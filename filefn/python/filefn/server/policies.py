@@ -107,7 +107,11 @@ def matches_content_type(pattern: str, mime_type: str) -> bool:
     if pattern == "*/*":
         return True
     if pattern.endswith("/*"):
-        return mime_type.startswith(pattern[:-1])
+        prefix = pattern[:-1]
+        # SVG can run script, so `image/*` does not admit it; name `image/svg+xml` to allow it.
+        if prefix.lower() == "image/" and mime_type.split(";", 1)[0].strip().lower() == "image/svg+xml":
+            return False
+        return mime_type.startswith(prefix)
     return pattern == mime_type
 
 def create_nucleus_policies() -> List[Policy]:

@@ -3142,7 +3142,9 @@ describe('mutation windows, replaced references and regained references (PR #308
       }
     });
     await billfn.quotaProvider.recordUsage({ principalId: 'shared_user', bytes: 0 });
-    await deliver(billfn, [subscriptionEvent({ eventId: 'evt_shared', subscriptionId: 'sub_shared', status: 'active', occurredAt: '2026-10-30T00:00:00.000Z', billingAccountId: 'ba_user_shared_user', productId: 'price_pro_shared' })]);
+    // The provider reports the shared product; the record also names the exact catalog price.
+    const sharedEvent = subscriptionEvent({ eventId: 'evt_shared', subscriptionId: 'sub_shared', status: 'active', occurredAt: '2026-10-30T00:00:00.000Z', billingAccountId: 'ba_user_shared_user', productId: 'pdt_shared' });
+    await deliver(billfn, [{ ...sharedEvent, priceId: 'price_pro_shared' }]);
     const stored = () => billfn.subscriptionProvider.getActiveSubscription({ principalId: 'shared_user' });
     const planOf = async () => (await stored())?.priceId;
     expect(await planOf()).toBe('price_pro_shared');

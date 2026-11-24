@@ -68,7 +68,9 @@ import type {
   BillFnReconciliationJobKind,
   BillFnReconciliationJobResponse,
   BillFnRefund,
+  BillFnRefundAuthorizationInput,
   BillFnRefundChargeRequest,
+  BillFnRefundMode,
   BillFnRefundChargeResponse,
   BillFnRestorePurchasesRequest,
   BillFnRestorePurchasesResponse,
@@ -269,10 +271,48 @@ type ParsedProviderEvent = {
   providerSubscriptionId?: string;
   providerChargeId?: string;
   checkoutReferenceId?: string;
+  checkoutReferenceSource?: 'provider' | 'metadata';
   billingState?: VerifiedBillingState;
   raw: Record<string, unknown>;
 };
 type ProviderProjectionContext = NonNullable<Awaited<ReturnType<typeof resolveProjectionContextForProviderState>>>;
+
+const REFUND_MODES: ReadonlySet<string> = new Set<BillFnRefundMode>(['full', 'prorated_remaining_period', 'custom']);
+
+/**
+ * A full refund takes no amount; a partial one (`custom`, or `prorated_remaining_period` with the amount the
+ * host computed) needs a positive integer amount in the currency minor unit. Checked before any provider call,
+ * so a partial request is never sent as a full refund.
+ */
+function assertRefundModeAndAmount(mode: unknown, amount: unknown): asserts mode is BillFnRefundMode {
+  if (typeof mode !== 'string' || !REFUND_MODES.has(mode)) {
+    throw createBillFnError({
+      code: 'BILLFN_VALIDATION_ERROR',
+      message: "Refund mode must be 'full', 'prorated_remaining_period' or 'custom'"
+    });
+  }
+  if (mode === 'full') {
+    if (amount !== undefined) {
+      throw createBillFnError({
+        code: 'BILLFN_VALIDATION_ERROR',
+        message: 'A full refund takes no amount'
+      });
+    }
+    return;
+  }
+  if (typeof amount !== 'number' || !Number.isSafeInteger(amount) || amount <= 0) {
+    throw createBillFnError({
+      code: 'BILLFN_VALIDATION_ERROR',
+      message: 'A partial refund needs a positive integer amount in the currency minor unit'
+    });
+  }
+}
+
+/** Internal options for `refundCharge`; the public instance method takes none. */
+export interface RefundChargeOptions {
+  /** Runs once the refund target is resolved and before the provider is called; throws to refuse. */
+  authorize?: (target: Omit<BillFnRefundAuthorizationInput, 'request'>) => Promise<void>;
+}
 
 export function createBillFnService(config: BillFnConfig) {
   return createBillFnServiceWithInternals(config).service;
@@ -1086,36 +1126,81 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
         })
       );
     },
-    async refundCharge(input: BillFnRefundChargeRequest): Promise<BillFnRefundChargeResponse> {
+    async refundCharge(
+      input: BillFnRefundChargeRequest,
+      options: RefundChargeOptions = {}
+    ): Promise<BillFnRefundChargeResponse> {
       const subject = requireSubject(input.subject);
-      const { billingAccount } = await getOrCreateBillingAccount(deps, subject);
-      const subscription = input.subscriptionId
-        ? await getSubscriptionForAccount(deps, billingAccount.id, input.subscriptionId)
-        : await findActiveSubscription(deps, billingAccount.id);
-      if (!subscription) {
+      // Read the caller's input once: the validated values are the ones dispatched and recorded, even if the
+      // caller's object changes while the refund awaits.
+      const { amount, reason } = input;
+      const requestedChargeId = input.providerChargeId;
+      const requestedSubscriptionId = input.subscriptionId;
+      // Only an absent mode means a full refund; an explicit null or other value is refused below.
+      const mode = input.mode === undefined ? 'full' : input.mode;
+      assertRefundModeAndAmount(mode, amount);
+      // A refund never creates a billing account: an account without one has nothing to refund.
+      const billingAccount = await findBillingAccountForSubject(deps, subject);
+      const subscription = billingAccount
+        ? requestedSubscriptionId
+          ? await getSubscriptionForAccount(deps, billingAccount.id, requestedSubscriptionId)
+          : await findActiveSubscription(deps, billingAccount.id)
+        : null;
+      if (!billingAccount || !subscription) {
         throw createBillFnError({
           code: 'BILLFN_NOT_FOUND',
           message: 'Subscription not found for refund'
         });
       }
-      if (input.providerChargeId && input.providerChargeId !== subscription.providerChargeId) {
+      if (requestedChargeId && requestedChargeId !== subscription.providerChargeId) {
         throw createBillFnError({
           code: 'BILLFN_CONFLICT',
           message: 'Refund charge does not belong to the resolved subscription'
         });
       }
       const providerName = subscription.provider;
+      const providerChargeId = requestedChargeId ?? subscription.providerChargeId;
+      const currency = requirePriceById(requirePlan(deps.catalog, subscription.planKey), subscription.priceId).currency;
+      let liveStateObservedAt = toIsoString(deps.now());
+      if (options.authorize) {
+        // The router's host check sees the exact account, subscription and charge this call refunds.
+        await options.authorize({
+          subject,
+          billingAccountId: billingAccount.id,
+          subscriptionId: subscription.id,
+          providerSubscriptionId: subscription.providerSubscriptionId,
+          providerChargeId,
+          mode,
+          amount,
+          currency,
+          reason
+        });
+        // The approval covers the subscription as it was read; one that changed meanwhile (a renewal, a
+        // cancellation) is refused rather than refunded from a stale snapshot. The provider-state clock restarts
+        // before the re-read, so a write that lands after it is newer than the refund's projection.
+        liveStateObservedAt = toIsoString(deps.now());
+        const current = await getSubscriptionForAccount(deps, billingAccount.id, subscription.id);
+        if (
+          !current ||
+          current.updatedAt !== subscription.updatedAt ||
+          current.providerChargeId !== subscription.providerChargeId ||
+          current.status !== subscription.status
+        ) {
+          throw createBillFnError({
+            code: 'BILLFN_CONFLICT',
+            message: 'The subscription changed while the refund was being authorized; retry the refund'
+          });
+        }
+      }
       const provider = requireProvider(deps, providerName, 'refundCharge');
-      const mode = input.mode ?? 'full';
-      const providerChargeId = input.providerChargeId ?? subscription.providerChargeId;
-      const liveStateObservedAt = toIsoString(deps.now());
       const operation = await provider.refundCharge({
         subscription,
         billingAccount,
         providerChargeId,
         mode,
-        amount: input.amount,
-        reason: input.reason
+        amount,
+        currency,
+        reason
       });
 
       const timestamp = toIsoString(deps.now());
@@ -1126,9 +1211,9 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
         providerChargeId,
         providerRefundId: operation.providerRefundId,
         mode,
-        amount: input.amount,
-        currency: requirePriceById(requirePlan(deps.catalog, subscription.planKey), subscription.priceId).currency,
-        reason: input.reason,
+        amount,
+        currency,
+        reason,
         status: operation.operationStatus === 'applied' ? 'succeeded' : 'requires_action',
         operationStatus: operation.operationStatus,
         metadata: operation.raw,
@@ -4283,12 +4368,13 @@ async function resolveProjectionContextForProviderState(
 async function processParsedWebhookEvent(
   deps: ServiceDeps,
   providerName: BillingProviderName,
-  event: ParsedProviderEvent
+  parsedEvent: ParsedProviderEvent
 ) {
-  const state = event.billingState;
+  const state = parsedEvent.billingState;
   if (!state) {
     return null;
   }
+  const event = await withTrustedCheckoutReference(deps, providerName, parsedEvent, state);
   let projection = await resolveProjectionContextForProviderState(deps, {
     provider: providerName,
     state,
@@ -5120,11 +5206,12 @@ async function applyUnlinkedWebhookEvent(
   deps: ServiceDeps,
   row: BillFnUnlinkedWebhookEvent
 ): Promise<UnlinkedReplayOutcome> {
-  const event = deserializeParsedWebhookEvent(row.event);
-  const state = event?.billingState;
-  if (!event || !state) {
+  const storedEvent = deserializeParsedWebhookEvent(row.event);
+  const state = storedEvent?.billingState;
+  if (!storedEvent || !state) {
     return { kind: 'unresolved' };
   }
+  const event = await withTrustedCheckoutReference(deps, row.provider, storedEvent, state);
   const projection = await resolveProjectionContextForProviderState(deps, {
     provider: row.provider,
     state,
@@ -5361,6 +5448,139 @@ async function refreshProjectionAfterReplay(deps: ServiceDeps, result: Projectio
   return { checkoutSession, subscription, entitlements };
 }
 
+/**
+ * The event with its checkout reference kept only when it can be trusted. A reference the provider reported from
+ * its own record (`checkoutReferenceSource` other than `metadata`) that equals a session's provider checkout id,
+ * or any reference to a session that already holds the event's provider references, is the provider's. A
+ * reference copied from metadata anyone paying the provider can set, or one naming a BillFn checkout session id,
+ * links the event to that session (and its plan and billing account) only when the event pays for the session's
+ * product, as the provider reported it, and any billing account its metadata names is the session's. Otherwise it
+ * is dropped and the event is linked, bootstrapped or stored unlinked by its own references, as if it named no
+ * session.
+ */
+async function withTrustedCheckoutReference<T extends ParsedProviderEvent>(
+  deps: ServiceDeps,
+  provider: BillingProviderName,
+  event: T,
+  state: VerifiedBillingState
+): Promise<T> {
+  const reference = event.checkoutReferenceId;
+  if (!reference) {
+    return event;
+  }
+  // An event stored before sources were recorded is the provider's when its raw record names the reference as
+  // the provider's own checkout id (Dodo's checkout_session_id).
+  const rawData = asRecord(event.raw.data);
+  const source =
+    event.checkoutReferenceSource ??
+    (readString(rawData ?? event.raw, 'checkout_session_id') === reference ? 'provider' : undefined);
+  const byProviderId = await deps.db.findOne<BillFnCheckoutSession>({
+    model: TABLES.checkoutSessions,
+    where: [
+      { field: 'provider', operator: 'eq', value: provider },
+      { field: 'providerCheckoutId', operator: 'eq', value: reference }
+    ],
+    namespace: deps.namespace
+  });
+  // Only a reference the adapter says it read from the provider's own record is trusted as the provider's; one
+  // without a source (an adapter that does not say, or an event stored before sources were recorded) is checked.
+  if (byProviderId && source === 'provider') {
+    return event;
+  }
+  const session =
+    byProviderId ??
+    (await deps.db.findOne<BillFnCheckoutSession>({
+      model: TABLES.checkoutSessions,
+      where: [{ field: 'checkoutSessionId', operator: 'eq', value: reference }],
+      namespace: deps.namespace
+    }));
+  if (!session || checkoutReferenceMatchesSession(deps, provider, event, state, session)) {
+    return event;
+  }
+  deps.metrics.track('webhook.checkout_reference.dropped', {
+    provider,
+    providerEventId: event.providerEventId
+  });
+  return { ...event, checkoutReferenceId: undefined, checkoutReferenceSource: undefined };
+}
+
+function checkoutReferenceMatchesSession(
+  deps: ServiceDeps,
+  provider: BillingProviderName,
+  event: ParsedProviderEvent,
+  state: VerifiedBillingState,
+  session: BillFnCheckoutSession
+): boolean {
+  if (session.provider !== provider) {
+    return false;
+  }
+  const holdsReference =
+    (state.providerSubscriptionId !== undefined && session.providerSubscriptionId === state.providerSubscriptionId) ||
+    (state.providerChargeId !== undefined && session.providerChargeId === state.providerChargeId);
+  if (holdsReference) {
+    return true;
+  }
+  const metadataBillingAccountId = readBillingAccountMetadata(event, state);
+  if (metadataBillingAccountId && metadataBillingAccountId !== session.billingAccountId) {
+    return false;
+  }
+  // The session's own price, looked up in its plan (a price id may repeat across plans).
+  const sessionPrice = resolvePlan(deps.catalog, session.planKey)?.prices.find(
+    (price) => price.priceId === session.priceId && price.provider === provider
+  );
+  // The event must pay for the session's product, as the provider itself reported it; a price id from metadata
+  // proves nothing.
+  // The adapter's providerProductId may name the catalog price itself (see BillFnVerifiedBillingState).
+  return (
+    sessionPrice !== undefined &&
+    (providerReportedProducts(provider, state).includes(sessionPrice.providerProductId) ||
+      state.providerProductId === sessionPrice.priceId)
+  );
+}
+
+/**
+ * The products a provider's own record says the event paid for: the state's product, and the product fields of
+ * its raw record (its transaction's for Apple, its cart's for a Dodo one-time payment). Metadata is never read.
+ */
+function providerReportedProducts(provider: BillingProviderName, state: VerifiedBillingState | undefined): string[] {
+  const raw = asRecord(state?.raw);
+  const records = [raw, asRecord(raw?.transaction)];
+  // A Dodo cart lists a payment's one-time items; a payment that also charges a subscription keeps the
+  // subscription's product elsewhere, so its cart says nothing about the subscription's plan.
+  const cart = dodoCartNamesProduct(provider, state) && Array.isArray(raw?.product_cart) ? raw.product_cart : [];
+  return [
+    state?.providerProductId,
+    ...records.flatMap((record) => (record ? [readString(record, 'product_id'), readString(record, 'productId')] : [])),
+    ...cart.map((item) => readString(asRecord(item) ?? {}, 'product_id'))
+  ].filter((product): product is string => typeof product === 'string' && product.length > 0);
+}
+
+/**
+ * Whether a record's Dodo product_cart names the product paid for: only for a Dodo payment that says it is one-time
+ * (a null subscription_id, or a subscription_ids list) and charges no subscription. A cart lists a payment's one-time
+ * items, so it says nothing about a subscription's plan, nor about a payment that does not say which it is.
+ */
+function dodoCartNamesProduct(provider: BillingProviderName, state: VerifiedBillingState | undefined): boolean {
+  const raw = asRecord(state?.raw);
+  const saysOneTime = raw !== null && (raw.subscription_id === null || Array.isArray(raw.subscription_ids));
+  return provider === 'dodo' && saysOneTime && !chargesSubscription(state);
+}
+
+/** Whether a record charges a subscription: it names one, or (Dodo) lists subscription ids or is multi-subscription. */
+function chargesSubscription(state: VerifiedBillingState | undefined): boolean {
+  const raw = asRecord(state?.raw);
+  return (
+    Boolean(state?.providerSubscriptionId) ||
+    Boolean(readString(raw ?? {}, 'subscription_id')) ||
+    (Array.isArray(raw?.subscription_ids) && raw.subscription_ids.length > 0) ||
+    raw?.is_multi_subscription === true
+  );
+}
+
+function readCheckoutReferenceSource(value: unknown): 'provider' | 'metadata' | undefined {
+  return value === 'provider' || value === 'metadata' ? value : undefined;
+}
+
 function readBillingAccountMetadata(event: ParsedProviderEvent, state: VerifiedBillingState) {
   const stateRaw = asRecord(state.raw);
   const candidates = [
@@ -5397,14 +5617,31 @@ async function resolveProviderEventPriceReference(
     const raw = asRecord(event.billingState?.raw);
     // A provider record may carry its product on the transaction it describes (Apple).
     const records = [raw, asRecord(raw?.transaction)];
+    // A Dodo payment whose cart does not name its product, and that reports no product, names its plan nowhere: a
+    // hint an older adapter stored from its cart is not used.
+    const rawCart = asRecord(event.billingState?.raw)?.product_cart;
+    const staleCartHint =
+      provider === 'dodo' &&
+      Array.isArray(rawCart) &&
+      rawCart.length > 0 &&
+      !dodoCartNamesProduct(provider, event.billingState) &&
+      providerReportedProducts(provider, event.billingState).length === 0;
     const references = [
       event.billingState?.providerProductId,
-      event.priceId,
+      staleCartHint ? undefined : event.priceId,
       ...records.flatMap((record) =>
         record ? ['product_id', 'productId', 'price_id', 'priceId'].map((key) => readString(record, key)) : []
       )
     ];
-    const resolved = findCatalogPriceReference(deps.catalog, provider, references, subscription?.priceId);
+    // When the provider reported what the event paid for, a price id (which can come from metadata) selects only
+    // a catalog price of this provider with that id that sells a reported product; the reported products then
+    // select by product id alone, so neither can stand in for the other.
+    const paidProducts = providerReportedProducts(provider, event.billingState);
+    const resolved =
+      paidProducts.length === 0
+        ? findCatalogPriceReference(deps.catalog, provider, references, subscription?.priceId)
+        : (selectPaidPriceById(deps.catalog, provider, references, paidProducts, event.billingState?.providerProductId) ??
+          findCatalogPriceReference(deps.catalog, provider, paidProducts, subscription?.priceId, { productsOnly: true }));
     if (resolved) {
       return resolved;
     }
@@ -5428,22 +5665,55 @@ async function resolveProviderEventPriceReference(
 }
 
 /**
+ * The first catalog price of this provider whose id a reference names and whose product was paid for, or that the
+ * adapter's own providerProductId names directly.
+ */
+function selectPaidPriceById(
+  catalog: BillFnCatalog,
+  provider: BillingProviderName,
+  references: Array<string | null | undefined>,
+  paidProducts: readonly string[],
+  /** The adapter's providerProductId, which may name the catalog price itself rather than a product. */
+  adapterPriceReference?: string
+): CatalogSelection | null {
+  for (const reference of references) {
+    if (!reference) {
+      continue;
+    }
+    for (const plan of catalog.plans) {
+      const price = plan.prices.find(
+        (candidate) =>
+          candidate.priceId === reference &&
+          candidate.provider === provider &&
+          (paidProducts.includes(candidate.providerProductId) || candidate.priceId === adapterPriceReference)
+      );
+      if (price) {
+        return { plan, price };
+      }
+    }
+  }
+  return null;
+}
+
+/**
  * The catalog price the references name: an exact catalog price id first, then
  * a provider product id. A product several prices share names the current
  * price if it is one of them, else the first of them when they are all in one
  * plan; across plans it names none, so the caller keeps its stored selection.
+ * With `productsOnly`, only the product-id pass runs.
  */
 function findCatalogPriceReference(
   catalog: BillFnCatalog,
   provider: BillingProviderName,
   references: Array<string | null | undefined>,
-  currentPriceId?: string
+  currentPriceId?: string,
+  options: { productsOnly?: boolean } = {}
 ): CatalogSelection | null {
   const prices = catalog.plans.flatMap((plan) =>
     plan.prices.filter((price) => price.provider === provider).map((price) => ({ plan, price }))
   );
   const named = references.filter((reference): reference is string => Boolean(reference));
-  for (const reference of named) {
+  for (const reference of options.productsOnly ? [] : named) {
     const exact = prices.find((candidate) => candidate.price.priceId === reference);
     if (exact) {
       return exact;
@@ -5515,6 +5785,7 @@ function serializeParsedWebhookEvent(event: {
   providerSubscriptionId?: string;
   providerChargeId?: string;
   checkoutReferenceId?: string;
+  checkoutReferenceSource?: 'provider' | 'metadata';
   billingState?: NonNullable<Awaited<ReturnType<NonNullable<BillFnProviderAdapter['verifyCheckout']>>>>;
   raw: Record<string, unknown>;
 }) {
@@ -5528,6 +5799,7 @@ function serializeParsedWebhookEvent(event: {
     providerSubscriptionId: event.providerSubscriptionId,
     providerChargeId: event.providerChargeId,
     checkoutReferenceId: event.checkoutReferenceId,
+    ...(event.checkoutReferenceSource ? { checkoutReferenceSource: event.checkoutReferenceSource } : {}),
     billingState: event.billingState,
     raw: event.raw
   };
@@ -5548,6 +5820,7 @@ function deserializeParsedWebhookEvent(value: unknown) {
     providerSubscriptionId: readString(record, 'providerSubscriptionId') ?? undefined,
     providerChargeId: readString(record, 'providerChargeId') ?? undefined,
     checkoutReferenceId: readString(record, 'checkoutReferenceId') ?? undefined,
+    checkoutReferenceSource: readCheckoutReferenceSource(record.checkoutReferenceSource),
     billingState: asRecord(record.billingState) as unknown as NonNullable<
       Awaited<ReturnType<NonNullable<BillFnProviderAdapter['verifyCheckout']>>>
     > | undefined,

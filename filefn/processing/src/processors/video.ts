@@ -5,6 +5,7 @@ import type {
   VideoConfig,
   VideoProcessorProvider,
 } from '../types.js';
+import { CONTENT_TYPE_MISMATCH_ERROR, contentMatchesDeclaredType } from '../content-sniff.js';
 
 const SUPPORTED_MIME_TYPES = [
   'video/mp4',
@@ -64,8 +65,12 @@ export function createVideoProcessor(config: VideoConfig = {}): Processor {
 
       try {
         const videoData = await getData();
+        // The decoders pick a format from the bytes; refuse bytes that are not the declared type.
+        if (!contentMatchesDeclaredType(videoData, input.mimeType)) {
+          return { success: false, artifacts: [], error: CONTENT_TYPE_MISMATCH_ERROR };
+        }
         const artifacts = [];
-        const baseKey = input.storageKey.replace(/\.[^.]+$/, '');
+        const baseKey = input.storageKey.replace(/\.[^/.]+$/, '');
         const runtime = (generatePoster || transcode || extractMetadata)
           ? requireProvider(provider)
           : undefined;

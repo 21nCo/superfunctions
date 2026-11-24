@@ -148,6 +148,8 @@ export interface HttpClient {
     body: Blob,
     uploadSessionToken?: string,
     signal?: AbortSignal,
+    /** The part this URL was signed for: the token then goes only to FileFn's exact endpoint for it. */
+    expectedPart?: { uploadSessionId: string; partNumber: number },
   ): Promise<{ etag: string; recorded?: boolean }>;
 }
 
@@ -247,20 +249,28 @@ function resolveUrl(url: string, base: string): URL | undefined {
  * `baseUrl` (a configured "" or "/") is the page origin root, so every
  * same-origin path matches it. A URL that cannot be parsed never matches.
  */
+// FileFn's proxy part route, on the path under baseUrl.
+const PART_ROUTE = /^\/upload\/[^/]+\/parts\/\d+$/;
+
 function createPartUrlResolver(
   baseUrl: string,
-): (url: string) => { url: string; toFileFn: boolean } {
+): (url: string) => { url: string; toFileFn: boolean; toPartRoute: boolean; routePath: string | null } {
   return (url) => {
     const pageBase = pageBaseUrl();
     const base = resolveUrl(baseUrl || "/", pageBase ?? NO_LOCATION_ORIGIN);
     const target = resolveUrl(url, pageBase ?? NO_LOCATION_ORIGIN);
-    if (!base || !target) return { url, toFileFn: false };
+    if (!base || !target) return { url, toFileFn: false, toPartRoute: false, routePath: null };
     const basePath = base.pathname.replace(/\/$/, "");
+    const toFileFn =
+      target.origin === base.origin &&
+      (target.pathname === basePath || target.pathname.startsWith(`${basePath}/`));
     return {
       url: pageBase ? target.href : url,
-      toFileFn:
-        target.origin === base.origin &&
-        (target.pathname === basePath || target.pathname.startsWith(`${basePath}/`)),
+      toFileFn,
+      // Only FileFn's own part endpoint, never another URL served under the
+      // same origin and prefix (a presigned URL behind a reverse proxy).
+      toPartRoute: toFileFn && !target.search && PART_ROUTE.test(target.pathname.slice(basePath.length)),
+      routePath: toFileFn ? target.pathname.slice(basePath.length) : null,
     };
   };
 }
@@ -537,7 +547,7 @@ export function createHttpClient(config: FileFnClientConfig): HttpClient {
       );
     },
 
-    async uploadPartToSignedUrl(url, headers, body, uploadSessionToken, signal) {
+    async uploadPartToSignedUrl(url, headers, body, uploadSessionToken, signal, expectedPart) {
       return withRetry(
         async () => {
           // A root-relative URL (proxy upload) is a path under baseUrl; a
@@ -546,20 +556,48 @@ export function createHttpClient(config: FileFnClientConfig): HttpClient {
           // headers and credentials mode. Any other URL (a presigned storage
           // URL) gets only its signed headers and never ambient credentials.
           // The URL is classified and dispatched in the same resolved form.
-          const { url: finalUrl, toFileFn } = resolvePartUrl(
+          const { url: finalUrl, toFileFn, toPartRoute, routePath } = resolvePartUrl(
             url.startsWith("/") && !isProtocolRelative(url) ? `${baseUrl}${url}` : url,
           );
 
+          // The session token is FileFn's credential: it goes only to FileFn's
+          // part endpoint, never to a storage provider's presigned URL, whose
+          // logs would record it. A token-bearing PUT follows no redirect, so a
+          // redirect can't carry the header elsewhere.
+          // Proxy part URLs are issued root-relative (`/upload/<id>/parts/<n>`);
+          // storage URLs, multipart included, are absolute. Only a root-relative
+          // URL that resolves to the part route gets the token, so a storage
+          // URL never does, whatever path a same-origin storage proxy uses.
+          // When the caller names the part, only FileFn's exact endpoint for
+          // that session and part qualifies.
+          const issuedRelative = url.startsWith("/") && !isProtocolRelative(url);
+          const exactPart =
+            !expectedPart ||
+            routePath === `/upload/${encodeURIComponent(expectedPart.uploadSessionId)}/parts/${expectedPart.partNumber}`;
+          const partRequest = issuedRelative && toPartRoute && exactPart;
           const requestHeaders = mergeHeaders(
             toFileFn ? await readAuthHeaders() : undefined,
             headers,
-            uploadSessionToken ? { "x-upload-session-token": uploadSessionToken } : undefined,
           );
+          // The token goes only to a verified FileFn part request: the explicit
+          // one first, else one the auth headers carry (a resumed upload). It is
+          // removed from every other request.
+          let headerToken: string | undefined;
+          for (const name of Object.keys(requestHeaders)) {
+            if (name.toLowerCase() === "x-upload-session-token") {
+              headerToken = requestHeaders[name];
+              delete requestHeaders[name];
+            }
+          }
+          const token = uploadSessionToken || headerToken;
+          const sendToken = partRequest && Boolean(token);
+          if (sendToken) requestHeaders["x-upload-session-token"] = token!;
           const response = await transport.send(finalUrl, {
             method: "PUT",
             headers: requestHeaders,
             body,
             credentials: toFileFn ? transport.credentials : "omit",
+            ...(sendToken ? { redirect: "error" as const } : {}),
             signal,
           });
 

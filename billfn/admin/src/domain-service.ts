@@ -364,14 +364,20 @@ export function createBillFnDomainAdminService(
       })));
     },
     async refundPayment(input, context) {
-      return accepted(unwrap(await options.billfn.refundCharge({
-        subject: await options.subject(context),
-        providerChargeId: input.id,
-        subscriptionId: input.payload?.subscriptionId,
-        mode: input.payload?.mode,
-        amount: input.payload?.amount,
-        reason: input.reason,
-      })));
+      const subject = await options.subject(context);
+      try {
+        return accepted(unwrap(await options.billfn.refundCharge({
+          subject,
+          providerChargeId: input.id,
+          subscriptionId: input.payload?.subscriptionId,
+          mode: input.payload?.mode,
+          amount: input.payload?.amount,
+          reason: input.reason,
+        })));
+      } catch (error) {
+        // A refused refund (an invalid amount, a provider without partial refunds) is a client error, not a 500.
+        throw adminErrorFromBillFn(error);
+      }
     },
     async reconcileProvider(input, context) {
       const subject = await options.subject(context);
