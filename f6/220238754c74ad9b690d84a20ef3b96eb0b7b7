@@ -1,0 +1,28 @@
+filefn/server/src/policies.ts
+  s_b841cebdcfad95::t_817e1d6f45e935 93-96,98-104,107-143,145-147,178
+filefn/server/src/__tests__/policies.test.ts
+  s_b841cebdcfad95::t_3ecba4f6a5556b 17
+filefn/server/tests/storage-key-security.test.ts
+  s_b841cebdcfad95::t_3ecba4f6a5556b 81,104-112,116,123-134
+  s_b841cebdcfad95::t_bd16949af036a3 135
+filefn/docs/content/docs/core-concepts/policies.md
+  s_b841cebdcfad95::t_b72d55da41f58f 106
+filefn/docs/static/llms-full.txt
+  s_b841cebdcfad95::t_0fae38ff629ca9 2365
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f6220238754c74ad9b690d84a20ef3b96eb0b7b7",
+  "prompts": {},
+  "sessions": {
+    "s_b841cebdcfad95": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "436f4738-d86e-44e1-82bc-c432f9aaabf3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

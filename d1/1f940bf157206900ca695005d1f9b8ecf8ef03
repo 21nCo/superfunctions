@@ -1,0 +1,35 @@
+billfn/admin/src/__tests__/admin.test.ts
+  s_0d7e11293d5a4e::t_2763007edf7457 537,543-567
+  s_0d7e11293d5a4e::t_b487a19cc562d6 568
+  s_0d7e11293d5a4e::t_55c78f80e8ae9f 569-570
+billfn/core/src/__tests__/router-subject-refund.test.ts
+  s_0d7e11293d5a4e::t_cee9336cfbc01a 247,355-364
+  s_0d7e11293d5a4e::t_b0869a32e6a064 365-366
+billfn/admin/src/domain-service.ts
+  s_0d7e11293d5a4e::t_2763007edf7457 367-380
+billfn/core/src/service.ts
+  s_0d7e11293d5a4e::t_7bace895b23507 1144-1145
+  s_0d7e11293d5a4e::t_2763007edf7457 1133-1137,1140,1154,1161,1169,1172-1173,1198-1199,1210,1212
+billfn/docs/content/docs/server/setup.mdx
+  s_0d7e11293d5a4e::t_8f92d982e4f9b3 120-123
+billfn/core/src/types.ts
+  s_0d7e11293d5a4e::t_2763007edf7457 971-975
+billfn/admin/src/index.ts
+  s_0d7e11293d5a4e::t_2763007edf7457 557
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d11f940bf157206900ca695005d1f9b8ecf8ef03",
+  "prompts": {},
+  "sessions": {
+    "s_0d7e11293d5a4e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "97ac12a3-1bf1-4732-a6f3-ece8c28b207e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

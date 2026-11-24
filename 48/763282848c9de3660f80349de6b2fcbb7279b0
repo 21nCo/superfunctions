@@ -1,0 +1,21 @@
+filefn/processing/container/src/tesseract-cli.ts
+  s_b841cebdcfad95::t_01563901394682 49-52,57
+filefn/processing/src/providers/tesseract-ocr.ts
+  s_b841cebdcfad95::t_b75bf8a415e9cc 7-8,19-22,28
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "48763282848c9de3660f80349de6b2fcbb7279b0",
+  "prompts": {},
+  "sessions": {
+    "s_b841cebdcfad95": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "436f4738-d86e-44e1-82bc-c432f9aaabf3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

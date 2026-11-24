@@ -1,0 +1,40 @@
+filefn/server/src/processing/routes.ts
+  s_b841cebdcfad95::t_6136a153efc6c1 120-121,149-150,188-189,213-214,241-242
+filefn/docs/content/docs/features/downloads.md
+  s_b841cebdcfad95::t_2dbba467cba695 65
+filefn/docs/static/llms-full.txt
+  s_b841cebdcfad95::t_650c83209661fb 3524
+filefn/server/src/files/service.ts
+  s_b841cebdcfad95::t_e1786ac593f196 8,215-216,218
+filefn/server/src/download-headers.ts
+  s_3b8f939604721f::t_8d41451bc1cbd8 36-46,53,73-74,90-94,98
+  s_3b8f939604721f::t_9f412ee4e585fa 103-105,109-116
+filefn/server/src/processing/service.ts
+  s_b841cebdcfad95::t_9ec59eb4d73f93 2216,2235-2236
+filefn/server/tests/read-path-security.test.ts
+  s_b841cebdcfad95::t_832ca41ba5f7d8 162-228
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c110bdc9f3580629df785d64374a42ff23d60f05",
+  "prompts": {},
+  "sessions": {
+    "s_3b8f939604721f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c4351b6f-9fa5-4c42-8658-94d86f5a1fc8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_b841cebdcfad95": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "436f4738-d86e-44e1-82bc-c432f9aaabf3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

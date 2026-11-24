@@ -1,0 +1,21 @@
+filefn/server/src/files/service.ts
+  s_b841cebdcfad95::t_486f139f425bef 601-606,610,614-615,617-629,631-634,637-638,646
+filefn/server/tests/read-path-security.test.ts
+  s_b841cebdcfad95::t_ee7925a7c44ec0 14-32,297,339
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5cbefd20d983d94b2ec13e0e43e60cde0a136827",
+  "prompts": {},
+  "sessions": {
+    "s_b841cebdcfad95": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "436f4738-d86e-44e1-82bc-c432f9aaabf3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
