@@ -765,5 +765,26 @@ describe("Idempotency record ids and in-process search context", () => {
     expect(throwingGetActorId).not.toHaveBeenCalled();
     await expect(throwingServer.search({ query: "x" }, { ns: "tenant:a", actor: "alice" })).rejects.toThrow();
     await throwingServer.close();
+
+    // A null context, configured or passed, counts as absent: the search runs
+    // anonymous and getActorId is never called with null.
+    const nullGetActorId = vi.fn(() => "alice");
+    const nullServer = await createDatafnServer<Ctx>({
+      schema,
+      database: db,
+      searchProvider,
+      context: null as unknown as Ctx,
+      namespaceProvider: {
+        getNamespace: (ctx) => ctx?.ns ?? "tenant:a",
+        getActorId: nullGetActorId,
+      },
+    });
+    await expect(nullServer.search({ query: "x", namespace: "tenant:a" })).resolves.toEqual({ results: [] });
+    await expect(nullServer.search({ query: "x" })).resolves.toEqual({ results: [] });
+    await expect(
+      nullServer.search({ query: "x", namespace: "tenant:a" }, null as unknown as Ctx),
+    ).resolves.toEqual({ results: [] });
+    expect(nullGetActorId).not.toHaveBeenCalled();
+    await nullServer.close();
   });
 });
