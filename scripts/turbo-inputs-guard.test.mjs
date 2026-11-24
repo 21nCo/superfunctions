@@ -246,17 +246,18 @@ const FORMS = [
     source: `export { y } from "../../../zz-guard-nonpkg/closure-x.mjs";\n`,
   },
   // Form 4: a relative path in the script that runs a task or in its npm pre/post hook runs that file, so what the file
-  // reads is read by the task: here a root script (a global input) that a prebuild hook runs reads a target file.
+  // reads is read by the task: here a root script (a global input) that a prebuild hook runs, quoted because its name has
+  // a space, reads a target file.
   {
     name: "lifecycle-script",
     file: "package.json",
     task: "build",
-    target: "scripts/zz-guard-lifecycle.mjs",
+    target: "scripts/zz-guard lifecycle.mjs",
     files: [`${TARGET_DIR}/data/lifecycle-script.json`],
     outside: {
-      "scripts/zz-guard-lifecycle.mjs": `import path from "node:path";\nexport const file = path.join(import.meta.dirname, "../${TARGET_DIR}/data/lifecycle-script.json");\n`,
+      "scripts/zz-guard lifecycle.mjs": `import path from "node:path";\nexport const file = path.join(import.meta.dirname, "../${TARGET_DIR}/data/lifecycle-script.json");\n`,
     },
-    scripts: { prebuild: "node ../../scripts/zz-guard-lifecycle.mjs", build: "node -e 0" },
+    scripts: { prebuild: `node "../../scripts/zz-guard lifecycle.mjs" && node -e 0`, build: "node -e 0" },
     get source() {
       return manifest("@guard/lifecycle-script", this.scripts);
     },

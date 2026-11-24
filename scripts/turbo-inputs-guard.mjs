@@ -823,8 +823,15 @@ function applyPathFunction(name, values, cwd) {
 
 // ---------------------------------------------------------------------------------------------------------------------
 
-// Git from a fixed system directory, never a PATH lookup.
-const GIT = ["/usr/bin/git", "/usr/local/bin/git", "/opt/homebrew/bin/git"].find((candidate) => existsSync(candidate));
+// The first working Git in a fixed system directory, never a PATH lookup (macOS /usr/bin/git can be a shim that fails
+// without developer tools installed).
+const GIT = ["/usr/bin/git", "/usr/local/bin/git", "/opt/homebrew/bin/git"].find((candidate) => {
+  try {
+    return existsSync(candidate) && execFileSync(candidate, ["--version"], { stdio: ["ignore", "pipe", "ignore"] }).length > 0;
+  } catch {
+    return false;
+  }
+});
 
 function git(root, args) {
   if (!GIT) throw new Error("git is not installed in /usr/bin, /usr/local/bin or /opt/homebrew/bin");
@@ -862,7 +869,8 @@ function owningPackage(file, packageDirs) {
 export function resolveTarget(read, file, tracked, trackedDirs) {
   if (read.specifier !== undefined && !/^\.\.?(?:\/|$)/.test(read.specifier)) return null;
   const module = read.specifier !== undefined || read.form === "alias";
-  const specifier = read.specifier?.split("?")[0];
+  // A path on a command line is a file name; an import specifier may carry a query (`?raw`).
+  const specifier = read.form === "script" ? read.specifier : read.specifier?.split("?")[0];
   const target = (specifier === undefined ? read.target.slice(1) : posix.join(posix.dirname(file), specifier)).replace(/(.)\/+$/, "$1");
   if (target === "" || target === "." || target === ".." || target.startsWith("../")) return null;
   if (!module) return { target, files: tracked.has(target) ? [target] : trackedDirs.get(target) ?? [], module };
@@ -969,8 +977,9 @@ export function findOutsideReads(root, packages, packageDirs = packages.map((pkg
         if (typeof scripts[name] !== "string") continue;
         const at = text.indexOf(`${JSON.stringify(name)}:`, Math.max(0, text.indexOf('"scripts"')));
         const read = { line: at === -1 ? 1 : text.slice(0, at).split("\n").length, form: "script" };
-        for (const word of scripts[name].split(/[\s;&|()<>]+/)) {
-          const specifier = word.replace(/^["']+|["']+$/g, "");
+        // Shell words, with quoted and backslash-escaped characters kept as part of the word.
+        for (const [word] of scripts[name].matchAll(/(?:"(?:[^"\\]|\\.)*"|'[^']*'|\\.|[^\s;&|()<>"'\\])+/g)) {
+          const specifier = word.replace(/"((?:[^"\\]|\\.)*)"|'([^']*)'|\\(.)/g, (_, double, single, escaped) => escaped ?? single ?? double.replace(/\\(.)/g, "$1"));
           if (!/^\.\.?\//.test(specifier)) continue;
           const resolved = resolveTarget({ ...read, specifier }, manifest, tracked, trackedDirs);
           if (resolved && resolved.files.length > 0) addRead(pkg, manifest, read, resolved, [task]);
