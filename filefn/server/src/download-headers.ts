@@ -144,21 +144,37 @@ function asciiFallbackFileName(fileName: string): string {
 }
 
 /** `Content-Disposition` value: RFC 6266 with an RFC 5987 `filename*` for non-ASCII names. */
+/** Largest Content-Disposition value FileFn sends, so proxies with small header limits pass it. */
+export const MAX_CONTENT_DISPOSITION_LENGTH = 512;
+
+function dispositionValue(type: 'inline' | 'attachment', fileName: string): string {
+  const encoded = encodeURIComponent(fileName).replace(/['()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+  return `${type}; filename="${asciiFallbackFileName(fileName)}"; filename*=UTF-8''${encoded}`;
+}
+
+/**
+ * `Content-Disposition` value: RFC 6266 with an RFC 5987 `filename*` for
+ * non-ASCII names. A name whose header would exceed
+ * MAX_CONTENT_DISPOSITION_LENGTH is shortened at code-point boundaries,
+ * keeping a short extension.
+ */
 export function contentDisposition(type: 'inline' | 'attachment', fileName?: string | null): string {
   if (!fileName) {
     return type;
   }
-  // Keep the header small for proxies: at most 100 code points, keeping a
-  // short extension.
-  const codePoints = Array.from(fileName);
-  if (codePoints.length > 100) {
-    const extension = /\.[A-Za-z0-9]{1,10}$/.exec(fileName)?.[0] ?? '';
-    fileName = codePoints.slice(0, 100 - extension.length).join('') + extension;
-  }
   // encodeURIComponent throws on a lone surrogate; replace it with U+FFFD.
-  fileName = fileName.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '\uFFFD');
-  const encoded = encodeURIComponent(fileName).replace(/['()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
-  return `${type}; filename="${asciiFallbackFileName(fileName)}"; filename*=UTF-8''${encoded}`;
+  const wellFormed = fileName.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '\uFFFD');
+  let value = dispositionValue(type, wellFormed);
+  if (value.length <= MAX_CONTENT_DISPOSITION_LENGTH) return value;
+  const extension = /\.[A-Za-z0-9]{1,10}$/.exec(wellFormed)?.[0] ?? '';
+  const stem = Array.from(wellFormed.slice(0, wellFormed.length - extension.length));
+  let keep = stem.length;
+  while (keep > 0) {
+    keep -= 1;
+    value = dispositionValue(type, stem.slice(0, keep).join('') + extension);
+    if (value.length <= MAX_CONTENT_DISPOSITION_LENGTH) return value;
+  }
+  return dispositionValue(type, extension || 'download');
 }
 
 export interface DownloadHeadersInput {

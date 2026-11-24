@@ -188,10 +188,14 @@ describe('read path (FILE-30 F-03, F-04, F-23)', () => {
     expect(buildDownloadHeaders({ contentType: 'image/png;', size: 1 })['Content-Disposition']).toBe('inline');
     expect(buildDownloadHeaders({ contentType: 'image/png;; q=1', size: 1 })['Content-Type']).toBe('image/png');
     // Long names are capped, keeping the extension.
-    const longName = `${'\u00e9'.repeat(300)}.pdf`;
-    const disposition = buildDownloadHeaders({ contentType: 'application/pdf', size: 1, fileName: longName })['Content-Disposition'];
-    expect(disposition.length).toBeLessThan(1000);
-    expect(disposition.endsWith('.pdf')).toBe(true);
+    for (const longName of [`${'\u00e9'.repeat(300)}.pdf`, `${'\u{1F600}'.repeat(96)}.pdf`]) {
+      const disposition = buildDownloadHeaders({ contentType: 'application/pdf', size: 1, fileName: longName })['Content-Disposition'];
+      expect(disposition.length).toBeLessThanOrEqual(512);
+      expect(disposition.endsWith('.pdf')).toBe(true);
+    }
+    // A long ASCII name that fits is not shortened.
+    const ascii = `${'a'.repeat(120)}.txt`;
+    expect(buildDownloadHeaders({ contentType: 'text/plain', size: 1, fileName: ascii })['Content-Disposition']).toContain(ascii);
 
     // A lone surrogate in a stored name does not break the header.
     expect(buildDownloadHeaders({ contentType: 'text/plain', size: 1, fileName: 'a\uD800.txt' })['Content-Disposition'])
