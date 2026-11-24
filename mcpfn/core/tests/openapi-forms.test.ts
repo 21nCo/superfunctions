@@ -2258,6 +2258,73 @@ describe("fromOpenAPI body fallback, synchronous schemas, per-kind alternatives 
     }
   });
 
+  it("lists a wide shared array, map or schema object once per call when operations keep failing on it", () => {
+    const missing = { $ref: "#/components/schemas/Missing" };
+    const width = 2_000;
+    const members = Array.from({ length: width - 1 }, () => ({ type: "string" }));
+    const array = [missing, ...members];
+    const map = Object.fromEntries([["a", missing], ...members.map((member, index) => [`p${index}`, member])]);
+    const annotated = { ...Object.fromEntries(members.map((_, index) => [`x-note${index}`, index])), allOf: [missing] };
+    const wrappers: Array<[string, () => unknown]> = [
+      ["allOf", () => ({ allOf: array })],
+      ["items", () => ({ type: "array", items: array })],
+      ["properties", () => ({ type: "object", properties: map })],
+      ["$defs", () => ({ type: "object", $defs: map })],
+      ["x-keys", () => ({ allOf: [annotated] })],
+    ];
+    const merge = { "application/merge-patch+json": { schema: { type: "object", properties: { n: { type: "number" } } } } };
+    for (const [label, wrapper] of wrappers) {
+      for (const trailing of [{}, merge]) {
+        const paths: Record<string, unknown> = Object.fromEntries(
+          Array.from({ length: 200 }, (_, index) => [
+            `/p${index}`,
+            { post: { operationId: `p${index}`, requestBody: { content: { "application/json": { schema: wrapper() }, "application/example+json": { schema: wrapper() }, ...trailing } }, responses: ok } },
+          ]),
+        );
+        paths["/ok"] = { get: { operationId: "okGet", responses: ok } };
+        const keys = Object.keys;
+        const entries = Object.entries;
+        let wide = 0;
+        const count = <T>(listed: T[]): T[] => {
+          if (listed.length >= 1_000) wide += 1;
+          return listed;
+        };
+        Object.keys = (value: object) => count(keys(value));
+        Object.entries = ((value: object) => count(entries(value))) as typeof Object.entries;
+        let result: Result;
+        try {
+          result = fromOpenAPI({ openapi: "3.1.0", paths, components: { schemas: {} } }, options());
+        } finally {
+          Object.keys = keys;
+          Object.entries = entries;
+        }
+        // One listing of the shared container for the whole call, not one per operation or body entry.
+        expect([label, wide]).toEqual([label, 1]);
+        if (trailing === merge) {
+          expect(result.skipped).toEqual([]);
+          expect(new Set(result.tools.map((entry) => entry.operation.requestBody?.contentType))).toEqual(new Set([undefined, "application/merge-patch+json"]));
+          expectArguments(tool(result.tools, "p0").inputSchema, { valid: [{ body: { n: 1 } }], invalid: [{ body: { n: "x" } }] });
+        } else {
+          expect(new Set(result.skipped.map(({ code }) => code))).toEqual(new Set(["unresolved-ref"]));
+          expect(result.skipped).toHaveLength(200);
+        }
+        expect(tool(result.tools, "okGet")).toBeDefined();
+      }
+    }
+  });
+
+  it("does not remember a budget skip inside a shared schema for operations where it fits", () => {
+    const small = { type: "object", properties: Object.fromEntries(Array.from({ length: 20 }, (_, index) => [`s${index}`, { type: "string" }])) };
+    const big = { type: "object", properties: Object.fromEntries(Array.from({ length: 99_990 }, (_, index) => [`b${index}`, true])) };
+    const post = (operationId: string, schema: unknown) => ({ post: { operationId, requestBody: { content: { "application/json": { schema } } }, responses: ok } });
+    const result = fromOpenAPI(
+      { openapi: "3.1.0", paths: { "/full": post("full", { allOf: [big, small] }), "/fits": post("fits", { allOf: [small] }) } },
+      options(),
+    );
+    expect(result.skipped.map(({ operation, code }) => [operation.operationId, code])).toEqual([["full", "schema-too-large"]]);
+    expectArguments(tool(result.tools, "fits").inputSchema, { valid: [{ body: { s0: "x" } }], invalid: [{ body: { s0: 1 } }] });
+  });
+
   it("tries each request body entry in the whole input, checks a shared one once and falls through a too-deep one", () => {
     const fallback = { "application/example+json": { schema: { type: "string" } } };
     const patch = (operationId: string, content: Record<string, unknown>, extra: Record<string, unknown> = {}) =>

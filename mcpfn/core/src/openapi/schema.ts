@@ -136,17 +136,51 @@ const SHARING_ALLOWANCE = 1024;
 
 const REGION = "a schema expands";
 
+/**
+ * Skip reasons a schema object's conversion gives whatever region, budget or
+ * position it is read in, so one call remembers them per object. Budget,
+ * sharing, circular-object and projection skips depend on where the object
+ * is read and are never remembered.
+ */
+const CONTEXT_FREE_FAILURES: ReadonlySet<OpenApiSkipCode> = new Set<OpenApiSkipCode>([
+  "invalid-schema",
+  "unsupported-schema-keyword",
+  "unsupported-dialect",
+  "unresolved-ref",
+  "external-ref",
+  "unsupported-ref",
+  "unsupported-component-name",
+]);
+
 export class NodeBudget {
   private produced = 0;
   private sourceValues = 0;
   /** Objects whose own values are already counted, each once by identity. */
   private readonly credited = new WeakSet<object>();
+  /**
+   * The own keys of each object read, listed once for a whole call and shared
+   * by its budgets: every unit of enumeration work is done once per call or
+   * charged to the call's total, however many regions read the same object.
+   */
+  private readonly keys: WeakMap<object, readonly string[]>;
 
   constructor(
     private readonly limit = MAX_SCHEMA_NODES,
     private readonly total?: NodeBudget,
     private readonly subject = REGION,
-  ) {}
+  ) {
+    this.keys = total?.keys ?? new WeakMap();
+  }
+
+  /** The own enumerable keys of `value` (an array's indices without its holes), listed once per call. */
+  ownKeys(value: object): readonly string[] {
+    let keys = this.keys.get(value);
+    if (keys === undefined) {
+      keys = Object.keys(value);
+      this.keys.set(value, keys);
+    }
+    return keys;
+  }
 
   /** The conversion budget of a whole call for `document`, counted as its values (shared ones once). */
   static forDocument(document: unknown): NodeBudget {
@@ -185,7 +219,7 @@ export class NodeBudget {
     if (this.credited.has(value)) return;
     this.credited.add(value);
     // Own keys, not length: the holes of a sparse array are not source values.
-    this.sourceValues += 1 + Object.keys(value).length;
+    this.sourceValues += 1 + this.ownKeys(value).length;
   }
 
   /** Mark `value`, built by the conversion from source already counted, as counted. */
@@ -357,6 +391,8 @@ export class SchemaConverter {
   private readonly reaches = new Map<DirectionalKeyword, WeakMap<object, boolean>>();
   private readonly reaching = new Map<DirectionalKeyword, ReadonlySet<string>>();
   private readonly projections = new Map<DirectionalKeyword, WeakMap<object, AccessConflict | null>>();
+  /** Schema objects whose conversion failed for a reason of their own, by mode, for the whole call. */
+  private readonly failures = new Map<SchemaMode, WeakMap<object, OpenApiSkip>>();
   private budget: NodeBudget;
 
   constructor(
@@ -479,12 +515,15 @@ export class SchemaConverter {
   private checkRootDialect(schema: unknown): void {
     if (this.unsupportedDialect === undefined) return;
     if (isObject(schema) && Object.hasOwn(schema, "$schema")) return;
-    if (isObject(schema) && Object.keys(schema).length === 1 && Object.hasOwn(schema, "$ref")) return;
+    if (isObject(schema) && this.budget.ownKeys(schema).length === 1 && Object.hasOwn(schema, "$ref")) return;
     if (!isObject(schema) && typeof schema !== "boolean") return;
     throw new OpenApiSkip("unsupported-dialect", `the document's jsonSchemaDialect ${this.unsupportedDialect} is not supported`);
   }
 
   private convert(schema: unknown, mode: SchemaMode, refs: Set<string>): McpFnJsonSchema | boolean {
+    // A schema object that already failed for a reason of its own fails again without any work.
+    const failed = isObject(schema) ? this.failures.get(mode)?.get(schema) : undefined;
+    if (failed) throw failed;
     this.budget.charge(schema);
     if (typeof schema === "boolean") return schema;
     if (!isObject(schema)) {
@@ -496,6 +535,9 @@ export class SchemaConverter {
     this.ancestors.add(schema);
     try {
       return this.convertObject(schema, mode, refs);
+    } catch (error) {
+      if (error instanceof OpenApiSkip && CONTEXT_FREE_FAILURES.has(error.code)) memoFor(this.failures, mode).set(schema, error);
+      throw error;
     } finally {
       this.ancestors.delete(schema);
     }
@@ -551,7 +593,9 @@ export class SchemaConverter {
     const entries: Array<[string, unknown]> = [];
     let dependencies: JsonObject | undefined;
     let defs: JsonObject | undefined;
-    for (const [keyword, value] of Object.entries(schema)) {
+    // Keyword by keyword, so a failing one ends the work before the rest are read.
+    for (const keyword of this.budget.ownKeys(schema)) {
+      const value = schema[keyword];
       if (DROPPED_KEYWORDS.has(keyword)) continue;
       // 2020-12 (OpenAPI 3.1) defines no `dependencies`: it annotates only.
       if (keyword === this.ignoredKeyword()) continue;
@@ -598,20 +642,19 @@ export class SchemaConverter {
   }
 
   private convertMap(value: JsonObject, mode: SchemaMode, refs: Set<string>): JsonObject {
-    this.budget.source(value);
-    return Object.fromEntries(
-      Object.entries(value).map(([key, item]) => [key, this.convert(item, mode, refs)]),
-    );
+    return this.convertMembers(value, (item) => this.convert(item, mode, refs));
   }
 
   private convertDependencies(value: JsonObject, mode: SchemaMode, refs: Set<string>): JsonObject {
+    return this.convertMembers(value, (item) => (Array.isArray(item) ? item : this.convert(item, mode, refs)));
+  }
+
+  /** A map's members converted one by one, so a failing member ends the work before the rest are read. */
+  private convertMembers(value: JsonObject, convert: (item: unknown) => unknown): JsonObject {
     this.budget.source(value);
-    return Object.fromEntries(
-      Object.entries(value).map(([key, item]) => [
-        key,
-        Array.isArray(item) ? item : this.convert(item, mode, refs),
-      ]),
-    );
+    const entries: Array<[string, unknown]> = [];
+    for (const key of this.budget.ownKeys(value)) entries.push([key, convert(value[key])]);
+    return Object.fromEntries(entries);
   }
 
   /**
