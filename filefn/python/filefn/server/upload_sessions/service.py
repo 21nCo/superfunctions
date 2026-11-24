@@ -7,7 +7,7 @@ from tempfile import SpooledTemporaryFile
 from typing import Any, Dict, List, Optional, Protocol, cast
 
 from pydantic import BaseModel
-from superfunctions.db.errors import ConstraintViolationError, DuplicateKeyError, NotFoundError
+from superfunctions.db.errors import DuplicateKeyError, NotFoundError
 
 from .. import errors
 from ..events import (
@@ -693,31 +693,17 @@ class UploadSessionService:
             namespace=self.namespace,
         )
 
-        async def refuse_replace(delete_own_object: bool) -> None:
-            # On an authorization refusal this completion deletes its own object
-            # (unless a version references it, e.g. through dedup): no
-            # concurrent completion of the same session can be publishing it,
-            # because that one would be authorized too. When another publisher
-            # won the row (update miss, duplicate insert), the object is left,
-            # as it may be that publisher's own (a second call for this session).
-            if delete_own_object and final_storage_key == session.storageKey:
-                try:
-                    referenced = await self.db.find_one(
-                        model="fileVersions",
-                        where=[{"field": "storageKey", "operator": "eq", "value": session.storageKey}],
-                        namespace=self.namespace,
-                    )
-                    if not referenced:
-                        await self.storage.delete_object(key=session.storageKey, target=storage_target)
-                except Exception:
-                    pass
+        def refuse_replace() -> None:
+            # The finalized object is left in place: without a completion fence
+            # another call for this session may still be publishing it, so
+            # deleting it here could remove a published version's bytes.
             raise errors.forbidden({"fileId": file_id, "operation": "replace"})
 
         if existing_file and existing_file.get("currentVersionId") != version_id:
             # Another completion created the file meanwhile: replacing it needs
             # write access to that row, checked now (FILE-30 F-02).
             if self.file_write_checker and not await self.file_write_checker.can_write_file(file_id, ctx):
-                await refuse_replace(delete_own_object=True)
+                refuse_replace()
 
         if existing_file:
             # Conditional on the row that was authorized: a row deleted or
@@ -745,7 +731,7 @@ class UploadSessionService:
                 # Only a missing row counts as losing it; other errors propagate.
                 updated = None
             if not updated:
-                await refuse_replace(delete_own_object=False)
+                refuse_replace()
         else:
             try:
                 await self.db.create(
@@ -766,10 +752,10 @@ class UploadSessionService:
                 },
                 namespace=self.namespace,
                 )
-            except (DuplicateKeyError, ConstraintViolationError):
-                # Another completion created this file ID first (unique key):
+            except DuplicateKeyError:
+                # Another completion created this file ID first (its unique key):
                 # this one may not publish over it. Other errors propagate.
-                await refuse_replace(delete_own_object=False)
+                refuse_replace()
 
         await self.db.create(
             model="fileVersions",
