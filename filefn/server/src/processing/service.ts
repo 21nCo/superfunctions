@@ -5,6 +5,7 @@ import type { FileProviderContext } from '@superfunctions/files';
 import type { FileFnEventEmitter } from '../events.js';
 import { resolveArtifactStorageTarget, resolveStorageTarget, type PolicyRegistry } from '../policies.js';
 import type { Logger } from '../observability/logger.js';
+import { signedDownloadConstraints } from '../download-headers.js';
 import * as errors from '../errors.js';
 import { createBackgroundScheduler, type BackgroundScheduler } from '../runtime.js';
 import { findReferencedStorageRefs, parseStorageRef, storageRef } from '../storage-references.js';
@@ -201,6 +202,13 @@ export interface ProcessingServiceConfig {
    * Without it only the file's owner may.
    */
   writeChecker?: { canWriteFile(fileId: string, ctx: FileProviderContext): Promise<boolean> };
+  /**
+   * Decides who may read a file (list and download artifacts, trigger
+   * processing). FileFn passes its file service, so the configured authorizer
+   * and grants decide exactly as they do for the file itself. Without it the
+   * service falls back to owner, visibility and read grants.
+   */
+  readChecker?: { canReadFile(fileId: string, ctx: FileProviderContext): Promise<boolean> };
 }
 
 /** A client-supplied artifact for one file version. */
@@ -603,6 +611,7 @@ export function createProcessingService(config: ProcessingServiceConfig) {
     enabled = true,
     maxFileBytes = 50 * 1024 * 1024,
     writeChecker,
+    readChecker,
   } = config;
   const background = config.background ?? createBackgroundScheduler(undefined, logger);
 
@@ -648,6 +657,28 @@ export function createProcessingService(config: ProcessingServiceConfig) {
     return false;
   }
 
+  // The artifacts listed for a file (internal kinds excluded); callers authorize first.
+  async function queryArtifacts(fileId: string, page?: { limit?: number; offset?: number }): Promise<FileArtifactRecord[]> {
+    const artifacts = await db.findMany<FileArtifactRecord>({
+        model: 'fileArtifacts',
+        where: [
+          { field: 'fileId', operator: 'eq', value: fileId },
+          { field: 'kind', operator: 'ne', value: PROCESSING_RUN_KIND },
+          { field: 'kind', operator: 'ne', value: DISPLACED_OBJECT_KIND },
+          { field: 'kind', operator: 'ne', value: UPLOAD_INTENT_KIND },
+        ],
+        orderBy: [
+          { field: 'createdAt', direction: 'desc' },
+          { field: 'artifactId', direction: 'asc' },
+        ],
+        limit: page?.limit,
+        offset: page?.offset,
+        namespace,
+      });
+
+    return artifacts;
+  }
+
   async function requireReadableFile(fileId: string, ctx: FileProviderContext): Promise<FileRecord> {
     const file = await db.findOne<FileRecord>({
       model: 'files',
@@ -657,6 +688,23 @@ export function createProcessingService(config: ProcessingServiceConfig) {
 
     if (!file) {
       throw errors.notFound('File');
+    }
+
+    // An unauthenticated guest (no principal, or the shared 'anonymous'
+    // principal) reads only public files here, as before, whatever a host
+    // authorizer or the fallback rules would allow it.
+    if ((!ctx.principalId || ctx.principalId === 'anonymous') && file.visibility !== 'public') {
+      throw errors.forbidden();
+    }
+
+    // The file service's read check applies the host's authorizer, so an
+    // artifact (often the whole content: OCR text, previews, transcodes) is
+    // never readable by someone the authorizer refuses the file to.
+    if (readChecker) {
+      if (await readChecker.canReadFile(fileId, ctx)) {
+        return file;
+      }
+      throw errors.forbidden();
     }
 
     if (canReadByVisibility(file, ctx)) {
@@ -2095,26 +2143,11 @@ export function createProcessingService(config: ProcessingServiceConfig) {
       ctx: FileProviderContext,
       page?: { limit?: number; offset?: number },
     ): Promise<FileArtifactRecord[]> {
-      void ctx;
-
-      const artifacts = await db.findMany<FileArtifactRecord>({
-        model: 'fileArtifacts',
-        where: [
-          { field: 'fileId', operator: 'eq', value: fileId },
-          { field: 'kind', operator: 'ne', value: PROCESSING_RUN_KIND },
-          { field: 'kind', operator: 'ne', value: DISPLACED_OBJECT_KIND },
-          { field: 'kind', operator: 'ne', value: UPLOAD_INTENT_KIND },
-        ],
-        orderBy: [
-          { field: 'createdAt', direction: 'desc' },
-          { field: 'artifactId', direction: 'asc' },
-        ],
-        limit: page?.limit,
-        offset: page?.offset,
-        namespace,
-      });
-
-      return artifacts;
+      // With a read check configured, this entry point is authorized too.
+      if (readChecker) {
+        await requireReadableFile(fileId, ctx);
+      }
+      return queryArtifacts(fileId, page);
     },
 
     async listArtifactsForFile(
@@ -2122,9 +2155,11 @@ export function createProcessingService(config: ProcessingServiceConfig) {
       ctx: FileProviderContext,
       page?: { limit?: number; offset?: number },
     ): Promise<FileArtifactRecord[]> {
+      // Authorized exactly once.
       await requireReadableFile(fileId, ctx);
-      return this.listArtifacts(fileId, ctx, page);
+      return queryArtifacts(fileId, page);
     },
+
 
     async getArtifactDownloadUrl(
       artifactId: string,
@@ -2147,6 +2182,9 @@ export function createProcessingService(config: ProcessingServiceConfig) {
       });
       if (file) {
         await requireReadableFile(file.fileId, ctx);
+      } else if (readChecker) {
+        // No parent file to authorize against: fail closed.
+        throw errors.notFound('Artifact');
       }
       const artifactStorageTarget = getArtifactStorageTarget(file ?? { policy: '' });
 
@@ -2155,6 +2193,7 @@ export function createProcessingService(config: ProcessingServiceConfig) {
           key: artifact.storageKey,
           target: artifactStorageTarget,
           expiresInSeconds: 900,
+          ...signedDownloadConstraints(artifact.mimeType),
         });
         return { url: result.url, headers: result.headers };
       }
@@ -2181,6 +2220,7 @@ export function createProcessingService(config: ProcessingServiceConfig) {
           key: artifact.storageKey,
           target: artifactStorageTarget,
           expiresInSeconds: 900,
+          ...signedDownloadConstraints(artifact.mimeType),
         });
         return { url: result.url, headers: result.headers };
       }
@@ -2192,7 +2232,7 @@ export function createProcessingService(config: ProcessingServiceConfig) {
       fileId: string,
       artifactId: string,
       ctx: FileProviderContext,
-    ): Promise<{ stream: ReadableStream; contentType: string; size: number }> {
+    ): Promise<{ stream: ReadableStream; contentType: string; size: number; fileName: string }> {
       await requireReadableFile(fileId, ctx);
       const artifact = await getBoundArtifact(fileId, artifactId);
 
@@ -2211,6 +2251,8 @@ export function createProcessingService(config: ProcessingServiceConfig) {
         stream: stream as unknown as ReadableStream,
         contentType: artifact.mimeType,
         size: artifact.size,
+        // A download name for the attachment: the kind plus the stored key's extension.
+        fileName: `${artifact.kind}${/\.[A-Za-z0-9]{1,10}$/.exec(artifact.storageKey.split('/').pop() ?? '')?.[0] ?? ''}`,
       };
     },
 
