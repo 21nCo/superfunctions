@@ -574,17 +574,24 @@ export function createHttpClient(config: FileFnClientConfig): HttpClient {
           const exactPart =
             !expectedPart ||
             routePath === `/upload/${encodeURIComponent(expectedPart.uploadSessionId)}/parts/${expectedPart.partNumber}`;
-          const sendToken = issuedRelative && toPartRoute && exactPart && Boolean(uploadSessionToken);
+          const partRequest = issuedRelative && toPartRoute && exactPart;
           const requestHeaders = mergeHeaders(
             toFileFn ? await readAuthHeaders() : undefined,
             headers,
           );
-          // Whatever the auth or signed headers carried, the token is set only
-          // for a verified FileFn part request.
+          // The token goes only to a verified FileFn part request: the explicit
+          // one first, else one the auth headers carry (a resumed upload). It is
+          // removed from every other request.
+          let headerToken: string | undefined;
           for (const name of Object.keys(requestHeaders)) {
-            if (name.toLowerCase() === "x-upload-session-token") delete requestHeaders[name];
+            if (name.toLowerCase() === "x-upload-session-token") {
+              headerToken = requestHeaders[name];
+              delete requestHeaders[name];
+            }
           }
-          if (sendToken) requestHeaders["x-upload-session-token"] = uploadSessionToken!;
+          const token = uploadSessionToken || headerToken;
+          const sendToken = partRequest && Boolean(token);
+          if (sendToken) requestHeaders["x-upload-session-token"] = token!;
           const response = await transport.send(finalUrl, {
             method: "PUT",
             headers: requestHeaders,

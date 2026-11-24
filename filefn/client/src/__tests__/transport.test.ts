@@ -251,6 +251,14 @@ describe('client transport options', () => {
     expect(server.calls[1]!.headers.get('x-upload-session-token')).toBe('upls_1');
   });
 
+  it('uses a session token from the auth headers for a part request when none is passed (resumed upload)', async () => {
+    const server = createFakeServer((n) => `/upload/sess_1/parts/${n}`);
+    const http = createHttpClient({ baseUrl: BASE, fetch: server.fetch, getAuthHeaders: () => ({ 'X-Upload-Session-Token': 'upls_auth' }) });
+    await http.uploadPartToSignedUrl('/upload/sess_1/parts/1', {}, new Blob(['abc']), undefined, undefined, { uploadSessionId: 'sess_1', partNumber: 1 });
+    expect(server.calls[0]!.headers.get('x-upload-session-token')).toBe('upls_auth');
+    expect(server.calls[0]!.redirect).toBe('error');
+  });
+
   it('sends the token only to the exact part endpoint the upload names', async () => {
     const server = createFakeServer((n) => `/upload/sess_1/parts/${n}`);
     const http = createHttpClient({ baseUrl: BASE, fetch: server.fetch });
