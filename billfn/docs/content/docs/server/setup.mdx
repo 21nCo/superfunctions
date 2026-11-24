@@ -160,7 +160,7 @@ takes no `amount`, and `custom` or `prorated_remaining_period` needs a
 positive integer `amount` in the currency minor unit (BillFn does not compute
 a prorated amount; the caller supplies it). A `mode` of `null` is not the
 default. Anything else answers `400 BILLFN_VALIDATION_ERROR`, as does a
-partial refund on Apple, which refunds only whole transactions. A refund never creates a billing account; a
+partial refund on Apple, which refunds only whole transactions. A refund, cancel, change, resume or sync never creates a billing account; a
 subject without one gets `404 BILLFN_NOT_FOUND`.
 
 The router refund acts on the resolved subject's own account. To refund

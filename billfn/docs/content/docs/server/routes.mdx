@@ -74,6 +74,12 @@ Current provider support:
 }
 ```
 
+## Requests
+
+Routes that take a JSON body require a single `content-type` of `application/json` (or another `type/subtype+json`); anything else, such as a cross-site form post sent as `text/plain`, answers `400 BILLFN_VALIDATION_ERROR` before the route acts. Routes without a body, such as `POST /ops/reconciliation/jobs/:jobId/run`, and the provider webhook routes do not check it. A body that middleware already started reading is refused too. Request bodies, webhook deliveries included, are limited to 256 KiB; the webhook ingress applies the same limit before any owner lookup. Checkout `metadata` is an object of at most 20 keys (up to 40 characters each) with string (up to 500 characters), number or boolean values. The host remains responsible for CSRF protection of cookie sessions (see [Server setup](/docs/server/setup#recommended-production-wiring)).
+
+## Responses
+
 Successful responses use the shared envelope shape:
 
 ```json
@@ -106,5 +112,7 @@ Failures remain envelope-based:
   }
 }
 ```
+
+Error `details` never carry a provider's raw response body or BillFn configuration (bundle ids, catalog price ids); the router leaves them out of the response (BillFn does not log them).
 
 The client SDKs preserve this shape instead of flattening it away.
