@@ -5547,17 +5547,23 @@ function providerReportedProducts(state: VerifiedBillingState | undefined): stri
   const records = [raw, asRecord(raw?.transaction)];
   // A Dodo cart lists a payment's one-time items; a payment that also charges a subscription keeps the
   // subscription's product elsewhere, so its cart says nothing about the subscription's plan.
-  const chargesSubscription =
-    Boolean(state?.providerSubscriptionId) ||
-    Boolean(readString(raw ?? {}, 'subscription_id')) ||
-    (Array.isArray(raw?.subscription_ids) && raw.subscription_ids.length > 0) ||
-    raw?.is_multi_subscription === true;
-  const cart = !chargesSubscription && Array.isArray(raw?.product_cart) ? raw.product_cart : [];
+  const cart = !chargesSubscription(state) && Array.isArray(raw?.product_cart) ? raw.product_cart : [];
   return [
     state?.providerProductId,
     ...records.flatMap((record) => (record ? [readString(record, 'product_id'), readString(record, 'productId')] : [])),
     ...cart.map((item) => readString(asRecord(item) ?? {}, 'product_id'))
   ].filter((product): product is string => typeof product === 'string' && product.length > 0);
+}
+
+/** Whether a record charges a subscription: it names one, or (Dodo) lists subscription ids or is multi-subscription. */
+function chargesSubscription(state: VerifiedBillingState | undefined): boolean {
+  const raw = asRecord(state?.raw);
+  return (
+    Boolean(state?.providerSubscriptionId) ||
+    Boolean(readString(raw ?? {}, 'subscription_id')) ||
+    (Array.isArray(raw?.subscription_ids) && raw.subscription_ids.length > 0) ||
+    raw?.is_multi_subscription === true
+  );
 }
 
 function readCheckoutReferenceSource(value: unknown): 'provider' | 'metadata' | undefined {
@@ -5611,9 +5617,15 @@ async function resolveProviderEventPriceReference(
     // a catalog price of this provider with that id that sells a reported product; the reported products then
     // select by product id alone, so neither can stand in for the other.
     const paidProducts = providerReportedProducts(event.billingState);
+    // A subscription charge that reports no product names its plan nowhere: a stored hint (an event parsed before
+    // cart items stopped counting for subscription payments) is not used.
+    const usableReferences =
+      paidProducts.length === 0 && chargesSubscription(event.billingState) && asRecord(event.billingState?.raw)?.product_cart !== undefined
+        ? references.filter((reference) => reference !== event.priceId)
+        : references;
     const resolved =
       paidProducts.length === 0
-        ? findCatalogPriceReference(deps.catalog, provider, references, subscription?.priceId)
+        ? findCatalogPriceReference(deps.catalog, provider, usableReferences, subscription?.priceId)
         : (selectPaidPriceById(deps.catalog, provider, references, paidProducts, event.billingState?.providerProductId) ??
           findCatalogPriceReference(deps.catalog, provider, paidProducts, subscription?.priceId, { productsOnly: true }));
     if (resolved) {

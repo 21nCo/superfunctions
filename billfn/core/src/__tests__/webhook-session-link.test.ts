@@ -412,4 +412,29 @@ describe('event prices named outside the provider record', () => {
 
     expect((await env.entitlements())?.subscription?.planKey).not.toBe('starter');
   });
+
+  it('ignores the cart price hint a pre-upgrade event stored for a subscription payment', async () => {
+    const env = setup();
+    await env.openCheckout('enterprise');
+
+    // Parsed before cart items stopped naming a subscription payment's product: the hint is the cart's item.
+    await env.deliver({
+      priceId: 'pdt_starter_month',
+      providerChargeId: 'pay_stored',
+      billingState: {
+        subscriptionStatus: 'active',
+        checkoutStatus: 'succeeded',
+        providerChargeId: 'pay_stored',
+        autoRenew: false,
+        raw: {
+          is_multi_subscription: true,
+          product_cart: [{ product_id: 'pdt_starter_month' }],
+          metadata: { billfn_billing_account_id: 'ba_user_attacker' }
+        }
+      },
+      raw: {}
+    });
+
+    expect((await env.entitlements())?.subscription?.planKey).not.toBe('starter');
+  });
 });
