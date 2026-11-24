@@ -1355,3 +1355,24 @@ async def test_refused_session_keeps_its_object_for_the_sweep_and_replays_ask_fo
     db.tables["uploadSessions"][0]["expiresAt"] = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
     await service.garbage_collect_expired_sessions()
     assert db.tables["uploadSessions"]
+
+
+@pytest.mark.asyncio
+async def test_abort_and_sweep_never_overwrite_a_session_refused_meanwhile() -> None:
+    db = FakeDB()
+
+    class RefusesDuringCleanup(StatStorage):
+        async def abort_multipart_upload(self, key: str, upload_id: str, target: Optional[str] = None) -> None:
+            # A completion refuses the session while abort or the sweep is mid-way.
+            db.tables["uploadSessions"][0]["status"] = "refused"
+
+    storage = RefusesDuringCleanup(actual_size=3)
+    service = _make_service(db=db, storage=storage)
+    session = await _multipart_session(service)
+    await service.abort_session(session["uploadSessionId"], _ctx())
+    assert db.tables["uploadSessions"][0]["status"] == "refused"
+
+    db.tables["uploadSessions"][0]["status"] = "in_progress"
+    db.tables["uploadSessions"][0]["expiresAt"] = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    await service.garbage_collect_expired_sessions()
+    assert [row["status"] for row in db.tables["uploadSessions"]] == ["refused"]

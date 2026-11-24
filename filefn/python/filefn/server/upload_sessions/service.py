@@ -1186,12 +1186,9 @@ class UploadSessionService:
             except Exception:
                 pass
 
-        await self.db.update(
-            model="uploadSessions",
-            where=[{"field": "uploadSessionId", "operator": "eq", "value": upload_session_id}],
-            data={"status": "aborted"},
-            namespace=self.namespace,
-        )
+        # Only from the state read above: a completion that refused (or
+        # finished) the session meanwhile keeps its state.
+        await self._set_status_if(upload_session_id, session.status, "aborted")
 
     async def garbage_collect_expired_sessions(self) -> Dict[str, int]:
         now = datetime.now(timezone.utc)
@@ -1269,12 +1266,19 @@ class UploadSessionService:
                 where=[{"field": "uploadSessionId", "operator": "eq", "value": session.uploadSessionId}],
                 namespace=self.namespace,
             )
-            await self.db.delete(
+            # Only while the row is still in the state this sweep read: a
+            # completion that refused or finished it meanwhile keeps it (a refused
+            # one for the next sweep).
+            removed = await self.db.delete_many(
                 model="uploadSessions",
-                where=[{"field": "uploadSessionId", "operator": "eq", "value": session.uploadSessionId}],
+                where=[
+                    {"field": "uploadSessionId", "operator": "eq", "value": session.uploadSessionId},
+                    {"field": "status", "operator": "eq", "value": session.status},
+                ],
                 namespace=self.namespace,
             )
-            deleted_sessions += 1
+            if removed:
+                deleted_sessions += 1
 
         return {
             "deletedSessions": deleted_sessions,
