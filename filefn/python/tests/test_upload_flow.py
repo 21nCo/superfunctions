@@ -1024,3 +1024,25 @@ async def test_long_registered_policy_names_still_work() -> None:
         _ctx(),
     )
     assert result["uploadSessionId"]
+
+
+@pytest.mark.asyncio
+async def test_parts_are_bounded_by_the_declared_size() -> None:
+    # FILE-30 F-05 (Python): a part may carry at most what the session allows.
+    multipart = _make_service(storage=FakeStorage({"signedUploadUrls": True, "multipart": True}))
+    created = await multipart.create_session(
+        CreateSessionInput(policy="user-avatar", fileName="a.png", size=3, mimeType="image/png"), _ctx()
+    )
+    for bad, code in [(4, "FILEFN_PART_TOO_LARGE"), (0, "FILEFN_INVALID_REQUEST")]:
+        with pytest.raises(Exception) as exc_info:
+            await multipart.sign_part(created["uploadSessionId"], 1, bad, _ctx())
+        assert getattr(exc_info.value, "code", "") == code
+    assert (await multipart.sign_part(created["uploadSessionId"], 1, 3, _ctx()))["url"]
+
+    proxy = _make_service()
+    created = await proxy.create_session(
+        CreateSessionInput(policy="user-avatar", fileName="b.png", size=3, mimeType="image/png"), _ctx()
+    )
+    with pytest.raises(Exception) as exc_info:
+        await proxy.record_proxy_part(created["uploadSessionId"], 1, b"abcd", _ctx())
+    assert getattr(exc_info.value, "code", "") == "FILEFN_PART_TOO_LARGE"

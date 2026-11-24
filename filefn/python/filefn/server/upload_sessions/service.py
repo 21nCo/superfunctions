@@ -581,6 +581,13 @@ class UploadSessionService:
             "expiresAt": session.expiresAt,
         }
 
+    @staticmethod
+    def _max_part_bytes(session: "UploadSessionRecord", part_number: int) -> int:
+        # The chunk size, or what is left of the declared size for the last part.
+        if part_number < session.totalParts:
+            return session.chunkSizeBytes
+        return max(0, session.size - (session.totalParts - 1) * session.chunkSizeBytes)
+
     async def sign_part(
         self,
         upload_session_id: str,
@@ -601,6 +608,11 @@ class UploadSessionService:
 
         if part_number < 1 or part_number > session.totalParts:
             raise errors.invalid_part_number()
+        part_limit = self._max_part_bytes(session, part_number)
+        if isinstance(content_length, bool) or not isinstance(content_length, int) or content_length < 1:
+            raise errors.invalid_request("contentLength must be a positive integer", {"field": "contentLength"})
+        if content_length > part_limit:
+            raise errors.part_too_large(part_number, part_limit)
 
         if session.uploadMode == "proxy":
             return {
@@ -650,6 +662,9 @@ class UploadSessionService:
             raise errors.upload_expired()
         if part_number < 1 or part_number > session.totalParts:
             raise errors.invalid_part_number()
+        part_limit = self._max_part_bytes(session, part_number)
+        if size > part_limit:
+            raise errors.part_too_large(part_number, part_limit)
 
         existing = await self.db.find_one(
             model="uploadParts",
@@ -716,6 +731,9 @@ class UploadSessionService:
             raise errors.upload_expired()
         if part_number < 1 or part_number > session.totalParts:
             raise errors.invalid_part_number()
+        part_limit = self._max_part_bytes(session, part_number)
+        if len(data) > part_limit:
+            raise errors.part_too_large(part_number, part_limit)
 
         existing = await self.db.find_one(
             model="uploadParts",
@@ -754,6 +772,9 @@ class UploadSessionService:
                 async for chunk in stream:
                     payload.write(chunk)
 
+            stitched_size = payload.tell()
+            if stitched_size != session.size:
+                raise errors.upload_size_mismatch(session.size, stitched_size)
             payload.seek(0)
             await self.storage.put_object(
                 key=session.storageKey,
@@ -814,6 +835,25 @@ class UploadSessionService:
                 parts=[{"partNumber": p["partNumber"], "etag": p["etag"]} for p in parts],
                 target=storage_target,
             )
+            # The client reports part sizes; the stored object is what counts. An
+            # adapter that can stat objects lets the server refuse (and delete) an
+            # object larger or smaller than declared.
+            stat_object = getattr(self.storage, "stat_object", None)
+            if callable(stat_object):
+                stat = await stat_object(key=session.storageKey, target=storage_target)
+                actual = int(stat.get("size") if isinstance(stat, dict) else getattr(stat, "size"))
+                if actual != session.size:
+                    try:
+                        await self.storage.delete_object(key=session.storageKey, target=storage_target)
+                    except Exception:
+                        pass
+                    await self.db.update(
+                        model="uploadSessions",
+                        where=[{"field": "uploadSessionId", "operator": "eq", "value": upload_session_id}],
+                        data={"status": "aborted"},
+                        namespace=self.namespace,
+                    )
+                    raise errors.upload_size_mismatch(session.size, actual)
         elif session.uploadMode == "proxy":
             await self._finalize_proxy_upload(session, parts_data)
 
