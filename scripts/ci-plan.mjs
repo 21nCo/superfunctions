@@ -29,7 +29,8 @@ const JS_GLOBAL_PATTERNS = [
   /^\.github\/workflows\/ci\.yml$/,
 ];
 
-// Root scripts that no workspace package uses and that run only in non-JavaScript jobs (SFNS-307). A change to one
+// Root scripts that no workspace package uses and that no Turbo task runs (SFNS-307); scripts/turbo-cache-merge.mjs
+// runs in the JavaScript and DevFn tests jobs, but only on Turbo's cache after their tasks (SFNS-312). A change to one
 // neither forces a full JavaScript run nor, since turbo.json's globalDependencies exclude exactly these globs,
 // invalidates Turbo's task cache; every other scripts/ path does both. A `*` stays inside one path segment, as in
 // Turbo's globs. scripts/turbo-cache-config.test.mjs fails if a tracked file outside scripts/ and .github/workflows/,
@@ -50,6 +51,7 @@ const STANDALONE_SCRIPTS = [
   "scripts/assert-release-ci.*",
   "scripts/release-gate-workflows.*",
   "scripts/notify-next-sync-workflow.*",
+  "scripts/turbo-cache-merge.*",
 ];
 
 const STANDALONE_SCRIPT_PATTERNS = STANDALONE_SCRIPTS.map(
