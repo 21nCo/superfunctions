@@ -1,0 +1,41 @@
+filefn/docs/content/docs/core-concepts/idempotency.md
+  s_b841cebdcfad95::t_a2b1a889840dbc 25,31-32
+filefn/docs/content/docs/core-concepts/security.md
+  s_b841cebdcfad95::t_eb3ea57529cfa4 55-56
+filefn/docs/content/docs/core-concepts/upload-sessions.md
+  s_b841cebdcfad95::t_39730e102ab01b 84
+filefn/docs/static/llms-full.txt
+  s_b841cebdcfad95::t_205d000d16d71c 1842,1848-1849,2695-2696,3012
+filefn/python/filefn/server/files/service.py
+  s_b841cebdcfad95::t_e0a0e1e078ad8d 13,229-230
+filefn/python/filefn/server/upload_sessions/service.py
+  s_b841cebdcfad95::t_d8ad396582d490 146-150,222-225,227,235-248,255,355
+filefn/python/tests/test_downloads.py
+  s_b841cebdcfad95::t_09b2ce1d346477 822-850
+filefn/python/tests/test_upload_flow.py
+  s_b841cebdcfad95::t_5e5e7de5739b81 425-427,441-442,452,799-823
+filefn/server/src/__tests__/idempotency-complete.test.ts
+  s_b841cebdcfad95::t_0e4f8b10834780 180,194-196,198-199
+filefn/server/src/__tests__/upload-sessions.test.ts
+  s_b841cebdcfad95::t_9ac66569361919 501,513,515-516
+filefn/server/src/upload-sessions/service.ts
+  s_b841cebdcfad95::t_a90221f19f810b 1282-1286,1289-1291,1296-1311,1442
+filefn/server/tests/anonymous-isolation.test.ts
+  s_b841cebdcfad95::t_7b8dfeb38ffc97 101,108-110,112,118-133
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0b1a31b86ff6070df4e081ca95421c38bd14ed90",
+  "prompts": {},
+  "sessions": {
+    "s_b841cebdcfad95": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "436f4738-d86e-44e1-82bc-c432f9aaabf3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

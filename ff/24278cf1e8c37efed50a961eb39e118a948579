@@ -1,0 +1,33 @@
+apifn/cli/src/commands/check-git.ts
+  s_4ded9ba77a0730::t_4b24abe4732ee8 36,384-385,387-391,396-397,399,401-406,408,410-413
+apifn/cli/src/commands/check-publish.ts
+  s_4ded9ba77a0730::t_d2e9964bafa8a3 57,361-362,423-424,457,488,495-496,689-691,732,776-777
+apifn/cli/src/utils/router-loader.ts
+  s_4ded9ba77a0730::t_fdfef040c88139 22
+apifn/cli/__tests__/check-command.test.ts
+  s_6d7793942586f4::t_99d5c9ae14010b 69-71,96,100-106,2932-2933,2935,2941,4680-4682,4711-4749,4947-4980
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ff24278cf1e8c37efed50a961eb39e118a948579",
+  "prompts": {},
+  "sessions": {
+    "s_4ded9ba77a0730": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "db8b8206-ac73-4606-8f19-e27147be0806",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_6d7793942586f4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec2a1132-33c2-4d38-8cf7-6f92501ab558",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
