@@ -1167,7 +1167,8 @@ async def test_policy_storage_path_must_include_the_version_id() -> None:
     )
     with pytest.raises(errors.FileFnError) as refused:
         await service.create_session(CreateSessionInput(policy="shared", fileName="a.png", size=3, mimeType="image/png"), _ctx())
-    assert refused.value.code == "FILEFN_INVALID_REQUEST"
+    assert refused.value.code == "FILEFN_STORAGE_PATH_NOT_PER_VERSION"
+    assert refused.value.status == 500
 
 
 @pytest.mark.asyncio
@@ -1179,7 +1180,9 @@ async def test_zero_byte_upload_signs_its_empty_part_and_parts_need_integer_size
     other = await service.create_session(CreateSessionInput(policy="user-avatar", fileName="b.png", size=3, mimeType="image/png"), _ctx())
     with pytest.raises(errors.FileFnError):
         await service.sign_part(other["uploadSessionId"], 1, 0, _ctx())
-    for bad in ["3", None, True, -1]:
+    # A whole-number float is the same JSON number as the integer.
+    assert (await service.complete_part(other["uploadSessionId"], 1, "etag-1", 3.0, _ctx()))["recorded"]  # type: ignore[arg-type]
+    for bad in ["3", None, True, -1, 1.5]:
         with pytest.raises(errors.FileFnError) as invalid:
             await service.complete_part(other["uploadSessionId"], 1, "etag-1", bad, _ctx())  # type: ignore[arg-type]
         assert invalid.value.code == "FILEFN_INVALID_REQUEST"

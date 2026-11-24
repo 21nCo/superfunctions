@@ -171,6 +171,13 @@ def _js_json(value: Any) -> str:
     raise TypeError(f"not JSON-serialisable: {type(value).__name__}")
 
 
+def _integral(value: Any) -> Any:
+    """A finite whole-number float (JSON `1.0`) as an int, as JavaScript reads it; anything else unchanged."""
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    return value
+
+
 def _utf16_length(value: str) -> int:
     # Lengths are counted in UTF-16 code units, as the TypeScript server does;
     # surrogatepass counts a lone surrogate (valid in JSON) as one unit.
@@ -502,9 +509,12 @@ class UploadSessionService:
         # share an object (and cleanup of one never deletes another's); a
         # storagePath that drops it is refused, as in TypeScript.
         if version_id not in storage_key:
-            raise errors.invalid_request(
-                "The policy's storagePath must include the version ID",
-                {"policy": input.policy, "reason": "storage path not per version"},
+            # A policy misconfiguration, answered as the TypeScript server does.
+            raise errors.FileFnError(
+                "FILEFN_STORAGE_PATH_NOT_PER_VERSION",
+                "Policy storagePath must return a key that contains the full versionId",
+                500,
+                {"policy": input.policy},
             )
 
         storage_upload_id: Optional[str] = None
@@ -640,6 +650,7 @@ class UploadSessionService:
         if part_number < 1 or part_number > session.totalParts:
             raise errors.invalid_part_number()
         part_limit = self._max_part_bytes(session, part_number)
+        content_length = _integral(content_length)
         # Zero only for the empty part of a zero-byte upload.
         if (
             isinstance(content_length, bool)
@@ -699,6 +710,7 @@ class UploadSessionService:
             raise errors.upload_expired()
         if part_number < 1 or part_number > session.totalParts:
             raise errors.invalid_part_number()
+        size = _integral(size)
         if isinstance(size, bool) or not isinstance(size, int) or size < 0:
             raise errors.invalid_request("size must be a non-negative integer", {"field": "size"})
         part_limit = self._max_part_bytes(session, part_number)
