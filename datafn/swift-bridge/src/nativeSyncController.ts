@@ -50,9 +50,9 @@ export function createNativeSyncController(
         return { ok: false, error: validationError };
       }
 
-      // Capabilities belong to one successful handshake. Clear any prior
-      // negotiation before contacting a host that may have restarted or been
-      // replaced with an older bridge implementation.
+      // Preserve the last successful capability set while renegotiation is in
+      // flight. The generation fence prevents an older overlapping response
+      // from replacing the latest successful result.
       const negotiationGeneration = beginBridgeCapabilityNegotiation(bus);
       const response = await bus.request({
         protocol: DATAFN_BRIDGE_PROTOCOL,
