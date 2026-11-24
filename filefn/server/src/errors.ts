@@ -48,6 +48,7 @@ export const ErrorCodes = {
   SHARE_REVOKED: 'FILEFN_SHARE_REVOKED',
   SHARE_DOWNLOADS_EXCEEDED: 'FILEFN_SHARE_DOWNLOADS_EXCEEDED',
   SHARE_NOT_FOUND: 'FILEFN_SHARE_NOT_FOUND',
+  SHARE_DOWNLOAD_CONFLICT: 'FILEFN_SHARE_DOWNLOAD_CONFLICT',
   PERMISSION_NOT_FOUND: 'FILEFN_PERMISSION_NOT_FOUND',
   PROCESSING_ENQUEUE_FAILED: 'FILEFN_PROCESSING_ENQUEUE_FAILED',
   INVALID_RENDER_INTENT: 'FILEFN_INVALID_RENDER_INTENT',
@@ -57,6 +58,8 @@ export const ErrorCodes = {
   INVALID_FILE_ID: 'FILEFN_INVALID_FILE_ID',
   UPLOAD_COMPLETION_IN_PROGRESS: 'FILEFN_UPLOAD_COMPLETION_IN_PROGRESS',
   INVALID_REQUEST: 'FILEFN_INVALID_REQUEST',
+  UNSUPPORTED_MEDIA_TYPE: 'FILEFN_UNSUPPORTED_MEDIA_TYPE',
+  BODY_TOO_LARGE: 'FILEFN_BODY_TOO_LARGE',
   ARTIFACT_KIND_NOT_ALLOWED: 'FILEFN_ARTIFACT_KIND_NOT_ALLOWED',
   ARTIFACT_TYPE_NOT_ALLOWED: 'FILEFN_ARTIFACT_TYPE_NOT_ALLOWED',
   ARTIFACT_TOO_LARGE: 'FILEFN_ARTIFACT_TOO_LARGE',
@@ -352,4 +355,16 @@ export function importConflict(storageKey: string, reason: 'owner' | 'fileId', f
     409,
     fileId === undefined ? { storageKey, reason } : { storageKey, reason, fileId },
   );
+}
+
+export function unsupportedMediaType(): FileFnError {
+  return new FileFnError(
+    ErrorCodes.UNSUPPORTED_MEDIA_TYPE,
+    'This route takes a JSON body: send Content-Type: application/json',
+    415
+  );
+}
+
+export function bodyTooLarge(maxBytes: number): FileFnError {
+  return new FileFnError(ErrorCodes.BODY_TOO_LARGE, 'Request body is too large', 413, { maxBytes });
 }

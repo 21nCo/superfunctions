@@ -822,6 +822,248 @@ async def test_delete_file_removes_completed_upload_sessions() -> None:
 
 
 @pytest.mark.asyncio
+async def test_share_and_grant_creation_validate_like_the_typescript_server() -> None:
+    # FILE-30 F-07/F-08: strict ISO expiry, positive limits, and no cross-tenant grants by default.
+    from filefn.server import errors
+    from filefn.server.authz.grants_service import (
+        CreateGrantInput,
+        GrantsServiceConfig,
+        create_grants_service,
+    )
+
+    db = FakeDB()
+    await _seed_file_rows(db)
+    shares_service = create_shares_service(SharesServiceConfig(db=db, storage=FakeStorage(with_signing=True), namespace="filefn"))
+    grants_service = create_grants_service(GrantsServiceConfig(db=db, namespace="filefn"))
+
+    for bad in [
+        {"expiresAt": "12/31/2099"},
+        {"expiresAt": "2001-01-01T00:00:00Z"},
+        {"maxDownloads": 0},
+    ]:
+        with pytest.raises(errors.FileFnError) as share_error:
+            await shares_service.create_share_link(CreateShareLinkInput(fileId="file_0001", **bad), _ctx("user_123"))
+        assert share_error.value.code == "FILEFN_INVALID_REQUEST"
+
+    with pytest.raises(errors.FileFnError) as tenant_error:
+        await grants_service.create_grant(CreateGrantInput(fileId="file_0001", tenantId="org_other"), _ctx("user_123"))
+    assert tenant_error.value.code == "FILEFN_FORBIDDEN"
+    with pytest.raises(errors.FileFnError) as expiry_error:
+        await grants_service.create_grant(
+            CreateGrantInput(fileId="file_0001", userId="reader", expiresAt="Tue, 01 Jan 2099 00:00:00 GMT"), _ctx("user_123")
+        )
+    assert expiry_error.value.code == "FILEFN_INVALID_REQUEST"
+
+    grant = await grants_service.create_grant(
+        CreateGrantInput(fileId="file_0001", userId="reader", expiresAt="2099-12-31T00:00:00+02:00"), _ctx("user_123")
+    )
+    assert grant.expiresAt == "2099-12-30T22:00:00.000Z"
+    same_tenant = await grants_service.create_grant(CreateGrantInput(fileId="file_0001", tenantId="org_123"), _ctx("user_123"))
+    assert same_tenant.tenantId == "org_123"
+
+    permissive = create_grants_service(GrantsServiceConfig(db=db, namespace="filefn", allow_cross_tenant=True))
+    other = await permissive.create_grant(CreateGrantInput(fileId="file_0001", tenantId="org_other"), _ctx("user_123"))
+    assert other.tenantId == "org_other"
+
+
+@pytest.mark.asyncio
+async def test_share_signed_url_never_outlives_the_link_and_bad_stored_expiry_fails_closed() -> None:
+    from filefn.server import errors
+
+    db = FakeDB()
+    await _seed_file_rows(db)
+    storage = FakeStorage(with_signing=True)
+    lifetimes: List[int] = []
+    original = storage.sign_download_url
+
+    async def recording(key: str, expires_in_seconds: int, target: Optional[str] = None) -> Dict[str, Any]:
+        lifetimes.append(expires_in_seconds)
+        return await original(key, expires_in_seconds, target)
+
+    storage.sign_download_url = recording  # type: ignore[method-assign]
+    storage.capabilities = {"signedDownloadUrls": True}  # type: ignore[attr-defined]
+    shares_service = create_shares_service(
+        SharesServiceConfig(db=db, storage=storage, namespace="filefn", signed_url_ttl_seconds=900)
+    )
+    soon = (datetime.now(timezone.utc) + timedelta(seconds=60)).isoformat().replace("+00:00", "Z")
+    created = await shares_service.create_share_link(CreateShareLinkInput(fileId="file_0001", expiresAt=soon), _ctx("user_123"))
+    await shares_service.download_via_share_link(created["token"], _ctx(None), is_authenticated=False)
+    assert len(lifetimes) == 1 and 0 < lifetimes[0] <= 60
+
+    for row in db.tables["fileShares"]:
+        row["expiresAt"] = "12/31/2099"
+    with pytest.raises(errors.FileFnError) as expired:
+        await shares_service.download_via_share_link(created["token"], _ctx(None), is_authenticated=False)
+    assert expired.value.code == "FILEFN_SHARE_EXPIRED"
+
+
+@pytest.mark.asyncio
+async def test_share_with_under_a_second_left_is_expired_on_signing_storage() -> None:
+    from filefn.server import errors
+
+    db = FakeDB()
+    await _seed_file_rows(db)
+    storage = FakeStorage(with_signing=True)
+    storage.capabilities = {"signedDownloadUrls": True}  # type: ignore[attr-defined]
+    shares_service = create_shares_service(SharesServiceConfig(db=db, storage=storage, namespace="filefn"))
+    created = await shares_service.create_share_link(CreateShareLinkInput(fileId="file_0001"), _ctx("user_123"))
+    for row in db.tables["fileShares"]:
+        row["expiresAt"] = (datetime.now(timezone.utc) + timedelta(milliseconds=500)).isoformat()
+    # Under a second left: expired, not handed over to the proxy, and not counted.
+    with pytest.raises(errors.FileFnError) as last_second:
+        await shares_service.download_via_share_link(created["token"], _ctx(None), is_authenticated=False)
+    assert last_second.value.code == "FILEFN_SHARE_EXPIRED"
+    assert all(row["downloads"] == 0 for row in db.tables["fileShares"])
+
+    for row in db.tables["fileShares"]:
+        row["expiresAt"] = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
+    with pytest.raises(errors.FileFnError) as expired:
+        await shares_service.download_via_share_link(created["token"], _ctx(None), is_authenticated=False)
+    assert expired.value.code == "FILEFN_SHARE_EXPIRED"
+
+
+@pytest.mark.asyncio
+async def test_signing_failure_on_signing_only_storage_is_not_reported_as_expired() -> None:
+    db = FakeDB()
+    await _seed_file_rows(db)
+    storage = FakeStorage(with_signing=False)
+    storage.capabilities = {"signedDownloadUrls": True, "proxyStreamingDownload": False}  # type: ignore[attr-defined]
+    shares_service = create_shares_service(SharesServiceConfig(db=db, storage=storage, namespace="filefn"))
+    created = await shares_service.create_share_link(CreateShareLinkInput(fileId="file_0001"), _ctx("user_123"))
+    with pytest.raises(RuntimeError, match="signing not supported"):
+        await shares_service.download_via_share_link(created["token"], _ctx(None), is_authenticated=False)
+    assert all(row["downloads"] == 0 for row in db.tables["fileShares"])
+
+
+def test_routed_storage_reports_streaming_per_target() -> None:
+    class SignOnly:
+        capabilities = {"signedDownloadUrls": True}
+
+        async def sign_download_url(self, key: str, expires_in_seconds: int) -> Dict[str, Any]:
+            return {"url": "https://download.local/x"}
+
+    routed = create_routed_storage_adapter({"sign": SignOnly(), "stream": FakeStorage()}, default_target="sign")
+    assert routed.can_stream_downloads("sign") is False
+    assert routed.can_stream_downloads("stream") is True
+    # The capability map itself is unchanged, so upload-mode detection still infers from methods.
+    assert "proxyStreamingDownload" not in routed.capabilities_for_target("stream")
+
+
+@pytest.mark.asyncio
+async def test_cancelled_signing_gives_the_download_back() -> None:
+    import asyncio
+
+    db = FakeDB()
+    await _seed_file_rows(db)
+    storage = FakeStorage(with_signing=True)
+    storage.capabilities = {"signedDownloadUrls": True}  # type: ignore[attr-defined]
+
+    async def slow_sign(key: str, expires_in_seconds: int, target: Optional[str] = None) -> Dict[str, Any]:
+        await asyncio.sleep(10)
+        return {"url": "https://download.local/x"}
+
+    storage.sign_download_url = slow_sign  # type: ignore[method-assign]
+    shares_service = create_shares_service(SharesServiceConfig(db=db, storage=storage, namespace="filefn"))
+    created = await shares_service.create_share_link(CreateShareLinkInput(fileId="file_0001", maxDownloads=1), _ctx("user_123"))
+    with pytest.raises(asyncio.TimeoutError):
+        await asyncio.wait_for(
+            shares_service.download_via_share_link(created["token"], _ctx(None), is_authenticated=False), timeout=0.05
+        )
+    assert all(row["downloads"] == 0 for row in db.tables["fileShares"])
+
+
+class UpdateManyDB(FakeDB):
+    """Like the SQLAlchemy adapter: update raises not-found on a miss; update_many reports affected rows."""
+
+    async def update(self, model: str, where: List[Dict[str, Any]], data: Dict[str, Any], namespace: Optional[str] = None):
+        raise AssertionError("share counting must use update_many when the adapter has it")
+
+    async def update_many(self, model: str, where: List[Dict[str, Any]], data: Dict[str, Any], namespace: Optional[str] = None) -> int:
+        count = 0
+        for row in self._table(model):
+            if self._matches(row, where):
+                row.update(data)
+                count += 1
+        return count
+
+
+@pytest.mark.asyncio
+async def test_failed_download_is_given_back_once_with_update_many() -> None:
+    db = UpdateManyDB()
+    await _seed_file_rows(db)
+    storage = FakeStorage(with_signing=True)
+    storage.capabilities = {"signedDownloadUrls": True, "proxyStreamingDownload": False}  # type: ignore[attr-defined]
+    calls = {"n": 0}
+    shares_service = create_shares_service(SharesServiceConfig(db=db, storage=storage, namespace="filefn"))
+    created = await shares_service.create_share_link(CreateShareLinkInput(fileId="file_0001", maxDownloads=2), _ctx("user_123"))
+
+    async def sign(key: str, expires_in_seconds: int, target: Optional[str] = None) -> Dict[str, Any]:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            # While A signs, B counts and succeeds; then A's signing fails.
+            await shares_service.download_via_share_link(created["token"], _ctx(None), is_authenticated=False)
+            raise RuntimeError("storage unavailable")
+        return {"url": "https://download.local/x"}
+
+    storage.sign_download_url = sign  # type: ignore[method-assign]
+    with pytest.raises(RuntimeError):
+        await shares_service.download_via_share_link(created["token"], _ctx(None), is_authenticated=False)
+    assert [row["downloads"] for row in db.tables["fileShares"]] == [1]
+    descriptor = await shares_service.download_via_share_link(created["token"], _ctx(None), is_authenticated=False)
+    assert descriptor["url"] == "https://download.local/x"
+
+
+@pytest.mark.asyncio
+async def test_cancelled_while_counting_gives_the_landed_count_back() -> None:
+    import asyncio
+
+    class SlowCountDB(FakeDB):
+        async def update(self, model: str, where: List[Dict[str, Any]], data: Dict[str, Any], namespace: Optional[str] = None):
+            row = await super().update(model, where, data, namespace)
+            await asyncio.sleep(0.2)  # the write landed; the result comes back late
+            return row
+
+    db = SlowCountDB()
+    await _seed_file_rows(db)
+    storage = FakeStorage(with_signing=True)
+    storage.capabilities = {"signedDownloadUrls": True}  # type: ignore[attr-defined]
+    shares_service = create_shares_service(SharesServiceConfig(db=db, storage=storage, namespace="filefn"))
+    created = await shares_service.create_share_link(CreateShareLinkInput(fileId="file_0001", maxDownloads=1), _ctx("user_123"))
+    with pytest.raises(asyncio.TimeoutError):
+        await asyncio.wait_for(
+            shares_service.download_via_share_link(created["token"], _ctx(None), is_authenticated=False), timeout=0.05
+        )
+    for _ in range(50):
+        if all(row["downloads"] == 0 for row in db.tables["fileShares"]):
+            break
+        await asyncio.sleep(0.05)
+    assert all(row["downloads"] == 0 for row in db.tables["fileShares"])
+
+
+@pytest.mark.asyncio
+async def test_url_signed_while_the_link_was_revoked_is_withheld() -> None:
+    from filefn.server import errors
+
+    db = FakeDB()
+    await _seed_file_rows(db)
+    storage = FakeStorage(with_signing=True)
+    storage.capabilities = {"signedDownloadUrls": True}  # type: ignore[attr-defined]
+    shares_service = create_shares_service(SharesServiceConfig(db=db, storage=storage, namespace="filefn"))
+    created = await shares_service.create_share_link(CreateShareLinkInput(fileId="file_0001", maxDownloads=1), _ctx("user_123"))
+
+    async def sign(key: str, expires_in_seconds: int, target: Optional[str] = None) -> Dict[str, Any]:
+        for row in db.tables["fileShares"]:
+            row["revokedAt"] = datetime.now(timezone.utc).isoformat()
+        return {"url": "https://download.local/x"}
+
+    storage.sign_download_url = sign  # type: ignore[method-assign]
+    with pytest.raises(errors.FileFnError) as revoked:
+        await shares_service.download_via_share_link(created["token"], _ctx(None), is_authenticated=False)
+    assert revoked.value.code == "FILEFN_SHARE_REVOKED"
+    assert [row["downloads"] for row in db.tables["fileShares"]] == [0]
+
+
+@pytest.mark.asyncio
 async def test_list_files_never_lists_private_anonymous_uploads_to_an_anonymous_caller() -> None:
     # FILE-30 F-02: every unauthenticated caller is `anonymous`; nobody owns those uploads.
     db = FakeDB()
@@ -856,3 +1098,31 @@ async def test_list_files_never_lists_private_anonymous_uploads_to_an_anonymous_
     )
     page = await file_service.list_files(_ctx("anonymous"), {"limit": 10})
     assert [file["fileId"] for file in page["files"]] == ["file_anon"]
+
+
+@pytest.mark.asyncio
+async def test_share_reservation_reports_a_link_used_up_by_the_writes_that_won() -> None:
+    from filefn.server import errors
+
+    db = FakeDB()
+    await _seed_file_rows(db)
+    shares_service = create_shares_service(
+        SharesServiceConfig(db=db, storage=FakeStorage(with_signing=True), namespace="filefn")
+    )
+    created = await shares_service.create_share_link(CreateShareLinkInput(fileId="file_0001", maxDownloads=1), _ctx("user_123"))
+    lost = 0
+
+    async def always_loses(token_hash: str, from_count: int, to_count: int) -> bool:
+        nonlocal lost
+        lost += 1
+        if lost == 5:
+            # The last lost write loses to a download that takes the last slot.
+            for row in db.tables["fileShares"]:
+                row["downloads"] = 1
+        return False
+
+    shares_service._set_downloads_if = always_loses  # type: ignore[method-assign]
+    with pytest.raises(errors.FileFnError) as used_up:
+        await shares_service.get_download_stream_via_share_link(created["token"], _ctx(None), is_authenticated=False)
+    assert used_up.value.code == "FILEFN_SHARE_DOWNLOADS_EXCEEDED"
+    assert lost == 5

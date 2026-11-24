@@ -5,6 +5,7 @@ import type { RateLimiter } from '@superfunctions/middleware';
 import { resolvePrincipal } from '../auth.js';
 import * as errors from '../errors.js';
 import { buildDownloadHeaders } from '../download-headers.js';
+import { readJsonBody } from '../http-body.js';
 
 export interface ProcessingRoutesConfig {
   service: ProcessingService;
@@ -250,7 +251,7 @@ export function createProcessingRoutes(config: ProcessingRoutesConfig) {
         };
         const writeCtx = { ...ctx, principalId: principal?.principalId };
 
-        const body = (await request.json()) as {
+        const body = (await readJsonBody(request)) as {
           versionId?: string;
           force?: unknown;
         } | undefined;

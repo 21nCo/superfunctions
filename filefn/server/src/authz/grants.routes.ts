@@ -2,6 +2,7 @@ import type { GrantsService } from './grants.service.js';
 import type { FileFnPrincipal, AuthConfig } from '../auth.js';
 import { resolvePrincipal } from '../auth.js';
 import { FileFnError, authRequired } from '../errors.js';
+import { readJsonBody } from '../http-body.js';
 
 export interface GrantsRouteContext {
   service: GrantsService;
@@ -40,7 +41,7 @@ export function createGrantsRoutes(ctx: GrantsRouteContext) {
       const requestId = getRequestId(request);
       try {
         const principal = await requireAuth(request);
-        const body = await request.json() as {
+        const body = await readJsonBody(request) as {
           userId?: string;
           role?: string;
           tenantId?: string;
