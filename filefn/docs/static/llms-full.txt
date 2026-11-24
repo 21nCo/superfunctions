@@ -1839,11 +1839,13 @@ The server:
 
 1. Computes a stable hash of the canonical request payload (`policy + fileName + size + mimeType + metadata`, sorted keys).
 2. Looks up `uploadSessions` by `(idempotencyKey, ownerId, tenantId)`.
-3. If a row exists with the **same** payload hash → return the existing session. An anonymous session's `uploadSessionToken` is returned only by the request that created it, never on a replay: every anonymous caller shares one scope, so a replay could otherwise hand the upload to someone else.
+3. If a row exists with the **same** payload hash → return the existing session.
 4. If a row exists with a **different** payload hash → fail with `FILEFN_IDEMPOTENCY_CONFLICT`.
 5. Otherwise → create a new session and store the key + hash.
 
 The window is the upload-session TTL. Re-using a key after the session expires creates a new session.
+
+Unauthenticated (anonymous) callers get no idempotency: they all share one scope, and only the caller that created a session holds its `uploadSessionToken`, so a retry always creates a fresh session with its own token. The abandoned session expires on its own.
 
 ## What's in the payload hash
 
@@ -2690,6 +2692,8 @@ Every unauthenticated caller is the same principal, `anonymous`, so FileFn treat
 
 Use anonymous mode for public drop-offs. For uploads people should manage afterwards, configure `auth.resolveSession`.
 
+The principal ID `anonymous` is reserved for this: never return it from `auth.resolveSession` for a real user, who would own nothing. Share links created on anonymous uploads before this rule cannot be revoked over HTTP any more; revoke them in the database (set `revokedAt` on `fileShares` rows whose file is owned by `anonymous`).
+
 ### 2. Per-route rate limits
 
 Always configure `rateLimit.limits` in production. The unrestricted defaults are intentional (the kernel doesn't pretend to know your traffic), but they're not safe in the wild.
@@ -3005,7 +3009,7 @@ This is what makes accidental double-clicks (and dropped responses on flaky netw
 - is stored only as a hash in `uploadSessions.uploadSessionTokenHash`
 - is required on `status`, `sign`, `complete`, `abort` (and the proxy `PUT` for parts)
 - is short-lived (the session TTL)
-- is returned only by the `init` call that created the session, not on an idempotent replay
+- is returned only by the `init` call that created the session (anonymous `init` calls are never replayed; a retry gets a new session and token)
 
 This lets you do client-side / browser-side multipart uploads where the user has no long-lived auth token, without exposing the rest of the API.
 

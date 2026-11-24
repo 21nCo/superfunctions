@@ -143,7 +143,11 @@ class UploadSessionService:
         owner_id = session_data.get("ownerId")
         tenant_id = session_data.get("tenantId")
 
-        if owner_id and owner_id != "anonymous":
+        # Every session row records its owner; one without is refused.
+        if not owner_id:
+            raise errors.forbidden({"uploadSessionId": session_data.get("uploadSessionId")})
+
+        if owner_id != "anonymous":
             if getattr(ctx, "principalId", None) != owner_id:
                 raise errors.forbidden({"uploadSessionId": session_data.get("uploadSessionId")})
             if tenant_id != getattr(ctx, "tenantId", None):
@@ -215,8 +219,12 @@ class UploadSessionService:
 
         # The stored key is scoped to the caller, so one caller's key never finds
         # or blocks another caller's session.
+        # Anonymous callers get no idempotency: they share one scope, and a replay
+        # could only return the session without its token (which only the
+        # creator holds). A retry gets a fresh session and token instead.
+        anonymous = not ctx.principalId or ctx.principalId == "anonymous"
         scoped_idempotency_key = (
-            _scope_idempotency_key(input.idempotencyKey, ctx) if input.idempotencyKey else None
+            _scope_idempotency_key(input.idempotencyKey, ctx) if input.idempotencyKey and not anonymous else None
         )
         if scoped_idempotency_key:
             existing_data = await self.db.find_one(
@@ -224,13 +232,27 @@ class UploadSessionService:
                 where=[{"field": "idempotencyKey", "operator": "eq", "value": scoped_idempotency_key}],
                 namespace=self.namespace,
             )
+            if not existing_data:
+                # A session created before keys were scoped stores the raw key; it
+                # is this caller's only if owner and tenant match.
+                legacy = await self.db.find_one(
+                    model="uploadSessions",
+                    where=[{"field": "idempotencyKey", "operator": "eq", "value": input.idempotencyKey}],
+                    namespace=self.namespace,
+                )
+                if (
+                    legacy
+                    and legacy.get("ownerId") == ctx.principalId
+                    and (legacy.get("tenantId") or None) == (getattr(ctx, "tenantId", None) or None)
+                ):
+                    existing_data = legacy
             if existing_data:
                 existing = UploadSessionRecord(**existing_data)
                 expected_hash = self._hash_payload(input, ctx)
                 if existing.idempotencyPayloadHash != expected_hash:
                     raise errors.idempotency_conflict()
 
-                result: Dict[str, Any] = {
+                return {
                     "uploadSessionId": existing.uploadSessionId,
                     "fileId": existing.fileId,
                     "uploadMode": existing.uploadMode,
@@ -239,10 +261,6 @@ class UploadSessionService:
                     "expiresAt": existing.expiresAt,
                     "warnings": [],
                 }
-                # An anonymous session's token is returned only when the session is
-                # created; it is never replayed or rotated, so repeating the key and
-                # payload cannot take over (or lock out) the original uploader.
-                return result
 
         policy = self.policies.get(input.policy)
         if not policy:
@@ -334,7 +352,7 @@ class UploadSessionService:
                 "tenantId": ctx.tenantId,
                 "metadata": input.metadata or {},
                 "idempotencyKey": scoped_idempotency_key,
-                "idempotencyPayloadHash": self._hash_payload(input, ctx) if input.idempotencyKey else None,
+                "idempotencyPayloadHash": self._hash_payload(input, ctx) if scoped_idempotency_key else None,
                 "uploadSessionToken": None,
                 "sessionTokenHash": session_token_hash,
                 "expiresAt": expires_at,

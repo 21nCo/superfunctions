@@ -98,23 +98,39 @@ describe('anonymous uploads and idempotency (FILE-30 F-02, F-11, F-18)', () => {
     expect((await call(fileFn, 'DELETE', `/${file.fileId}`)).status).toBe(403);
   });
 
-  it('an idempotent anonymous replay never returns the token, and the token is not stored in plaintext (P7)', async () => {
+  it('an anonymous retry gets its own session and token, and tokens are not stored in plaintext (P7)', async () => {
     const { fileFn, database } = makeFileFn();
     const body = { policy: 'private', fileName: 'a.txt', size: 3, mimeType: 'text/plain' };
     const headers = { 'x-idempotency-key': 'test-idempotency-key' };
     const first = await call(fileFn, 'POST', '/upload/init', { body, headers });
     const replay = await call(fileFn, 'POST', '/upload/init', { body, headers });
     expect(first.json.data.uploadSessionToken).toEqual(expect.any(String));
-    expect(replay.json.data.uploadSessionId).toBe(first.json.data.uploadSessionId);
-    expect(replay.json.data.uploadSessionToken).toBeUndefined();
+    expect(replay.json.data.uploadSessionToken).toEqual(expect.any(String));
+    expect(replay.json.data.uploadSessionId).not.toBe(first.json.data.uploadSessionId);
+    expect(replay.json.data.uploadSessionToken).not.toBe(first.json.data.uploadSessionToken);
 
-    const row = await database.findOne<{ uploadSessionToken: string | null; idempotencyKey: string }>({
+    const row = await database.findOne<{ uploadSessionToken: string | null; idempotencyKey: string | null }>({
       model: 'uploadSessions',
       where: [{ field: 'uploadSessionId', operator: 'eq', value: first.json.data.uploadSessionId }],
       namespace: 'filefn',
     });
     expect(row!.uploadSessionToken).toBeNull();
-    expect(row!.idempotencyKey).not.toBe('test-idempotency-key');
+    expect(row!.idempotencyKey).toBeNull();
+  });
+
+  it('replays a session created before keys were scoped only for its own owner', async () => {
+    const { fileFn, database } = makeFileFn();
+    const body = { policy: 'private', fileName: 'a.txt', size: 3, mimeType: 'text/plain' };
+    const first = await call(fileFn, 'POST', '/upload/init', { body, headers: { 'x-idempotency-key': 'legacy-key', 'x-test-user': 'alice' } });
+    // Turn the row into a pre-upgrade one, which stored the raw key.
+    await database.update({
+      model: 'uploadSessions',
+      where: [{ field: 'uploadSessionId', operator: 'eq', value: first.json.data.uploadSessionId }],
+      data: { idempotencyKey: 'legacy-key' },
+      namespace: 'filefn',
+    });
+    const replay = await call(fileFn, 'POST', '/upload/init', { body, headers: { 'x-idempotency-key': 'legacy-key', 'x-test-user': 'alice' } });
+    expect(replay.json.data.uploadSessionId).toBe(first.json.data.uploadSessionId);
   });
 
   it('scopes idempotency keys to the caller', async () => {

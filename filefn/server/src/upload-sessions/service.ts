@@ -1279,26 +1279,41 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       // Check idempotency. The stored key is scoped to the caller (owner and
       // tenant), so one caller's key never finds or blocks another caller's
       // session.
-      const scopedIdempotencyKey = input.idempotencyKey
+      // Anonymous callers get no idempotency: they all share one scope, and a
+      // replay could only return the session without its token (which only
+      // the creator holds), dead-ending the client's retry. A retry instead
+      // gets a fresh session and token; the abandoned one expires.
+      const scopedIdempotencyKey = input.idempotencyKey && !isAnonymousContext(ctx)
         ? scopeIdempotencyKey(input.idempotencyKey, ctx)
         : null;
-      if (scopedIdempotencyKey) {
-        const existing = await db.findOne<UploadSession>({
+      if (scopedIdempotencyKey && input.idempotencyKey) {
+        const expectedHash = hashPayload(input, { principalId: ctx.principalId, tenantId: ctx.tenantId });
+        let existing = await db.findOne<UploadSession>({
           model: 'uploadSessions',
           where: [{ field: 'idempotencyKey', operator: 'eq', value: scopedIdempotencyKey }],
           namespace,
         });
+        if (!existing) {
+          // A session created before keys were scoped stores the raw key; it is
+          // this caller's only if owner and tenant match.
+          const legacy = await db.findOne<UploadSession>({
+            model: 'uploadSessions',
+            where: [{ field: 'idempotencyKey', operator: 'eq', value: input.idempotencyKey }],
+            namespace,
+          });
+          if (
+            legacy &&
+            legacy.ownerId === ctx.principalId &&
+            (legacy.tenantId ?? null) === (ctx.tenantId ?? null)
+          ) {
+            existing = legacy;
+          }
+        }
 
         if (existing) {
-          const expectedHash = hashPayload(input, { principalId: ctx.principalId, tenantId: ctx.tenantId });
           if (existing.idempotencyPayloadHash !== expectedHash) {
             throw errors.idempotencyConflict();
           }
-
-          // An anonymous session's token is returned only when the session is
-          // created. Every anonymous caller shares one scope, so replaying it
-          // would hand the upload to whoever repeats the key and payload; the
-          // original caller already holds it.
           return {
             uploadSessionId: existing.uploadSessionId,
             uploadMode: existing.uploadMode,
@@ -1424,7 +1439,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
           tenantId: ctx.tenantId || null,
           metadata: input.metadata ?? {},
           idempotencyKey: scopedIdempotencyKey,
-          idempotencyPayloadHash: input.idempotencyKey ? hashPayload(input, { principalId: ctx.principalId, tenantId: ctx.tenantId }) : null,
+          idempotencyPayloadHash: scopedIdempotencyKey ? hashPayload(input, { principalId: ctx.principalId, tenantId: ctx.tenantId }) : null,
           // Only the hash is kept; the token is returned once, below.
           uploadSessionToken: null,
           uploadSessionTokenHash,

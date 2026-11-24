@@ -422,9 +422,9 @@ async def test_upload_session_binding_for_authenticated_and_anonymous_flows() ->
 
 
 @pytest.mark.asyncio
-async def test_anonymous_init_replay_keeps_token_and_persists_hash_only() -> None:
-    # FILE-30 F-11: a replay must neither hand out nor rotate the token, or a
-    # second anonymous caller repeating the key could take over the upload.
+async def test_anonymous_init_retry_gets_a_fresh_session_and_persists_hash_only() -> None:
+    # FILE-30 F-11: anonymous callers share one scope, so their init is never
+    # replayed; a retry gets its own session and token.
     db = FakeDB()
     service = _make_service(db=db)
     init = CreateSessionInput(
@@ -438,8 +438,8 @@ async def test_anonymous_init_replay_keeps_token_and_persists_hash_only() -> Non
     first = await service.create_session(init, _ctx(principal_id=None, tenant_id=None))
     replay = await service.create_session(init, _ctx(principal_id=None, tenant_id=None))
 
-    assert first["uploadSessionId"] == replay["uploadSessionId"]
-    assert "uploadSessionToken" not in replay
+    assert first["uploadSessionId"] != replay["uploadSessionId"]
+    assert first["uploadSessionToken"] != replay["uploadSessionToken"]
 
     session_row = await db.find_one(
         model="uploadSessions",
@@ -449,7 +449,7 @@ async def test_anonymous_init_replay_keeps_token_and_persists_hash_only() -> Non
     assert session_row is not None
     assert session_row["uploadSessionToken"] is None
     assert session_row["sessionTokenHash"] == service._hash_session_token(first["uploadSessionToken"])
-    assert session_row["idempotencyKey"] != "idem_anon_001"
+    assert session_row["idempotencyKey"] is None
 
 
 @pytest.mark.asyncio
@@ -796,3 +796,28 @@ def test_nobody_owns_an_anonymous_file() -> None:
     assert not is_file_owner(anon_file, SimpleNamespace(principalId=None))
     assert is_file_owner(SimpleNamespace(ownerId="alice"), SimpleNamespace(principalId="alice"))
     assert not is_file_owner(SimpleNamespace(ownerId=None), SimpleNamespace(principalId=""))
+
+
+@pytest.mark.asyncio
+async def test_legacy_raw_idempotency_key_replays_for_its_owner_only() -> None:
+    db = FakeDB()
+    service = _make_service(db=db)
+    init = CreateSessionInput(policy="user-avatar", fileName="a.png", size=3, mimeType="image/png", idempotencyKey="legacy")
+    first = await service.create_session(init, _ctx(principal_id="alice"))
+    db.tables["uploadSessions"][0]["idempotencyKey"] = "legacy"
+    replay = await service.create_session(init, _ctx(principal_id="alice"))
+    assert replay["uploadSessionId"] == first["uploadSessionId"]
+
+
+@pytest.mark.asyncio
+async def test_session_without_owner_is_refused() -> None:
+    db = FakeDB()
+    service = _make_service(db=db)
+    created = await service.create_session(
+        CreateSessionInput(policy="user-avatar", fileName="a.png", size=3, mimeType="image/png"),
+        _ctx(principal_id="alice"),
+    )
+    db.tables["uploadSessions"][0]["ownerId"] = None
+    with pytest.raises(Exception) as exc_info:
+        await service.get_session_status(created["uploadSessionId"], _ctx(principal_id="mallory"))
+    assert getattr(exc_info.value, "code", "") == "FILEFN_FORBIDDEN"

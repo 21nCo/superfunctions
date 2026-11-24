@@ -10,7 +10,7 @@ from ..events import FileFnEventEmitter, create_file_deleted_event
 from ..models import FileProviderContext, FileRecord, FileVersionRecord, Visibility
 from ..policies import resolve_artifact_storage_target, resolve_storage_target
 from ..routed_storage import get_storage_capabilities
-from ..authz.ownership import is_file_owner
+from ..authz.ownership import is_anonymous_principal, is_file_owner
 
 
 class Authorizer(Protocol):
@@ -226,7 +226,8 @@ class FileService:
             ):
                 files_by_id[file.fileId] = file
 
-        if ctx.principalId:
+        # An unauthenticated caller owns nothing (FILE-30 F-02).
+        if ctx.principalId and not is_anonymous_principal(ctx.principalId):
             for file in await self._find_files(
                 [{"field": "ownerId", "operator": "eq", "value": ctx.principalId}],
                 limit=source_limit,

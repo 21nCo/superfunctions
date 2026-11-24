@@ -819,3 +819,32 @@ async def test_delete_file_removes_completed_upload_sessions() -> None:
 
     await service.delete_file("file_cleanup", _ctx("user_123"))
     assert await db.find_many("uploadSessions", where=[{"field": "fileId", "operator": "eq", "value": "file_cleanup"}]) == []
+
+
+@pytest.mark.asyncio
+async def test_list_files_never_lists_private_anonymous_uploads_to_an_anonymous_caller() -> None:
+    # FILE-30 F-02: every unauthenticated caller is `anonymous`; nobody owns those uploads.
+    db = FakeDB()
+    now = "2026-03-22T00:00:00+00:00"
+    await db.create(
+        model="files",
+        data={
+            "fileId": "file_anon",
+            "currentVersionId": "ver_anon",
+            "ownerId": "anonymous",
+            "tenantId": None,
+            "visibility": "private",
+            "policy": "user-avatar",
+            "mimeType": "image/png",
+            "size": 4,
+            "name": "a.png",
+            "metadata": {},
+            "createdAt": now,
+            "updatedAt": now,
+        },
+    )
+    file_service = create_file_service(
+        FileServiceConfig(db=db, storage=FakeStorage(with_signing=False), events=create_event_emitter(), namespace="filefn")
+    )
+    page = await file_service.list_files(_ctx("anonymous"), {"limit": 10})
+    assert [file["fileId"] for file in page["files"]] == []
