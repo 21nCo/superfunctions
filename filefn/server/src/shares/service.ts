@@ -380,8 +380,15 @@ export function createSharesService(config: SharesServiceConfig) {
             await releaseDownload(tokenHash, written);
             throw error;
           }
-          // Revoked or expired while signing: the URL is withheld.
-          const after = await readShare(tokenHash);
+          // Revoked or expired while signing: the URL is withheld. A failed
+          // read withholds it too, and gives the count back.
+          let after: FileShareRecord | null;
+          try {
+            after = await readShare(tokenHash);
+          } catch (error) {
+            await releaseDownload(tokenHash, written);
+            throw error;
+          }
           if (!after || after.revokedAt || isGrantExpired(after.expiresAt)) {
             await releaseDownload(tokenHash, written);
             if (!after) throw errors.shareNotFound();

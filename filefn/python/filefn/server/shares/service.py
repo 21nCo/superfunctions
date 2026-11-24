@@ -329,12 +329,17 @@ class SharesService:
             else:
                 await asyncio.shield(self._release_download(token_hash, written))
             if result is not None:
-                # Revoked or expired while signing: the URL is withheld.
-                after = await self.db.find_one(
-                    model="fileShares",
-                    where=[{"field": "tokenHash", "operator": "eq", "value": token_hash}],
-                    namespace=self.namespace,
-                )
+                # Revoked or expired while signing: the URL is withheld. A failed
+                # or cancelled read withholds it too, and gives the count back.
+                try:
+                    after = await self.db.find_one(
+                        model="fileShares",
+                        where=[{"field": "tokenHash", "operator": "eq", "value": token_hash}],
+                        namespace=self.namespace,
+                    )
+                except BaseException:
+                    await asyncio.shield(self._release_download(token_hash, written))
+                    raise
                 if not after or after.get("revokedAt") or is_grant_expired(after.get("expiresAt")):
                     await asyncio.shield(self._release_download(token_hash, written))
                     if not after:

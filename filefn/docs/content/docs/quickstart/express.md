@@ -50,6 +50,9 @@ export function fileFnHandler(router: FileFnRouter): RequestHandler {
       const response = await router.handle(request);
       if (!response) { res.status(404).end(); return; }
       res.status(response.status);
+      // A request body FileFn stopped reading (e.g. a 413) is never drained:
+      // close the connection instead of leaving it paused.
+      if (!req.complete) res.setHeader("connection", "close");
       response.headers.forEach((value, name) => {
         if (name !== "set-cookie") res.setHeader(name, value);
       });

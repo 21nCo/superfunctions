@@ -319,6 +319,51 @@ describe('share links, grants and JSON routes (FILE-30 F-07, F-08, F-09, F-15)',
     expect(row!.downloads).toBe(0);
   });
 
+  it('gives the download back when the check after signing fails', async () => {
+    const local = createLocalStorageAdapter({ rootDir });
+    let failNextShareRead = false;
+    let signings = 0;
+    const storage = new Proxy(local, {
+      get(target, prop, receiver) {
+        if (prop === 'capabilities') return { ...target.capabilities, signedDownloadUrls: true };
+        if (prop === 'signDownloadUrl') {
+          return async () => {
+            signings += 1;
+            // Only the first download's post-signing read fails.
+            failNextShareRead = signings === 1;
+            return { url: 'https://storage.example/object' };
+          };
+        }
+        return Reflect.get(target, prop, receiver);
+      },
+    });
+    const database = memoryAdapter();
+    const flaky = new Proxy(database, {
+      get(target, prop, receiver) {
+        if (prop === 'findOne') {
+          return async (params: Parameters<typeof target.findOne>[0]) => {
+            if (failNextShareRead && params.model === 'fileShares') {
+              failNextShareRead = false;
+              throw new Error('database timeout');
+            }
+            return target.findOne(params);
+          };
+        }
+        return Reflect.get(target, prop, receiver);
+      },
+    });
+    const fileFn = createFileFn({
+      database: flaky,
+      storage,
+      namespace: 'filefn',
+      policies: [{ name: 'docs', contentTypes: ['text/plain'], visibility: 'private' }],
+    });
+    const file = await upload(fileFn);
+    const share = await fileFn.services.shares.createShareLink({ fileId: file.fileId, maxDownloads: 1 }, owner);
+    await expect(fileFn.services.shares.downloadViaShareLink(share.token, {})).rejects.toThrow('database timeout');
+    await expect(fileFn.services.shares.downloadViaShareLink(share.token, {})).resolves.toMatchObject({ url: 'https://storage.example/object' });
+  });
+
   it('reads expiry dates strictly as ISO 8601, and an empty expiresAt as none', async () => {
     const { fileFn, database } = makeFileFn();
     const file = await upload(fileFn);
