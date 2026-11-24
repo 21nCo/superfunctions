@@ -16,6 +16,7 @@ import { createHash, randomBytes } from 'crypto';
 import { generateFileFnId } from '../ids.js';
 import { parseRequestedFileId, SERIALIZED_WAIT_TIMEOUT_MS } from './file-id.js';
 import { createFileCommitLock, runFileFnSerialized } from '../files/file-commit-lock.js';
+import { isAnonymousContext } from '../authz/ownership.js';
 import { findReferencedStorageRefs, storageRef } from '../storage-references.js';
 import {
   createUploadStartedEvent,
@@ -209,8 +210,13 @@ function hashPayload(input: CreateSessionInput, ctx: { principalId?: string; ten
   return createHash('sha256').update(str).digest('hex');
 }
 
-function isAnonymousContext(ctx: FileProviderContext): boolean {
-  return !ctx.principalId || ctx.principalId === 'anonymous';
+/**
+ * The value stored in `uploadSessions.idempotencyKey`: the client's key hashed
+ * with the caller's owner and tenant, so the (unique) column is per caller.
+ */
+function scopeIdempotencyKey(idempotencyKey: string, ctx: FileProviderContext): string {
+  const scope = JSON.stringify([ctx.principalId || 'anonymous', ctx.tenantId || null, idempotencyKey]);
+  return `idem_${createHash('sha256').update(scope).digest('hex')}`;
 }
 
 function isAnonymousSession(session: UploadSession): boolean {
@@ -1225,10 +1231,10 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
 
   const service = {
     assertSessionAccess(session: UploadSession, ctx: FileProviderContext, uploadSessionToken?: string): void {
-      // Legacy safety: pre-binding records may not carry ownerId.
-      // Current sessions always persist ownerId, so this only preserves older fixtures.
+      // Every session row records its owner. A row without one is refused rather
+      // than treated as open to every caller.
       if (!session.ownerId) {
-        return;
+        throw errors.forbidden();
       }
 
       if (!isAnonymousSession(session)) {
@@ -1270,11 +1276,16 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       const warnings: string[] = [];
       const requestedFileId = parseRequestedFileId(input.fileId as unknown);
 
-      // Check idempotency
-      if (input.idempotencyKey) {
+      // Check idempotency. The stored key is scoped to the caller (owner and
+      // tenant), so one caller's key never finds or blocks another caller's
+      // session.
+      const scopedIdempotencyKey = input.idempotencyKey
+        ? scopeIdempotencyKey(input.idempotencyKey, ctx)
+        : null;
+      if (scopedIdempotencyKey) {
         const existing = await db.findOne<UploadSession>({
           model: 'uploadSessions',
-          where: [{ field: 'idempotencyKey', operator: 'eq', value: input.idempotencyKey }],
+          where: [{ field: 'idempotencyKey', operator: 'eq', value: scopedIdempotencyKey }],
           namespace,
         });
 
@@ -1284,27 +1295,10 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
             throw errors.idempotencyConflict();
           }
 
-          let uploadSessionToken: string | undefined;
-          if (isAnonymousSession(existing)) {
-            if (existing.uploadSessionToken) {
-              uploadSessionToken = existing.uploadSessionToken;
-            } else {
-              // Older sessions may only have the hash persisted. Preserve access by
-              // minting and persisting a replacement token once, then replay it
-              // deterministically for future idempotent responses.
-              uploadSessionToken = generateUploadSessionToken();
-              await db.update({
-                model: 'uploadSessions',
-                where: [{ field: 'uploadSessionId', operator: 'eq', value: existing.uploadSessionId }],
-                data: {
-                  uploadSessionToken,
-                  uploadSessionTokenHash: hashUploadSessionToken(uploadSessionToken),
-                },
-                namespace,
-              });
-            }
-          }
-
+          // An anonymous session's token is returned only when the session is
+          // created. Every anonymous caller shares one scope, so replaying it
+          // would hand the upload to whoever repeats the key and payload; the
+          // original caller already holds it.
           return {
             uploadSessionId: existing.uploadSessionId,
             uploadMode: existing.uploadMode,
@@ -1312,7 +1306,6 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
             totalParts: existing.totalParts,
             expiresAt: existing.expiresAt,
             warnings: [],
-            uploadSessionToken,
           };
         }
       }
@@ -1430,9 +1423,10 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
           ownerId: ctx.principalId || 'anonymous',
           tenantId: ctx.tenantId || null,
           metadata: input.metadata ?? {},
-          idempotencyKey: input.idempotencyKey || null,
+          idempotencyKey: scopedIdempotencyKey,
           idempotencyPayloadHash: input.idempotencyKey ? hashPayload(input, { principalId: ctx.principalId, tenantId: ctx.tenantId }) : null,
-          uploadSessionToken: uploadSessionToken || null,
+          // Only the hash is kept; the token is returned once, below.
+          uploadSessionToken: null,
           uploadSessionTokenHash,
           expiresAt,
           createdAt: now.toISOString(),

@@ -422,7 +422,9 @@ async def test_upload_session_binding_for_authenticated_and_anonymous_flows() ->
 
 
 @pytest.mark.asyncio
-async def test_anonymous_init_replay_rotates_token_and_persists_hash_only() -> None:
+async def test_anonymous_init_replay_keeps_token_and_persists_hash_only() -> None:
+    # FILE-30 F-11: a replay must neither hand out nor rotate the token, or a
+    # second anonymous caller repeating the key could take over the upload.
     db = FakeDB()
     service = _make_service(db=db)
     init = CreateSessionInput(
@@ -437,7 +439,7 @@ async def test_anonymous_init_replay_rotates_token_and_persists_hash_only() -> N
     replay = await service.create_session(init, _ctx(principal_id=None, tenant_id=None))
 
     assert first["uploadSessionId"] == replay["uploadSessionId"]
-    assert first["uploadSessionToken"] != replay["uploadSessionToken"]
+    assert "uploadSessionToken" not in replay
 
     session_row = await db.find_one(
         model="uploadSessions",
@@ -446,8 +448,22 @@ async def test_anonymous_init_replay_rotates_token_and_persists_hash_only() -> N
     )
     assert session_row is not None
     assert session_row["uploadSessionToken"] is None
-    assert session_row["sessionTokenHash"] == service._hash_session_token(replay["uploadSessionToken"])
+    assert session_row["sessionTokenHash"] == service._hash_session_token(first["uploadSessionToken"])
+    assert session_row["idempotencyKey"] != "idem_anon_001"
 
+
+@pytest.mark.asyncio
+async def test_idempotency_keys_are_scoped_to_the_caller() -> None:
+    service = _make_service()
+    alice = await service.create_session(
+        CreateSessionInput(policy="user-avatar", fileName="a.png", size=3, mimeType="image/png", idempotencyKey="shared"),
+        _ctx(principal_id="alice"),
+    )
+    bob = await service.create_session(
+        CreateSessionInput(policy="user-avatar", fileName="b.png", size=3, mimeType="image/png", idempotencyKey="shared"),
+        _ctx(principal_id="bob"),
+    )
+    assert alice["uploadSessionId"] != bob["uploadSessionId"]
 
 @pytest.mark.asyncio
 async def test_create_session_respects_anonymous_upload_policy() -> None:
@@ -768,3 +784,15 @@ async def test_nucleus_policy_bundle_enforces_size_and_wildcard_types() -> None:
             _ctx("user_123", "org_123"),
         )
     assert getattr(exc_mime.value, "code", "") == "FILEFN_POLICY_CONTENT_TYPE_NOT_ALLOWED"
+
+
+
+def test_nobody_owns_an_anonymous_file() -> None:
+    # FILE-30 F-02: every unauthenticated caller shares the principal `anonymous`.
+    from filefn.server.authz.ownership import is_file_owner
+
+    anon_file = SimpleNamespace(ownerId="anonymous")
+    assert not is_file_owner(anon_file, SimpleNamespace(principalId="anonymous"))
+    assert not is_file_owner(anon_file, SimpleNamespace(principalId=None))
+    assert is_file_owner(SimpleNamespace(ownerId="alice"), SimpleNamespace(principalId="alice"))
+    assert not is_file_owner(SimpleNamespace(ownerId=None), SimpleNamespace(principalId=""))

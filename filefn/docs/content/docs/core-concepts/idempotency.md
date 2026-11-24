@@ -22,7 +22,7 @@ The server:
 
 1. Computes a stable hash of the canonical request payload (`policy + fileName + size + mimeType + metadata`, sorted keys).
 2. Looks up `uploadSessions` by `(idempotencyKey, ownerId, tenantId)`.
-3. If a row exists with the **same** payload hash → return the existing session.
+3. If a row exists with the **same** payload hash → return the existing session. An anonymous session's `uploadSessionToken` is returned only by the request that created it, never on a replay: every anonymous caller shares one scope, so a replay could otherwise hand the upload to someone else.
 4. If a row exists with a **different** payload hash → fail with `FILEFN_IDEMPOTENCY_CONFLICT`.
 5. Otherwise → create a new session and store the key + hash.
 

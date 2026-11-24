@@ -1839,7 +1839,7 @@ The server:
 
 1. Computes a stable hash of the canonical request payload (`policy + fileName + size + mimeType + metadata`, sorted keys).
 2. Looks up `uploadSessions` by `(idempotencyKey, ownerId, tenantId)`.
-3. If a row exists with the **same** payload hash → return the existing session.
+3. If a row exists with the **same** payload hash → return the existing session. An anonymous session's `uploadSessionToken` is returned only by the request that created it, never on a replay: every anonymous caller shares one scope, so a replay could otherwise hand the upload to someone else.
 4. If a row exists with a **different** payload hash → fail with `FILEFN_IDEMPOTENCY_CONFLICT`.
 5. Otherwise → create a new session and store the key + hash.
 
@@ -2681,6 +2681,15 @@ auth: {
 }
 ```
 
+### Anonymous mode (`auth.required: false`)
+
+Every unauthenticated caller is the same principal, `anonymous`, so FileFn treats an anonymous upload as owned by nobody:
+
+- an unauthenticated caller can upload, but cannot read back, list, share, grant, replace or delete what was uploaded;
+- the file is readable only through its policy's visibility (`public`), a grant, or a share link that an authenticated user created.
+
+Use anonymous mode for public drop-offs. For uploads people should manage afterwards, configure `auth.resolveSession`.
+
 ### 2. Per-route rate limits
 
 Always configure `rateLimit.limits` in production. The unrestricted defaults are intentional (the kernel doesn't pretend to know your traffic), but they're not safe in the wild.
@@ -2996,6 +3005,7 @@ This is what makes accidental double-clicks (and dropped responses on flaky netw
 - is stored only as a hash in `uploadSessions.uploadSessionTokenHash`
 - is required on `status`, `sign`, `complete`, `abort` (and the proxy `PUT` for parts)
 - is short-lived (the session TTL)
+- is returned only by the `init` call that created the session, not on an idempotent replay
 
 This lets you do client-side / browser-side multipart uploads where the user has no long-lived auth token, without exposing the rest of the API.
 
@@ -4952,6 +4962,8 @@ app.all("/filefn/*", async (c) => {
 });
 ```
 
+With `required: false`, requests without a session are served as the shared `anonymous` principal: they can upload, but nobody owns an anonymous upload, so they cannot read back a private one, share it or delete it. Set `required: true` if every upload should belong to a signed-in user.
+
 ## CSRF
 
 filefn's auth path is enforced by `auth.resolveSession`. For browser-issued proxy uploads (`PUT /upload/:id/parts/:n`), pair filefn with your authfn CSRF protection. The bundled clients send credentials by default; on the server, validate the `Origin` / `Referer` header on every state-changing route.
@@ -5180,6 +5192,8 @@ export const fileFn = createFileFn({
   },
 });
 ```
+
+With `required: false`, requests without a session are served as the shared `anonymous` principal: they can upload, but nobody owns an anonymous upload, so they cannot read back a private one, share it or delete it. Set `required: true` if every upload should belong to a signed-in user.
 
 ```ts
 // src/routes/filefn/[...path]/+server.ts
@@ -5590,6 +5604,8 @@ Bun.serve({
 });
 ```
 
+`auth: { required: false }` keeps this quickstart short: anyone can upload, and because every unauthenticated caller is the same `anonymous` principal, nobody owns those uploads afterwards. They are readable only when the policy is `public`, and nobody can delete or share them over HTTP. Configure `auth.resolveSession` before real users upload (see [Security](../core-concepts/security)).
+
 ## Why Bun is the fastest path
 
 - Native multipart upload streaming through `Bun.file`
@@ -5710,6 +5726,8 @@ app.listen(3001);
 ```
 
 The bridge streams downloads with backpressure and preserves their bytes and headers. Unknown routes return 404. Keep JSON/raw body parsers off this mount; FileFn’s upload policy still controls accepted file size. The memory database is disposable and loses metadata on restart. Use your host’s persistent adapter, authentication, and policy configuration for production.
+
+`auth: { required: false }` keeps this quickstart short: anyone can upload, and because every unauthenticated caller is the same `anonymous` principal, nobody owns those uploads afterwards. They are readable only when the policy is `public`, and nobody can delete or share them over HTTP. Configure `auth.resolveSession` before real users upload (see [Security](../core-concepts/security)).
 
 ## When to use Express vs. Hono
 
@@ -6087,6 +6105,8 @@ export const fileFn = createFileFn({
 });
 ```
 
+`auth: { required: false }` keeps this quickstart short: anyone can upload, and because every unauthenticated caller is the same `anonymous` principal, nobody owns those uploads afterwards. They are readable only when the policy is `public`, and nobody can delete or share them over HTTP. Configure `auth.resolveSession` before real users upload (see [Security](../core-concepts/security)).
+
 ## Catch-all route
 
 `app/filefn/[...path]/route.ts`:
@@ -6176,6 +6196,8 @@ export const fileFn = createFileFn({
   auth: { required: false },
 });
 ```
+
+`auth: { required: false }` keeps this quickstart short: anyone can upload, and because every unauthenticated caller is the same `anonymous` principal, nobody owns those uploads afterwards. They are readable only when the policy is `public`, and nobody can delete or share them over HTTP. Configure `auth.resolveSession` before real users upload (see [Security](../core-concepts/security)).
 
 ## Catch-all route
 

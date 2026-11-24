@@ -43,6 +43,15 @@ auth: {
 }
 ```
 
+### Anonymous mode (`auth.required: false`)
+
+Every unauthenticated caller is the same principal, `anonymous`, so FileFn treats an anonymous upload as owned by nobody:
+
+- an unauthenticated caller can upload, but cannot read back, list, share, grant, replace or delete what was uploaded;
+- the file is readable only through its policy's visibility (`public`), a grant, or a share link that an authenticated user created.
+
+Use anonymous mode for public drop-offs. For uploads people should manage afterwards, configure `auth.resolveSession`.
+
 ### 2. Per-route rate limits
 
 Always configure `rateLimit.limits` in production. The unrestricted defaults are intentional (the kernel doesn't pretend to know your traffic), but they're not safe in the wild.

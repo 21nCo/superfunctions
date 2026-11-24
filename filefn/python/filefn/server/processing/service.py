@@ -15,6 +15,7 @@ from ..events import (
 from ..models import FileProviderContext, FileRecord, Visibility
 from ..policies import resolve_artifact_storage_target, resolve_storage_target
 from ..routed_storage import get_storage_capabilities
+from ..authz.ownership import is_file_owner
 
 
 class ProcessorInput(BaseModel):
@@ -334,7 +335,7 @@ class ProcessingService:
         file = FileRecord(**file_data)
         if file.visibility == Visibility.PUBLIC:
             return file
-        if file.ownerId == ctx.principalId:
+        if is_file_owner(file, ctx):
             return file
         if file.visibility == Visibility.SHARED and file.tenantId and file.tenantId == ctx.tenantId:
             return file

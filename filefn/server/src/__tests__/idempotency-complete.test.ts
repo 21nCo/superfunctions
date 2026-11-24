@@ -177,7 +177,7 @@ describe('PHASE_00 idempotency and completion semantics', () => {
     expect(second.totalParts).toBe(first.totalParts);
   });
 
-  it('TV-AUTH-001: anonymous init replay returns the original upload session token', async () => {
+  it('TV-AUTH-001: anonymous init replay returns the session but never its token (FILE-30 F-11)', async () => {
     const { service } = createHarness();
     const input = {
       policy: 'p1',
@@ -193,7 +193,7 @@ describe('PHASE_00 idempotency and completion semantics', () => {
 
     expect(first.uploadSessionId).toBe(replay.uploadSessionId);
     expect(first.uploadSessionToken).toBeDefined();
-    expect(replay.uploadSessionToken).toBe(first.uploadSessionToken);
+    expect(replay.uploadSessionToken).toBeUndefined();
   });
 
   it('TV-IDEMPOTENCY-NEG-001: idempotency-key mismatch returns FILEFN_IDEMPOTENCY_CONFLICT', async () => {

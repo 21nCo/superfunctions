@@ -68,6 +68,16 @@ class CreateSessionInput(BaseModel):
     idempotencyKey: Optional[str] = None
 
 
+def _scope_idempotency_key(idempotency_key: str, ctx: FileProviderContext) -> str:
+    """Hash the client's key with the caller's owner and tenant (same value as the TypeScript server)."""
+    scope = json.dumps(
+        [getattr(ctx, "principalId", None) or "anonymous", getattr(ctx, "tenantId", None) or None, idempotency_key],
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
+    return "idem_" + hashlib.sha256(scope.encode("utf-8")).hexdigest()
+
+
 class UploadSessionService:
     def __init__(self, config: UploadSessionServiceConfig):
         self.db = config.db
@@ -103,19 +113,6 @@ class UploadSessionService:
 
     def _hash_session_token(self, token: str) -> str:
         return hashlib.sha256(token.encode("utf-8")).hexdigest()
-
-    async def _issue_anonymous_session_token(self, upload_session_id: str) -> str:
-        upload_session_token = secrets.token_urlsafe(32)
-        await self.db.update(
-            model="uploadSessions",
-            where=[{"field": "uploadSessionId", "operator": "eq", "value": upload_session_id}],
-            data={
-                "uploadSessionToken": None,
-                "sessionTokenHash": self._hash_session_token(upload_session_token),
-            },
-            namespace=self.namespace,
-        )
-        return upload_session_token
 
     def _extract_upload_session_token(self, ctx: Any) -> Optional[str]:
         for attr in ("uploadSessionToken", "upload_session_token", "sessionToken", "session_token"):
@@ -216,10 +213,15 @@ class UploadSessionService:
         if not ctx.principalId and not self.allow_anonymous_uploads:
             raise errors.auth_required()
 
-        if input.idempotencyKey:
+        # The stored key is scoped to the caller, so one caller's key never finds
+        # or blocks another caller's session.
+        scoped_idempotency_key = (
+            _scope_idempotency_key(input.idempotencyKey, ctx) if input.idempotencyKey else None
+        )
+        if scoped_idempotency_key:
             existing_data = await self.db.find_one(
                 model="uploadSessions",
-                where=[{"field": "idempotencyKey", "operator": "eq", "value": input.idempotencyKey}],
+                where=[{"field": "idempotencyKey", "operator": "eq", "value": scoped_idempotency_key}],
                 namespace=self.namespace,
             )
             if existing_data:
@@ -237,11 +239,9 @@ class UploadSessionService:
                     "expiresAt": existing.expiresAt,
                     "warnings": [],
                 }
-                if existing.ownerId == "anonymous":
-                    issued_upload_session_token = await self._issue_anonymous_session_token(
-                        existing.uploadSessionId,
-                    )
-                    result["uploadSessionToken"] = issued_upload_session_token
+                # An anonymous session's token is returned only when the session is
+                # created; it is never replayed or rotated, so repeating the key and
+                # payload cannot take over (or lock out) the original uploader.
                 return result
 
         policy = self.policies.get(input.policy)
@@ -333,7 +333,7 @@ class UploadSessionService:
                 "ownerId": owner_id,
                 "tenantId": ctx.tenantId,
                 "metadata": input.metadata or {},
-                "idempotencyKey": input.idempotencyKey,
+                "idempotencyKey": scoped_idempotency_key,
                 "idempotencyPayloadHash": self._hash_payload(input, ctx) if input.idempotencyKey else None,
                 "uploadSessionToken": None,
                 "sessionTokenHash": session_token_hash,

@@ -16,6 +16,7 @@ import {
 } from '../processing/service.js';
 import { findReferencedStorageRefs, parseStorageRef, storageRef } from '../storage-references.js';
 import { createImportObject } from './import.js';
+import { isFileOwner } from '../authz/ownership.js';
 
 /** Kinds of the rows recording an artifact object no artifact row names (see the processing service). */
 const RECORD_KINDS = [DISPLACED_OBJECT_KIND, UPLOAD_INTENT_KIND];
@@ -148,15 +149,15 @@ function createDefaultAuthorizer(): Authorizer {
   return {
     async canRead(file, ctx) {
       if (file.visibility === 'public') return true;
-      if (file.ownerId === ctx.principalId) return true;
+      if (isFileOwner(file, ctx)) return true;
       if (file.visibility === 'shared' && file.tenantId && file.tenantId === ctx.tenantId) return true;
       return false;
     },
     async canWrite(file, ctx) {
-      return file.ownerId === ctx.principalId;
+      return isFileOwner(file, ctx);
     },
     async canDelete(file, ctx) {
-      return file.ownerId === ctx.principalId;
+      return isFileOwner(file, ctx);
     },
   };
 }

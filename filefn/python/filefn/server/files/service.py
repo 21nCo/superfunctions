@@ -10,6 +10,7 @@ from ..events import FileFnEventEmitter, create_file_deleted_event
 from ..models import FileProviderContext, FileRecord, FileVersionRecord, Visibility
 from ..policies import resolve_artifact_storage_target, resolve_storage_target
 from ..routed_storage import get_storage_capabilities
+from ..authz.ownership import is_file_owner
 
 
 class Authorizer(Protocol):
@@ -24,17 +25,17 @@ class DefaultAuthorizer:
     async def can_read(self, file: FileRecord, ctx: FileProviderContext) -> bool:
         if file.visibility == Visibility.PUBLIC:
             return True
-        if file.ownerId == ctx.principalId:
+        if is_file_owner(file, ctx):
             return True
         if file.visibility == Visibility.SHARED and file.tenantId and file.tenantId == ctx.tenantId:
             return True
         return False
 
     async def can_write(self, file: FileRecord, ctx: FileProviderContext) -> bool:
-        return file.ownerId == ctx.principalId
+        return is_file_owner(file, ctx)
 
     async def can_delete(self, file: FileRecord, ctx: FileProviderContext) -> bool:
-        return file.ownerId == ctx.principalId
+        return is_file_owner(file, ctx)
 
 
 class QuotaProvider(Protocol):

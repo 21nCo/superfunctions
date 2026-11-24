@@ -498,7 +498,7 @@ describe('@filefn/server upload sessions', () => {
       expect(result1.uploadSessionId).toBe(result2.uploadSessionId);
     });
 
-    it('should replay the original anonymous upload session token for identical input', async () => {
+    it('should return the anonymous session on replay without its token (FILE-30 F-11)', async () => {
       const input = {
         policy: 'user-avatar',
         fileName: 'avatar.png',
@@ -512,7 +512,7 @@ describe('@filefn/server upload sessions', () => {
 
       expect(first.uploadSessionId).toBe(replay.uploadSessionId);
       expect(first.uploadSessionToken).toBeDefined();
-      expect(replay.uploadSessionToken).toBe(first.uploadSessionToken);
+      expect(replay.uploadSessionToken).toBeUndefined();
     });
   });
 
