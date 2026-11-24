@@ -669,6 +669,11 @@ describe("panel policy and slot identity", () => {
       expect(validatePanelPolicy({ ...withProfile, profiles: { agent: { ...profile, envAllowlist } } }).issues.map(issue => issue.path)).toEqual(["/profiles/agent/envAllowlist/0"]);
     }
     expect(validateSlotRun({ ...panelReport().slotRuns[0], limitations: [undefined] }).issues.map(issue => issue.path)).toEqual(["/limitations/0"]);
+    // Item issues go straight into the result: a very large invalid array yields schema issues, never a RangeError.
+    const invalidItems = Array.from({ length: 200_000 }, () => 0);
+    const argvIssues = validateHarnessProfile({ ...profile, argv: invalidItems }).issues;
+    expect([argvIssues.length >= 200_000, argvIssues.some(issue => issue.path === "/argv/199999")]).toEqual([true, true]);
+    expect(validateSlotRun({ ...panelReport().slotRuns[0], limitations: invalidItems }).issues.length).toBeGreaterThanOrEqual(200_000);
     expect(validateHarnessProfile({ ...profile, envAllowlist: ["NOT-A-NAME"] }).valid).toBe(false);
     expect(validateHarnessProfile({ ...profile, shell: true }).valid).toBe(false);
     expect(harnessProfileIssues(profile, "/profiles/agent")).toEqual([]);
@@ -754,11 +759,11 @@ describe("panel policy and slot identity", () => {
     expect(await messages(distinct)).toEqual([expect.stringMatching(/^\/slotRuns\/1\/identity\/modelVerified .*reports no model, so its run must record modelVerified false/)]);
     const unlimited = structuredClone(report); unlimited.slotRuns[0].limitations = ["model_unverified"];
     expect(await messages(unlimited)).toEqual(expect.arrayContaining([expect.stringMatching(/^\/slotRuns\/0\/limitations .*must record sandbox_tree_verified_only/)]));
-    // A profile with a model reporter verifies the model, so its run never claims an unverified one.
+    // A profile with a model reporter verifies only a model it reports: a run that observed none records the configured model unverified.
     const reporting: PanelPolicy = { ...genericPolicy, slots: [cli(panelPolicy.slots[0], "reported", "model-a"), cli(panelPolicy.slots[1], "quiet", "model-b"), panelPolicy.slots[2], panelPolicy.slots[3]] };
     const misreported = structuredClone(report); misreported.slots = structuredClone(reporting.slots); misreported.slotRuns[0].identity.harnessProfile = "reported";
     sign(misreported, reporting);
-    expect(await messages(misreported)).toEqual(expect.arrayContaining([expect.stringMatching(/^\/slotRuns\/0\/identity\/modelVerified .*reports its model/)]));
+    expect((await messages(misreported)).filter(message => message.startsWith("/slotRuns/0/"))).toEqual([]);
     // A slot that runs no profile never records an unverified model.
     const verifier = structuredClone(report); verifier.slotRuns[3].identity.modelVerified = false; verifier.slotRuns[3].limitations = ["model_unverified"];
     expect(await messages(verifier)).toEqual([expect.stringMatching(/^\/slotRuns\/3\/identity\/modelVerified .*runs no harness profile/)]);

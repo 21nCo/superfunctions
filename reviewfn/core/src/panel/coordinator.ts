@@ -484,7 +484,7 @@ export class PanelCoordinator {
     const harness = this.dependencies.harnesses.find(item => item.capabilities.id === slot.harness.adapter);
     const resolved = context.resolved.get(slot.id);
     const credential = slot.inference.credentialEnv ? (this.dependencies.environment ?? process.env)[slot.inference.credentialEnv] : undefined;
-    const unverified = slotProfile(slot, context.request.panelPolicy)?.modelReport === "none";
+    const unverified = slotProfile(slot, context.request.panelPolicy)?.modelReport === "none" || (slot.harness.profile !== undefined && !nonblank(resolved?.model));
     return {
       harnessAdapter: slot.harness.adapter,
       // The slot's pin is never recorded as a version: it is what the reported version is checked against.
@@ -513,7 +513,7 @@ export class PanelCoordinator {
       // The profile's limitations hold for every run of the slot, whatever its terminal; the harness may add others it observed.
       // model_unverified holds only for an identity whose model is unverified; a harness report never adds it to a verified one.
       const { limitations: observedLimitations, ...recorded } = extra;
-      const limitations = [...new Set([...profileLimitations(slotProfile(slot, request.panelPolicy)), ...(observedLimitations ?? [])])].filter(item => item !== "model_unverified" || identity.modelVerified === false);
+      const limitations = [...new Set([...(identity.modelVerified === false ? ["model_unverified" as const] : []), ...profileLimitations(slotProfile(slot, request.panelPolicy)), ...(observedLimitations ?? [])])].filter(item => item !== "model_unverified" || identity.modelVerified === false);
       const voidReasons = [...(extra.voidReasons ?? [])];
       const allReasons = [...reasons];
       if (slot.inference.model !== "configured" && (identity.model !== slot.inference.model || identity.modelMismatch === true) && !voidReasons.includes("model_mismatch")) {
@@ -621,14 +621,16 @@ export class PanelCoordinator {
             ? { terminal: "timed_out", reason: `The checkout comparison did not finish within its ${comparisonMs} ms bound, so the checkout was not shown to be unchanged.` }
             : { terminal: "failed", reason: `The checkout was not compared with head: ${check.reason ?? "the comparison did not complete"}` };
       }
+      const reportedModel = slotProfile(slot, request.panelPolicy)?.modelReport !== "none" && nonblank(observed.model) ? observed.model : undefined;
       const identity: SlotIdentity = {
         ...baseIdentity,
         ...(nonblank(observed.harnessVersion) ? { harnessVersion: redactText(observed.harnessVersion, context.secrets) } : {}),
-        ...(baseIdentity.modelVerified !== false && nonblank(observed.model) ? { model: slot.inference.model !== "configured" && observed.modelMismatch === false ? slot.inference.model : redactText(observed.model, context.secrets) } : {}),
+        ...(reportedModel !== undefined ? { model: slot.inference.model !== "configured" && observed.modelMismatch === false ? slot.inference.model : redactText(reportedModel, context.secrets) } : {}),
         // The harness's raw comparison is kept with the identity: redaction or truncation can make the recorded model read
         // as the configured one, and the mismatch must still void the run and survive in the report.
-        ...(baseIdentity.modelVerified !== false && slot.inference.model !== "configured" && observed.modelMismatch === true ? { modelMismatch: true as const } : {}),
+        ...((reportedModel !== undefined || baseIdentity.modelVerified !== false) && slot.inference.model !== "configured" && observed.modelMismatch === true ? { modelMismatch: true as const } : {}),
       };
+      if (reportedModel !== undefined) delete identity.modelVerified; // A model the run reports verifies the identity.
       if (!identity.credentialFingerprint && nonblank(observed.accountIdentity)) identity.credentialFingerprint = credentialFingerprint(observed.accountIdentity);
       const voidReasons: SlotVoidReason[] = [];
       if (slot.inference.model !== "configured" && (identity.model !== slot.inference.model || identity.modelMismatch === true)) {

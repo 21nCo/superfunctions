@@ -88,7 +88,7 @@ export interface SlotIdentity {
   harnessExecutable?: string;
   harnessProfile?: string;
   /**
-   * `false` when the harness profile reports no model (`modelReport: "none"`): `model` is then the configured model,
+   * `false` when the harness profile reports no model (`modelReport: "none"`), or its reporter observed none: `model` is then the configured model,
    * unconfirmed, and the identity is only (adapter, version, executable, profile), so such runs of one executable and
    * profile never count as distinct.
    */

@@ -73,10 +73,9 @@ function array(item: Check, options: { min?: number; max?: number; unique?: bool
     if (options.min !== undefined && value.length < options.min) add(issues, "REVIEWFN_PANEL_SCHEMA", path, `must have at least ${options.min} item(s).`);
     if (options.max !== undefined && value.length > options.max) add(issues, "REVIEWFN_PANEL_SCHEMA", path, `must have at most ${options.max} item(s).`);
     // Items are checked first: only valid items are canonicalized, so invalid input yields issues, never a throw.
-    const itemIssues: Issues = [];
-    value.forEach((entry, index) => item(entry, pointer(path, index), itemIssues));
-    if (options.unique && itemIssues.length === 0 && new Set(value.map(entry => stableStringify(entry))).size !== value.length) add(issues, "REVIEWFN_PANEL_SCHEMA", path, "must not contain duplicate items.");
-    issues.push(...itemIssues);
+    const before = issues.length;
+    value.forEach((entry, index) => item(entry, pointer(path, index), issues));
+    if (options.unique && issues.length === before && new Set(value.map(entry => stableStringify(entry))).size !== value.length) add(issues, "REVIEWFN_PANEL_SCHEMA", path, "must not contain duplicate items.");
   };
 }
 function object(properties: Record<string, Check>, required: readonly string[], rule?: (value: Record<string, unknown>, path: string, issues: Issues) => void): Check {
@@ -492,7 +491,6 @@ function slotRunIssues(report: PanelReport, slots: Map<string, PanelSlot>, issue
     if (profile) {
       const limitations = run.limitations ?? [];
       if (profile.modelReport === "none" && (identity.modelVerified !== false || !limitations.includes("model_unverified"))) add(issues, "REVIEWFN_PANEL_SCHEMA", `${path}/identity/modelVerified`, `Slot ${slot.id}'s profile ${slot.harness.profile} reports no model, so its run must record modelVerified false and the model_unverified limitation.`);
-      if (profile.modelReport !== "none" && identity.modelVerified !== undefined) add(issues, "REVIEWFN_PANEL_SCHEMA", `${path}/identity/modelVerified`, `Slot ${slot.id}'s profile ${slot.harness.profile} reports its model, so its run's model is verified.`);
       if (profile.capabilities.sandbox === "tree-verified-only" && !limitations.includes("sandbox_tree_verified_only")) add(issues, "REVIEWFN_PANEL_SCHEMA", `${path}/limitations`, `Slot ${slot.id}'s profile ${slot.harness.profile} enforces no tool restriction, so its run must record sandbox_tree_verified_only.`);
     }
     // A harness reporting another version than the slot pins is recorded truthfully, but its run never counts or collapses.

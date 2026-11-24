@@ -272,6 +272,28 @@ describe("PanelCoordinator isolation and voiding", () => {
     await expectValid(result, setup, panelPolicy);
   });
 
+  it("records a reporting profile's model as unverified when neither preflight nor the run reported one", async () => {
+    const reporter = (modelReport: string) => ({ argv: ["--model", "{model}"], promptVia: "stdin" as const, outputVia: "stdout-last-json" as const, envAllowlist: [], modelReport, capabilities: { structuredOutput: false, sandbox: "enforced-read-only" as const } });
+    const profiles = { json: reporter("json-path:model"), stderr: reporter("stderr-regex:model=(\\S+)") };
+    const cli = new FakePanelHarness({ id: "cli", behaviors: { seen: () => ({ ...clean(), observed: { model: "model-seen" } }) } });
+    const preflight = cli.preflight.bind(cli);
+    cli.preflight = async config => { const result = await preflight(config); return { ...result, resolved: { ...result.resolved!, model: undefined } }; };
+    const profiled = (id: string, profile: string) => slot(id, 1, `model-${id}`, { harness: { adapter: "cli", version: "1", executable: "agent", profile } });
+    const panelPolicy = panel([profiled("json-a", "json"), profiled("json-b", "json"), profiled("stderr-a", "stderr"), profiled("stderr-b", "stderr"), profiled("seen", "json")], { profiles });
+    const setup = coordinator(cli, { harnessContractVersions: { cli: "1" } });
+    const result = await setup.coordinator.run(request(panelPolicy));
+    const runs = new Map(result.report.slotRuns.map(run => [run.slotId, run]));
+    // Slots differing only in requested model are one identity when no model was observed: the second of each collapses.
+    for (const [id, terminal] of [["json-a", "completed"], ["json-b", "collapsed"], ["stderr-a", "completed"], ["stderr-b", "collapsed"]]) {
+      expect(runs.get(id)).toMatchObject({ terminal, limitations: ["model_unverified"], identity: { model: `model-${id}`, modelVerified: false } });
+    }
+    // A model the run reports verifies the identity.
+    expect(runs.get("seen")).toMatchObject({ terminal: "completed", identity: { model: "model-seen" } });
+    expect(runs.get("seen")).not.toHaveProperty("limitations");
+    expect(runs.get("seen")!.identity).not.toHaveProperty("modelVerified");
+    await expectValid(result, setup, panelPolicy);
+  });
+
   it("runs the panel policy it was given, whatever the caller changes during the run", async () => {
     const unreported = { argv: ["--model", "{model}"], promptVia: "stdin" as const, outputVia: "stdout-last-json" as const, envAllowlist: [], modelReport: "none", capabilities: { structuredOutput: false, sandbox: "tree-verified-only" as const } };
     const cli = new FakePanelHarness({ id: "cli" });
