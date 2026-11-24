@@ -460,7 +460,7 @@ class OperationConverter {
       ...(required.length > 0 ? { required } : {}),
       additionalProperties: false,
     };
-    const definitions = this.schemas.definitions(refs, "input", root);
+    const definitions = this.schemas.definitions(refs, "input");
     return this.toolSchema("input", root, definitions, () => root)!;
   }
 
@@ -491,16 +491,18 @@ class OperationConverter {
     definitions: Record<string, McpFnJsonSchema | boolean>,
     finish: () => McpFnObjectSchema | undefined,
   ): McpFnObjectSchema | undefined {
-    // Each tool holding a closure is charged for it, shared or not.
-    this.schemas.chargeEmitted(definitions);
     const produce = () => {
       const schema = finish();
       if (schema === undefined) return undefined;
-      return treeCopy(Object.keys(definitions).length > 0 ? { ...schema, definitions } : schema, this.schemas.copyBudget());
+      if (Object.keys(definitions).length === 0) return treeCopy(schema, this.schemas.rootCopyBudget());
+      // The root first, so a root that fails to copy is charged nothing for the definitions it holds;
+      // the definitions, converted once per call, are charged to every tool copying them as they are read.
+      const rest = treeCopy(Object.fromEntries(Object.entries(schema).filter(([key]) => key !== "definitions")), this.schemas.rootCopyBudget()) as McpFnObjectSchema;
+      return { ...rest, definitions: treeCopy(definitions, this.schemas.copyBudget()) };
     };
     if (!this.shareSchemas) return produce();
     const values = { json: true, chars: 0 };
-    const key = contentKey(kind, treeCopy(root, this.schemas.copyBudget(), values), values, definitions);
+    const key = contentKey(kind, treeCopy(root, this.schemas.rootCopyBudget(), values), values, definitions);
     if (key !== undefined && this.shared.has(key)) return this.shared.get(key);
     const result = produce();
     if (key !== undefined) this.shared.set(key, result && deepFreeze(result));
@@ -545,7 +547,7 @@ class OperationConverter {
     }
     const refs = new Set<string>();
     const root = this.schemas.convertRoot(schema, "output", refs);
-    const definitions = this.schemas.definitions(refs, "output", root);
+    const definitions = this.schemas.definitions(refs, "output");
     // An output that cannot be projected soundly skips the operation, so no
     // tool returns structured content its schema would not have checked.
     this.assertProjectable(schema, "output", "response");
@@ -588,7 +590,7 @@ class OperationConverter {
       try {
         const refs = new Set<string>();
         const root = this.schemas.convertRoot(schema, "plain", refs);
-        verdict = this.compileVerdict(root, this.schemas.definitions(refs, "plain", root), "plain");
+        verdict = this.compileVerdict(root, this.schemas.definitions(refs, "plain"), "plain");
       } catch (error) {
         if (isObject(schema) && error instanceof OpenApiSkip && CONTEXT_FREE_FAILURES.has(error.code)) this.checkedAsWritten.set(schema, error);
         throw error;
@@ -609,7 +611,7 @@ class OperationConverter {
     mode: "plain" | "input" | "output",
   ): string | null {
     if (!isObject(root)) return null;
-    const budget = this.schemas.copyBudget(true);
+    const budget = this.schemas.copyBudget();
     const values = { json: true, chars: 0 };
     const copy = treeCopy(root, budget, values);
     // Definitions with the same names differ between modes. The key holds
@@ -644,7 +646,7 @@ class OperationConverter {
   private assertBodyCompiles(schema: unknown, converted: McpFnJsonSchema | boolean, refs: ReadonlySet<string>): void {
     let verdict = isObject(schema) ? this.bodyVerdicts.get(schema) : undefined;
     if (verdict === undefined) {
-      verdict = this.compileVerdict(converted, this.schemas.definitions(refs, "input", converted), "input");
+      verdict = this.compileVerdict(converted, this.schemas.definitions(refs, "input"), "input");
       if (isObject(schema)) this.bodyVerdicts.set(schema, verdict);
     }
     throwIfInvalid(verdict, "request body");
@@ -718,7 +720,7 @@ class OperationConverter {
     // unresolved or cyclic references) take precedence over the shape check.
     const refs = new Set<string>();
     const converted = this.schemas.convertRoot(raw.schema, "input", refs);
-    this.schemas.checkDefinitions(refs, "input", converted);
+    this.schemas.checkDefinitions(refs, "input");
     this.assertProjectable(raw.schema, "input", `parameter ${name}`);
     const shape = this.parameterShape(name, location, raw.schema);
     if (location === "query" && shape === "array" && !explode) {

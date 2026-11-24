@@ -178,21 +178,21 @@ for (const { operation, code, reason } of skipped) {
   (`unsupported-dialect`), boolean schemas included; a schema root that names
   a supported `$schema` itself is read in it, and a JSON body without
   `schema` declares none, so it accepts any JSON value in any dialect. A 3.1
-  `dependencies` keyword is ignored, since 2020-12 defines none. A schema that would expand to more
-  than 100,000 nodes, or that repeats objects the document shares between
-  positions into more than four times the values they hold, is skipped
-  (`schema-too-large`), and so is every schema converted after one call's
-  conversions have produced 1,000,000 nodes plus 64 per value of the
-  document (each tool's own copy of its schemas does not count, but the
-  referenced component schemas it holds do, once per tool; a copy made
-  to check a schema does). A schema compiled only to be checked (a `HEAD` or
-  non-object response, or one with properties to leave out) is compiled once
-  per distinct schema. A schema nested too deeply to walk or compile (a
-  validator's stack overflow included), or a chain of applied references
-  more than 150 component schemas deep (`allOf: [{ $ref }]` links and
-  property or item schemas alike, entering each schema once as a validator
-  compiling them does, in document order; a `$defs` entry nothing applies
-  does not count), is skipped the same way. A Swagger 2.0 document throws.
+  `dependencies` keyword is ignored, since 2020-12 defines none. One budget bounds all of one call's work: once
+  its conversions and copies have produced 1,000,000 nodes plus 64 per value
+  of the document, every schema converted after that is skipped
+  (`schema-too-large`). Each tool's copy of the referenced component schemas
+  it holds is charged, by the values it reads, as it is made; a copy made to
+  check a schema is charged too, and a copy that fails is charged only for
+  what it read. No schema has a size or depth limit of its own: a schema that
+  repeats objects the document shares between positions into more than four
+  times the values they hold is skipped (`schema-too-large`), and a schema
+  nested or referencing too deeply for the converter or the registry's
+  validator to compile (a stack overflow) is skipped the same way. Near the
+  validator's own limit, that verdict is the validator's. A schema compiled
+  only to be checked (a `HEAD` or non-object response, or one with
+  properties to leave out) is compiled once per distinct schema. A Swagger
+  2.0 document throws.
 - **Catalog.** `tools` holds copies of the registered schemas, so changing
   them changes neither what the registry lists nor what it validates. In a
   registry `fromOpenAPI` creates, tools with identical schemas register one

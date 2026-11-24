@@ -2073,7 +2073,7 @@ describe("fromOpenAPI body fallback, synchronous schemas, per-kind alternatives 
     expect(none.skipped.map(({ code, reason }) => [code, reason])).toEqual([["invalid-schema", "a schema is not an object"]]);
   });
 
-  it("checks each request body entry within its own node budget and converts the chosen one once", () => {
+  it("checks each request body entry with no size limit of its own and converts the chosen one once", () => {
     const large = (count: number) => ({
       type: "object",
       $defs: Object.fromEntries(Array.from({ length: count }, (_, index) => [`d${index}`, {}])),
@@ -2083,16 +2083,16 @@ describe("fromOpenAPI body fallback, synchronous schemas, per-kind alternatives 
         { openapi: "3.1.0", paths: { "/m": { patch: { operationId: "m", requestBody: { content }, responses: ok } } } },
         options(),
       );
-    // More than half the per-schema budget: checking and building the input must not count it twice.
+    // A large preferred entry: checking and building the input must not count it twice.
     const half = convertBody({ "application/json": { schema: large(51_000) }, "application/example+json": { schema: { type: "string" } } });
     expect(half.skipped).toEqual([]);
     expect(tool(half.tools, "m").operation.requestBody?.contentType).toBe("application/json");
-    // Over the budget on its own: the next entry still gets its full share.
+    // Past what one schema could once produce: a schema validators compile is kept; only the document's total bounds it.
     const over = convertBody({ "application/json": { schema: large(100_001) }, "application/example+json": { schema: { type: "string" } } });
     expect(over.skipped).toEqual([]);
-    expect(tool(over.tools, "m").operation.requestBody?.contentType).toBe("application/example+json");
-    expectArguments(tool(over.tools, "m").inputSchema, { valid: [{ body: "x" }], invalid: [{ body: 1 }] });
-  });
+    expect(tool(over.tools, "m").operation.requestBody?.contentType).toBe("application/json");
+    expectArguments(tool(over.tools, "m").inputSchema, { valid: [{ body: {} }], invalid: [{ body: "x" }] });
+  }, 60_000);
 
   it("converts the parameters once however many request body entries it tries", () => {
     const filter = {
@@ -2557,7 +2557,7 @@ describe("fromOpenAPI body fallback, synchronous schemas, per-kind alternatives 
     }
   };
 
-  it("refuses a too-long reference chain once per call, whatever the stack left to walk it", () => {
+  it("skips a chain validators cannot compile, whatever the stack left, and bounds many operations reaching it by the document total", () => {
     const depth = 20_000;
     const build = (operations: number) => {
       const schemas: Record<string, unknown> = {};
@@ -2575,25 +2575,27 @@ describe("fromOpenAPI body fallback, synchronous schemas, per-kind alternatives 
     const outcome = (result: Result) => [registered(result), [...new Set(result.skipped.map(({ code, reason }) => `${code}: ${reason}`))]];
     // Schema objects whose kinds are read: the chain once per call, plus each operation's own root.
     const [single, once] = countCalls("kindsTerms", () => outcome(fromOpenAPI(build(1), options())));
-    const [repeated, walked] = countCalls("kindsTerms", () => outcome(fromOpenAPI(build(1000), options())));
+    const [repeated, walked] = countCalls("kindsTerms", () => outcome(fromOpenAPI(build(200), options())));
     expect(single).toEqual([[["ok", false], ["short", true]], ["schema-too-large: a schema or reference chain nests too deeply"]]);
-    expect(repeated).toEqual(single);
+    // Each tool copies the 20,000-definition closure: once the document's total is spent, the rest are skipped for it.
+    expect(repeated[0]).toContainEqual(["ok", false]);
+    for (const reason of repeated[1] as string[]) expect(reason).toMatch(/^schema-too-large: (a schema or reference chain nests too deeply|the document's schemas expand in total to more than \d+ nodes)$/);
     expect(once).toBeGreaterThan(depth);
-    expect(walked).toBeLessThanOrEqual(once + 2 * 1000);
+    expect(walked).toBeLessThanOrEqual(once + 2 * 200);
     // Run with thousands of frames already on the stack: the same result.
     const nested = (frames: number): ReturnType<typeof outcome> =>
       frames === 0 ? outcome(fromOpenAPI(build(10), options())) : nested(frames - 1);
     expect(nested(3000)).toEqual(single);
   }, 60_000);
 
-  it("refuses reference chains past 150 definitions for every root, after the closure's own failures, and keeps chains validators compile", () => {
+  it("keeps reference chains validators compile past 150 definitions for every root, after the closure's own failures", () => {
     const chain = (length: number) => {
       const schemas: Record<string, unknown> = {};
       for (let index = 0; index < length - 1; index += 1) schemas[`T${index}`] = { allOf: [{ $ref: `#/components/schemas/T${index + 1}` }] };
       schemas[`T${length - 1}`] = { type: "object", properties: { n: { type: "integer" } }, required: ["n"] };
       return schemas;
     };
-    // 100 operations, each through its own one-link wrapper around one 200-link tail.
+    // 10 operations, each through its own one-link wrapper around one 155-link tail (validators compile 160 cold).
     const document = (length: number, operations: number) => {
       const schemas = chain(length);
       const paths: Record<string, unknown> = {};
@@ -2604,10 +2606,10 @@ describe("fromOpenAPI body fallback, synchronous schemas, per-kind alternatives 
       paths["/short"] = { get: { operationId: "short", responses: json({ $ref: `#/components/schemas/T${length - 5}` }) } };
       return { openapi: "3.0.3", paths, components: { schemas } };
     };
-    const result = fromOpenAPI(document(200, 100), options());
-    expect(registered(result)).toEqual([["short", true]]);
-    expect(new Set(result.skipped.map(({ code, reason }) => `${code}: ${reason}`))).toEqual(new Set(["schema-too-large: a schema or reference chain nests too deeply"]));
-    expect(result.skipped).toHaveLength(100);
+    const result = fromOpenAPI(document(155, 10), options());
+    expect(result.skipped).toEqual([]);
+    expect(registered(result)).toEqual([...Array.from({ length: 10 }, (_, index): [string, boolean] => [`w${index}`, true]), ["short", true]]);
+    expectArguments(tool(result.tools, "w9").outputSchema!, { valid: [{ n: 1 }], invalid: [{ n: "x" }] });
     // A closure's own failing component is reported, and nothing past it is
     // converted first (so its conversions cannot exhaust the call's budget).
     const [isolated, converted] = countCalls("convertedComponent", () =>
@@ -2632,8 +2634,8 @@ describe("fromOpenAPI body fallback, synchronous schemas, per-kind alternatives 
     expect(registered(isolated)).toEqual([["get", true]]);
     expect(isolated.skipped.map(({ code }) => code)).toEqual(["unsupported-schema-keyword"]);
     expect(converted).toBeLessThan(10);
-    // Chains of up to 150 definitions register as a response, a HEAD response, a body and a query parameter, under both engines.
-    for (const length of [65, 129, 150]) {
+    // Chains of up to 155 definitions register as a response, a HEAD response, a body and a query parameter, under both engines.
+    for (const length of [65, 150, 155]) {
       const schemas = { ...chain(length), Q: { allOf: [{ $ref: "#/components/schemas/T0" }] } };
       const ref = { $ref: "#/components/schemas/T0" };
       const valid = fromOpenAPI(
@@ -2669,9 +2671,9 @@ describe("fromOpenAPI body fallback, synchronous schemas, per-kind alternatives 
     }
   }, 60_000);
 
-  it("counts only applied references toward the depth bound, in place or through properties, never an unused $defs entry", () => {
-    const schemas: Record<string, unknown> = { T199: { type: "object" }, P199: { type: "object" }, U149: { type: "object", properties: { n: { type: "integer" } }, required: ["n"] } };
-    for (let index = 0; index < 199; index += 1) {
+  it("keeps applied chains validators compile, in place or through properties, and an unused $defs entry", () => {
+    const schemas: Record<string, unknown> = { T154: { type: "object" }, P154: { type: "object" }, U149: { type: "object", properties: { n: { type: "integer" } }, required: ["n"] } };
+    for (let index = 0; index < 154; index += 1) {
       schemas[`T${index}`] = { allOf: [{ $ref: `#/components/schemas/T${index + 1}` }] };
       schemas[`P${index}`] = { type: "object", properties: { next: { $ref: `#/components/schemas/P${index + 1}` } } };
     }
@@ -2702,11 +2704,9 @@ describe("fromOpenAPI body fallback, synchronous schemas, per-kind alternatives 
       },
       options(),
     );
-    expect(registered(result)).toEqual([["unused", true], ["body", false]]);
-    expect(skips(result)).toEqual([
-      ["inPlace", "schema-too-large", "a schema or reference chain nests too deeply"],
-      ["property", "schema-too-large", "a schema or reference chain nests too deeply"],
-    ]);
+    expect(result.skipped).toEqual([]);
+    expect(registered(result)).toEqual([["unused", true], ["inPlace", true], ["property", true], ["body", false]]);
+    expectArguments(tool(result.tools, "property").outputSchema!, { valid: [{ next: { next: {} } }], invalid: [{ next: 1 }] });
     expectArguments(tool(result.tools, "unused").outputSchema!, { valid: [{ a: "x" }], invalid: [{ a: 1 }] });
     // The preferred entry's 150-definition chain compiles, so it stays selected.
     const body = tool(result.tools, "body");
@@ -2730,13 +2730,14 @@ describe("fromOpenAPI body fallback, synchronous schemas, per-kind alternatives 
       (next: string) => ({ allOf: [{ $ref: next }] }),
       (next: string) => ({ type: "object", properties: { next: { $ref: next } } }),
     ];
+    // Registration compiles each schema; that cost is the registry's, so it is left out here.
+    const uncompiled = { register: () => undefined, has: () => false } as unknown as McpFnRegistry;
     for (const link of links) {
-      const [result, reads] = countCalls("convertedComponent", () => fromOpenAPI(build(500, link), options()));
-      expect(registered(result)).toEqual([["ok", false]]);
-      expect(new Set(skips(result).map(([, code, reason]) => `${code}: ${reason}`))).toEqual(new Set(["schema-too-large: a schema or reference chain nests too deeply"]));
-      expect(result.skipped).toHaveLength(500);
+      const [result, reads] = countCalls("convertedComponent", () => fromOpenAPI(build(100, link), { ...options(), registry: uncompiled }));
+      expect(result.skipped).toEqual([]);
+      expect(result.tools).toHaveLength(101);
       // The tail once, plus each wrapper's own component.
-      expect(reads).toBeLessThanOrEqual(1000 + 2 * 500);
+      expect(reads).toBeLessThanOrEqual(1000 + 2 * 100);
     }
     // A tail that fails is walked again by each wrapper, and each walk is charged to the call's total.
     const charged = vi.spyOn(NodeBudget.prototype, "chargeNodes");
@@ -2752,24 +2753,27 @@ describe("fromOpenAPI body fallback, synchronous schemas, per-kind alternatives 
     }
   }, 60_000);
 
-  it("charges every tool's closure to the call's total, shared closures included", () => {
-    const charged = vi.spyOn(NodeBudget.prototype, "chargeNodes");
-    try {
-      const values = Array.from({ length: 50 }, (_, index) => `v${index}`);
-      const schemas = { Item: { type: "object", properties: { a: { type: "string", enum: values }, b: { type: "integer" } } } };
-      const ref = { $ref: "#/components/schemas/Item" };
-      const paths: Record<string, unknown> = {};
-      for (let index = 0; index < 5; index += 1) paths[`/g${index}`] = { get: { operationId: `g${index}`, responses: json(ref) } };
-      const result = fromOpenAPI({ openapi: "3.0.3", paths, components: { schemas } }, options());
-      expect(result.skipped).toEqual([]);
-      const counts = charged.mock.calls.map(([count]) => count);
-      expect(counts).toHaveLength(5);
-      expect(new Set(counts).size).toBe(1);
-      // Literal payloads count: the enum's values are copied into every tool.
-      expect(counts[0]).toBeGreaterThan(values.length);
-    } finally {
-      charged.mockRestore();
-    }
+  it("charges every copy of a closure to the call's total as it is made, literals included", () => {
+    const values = Array.from({ length: 50 }, (_, index) => `v${index}`);
+    const schemas = { Item: { type: "object", properties: { a: { type: "string", enum: values }, b: { type: "integer" } } } };
+    const charge = (operations: number, registry?: McpFnRegistry) => {
+      const charged = vi.spyOn(NodeBudget.prototype, "chargeNodes");
+      try {
+        const paths: Record<string, unknown> = {};
+        for (let index = 0; index < operations; index += 1) paths[`/g${index}`] = { get: { operationId: `g${index}`, responses: json({ $ref: "#/components/schemas/Item" }) } };
+        const result = fromOpenAPI({ openapi: "3.0.3", paths, components: { schemas } }, { ...options(), ...(registry ? { registry } : {}) });
+        expect(result.skipped).toEqual([]);
+        expect(result.tools).toHaveLength(operations);
+        return charged.mock.calls.reduce((sum, [count]) => sum + count, 0);
+      } finally {
+        charged.mockRestore();
+      }
+    };
+    // Fresh copies per tool: each copy of the closure is charged, the enum's values included.
+    const fresh = () => ({ register: () => undefined, has: () => false }) as unknown as McpFnRegistry;
+    expect(charge(10, fresh()) - charge(5, fresh())).toBeGreaterThan(5 * values.length);
+    // Tools with identical schemas share one copy: the closure is copied, and charged, once.
+    expect(charge(10) - charge(5)).toBeLessThan(values.length);
     // A parameter that fails its shape check never emits the closure it was checked with.
     const parameters = Array.from({ length: 20 }, (_, index) => ({ name: `p${index}`, in: "query", schema: { $ref: `#/components/schemas/Q${index}` } }));
     const wrappers = Object.fromEntries(parameters.map((_, index) => [`Q${index}`, { allOf: [{ $ref: "#/components/schemas/Shape" }] }]));
@@ -2826,15 +2830,15 @@ describe("fromOpenAPI body fallback, synchronous schemas, per-kind alternatives 
     }
   });
 
-  it("bounds how deep compiling nests, not how many definitions reach each other", () => {
-    // A hub whose 150 children each refer back to it nests two deep; a ring of 151 nests 151 deep.
+  it("compiles a hub many definitions reach and a ring of references, with no bound of its own on either", () => {
+    // A hub whose 150 children each refer back to it nests two deep; a ring of 100 nests 100 deep.
     const schemas: Record<string, unknown> = { Hub: { type: "object", properties: {} as Record<string, unknown> } };
     for (let index = 0; index < 150; index += 1) {
       (schemas.Hub as { properties: Record<string, unknown> }).properties[`c${index}`] = { $ref: `#/components/schemas/C${index}` };
       schemas[`C${index}`] = { type: "object", properties: { n: { type: "integer" }, parent: { $ref: "#/components/schemas/Hub" } } };
-      schemas[`R${index}`] = { type: "object", properties: { next: { $ref: `#/components/schemas/R${index + 1}` } } };
+      if (index < 99) schemas[`R${index}`] = { type: "object", properties: { next: { $ref: `#/components/schemas/R${index + 1}` } } };
     }
-    schemas.R150 = { type: "object", properties: { next: { $ref: "#/components/schemas/R0" } } };
+    schemas.R99 = { type: "object", properties: { next: { $ref: "#/components/schemas/R0" } } };
     const hub = { $ref: "#/components/schemas/Hub" };
     const result = fromOpenAPI(
       {
@@ -2851,8 +2855,9 @@ describe("fromOpenAPI body fallback, synchronous schemas, per-kind alternatives 
       },
       options(),
     );
-    expect(registered(result)).toEqual([["hub", true], ["hubHead", false], ["hubBody", false]]);
-    expect(skips(result)).toEqual([["ring", "schema-too-large", "a schema or reference chain nests too deeply"]]);
+    expect(result.skipped).toEqual([]);
+    expect(registered(result)).toEqual([["hub", true], ["hubHead", false], ["hubBody", false], ["ring", true]]);
+    expectArguments(tool(result.tools, "ring").outputSchema!, { valid: [{ next: { next: {} } }], invalid: [{ next: { next: 1 } }] });
     expect(tool(result.tools, "hubBody").operation.requestBody?.contentType).toBe("application/json");
     expectArguments(tool(result.tools, "hub").outputSchema!, { valid: [{ c0: { n: 1, parent: { c1: { n: 2 } } } }], invalid: [{ c0: { n: "x" } }] });
     expectArguments(tool(result.tools, "hubBody").inputSchema, { valid: [{ body: { c3: { n: 1 } } }], invalid: [{ body: { c3: { parent: { c4: { n: "x" } } } } }] });
@@ -2949,11 +2954,81 @@ describe("fromOpenAPI body fallback, synchronous schemas, per-kind alternatives 
     expect(skips(result).map(([name, code]) => [name, code])).toEqual([["shared", "schema-too-large"]]);
   });
 
+  it("registers a 151-definition chain whatever order its keywords are written in, and a chain behind a lone if", () => {
+    const ref = (name: string) => ({ $ref: `#/components/schemas/${name}` });
+    const schemas: Record<string, unknown> = { P150: { type: "object" }, I150: { type: "object" } };
+    for (let index = 0; index < 150; index += 1) {
+      schemas[`P${index}`] = { type: "object", properties: { next: ref(`P${index + 1}`) } };
+      // `if` without then/else asserts nothing, so validators that read it still accept every value it admits.
+      schemas[`I${index}`] = { type: "object", if: ref(`I${index + 1}`) };
+    }
+    const members = Array.from({ length: 151 }, (_, index) => ref(`P${150 - index}`));
+    const propertiesFirst = { type: "object", properties: { head: ref("P0") }, allOf: members };
+    const allOfFirst = { allOf: members, type: "object", properties: { head: ref("P0") } };
+    for (const openapi of ["3.0.3", "3.1.0"]) {
+      const result = fromOpenAPI(
+        {
+          openapi,
+          paths: {
+            "/a": { get: { operationId: "propertiesFirst", responses: json(propertiesFirst) } },
+            "/b": { get: { operationId: "allOfFirst", responses: json(allOfFirst) } },
+            "/i": { get: { operationId: "loneIf", responses: json(ref("I0")) } },
+          },
+          components: { schemas },
+        },
+        options(),
+      );
+      expect(result.skipped).toEqual([]);
+      expect(registered(result)).toEqual([["propertiesFirst", true], ["allOfFirst", true], ["loneIf", true]]);
+      for (const name of ["propertiesFirst", "allOfFirst"]) {
+        expectArguments(tool(result.tools, name).outputSchema!, { valid: [{ head: { next: {} } }], invalid: [{ head: 1 }, { head: { next: 1 } }] });
+      }
+      expectArguments(tool(result.tools, "loneIf").outputSchema!, { valid: [{}], invalid: [] });
+    }
+  }, 60_000);
+
+  it("charges a rejected candidate only for what it copied, so valid siblings still fit the document's total", () => {
+    let shared: unknown = { leaf: true };
+    for (let level = 0; level < 24; level += 1) shared = { a: shared, b: shared };
+    const big = { type: "object", properties: Object.fromEntries(Array.from({ length: 30_000 }, (_, index) => [`f${index}`, { type: "string" }])) };
+    const paths: Record<string, unknown> = {};
+    // Each root's own copy fails on its default before it reaches Big's 30,000-property closure.
+    for (let index = 0; index < 120; index += 1) {
+      paths[`/bad${index}`] = { get: { operationId: `bad${index}`, responses: json({ type: "object", default: shared, allOf: [{ $ref: "#/components/schemas/Big" }] }) } };
+    }
+    paths["/ok"] = { get: { operationId: "ok", responses: json({ $ref: "#/components/schemas/Small" }) } };
+    const result = fromOpenAPI(
+      { openapi: "3.1.0", paths, components: { schemas: { Big: big, Small: { type: "object", properties: { a: { type: "string" } } } } } },
+      options(),
+    );
+    expect(registered(result)).toEqual([["ok", true]]);
+    expect(result.skipped).toHaveLength(120);
+    for (const entry of result.skipped) expect(entry.reason).toMatch(/^a schema repeats shared objects into \d+ nodes from \d+ source values$/);
+    expectArguments(tool(result.tools, "ok").outputSchema!, { valid: [{ a: "x" }], invalid: [{ a: 1 }] });
+  }, 60_000);
+
+  it("never measures a literal many components share once per component, and stops a closure repeating it while copying", () => {
+    const literal = Array.from({ length: 5000 }, (_, index) => `v${index}`);
+    const schemas: Record<string, unknown> = {};
+    for (let index = 0; index < 200; index += 1) schemas[`L${index}`] = { type: "object", default: literal };
+    const root = { allOf: Object.keys(schemas).map((name) => ({ $ref: `#/components/schemas/${name}` })) };
+    const values = vi.spyOn(Object, "values");
+    try {
+      const result = fromOpenAPI({ openapi: "3.1.0", paths: { "/l": { get: { operationId: "l", responses: json(root) } } }, components: { schemas } }, options());
+      expect(skips(result).map(([name, code]) => [name, code])).toEqual([["l", "schema-too-large"]]);
+      // The literal (copied by the conversion, so matched by shape) is read by the copy alone, never measured again per component.
+      expect(values.mock.calls.filter(([value]) => Array.isArray(value) && value.length === literal.length)).toHaveLength(0);
+    } finally {
+      values.mockRestore();
+    }
+  });
+
   it("gives a shallow root the same result whether or not a deeper root sharing its chain came first", () => {
-    const schemas: Record<string, unknown> = { C199: { type: "object" } };
-    for (let index = 0; index < 199; index += 1) schemas[`C${index}`] = { allOf: [{ $ref: `#/components/schemas/C${index + 1}` }] };
+    // 5,000 links: past what validators compile however warm they are.
+    const schemas: Record<string, unknown> = { C4999: { type: "object" } };
+    for (let index = 0; index < 4999; index += 1) schemas[`C${index}`] = { allOf: [{ $ref: `#/components/schemas/C${index + 1}` }] };
     const deep = { get: { operationId: "deep", responses: json({ $ref: "#/components/schemas/C0" }) } };
-    const shallow = { get: { operationId: "shallow", responses: json({ $ref: "#/components/schemas/C190" }) } };
+    const shallow = { get: { operationId: "shallow", responses: json({ $ref: "#/components/schemas/C4990" }) } };
     const run = (first: string) =>
       fromOpenAPI({ openapi: "3.1.0", paths: first === "deep" ? { "/d": deep, "/s": shallow } : { "/s": shallow, "/d": deep }, components: { schemas } }, options());
     for (const first of ["deep", "shallow"]) {
@@ -3098,7 +3173,9 @@ describe("fromOpenAPI body fallback, synchronous schemas, per-kind alternatives 
 
   it("does not remember a budget skip inside a shared schema for operations where it fits", () => {
     const small = { type: "object", properties: Object.fromEntries(Array.from({ length: 20 }, (_, index) => [`s${index}`, { type: "string" }])) };
-    const big = { type: "object", properties: Object.fromEntries(Array.from({ length: 99_990 }, (_, index) => [`b${index}`, true])) };
+    let shared: unknown = { leaf: true };
+    for (let level = 0; level < 22; level += 1) shared = { left: shared, right: shared };
+    const big = { type: "object", default: shared };
     const post = (operationId: string, schema: unknown) => ({ post: { operationId, requestBody: { content: { "application/json": { schema } } }, responses: ok } });
     const result = fromOpenAPI(
       { openapi: "3.1.0", paths: { "/full": post("full", { allOf: [big, small] }), "/fits": post("fits", { allOf: [small] }) } },
@@ -3122,14 +3199,14 @@ describe("fromOpenAPI body fallback, synchronous schemas, per-kind alternatives 
     const many = fromOpenAPI({ openapi: "3.1.0", paths }, options());
     expect(many.skipped).toEqual([]);
     expect(new Set(contentTypes(many).map(([, type]) => type))).toEqual(new Set(["application/json"]));
-    // A preferred body that fits alone but not beside the parameters, or nests too deeply to walk, gives way to the next entry.
+    // A preferred body that nests too deeply to compile gives way to the next entry.
     const aliases: Record<string, unknown> = { Leaf: { type: "object" } };
-    for (let index = 0; index < 20_000; index += 1) {
+    for (let index = 0; index < 5000; index += 1) {
       aliases[`Alias${index}`] = { $ref: `#/components/schemas/${index === 0 ? "Leaf" : `Alias${index - 1}`}` };
     }
-    aliases.Holder = { type: "object", properties: { deep: { $ref: "#/components/schemas/Alias19999" } } };
-    const large = { type: "object", $defs: Object.fromEntries(Array.from({ length: 80_000 }, (_, index) => [`d${index}`, {}])) };
-    const parameters = [{ name: "q", in: "query", schema: { type: "string", enum: Array.from({ length: 25_000 }, (_, index) => `v${index}`) } }];
+    aliases.Holder = { type: "object", properties: { deep: { $ref: "#/components/schemas/Alias4999" } } };
+    const large = { type: "object", $defs: Object.fromEntries(Array.from({ length: 20_000 }, (_, index) => [`d${index}`, {}])) };
+    const parameters = [{ name: "q", in: "query", schema: { type: "string", enum: Array.from({ length: 5000 }, (_, index) => `v${index}`) } }];
     const result = fromOpenAPI(
       {
         openapi: "3.1.0",
@@ -3142,8 +3219,9 @@ describe("fromOpenAPI body fallback, synchronous schemas, per-kind alternatives 
       },
       options(),
     );
-    expect(contentTypes(result)).toEqual([["combined", "application/example+json"], ["deep", "application/example+json"]]);
-    expectArguments(tool(result.tools, "combined").inputSchema, { valid: [{ query: { q: "v1" }, body: "x" }], invalid: [{ body: 1 }, { query: { q: "w" } }] });
+    // The large preferred entry beside the parameters is kept: no schema has a size limit of its own.
+    expect(contentTypes(result)).toEqual([["combined", "application/json"], ["deep", "application/example+json"]]);
+    expectArguments(tool(result.tools, "combined").inputSchema, { valid: [{ query: { q: "v1" }, body: {} }], invalid: [{ body: "x" }, { query: { q: "w" } }] });
     expect(result.skipped.map(({ code, reason }) => [code, reason])).toEqual([["schema-too-large", "a schema or reference chain nests too deeply"]]);
   }, 60_000);
 

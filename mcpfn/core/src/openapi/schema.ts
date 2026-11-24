@@ -109,19 +109,16 @@ const SUPPORTED_DIALECTS = new Set([
 ]);
 
 /**
- * Schema nodes one operation's input, one operation's output or one
- * component may produce, counted while converting and while copying. A
- * parsed document can share one object between many schema positions, so
- * the produced tree can be exponentially larger than the document.
- */
-export const MAX_SCHEMA_NODES = 100_000;
-
-/**
- * Schema nodes all of one `fromOpenAPI` call's conversions may produce: a
- * floor plus a multiple of the document's own size, so a document that shares
- * one schema object between many operations cannot multiply the work.
- * Copies made to check a schema are charged to it too; each tool's own copy
- * of its schemas is not (see `copyBudget`).
+ * Schema nodes one `fromOpenAPI` call may produce, the one budget of all its
+ * work: a floor plus a multiple of the document's own size, so a document
+ * that shares one schema object between many operations cannot multiply the
+ * work. Every conversion (node by node) and every copy (each tool's copy of
+ * the referenced component schemas it holds and copies made to check a
+ * schema, by the source values it reads) is charged while it is made, so
+ * work stops where the budget runs out and a copy that fails is charged only
+ * for what it read. A tool's copy of its own root is bounded by the charged
+ * conversion of that root (`rootCopyBudget`).
+ * No single schema has a fixed size or depth limit of its own.
  */
 const DOCUMENT_NODE_FLOOR = 1_000_000;
 const DOCUMENT_NODE_FACTOR = 64;
@@ -158,6 +155,8 @@ export const CONTEXT_FREE_FAILURES: ReadonlySet<OpenApiSkipCode> = new Set<OpenA
 export class NodeBudget {
   private produced = 0;
   private sourceValues = 0;
+  /** Set on a copy's budget: it charges its total by the distinct values it reads, not by the nodes it produces. */
+  private chargesSource = false;
   /** Objects whose own values are already counted, each once by identity. */
   private readonly credited = new WeakSet<object>();
   /**
@@ -170,7 +169,7 @@ export class NodeBudget {
   private readonly call: { keys: WeakMap<object, readonly string[]>; circular: WeakSet<object> };
 
   constructor(
-    private readonly limit = MAX_SCHEMA_NODES,
+    private readonly limit = Number.POSITIVE_INFINITY,
     private readonly total?: NodeBudget,
     private readonly subject = REGION,
     call?: NodeBudget["call"],
@@ -178,9 +177,14 @@ export class NodeBudget {
     this.call = call ?? total?.call ?? { keys: new WeakMap(), circular: new WeakSet() };
   }
 
-  /** A budget with only its own limits that shares what this call learnt. */
+  /**
+   * A budget with only its own sharing check, charged to no total, that
+   * shares what this call learnt: for a tool's own copy of a root whose
+   * conversion was charged node by node (the check bounds the copy by a
+   * constant factor of what it reads).
+   */
   uncharged(): NodeBudget {
-    return new NodeBudget(MAX_SCHEMA_NODES, undefined, REGION, this.call);
+    return new NodeBudget(Number.POSITIVE_INFINITY, undefined, REGION, this.call);
   }
 
   /** The own enumerable keys of `value` (an array's indices without its holes), listed once per call. */
@@ -209,9 +213,26 @@ export class NodeBudget {
     return new NodeBudget(limit, undefined, "the document's schemas expand in total", call);
   }
 
-  /** A budget for one input, output or component conversion, also charged to this one. */
+  /**
+   * A budget for one conversion or copy, charged to this one. Its own check
+   * is relative: it may not repeat objects the document shares into many
+   * times the values they hold (see SHARING_FACTOR).
+   */
   child(): NodeBudget {
-    return new NodeBudget(MAX_SCHEMA_NODES, this);
+    return new NodeBudget(Number.POSITIVE_INFINITY, this);
+  }
+
+  /**
+   * A budget for one copy, charged to this one by the values of each source
+   * object as the copy first reads it (an object shared between positions
+   * once). Its own sharing check bounds the nodes it may produce from them,
+   * so the work is bounded by the charge, and a copy that fails is charged
+   * only for what it read.
+   */
+  copy(): NodeBudget {
+    const budget = new NodeBudget(Number.POSITIVE_INFINITY, this);
+    budget.chargesSource = true;
+    return budget;
   }
 
   /** Nodes produced so far. */
@@ -230,7 +251,7 @@ export class NodeBudget {
 
   /** Charge one produced node read from `value`. */
   charge(value?: unknown): void {
-    this.total?.charge();
+    if (!this.chargesSource) this.total?.charge();
     this.produced += 1;
     if (typeof value === "object" && value !== null) this.source(value);
     if (this.produced > this.limit) {
@@ -254,7 +275,9 @@ export class NodeBudget {
     if (this.credited.has(value)) return;
     this.credited.add(value);
     // Own keys, not length: the holes of a sparse array are not source values.
-    this.sourceValues += 1 + this.ownKeys(value).length;
+    const values = 1 + this.ownKeys(value).length;
+    this.sourceValues += values;
+    if (this.chargesSource) this.total?.chargeNodes(values);
   }
 
   /** Mark `value`, built by the conversion from source already counted, as counted. */
@@ -361,10 +384,6 @@ interface ConvertedComponent {
   refs?: Set<string>;
   /** Definitions this one validates the same instance against (allOf/anyOf/oneOf/not/if/then/else/dependencies). */
   inPlace?: Set<string>;
-  /** Definitions this one applies, in place or to a child value: every reference outside its declaration maps. */
-  applied?: Set<string>;
-  /** Nodes the conversion produced. */
-  nodes?: number;
   error?: OpenApiSkip;
 }
 
@@ -499,12 +518,20 @@ export class SchemaConverter {
   }
 
   /**
-   * A budget for one copy of a produced schema. A tool's own copy of its
-   * schemas is output the registry compiles anyway, so it has only its own
-   * limits; a copy made only to check a schema is charged to the call's total.
+   * A budget for one copy of produced schemas, charged to the call's total as
+   * it copies (`NodeBudget.copy`): copies made to check a schema, and each
+   * tool's copy of the generated definitions, which are converted once per call.
    */
-  copyBudget(charged = false): NodeBudget {
-    return charged ? this.total.child() : this.total.uncharged();
+  copyBudget(): NodeBudget {
+    return this.total.copy();
+  }
+
+  /**
+   * A budget for a tool's own copy of its root, which the operation's own
+   * conversion already charged (`NodeBudget.uncharged`).
+   */
+  rootCopyBudget(): NodeBudget {
+    return this.total.uncharged();
   }
 
   /** Run `task` with a fresh node budget (one per operation input, operation output or component). */
@@ -1539,7 +1566,7 @@ export class SchemaConverter {
         const schema = this.budgeted(() => this.convertRoot(this.component(name), mode, refs));
         // Only references the conversion made are edges: a malformed keyword it kept as written makes none.
         const made = (found: Set<string>) => new Set([...found].filter((key) => refs.has(key)));
-        entry = { schema, refs, inPlace: made(inPlaceReferences(schema)), applied: made(appliedReferences(schema)) };
+        entry = { schema, refs, inPlace: made(inPlaceReferences(schema)) };
       } catch (error) {
         if (!(error instanceof OpenApiSkip)) throw error;
         entry = {
@@ -1556,18 +1583,19 @@ export class SchemaConverter {
    * `definitions`, for a converted `root` referring to them. A closure in
    * which a definition reaches itself without descending into a property,
    * item or other child instance is rejected: validators would recurse on
-   * the same value without end. So is a root applying a chain of more than
-   * MAX_REFERENCE_DEPTH definitions, before anything is emitted.
+   * the same value without end. How deep the closure nests is not bounded
+   * here: the validator compiling the tool schema decides (a stack overflow
+   * skips it as `schema-too-large`), and the work is charged to the call.
    */
-  definitions(refs: Iterable<string>, mode: SchemaMode, root: unknown): Record<string, McpFnJsonSchema | boolean> {
+  definitions(refs: Iterable<string>, mode: SchemaMode): Record<string, McpFnJsonSchema | boolean> {
     const names = [...refs];
-    const known = this.checkDefinitions(names, mode, root);
+    const known = this.checkDefinitions(names, mode);
     known.value ??= this.emit(names, mode);
     return known.value;
   }
 
   /** Everything `definitions` checks, without emitting the closure. */
-  checkDefinitions(refs: Iterable<string>, mode: SchemaMode, root: unknown): { value?: Record<string, McpFnJsonSchema | boolean> } {
+  checkDefinitions(refs: Iterable<string>, mode: SchemaMode): { value?: Record<string, McpFnJsonSchema | boolean> } {
     // Kept per call by mode and names: many operations reach the same closure.
     const names = [...refs];
     const key = `${mode}\0${names.join("\0")}`;
@@ -1583,69 +1611,16 @@ export class SchemaConverter {
       this.closures.set(key, known);
     }
     if (known.error) throw known.error;
-    if (names.length > 0) {
-      // Only applied references count: nothing refers to a declaration map's entries.
-      const listed = new Set(names);
-      const applied = [...appliedReferences(root)].filter((name) => listed.has(name));
-      // The bound holds for any order validators walk in; only a root it does not clear is walked.
-      if (applied.some((name) => this.referenceDepth(name, mode) > MAX_REFERENCE_DEPTH) && this.nestsTooDeeply(applied, mode)) {
-        throw new OpenApiSkip("schema-too-large", TOO_DEEP);
-      }
-    }
     return known;
   }
 
-  private readonly deepRoots = new Map<string, boolean>();
-
-  /**
-   * Whether compiling definitions from `roots` nests more than
-   * MAX_REFERENCE_DEPTH deep: a depth-first walk in document order that,
-   * like a validator compiling them, enters each definition once. It stops
-   * at the bound, and its steps are charged to the call's total.
-   */
-  private nestsTooDeeply(roots: string[], mode: SchemaMode): boolean {
-    const key = `${mode}\0${roots.join("\0")}`;
-    let deep = this.deepRoots.get(key);
-    if (deep === undefined) {
-      const entered = new Set<string>();
-      const stack: Array<Iterator<string>> = [];
-      const enter = (name: string): boolean => {
-        entered.add(name);
-        stack.push(this.converted(name, mode).applied![Symbol.iterator]());
-        return stack.length > MAX_REFERENCE_DEPTH;
-      };
-      deep = false;
-      for (const root of roots) {
-        if (deep || entered.has(root)) continue;
-        deep = enter(root);
-        while (!deep && stack.length > 0) {
-          const step = stack.at(-1)!.next();
-          if (step.done) stack.pop();
-          else if (!entered.has(step.value)) deep = enter(step.value);
-        }
-      }
-      this.total.chargeNodes(entered.size);
-      this.deepRoots.set(key, deep);
-    }
-    return deep;
-  }
-
-  /** Charge a closure a tool emits to the call's total, each time a tool schema holds it. */
-  chargeEmitted(definitions: object): void {
-    const nodes = this.emittedNodes.get(definitions);
-    if (nodes) this.total.chargeNodes(nodes);
-  }
-
   private readonly closures = new Map<string, { value?: Record<string, McpFnJsonSchema | boolean>; error?: OpenApiSkip }>();
-  private readonly emittedNodes = new WeakMap<object, number>();
   /** By mode, for the whole call: components whose whole closure converted. */
   private readonly checkedClosures = new Map<SchemaMode, Set<string>>();
   /** By mode, for the whole call: the longest in-place reference chain from each component (-1: it reaches a cycle). */
   private readonly inPlaceDepths = new Map<SchemaMode, Map<string, number>>();
   /** By mode, for the whole call: 1 when a component's closure holds an in-place cycle. */
   private readonly cycles = new Map<SchemaMode, Map<string, number>>();
-  /** By mode, for the whole call: the most definitions a chain of applied references from a component holds. */
-  private readonly referenceDepths = new Map<SchemaMode, Map<string, number>>();
 
   /** A converted component of a checked closure (none: no references, no schema). */
   private converted(name: string, mode: SchemaMode): ConvertedComponent {
@@ -1689,16 +1664,6 @@ export class SchemaConverter {
     }
   }
 
-  /**
-   * The most definitions a chain of applied references from `name` holds, a
-   * group of definitions that reach each other counting as all of them: an
-   * upper bound on how deep validators recurse while compiling it, in any order.
-   */
-  private referenceDepth(name: string, mode: SchemaMode): number {
-    const depths = memoMap(this.referenceDepths, mode, () => new Map<string, number>());
-    return settleGraph(name, (key) => this.converted(key, mode).applied!, depths, (component, below) => component.length + below);
-  }
-
   /** The converted closure of `names`, in breadth-first order. */
   private closureEntries(names: string[], mode: SchemaMode): Map<string, ConvertedComponent> {
     const entries = new Map<string, ConvertedComponent>();
@@ -1713,18 +1678,11 @@ export class SchemaConverter {
     return entries;
   }
 
+  /** The closure as `definitions`. Each tool schema holding it is charged while it is copied (`copyBudget`). */
   private emit(names: string[], mode: SchemaMode): Record<string, McpFnJsonSchema | boolean> {
-    let nodes = 0;
     const result: Array<[string, McpFnJsonSchema | boolean]> = [];
-    for (const [key, entry] of this.closureEntries(names, mode)) {
-      result.push([key, entry.schema!]);
-      // Counted once a closure is emitted, so nothing a rejected candidate holds is read again.
-      entry.nodes ??= distinctValues(entry.schema);
-      nodes += entry.nodes;
-    }
-    const definitions = Object.fromEntries(result);
-    this.emittedNodes.set(definitions, nodes);
-    return definitions;
+    for (const [key, entry] of this.closureEntries(names, mode)) result.push([key, entry.schema!]);
+    return Object.fromEntries(result);
   }
 
   /**
@@ -1935,62 +1893,7 @@ const SUBSCHEMA_KEYWORDS = [
 const IN_PLACE_ARRAY_KEYWORDS = ["allOf", "anyOf", "oneOf"] as const;
 const IN_PLACE_KEYWORDS = ["not", "if", "then", "else"] as const;
 
-const APPLIED_MAPS = new Set(["properties", "patternProperties", "dependencies"]);
-
-/** Whether validators ignore `keyword` of `schema`: `then`/`else` without `if`, `additionalItems` without an `items` array. */
-function isIgnored(schema: JsonObject, keyword: string): boolean {
-  if (keyword === "then" || keyword === "else") return !Object.hasOwn(schema, "if");
-  return keyword === "additionalItems" && !Array.isArray(schema.items);
-}
-const APPLIED_KEYWORDS = new Set<string>(SUBSCHEMA_KEYWORDS.filter((keyword) => keyword !== "definitions" && keyword !== "$defs"));
-
-/**
- * The values `schema` holds, literals included, each shared object once: a
- * copy that repeats shared objects is bounded by its own budget (`copyBudget`).
- */
-function distinctValues(schema: unknown): number {
-  const seen = new Set<object>();
-  const stack = [schema];
-  let count = 0;
-  while (stack.length > 0) {
-    const value = stack.pop();
-    count += 1;
-    if (typeof value !== "object" || value === null || seen.has(value)) continue;
-    seen.add(value);
-    for (const member of Object.values(value)) stack.push(member);
-  }
-  return count;
-}
-
-const NO_COMPONENT: ConvertedComponent = { refs: new Set(), inPlace: new Set(), applied: new Set() };
-
-/**
- * Definitions a converted schema applies, in place or to a child value:
- * every reference outside its declaration maps (`definitions`, `$defs`),
- * whose entries nothing refers to. Walked with an explicit stack.
- */
-function appliedReferences(schema: unknown): Set<string> {
-  const found = new Set<string>();
-  const seen = new Set<object>();
-  const stack = [schema];
-  while (stack.length > 0) {
-    const current = stack.pop();
-    if (!isObject(current) || seen.has(current)) continue;
-    seen.add(current);
-    if (typeof current.$ref === "string" && current.$ref.startsWith(DEFINITION_REF)) {
-      found.add(current.$ref.slice(DEFINITION_REF.length));
-    }
-    // Pushed last to first, so they are read in document order.
-    const children: unknown[] = [];
-    for (const [keyword, value] of Object.entries(current)) {
-      if (!APPLIED_KEYWORDS.has(keyword) || typeof value !== "object" || value === null || isIgnored(current, keyword)) continue;
-      if (Array.isArray(value) || APPLIED_MAPS.has(keyword)) for (const member of Object.values(value)) children.push(member);
-      else children.push(value);
-    }
-    for (let index = children.length - 1; index >= 0; index -= 1) stack.push(children[index]);
-  }
-  return found;
-}
+const NO_COMPONENT: ConvertedComponent = { refs: new Set(), inPlace: new Set() };
 
 /**
  * A value per node of a graph, settled once per strongly connected component
@@ -2066,19 +1969,7 @@ function inPlaceReferences(schema: McpFnJsonSchema | boolean): Set<string> {
   return found;
 }
 
-/**
- * How deep a chain of applied references (in place, as an `allOf` member,
- * or to a child value, as a property's schema) from a tool's schema may
- * nest, entering each definition once in document order (see
- * `nestsTooDeeply`). Validators recurse once per definition while compiling. Measured cold at
- * the default Node 20 and 22 stack, Ajv compiles 160 and overflows at 180
- * (after warm-up between 250 and 300), and @cfworker/json-schema compiles
- * 200; 150 leaves the margin for the caller's own frames. A declaration map
- * entry ($defs/definitions) nothing applies adds nothing.
- */
-export const MAX_REFERENCE_DEPTH = 150;
-
-/** A stack overflow, or a chain longer than validators walk, means schemas or references nest too deeply. */
+/** A stack overflow (the converter's or a validator's) means schemas or references nest too deeply. */
 export const TOO_DEEP = "a schema or reference chain nests too deeply";
 
 /**
