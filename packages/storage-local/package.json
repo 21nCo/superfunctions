@@ -1,6 +1,6 @@
 {
   "name": "@superfunctions/storage-local",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Local filesystem storage adapter for @superfunctions/storage",
   "type": "module",
   "main": "./dist/index.js",
