@@ -454,6 +454,19 @@ describe('checkout metadata', () => {
     ).rejects.toMatchObject({ code: 'BILLFN_VALIDATION_ERROR' });
   });
 
+  it('refuses nested metadata sent through the router before creating an account', async () => {
+    const env = await setup();
+
+    const response = await env.call('/checkouts', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ planKey: 'pro', provider: 'dodo', interval: 'month', metadata: { campaign: { name: 'spring' } } })
+    });
+
+    expect(response.status).toBe(400);
+    expect(await env.accounts()).toHaveLength(0);
+  });
+
   it('accepts small scalar metadata', async () => {
     const env = await setup();
 

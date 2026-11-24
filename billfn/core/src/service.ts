@@ -39,6 +39,7 @@ import type {
   BillFnCatalog,
   BillFnChangeSubscriptionRequest,
   BillFnChangeSubscriptionResponse,
+  BillFnCheckoutMetadata,
   BillFnCheckoutCreateRequest,
   BillFnCheckoutSession,
   BillFnLifecycleEventType,
@@ -323,7 +324,8 @@ const MAX_CHECKOUT_METADATA_KEYS = 20;
 const MAX_CHECKOUT_METADATA_KEY_LENGTH = 40;
 const MAX_CHECKOUT_METADATA_VALUE_LENGTH = 500;
 
-function assertCheckoutMetadata(metadata: unknown) {
+/** Throws unless `metadata` is absent or valid checkout metadata; narrows it to that type. */
+export function assertCheckoutMetadata(metadata: unknown): asserts metadata is BillFnCheckoutMetadata | undefined {
   if (metadata === undefined) {
     return;
   }

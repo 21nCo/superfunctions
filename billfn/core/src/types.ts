@@ -908,6 +908,9 @@ export interface BillFnPriceEligibilityInput {
   price: BillFnPriceDefinition;
 }
 
+/** Checkout metadata: at most 20 entries; keys up to 40 characters; string (up to 500 characters), finite number or boolean values. */
+export type BillFnCheckoutMetadata = Record<string, string | number | boolean>;
+
 export interface BillFnCheckoutCreateRequest {
   subject?: BillableSubject;
   planKey: string;
@@ -919,8 +922,7 @@ export interface BillFnCheckoutCreateRequest {
    * provider and interval.
    */
   priceId?: string;
-  /** At most 20 entries; keys up to 40 characters; string (up to 500 characters), finite number or boolean values. */
-  metadata?: Record<string, string | number | boolean>;
+  metadata?: BillFnCheckoutMetadata;
   customer?: {
     email?: string;
     name?: string;

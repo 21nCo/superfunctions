@@ -2,7 +2,7 @@ import { createRouter, type Route } from '@superfunctions/http';
 import { createBillFnError } from './errors.js';
 import { errorResponse, jsonResponse, readBoundedBytes, successResponse } from './http.js';
 import { normalizeBasePath, resolveRequestSubject } from './helpers.js';
-import { createBillFnService } from './service.js';
+import { assertCheckoutMetadata, createBillFnService } from './service.js';
 import type {
   BillFnConfig,
   BillFnRefundAuthorizationInput,
@@ -245,6 +245,9 @@ export function createBillFnRouter(config: BillFnConfig) {
           successUrl?: string;
           cancelUrl?: string;
         }>(request);
+        // The request's metadata is unchecked JSON; the check itself narrows it to the type the service takes.
+        const metadata: unknown = body.metadata;
+        assertCheckoutMetadata(metadata);
         const subject = await resolveRequestSubject(request, config.auth, body.subject);
         const response = await service.createCheckout({
           subject,
@@ -252,8 +255,7 @@ export function createBillFnRouter(config: BillFnConfig) {
           provider: body.provider as never,
           interval: body.interval as never,
           priceId: body.priceId as string | undefined,
-          // Checked by the service (assertCheckoutMetadata) before anything is stored.
-          metadata: body.metadata as Record<string, string | number | boolean> | undefined,
+          metadata,
           customer: body.customer,
           returnUrl: body.returnUrl,
           successUrl: body.successUrl,
