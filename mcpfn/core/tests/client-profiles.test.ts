@@ -397,7 +397,7 @@ describe("McpFn client profiles", () => {
       handler: async (args) => structuredResult(args),
       taskHandler: { createTask: vi.fn(), getTask: vi.fn(), getTaskResult: vi.fn() } as never,
     });
-    const profile = { ...tenantProfile(), enrichArguments: () => { throw new McpFnError("TENANT_LOOKUP_FAILED", "Tenant lookup failed", { code: "upstream-503", attempts: 2n }); } };
+    const profile = { ...tenantProfile(), enrichArguments: () => { throw new McpFnError("TENANT_LOOKUP_FAILED", "Tenant lookup failed", { code: "upstream-503", attempts: 2n, toJSON: () => ({ code: "upstream-503", attempts: "2", lifecycleStage: "handler" }) }); } };
     const server = createMcpFnServer({
       info: { name: "profile-server", version: "1.0.0" },
       registry,
@@ -416,7 +416,7 @@ describe("McpFn client profiles", () => {
     ).then(() => undefined, (failure: unknown) => failure);
     expect(error).toMatchObject({
       code: ErrorCode.InvalidParams,
-      data: { code: "TENANT_LOOKUP_FAILED", attempts: "2", lifecycleStage: "argument-enrichment" },
+      data: { code: "TENANT_LOOKUP_FAILED", attempts: "2", lifecycleStage: "argument-enrichment", profile: { id: "consumer/trusted", version: "1" } },
     });
   });
 

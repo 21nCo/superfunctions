@@ -513,7 +513,10 @@ export class McpFnServer<TContext = undefined> {
               const data = jsonSafe(lifecycleError.details);
               throw new McpError(ErrorCode.InvalidParams, lifecycleError.message, {
                 ...(data !== null && typeof data === "object" && !Array.isArray(data) ? data : {}),
-                // The McpFn code stays authoritative over a detail named code.
+                // Set after serialization so details (including a toJSON
+                // method) cannot replace the McpFn code, stage or profile.
+                lifecycleStage: currentStage,
+                ...(profile ? { profile } : {}),
                 code: lifecycleError.code,
               });
             }
