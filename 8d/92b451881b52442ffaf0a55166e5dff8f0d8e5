@@ -1,0 +1,32 @@
+mcpfn/core/tests/http-session-security.test.ts
+  s_c8d3e62c4e5cbc::t_283a02448997e1 1-217
+  s_c8d3e62c4e5cbc::t_53852861da194b 218
+mcpfn/core/README.md
+  s_c8d3e62c4e5cbc::t_1374629a62ebaf 174-184
+mcpfn/core/src/server.ts
+  s_c8d3e62c4e5cbc::t_5ae91dab0aff06 11,107-145,148-205,896-917,923-924,953-988,990-1013,1015-1021,1025-1041,1052-1054,1062,1064-1072,1075
+mcpfn/docs/content/docs/deployment.md
+  s_c8d3e62c4e5cbc::t_e1f9f816e6192c 14-19
+mcpfn/docs/content/docs/reference/core.md
+  s_c8d3e62c4e5cbc::t_92fb8a67bd0af1 179-189
+mcpfn/docs/static/llms-full.txt
+  s_c8d3e62c4e5cbc::t_5c7ed5cf6b519c 104-109,870-880
+mcpfn/examples/calculator-http-server.ts
+  s_c8d3e62c4e5cbc::t_a0700deba818c0 6-7,9-10,15-22,29,31-38
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8d92b451881b52442ffaf0a55166e5dff8f0d8e5",
+  "prompts": {},
+  "sessions": {
+    "s_c8d3e62c4e5cbc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "81c58342-6481-4e86-8c66-8c52736f9b64",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
