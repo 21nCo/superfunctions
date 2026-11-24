@@ -251,6 +251,8 @@ class UploadSessionService:
                 )
                 if (
                     legacy
+                    # Exactly the key sent (a case-insensitive column could match another).
+                    and legacy.get("idempotencyKey") == input.idempotencyKey
                     and legacy.get("ownerId") == ctx.principalId
                     and (legacy.get("tenantId") or None) == (getattr(ctx, "tenantId", None) or None)
                 ):
@@ -689,6 +691,12 @@ class UploadSessionService:
             where=[{"field": "fileId", "operator": "eq", "value": file_id}],
             namespace=self.namespace,
         )
+
+        if existing_file and existing_file.get("currentVersionId") != version_id:
+            # Another completion created the file meanwhile: replacing it needs
+            # write access to that row, checked now (FILE-30 F-02).
+            if self.file_write_checker and not await self.file_write_checker.can_write_file(file_id, ctx):
+                raise errors.forbidden({"fileId": file_id, "operation": "replace"})
 
         if existing_file:
             await self.db.update(

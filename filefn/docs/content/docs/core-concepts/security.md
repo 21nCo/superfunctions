@@ -12,7 +12,7 @@ filefn is a kernel; it inherits some risks from the host stack and adds a small 
 - **Bytes at rest** — the storage adapter handles encryption (S3 SSE, GCS CMEK, etc.). filefn doesn't add a second encryption layer.
 - **Bytes in flight** — TLS termination is the host stack's job. filefn assumes incoming requests are TLS-terminated and signed URLs are HTTPS.
 - **Multipart integrity** — every part is etagged; conflicts fail closed. The final SHA-256 (when supported by storage) is recorded in `fileVersions.checksumSha256Base64`.
-- **Idempotent retries** — `x-idempotency-key` prevents duplicate sessions from accidental retries.
+- **Idempotent retries** — `x-idempotency-key` prevents duplicate sessions from accidental retries by signed-in callers. Anonymous `init` calls are never replayed: a retry gets a new session.
 - **Anonymous upload tokens** — `uploadSessionToken` is hashed at rest and short-lived. Stealing the token gives access only for the session TTL and only for that one upload.
 - **Visibility** — `private` files require a session or grant. `shared` enforces the same. Share-link tokens are opaque and hashed.
 - **CSRF** — for routes that mutate, filefn requires either an `Authorization` header (bearer) or a CSRF-protected cookie. The kernel doesn't ship CSRF middleware itself; it expects the host framework to provide one.

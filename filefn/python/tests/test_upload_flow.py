@@ -821,3 +821,34 @@ async def test_session_without_owner_is_refused() -> None:
     with pytest.raises(Exception) as exc_info:
         await service.get_session_status(created["uploadSessionId"], _ctx(principal_id="mallory"))
     assert getattr(exc_info.value, "code", "") == "FILEFN_FORBIDDEN"
+
+
+@pytest.mark.asyncio
+async def test_a_second_completion_rechecks_write_access_to_a_file_created_meanwhile() -> None:
+    # FILE-30 F-02 (Python): two anonymous sessions for one client-chosen fileId;
+    # after the first creates the file, the second may not replace it.
+    from filefn.server.authz.ownership import is_file_owner
+
+    db = FakeDB()
+    service = _make_service(db=db)
+
+    class OwnerOnly:
+        async def can_write_file(self, file_id: str, ctx: Any) -> bool:
+            row = await db.find_one(model="files", where=[{"field": "fileId", "operator": "eq", "value": file_id}])
+            return row is None or is_file_owner(SimpleNamespace(**row), ctx)
+
+    service.file_write_checker = OwnerOnly()
+    anon = _ctx(principal_id=None, tenant_id=None)
+    sessions = []
+    for name in ("a.png", "b.png"):
+        created = await service.create_session(
+            CreateSessionInput(policy="user-avatar", fileName=name, size=3, mimeType="image/png", fileId="file_shared01"), anon
+        )
+        token_ctx = _ctx(principal_id=None, tenant_id=None, upload_session_token=created["uploadSessionToken"])
+        await service.record_proxy_part(created["uploadSessionId"], 1, b"abc", token_ctx)
+        sessions.append((created["uploadSessionId"], token_ctx))
+
+    await service.complete_session(sessions[0][0], sessions[0][1])
+    with pytest.raises(Exception) as exc_info:
+        await service.complete_session(sessions[1][0], sessions[1][1])
+    assert getattr(exc_info.value, "code", "") == "FILEFN_FORBIDDEN"

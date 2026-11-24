@@ -1311,6 +1311,8 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
           });
           if (
             legacy &&
+            // Exactly the key sent (a case-insensitive column could match another).
+            legacy.idempotencyKey === input.idempotencyKey &&
             legacy.ownerId === ctx.principalId &&
             (legacy.tenantId || null) === (ctx.tenantId || null)
           ) {
