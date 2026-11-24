@@ -2169,25 +2169,43 @@ describe("fromOpenAPI body fallback, synchronous schemas, per-kind alternatives 
     }
   }, 60_000);
 
-  it("counts the entries of a schema's arrays as source values, not as shared expansion", () => {
-    const defs = Object.fromEntries(Array.from({ length: 100 }, (_, index) => [`d${index}`, {}]));
-    const filter = { name: "filter", in: "query", schema: { type: "string", $defs: defs } };
-    // 1,100 boolean members, none shared: the body's own budget must keep it.
-    const preferred = { schema: { type: "object", allOf: Array.from({ length: 1_100 }, () => true) } };
-    const chosen = (content: Record<string, unknown>, parameters: unknown[]) => {
-      const result = fromOpenAPI(
-        { openapi: "3.1.0", paths: { "/m": { patch: { operationId: "m", parameters, requestBody: { content }, responses: ok } } } },
+  it("counts the members of a schema's arrays and maps as source values once, not as shared expansion", () => {
+    const named = <T>(count: number, value: () => T) => Object.fromEntries(Array.from({ length: count }, (_, index) => [`d${index}`, value()]));
+    const filter = { name: "filter", in: "query", schema: { type: "string", $defs: named(100, () => ({})) } };
+    const booleans = () => Array.from({ length: 1_100 }, () => true);
+    // 1,100 boolean members, none shared: the body's own budget must keep each of them.
+    const unshared = [
+      { type: "object", allOf: booleans() },
+      { type: "object", properties: named(1_100, () => true) },
+      { type: "object", patternProperties: named(1_100, () => true) },
+      { type: "object", $defs: named(1_100, () => true) },
+    ];
+    const convert = (content: Record<string, unknown>, parameters: unknown[]) =>
+      fromOpenAPI(
+        {
+          openapi: "3.1.0",
+          paths: {
+            "/m": { patch: { operationId: "m", parameters, requestBody: { content }, responses: ok } },
+            "/n": { get: { operationId: "n", responses: ok } },
+          },
+        },
         options(),
       );
-      expect(result.skipped).toEqual([]);
-      return tool(result.tools, "m").operation.requestBody?.contentType;
-    };
-    for (const parameters of [[filter], []]) {
-      expect(chosen({ "application/json": preferred }, parameters)).toBe("application/json");
-      expect(chosen({ "application/json": preferred, "application/example+json": { schema: { type: "string" } } }, parameters)).toBe(
-        "application/json",
-      );
+    for (const schema of unshared) {
+      for (const parameters of [[filter], []]) {
+        for (const content of [{ "application/json": { schema } }, { "application/json": { schema }, "application/example+json": { schema: { type: "string" } } }]) {
+          const result = convert(content, parameters);
+          expect(result.skipped).toEqual([]);
+          expect(tool(result.tools, "m").operation.requestBody?.contentType).toBe("application/json");
+        }
+      }
     }
+    // One 400-member array shared by 16 wrappers is still expansion of a shared object; the sibling stays.
+    const shared = booleans().slice(0, 400);
+    const repeated = { type: "object", allOf: Array.from({ length: 16 }, () => ({ allOf: shared })) };
+    const result = convert({ "application/json": { schema: repeated } }, []);
+    expect(result.skipped.map(({ code }) => code)).toEqual(["schema-too-large"]);
+    expect(result.tools.map(({ name }) => name)).toEqual(["n"]);
   });
 
   it("tries each request body entry in the whole input, checks a shared one once and falls through a too-deep one", () => {

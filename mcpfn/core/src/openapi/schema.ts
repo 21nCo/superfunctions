@@ -140,6 +140,8 @@ export class NodeBudget {
   private produced = 0;
   private sourceValues = 0;
   private readonly seen = new WeakSet<object>();
+  /** Objects whose own values are already counted, each once by identity. */
+  private readonly credited = new WeakSet<object>();
 
   constructor(
     private readonly limit = MAX_SCHEMA_NODES,
@@ -164,7 +166,12 @@ export class NodeBudget {
     this.produced += 1;
     if (typeof value === "object" && value !== null && !this.seen.has(value)) {
       this.seen.add(value);
-      this.sourceValues += 1 + ownValues(value);
+      this.credit(value);
+      // Its arrays and maps (allOf, properties, $defs, ...) are source too:
+      // their members are produced without the container being charged.
+      for (const item of Object.values(value)) {
+        if (typeof item === "object" && item !== null) this.credit(item);
+      }
     }
     if (this.produced > this.limit) {
       throw new OpenApiSkip("schema-too-large", `${this.subject} to more than ${this.limit} nodes`);
@@ -177,16 +184,13 @@ export class NodeBudget {
       );
     }
   }
-}
 
-/**
- * The values directly under `value`: its own keys plus the entries of its
- * array values (an `allOf` of booleans is source, not shared expansion).
- */
-function ownValues(value: object): number {
-  let count = 0;
-  for (const item of Object.values(value)) count += 1 + (Array.isArray(item) ? item.length : 0);
-  return count;
+  /** Count `value` and its own values as source, once per object whoever refers to it. */
+  private credit(value: object): void {
+    if (this.credited.has(value)) return;
+    this.credited.add(value);
+    this.sourceValues += 1 + Object.keys(value).length;
+  }
 }
 
 /** The values in a JSON-like tree, each shared object counted once. */
