@@ -327,6 +327,16 @@ export async function drainPermissionDirectorySync(
     return false;
   }
   if (String(task.region_id) !== runtime.regionId) return false;
+  const settlementWhere = options.expectedNextAttemptAt
+    ? taskWhere
+    : [
+        { field: "id", op: "eq" as const, value: taskId },
+        {
+          field: "next_attempt_at",
+          op: "eq" as const,
+          value: task.next_attempt_at,
+        },
+      ];
 
   try {
     const mutation = JSON.parse(String(task.mutation)) as PermissionDirectorySyncMutation;
@@ -336,7 +346,7 @@ export async function drainPermissionDirectorySync(
       String(task.namespace),
       runtime,
     );
-    const deleted = await db.internal.delete(OUTBOX_TABLE, taskWhere);
+    const deleted = await db.internal.delete(OUTBOX_TABLE, settlementWhere);
     if (deleted > 0) detachPrecommitLeaseHeartbeat(taskId);
     // A live owner may renew after a stale drainer claimed the row. The
     // conditional delete fences that race: reconciliation is idempotent, and
@@ -345,7 +355,7 @@ export async function drainPermissionDirectorySync(
   } catch (error) {
     const attempts = Number(task.attempts ?? 0) + 1;
     const retryDelaySeconds = Math.min(15 * (2 ** Math.min(attempts - 1, 5)), 300);
-    await db.internal.update(OUTBOX_TABLE, taskWhere, {
+    await db.internal.update(OUTBOX_TABLE, settlementWhere, {
       attempts,
       last_error: String(error),
       next_attempt_at: new Date(Date.now() + retryDelaySeconds * 1000).toISOString(),

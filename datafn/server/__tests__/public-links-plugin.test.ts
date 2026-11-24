@@ -567,6 +567,165 @@ describe("DataFn public-links plugin", () => {
     }
   });
 
+  it("keeps a failed public-link credential revoked when row cleanup fails", async () => {
+    const db = memoryAdapter();
+    await db.initialize();
+    const directory = createMemoryIndexedDirectoryStore();
+    const publicLinks = createDatafnPublicLinksPlugin<{ actorId: string }>({
+      authenticateOwner: (request) => {
+        const actorId = request.headers.get("x-owner-actor");
+        return actorId ? { actorId } : null;
+      },
+      getOwnerActorId: (session) => session.actorId,
+      getOwnerNamespace: (actorId) => `user:${actorId}`,
+      directory,
+      resourceRegion: "region:public-links",
+    });
+    const server = await createDatafnServer<TestContext>({
+      schema,
+      database: db,
+      allowUnknownResources: false,
+      publicLinks,
+      namespaceProvider: {
+        getNamespace: () => "user:owner",
+        getActorId: () => "owner",
+      },
+    });
+    try {
+      const inserted = await post(server, "/datafn/mutation", {
+        resource: "linkTag",
+        version: 1,
+        operation: "insert",
+        id: "tag:failed-link-cleanup",
+        clientId: "public-link-cleanup",
+        mutationId: "public-link-cleanup-insert",
+        record: { id: "tag:failed-link-cleanup", label: "Failed cleanup" },
+      }, ownerHeaders());
+      expect(inserted.status).toBe(200);
+
+      const originalCreate = db.create.bind(db);
+      db.create = async (input) => {
+        const result = await originalCreate(input);
+        if (input.model === "__datafn_permissions_global") {
+          throw new Error("post-permission write failure");
+        }
+        return result;
+      };
+      const originalDelete = db.delete.bind(db);
+      db.delete = async (input) => {
+        if (input.model === "publicLink") {
+          throw new Error("public-link cleanup unavailable");
+        }
+        return originalDelete(input);
+      };
+
+      const created = await post(server, "/datafn/public-links", {
+        resource: "linkTag",
+        recordId: "tag:failed-link-cleanup",
+        scope: "record",
+        level: "viewer",
+      }, ownerHeaders());
+
+      expect(created.status).toBeGreaterThanOrEqual(500);
+      const failedLinks = await db.findMany({
+        model: "publicLink",
+        where: [],
+        namespace: "user:owner",
+      });
+      expect(failedLinks).toHaveLength(1);
+      expect(failedLinks[0].revokedAt).toEqual(expect.any(Number));
+      await expect(db.findMany({
+        model: "__datafn_permissions_global",
+        where: [],
+        namespace: "user:owner",
+      })).resolves.toEqual([]);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("compensates the grant and settles directory work when activation fails", async () => {
+    const db = memoryAdapter();
+    await db.initialize();
+    const directory = createMemoryIndexedDirectoryStore();
+    const runtime = { regionId: "region:activation-failure", directory };
+    const publicLinks = createDatafnPublicLinksPlugin<{ actorId: string }>({
+      authenticateOwner: (request) => {
+        const actorId = request.headers.get("x-owner-actor");
+        return actorId ? { actorId } : null;
+      },
+      getOwnerActorId: (session) => session.actorId,
+      getOwnerNamespace: (actorId) => `user:${actorId}`,
+      directory,
+      resourceRegion: runtime.regionId,
+    });
+    const server = await createDatafnServer<TestContext>({
+      schema,
+      database: db,
+      allowUnknownResources: false,
+      publicLinks,
+      namespaceProvider: {
+        getNamespace: () => "user:owner",
+        getActorId: () => "owner",
+      },
+    });
+    try {
+      const inserted = await post(server, "/datafn/mutation", {
+        resource: "linkTag",
+        version: 1,
+        operation: "insert",
+        id: "tag:activation-failure",
+        clientId: "public-link-activation",
+        mutationId: "public-link-activation-insert",
+        record: { id: "tag:activation-failure", label: "Activation failure" },
+      }, ownerHeaders());
+      expect(inserted.status).toBe(200);
+
+      const originalUpdate = db.update.bind(db);
+      db.update = async (input) => {
+        if (
+          input.model === "publicLink" &&
+          input.data.revokedAt === null
+        ) {
+          throw new Error("public-link activation unavailable");
+        }
+        return originalUpdate(input);
+      };
+
+      const created = await post(server, "/datafn/public-links", {
+        resource: "linkTag",
+        recordId: "tag:activation-failure",
+        scope: "record",
+        level: "viewer",
+      }, ownerHeaders());
+
+      expect(created.status).toBeGreaterThanOrEqual(500);
+      const failedLinks = await db.findMany({
+        model: "publicLink",
+        where: [],
+        namespace: "user:owner",
+      });
+      expect(failedLinks).toHaveLength(1);
+      expect(failedLinks[0].revokedAt).toEqual(expect.any(Number));
+      await expect(db.findMany({
+        model: "__datafn_permissions_global",
+        where: [],
+        namespace: "user:owner",
+      })).resolves.toEqual([]);
+      await expect(db.internal.findMany(
+        "__datafn_permission_directory_outbox",
+        [],
+      )).resolves.toEqual([]);
+      const indexed = await directory.query({
+        index: "datafn.permission.principalResource",
+        value: `${String(failedLinks[0].principalId)}#linkTag`,
+      });
+      expect(indexed.records).toEqual([]);
+    } finally {
+      await server.close();
+    }
+  });
+
   it("durably retries failed share compensation", async () => {
     const db = memoryAdapter();
     await db.initialize();

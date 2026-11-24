@@ -35,4 +35,31 @@ describe("server validation schema index capability fields", () => {
     expect(writable?.has("trashedBy")).toBe(false);
     expect(writable?.has("text")).toBe(true);
   });
+
+  it("derives a many-one FK from the target when aliases are omitted", () => {
+    const index = buildSchemaIndex({
+      resources: [
+        {
+          name: "todos",
+          version: 1,
+          fields: [{ name: "text", type: "string", required: true }],
+        },
+        {
+          name: "projects",
+          version: 1,
+          fields: [{ name: "title", type: "string", required: true }],
+        },
+      ],
+      relations: [{
+        type: "many-one",
+        from: "todos",
+        to: "projects",
+      }],
+    } as any);
+
+    expect(index.fieldsByResource.get("todos")?.has("projectsId")).toBe(true);
+    expect(index.writableFieldsByResource.get("todos")?.has("projectsId"))
+      .toBe(true);
+    expect(index.fieldsByResource.get("todos")?.has("undefinedId")).toBe(false);
+  });
 });
