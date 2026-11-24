@@ -1,0 +1,704 @@
+memoryfn/typescript/src/storage/memory/adapter.ts
+  s_d584f7b0ec7863::t_2378086612fa60 5,90-91,96,183-193,201,209,277-281,287-289,291-301,323-325
+authfn/core/src/__tests__/security-hardening.test.ts
+  s_d584f7b0ec7863::t_2378086612fa60 1-792
+clifn/core/package.json
+  s_d584f7b0ec7863::t_2378086612fa60 3,64-67,70-72,80-81,95,101
+scripts/resolve-release-tag.mjs
+  s_d584f7b0ec7863::t_2378086612fa60 89-90,94-98
+mcpfn/auth/tests/oauth-platform.test.ts
+  s_d584f7b0ec7863::t_2378086612fa60 788-792
+authfn/docs/content/docs/core-concepts/errors.md
+  s_d584f7b0ec7863::t_2378086612fa60 62
+mcpfn/auth/src/hosted-authorization.ts
+  s_d584f7b0ec7863::t_2378086612fa60 363-393,416-417,458,764,774-848
+  s_d584f7b0ec7863::t_96bae5a0317920 849
+scripts/release-gate-workflows.test.mjs
+  s_d584f7b0ec7863::t_2378086612fa60 1-323
+mcpfn/ADR-0001-COMPATIBILITY.md
+  s_d584f7b0ec7863::t_2378086612fa60 10-13,46-64
+memoryfn/typescript/src/providers/embed/openai.ts
+  s_d584f7b0ec7863::t_2378086612fa60 4-23,49-54,57-67
+authfn/docs/static/llms-full.txt
+  s_d584f7b0ec7863::t_2378086612fa60 1510,2168,3128,3131,5168-5170,5196,5762-5764,5806,5845,5847,5864-5865,6293,6298-6303,6306-6307,6312-6313,6399,6405,6408,6478-6479,6482-6496,6704-6707,7006-7009,7036-7039,7062,7079-7082,7123-7132,7211-7212,7231,7265-7275,7302,7760,7771-7777,7779-7782,7787-7788,8904-8908,8912-8913,8925-8927,8933-8938,10104,10299,10308,10353,10646-10647,10712-10713,11451,11748,11753-11758,11761
+langfn/typescript/src/models/responses/ledger.ts
+  s_d584f7b0ec7863::t_2378086612fa60 1-725
+langfn/typescript/tests/fixtures/responses/chatgpt-signin/usage-limit.json
+  s_d584f7b0ec7863::t_2378086612fa60 1-15
+authfn/docs/content/docs/core-concepts/rate-limiting.md
+  s_d584f7b0ec7863::t_2378086612fa60 35,38
+authfn/python/tests/test_social_oauth.py
+  s_d584f7b0ec7863::t_2378086612fa60 49-51,110-123,135-137,338,395,444,480,519,542,582,593,619,651,703,731,745-1136
+memoryfn/docs/static/llms-full.txt
+  s_d584f7b0ec7863::t_2378086612fa60 10-82,89,174,301-302,307,509
+mcpfn/auth/README.md
+  s_d584f7b0ec7863::t_2378086612fa60 94-129
+langfn/typescript/src/models/profiles/types.ts
+  s_d584f7b0ec7863::t_2378086612fa60 1-174
+langfn/typescript/tests/fixtures/responses/openrouter/failed-context-length.json
+  s_d584f7b0ec7863::t_2378086612fa60 1-17
+authfn/python/tests/test_otp.py
+  s_d584f7b0ec7863::t_2378086612fa60 7,369-459
+authfn/core/src/core/account-claim.ts
+  s_d584f7b0ec7863::t_2378086612fa60 1-126
+mcpfn/testing/tests/host-authorization.test.ts
+  s_d584f7b0ec7863::t_2378086612fa60 1,5,8,14-15,484-1844
+  s_d584f7b0ec7863::t_d4101d8319e361 1845
+langfn/typescript/src/models/profiles/openrouter.ts
+  s_d584f7b0ec7863::t_2378086612fa60 1-43
+authfn/core/src/http/router.ts
+  s_d584f7b0ec7863::t_2378086612fa60 4,51-52,68-74,79,235-239,254,263,265
+authfn/python/authfn/plugins/social_oauth.py
+  s_d584f7b0ec7863::t_2378086612fa60 15-17,60,106-108,182-183,186-187,189-195,256-258,262-265,284-383,577,580-585,594-597,656-663,673-674,778-779,878,887,1306-1311,1690-1692,1697-1722
+  s_d584f7b0ec7863::t_92ff2c02ab0d15 1723-1724
+superconsole/package.json
+  s_d584f7b0ec7863::t_2378086612fa60 27
+authfn/schema-plugin/package.json
+  s_d584f7b0ec7863::t_2378086612fa60 29-30
+memoryfn/docs/content/docs/documents-and-sources.md
+  s_d584f7b0ec7863::t_2378086612fa60 1-69
+authfn/admin/package.json
+  s_d584f7b0ec7863::t_2378086612fa60 3,40-41,43,46-47
+langfn/typescript/src/models/profiles/index.ts
+  s_d584f7b0ec7863::t_2378086612fa60 1-4
+clifn/core/tests/fixtures/consumer-scan/listed-forms.ts
+  s_d584f7b0ec7863::t_2378086612fa60 1-25
+apifn/core/__tests__/root-entry-graph.test.ts
+  s_d584f7b0ec7863::t_2378086612fa60 1-95
+memoryfn/typescript/src/http/router.ts
+  s_d584f7b0ec7863::t_2378086612fa60 5-28,38-62,80-92
+mcpfn/auth/package.json
+  s_d584f7b0ec7863::t_2378086612fa60 3,17,24,37
+langfn/typescript/tests/fixtures/responses/openrouter/context-length.json
+  s_d584f7b0ec7863::t_2378086612fa60 1-15
+memoryfn/docs/content/docs/embeddings-and-extraction.md
+  s_d584f7b0ec7863::t_2378086612fa60 6
+langfn/typescript/tests/fixtures/responses/chatgpt-signin/stream-text.sse
+  s_d584f7b0ec7863::t_2378086612fa60 1-21
+apifn/contracts/README.md
+  s_d584f7b0ec7863::t_2378086612fa60 149,152
+authfn/python/authfn/authfn.py
+  s_d584f7b0ec7863::t_2378086612fa60 100-101
+clifn/core/src/credentials.ts
+  s_d584f7b0ec7863::t_2378086612fa60 6-15,44-56,113-143
+clifn/docs/static/llms-full.txt
+  s_d584f7b0ec7863::t_2378086612fa60 116,130,336,524,530-531,583-588,714,741-743
+mcpfn/client/tests/workerd.test.ts
+  s_d584f7b0ec7863::t_2378086612fa60 1-330
+scripts/assert-release-owner.test.mjs
+  s_d584f7b0ec7863::t_2378086612fa60 1-182
+langfn/typescript/tests/fixtures/responses/openai/server-error.json
+  s_d584f7b0ec7863::t_2378086612fa60 1-14
+memoryfn/typescript/tests/documents.test.ts
+  s_d584f7b0ec7863::t_2378086612fa60 1-1106
+authfn/core/src/types.ts
+  s_d584f7b0ec7863::t_2378086612fa60 35,177-184,652-655,663
+clifn/docs/content/docs/configuration.md
+  s_d584f7b0ec7863::t_2378086612fa60 30
+clifn/core/tests/fixtures/consumer-scan/fail-closed-forms.ts
+  s_d584f7b0ec7863::t_2378086612fa60 1-15
+apifn/core/scripts/verify-packed-consumer.mjs
+  s_d584f7b0ec7863::t_2378086612fa60 1-354
+authfn/core/src/plugin-types.ts
+  s_d584f7b0ec7863::t_2378086612fa60 42-61,65-75,102-112,117-129
+mcpfn/client/src/edge-schema-validator.ts
+  s_d584f7b0ec7863::t_2378086612fa60 1-59
+mcpfn/client/src/stdio-unavailable.ts
+  s_d584f7b0ec7863::t_2378086612fa60 1-12
+scripts/ci-plan.test.mjs
+  s_d584f7b0ec7863::t_2378086612fa60 13-14,60-61,98-99,126-128,130-132,136,154-155,178,193-194,242-243,381-726
+authfn/social-oauth/src/types.ts
+  s_d584f7b0ec7863::t_2378086612fa60 49-70
+authfn/core/src/core/conditional-update.ts
+  s_d584f7b0ec7863::t_2378086612fa60 1-74
+authfn/docs/content/docs/reference/schema.md
+  s_d584f7b0ec7863::t_2378086612fa60 70-71,136-137
+clifn/core/tests/consumer-contract.test-d.ts
+  s_d584f7b0ec7863::t_2378086612fa60 1-196
+apifn/admin/package.json
+  s_d584f7b0ec7863::t_2378086612fa60 3,41,47
+mcpfn/client/turbo.json
+  s_d584f7b0ec7863::t_2378086612fa60 1-9
+scripts/sfns4/packed-consumers.mjs
+  s_d584f7b0ec7863::t_2378086612fa60 135
+langfn/typescript/src/models/responses/request.ts
+  s_d584f7b0ec7863::t_2378086612fa60 1-443
+authfn/core/src/core/challenge-id.ts
+  s_d584f7b0ec7863::t_2378086612fa60 1-5
+authfn/core/src/index.ts
+  s_d584f7b0ec7863::t_2378086612fa60 75
+memoryfn/typescript/src/storage/pg/adapter.ts
+  s_d584f7b0ec7863::t_2378086612fa60 4,28-29,36-40,122-132,140,160,335-339,349-371,375-383,449-451
+langfn/typescript/tests/fixtures/responses/openai/tool-continuation.json
+  s_d584f7b0ec7863::t_2378086612fa60 1-43
+langfn/typescript/tests/fixtures/responses/openai/stream-failed.sse
+  s_d584f7b0ec7863::t_2378086612fa60 1-9
+authfn/docs/content/docs/plugins/email-otp.md
+  s_d584f7b0ec7863::t_2378086612fa60 55-57,99,138,140,157
+  s_d584f7b0ec7863::t_84e8b29a493b41 158
+scripts/test-mcpfn-registry-install.mjs
+  s_d584f7b0ec7863::t_2378086612fa60 32
+authfn/core/src/core/rate-limit.ts
+  s_d584f7b0ec7863::t_2378086612fa60 4-5,12,34,55-57,149-154,163-167,332-363
+authfn/client/src/__tests__/client-password.test.ts
+  s_d584f7b0ec7863::t_2378086612fa60 6,152-204
+  s_d584f7b0ec7863::t_4926aa0169426b 205-206
+apifn/README.md
+  s_d584f7b0ec7863::t_2378086612fa60 24-35,37-40
+authfn/swift/Sources/AuthFnClient/AuthFnClient.swift
+  s_d584f7b0ec7863::t_2378086612fa60 84-99,113-173,314-320,323,374-377
+mcpfn/testing/package.json
+  s_d584f7b0ec7863::t_2378086612fa60 3,33-36,49
+scripts/gate-mcpfn-release.mjs
+  s_d584f7b0ec7863::t_2378086612fa60 92-93,95-100,147-283,489-490,555,569,571,581-582,584,588,666-670
+authfn/core/src/__tests__/otp.test.ts
+  s_d584f7b0ec7863::t_2378086612fa60 18,20,1044-1594
+  s_d584f7b0ec7863::t_20d9497be8f13e 1595
+authfn/core/package.json
+  s_d584f7b0ec7863::t_2378086612fa60 3,68,76
+authfn/python/authfn/plugins/email_otp.py
+  s_d584f7b0ec7863::t_2378086612fa60 459-460,463-469,487-505,561-565
+  s_d584f7b0ec7863::t_293dd29b5a403e 566
+langfn/typescript/src/models/responses/model.ts
+  s_d584f7b0ec7863::t_2378086612fa60 1-497
+langfn/typescript/tests/fixtures/responses/chatgpt-signin/subscription-usage-limit.json
+  s_d584f7b0ec7863::t_2378086612fa60 1-14
+langfn/typescript/tests/fixtures/responses/openai/context-length.json
+  s_d584f7b0ec7863::t_2378086612fa60 1-14
+langfn/typescript/tests/fixtures/responses/openrouter/stream-error-insufficient-credits.sse
+  s_d584f7b0ec7863::t_2378086612fa60 1-4
+apifn/core/scripts/fix-testfn-cjs-types.mjs
+  s_d584f7b0ec7863::t_2378086612fa60 1-30
+authfn/adapters/lookup-dynamodb/package.json
+  s_d584f7b0ec7863::t_2378086612fa60 35-36
+.github/workflows/ci.yml
+  s_d584f7b0ec7863::t_2378086612fa60 15-17,22-24,26-27,35,104-109,112-113,192,373-374
+  s_d584f7b0ec7863::t_7c47e7b3a78f35 375
+authfn/docs/content/docs/reference/configuration.md
+  s_d584f7b0ec7863::t_2378086612fa60 113
+langfn/typescript/turbo.json
+  s_d584f7b0ec7863::t_2378086612fa60 1-9
+mcpfn/auth/tests/authorization-errors.test.ts
+  s_d584f7b0ec7863::t_2378086612fa60 1-298
+memoryfn/typescript/src/core/pipeline.ts
+  s_d584f7b0ec7863::t_2378086612fa60 2-12,15,56-57,90-213,249-468
+devfn/config/package.json
+  s_d584f7b0ec7863::t_2378086612fa60 22
+memoryfn/typescript/src/chunking/markdown.ts
+  s_d584f7b0ec7863::t_2378086612fa60 1-246
+authfn/python/authfn/http.py
+  s_d584f7b0ec7863::t_2378086612fa60 162-169,171-175,1740-1742
+langfn/typescript/tests/fixtures/responses/openai/tool-call.json
+  s_d584f7b0ec7863::t_2378086612fa60 1-48
+mcpfn/client/src/load-stdio-target.mjs
+  s_d584f7b0ec7863::t_2378086612fa60 1-8
+authfn/core/src/core/sessions.ts
+  s_d584f7b0ec7863::t_2378086612fa60 36,66-67,198-240,301-311,537
+authfn/python/authfn/schema.py
+  s_d584f7b0ec7863::t_2378086612fa60 12
+authfn/swift/Tests/AuthFnWebViewBridgeHostTests/AuthFnWebViewBridgeHostTests.swift
+  s_d584f7b0ec7863::t_2378086612fa60 13-193
+authfn/python/tests/test_schema.py
+  s_d584f7b0ec7863::t_2378086612fa60 51
+authfn/docs/content/docs/sdk/swift.md
+  s_d584f7b0ec7863::t_2378086612fa60 117,122-127,130
+authfn/core/src/__tests__/social-google.test.ts
+  s_d584f7b0ec7863::t_2378086612fa60 1,374-446,597-610
+  s_d584f7b0ec7863::t_957574c6f33d17 611
+clifn/core/README.md
+  s_d584f7b0ec7863::t_2378086612fa60 25,213,219-220,272-277,403
+authfn/docs/content/docs/plugins/social-oauth/index.md
+  s_d584f7b0ec7863::t_2378086612fa60 54-57,84-87,110,127-130,171-180
+apifn/svelte/package.json
+  s_d584f7b0ec7863::t_2378086612fa60 3,50
+clifn/core/src/store-options.ts
+  s_d584f7b0ec7863::t_2378086612fa60 1-180
+filefn/docs/package.json
+  s_d584f7b0ec7863::t_2378086612fa60 40-41,50
+memoryfn/typescript/tests/http-documents.test.ts
+  s_d584f7b0ec7863::t_2378086612fa60 1-243
+memoryfn/typescript/src/index.ts
+  s_d584f7b0ec7863::t_2378086612fa60 94
+authfn/core/src/__tests__/two-factor.test.ts
+  s_d584f7b0ec7863::t_2378086612fa60 5,16,19,21,172-177,462-493,633-1377
+apifn/core/__tests__/testfn-adapter.test.ts
+  s_d584f7b0ec7863::t_2378086612fa60 1-4,6-7,22-23,28-32,43-47,62-65,67-68
+authfn/core/src/__tests__/sessions.test.ts
+  s_d584f7b0ec7863::t_2378086612fa60 18,640-655
+  s_d584f7b0ec7863::t_c2c9236603c72d 656-657
+mcpfn/cli/src/index.ts
+  s_d584f7b0ec7863::t_2378086612fa60 11
+mcpfn/core/tests/bundled-sdk-version.test.ts
+  s_d584f7b0ec7863::t_2378086612fa60 1-382
+mcpfn/docs/static/llms-full.txt
+  s_d584f7b0ec7863::t_2378086612fa60 74-76,106,520-555,666-669
+.github/workflows/pullfrog.yml
+  s_d584f7b0ec7863::t_2378086612fa60 30-32
+scripts/assert-release-ci.mjs
+  s_d584f7b0ec7863::t_2378086612fa60 1-217
+clifn/docs/content/docs/credentials-and-client.md
+  s_d584f7b0ec7863::t_2378086612fa60 6
+authfn/two-factor/src/index.ts
+  s_d584f7b0ec7863::t_2378086612fa60 14-15,35-39,44-66,81-82
+authfn/client/src/client.ts
+  s_d584f7b0ec7863::t_2378086612fa60 5-6,9-11,43-45,87-91,111-115
+  s_d584f7b0ec7863::t_11d71721972def 116
+memoryfn/typescript/tests/source-contract.ts
+  s_d584f7b0ec7863::t_2378086612fa60 97-112
+authfn/api-keys/package.json
+  s_d584f7b0ec7863::t_2378086612fa60 3,29
+.github/workflows/notify-next-sync.yml
+  s_d584f7b0ec7863::t_2378086612fa60 1-70
+authfn/swift/Tests/AuthFnClientTests/AuthFnClientTests.swift
+  s_d584f7b0ec7863::t_2378086612fa60 68-188
+authfn/core/src/core/api-keys.ts
+  s_d584f7b0ec7863::t_2378086612fa60 16,244
+langfn/typescript/tests/fixtures/responses/openrouter/stream-failed-authentication.sse
+  s_d584f7b0ec7863::t_2378086612fa60 1-4
+authfn/core/src/__tests__/account-lifecycle-security.test.ts
+  s_d584f7b0ec7863::t_2378086612fa60 1-687
+clifn/core/vitest.config.ts
+  s_d584f7b0ec7863::t_2378086612fa60 7-12,16
+langfn/typescript/package.json
+  s_d584f7b0ec7863::t_2378086612fa60 104
+memoryfn/typescript/README.md
+  s_d584f7b0ec7863::t_2378086612fa60 34-37
+authfn/password/src/index.ts
+  s_d584f7b0ec7863::t_2378086612fa60 13,17,35-39,42-49,51-56,60-67,97-98,102,121-123
+langfn/typescript/src/models/responses/credentials.ts
+  s_d584f7b0ec7863::t_2378086612fa60 1-169
+mcpfn/client/vitest.config.ts
+  s_d584f7b0ec7863::t_2378086612fa60 1-2,6-15
+mcpfn/core/package.json
+  s_d584f7b0ec7863::t_2378086612fa60 3,17,25,31
+memoryfn/typescript/src/core/config.ts
+  s_d584f7b0ec7863::t_2378086612fa60 2,82-87
+mcpfn/inspector/package.json
+  s_d584f7b0ec7863::t_2378086612fa60 3,24-26,30-31
+authfn/social-oauth/src/index.ts
+  s_d584f7b0ec7863::t_2378086612fa60 1,30,40-41,59,61-63,70,104-109,117-122,151,181-182,186-203,206-207,222,225-233,245-252,278-290,305-309,334-433,457-459,461,517-528,559,562-563,572-655,666-668,685-702,721-722,760,764-768,872-874,1911,1916,2055-2058,2085,2096,2104,2108,2134-2201,2203-2205,2211-2215,2219-2222,2230-2236,2645-2929
+authfn/client/src/types.ts
+  s_d584f7b0ec7863::t_2378086612fa60 214-221,233-234,247-260,268-272,351-353
+  s_d584f7b0ec7863::t_07ad20da92154b 354-355
+clifn/core/tsconfig.typecheck.json
+  s_d584f7b0ec7863::t_2378086612fa60 1-10
+mcpfn/auth/tests/bundled-sdk-version.test.ts
+  s_d584f7b0ec7863::t_2378086612fa60 1-236
+mcpfn/MIGRATION.md
+  s_d584f7b0ec7863::t_2378086612fa60 59-63
+packages/oauth-storage/src/token-vault.ts
+  s_d584f7b0ec7863::t_2378086612fa60 48-50,64-65,86-92
+authfn/client/package.json
+  s_d584f7b0ec7863::t_2378086612fa60 3,33,37-40,42
+  s_d584f7b0ec7863::t_fdc3c2d8165ff5 41
+authfn/core/src/core/passwords.ts
+  s_d584f7b0ec7863::t_2378086612fa60 23,97,104,107
+clifn/core/tests/paths.test.ts
+  s_d584f7b0ec7863::t_2378086612fa60 1-323
+apifn/mock/package.json
+  s_d584f7b0ec7863::t_2378086612fa60 3,23
+extfn/cli/package.json
+  s_d584f7b0ec7863::t_2378086612fa60 38
+langfn/typescript/tests/fixtures/responses/openai/stream-tool-call.sse
+  s_d584f7b0ec7863::t_2378086612fa60 1-21
+langfn/typescript/src/models/openai.ts
+  s_d584f7b0ec7863::t_2378086612fa60 223-231,238
+langfn/typescript/tests/fixtures/responses/openai/rate-limit.json
+  s_d584f7b0ec7863::t_2378086612fa60 1-15
+langfn/typescript/tests/fixtures/responses/openrouter/failed-insufficient-credits.json
+  s_d584f7b0ec7863::t_2378086612fa60 1-16
+mcpfn/auth/tsup.config.ts
+  s_d584f7b0ec7863::t_2378086612fa60 1-2,4,19-21
+memoryfn/docs/content/docs/reference/api.md
+  s_d584f7b0ec7863::t_2378086612fa60 21-22,27
+clifn/core/tests/app-stores.test.ts
+  s_d584f7b0ec7863::t_2378086612fa60 1-501
+memoryfn/typescript/tests/types/legacy-consumers.ts
+  s_d584f7b0ec7863::t_2378086612fa60 1-24
+scripts/notify-next-sync-workflow.test.mjs
+  s_d584f7b0ec7863::t_2378086612fa60 1-206
+langfn/typescript/src/models/index.ts
+  s_d584f7b0ec7863::t_2378086612fa60 9-10
+mcpfn/client/tests/packed-exports.test.ts
+  s_d584f7b0ec7863::t_2378086612fa60 1-152
+authfn/core/src/core/two-factor.ts
+  s_d584f7b0ec7863::t_2378086612fa60 21,25-26,43-64,198,225-231,309-313,346-365,368-430,450,480,558-567,571-805,812-834,836-862,864-865,867-923,926-932,939-940,943,959-969,972-978,1065-1066
+authfn/swift/Sources/AuthFnWebViewBridgeHost/AuthFnWebViewBridgeHost.swift
+  s_d584f7b0ec7863::t_2378086612fa60 5-394,407,409-413,417,421-426,449-454,549-552
+  s_d584f7b0ec7863::t_78432b0fda0a11 553
+langfn/typescript/tests/fixtures/responses/openai/insufficient-quota.json
+  s_d584f7b0ec7863::t_2378086612fa60 1-14
+mcpfn/client/tests/fixtures/schema-parity-server.mjs
+  s_d584f7b0ec7863::t_2378086612fa60 1-27
+authfn/docs/content/docs/plugins/api-keys.md
+  s_d584f7b0ec7863::t_2378086612fa60 31-33,59
+mcpfn/core/tsup.config.ts
+  s_d584f7b0ec7863::t_2378086612fa60 3,5,29-31
+apifn/react/package.json
+  s_d584f7b0ec7863::t_2378086612fa60 3,22
+scripts/owners.test.mjs
+  s_d584f7b0ec7863::t_2378086612fa60 2-3,6,19,128-156,226-393
+langfn/typescript/src/models/stream-lines.ts
+  s_d584f7b0ec7863::t_2378086612fa60 3-40,45,48,50-57,61-62,68-71,73-74,78-80,82,85-92,96-99,101-103,106-116
+mcpfn/datafn/package.json
+  s_d584f7b0ec7863::t_2378086612fa60 3,26,30
+extfn/cli/__tests__/dev.test.ts
+  s_d584f7b0ec7863::t_2378086612fa60 97
+langfn/typescript/tests/fixtures/responses/openrouter/stream-failed-context-length.sse
+  s_d584f7b0ec7863::t_2378086612fa60 1-4
+authfn/docs/content/docs/recipes/email-verification.md
+  s_d584f7b0ec7863::t_2378086612fa60 21-25,29-30,42-44,50-55
+langfn/typescript/tests/responses-mapping.test.ts
+  s_d584f7b0ec7863::t_2378086612fa60 1-2981
+mcpfn/client/tests/edge-schema-validator.test.ts
+  s_d584f7b0ec7863::t_2378086612fa60 1-62
+mcpfn/client/tests/transports.test.ts
+  s_d584f7b0ec7863::t_2378086612fa60 12,16,24-26,28,37-48
+  s_d584f7b0ec7863::t_6f2f79d81be909 49-51
+memoryfn/typescript/tsconfig.types.json
+  s_d584f7b0ec7863::t_2378086612fa60 1-5
+packages/oauth-storage/tests/state-vault.test.ts
+  s_d584f7b0ec7863::t_2378086612fa60 202-217
+memoryfn/docs/content/docs/meta.json
+  s_d584f7b0ec7863::t_2378086612fa60 10
+memoryfn/typescript/src/storage/adapter.ts
+  s_d584f7b0ec7863::t_2378086612fa60 27-30,70-91,104-113,126-136,157-161,164,233-236,238,245-250,257-306,330
+authfn/core/src/core/account.ts
+  s_d584f7b0ec7863::t_2378086612fa60 226,231-233
+authfn/docs/content/docs/quickstart/python.md
+  s_d584f7b0ec7863::t_2378086612fa60 29,40-46,48-51,56
+  s_d584f7b0ec7863::t_546936597c3de8 57
+authfn/password/package.json
+  s_d584f7b0ec7863::t_2378086612fa60 3,29
+clifn/core/tests/consumer-contract.table.ts
+  s_d584f7b0ec7863::t_2378086612fa60 1-59
+authfn/python/README.md
+  s_d584f7b0ec7863::t_2378086612fa60 28,42-53,62
+  s_d584f7b0ec7863::t_48015505885277 63
+authfn/core/src/core/verifications.ts
+  s_d584f7b0ec7863::t_2378086612fa60 16,22-24,30-45,55-59,68-70,87-93,132-137,140,145,149-151,159-160,321,324-329,343-344,380-390,401-429,432-445,450-454,457,459,528,537,542-548,558-630,662-675,708-1131,1205-1253,1263,1265,1278-1280,1308-1322,1333,1336,1348-1351,1411,1516,1520,1525
+memoryfn/typescript/tests/postgres-source-statements.test.ts
+  s_d584f7b0ec7863::t_2378086612fa60 5,10,12-13,20,22,26,100-173
+langfn/typescript/src/models/profiles/chatgpt.ts
+  s_d584f7b0ec7863::t_2378086612fa60 1-41
+langfn/typescript/tests/fixtures/responses/chatgpt-signin/unauthorized.json
+  s_d584f7b0ec7863::t_2378086612fa60 1-14
+scripts/verify-mcpfn-bundled-sdk.mjs
+  s_d584f7b0ec7863::t_2378086612fa60 1-470
+authfn/core/src/__tests__/sqlite/migrations/0000_authfn_sqlite.sql
+  s_d584f7b0ec7863::t_2378086612fa60 30
+authfn/core/src/core/errors.ts
+  s_d584f7b0ec7863::t_2378086612fa60 26,288-298,571-604
+authfn/docs/content/docs/plugins/password.md
+  s_d584f7b0ec7863::t_2378086612fa60 50,56,59,129-130,133-147
+langfn/typescript/tests/fixtures/responses/openrouter/tool-call-incomplete.json
+  s_d584f7b0ec7863::t_2378086612fa60 1-69
+langfn/typescript/src/http/validation.ts
+  s_d584f7b0ec7863::t_2378086612fa60 247,252,257
+langfn/typescript/tests/fixtures/responses/openai/tool-call-incomplete.json
+  s_d584f7b0ec7863::t_2378086612fa60 1-69
+mcpfn/cli/package.json
+  s_d584f7b0ec7863::t_2378086612fa60 3,25-30,35
+mcpfn/client/src/targets.ts
+  s_d584f7b0ec7863::t_2378086612fa60 8-14,16-18,47-54,57-67,72-94
+  s_d584f7b0ec7863::t_58fbdfca51bccd 95
+memoryfn/docs/content/docs/http.md
+  s_d584f7b0ec7863::t_2378086612fa60 22
+memoryfn/typescript/src/core/types.ts
+  s_d584f7b0ec7863::t_2378086612fa60 1-2,11-13,101-143
+  s_d584f7b0ec7863::t_c6ae643ea7da2b 144
+apifn/collections/package.json
+  s_d584f7b0ec7863::t_2378086612fa60 3,23
+authfn/core/src/core/placement-context.ts
+  s_d584f7b0ec7863::t_2378086612fa60 34,530-532
+authfn/docs/content/docs/sdk/python.md
+  s_d584f7b0ec7863::t_2378086612fa60 193
+clifn/core/turbo.json
+  s_d584f7b0ec7863::t_2378086612fa60 1-42
+langfn/typescript/src/models/responses/stream.ts
+  s_d584f7b0ec7863::t_2378086612fa60 1-449
+langfn/typescript/tests/fixtures/responses/openrouter/stream-failed-insufficient-credits.sse
+  s_d584f7b0ec7863::t_2378086612fa60 1-4
+authfn/docs/content/docs/plugins/two-factor.md
+  s_d584f7b0ec7863::t_2378086612fa60 45-46,65,99-109,136
+mcpfn/testing/src/host-authorization.ts
+  s_d584f7b0ec7863::t_2378086612fa60 3-9,46-52,58-71,74-113,298,300,303-311,314-323,327-328,467,469,515,518,521-526,534-939,946,949-951,956
+  s_d584f7b0ec7863::t_e290c02ad636e1 2
+authfn/core/src/__tests__/placement-context.test.ts
+  s_d584f7b0ec7863::t_2378086612fa60 638-651
+scripts/test-mcpfn-isolated-release.mjs
+  s_d584f7b0ec7863::t_2378086612fa60 1-84
+langfn/typescript/src/models/responses/response.ts
+  s_d584f7b0ec7863::t_2378086612fa60 1-639
+clifn/core/tests/consumer-contract.test.ts
+  s_d584f7b0ec7863::t_2378086612fa60 1-78
+devfn/cli/package.json
+  s_d584f7b0ec7863::t_2378086612fa60 17
+clifn/core/tests/consumer-scan.test.ts
+  s_d584f7b0ec7863::t_2378086612fa60 1-465
+memoryfn/typescript/package.json
+  s_d584f7b0ec7863::t_2378086612fa60 42,45
+langfn/typescript/tests/fixtures/responses/openrouter/stream-tool-call.sse
+  s_d584f7b0ec7863::t_2378086612fa60 1-20
+mcpfn/client/src/custom-target.ts
+  s_d584f7b0ec7863::t_2378086612fa60 1-30
+authfn/adapters/lookup-cloudflare-do/package.json
+  s_d584f7b0ec7863::t_2378086612fa60 33-34
+memoryfn/typescript/tests/openai-provider.test.ts
+  s_d584f7b0ec7863::t_2378086612fa60 16-17,66-108
+  s_d584f7b0ec7863::t_dbc356e11aefd4 109
+langfn/typescript/tests/responses-credentials.test.ts
+  s_d584f7b0ec7863::t_2378086612fa60 1-537
+langfn/typescript/tests/responses-conformance.test.ts
+  s_d584f7b0ec7863::t_2378086612fa60 1-515
+clifn/core/tests/consumer-import-scanner.ts
+  s_d584f7b0ec7863::t_2378086612fa60 1-431
+authfn/python/CHANGELOG.md
+  s_d584f7b0ec7863::t_2378086612fa60 10-12
+langfn/typescript/tests/fixtures/responses/openrouter/text.json
+  s_d584f7b0ec7863::t_2378086612fa60 1-50
+mcpfn/client/src/load-stdio-target.d.mts
+  s_d584f7b0ec7863::t_2378086612fa60 1
+apifn/core/turbo.json
+  s_d584f7b0ec7863::t_2378086612fa60 1-9
+clifn/core/CHANGELOG.md
+  s_d584f7b0ec7863::t_2378086612fa60 3-17
+langfn/typescript/tests/fixtures/responses/openrouter/stream-failed.sse
+  s_d584f7b0ec7863::t_2378086612fa60 1-10
+clifn/core/tests/fixtures/consumer-scan/boundary-listed-forms.ts
+  s_d584f7b0ec7863::t_2378086612fa60 1-17
+mcpfn/client/scripts/build-stamp.d.mts
+  s_d584f7b0ec7863::t_2378086612fa60 1-8
+authfn/core/src/__tests__/social-apple.test.ts
+  s_d584f7b0ec7863::t_2378086612fa60 1-2,8-28,30-46,391-664
+langfn/typescript/tests/fixtures/responses/openrouter/server-error.json
+  s_d584f7b0ec7863::t_2378086612fa60 1-16
+mcpfn/client/CHANGELOG.md
+  s_d584f7b0ec7863::t_2378086612fa60 1-41
+clifn/core/tests/import-lookups.test.ts
+  s_d584f7b0ec7863::t_2378086612fa60 1-64
+apifn/cli/package.json
+  s_d584f7b0ec7863::t_2378086612fa60 26,28-29,31
+langfn/typescript/tests/fixtures/responses/openrouter/auth.json
+  s_d584f7b0ec7863::t_2378086612fa60 1-12
+clifn/core/src/index.ts
+  s_d584f7b0ec7863::t_2378086612fa60 71,76,79-87
+.github/workflows/publish-tag.yml
+  s_d584f7b0ec7863::t_2378086612fa60 31-35,72-99,234-237
+  s_d584f7b0ec7863::t_9499e007694960 238
+clifn/core/src/paths.ts
+  s_d584f7b0ec7863::t_2378086612fa60 1-48
+mcpfn/docs/content/docs/client.md
+  s_d584f7b0ec7863::t_2378086612fa60 25-27
+authfn/email-otp/package.json
+  s_d584f7b0ec7863::t_2378086612fa60 3,29
+authfn/client/src/regional-client.ts
+  s_d584f7b0ec7863::t_2378086612fa60 9,19,22,25,181,240
+langfn/typescript/tests/fixtures/responses/openai/stream-tool-call-incomplete.sse
+  s_d584f7b0ec7863::t_2378086612fa60 1-15
+apifn/core/tsup.config.ts
+  s_d584f7b0ec7863::t_2378086612fa60 4-10
+.github/workflows/publish-python.yml
+  s_d584f7b0ec7863::t_2378086612fa60 31-35,43,46,52-67,99,102
+mcpfn/client/tests/build-stamp.test.ts
+  s_d584f7b0ec7863::t_2378086612fa60 1-232
+authfn/api-keys/src/index.ts
+  s_d584f7b0ec7863::t_2378086612fa60 17-22,33-51,54-55,113-114,121,130,203-264
+authfn/docs/package.json
+  s_d584f7b0ec7863::t_2378086612fa60 26-30,32,34,44
+  s_d584f7b0ec7863::t_277f87607e2dca 31
+authfn/python/authfn/plugins/two_factor.py
+  s_d584f7b0ec7863::t_2378086612fa60 25,55,70-80,166-168,255,330-331,336-349,351-362,428-431,439-497,545-549,619,624-628
+  s_d584f7b0ec7863::t_12699ace22c86a 629-630
+langfn/typescript/tests/fixtures/responses/openrouter/insufficient-credits.json
+  s_d584f7b0ec7863::t_2378086612fa60 1-12
+langfn/typescript/tests/fixtures/responses/openrouter/stream-tool-call-incomplete.sse
+  s_d584f7b0ec7863::t_2378086612fa60 1-13
+memoryfn/typescript/tests/chunking.test.ts
+  s_d584f7b0ec7863::t_2378086612fa60 1-206
+mcpfn/docs/content/docs/deployment.md
+  s_d584f7b0ec7863::t_2378086612fa60 16
+packages/admin/package.json
+  s_d584f7b0ec7863::t_2378086612fa60 31
+clifn/docs/content/docs/reference/core-readme.md
+  s_d584f7b0ec7863::t_2378086612fa60 28,216,222-223,275-280,406
+langfn/typescript/tests/fixtures/responses/chatgpt-signin/stream-subscription-usage-limit.sse
+  s_d584f7b0ec7863::t_2378086612fa60 1-6
+langfn/typescript/src/models/profiles/openai.ts
+  s_d584f7b0ec7863::t_2378086612fa60 1-20
+memoryfn/docs/static/llms.txt
+  s_d584f7b0ec7863::t_2378086612fa60 7
+authfn/social-oauth/package.json
+  s_d584f7b0ec7863::t_a3bd0522e9b429 3
+  s_d584f7b0ec7863::t_2378086612fa60 33-34
+mcpfn/client/src/index.ts
+  s_d584f7b0ec7863::t_2378086612fa60 1-3
+apifn/contracts/package.json
+  s_d584f7b0ec7863::t_2378086612fa60 39-40,43
+apifn/core/README.md
+  s_d584f7b0ec7863::t_2378086612fa60 8,11-12,222-226,229,256
+  s_d584f7b0ec7863::t_af95080801ca64 257
+langfn/typescript/tests/fixtures/responses/openrouter/stream-reasoning.sse
+  s_d584f7b0ec7863::t_2378086612fa60 1-36
+langfn/typescript/tests/fixtures/responses/openai/stream-reasoning.sse
+  s_d584f7b0ec7863::t_2378086612fa60 1-45
+langfn/typescript/src/models/responses/index.ts
+  s_d584f7b0ec7863::t_2378086612fa60 1-15
+authfn/email-otp/src/index.ts
+  s_d584f7b0ec7863::t_2378086612fa60 11,33,62-67,116,123-124
+authfn/examples/otp-recovery/client/src/App.svelte
+  s_d584f7b0ec7863::t_2378086612fa60 96-99
+authfn/multi-region/package.json
+  s_d584f7b0ec7863::t_2378086612fa60 3,29
+scripts/ci-plan.mjs
+  s_d584f7b0ec7863::t_2378086612fa60 16-23,49-52,73-74,268-374,422-519,544-548,556-642,652-669,738-739,741-748,752-799,843-846,858-911,913,915,921,929-930,932,935-939,951-969,972,974,976-978,980-981,989-996
+clifn/core/src/app-dirs.ts
+  s_d584f7b0ec7863::t_2378086612fa60 1-151
+mailfn/cli/package.json
+  s_d584f7b0ec7863::t_2378086612fa60 17
+apifn/snippets/package.json
+  s_d584f7b0ec7863::t_2378086612fa60 3,23
+clifn/docs/content/docs/reference/exports.md
+  s_d584f7b0ec7863::t_2378086612fa60 17-19
+authfn/docs/content/docs/reference/errors.md
+  s_d584f7b0ec7863::t_2378086612fa60 25,34,79
+clifn/core/tests/fixtures/consumer-scan/statement-boundary-forms.ts
+  s_d584f7b0ec7863::t_2378086612fa60 1-17
+langfn/typescript/tests/fixtures/responses/chatgpt-signin/stream-usage-limit.sse
+  s_d584f7b0ec7863::t_2378086612fa60 1-6
+mcpfn/client/tests/fixtures/schema-parity.mjs
+  s_d584f7b0ec7863::t_2378086612fa60 1-127
+mcpfn/client/tsup.config.ts
+  s_d584f7b0ec7863::t_2378086612fa60 4-8,10-12,16-25
+memoryfn/typescript/src/extraction/dedup.ts
+  s_d584f7b0ec7863::t_2378086612fa60 4-21,31,33-34
+scripts/assert-release-owner.mjs
+  s_d584f7b0ec7863::t_2378086612fa60 1-171
+scripts/owners.mjs
+  s_d584f7b0ec7863::t_2378086612fa60 6,13-18,98-124,127-128,136,162,330-483
+apifn/core/package.json
+  s_d584f7b0ec7863::t_2378086612fa60 3,19-28,32,34-36,46-47,55-57,62-63
+authfn/native-handoff/src/index.ts
+  s_d584f7b0ec7863::t_2378086612fa60 1,33,50-55,58-59,104-106,109,189,191-194,203-204,228-243,282-308,397-398,437-438,450-455,571-603,607-608,611-618
+clifn/core/tests/fixtures/consumer-scan/unlisted-imports.ts
+  s_d584f7b0ec7863::t_2378086612fa60 1-11
+authfn/core/src/__tests__/sqlite/generated/authfn-schema.ts
+  s_d584f7b0ec7863::t_2378086612fa60 103
+langfn/typescript/tests/fixtures/responses/openrouter/tool-continuation.json
+  s_d584f7b0ec7863::t_2378086612fa60 1-44
+scripts/verify-mcpfn-bundled-sdk.d.mts
+  s_d584f7b0ec7863::t_2378086612fa60 1-24
+authfn/python/tests/support.py
+  s_d584f7b0ec7863::t_2378086612fa60 73-86,171
+  s_d584f7b0ec7863::t_02ff95f9f43051 172
+apifn/contracts/scripts/verify-packed-consumer.mjs
+  s_d584f7b0ec7863::t_2378086612fa60 4-10,21-22,64,148-156,162-169
+authfn/python/tests/test_openapi.py
+  s_d584f7b0ec7863::t_2378086612fa60 67,150
+authfn/core/src/schema.ts
+  s_d584f7b0ec7863::t_2378086612fa60 6
+langfn/typescript/tests/fixtures/responses/openrouter/failed-authentication.json
+  s_d584f7b0ec7863::t_2378086612fa60 1-17
+authfn/oauth-provider/package.json
+  s_d584f7b0ec7863::t_2378086612fa60 3,30,34
+mcpfn/client/src/client.ts
+  s_d584f7b0ec7863::t_2378086612fa60 31-32,110-191,201-202,657-659,847-855,871-874,876,1155
+packages/cli/src/__tests__/authfn-schema-discovery.test.ts
+  s_d584f7b0ec7863::t_2378086612fa60 159-162
+mcpfn/client/package.json
+  s_d584f7b0ec7863::t_2378086612fa60 3,13-42,45,47,54-55,58-60,62-63
+mcpfn/client/tests/request-id.test.ts
+  s_d584f7b0ec7863::t_2378086612fa60 1-133
+authfn/core/src/core/users.ts
+  s_d584f7b0ec7863::t_2378086612fa60 4,127-235
+authfn/core/src/__tests__/integration-browser.test.ts
+  s_d584f7b0ec7863::t_2378086612fa60 326-334
+authfn/two-factor/package.json
+  s_d584f7b0ec7863::t_2378086612fa60 3,29
+authfn/svelte/package.json
+  s_d584f7b0ec7863::t_2378086612fa60 3,32,36
+billfn/docs/package.json
+  s_d584f7b0ec7863::t_2378086612fa60 30,42
+clifn/core/src/config.ts
+  s_d584f7b0ec7863::t_2378086612fa60 3-13,34-46,73-123,125,127-128,135,145
+mcpfn/client/README.md
+  s_d584f7b0ec7863::t_2378086612fa60 3-4,34-71
+mcpfn/client/scripts/build.mjs
+  s_d584f7b0ec7863::t_2378086612fa60 1-17
+mcpfn/client/src/stdio-options.ts
+  s_d584f7b0ec7863::t_2378086612fa60 1-17
+langfn/typescript/src/models/responses/errors.ts
+  s_d584f7b0ec7863::t_2378086612fa60 1-34
+authfn/docs/content/docs/plugins/social-oauth/apple.md
+  s_d584f7b0ec7863::t_2378086612fa60 131-134
+mcpfn/client/src/stdio.ts
+  s_d584f7b0ec7863::t_2378086612fa60 1-24
+authfn/docs/content/docs/plugins/native-handoff.md
+  s_d584f7b0ec7863::t_2378086612fa60 82,87-92,95-96,101
+  s_d584f7b0ec7863::t_17fbde37d47d27 102
+authfn/client/src/__tests__/client-account-settings.test.ts
+  s_d584f7b0ec7863::t_2378086612fa60 32-33,267,281
+langfn/typescript/src/models/responses/types.ts
+  s_d584f7b0ec7863::t_2378086612fa60 1-67
+langfn/typescript/tests/fixtures/responses/openai/text.json
+  s_d584f7b0ec7863::t_2378086612fa60 1-49
+plugfn/cli/package.json
+  s_d584f7b0ec7863::t_2378086612fa60 36
+langfn/typescript/tests/stream-lines.test.ts
+  s_d584f7b0ec7863::t_2378086612fa60 2,33-142
+README.md
+  s_d584f7b0ec7863::t_2378086612fa60 61-88,281-283
+  s_d584f7b0ec7863::t_e46a800bf78644 284
+authfn/docs/content/docs/core-concepts/account-linking.md
+  s_d584f7b0ec7863::t_2378086612fa60 71
+authfn/native-handoff/package.json
+  s_d584f7b0ec7863::t_2378086612fa60 3,29-30
+langfn/typescript/tests/fixtures/responses/openai/auth.json
+  s_d584f7b0ec7863::t_2378086612fa60 1-14
+mcpfn/client/tests/global-setup.ts
+  s_d584f7b0ec7863::t_2378086612fa60 1-21
+mcpfn/docs/content/docs/reference/client.md
+  s_d584f7b0ec7863::t_2378086612fa60 37-40
+memoryfn/docs/content/docs/storage.md
+  s_d584f7b0ec7863::t_2378086612fa60 31
+memoryfn/typescript/src/extraction/facts.ts
+  s_d584f7b0ec7863::t_2378086612fa60 10-24,32,49-55,57-107,109
+mcpfn/client/scripts/build-stamp.mjs
+  s_d584f7b0ec7863::t_2378086612fa60 1-179
+scripts/assert-release-ci.test.mjs
+  s_d584f7b0ec7863::t_2378086612fa60 1-298
+turbo.json
+  s_d584f7b0ec7863::t_2378086612fa60 15-18
+authfn/python/tests/test_two_factor.py
+  s_d584f7b0ec7863::t_2378086612fa60 9,31-33,38,40-42,246-507
+AGENTS.md
+  s_d584f7b0ec7863::t_2378086612fa60 3-54
+langfn/typescript/tests/fixtures/responses/openrouter/rate-limit.json
+  s_d584f7b0ec7863::t_2378086612fa60 1-20
+langfn/typescript/tests/fixtures/responses/openrouter/tool-call.json
+  s_d584f7b0ec7863::t_2378086612fa60 1-49
+mcpfn/client/tests/stdio-compat-abort.test.ts
+  s_d584f7b0ec7863::t_2378086612fa60 1-96
+mcpfn/docs/content/docs/reference/auth.md
+  s_d584f7b0ec7863::t_2378086612fa60 97-132
+apifn/docsfn/package.json
+  s_d584f7b0ec7863::t_2378086612fa60 3,32-34
+package-lock.json
+  s_d584f7b0ec7863::t_d082729709e165 93,96,99,113,115-116,118,137,140,266,305,315-316,324-325,333-335,346-349,353-387,392,395-397,429,432,443,446,846,849,860,863,1274-1275,1300-1301,1321,1324-1325,1327,1330-1331,1358,1361,1390,1394,1397-1402,1429,1433,1521-1527,1529,1539,1846,1849,3892,3896,3925,3927,3929,3958,3962,3965,4001,4004,4035-4036,4056,4058,4065,4125,4128,4135,4151,4154,4323,4335,8363,8366,8376-8378,8398-8400,8403,10606,10682,11282,11984-11985,12002,15108,15673,16918,16921,16926,16946-16957,16959-16962,16964,17392,17395-17400,17408,17418-17429,17431-17434,17436,17852,17855-17856,17859-17861,17863-17864,17873-17884,17886-17889,17891,17929,18320,18324,18330,18341-18352,18354-18356,18786,18791,18794,19246,19249-19251,19255-19256,19266-19277,19279-19282,19284,19712,19715-19718,19723,19742-19753,19755-19758,19760,24355,36590,36599,36822,37875,37892,37902,37919,37929,37939,37946,37954,37979,37990,38003,38008,38019,38032,38039,38052,38087,38102,42619,42728,45052,50075,50162,52821,53072,53997,54011,54067,56892,56994,57002,57017,57025,57033,57038,57043,57051,57062,57070,57266,58470,59640,61684-61712,61717-61723,64231
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "eb7d8f90e693b82fae0f4c8fb079fbb2367304e3",
+  "prompts": {},
+  "sessions": {
+    "s_d584f7b0ec7863": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ef7b35a3-950e-44c9-b6fe-63291f5cdafb",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

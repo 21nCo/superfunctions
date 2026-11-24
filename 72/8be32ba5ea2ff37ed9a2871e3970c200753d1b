@@ -1,0 +1,21 @@
+datafn/client/src/__tests__/query-limited-page-overlay.test.ts
+  s_e9dfbe834f33c0::t_d5dd231108945b 2136,2138-2145,2359,2545-2548,2589-2592
+datafn/client/src/query.ts
+  s_e9dfbe834f33c0::t_71b407c6d62d1e 23,854-856,899-900,1033-1035,1076,1080-1081,1086-1097,1205
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "728be32ba5ea2ff37ed9a2871e3970c200753d1b",
+  "prompts": {},
+  "sessions": {
+    "s_e9dfbe834f33c0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "850a774f-d05d-4cbc-a15c-db251688ada8",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
