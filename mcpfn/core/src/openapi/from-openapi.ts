@@ -287,6 +287,8 @@ class OperationConverter {
   private compiler: SchemaCompiler | undefined;
   /** Tool schemas by content, when tools share them (see `toolSchema`). */
   private readonly shared = new Map<string, McpFnObjectSchema | undefined>();
+  /** Nodes each shared schema's copy of its definitions cost, charged again per tool reusing it. */
+  private readonly sharedCosts = new Map<string, number>();
   /** Why a schema checked as written failed to compile (null: it compiled), by source object and by content. */
   private readonly checkedAsWritten = new WeakMap<object, string | null | OpenApiSkip>();
   /** Request body schemas whose checked conversion failed for a reason of their own. */
@@ -491,6 +493,7 @@ class OperationConverter {
     definitions: Record<string, McpFnJsonSchema | boolean>,
     finish: () => McpFnObjectSchema | undefined,
   ): McpFnObjectSchema | undefined {
+    let cost = 0;
     const produce = () => {
       const schema = finish();
       if (schema === undefined) return undefined;
@@ -498,14 +501,24 @@ class OperationConverter {
       // The root first, so a root that fails to copy is charged nothing for the definitions it holds;
       // the definitions, converted once per call, are charged to every tool copying them as they are read.
       const rest = treeCopy(Object.fromEntries(Object.entries(schema).filter(([key]) => key !== "definitions")), this.schemas.rootCopyBudget()) as McpFnObjectSchema;
-      return { ...rest, definitions: treeCopy(definitions, this.schemas.copyBudget()) };
+      const budget = this.schemas.copyBudget();
+      const copied = { ...rest, definitions: treeCopy(definitions, budget) };
+      cost = budget.used;
+      return copied;
     };
     if (!this.shareSchemas) return produce();
     const values = { json: true, chars: 0 };
     const key = contentKey(kind, treeCopy(root, this.schemas.rootCopyBudget(), values), values, definitions);
-    if (key !== undefined && this.shared.has(key)) return this.shared.get(key);
+    if (key !== undefined && this.shared.has(key)) {
+      // The registry shares the schema, but each tool's catalog entry copies its definitions again (`register`).
+      this.schemas.chargeCopy(this.sharedCosts.get(key)!);
+      return this.shared.get(key);
+    }
     const result = produce();
-    if (key !== undefined) this.shared.set(key, result && deepFreeze(result));
+    if (key !== undefined) {
+      this.shared.set(key, result && deepFreeze(result));
+      this.sharedCosts.set(key, cost);
+    }
     return result;
   }
 
@@ -621,20 +634,21 @@ class OperationConverter {
     if (failure === undefined) {
       // The generated definitions go on a wrapper, as in a tool schema, so
       // they never replace definitions the schema itself declares.
+      const wrapped = Object.keys(definitions).length > 0;
       failure = this.compileFailure(
-        Object.keys(definitions).length > 0
-          ? { type: "object", properties: { value: copy }, definitions: treeCopy(definitions, budget) }
-          : copy,
+        wrapped ? { type: "object", properties: { value: copy }, definitions: treeCopy(definitions, budget) } : copy,
+        // A value that reaches the checked schema, under the wrapper or not.
+        wrapped ? { value: null } : null,
       );
       if (key !== undefined) this.verdicts.set(key, failure);
     }
     return failure;
   }
 
-  private compileFailure(schema: object): string | null {
+  private compileFailure(schema: object, probe: unknown): string | null {
     this.compiler ??= createSchemaCompiler();
     try {
-      this.compiler.compile(schema);
+      reachReferences(this.compiler.engine, this.compiler.compile(schema), probe);
       return null;
     } catch (error) {
       if (error instanceof RangeError) return TOO_DEEP_VERDICT;
@@ -897,6 +911,28 @@ function candidateFailure(error: unknown): OpenApiSkip {
   throw error;
 }
 
+/**
+ * @cfworker/json-schema follows references only while validating, so its
+ * compile never overflows on a chain too deep to validate: one value is
+ * validated too, which follows every reference applied in place once.
+ */
+function reachReferences(engine: string, validate: (value: unknown) => boolean, probe: unknown = null): void {
+  if (engine === "cfworker") validate(probe);
+}
+
+/** Whether validating with @cfworker/json-schema overflows on a tool's input or output schema. */
+function overflowsWhenValidated(schemas: [object, object]): boolean {
+  for (const schema of schemas) {
+    if (schema === NO_OUTPUT) continue;
+    try {
+      reachReferences("cfworker", createSchemaCompiler("cfworker").compile(schema));
+    } catch (error) {
+      if (error instanceof RangeError) return true;
+    }
+  }
+  return false;
+}
+
 /** A compile verdict for a stack overflow, kept like any other verdict. */
 const TOO_DEEP_VERDICT = "\0too deep";
 
@@ -1123,10 +1159,18 @@ function register<TContext>(
   // Input and output schemas a validator overflowed its stack on: tools with
   // the same schemas (shared by content) get the same verdict, however warm the engine is.
   const overflowed = new WeakMap<object, WeakSet<object>>();
+  let engine: string | undefined;
   candidates.forEach((candidate, index) => {
     const { operation } = candidate;
     const pair: [object, object] = [candidate.inputSchema, candidate.outputSchema ?? NO_OUTPUT];
     if (overflowed.get(pair[0])?.has(pair[1])) {
+      skipped.push(tooDeepSkip(operation));
+      return;
+    }
+    engine ??= createSchemaCompiler().engine;
+    if (engine === "cfworker" && overflowsWhenValidated(pair)) {
+      if (!overflowed.has(pair[0])) overflowed.set(pair[0], new WeakSet());
+      overflowed.get(pair[0])!.add(pair[1]);
       skipped.push(tooDeepSkip(operation));
       return;
     }

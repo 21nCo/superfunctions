@@ -2758,22 +2758,24 @@ describe("fromOpenAPI body fallback, synchronous schemas, per-kind alternatives 
     const schemas = { Item: { type: "object", properties: { a: { type: "string", enum: values }, b: { type: "integer" } } } };
     const charge = (operations: number, registry?: McpFnRegistry) => {
       const charged = vi.spyOn(NodeBudget.prototype, "chargeNodes");
+      const nodes = vi.spyOn(NodeBudget.prototype, "charge");
       try {
         const paths: Record<string, unknown> = {};
         for (let index = 0; index < operations; index += 1) paths[`/g${index}`] = { get: { operationId: `g${index}`, responses: json({ $ref: "#/components/schemas/Item" }) } };
         const result = fromOpenAPI({ openapi: "3.0.3", paths, components: { schemas } }, { ...options(), ...(registry ? { registry } : {}) });
         expect(result.skipped).toEqual([]);
         expect(result.tools).toHaveLength(operations);
-        return charged.mock.calls.reduce((sum, [count]) => sum + count, 0);
+        return charged.mock.calls.reduce((sum, [count]) => sum + count, nodes.mock.calls.length);
       } finally {
         charged.mockRestore();
+        nodes.mockRestore();
       }
     };
     // Fresh copies per tool: each copy of the closure is charged, the enum's values included.
     const fresh = () => ({ register: () => undefined, has: () => false }) as unknown as McpFnRegistry;
     expect(charge(10, fresh()) - charge(5, fresh())).toBeGreaterThan(5 * values.length);
-    // Tools with identical schemas share one copy: the closure is copied, and charged, once.
-    expect(charge(10) - charge(5)).toBeLessThan(values.length);
+    // Tools with identical schemas share one registry copy, but each catalog entry copies the closure again: charged per tool too.
+    expect(charge(10) - charge(5)).toBeGreaterThan(5 * values.length);
     // A parameter that fails its shape check never emits the closure it was checked with.
     const parameters = Array.from({ length: 20 }, (_, index) => ({ name: `p${index}`, in: "query", schema: { $ref: `#/components/schemas/Q${index}` } }));
     const wrappers = Object.fromEntries(parameters.map((_, index) => [`Q${index}`, { allOf: [{ $ref: "#/components/schemas/Shape" }] }]));
@@ -3022,6 +3024,47 @@ describe("fromOpenAPI body fallback, synchronous schemas, per-kind alternatives 
       values.mockRestore();
     }
   });
+
+  it("charges a check copy that meets a cycle only for what it copied, so a valid sibling still fits", () => {
+    const cyclic: Record<string, unknown> = {};
+    cyclic.self = cyclic;
+    for (let index = 0; index < 20_000; index += 1) cyclic[`f${index}`] = index;
+    const paths: Record<string, unknown> = {};
+    // HEAD responses are compiled as written, through a charged copy that meets the cycle in its first field.
+    for (let index = 0; index < 200; index += 1) paths[`/h${index}`] = { head: { operationId: `h${index}`, responses: json({ type: "object", description: `h${index}`, default: cyclic }) } };
+    paths["/ok"] = { get: { operationId: "ok", responses: json({ type: "object", properties: { a: { type: "string" } } }) } };
+    const result = fromOpenAPI({ openapi: "3.1.0", paths }, options());
+    expect(registered(result)).toEqual([["ok", true]]);
+    expect(new Set(result.skipped.map(({ code }) => code))).toEqual(new Set(["circular-object"]));
+    expect(result.skipped).toHaveLength(200);
+  }, 60_000);
+
+  it("charges each catalog copy of a shared schema's definitions, and each walk of a closure's references", () => {
+    const literal = Array.from({ length: 25_000 }, (_, index) => index);
+    const paths: Record<string, unknown> = {};
+    for (let index = 0; index < 200; index += 1) paths[`/g${index}`] = { get: { operationId: `g${index}`, responses: json({ $ref: "#/components/schemas/Item" }) } };
+    const shared = fromOpenAPI({ openapi: "3.1.0", paths, components: { schemas: { Item: { type: "object", default: literal } } } }, options());
+    // One registry schema, but every catalog entry copies its 25,000 values: the document's total stops them.
+    expect(shared.tools.length).toBeGreaterThan(0);
+    expect(shared.tools.length).toBeLessThan(200);
+    expect(new Set(shared.skipped.map(({ reason }) => reason.replace(/\d+/g, "N")))).toEqual(new Set(["the document's schemas expand in total to more than N nodes"]));
+    // Distinct wrappers around one wide reference graph: each closure walk is charged for its edges.
+    const schemas: Record<string, unknown> = { Leaf: { type: "object" } };
+    schemas.Hub = { type: "object", properties: Object.fromEntries(Array.from({ length: 2000 }, (_, index) => [`p${index}`, { $ref: `#/components/schemas/L${index}` }])) };
+    for (let index = 0; index < 2000; index += 1) schemas[`L${index}`] = { $ref: "#/components/schemas/Leaf" };
+    const wrapped: Record<string, unknown> = {};
+    for (let index = 0; index < 100; index += 1) {
+      schemas[`W${index}`] = { allOf: [{ $ref: "#/components/schemas/Hub" }] };
+      wrapped[`/w${index}`] = { get: { operationId: `w${index}`, responses: json({ $ref: `#/components/schemas/W${index}` }) } };
+    }
+    const charged = vi.spyOn(NodeBudget.prototype, "chargeNodes");
+    try {
+      fromOpenAPI({ openapi: "3.1.0", paths: wrapped, components: { schemas } }, { ...options(), registry: { register: () => undefined, has: () => false } as unknown as McpFnRegistry });
+      expect(charged.mock.calls.reduce((sum, [count]) => sum + count, 0)).toBeGreaterThanOrEqual(100 * 2 * 2000);
+    } finally {
+      charged.mockRestore();
+    }
+  }, 60_000);
 
   it("gives a shallow root the same result whether or not a deeper root sharing its chain came first", () => {
     // 5,000 links: past what validators compile however warm they are.

@@ -182,13 +182,16 @@ for (const { operation, code, reason } of skipped) {
   its conversions and copies have produced 1,000,000 nodes plus 64 per value
   of the document, every schema converted after that is skipped
   (`schema-too-large`). Each tool's copy of the referenced component schemas
-  it holds is charged, by the values it reads, as it is made; a copy made to
-  check a schema is charged too, and a copy that fails is charged only for
-  what it read. No schema has a size or depth limit of its own: a schema that
+  it holds is charged node by node as it is made (again for each catalog
+  entry that copies a shared one), and so are a copy made to check a schema
+  and each walk of a closure's references; a copy that fails is charged only
+  for what it copied. No schema has a size or depth limit of its own: a schema that
   repeats objects the document shares between positions into more than four
   times the values they hold is skipped (`schema-too-large`), and a schema
   nested or referencing too deeply for the converter or the registry's
-  validator to compile (a stack overflow) is skipped the same way. Near the
+  validator to compile (a stack overflow) is skipped the same way; under
+  @cfworker/json-schema, which follows references only while validating, a
+  schema is also validated once to find out. Near the
   validator's own limit, that verdict is the validator's. A schema compiled
   only to be checked (a `HEAD` or non-object response, or one with
   properties to leave out) is compiled once per distinct schema. A Swagger

@@ -112,11 +112,11 @@ const SUPPORTED_DIALECTS = new Set([
  * Schema nodes one `fromOpenAPI` call may produce, the one budget of all its
  * work: a floor plus a multiple of the document's own size, so a document
  * that shares one schema object between many operations cannot multiply the
- * work. Every conversion (node by node) and every copy (each tool's copy of
- * the referenced component schemas it holds and copies made to check a
- * schema, by the source values it reads) is charged while it is made, so
+ * work. Every conversion and every copy (each tool's copy of the referenced
+ * component schemas it holds and copies made to check a schema) is charged
+ * node by node while it is made, so
  * work stops where the budget runs out and a copy that fails is charged only
- * for what it read. A tool's copy of its own root is bounded by the charged
+ * for what it copied. A tool's copy of its own root is bounded by the charged
  * conversion of that root (`rootCopyBudget`).
  * No single schema has a fixed size or depth limit of its own.
  */
@@ -155,8 +155,6 @@ export const CONTEXT_FREE_FAILURES: ReadonlySet<OpenApiSkipCode> = new Set<OpenA
 export class NodeBudget {
   private produced = 0;
   private sourceValues = 0;
-  /** Set on a copy's budget: it charges its total by the distinct values it reads, not by the nodes it produces. */
-  private chargesSource = false;
   /** Objects whose own values are already counted, each once by identity. */
   private readonly credited = new WeakSet<object>();
   /**
@@ -222,18 +220,6 @@ export class NodeBudget {
     return new NodeBudget(Number.POSITIVE_INFINITY, this);
   }
 
-  /**
-   * A budget for one copy, charged to this one by the values of each source
-   * object as the copy first reads it (an object shared between positions
-   * once). Its own sharing check bounds the nodes it may produce from them,
-   * so the work is bounded by the charge, and a copy that fails is charged
-   * only for what it read.
-   */
-  copy(): NodeBudget {
-    const budget = new NodeBudget(Number.POSITIVE_INFINITY, this);
-    budget.chargesSource = true;
-    return budget;
-  }
 
   /** Nodes produced so far. */
   get used(): number {
@@ -251,7 +237,7 @@ export class NodeBudget {
 
   /** Charge one produced node read from `value`. */
   charge(value?: unknown): void {
-    if (!this.chargesSource) this.total?.charge();
+    this.total?.charge();
     this.produced += 1;
     if (typeof value === "object" && value !== null) this.source(value);
     if (this.produced > this.limit) {
@@ -275,9 +261,7 @@ export class NodeBudget {
     if (this.credited.has(value)) return;
     this.credited.add(value);
     // Own keys, not length: the holes of a sparse array are not source values.
-    const values = 1 + this.ownKeys(value).length;
-    this.sourceValues += values;
-    if (this.chargesSource) this.total?.chargeNodes(values);
+    this.sourceValues += 1 + this.ownKeys(value).length;
   }
 
   /** Mark `value`, built by the conversion from source already counted, as counted. */
@@ -518,12 +502,17 @@ export class SchemaConverter {
   }
 
   /**
-   * A budget for one copy of produced schemas, charged to the call's total as
-   * it copies (`NodeBudget.copy`): copies made to check a schema, and each
-   * tool's copy of the generated definitions, which are converted once per call.
+   * A budget for one copy of produced schemas, charged to the call's total
+   * node by node as it copies: copies made to check a schema, and each tool's
+   * copy of the generated definitions, which are converted once per call.
    */
   copyBudget(): NodeBudget {
-    return this.total.copy();
+    return this.total.child();
+  }
+
+  /** Charge `nodes` to the call's total: a copy a tool's catalog entry repeats (see `toolSchema`). */
+  chargeCopy(nodes: number): void {
+    this.total.chargeNodes(nodes);
   }
 
   /**
@@ -1669,8 +1658,9 @@ export class SchemaConverter {
     for (let index = 0; index < queue.length; index += 1) {
       const key = queue[index]!;
       if (entries.has(key)) continue;
-      this.total.chargeNodes(1);
       const entry = this.converted(key, mode);
+      // The entry and every reference it holds: walking a closure costs its edges.
+      this.total.chargeNodes(1 + entry.refs!.size);
       entries.set(key, entry);
       for (const next of entry.refs!) if (!entries.has(next)) queue.push(next);
     }
