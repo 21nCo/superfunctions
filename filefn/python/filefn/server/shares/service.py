@@ -20,6 +20,10 @@ class CreateShareLinkInput(BaseModel):
     maxDownloads: Optional[int] = None
 
 
+# Seconds a signed share URL keeps clear of the link's expiry, for the time signing takes.
+SIGNING_MARGIN_SECONDS = 5
+
+
 class SharesServiceConfig(BaseModel):
     db: Any
     storage: Any
@@ -56,7 +60,7 @@ class SharesService:
         expires = parse_iso_instant(share.expiresAt) if share.expiresAt else None
         if expires is None:
             return self.signed_url_ttl_seconds
-        remaining = int((expires - datetime.now(timezone.utc)).total_seconds())
+        remaining = int((expires - datetime.now(timezone.utc)).total_seconds()) - SIGNING_MARGIN_SECONDS
         if remaining < 1:
             return None
         return min(self.signed_url_ttl_seconds, remaining)
@@ -263,6 +267,13 @@ class SharesService:
                 "fileName": file.name,
                 "mimeType": file.mimeType,
             }
+
+        # Only a link that is still valid gets the proxy URL.
+        if descriptor["url"].startswith("/proxy/"):
+            if is_grant_expired(share.expiresAt):
+                raise errors.share_expired()
+            if not hasattr(self.storage, "open_download_stream") and hasattr(self.storage, "sign_download_url"):
+                raise errors.share_expired()
 
         return descriptor
 

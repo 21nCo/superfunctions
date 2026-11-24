@@ -64,6 +64,9 @@ function generateToken(): string {
 }
 
 
+/** Seconds a signed share URL keeps clear of the link's expiry, for the time signing takes. */
+const SIGNING_MARGIN_SECONDS = 5;
+
 export function createSharesService(config: SharesServiceConfig) {
   const { db, storage, policies, namespace = 'filefn', signedUrlTtlSeconds = 900, options = {} } = config;
   if (
@@ -228,13 +231,13 @@ export function createSharesService(config: SharesServiceConfig) {
 
   /**
    * Signed URL lifetime: the configured TTL, but never past the link's own
-   * expiry. Null when less than a whole second is left: the checked proxy
-   * serves the link then.
+   * expiry, less SIGNING_MARGIN_SECONDS for the time signing itself takes.
+   * Null when no whole second is left after that margin.
    */
   function signedUrlLifetime(share: FileShareRecord): number | null {
     const expiresAtMs = share.expiresAt ? parseIsoInstant(share.expiresAt) : null;
     if (expiresAtMs === null) return signedUrlTtlSeconds;
-    const remaining = Math.floor((expiresAtMs - Date.now()) / 1000);
+    const remaining = Math.floor((expiresAtMs - Date.now()) / 1000) - SIGNING_MARGIN_SECONDS;
     return remaining < 1 ? null : Math.min(signedUrlTtlSeconds, remaining);
   }
 
@@ -329,8 +332,9 @@ export function createSharesService(config: SharesServiceConfig) {
       const { tokenHash, share, file, version } = await resolveDownload(token, ctx);
       const storageTarget = resolveStorageTarget(policies?.get(file.policy) ?? {});
 
+      const capabilities = getStorageCapabilities(storage, storageTarget);
       const lifetime = signedUrlLifetime(share);
-      if (lifetime !== null && getStorageCapabilities(storage, storageTarget).signedDownloadUrls && storage.signDownloadUrl) {
+      if (lifetime !== null && capabilities.signedDownloadUrls && storage.signDownloadUrl) {
         // Signed first and handed out only once the download is counted.
         const result = await storage.signDownloadUrl({
           key: version.storageKey,
@@ -339,7 +343,8 @@ export function createSharesService(config: SharesServiceConfig) {
         });
         // The signer fixed the URL's expiry no later than now + lifetime. If
         // signing took long enough for that to pass the link's own expiry, the
-        // URL is dropped and the checked proxy serves the link instead.
+        // URL is dropped and the checked proxy serves the link instead (or,
+        // without proxy streaming, the link counts as expired).
         const linkExpiresAtMs = share.expiresAt ? parseIsoInstant(share.expiresAt) : null;
         if (linkExpiresAtMs === null || Date.now() + lifetime * 1000 <= linkExpiresAtMs) {
           await reserveDownload(tokenHash, share, ctx);
@@ -347,6 +352,14 @@ export function createSharesService(config: SharesServiceConfig) {
         }
       }
 
+      // Only a link that is still valid, on storage that can stream it, gets
+      // the proxy URL.
+      if (isGrantExpired(share.expiresAt)) throw errors.shareExpired();
+      // Signing-only storage can't serve the proxy URL: near its end (within
+      // the signing margin) such a link counts as expired.
+      if (!storage.openDownloadStream && capabilities.signedDownloadUrls && storage.signDownloadUrl) {
+        throw errors.shareExpired();
+      }
       return {
         url: `/proxy/share-links/${encodeURIComponent(token)}/download`,
         fileName: file.name,

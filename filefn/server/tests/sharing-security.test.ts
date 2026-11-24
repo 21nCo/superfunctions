@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { memoryAdapter } from '@superfunctions/db/adapters/memory';
 import { createLocalStorageAdapter } from '@superfunctions/storage-local';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createFileFn, type FileFnConfig } from '../src/index.js';
 
 const owner = { principalId: 'owner', tenantId: 't1' };
@@ -277,17 +277,20 @@ describe('share links, grants and JSON routes (FILE-30 F-07, F-08, F-09, F-15)',
   });
 
   it('serves a link through the checked proxy when a signed URL could outlive it', async () => {
+    let signingTakesMs = 0;
+    let streaming = true;
     const local = createLocalStorageAdapter({ rootDir });
-    let delayMs = 0;
     const storage = new Proxy(local, {
       get(target, prop, receiver) {
         if (prop === 'capabilities') return { ...target.capabilities, signedDownloadUrls: true };
         if (prop === 'signDownloadUrl') {
           return async () => {
-            await new Promise((resolve) => setTimeout(resolve, delayMs));
+            // Signing "takes" this long: the clock moves on while it runs.
+            vi.setSystemTime(Date.now() + signingTakesMs);
             return { url: 'https://storage.example/object' };
           };
         }
+        if (prop === 'openDownloadStream' && !streaming) return undefined;
         return Reflect.get(target, prop, receiver);
       },
     });
@@ -307,19 +310,35 @@ describe('share links, grants and JSON routes (FILE-30 F-07, F-08, F-09, F-15)',
         data: { expiresAt: new Date(Date.now() + ms).toISOString() },
         namespace: 'filefn',
       });
+    const resolve = () => fileFn.services.shares.downloadViaShareLink(share.token, {});
 
-    // Under a second left: nothing to sign, the proxy (which checks expiry) serves it.
-    await setExpiry(500);
-    expect((await fileFn.services.shares.downloadViaShareLink(share.token, {})).url).toMatch(/^\/proxy\/share-links\//);
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      // Too little time left to sign with the safety margin: the proxy (which checks expiry) serves it.
+      await setExpiry(3000);
+      expect((await resolve()).url).toMatch(/^\/proxy\/share-links\//);
 
-    // Signing slower than the slack left: the URL would outlive the link, so it is dropped.
-    await setExpiry(1900);
-    delayMs = 1000;
-    expect((await fileFn.services.shares.downloadViaShareLink(share.token, {})).url).toMatch(/^\/proxy\/share-links\//);
+      // Signing slower than the margin: the URL would outlive the link, so it is dropped.
+      await setExpiry(60_000);
+      signingTakesMs = 6000;
+      expect((await resolve()).url).toMatch(/^\/proxy\/share-links\//);
 
-    await setExpiry(3_600_000);
-    delayMs = 0;
-    expect((await fileFn.services.shares.downloadViaShareLink(share.token, {})).url).toBe('https://storage.example/object');
+      // The link expired while signing: no proxy URL for a dead link.
+      await setExpiry(7000);
+      signingTakesMs = 8000;
+      await expect(resolve()).rejects.toMatchObject({ code: 'FILEFN_SHARE_EXPIRED' });
+
+      // Signing-only storage can't serve the proxy URL.
+      streaming = false;
+      signingTakesMs = 0;
+      await setExpiry(3000);
+      await expect(resolve()).rejects.toMatchObject({ code: 'FILEFN_SHARE_EXPIRED' });
+
+      await setExpiry(3_600_000);
+      expect((await resolve()).url).toBe('https://storage.example/object');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('treats the anonymous principal as a guest for links that require auth', async () => {
