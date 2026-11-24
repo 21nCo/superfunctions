@@ -1127,8 +1127,9 @@ async def test_multipart_retry_after_a_failed_stat_verifies_the_finalized_object
     storage = StatStorage(actual_size=3, fail_stats=1)
     service = _make_service(db=db, storage=storage)
     session = await _multipart_session(service)
-    with pytest.raises(RuntimeError):
+    with pytest.raises(errors.FileFnError) as unreadable:
         await service.complete_session(session["uploadSessionId"], _ctx())
+    assert unreadable.value.code == "FILEFN_STORAGE_ERROR"
     # The upload ID is consumed; the retry finds the session's own object and checks its size.
     result = await service.complete_session(session["uploadSessionId"], _ctx())
     assert result["versionId"] in db.tables["uploadSessions"][0]["storageKey"]
@@ -1208,7 +1209,13 @@ def test_drive_qualified_keys_are_unsafe() -> None:
 
     assert unsafe_storage_key_reason("C:/Windows/x") == "absolute key"
     assert unsafe_storage_key_reason("c:") == "absolute key"
-    assert unsafe_storage_key_reason("a:b/x") is None
+    assert unsafe_storage_key_reason("C:x/y") == "absolute key"
+    assert unsafe_storage_key_reason("ab:c/x") is None
+    # Default keys stay usable: a drive-like segment start is encoded.
+    from filefn.server.policies import sanitize_storage_key_segment
+
+    assert sanitize_storage_key_segment("a:b") == "a%3Ab"
+    assert sanitize_storage_key_segment("ab:c") == "ab:c"
 
 
 @pytest.mark.asyncio
@@ -1231,3 +1238,45 @@ async def test_retry_after_the_version_was_written_finishes_the_session() -> Non
     result = await service.complete_session(session["uploadSessionId"], _ctx())
     assert db.tables["uploadSessions"][0]["status"] == "completed"
     assert [row["versionId"] for row in db.tables["fileVersions"]] == [result["versionId"]]
+
+
+@pytest.mark.asyncio
+async def test_proxy_retry_after_the_version_was_written_finishes_without_storage() -> None:
+    class FailOnceSessionUpdate(FakeDB):
+        failed = False
+
+        async def update(self, model: str, where: List[Dict[str, Any]], data: Dict[str, Any], namespace: Optional[str] = None):
+            if model == "uploadSessions" and data.get("status") == "completed" and not self.failed:
+                self.failed = True
+                raise RuntimeError("database timeout")
+            return await super().update(model, where, data, namespace)
+
+    db = FailOnceSessionUpdate()
+    service = _make_service(db=db)
+    session = await service.create_session(
+        CreateSessionInput(policy="user-avatar", fileName="a.png", size=3, mimeType="image/png"), _ctx()
+    )
+    await service.record_proxy_part(session["uploadSessionId"], 1, b"abc", _ctx())
+    with pytest.raises(RuntimeError):
+        await service.complete_session(session["uploadSessionId"], _ctx())
+    # The staged parts are gone; the retry finishes from the published version alone.
+    result = await service.complete_session(session["uploadSessionId"], _ctx())
+    assert db.tables["uploadSessions"][0]["status"] == "completed"
+    assert [row["versionId"] for row in db.tables["fileVersions"]] == [result["versionId"]]
+
+
+@pytest.mark.asyncio
+async def test_legacy_session_sharing_a_published_key_must_restart() -> None:
+    db = FakeDB()
+    storage = StatStorage(actual_size=3)
+    service = _make_service(db=db, storage=storage)
+    session = await _multipart_session(service)
+    row = db.tables["uploadSessions"][0]
+    # A pre-upgrade session: no version ID of its own, and a key a published version uses.
+    row["completionVersionId"] = None
+    await db.create(model="fileVersions", data={"versionId": "ver_old", "fileId": "file_other", "storageKey": row["storageKey"], "size": 3})
+    with pytest.raises(errors.FileFnError) as restart:
+        await service.complete_session(session["uploadSessionId"], _ctx())
+    assert restart.value.code == "FILEFN_INVALID_REQUEST"
+    assert row["status"] == "aborted"
+    assert row["storageKey"] not in storage.objects

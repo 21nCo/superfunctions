@@ -821,6 +821,114 @@ class UploadSessionService:
         """Whether the session's storage key contains its own version ID, so no other session shares it."""
         return bool(session.completionVersionId) and session.completionVersionId in session.storageKey
 
+    async def _finalize_upload_storage(
+        self,
+        session: "UploadSessionRecord",
+        session_data: Dict[str, Any],
+        upload_session_id: str,
+        storage_target: str,
+    ) -> None:
+        """Checks the recorded parts and finalizes the session's object, verifying its stored size."""
+        parts_data = await self.db.find_many(
+            model="uploadParts",
+            where=[{"field": "uploadSessionId", "operator": "eq", "value": upload_session_id}],
+            namespace=self.namespace,
+        )
+        if len(parts_data) != session.totalParts:
+            raise errors.upload_incomplete()
+        uploaded_size = sum(int(part.get("size") or 0) for part in parts_data)
+        if uploaded_size != session.size:
+            raise errors.upload_size_mismatch(session.size, uploaded_size)
+
+        owned = self._key_is_session_owned(session, session_data)
+        if not owned:
+            # A session from before per-version keys may share its key with a
+            # published version; finalizing would overwrite that version's bytes.
+            referencing = await self.db.find_many(
+                model="fileVersions",
+                where=[{"field": "storageKey", "operator": "eq", "value": session.storageKey}],
+                namespace=self.namespace,
+            )
+            if referencing:
+                await self._mark_aborted(upload_session_id)
+                raise errors.invalid_request(
+                    "This upload must be restarted: its storage key is in use by a published version",
+                    {"reason": "shared storage key"},
+                )
+
+        if session.uploadMode == "multipart-signed-url":
+            parts = sorted(parts_data, key=lambda p: p["partNumber"])
+            completion: Any = None
+            try:
+                completion = await self.storage.complete_multipart_upload(
+                    key=session.storageKey,
+                    upload_id=session.storageUploadId,
+                    parts=[{"partNumber": p["partNumber"], "etag": p["etag"]} for p in parts],
+                    target=storage_target,
+                )
+            except Exception:
+                # A retry after an earlier call finalized the upload (and then
+                # failed, for example at the size check below) finds the upload
+                # ID consumed. A session-owned key holding an object is that
+                # finalized upload, and the size check below decides.
+                if not owned or await self._stored_size(session.storageKey, storage_target, None) is None:
+                    raise
+
+            # The client reports part sizes; the stored object is what counts.
+            actual = await self._stored_size(session.storageKey, storage_target, completion)
+            if actual is None:
+                raise errors.FileFnError(
+                    "FILEFN_STORAGE_ERROR",
+                    "The stored upload's size could not be read, so it was not published",
+                    502,
+                    {"uploadSessionId": upload_session_id},
+                )
+            if actual != session.size:
+                # Aborted first, so a retry never reaches storage again; then
+                # only a key this session owns is deleted.
+                await self._mark_aborted(upload_session_id)
+                if owned:
+                    try:
+                        await self.storage.delete_object(key=session.storageKey, target=storage_target)
+                    except Exception:
+                        pass
+                raise errors.upload_size_mismatch(session.size, actual)
+        elif session.uploadMode == "proxy":
+            await self._finalize_proxy_upload(session, parts_data)
+
+    async def _mark_aborted(self, upload_session_id: str) -> None:
+        await self.db.update(
+            model="uploadSessions",
+            where=[{"field": "uploadSessionId", "operator": "eq", "value": upload_session_id}],
+            data={"status": "aborted"},
+            namespace=self.namespace,
+        )
+
+    async def _stored_size(self, key: str, target: str, completion: Any) -> Optional[int]:
+        """The stored object's size: stat_object, else the completion result, else get_object; None if unreadable."""
+
+        def size_of(value: Any) -> Optional[int]:
+            size = value.get("size") if isinstance(value, dict) else getattr(value, "size", None)
+            return size if isinstance(size, int) and not isinstance(size, bool) else None
+
+        stat_object = getattr(self.storage, "stat_object", None)
+        if callable(stat_object):
+            try:
+                return size_of(await stat_object(key=key, target=target))
+            except NotImplementedError:
+                pass
+            except Exception:
+                return None
+        if completion is not None and size_of(completion) is not None:
+            return size_of(completion)
+        get_object = getattr(self.storage, "get_object", None)
+        if callable(get_object):
+            try:
+                return size_of(await get_object(key=key, target=target))
+            except Exception:
+                return None
+        return None
+
     async def complete_session(self, upload_session_id: str, ctx: Any) -> Dict[str, str]:
         session_data = await self._get_session_data(upload_session_id)
         self._assert_session_binding(session_data, ctx)
@@ -848,93 +956,35 @@ class UploadSessionService:
             if not await self.file_write_checker.can_write_file(session.fileId, ctx):
                 raise errors.forbidden({"fileId": session.fileId, "operation": "replace"})
 
-        parts_data = await self.db.find_many(
-            model="uploadParts",
-            where=[{"field": "uploadSessionId", "operator": "eq", "value": upload_session_id}],
-            namespace=self.namespace,
-        )
-        if len(parts_data) != session.totalParts:
-            raise errors.upload_incomplete()
-        uploaded_size = sum(int(part.get("size") or 0) for part in parts_data)
-        if uploaded_size != session.size:
-            raise errors.upload_size_mismatch(session.size, uploaded_size)
-
-        policy = self.policies.get(session.policy)
-        storage_target = resolve_storage_target(policy)
-
-        if session.uploadMode == "multipart-signed-url":
-            parts = sorted(parts_data, key=lambda p: p["partNumber"])
-            stat_object = getattr(self.storage, "stat_object", None)
-            try:
-                await self.storage.complete_multipart_upload(
-                    key=session.storageKey,
-                    upload_id=session.storageUploadId,
-                    parts=[{"partNumber": p["partNumber"], "etag": p["etag"]} for p in parts],
-                    target=storage_target,
-                )
-            except Exception as complete_error:
-                # A retry after an earlier call finalized the upload (and then
-                # failed, for example at the stat below) finds the upload ID
-                # consumed. A session's key is its own (it contains the session's
-                # version ID), so an object there is that finalized upload, and
-                # the size check below decides. Sessions from before that rule
-                # may share a key and keep the original error.
-                if not callable(stat_object) or not self._key_is_session_owned(session, session_data):
-                    raise
-                try:
-                    await stat_object(key=session.storageKey, target=storage_target)
-                except Exception:
-                    raise complete_error
-
-            # The client reports part sizes; the stored object is what counts. An
-            # adapter that can stat objects lets the server refuse (and delete) an
-            # object larger or smaller than declared.
-            stat: Any = None
-            if callable(stat_object):
-                try:
-                    stat = await stat_object(key=session.storageKey, target=storage_target)
-                except NotImplementedError:
-                    # A routed target that can't stat objects: as without stat_object.
-                    stat = None
-            if stat is not None:
-                actual = int(stat.get("size") if isinstance(stat, dict) else getattr(stat, "size"))
-                if actual != session.size:
-                    # Only a key this session owns is deleted: a session from
-                    # before per-version keys may share its key with a published
-                    # version.
-                    if self._key_is_session_owned(session, session_data):
-                        try:
-                            await self.storage.delete_object(key=session.storageKey, target=storage_target)
-                        except Exception:
-                            pass
-                    await self.db.update(
-                        model="uploadSessions",
-                        where=[{"field": "uploadSessionId", "operator": "eq", "value": upload_session_id}],
-                        data={"status": "aborted"},
-                        namespace=self.namespace,
-                    )
-                    raise errors.upload_size_mismatch(session.size, actual)
-        elif session.uploadMode == "proxy":
-            await self._finalize_proxy_upload(session, parts_data)
-
-        now_str = datetime.now(timezone.utc).isoformat()
         file_id = session.fileId or f"file_{secrets.token_urlsafe(12)}"
         # The version allocated at init (its ID is in the key); sessions created
         # before that get a fresh one.
         version_id = session.completionVersionId or f"ver_{secrets.token_urlsafe(12)}"
-        metadata = session_data.get("metadata") or {}
 
         # A retry after an attempt that wrote this version and then failed (for
         # example on the session update below) finds the version already
-        # published: it only finishes the session. Version IDs are unique.
-        published = None
+        # published. It touches no storage (the parts may be gone, or the object
+        # deduplicated away) and only finishes the session. Version IDs are unique.
+        published: Optional[Dict[str, Any]] = None
         if session.completionVersionId:
             published = await self.db.find_one(
                 model="fileVersions",
                 where=[{"field": "versionId", "operator": "eq", "value": version_id}],
                 namespace=self.namespace,
             )
-        if published and published.get("fileId") == file_id:
+            if published and published.get("fileId") != file_id:
+                published = None
+
+        policy = self.policies.get(session.policy)
+        storage_target = resolve_storage_target(policy)
+
+        if not published:
+            await self._finalize_upload_storage(session, session_data, upload_session_id, storage_target)
+
+        now_str = datetime.now(timezone.utc).isoformat()
+        metadata = session_data.get("metadata") or {}
+
+        if published:
             final_storage_key = cast(str, published.get("storageKey") or session.storageKey)
             checksum_sha256_base64: Optional[str] = published.get("checksumSha256Base64")
         else:

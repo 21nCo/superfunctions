@@ -112,6 +112,8 @@ def sanitize_storage_key_segment(value: str) -> str:
     """
     encoded = _ENCODED_CHARACTERS.sub(_percent_encode, str(value))
     encoded = re.sub(r"^\.\.+", lambda dots: "%2E" * len(dots.group(0)), encoded)
+    # A leading drive letter and colon (`C:`), which Windows would read as a drive.
+    encoded = re.sub(r"^([A-Za-z]):", r"\1%3A", encoded)
     if encoded == "":
         return "%20"
     if encoded == ".":
@@ -150,8 +152,8 @@ def unsafe_storage_key_reason(key: str) -> Optional[str]:
         return "control character"
     if "\\" in key:
         return "backslash"
-    # Slash-rooted, or drive-qualified as a Windows filesystem adapter would read it.
-    if key.startswith("/") or re.match(r"[A-Za-z]:(/|\Z)", key):
+    # Slash-rooted, or starting with a Windows drive (`C:/x` or drive-relative `C:x`).
+    if key.startswith("/") or re.match(r"[A-Za-z]:", key):
         return "absolute key"
     for segment in key.split("/"):
         if segment == "":
