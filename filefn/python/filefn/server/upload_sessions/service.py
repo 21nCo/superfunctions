@@ -1,5 +1,6 @@
 import hashlib
 import json
+import math
 import re
 import secrets
 from datetime import datetime, timedelta, timezone
@@ -120,7 +121,7 @@ def _has_lone_surrogate(value: Any, depth: int = 0) -> bool:
 
 def _js_number_text(value: float) -> str:
     """Format a float exactly as JavaScript's Number.prototype.toString does."""
-    if value != value or value in (float("inf"), float("-inf")):
+    if not math.isfinite(value):
         return "null"  # JSON.stringify writes non-finite numbers as null
     if value == 0:
         return "0"
@@ -158,7 +159,7 @@ def _js_json(value: Any) -> str:
     if isinstance(value, int):
         return str(value)
     if isinstance(value, float):
-        if value != value or value in (float("inf"), float("-inf")):
+        if not math.isfinite(value):
             # Stored as sent, so a non-finite number (e.g. 1e400) is refused
             # rather than counted as JSON.stringify's null.
             raise ValueError("non-finite number")
