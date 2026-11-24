@@ -1,11 +1,21 @@
 import type { GrantsService } from './grants.service.js';
 import type { FileFnPrincipal, AuthConfig } from '../auth.js';
 import { resolvePrincipal } from '../auth.js';
-import { FileFnError, authRequired } from '../errors.js';
+import { FileFnError, authRequired, rateLimited } from '../errors.js';
+import type { RateLimiter } from '@superfunctions/middleware';
+import { rateLimitSubject, type RateLimitClientKey } from '../rate-limit-key.js';
 
 export interface GrantsRouteContext {
   service: GrantsService;
   auth: AuthConfig;
+  rateLimiter?: RateLimiter;
+  rateLimits?: {
+    grantCreate?: {
+      windowSeconds: number;
+      maxRequests: number;
+    };
+  };
+  clientKey?: RateLimitClientKey;
 }
 
 function getRequestId(request: Request): string | undefined {
@@ -25,7 +35,18 @@ function errorResponse(error: FileFnError, requestId?: string): Response {
 }
 
 export function createGrantsRoutes(ctx: GrantsRouteContext) {
-  const { service, auth } = ctx;
+  const { service, auth, rateLimiter, rateLimits, clientKey } = ctx;
+
+  async function checkGrantCreateRateLimit(request: Request, principal: FileFnPrincipal): Promise<void> {
+    const categoryLimit = rateLimits?.grantCreate;
+    if (!rateLimiter || !categoryLimit) return;
+    const result = await rateLimiter.check({
+      key: `grant-create:${await rateLimitSubject(principal, request, clientKey)}`,
+      windowSeconds: categoryLimit.windowSeconds,
+      limit: categoryLimit.maxRequests,
+    });
+    if (!result.allowed) throw rateLimited(result.resetAt);
+  }
 
   async function requireAuth(request: Request): Promise<FileFnPrincipal> {
     const principal = await resolvePrincipal(request, auth);
@@ -40,6 +61,7 @@ export function createGrantsRoutes(ctx: GrantsRouteContext) {
       const requestId = getRequestId(request);
       try {
         const principal = await requireAuth(request);
+        await checkGrantCreateRateLimit(request, principal);
         const body = await request.json() as {
           userId?: string;
           role?: string;
@@ -63,7 +85,7 @@ export function createGrantsRoutes(ctx: GrantsRouteContext) {
             canShare: body.canShare,
             expiresAt: body.expiresAt,
           },
-          { principalId: principal.principalId, tenantId: principal.tenantId, requestId }
+          { principalId: principal.principalId, tenantId: principal.tenantId, roles: principal.roles, requestId }
         );
 
         return createdResponse(grant, requestId);
@@ -80,6 +102,7 @@ export function createGrantsRoutes(ctx: GrantsRouteContext) {
         const grants = await service.listGrants(fileId, {
           principalId: principal.principalId,
           tenantId: principal.tenantId,
+          roles: principal.roles,
           requestId,
         });
 
@@ -97,6 +120,7 @@ export function createGrantsRoutes(ctx: GrantsRouteContext) {
         await service.revokeGrant(fileId, permissionId, {
           principalId: principal.principalId,
           tenantId: principal.tenantId,
+          roles: principal.roles,
           requestId,
         });
 

@@ -520,8 +520,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
     }
     if (quota) {
       const quotaResult = await quota.checkQuota({
-        principalId: ctx.principalId,
-        tenantId: ctx.tenantId,
+        ...(await quotaAccountFor(session.fileId, ctx)),
         requestedBytes: session.size,
       });
       if (!quotaResult.allowed) {
@@ -1155,6 +1154,26 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
     return { fileId, versionId: publication.versionId };
   }
 
+  // The account a file's storage is charged to: its owner. Usage is recorded
+  // and refunded (when the file is deleted) against the same account, so a
+  // writer with a grant adds to the owner's usage, not their own.
+  async function quotaAccountFor(
+    fileId: string | null | undefined,
+    ctx: FileProviderContext,
+  ): Promise<{ principalId?: string; tenantId?: string }> {
+    if (fileId) {
+      const file = await db.findOne<{ ownerId: string; tenantId?: string | null }>({
+        model: 'files',
+        where: [{ field: 'fileId', operator: 'eq', value: fileId }],
+        namespace,
+      });
+      if (file) {
+        return { principalId: file.ownerId, tenantId: file.tenantId ?? undefined };
+      }
+    }
+    return { principalId: ctx.principalId || 'anonymous', tenantId: ctx.tenantId };
+  }
+
   // The effects of a completion, run once by the call that completed the
   // session: usage, the file:uploaded event and processing. Cleanup runs after
   // the usage and the event and never stops them: a proxy part object that
@@ -1169,7 +1188,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
     const { uploadSessionId } = session;
     const { versionId } = publication;
     if (quota) {
-      await quota.recordUsage({ principalId: ctx.principalId, tenantId: ctx.tenantId, bytes: session.size });
+      await quota.recordUsage({ ...(await quotaAccountFor(fileId, ctx)), bytes: session.size });
     }
 
     events.emit('file:uploaded', createFileUploadedEvent({
@@ -1347,8 +1366,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       // Check quota
       if (quota) {
         const quotaResult = await quota.checkQuota({
-          principalId: ctx.principalId,
-          tenantId: ctx.tenantId,
+          ...(await quotaAccountFor(requestedFileId, ctx)),
           requestedBytes: input.size,
         });
 

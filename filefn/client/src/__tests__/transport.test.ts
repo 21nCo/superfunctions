@@ -228,6 +228,17 @@ describe('client transport options', () => {
   ])('only sends FileFn headers and credentials to signed URL %s when it is under baseUrl (%s)', (url, toFileFn) =>
     expectPartUploadTransport({ baseUrl: `${BASE}/`, url, toFileFn, expectedUrl: url }));
 
+  it('sends the upload session token to FileFn part URLs only, never to a presigned storage URL (FILE-30 F-19)', async () => {
+    const server = createFakeServer(() => PRESIGNED);
+    const http = createHttpClient({ baseUrl: BASE, fetch: server.fetch });
+    await http.uploadPartToSignedUrl(PRESIGNED, {}, new Blob(['abc']), 'upls_1');
+    await http.uploadPartToSignedUrl('/upload/sess_1/parts/1', {}, new Blob(['abc']), 'upls_1');
+    const storagePut = server.calls.find((c) => c.url === PRESIGNED)!;
+    const proxyPut = server.calls.find((c) => c.url === `${BASE}/upload/sess_1/parts/1`)!;
+    expect(storagePut.headers.get('x-upload-session-token')).toBeNull();
+    expect(proxyPut.headers.get('x-upload-session-token')).toBe('upls_1');
+  });
+
   it('lets request headers replace auth headers of any case on API requests', async () => {
     const server = createFakeServer((n) => `/upload/sess_1/parts/${n}`);
     const http = createHttpClient({

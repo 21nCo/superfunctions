@@ -4,6 +4,7 @@ import type { AuthConfig } from '../auth.js';
 import type { RateLimiter } from '@superfunctions/middleware';
 import { resolvePrincipal } from '../auth.js';
 import * as errors from '../errors.js';
+import { rateLimitSubject, type RateLimitClientKey } from '../rate-limit-key.js';
 
 export interface ProcessingRoutesConfig {
   service: ProcessingService;
@@ -14,7 +15,12 @@ export interface ProcessingRoutesConfig {
       windowSeconds: number;
       maxRequests: number;
     };
+    processing?: {
+      windowSeconds: number;
+      maxRequests: number;
+    };
   };
+  clientKey?: RateLimitClientKey;
 }
 
 export interface ProcessingRouteContext {
@@ -81,7 +87,7 @@ function parseOptionalInteger(value: string | null): number | undefined {
 }
 
 export function createProcessingRoutes(config: ProcessingRoutesConfig) {
-  const { service, auth, rateLimiter, rateLimits } = config;
+  const { service, auth, rateLimiter, rateLimits, clientKey } = config;
 
   function requireAuth(principal: { principalId?: string; tenantId?: string } | null): void {
     if (!principal && auth.required !== false) {
@@ -89,16 +95,18 @@ export function createProcessingRoutes(config: ProcessingRoutesConfig) {
     }
   }
 
-  async function checkArtifactDownloadRateLimit(
-    principal: { principalId?: string; tenantId?: string } | null
+  async function checkRateLimit(
+    request: Request,
+    category: string,
+    principal: { principalId?: string; tenantId?: string } | null,
+    categoryLimit?: { windowSeconds: number; maxRequests: number },
   ): Promise<void> {
-    const categoryLimit = rateLimits?.artifactDownload;
     if (!rateLimiter || !categoryLimit) {
       return;
     }
 
     const result = await rateLimiter.check({
-      key: `artifact-download:${principal?.tenantId || 'global'}:${principal?.principalId || 'anonymous'}`,
+      key: `${category}:${await rateLimitSubject(principal as { principalId: string; tenantId?: string } | null, request, clientKey)}`,
       windowSeconds: categoryLimit.windowSeconds,
       limit: categoryLimit.maxRequests,
     });
@@ -107,6 +115,9 @@ export function createProcessingRoutes(config: ProcessingRoutesConfig) {
     }
   }
 
+  const checkArtifactDownloadRateLimit = (request: Request, principal: { principalId?: string; tenantId?: string } | null) =>
+    checkRateLimit(request, 'artifact-download', principal, rateLimits?.artifactDownload);
+
   return {
     async listArtifacts(request: Request, fileId: string): Promise<Response> {
       const requestId = getRequestId(request);
@@ -114,10 +125,11 @@ export function createProcessingRoutes(config: ProcessingRoutesConfig) {
       try {
         const principal = await resolvePrincipal(request, auth);
         requireAuth(principal);
-        await checkArtifactDownloadRateLimit(principal);
+        await checkArtifactDownloadRateLimit(request, principal);
         const ctx = {
           principalId: principal?.principalId,
           tenantId: principal?.tenantId,
+          roles: principal?.roles,
           requestId,
         };
 
@@ -146,6 +158,7 @@ export function createProcessingRoutes(config: ProcessingRoutesConfig) {
         const ctx = {
           principalId: principal?.principalId,
           tenantId: principal?.tenantId,
+          roles: principal?.roles,
           requestId,
         };
         const url = new URL(request.url);
@@ -180,10 +193,11 @@ export function createProcessingRoutes(config: ProcessingRoutesConfig) {
       try {
         const principal = await resolvePrincipal(request, auth);
         requireAuth(principal);
-        await checkArtifactDownloadRateLimit(principal);
+        await checkArtifactDownloadRateLimit(request, principal);
         const ctx = {
           principalId: principal?.principalId,
           tenantId: principal?.tenantId,
+          roles: principal?.roles,
           requestId,
         };
 
@@ -204,10 +218,11 @@ export function createProcessingRoutes(config: ProcessingRoutesConfig) {
       try {
         const principal = await resolvePrincipal(request, auth);
         requireAuth(principal);
-        await checkArtifactDownloadRateLimit(principal);
+        await checkArtifactDownloadRateLimit(request, principal);
         const ctx = {
           principalId: principal?.principalId,
           tenantId: principal?.tenantId,
+          roles: principal?.roles,
           requestId,
         };
 
@@ -234,10 +249,13 @@ export function createProcessingRoutes(config: ProcessingRoutesConfig) {
       try {
         const principal = await resolvePrincipal(request, auth);
         requireAuth(principal);
+        // Each run loads the source into memory and re-runs every processor.
+        await checkRateLimit(request, 'processing', principal, rateLimits?.processing);
 
         const ctx = {
           principalId: principal?.principalId,
           tenantId: principal?.tenantId,
+          roles: principal?.roles,
           requestId,
         };
 

@@ -3,6 +3,7 @@ import type { FileFnPrincipal, AuthConfig } from '../auth.js';
 import type { RateLimiter } from '@superfunctions/middleware';
 import { resolvePrincipal } from '../auth.js';
 import { FileFnError, authRequired, rateLimited } from '../errors.js';
+import { rateLimitSubject, type RateLimitClientKey } from '../rate-limit-key.js';
 
 export interface SharesRouteContext {
   service: SharesService;
@@ -13,7 +14,12 @@ export interface SharesRouteContext {
       windowSeconds: number;
       maxRequests: number;
     };
+    shareCreate?: {
+      windowSeconds: number;
+      maxRequests: number;
+    };
   };
+  clientKey?: RateLimitClientKey;
 }
 
 function getRequestId(request: Request): string | undefined {
@@ -33,7 +39,7 @@ function errorResponse(error: FileFnError, requestId?: string): Response {
 }
 
 export function createSharesRoutes(ctx: SharesRouteContext) {
-  const { service, auth, rateLimiter, rateLimits } = ctx;
+  const { service, auth, rateLimiter, rateLimits, clientKey } = ctx;
 
   async function requireAuth(request: Request): Promise<FileFnPrincipal> {
     const principal = await resolvePrincipal(request, auth);
@@ -48,6 +54,8 @@ export function createSharesRoutes(ctx: SharesRouteContext) {
   }
 
   async function checkRateLimit(
+    request: Request,
+    category: string,
     principal: FileFnPrincipal | null,
     categoryLimit?: { windowSeconds: number; maxRequests: number }
   ): Promise<void> {
@@ -56,7 +64,7 @@ export function createSharesRoutes(ctx: SharesRouteContext) {
     }
 
     const result = await rateLimiter.check({
-      key: `share-download:${principal?.tenantId || 'global'}:${principal?.principalId || 'anonymous'}`,
+      key: `${category}:${await rateLimitSubject(principal, request, clientKey)}`,
       windowSeconds: categoryLimit.windowSeconds,
       limit: categoryLimit.maxRequests,
     });
@@ -70,6 +78,7 @@ export function createSharesRoutes(ctx: SharesRouteContext) {
       const requestId = getRequestId(request);
       try {
         const principal = await requireAuth(request);
+        await checkRateLimit(request, 'share-create', principal, rateLimits?.shareCreate);
         const body = await request.json() as {
           versionId?: string;
           expiresAt?: string;
@@ -85,7 +94,7 @@ export function createSharesRoutes(ctx: SharesRouteContext) {
             requiresAuth: body.requiresAuth,
             maxDownloads: body.maxDownloads,
           },
-          { principalId: principal.principalId, tenantId: principal.tenantId, requestId }
+          { principalId: principal.principalId, tenantId: principal.tenantId, roles: principal.roles, requestId }
         );
 
         return createdResponse(result, requestId);
@@ -99,11 +108,12 @@ export function createSharesRoutes(ctx: SharesRouteContext) {
       const requestId = getRequestId(request);
       try {
         const principal = await optionalAuth(request);
-        await checkRateLimit(principal, rateLimits?.shareDownload);
+        await checkRateLimit(request, 'share-download', principal, rateLimits?.shareDownload);
 
         const result = await service.downloadViaShareLink(token, {
           principalId: principal?.principalId || 'anonymous',
           tenantId: principal?.tenantId,
+          roles: principal?.roles,
           isAuthenticated: !!principal,
           requestId,
         });
@@ -124,11 +134,12 @@ export function createSharesRoutes(ctx: SharesRouteContext) {
       const requestId = getRequestId(request);
       try {
         const principal = await optionalAuth(request);
-        await checkRateLimit(principal, rateLimits?.shareDownload);
+        await checkRateLimit(request, 'share-download', principal, rateLimits?.shareDownload);
 
         const result = await service.getDownloadStreamViaShareLink(token, {
           principalId: principal?.principalId || 'anonymous',
           tenantId: principal?.tenantId,
+          roles: principal?.roles,
           isAuthenticated: !!principal,
           requestId,
         });
@@ -153,6 +164,7 @@ export function createSharesRoutes(ctx: SharesRouteContext) {
         await service.revokeShareLink(fileId, token, {
           principalId: principal.principalId,
           tenantId: principal.tenantId,
+          roles: principal.roles,
           requestId,
         });
 
@@ -170,6 +182,7 @@ export function createSharesRoutes(ctx: SharesRouteContext) {
         const shares = await service.listShareLinks(fileId, {
           principalId: principal.principalId,
           tenantId: principal.tenantId,
+          roles: principal.roles,
           requestId,
         });
 

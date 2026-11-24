@@ -116,13 +116,19 @@ export function createDefaultAuthorizer(config: DefaultAuthorizerConfig): Author
     return expiresAtMs <= Date.now();
   }
 
+  // Roles are tenant-relative: a role (admin or a role grant) applies only to
+  // files of the caller's own tenant, or to files that belong to no tenant.
+  function inFileTenant(file: FileRecord, ctx: FileProviderContext): boolean {
+    return !file.tenantId || file.tenantId === ctx.tenantId;
+  }
+
   async function getApplicableGrants(
-    fileId: string,
+    file: FileRecord,
     ctx: DefaultAuthorizerContext
   ): Promise<FilePermissionRecord[]> {
     const grants = await db.findMany<FilePermissionRecord>({
       model: 'filePermissions',
-      where: [{ field: 'fileId', operator: 'eq', value: fileId }],
+      where: [{ field: 'fileId', operator: 'eq', value: file.fileId }],
       namespace,
     });
 
@@ -130,15 +136,15 @@ export function createDefaultAuthorizer(config: DefaultAuthorizerConfig): Author
       if (isGrantExpired(grant.expiresAt)) return false;
 
       if (grant.userId && grant.userId === ctx.principalId) return true;
-      if (grant.role && ctx.roles?.includes(grant.role)) return true;
+      if (grant.role && ctx.roles?.includes(grant.role) && inFileTenant(file, ctx)) return true;
       if (grant.tenantId && grant.tenantId === ctx.tenantId) return true;
 
       return false;
     });
   }
 
-  function isAdmin(ctx: DefaultAuthorizerContext): boolean {
-    return ctx.roles?.some(role => adminRoles.includes(role)) ?? false;
+  function isAdmin(file: FileRecord, ctx: DefaultAuthorizerContext): boolean {
+    return inFileTenant(file, ctx) && (ctx.roles?.some(role => adminRoles.includes(role)) ?? false);
   }
 
   function isOwner(file: FileRecord, ctx: FileProviderContext): boolean {
@@ -148,27 +154,27 @@ export function createDefaultAuthorizer(config: DefaultAuthorizerConfig): Author
   return {
     async canRead(file, ctx) {
       if (isOwner(file, ctx)) return true;
-      if (isAdmin(ctx as DefaultAuthorizerContext)) return true;
+      if (isAdmin(file, ctx as DefaultAuthorizerContext)) return true;
       if (file.visibility === 'public') return true;
       if (file.visibility === 'shared' && file.tenantId && file.tenantId === ctx.tenantId) return true;
 
-      const grants = await getApplicableGrants(file.fileId, ctx as DefaultAuthorizerContext);
+      const grants = await getApplicableGrants(file, ctx as DefaultAuthorizerContext);
       return grants.some(g => g.canRead);
     },
 
     async canWrite(file, ctx) {
       if (isOwner(file, ctx)) return true;
-      if (isAdmin(ctx as DefaultAuthorizerContext)) return true;
+      if (isAdmin(file, ctx as DefaultAuthorizerContext)) return true;
 
-      const grants = await getApplicableGrants(file.fileId, ctx as DefaultAuthorizerContext);
+      const grants = await getApplicableGrants(file, ctx as DefaultAuthorizerContext);
       return grants.some(g => g.canWrite);
     },
 
     async canDelete(file, ctx) {
       if (isOwner(file, ctx)) return true;
-      if (isAdmin(ctx as DefaultAuthorizerContext)) return true;
+      if (isAdmin(file, ctx as DefaultAuthorizerContext)) return true;
 
-      const grants = await getApplicableGrants(file.fileId, ctx as DefaultAuthorizerContext);
+      const grants = await getApplicableGrants(file, ctx as DefaultAuthorizerContext);
       return grants.some(g => g.canDelete);
     },
   };

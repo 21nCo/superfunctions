@@ -550,10 +550,12 @@ export function createHttpClient(config: FileFnClientConfig): HttpClient {
             url.startsWith("/") && !isProtocolRelative(url) ? `${baseUrl}${url}` : url,
           );
 
+          // The session token is FileFn's credential: never send it to a
+          // storage provider's presigned URL, whose logs would record it.
           const requestHeaders = mergeHeaders(
             toFileFn ? await readAuthHeaders() : undefined,
             headers,
-            uploadSessionToken ? { "x-upload-session-token": uploadSessionToken } : undefined,
+            toFileFn && uploadSessionToken ? { "x-upload-session-token": uploadSessionToken } : undefined,
           );
           const response = await transport.send(finalUrl, {
             method: "PUT",
