@@ -119,7 +119,7 @@ const MIME_ALIASES: Record<string, string> = {
 /** The MIME type without parameters, lower-cased, aliases resolved: `Text/HTML; charset=x` -> `text/html`. */
 export function contentTypeEssence(contentType: string | null | undefined): string {
   const essence = (contentType ?? '').split(';', 1)[0].trim().toLowerCase();
-  return MIME_ALIASES[essence] ?? essence;
+  return Object.hasOwn(MIME_ALIASES, essence) ? MIME_ALIASES[essence]! : essence;
 }
 
 /**
@@ -131,7 +131,13 @@ function safeInlineType(contentType: string): string {
   if (!parsed) return 'application/octet-stream';
   if (parsed.essence === 'text/plain') {
     const charset = parsed.parameters.get('charset');
-    if (charset && /^[A-Za-z0-9._-]{1,40}$/.test(charset)) return `text/plain; charset=${charset.toLowerCase()}`;
+    if (charset && /^[\x20-\x7e]{1,40}$/.test(charset)) {
+      // A token charset as is; any other printable label (e.g. iso_8859-2:1987) quoted.
+      const label = charset.toLowerCase();
+      return /^[!#$%&'*+.^_`|~0-9a-z-]+$/.test(label)
+        ? `text/plain; charset=${label}`
+        : `text/plain; charset="${label.replace(/["\\]/g, '\\$&')}"`;
+    }
   }
   return parsed.essence;
 }

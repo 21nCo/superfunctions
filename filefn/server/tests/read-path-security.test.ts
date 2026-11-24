@@ -355,4 +355,21 @@ describe('read path (FILE-30 F-03, F-04, F-23)', () => {
     await expect(service.listArtifacts('file_a', { principalId: 'o' })).rejects.toMatchObject({ code: 'FILEFN_FORBIDDEN' });
     await expect(service.getArtifactDownloadUrl('art_orphan', { principalId: 'o' })).rejects.toMatchObject({ code: 'FILEFN_NOT_FOUND' });
   });
+
+  it('a standalone service without a readChecker never lets a guest act as the anonymous owner', async () => {
+    const database = memoryAdapter();
+    const service = createProcessingService({ db: database, storage: createLocalStorageAdapter({ rootDir }), namespace: 'bare', processors: [] });
+    const now = new Date().toISOString();
+    await database.create({ model: 'files', data: { fileId: 'file_anon', ownerId: 'anonymous', visibility: 'private', policy: 'p', name: 'a', currentVersionId: 'ver_a', createdAt: now, updatedAt: now }, namespace: 'bare' });
+    await expect(service.listArtifactsForFile('file_anon', { principalId: 'anonymous' })).rejects.toMatchObject({ code: 'FILEFN_FORBIDDEN' });
+    await expect(service.listArtifactsForFile('file_anon', {})).rejects.toMatchObject({ code: 'FILEFN_FORBIDDEN' });
+  });
+
+  it('handles malformed MIME types and quoted charset labels safely', () => {
+    expect(() => buildDownloadHeaders({ contentType: 'constructor', size: 1 })).not.toThrow();
+    expect(buildDownloadHeaders({ contentType: 'constructor', size: 1 })['Content-Disposition']).toBe('attachment');
+    expect(buildDownloadHeaders({ contentType: 'text/plain; charset="iso_8859-2:1987"', size: 1 })['Content-Type']).toBe(
+      'text/plain; charset="iso_8859-2:1987"',
+    );
+  });
 });

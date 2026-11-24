@@ -548,7 +548,11 @@ export function createFileService(config: FileServiceConfig) {
 
       // Thumbnails and previews must render in the browser: only inline-safe
       // raster artifacts qualify, whatever their kind says.
-      const previewArtifacts = artifacts.filter(
+      // A guest (no principal, or the shared 'anonymous' one) reads artifacts
+      // of public files only, as the artifact routes do, so a descriptor never
+      // names an artifact URL its proxy would refuse.
+      const guestOnPrivate = (!ctx.principalId || ctx.principalId === 'anonymous') && file.visibility !== 'public';
+      const previewArtifacts = (guestOnPrivate ? [] : artifacts).filter(
         (artifact) => contentTypeEssence(artifact.mimeType).startsWith('image/') && isInlineSafeContentType(artifact.mimeType),
       );
 

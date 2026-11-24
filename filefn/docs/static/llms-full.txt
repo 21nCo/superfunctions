@@ -3536,7 +3536,7 @@ Serving downloads from a separate origin (a dedicated download domain or the sto
 filefn doesn't rewrite the filename you uploaded. Proxied downloads send it in `Content-Disposition`, and browsers prefer that header over an `<a download>` attribute, so to save a file under a different name (e.g. `Report - Acme Corp.pdf`), fetch it and save the blob:
 
 ```ts
-const { url } = await client.downloadUrl(fileId);
+const url = await client.downloadUrl(fileId);
 
 // Send cookies only to your own origin (a proxied download); a signed storage
 // URL needs no credentials and its CORS rules may refuse them.

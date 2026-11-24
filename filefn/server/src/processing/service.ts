@@ -690,16 +690,17 @@ export function createProcessingService(config: ProcessingServiceConfig) {
       throw errors.notFound('File');
     }
 
+    // An unauthenticated guest (no principal, or the shared 'anonymous'
+    // principal) reads only public files here, as before, whatever a host
+    // authorizer or the fallback rules would allow it.
+    if ((!ctx.principalId || ctx.principalId === 'anonymous') && file.visibility !== 'public') {
+      throw errors.forbidden();
+    }
+
     // The file service's read check applies the host's authorizer, so an
     // artifact (often the whole content: OCR text, previews, transcodes) is
     // never readable by someone the authorizer refuses the file to.
     if (readChecker) {
-      // An unauthenticated guest (no principal, or the shared 'anonymous'
-      // principal) reads only public files here, as before, whatever the host
-      // authorizer would allow it.
-      if ((!ctx.principalId || ctx.principalId === 'anonymous') && file.visibility !== 'public') {
-        throw errors.forbidden();
-      }
       if (await readChecker.canReadFile(fileId, ctx)) {
         return file;
       }
