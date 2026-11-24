@@ -15,7 +15,7 @@ import { effectiveMaxConcurrentSlots } from "./policy.js";
 import { buildSlotPrompt, PANEL_PROMPT_VERSION, type PriorStageFinding, type SlotScope } from "./prompt.js";
 import { lensOutputSchema, validateLensPayload } from "./schema.js";
 import { PANEL_CANCELED_REASON } from "./types.js";
-import type { PanelFinding, PanelFindingSeverity, PanelPolicy, PanelReport, PanelReportValidationResult, PanelSlot, SlotIdentity, SlotRun, SlotRunTerminal, SlotVoidReason } from "./types.js";
+import type { HarnessProfile, PanelFinding, PanelFindingSeverity, PanelPolicy, PanelReport, PanelReportValidationResult, PanelSlot, SlotIdentity, SlotRun, SlotRunLimitation, SlotRunTerminal, SlotVoidReason } from "./types.js";
 import { credentialFingerprint, derivePanelVerdict, panelPolicyDigest, panelStructureIssues, slotIdentityKey, validatePanelPolicy, validatePanelReport } from "./validate.js";
 import { GitSlotWorkspaceProvider, removeTree, type GitSlotWorkspaceOptions, type SlotWorkspace, type SlotWorkspaceProvider, type WorkspaceCheck } from "./workspace.js";
 
@@ -41,11 +41,18 @@ export interface SlotObservation {
   harnessVersion?: string;
   /** The model the provider actually served. */
   model?: string;
+  /**
+   * The harness compared the raw reported model with the configured one and they differ. It voids the run even when
+   * `model`, as redacted and cut to length, reads the same as the configured model.
+   */
+  modelMismatch?: boolean;
   /** Provider account identity; only its fingerprint is recorded. */
   accountIdentity?: string;
   /** Tools the harness used that its tool policy forbids. */
   disallowedTools?: string[];
   usage?: { inputTokens?: number; outputTokens?: number; costUsd?: number };
+  /** Limitations of the run the harness observed; only the closed `SlotRunLimitation` values are recorded. */
+  limitations?: SlotRunLimitation[];
 }
 
 export interface SlotHarnessOutput extends HarnessOutput {
@@ -177,12 +184,33 @@ function emptyOutput(terminal: HarnessOutput["terminal"], error: string): SlotHa
  * then required. The slot's `harness.version` is what the harness must report, which is compared with the observed
  * version, not configured.
  */
-export function slotConfiguration(config: ReviewFnConfig, slot: PanelSlot, contractVersion?: string): ReviewFnConfig {
+export function slotConfiguration(config: ReviewFnConfig, slot: PanelSlot, contractVersion?: string, profiles?: PanelPolicy["profiles"]): ReviewFnConfig {
   const same = config.harness.adapter === slot.harness.adapter;
   if (!same && !nonblank(contractVersion)) throw new ReviewFnError("REVIEWFN_CONFIG_INVALID", `Slot ${slot.id} uses harness ${slot.harness.adapter}, whose adapter contract version is not configured.`);
   const version = same ? config.harness.version : contractVersion!;
+  // A profile-driven slot runs its own executable with the trusted policy's profile; a file configuration never supplies either.
+  const { executable, profile } = slot.harness;
+  if (profile !== undefined) {
+    const definition = profiles && Object.hasOwn(profiles, profile) ? profiles[profile] : undefined;
+    if (!definition || executable === undefined) throw new ReviewFnError("REVIEWFN_CONFIG_INVALID", `Slot ${slot.id} names harness profile ${profile}, which the panel policy does not declare with an executable.`);
+    return { ...config, harness: { adapter: slot.harness.adapter, version, executable, profile, profileDefinition: structuredClone(definition) }, inference: { ...slot.inference } };
+  }
   return { ...config, harness: { adapter: slot.harness.adapter, version, ...(same && config.harness.executable ? { executable: config.harness.executable } : {}) }, inference: { ...slot.inference } };
 }
+
+/** The trusted policy's profile a slot names, if any. */
+function slotProfile(slot: PanelSlot, policy: PanelPolicy): HarnessProfile | undefined {
+  const { profile } = slot.harness;
+  return profile !== undefined && policy.profiles && Object.hasOwn(policy.profiles, profile) ? policy.profiles[profile] : undefined;
+}
+
+/** The limitations a slot's harness profile always carries: an unreported model, and a sandbox only the checkout comparison verifies. */
+function profileLimitations(profile: HarnessProfile | undefined): SlotRunLimitation[] {
+  if (!profile) return [];
+  return [...(profile.modelReport === "none" ? ["model_unverified" as const] : []), ...(profile.capabilities.sandbox === "tree-verified-only" ? ["sandbox_tree_verified_only" as const] : [])];
+}
+
+const SLOT_LIMITATIONS: ReadonlySet<string> = new Set<SlotRunLimitation>(["model_unverified", "sandbox_tree_verified_only"]);
 
 /**
  * A signal that aborts when `parent` aborts or, with `timeoutMs`, when the timeout elapses (calling `onTimeout` first).
@@ -295,8 +323,8 @@ export class PanelCoordinator {
     this.contractVersions = new Map(Object.entries(dependencies.harnessContractVersions ?? {}));
   }
 
-  private slotConfig(config: ReviewFnConfig, slot: PanelSlot): ReviewFnConfig {
-    return slotConfiguration(config, slot, this.contractVersions.get(slot.harness.adapter));
+  private slotConfig(config: ReviewFnConfig, slot: PanelSlot, profiles: PanelPolicy["profiles"]): ReviewFnConfig {
+    return slotConfiguration(config, slot, this.contractVersions.get(slot.harness.adapter), profiles);
   }
 
   public async preflight(request: PanelRunRequest): Promise<PreflightDiagnostic[]> {
@@ -316,7 +344,7 @@ export class PanelCoordinator {
     // lens (ID, version and instructions) and the adapter contract version it is configured with.
     const slotInputs = policy.slots.filter(slot => slot.stage !== "verifier").map(slot => {
       const lens = this.lenses.get(slot.lens)!;
-      return { slotId: slot.id, lens: { id: lens.id, version: lens.version, instructionsDigest: digestJson(lens.instructions) }, harnessContractVersion: this.slotConfig(request.config, slot).harness.version };
+      return { slotId: slot.id, lens: { id: lens.id, version: lens.version, instructionsDigest: digestJson(lens.instructions) }, harnessContractVersion: this.slotConfig(request.config, slot, request.panelPolicy.profiles).harness.version };
     });
     const runId = digestJson({ kind: "reviewfn-panel", change: identityChange, contextDigest: prepared.context.digest, policy: request.policy, config: request.config, panelPolicyDigest: policyDigest, slots: slotInputs, tests: prepared.tests.map(({ startedAt, finishedAt, runtimeMs, ...receipt }) => receipt), promptVersion: PANEL_PROMPT_VERSION, ...(request.since === undefined ? {} : { since: request.since }) });
     const environment = this.dependencies.environment ?? process.env;
@@ -382,7 +410,7 @@ export class PanelCoordinator {
     for (const slot of reviewSlots) {
       const harness = harnesses.get(slot.harness.adapter);
       if (!harness || (slot.harness.adapter !== request.config.harness.adapter && !nonblank(this.contractVersions.get(slot.harness.adapter)))) continue;
-      const config = this.slotConfig(request.config, slot);
+      const config = this.slotConfig(request.config, slot, request.panelPolicy.profiles);
       const key = stableStringify({ adapter: slot.harness.adapter, harness: config.harness, inference: config.inference });
       let pending = results.get(key);
       const first = !pending;
@@ -448,14 +476,18 @@ export class PanelCoordinator {
     const harness = this.dependencies.harnesses.find(item => item.capabilities.id === slot.harness.adapter);
     const resolved = context.resolved.get(slot.id);
     const credential = slot.inference.credentialEnv ? (this.dependencies.environment ?? process.env)[slot.inference.credentialEnv] : undefined;
+    const unverified = slotProfile(slot, context.request.panelPolicy)?.modelReport === "none";
     return {
       harnessAdapter: slot.harness.adapter,
       // The slot's pin is never recorded as a version: it is what the reported version is checked against.
       harnessVersion: nonblank(resolved?.harnessVersion) ? resolved.harnessVersion : nonblank(harness?.capabilities.version) ? harness.capabilities.version : UNOBSERVED_VERSION,
       provider: slot.inference.provider,
-      model: nonblank(resolved?.model) ? resolved.model : slot.inference.model,
+      // An unverified model stands for the configured one: nothing reported can confirm or contradict it.
+      model: !unverified && nonblank(resolved?.model) ? resolved.model : slot.inference.model,
       auth: slot.inference.auth,
       ...(credential ? { credentialFingerprint: credentialFingerprint(credential) } : {}),
+      ...(slot.harness.profile !== undefined ? { harnessExecutable: slot.harness.executable, harnessProfile: slot.harness.profile } : {}),
+      ...(unverified ? { modelVerified: false as const } : {}),
     };
   }
 
@@ -470,9 +502,11 @@ export class PanelCoordinator {
     // than the configured one voids the run, even one that ended before the harness ran (identity from preflight).
     const finish = (terminal: SlotRunTerminal, reasons: string[], output: SlotHarnessOutput, extra: Partial<SlotRun> = {}, promptDigest = "", transcriptArtifact?: string): SlotRecord => {
       const identity = extra.identity ?? baseIdentity;
+      // The profile's limitations hold for every run of the slot, whatever its terminal; the harness may add others it observed.
+      const limitations = [...new Set([...profileLimitations(slotProfile(slot, request.panelPolicy)), ...(extra.limitations ?? [])])];
       const voidReasons = [...(extra.voidReasons ?? [])];
       const allReasons = [...reasons];
-      if (slot.inference.model !== "configured" && identity.model !== slot.inference.model && !voidReasons.includes("model_mismatch")) {
+      if (slot.inference.model !== "configured" && (identity.model !== slot.inference.model || identity.modelMismatch === true) && !voidReasons.includes("model_mismatch")) {
         voidReasons.unshift("model_mismatch");
         allReasons.push(`Preflight resolved model ${identity.model}, not the configured ${slot.inference.model}.`);
       }
@@ -483,7 +517,7 @@ export class PanelCoordinator {
       const finishedAt = Date.parse(finished) < Date.parse(startedAt) ? startedAt : finished;
       return {
         slot, output: redactJson(output, context.secrets), reasons: allReasons.map(reason => redactText(reason, context.secrets)), promptDigest, ...(transcriptArtifact ? { transcriptArtifact } : {}),
-        run: { slotId: slot.id, ...extra, identity, terminal: voidReasons.length ? "void" : terminal, voidReasons, startedAt, finishedAt },
+        run: { slotId: slot.id, ...extra, identity, terminal: voidReasons.length ? "void" : terminal, voidReasons, startedAt, finishedAt, ...(limitations.length ? { limitations } : {}) },
       };
     };
     if (context.runSignal.aborted) return finish("canceled", ["The panel run was canceled before the slot started."], emptyOutput("canceled", "The panel run was canceled before the slot started."));
@@ -523,7 +557,7 @@ export class PanelCoordinator {
       clearHarnessTimer = harnessSignal.clearTimer;
       const signal = harnessSignal.signal;
       const lens = this.lenses.get(slot.lens)!;
-      const config = this.slotConfig(request.config, slot);
+      const config = this.slotConfig(request.config, slot, request.panelPolicy.profiles);
       // The requirements slot reviews the full change, but its report must account for every delta path, so it is shown the delta too.
       const delta = request.since !== undefined && prepared.changeDetail.delta ? { delta: prepared.changeDetail.delta, since: request.since } : {};
       const scope: SlotScope = requirements ? { mode: "full", hunks: prepared.changeDetail.hunks, ...delta }
@@ -580,11 +614,17 @@ export class PanelCoordinator {
       const identity: SlotIdentity = {
         ...baseIdentity,
         ...(nonblank(observed.harnessVersion) ? { harnessVersion: redactText(observed.harnessVersion, context.secrets) } : {}),
-        ...(nonblank(observed.model) ? { model: redactText(observed.model, context.secrets) } : {}),
+        ...(baseIdentity.modelVerified !== false && nonblank(observed.model) ? { model: redactText(observed.model, context.secrets) } : {}),
+        // The harness's raw comparison is kept with the identity: redaction or truncation can make the recorded model read
+        // as the configured one, and the mismatch must still void the run and survive in the report.
+        ...(baseIdentity.modelVerified !== false && slot.inference.model !== "configured" && observed.modelMismatch === true ? { modelMismatch: true as const } : {}),
       };
       if (!identity.credentialFingerprint && nonblank(observed.accountIdentity)) identity.credentialFingerprint = credentialFingerprint(observed.accountIdentity);
       const voidReasons: SlotVoidReason[] = [];
-      if (slot.inference.model !== "configured" && identity.model !== slot.inference.model) { voidReasons.push("model_mismatch"); reasons.push(`The harness served model ${identity.model}, not the configured ${slot.inference.model}.`); }
+      if (slot.inference.model !== "configured" && (identity.model !== slot.inference.model || identity.modelMismatch === true)) {
+        voidReasons.push("model_mismatch");
+        reasons.push(identity.model === slot.inference.model ? `The harness reported a model other than the configured ${slot.inference.model}.` : `The harness served model ${identity.model}, not the configured ${slot.inference.model}.`);
+      }
       if (!check.unchanged && !check.incomplete) { voidReasons.push("workspace_mutated"); reasons.push(check.reason ?? "The slot changed its checkout."); }
       const disallowed = Array.isArray(observed.disallowedTools) ? observed.disallowedTools.filter(nonblank).map(tool => redactText(tool, context.secrets)) : [];
       if (disallowed.length) { voidReasons.push("disallowed_tool_use"); reasons.push(`The harness used disallowed tools: ${disallowed.join(", ")}.`); }
@@ -601,7 +641,8 @@ export class PanelCoordinator {
         try { transcript = (await this.dependencies.artifacts.put("redacted-transcript", redactText(output.transcript, context.secrets), prepared.retention.transcriptDays)).id; }
         catch (error) { reasons.push(`The slot transcript could not be stored: ${message(error)}`); }
       }
-      return finish(terminal, reasons, output, { identity, voidReasons, ...(usage ? { usage } : {}) }, prompt.digest, transcript);
+      const limitations = Array.isArray(observed.limitations) ? observed.limitations.filter((item): item is SlotRunLimitation => typeof item === "string" && SLOT_LIMITATIONS.has(item)) : [];
+      return finish(terminal, reasons, output, { identity, voidReasons, ...(usage ? { usage } : {}), ...(limitations.length ? { limitations } : {}) }, prompt.digest, transcript);
     } catch (error) {
       const terminal = context.runSignal.aborted ? "canceled" : "failed";
       const reason = `The slot failed unexpectedly: ${message(error)}`;
@@ -708,7 +749,7 @@ export class PanelCoordinator {
       if (output.terminal === "completed") output.terminal = record.run.terminal === "canceled" ? "canceled" : "failed";
       output.error = `Requirements slot ${record.slot.id} is ${record.run.terminal}: ${record.reasons.join(" ")}`;
     }
-    const config = this.slotConfig(context.request.config, record.slot);
+    const config = this.slotConfig(context.request.config, record.slot, context.request.panelPolicy.profiles);
     const request = { ...context.request, config };
     try {
       const { report, reportArtifact } = await assembleReviewReport(this.dependencies, {
