@@ -1,0 +1,22 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "extends": ["//"],
+  "tasks": {
+    "build": {
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/mdfn/examples/shared.css",
+        "$TURBO_ROOT$/mdfn/examples/shared.ts",
+        "$TURBO_ROOT$/mdfn/examples/vite.shared.ts"
+      ]
+    },
+    "typecheck": {
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/mdfn/examples/shared.css",
+        "$TURBO_ROOT$/mdfn/examples/shared.ts",
+        "$TURBO_ROOT$/mdfn/examples/vite.shared.ts"
+      ]
+    }
+  }
+}

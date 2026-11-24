@@ -1,0 +1,33 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "extends": ["//"],
+  "tasks": {
+    "typecheck": {
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/uifn/catalog/generated/catalog.json",
+        "$TURBO_ROOT$/uifn/evidence/generated/phase-11/phase-11-react-compounds.json",
+        "$TURBO_ROOT$/uifn/evidence/generated/phase-14/phase-14-public-vectors.json",
+        "$TURBO_ROOT$/uifn/parity/src/**"
+      ]
+    },
+    "test": {
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/uifn/catalog/generated/catalog.json",
+        "$TURBO_ROOT$/uifn/evidence/generated/phase-11/phase-11-react-compounds.json",
+        "$TURBO_ROOT$/uifn/evidence/generated/phase-14/phase-14-public-vectors.json",
+        "$TURBO_ROOT$/uifn/parity/src/**"
+      ]
+    },
+    "lint": {
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/uifn/catalog/generated/catalog.json",
+        "$TURBO_ROOT$/uifn/evidence/generated/phase-11/phase-11-react-compounds.json",
+        "$TURBO_ROOT$/uifn/evidence/generated/phase-14/phase-14-public-vectors.json",
+        "$TURBO_ROOT$/uifn/parity/src/**"
+      ]
+    }
+  }
+}

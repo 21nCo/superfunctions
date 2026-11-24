@@ -1,0 +1,24 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "extends": ["//"],
+  "tasks": {
+    "test": {
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/packages/config/src/**",
+        "$TURBO_ROOT$/packages/http/src/**",
+        "$TURBO_ROOT$/packages/storage-s3/src/**",
+        "$TURBO_ROOT$/plugfn/providers/src/**"
+      ]
+    },
+    "lint": {
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/packages/config/src/**",
+        "$TURBO_ROOT$/packages/http/src/**",
+        "$TURBO_ROOT$/packages/storage-s3/src/**",
+        "$TURBO_ROOT$/plugfn/providers/src/**"
+      ]
+    }
+  }
+}

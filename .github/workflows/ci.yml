@@ -79,6 +79,19 @@ jobs:
         run: |
           node --test --test-name-pattern="^standalone list: " scripts/turbo-cache-config.test.mjs
 
+      # Every file a cacheable Turbo task reads from outside its package must be in that task's Turbo hash (SFNS-311).
+      # The guard asks Turbo, and this job installs no workspace dependencies, so it installs only the locked Turbo.
+      - name: Install Turbo
+        run: |
+          turbo_version="$(node -p "require('./package-lock.json').packages['node_modules/turbo'].version")"
+          npm install --no-save --no-package-lock --no-audit --no-fund --prefix "$RUNNER_TEMP/turbo" "turbo@${turbo_version}"
+          echo "TURBO_BIN=$RUNNER_TEMP/turbo/node_modules/turbo/bin/turbo" >> "$GITHUB_ENV"
+
+      - name: Verify Turbo task inputs
+        run: |
+          node --test scripts/turbo-inputs-guard.test.mjs
+          node scripts/turbo-inputs-guard.mjs
+
       - name: Verify UIFn docs CLI resolution
         run: node --test scripts/uifn-docs-cli-resolution.test.mjs
 

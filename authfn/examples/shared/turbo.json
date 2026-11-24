@@ -1,0 +1,22 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "extends": ["//"],
+  "tasks": {
+    "typecheck": {
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/authfn/examples/account-settings/client/src/App.svelte",
+        "$TURBO_ROOT$/authfn/examples/account-settings/e2e/account-settings.spec.ts",
+        "$TURBO_ROOT$/authfn/examples/multi-region-routing/client/src/App.svelte",
+        "$TURBO_ROOT$/authfn/examples/multi-region-routing/e2e/multi-region-routing.spec.ts",
+        "$TURBO_ROOT$/authfn/examples/otp-recovery/client/src/App.svelte",
+        "$TURBO_ROOT$/authfn/examples/otp-recovery/e2e/otp-recovery.spec.ts",
+        "$TURBO_ROOT$/authfn/examples/password-sessions/client/src/App.svelte",
+        "$TURBO_ROOT$/authfn/examples/password-sessions/e2e/password-sessions.spec.ts",
+        "$TURBO_ROOT$/authfn/examples/social-oauth/client/src/App.svelte",
+        "$TURBO_ROOT$/authfn/examples/social-oauth/e2e/social-oauth.spec.ts",
+        "$TURBO_ROOT$/authfn/examples/social-oauth/server/src/auth.ts"
+      ]
+    }
+  }
+}
