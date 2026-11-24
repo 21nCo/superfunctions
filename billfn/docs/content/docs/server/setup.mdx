@@ -80,7 +80,7 @@ const billfn = createBillFn({
       if (!session) return null;
       // A cookie session also needs a CSRF check on writes, or another site
       // can post with the user's cookie.
-      if (request.method !== "GET" && !verifyCsrf(request, session)) {
+      if (request.method !== "GET" && !(await verifyCsrf(request, session))) {
         throw createBillFnError({ code: "BILLFN_UNAUTHORIZED", message: "CSRF check failed" });
       }
       return { principalId: session.userId };
@@ -141,8 +141,9 @@ const billfn = createBillFn({
     // self-service policy (for example one refund per charge within 14 days)
     // would check the subject's history here instead; to enforce "once"
     // against concurrent requests, reserve the charge atomically in your own
-    // store here (and release it if the refund fails), because two requests
-    // can both see no earlier refund.
+    // store here, because two requests can both see no earlier refund. Keep
+    // the reservation when the refund call fails: the provider may already
+    // have refunded, so check its refund records before releasing it.
     authorize: async ({ request }) => (await getSession(request))?.role === "billing-operator",
   },
 });
