@@ -1,30 +1,18 @@
-import { mkdtemp, readdir, rm } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, relative } from 'node:path';
-import { memoryAdapter } from '@superfunctions/db/adapters/memory';
-import { createLocalStorageAdapter } from '@superfunctions/storage-local';
+import { join } from 'node:path';
 import { runInNewContext } from 'node:vm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { memoryAdapter } from '@superfunctions/db/adapters/memory';
+import { createLocalStorageAdapter } from '@superfunctions/storage-local';
 import { createFileFn, type Policy } from '../src/index.js';
+import { listObjects, makeLocalFileFn, uploadText } from './local-storage-harness.js';
 import { assertValidUploadInit } from '../src/upload-sessions/input.js';
 
 function nested(depth: number, leaf: unknown): unknown {
   let value: unknown = leaf;
   for (let i = 0; i < depth; i++) value = [value];
   return value;
-}
-
-async function listObjects(rootDir: string): Promise<string[]> {
-  const out: string[] = [];
-  async function walk(dir: string): Promise<void> {
-    for (const entry of await readdir(dir, { withFileTypes: true })) {
-      const path = join(dir, entry.name);
-      if (entry.isDirectory()) await walk(path);
-      else out.push(relative(rootDir, path).split('\\').join('/'));
-    }
-  }
-  await walk(rootDir);
-  return out.sort();
 }
 
 describe('upload init input (FILE-30 F-21, F-05)', () => {
@@ -38,28 +26,8 @@ describe('upload init input (FILE-30 F-21, F-05)', () => {
     await rm(rootDir, { recursive: true, force: true });
   });
 
-  function makeFileFn(policies: Policy[] = [{ name: 'docs', contentTypes: ['text/plain'], visibility: 'public' }]) {
-    return createFileFn({
-      database: memoryAdapter(),
-      storage: createLocalStorageAdapter({ rootDir }),
-      namespace: 'upload_input_test',
-      policies,
-    });
-  }
-
-  async function upload(
-    fileFn: ReturnType<typeof makeFileFn>,
-    ctx: { principalId: string; tenantId?: string },
-    fileName: string,
-    text: string,
-    policy = 'docs',
-  ) {
-    const body = Buffer.from(text);
-    const session = await fileFn.createUploadSession({ policy, fileName, size: body.length, mimeType: 'text/plain' }, ctx);
-    const part = await fileFn.services.uploads.uploadPartBytes(session.uploadSessionId, 1, body, body.length, ctx);
-    await fileFn.completeUploadPart({ uploadSessionId: session.uploadSessionId, partNumber: 1, etag: part.etag, size: part.size }, ctx);
-    return fileFn.completeUploadSession({ uploadSessionId: session.uploadSessionId }, ctx);
-  }
+  const makeFileFn = (policies?: Policy[]) => makeLocalFileFn(rootDir, 'upload_input_test', policies);
+  const upload = uploadText;
 
   it('refuses unsafe file names at init (P1 inputs)', async () => {
     const fileFn = makeFileFn();
