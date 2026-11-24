@@ -560,7 +560,14 @@ export class SchemaConverter {
       for (const member of component) onStack.delete(member);
       this.settleKinds(component, terms);
     };
-    visit(root);
+    try {
+      visit(root);
+    } catch (error) {
+      // A node still open reaches a node on the failing path (Tarjan's
+      // invariant), so it fails too: keep that, not a rescan per root.
+      if (error instanceof OpenApiSkip) for (const node of open) this.admitted.set(node, error);
+      throw error;
+    }
   }
 
   /**

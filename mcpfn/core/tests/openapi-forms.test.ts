@@ -2592,6 +2592,16 @@ describe("fromOpenAPI body fallback, synchronous schemas, per-kind alternatives 
     ]);
     expect(named).toEqual(["ok"]);
     expect(tool(result.tools, "ok").operation.security).toEqual([{ oauth: ["read"] }]);
+    // One map used as both a server variables map and a security requirement is checked in each role.
+    const both = { oauth: Object.assign(["read"], { some: 0 }) };
+    for (const [first, second] of [["/v", "/s"], ["/s", "/v"]] as const) {
+      const operations = {
+        "/v": { get: { operationId: "v", servers: [{ url: "https://example.test", variables: both }], responses: ok } },
+        "/s": { get: { operationId: "s", security: [both], responses: ok } },
+      };
+      const aliased = fromOpenAPI({ openapi: "3.1.0", paths: { [first]: operations[first], [second]: operations[second] } }, options());
+      expect(aliased.skipped.map(({ operation }) => operation.operationId)).toEqual(["s"]);
+    }
   });
 
   it("fails only the operations that reach a component holding an irregular array", () => {

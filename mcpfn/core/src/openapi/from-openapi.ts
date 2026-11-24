@@ -204,7 +204,7 @@ function security(...levels: unknown[]): OpenApiOperation["security"] {
     if (Array.isArray(level)) {
       const requirements = documentItems(level, "invalid-operation").filter(isObject);
       // Scope lists reach the executor and the naming callback as arrays.
-      for (const requirement of requirements) checkMetadata(requirement, (scopes) => scopes);
+      for (const requirement of requirements) checkMetadata(checkedRequirements, requirement, (scopes) => scopes);
       return requirements as Record<string, string[]>[];
     }
   }
@@ -213,16 +213,21 @@ function security(...levels: unknown[]): OpenApiOperation["security"] {
 
 /** Server variables, whose `enum` lists reach the executor and the naming callback as arrays. */
 function checkedVariables(variables: JsonObject): OpenApiServer["variables"] {
-  checkMetadata(variables, (variable) => (isObject(variable) ? variable.enum : undefined));
+  checkMetadata(checkedVariableMaps, variables, (variable) => (isObject(variable) ? variable.enum : undefined));
   return variables as OpenApiServer["variables"];
 }
 
-/** Metadata objects whose member lists were checked, with the failure if one was irregular; shared ones are read once. */
-const checkedMetadataObjects = new WeakMap<object, OpenApiSkip | null>();
+/**
+ * Security requirements and server variables maps whose member lists were
+ * checked, with the failure if one was irregular, so shared ones are read
+ * once. Kept per role: each role reads different lists of the same object.
+ */
+const checkedRequirements = new WeakMap<object, OpenApiSkip | null>();
+const checkedVariableMaps = new WeakMap<object, OpenApiSkip | null>();
 
-/** Check the list `listOf` picks from each member of `metadata` (a security requirement or a variables map), once per object. */
-function checkMetadata(metadata: JsonObject, listOf: (member: unknown) => unknown): void {
-  let failure = checkedMetadataObjects.get(metadata);
+/** Check the list `listOf` picks from each member of `metadata`, once per object and role (`checked`). */
+function checkMetadata(checked: WeakMap<object, OpenApiSkip | null>, metadata: JsonObject, listOf: (member: unknown) => unknown): void {
+  let failure = checked.get(metadata);
   if (failure === undefined) {
     failure = null;
     for (const member of Object.values(metadata)) {
@@ -236,7 +241,7 @@ function checkMetadata(metadata: JsonObject, listOf: (member: unknown) => unknow
         break;
       }
     }
-    checkedMetadataObjects.set(metadata, failure);
+    checked.set(metadata, failure);
   }
   if (failure) throw failure;
 }

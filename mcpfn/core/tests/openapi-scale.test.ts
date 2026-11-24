@@ -148,6 +148,21 @@ describe("fromOpenAPI scale", () => {
     expect(performance.now() - started).toBeLessThan(2000);
     expect(malformed.tools.map((entry) => entry.name)).toEqual(["ok"]);
     expect(malformed.skipped).toHaveLength(4000);
+    // A chain A1..A2000 ($ref forward, items back; A1's back link missing) ending in a 3,000-member recursive allOf:
+    // the nodes left open by A1's failure keep it, so later roots do not walk the wide list again.
+    const ref = (name: string) => ({ $ref: `#/components/schemas/${name}` });
+    const chain: Record<string, unknown> = {
+      A2000: { allOf: Array.from({ length: 3000 }, () => ({ items: ref("A2000") })), items: ref("A1999") },
+    };
+    for (let index = 1; index < 2000; index += 1) chain[`A${index}`] = { ...ref(`A${index + 1}`), items: ref(index === 1 ? "Missing" : `A${index - 1}`) };
+    const roots: Record<string, unknown> = {};
+    for (let index = 1; index <= 2000; index += 1) {
+      roots[`/a${index}`] = { get: { operationId: `a${index}`, responses: { "200": { description: "OK", content: { "application/json": { schema: { ...ref(`A${index}`), prefixItems: [] } } } } } } };
+    }
+    started = performance.now();
+    const chained = fromOpenAPI({ openapi: "3.1.0", paths: roots, components: { schemas: chain } }, { executor: recordingExecutor() });
+    expect(performance.now() - started).toBeLessThan(2000);
+    expect(chained.skipped).toHaveLength(2000);
   });
 
   it("suffixes 2,000 colliding names within 2 seconds", () => {
