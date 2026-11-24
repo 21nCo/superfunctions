@@ -2,9 +2,8 @@ import { execFile } from 'node:child_process';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { OCRProcessorProvider, OCRProviderRequest, OCRProviderResult } from '@filefn/processing';
+import { CONTENT_TYPE_MISMATCH_ERROR, SHARP_INPUT_OPTIONS, isRasterImageBytes, type OCRProcessorProvider, type OCRProviderRequest, type OCRProviderResult } from '@filefn/processing';
 import sharp from 'sharp';
-import { isRasterImage } from './raster-image.js';
 
 export interface TesseractCliOptions {
   /** The `tesseract` executable; defaults to `tesseract` on PATH. */
@@ -49,12 +48,12 @@ export function createTesseractCliOCRProvider(options: TesseractCliOptions = {})
       // Only raster images reach sharp, whatever the declared type. A private
       // copy is checked and decoded, so the caller can't change it in between.
       const imageData = Buffer.from(request.imageData);
-      if (!isRasterImage(imageData)) throw new Error('File content does not match its declared type');
+      if (!isRasterImageBytes(imageData)) throw new Error(CONTENT_TYPE_MISMATCH_ERROR);
       const directory = await mkdtemp(join(tmpdir(), 'filefn-ocr-'));
       try {
         const input = join(directory, 'input.png');
         const output = join(directory, 'output');
-        await writeFile(input, await sharp(imageData, { limitInputPixels: 100_000_000 }).grayscale().normalize().sharpen().png().toBuffer());
+        await writeFile(input, await sharp(imageData, SHARP_INPUT_OPTIONS).grayscale().normalize().sharpen().png().toBuffer());
         const formats = request.includeHOCR ? ['txt', 'tsv', 'hocr'] : ['txt', 'tsv'];
         await run(binary, [input, output, '-l', request.language, '--psm', '6', '-c', 'preserve_interword_spaces=1', ...formats], timeoutMs);
         const [text, tsv, hocr] = await Promise.all([

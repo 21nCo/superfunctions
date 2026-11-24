@@ -56,6 +56,18 @@ export {
   createOCRProcessor,
   OCR_SUPPORTED_MIME_TYPES,
 } from './processors/ocr.js';
+// Input checks for decoders: raster/PDF signatures and pinned ffmpeg demuxers.
+export {
+  CONTENT_TYPE_MISMATCH_ERROR,
+  MAX_INPUT_PIXELS,
+  SHARP_INPUT_OPTIONS,
+  assertContentMatchesDeclaredType,
+  assertRasterImage,
+  contentMatchesDeclaredType,
+  ffmpegInputArgs,
+  isRasterImageBytes,
+  pdfStart,
+} from './content-sniff.js';
 export { createTesseractJsOCRProvider } from './providers/tesseract-ocr.js';
 
 export {
