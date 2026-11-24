@@ -1077,15 +1077,10 @@ function hasDodoPaymentSubscriptionId(payment: Record<string, unknown>): boolean
  * `null` `subscription_id`, or (Dodo may omit that optional field) an empty `subscription_ids` list.
  */
 function classifyDodoPayment(payment: Record<string, unknown>): 'one_time' | 'subscription' | 'unknown' {
-  const subscriptionIds = Array.isArray(payment.subscription_ids) ? payment.subscription_ids : undefined;
-  if (
-    (typeof payment.subscription_id === 'string' && payment.subscription_id.length > 0) ||
-    (subscriptionIds !== undefined && subscriptionIds.length > 0) ||
-    payment.is_multi_subscription === true
-  ) {
+  if (hasDodoPaymentSubscriptionId(payment) || payment.is_multi_subscription === true) {
     return 'subscription';
   }
-  return payment.subscription_id === null || subscriptionIds !== undefined ? 'one_time' : 'unknown';
+  return payment.subscription_id === null || Array.isArray(payment.subscription_ids) ? 'one_time' : 'unknown';
 }
 
 /**
