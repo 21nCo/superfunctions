@@ -1406,6 +1406,7 @@ Processing happens after the upload closes. Errors are isolated:
 ```ts
 fetch(`/filefn/${fileId}/process`, {
   method: "POST",
+  headers: { "content-type": "application/json" },
   body: JSON.stringify({
     storageKey: existing.storageKey,
     mimeType: existing.mimeType,
@@ -1577,6 +1578,7 @@ Every error response from filefn follows the same envelope:
 | `FILEFN_SHARE_EXPIRED` | 410 | The share link's `expiresAt` has passed. |
 | `FILEFN_SHARE_REVOKED` | 410 | The share link was revoked. |
 | `FILEFN_SHARE_DOWNLOADS_EXCEEDED` | 410 | The share link reached `maxDownloads`. |
+| `FILEFN_SHARE_DOWNLOAD_CONFLICT` | 409 | Too many concurrent downloads of the share link; retry. |
 | `FILEFN_SHARE_NOT_FOUND` | 404 | The share token doesn't match any row. |
 | `FILEFN_PERMISSION_NOT_FOUND` | 404 | Permission grant id doesn't exist. |
 | `FILEFN_PROCESSING_ENQUEUE_FAILED` | 503 | The processing queue / inline runner refused. |
@@ -1776,6 +1778,7 @@ Custom authorizers can implement org-wide read, project-scoped writes, anything 
 // We grant alice read + share for 24h.
 const grant = await fetch(`/filefn/file_xyz/permissions`, {
   method: "POST",
+  headers: { "content-type": "application/json" },
   body: JSON.stringify({
     userId: "alice",
     canRead: true,
@@ -2704,6 +2707,10 @@ Always configure `rateLimit.limits` in production. The unrestricted defaults are
 
 Default to a strict origin list. Wide-open `Access-Control-Allow-Origin: *` works for proxy-mode public files, but anything that depends on credentials must scope down.
 
+### Cookie auth and CSRF
+
+Every FileFn route that takes a JSON body accepts only `Content-Type: application/json` (or a `+json` type) and answers anything else with `415 FILEFN_UNSUPPORTED_MEDIA_TYPE`, so a cross-site form or `no-cors` fetch cannot reach it without a CORS preflight. Routes that take raw bytes (upload-part `PUT`s and artifact uploads) are not covered by this check: they need a valid upload session or an authorized caller, so keep cookie auth `SameSite=Lax` or stricter, or check `Origin` in the host, for those too. A `POST` without a body (completing an upload) is still a simple request: when auth is a cookie, set it `SameSite=Lax` or stricter, or check `Origin` in the host. JSON bodies over 64 KiB are refused with `413 FILEFN_BODY_TOO_LARGE`.
+
 ### 4. Strict policies
 
 - Upper-bound every policy's `maxSizeBytes`. Don't ship a policy with unlimited size unless you really mean it.
@@ -2779,7 +2786,7 @@ curl -X POST https://example.com/filefn/file_xyz/share-links \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "expiresAt": "2025-01-31T23:59:59Z",
+    "expiresAt": "2099-01-31T23:59:59Z",
     "requiresAuth": false,
     "maxDownloads": 10
   }'
@@ -2793,7 +2800,7 @@ Response:
   "data": {
     "token": "shr_live_<random>",
     "url": "https://example.com/filefn/share-links/shr_live_<random>/download",
-    "expiresAt": "2025-01-31T23:59:59Z",
+    "expiresAt": "2099-01-31T23:59:59.000Z",
     "requiresAuth": false,
     "maxDownloads": 10
   }
@@ -2840,8 +2847,9 @@ After revoke, the token returns `FILEFN_SHARE_REVOKED` (HTTP 410).
 | `FILEFN_SHARE_EXPIRED` | The current time is past `expiresAt`. |
 | `FILEFN_SHARE_REVOKED` | The token was revoked. |
 | `FILEFN_SHARE_DOWNLOADS_EXCEEDED` | `maxDownloads` was reached. |
+| `FILEFN_SHARE_DOWNLOAD_CONFLICT` | Too many concurrent downloads of the link; retry. |
 
-All return HTTP 410 except `NOT_FOUND` (404). They're indistinguishable on purpose — clients that try a guessed token see "not found" instead of "exists but expired," which avoids leaking enumeration signal.
+All return HTTP 410 except `NOT_FOUND` (404) and `SHARE_DOWNLOAD_CONFLICT` (409). Retry a 409, treat a 410 as final, and read a 404 as no matching link. A token that matches no link gets 404 (once the request is past the rate limit, which answers 429 first), never one of the 410s, so trying tokens reveals nothing about links that exist.
 
 ## What share links don't do
 
@@ -2966,6 +2974,16 @@ States:
 - **completed** — `complete` succeeded, `fileVersions` row written, session is read-only.
 - **aborted** — explicit abort or implicit cleanup. The session is gone.
 - **expired** — TTL hit. The cleanup job evicts the row and any orphaned storage objects.
+
+## What `init` accepts
+
+`init` checks the body before anything else, including the idempotency lookup, and answers `400 FILEFN_INVALID_REQUEST` (with the offending `field` in `details`) when:
+
+- `fileName` is not a string, is blank, is longer than 255 UTF-16 code units, contains `/`, `\`, a control character or a lone surrogate, or is `.` or `..`;
+- `size` is not a non-negative safe integer;
+- `mimeType` is not one `type/subtype` of RFC 9110 tokens with optional parameters, or is longer than 1024 characters;
+- `metadata` is not a JSON object, is over 16 KiB as JSON, nests more than 32 levels or contains a lone surrogate or a NUL character;
+- the idempotency key is longer than 255 characters or contains a control character.
 
 ## What `init` returns
 
@@ -3636,7 +3654,11 @@ The owner has all four implicitly. Grants supplement the owner's capabilities fo
 
 ## TTL
 
-`expiresAt` is enforced on every authorisation check. Expired grants are kept in the table for audit; you can prune them with a cron.
+`expiresAt` must be an ISO 8601 date or date-time (send a zone, e.g. `Z`: a date-time without one is read as the server's local time by the TypeScript server and as UTC by the Python server, as each always has; a date alone is UTC midnight) in the future when the grant is created, and it is enforced on every authorisation check; a stored value in any other format counts as expired. Expired grants are kept in the table for audit; you can prune them with a cron.
+
+## Tenants
+
+A grant to a `tenantId` other than the file's own is refused with `FILEFN_FORBIDDEN`, so one user cannot hand a file to every member of another tenant. Set `grants: { allowCrossTenant: true }` in `createFileFn` (in the Python server, `grants={"allowCrossTenant": True}` in `FileFnConfig`) to allow it. A grant extends what the configured authorizer allows: a matching read grant lets its holder read the file even when the authorizer alone would not.
 
 ## Roles vs. users
 
@@ -4337,7 +4359,22 @@ See [Core Concepts › Share links](../core-concepts/share-links) for the full l
 
 ## Enabling
 
-Share links are wired automatically when `auth` is configured. There's no separate `shares.enabled` flag — every server gets the routes by default. Disable by removing `auth` (or setting `auth.required: false` and not exposing the routes through your reverse proxy).
+Share links are on by default. Configure them with `shares` in `createFileFn`:
+
+```ts
+createFileFn({
+  // ...
+  shares: {
+    enabled: true,         // false removes every share-link route (not fileFn.services.shares)
+    requireAuth: false,    // true: every new link needs a signed-in downloader
+    maxTtlSeconds: 86_400, // cap on a link's lifetime (at most 100 years); also the lifetime of a link created without expiresAt
+  },
+});
+```
+
+Without `maxTtlSeconds`, a link created without `expiresAt` never expires.
+
+`enabled: false` removes the HTTP routes only. `fileFn.services.shares` (and the admin app, which uses it) can still create, list and revoke links, and links stored meanwhile work again once the routes are back.
 
 ## Routes
 
@@ -4375,7 +4412,7 @@ Anonymous downloads (no auth) work when `requiresAuth` is `false`. If `requiresA
 
 ## TTL and download caps
 
-Both fields are server-enforced. The download counter is incremented atomically when `GET /share-links/:token/download` resolves; a second concurrent request that would push the counter past `maxDownloads` fails with `FILEFN_SHARE_DOWNLOADS_EXCEEDED`.
+Both fields are server-enforced and checked when the link is created: `expiresAt` must be an ISO 8601 date (`2030-01-01`) or date-time (`2030-01-01T00:00:00Z`; without a zone it is read as UTC) in the future, and `maxDownloads` a positive integer, otherwise the request fails with `FILEFN_INVALID_REQUEST`. An empty `expiresAt` means no expiry. A stored `expiresAt` in any other format counts as expired. Each download is counted with a conditional write before any byte or URL is handed out, so concurrent downloads never exceed `maxDownloads`; the extra requests fail with `FILEFN_SHARE_DOWNLOADS_EXCEEDED`. A download that keeps losing that write to concurrent ones fails with `FILEFN_SHARE_DOWNLOAD_CONFLICT` (409, retryable). A proxied download opens its stream before it is counted (and hands it out only if the link is still valid after counting), and a signed one gives its count back if signing fails, so a storage failure never uses up a download. A signed download URL is signed right after the download is counted, with the server's signed-URL TTL or the whole seconds left before `expiresAt`, whichever is shorter, so it ends no later than the link (give or take the time the storage takes to sign). With less than a second left the TypeScript server names the proxy URL instead, which checks the link again when it is fetched; on storage that can only sign URLs, and on the Python server whenever it can sign, the link counts as expired then.
 
 ## Anti-enumeration
 
@@ -5706,6 +5743,9 @@ export function fileFnHandler(router: FileFnRouter): RequestHandler {
       const response = await router.handle(request);
       if (!response) { res.status(404).end(); return; }
       res.status(response.status);
+      // A request body FileFn stopped reading (e.g. a 413) is never drained:
+      // close the connection instead of leaving it paused.
+      if (!req.complete) res.setHeader("connection", "close");
       response.headers.forEach((value, name) => {
         if (name !== "set-cookie") res.setHeader(name, value);
       });
@@ -7267,6 +7307,7 @@ filefn ships share links with TTLs and download caps. This recipe shows how to c
 ```ts
 const share = await fetch(`/filefn/${fileId}/share-links`, {
   method: "POST",
+  headers: { "content-type": "application/json" },
   body: JSON.stringify({ maxDownloads: 1 }),
 }).then((r) => r.json());
 
@@ -7280,6 +7321,7 @@ The first download succeeds; the second returns `FILEFN_SHARE_DOWNLOADS_EXCEEDED
 ```ts
 await fetch(`/filefn/${fileId}/share-links`, {
   method: "POST",
+  headers: { "content-type": "application/json" },
   body: JSON.stringify({
     expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(), // 1 hour
   }),
@@ -7291,6 +7333,7 @@ await fetch(`/filefn/${fileId}/share-links`, {
 ```ts
 await fetch(`/filefn/${fileId}/share-links`, {
   method: "POST",
+  headers: { "content-type": "application/json" },
   body: JSON.stringify({
     requiresAuth: true,
     expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
@@ -8516,6 +8559,7 @@ Wire-format envelope:
 | `FILEFN_SHARE_REVOKED` | 410 | Share was revoked. | Surface a "this link is no longer valid" message. |
 | `FILEFN_SHARE_EXPIRED` | 410 | Share past `expiresAt`. | Same. |
 | `FILEFN_SHARE_DOWNLOADS_EXCEEDED` | 410 | `maxDownloads` exhausted. | Same. |
+| `FILEFN_SHARE_DOWNLOAD_CONFLICT` | 409 | Too many concurrent downloads of the link. | Retry. |
 
 ## Permissions
 

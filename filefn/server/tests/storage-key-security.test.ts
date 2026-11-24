@@ -1,23 +1,9 @@
-import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, relative } from 'node:path';
-import { memoryAdapter } from '@superfunctions/db/adapters/memory';
-import { createLocalStorageAdapter } from '@superfunctions/storage-local';
+import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { computeStoragePath, createFileFn, sanitizeStorageKeySegment, unsafeStorageKeyReason, type Policy } from '../src/index.js';
-
-async function listObjects(rootDir: string): Promise<string[]> {
-  const out: string[] = [];
-  async function walk(dir: string): Promise<void> {
-    for (const entry of await readdir(dir, { withFileTypes: true })) {
-      const path = join(dir, entry.name);
-      if (entry.isDirectory()) await walk(path);
-      else out.push(relative(rootDir, path).split('\\').join('/'));
-    }
-  }
-  await walk(rootDir);
-  return out.sort();
-}
+import { computeStoragePath, sanitizeStorageKeySegment, unsafeStorageKeyReason, type Policy } from '../src/index.js';
+import { listObjects, makeLocalFileFn, uploadText } from './local-storage-harness.js';
 
 describe('storage keys (FILE-30 F-01)', () => {
   let rootDir: string;
@@ -30,44 +16,23 @@ describe('storage keys (FILE-30 F-01)', () => {
     await rm(rootDir, { recursive: true, force: true });
   });
 
-  function makeFileFn(policies: Policy[] = [{ name: 'docs', contentTypes: ['text/plain'], visibility: 'public' }]) {
-    return createFileFn({
-      database: memoryAdapter(),
-      storage: createLocalStorageAdapter({ rootDir }),
-      namespace: 'storage_keys_test',
-      policies,
-    });
-  }
+  const makeFileFn = (policies?: Policy[]) => makeLocalFileFn(rootDir, 'storage_keys_test', policies);
+  const upload = uploadText;
 
-  async function upload(
-    fileFn: ReturnType<typeof makeFileFn>,
-    ctx: { principalId: string; tenantId?: string },
-    fileName: string,
-    text: string,
-  ) {
-    const body = Buffer.from(text);
-    const session = await fileFn.createUploadSession({ policy: 'docs', fileName, size: body.length, mimeType: 'text/plain' }, ctx);
-    const part = await fileFn.services.uploads.uploadPartBytes(session.uploadSessionId, 1, body, body.length, ctx);
-    await fileFn.completeUploadPart({ uploadSessionId: session.uploadSessionId, partNumber: 1, etag: part.etag, size: part.size }, ctx);
-    return fileFn.completeUploadSession({ uploadSessionId: session.uploadSessionId }, ctx);
-  }
-
-  it('a traversal file name stays inside its own key, so it cannot overwrite or delete the owner object (P1)', async () => {
+  it('a traversal file name is refused at init, and the key builder keeps one inside its own key anyway (P1)', async () => {
     const fileFn = makeFileFn();
     const alice = { principalId: 'alice', tenantId: 't1' };
     const bob = { principalId: 'bob', tenantId: 't1' };
     const aliceFile = await upload(fileFn, alice, 'report.txt', 'alice original');
     const [aliceKey] = await listObjects(rootDir);
 
-    const bobFile = await upload(fileFn, bob, `../../../../${aliceKey}`, 'BOB-WAS-HERE');
-    const objects = await listObjects(rootDir);
-    expect(objects).toHaveLength(2);
-    const bobKey = objects.find((key) => key !== aliceKey)!;
-    expect(bobKey.startsWith(`t1/bob/${bobFile.fileId}/`)).toBe(true);
+    await expect(
+      fileFn.createUploadSession({ policy: 'docs', fileName: `../../../../${aliceKey}`, size: 1, mimeType: 'text/plain' }, bob),
+    ).rejects.toMatchObject({ code: 'FILEFN_INVALID_REQUEST' });
+    // A name reaching the key builder another way still stays in its segment.
+    const bobKey = computeStoragePath({ name: 'p' }, { tenantId: 't1', principalId: 'bob', fileName: `../../../../${aliceKey}`, fileId: 'file_1', versionId: 'ver_1' });
+    expect(bobKey.startsWith('t1/bob/file_1/')).toBe(true);
     expect(unsafeStorageKeyReason(bobKey)).toBeNull();
-    expect(await readFile(join(rootDir, aliceKey), 'utf8')).toBe('alice original');
-
-    await fileFn.deleteFile({ fileId: bobFile.fileId }, bob);
     expect(await listObjects(rootDir)).toEqual([aliceKey]);
     const download = await fileFn.services.files.getDownloadStream(aliceFile.fileId, undefined, alice);
     expect(await new Response(download.stream).text()).toBe('alice original');
@@ -130,14 +95,15 @@ describe('storage keys (FILE-30 F-01)', () => {
 
   it('shortens a long file name in the key so the segment fits a 255-byte filesystem name', async () => {
     const fileFn = makeFileFn();
-    const longName = `${'f'.repeat(140)}/${'n'.repeat(120)}.txt`;
+    // 204 characters (allowed) but 404 bytes in UTF-8.
+    const longName = `${'é'.repeat(200)}.txt`;
     await upload(fileFn, { principalId: 'alice', tenantId: 't1' }, longName, 'hello');
     const [key] = await listObjects(rootDir);
     const last = key.split('/').pop()!;
     expect(new TextEncoder().encode(last).length).toBeLessThan(200);
     expect(last.endsWith('.txt')).toBe(true);
     const other = computeStoragePath({ name: 'p' }, { fileName: `${'f'.repeat(140)}/${'m'.repeat(120)}.txt`, fileId: 'file_1', versionId: 'ver_1' });
-    const same = computeStoragePath({ name: 'p' }, { fileName: longName, fileId: 'file_1', versionId: 'ver_1' });
+    const same = computeStoragePath({ name: 'p' }, { fileName: `${'f'.repeat(140)}/${'n'.repeat(120)}.txt`, fileId: 'file_1', versionId: 'ver_1' });
     expect(other).not.toBe(same);
   });
 

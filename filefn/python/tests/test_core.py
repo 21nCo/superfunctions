@@ -77,6 +77,53 @@ def test_policy_registry_define_accepts_policy_dicts() -> None:
     assert policy.visibility == "private"
 
 
+def test_unparseable_grant_expiry_counts_as_expired() -> None:
+    # FILE-30 F-08: a grant whose expiresAt does not parse must not live forever.
+    from filefn.server.files.service import FileService
+
+    assert FileService._is_grant_expired(object.__new__(FileService), "not-a-date") is True
+    assert FileService._is_grant_expired(object.__new__(FileService), None) is False
+    assert FileService._is_grant_expired(object.__new__(FileService), "2999-01-01T00:00:00Z") is False
+
+
+def test_grant_expiry_helper_fails_closed() -> None:
+    from filefn.server.authz.grant_expiry import is_grant_expired
+
+    assert is_grant_expired("not-a-date")
+    assert is_grant_expired("2001-01-01T00:00:00Z")
+    assert not is_grant_expired("2999-01-01T00:00:00Z")
+    assert not is_grant_expired(None)
+
+
+def test_iso_instant_outside_utc_year_range_is_refused() -> None:
+    from filefn.server.authz.grant_expiry import is_grant_expired, parse_iso_instant
+
+    assert parse_iso_instant("9999-12-31T23:59:59-01:00") is None
+    assert parse_iso_instant("0001-01-01T00:00:00+01:00") is None
+    assert is_grant_expired("9999-12-31T23:59:59-01:00")
+    assert parse_iso_instant("9999-12-31T22:59:59-01:00") is not None
+
+
+def test_iso_instant_accepts_offsets_with_or_without_a_colon() -> None:
+    from datetime import datetime, timezone
+
+    from filefn.server.authz.grant_expiry import parse_iso_instant
+
+    expected = datetime(2030, 1, 1, 12, 30, tzinfo=timezone.utc)
+    assert parse_iso_instant("2030-01-01T18:00:00+0530") == expected
+    assert parse_iso_instant("2030-01-01T18:00:00+05:30") == expected
+    assert parse_iso_instant("2030-01-01T18:00:00+0560") is None
+    assert parse_iso_instant("2030-01-01T18:00:00+053") is None
+
+
+def test_iso_instant_requires_a_full_ascii_match() -> None:
+    from filefn.server.authz.grant_expiry import is_grant_expired, parse_iso_instant
+
+    assert parse_iso_instant("2099-01-01T00:00:00Z\n") is None
+    assert parse_iso_instant("\u0662\u0660\u0669\u0669-01-01") is None
+    assert is_grant_expired("2099-01-01T00:00:00Z\n")
+
+
 def test_image_wildcard_does_not_admit_svg() -> None:
     # FILE-30 F-04: SVG can run script, so `image/*` must not accept it.
     from filefn.server.policies import matches_content_type
