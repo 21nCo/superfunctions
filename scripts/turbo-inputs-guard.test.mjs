@@ -703,6 +703,19 @@ test("changing a declared outside file changes the hash of each task that reads 
     ["datafn/docs/content/docs/cli/drizzle-codegen.mdx", ["@datafn/server#test"]],
     // The declarations TypeScript resolves for uifn/parity/src/trace.mjs.
     ["uifn/parity/src/trace.d.mts", ["@uifn/solid#typecheck", "@uifn/react#typecheck", "@uifn/svelte#typecheck"]],
+    // CSS @import reads, outside the guard's closed set: the Solid and Svelte workbench stylesheets import the React
+    // workbench's, and Vite bundles them into both workbenches and both catalogs; searchfn/docs imports the docs theme
+    // tokens, covered by its dependency on @superfunctions/docs-theme#build.
+    ...["styles.css", "catalog.css"].map((file) => [
+      `uifn/examples/react-workbench/src/${file}`,
+      [
+        "@uifn/example-solid-workbench#build",
+        "@uifn/example-svelte-workbench#build",
+        "@uifn/catalog-solid#build",
+        "@uifn/catalog-svelte#build",
+      ],
+    ]),
+    ["packages/docs-theme/src/tokens.css", ["@searchfn/docs#build"]],
   ];
   const taskIds = [...new Set(examples.flatMap(([, ids]) => ids))];
   const baseline = hashesAfterEditing(null, taskIds);
