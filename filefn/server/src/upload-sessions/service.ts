@@ -358,7 +358,8 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
 
   // Deletes the session's proxy part objects. Returns false if any delete
   // failed; callers that must not lose track of the parts keep the session.
-  const MAX_SWEPT_PART_NUMBERS = 10_000;
+  // The S3-compatible multipart part limit, applied to every upload mode.
+  const MAX_UPLOAD_PARTS = 10_000;
 
   async function deleteProxyTempPartObjects(session: UploadSession): Promise<boolean> {
     if (session.uploadMode !== 'proxy' || !storage.deleteObject) {
@@ -367,10 +368,10 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
     const policy = policies.get(session.policy);
     const storageTarget = policy ? resolveStorageTarget(policy) : undefined;
 
-    // Every part key of the session, recorded or not: an aborted part write
-    // (an oversized stream, a dropped connection) can leave bytes on adapters
-    // that write in place, without a part row. The keys are this session's
-    // alone, and deletes of missing objects are no-ops.
+    // The recorded parts. An aborted or failed part write never leaves bytes
+    // at a part key (S3-compatible stores and GCS don't commit an aborted
+    // upload; storage-local writes to a temporary file renamed on close), and
+    // a part committed after its session ended is removed by its own call.
     const recorded = await db.findMany<{ partNumber: number }>({
       model: 'uploadParts',
       where: [{ field: 'uploadSessionId', operator: 'eq', value: session.uploadSessionId }],
@@ -378,10 +379,6 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       namespace,
     });
     const partNumbers = new Set<number>(recorded.map((part) => part.partNumber));
-    // Bounded: a huge declared size must not make cleanup unbounded. 10,000 is
-    // the multipart part limit of S3-compatible stores.
-    const sweepUpTo = Math.min(session.totalParts ?? 0, MAX_SWEPT_PART_NUMBERS);
-    for (let n = 1; n <= sweepUpTo; n++) partNumbers.add(n);
 
     let allDeleted = true;
     for (const partNumber of partNumbers) {
@@ -1407,10 +1404,10 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       const totalParts = computeTotalParts(input.size, chunkSizeBytes);
       // At most 10,000 parts (the S3-compatible multipart limit), which also
       // bounds part cleanup.
-      if (totalParts > MAX_SWEPT_PART_NUMBERS) {
-        throw errors.invalidRequest(`size needs more than ${MAX_SWEPT_PART_NUMBERS} parts of ${chunkSizeBytes} bytes`, {
+      if (totalParts > MAX_UPLOAD_PARTS) {
+        throw errors.invalidRequest(`size needs more than ${MAX_UPLOAD_PARTS} parts of ${chunkSizeBytes} bytes`, {
           field: 'size',
-          maxParts: MAX_SWEPT_PART_NUMBERS,
+          maxParts: MAX_UPLOAD_PARTS,
         });
       }
       // Completion verifies the stored size with statObject; refuse before any
@@ -1582,7 +1579,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       if (isExpiredAt(session.expiresAt)) throw errors.uploadExpired();
       // Sessions created before the 10,000-part cap may declare more parts;
       // parts past it would be outside cleanup.
-      if (partNumber < 1 || partNumber > session.totalParts || partNumber > MAX_SWEPT_PART_NUMBERS) throw errors.invalidPartNumber();
+      if (partNumber < 1 || partNumber > session.totalParts || partNumber > MAX_UPLOAD_PARTS) throw errors.invalidPartNumber();
       const partLimit = maxPartBytes(session, partNumber);
       if (!Number.isSafeInteger(contentLength) || contentLength < 1) {
         throw errors.invalidRequest('contentLength must be a positive integer', { field: 'contentLength' });
@@ -1645,7 +1642,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       if (isExpiredAt(session.expiresAt)) throw errors.uploadExpired();
       // Sessions created before the 10,000-part cap may declare more parts;
       // parts past it would be outside cleanup.
-      if (partNumber < 1 || partNumber > session.totalParts || partNumber > MAX_SWEPT_PART_NUMBERS) throw errors.invalidPartNumber();
+      if (partNumber < 1 || partNumber > session.totalParts || partNumber > MAX_UPLOAD_PARTS) throw errors.invalidPartNumber();
       if (session.uploadMode !== 'proxy') throw errors.noSupportedUploadMode();
       // Counted while streaming: the declared Content-Length is only an early refusal.
       const partLimit = maxPartBytes(session, partNumber);
@@ -1770,7 +1767,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       if (isExpiredAt(session.expiresAt)) throw errors.uploadExpired();
       // Sessions created before the 10,000-part cap may declare more parts;
       // parts past it would be outside cleanup.
-      if (partNumber < 1 || partNumber > session.totalParts || partNumber > MAX_SWEPT_PART_NUMBERS) throw errors.invalidPartNumber();
+      if (partNumber < 1 || partNumber > session.totalParts || partNumber > MAX_UPLOAD_PARTS) throw errors.invalidPartNumber();
       if (!etag || etag.trim() === '') throw errors.invalidEtag();
 
       const existingPart = await db.findOne<{ partNumber: number; etag: string; size: number }>({
