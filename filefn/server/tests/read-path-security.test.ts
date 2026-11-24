@@ -5,7 +5,7 @@ import { memoryAdapter } from '@superfunctions/db/adapters/memory';
 import { createLocalStorageAdapter } from '@superfunctions/storage-local';
 import type { StorageAdapter } from '@superfunctions/storage';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { buildDownloadHeaders, createFileFn, matchesContentType, signedDownloadConstraints, type Processor } from '../src/index.js';
+import { buildDownloadHeaders, createFileFn, createProcessingService, matchesContentType, signedDownloadConstraints, type Processor } from '../src/index.js';
 
 type Ctx = { principalId: string; tenantId?: string };
 
@@ -297,5 +297,58 @@ describe('read path (FILE-30 F-03, F-04, F-23)', () => {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ force: true }),
     }));
     expect(forced!.status).toBe(403);
+  });
+
+  it('guests read only public files on processing routes, whatever the authorizer allows a context without a principal', async () => {
+    const processors: Processor[] = [{
+      name: 'copy',
+      supportedMimeTypes: ['text/plain'],
+      async process(input, getData) {
+        return { success: true, artifacts: [{ kind: 'copy', data: await getData(), mimeType: 'text/plain', storageKey: `${input.storageKey}.copy` }] };
+      },
+    }];
+    const fileFn = createFileFn({
+      database: memoryAdapter(),
+      storage: createLocalStorageAdapter({ rootDir }),
+      namespace: 'read_path_guest_private',
+      policies: [{ name: 'private', visibility: 'private' }],
+      auth: { required: false, resolveSession: async () => null },
+      // A host authorizer that treats a missing principal as a trusted server call.
+      authorizer: {
+        async canRead(file, ctx) { return !ctx.principalId || file.ownerId === ctx.principalId; },
+        async canWrite(file, ctx) { return file.ownerId === ctx.principalId; },
+        async canDelete(file, ctx) { return file.ownerId === ctx.principalId; },
+      },
+      processing: { enabled: true, processors },
+    });
+    const owner = { principalId: 'owner' };
+    const body = Buffer.from('private bytes');
+    const session = await fileFn.createUploadSession({ policy: 'private', fileName: 'p.txt', size: body.length, mimeType: 'text/plain' }, owner);
+    const part = await fileFn.services.uploads.uploadPartBytes(session.uploadSessionId, 1, body, body.length, owner);
+    await fileFn.completeUploadPart({ uploadSessionId: session.uploadSessionId, partNumber: 1, etag: part.etag, size: part.size }, owner);
+    const done = new Promise<void>((resolve) => fileFn.events.once('processing.completed', () => resolve()));
+    const file = await fileFn.completeUploadSession({ uploadSessionId: session.uploadSessionId }, owner);
+    await fileFn.services.processing.triggerProcessingForFile(file.fileId, owner, file.versionId);
+    await done;
+
+    expect((await fileFn.router.handle(new Request(`http://localhost/${file.fileId}/artifacts`)))!.status).toBe(403);
+    expect((await fileFn.services.processing.listArtifactsForFile(file.fileId, owner))).toHaveLength(1);
+  });
+
+  it('a standalone processing service applies its readChecker on every entry point', async () => {
+    const database = memoryAdapter();
+    const service = createProcessingService({
+      db: database,
+      storage: createLocalStorageAdapter({ rootDir }),
+      namespace: 'standalone',
+      processors: [],
+      readChecker: { async canReadFile() { return false; } },
+    });
+    const now = new Date().toISOString();
+    await database.create({ model: 'files', data: { fileId: 'file_a', ownerId: 'o', visibility: 'private', policy: 'p', name: 'a', currentVersionId: 'ver_a', createdAt: now, updatedAt: now }, namespace: 'standalone' });
+    await database.create({ model: 'fileArtifacts', data: { artifactId: 'art_a', fileId: 'file_a', versionId: 'ver_a', kind: 'copy', storageKey: 'k', mimeType: 'text/plain', size: 1, createdAt: now }, namespace: 'standalone' });
+    await database.create({ model: 'fileArtifacts', data: { artifactId: 'art_orphan', fileId: 'file_gone', versionId: 'ver_x', kind: 'copy', storageKey: 'k2', mimeType: 'text/plain', size: 1, createdAt: now }, namespace: 'standalone' });
+    await expect(service.listArtifacts('file_a', { principalId: 'o' })).rejects.toMatchObject({ code: 'FILEFN_FORBIDDEN' });
+    await expect(service.getArtifactDownloadUrl('art_orphan', { principalId: 'o' })).rejects.toMatchObject({ code: 'FILEFN_NOT_FOUND' });
   });
 });

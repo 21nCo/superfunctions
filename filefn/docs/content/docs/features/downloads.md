@@ -74,15 +74,18 @@ Serving downloads from a separate origin (a dedicated download domain or the sto
 
 ## Filenames
 
-filefn doesn't rewrite the filename you uploaded. If you want a download UX that suggests a different name (e.g. `Report - Acme Corp.pdf`), do it in your app code:
+filefn doesn't rewrite the filename you uploaded. Proxied downloads send it in `Content-Disposition`, and browsers prefer that header over an `<a download>` attribute, so to save a file under a different name (e.g. `Report - Acme Corp.pdf`), fetch it and save the blob:
 
 ```ts
-const { url, fileName, mimeType } = await client.downloadUrl(fileId);
+const { url } = await client.downloadUrl(fileId);
 
+const response = await fetch(url, { credentials: "include" });
+const objectUrl = URL.createObjectURL(await response.blob());
 const a = document.createElement("a");
-a.href = url;
+a.href = objectUrl;
 a.download = `Report - ${myAppContext.orgName}.pdf`;
 a.click();
+URL.revokeObjectURL(objectUrl);
 ```
 
 ## See also

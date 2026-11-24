@@ -672,6 +672,12 @@ export function createProcessingService(config: ProcessingServiceConfig) {
     // artifact (often the whole content: OCR text, previews, transcodes) is
     // never readable by someone the authorizer refuses the file to.
     if (readChecker) {
+      // A caller without a principal (an unauthenticated guest) reads only
+      // public files here, as before, whatever the host authorizer would allow
+      // a context without a principal.
+      if (!ctx.principalId && file.visibility !== 'public') {
+        throw errors.forbidden();
+      }
       if (await readChecker.canReadFile(fileId, ctx)) {
         return file;
       }
@@ -2114,7 +2120,10 @@ export function createProcessingService(config: ProcessingServiceConfig) {
       ctx: FileProviderContext,
       page?: { limit?: number; offset?: number },
     ): Promise<FileArtifactRecord[]> {
-      void ctx;
+      // With a read check configured, this entry point is authorized too.
+      if (readChecker) {
+        await requireReadableFile(fileId, ctx);
+      }
 
       const artifacts = await db.findMany<FileArtifactRecord>({
         model: 'fileArtifacts',
@@ -2166,6 +2175,9 @@ export function createProcessingService(config: ProcessingServiceConfig) {
       });
       if (file) {
         await requireReadableFile(file.fileId, ctx);
+      } else if (readChecker) {
+        // No parent file to authorize against: fail closed.
+        throw errors.notFound('Artifact');
       }
       const artifactStorageTarget = getArtifactStorageTarget(file ?? { policy: '' });
 
