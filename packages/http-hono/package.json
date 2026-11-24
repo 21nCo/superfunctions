@@ -1,6 +1,6 @@
 {
   "name": "@superfunctions/http-hono",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Hono adapter for @superfunctions/http",
   "type": "module",
   "main": "./dist/index.js",
