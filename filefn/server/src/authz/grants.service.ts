@@ -4,6 +4,7 @@ import type { FileRecord } from '../files/service.js';
 import type { FilePermissionRecord } from './authorizer.js';
 import { randomUUID } from 'crypto';
 import * as errors from '../errors.js';
+import { isFileOwner } from './ownership.js';
 
 export interface GrantsServiceConfig {
   db: Adapter;
@@ -34,7 +35,7 @@ export function createGrantsService(config: GrantsServiceConfig) {
   }
 
   async function canManagePermissions(file: FileRecord, ctx: FileProviderContext): Promise<boolean> {
-    return file.ownerId === ctx.principalId;
+    return isFileOwner(file, ctx);
   }
 
   return {
