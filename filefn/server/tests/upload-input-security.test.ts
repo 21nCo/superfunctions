@@ -245,6 +245,31 @@ describe('upload init input (FILE-30 F-21, F-05)', () => {
     expect(checked.metadataJson).toBe('{"big":9007199254740993}');
   });
 
+  it('refuses a JSON.rawJSON primitive as the whole metadata, and accepts one at the deepest level', async () => {
+    const rawJSON = (JSON as { rawJSON?: (text: string) => unknown }).rawJSON;
+    if (typeof rawJSON !== 'function') return;
+    const init = (metadata: unknown) => ({ policy: 'any', fileName: 'a.txt', size: 1, mimeType: 'text/plain', metadata }) as never;
+    expect(() => assertValidUploadInit(init(rawJSON('42')))).toThrow();
+    const accepts = (metadata: unknown) => {
+      try {
+        assertValidUploadInit(init(metadata));
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    // The deepest nesting a plain 42 is accepted at.
+    let plain: unknown = { v: 42 };
+    let raw: unknown = { v: rawJSON('42') };
+    while (accepts({ v: plain })) {
+      plain = { v: plain };
+      raw = { v: raw };
+    }
+    expect(accepts(plain)).toBe(true);
+    expect(accepts(raw)).toBe(true);
+    expect(accepts({ v: raw })).toBe(false);
+  });
+
   it('refuses a JSON.rawJSON string that decodes to NUL', async () => {
     const rawJSON = (JSON as { rawJSON?: (text: string) => unknown }).rawJSON;
     if (typeof rawJSON !== 'function') return;

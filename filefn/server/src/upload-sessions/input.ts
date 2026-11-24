@@ -18,6 +18,12 @@ const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[
 // Metadata text: no lone surrogate, and no NUL, which PostgreSQL jsonb refuses.
 const isBadMetadataText = (text: string): boolean => LONE_SURROGATE.test(text) || text.includes(String.fromCharCode(0));
 
+/** A JSON.rawJSON wrapper (newer runtimes): it always stands for a JSON primitive. */
+function isRawJsonValue(value: unknown): boolean {
+  const isRawJSON = (JSON as { isRawJSON?: (v: unknown) => boolean }).isRawJSON;
+  return typeof isRawJSON === 'function' && isRawJSON(value);
+}
+
 /** Deepest metadata nesting accepted; deeper metadata is refused. */
 export const MAX_METADATA_DEPTH = 32;
 
@@ -107,8 +113,7 @@ function normalizeJson(
   // JSON.rawJSON values (newer runtimes) are kept as they are, so both the
   // fingerprint and the stored JSON carry the raw text exactly (a number past
   // 2^53 isn't rounded); the decoded value is what gets validated.
-  const isRawJSON = (JSON as { isRawJSON?: (v: unknown) => boolean }).isRawJSON;
-  if (typeof isRawJSON === 'function' && isRawJSON(value)) {
+  if (isRawJsonValue(value)) {
     const raw = String((value as { rawJSON: unknown }).rawJSON);
     charge(budget, raw.length);
     const decoded: unknown = JSON.parse(raw);
@@ -161,7 +166,8 @@ function hasLoneSurrogate(value: unknown, depth = 0, budget = { left: MAX_METADA
   budget.left -= 1;
   if (budget.left < 0) return true;
   if (typeof value === 'string') return isBadMetadataText(value);
-  if (value === null || typeof value !== 'object') return false;
+  // A raw JSON primitive's decoded text was checked when it was normalized.
+  if (value === null || typeof value !== 'object' || isRawJsonValue(value)) return false;
   if (depth >= MAX_METADATA_DEPTH) return true;
   // Plain loops and Object.keys only: no method of the value itself is called.
   if (Array.isArray(value)) {
@@ -302,7 +308,7 @@ export function assertValidUploadInit(input: UploadInitInput): { metadata?: Reco
         maxBytes: MAX_METADATA_BYTES,
       });
     }
-    if (normalized === null || typeof normalized !== 'object' || Array.isArray(normalized) || hasLoneSurrogate(normalized)) {
+    if (normalized === null || typeof normalized !== 'object' || Array.isArray(normalized) || isRawJsonValue(normalized) || hasLoneSurrogate(normalized)) {
       throw invalidRequest(`metadata must be a JSON object of well-formed text, nested at most ${MAX_METADATA_DEPTH} levels`, { field: 'metadata' });
     }
     const encoded = normalizedJson ?? JSON.stringify(normalized);
