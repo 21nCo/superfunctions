@@ -104,14 +104,16 @@ function normalizeJson(
   }
   if (typeof value === 'bigint') throw new TypeError('BigInt is not JSON');
   if (typeof value !== 'object') return { value: undefined, json: undefined };
-  // JSON.rawJSON values (newer runtimes): the decoded value is what gets
-  // stored, so it is what gets hashed too (a number past 2^53 rounds).
+  // JSON.rawJSON values (newer runtimes) are kept as they are, so both the
+  // fingerprint and the stored JSON carry the raw text exactly (a number past
+  // 2^53 isn't rounded); the decoded value is what gets validated.
   const isRawJSON = (JSON as { isRawJSON?: (v: unknown) => boolean }).isRawJSON;
   if (typeof isRawJSON === 'function' && isRawJSON(value)) {
     const raw = String((value as { rawJSON: unknown }).rawJSON);
     charge(budget, raw.length);
     const decoded: unknown = JSON.parse(raw);
-    return { value: decoded, json: JSON.stringify(decoded) };
+    if (typeof decoded === 'string' && isBadMetadataText(decoded)) throw new TypeError('metadata text is not well formed');
+    return { value, json: raw };
   }
   // A value that is its own ancestor is circular, which JSON.stringify refuses.
   if (ancestors.has(value)) throw new TypeError('circular metadata');

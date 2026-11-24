@@ -227,11 +227,11 @@ describe('upload init input (FILE-30 F-21, F-05)', () => {
       mimeType: 'text/plain',
       metadata: { count: rawJSON('42') },
     } as never);
-    expect(checked.metadata).toEqual({ count: 42 });
+    expect(JSON.stringify(checked.metadata)).toBe('{"count":42}');
     expect(checked.metadataJson).toBe('{"count":42}');
   });
 
-  it('hashes a JSON.rawJSON number as the value that gets stored', async () => {
+  it('keeps a JSON.rawJSON number exact in the stored and hashed JSON', async () => {
     const rawJSON = (JSON as { rawJSON?: (text: string) => unknown }).rawJSON;
     if (typeof rawJSON !== 'function') return;
     const checked = assertValidUploadInit({
@@ -241,8 +241,22 @@ describe('upload init input (FILE-30 F-21, F-05)', () => {
       mimeType: 'text/plain',
       metadata: { big: rawJSON('9007199254740993') },
     } as never);
-    expect(checked.metadata).toEqual({ big: 9007199254740992 });
-    expect(checked.metadataJson).toBe('{"big":9007199254740992}');
+    expect(JSON.stringify(checked.metadata)).toBe('{"big":9007199254740993}');
+    expect(checked.metadataJson).toBe('{"big":9007199254740993}');
+  });
+
+  it('refuses a JSON.rawJSON string that decodes to NUL', async () => {
+    const rawJSON = (JSON as { rawJSON?: (text: string) => unknown }).rawJSON;
+    if (typeof rawJSON !== 'function') return;
+    expect(() =>
+      assertValidUploadInit({
+        policy: 'any',
+        fileName: 'a.txt',
+        size: 1,
+        mimeType: 'text/plain',
+        metadata: { s: rawJSON('"a\\u0000b"') },
+      } as never),
+    ).toThrow();
   });
 
   it('applies the budgets to what toJSON returns, too', async () => {
