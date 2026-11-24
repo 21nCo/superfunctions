@@ -5468,6 +5468,12 @@ async function withTrustedCheckoutReference<T extends ParsedProviderEvent>(
   if (!reference) {
     return event;
   }
+  // An event stored before sources were recorded is the provider's when its raw record names the reference as
+  // the provider's own checkout id (Dodo's checkout_session_id).
+  const rawData = asRecord(event.raw.data);
+  const source =
+    event.checkoutReferenceSource ??
+    (readString(rawData ?? event.raw, 'checkout_session_id') === reference ? 'provider' : undefined);
   const byProviderId = await deps.db.findOne<BillFnCheckoutSession>({
     model: TABLES.checkoutSessions,
     where: [
@@ -5478,7 +5484,7 @@ async function withTrustedCheckoutReference<T extends ParsedProviderEvent>(
   });
   // Only a reference the adapter says it read from the provider's own record is trusted as the provider's; one
   // without a source (an adapter that does not say, or an event stored before sources were recorded) is checked.
-  if (byProviderId && event.checkoutReferenceSource === 'provider') {
+  if (byProviderId && source === 'provider') {
     return event;
   }
   const session =
@@ -5593,27 +5599,27 @@ async function resolveProviderEventPriceReference(
         record ? ['product_id', 'productId', 'price_id', 'priceId'].map((key) => readString(record, key)) : []
       )
     ];
-    // A catalog price id (which can come from metadata) counts only when it sells a product the provider itself
-    // reported the event paying for, whenever the provider reported one.
+    // When the provider reported what the event paid for, a price id (which can come from metadata) selects a
+    // price only when every price of this provider with that id sells a reported product; the reported products
+    // then select by product id alone, so neither can stand in for the other.
     const paidProducts = providerReportedProducts(event.billingState);
-    const trustedReferences =
+    const providerPricesWithId = (id: string) =>
+      deps.catalog.plans.flatMap((plan) => plan.prices.filter((price) => price.priceId === id && price.provider === provider));
+    const resolved =
       paidProducts.length === 0
-        ? references
-        : [
-            ...references.filter((reference) => {
-              if (!reference || paidProducts.includes(reference)) {
-                return true;
+        ? findCatalogPriceReference(deps.catalog, provider, references, subscription?.priceId)
+        : (findCatalogPriceReference(
+            deps.catalog,
+            provider,
+            references.filter((reference): reference is string => {
+              if (!reference) {
+                return false;
               }
-              // Every price of this provider with that id must sell a paid product (ids may repeat across plans).
-              const named = deps.catalog.plans.flatMap((plan) =>
-                plan.prices.filter((price) => price.priceId === reference && price.provider === provider)
-              );
-              return named.every((price) => paidProducts.includes(price.providerProductId));
+              const named = providerPricesWithId(reference);
+              return named.length > 0 && named.every((price) => paidProducts.includes(price.providerProductId));
             }),
-            // The products the provider reported (a Dodo payment's cart among them) are references too.
-            ...paidProducts
-          ];
-    const resolved = findCatalogPriceReference(deps.catalog, provider, trustedReferences, subscription?.priceId);
+            subscription?.priceId
+          ) ?? findCatalogPriceReference(deps.catalog, provider, paidProducts, subscription?.priceId, { productsOnly: true }));
     if (resolved) {
       return resolved;
     }
@@ -5646,13 +5652,14 @@ function findCatalogPriceReference(
   catalog: BillFnCatalog,
   provider: BillingProviderName,
   references: Array<string | null | undefined>,
-  currentPriceId?: string
+  currentPriceId?: string,
+  options: { productsOnly?: boolean } = {}
 ): CatalogSelection | null {
   const prices = catalog.plans.flatMap((plan) =>
     plan.prices.filter((price) => price.provider === provider).map((price) => ({ plan, price }))
   );
   const named = references.filter((reference): reference is string => Boolean(reference));
-  for (const reference of named) {
+  for (const reference of options.productsOnly ? [] : named) {
     const exact = prices.find((candidate) => candidate.price.priceId === reference);
     if (exact) {
       return exact;

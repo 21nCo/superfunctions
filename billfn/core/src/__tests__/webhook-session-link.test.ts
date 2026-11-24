@@ -216,6 +216,17 @@ describe('webhook events linked to a checkout session by its BillFn id', () => {
     expect((await env.entitlements())?.subscription).toMatchObject({ planKey: 'enterprise' });
   });
 
+  it('trusts a stored event without a source whose raw record names the reference as the provider checkout id', async () => {
+    const env = setup();
+    const session = await env.openCheckout('enterprise');
+    const reference = `cks_${session.checkoutSessionId}`;
+    const legacy = paidEvent(reference, 'pdt_any');
+
+    await env.deliver({ ...legacy, raw: { data: { checkout_session_id: reference } } });
+
+    expect((await env.entitlements())?.subscription).toMatchObject({ planKey: 'enterprise' });
+  });
+
   it('checks a provider checkout id whose event does not say where it came from', async () => {
     const env = setup();
     const session = await env.openCheckout('enterprise');
@@ -270,5 +281,41 @@ describe('event prices named outside the provider record', () => {
 
     const data = await env.entitlements();
     expect(data?.subscription?.planKey).toBe('starter');
+  });
+
+  it('does not bootstrap a plan through a product id given as the price hint', async () => {
+    const env = setup();
+    await env.openCheckout('starter');
+    const forged = paidEvent('chk_unknown_session', 'pdt_cheap_not_in_catalog', { billfn_billing_account_id: 'ba_user_attacker' });
+
+    await env.deliver({ ...forged, priceId: 'pdt_enterprise_month', checkoutReferenceSource: 'metadata' });
+
+    expect((await env.entitlements())?.subscription?.planKey).not.toBe('enterprise');
+  });
+
+  it('resolves a cart product by product id only, never as another plan\'s price id', async () => {
+    // The enterprise price id equals the id of the product the cart holds.
+    const colliding: BillFnCatalog = {
+      plans: [
+        { ...catalog.plans[0]!, prices: [{ ...catalog.plans[0]!.prices[0]!, priceId: 'pdt_starter_month' }] },
+        catalog.plans[1]!
+      ]
+    };
+    const env = setup(colliding);
+    await env.openCheckout('starter');
+
+    await env.deliver({
+      providerChargeId: 'pay_cart_collide',
+      billingState: {
+        subscriptionStatus: 'active',
+        checkoutStatus: 'succeeded',
+        providerChargeId: 'pay_cart_collide',
+        autoRenew: false,
+        raw: { product_cart: [{ product_id: 'pdt_starter_month' }], metadata: { billfn_billing_account_id: 'ba_user_attacker' } }
+      },
+      raw: {}
+    });
+
+    expect((await env.entitlements())?.subscription?.planKey).toBe('starter');
   });
 });
