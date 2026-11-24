@@ -136,13 +136,9 @@ const SHARING_ALLOWANCE = 1024;
 
 const REGION = "a schema expands";
 
-/** Keywords whose value is a map of schemas the conversion reads. */
-const SOURCE_MAPS = new Set(["properties", "patternProperties", "$defs", "definitions"]);
-
 export class NodeBudget {
   private produced = 0;
   private sourceValues = 0;
-  private readonly seen = new WeakSet<object>();
   /** Objects whose own values are already counted, each once by identity. */
   private readonly credited = new WeakSet<object>();
 
@@ -167,16 +163,7 @@ export class NodeBudget {
   charge(value?: unknown): void {
     this.total?.charge();
     this.produced += 1;
-    if (typeof value === "object" && value !== null && !this.seen.has(value)) {
-      this.seen.add(value);
-      this.credit(value);
-      // Its arrays and schema maps (allOf, properties, $defs, ...) are source
-      // too: their members are produced without the container being charged.
-      // Other objects under it (an example, say) are not read, so not counted.
-      for (const [key, item] of Object.entries(value)) {
-        if (Array.isArray(item) || (SOURCE_MAPS.has(key) && typeof item === "object" && item !== null)) this.credit(item);
-      }
-    }
+    if (typeof value === "object" && value !== null) this.source(value);
     if (this.produced > this.limit) {
       throw new OpenApiSkip("schema-too-large", `${this.subject} to more than ${this.limit} nodes`);
     }
@@ -189,8 +176,12 @@ export class NodeBudget {
     }
   }
 
-  /** Count `value` and its own values as source, once per object whoever refers to it. */
-  private credit(value: object): void {
+  /**
+   * Count `value` and its own values as source, once per object whoever refers
+   * to it. A conversion that reads the members of an array or map it does not
+   * charge (allOf, properties, $defs, ...) calls this for the container.
+   */
+  source(value: object): void {
     if (this.credited.has(value)) return;
     this.credited.add(value);
     this.sourceValues += 1 + (Array.isArray(value) ? value.length : Object.keys(value).length);
@@ -580,15 +571,11 @@ export class SchemaConverter {
     if (SCHEMA_MAP_KEYWORDS.has(keyword) && isObject(value)) {
       return [keyword, this.convertMap(value, mode, refs)];
     }
-    if (SCHEMA_ARRAY_KEYWORDS.has(keyword) && Array.isArray(value)) {
+    if ((SCHEMA_ARRAY_KEYWORDS.has(keyword) || keyword === "items") && Array.isArray(value)) {
+      this.budget.source(value);
       return [keyword, value.map((item) => this.convert(item, mode, refs))];
     }
-    if (keyword === "items") {
-      return [
-        keyword,
-        Array.isArray(value) ? value.map((item) => this.convert(item, mode, refs)) : this.convert(value, mode, refs),
-      ];
-    }
+    if (keyword === "items") return [keyword, this.convert(value, mode, refs)];
     if (SCHEMA_KEYWORDS.has(keyword)) return [keyword, this.convert(value, mode, refs)];
     if ((keyword === "exclusiveMinimum" || keyword === "exclusiveMaximum") && typeof value === "boolean") {
       // OpenAPI 3.0 (draft-04 style) boolean form; draft-07 takes the bound.
@@ -599,12 +586,14 @@ export class SchemaConverter {
   }
 
   private convertMap(value: JsonObject, mode: SchemaMode, refs: Set<string>): JsonObject {
+    this.budget.source(value);
     return Object.fromEntries(
       Object.entries(value).map(([key, item]) => [key, this.convert(item, mode, refs)]),
     );
   }
 
   private convertDependencies(value: JsonObject, mode: SchemaMode, refs: Set<string>): JsonObject {
+    this.budget.source(value);
     return Object.fromEntries(
       Object.entries(value).map(([key, item]) => [
         key,

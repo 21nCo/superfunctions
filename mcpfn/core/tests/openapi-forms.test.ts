@@ -2200,6 +2200,13 @@ describe("fromOpenAPI body fallback, synchronous schemas, per-kind alternatives 
         }
       }
     }
+    // OpenAPI 3.0 `dependencies` is converted too, so its map is source.
+    const dependencies = { type: "object", dependencies: named(1_100, () => true) };
+    const legacy = fromOpenAPI(
+      { openapi: "3.0.3", paths: { "/m": { patch: { operationId: "m", requestBody: { content: { "application/json": { schema: dependencies } } }, responses: ok } } } },
+      options(),
+    );
+    expect(legacy.skipped).toEqual([]);
     // One 400-member array shared by 16 wrappers is still expansion of a shared object; the sibling stays.
     const shared = booleans().slice(0, 400);
     const repeated = { type: "object", allOf: Array.from({ length: 16 }, () => ({ allOf: shared })) };
@@ -2208,18 +2215,23 @@ describe("fromOpenAPI body fallback, synchronous schemas, per-kind alternatives 
     expect(result.tools.map(({ name }) => name)).toEqual(["n"]);
   });
 
-  it("does not count the members of objects the conversion does not read, such as a shared example", () => {
-    // One example object with 20,000 keys under a string schema that 2,000 operations share.
-    const example = Object.fromEntries(Array.from({ length: 20_000 }, (_, index) => [`k${index}`, index]));
-    const schema = { type: "string", example };
-    const paths = Object.fromEntries(
-      Array.from({ length: 2_000 }, (_, index) => [`/r${index}`, { get: { operationId: `r${index}`, parameters: [{ name: "q", in: "query", schema }], responses: ok } }]),
-    );
-    const started = performance.now();
-    const result = fromOpenAPI({ openapi: "3.0.3", paths }, options());
-    expect(performance.now() - started).toBeLessThan(2000);
-    expect(result.skipped).toEqual([]);
-    expect(result.tools).toHaveLength(2_000);
+  it("does not count the members of objects the conversion does not read, such as a shared example or $ref sibling", () => {
+    // One 20,000-key object that 2,000 operations share: an example, or a `properties` sibling OpenAPI 3.0 ignores beside a $ref.
+    const big = Object.fromEntries(Array.from({ length: 20_000 }, (_, index) => [`k${index}`, { type: "string" }]));
+    const schemas = [
+      { type: "string", example: big },
+      { $ref: "#/components/schemas/S", properties: big },
+    ];
+    for (const schema of schemas) {
+      const paths = Object.fromEntries(
+        Array.from({ length: 2_000 }, (_, index) => [`/r${index}`, { get: { operationId: `r${index}`, parameters: [{ name: "q", in: "query", schema }], responses: ok } }]),
+      );
+      const started = performance.now();
+      const result = fromOpenAPI({ openapi: "3.0.3", paths, components: { schemas: { S: { type: "string" } } } }, options());
+      expect(performance.now() - started).toBeLessThan(2000);
+      expect(result.skipped).toEqual([]);
+      expect(result.tools).toHaveLength(2_000);
+    }
   });
 
   it("tries each request body entry in the whole input, checks a shared one once and falls through a too-deep one", () => {
