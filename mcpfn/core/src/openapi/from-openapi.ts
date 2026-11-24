@@ -191,7 +191,7 @@ function servers(...levels: unknown[]): OpenApiServer[] {
         url: server.url as string,
         ...(typeof server.description === "string" ? { description: server.description } : {}),
         ...(isObject(server.variables)
-          ? { variables: server.variables as OpenApiServer["variables"] }
+          ? { variables: checkedVariables(server.variables) }
           : {}),
       }));
     if (usable.length > 0) return usable;
@@ -202,10 +202,23 @@ function servers(...levels: unknown[]): OpenApiServer[] {
 function security(...levels: unknown[]): OpenApiOperation["security"] {
   for (const level of levels) {
     if (Array.isArray(level)) {
-      return documentItems(level, "invalid-operation").filter(isObject) as Record<string, string[]>[];
+      const requirements = documentItems(level, "invalid-operation").filter(isObject);
+      // Scope lists reach the executor and the naming callback as arrays.
+      for (const requirement of requirements) {
+        for (const scopes of Object.values(requirement)) if (Array.isArray(scopes)) documentItems(scopes, "invalid-operation");
+      }
+      return requirements as Record<string, string[]>[];
     }
   }
   return undefined;
+}
+
+/** Server variables, whose `enum` lists reach the executor and the naming callback as arrays. */
+function checkedVariables(variables: JsonObject): OpenApiServer["variables"] {
+  for (const variable of Object.values(variables)) {
+    if (isObject(variable) && Array.isArray(variable.enum)) documentItems(variable.enum, "invalid-operation");
+  }
+  return variables as OpenApiServer["variables"];
 }
 
 function isJsonMediaType(key: string): boolean {

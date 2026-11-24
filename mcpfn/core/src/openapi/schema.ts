@@ -288,8 +288,8 @@ function surveyValues(root: unknown, keys: WeakMap<object, readonly string[]>): 
 /**
  * A document array, read only when it holds exactly its indices: its length
  * is then its member count, and the array methods it inherits are not
- * shadowed. Every read of a document array goes through this (or `arrayOf`
- * and `listOf`, which use it).
+ * shadowed. Every read of a document array goes through this (or through
+ * `arrayOf`, which uses it).
  */
 export function documentItems(
   value: unknown[],
@@ -419,10 +419,6 @@ function arrayOf(value: unknown): unknown[] {
   return Array.isArray(value) ? documentItems(value) : [];
 }
 
-/** A keyword that takes one value or an array of them (such as `type`). */
-function listOf(value: unknown): unknown[] {
-  return Array.isArray(value) ? documentItems(value) : [value];
-}
 
 function objectEntries(value: unknown): Array<[string, unknown]> {
   return isObject(value) ? Object.entries(value) : [];
@@ -448,8 +444,9 @@ export class SchemaConverter {
   private readonly admitted = new WeakMap<object, AdmittedKinds | OpenApiSkip>();
   /** The node of an allOf (`both`) or anyOf/oneOf (`either`) member array, once per array. */
   private readonly memberLists = new Map<"both" | "either", WeakMap<object, MemberList>>();
-  /** The kinds of each `type` array and type-only `not` object (see `listedKinds`). */
-  private readonly typeKinds = new WeakMap<object, readonly ValueKind[]>();
+  /** The distinct kinds of each `type` array, and of the items of each array literal. */
+  private readonly listedTypes = new WeakMap<object, readonly ValueKind[]>();
+  private readonly literalItems = new WeakMap<object, ReadonlySet<ValueKind>>();
   /** The kinds of the values an `enum` array or a `const` object lists, once per object. */
   private readonly literalKinds = new Map<"enum" | "const", WeakMap<object, AdmittedKinds>>();
   private readonly flags = new Map<DirectionalKeyword, WeakMap<object, boolean>>();
@@ -649,31 +646,64 @@ export class SchemaConverter {
       const value = schema[keyword];
       if (Array.isArray(value)) members.push(this.memberList(value, "either"));
     }
-    const excluded = isObject(schema.not) ? this.listedKinds(schema.not, () => typeOnlyKinds(schema.not)) : [];
+    const excluded = this.typeOnlyKinds(schema.not);
     const narrowed = this.narrowByValues(EVERYTHING, schema);
     const own = excluded.length === 0 ? narrowed : { ...narrowed, values: without(narrowed.values, excluded) };
     const items = Object.hasOwn(schema, "items") && !Array.isArray(schema.items) ? schema.items : undefined;
     return termsOf("both", own, members, items);
   }
 
-  /** The kinds a `type` array lists or a `not` object refuses, read once per object. */
-  private listedKinds(value: object, read: () => ValueKind[]): readonly ValueKind[] {
-    let kinds = this.typeKinds.get(value);
+  /** The kinds a `type` value names; an array of them is reduced to its distinct kinds once per array. */
+  private typeKinds(type: unknown): readonly ValueKind[] {
+    if (!Array.isArray(type)) return kindsOfType(type);
+    let kinds = this.listedTypes.get(type);
     if (kinds === undefined) {
-      kinds = read();
-      this.typeKinds.set(value, kinds);
+      const distinct = new Set<ValueKind>();
+      for (const entry of documentItems(type)) for (const kind of kindsOfType(entry)) distinct.add(kind);
+      kinds = [...distinct];
+      this.listedTypes.set(type, kinds);
     }
     return kinds;
+  }
+
+  /** The kinds a `not` refuses when it holds nothing but `type` (and annotations). */
+  private typeOnlyKinds(not: unknown): readonly ValueKind[] {
+    if (!isObject(not) || not.type === undefined) return [];
+    if (!this.budget.ownKeys(not).every((key) => ANNOTATION_KEYWORDS.has(key))) return [];
+    return this.typeKinds(not.type);
+  }
+
+  /** The kinds of the items of an array literal, once per array. */
+  private itemKinds(literal: unknown[]): ReadonlySet<ValueKind> {
+    let kinds = this.literalItems.get(literal);
+    if (kinds === undefined) {
+      const listed = new Set<ValueKind>();
+      for (const item of documentItems(literal)) listed.add(kindOfValue(item));
+      kinds = listed;
+      this.literalItems.set(literal, kinds);
+    }
+    return kinds;
+  }
+
+  /** `enum`/`const`: the value is one of `literals`, and an array value's items are among theirs. */
+  private kindsOfLiterals(literals: unknown[]): AdmittedKinds {
+    const values = new Set<ValueKind>();
+    const items = new Set<ValueKind>();
+    for (const literal of literals) {
+      values.add(kindOfValue(literal));
+      if (Array.isArray(literal)) for (const kind of this.itemKinds(literal)) items.add(kind);
+    }
+    return { values, items };
   }
 
   /** The kinds of the literals an `enum` array (or a `const` value) lists, kept per object. */
   private literals(keyword: "enum" | "const", value: unknown): AdmittedKinds {
     const listed = keyword === "enum" ? documentItems(value as unknown[]) : [value];
-    if (typeof value !== "object" || value === null) return kindsOfLiterals(listed);
+    if (typeof value !== "object" || value === null) return this.kindsOfLiterals(listed);
     const memo = memoFor(this.literalKinds, keyword);
     let kinds = memo.get(value);
     if (kinds === undefined) {
-      kinds = kindsOfLiterals(listed);
+      kinds = this.kindsOfLiterals(listed);
       memo.set(value, kinds);
     }
     return kinds;
@@ -683,8 +713,7 @@ export class SchemaConverter {
   private narrowByValues(result: AdmittedKinds, schema: JsonObject): AdmittedKinds {
     let narrowed = result;
     if (schema.type !== undefined) {
-      const { type } = schema;
-      const kinds = Array.isArray(type) ? this.listedKinds(type, () => listOf(type).flatMap(kindsOfType)) : kindsOfType(type);
+      const kinds = this.typeKinds(schema.type);
       const nullable = this.version === "3.0" && schema.nullable === true;
       narrowed = { ...narrowed, values: intersect(narrowed.values, nullable ? [...kinds, "null"] : kinds) };
     }
@@ -1728,23 +1757,6 @@ function kindOfValue(value: unknown): ValueKind {
 }
 
 const ANNOTATION_KEYWORDS = new Set(["type", "title", "description", "$comment"]);
-
-/** The kinds a `not` refuses when it holds nothing but `type` (and annotations). */
-function typeOnlyKinds(not: unknown): ValueKind[] {
-  if (!isObject(not) || not.type === undefined) return [];
-  if (!Object.keys(not).every((key) => ANNOTATION_KEYWORDS.has(key))) return [];
-  return listOf(not.type).flatMap(kindsOfType);
-}
-
-/** `enum`/`const`: the value is one of `literals`, and an array value's items are among theirs. */
-/** The kinds of `literals` and of the items of those that are arrays, to narrow by with `both`. */
-function kindsOfLiterals(literals: unknown[]): AdmittedKinds {
-  const items = new Set<ValueKind>();
-  for (const literal of literals) {
-    for (const item of arrayOf(literal)) items.add(kindOfValue(item));
-  }
-  return { values: new Set(literals.map(kindOfValue)), items };
-}
 
 /** The entries that can apply to a value of `kind`, each conditional when it applies to that kind only under a condition. */
 function entriesFor(entries: ClosureEntry[], kind: ValueKind): ClosureEntry[] {

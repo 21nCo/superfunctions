@@ -2566,6 +2566,34 @@ describe("fromOpenAPI body fallback, synchronous schemas, per-kind alternatives 
     }
   });
 
+  it("skips an operation whose effective scope or server variable list shadows an array method, before naming it", () => {
+    const named: string[] = [];
+    const result = fromOpenAPI(
+      {
+        openapi: "3.1.0",
+        paths: {
+          "/s": { get: { operationId: "s", security: [{ oauth: Object.assign(["read"], { some: 0 }) }], responses: ok } },
+          "/v": { get: { operationId: "v", servers: [{ url: "https://{r}.example.test", variables: { r: { default: "eu", enum: Object.assign(["eu"], { map: 0 }) } } }], responses: ok } },
+          "/ok": { get: { operationId: "ok", security: [{ oauth: ["read"] }], responses: ok } },
+        },
+      },
+      {
+        ...options(),
+        name: (operation) => {
+          named.push(operation.operationId!);
+          for (const requirement of operation.security ?? []) for (const scopes of Object.values(requirement)) scopes.some(Boolean);
+          return operation.operationId!;
+        },
+      },
+    );
+    expect(result.skipped.map(({ operation, code }) => [operation.operationId, code])).toEqual([
+      ["s", "invalid-operation"],
+      ["v", "invalid-operation"],
+    ]);
+    expect(named).toEqual(["ok"]);
+    expect(tool(result.tools, "ok").operation.security).toEqual([{ oauth: ["read"] }]);
+  });
+
   it("fails only the operations that reach a component holding an irregular array", () => {
     const flagged = { type: "object", properties: { a: { type: "string", readOnly: true }, b: { type: "string" } } };
     const result = fromOpenAPI(

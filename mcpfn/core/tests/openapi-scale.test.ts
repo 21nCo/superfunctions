@@ -96,6 +96,32 @@ describe("fromOpenAPI scale", () => {
     expect(performance.now() - started).toBeLessThan(2000);
     expect(broken.tools.map((entry) => entry.name)).toEqual(["ok"]);
     expect(broken.skipped.map((entry) => entry.code)).toEqual(Array.from({ length: 2000 }, () => "unresolved-ref"));
+    // The same list beside a resolvable $ref and inside distinct type-only `not` wrappers is reduced once.
+    const resolvable: Record<string, unknown> = { "/ok": { get: { operationId: "ok", responses: ok } } };
+    for (let index = 0; index < 2000; index += 1) {
+      resolvable[`/r${index}`] = { get: { operationId: `r${index}`, responses: { "200": { description: "OK", content: { "application/json": { schema: { $ref: "#/components/schemas/S", type, not: { type } } } } } } } };
+    }
+    started = performance.now();
+    const reduced = fromOpenAPI({ openapi: "3.1.0", paths: resolvable, components: { schemas: { S: { type: "object" } } } }, { executor: recordingExecutor() });
+    expect(performance.now() - started).toBeLessThan(2000);
+    expect(reduced.tools.map((entry) => entry.name)).toEqual(["ok"]);
+    expect(reduced.skipped).toHaveLength(2000);
+    // 20,000 enum entries that are one 20,000-item array: its item kinds are read once, not once per entry.
+    const big = Array.from({ length: 20_000 }, () => 1);
+    started = performance.now();
+    const aliased = fromOpenAPI(
+      {
+        openapi: "3.1.0",
+        paths: {
+          "/r": { get: { operationId: "r", responses: { "200": { description: "OK", content: { "application/json": { schema: { $ref: "#/components/schemas/Broken", enum: Array.from({ length: 20_000 }, () => big) } } } } } } },
+          "/ok": { get: { operationId: "ok", responses: ok } },
+        },
+        components: { schemas: { Broken: { $ref: "#/components/schemas/Missing" } } },
+      },
+      { executor: recordingExecutor() },
+    );
+    expect(performance.now() - started).toBeLessThan(2000);
+    expect(aliased.skipped.map((entry) => [entry.operation.operationId, entry.code])).toEqual([["r", "unresolved-ref"]]);
   });
 
   it("suffixes 2,000 colliding names within 2 seconds", () => {
