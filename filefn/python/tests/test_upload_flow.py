@@ -818,15 +818,21 @@ async def test_default_storage_key_sanitizes_tenant_and_principal() -> None:
         _ctx(principal_id="../alice", tenant_id="t1/.."),
     )
     key = db.tables["uploadSessions"][0]["storageKey"]
-    assert key.startswith("t1_/_alice/")
+    assert key.startswith("t1%2F../%2E%2E%2Falice/")
     assert all(segment not in (".", "..", "") for segment in key.split("/"))
+    # Dots inside a name are kept.
+    assert key.endswith("-a..b.png")
 
 
 def test_unsafe_storage_key_reason() -> None:
     from filefn.server.policies import sanitize_storage_key_segment, unsafe_storage_key_reason
 
-    assert sanitize_storage_key_segment("../a/b") == "_a_b"
-    assert sanitize_storage_key_segment(".") == "_"
+    # The same encoding as the TypeScript server, so distinct IDs never share a segment.
+    assert sanitize_storage_key_segment("../a/b") == "%2E%2E%2Fa%2Fb"
+    assert sanitize_storage_key_segment(".") == "%2E"
+    assert sanitize_storage_key_segment("") == "%20"
+    assert sanitize_storage_key_segment("team/east") != sanitize_storage_key_segment("team_east")
+    assert sanitize_storage_key_segment("a%b") == "a%25b"
     assert unsafe_storage_key_reason("a/../b") == "dot segment"
     assert unsafe_storage_key_reason("acme.com/a..b") is None
 
@@ -1046,3 +1052,17 @@ async def test_parts_are_bounded_by_the_declared_size() -> None:
     with pytest.raises(Exception) as exc_info:
         await proxy.record_proxy_part(created["uploadSessionId"], 1, b"abcd", _ctx())
     assert getattr(exc_info.value, "code", "") == "FILEFN_PART_TOO_LARGE"
+
+
+def test_long_key_parts_are_shortened_like_typescript() -> None:
+    from types import SimpleNamespace
+
+    from filefn.server.policies import compute_storage_path
+
+    key = compute_storage_path(
+        SimpleNamespace(storagePath=None),
+        SimpleNamespace(tenantId="t" * 200, principalId="p", fileId="f", versionId="ver_1", fileName="n" * 200 + ".pdf"),
+    )
+    tenant, _, _, last = key.split("/")
+    assert len(tenant.encode()) <= 120 and "%~" in tenant
+    assert last.startswith("ver_1-") and last.endswith(".pdf") and "%~" in last

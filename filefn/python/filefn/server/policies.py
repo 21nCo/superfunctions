@@ -1,3 +1,4 @@
+import hashlib
 import re
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Protocol, Union
@@ -83,34 +84,62 @@ def validate_policy_constraints(policy: Policy, mime_type: str, size: int) -> Di
 
     return {'valid': True}
 
+# C0 controls, DEL and C1 controls.
 _STORAGE_KEY_CONTROL_CHARACTERS = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+_ENCODED_CHARACTERS = re.compile(r"[%\\/\x00-\x1f\x7f-\x9f]")
+# Longest tenant, principal, file ID or file-name part of a default key, in UTF-8 bytes.
+_MAX_KEY_PART_BYTES = 120
 
 
-def _sanitize_segment(value: str, collapse_underscores: bool) -> str:
-    sanitized = _STORAGE_KEY_CONTROL_CHARACTERS.sub("", value)
-    sanitized = re.sub(r"[\\/]+", "_", sanitized)
-    sanitized = re.sub(r"\.\.+", "_", sanitized)
-    if collapse_underscores:
-        sanitized = re.sub(r"_+", "_", sanitized)
-    # Strip what JavaScript's trim() strips, as the TypeScript server does.
-    sanitized = sanitized.strip(
-        "\t\n\v\f\r \u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006"
-        "\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff"
-    )
-    if not sanitized or sanitized == ".":
-        return "_"
-    return sanitized
+def _utf8(value: str) -> bytes:
+    """UTF-8 as JavaScript's TextEncoder writes it (a lone surrogate becomes U+FFFD)."""
+    return value.encode("utf-16", "surrogatepass").decode("utf-16", "replace").encode("utf-8")
+
+
+def _percent_encode(match: "re.Match[str]") -> str:
+    return "".join(f"%{byte:02X}" for byte in _utf8(match.group(0)))
 
 
 def sanitize_storage_key_segment(value: str) -> str:
-    """Turn one value into a single storage key segment.
+    """Turn one value into a single storage key segment without collisions.
 
-    Path separators become ``_``, runs of dots collapse to ``_``, runs of ``_``
-    collapse to one, control characters are dropped, and an empty or dot-only
-    result becomes ``_``. Default keys stay unique because the version ID in
-    them is never collapsed.
+    The same encoding as the TypeScript server: ``%``, path separators and
+    control characters are percent-encoded, as are the dots of a leading run of
+    two or more dots and a segment that is exactly ``.``. Everything else is
+    kept, so distinct IDs never share a segment (``team/east`` becomes
+    ``team%2Feast``, never ``team_east``). An empty value becomes ``%20``,
+    which no other value produces.
     """
-    return _sanitize_segment(value, True)
+    encoded = _ENCODED_CHARACTERS.sub(_percent_encode, str(value))
+    encoded = re.sub(r"^\.\.+", lambda dots: "%2E" * len(dots.group(0)), encoded)
+    if encoded == "":
+        return "%20"
+    if encoded == ".":
+        return "%2E"
+    return encoded
+
+
+def _bounded_key_part(value: str, keep_extension: bool) -> str:
+    """A sanitized key part, shortened past 120 UTF-8 bytes as the TypeScript server does.
+
+    A shortened part keeps its start, then ``%~`` and 128 bits of the SHA-256 of
+    the whole part, then (for file names) its extension. ``%~`` never appears in
+    a sanitized value, so a shortened part never equals another ID's segment.
+    """
+    sanitized = sanitize_storage_key_segment(value)
+    if len(_utf8(sanitized)) <= _MAX_KEY_PART_BYTES:
+        return sanitized
+    extension_match = re.search(r"\.[A-Za-z0-9]{1,10}\Z", sanitized) if keep_extension else None
+    extension = extension_match.group(0) if extension_match else ""
+    suffix = f"%~{hashlib.sha256(_utf8(sanitized)).hexdigest()[:32]}{extension}"
+    head = ""
+    for char in sanitized:
+        if len(_utf8(head + char)) + len(suffix) > _MAX_KEY_PART_BYTES:
+            break
+        head += char
+    # Never end the head inside a percent-escape.
+    head = re.sub(r"%[0-9A-F]?\Z", "", head)
+    return f"{head}{suffix}"
 
 
 def unsafe_storage_key_reason(key: str) -> Optional[str]:
@@ -137,12 +166,11 @@ def compute_storage_path(policy: Policy, ctx: PolicyStoragePathContext) -> str:
 
     parts = []
     if ctx.tenantId:
-        parts.append(sanitize_storage_key_segment(ctx.tenantId))
+        parts.append(_bounded_key_part(ctx.tenantId, False))
     if ctx.principalId:
-        parts.append(sanitize_storage_key_segment(ctx.principalId))
-    parts.append(sanitize_storage_key_segment(ctx.fileId))
-    # Underscores in the version ID are kept: two distinct version IDs must never share a key.
-    parts.append(f"{_sanitize_segment(ctx.versionId, False)}-{sanitize_storage_key_segment(ctx.fileName)}")
+        parts.append(_bounded_key_part(ctx.principalId, False))
+    parts.append(_bounded_key_part(ctx.fileId, False))
+    parts.append(f"{sanitize_storage_key_segment(ctx.versionId)}-{_bounded_key_part(ctx.fileName, True)}")
     return "/".join(parts)
 
 def resolve_storage_target(policy: Any) -> str:
