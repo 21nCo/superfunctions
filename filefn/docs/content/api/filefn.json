@@ -1158,6 +1158,105 @@
         }
       }
     },
+    "/{fileId}/versions/{versionId}/artifacts/{kind}": {
+      "put": {
+        "summary": "Attach a client-supplied artifact",
+        "tags": [
+          "artifacts"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/XRequestID"
+          },
+          {
+            "$ref": "#/components/parameters/XFileFnClientVersion"
+          },
+          {
+            "$ref": "#/components/parameters/FileID"
+          },
+          {
+            "$ref": "#/components/parameters/VersionID"
+          },
+          {
+            "$ref": "#/components/parameters/ArtifactKind"
+          },
+          {
+            "name": "durationMs",
+            "in": "query",
+            "required": false,
+            "description": "Time the client spent producing the artifact, in milliseconds",
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 86400000
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Authorization"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "image/webp": {
+              "schema": {
+                "type": "string",
+                "contentMediaType": "image/webp"
+              }
+            },
+            "image/png": {
+              "schema": {
+                "type": "string",
+                "contentMediaType": "image/png"
+              }
+            },
+            "image/jpeg": {
+              "schema": {
+                "type": "string",
+                "contentMediaType": "image/jpeg"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/SuccessEnvelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/ArtifactEnvelope"
+                        }
+                      },
+                      "required": [
+                        "data"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Canonical FileFn error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/policies": {
       "get": {
         "summary": "List policies",
@@ -1864,6 +1963,21 @@
           "type": "string"
         }
       },
+      "ArtifactKind": {
+        "name": "kind",
+        "in": "path",
+        "required": true,
+        "description": "Client-supplied artifact kind.",
+        "schema": {
+          "type": "string",
+          "enum": [
+            "thumbnail-small",
+            "thumbnail-medium",
+            "thumbnail-large",
+            "converted"
+          ]
+        }
+      },
       "Token": {
         "name": "token",
         "in": "path",
@@ -2513,6 +2627,16 @@
           "size": {
             "type": "integer"
           },
+          "source": {
+            "type": "string",
+            "enum": [
+              "client",
+              "server"
+            ]
+          },
+          "processingDurationMs": {
+            "type": "integer"
+          },
           "createdAt": {
             "type": "string"
           }
@@ -2523,6 +2647,17 @@
           "mimeType",
           "size",
           "createdAt"
+        ]
+      },
+      "ArtifactEnvelope": {
+        "type": "object",
+        "properties": {
+          "artifact": {
+            "$ref": "#/components/schemas/ArtifactDescriptor"
+          }
+        },
+        "required": [
+          "artifact"
         ]
       },
       "ArtifactPage": {
@@ -2815,6 +2950,9 @@
             "items": {
               "type": "string"
             }
+          },
+          "force": {
+            "type": "boolean"
           }
         },
         "required": [
