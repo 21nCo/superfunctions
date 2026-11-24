@@ -313,12 +313,13 @@ function lastEntry(walk: Walk, entry: TreeEntry): Lookup {
 }
 
 /**
- * A non-directory where the path goes on. A blob before a further name means nothing is tracked
- * at the path; a blob before only `/` or `/.` is an error (the kernel's ENOTDIR), never the spec.
+ * A non-directory where the path goes on. On a plain path, a blob before a further name means
+ * nothing is tracked at the path; a blob before only `/` or `/.`, or anywhere after a followed
+ * link, is an error (the kernel's ENOTDIR), never the spec and never absence.
  */
 function throughFile(walk: Walk, entry: TreeEntry): Lookup {
   if (entry.type !== "blob") walk.fail(`${walk.here(entry)} at ${walk.ref} is a ${entry.type}; apifn check does not read into it.`);
-  if (walk.pending.every((part) => part === "" || part === ".")) {
+  if (walk.links > 0 || walk.pending.every((part) => part === "" || part === ".")) {
     walk.fail(`${walk.here(entry)} at ${walk.ref} is a file, but the spec path needs it to be a directory.`);
   }
   return { found: false };

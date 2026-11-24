@@ -2,7 +2,8 @@
  * Safe publication for `apifn check`: the spec repair (`--write`) and the report file.
  *
  * - No output may land on a file the run read (spec, base file, router module, config file) or
- *   on the other output. Separation is an outcome, checked during publication: every protected
+ *   on the other output. These guards cover runs that write a file; a stdout-only run makes no
+ *   change and reports the inputs as it read them. Separation is an outcome, checked during publication: every protected
  *   path (the inputs, the spec even when only a report is written, and each other output) is
  *   passed to publish with its observed state and looked up again at its bound destination after
  *   every change the run makes (a created directory, a staged temp file, a backup, a rename). A
@@ -401,14 +402,15 @@ function removeTemp(staged: Staged): string | null {
  * the observed file, so another link's edit shows there too and is not a replacement).
  */
 function backupOwned(staged: Staged, now: FileState): boolean {
-  if (!dirsHold(staged)) return false;
-  const made = staged.backupState as FileState;
+  const made = staged.backupState;
+  if (!dirsHold(staged) || !made) return false; // never made (another's name): not this run's
   return staged.linked ? sameFile(now, made) : sameState(now, made);
 }
 
 /** True while the backup still holds the observed file's bytes exactly as this run made it. */
 function backupHoldsPrevious(staged: Staged): boolean {
-  return staged.backup !== undefined && dirsHold(staged) && sameState(currentState(staged.backup), staged.backupState as FileState);
+  const made = staged.backupState;
+  return staged.backup !== undefined && !!made && dirsHold(staged) && sameState(currentState(staged.backup), made);
 }
 
 /** Removes the backup while it is still this run's (backupOwned); another writer's is left and named. */
@@ -668,9 +670,9 @@ function install(staged: Staged, hook: PublishHook | undefined, verify: Verify):
   staged.temp = undefined;
   staged.published = true;
   // The rename changes the change time of the installed inode and, by dropping a link, of the
-  // backup's: record both now, the installed one through the descriptor, not by name.
+  // backup's link: record both now, the installed one through the descriptor (a copy keeps its own).
   staged.installed = stateOf(fstatSync(staged.fd as number, BIG));
-  if (staged.backup !== undefined) {
+  if (staged.linked && staged.backup !== undefined) {
     const backupNow = currentState(staged.backup);
     if (sameContent(backupNow, staged.backupState as FileState)) staged.backupState = backupNow;
   }

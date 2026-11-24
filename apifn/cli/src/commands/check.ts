@@ -68,9 +68,9 @@ export interface CheckCommandOptions {
   /** The config file `config` was loaded from; no output may land on it. */
   configFile?: string;
   /**
-   * Where `configFile` led and its state, bound before it was loaded (bindBeforeRead): a change
-   * after that exits 2 before anything is published. Without it the run binds the config file
-   * when it starts.
+   * Where `configFile` led and its state, bound before it was loaded (bindBeforeRead): in a run
+   * that writes a file, a change after that exits 2 before anything is published; a stdout-only
+   * run reports the inputs as it read them. Without it the run binds the config file at start.
    */
   configRead?: Binding;
   output: Output;

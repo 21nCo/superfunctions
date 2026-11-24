@@ -56,10 +56,11 @@ const FIXTURES = path.join(import.meta.dirname, "fixtures", "check");
 
 /**
  * Injected filesystem faults (API-25 round 4), off unless a test turns one on: hard links fail
- * (the backup takes its copy path), a new .bak file is displaced right after it is created, or a
- * .bak lookup fails.
+ * (the backup takes its copy path), a new .bak file is displaced right after it is created, or
+ * the lookup of a .bak whose name contains `failBackupLookup` fails, or another writer takes a .bak
+ * name (`occupyBackup` bytes) right before the run creates it.
  */
-const fsFaults = vi.hoisted(() => ({ noLink: false, displaceBackup: "", failBackupLookup: false }));
+const fsFaults = vi.hoisted(() => ({ noLink: false, displaceBackup: "", failBackupLookup: "", occupyBackup: "" }));
 vi.mock("node:fs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs")>();
   const displace = (file: unknown): void => {
@@ -79,12 +80,16 @@ vi.mock("node:fs", async (importOriginal) => {
       displace(args[1]);
     }) as typeof actual.copyFileSync,
     openSync: ((...args: Parameters<typeof actual.openSync>) => {
+      if (fsFaults.occupyBackup && String(args[0]).endsWith(".bak")) {
+        actual.writeFileSync(args[0], fsFaults.occupyBackup);
+        fsFaults.occupyBackup = ""; // once
+      }
       const fd = actual.openSync(...args);
       displace(args[0]);
       return fd;
     }) as typeof actual.openSync,
     lstatSync: ((...args: Parameters<typeof actual.lstatSync>) => {
-      if (fsFaults.failBackupLookup && String(args[0]).endsWith(".bak")) {
+      if (fsFaults.failBackupLookup && String(args[0]).endsWith(".bak") && String(args[0]).includes(fsFaults.failBackupLookup)) {
         throw Object.assign(new Error("EACCES: injected"), { code: "EACCES" });
       }
       return actual.lstatSync(...args);
@@ -2165,7 +2170,7 @@ describe("apifn check: publication re-checks each step and stdout completes the 
       }
     );
     expect(code).toBe(2);
-    expect(errors.join("\n")).toContain(`${reportFile} changed after apifn check wrote it`);
+    expect(errors.join("\n")).toContain(`${path.join(realpathSync(dir), "report.md")} changed after apifn check wrote it`);
     expect(await readFile(reportFile, "utf8")).toBe("other report\n");
     expect(await readFile(path.join(dir, SPEC), "utf8")).toBe("openapi: 3.1.0\n");
   });
@@ -2472,6 +2477,42 @@ describe("apifn check: the git baseline is the pinned object (round 4)", () => {
       expect(result.stderr).toContain("needs it to be a directory");
     }
   );
+
+  // API-25 round 5: through a followed link, a blob before any further name is the kernel's
+  // ENOTDIR, never absence (new-contract would skip the diff and pass a breaking head).
+  it.skipIf(POSIX_ONLY).each(["contract.yml/x", "contract.yml/../contract.yml"])(
+    "a tracked spec link through a file to %j exits 2 with nothing published",
+    async (target) => {
+      const { root, service, baseText } = await gitBase();
+      await writeFile(path.join(service, ".apifn", "contract.yml"), baseText);
+      await rm(path.join(service, SPEC));
+      await symlink(target, path.join(service, SPEC));
+      git(root, "add", "-A");
+      git(root, "commit", "-q", "-m", "spec link through a file");
+      await rm(path.join(service, SPEC));
+      await commitSpec(service);
+      await writeFile(path.join(service, "report.md"), "previous report\n");
+
+      const result = await run(["check", "--base", "HEAD", "--report", "report.md"], service);
+      expect({ code: result.code, stdout: result.stdout }).toEqual({ code: 2, stdout: "" });
+      expect(result.stderr).toContain("breaking/.apifn/contract.yml at HEAD");
+      expect(result.stderr).toContain("is a file, but the spec path needs it to be a directory");
+      expect(await readFile(path.join(service, "report.md"), "utf8")).toBe("previous report\n");
+    }
+  );
+
+  it("a plain spec path that meets a file at the base ref (no link) is a new contract", async () => {
+    const { root, service } = await gitBase();
+    await rm(path.join(service, ".apifn"), { recursive: true });
+    await writeFile(path.join(service, ".apifn"), "not a directory at the base\n");
+    git(root, "add", "-A");
+    git(root, "commit", "-q", "-m", ".apifn is a file at the base");
+    await rm(path.join(service, ".apifn"));
+    await commitSpec(service);
+
+    const { code, report } = await runJson(["check", "--base", "HEAD"], service);
+    expect({ code, status: report.base.status }).toEqual({ code: 0, status: "new-contract" });
+  });
 
   it("an unrelated tracked name that is not UTF-8 beside the spec path does not stop the walk", async () => {
     const { root, service } = await gitBase();
@@ -4356,8 +4397,12 @@ describe("apifn check: a backup is bound to the file this run made, and cleanup 
     return dir;
   }
 
-  async function check(dir: string, hook: (step: PublishStep, destination: string) => void): Promise<{ code: number; errors: string }> {
+  async function check(
+    dir: string,
+    hook: (step: PublishStep, destination: string) => void
+  ): Promise<{ code: number; errors: string; stdout: string }> {
     const errors: string[] = [];
+    let stdout = "";
     const output = { error: (message: string) => errors.push(message), warn: () => {} } as unknown as Output;
     try {
       const code = await runCheckCommand({
@@ -4366,12 +4411,14 @@ describe("apifn check: a backup is bound to the file this run made, and cleanup 
         output,
         write: true,
         reportPath: "report.md",
-        writeStdout: () => {},
+        writeStdout: (text: string) => {
+          stdout += text;
+        },
         publishHook: hook,
       });
-      return { code, errors: errors.join("\n") };
+      return { code, errors: errors.join("\n"), stdout };
     } finally {
-      Object.assign(fsFaults, { noLink: false, displaceBackup: "", failBackupLookup: false });
+      Object.assign(fsFaults, { noLink: false, displaceBackup: "", failBackupLookup: "", occupyBackup: "" });
     }
   }
 
@@ -4406,13 +4453,37 @@ describe("apifn check: a backup is bound to the file this run made, and cleanup 
   });
 
   it("a cleanup error after the commit is a stderr notice: the verdict stands and the other backup is removed", async () => {
+    const control = await check(await staleService(), () => {});
     const dir = await staleService();
-    const { code, errors } = await check(dir, (step) => {
-      if (step === "committed") fsFaults.failBackupLookup = true;
+    const { code, errors, stdout } = await check(dir, (step) => {
+      // Only the spec's backup lookup fails; the report's backup is cleaned up as usual.
+      if (step === "committed") fsFaults.failBackupLookup = ".openapi.yml.apifn-";
     });
+    expect({ code, stdout }).toEqual({ code: control.code, stdout: control.stdout });
     expect(code).toBe(0);
+    expect(stdout).toBe(await readFile(path.join(dir, "report.md"), "utf8"));
+    expect(await leftovers(dir)).toEqual([]);
+    const left = await leftovers(path.join(dir, ".apifn"));
+    expect(left).toHaveLength(1);
+    expect(errors).toContain(`Failed to remove ${path.join(realpathSync(path.join(dir, ".apifn")), left[0])}`);
     expect(errors).toContain("EACCES: injected");
-    expect(await readFile(path.join(dir, "report.md"), "utf8")).not.toBe("previous report\n");
     expect(await readFile(path.join(dir, SPEC), "utf8")).not.toBe("openapi: 3.1.0\n");
+  });
+
+  it("a backup name another writer already holds is left and named, and the untouched spec is not 'restored'", async () => {
+    const dir = await staleService();
+    const specDir = path.join(dir, ".apifn");
+    const { code, errors } = await check(dir, (step, destination) => {
+      if (step !== "backup" || !destination.endsWith("openapi.yml")) return;
+      // No hard link, and the copy's O_EXCL create meets a name another writer just took.
+      Object.assign(fsFaults, { noLink: true, occupyBackup: "another writer's backup\n" });
+    });
+    expect(code).toBe(2);
+    expect(errors).not.toContain("Failed to restore");
+    const left = (await leftovers(specDir)).filter((name) => name.endsWith(".bak"));
+    expect(left).toHaveLength(1);
+    expect(await readFile(path.join(specDir, left[0]), "utf8")).toBe("another writer's backup\n");
+    expect(errors).toContain(`${path.join(realpathSync(specDir), left[0])}, apifn check's backup of`);
+    expect(await readFile(path.join(dir, SPEC), "utf8")).toBe("openapi: 3.1.0\n");
   });
 });
