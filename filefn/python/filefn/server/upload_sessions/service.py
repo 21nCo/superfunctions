@@ -157,6 +157,10 @@ def _js_json(value: Any) -> str:
     if isinstance(value, int):
         return str(value)
     if isinstance(value, float):
+        if value != value or value in (float("inf"), float("-inf")):
+            # Stored as sent, so a non-finite number (e.g. 1e400) is refused
+            # rather than counted as JSON.stringify's null.
+            raise ValueError("non-finite number")
         return _js_number_text(value)
     if isinstance(value, str):
         return json.dumps(value, ensure_ascii=False)
@@ -228,7 +232,7 @@ def _validate_upload_init(input: CreateSessionInput) -> None:
             # surrogatepass: a lone surrogate is counted (3 bytes) rather than raising.
             encoded_size = len(encoded.encode("utf-8", "surrogatepass"))
         except (TypeError, ValueError):
-            raise errors.invalid_request("metadata must be a JSON object", {"field": "metadata"})
+            raise errors.invalid_request("metadata must be a JSON object with finite numbers", {"field": "metadata"})
         if encoded_size > MAX_METADATA_BYTES:
             raise errors.invalid_request(
                 f"metadata must be at most {MAX_METADATA_BYTES} bytes as JSON",
@@ -718,12 +722,7 @@ class UploadSessionService:
         )
 
         if session.status == "pending":
-            await self.db.update(
-                model="uploadSessions",
-                where=[{"field": "uploadSessionId", "operator": "eq", "value": upload_session_id}],
-                data={"status": "in_progress"},
-                namespace=self.namespace,
-            )
+            await self._set_status_if(upload_session_id, "pending", "in_progress")
 
         self.events.emit(
             "part.recorded",
@@ -841,6 +840,15 @@ class UploadSessionService:
             raise errors.upload_size_mismatch(session.size, uploaded_size)
 
         owned = self._key_is_session_owned(session, session_data)
+        if not owned and session.uploadMode == "multipart-signed-url":
+            # A multipart session from before per-version keys: finalizing
+            # consumes its upload ID, and its key alone can't prove a later retry
+            # that the object there is its own, so it restarts instead.
+            await self._mark_aborted(upload_session_id)
+            raise errors.invalid_request(
+                "This upload must be restarted: it was started before this server version",
+                {"reason": "legacy multipart session"},
+            )
         if not owned:
             # A session from before per-version keys may share its key with a
             # published version; finalizing would overwrite that version's bytes.
@@ -895,6 +903,22 @@ class UploadSessionService:
                 raise errors.upload_size_mismatch(session.size, actual)
         elif session.uploadMode == "proxy":
             await self._finalize_proxy_upload(session, parts_data)
+
+    async def _set_status_if(self, upload_session_id: str, expected: str, status: str) -> None:
+        """Moves the session to `status` only while it is still `expected` (never over a terminal state)."""
+        where = [
+            {"field": "uploadSessionId", "operator": "eq", "value": upload_session_id},
+            {"field": "status", "operator": "eq", "value": expected},
+        ]
+        update_many = getattr(self.db, "update_many", None)
+        if callable(update_many):
+            await update_many(model="uploadSessions", where=where, data={"status": status}, namespace=self.namespace)
+            return
+        try:
+            await self.db.update(model="uploadSessions", where=where, data={"status": status}, namespace=self.namespace)
+        except Exception as error:
+            if type(error).__name__ != "NotFoundError":
+                raise
 
     async def _mark_aborted(self, upload_session_id: str) -> None:
         await self.db.update(
@@ -1200,6 +1224,26 @@ class UploadSessionService:
                     )
                 except Exception:
                     pass
+
+            # An aborted multipart session may have finalized an object that was
+            # never published (refused for its size, with the delete failing).
+            # Its key is its own and no version references it, so it is deleted
+            # here; if that fails, the session row stays for the next sweep.
+            if (
+                session.status == "aborted"
+                and session.uploadMode == "multipart-signed-url"
+                and self._key_is_session_owned(session, session_data)
+            ):
+                referencing = await self.db.find_many(
+                    model="fileVersions",
+                    where=[{"field": "storageKey", "operator": "eq", "value": session.storageKey}],
+                    namespace=self.namespace,
+                )
+                if not referencing and await self._stored_size(session.storageKey, storage_target, None) is not None:
+                    try:
+                        await self.storage.delete_object(key=session.storageKey, target=storage_target)
+                    except Exception:
+                        continue
 
             parts = await self.db.find_many(
                 model="uploadParts",

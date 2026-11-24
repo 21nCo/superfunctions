@@ -1280,3 +1280,51 @@ async def test_legacy_session_sharing_a_published_key_must_restart() -> None:
     assert restart.value.code == "FILEFN_INVALID_REQUEST"
     assert row["status"] == "aborted"
     assert row["storageKey"] not in storage.objects
+
+
+@pytest.mark.asyncio
+async def test_metadata_with_non_finite_numbers_is_refused() -> None:
+    service = _make_service()
+    with pytest.raises(errors.FileFnError) as refused:
+        await service.create_session(
+            CreateSessionInput(policy="user-avatar", fileName="a.png", size=3, mimeType="image/png", metadata={"x": float("inf")}),
+            _ctx(),
+        )
+    assert refused.value.code == "FILEFN_INVALID_REQUEST"
+
+
+@pytest.mark.asyncio
+async def test_pending_to_in_progress_never_overwrites_an_aborted_session() -> None:
+    db = FakeDB()
+    service = _make_service(db=db)
+    session = await service.create_session(
+        CreateSessionInput(policy="user-avatar", fileName="a.png", size=3, mimeType="image/png"), _ctx()
+    )
+    db.tables["uploadSessions"][0]["status"] = "aborted"
+    await service._set_status_if(session["uploadSessionId"], "pending", "in_progress")
+    assert db.tables["uploadSessions"][0]["status"] == "aborted"
+
+
+@pytest.mark.asyncio
+async def test_expiry_sweep_deletes_an_unpublished_object_whose_delete_failed() -> None:
+    class DeleteFailsOnce(StatStorage):
+        failed = False
+
+        async def delete_object(self, key: str, target: Optional[str] = None) -> None:
+            if not self.failed:
+                self.failed = True
+                raise RuntimeError("storage unavailable")
+            await super().delete_object(key, target)
+
+    db = FakeDB()
+    storage = DeleteFailsOnce(actual_size=50)
+    service = _make_service(db=db, storage=storage)
+    session = await _multipart_session(service)
+    key = db.tables["uploadSessions"][0]["storageKey"]
+    with pytest.raises(errors.FileFnError):
+        await service.complete_session(session["uploadSessionId"], _ctx())
+    assert key in storage.objects
+    db.tables["uploadSessions"][0]["expiresAt"] = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    await service.garbage_collect_expired_sessions()
+    assert key not in storage.objects
+    assert not db.tables["uploadSessions"]
