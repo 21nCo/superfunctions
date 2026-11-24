@@ -244,10 +244,13 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
     const unconfirmed = await this.confirmVersion(prepared, executable, key);
     if (unconfirmed) return unconfirmed;
     state.harnessVersion = this.versions.get(key);
+    // The slot's pin is checked here, on a cold or a warm cache, so a CLI of another version never runs the review.
+    const pinned = input.slot?.harness.version;
+    if (pinned !== undefined && state.harnessVersion !== pinned) return state.finish("failed", `The CLI reported version ${String(state.harnessVersion)}, not the pinned ${pinned}, so the review was not run.`);
     let directory: string | undefined;
     try {
       directory = await mkdtemp(path.join(tmpdir(), "reviewfn-cli-"));
-      return await this.attempts({ ...prepared, executable, directory });
+      return await this.attempts({ ...prepared, executable, key, directory });
     } finally {
       if (directory) await rm(directory, { recursive: true, force: true });
     }
@@ -281,7 +284,7 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
   }
 
   /** The first attempt and, when its answer is rejected, the one repair attempt. */
-  private async attempts(prepared: Prepared & { executable: string; directory: string }): Promise<SlotHarnessOutput> {
+  private async attempts(prepared: Prepared & { executable: string; key: string; directory: string }): Promise<SlotHarnessOutput> {
     const { state, input, profile } = prepared;
     // The CLI is shown (in the prompt and {schemaFile}) a schema that also declares its json-path model report, so a CLI
     // that enforces the schema can still emit it; its answer is validated against the slot's own schema as written, and
@@ -310,6 +313,9 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
     if (remaining <= 0) return state.finish("timed_out", `The CLI exceeded its configured bound ${before}.`);
     const outputBytes = state.remainingOutputBytes();
     if (outputBytes <= 0) return state.finish("timed_out", `The CLI output used its whole byte budget ${before}.`);
+    // Each attempt runs only the executable whose version was read: one replaced at the same path since is refused.
+    const current = await this.versionKey(run.executable, profile, run.environment).catch(() => undefined);
+    if (current !== run.key) return state.finish("failed", `The CLI executable changed after its version was read, so it was refused ${before}.`);
     // Each attempt gets its own directory, created exclusively with an unpredictable name once the previous attempt has
     // ended, holding its schema, its prompt (written only when the CLI is given its path) and its output path, which is
     // therefore absent when it starts. Nothing an earlier attempt left (a link, a rewritten schema, a planted answer) is
@@ -416,8 +422,8 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
 
   private secrets(config: ReviewFnConfig, environment: NodeJS.ProcessEnv): string[] {
     const credential = config.inference.credentialEnv ? this.environment[config.inference.credentialEnv] : undefined;
-    // The credential, and every allowlisted value whose name marks it as a secret.
-    return collectSecrets(environment, credential ? [credential] : []);
+    // The credential, and every allowlisted value whose name marks it as a secret, each also as escaped in a JSON string.
+    return withJsonEscapes(collectSecrets(environment, credential ? [credential] : []));
   }
 }
 
@@ -432,7 +438,7 @@ interface Prepared {
   deadline: number;
 }
 
-interface AttemptContext extends Prepared { executable: string; directory: string; schemaText: string }
+interface AttemptContext extends Prepared { executable: string; key: string; directory: string; schemaText: string }
 
 /** A new directory for one attempt, created exclusively inside the run directory, with its schema and prompt files. */
 async function attemptFiles(run: AttemptContext, attempt: number, prompt: string): Promise<{ promptFile: string; schemaFile: string; outputFile: string }> {
@@ -441,6 +447,20 @@ async function attemptFiles(run: AttemptContext, attempt: number, prompt: string
   await writeFile(files.schemaFile, run.schemaText, { mode: 0o600, flag: "wx" });
   if (run.profile.promptVia === "file" || run.profile.argv.includes("{promptFile}")) await writeFile(files.promptFile, prompt, { mode: 0o600, flag: "wx" });
   return files;
+}
+
+/**
+ * Each secret and the forms a JSON string writes it in (quote, backslash and control characters escaped, optionally `/`
+ * as `\/` and non-ASCII as `\uXXXX`), longest first, so a credential the CLI echoes inside JSON is redacted too.
+ */
+function withJsonEscapes(secrets: readonly string[]): string[] {
+  const forms = secrets.flatMap(secret => {
+    const escaped = JSON.stringify(secret).slice(1, -1);
+    // Without the u flag each UTF-16 unit, a surrogate half included, is escaped on its own, as JSON writes it.
+    const ascii = escaped.replaceAll(/[^\x20-\x7e]/g, unit => `\\u${unit.charCodeAt(0).toString(16).padStart(4, "0")}`);
+    return [secret, escaped, escaped.replaceAll("/", "\\/"), ascii, ascii.replaceAll("/", "\\/")];
+  });
+  return [...new Set(forms)].sort((left, right) => right.length - left.length);
 }
 
 /** An answer rejected by validation, with what the repair prompt echoes back. */
@@ -698,20 +718,20 @@ function watchOutputFile(file: string, maxBytes: number, parent: AbortSignal | u
  * on every object schema on the path that does not declare the key yet, including each object `allOf` branch, so a CLI
  * that enforces the schema, even one that emits only declared properties, can still report its model. Where the object
  * is closed to the key (`additionalProperties: false`, or `unevaluatedProperties: false`, with no `properties` or
- * `patternProperties` entry for it) the key is declared as a string at the rest of the path; where one
- * `patternProperties` or `additionalProperties` schema already owns it, it is declared as that schema. It descends
- * through the property, owning and array `items` schemas on the path. An `allOf` entry that is `{}` or `true` is
- * ignored. A node whose ownership of the key cannot be settled statically (`$ref`, `anyOf`, `oneOf`,
- * `not`, a conditional or `dependentSchemas`) is shown unchanged, so the slot's schema must declare the report there
- * itself. The caller's schema is never changed.
+ * `patternProperties` entry for it) the key is declared as a string at the rest of the path; where an
+ * `additionalProperties` schema owns it, it is declared as that schema. It descends through the property, owning and
+ * array `items` schemas on the path. An `allOf` entry that is `{}` or `true` is ignored. A node where a
+ * `patternProperties` pattern matches the key (its schema is shared by every sibling key it matches), or whose ownership
+ * of the key cannot be settled statically (`$ref`, `anyOf`, `oneOf`, `not`, a conditional or `dependentSchemas`), is
+ * shown unchanged, so the slot's schema must declare the report there itself. The caller's schema is never changed.
  */
 export function withModelReportField(schema: Readonly<Record<string, unknown>>, modelReport: string): Readonly<Record<string, unknown>> {
   if (!modelReport.startsWith("json-path:")) return schema;
   return declarePath(schema, modelReport.slice("json-path:".length).split("."));
 }
 
-/** The schema with the report declared along `keys`: required there, or, when `optional`, only allowed. */
-function declarePath(schema: Readonly<Record<string, unknown>>, keys: readonly string[], optional = false): Readonly<Record<string, unknown>> {
+/** The schema with the report declared, and required, along `keys`. */
+function declarePath(schema: Readonly<Record<string, unknown>>, keys: readonly string[]): Readonly<Record<string, unknown>> {
   const [key, ...rest] = keys;
   if (key === undefined) return schema;
   // A numeric step indexes an array schema, as valueAtPath reads an array; elsewhere it names a property. The items
@@ -719,61 +739,49 @@ function declarePath(schema: Readonly<Record<string, unknown>>, keys: readonly s
   // follows (itemSchemas): the node's own items and its allOf branches', none below an unsettled array node.
   if (isArrayStep(schema, key)) {
     if (isUnsettledArray(schema)) return schema;
-    const items = isRecord(schema.items) ? declarePath(schema.items, rest, optional) : schema.items;
-    return declareBranches(schema, items === schema.items ? schema : { ...schema, items }, keys, optional);
+    const items = isRecord(schema.items) ? declarePath(schema.items, rest) : schema.items;
+    return declareBranches(schema, items === schema.items ? schema : { ...schema, items }, keys);
   }
-  if (ownership(schema, key).kind === "unsettled") return schema;
-  return declareBranches(schema, declareOwn(schema, key, rest, optional), keys, optional);
+  // A pattern schema is shared by every key it matches, so it can neither allow the report for the named key alone nor
+  // sit beside a declared copy of it (strict Ajv refuses the overlap): a pattern-owned key is shown as written.
+  if (ownership(schema, key).kind === "unsettled" || patternOwned(schema, key)) return schema;
+  return declareBranches(schema, declareOwn(schema, key, rest), keys);
 }
 
 /** `shown` with the report declared along `keys` in each non-trivial `allOf` branch of `schema`. */
-function declareBranches(schema: Readonly<Record<string, unknown>>, shown: Readonly<Record<string, unknown>>, keys: readonly string[], optional: boolean): Readonly<Record<string, unknown>> {
+function declareBranches(schema: Readonly<Record<string, unknown>>, shown: Readonly<Record<string, unknown>>, keys: readonly string[]): Readonly<Record<string, unknown>> {
   if (!Array.isArray(schema.allOf)) return shown;
   const branches: unknown[] = schema.allOf;
-  const allOf = branches.map(branch => isRecord(branch) && !isTrivial(branch) ? declarePath(branch, keys, optional) : branch);
+  const allOf = branches.map(branch => isRecord(branch) && !isTrivial(branch) ? declarePath(branch, keys) : branch);
   return allOf.every((branch, index) => branch === branches[index]) ? shown : { ...shown, allOf };
 }
 
 /**
  * The node itself, its `allOf` aside: below the key's declared schema; or, on an object schema that does not declare
- * the key, the key declared, and required, as the one pattern or additional-properties schema that owns it or, on a
- * closed object or with several owners, as a new report field. Each pattern schema that also applies to the key allows
- * the rest of the report (never requires it, since other keys share the pattern), so it cannot forbid what the
- * declared property requires.
+ * the key, the key declared, and required, as the additional-properties schema that owns it or, on a closed object, as a
+ * new report field.
  */
-function declareOwn(schema: Readonly<Record<string, unknown>>, key: string, rest: readonly string[], optional: boolean): Readonly<Record<string, unknown>> {
+function declareOwn(schema: Readonly<Record<string, unknown>>, key: string, rest: readonly string[]): Readonly<Record<string, unknown>> {
   const owned = ownOwnership(schema, key);
   let child: unknown;
   if (owned.kind === "open" && owned.via === "declared") {
     const [declared] = owned.children;
-    const next = isRecord(declared) ? declarePath(declared, rest, optional) : declared;
+    const next = isRecord(declared) ? declarePath(declared, rest) : declared;
     if (next !== declared) child = next;
   } else if (isObjectSchema(schema)) {
     const [owner] = owned.kind === "open" ? owned.children : [];
-    child = owned.kind === "open" && owned.children.length === 1 && isRecord(owner) && !isTrivial(owner) ? declarePath(owner, rest, optional) : reportField(rest);
+    child = owned.kind === "open" && isRecord(owner) && !isTrivial(owner) ? declarePath(owner, rest) : reportField(rest);
   }
-  const patterns = allowInPatterns(schema, key, rest);
-  if (child === undefined && patterns === schema.patternProperties) return schema;
-  const shown: Record<string, unknown> = patterns === schema.patternProperties ? { ...schema } : { ...schema, patternProperties: patterns };
-  if (child === undefined) return shown;
-  shown.properties = { ...(isRecord(schema.properties) ? schema.properties : {}), [key]: child };
+  if (child === undefined) return schema;
   const required = Array.isArray(schema.required) ? schema.required : [];
-  if (!optional && !required.includes(key)) shown.required = [...required, key];
-  return shown;
+  return { ...schema, properties: { ...(isRecord(schema.properties) ? schema.properties : {}), [key]: child }, ...(required.includes(key) ? {} : { required: [...required, key] }) };
 }
 
-/** The node's `patternProperties` with the rest of the report allowed, never required, below each one matching `key`. */
-function allowInPatterns(schema: Readonly<Record<string, unknown>>, key: string, rest: readonly string[]): unknown {
-  const patterns = schema.patternProperties;
-  if (!isRecord(patterns) || !rest.length) return patterns;
-  let changed = false;
-  const allowed = Object.fromEntries(Object.entries(patterns).map(([pattern, child]) => {
-    if (!isRecord(child) || !matches(pattern, key)) return [pattern, child];
-    const next = declarePath(child, rest, true);
-    changed ||= next !== child;
-    return [pattern, next];
-  }));
-  return changed ? allowed : patterns;
+/** Whether a `patternProperties` pattern of the node, or of a non-trivial `allOf` branch, matches `key`. */
+function patternOwned(schema: Readonly<Record<string, unknown>>, key: string): boolean {
+  const patterns = isRecord(schema.patternProperties) ? Object.keys(schema.patternProperties) : [];
+  const branches: unknown[] = Array.isArray(schema.allOf) ? schema.allOf : [];
+  return patterns.some(pattern => matches(pattern, key) !== false) || branches.some(branch => isRecord(branch) && !isTrivial(branch) && patternOwned(branch, key));
 }
 
 /** Whether a `patternProperties` pattern matches a key; undefined for a pattern that does not compile. */
@@ -986,6 +994,8 @@ class RunState {
   }
 
   public complete(payload: Payload): SlotHarnessOutput {
+    // A completed run is attributed to the model the accepted attempt reported, never to a rejected attempt's.
+    if (this.reported !== undefined) this.everReported = this.reported;
     return this.bounded({ terminal: "completed", ...payload, events: [] });
   }
 
