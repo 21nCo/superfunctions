@@ -4,8 +4,8 @@ import { createWorker, PSM } from 'tesseract.js';
 
 import type { OCRProcessorProvider, OCRProviderRequest, OCRProviderResult } from '../types.js';
 
-async function preprocessImage(imageData: Uint8Array): Promise<Buffer> {
-  return await sharp(Buffer.from(imageData), SHARP_INPUT_OPTIONS)
+async function preprocessImage(imageData: Buffer): Promise<Buffer> {
+  return await sharp(imageData, SHARP_INPUT_OPTIONS)
     .grayscale()
     .normalize()
     .sharpen()
@@ -16,14 +16,16 @@ async function preprocessImage(imageData: Uint8Array): Promise<Buffer> {
 export function createTesseractJsOCRProvider(): OCRProcessorProvider {
   return {
     async recognize(request: OCRProviderRequest): Promise<OCRProviderResult> {
-      // Only raster images reach sharp, whatever the declared type.
-      assertRasterImage(request.imageData);
+      // Only raster images reach sharp, whatever the declared type. A private
+      // copy is checked and decoded, so the caller can't change it in between.
+      const imageData = Buffer.from(request.imageData);
+      assertRasterImage(imageData);
       const worker = await createWorker(request.language, 1, {
         logger: () => {},
       });
 
       try {
-        const normalized = await preprocessImage(request.imageData);
+        const normalized = await preprocessImage(imageData);
         await worker.setParameters({
           tessedit_pageseg_mode: PSM.SINGLE_BLOCK,
           preserve_interword_spaces: '1',

@@ -46,13 +46,15 @@ export function createTesseractCliOCRProvider(options: TesseractCliOptions = {})
 
   return {
     async recognize(request: OCRProviderRequest): Promise<OCRProviderResult> {
-      // Only raster images reach sharp, whatever the declared type.
-      if (!isRasterImage(request.imageData)) throw new Error('File content does not match its declared type');
+      // Only raster images reach sharp, whatever the declared type. A private
+      // copy is checked and decoded, so the caller can't change it in between.
+      const imageData = Buffer.from(request.imageData);
+      if (!isRasterImage(imageData)) throw new Error('File content does not match its declared type');
       const directory = await mkdtemp(join(tmpdir(), 'filefn-ocr-'));
       try {
         const input = join(directory, 'input.png');
         const output = join(directory, 'output');
-        await writeFile(input, await sharp(Buffer.from(request.imageData), { limitInputPixels: 100_000_000 }).grayscale().normalize().sharpen().png().toBuffer());
+        await writeFile(input, await sharp(imageData, { limitInputPixels: 100_000_000 }).grayscale().normalize().sharpen().png().toBuffer());
         const formats = request.includeHOCR ? ['txt', 'tsv', 'hocr'] : ['txt', 'tsv'];
         await run(binary, [input, output, '-l', request.language, '--psm', '6', '-c', 'preserve_interword_spaces=1', ...formats], timeoutMs);
         const [text, tsv, hocr] = await Promise.all([
