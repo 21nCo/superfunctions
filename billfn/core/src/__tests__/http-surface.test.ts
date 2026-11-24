@@ -42,6 +42,7 @@ async function setup(config: Partial<BillFnConfig> = {}) {
     }
   }));
   const syncSubscription = vi.fn<NonNullable<BillFnProviderAdapter['fetchSubscription']>>();
+  const parseWebhookError: { current?: Error } = {};
   const provider: BillFnProviderAdapter = {
     provider: 'dodo',
     capabilities: {
@@ -67,11 +68,14 @@ async function setup(config: Partial<BillFnConfig> = {}) {
     fetchSubscription: syncSubscription,
     cancelSubscription,
     async parseWebhook() {
-      throw createBillFnError({
-        code: 'BILLFN_PROVIDER_ERROR',
-        message: 'Dodo request failed with status 400',
-        details: { status: 400, body: '{"secret":"provider-internal"}', bundleIds: ['com.example.app'] }
-      });
+      throw (
+        parseWebhookError.current ??
+        createBillFnError({
+          code: 'BILLFN_PROVIDER_ERROR',
+          message: 'Dodo request failed with status 400',
+          details: { status: 400, body: '{"secret":"provider-internal"}', bundleIds: ['com.example.app'] }
+        })
+      );
     }
   };
   const billfn = createBillFn({
@@ -83,7 +87,7 @@ async function setup(config: Partial<BillFnConfig> = {}) {
   });
   const accounts = () => db.findMany({ model: 'billingAccounts', where: [], namespace: 'billfn' });
   const call = (path: string, init: RequestInit) => billfn.router.handle(new Request(`https://billfn.example.test/billfn${path}`, init));
-  return { billfn, cancelSubscription, syncSubscription, accounts, call };
+  return { billfn, cancelSubscription, syncSubscription, accounts, call, parseWebhookError };
 }
 
 describe('error details returned to callers', () => {
@@ -97,10 +101,24 @@ describe('error details returned to callers', () => {
     expect(payload.error.details).toEqual({ status: 400 });
     expect(JSON.stringify(payload)).not.toContain('provider-internal');
   });
+
+  it('leaves out a provider response body nested anywhere in the details', async () => {
+    const env = await setup();
+    env.parseWebhookError.current = createBillFnError({
+      code: 'BILLFN_PROVIDER_ERROR',
+      message: 'Provider request failed',
+      details: { status: 502, response: { body: '{"secret":"nested-internal"}', status: 502 }, attempts: [{ raw: 'attempt-internal', at: 1 }] }
+    });
+
+    const response = await env.call('/webhooks/dodo', { method: 'POST', body: '{}' });
+    const payload = (await response.json()) as { error: { details?: Record<string, unknown> } };
+
+    expect(payload.error.details).toEqual({ status: 502, response: { status: 502 }, attempts: [{ at: 1 }] });
+  });
 });
 
 describe('request content type', () => {
-  it.each(['text/plain', 'application/x-www-form-urlencoded', ''])(
+  it.each(['text/plain', 'application/x-www-form-urlencoded', '', 'example+json', '+json', 'application/+json', 'application/json/x'])(
     'refuses a write sent as %j before acting on it',
     async (contentType) => {
       const env = await setup();
@@ -166,6 +184,61 @@ describe('request size', () => {
 
     expect(response.status).toBe(400);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+/** A body streamed in chunks with no content-length, counting how many chunks were pulled. */
+function streamedBody(chunkBytes: number, chunks: number) {
+  let pulled = 0;
+  const stream = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (pulled >= chunks) {
+        controller.close();
+        return;
+      }
+      pulled += 1;
+      controller.enqueue(new Uint8Array(chunkBytes).fill(0x61));
+    }
+  });
+  return { stream, pulled: () => pulled };
+}
+
+describe('streamed request bodies', () => {
+  it('stops reading an ingress delivery with no content-length once it passes the limit', async () => {
+    const fetchMock = vi.fn(async () => Response.json({ ok: true, data: { owned: false } }));
+    const ingress = createWebhookIngress({
+      regions: [{ id: 'useast', url: 'https://useast.billfn.test/billfn/' }],
+      defaultRegion: 'useast',
+      internalToken: 'test-internal-token',
+      fetch: fetchMock as unknown as typeof fetch
+    });
+    const body = streamedBody(64 * 1024, 1000);
+
+    const response = await ingress.handle(
+      'dodo',
+      new Request('https://ingress.example.test/dodo', { method: 'POST', body: body.stream, duplex: 'half' } as RequestInit)
+    );
+
+    expect(response.status).toBe(400);
+    expect(body.pulled()).toBeLessThan(10);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('answers an oversized streamed router body even while an unread clone of the request is held', async () => {
+    const env = await setup();
+    const body = streamedBody(64 * 1024, 1000);
+    const request = new Request('https://billfn.example.test/billfn/checkouts', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: body.stream,
+      duplex: 'half'
+    } as RequestInit);
+    const held = request.clone();
+
+    const response = await env.billfn.router.handle(request);
+
+    expect(response.status).toBe(400);
+    expect(held.bodyUsed).toBe(false);
   });
 });
 

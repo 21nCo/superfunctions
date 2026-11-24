@@ -1,6 +1,6 @@
 import { createRouter, type Route } from '@superfunctions/http';
 import { createBillFnError } from './errors.js';
-import { errorResponse, jsonResponse, successResponse } from './http.js';
+import { errorResponse, jsonResponse, readBoundedBytes, successResponse } from './http.js';
 import { normalizeBasePath, resolveRequestSubject } from './helpers.js';
 import { createBillFnService } from './service.js';
 import type {
@@ -49,33 +49,9 @@ export const MAX_REQUEST_BODY_BYTES = 256 * 1024;
 
 /** Reads a request body as text, refusing one larger than MAX_REQUEST_BODY_BYTES before or while reading it. */
 async function readBoundedText(request: Request): Promise<string> {
-  const declared = Number(request.headers.get('content-length') ?? '');
-  if (Number.isFinite(declared) && declared > MAX_REQUEST_BODY_BYTES) {
+  const bytes = await readBoundedBytes(request, MAX_REQUEST_BODY_BYTES);
+  if (!bytes) {
     throw bodyTooLarge();
-  }
-  if (!request.body) {
-    return '';
-  }
-  const reader = request.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let size = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) {
-      break;
-    }
-    size += value.byteLength;
-    if (size > MAX_REQUEST_BODY_BYTES) {
-      await reader.cancel().catch(() => undefined);
-      throw bodyTooLarge();
-    }
-    chunks.push(value);
-  }
-  const bytes = new Uint8Array(size);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
   }
   return new TextDecoder().decode(bytes);
 }
@@ -87,11 +63,23 @@ function bodyTooLarge() {
   });
 }
 
+/** A media type token (RFC 9110): the type and subtype each a run of token characters. */
+const MEDIA_TYPE = /^[a-z0-9!#$%&'*+.^_`|~-]+\/[a-z0-9!#$%&'*+.^_`|~-]+$/;
+
+/** application/json, or a valid type/subtype with the +json structured suffix; parameters are ignored. */
+function isJsonContentType(header: string | null) {
+  const essence = (header ?? '').split(';')[0]!.trim().toLowerCase();
+  if (!MEDIA_TYPE.test(essence)) {
+    return false;
+  }
+  const subtype = essence.slice(essence.indexOf('/') + 1);
+  return essence === 'application/json' || (subtype.endsWith('+json') && subtype.length > '+json'.length);
+}
+
 async function parseJsonBody<T>(request: Request): Promise<T> {
   // A JSON content type is required, so a cross-site form post (text/plain, sent without a CORS preflight) is
   // refused instead of parsed.
-  const contentType = (request.headers.get('content-type') ?? '').split(';')[0]!.trim().toLowerCase();
-  if (contentType !== 'application/json' && !contentType.endsWith('+json')) {
+  if (!isJsonContentType(request.headers.get('content-type'))) {
     throw createBillFnError({
       code: 'BILLFN_VALIDATION_ERROR',
       message: 'Request body must be sent as application/json'

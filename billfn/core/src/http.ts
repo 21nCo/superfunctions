@@ -20,13 +20,68 @@ export function successResponse<T>(data: T, status: number = 200): Response {
  */
 const PRIVATE_DETAIL_KEYS: ReadonlySet<string> = new Set(['body', 'raw', 'rawBody', 'bundleIds', 'matchingPriceIds']);
 
-/** The error details safe to return over HTTP: a plain object without the private keys. */
+/** The error details safe to return over HTTP: a plain object without the private keys, at any depth. */
 export function publicErrorDetails(details: unknown): Record<string, unknown> | undefined {
   if (details === null || typeof details !== 'object' || Array.isArray(details)) {
     return undefined;
   }
-  const kept = Object.entries(details as Record<string, unknown>).filter(([key]) => !PRIVATE_DETAIL_KEYS.has(key));
-  return kept.length > 0 ? Object.fromEntries(kept) : undefined;
+  const kept = stripPrivateDetails(details) as Record<string, unknown>;
+  return Object.keys(kept).length > 0 ? kept : undefined;
+}
+
+function stripPrivateDetails(value: unknown, depth = 0): unknown {
+  if (value === null || typeof value !== 'object') {
+    return value;
+  }
+  // Details are small; anything nested deeper than this is not returned at all.
+  if (depth >= 8) {
+    return undefined;
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => stripPrivateDetails(item, depth + 1));
+  }
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .filter(([key]) => !PRIVATE_DETAIL_KEYS.has(key))
+      .map(([key, item]) => [key, stripPrivateDetails(item, depth + 1)])
+  );
+}
+
+/**
+ * Reads a request body as bytes, up to `limit`: a larger body (declared by content-length, or found while reading)
+ * answers null without reading the rest. The stream is cancelled without waiting, so an unread clone of the request
+ * cannot hold the answer back.
+ */
+export async function readBoundedBytes(request: Request, limit: number): Promise<Uint8Array | null> {
+  const declared = Number(request.headers.get('content-length') ?? '');
+  if (Number.isFinite(declared) && declared > limit) {
+    return null;
+  }
+  if (!request.body) {
+    return new Uint8Array(0);
+  }
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+    size += value.byteLength;
+    if (size > limit) {
+      void reader.cancel().catch(() => undefined);
+      return null;
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
 }
 
 export function errorResponse(error: Error): Response {

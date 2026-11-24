@@ -318,6 +318,35 @@ export function createBillFnService(config: BillFnConfig) {
   return createBillFnServiceWithInternals(config).service;
 }
 
+/** Limits on caller checkout metadata, which is stored and sent to the provider. */
+const MAX_CHECKOUT_METADATA_KEYS = 20;
+const MAX_CHECKOUT_METADATA_KEY_LENGTH = 40;
+const MAX_CHECKOUT_METADATA_VALUE_LENGTH = 500;
+
+function assertCheckoutMetadata(metadata: unknown) {
+  if (metadata === undefined) {
+    return;
+  }
+  const entries = metadata !== null && typeof metadata === 'object' && !Array.isArray(metadata) ? Object.entries(metadata) : null;
+  const valid =
+    entries !== null &&
+    entries.length <= MAX_CHECKOUT_METADATA_KEYS &&
+    entries.every(
+      ([key, value]) =>
+        key.length > 0 &&
+        key.length <= MAX_CHECKOUT_METADATA_KEY_LENGTH &&
+        (typeof value === 'boolean' ||
+          (typeof value === 'number' && Number.isFinite(value)) ||
+          (typeof value === 'string' && value.length <= MAX_CHECKOUT_METADATA_VALUE_LENGTH))
+    );
+  if (!valid) {
+    throw createBillFnError({
+      code: 'BILLFN_VALIDATION_ERROR',
+      message: `Checkout metadata must be an object of at most ${MAX_CHECKOUT_METADATA_KEYS} keys (each up to ${MAX_CHECKOUT_METADATA_KEY_LENGTH} characters) with string, number or boolean values (strings up to ${MAX_CHECKOUT_METADATA_VALUE_LENGTH} characters)`
+    });
+  }
+}
+
 function createBillFnServiceWithInternals(config: BillFnConfig) {
   const namespace = config.namespace ?? 'billfn';
   const now = config.now ?? (() => new Date());
@@ -615,36 +644,7 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
     }
   }
 
-  /** Limits on caller checkout metadata, which is stored and sent to the provider. */
-const MAX_CHECKOUT_METADATA_KEYS = 20;
-const MAX_CHECKOUT_METADATA_KEY_LENGTH = 40;
-const MAX_CHECKOUT_METADATA_VALUE_LENGTH = 500;
-
-function assertCheckoutMetadata(metadata: unknown) {
-  if (metadata === undefined) {
-    return;
-  }
-  const entries = metadata !== null && typeof metadata === 'object' && !Array.isArray(metadata) ? Object.entries(metadata) : null;
-  const valid =
-    entries !== null &&
-    entries.length <= MAX_CHECKOUT_METADATA_KEYS &&
-    entries.every(
-      ([key, value]) =>
-        key.length > 0 &&
-        key.length <= MAX_CHECKOUT_METADATA_KEY_LENGTH &&
-        (typeof value === 'boolean' ||
-          (typeof value === 'number' && Number.isFinite(value)) ||
-          (typeof value === 'string' && value.length <= MAX_CHECKOUT_METADATA_VALUE_LENGTH))
-    );
-  if (!valid) {
-    throw createBillFnError({
-      code: 'BILLFN_VALIDATION_ERROR',
-      message: `Checkout metadata must be an object of at most ${MAX_CHECKOUT_METADATA_KEYS} keys (each up to ${MAX_CHECKOUT_METADATA_KEY_LENGTH} characters) with string, number or boolean values (strings up to ${MAX_CHECKOUT_METADATA_VALUE_LENGTH} characters)`
-    });
-  }
-}
-
-/** Loads the caller's subscription, plan and price for a subscription mutation. */
+  /** Loads the caller's subscription, plan and price for a subscription mutation. */
   async function loadMutationSubscription(input: { subject?: BillableSubject; subscriptionId?: string }) {
     const subject = requireSubject(input.subject);
     // A mutation never creates a billing account: an account without one has no subscription to change.
