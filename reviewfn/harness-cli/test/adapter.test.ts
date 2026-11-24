@@ -1,0 +1,624 @@
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { DEFAULT_CONFIG, DEFAULT_POLICY, lensOutputSchema, runProcessGroup, structuredOutputValidator, type CommandRunner, type HarnessProfile, type ReviewFnConfig, type SlotHarnessInput } from "@superfunctions/reviewfn-core";
+
+import { AGENT, LAUNCH } from "./launcher.js";
+import { CliHarnessAdapter, cliArguments, cliEnvironment, lastJsonObjectLine, matchReporter, parseCliVersion, valueAtPath, withModelReportField } from "../src/index.js";
+
+const CREDENTIAL = "reviewfn-cli-fixture-credential-5521";
+const ALLOWED_SECRET = "allowlisted-secret-value-9034";
+const MODEL = "fake model; rm -rf ~";
+
+interface Call { argv: string[]; env: Record<string, string>; cwd: string; prompt: string; stdin: string }
+
+let directory: string, state: string, workspace: string;
+beforeEach(async () => {
+  directory = await mkdtemp(path.join(tmpdir(), "reviewfn-cli-test-"));
+  state = path.join(directory, "state");
+  // A workspace path with spaces and `;` must still reach the CLI as one argument.
+  workspace = path.join(directory, "work space; echo pwned");
+  await mkdir(state);
+  await mkdir(workspace);
+});
+afterEach(async () => { await rm(directory, { recursive: true, force: true }); });
+
+const environment = () => ({ PATH: process.env.PATH, HOME: "/home/operator", ALLOWED_ONE: "one", FIXTURE_API_KEY: ALLOWED_SECRET, OTHER_VAR: "other", GITHUB_TOKEN: "publication-private-token", REVIEW_AUTH: CREDENTIAL });
+
+function profile(overrides: Partial<HarnessProfile> & { extra?: string[] } = {}): HarnessProfile {
+  const { extra = [], ...rest } = overrides;
+  const promptVia = rest.promptVia ?? "stdin";
+  const outputVia = rest.outputVia ?? "stdout-last-json";
+  return {
+    argv: [...LAUNCH, "--state", state, ...(promptVia === "file" ? ["--prompt", "{promptFile}"] : []), ...(outputVia === "file" ? ["--out", "{outputFile}"] : []), ...extra],
+    promptVia, outputVia, envAllowlist: ["ALLOWED_ONE"], modelReport: "none",
+    capabilities: { structuredOutput: false, sandbox: "tree-verified-only" }, versionArgv: [...LAUNCH, "--version"],
+    ...rest,
+  };
+}
+
+function configuration(definition: HarnessProfile, model = MODEL): ReviewFnConfig {
+  return { ...DEFAULT_CONFIG, harness: { adapter: "cli", version: "1", executable: AGENT, profile: "fake", profileDefinition: definition }, inference: { provider: "fixture", model, auth: "api-key", credentialEnv: "REVIEW_AUTH" } };
+}
+
+function input(config: ReviewFnConfig, extra: Partial<SlotHarnessInput> = {}): SlotHarnessInput {
+  return {
+    runId: "run", workspace,
+    change: { repositoryId: "repo", host: "local", targetBranch: "main", baseCommit: "a".repeat(40), headCommit: "b".repeat(40), mergeBaseCommit: "a".repeat(40), diffDigest: "c".repeat(64), changedPaths: ["src/index.ts"], capturedAt: "2026-01-01T00:00:00.000Z" },
+    context: { version: 1, sources: [], selection: { candidates: [], selected: [], rule: "none" }, limits: { maxSources: 1, maxBytes: 1, maxDepth: 1 }, incompleteReasons: [], digest: "d".repeat(64) },
+    policy: DEFAULT_POLICY, configuration: config, testReceipts: [], prompt: "Review the change.", outputSchema: lensOutputSchema,
+    slot: { id: "slot", stage: 1, harness: { adapter: "cli", version: "1.2.3", executable: AGENT, profile: "fake" }, inference: config.inference, lens: "general", budget: { timeoutMs: 60_000, maxOutputBytes: 1_000_000 } },
+    ...extra,
+  };
+}
+
+async function calls(): Promise<Call[]> {
+  const text = await readFile(path.join(state, "calls.jsonl"), "utf8").catch(() => "");
+  return text.split("\n").filter(Boolean).map(line => JSON.parse(line) as Call);
+}
+
+const run = (definition: HarnessProfile, model?: string, extra?: Partial<SlotHarnessInput>) => new CliHarnessAdapter({ environment: environment() }).run(input(configuration(definition, model), extra));
+
+describe("CliHarnessAdapter prompt and output channels", () => {
+  it.each([["stdin", "stdout-last-json"], ["stdin", "file"], ["file", "stdout-last-json"], ["file", "file"]] as const)("completes with promptVia %s and outputVia %s", async (promptVia, outputVia) => {
+    const output = await run(profile({ promptVia, outputVia }));
+    expect(output.error).toBeUndefined();
+    expect(output.terminal).toBe("completed");
+    expect(output.inspectedPaths).toEqual(["src/index.ts"]);
+    expect(output.observed).toEqual({ harnessVersion: "1.2.3", limitations: ["model_unverified", "sandbox_tree_verified_only"] });
+    const [call] = await calls();
+    expect(call.prompt).toContain("Review the change.");
+    expect(call.prompt).toContain("Output contract");
+    expect(call.stdin).toBe(promptVia === "stdin" ? call.prompt : "");
+    expect(call.cwd).toBe(await realpath(workspace));
+    expect(await calls()).toHaveLength(1);
+  }, 20_000);
+
+  it("takes the last stdout line that parses as a JSON object, ignoring progress lines before and text after it", async () => {
+    expect(lastJsonObjectLine('Thinking...\n{"type":"progress"}\n{"answer":1}\n[1,2]\n{"broken": \ndone\n')).toEqual({ answer: 1 });
+    expect(lastJsonObjectLine("only text\n[1]\n")).toBeUndefined();
+    // The fixture prints a JSON progress object and a truncated object before its answer: the answer is what completes.
+    const output = await run(profile());
+    expect(output.terminal).toBe("completed");
+    expect(output.transcript).toContain('{"type":"progress","step":1}');
+  }, 20_000);
+
+  it("refuses an output file that is too large for the output budget as an overrun", async () => {
+    const output = await run(profile({ outputVia: "file" }), undefined, { policy: { ...DEFAULT_POLICY, limits: { ...DEFAULT_POLICY.limits, maxOutputBytes: 60 } } });
+    expect(output.terminal).toBe("timed_out");
+  }, 20_000);
+
+  it.each([["without", []], ["with", ["--stderr", "rate limit exceeded"]]] as const)("ends an oversized output file timed_out even after a fast nonzero exit, %s quota stderr", async (_name, stderr) => {
+    const output = await run(profile({ outputVia: "file", extra: ["--exit", "3", "--extra-json", JSON.stringify({ pad: "x".repeat(8_000) }), ...stderr] }), undefined, { policy: { ...DEFAULT_POLICY, limits: { ...DEFAULT_POLICY.limits, maxOutputBytes: 4_000 } } });
+    expect(output.terminal).toBe("timed_out");
+    expect(output.error).toMatch(/output file .*exceeded the remaining/);
+  }, 20_000);
+
+  it("kills a CLI that keeps appending to its output file as soon as the file outgrows the budget, as a timeout", async () => {
+    const started = Date.now();
+    const output = await run(profile({ outputVia: "file", extra: ["--flood", "1"] }), undefined, { policy: { ...DEFAULT_POLICY, limits: { ...DEFAULT_POLICY.limits, maxOutputBytes: 200_000, harnessTimeoutMs: 60_000 } } });
+    expect(output.terminal).toBe("timed_out");
+    expect(output.error).toContain("while it ran");
+    expect(Date.now() - started).toBeLessThan(20_000);
+  }, 30_000);
+});
+
+describe("CliHarnessAdapter process boundary", () => {
+  it("passes every placeholder value, even with spaces or ';', as exactly one argument", async () => {
+    const definition = profile({ extra: ["--schema", "{schemaFile}", "--workspace", "{workspace}", "--model", "{model}", "--literal", "a b; c"] });
+    expect((await run(definition)).terminal).toBe("completed");
+    const [call] = await calls();
+    expect(call.argv).toHaveLength(definition.argv.length - LAUNCH.length);
+    expect(call.argv.slice(2)).toEqual(["--schema", expect.stringMatching(/schema\.json$/), "--workspace", workspace, "--model", MODEL, "--literal", "a b; c"]);
+    expect(cliArguments(["{model}", "x{model}", "{workspace}", "{unknown}"], { promptFile: "p", schemaFile: "s", outputFile: "o", workspace: "/w s;x", model: "m; n" })).toEqual(["m; n", "x{model}", "/w s;x", "{unknown}"]);
+  }, 20_000);
+
+  it("gives the CLI only the allowlisted variables and the credential", async () => {
+    expect((await run(profile())).terminal).toBe("completed");
+    const [call] = await calls();
+    // macOS may add its own __CF_* variable to a process at launch; nothing else may appear.
+    expect(Object.keys(call.env).filter(name => !name.startsWith("__CF_")).sort()).toEqual(["ALLOWED_ONE", "REVIEW_AUTH"]);
+    expect(cliEnvironment({ A: "1", B: "2", C: undefined }, ["A", "C", "bad-name"], "B")).toEqual({ A: "1", B: "2" });
+  }, 20_000);
+
+  it("redacts the credential and secret-named allowlisted values from the error and transcript", async () => {
+    const definition = profile({ envAllowlist: ["ALLOWED_ONE", "FIXTURE_API_KEY"], extra: ["--stderr", `failed with ${CREDENTIAL} and ${ALLOWED_SECRET}`, "--exit", "3"] });
+    const output = await run(definition);
+    expect(output.terminal).toBe("failed");
+    const stored = JSON.stringify(output);
+    expect(stored).not.toContain(CREDENTIAL);
+    expect(stored).not.toContain(ALLOWED_SECRET);
+    expect(output.error).toContain("[REDACTED]");
+  }, 20_000);
+
+  it.skipIf(process.platform === "win32")("ends timed_out and kills the whole process group", async () => {
+    const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+    const output = await run(profile({ extra: ["--hang", "1"] }), undefined, { policy: { ...DEFAULT_POLICY, limits: { ...DEFAULT_POLICY.limits, harnessTimeoutMs: 1_500 } } });
+    expect(output.terminal).toBe("timed_out");
+    const pid = Number((await readFile(path.join(state, "descendant.pid"), "utf8")).trim());
+    expect(pid).toBeGreaterThan(0);
+    let dead = false;
+    for (const started = Date.now(); !dead && Date.now() - started < 5_000; await new Promise(resolve => setTimeout(resolve, 25))) dead = !alive(pid);
+    expect(dead).toBe(true);
+  }, 20_000);
+
+  it("refuses pull-request reviews before any process starts", async () => {
+    const base = input(configuration(profile()));
+    const output = await new CliHarnessAdapter({ environment: environment() }).run({ ...base, change: { ...base.change, pullRequest: 4 } });
+    expect(output.terminal).toBe("failed");
+    expect(await calls()).toEqual([]);
+  });
+});
+
+describe("CliHarnessAdapter model reporting", () => {
+  it("reports no model and records model_unverified with modelReport none", async () => {
+    const clean = await run(profile());
+    expect(clean.observed?.model).toBeUndefined();
+    expect(clean.observed?.limitations).toContain("model_unverified");
+  }, 30_000);
+
+  it.each([
+    ["json-path:model", ["--model-json"]],
+    ["stderr-regex:served model: (\\S+)", ["--model-stderr"]],
+  ] as const)("with %s, confirms the configured model and reports a mismatch as the served model", async (modelReport, flag) => {
+    const matching = await run(profile({ modelReport, extra: [...flag, "fake-model-1"] }), "fake-model-1");
+    expect(matching.terminal).toBe("completed");
+    expect(matching.observed).toMatchObject({ model: "fake-model-1" });
+    expect(matching.observed?.limitations).toEqual(["sandbox_tree_verified_only"]);
+    const mismatched = await run(profile({ modelReport, extra: [...flag, "other-model"] }), "fake-model-1");
+    expect(mismatched.terminal).toBe("failed");
+    expect(mismatched.error).toMatch(/^model_mismatch/);
+    expect(mismatched.observed).toMatchObject({ model: "other-model" });
+    const silent = await run(profile({ modelReport }), "fake-model-1");
+    expect(silent.terminal).toBe("failed");
+    expect(silent.error).toContain("not confirmed");
+  }, 30_000);
+
+  it.each([
+    ["a stderr report, then a hang", "stderr-regex:served model: (\\S+)", ["--model-stderr", "other-model", "--hang", "1"], "timed_out"],
+    ["a json report, then a nonzero exit", "json-path:model", ["--model-json", "other-model", "--exit", "3"], "failed"],
+    ["a json report in the output file, then a nonzero exit", "json-path:model", ["--model-json", "other-model", "--exit", "3"], "failed", "file"],
+  ] as const)("reports the served model of %s, so the panel voids it", async (_name, modelReport, extra, terminal, outputVia = "stdout-last-json") => {
+    const output = await run(profile({ modelReport, outputVia, extra: [...extra] }), "fake-model-1", { policy: { ...DEFAULT_POLICY, limits: { ...DEFAULT_POLICY.limits, harnessTimeoutMs: 1_500 } } });
+    expect(output.terminal).toBe(terminal);
+    expect(output.observed).toMatchObject({ model: "other-model" });
+  }, 30_000);
+
+  it.each([
+    ["json-path:model", "--model-json", "truncation", `${"a".repeat(256)}…`, `${"a".repeat(256)}b`],
+    ["stderr-regex:served model: (\\S+)", "--model-stderr", "truncation", `${"a".repeat(256)}…`, `${"a".repeat(256)}b`],
+    ["json-path:model", "--model-json", "redaction", "[REDACTED]", CREDENTIAL],
+    ["stderr-regex:served model: (\\S+)", "--model-stderr", "redaction", "[REDACTED]", CREDENTIAL],
+  ] as const)("with %s, flags a mismatch whose stored model reads as the configured one after %s", async (modelReport, flag, _collision, configured, reported) => {
+    const output = await run(profile({ modelReport, extra: [flag, reported] }), configured);
+    expect(output.error).toMatch(/^model_mismatch/);
+    expect(output.observed).toMatchObject({ model: configured, modelMismatch: true });
+    expect(JSON.stringify(output)).not.toContain(CREDENTIAL);
+    const matching = await run(profile({ modelReport, extra: [flag, "fake-model-1"] }), "fake-model-1");
+    expect(matching.terminal).toBe("completed");
+    expect(matching.observed?.modelMismatch).toBeUndefined();
+  }, 30_000);
+
+  it("ends a run whose stderr-regex reporter backtracks without end timed_out, without blocking the event loop", async () => {
+    let ticks = 0;
+    const ticker = setInterval(() => { ticks += 1; }, 50);
+    const started = Date.now();
+    const output = await run(profile({ modelReport: String.raw`stderr-regex:^(?:a+)+(b)$`, extra: ["--stderr", `${"a".repeat(40)}!`] }), "fake-model-1");
+    clearInterval(ticker);
+    expect(output.terminal).toBe("timed_out");
+    expect(output.error).toContain("model reporter did not finish");
+    expect(Date.now() - started).toBeLessThan(15_000);
+    expect(ticks).toBeGreaterThan(10);
+  }, 30_000);
+
+  it("stops a stalled reporter as soon as the run is canceled", async () => {
+    const controller = new AbortController();
+    const started = Date.now();
+    const stalled = matchReporter(`${"a".repeat(40)}!`, "^(?:a+)+(b)$", "fake-model-1", 60_000, controller.signal);
+    setTimeout(() => controller.abort(), 200);
+    expect(await stalled).toMatchObject({ terminal: "canceled" });
+    expect(Date.now() - started).toBeLessThan(5_000);
+  }, 20_000);
+
+  it("keeps only the first, first mismatching and last captures, so overlapping captures cannot grow quadratically", async () => {
+    expect(await matchReporter("served model: m1\nserved model: m2\nserved model: m1\n", String.raw`served model: (\S+)`, "m1", 60_000)).toEqual({ first: "m1", mismatch: "m2", last: "m1" });
+    const overlapping = await matchReporter("a".repeat(4_000), "(?=(a+))", "m1", 60_000);
+    expect(overlapping).toMatchObject({ first: "a".repeat(4_000), last: "a" });
+    expect(JSON.stringify(overlapping).length).toBeLessThan(3 * 4_000 + 200);
+  }, 20_000);
+
+  it("keeps the models a reporter matched before it stalled, so an earlier mismatch still voids the run", async () => {
+    const reporter = String.raw`served model: (\S+)|(?:a+)+$`;
+    const partial = await matchReporter(`served model: other-model\n${"a".repeat(40)}!`, reporter, "fake-model-1", 500);
+    expect(partial).toMatchObject({ first: "other-model", mismatch: "other-model", terminal: "timed_out" });
+    const output = await run(profile({ modelReport: `stderr-regex:${reporter}`, extra: ["--model-stderr", "other-model", "--stderr", `${"a".repeat(40)}!`] }), "fake-model-1");
+    expect(output.terminal).toBe("timed_out");
+    expect(output.observed).toMatchObject({ model: "other-model", modelMismatch: true });
+  }, 30_000);
+
+  it("returns the reporter's captures promptly after an abort at the panel's slot deadline", async () => {
+    const controller = new AbortController();
+    // The panel's deadline aborts with a TimeoutError just as the CLI finishes.
+    const runner: CommandRunner = async (command, args, options) => {
+      const result = await runProcessGroup(command, args, { ...options, signal: undefined });
+      if (args.includes("--state")) controller.abort(new DOMException("The operation timed out.", "TimeoutError"));
+      return result;
+    };
+    const started = Date.now();
+    const config = configuration(profile({ modelReport: String.raw`stderr-regex:served model: (\S+)|(?:a+)+$`, extra: ["--model-stderr", "other-model", "--stderr", `${"a".repeat(40)}!`] }), "fake-model-1");
+    const output = await new CliHarnessAdapter({ environment: environment(), runner }).run(input(config, { signal: controller.signal }));
+    expect(output.terminal).toBe("timed_out");
+    expect(output.observed).toMatchObject({ model: "other-model", modelMismatch: true });
+    expect(output.error).toContain("deadline");
+    expect(Date.now() - started).toBeLessThan(1_900);
+  }, 30_000);
+
+  it("bounds a stderr-regex reporter by the run's own deadline, with no caller signal, keeping its earlier mismatch", async () => {
+    // The CLI returns at once, so only the stalled reporter can use up the 1.2 s harness timeout.
+    const runner: CommandRunner = async (_command, args) => ({ code: 0, signal: null, stdout: args.includes("--version") ? "fake-cli version 1.2.3\n" : "", stderr: args.includes("--version") ? "" : `served model: other-model\n${"a".repeat(40)}!`, timedOut: false, canceled: false });
+    const policy = { ...DEFAULT_POLICY, limits: { ...DEFAULT_POLICY.limits, harnessTimeoutMs: 1_200 } };
+    const config = configuration(profile({ modelReport: String.raw`stderr-regex:served model: (\S+)|(?:a+)+$` }), "fake-model-1");
+    const started = Date.now();
+    const output = await new CliHarnessAdapter({ environment: environment(), runner }).run(input(config, { policy }));
+    expect(output.terminal).toBe("timed_out");
+    expect(output.error).toContain("model reporter did not finish");
+    expect(output.observed).toMatchObject({ model: "other-model", modelMismatch: true });
+    expect(Date.now() - started).toBeLessThan(1_200 + 500);
+  }, 30_000);
+
+  it("repairs an invalid answer that lacks its model report, and confirms the model only on the answer it accepts", async () => {
+    const repaired = await run(profile({ modelReport: "json-path:model", extra: ["--answer", "invalid-once", "--model-json", "fake-model-1"] }), "fake-model-1");
+    expect(repaired.terminal).toBe("completed");
+    expect(repaired.observed).toMatchObject({ model: "fake-model-1" });
+    expect(await calls()).toHaveLength(2);
+    await rm(path.join(state, "calls.jsonl"));
+    const malformed = await run(profile({ modelReport: "json-path:model", extra: ["--answer", "invalid", "--model-json", "fake-model-1"] }), "fake-model-1");
+    expect(malformed.terminal).toBe("malformed");
+    expect(await calls()).toHaveLength(2);
+  }, 30_000);
+
+  it("shows a schema-enforcing CLI a schema that declares its json-path model report, and validates the answer without it", async () => {
+    const enforcing = (extra: string[]) => profile({ modelReport: "json-path:model", capabilities: { structuredOutput: true, sandbox: "tree-verified-only" }, extra: ["--enforce-schema", "{schemaFile}", ...extra] });
+    const matching = await run(enforcing(["--model-json", "fake-model-1"]), "fake-model-1");
+    expect(matching.error).toBeUndefined();
+    expect(matching.terminal).toBe("completed");
+    expect(matching.observed).toMatchObject({ model: "fake-model-1" });
+    const [call] = await calls();
+    expect(call.prompt).toContain('"model":{"type":"string"}');
+    const mismatched = await run(enforcing(["--model-json", "other-model"]), "fake-model-1");
+    expect(mismatched.error).toMatch(/^model_mismatch/);
+    expect(mismatched.observed).toMatchObject({ model: "other-model" });
+    expect(lensOutputSchema.properties).not.toHaveProperty("model");
+  }, 30_000);
+
+  it("declares a nested json-path report field without changing a schema that already declares it", () => {
+    const schema = { type: "object", additionalProperties: false, properties: { findings: { type: "array" } }, required: ["findings"] };
+    expect(withModelReportField(schema, "json-path:meta.models.0")).toEqual({ ...schema, properties: { ...schema.properties, meta: { type: "object", properties: { models: { type: "array", minItems: 1, items: { type: "string" } } }, required: ["models"] } }, required: ["findings", "meta"] });
+    expect(withModelReportField(schema, "json-path:findings")).toBe(schema);
+    expect(withModelReportField(schema, "none")).toBe(schema);
+    expect(schema.properties).not.toHaveProperty("meta");
+  });
+
+  it("declares a reporter leaf inside a closed parent object or array items the schema already declares", () => {
+    const schema = { type: "object", properties: { meta: { type: "object", additionalProperties: false, properties: { source: { type: "string" } } }, runs: { type: "array", items: { type: "object", additionalProperties: false, properties: { id: { type: "string" } }, required: ["id"] } } }, required: [] };
+    const original = structuredClone(schema);
+    expect(withModelReportField(schema, "json-path:meta.model")).toEqual({ ...schema, properties: { ...schema.properties, meta: { ...schema.properties.meta, properties: { source: { type: "string" } , model: { type: "string" } }, required: ["model"] } }, required: ["meta"] });
+    expect(withModelReportField(schema, "json-path:runs.0.model")).toEqual({ ...schema, properties: { ...schema.properties, runs: { type: "array", items: { ...schema.properties.runs.items, properties: { id: { type: "string" }, model: { type: "string" } }, required: ["id", "model"] } } }, required: ["runs"] });
+    expect(withModelReportField(schema, "json-path:meta.source")).toBe(schema);
+    expect(schema).toEqual(original);
+  });
+
+  it("removes only the undeclared reporter leaf of a closed nested object, keeping its declared siblings", async () => {
+    const outputSchema = { ...lensOutputSchema, properties: { ...lensOutputSchema.properties, meta: { type: "object", additionalProperties: false, properties: { source: { type: "string" } } } } };
+    const output = await run(profile({ modelReport: "json-path:meta.model", extra: ["--extra-json", JSON.stringify({ meta: { source: "fixture", model: "fake-model-1" } })] }), "fake-model-1", { outputSchema });
+    expect(output.error).toBeUndefined();
+    expect(output.terminal).toBe("completed");
+    expect(output.observed).toMatchObject({ model: "fake-model-1" });
+    expect(await calls()).toHaveLength(1);
+  }, 30_000);
+
+  it("removes an array-item reporter from every item, and reads a numeric key of an object as a property", async () => {
+    const item = { type: "object", additionalProperties: false, properties: { id: { type: "string" } }, required: ["id"] };
+    const listed = { ...lensOutputSchema, properties: { ...lensOutputSchema.properties, runs: { type: "array", items: item } } };
+    const runs = [{ id: "a", model: "fake-model-1" }, { id: "b", model: "fake-model-1" }];
+    const arrayReport = await run(profile({ modelReport: "json-path:runs.0.model", extra: ["--extra-json", JSON.stringify({ runs })] }), "fake-model-1", { outputSchema: listed });
+    expect(arrayReport.error).toBeUndefined();
+    expect(arrayReport.terminal).toBe("completed");
+    expect(withModelReportField(lensOutputSchema, "json-path:0").properties).toHaveProperty("0", { type: "string" });
+    await rm(path.join(state, "calls.jsonl"));
+    const keyed = await run(profile({ modelReport: "json-path:0", extra: ["--extra-json", JSON.stringify({ 0: "fake-model-1" })] }), "fake-model-1");
+    expect(keyed.error).toBeUndefined();
+    expect(keyed.observed).toMatchObject({ model: "fake-model-1" });
+    expect(await calls()).toHaveLength(1);
+  }, 30_000);
+
+  it("declares and removes a reporter inside a closed object without properties, and keeps one a $ref declares", async () => {
+    const closed = { ...lensOutputSchema, properties: { ...lensOutputSchema.properties, meta: { type: "object", additionalProperties: false } } };
+    expect(withModelReportField(closed, "json-path:meta.model").properties).toHaveProperty("meta", { type: "object", additionalProperties: false, properties: { model: { type: "string" } }, required: ["model"] });
+    const answer = ["--extra-json", JSON.stringify({ meta: { model: "fake-model-1" } })];
+    const closedRun = await run(profile({ modelReport: "json-path:meta.model", extra: answer }), "fake-model-1", { outputSchema: closed });
+    expect(closedRun.error).toBeUndefined();
+    expect(closedRun.terminal).toBe("completed");
+    const referenced = { ...lensOutputSchema, $defs: { ...(lensOutputSchema as { $defs?: Record<string, unknown> }).$defs, meta: { type: "object", additionalProperties: false, properties: { model: { type: "string" } }, required: ["model"] } }, properties: { ...lensOutputSchema.properties, meta: { $ref: "#/$defs/meta" } } };
+    expect(withModelReportField(referenced, "json-path:meta.model")).toBe(referenced);
+    const referencedRun = await run(profile({ modelReport: "json-path:meta.model", extra: answer }), "fake-model-1", { outputSchema: referenced });
+    expect(referencedRun.error).toBeUndefined();
+    expect(referencedRun.terminal).toBe("completed");
+  }, 30_000);
+
+  it("declares the report on a closed schema whose allOf entries are trivial, and in a closing allOf branch", async () => {
+    const wrapped = { ...lensOutputSchema, allOf: [{}, true] };
+    expect(withModelReportField(wrapped, "json-path:model").properties).toHaveProperty("model", { type: "string" });
+    const enforcing = (model: string) => profile({ modelReport: "json-path:model", capabilities: { structuredOutput: true, sandbox: "tree-verified-only" }, extra: ["--enforce-schema", "{schemaFile}", "--model-json", model] });
+    const matching = await run(enforcing("fake-model-1"), "fake-model-1", { outputSchema: wrapped });
+    expect(matching.error).toBeUndefined();
+    expect(matching.terminal).toBe("completed");
+    expect(matching.observed).toMatchObject({ model: "fake-model-1" });
+    expect(await calls()).toHaveLength(1);
+    expect((await calls())[0].prompt).toContain('"model":{"type":"string"}');
+    expect((await run(enforcing("other-model"), "fake-model-1", { outputSchema: wrapped })).error).toMatch(/^model_mismatch/);
+    const branch = { type: "object", additionalProperties: false, properties: { source: { type: "string" } } };
+    const composed = { type: "object", properties: { meta: { type: "object", allOf: [branch] } } };
+    const declaredBranch = { ...branch, properties: { source: { type: "string" }, model: { type: "string" } }, required: ["model"] };
+    expect(withModelReportField(composed, "json-path:meta.model")).toEqual({ ...composed, properties: { meta: { type: "object", allOf: [declaredBranch], properties: { model: { type: "string" } }, required: ["model"] } }, required: ["meta"] });
+  }, 30_000);
+
+  it.each([
+    ["schema-valued additionalProperties", { type: "object", additionalProperties: { type: "string" }, minProperties: 1 }],
+    ["patternProperties", { type: "object", patternProperties: { "^model$": { type: "string" } }, additionalProperties: false, minProperties: 1 }],
+    ["additionalProperties: true", { type: "object", additionalProperties: true, minProperties: 1 }],
+  ])("keeps a nested report field the schema allows through %s, completing in one call", async (_name, meta) => {
+    const outputSchema = { ...lensOutputSchema, properties: { ...lensOutputSchema.properties, meta }, required: [...lensOutputSchema.required, "meta"] };
+    expect(withModelReportField(outputSchema, "json-path:meta.model").properties).toHaveProperty("meta", expect.objectContaining({ properties: expect.objectContaining({ model: expect.objectContaining({ type: "string" }) }), required: ["model"] }));
+    const answer = (model: string) => profile({ modelReport: "json-path:meta.model", extra: ["--extra-json", JSON.stringify({ meta: { model } })] });
+    const output = await run(answer("fake-model-1"), "fake-model-1", { outputSchema });
+    expect(output.error).toBeUndefined();
+    expect(output.terminal).toBe("completed");
+    expect(output.observed).toMatchObject({ model: "fake-model-1" });
+    expect(await calls()).toHaveLength(1);
+    const mismatched = await run(answer("other-model"), "fake-model-1", { outputSchema });
+    expect(mismatched.error).toMatch(/^model_mismatch/);
+    expect(mismatched.observed).toMatchObject({ model: "other-model", modelMismatch: true });
+  }, 30_000);
+
+  it.each([
+    ["open to any property", { ...lensOutputSchema, additionalProperties: true }],
+    ["open to string properties", { ...lensOutputSchema, additionalProperties: { type: "string" } }],
+    ["without additionalProperties", (({ additionalProperties: _open, ...rest }) => rest)(lensOutputSchema)],
+  ])("declares the report to a CLI that emits only declared properties when the schema is %s", async (_name, outputSchema) => {
+    const enforcing = (model: string) => profile({ modelReport: "json-path:model", capabilities: { structuredOutput: true, sandbox: "tree-verified-only" }, extra: ["--enforce-schema", "{schemaFile}", "--model-json", model] });
+    expect(withModelReportField(outputSchema, "json-path:model")).toMatchObject({ properties: { model: { type: "string" } }, required: expect.arrayContaining(["model"]) });
+    const matching = await run(enforcing("fake-model-1"), "fake-model-1", { outputSchema });
+    expect(matching.error).toBeUndefined();
+    expect(matching.terminal).toBe("completed");
+    expect(await calls()).toHaveLength(1);
+    expect((await run(enforcing("other-model"), "fake-model-1", { outputSchema })).error).toMatch(/^model_mismatch/);
+  }, 30_000);
+
+  it.each([
+    ["an uninspected item", "uninspected", { scope: "review", reason: "fixture" }, { type: "object", required: ["scope", "reason"], properties: { scope: { type: "string" }, reason: { type: "string" } } }],
+    ["an evidence item", "evidence", { id: "e1", kind: "diff", description: "fixture" }, { type: "object", required: ["id", "kind", "description"], properties: { id: { type: "string" }, kind: { type: "string" }, description: { type: "string" } } }],
+  ] as const)("keeps a report the caller's schema allows inside %s out of the payload", async (_name, section, item, items) => {
+    const outputSchema = { ...lensOutputSchema, properties: { ...lensOutputSchema.properties, [section]: { type: "array", items } } };
+    const answer = (model: string) => profile({ modelReport: `json-path:${section}.0.model`, extra: ["--extra-json", JSON.stringify({ [section]: [{ ...item, model }] })] });
+    const output = await run(answer("fake-model-1"), "fake-model-1", { outputSchema });
+    expect(output.error).toBeUndefined();
+    expect(output.terminal).toBe("completed");
+    expect(output.observed).toMatchObject({ model: "fake-model-1" });
+    expect(output[section]).toEqual([item]);
+    expect(await calls()).toHaveLength(1);
+    const mismatched = await run(answer("other-model"), "fake-model-1", { outputSchema });
+    expect(mismatched.error).toMatch(/^model_mismatch/);
+    expect(mismatched.observed).toMatchObject({ model: "other-model", modelMismatch: true });
+  }, 30_000);
+
+  it.each([
+    ["owned by a closed pattern schema", "meta", "meta.run.model", { type: "object", patternProperties: { "^run$": { type: "object", properties: { source: { type: "string" } }, additionalProperties: false } }, additionalProperties: false }, (model: string) => ({ run: { source: "s", model } })],
+    ["in the items of an allOf-wrapped array", "runs", "runs.0.model", { allOf: [{ type: "array", items: { type: "object", properties: { id: { type: "string" } }, additionalProperties: false } }] }, (model: string) => [{ id: "r1", model }]],
+    ["in the items of an array's allOf branch", "runs", "runs.0.model", { type: "array", allOf: [{ items: { type: "object", properties: { id: { type: "string" } }, additionalProperties: false } }] }, (model: string) => [{ id: "r1", model }]],
+    ["in both an array's own items and its allOf branch's", "runs", "runs.0.model", { type: "array", items: { type: "object", properties: { id: { type: "string" } }, additionalProperties: false }, allOf: [{ items: { type: "object", properties: { id: { type: "string" } }, additionalProperties: false } }] }, (model: string) => [{ id: "r1", model }]],
+  ] as const)("shows a contract that accepts a report %s, and removes it where the slot's schema forbids it", async (_name, field, dotted, schema, value) => {
+    const outputSchema = { ...lensOutputSchema, properties: { ...lensOutputSchema.properties, [field]: schema } };
+    const valid = { findings: [], evidence: [], inspectedPaths: ["src/index.ts"], uninspected: [] };
+    const shown = withModelReportField(outputSchema, `json-path:${dotted}`);
+    // Strict Ajv refuses a property that a pattern also matches, so a pattern-owned report is checked by its shape.
+    if (field === "meta") expect(shown.properties).toHaveProperty("meta", expect.objectContaining({ properties: { run: expect.objectContaining({ properties: expect.objectContaining({ model: { type: "string" } }), required: ["model"] }) }, required: ["run"], patternProperties: { "^run$": expect.objectContaining({ properties: expect.objectContaining({ model: { type: "string" } }) }) } }));
+    else expect(structuredOutputValidator(shown)({ ...valid, [field]: value("m") })).toEqual([]);
+    const answer = (model: string) => profile({ modelReport: `json-path:${dotted}`, extra: ["--extra-json", JSON.stringify({ [field]: value(model) })] });
+    const output = await run(answer("fake-model-1"), "fake-model-1", { outputSchema });
+    expect(output.error).toBeUndefined();
+    expect(output.terminal).toBe("completed");
+    expect(await calls()).toHaveLength(1);
+    expect((await run(answer("other-model"), "fake-model-1", { outputSchema })).error).toMatch(/^model_mismatch/);
+  }, 30_000);
+
+  it("declares and requires a top-level report a pattern owns to a CLI that emits only declared properties", async () => {
+    const outputSchema = { ...lensOutputSchema, patternProperties: { "^model$": { type: "string" } } };
+    expect(withModelReportField(outputSchema, "json-path:model")).toMatchObject({ properties: { model: { type: "string" } }, required: expect.arrayContaining(["model"]) });
+    const enforcing = (model: string) => profile({ modelReport: "json-path:model", capabilities: { structuredOutput: true, sandbox: "tree-verified-only" }, extra: ["--enforce-schema", "{schemaFile}", "--model-json", model] });
+    const matching = await run(enforcing("fake-model-1"), "fake-model-1", { outputSchema });
+    expect(matching.error).toBeUndefined();
+    expect(matching.terminal).toBe("completed");
+    expect(await calls()).toHaveLength(1);
+    expect((await run(enforcing("other-model"), "fake-model-1", { outputSchema })).error).toMatch(/^model_mismatch/);
+  }, 30_000);
+
+  it("removes the report of a schema-invalid answer too deep to copy without walking it, then repairs and ends malformed", async () => {
+    const deep = JSON.parse(`${"[".repeat(3_000)}${"]".repeat(3_000)}`) as unknown;
+    const output = await run(profile({ modelReport: "json-path:model", extra: ["--model-json", "fake-model-1", "--extra-json", JSON.stringify({ findings: deep })] }), "fake-model-1");
+    expect(output.terminal).toBe("malformed");
+    expect(await calls()).toHaveLength(2);
+  }, 30_000);
+
+  it("shows a node whose ownership is not settled unchanged, and removes nothing from it", async () => {
+    const meta = { anyOf: [{ type: "object", additionalProperties: false, properties: { model: { type: "string" } }, required: ["model"] }] };
+    const outputSchema = { ...lensOutputSchema, properties: { ...lensOutputSchema.properties, meta } };
+    expect(withModelReportField(outputSchema, "json-path:meta.model")).toBe(outputSchema);
+    expect(withModelReportField({ ...outputSchema, unevaluatedProperties: false, allOf: [{ properties: { x: {} } }] }, "json-path:model")).toHaveProperty("properties", outputSchema.properties);
+    const composedArray = { ...lensOutputSchema, properties: { ...lensOutputSchema.properties, runs: { type: "array", anyOf: [{ minItems: 1 }], items: { type: "object", properties: { id: { type: "string" } } } } } };
+    expect(withModelReportField(composedArray, "json-path:runs.0.model")).toBe(composedArray);
+    const output = await run(profile({ modelReport: "json-path:meta.model", extra: ["--extra-json", JSON.stringify({ meta: { model: "fake-model-1" } })] }), "fake-model-1", { outputSchema });
+    expect(output.error).toBeUndefined();
+    expect(output.terminal).toBe("completed");
+    expect(await calls()).toHaveLength(1);
+  }, 30_000);
+
+  it("reads dotted json paths of own properties only", () => {
+    expect(valueAtPath({ meta: { models: ["m"] } }, "meta.models.0")).toBe("m");
+    expect(valueAtPath({}, "constructor")).toBeUndefined();
+  });
+});
+
+describe("CliHarnessAdapter output validation", () => {
+  it.each(["stdout-last-json", "file"] as const)("repairs one malformed %s answer, then ends malformed after a second", async outputVia => {
+    const repaired = await run(profile({ outputVia, extra: ["--answer", "invalid-once"] }));
+    expect(repaired.terminal).toBe("completed");
+    const attempts = await calls();
+    expect(attempts).toHaveLength(2);
+    expect(attempts[1].prompt).toContain("Repair: your previous answer was rejected");
+    expect(attempts[1].prompt).toContain('{"findings":"none"}');
+    await rm(path.join(state, "calls.jsonl"));
+    const malformed = await run(profile({ outputVia, extra: ["--answer", "invalid"] }));
+    expect(malformed.terminal).toBe("malformed");
+    expect(malformed.error).toContain("after one repair attempt");
+    expect(await calls()).toHaveLength(2);
+  }, 30_000);
+
+  it("gives a schema-invalid answer too deep to normalize its repair attempt, then ends malformed", async () => {
+    const deep = JSON.parse(`${"[".repeat(4_000)}${"]".repeat(4_000)}`) as unknown;
+    const output = await run(profile({ extra: ["--extra-json", JSON.stringify({ findings: deep })] }));
+    expect(output.terminal).toBe("malformed");
+    expect(await calls()).toHaveLength(2);
+  }, 30_000);
+
+  it("treats a null requirements or assessments section the caller schema allows as empty", async () => {
+    const nullable = { ...lensOutputSchema, properties: { ...lensOutputSchema.properties, requirements: { type: "null" }, assessments: { type: "null" } } };
+    const output = await run(profile({ extra: ["--extra-json", JSON.stringify({ requirements: null, assessments: null })] }), undefined, { outputSchema: nullable });
+    expect(output.error).toBeUndefined();
+    expect(output).toMatchObject({ terminal: "completed", requirements: [], assessments: [] });
+  }, 30_000);
+
+  it("treats a missing output file as a malformed answer", async () => {
+    const definition = profile({ outputVia: "file" });
+    // The CLI is told the output file, but answers on stdout instead.
+    const output = await run({ ...definition, argv: definition.argv.map(item => item === "--out" ? "--unused" : item) });
+    expect(output.terminal).toBe("malformed");
+    expect(output.error).toContain("wrote no output file");
+  }, 30_000);
+});
+
+describe("CliHarnessAdapter preflight and configuration", () => {
+  it("reads the pinned version with versionArgv and resolves the configured model", async () => {
+    const result = await new CliHarnessAdapter({ environment: environment() }).preflight(configuration(profile()));
+    expect(result).toMatchObject({ ok: true, resolved: { harnessVersion: "1.2.3", model: MODEL } });
+    expect(result.diagnostics.map(item => item.code)).toEqual(["REVIEWFN_HARNESS_SANDBOX_UNENFORCED", "REVIEWFN_HARNESS_MODEL_UNVERIFIED"]);
+    expect(parseCliVersion("cursor-agent 2025.08.25-896bbe1\n")).toBe("2025.08.25-896bbe1");
+    expect(parseCliVersion("v0.9.0")).toBe("0.9.0");
+  }, 20_000);
+
+  it("parses version tokens with a linear scan, as the documented token rule reads them", () => {
+    expect(parseCliVersion("tool 1.2.3+build.7 (x)")).toBe("1.2.3+build.7");
+    expect(parseCliVersion("1.2.3-rc.1-")).toBe("1.2.3-rc.1");
+    expect(parseCliVersion("1.2.3-beta.")).toBe("1.2.3");
+    expect(parseCliVersion("1.2.3.")).toBeUndefined();
+    expect(parseCliVersion("a1.2.3 b.1.2 2.0")).toBe("2.0");
+    expect(parseCliVersion("version 7", "cli v4.5\n")).toBe("4.5");
+    expect(parseCliVersion("1.2_3 x")).toBeUndefined();
+    const started = Date.now();
+    // A long suffix is kept whole, never cut to a shorter version, and adversarial input still scans in linear time.
+    expect(parseCliVersion(`1.2.3-${"a".repeat(129)}`)).toBe(`1.2.3-${"a".repeat(129)}`);
+    expect(parseCliVersion(`${"1.1-".repeat(20_000)}_`, `${"9.".repeat(30_000)}_`)).toBe("1.1-".repeat(20_000).slice(0, -1));
+    expect(Date.now() - started).toBeLessThan(1_000);
+  });
+
+  it.each([["hangs", { timedOut: true, code: null, signal: "SIGKILL" as const }], ["overruns its output bound", { timedOut: true, code: null, signal: "SIGTERM" as const }]])("ends a cold-cache run timed_out when the version command %s", async (_name, outcome) => {
+    const runner: CommandRunner = async () => ({ stdout: "", stderr: "", canceled: false, ...outcome });
+    const config = configuration(profile());
+    const output = await new CliHarnessAdapter({ environment: environment(), runner }).run(input(config));
+    expect(output.terminal).toBe("timed_out");
+    expect(output.error).toMatch(/version command exceeded/);
+    const preflight = await new CliHarnessAdapter({ environment: environment(), runner }).preflight(config);
+    expect(preflight.ok).toBe(false);
+  });
+
+  it.skipIf(process.platform === "win32")("refuses an absolute executable in a Git repository or under a world-writable directory before reading its version", async () => {
+    const repository = path.join(directory, "target");
+    await mkdir(path.join(repository, ".git"), { recursive: true });
+    await mkdir(path.join(repository, "tools"));
+    const open = path.join(directory, "open");
+    await mkdir(open);
+    await chmod(open, 0o777);
+    const spawned: string[] = [];
+    const runner: CommandRunner = async (command, args, options) => { spawned.push(command); return runProcessGroup(command, args, options); };
+    for (const executable of [path.join(repository, "tools", "agent"), path.join(open, "agent")]) {
+      await writeFile(executable, "#!/bin/sh\necho 1.2.3\n");
+      await chmod(executable, 0o755);
+      const config = configuration(profile());
+      const placed = { ...config, harness: { ...config.harness, executable } };
+      const preflight = await new CliHarnessAdapter({ environment: environment(), runner }).preflight(placed);
+      expect(preflight.diagnostics).toEqual(expect.arrayContaining([expect.objectContaining({ code: "REVIEWFN_CLI_UNAVAILABLE", message: expect.stringMatching(/world-writable or Git-repository ancestor/) })]));
+      const output = await new CliHarnessAdapter({ environment: environment(), runner }).run(input(placed));
+      expect(output.terminal).toBe("failed");
+      expect(output.error).toMatch(/world-writable or Git-repository ancestor/);
+    }
+    expect(spawned).toEqual([]);
+  }, 30_000);
+
+  it.skipIf(process.platform === "win32")("refuses an absolute executable that resolves into the review workspace, directly or through a link", async () => {
+    const inside = path.join(workspace, "agent");
+    await writeFile(inside, "#!/bin/sh\necho 1.2.3\n");
+    await chmod(inside, 0o755);
+    const link = path.join(directory, "agent-link");
+    await symlink(inside, link);
+    for (const executable of [inside, link]) {
+      const config = configuration(profile());
+      const output = await new CliHarnessAdapter({ environment: environment() }).run(input({ ...config, harness: { ...config.harness, executable } }));
+      expect(output.terminal).toBe("failed");
+      expect(output.error).toMatch(/inside the repository under review/);
+    }
+    expect(await calls()).toEqual([]);
+    // An installed executable outside the workspace, even through a link, still runs.
+    const installed = path.join(directory, "agent-installed");
+    await symlink(AGENT, installed);
+    const config = configuration(profile());
+    expect((await new CliHarnessAdapter({ environment: environment() }).run(input({ ...config, harness: { ...config.harness, executable: installed } }))).terminal).toBe("completed");
+  }, 30_000);
+
+  it.each([["the credential", CREDENTIAL], ["a secret-named allowlisted value", ALLOWED_SECRET]])("redacts %s from a failed version read before cutting its stderr", async (_name, secret) => {
+    // The secret crosses the 500-character cut, so truncating before redaction would leave its prefix unmatched.
+    const runner: CommandRunner = async () => ({ code: 2, signal: null, stdout: "", stderr: `${"x".repeat(490)}${secret}`, timedOut: false, canceled: false });
+    const config = configuration(profile({ envAllowlist: ["ALLOWED_ONE", "FIXTURE_API_KEY"] }));
+    const preflight = await new CliHarnessAdapter({ environment: environment(), runner }).preflight(config);
+    const diagnostic = preflight.diagnostics.find(item => item.code === "REVIEWFN_HARNESS_VERSION");
+    expect(diagnostic?.message).toContain("exited with 2");
+    const output = await new CliHarnessAdapter({ environment: environment(), runner }).run(input(config));
+    expect(output.terminal).toBe("failed");
+    expect(output.error).toContain("exited with 2");
+    for (const text of [diagnostic!.message, output.error!, JSON.stringify(output)]) { expect(text).not.toContain(`x${secret.slice(0, 6)}`); expect(text).not.toContain(secret.slice(0, 10)); }
+  });
+
+  it.each([
+    ["a relative executable", (config: ReviewFnConfig) => ({ ...config, harness: { ...config.harness, executable: "bin/agent" } }), "REVIEWFN_CLI_UNAVAILABLE"],
+    ["no profile", (config: ReviewFnConfig) => ({ ...config, harness: { adapter: "cli", version: "1", executable: AGENT } }), "REVIEWFN_HARNESS_PROFILE_REQUIRED"],
+    ["an invalid profile", (config: ReviewFnConfig) => ({ ...config, harness: { ...config.harness, profileDefinition: { ...config.harness.profileDefinition!, argv: ["--model={model}"] } } }), "REVIEWFN_HARNESS_PROFILE_INVALID"],
+    ["an option-like model", (config: ReviewFnConfig) => ({ ...config, inference: { ...config.inference, model: "--yolo" } }), "REVIEWFN_MODEL_INVALID"],
+    ["{model} with the configured model", (config: ReviewFnConfig) => ({ ...config, harness: { ...config.harness, profileDefinition: { ...config.harness.profileDefinition!, argv: ["{model}"] } }, inference: { ...config.inference, model: "configured" } }), "REVIEWFN_MODEL_REQUIRED"],
+    ["another contract version", (config: ReviewFnConfig) => ({ ...config, harness: { ...config.harness, version: "2" } }), "REVIEWFN_HARNESS_VERSION"],
+  ] as const)("refuses %s", async (_name, change, code) => {
+    const config = change(configuration(profile()));
+    const harness = new CliHarnessAdapter({ environment: environment() });
+    const result = await harness.preflight(config);
+    expect(result.ok).toBe(false);
+    expect(result.diagnostics.map(item => item.code)).toContain(code);
+    expect((await harness.run(input(config))).terminal).toBe("failed");
+    expect(await calls()).toEqual([]);
+  }, 20_000);
+
+  it("keeps its contract version after preflight, for the CLI's harness contract versions", async () => {
+    const harness = new CliHarnessAdapter({ environment: environment() });
+    await harness.preflight(configuration(profile()));
+    expect(harness.capabilities).toMatchObject({ id: "cli", version: "1", toolControls: false });
+  }, 20_000);
+});
