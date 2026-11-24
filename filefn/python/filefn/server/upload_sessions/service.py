@@ -1063,6 +1063,7 @@ class UploadSessionService:
                         try:
                             await self.storage.delete_object(key=session.storageKey, target=storage_target)
                         except Exception:
+                            # Best effort: the duplicate's own object is no longer referenced.
                             pass
 
             existing_file = await self.db.find_one(
