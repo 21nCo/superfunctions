@@ -10,7 +10,9 @@
 //      process.cwd() or a const bound in the same file to one of these forms), or on none, which is relative to the
 //      package directory, where Turbo runs the task;
 //   3. `alias` values (and `replacement` entries) in vitest.config.*, vite.config.* and suffixed variants such as
-//      vitest.workerd.config.ts, as string literals or form 2.
+//      vitest.workerd.config.ts, as string literals or form 2;
+//   4. relative paths (`./…`, `../…`) in the package.json script that runs a cacheable task and in its npm `pre` and
+//      `post` hooks, as module reads of that task only, so a root script a hook runs has its own reads checked.
 // It reads JavaScript and TypeScript files, the scripts and markup expressions of Svelte, Vue and Astro components, and
 // the import and export blocks and `{…}` expressions of MDX files (see tokensOf).
 // Paths built from other values are computed reads, deferred to SFNS-306, and so is a name bound to a path that is
@@ -155,7 +157,8 @@ export function tokenize(source, { jsx = false, at, line: firstLine = 1 } = {}) 
   const skipBlockComment = () => {
     const end = source.indexOf("*/", i + 2);
     if (end === -1) fail("an unterminated block comment", line);
-    while (i < end + 2) step();
+    for (let k = i; k < end; k += 1) line += source[k] === "\n" ? 1 : 0;
+    i = end + 2;
   };
   // Whitespace and comments between the parts of a JSX tag.
   const skipJsxSpace = () => {
@@ -820,8 +823,12 @@ function applyPathFunction(name, values, cwd) {
 
 // ---------------------------------------------------------------------------------------------------------------------
 
+// Git from a fixed system directory, never a PATH lookup.
+const GIT = ["/usr/bin/git", "/usr/local/bin/git", "/opt/homebrew/bin/git"].find((candidate) => existsSync(candidate));
+
 function git(root, args) {
-  return execFileSync("git", args, { cwd: root, encoding: "utf8", maxBuffer: 512 * 1024 * 1024 });
+  if (!GIT) throw new Error("git is not installed in /usr/bin, /usr/local/bin or /opt/homebrew/bin");
+  return execFileSync(GIT, args, { cwd: root, encoding: "utf8", maxBuffer: 512 * 1024 * 1024 });
 }
 
 function runTurbo(root, turboBin, args) {
@@ -936,17 +943,38 @@ export function findOutsideReads(root, packages, packageDirs = packages.map((pkg
     return edges.get(file);
   };
   const reads = [];
+  const addRead = (pkg, file, read, resolved, tasks) => {
+    // A target inside the package is the package's own. A path of a directory that holds the package (an ancestor or
+    // the repository root) is a base for other paths, whose literal reads are found as their own; an import or alias
+    // of one reads its files.
+    if (within(resolved.target, pkg.path) || (!resolved.module && within(pkg.path, resolved.target))) return;
+    const files = filesOf(resolved).filter((entry) => !within(entry, pkg.path));
+    if (files.length === 0) return;
+    reads.push({ package: pkg.name, file, line: read.line, form: read.form, target: resolved.target, module: resolved.module, files, tasks });
+  };
   for (const pkg of packages) {
     for (const file of trackedDirs.get(pkg.path) ?? []) {
       if (owningPackage(file, packageDirs) !== pkg.path) continue;
-      for (const { read, resolved } of readsOf(file)) {
-        // A target inside the package is the package's own. A path of a directory that holds the package (an ancestor or
-        // the repository root) is a base for other paths, whose literal reads are found as their own; an import or
-        // alias of one reads its files.
-        if (within(resolved.target, pkg.path) || (!resolved.module && within(pkg.path, resolved.target))) continue;
-        const files = filesOf(resolved).filter((entry) => !within(entry, pkg.path));
-        if (files.length === 0) continue;
-        reads.push({ package: pkg.name, file, line: read.line, form: read.form, target: resolved.target, module: resolved.module, files, tasks: CACHEABLE_TASKS });
+      for (const { read, resolved } of readsOf(file)) addRead(pkg, file, read, resolved, CACHEABLE_TASKS);
+    }
+    // A relative path in the package.json script that runs a task, or in its npm `pre` or `post` hook (for example
+    // "prebuild": "node ../../scripts/generate.mjs"), names a file that task runs: it is a module read of that task, so
+    // what the file reads is checked too.
+    const manifest = `${pkg.path}/package.json`;
+    if (!tracked.has(manifest)) continue;
+    const text = readFileSync(path.join(root, manifest), "utf8");
+    const scripts = JSON.parse(text).scripts ?? {};
+    for (const task of CACHEABLE_TASKS) {
+      for (const name of [`pre${task}`, task, `post${task}`]) {
+        if (typeof scripts[name] !== "string") continue;
+        const at = text.indexOf(`${JSON.stringify(name)}:`, Math.max(0, text.indexOf('"scripts"')));
+        const read = { line: at === -1 ? 1 : text.slice(0, at).split("\n").length, form: "script" };
+        for (const word of scripts[name].split(/[\s;&|()<>]+/)) {
+          const specifier = word.replace(/^["']+|["']+$/g, "");
+          if (!/^\.\.?\//.test(specifier)) continue;
+          const resolved = resolveTarget({ ...read, specifier }, manifest, tracked, trackedDirs);
+          if (resolved && resolved.files.length > 0) addRead(pkg, manifest, read, resolved, [task]);
+        }
       }
     }
   }
@@ -1058,7 +1086,8 @@ function main() {
       for (const read of result.reads) console.log(`${read.package}: ${read.file}:${read.line} (${read.form}) -> ${read.target}`);
     }
     for (const { taskId, read, missing } of result.undeclared) {
-      const more = missing.length > 1 ? ` (${missing.length} files, e.g. ${missing[0]})` : "";
+      let more = missing.length > 1 ? ` (${missing.length} files, e.g. ${missing[0]})` : "";
+      if (missing.length === 1 && missing[0] !== read.target) more = ` (${missing[0]})`;
       console.log(`undeclared: ${taskId} reads ${read.target}${more} at ${read.file}:${read.line} (${read.form})`);
     }
     const summary = `${result.reads.length} outside reads, ${result.checked} task checks, ${result.undeclared.length} undeclared`;
