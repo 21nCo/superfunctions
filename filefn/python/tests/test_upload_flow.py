@@ -1345,6 +1345,8 @@ async def test_refused_session_keeps_its_object_for_the_sweep_and_replays_ask_fo
     with pytest.raises(errors.FileFnError):
         await service.complete_session(session["uploadSessionId"], _ctx())
     assert db.tables["uploadSessions"][0]["status"] == "refused"
+    status = await service.get_session_status(session["uploadSessionId"], _ctx())
+    assert status["status"] == "aborted"
     # An abort leaves it refused, so the sweep still deletes the object.
     await service.abort_session(session["uploadSessionId"], _ctx())
     assert db.tables["uploadSessions"][0]["status"] == "refused"

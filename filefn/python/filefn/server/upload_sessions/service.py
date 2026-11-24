@@ -603,7 +603,8 @@ class UploadSessionService:
         return {
             "uploadSessionId": upload_session_id,
             "fileId": session.fileId,
-            "status": session.status,
+            # `refused` is internal (cleanup still pending); clients see aborted, as in TypeScript.
+            "status": "aborted" if session.status == "refused" else session.status,
             "totalParts": session.totalParts,
             "recordedParts": recorded_parts,
             "chunkSizeBytes": session.chunkSizeBytes,
