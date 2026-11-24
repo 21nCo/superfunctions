@@ -1,0 +1,21 @@
+filefn/server/src/download-headers.ts
+  s_b841cebdcfad95::t_7339ed0e963063 167,170-181,183-184
+filefn/server/tests/read-path-security.test.ts
+  s_b841cebdcfad95::t_deb4e9aaa0f394 196-201
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4e1c5fce94f4e4e1c79c044914b8f228f26a98b0",
+  "prompts": {},
+  "sessions": {
+    "s_b841cebdcfad95": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "436f4738-d86e-44e1-82bc-c432f9aaabf3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
