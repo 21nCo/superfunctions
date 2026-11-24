@@ -419,13 +419,17 @@ function removeTemp(staged: Staged): string | null {
 function backupOwned(staged: Staged, now: FileState): boolean {
   const made = staged.backupState;
   if (!dirsHold(staged) || !made || staged.backupFd === undefined) return false; // never made (another's name): not this run's
-  return sameFile(now, stateOf(fstatSync(staged.backupFd, BIG))) && (staged.linked ? linkedIntact(staged) : sameState(now, made));
+  // A linked backup's bytes are read first; its name is looked up only after that read.
+  if (staged.linked) return linkedIntact(staged) && sameFile(currentState(staged.backup as string), stateOf(fstatSync(staged.backupFd, BIG)));
+  return sameFile(now, stateOf(fstatSync(staged.backupFd, BIG))) && sameState(now, made);
 }
 
 /** True while a linked backup holds the observed bytes, by its digest read through its descriptor; one
  * without a digest (unreadable or above MAX_SPEC_BYTES) cannot be verified, so it is kept and named. */
 function linkedIntact(staged: Staged): boolean {
-  return typeof staged.digest === "string" && digestOf(staged.backupFd as number) === staged.digest;
+  const fd = staged.backupFd as number;
+  const was = stateOf(fstatSync(fd, BIG)); // an edit during the read changes the change time
+  return typeof staged.digest === "string" && digestOf(fd) === staged.digest && sameState(stateOf(fstatSync(fd, BIG)), was);
 }
 
 /** The SHA-256 of the file open as `fd`, read from its start; null when it cannot be read through `fd`
@@ -445,8 +449,10 @@ function digestOf(fd: number): string | null {
 /** True while the backup still holds the observed file's bytes exactly as this run made it. */
 function backupHoldsPrevious(staged: Staged): boolean {
   const made = staged.backupState;
-  return staged.backup !== undefined && !!made && dirsHold(staged) && sameState(currentState(staged.backup), made) &&
-    (staged.linked ? linkedIntact(staged) : holdsBytes(staged.backupFd as number, staged.previous as Buffer));
+  // The bytes are read first; the backup's name is looked up after that read.
+  return staged.backup !== undefined && !!made && dirsHold(staged) &&
+    (staged.linked ? linkedIntact(staged) : holdsBytes(staged.backupFd as number, staged.previous as Buffer)) &&
+    sameState(currentState(staged.backup), made);
 }
 
 /** Removes the backup while it is still this run's (backupOwned); another writer's is left and named. */
