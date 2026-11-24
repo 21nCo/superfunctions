@@ -55,6 +55,41 @@ export function createDodoProvider(config: DodoProviderConfig): BillFnProviderAd
   const webhookSignatureHeader = (config.webhookSignatureHeader ?? 'webhook-signature').toLowerCase();
   const get = (...segments: string[]) =>
     requestJson(fetchImpl, dodoUrl(baseUrl, segments), { method: 'GET', headers: createHeaders(config.apiKey) });
+  /**
+   * The billing state a refund or dispute leaves the charge in, for an event that takes the money back: a full
+   * refund that succeeded, or a dispute the merchant lost or accepted. A one-time purchase is revoked (`canceled`);
+   * a subscription charge re-reads the subscription, so BillFn follows whatever Dodo did with it. Other refund and
+   * dispute events (partial or pending refunds, opened, challenged or won disputes) change nothing.
+   */
+  const readDodoRevocationState = async (
+    type: string,
+    data: Record<string, unknown>
+  ): Promise<BillFnVerifiedBillingState | undefined> => {
+    const paymentId = readString(data, ['payment_id']);
+    if (!paymentId || !isDodoRevocationEvent(type, data)) {
+      return undefined;
+    }
+    const payment = asPlainRecord(await get('payments', paymentId)) ?? {};
+    const subscriptionIds = Array.isArray(payment.subscription_ids)
+      ? payment.subscription_ids.filter((id): id is string => typeof id === 'string' && id.length > 0)
+      : [];
+    const subscriptionId = readDodoPaymentSubscriptionId(payment);
+    if (subscriptionId) {
+      const subscription = asPlainRecord(await get('subscriptions', subscriptionId));
+      return subscription ? mapDodoSubscriptionState(subscription) : undefined;
+    }
+    if (subscriptionIds.length > 0) {
+      // A payment for several subscriptions: no single subscription to re-read.
+      return undefined;
+    }
+    return {
+      subscriptionStatus: 'canceled',
+      checkoutStatus: 'succeeded',
+      providerChargeId: paymentId,
+      autoRenew: false,
+      raw: data
+    };
+  };
   const patchInit = (body: Record<string, unknown>): RequestInit => ({
     method: 'PATCH',
     headers: createHeaders(config.apiKey),
@@ -475,9 +510,27 @@ export function createDodoProvider(config: DodoProviderConfig): BillFnProviderAd
         });
       }
 
+      // A full refund of a one-time purchase that Dodo reports as succeeded revokes it now; a pending one does when
+      // its refund.succeeded webhook arrives. A subscription charge keeps its subscription's state.
+      const revokesPurchase =
+        input.mode === 'full' &&
+        readString(refund, ['status']) === 'succeeded' &&
+        input.subscription !== undefined &&
+        !input.subscription.providerSubscriptionId;
       return {
         operationStatus: 'applied',
         providerRefundId: readString(refund, ['refund_id', 'id']),
+        ...(revokesPurchase
+          ? {
+              billingState: {
+                subscriptionStatus: 'canceled',
+                checkoutStatus: 'succeeded',
+                providerChargeId: paymentId,
+                autoRenew: false,
+                raw: refund
+              } satisfies BillFnVerifiedBillingState
+            }
+          : {}),
         raw: committedRaw(response)
       } satisfies BillFnProviderOperationResult;
     },
@@ -580,6 +633,8 @@ export function createDodoProvider(config: DodoProviderConfig): BillFnProviderAd
       const eventId = webhookId;
       const data = asRecord(payload.data) ?? payload;
       const recordKind = dodoWebhookRecordKind(type, data);
+      const billingState =
+        recordKind === 'other' ? await readDodoRevocationState(type, data) : mapDodoWebhookState(recordKind, data);
 
       return [
         {
@@ -594,7 +649,7 @@ export function createDodoProvider(config: DodoProviderConfig): BillFnProviderAd
             readString(data, ['checkout_session_id']) ??
             readMetadataString(data, DODO_CHECKOUT_SESSION_METADATA_KEY) ??
             undefined,
-          billingState: mapDodoWebhookState(recordKind, data),
+          billingState,
           raw: payload
         }
       ];
@@ -916,6 +971,15 @@ function storedDodoSubscriptionState(
     ...(subscription.currentPeriodEnd ? { currentPeriodEnd: subscription.currentPeriodEnd } : {}),
     autoRenew: subscription.autoRenew
   };
+}
+
+/** Whether a refund or dispute event means the merchant lost the charge's money. */
+function isDodoRevocationEvent(type: string, data: Record<string, unknown>): boolean {
+  if (type === 'refund.succeeded') {
+    // A partial refund leaves the purchase paid for; only a full refund (is_partial false) revokes it.
+    return data.is_partial === false && readString(data, ['status']) !== 'failed';
+  }
+  return type === 'dispute.lost' || type === 'dispute.accepted';
 }
 
 /** Dodo's `SubscriptionStatus` values (and `paused`, which older answers report for a held subscription). */

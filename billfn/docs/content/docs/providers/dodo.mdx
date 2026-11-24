@@ -75,6 +75,12 @@ Dodo statuses are normalized into BillFn statuses such as:
 - `failed` (`failed`, or a `failed` or `cancelled` payment)
 - `pending` (`pending`, or a payment still processing)
 
-Refund and dispute webhooks carry no billing state, and a declined renewal payment leaves the subscription to Dodo's subscription events.
+A refund or dispute that takes the money back revokes what the charge paid for. That means a `refund.succeeded` webhook with `is_partial: false`, or a `dispute.lost` or `dispute.accepted` webhook. The adapter reads the charge's payment from Dodo:
+
+- for a one-time purchase it records `canceled`, so the purchase stops granting entitlements;
+- for a subscription charge it reads the subscription and records the state Dodo reports, so BillFn follows whatever Dodo did with the subscription;
+- for a payment that covers several subscriptions it changes nothing.
+
+If that read fails, the delivery fails and Dodo retries it. Other refund and dispute webhooks (partial or pending refunds; opened, challenged, won, expired or cancelled disputes) carry no billing state. A full refund that BillFn creates through `refundCharge` revokes a one-time purchase at once when Dodo answers `succeeded`; a pending one is revoked by its `refund.succeeded` webhook. A declined renewal payment leaves the subscription to Dodo's subscription events.
 
 That normalization lets the rest of the system stay provider-neutral.
