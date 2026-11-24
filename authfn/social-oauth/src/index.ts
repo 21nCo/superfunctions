@@ -67,7 +67,7 @@ import {
   AuthFnValidationError,
   toAuthFnError
 } from 'authfn/core/errors';
-import { createUser, findUserById, findUserByPrimaryEmail, isAuthFnUserDisabled } from 'authfn/core/users';
+import { createUser, findUserById, findUserByPrimaryEmail } from 'authfn/core/users';
 import { assertAuthFnDatabaseKeyLength } from 'authfn/core/limits';
 import { createAuthFnRouteMeta } from 'authfn/http/router';
 import { jsonSuccess, resolveRequestId } from 'authfn/http/envelopes';
@@ -376,7 +376,10 @@ function createSocialRoutes(
         if (!user) {
           throw new AuthFnOAuthCallbackInvalidError('Social handoff user no longer exists', { userId });
         }
-        if (isAuthFnUserDisabled(user)) {
+        // Same check as core's isAuthFnUserDisabled, which published authfn 0.8.0
+        // does not export yet. AUTH-34: use core's helper once authfn 0.9.0
+        // ships with the plugins re-released on it.
+        if (user.metadata?.disabled === true) {
           throw new AuthFnOAuthCallbackInvalidError('Social handoff user is disabled', { userId });
         }
         // The code was minted by a social sign-in through a linked provider
