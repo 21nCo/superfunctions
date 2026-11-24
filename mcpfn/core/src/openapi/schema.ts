@@ -136,6 +136,9 @@ const SHARING_ALLOWANCE = 1024;
 
 const REGION = "a schema expands";
 
+/** Keywords whose value is a map of schemas the conversion reads. */
+const SOURCE_MAPS = new Set(["properties", "patternProperties", "$defs", "definitions"]);
+
 export class NodeBudget {
   private produced = 0;
   private sourceValues = 0;
@@ -167,10 +170,11 @@ export class NodeBudget {
     if (typeof value === "object" && value !== null && !this.seen.has(value)) {
       this.seen.add(value);
       this.credit(value);
-      // Its arrays and maps (allOf, properties, $defs, ...) are source too:
-      // their members are produced without the container being charged.
-      for (const item of Object.values(value)) {
-        if (typeof item === "object" && item !== null) this.credit(item);
+      // Its arrays and schema maps (allOf, properties, $defs, ...) are source
+      // too: their members are produced without the container being charged.
+      // Other objects under it (an example, say) are not read, so not counted.
+      for (const [key, item] of Object.entries(value)) {
+        if (Array.isArray(item) || (SOURCE_MAPS.has(key) && typeof item === "object" && item !== null)) this.credit(item);
       }
     }
     if (this.produced > this.limit) {
@@ -189,7 +193,7 @@ export class NodeBudget {
   private credit(value: object): void {
     if (this.credited.has(value)) return;
     this.credited.add(value);
-    this.sourceValues += 1 + Object.keys(value).length;
+    this.sourceValues += 1 + (Array.isArray(value) ? value.length : Object.keys(value).length);
   }
 }
 

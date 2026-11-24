@@ -2208,6 +2208,20 @@ describe("fromOpenAPI body fallback, synchronous schemas, per-kind alternatives 
     expect(result.tools.map(({ name }) => name)).toEqual(["n"]);
   });
 
+  it("does not count the members of objects the conversion does not read, such as a shared example", () => {
+    // One example object with 20,000 keys under a string schema that 2,000 operations share.
+    const example = Object.fromEntries(Array.from({ length: 20_000 }, (_, index) => [`k${index}`, index]));
+    const schema = { type: "string", example };
+    const paths = Object.fromEntries(
+      Array.from({ length: 2_000 }, (_, index) => [`/r${index}`, { get: { operationId: `r${index}`, parameters: [{ name: "q", in: "query", schema }], responses: ok } }]),
+    );
+    const started = performance.now();
+    const result = fromOpenAPI({ openapi: "3.0.3", paths }, options());
+    expect(performance.now() - started).toBeLessThan(2000);
+    expect(result.skipped).toEqual([]);
+    expect(result.tools).toHaveLength(2_000);
+  });
+
   it("tries each request body entry in the whole input, checks a shared one once and falls through a too-deep one", () => {
     const fallback = { "application/example+json": { schema: { type: "string" } } };
     const patch = (operationId: string, content: Record<string, unknown>, extra: Record<string, unknown> = {}) =>
