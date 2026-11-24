@@ -1658,19 +1658,18 @@ export class SchemaConverter {
       ) > 0;
     // Only a closure holding an in-place cycle is walked again, to name the cycle.
     if (names.some(holdsCycle)) {
-      const entries = this.closureEntries(names, mode);
-      this.total.chargeNodes(entries.size);
-      assertProductiveRecursion(entries);
+      assertProductiveRecursion(this.closureEntries(names, mode));
     }
   }
 
-  /** The converted closure of `names`, in breadth-first order. */
+  /** The converted closure of `names`, in breadth-first order, each entry charged to the call's total as it is reached. */
   private closureEntries(names: string[], mode: SchemaMode): Map<string, ConvertedComponent> {
     const entries = new Map<string, ConvertedComponent>();
     const queue = [...names];
     for (let index = 0; index < queue.length; index += 1) {
       const key = queue[index]!;
       if (entries.has(key)) continue;
+      this.total.chargeNodes(1);
       const entry = this.converted(key, mode);
       entries.set(key, entry);
       for (const next of entry.refs!) if (!entries.has(next)) queue.push(next);

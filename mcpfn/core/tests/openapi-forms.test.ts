@@ -3201,10 +3201,10 @@ describe("fromOpenAPI body fallback, synchronous schemas, per-kind alternatives 
     expect(new Set(contentTypes(many).map(([, type]) => type))).toEqual(new Set(["application/json"]));
     // A preferred body that nests too deeply to compile gives way to the next entry.
     const aliases: Record<string, unknown> = { Leaf: { type: "object" } };
-    for (let index = 0; index < 5000; index += 1) {
+    for (let index = 0; index < 20_000; index += 1) {
       aliases[`Alias${index}`] = { $ref: `#/components/schemas/${index === 0 ? "Leaf" : `Alias${index - 1}`}` };
     }
-    aliases.Holder = { type: "object", properties: { deep: { $ref: "#/components/schemas/Alias4999" } } };
+    aliases.Holder = { type: "object", properties: { deep: { $ref: "#/components/schemas/Alias19999" } } };
     const large = { type: "object", $defs: Object.fromEntries(Array.from({ length: 20_000 }, (_, index) => [`d${index}`, {}])) };
     const parameters = [{ name: "q", in: "query", schema: { type: "string", enum: Array.from({ length: 5000 }, (_, index) => `v${index}`) } }];
     const result = fromOpenAPI(
