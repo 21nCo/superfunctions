@@ -265,6 +265,40 @@ describe('error details returned to callers', () => {
 
     expect(payload.error).not.toHaveProperty('details');
   });
+
+  it('answers no details when left-out values sit deeper, in objects and arrays', async () => {
+    const env = await setup();
+    class ProviderResponse {
+      data = 'left-out';
+    }
+    env.parseWebhookError.current = createBillFnError({
+      code: 'BILLFN_PROVIDER_ERROR',
+      message: 'Provider request failed',
+      details: { response: { data: new ProviderResponse() }, attempts: [new ProviderResponse()], body: 'private' }
+    });
+
+    const response = await env.call('/webhooks/dodo', { method: 'POST', body: '{}' });
+    const payload = (await response.json()) as { error: Record<string, unknown> };
+
+    expect(payload.error).not.toHaveProperty('details');
+  });
+
+  it('keeps the public values beside left-out ones in arrays', async () => {
+    const env = await setup();
+    class ProviderResponse {
+      data = 'left-out';
+    }
+    env.parseWebhookError.current = createBillFnError({
+      code: 'BILLFN_PROVIDER_ERROR',
+      message: 'Provider request failed',
+      details: { attempts: [new ProviderResponse(), { at: 1 }], tags: [] }
+    });
+
+    const response = await env.call('/webhooks/dodo', { method: 'POST', body: '{}' });
+    const payload = (await response.json()) as { error: { details?: unknown } };
+
+    expect(payload.error.details).toEqual({ attempts: [{ at: 1 }], tags: [] });
+  });
 });
 
 describe('request content type', () => {

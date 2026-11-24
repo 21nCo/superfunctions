@@ -54,16 +54,18 @@ function stripPrivateDetails(value: unknown, depth = 0): unknown {
   if (!plain || Object.getOwnPropertyDescriptor(value, 'toJSON') !== undefined) {
     return undefined;
   }
+  // Left-out values are dropped (array items and object keys alike), and an array or object that held something but
+  // is left with nothing is left out in turn, so details made only of left-out values, at any depth, answer as none.
   if (Array.isArray(value)) {
-    return value.map((item) => stripPrivateDetails(item, depth + 1));
+    const items = value.map((item) => stripPrivateDetails(item, depth + 1)).filter((item) => item !== undefined);
+    return items.length > 0 || value.length === 0 ? items : undefined;
   }
-  // A key whose value is left out is dropped too, so details made only of left-out values answer as none.
-  return Object.fromEntries(
-    Object.entries(value as Record<string, unknown>)
-      .filter(([key]) => !PRIVATE_DETAIL_KEYS.has(key))
-      .map(([key, item]) => [key, stripPrivateDetails(item, depth + 1)])
-      .filter(([, item]) => item !== undefined)
-  );
+  const entries = Object.entries(value as Record<string, unknown>);
+  const kept = entries
+    .filter(([key]) => !PRIVATE_DETAIL_KEYS.has(key))
+    .map(([key, item]) => [key, stripPrivateDetails(item, depth + 1)] as const)
+    .filter(([, item]) => item !== undefined);
+  return kept.length > 0 || entries.length === 0 ? Object.fromEntries(kept) : undefined;
 }
 
 /**
