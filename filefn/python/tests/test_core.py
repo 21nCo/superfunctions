@@ -104,6 +104,18 @@ def test_iso_instant_outside_utc_year_range_is_refused() -> None:
     assert parse_iso_instant("9999-12-31T22:59:59-01:00") is not None
 
 
+def test_iso_instant_accepts_offsets_with_or_without_a_colon() -> None:
+    from datetime import datetime, timezone
+
+    from filefn.server.authz.grant_expiry import parse_iso_instant
+
+    expected = datetime(2030, 1, 1, 12, 30, tzinfo=timezone.utc)
+    assert parse_iso_instant("2030-01-01T18:00:00+0530") == expected
+    assert parse_iso_instant("2030-01-01T18:00:00+05:30") == expected
+    assert parse_iso_instant("2030-01-01T18:00:00+0560") is None
+    assert parse_iso_instant("2030-01-01T18:00:00+053") is None
+
+
 def test_iso_instant_requires_a_full_ascii_match() -> None:
     from filefn.server.authz.grant_expiry import is_grant_expired, parse_iso_instant
 

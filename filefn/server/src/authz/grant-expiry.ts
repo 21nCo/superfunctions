@@ -2,9 +2,10 @@
 // zone. A date alone is UTC midnight. A date-time without a zone keeps the
 // reading FileFn always gave the stored value: local time for grants (read
 // with Date.parse) and UTC for share links (compared as UTC ISO strings).
+// A zone offset may be written with or without its colon (+05:30, +0530).
 // Values FileFn stores now carry an explicit UTC zone.
 const ISO_INSTANT =
-  /^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2})(?::(\d{2})(\.\d{1,9})?)?(Z|[+-]\d{2}:\d{2})?)?$/;
+  /^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2})(?::(\d{2})(\.\d{1,9})?)?(Z|[+-]\d{2}:?\d{2})?)?$/;
 
 /**
  * Parses an ISO 8601 date or date-time to epoch milliseconds, or null when the
@@ -36,7 +37,7 @@ export function parseIsoInstant(value: unknown, zoneless: 'local' | 'utc' = 'loc
   } else if (zone && zone !== 'Z') {
     const sign = zone[0] === '-' ? -1 : 1;
     const zoneHours = Number(zone.slice(1, 3));
-    const zoneMinutes = Number(zone.slice(4, 6));
+    const zoneMinutes = Number(zone.slice(-2));
     if (zoneHours > 23 || zoneMinutes > 59) return null;
     instant = utc - sign * (zoneHours * 60 + zoneMinutes) * 60_000;
   }

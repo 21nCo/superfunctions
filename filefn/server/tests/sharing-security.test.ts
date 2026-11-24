@@ -539,6 +539,11 @@ describe('share links, grants and JSON routes (FILE-30 F-07, F-08, F-09, F-15)',
     expect(parseIsoInstant('2030-01-01T18:00:00', 'utc')).toBe(Date.UTC(2030, 0, 1, 18));
     expect(parseIsoInstant('2030-01-01T18:00:00Z')).toBe(Date.UTC(2030, 0, 1, 18));
     expect(parseIsoInstant('2030-01-01')).toBe(Date.UTC(2030, 0, 1));
+    expect(parseIsoInstant('2030-01-01T18:00:00+0530')).toBe(Date.UTC(2030, 0, 1, 12, 30));
+    expect(parseIsoInstant('2030-01-01T18:00:00+05:30')).toBe(Date.UTC(2030, 0, 1, 12, 30));
+    expect(parseIsoInstant('2030-01-01T18:00:00-0130')).toBe(Date.UTC(2030, 0, 1, 19, 30));
+    expect(parseIsoInstant('2030-01-01T18:00:00+0560')).toBeNull();
+    expect(parseIsoInstant('2030-01-01T18:00:00+053')).toBeNull();
   });
 
   it('hands out no proxied stream for a link revoked while it was being counted', async () => {

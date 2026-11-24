@@ -3,12 +3,13 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 # ISO 8601 calendar date, or date-time with optional seconds, fraction and
-# zone; the same forms the TypeScript server accepts. A date-time without a
+# zone (an offset with or without its colon); the same forms the TypeScript
+# server accepts. A date-time without a
 # zone is read as UTC.
 # ASCII digits only and a full match: `\d` would accept other scripts' digits
 # and `$` a trailing newline, which the TypeScript parser refuses.
 _ISO_INSTANT = re.compile(
-    r"([0-9]{4})-([0-9]{2})-([0-9]{2})(?:T([0-9]{2}):([0-9]{2})(?::([0-9]{2})(\.[0-9]{1,9})?)?(Z|[+-][0-9]{2}:[0-9]{2})?)?"
+    r"([0-9]{4})-([0-9]{2})-([0-9]{2})(?:T([0-9]{2}):([0-9]{2})(?::([0-9]{2})(\.[0-9]{1,9})?)?(Z|[+-][0-9]{2}:?[0-9]{2})?)?"
 )
 
 
@@ -34,7 +35,7 @@ def parse_iso_instant(value: Any) -> Optional[datetime]:
     except ValueError:
         return None
     if zone and zone != "Z":
-        zone_hours, zone_minutes = int(zone[1:3]), int(zone[4:6])
+        zone_hours, zone_minutes = int(zone[1:3]), int(zone[-2:])
         if zone_hours > 23 or zone_minutes > 59:
             return None
         offset = timedelta(hours=zone_hours, minutes=zone_minutes)
