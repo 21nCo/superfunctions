@@ -1719,6 +1719,14 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         throw err;
       }
       await writer.close();
+      // A sweep may have ended the session while this write ran; then nothing
+      // would ever clean up the part it just committed.
+      if ((await readSession(uploadSessionId).catch(() => 'unknown' as const)) === null) {
+        if (storage.deleteObject) {
+          await storage.deleteObject({ key: partKey, target: storageTarget }).catch(() => {});
+        }
+        throw errors.sessionNotFound();
+      }
 
       const etag = `proxy-sha256-${hasher.digest('hex')}`;
 

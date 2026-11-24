@@ -156,9 +156,21 @@ export function createLocalStorageAdapter(config: LocalStorageConfig): StorageAd
       // Written to a temporary file next to the target and renamed over it on
       // close, so an aborted or failed upload never leaves partial bytes at the
       // key, and a reader never sees a half-written object.
-      const tempPath = `${filePath}.upload-${randomBytes(6).toString('hex')}.tmp`;
-      const nodeStream = createWriteStream(tempPath);
+      // A short, fixed-length name in the same directory, so a key whose last
+      // segment is near the filesystem's name limit still fits.
+      const tempPath = join(dir, `.upl-${randomBytes(8).toString('hex')}.tmp`);
+      const nodeStream = createWriteStream(tempPath, { flags: 'wx' });
       let streamError: Error | null = null;
+      // Set once the stream finished cleanly: the rename then owns the file
+      // (and removes it itself if the rename fails).
+      let committed = false;
+      // Removes the temporary file once the stream has closed, unless it was
+      // renamed over the key. Runs for abort, close errors and write errors
+      // (a failed write errors the Web stream, so its abort never reaches us).
+      const removeTemp = () => {
+        if (!committed) unlink(tempPath).catch(() => {});
+      };
+      nodeStream.on('close', removeTemp);
       nodeStream.on('error', (err) => {
         streamError = err;
       });
@@ -204,6 +216,7 @@ export function createLocalStorageAdapter(config: LocalStorageConfig): StorageAd
             };
             const onFinish = () => {
               cleanup();
+              committed = true;
               rename(tempPath, filePath).then(
                 () => resolve(undefined),
                 async (err: unknown) => {
