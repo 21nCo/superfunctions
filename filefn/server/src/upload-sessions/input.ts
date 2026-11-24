@@ -24,15 +24,29 @@ function hasLoneSurrogate(value: unknown, depth = 0): boolean {
   if (typeof value === 'string') return LONE_SURROGATE.test(value);
   if (value === null || typeof value !== 'object') return false;
   if (depth >= MAX_METADATA_DEPTH) return true;
-  if (Array.isArray(value)) return value.some((item) => hasLoneSurrogate(item, depth + 1));
-  return Object.entries(value as Record<string, unknown>).some(
-    ([key, item]) => LONE_SURROGATE.test(key) || hasLoneSurrogate(item, depth + 1),
-  );
+  // Plain loops and Object.keys only: no method of the value itself is called.
+  if (Array.isArray(value)) {
+    for (let i = 0; i < value.length; i++) {
+      if (hasLoneSurrogate(value[i], depth + 1)) return true;
+    }
+    return false;
+  }
+  for (const key of Object.keys(value)) {
+    if (LONE_SURROGATE.test(key) || hasLoneSurrogate((value as Record<string, unknown>)[key], depth + 1)) return true;
+  }
+  return false;
 }
 
 // type "/" subtype, each an HTTP token (RFC 9110), plus optional parameters.
 // Which types are allowed is the policy's decision, not this syntax check's.
-const MIME_TYPE = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+\/[!#$%&'*+.^_`|~0-9A-Za-z-]+([ \t]*;.*)?$/;
+// Each parameter is `token=token` or `token=quoted-string` (quoted text and
+// quoted pairs limited to tab and visible ASCII); empty parameter slots are
+// allowed. The value ends up in Content-Type headers, which must be ASCII.
+const MIME_TOKEN = "[!#$%&'*+.^_`|~0-9A-Za-z-]+";
+const MIME_QUOTED = '"(?:[\\t \\x21\\x23-\\x5B\\x5D-\\x7E]|\\\\[\\t \\x21-\\x7E])*"';
+const MIME_TYPE = new RegExp(
+  `^${MIME_TOKEN}/${MIME_TOKEN}(?:[ \\t]*;(?:[ \\t]*${MIME_TOKEN}=(?:${MIME_TOKEN}|${MIME_QUOTED}))?)*[ \\t]*$`,
+);
 
 /**
  * Checks a client-supplied file name. A name is shown to people and kept in the
@@ -109,8 +123,15 @@ export function assertValidUploadInit(input: UploadInitInput): void {
     throw invalidRequest('mimeType must be a MIME type such as "image/png"', { field: 'mimeType' });
   }
 
-  if (input.metadata !== undefined && input.metadata !== null) {
-    if (typeof input.metadata !== 'object' || Array.isArray(input.metadata) || hasLoneSurrogate(input.metadata)) {
+  // Omitted metadata is fine; an explicit null is not an object.
+  if (input.metadata !== undefined) {
+    let unsafe = true;
+    try {
+      unsafe = input.metadata === null || typeof input.metadata !== 'object' || Array.isArray(input.metadata) || hasLoneSurrogate(input.metadata);
+    } catch {
+      unsafe = true;
+    }
+    if (unsafe) {
       throw invalidRequest(`metadata must be a JSON object of well-formed text, nested at most ${MAX_METADATA_DEPTH} levels`, { field: 'metadata' });
     }
     let encoded: string;

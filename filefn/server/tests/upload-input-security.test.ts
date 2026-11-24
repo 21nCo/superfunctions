@@ -95,6 +95,10 @@ describe('upload init input (FILE-30 F-21, F-05)', () => {
     ['array metadata', { metadata: ['x'] }],
     ['oversized metadata', { metadata: { blob: 'x'.repeat(17 * 1024) } }],
     ['missing policy', { policy: undefined }],
+    ['unterminated quoted MIME parameter', { mimeType: 'text/plain; charset="unterminated' }],
+    ['non-ASCII MIME parameter', { mimeType: 'text/plain; name=\u65E5' }],
+    ['MIME parameter without a value', { mimeType: 'text/plain; garbage' }],
+    ['explicit null metadata', { metadata: null }],
     ['lone surrogate in fileName', { fileName: 'a\uD800.txt' }],
     ['lone surrogate in metadata', { metadata: { note: 'x\uDFFF' } }],
     ['lone surrogate in a metadata key', { metadata: { '\uD800': 1 } }],
@@ -131,7 +135,7 @@ describe('upload init input (FILE-30 F-21, F-05)', () => {
 
   it('accepts ordinary names, zero-byte uploads and MIME parameters', async () => {
     const fileFn = makeFileFn([{ name: 'any' }]);
-    for (const [fileName, mimeType] of [['report.txt', 'text/plain; charset=utf-8'], ['résumé (final).pdf', 'application/pdf'], ['.hidden', 'text/plain;\tcharset=UTF-8'], ['a..b', 'application/octet-stream'], ['photo \u{1F600}.png', 'image/png'], ['trailing.txt', 'text/plain \t'], ['private.bin', 'application/x-example~v1'], ['data.jsonld', `application/ld+json; profile="https://example.com/${'p'.repeat(400)}"`]]) {
+    for (const [fileName, mimeType] of [['report.txt', 'text/plain; charset=utf-8'], ['résumé (final).pdf', 'application/pdf'], ['.hidden', 'text/plain;\tcharset=UTF-8'], ['a..b', 'application/octet-stream'], ['photo \u{1F600}.png', 'image/png'], ['trailing.txt', 'text/plain \t'], ['private.bin', 'application/x-example~v1'], ['empty-slot.png', 'image/png;'], ['quoted.txt', 'text/plain; name="a \\"b\\" c"'], ['data.jsonld', `application/ld+json; profile="https://example.com/${'p'.repeat(400)}"`]]) {
       await expect(
         fileFn.createUploadSession({ policy: 'any', fileName, size: 0, mimeType }, { principalId: 'alice' }),
       ).resolves.toMatchObject({ uploadSessionId: expect.any(String) });
@@ -143,6 +147,14 @@ describe('upload init input (FILE-30 F-21, F-05)', () => {
     const fileFn = makeFileFn([{ name }]);
     await expect(
       fileFn.createUploadSession({ policy: name, fileName: 'a.bin', size: 1, mimeType: 'application/octet-stream' }, { principalId: 'alice' }),
+    ).resolves.toMatchObject({ uploadSessionId: expect.any(String) });
+  });
+
+  it('walks metadata arrays without calling their methods', async () => {
+    const fileFn = makeFileFn([{ name: 'any' }]);
+    const tags = Object.assign(['a'], { some: null });
+    await expect(
+      fileFn.createUploadSession({ policy: 'any', fileName: 'a.txt', size: 1, mimeType: 'text/plain', metadata: { tags } }, { principalId: 'alice' }),
     ).resolves.toMatchObject({ uploadSessionId: expect.any(String) });
   });
 });
