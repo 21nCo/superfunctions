@@ -837,7 +837,9 @@ export function createFileService(config: FileServiceConfig) {
 
       if (quota && totalBytesFreed > 0) {
         await quota.recordUsage({
-          principalId: file.ownerId,
+          // The reserved owner 'anonymous' is the provider's unset principal,
+          // the account its uploads were charged to.
+          principalId: file.ownerId && file.ownerId !== 'anonymous' ? file.ownerId : undefined,
           tenantId: file.tenantId ?? undefined,
           bytes: -totalBytesFreed,
         });

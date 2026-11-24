@@ -3,6 +3,7 @@ import type { FileFnPrincipal, AuthConfig } from '../auth.js';
 import type { RateLimiter } from '@superfunctions/middleware';
 import { resolvePrincipal } from '../auth.js';
 import { FileFnError, authRequired, invalidRenderIntent, rateLimited } from '../errors.js';
+import { rateLimitSubject, type RateLimitCategory, type RateLimitClientKey } from '../rate-limit-key.js';
 import { buildDownloadHeaders } from '../download-headers.js';
 
 export interface FileRouteContext {
@@ -14,8 +15,10 @@ export interface FileRouteContext {
       windowSeconds: number;
       maxRequests: number;
     };
+    list?: RateLimitCategory;
   };
   legacyGlobalRateLimit?: boolean;
+  clientKey?: RateLimitClientKey;
 }
 
 function getRequestId(request: Request): string | undefined {
@@ -31,7 +34,7 @@ function errorResponse(error: FileFnError, requestId?: string): Response {
 }
 
 export function createFileRoutes(ctx: FileRouteContext) {
-  const { service, auth, rateLimiter, rateLimits, legacyGlobalRateLimit = false } = ctx;
+  const { service, auth, rateLimiter, rateLimits, legacyGlobalRateLimit = false, clientKey } = ctx;
   const validRenderIntents = new Set(['thumbnail', 'preview', 'full', 'download']);
 
   async function requireAuth(request: Request): Promise<FileFnPrincipal> {
@@ -43,6 +46,7 @@ export function createFileRoutes(ctx: FileRouteContext) {
   }
 
   async function checkRateLimit(
+    request: Request,
     categoryKey: string,
     principal: FileFnPrincipal,
     categoryLimit?: { windowSeconds: number; maxRequests: number }
@@ -55,7 +59,7 @@ export function createFileRoutes(ctx: FileRouteContext) {
     }
 
     const result = await rateLimiter.check({
-      key: `${categoryKey}:${principal.tenantId || 'global'}:${principal.principalId}`,
+      key: `${categoryKey}:${await rateLimitSubject(principal, request, clientKey)}`,
       windowSeconds: categoryLimit?.windowSeconds,
       limit: categoryLimit?.maxRequests,
     });
@@ -69,6 +73,7 @@ export function createFileRoutes(ctx: FileRouteContext) {
       const requestId = getRequestId(request);
       try {
         const principal = await requireAuth(request);
+        if (rateLimits?.list) await checkRateLimit(request, 'list', principal, rateLimits.list);
         const url = new URL(request.url);
         const cursor = url.searchParams.get('cursor') || undefined;
         const rawLimit = url.searchParams.get('limit');
@@ -76,7 +81,7 @@ export function createFileRoutes(ctx: FileRouteContext) {
         const limit = typeof parsedLimit === 'number' && !Number.isNaN(parsedLimit) ? parsedLimit : undefined;
 
         const result = await service.listFiles(
-          { principalId: principal.principalId, tenantId: principal.tenantId, requestId },
+          { principalId: principal.principalId, tenantId: principal.tenantId, roles: principal.roles, requestId },
           { cursor, limit }
         );
 
@@ -94,6 +99,7 @@ export function createFileRoutes(ctx: FileRouteContext) {
         const file = await service.getFile(fileId, {
           principalId: principal.principalId,
           tenantId: principal.tenantId,
+          roles: principal.roles,
           requestId,
         });
 
@@ -119,11 +125,12 @@ export function createFileRoutes(ctx: FileRouteContext) {
       const requestId = getRequestId(request);
       try {
         const principal = await requireAuth(request);
-        await checkRateLimit('download', principal, rateLimits?.download);
+        await checkRateLimit(request, 'download', principal, rateLimits?.download);
 
         const result = await service.getDownloadUrl(fileId, versionId, {
           principalId: principal.principalId,
           tenantId: principal.tenantId,
+          roles: principal.roles,
           requestId,
         });
 
@@ -152,6 +159,7 @@ export function createFileRoutes(ctx: FileRouteContext) {
         }, {
           principalId: principal.principalId,
           tenantId: principal.tenantId,
+          roles: principal.roles,
           requestId,
         });
 
@@ -169,6 +177,7 @@ export function createFileRoutes(ctx: FileRouteContext) {
         await service.deleteFile(fileId, {
           principalId: principal.principalId,
           tenantId: principal.tenantId,
+          roles: principal.roles,
           requestId,
         });
 
@@ -186,6 +195,7 @@ export function createFileRoutes(ctx: FileRouteContext) {
         const result = await service.listVersions(fileId, {
           principalId: principal.principalId,
           tenantId: principal.tenantId,
+          roles: principal.roles,
           requestId,
         });
 
@@ -210,6 +220,7 @@ export function createFileRoutes(ctx: FileRouteContext) {
         const version = await service.getVersion(fileId, versionId, {
           principalId: principal.principalId,
           tenantId: principal.tenantId,
+          roles: principal.roles,
           requestId,
         });
 
@@ -230,11 +241,12 @@ export function createFileRoutes(ctx: FileRouteContext) {
         const requestId = getRequestId(request);
         try {
             const principal = await requireAuth(request);
-            await checkRateLimit('download', principal, rateLimits?.download);
+            await checkRateLimit(request, 'download', principal, rateLimits?.download);
 
             const result = await service.getDownloadStream(fileId, versionId, {
                 principalId: principal.principalId,
                 tenantId: principal.tenantId,
+                roles: principal.roles,
                 requestId
             });
 

@@ -217,8 +217,10 @@ export function createImportObject(deps: ImportObjectDeps) {
     where: [{ field: 'versionId', operator: 'eq', value: versionId }],
     namespace,
   });
+  // The reserved owner 'anonymous' is the provider's unset principal, as for
+  // uploads, so a later delete refunds the same account the import charged.
   const recordUsage = (request: ParsedImport, bytes: number) => quota?.recordUsage({
-    principalId: request.principalId,
+    principalId: request.principalId && request.principalId !== 'anonymous' ? request.principalId : undefined,
     tenantId: request.tenantId ?? undefined,
     bytes,
   });

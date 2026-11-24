@@ -3,6 +3,7 @@ import type { FileFnPrincipal, AuthConfig } from '../auth.js';
 import type { RateLimiter } from '@superfunctions/middleware';
 import { resolvePrincipal } from '../auth.js';
 import { FileFnError, authRequired, rateLimited } from '../errors.js';
+import { rateLimitSubject, type RateLimitClientKey } from '../rate-limit-key.js';
 import { readJsonBody } from '../http-body.js';
 
 export interface RouteContext {
@@ -24,6 +25,7 @@ export interface RouteContext {
     };
   };
   legacyGlobalRateLimit?: boolean;
+  clientKey?: RateLimitClientKey;
 }
 
 function getRequestId(request: Request): string | undefined {
@@ -57,7 +59,7 @@ async function parseJsonBody<T>(request: Request): Promise<T> {
 }
 
 export function createUploadSessionRoutes(ctx: RouteContext) {
-  const { service, auth, rateLimiter, rateLimits, legacyGlobalRateLimit = false } = ctx;
+  const { service, auth, rateLimiter, rateLimits, legacyGlobalRateLimit = false, clientKey } = ctx;
 
   async function resolveCaller(request: Request): Promise<FileFnPrincipal | null> {
     const principal = await resolvePrincipal(request, auth);
@@ -68,6 +70,7 @@ export function createUploadSessionRoutes(ctx: RouteContext) {
   }
 
   async function checkRateLimit(
+    request: Request,
     categoryKey: string,
     principal: FileFnPrincipal | null,
     categoryLimit?: { windowSeconds: number; maxRequests: number }
@@ -80,7 +83,7 @@ export function createUploadSessionRoutes(ctx: RouteContext) {
     }
 
     const result = await rateLimiter.check({
-      key: `${categoryKey}:${principal?.tenantId || 'global'}:${principal?.principalId || 'anonymous'}`,
+      key: `${categoryKey}:${await rateLimitSubject(principal, request, clientKey)}`,
       windowSeconds: categoryLimit?.windowSeconds,
       limit: categoryLimit?.maxRequests,
     });
@@ -94,7 +97,7 @@ export function createUploadSessionRoutes(ctx: RouteContext) {
       const requestId = getRequestId(request);
       try {
         const principal = await resolveCaller(request);
-        await checkRateLimit('upload-init', principal, rateLimits?.uploadInit);
+        await checkRateLimit(request, 'upload-init', principal, rateLimits?.uploadInit);
 
         const body = await parseJsonBody<{
           policy: string;
@@ -107,7 +110,7 @@ export function createUploadSessionRoutes(ctx: RouteContext) {
 
         const result = await service.createSession(
           { ...body, idempotencyKey: getIdempotencyKey(request) },
-          { principalId: principal?.principalId, tenantId: principal?.tenantId, requestId }
+          { principalId: principal?.principalId, tenantId: principal?.tenantId, roles: principal?.roles, requestId }
         );
 
         return successResponse(result, requestId, result.warnings);
@@ -126,6 +129,7 @@ export function createUploadSessionRoutes(ctx: RouteContext) {
         const result = await service.getSessionStatus(uploadSessionId, {
           principalId: principal?.principalId,
           tenantId: principal?.tenantId,
+          roles: principal?.roles,
           requestId,
         }, getUploadSessionToken(request));
         return successResponse(result, requestId);
@@ -141,12 +145,13 @@ export function createUploadSessionRoutes(ctx: RouteContext) {
       const requestId = getRequestId(request);
       try {
         const principal = await resolveCaller(request);
-        await checkRateLimit('upload-sign', principal, rateLimits?.uploadSign);
+        await checkRateLimit(request, 'upload-sign', principal, rateLimits?.uploadSign);
 
         const body = await parseJsonBody<{ contentLength: number; checksumSha256Base64?: string }>(request);
         const result = await service.signPart(uploadSessionId, partNumber, body.contentLength, {
           principalId: principal?.principalId,
           tenantId: principal?.tenantId,
+          roles: principal?.roles,
           requestId,
         }, getUploadSessionToken(request));
         return successResponse(result, requestId);
@@ -162,7 +167,7 @@ export function createUploadSessionRoutes(ctx: RouteContext) {
       const requestId = getRequestId(request);
       try {
         const principal = await resolveCaller(request);
-        await checkRateLimit('upload-complete', principal, rateLimits?.uploadComplete);
+        await checkRateLimit(request, 'upload-complete', principal, rateLimits?.uploadComplete);
         // Rate limit check for data plane might differ, but using sign limit for now or skipping
         // await checkRateLimit(`upload-part:${principal.principalId}`, requestId);
 
@@ -174,6 +179,7 @@ export function createUploadSessionRoutes(ctx: RouteContext) {
         const result = await service.uploadPartBytes(uploadSessionId, partNumber, request.body, contentLength, {
           principalId: principal?.principalId,
           tenantId: principal?.tenantId,
+          roles: principal?.roles,
           requestId,
         }, getUploadSessionToken(request));
         
@@ -191,11 +197,12 @@ export function createUploadSessionRoutes(ctx: RouteContext) {
       try {
         const principal = await resolveCaller(request);
         const body = await parseJsonBody<{ etag: string; size: number; checksumSha256Base64?: string }>(request);
-        await checkRateLimit('upload-complete', principal, rateLimits?.uploadComplete);
+        await checkRateLimit(request, 'upload-complete', principal, rateLimits?.uploadComplete);
 
         await service.completePart(uploadSessionId, partNumber, body.etag, body.size, {
           principalId: principal?.principalId,
           tenantId: principal?.tenantId,
+          roles: principal?.roles,
           requestId,
         }, getUploadSessionToken(request));
         return successResponse({ recorded: true }, requestId);
@@ -211,10 +218,11 @@ export function createUploadSessionRoutes(ctx: RouteContext) {
       const requestId = getRequestId(request);
       try {
         const principal = await resolveCaller(request);
-        await checkRateLimit('upload-complete', principal, rateLimits?.uploadComplete);
+        await checkRateLimit(request, 'upload-complete', principal, rateLimits?.uploadComplete);
         const result = await service.completeSession(uploadSessionId, {
           principalId: principal?.principalId,
           tenantId: principal?.tenantId,
+          roles: principal?.roles,
           requestId,
         }, getUploadSessionToken(request));
         return successResponse(result, requestId);
@@ -233,6 +241,7 @@ export function createUploadSessionRoutes(ctx: RouteContext) {
         await service.abortSession(uploadSessionId, {
           principalId: principal?.principalId,
           tenantId: principal?.tenantId,
+          roles: principal?.roles,
           requestId,
         }, getUploadSessionToken(request));
         return successResponse({ aborted: true }, requestId);

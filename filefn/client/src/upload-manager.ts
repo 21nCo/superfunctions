@@ -463,6 +463,7 @@ export class UploadManager {
       chunk,
       this.uploadSessionToken,
       signal,
+      { uploadSessionId, partNumber },
     );
 
     if (!recorded) {

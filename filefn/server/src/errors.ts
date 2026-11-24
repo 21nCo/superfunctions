@@ -115,6 +115,11 @@ export function quotaExceeded(current: number, limit: number, requested: number)
   );
 }
 
+/** Quota refused for an account that isn't the caller's (a file owner's): no usage figures. */
+export function ownerQuotaExceeded(requested: number): FileFnError {
+  return new FileFnError(ErrorCodes.QUOTA_EXCEEDED, "The file owner's storage quota is exceeded", 402, { requested });
+}
+
 export function rateLimited(resetAt: string): FileFnError {
   return new FileFnError(ErrorCodes.RATE_LIMITED, 'Rate limit exceeded', 429, { resetAt });
 }

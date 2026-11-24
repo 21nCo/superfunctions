@@ -24,6 +24,7 @@ export interface FileShareRecord {
 interface FilePermissionRecord {
   fileId: string;
   userId?: string | null;
+  role?: string | null;
   tenantId?: string | null;
   canShare?: boolean;
   expiresAt?: string | null;
@@ -151,7 +152,9 @@ export function createSharesService(config: SharesServiceConfig) {
     });
   }
 
-  async function canShareFile(file: FileRecord, ctx: FileProviderContext): Promise<boolean> {
+  // `allowRoleGrants`: role grants count only for creating links; revoking or
+  // listing keeps the owner/user/tenant rule.
+  async function canShareFile(file: FileRecord, ctx: FileProviderContext, allowRoleGrants = false): Promise<boolean> {
     if (isFileOwner(file, ctx)) {
       return true;
     }
@@ -169,7 +172,11 @@ export function createSharesService(config: SharesServiceConfig) {
       if (!grant?.canShare || isGrantExpired(grant.expiresAt)) {
         return false;
       }
-      return grant.userId === ctx.principalId || (grant.tenantId && grant.tenantId === ctx.tenantId);
+      if (grant.userId === ctx.principalId || (grant.tenantId && grant.tenantId === ctx.tenantId)) return true;
+      // A role grant, like an admin role, applies only within the file's tenant.
+      if (!allowRoleGrants) return false;
+      const roles = (ctx as { roles?: string[] }).roles;
+      return Boolean(grant.role && roles?.includes(grant.role) && (file.tenantId || null) === (ctx.tenantId || null));
     });
   }
 
@@ -329,7 +336,7 @@ export function createSharesService(config: SharesServiceConfig) {
         throw errors.notFound('File');
       }
 
-      const canShare = await canShareFile(file, ctx);
+      const canShare = await canShareFile(file, ctx, true);
       if (!canShare) {
         throw errors.forbidden();
       }
