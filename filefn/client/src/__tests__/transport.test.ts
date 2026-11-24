@@ -247,7 +247,9 @@ describe('client transport options', () => {
     const http = createHttpClient({ baseUrl: BASE, fetch: server.fetch });
     await http.uploadPartToSignedUrl(`${BASE}/bucket/object?X-Amz-Signature=test-signature`, {}, new Blob(['abc']), 'upls_1').catch(() => undefined);
     await http.uploadPartToSignedUrl(`${BASE}/upload/sess_1/parts/1?X-Amz-Signature=test-signature`, {}, new Blob(['abc']), 'upls_1').catch(() => undefined);
-    expect(server.calls).toHaveLength(2);
+    // An absolute, queryless URL on a FileFn-shaped path (storage signing through headers).
+    await http.uploadPartToSignedUrl(`${BASE}/upload/sess_1/parts/1`, { authorization: 'test-storage-signature' }, new Blob(['abc']), 'upls_1').catch(() => undefined);
+    expect(server.calls).toHaveLength(3);
     for (const call of server.calls) {
       expect(call.headers.get('x-upload-session-token')).toBeNull();
     }

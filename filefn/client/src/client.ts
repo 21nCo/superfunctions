@@ -561,7 +561,12 @@ export function createHttpClient(config: FileFnClientConfig): HttpClient {
           // part endpoint, never to a storage provider's presigned URL, whose
           // logs would record it. A token-bearing PUT follows no redirect, so a
           // redirect can't carry the header elsewhere.
-          const sendToken = toPartRoute && Boolean(uploadSessionToken);
+          // Proxy part URLs are issued root-relative (`/upload/<id>/parts/<n>`);
+          // storage URLs, multipart included, are absolute. Only a root-relative
+          // URL that resolves to the part route gets the token, so a storage
+          // URL never does, whatever path a same-origin storage proxy uses.
+          const issuedRelative = url.startsWith("/") && !isProtocolRelative(url);
+          const sendToken = issuedRelative && toPartRoute && Boolean(uploadSessionToken);
           const requestHeaders = mergeHeaders(
             toFileFn ? await readAuthHeaders() : undefined,
             headers,
