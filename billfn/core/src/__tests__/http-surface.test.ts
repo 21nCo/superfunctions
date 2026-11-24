@@ -173,6 +173,44 @@ describe('error details returned to callers', () => {
     expect(await answer.text()).not.toContain('subclass-serializer-internal');
   });
 
+  it('answers a deeply nested details object with its own code and status, cut off at depth', async () => {
+    const env = await setup();
+    let nested: Record<string, unknown> = { leaf: true };
+    for (let level = 0; level < 4000; level += 1) {
+      nested = { next: nested };
+    }
+    env.parseWebhookError.current = createBillFnError({
+      code: 'BILLFN_PROVIDER_ERROR',
+      message: 'Provider request failed',
+      details: { status: 502, nested }
+    });
+
+    const response = await env.call('/webhooks/dodo', { method: 'POST', body: '{}' });
+    const payload = (await response.json()) as { error: { code: string; details?: { status?: number } } };
+
+    expect(response.status).toBe(502);
+    expect(payload.error.code).toBe('BILLFN_PROVIDER_ERROR');
+    expect(payload.error.details?.status).toBe(502);
+  });
+
+  it('answers details with a throwing toJSON getter without reading it', async () => {
+    const env = await setup();
+    const details = { status: 502 };
+    Object.defineProperty(details, 'toJSON', {
+      get() {
+        throw new Error('test-getter-read');
+      },
+      enumerable: false
+    });
+    env.parseWebhookError.current = createBillFnError({ code: 'BILLFN_PROVIDER_ERROR', message: 'Provider request failed', details });
+
+    const response = await env.call('/webhooks/dodo', { method: 'POST', body: '{}' });
+    const payload = (await response.json()) as { error: { code: string; details?: unknown } };
+
+    expect(response.status).toBe(502);
+    expect(payload.error.code).toBe('BILLFN_PROVIDER_ERROR');
+  });
+
   it('leaves out objects in the details that are not plain data', async () => {
     const env = await setup();
     class ProviderResponse {

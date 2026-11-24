@@ -25,7 +25,13 @@ export function publicErrorDetails(details: unknown): Record<string, unknown> | 
   if (details === null || typeof details !== 'object' || Array.isArray(details)) {
     return undefined;
   }
-  const kept = stripPrivateDetails(details) as Record<string, unknown> | undefined;
+  let kept: Record<string, unknown> | undefined;
+  try {
+    kept = stripPrivateDetails(details) as Record<string, unknown> | undefined;
+  } catch {
+    // Details that cannot be read safely (a throwing getter) are left out; the error itself is still answered.
+    return undefined;
+  }
   return kept && Object.keys(kept).length > 0 ? kept : undefined;
 }
 
@@ -33,13 +39,19 @@ function stripPrivateDetails(value: unknown, depth = 0): unknown {
   if (value === null || typeof value !== 'object') {
     return value;
   }
+  // Details are small; anything nested deeper than this is not returned at all.
+  if (depth >= 8) {
+    return undefined;
+  }
   // Only plain data is rebuilt: a plain array, or an object whose prototype is Object.prototype or null. Anything
   // else (a class instance, an Array subclass, a Date, an Error) is left out rather than serialized from its own
   // properties, and so is plain data with its own serializer (even a non-enumerable toJSON), which decides what
   // it shows.
   const prototype = Object.getPrototypeOf(value);
   const plain = Array.isArray(value) ? prototype === Array.prototype : prototype === Object.prototype || prototype === null;
-  if (!plain || typeof (value as { toJSON?: unknown }).toJSON === 'function') {
+  // Plain data inherits nothing but Object.prototype or Array.prototype, so its own `toJSON` (value or accessor) is
+  // the only one; it is found by descriptor, never read.
+  if (!plain || Object.getOwnPropertyDescriptor(value, 'toJSON') !== undefined) {
     return undefined;
   }
   if (Array.isArray(value)) {
