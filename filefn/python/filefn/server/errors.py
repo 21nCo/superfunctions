@@ -47,6 +47,7 @@ class ErrorCodes:
     SHARE_NOT_FOUND = 'FILEFN_SHARE_NOT_FOUND'
     PERMISSION_NOT_FOUND = 'FILEFN_PERMISSION_NOT_FOUND'
     PROCESSING_ENQUEUE_FAILED = 'FILEFN_PROCESSING_ENQUEUE_FAILED'
+    INVALID_REQUEST = 'FILEFN_INVALID_REQUEST'
 
 def auth_required() -> FileFnError:
     return FileFnError(ErrorCodes.AUTH_REQUIRED, 'Authentication required', 401)
@@ -162,3 +163,6 @@ def offline_unsupported() -> FileFnError:
         'OPFS unavailable',
         400
     )
+
+def invalid_request(message: str, details: Optional[Dict[str, Any]] = None) -> FileFnError:
+    return FileFnError(ErrorCodes.INVALID_REQUEST, message, 400, details)

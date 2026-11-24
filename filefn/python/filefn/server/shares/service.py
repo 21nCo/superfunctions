@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel
 
 from .. import errors
+from ..authz.ownership import is_file_owner
 from ..models import FileProviderContext, FileRecord, FileShareRecord, FileVersionRecord
 from ..policies import resolve_storage_target
 from ..routed_storage import get_storage_capabilities
@@ -74,7 +75,7 @@ class SharesService:
         return FileVersionRecord(**data) if data else None
 
     async def _can_share_file(self, file: FileRecord, ctx: FileProviderContext) -> bool:
-        return file.ownerId == ctx.principalId
+        return is_file_owner(file, ctx)
 
     async def _reserve_download(self, token_hash: str) -> FileShareRecord:
         for _ in range(5):

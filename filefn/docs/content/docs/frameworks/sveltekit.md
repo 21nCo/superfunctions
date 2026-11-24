@@ -24,6 +24,8 @@ export const fileFn = createFileFn({
 });
 ```
 
+With `required: false`, requests without a session are served as the shared `anonymous` principal: they can upload, but nobody owns an anonymous upload, so they cannot read back a private one, share it or delete it. Set `required: true` if every upload should belong to a signed-in user.
+
 ```ts
 // src/routes/filefn/[...path]/+server.ts
 import type { RequestHandler } from "./$types";

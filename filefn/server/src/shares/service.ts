@@ -6,6 +6,7 @@ import { resolveStorageTarget, type PolicyRegistry } from '../policies.js';
 import { createHash, randomBytes } from 'crypto';
 import { signedDownloadConstraints } from '../download-headers.js';
 import * as errors from '../errors.js';
+import { isAnonymousContext, isFileOwner } from '../authz/ownership.js';
 
 export interface FileShareRecord {
   tokenHash: string;
@@ -74,10 +75,10 @@ export function createSharesService(config: SharesServiceConfig) {
   }
 
   async function canShareFile(file: FileRecord, ctx: FileProviderContext): Promise<boolean> {
-    if (file.ownerId === ctx.principalId) {
+    if (isFileOwner(file, ctx)) {
       return true;
     }
-    if (!ctx.principalId) {
+    if (isAnonymousContext(ctx)) {
       return false;
     }
 
