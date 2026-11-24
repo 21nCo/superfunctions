@@ -2823,6 +2823,28 @@ describe("apifn check: the router module is the one file loaded (round 4)", () =
       vi.unstubAllEnvs();
     }
   });
+
+  it("a JITI_ALIAS key that matches a relative name (\".\") does not redirect the resolved router file (PR round 1)", async () => {
+    const dir = realpathSync(path.join(await fixtures(), "base"));
+    const other = realpathSync(await tempDir("apifn-check-alias-dot-"));
+    const route = (id: string) =>
+      `export default { getRoutes() { return [{ method: "GET", path: "/${id}", handler: async () => Response.json({}), meta: { operationId: "${id}" } }]; } };\n`;
+    await mkdir(path.join(dir, "src"), { recursive: true });
+    await writeFile(path.join(dir, "src", "router.ts"), route("aliasResolved"));
+    await writeFile(path.join(other, "router.ts"), route("aliasElsewhere"));
+    vi.stubEnv("JITI_ALIAS", JSON.stringify({ ".": other }));
+    try {
+      const loaded = await loadRouterModule(path.join(dir, "src", "router"), dir);
+      expect(loaded.file).toBe(path.join(dir, "src", "router.ts"));
+      expect(loaded.router.getRoutes().map((r) => r.meta?.operationId)).toEqual(["aliasResolved"]);
+      const generated = await run(["generate", path.join(dir, "src", "router"), "--output", "out.yml"], dir);
+      expect(generated.code).toBe(0);
+      const out = await readFile(path.join(dir, "out.yml"), "utf8");
+      expect({ resolved: out.includes("aliasResolved"), elsewhere: out.includes("aliasElsewhere") }).toEqual({ resolved: true, elsewhere: false });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
 });
 
 describe("apifn check: argument handling stays in step with cac (round 4)", () => {

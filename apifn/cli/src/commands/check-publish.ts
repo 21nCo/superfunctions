@@ -357,7 +357,7 @@ interface Staged {
   backupState?: FileState;
   /** True when the backup is a hard link to the observed file (not a copy). */
   linked?: boolean;
-  /** The backup's inode, open until publish ends (an open inode's number is never reused), and the bytes it must hold. */
+  /** The backup's inode, open until publish ends (an open inode's number is never reused), and a copy's bytes. */
   backupFd?: number;
   previous?: Buffer;
   /** Descriptors that pin the reservation and each created directory until publish ends. */
@@ -418,7 +418,7 @@ function backupOwned(staged: Staged, now: FileState): boolean {
 function backupHoldsPrevious(staged: Staged): boolean {
   const made = staged.backupState;
   return staged.backup !== undefined && !!made && dirsHold(staged) && sameState(currentState(staged.backup), made) &&
-    holdsBytes(staged.backupFd as number, staged.previous as Buffer);
+    (staged.previous === undefined || holdsBytes(staged.backupFd as number, staged.previous));
 }
 
 /** Removes the backup while it is still this run's (backupOwned); another writer's is left and named. */
@@ -628,10 +628,9 @@ function backUp(staged: Staged): void {
   if (before === null) return;
   const backup = tempName(staged.destination).replace(/\.tmp$/, ".bak");
   staged.backup = backup;
-  // The observed file is opened before the link: the link must be that very inode.
-  staged.backupFd = openSync(staged.destination, constants.O_RDONLY);
+  // The observed file is opened (never blocking, never through a link) before the link: the link must be that very inode.
+  staged.backupFd = openSync(staged.destination, constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW);
   if (!sameState(stateOf(fstatSync(staged.backupFd, BIG)), before)) throw changed(staged);
-  staged.previous = readFileSync(staged.backupFd);
   try {
     linkSync(staged.destination, backup);
     staged.linked = true;
@@ -641,10 +640,11 @@ function backUp(staged: Staged): void {
   if (staged.linked) {
     const made = currentState(backup);
     // Not the observed inode: never this run's backup (null owns nothing), so it is left and named.
-    staged.backupState = sameFile(made, stateOf(fstatSync(staged.backupFd, BIG))) ? made : null;
+    staged.backupState = sameContent(made, before) && sameFile(made, stateOf(fstatSync(staged.backupFd, BIG))) ? made : null;
     if (staged.backupState === null) throw changed(staged);
     return;
   }
+  staged.previous = readFileSync(staged.backupFd);
   closeSync(staged.backupFd);
   staged.backupFd = undefined;
   const fd = openSync(backup, constants.O_RDWR | constants.O_CREAT | constants.O_EXCL, 0o600);
@@ -784,7 +784,8 @@ export async function publish(
     return await publishAll(all, verifier(all, guarded), guarded, emit, hook, signal);
   } finally {
     for (const staged of all) {
-      for (const fd of [staged.fd, staged.backupFd, ...staged.held]) if (fd !== undefined) closeSync(fd);
+      // A close failure (nothing is left to flush: each temp was fsynced) never changes the verdict.
+      for (const fd of [staged.fd, staged.backupFd, ...staged.held]) if (fd !== undefined) try { closeSync(fd); } catch { /* ignored */ }
     }
     if (all.length > 0) onPublishing?.(false);
   }
