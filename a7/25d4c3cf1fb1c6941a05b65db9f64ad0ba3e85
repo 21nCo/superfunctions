@@ -1,0 +1,31 @@
+filefn/admin/src/__tests__/admin.test.ts
+  s_b841cebdcfad95::t_e5867c2c152ea9 455-468
+filefn/admin/src/domain-service.ts
+  s_b841cebdcfad95::t_d7c3883c344175 25-41,268-274
+filefn/docs/content/docs/core-concepts/upload-sessions.md
+  s_b841cebdcfad95::t_b248459f1ccaec 40-49
+filefn/docs/static/llms-full.txt
+  s_b841cebdcfad95::t_5fca75334081d0 2955-2964
+filefn/server/src/upload-sessions/input.ts
+  s_b841cebdcfad95::t_7ffe613c4611d5 1-142
+filefn/server/src/upload-sessions/service.ts
+  s_b841cebdcfad95::t_c24f07af87ea93 18,1272-1274
+filefn/server/tests/upload-input-security.test.ts
+  s_b841cebdcfad95::t_7a02b9879aa047 1-148
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a725d4c3cf1fb1c6941a05b65db9f64ad0ba3e85",
+  "prompts": {},
+  "sessions": {
+    "s_b841cebdcfad95": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "436f4738-d86e-44e1-82bc-c432f9aaabf3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
