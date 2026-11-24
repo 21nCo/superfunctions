@@ -64,7 +64,8 @@ function normalizeJson(value: unknown, key: string, depth: number, budget: { lef
   // Number and String are converted with ToNumber/ToString, Boolean read with
   // the intrinsic valueOf.
   if (value !== null && typeof value === 'object') {
-    if (hasSlot(Number.prototype.valueOf, value)) value = Number(value);
+    // Unary plus is ToNumber (a BigInt from toPrimitive throws, as in JSON.stringify).
+    if (hasSlot(Number.prototype.valueOf, value)) value = +(value as unknown as number);
     else if (hasSlot(String.prototype.valueOf, value)) value = String(value);
     else if (hasSlot(Boolean.prototype.valueOf, value)) value = Boolean.prototype.valueOf.call(value);
   }

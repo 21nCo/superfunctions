@@ -262,4 +262,12 @@ describe('upload init input (FILE-30 F-21, F-05)', () => {
       details: { field: 'metadata' },
     });
   });
+
+  it('refuses a boxed Number that converts to a BigInt, as JSON.stringify does', async () => {
+    const fileFn = makeFileFn([{ name: 'any' }]);
+    const boxed = Object.assign(new Number(1), { [Symbol.toPrimitive]: () => 1n });
+    await expect(
+      fileFn.createUploadSession({ policy: 'any', fileName: 'a.txt', size: 1, mimeType: 'text/plain', metadata: { n: boxed } } as never, { principalId: 'alice' }),
+    ).rejects.toMatchObject({ code: 'FILEFN_INVALID_REQUEST' });
+  });
 });
