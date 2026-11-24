@@ -7,6 +7,7 @@ import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
+  byCodeUnit,
   declaredOutputMatcher,
   driftSnapshot,
   entryHash,
@@ -141,6 +142,12 @@ test("a pull request prunes its restored entries that are stale or tainted and k
   });
 });
 
+test("paths and hashes sort by code unit, not by locale", () => {
+  const names = ["b.txt", "B.txt", "_x", "a.txt", "é", "10", "9"];
+  assert.deepEqual([...names].sort(byCodeUnit), [...names].sort());
+  assert.deepEqual([...names].sort(byCodeUnit), ["10", "9", "B.txt", "_x", "a.txt", "b.txt", "é"]);
+});
+
 test("entry files are recognised by Turbo's names only", () => {
   assert.equal(entryHash(`${KEPT}.tar.zst`), KEPT);
   assert.equal(entryHash(`${KEPT}-meta.json`), KEPT);
@@ -178,6 +185,7 @@ test("declared outputs follow Turbo's globs relative to each task's directory", 
     { taskId: "c#build", directory: "libs/c", outputs: ["$TURBO_ROOT$/shared/out/**", "lib/**/index.d.ts"] },
     { taskId: "//#lint", directory: "", outputs: ["report.json"] },
     { taskId: "d#test", directory: "libs/d" },
+    { taskId: "e#build", directory: "libs/e", outputs: ["out/[ab].txt", "out/[!ab]x.txt", "a}b,c.txt"] },
   ]);
   const cases = {
     "apps/a/.next/server/page.js": true,
@@ -197,6 +205,12 @@ test("declared outputs follow Turbo's globs relative to each task's directory", 
     "libs/c/lib/x/y/index.d.ts": true,
     "report.json": true,
     "libs/d/report.json": false,
+    "libs/e/out/a.txt": true, // `[…]` is a character class
+    "libs/e/out/c.txt": false,
+    "libs/e/out/cx.txt": true, // `[!…]` negates it
+    "libs/e/out/ax.txt": false,
+    "libs/e/a}b,c.txt": true, // `}` and `,` outside braces are literal
+    "libs/e/aXb,c.txt": false,
   };
   for (const [file, expected] of Object.entries(cases)) assert.equal(isOutput(file), expected, file);
   const matcher = (outputs) => () => declaredOutputMatcher([{ taskId: "a#build", directory: "a", outputs }]);
@@ -205,6 +219,8 @@ test("declared outputs follow Turbo's globs relative to each task's directory", 
   assert.throws(matcher(["../../x/**"]), /outside the repository/);
   assert.throws(matcher(["dist**"]), /unsupported output glob/);
   assert.throws(matcher(["{a,b"]), /unsupported output glob/);
+  assert.throws(matcher(["out/[x"]), /unsupported output glob/);
+  assert.throws(matcher(["a/***/b"]), /unsupported output glob/);
 });
 
 // Step records as recordStep writes them: `listing` names the cache files, `snapshot` maps drift paths to hashes.
@@ -244,28 +260,39 @@ test("only the entries that first appeared in a step that changed files outside 
   }
 });
 
-test("files the summarised tasks declare as outputs, in this or an earlier step, are not drift", () => {
-  const buildTasks = [
-    {
-      taskId: "ui#build",
-      hash: BUILD,
-      directory: "ui",
-      outputs: ["src/*.generated.ts", "dist/**"],
-      excludedOutputs: ["dist/skip/**"],
-    },
-  ];
+test("only files the step's own summarised tasks declare as outputs are not drift", () => {
+  const buildTask = {
+    taskId: "ui#build",
+    hash: BUILD,
+    directory: "ui",
+    outputs: ["src/*.generated.ts", "dist/**"],
+    excludedOutputs: ["dist/skip/**"],
+  };
+  const buildTasks = [buildTask];
   const snapshot = { "ui/src/catalog.generated.ts": "v2", "ui/dist/index.js": "v2" };
-  const records = [
-    baseline(),
-    step("build", files(BUILD), snapshot, buildTasks),
-    step("typecheck", files(BUILD, TYPECHECK), { ...snapshot, "ui/src/catalog.generated.ts": "v3" }),
-  ];
-  assert.deepEqual([...taintedEntries(records, files(BUILD, TYPECHECK)).tainted], []);
+  const rewritten = { ...snapshot, "ui/src/catalog.generated.ts": "v3" };
+  // Typecheck rewrites a file only the earlier build declares; replaying typecheck would leave the build's v2.
+  const built = step("build", files(BUILD), snapshot, buildTasks);
+  const records = [baseline(), built, step("typecheck", files(BUILD, TYPECHECK), rewritten)];
+  const { tainted, reports } = taintedEntries(records, files(BUILD, TYPECHECK));
+  assert.deepEqual([...tainted], [TYPECHECK]);
+  assert.deepEqual(reports, [
+    {
+      step: "typecheck",
+      reason: "files changed outside the declared outputs",
+      drift: ["ui/src/catalog.generated.ts"],
+      entries: 1,
+    },
+  ]);
+  // A step whose own summary replays the build restores its declared outputs, so that change is not drift.
+  const replaying = [...buildTasks, { taskId: "app#typecheck", hash: TYPECHECK, directory: "app" }];
+  const replayed = [baseline(), built, step("typecheck", files(BUILD, TYPECHECK), rewritten, replaying)];
+  assert.deepEqual([...taintedEntries(replayed, files(BUILD, TYPECHECK)).tainted], []);
 
   const excluded = [baseline(), step("build", files(BUILD), { ...snapshot, "ui/dist/skip/x.js": "v1" }, buildTasks)];
-  const { tainted, reports } = taintedEntries(excluded, files(BUILD));
-  assert.deepEqual([...tainted], [BUILD]);
-  assert.deepEqual(reports[0].drift, ["ui/dist/skip/x.js"]);
+  const excludedResult = taintedEntries(excluded, files(BUILD));
+  assert.deepEqual([...excludedResult.tainted], [BUILD]);
+  assert.deepEqual(excludedResult.reports[0].drift, ["ui/dist/skip/x.js"]);
 });
 
 test("missing evidence taints: no summary, no listing, no snapshot, no record or a malformed output glob", () => {

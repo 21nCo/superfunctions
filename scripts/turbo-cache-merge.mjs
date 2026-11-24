@@ -6,8 +6,9 @@
 // replayed, so its entry is not saved. Each Turbo step runs with `--summarize`, then records (`--record <step>`) its
 // run summary, the cache directory's files and a drift snapshot (changed tracked and untracked unignored files, each
 // with a content hash); `--baseline` records the same before any task runs. Before saving, the merge deletes every
-// entry that first appeared during a step whose snapshot changed outside the declared outputs of the tasks summarised
-// so far, every entry of a step without a readable summary, listing or snapshot, and every entry no step recorded.
+// entry that first appeared during a step whose snapshot changed outside the declared outputs of the tasks in that
+// step's own summary (a replay of the step restores only those), every entry of a step without a readable summary,
+// listing or snapshot, and every entry no step recorded.
 // Drift only warns: the cache never changes a job's result.
 //
 // Merge. Runs that must verify every task (pushes, the nightly run, manual runs) replay nothing, yet the entry they
@@ -57,47 +58,54 @@ export function readSummaryTasks(json, what) {
   });
 }
 
+// One token of an output glob: `**` with the `/` after it, `*`, `?`, a character class (`[` and at least one character
+// up to the next `]`) or any other single character.
+const GLOB_TOKEN = /\*\*\/?|\*|\?|\[.[^\]]*\]|./gs;
+
+function unsupportedGlob(glob) {
+  return new Error(`unsupported output glob ${JSON.stringify(glob)}`);
+}
+
+// `**` must be a whole path segment. Before a `/` it matches any number of segments; at the end of the glob it matches
+// everything below the directory, or the directory's own path.
+function doubleStarSource(glob, token, index, source) {
+  const segmentStart = index === 0 || glob[index - 1] === "/";
+  const trailing = index + token.length === glob.length;
+  if (!segmentStart || !(trailing || token.endsWith("/"))) throw unsupportedGlob(glob);
+  if (token.endsWith("/")) return `${source}(?:[^/]*/)*`;
+  return source.endsWith("/") ? `${source.slice(0, -1)}(?:/.*)?` : `${source}.*`;
+}
+
+// The source for a token that is not `**` or part of a brace group.
+function tokenSource(glob, token) {
+  if (token === "*") return "[^/]*";
+  if (token === "?") return "[^/]";
+  if (token === "[") throw unsupportedGlob(glob);
+  if (token.startsWith("[")) return `[${token.slice(1, -1).replace(/^!/, "^").replaceAll("\\", String.raw`\\`)}]`;
+  return token.replace(/[.+^${}()|[\]\\]/g, String.raw`\$&`);
+}
+
 // A regular expression source for one Turbo output glob: `**` as a whole path segment matches any number of segments,
 // `*` and `?` match within one segment, `{a,b}` matches either alternative and `[…]` (or `[!…]`) a character class.
 function globSource(glob) {
   let source = "";
   let braces = 0;
-  for (let index = 0; index < glob.length; index++) {
-    const char = glob[index];
-    if (char === "*" && glob[index + 1] === "*") {
-      const segmentStart = index === 0 || glob[index - 1] === "/";
-      const segmentEnd = index + 2 === glob.length || glob[index + 2] === "/";
-      if (!segmentStart || !segmentEnd) throw new Error(`unsupported output glob ${JSON.stringify(glob)}`);
-      if (index + 2 === glob.length) {
-        // A trailing `**` matches everything below the directory, or the directory's own path.
-        source = source.endsWith("/") ? `${source.slice(0, -1)}(?:/.*)?` : `${source}.*`;
-      } else {
-        source += "(?:[^/]*/)*";
-        index += 1; // also skip the `/` after `**`
-      }
-      index += 1;
-    } else if (char === "*") {
-      source += "[^/]*";
-    } else if (char === "?") {
-      source += "[^/]";
-    } else if (char === "[") {
-      const end = glob.indexOf("]", index + 2);
-      if (end === -1) throw new Error(`unsupported output glob ${JSON.stringify(glob)}`);
-      source += `[${glob.slice(index + 1, end).replace(/^!/, "^").replaceAll("\\", "\\\\")}]`;
-      index = end;
-    } else if (char === "{") {
+  for (const { 0: token, index } of glob.matchAll(GLOB_TOKEN)) {
+    if (token.startsWith("**")) {
+      source = doubleStarSource(glob, token, index, source);
+    } else if (token === "{") {
       braces += 1;
       source += "(?:";
-    } else if (char === "}" && braces > 0) {
+    } else if (token === "}" && braces > 0) {
       braces -= 1;
       source += ")";
-    } else if (char === "," && braces > 0) {
+    } else if (token === "," && braces > 0) {
       source += "|";
     } else {
-      source += char.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+      source += tokenSource(glob, token);
     }
   }
-  if (braces !== 0) throw new Error(`unsupported output glob ${JSON.stringify(glob)}`);
+  if (braces !== 0) throw unsupportedGlob(glob);
   return source;
 }
 
@@ -138,28 +146,50 @@ export function declaredOutputMatcher(tasks) {
     );
 }
 
+// Orders strings by UTF-16 code unit, as the default sort does, so paths and hashes sort the same on every machine.
+export function byCodeUnit(a, b) {
+  if (a < b) return -1;
+  return a > b ? 1 : 0;
+}
+
 function filesIn(directory) {
   if (!fs.existsSync(directory)) return [];
   return fs
     .readdirSync(directory, { withFileTypes: true })
     .filter((entry) => entry.isFile())
     .map((entry) => entry.name)
-    .sort();
+    .sort(byCodeUnit);
+}
+
+// Git by absolute path, not looked up on PATH: /usr/bin/git on the Linux runners and on macOS.
+const GIT_CANDIDATES = ["/usr/bin/git", "/usr/local/bin/git", "/opt/homebrew/bin/git"];
+
+function gitExecutable() {
+  const git = GIT_CANDIDATES.find((file) => fs.existsSync(file));
+  if (!git) throw new Error(`git is not at ${GIT_CANDIDATES.join(", ")}`);
+  return git;
+}
+
+// A hash of the content at `full`: a symbolic link's target, a file's bytes, "directory" for anything else, or
+// "deleted" when nothing is there.
+function contentHash(full) {
+  const stat = fs.lstatSync(full, { throwIfNoEntry: false });
+  if (!stat) return "deleted";
+  let content = "directory";
+  if (stat.isSymbolicLink()) content = `link:${fs.readlinkSync(full)}`;
+  else if (stat.isFile()) content = fs.readFileSync(full);
+  return createHash("sha256").update(content).digest("hex");
 }
 
 // The files of the Git checkout at `cwd` that differ from HEAD (changed, deleted or staged) and the untracked files
 // that are not ignored, each with a hash of its content ("deleted" for a missing file).
 export function driftSnapshot(cwd) {
   const args = ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--no-renames"];
-  const status = execFileSync("git", args, { cwd, encoding: "utf8", maxBuffer: 1 << 28 });
+  const status = execFileSync(gitExecutable(), args, { cwd, encoding: "utf8", maxBuffer: 1 << 28 });
   const snapshot = {};
   for (const line of status.split("\0").filter(Boolean)) {
     const file = line.slice(3);
-    const full = path.join(cwd, file);
-    const stat = fs.lstatSync(full, { throwIfNoEntry: false });
-    const link = stat?.isSymbolicLink() ? `link:${fs.readlinkSync(full)}` : null;
-    const content = !stat ? null : (link ?? (stat.isFile() ? fs.readFileSync(full) : "directory"));
-    snapshot[file] = content === null ? "deleted" : createHash("sha256").update(content).digest("hex");
+    snapshot[file] = contentHash(path.join(cwd, file));
   }
   return snapshot;
 }
@@ -199,6 +229,25 @@ export function readRecords(stepsDir) {
     .map((file) => JSON.parse(fs.readFileSync(path.join(stepsDir, file), "utf8")));
 }
 
+// Why a step's new entries cannot be saved ({ reason, drift }), or null: its record has no readable summary or no
+// snapshot to compare with `previous`, or a file changed during the step that no task of the step's own summary
+// declares as an output. Only the step's own tasks count, since replaying the step restores only their outputs: a file
+// an earlier step's task declares but a later step rewrites would keep the earlier content on replay.
+function stepTaint(step, previous) {
+  if (!Array.isArray(step.tasks)) return { reason: "no readable Turbo run summary", drift: [] };
+  if (!step.snapshot || !previous) return { reason: "no drift snapshot", drift: [] };
+  let isOutput;
+  try {
+    isOutput = declaredOutputMatcher(step.tasks);
+  } catch (error) {
+    return { reason: error.message, drift: [] };
+  }
+  const files = new Set([...Object.keys(previous), ...Object.keys(step.snapshot)]);
+  const drift = [...files].filter((file) => previous[file] !== step.snapshot[file] && !isOutput(file));
+  if (drift.length === 0) return null;
+  return { reason: "files changed outside the declared outputs", drift: drift.sort(byCodeUnit) };
+}
+
 // The hashes of the entries to delete, from the step records in order (baseline first) and the cache directory's files
 // now, plus a report of each tainted step.
 export function taintedEntries(records, finalListing) {
@@ -208,7 +257,6 @@ export function taintedEntries(records, finalListing) {
   }
   const tainted = new Set();
   const reports = [];
-  const tasks = [];
   let listing = new Set(baseline.listing);
   let snapshot = baseline.snapshot;
   let carried = null;
@@ -218,26 +266,13 @@ export function taintedEntries(records, finalListing) {
     reports.push({ ...report, entries: new Set(hashes).size });
   };
   for (const step of steps) {
-    if (Array.isArray(step.tasks)) tasks.push(...step.tasks);
     if (!Array.isArray(step.listing)) {
       carried ??= `step ${step.name} has no cache listing`;
       snapshot = null;
       continue;
     }
-    let reason = carried ?? (step.tasks ? null : "no readable Turbo run summary");
-    let drift = [];
-    if (!reason && (!step.snapshot || !snapshot)) reason = "no drift snapshot";
-    if (!reason) {
-      try {
-        const isOutput = declaredOutputMatcher(tasks);
-        const files = new Set([...Object.keys(snapshot), ...Object.keys(step.snapshot)]);
-        drift = [...files].filter((file) => snapshot[file] !== step.snapshot[file] && !isOutput(file)).sort();
-        if (drift.length > 0) reason = "files changed outside the declared outputs";
-      } catch (error) {
-        reason = error.message;
-      }
-    }
-    if (reason) taint(step.listing.filter((file) => !listing.has(file)), { step: step.name, reason, drift });
+    const found = carried ? { reason: carried, drift: [] } : stepTaint(step, snapshot);
+    if (found) taint(step.listing.filter((file) => !listing.has(file)), { step: step.name, ...found });
     listing = new Set(step.listing);
     snapshot = step.snapshot ?? null;
     carried = null;
@@ -257,6 +292,25 @@ function moveFile(from, to) {
     fs.copyFileSync(from, to);
     fs.rmSync(from);
   }
+}
+
+// Settles one restored or set-aside entry file and returns its outcome: "pruned" (deleted) when its hash is not current
+// or is tainted, "superseded" (deleted) for a set-aside entry the run wrote again, otherwise "restored" (kept in or
+// moved back to cacheDir).
+function settleCandidate({ fileName, hash, from }, { cacheDir, currentHashes, tainted, newHashes }) {
+  const source = path.join(from, fileName);
+  if (hash === null || !currentHashes.has(hash) || tainted.has(hash)) {
+    fs.rmSync(source);
+    return "pruned";
+  }
+  if (from === cacheDir) return "restored";
+  if (newHashes.has(hash)) {
+    fs.rmSync(source);
+    return "superseded";
+  }
+  fs.mkdirSync(cacheDir, { recursive: true });
+  moveFile(source, path.join(cacheDir, fileName));
+  return "restored";
 }
 
 // Deletes the tainted entries of cacheDir, then merges the set-aside entries (asideDir) or prunes the restored ones
@@ -280,30 +334,18 @@ export function mergeTurboCache({ cacheDir, asideDir, restoredFiles = [], curren
   if (asideDir !== undefined) {
     for (const fileName of filesIn(asideDir)) candidates.push({ fileName, hash: entryHash(fileName), from: asideDir });
   }
-  for (const { fileName, hash, from } of candidates) {
-    const source = path.join(from, fileName);
-    if (hash === null || !currentHashes.has(hash) || tainted.has(hash)) {
-      fs.rmSync(source);
-      outcome.pruned.add(hash ?? fileName);
-    } else if (from === cacheDir) {
-      outcome.restored.add(hash);
-    } else if (newHashes.has(hash)) {
-      fs.rmSync(source);
-      outcome.superseded.add(hash);
-    } else {
-      fs.mkdirSync(cacheDir, { recursive: true });
-      moveFile(source, path.join(cacheDir, fileName));
-      outcome.restored.add(hash);
-    }
+  const context = { cacheDir, currentHashes, tainted, newHashes };
+  for (const candidate of candidates) {
+    outcome[settleCandidate(candidate, context)].add(candidate.hash ?? candidate.fileName);
   }
   if (asideDir !== undefined) fs.rmSync(asideDir, { recursive: true, force: true });
-  const sorted = (set) => [...set].sort();
+  const sorted = (set) => [...set].sort(byCodeUnit);
   return Object.fromEntries(Object.entries({ kept: newHashes, ...outcome }).map(([key, set]) => [key, sorted(set)]));
 }
 
 // A value for a GitHub Actions annotation property (`file=…`).
 function annotationProperty(value) {
-  return value.replace(/[%\r\n:,]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase().padStart(2, "0")}`);
+  return value.replace(/[%\r\n:,]/g, (char) => `%${char.codePointAt(0).toString(16).toUpperCase().padStart(2, "0")}`);
 }
 
 const USAGE =
