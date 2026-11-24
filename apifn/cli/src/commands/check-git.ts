@@ -27,13 +27,14 @@
  * - the repository is the git work tree of the directory the check runs in; a spec whose file (its
  *   symlinks followed) lies outside that work tree, or inside another work tree below it, is an
  *   error, so a symlink can never make another repository's commit the baseline; it is discovered
- *   once, and every later git call names its git, common and work tree directories (GIT_DIR,
- *   GIT_COMMON_DIR, GIT_WORK_TREE);
+ *   once (its three paths from one rev-parse, the `.git` entries discovery reads bound before it
+ *   runs and checked again before any ref is resolved and after every read), and every later git
+ *   call names its git, common and work tree directories (GIT_DIR, GIT_COMMON_DIR, GIT_WORK_TREE);
  * - every git failure is an error (exit 2), never a new contract.
  */
 
 import { spawnSync } from "node:child_process";
-import { accessSync, constants, realpathSync, statSync } from "node:fs";
+import { accessSync, constants, lstatSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 import { decodeUtf8 } from "./check-io.js";
 import { MAX_SPEC_BYTES } from "./check-parse.js";
@@ -380,15 +381,27 @@ export interface GitBaseline {
 
 /** The native realpath of the git work tree holding `dir` and its git directory, or null with git's reason. */
 function workTreeOf(executable: string, dir: string): { root: string; gitDir: string; commonDir: string } | { root: null; reason: string } {
-  // One path per call, without its line terminator only, so every valid path name is kept exactly.
-  const paths: string[] = [];
-  for (const flag of ["--show-toplevel", "--absolute-git-dir", "--git-common-dir"]) {
-    const out = new Git(executable, dir).run(["rev-parse", flag]);
-    if (out.code !== 0) return { root: null, reason: out.stderr.trim() || `exit status ${out.code}` };
-    paths.push(out.stdout.replace(/\n$/, ""));
-  }
+  // All three paths come from one rev-parse, so they name one repository, never a mix of two.
+  const out = new Git(executable, dir).run(["rev-parse", "--show-toplevel", "--absolute-git-dir", "--git-common-dir"]);
+  if (out.code !== 0) return { root: null, reason: out.stderr.trim() || `exit status ${out.code}` };
+  const paths = out.stdout.replace(/\n$/, "").split("\n");
+  if (paths.length !== 3) throw new CheckUsageError(`git rev-parse in ${dir} printed a repository path that holds a line break; apifn check cannot bind it.`);
   const [top, gitDir, common] = paths;
   return { root: realpathSync.native(top), gitDir, commonDir: path.resolve(dir, common) };
+}
+
+/** The identity of each `.git` entry git's discovery reads from `dir` up to the filesystem root. */
+function discoveryEntries(dir: string): string {
+  const ids: string[] = [];
+  for (let at = realpathSync.native(dir); ; at = path.dirname(at)) {
+    try {
+      const id = lstatSync(path.join(at, ".git"), { bigint: true, throwIfNoEntry: false });
+      ids.push(id ? `${id.dev}:${id.ino}` : "-");
+    } catch {
+      ids.push("?");
+    }
+    if (path.dirname(at) === at) return ids.join("/");
+  }
 }
 
 /**
@@ -402,6 +415,8 @@ export function readSpecAtRef(ref: string, specPath: string, destination: string
     throw new CheckUsageError(`Invalid git ref '${ref}'`);
   }
   const executable = resolveGitExecutable();
+  // The .git entries discovery reads are bound before it runs: one replaced during discovery is an error.
+  const entries = discoveryEntries(cwd);
   const here = workTreeOf(executable, cwd);
   if (here.root === null) {
     throw new CheckUsageError(`--base needs a git work tree; ${cwd} is not inside one: ${here.reason}`);
@@ -412,9 +427,13 @@ export function readSpecAtRef(ref: string, specPath: string, destination: string
   const repository = bound.map((dir) => statSync(dir, { bigint: true }));
   const done = (baseline: GitBaseline): GitBaseline => {
     const now = bound.map((dir) => statSync(dir, { bigint: true, throwIfNoEntry: false }));
-    if (now.some((id, i) => id?.dev !== repository[i].dev || id.ino !== repository[i].ino)) throw new CheckUsageError(`The git repository at ${here.gitDir} was replaced while apifn check read it.`);
+    if (discoveryEntries(cwd) !== entries || now.some((id, i) => id?.dev !== repository[i].dev || id.ino !== repository[i].ino)) {
+      throw new CheckUsageError(`The git repository at ${here.gitDir} was replaced while apifn check read it.`);
+    }
     return baseline;
   };
+  // The identities are taken before any ref is resolved: a repository replaced during discovery stops here.
+  done({ commit: "", path: null, text: null });
 
   // The file the check reads and --write writes must be inside the repository, and not inside
   // another work tree nested in it (an untracked clone, or a submodule's checkout).

@@ -31,6 +31,7 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { access, chmod, cp, lstat, mkdir, readdir, readFile, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { createRequire } from "node:module";
 import { stringify as toYaml, parse as parseYaml } from "yaml";
 import { describe, expect, it, vi } from "vitest";
@@ -48,6 +49,7 @@ import { comparable } from "../src/commands/check-compare.js";
 import { gitEnvironment, leavesTree, readSpecAtRef } from "../src/commands/check-git.js";
 import { fetchBounded } from "../src/commands/check-io.js";
 import { observe } from "../src/commands/check-publish.js";
+import { MAX_SPEC_BYTES } from "../src/commands/check-parse.js";
 import type { PublishStep } from "../src/commands/check-publish.js";
 import { loadRouterModule } from "../src/utils/router-loader.js";
 import { createOutput } from "../src/utils/output.js";
@@ -2887,6 +2889,45 @@ describe("apifn check: the router module is the one file loaded (round 4)", () =
       vi.unstubAllEnvs();
     }
   });
+
+  it("under JITI_TRY_NATIVE a CommonJS router exported under a computed key loads for generate and check (PR round 3)", async () => {
+    const dir = realpathSync(path.join(await fixtures(), "base"));
+    await writeFile(
+      path.join(dir, "router.cjs"),
+      'const key = ["rou", "ter"].join("");\nmodule.exports = { [key]: { getRoutes() { return [{ method: "GET", path: "/native", handler: async () => Response.json({}), meta: { operationId: "nativeCjs" } }]; } } };\n'
+    );
+    vi.stubEnv("JITI_TRY_NATIVE", "true");
+    try {
+      const loaded = await loadRouterModule("./router.cjs", dir);
+      expect(loaded.file).toBe(path.join(dir, "router.cjs"));
+      expect(loaded.router.getRoutes().map((r) => r.meta?.operationId)).toEqual(["nativeCjs"]);
+      const generated = await run(["generate", "./router.cjs", "--output", "out.yml"], dir);
+      expect(generated.code).toBe(0);
+      expect(await readFile(path.join(dir, "out.yml"), "utf8")).toContain("nativeCjs");
+      const checked = await run(["check", "./router.cjs", "--spec", "out.yml"], dir);
+      expect({ code: checked.code, stderr: checked.stderr }).toEqual({ code: 0, stderr: "" });
+      const bound = await run(["check", "./router.cjs", "--report", "router.cjs"], dir);
+      expect(bound.code).toBe(2);
+      expect(bound.stderr).toContain("the router module");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  // Vitest rewrites import() in the module under test, so a real native import needs a plain Node process.
+  const [major, minor] = process.versions.node.split(".").map(Number);
+  it.skipIf(major < 22 || (major === 22 && minor < 6))("a native import() of a CommonJS router gets jiti's interop in a plain Node process (PR round 3)", async () => {
+    const dir = realpathSync(path.join(await fixtures(), "base"));
+    await writeFile(path.join(dir, "router.cjs"), 'const key = ["rou", "ter"].join("");\nmodule.exports = { [key]: { getRoutes() { return [{ meta: { operationId: "nativeCjs" } }]; } } };\n');
+    const loader = pathToFileURL(path.join(import.meta.dirname, "..", "src", "utils", "router-loader.ts")).href;
+    const script = `const { loadRouterModule } = await import(${JSON.stringify(loader)});\nconst { router } = await loadRouterModule("./router.cjs", ${JSON.stringify(dir)});\nconsole.log(router.getRoutes()[0].meta.operationId);`;
+    const out = execFileSync(process.execPath, ["--experimental-strip-types", "--no-warnings", "--input-type=module", "-e", script], {
+      cwd: dir,
+      env: { ...process.env, JITI_TRY_NATIVE: "true" },
+      encoding: "utf8",
+    });
+    expect(out.trim()).toBe("nativeCjs");
+  });
 });
 
 describe("apifn check: argument handling stays in step with cac (round 4)", () => {
@@ -4594,9 +4635,9 @@ describe("apifn check: git ignores inherited repository selectors (API-25 round 
     const shim = path.join(shimDir, "git");
     await shellScript(
       shim,
-      // After discovery and the spec's own work tree (three rev-parse calls each), another repository takes the .git name.
+      // After discovery and the spec's own work tree (one rev-parse call each), another repository takes the .git name.
       `n=$(cat '${shimDir}/n' 2>/dev/null || echo 0); n=$((n + 1)); echo $n > '${shimDir}/n'\n'${realGit()}' "$@"; code=$?\n` +
-        `if [ $n -eq 6 ]; then mv '${root}/.git' '${root}/.git-orig'; mv '${other}/.git' '${root}/.git'; fi\nexit $code`
+        `if [ $n -eq 2 ]; then mv '${root}/.git' '${root}/.git-orig'; mv '${other}/.git' '${root}/.git'; fi\nexit $code`
     );
     const result = await withEnv("APIFN_GIT", shim, () => run(["check", "--spec", path.join(".apifn", "openapi.yml"), "--base", "HEAD"], service));
     expect({ code: result.code, stdout: result.stdout }).toEqual({ code: 2, stdout: "" });
@@ -4621,12 +4662,39 @@ describe("apifn check: git ignores inherited repository selectors (API-25 round 
     await shellScript(
       shim,
       `n=$(cat '${shimDir}/n' 2>/dev/null || echo 0); n=$((n + 1)); echo $n > '${shimDir}/n'\n'${realGit()}' "$@"; code=$?\n` +
-        `if [ $n -eq 6 ]; then echo '${path.join(other, ".git")}' > '${commondir}'; fi\nexit $code`
+        `if [ $n -eq 2 ]; then echo '${path.join(other, ".git")}' > '${commondir}'; fi\nexit $code`
     );
     const result = await withEnv("APIFN_GIT", shim, () => run(["check", "--spec", path.join(".apifn", "openapi.yml"), "--base", "HEAD"], service));
     expect(result.code).toBe(1);
     expect(result.stdout).toContain("Breaking changes:");
     expect(result.stdout).not.toContain("Breaking changes: 0");
+  });
+
+  it.skipIf(POSIX_ONLY)("a .git replaced during discovery, right after its rev-parse, exits 2 with no stdout, report or repair (PR round 3)", async () => {
+    const { root, service } = await breakingAtHead();
+    const other = await tempDir("apifn-check-discovery-repo-");
+    git(other, "init", "-q");
+    await mkdir(path.join(other, "breaking", ".apifn"), { recursive: true });
+    await writeFile(path.join(other, "breaking", SPEC), await readFile(path.join(service, SPEC), "utf8"));
+    git(other, "add", "-A");
+    git(other, "commit", "-q", "-m", "head contract");
+    const spec = await readFile(path.join(service, SPEC), "utf8");
+    const shimDir = await tempDir("apifn-check-git-");
+    const shim = path.join(shimDir, "git");
+    await shellScript(
+      shim,
+      // The first call is discovery's one rev-parse: another repository takes the .git name as it returns.
+      `n=$(cat '${shimDir}/n' 2>/dev/null || echo 0); n=$((n + 1)); echo $n > '${shimDir}/n'\n'${realGit()}' "$@"; code=$?\n` +
+        `if [ $n -eq 1 ]; then mv '${root}/.git' '${root}/.git-orig'; mv '${other}/.git' '${root}/.git'; fi\nexit $code`
+    );
+    const result = await withEnv("APIFN_GIT", shim, () =>
+      run(["check", "--spec", path.join(".apifn", "openapi.yml"), "--base", "HEAD", "--write", "--report", "report.md"], service)
+    );
+    expect({ code: result.code, stdout: result.stdout }).toEqual({ code: 2, stdout: "" });
+    expect(result.stderr).toContain("was replaced while apifn check read it");
+    expect(existsSync(path.join(service, "report.md"))).toBe(false);
+    expect(await readFile(path.join(service, SPEC), "utf8")).toBe(spec);
+    expect(await readFile(path.join(shimDir, "n"), "utf8")).toBe("1\n");
   });
 });
 
@@ -4746,17 +4814,113 @@ describe("apifn check: a backup is bound to the file this run made, and cleanup 
     expect(await readFile(path.join(dir, SPEC), "utf8")).toBe("openapi: 3.1.0\n");
   });
 
-  it.skipIf(POSIX_ONLY || process.getuid?.() === 0)("an existing report the run may replace but not read is published; its unverifiable backup is kept and named (PR round 2)", async () => {
-    const control = await check(await staleService(), () => {});
+  /** A --write --report run whose stdout write fails: nothing it would deliver may be kept. */
+  async function failingStdout(dir: string, hook?: (step: PublishStep, destination: string) => void): Promise<{ code: number; errors: string; printed: boolean }> {
+    const errors: string[] = [];
+    let printed = false;
+    try {
+      const code = await runCheckCommand({
+        cwd: dir,
+        config: CONFIG,
+        output: { error: (message: string) => errors.push(message), warn: () => {} } as unknown as Output,
+        write: true,
+        reportPath: "report.md",
+        writeStdout: () => {
+          printed = true;
+          throw new Error("stdout closed");
+        },
+        publishHook: hook,
+      });
+      return { code, errors: errors.join("\n"), printed };
+    } finally {
+      Object.assign(fsFaults, { noLink: false, displaceBackup: "", failBackupLookup: "", occupyBackup: "", failClose: false, failTempLookup: false });
+    }
+  }
+
+  for (const [label, mode] of [["write-only", 0o200], ["unreadable", 0o000]] as const) {
+    it.skipIf(POSIX_ONLY || process.getuid?.() === 0)(`an existing ${label} report is never replaced: exit 2, it is named and every file is kept (PR round 3)`, async () => {
+      const dir = await staleService();
+      chmodSync(path.join(dir, "report.md"), mode);
+      const { code, errors, printed } = await failingStdout(dir);
+      chmodSync(path.join(dir, "report.md"), 0o600);
+      expect({ code, printed }).toEqual({ code: 2, printed: false });
+      expect(errors).toContain(`${path.join(realpathSync(dir), "report.md")}, which apifn check cannot read whole`);
+      expect(await readFile(path.join(dir, "report.md"), "utf8")).toBe("previous report\n");
+      expect(await readFile(path.join(dir, SPEC), "utf8")).toBe("openapi: 3.1.0\n");
+      expect([...(await leftovers(dir)), ...(await leftovers(path.join(dir, ".apifn")))]).toEqual([]);
+    });
+  }
+
+  it("an existing report over MAX_SPEC_BYTES is never replaced: exit 2, it is named and every file is kept (PR round 3)", async () => {
     const dir = await staleService();
-    chmodSync(path.join(dir, "report.md"), 0o200);
-    const { code, errors, stdout } = await check(dir, () => {});
-    expect({ code, stdout }).toEqual({ code: control.code, stdout: control.stdout });
-    chmodSync(path.join(dir, "report.md"), 0o600);
-    expect(await readFile(path.join(dir, "report.md"), "utf8")).toBe(stdout);
-    const left = await leftovers(dir);
-    expect(left).toHaveLength(1);
-    expect(errors).toContain(`${path.join(realpathSync(dir), left[0])}, apifn check's backup of`);
+    const big = Buffer.alloc(MAX_SPEC_BYTES + 1, 0x61);
+    writeFileSync(path.join(dir, "report.md"), big);
+    const { code, errors, printed } = await failingStdout(dir);
+    expect({ code, printed }).toEqual({ code: 2, printed: false });
+    expect(errors).toContain(`${path.join(realpathSync(dir), "report.md")}, which apifn check cannot read whole`);
+    expect(readFileSync(path.join(dir, "report.md")).equals(big)).toBe(true);
+    expect(await readFile(path.join(dir, SPEC), "utf8")).toBe("openapi: 3.1.0\n");
+    expect([...(await leftovers(dir)), ...(await leftovers(path.join(dir, ".apifn")))]).toEqual([]);
+  });
+
+  for (const [label, copied, swap] of [["linked backup edited in place", false, false], ["copied backup edited in place", true, false], ["backup swapped for the same bytes", false, true]] as const) {
+    it(`a ${label} before the restore is never installed or removed: it is kept and named (PR round 3)`, async () => {
+      const dir = await staleService();
+      let backup = "";
+      let foreign = 0n;
+      const { code, errors } = await failingStdout(dir, (step, destination) => {
+        if (!destination.endsWith("report.md")) return;
+        if (step === "backup" && copied) fsFaults.noLink = true;
+        if (step === "backup" && !copied) fsFaults.noLink = false;
+        if (step !== "rollback") return;
+        backup = path.join(realpathSync(dir), readdirSync(dir).find((name) => name.endsWith(".bak")) as string);
+        if (swap) {
+          writeFileSync(`${backup}.foreign`, "previous report\n");
+          renameSync(`${backup}.foreign`, backup);
+          foreign = statSync(backup, { bigint: true }).ino;
+          return;
+        }
+        const { atime, mtime } = statSync(backup);
+        writeFileSync(backup, "previous REPORT\n");
+        utimesSync(backup, atime, mtime);
+      });
+      expect(code).toBe(2);
+      expect(errors).toContain(`${backup}, apifn check's backup of`);
+      expect(await readFile(backup, "utf8")).toBe(swap ? "previous report\n" : "previous REPORT\n");
+      if (swap) expect(statSync(backup, { bigint: true }).ino).toBe(foreign);
+      expect(await readFile(path.join(dir, "report.md"), "utf8")).not.toMatch(/^previous (report|REPORT)\n$/);
+      expect(errors).not.toContain("No output it wrote is kept");
+    });
+  }
+
+  it("an onPublishing callback that throws after the commit keeps the verdict, the report and the repaired spec (PR round 3)", async () => {
+    const runWith = async (dir: string, onPublishing?: (publishing: boolean) => void) => {
+      let stdout = "";
+      let stderr = "";
+      const code = await runCli(["check", "--write", "--report", "report.md"], {
+        cwd: dir,
+        stdout: (text) => {
+          stdout += text;
+        },
+        stderr: (text) => {
+          stderr += text;
+        },
+        onPublishing,
+      });
+      return { code, stdout, stderr };
+    };
+    const controlDir = await staleService();
+    const control = await runWith(controlDir);
+    const dir = await staleService();
+    const result = await runWith(dir, (publishing) => {
+      if (!publishing) throw new Error("embedder callback failed");
+    });
+    expect({ code: result.code, stdout: result.stdout }).toEqual({ code: control.code, stdout: control.stdout });
+    expect(result.stderr).toContain("embedder callback failed");
+    expect(await readFile(path.join(dir, "report.md"), "utf8")).toBe(result.stdout);
+    expect(await readFile(path.join(dir, SPEC), "utf8")).toBe(await readFile(path.join(controlDir, SPEC), "utf8"));
+    expect(await readFile(path.join(dir, SPEC), "utf8")).not.toBe("openapi: 3.1.0\n");
+    expect([...(await leftovers(dir)), ...(await leftovers(path.join(dir, ".apifn")))]).toEqual([]);
   });
 
   it("staged bytes altered before they are recorded abort the run with no rename (PR round 2)", async () => {

@@ -39,8 +39,10 @@
  *   while they are still this run's, in their bound directories: the temp the inode its kept
  *   descriptor names, the backup the inode its kept descriptor names. Every name the run may remove
  *   (temp, backup, reservation, created directory) has its inode held open until publish ends, so a
- *   freed inode number cannot pass to another writer's file. A rollback restores a backup only while
- *   it still holds the previous bytes, read back through that descriptor.
+ *   freed inode number cannot pass to another writer's file. Only a file the run can read whole (read
+ *   permission, at most MAX_SPEC_BYTES) is replaced: its backup is verified by those bytes. Right before
+ *   a rollback restores a backup, or a cleanup removes it, the backup's held inode, its bytes read back
+ *   through that descriptor and then its name are checked again.
  * - Cancellation is an AbortSignal, never a process signal: this module installs, inspects,
  *   removes and raises no process signal listener, so an embedding host's own handling is left
  *   alone. An abort before the commit rolls every output back (checked after each step and after
@@ -54,7 +56,8 @@
  * Residual: POSIX has no compare-and-swap rename, so a replacement made between the last check
  * and the rename (a window of one system call) is not detected. Node has no mkdirat either: a
  * directory swapped in between the run's mkdir and its open of that name (one system call) is held
- * as the run's; rollback removes it only while it is empty. A run that cannot clean up (killed
+ * as the run's; rollback removes it only while it is empty. Windows holds no directory handle, so a
+ * directory created there is never removed by rollback: it is named. A run that cannot clean up (killed
  * by SIGKILL, a crash) can leave an empty reservation at an output's own name or a staged temp
  * file beside it; output bytes never become reachable through a protected name, because every
  * name that holds them was checked while it was still empty.
@@ -358,16 +361,17 @@ interface Staged {
   bytes: Buffer;
   /** The staged file's identity (after the rename, its change time then), read through `fd`. */
   installed?: FileState;
-  /** The directories this run created for the destination, deepest first, with their identities. */
-  created: Anchor[];
+  /** The directories this run created for the destination, deepest first, with their identities
+   * (`held`: its handle is open until publish ends, so rollback may remove it). */
+  created: Array<Anchor & { held: boolean }>;
   backup?: string;
   backupState?: FileState;
-  /** True when the backup is a hard link to the observed file (not a copy). */
+  /** True when the backup is a hard link to the observed file (not a copy); only a file the run read whole is backed up. */
   linked?: boolean;
   /** The backup's inode, open until publish ends (an open inode's number is never reused), and a copy's bytes. */
   backupFd?: number;
   previous?: Buffer;
-  /** The observed bytes' SHA-256, taken before the link (null: unreadable or above MAX_SPEC_BYTES). */
+  /** The observed bytes' SHA-256, read through the held descriptor before the link. */
   digest?: string | null;
   /** Descriptors that pin the reservation and each created directory until publish ends. */
   held: number[];
@@ -413,27 +417,27 @@ function removeTemp(staged: Staged): string | null {
 }
 
 /**
- * True while the backup is still the file this run made, in the bound directories: a copy (this
- * run's own inode) unchanged; a hard link the same inode still holding the bytes it was made with.
+ * True while the backup is still the file this run made and holds the previous bytes, checked right
+ * before it is restored or removed, in this order: its held inode is the one the run made, with the
+ * size and modification time it recorded (a link's change time also moves when another writer
+ * renames over the destination that shares it); its bytes (a link's digest, a copy's bytes) read
+ * through that descriptor match; the inode's full state is unchanged across that read; and last its
+ * name leads to that inode in that very state, in the bound directories, so nothing changed between
+ * the verified read and the name check.
  */
-function backupOwned(staged: Staged, now: FileState): boolean {
+function backupVerified(staged: Staged): boolean {
   const made = staged.backupState;
-  if (!dirsHold(staged) || !made || staged.backupFd === undefined) return false; // never made (another's name): not this run's
-  // A linked backup's bytes are read first; its name is looked up only after that read.
-  if (staged.linked) return linkedIntact(staged) && sameFile(currentState(staged.backup as string), stateOf(fstatSync(staged.backupFd, BIG)));
-  return sameFile(now, stateOf(fstatSync(staged.backupFd, BIG))) && sameState(now, made);
-}
-
-/** True while a linked backup holds the observed bytes, by its digest read through its descriptor; one
- * without a digest (unreadable or above MAX_SPEC_BYTES) cannot be verified, so it is kept and named. */
-function linkedIntact(staged: Staged): boolean {
-  const fd = staged.backupFd as number;
-  const was = stateOf(fstatSync(fd, BIG)); // an edit during the read changes the change time
-  return typeof staged.digest === "string" && digestOf(fd) === staged.digest && sameState(stateOf(fstatSync(fd, BIG)), was);
+  const fd = staged.backupFd;
+  if (staged.backup === undefined || !made || fd === undefined || !dirsHold(staged)) return false; // never made: not this run's
+  const was = stateOf(fstatSync(fd, BIG));
+  if (!sameContent(was, made)) return false;
+  const intact = staged.linked ? typeof staged.digest === "string" && digestOf(fd) === staged.digest : holdsBytes(fd, staged.previous as Buffer);
+  const read = stateOf(fstatSync(fd, BIG)); // an edit during the read, even one that restores the mtime, changes the change time
+  return intact && sameState(read, was) && sameState(currentState(staged.backup), read);
 }
 
 /** The SHA-256 of the file open as `fd`, read from its start; null when it cannot be read through `fd`
- * or holds more than MAX_SPEC_BYTES (no read goes past that bound). */
+ * or holds more than MAX_SPEC_BYTES (no read goes past that bound): such a file is never replaced. */
 function digestOf(fd: number): string | null {
   const hash = createHash("sha256");
   const chunk = Buffer.alloc(64 * 1024);
@@ -446,22 +450,12 @@ function digestOf(fd: number): string | null {
   }
 }
 
-/** True while the backup still holds the observed file's bytes exactly as this run made it. */
-function backupHoldsPrevious(staged: Staged): boolean {
-  const made = staged.backupState;
-  // The bytes are read first; the backup's name is looked up after that read.
-  return staged.backup !== undefined && !!made && dirsHold(staged) &&
-    (staged.linked ? linkedIntact(staged) : holdsBytes(staged.backupFd as number, staged.previous as Buffer)) &&
-    sameState(currentState(staged.backup), made);
-}
-
-/** Removes the backup while it is still this run's (backupOwned); another writer's is left and named. */
+/** Removes the backup while it is still this run's (backupVerified); another writer's is left and named. */
 function removeBackup(staged: Staged): string | null {
   const backup = staged.backup;
   if (backup === undefined) return null;
-  const now = currentState(backup);
-  if (now === null && dirsHold(staged)) return null;
-  if (!backupOwned(staged, now)) {
+  if (currentState(backup) === null && dirsHold(staged)) return null;
+  if (!backupVerified(staged)) {
     return `${backup}, apifn check's backup of ${staged.destination}, or its directory changed while apifn check ran, so it was left as it is.`;
   }
   staged.backup = undefined;
@@ -470,17 +464,20 @@ function removeBackup(staged: Staged): string | null {
 
 /**
  * Removes the directories this run created for a destination, deepest first, while empty and
- * still the directory this run created (another process's replacement is left alone).
+ * still the directory this run created (another process's replacement is left alone). One the run
+ * holds no handle on (Windows) cannot be told from another writer's: it is left and named.
  */
-function removeCreatedDirs(staged: Staged): void {
+function removeCreatedDirs(staged: Staged): string | null {
   for (const created of staged.created) {
-    if (!stillAnchored(created)) return;
+    if (!created.held) return `${created.dir}, a directory apifn check created for ${staged.destination}, was left in place: apifn check held no handle on it, so it cannot tell it from another writer's.`;
+    if (!stillAnchored(created)) return null;
     try {
       rmdirSync(created.dir);
     } catch {
-      return;
+      return null;
     }
   }
+  return null;
 }
 
 /**
@@ -500,7 +497,7 @@ function makeParents(staged: Staged, hook: PublishHook | undefined, verify: Veri
     // run made, so it is never recorded and rollback never removes it.
     const made = holdDir(staged, dir);
     if (!made.isDirectory()) throw changed(staged);
-    staged.created.unshift({ dir, dev: made.dev, ino: made.ino });
+    staged.created.unshift({ dir, dev: made.dev, ino: made.ino, held: process.platform !== "win32" });
     hook?.("mkdir", dir);
     verify(staged);
   }
@@ -508,7 +505,7 @@ function makeParents(staged: Staged, hook: PublishHook | undefined, verify: Veri
 
 /** Opens a directory this run created without following a link and keeps it open (POSIX), so its
  * identity cannot pass to another directory while the run may remove it. Windows opens no directory
- * handle here; its file ID carries a sequence number that a reused file record changes. */
+ * handle here, so rollback never removes such a directory: it names it (removeCreatedDirs). */
 function holdDir(staged: Staged, dir: string): BigIntStats {
   if (process.platform === "win32") return lstatSync(dir, BIG);
   const fd = openSync(dir, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
@@ -670,12 +667,14 @@ function backUp(staged: Staged): void {
   const backup = tempName(staged.destination).replace(/\.tmp$/, ".bak");
   staged.backup = backup;
   // The observed file is opened (never blocking, never through a link) before the link: the link must be that very inode.
-  staged.backupFd = openHeld(staged.destination);
+  staged.backupFd = openHeld(staged);
   // The digest is of the observed bytes: read before the link, the descriptor's state unchanged before and after.
   const held = (fd: number) => sameState(stateOf(fstatSync(fd, BIG)), before);
   if (!held(staged.backupFd)) throw changed(staged);
   staged.digest = digestOf(staged.backupFd);
   if (!held(staged.backupFd)) throw changed(staged);
+  // Only a file this run can back up verifiably is replaced: one it cannot read whole is left as it is.
+  if (staged.digest === null) throw unverifiable(staged);
   try {
     linkSync(staged.destination, backup);
     staged.linked = true;
@@ -707,15 +706,21 @@ function backUp(staged: Staged): void {
   }
 }
 
-/** Opens `file` to hold its inode: for reading, or (a file the run may replace but not read) write-only, writing nothing. */
-function openHeld(file: string): number {
-  const flags = constants.O_NONBLOCK | constants.O_NOFOLLOW;
+/** Opens the observed file for reading to hold its inode; one the run may not read is never replaced. */
+function openHeld(staged: Staged): number {
   try {
-    return openSync(file, constants.O_RDONLY | flags);
+    return openSync(staged.destination, constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "EACCES") throw error;
-    return openSync(file, constants.O_WRONLY | flags);
+    if ((error as NodeJS.ErrnoException).code === "EACCES") throw unverifiable(staged);
+    throw error;
   }
+}
+
+/** The refusal to replace a file the run cannot read whole, so it could neither verify nor restore a backup. */
+function unverifiable(staged: Staged): CheckUsageError {
+  return new CheckUsageError(
+    `${staged.output.option} would replace ${staged.destination}, which apifn check cannot read whole (no read permission, or more than ${MAX_SPEC_BYTES} bytes), so it could not keep a backup it can verify and restore; that file was left as it is. Make it readable or remove it, then run apifn check again.`
+  );
 }
 
 /** What the destination must be right before the rename: the backup's inode (the link changed its
@@ -752,7 +757,7 @@ function rollBack(staged: Staged, hook: PublishHook | undefined): string | null 
   if (!staged.published) {
     // Each cleanup step runs on its own: a failure in one is named and never skips the others.
     const conflicts: string[] = [];
-    for (const step of [removeTemp, removeBackup, releaseReservation, (s: Staged) => (removeCreatedDirs(s), null)]) {
+    for (const step of [removeTemp, removeBackup, releaseReservation, removeCreatedDirs]) {
       try {
         const conflict = step(staged);
         if (conflict !== null) conflicts.push(conflict);
@@ -763,25 +768,25 @@ function rollBack(staged: Staged, hook: PublishHook | undefined): string | null 
     return conflicts.length === 0 ? null : conflicts.join(" ");
   }
   hook?.("rollback", staged.destination);
-  // A backup is named as the recovery file only while it still holds the previous bytes.
-  const previous = staged.backup !== undefined && backupHoldsPrevious(staged);
   if (!stillOwned(staged)) {
     let kept = "";
     if (staged.backup !== undefined) {
-      kept = previous
+      // A backup is named as the recovery file only while it still holds the previous bytes.
+      kept = backupVerified(staged)
         ? ` Its previous bytes are in ${staged.backup}.`
         : ` Its backup ${staged.backup} changed or is gone too, so it holds no copy of the previous bytes apifn check can vouch for.`;
     }
     return `${staged.destination} changed after apifn check wrote it, so it was left as it is.${kept}`;
   }
   if (staged.backup) {
-    if (!previous) {
+    // Verified right before the rename: a backup swapped or edited since is never installed.
+    if (!backupVerified(staged)) {
       return `${staged.backup}, apifn check's backup of ${staged.destination}, changed or is gone, so ${staged.destination} was left with the bytes apifn check wrote and the backup was left as it is.`;
     }
     renameSync(staged.backup, staged.destination);
   } else {
     unlinkSync(staged.destination);
-    removeCreatedDirs(staged);
+    return removeCreatedDirs(staged);
   }
   return null;
 }
@@ -796,7 +801,9 @@ function rollBackAll(all: Staged[], error: CheckUsageError, hook: PublishHook | 
       problems.push(`Failed to restore ${staged.destination}: ${errorMessage(restoreError)}`);
     }
   }
-  return new CheckUsageError([error.message, ...problems].join(" "));
+  // An abort says nothing it wrote is kept only when every rollback step left nothing behind.
+  const outcome = error instanceof AbortedRun && problems.length === 0 ? ["No output it wrote is kept."] : problems;
+  return new CheckUsageError([error.message, ...outcome].join(" "));
 }
 
 function writeFailure(staged: Staged, error: unknown): CheckUsageError {
@@ -851,13 +858,21 @@ export async function publish(
   } finally {
     // A close failure (each temp was fsynced) never changes the verdict: after the commit it is a notice.
     for (const staged of all) for (const fd of [staged.fd, staged.backupFd, ...staged.held]) if (fd !== undefined) try { closeSync(fd); } catch (error) { notices.push(`Failed to close a descriptor apifn check held for ${staged.destination}: ${errorMessage(error)}`); }
-    if (all.length > 0) onPublishing?.(false);
+    // The caller's callback runs after the verdict is settled: a throw is a notice and changes nothing.
+    try {
+      if (all.length > 0) onPublishing?.(false);
+    } catch (error) {
+      notices.push(`The onPublishing callback failed after apifn check finished writing: ${errorMessage(error)}`);
+    }
   }
 }
 
+/** An abort before the commit; rollBackAll states what of the run's output was kept. */
+class AbortedRun extends CheckUsageError {}
+
 function abortError(signal: AbortSignal): CheckUsageError {
   const why = typeof signal.reason === "string" ? `received ${signal.reason}` : "was aborted";
-  return new CheckUsageError(`apifn check ${why} before its report was delivered; no output it wrote is kept.`);
+  return new AbortedRun(`apifn check ${why} before its report was delivered.`);
 }
 
 /** Settles when `signal` aborts (never without one); `stop` removes its listener. */

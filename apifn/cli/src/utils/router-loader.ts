@@ -13,6 +13,17 @@ function isRouter(value: unknown): value is Router<unknown> {
 }
 
 /**
+ * jiti's default interop for a natively imported namespace, for the exports the loader reads: a
+ * CommonJS module's exports object is its `default`, and a name the namespace lacks is read from it.
+ */
+function interopDefault(namespace: Record<string, unknown>, enabled: boolean): Record<string, unknown> {
+  const inner = namespace.default as Record<string, unknown> | null | undefined;
+  if (!enabled || inner === null || (typeof inner !== "object" && typeof inner !== "function")) return namespace;
+  const unwrapped = typeof inner.default === "function" && namespace.__esModule ? inner.default : inner;
+  return { ...namespace, default: unwrapped, router: "router" in namespace ? namespace.router : inner.router };
+}
+
+/**
  * Loads the router module once and returns it with the file that load read: the operand
  * (extensionless or a directory) is resolved once, and that very file is imported, so the file
  * named is the module loaded, never a second lookup made after the import. `beforeImport` is
@@ -33,8 +44,10 @@ export async function loadRouterModule(
     // esmResolve applied JITI_ALIAS once: `file` itself is evaluated (no second alias lookup), and
     // its dependencies resolve with the caller's alias table unchanged.
     const evaluate = async () => jiti.evalModule(readFileSync(file, "utf8"), { id: file, filename: file, async: true });
-    // With tryNative, jiti.import loaded the file natively first (no alias applies to a file URL) and fell back to jiti.
-    load = jiti.options.tryNative ? () => import(pathToFileURL(file).href).catch(evaluate) : evaluate;
+    // With tryNative, jiti.import loaded the file natively first (no alias applies to a file URL), with its
+    // default/CommonJS interop, and fell back to jiti.
+    const native = async () => interopDefault(await import(pathToFileURL(file).href), jiti.options.interopDefault !== false);
+    load = jiti.options.tryNative ? () => native().catch(evaluate) : evaluate;
   } catch {
     // Not resolvable: the import below reports the missing module as it always has.
   }
