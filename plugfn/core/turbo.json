@@ -2,6 +2,15 @@
   "$schema": "https://turbo.build/schema.json",
   "extends": ["//"],
   "tasks": {
+    "build": {
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/packages/config/src/**",
+        "$TURBO_ROOT$/packages/http/src/**",
+        "$TURBO_ROOT$/packages/storage-s3/src/**",
+        "$TURBO_ROOT$/plugfn/providers/src/**"
+      ]
+    },
     "test": {
       "inputs": [
         "$TURBO_DEFAULT$",

@@ -2,6 +2,14 @@
   "$schema": "https://turbo.build/schema.json",
   "extends": ["//"],
   "tasks": {
+    "build": {
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/datafn/server/src/**",
+        "$TURBO_ROOT$/datafn/cli/src/**",
+        "$TURBO_ROOT$/datafn/swift-bridge/src/**"
+      ]
+    },
     "typecheck": {
       "inputs": [
         "$TURBO_DEFAULT$",

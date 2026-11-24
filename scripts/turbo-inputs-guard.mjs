@@ -11,18 +11,19 @@
 //      package directory, where Turbo runs the task;
 //   3. `alias` values (and `replacement` entries) in vitest.config.*, vite.config.* and suffixed variants such as
 //      vitest.workerd.config.ts, as string literals or form 2.
+// It reads JavaScript and TypeScript files, the scripts and markup expressions of Svelte, Vue and Astro components, and
+// the import and export blocks and `{…}` expressions of MDX files (see tokensOf).
 // Paths built from other values are computed reads, deferred to SFNS-306, and so is a name bound to a path that is
 // only ever the base of other paths. These targets are skipped: one with no tracked file (a file the task writes or
-// generates, which no Turbo input can hash), and a directory that holds the reading package (an ancestor or the
-// repository root, a base for other paths whose literal reads are found as their own). A read of another package's
-// directory reads that package's files; a tracked symlink to a directory stands for the files of that directory.
-// A file the guard cannot tokenize (an unterminated comment, string, template, regular expression or JSX element) is
-// an error naming the file and line, never a silent skip of the code after it.
-// A read in a test file (a *.test.* or *.spec.* file, a file under a __tests__, test, tests, e2e, test-support or
-// fixtures directory, or a Vitest or Playwright config) must be hashed by the package's test, typecheck and lint tasks,
-// and also by build when the build may run it: when a build script names it, or a file the build may run imports it or
-// names it by a literal path. Any other read must be hashed by all four cacheable tasks, since the guard cannot tell
-// which task runs the file.
+// generates, which no Turbo input can hash), and a path (form 2) of a directory that holds the reading package (an
+// ancestor or the repository root, a base for other paths whose literal reads are found as their own). A read of
+// another package's directory reads that package's files; a tracked symlink to a directory stands for the files of
+// that directory. A module read names every file a resolver could load for it (see resolveTarget), and what a file
+// outside the package that a module read names goes on to import or read is read too (see checkReads).
+// A file the guard cannot tokenize (an unterminated comment, string, template, regular expression, JSX element, tag or
+// HTML comment) is an error naming the file and line, never a silent skip of the code after it.
+// Every read must be hashed by each of the package's four cacheable tasks that exists: the guard does not try to tell
+// which task runs a file, and declaring an input a task does not read only costs cache hits.
 //
 // Usage: node scripts/turbo-inputs-guard.mjs [--root <dir>] [--package <name>]... [--turbo <bin>] [--list] [--json]
 // Turbo comes from --turbo, then $TURBO_BIN, then <root>/node_modules/turbo/bin/turbo. Exit 1 lists each undeclared
@@ -40,17 +41,14 @@ const SCANNED_FILE = /\.(?:[cm]?[jt]sx?|svelte|vue|astro|mdx)$/;
 // Files that may hold JSX. TypeScript's `<Type>value` assertions are valid only in .ts, .mts and .cts files.
 const JSX_FILE = /\.(?:[cm]?jsx?|tsx)$/;
 const CONFIG_FILE = /(?:^|\/)(?:vitest|vite)(?:\.[\w-]+)?\.config\.[cm]?[jt]s$/;
-const RESOLVE_EXTENSIONS = [".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs", ".json", ".svelte", ".vue", ".d.ts"];
+const RESOLVE_EXTENSIONS = [".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs", ".json", ".svelte", ".vue", ".d.ts", ".d.mts", ".d.cts"];
+const TYPE_VARIANTS = [".ts", ".tsx", ".d.ts", ".mts", ".d.mts", ".cts", ".d.cts"];
 const PATH_MODULES = new Set(["path", "node:path", "path/posix", "node:path/posix"]);
 const URL_MODULES = new Set(["url", "node:url"]);
 const PATH_FUNCTIONS = new Set(["join", "resolve", "dirname", "normalize"]);
 const REGEX_AFTER = new Set(["return", "typeof", "instanceof", "in", "of", "new", "delete", "void", "throw", "case", "do", "else", "yield", "await", "default"]);
 const MULTI_CHAR_PUNCTUATION = ["===", "!==", "...", "=>", "++", "--", "==", "!=", "?.", "??", "&&", "||", "<=", ">="];
 const STATEMENT_END = new Set([",", ")", "]", "}", ";"]);
-const TEST_FILE =
-  /(?:^|\/)(?:__tests__|__mocks__|tests?|e2e|test-support|fixtures)\/|\.(?:test|spec)\.[cm]?[jt]sx?$|(?:^|\/)(?:vitest|playwright)(?:\.[\w-]+)?\.config\.[cm]?[jt]s$/;
-const TEST_TASKS = ["test", "typecheck", "lint"];
-const BUILD_SCRIPTS = ["prebuild", "build", "postbuild"];
 const IDENTIFIER_START = /[\p{ID_Start}_$]/u;
 const IDENTIFIER = /^#?[\p{ID_Continue}$‌‍]+/u;
 const JSX_NAME = /^[\p{ID_Start}_$][\p{ID_Continue}$.:-]*/u;
@@ -70,10 +68,12 @@ const ESCAPES = { n: "\n", t: "\t", r: "\r", b: "\b", f: "\f", v: "\v" };
 // files, one `jsx` token after each JSX element (whose `{…}` expressions come before it as ordinary tokens). Comments,
 // regular expressions and JSX text are dropped. Code it cannot read (an unterminated comment, string, template, regular
 // expression or JSX element) throws a SourceError, so a misread never hides the code after it.
-export function tokenize(source, { jsx = false } = {}) {
+// With `at`, the index of a `{`, it reads only the expression that brace opens and returns { tokens, end } where end is
+// the index after its `}`; `line` is the line number of the first character read.
+export function tokenize(source, { jsx = false, at, line: firstLine = 1 } = {}) {
   const tokens = [];
-  let i = 0;
-  let line = 1;
+  let i = at === undefined ? 0 : at + 1;
+  let line = firstLine;
   const fail = (what, at) => {
     throw new SourceError(`cannot read ${what}`, at);
   };
@@ -327,44 +327,201 @@ export function tokenize(source, { jsx = false } = {}) {
     if (nested) fail("an unterminated `${…}` or JSX `{…}` expression", open);
   };
 
+  if (at !== undefined) {
+    scanCode(firstLine);
+    return { tokens, end: i };
+  }
   scanCode();
   return tokens;
 }
 
-// The parts of a file that hold code, with every other character blanked so line numbers stay true.
-function codeOf(file, source) {
-  const blank = (text) => text.replace(/[^\n]/g, " ");
-  if (/\.(?:svelte|vue)$/.test(file)) {
-    return source.replace(/<script\b[^>]*>([\s\S]*?)<\/script>|[\s\S]/g, (match, script) =>
-      script === undefined ? blank(match) : blank(match.slice(0, match.indexOf(">") + 1)) + script + blank("</script>")
-    );
-  }
-  if (file.endsWith(".astro")) {
-    const front = /^---\r?\n([\s\S]*?)\r?\n---/.exec(source);
-    return front ? `   \n${front[1]}${blank(source.slice(front[0].length - 4))}` : blank(source);
-  }
+// The tokens of a file's code. Svelte, Vue and Astro components hold code in their <script> blocks (and an Astro
+// component in its frontmatter), and in the expressions of their markup: Svelte and Astro `{…}` (text, attribute
+// values, spreads and Svelte blocks), Vue `{{ … }}` and Vue directive values (v-*, :prop, @event, #slot). MDX holds code
+// in top-level import and export blocks and in `{…}` expressions, including those in JSX attributes. HTML comments,
+// <style> blocks, prose and fenced or inline code are not code. Each region's tokens end with a ";" so regions never
+// join into one expression.
+function tokensOf(file, source) {
+  if (!/\.(?:svelte|vue|astro|mdx)$/.test(file)) return tokenize(source, { jsx: JSX_FILE.test(file) });
+  const lineStarts = [0];
+  for (let k = source.indexOf("\n"); k !== -1; k = source.indexOf("\n", k + 1)) lineStarts.push(k + 1);
+  const lineAt = (offset) => {
+    let low = 0;
+    let high = lineStarts.length - 1;
+    while (low < high) {
+      const middle = (low + high + 1) >> 1;
+      if (lineStarts[middle] <= offset) low = middle;
+      else high = middle - 1;
+    }
+    return low + 1;
+  };
+  const fail = (what, at) => {
+    throw new SourceError(`cannot read ${what}`, lineAt(at));
+  };
+  const tokens = [];
+  const add = (list, at) => {
+    for (const token of list) tokens.push(token);
+    tokens.push({ type: "punc", value: ";", line: lineAt(at) });
+  };
+  // Code between two offsets, and the `{…}` expression at an offset (returning the offset after it).
+  const code = (from, to, jsx) => {
+    if (to > from) add(tokenize(source.slice(from, to), { jsx, line: lineAt(from) }), to);
+  };
+  const expression = (at, jsx) => {
+    const { tokens: list, end } = tokenize(source, { jsx, at, line: lineAt(at) });
+    add(list, end);
+    return end;
+  };
+  const skipPast = (text, from, what, at) => {
+    const end = source.indexOf(text, from);
+    if (end === -1) fail(what, at);
+    return end + text.length;
+  };
+
   if (file.endsWith(".mdx")) {
-    // Only top-level import and export statements, which may span lines up to a blank line, their module specifier or
-    // a semicolon. Fenced code blocks are examples, not reads.
-    let fenced = false;
-    let statement = false;
-    return source
-      .split("\n")
-      .map((text) => {
-        if (/^\s*(?:```|~~~)/.test(text)) {
-          fenced = !fenced;
-          statement = false;
-          return "";
-        }
-        if (fenced) return "";
-        statement ||= /^(?:import|export)\s/.test(text);
-        const kept = statement ? text : "";
-        if (statement && (text.trim() === "" || /\bfrom\s*['"]|^import\s*['"]|;\s*$/.test(text))) statement = false;
-        return kept;
-      })
-      .join("\n");
+    mdxTokens(source, lineStarts, { code, expression, skipPast });
+    return tokens;
   }
-  return source;
+  const kind = file.slice(file.lastIndexOf(".") + 1);
+  const braces = kind !== "vue";
+  const jsx = kind === "astro";
+  // A Svelte or Astro `{…}`; a Svelte block's closing tag ({/if}) holds no code.
+  const brace = (at) => (kind === "svelte" && source[at + 1] === "/" ? skipPast("}", at, "a Svelte block tag", at) : expression(at, jsx));
+  // A tag from its "<": its attributes' expressions and, for <script> and <style>, its contents.
+  const tag = (at) => {
+    const name = /^<([A-Za-z][\w:.-]*)/.exec(source.slice(at, at + 256));
+    let k = at + name[0].length;
+    let lang = "";
+    for (;;) {
+      while (/\s/.test(source[k] ?? "")) k += 1;
+      if (k >= source.length) fail("an unclosed tag", at);
+      if (source.startsWith("/>", k)) return k + 2;
+      if (source[k] === ">") break;
+      if (braces && source[k] === "{") {
+        k = brace(k);
+        continue;
+      }
+      const attribute = /^[^\s=>/"'{]+/.exec(source.slice(k, k + 256));
+      if (!attribute) {
+        k += 1;
+        continue;
+      }
+      k += attribute[0].length;
+      while (/\s/.test(source[k] ?? "")) k += 1;
+      if (source[k] !== "=") continue;
+      k += 1;
+      while (/\s/.test(source[k] ?? "")) k += 1;
+      const quote = source[k];
+      if (quote === '"' || quote === "'") {
+        const open = k;
+        k += 1;
+        if (!braces) {
+          const end = skipPast(quote, k, "an unterminated attribute value", open) - 1;
+          if (/^(?:v-|[:@#])/.test(attribute[0])) code(k, end, false);
+          if (attribute[0] === "lang") lang = source.slice(k, end);
+          k = end + 1;
+          continue;
+        }
+        while (source[k] !== quote) {
+          if (k >= source.length) fail("an unterminated attribute value", open);
+          k = source[k] === "{" ? brace(k) : k + 1;
+        }
+        if (attribute[0] === "lang") lang = source.slice(open + 1, k);
+        k += 1;
+      } else if (braces && quote === "{") {
+        k = brace(k);
+      } else {
+        while (k < source.length && !/[\s>]/.test(source[k]) && !source.startsWith("/>", k)) k += 1;
+      }
+    }
+    k += 1;
+    const element = name[1].toLowerCase();
+    if (element === "script" || element === "style") {
+      const close = source.toLowerCase().indexOf(`</${element}`, k);
+      if (close === -1) fail(`an unclosed <${element}>`, at);
+      if (element === "script") code(k, close, /^[jt]sx$/.test(lang));
+      return skipPast(">", close, `an unclosed <${element}>`, at);
+    }
+    return k;
+  };
+
+  let i = 0;
+  if (kind === "astro") {
+    const front = /^---\r?\n([\s\S]*?)\r?\n---/.exec(source);
+    if (front) {
+      code(front[0].indexOf("\n") + 1, front[0].length - 3, false);
+      i = front[0].length;
+    }
+  }
+  while (i < source.length) {
+    if (source.startsWith("<!--", i)) i = skipPast("-->", i + 4, "an unterminated HTML comment", i);
+    else if (source[i] === "<" && /[A-Za-z]/.test(source[i + 1] ?? "")) i = tag(i);
+    else if (source[i] === "<" && source[i + 1] === "/") i = skipPast(">", i, "an unclosed tag", i);
+    else if (braces && source[i] === "{") i = brace(i);
+    else if (!braces && source.startsWith("{{", i)) i = expression(i, false);
+    else i += 1;
+  }
+  return tokens;
+}
+
+// MDX: frontmatter and fenced code are skipped; a top-level import or export block is code (an import ends at its module specifier or a
+// semicolon, an export at a blank line, as MDX reads them); in the rest, `{…}` is an expression unless it is escaped,
+// in inline code or in an HTML comment.
+function mdxTokens(source, lineStarts, { code, expression, skipPast }) {
+  const lines = source.split("\n");
+  const kinds = [];
+  const blockEnds = new Map();
+  let fenced = false;
+  // YAML frontmatter is data, like fenced code.
+  const frontEnd = /^---\r?$/.test(lines[0] ?? "") ? lines.findIndex((text, n) => n > 0 && /^---\r?$/.test(text)) : -1;
+  for (let n = 0; n <= frontEnd; n += 1) kinds.push("fence");
+  for (let n = frontEnd + 1; n < lines.length; n += 1) {
+    if (/^\s*(?:```|~~~)/.test(lines[n])) {
+      fenced = !fenced;
+      kinds.push("fence");
+    } else if (fenced) {
+      kinds.push("fence");
+    } else if (/^(?:import|export)\s/.test(lines[n])) {
+      const isImport = lines[n].startsWith("import");
+      let last = n;
+      while (last < lines.length && lines[last].trim() !== "") {
+        if (isImport && /\bfrom\s*['"]|^import\s*['"]|;\s*$/.test(lines[last])) break;
+        last += 1;
+      }
+      last = Math.min(last, lines.length - 1);
+      for (let k = n; k <= last; k += 1) kinds.push(k === n ? "code" : "inside");
+      blockEnds.set(n, lineStarts[last] + lines[last].length);
+      n = last;
+    } else {
+      kinds.push("prose");
+    }
+  }
+  let i = 0;
+  let line = 0;
+  while (i < source.length) {
+    while (line + 1 < lineStarts.length && lineStarts[line + 1] <= i) line += 1;
+    if (i === lineStarts[line] && kinds[line] === "fence") {
+      i = lineStarts[line + 1] ?? source.length;
+    } else if (i === lineStarts[line] && kinds[line] === "code") {
+      code(i, blockEnds.get(line), true);
+      i = blockEnds.get(line);
+    } else if (source[i] === "\\") {
+      i += 2;
+    } else if (source[i] === "`") {
+      const run = /^`+/.exec(source.slice(i, i + 64))[0];
+      const paragraphEnd = source.indexOf("\n\n", i);
+      const pattern = new RegExp(`(?<!\`)${run}(?!\`)`, "g");
+      pattern.lastIndex = i + run.length;
+      const close = pattern.exec(source);
+      i = close && (paragraphEnd === -1 || close.index < paragraphEnd) ? close.index + run.length : i + run.length;
+    } else if (source.startsWith("<!--", i)) {
+      i = skipPast("-->", i + 4, "an unterminated HTML comment", i);
+    } else if (source[i] === "{") {
+      i = expression(i, true);
+    } else {
+      i += 1;
+    }
+  }
 }
 
 const isId = (token, value) => token?.type === "id" && (value === undefined || token.value === value);
@@ -378,7 +535,7 @@ const isKey = (token, value) => (token?.type === "id" || token?.type === "str") 
 export function findReadsInSource(file, source, packageDir) {
   let tokens;
   try {
-    tokens = tokenize(codeOf(file, source), { jsx: JSX_FILE.test(file) });
+    tokens = tokensOf(file, source);
   } catch (error) {
     if (error instanceof SourceError) throw new SourceError(`${file}:${error.line}: ${error.message}`, error.line);
     throw error;
@@ -571,7 +728,7 @@ export function findReadsInSource(file, source, packageDir) {
       continue;
     }
     // Form 3: a string-literal alias value in a Vite or Vitest config.
-    if (isConfig && token.type === "str" && /^\.\.?\//.test(token.value) && isAliasValue(tokens, k)) {
+    if (isConfig && token.type === "str" && /^\.\.?(?:\/|$)/.test(token.value) && isAliasValue(tokens, k)) {
       candidates.push({ line: token.line, form: "alias", target: readPath({ path: posix.join(fileDir, token.value) }) });
       continue;
     }
@@ -688,68 +845,39 @@ function owningPackage(file, packageDirs) {
   return best;
 }
 
-// Resolves a read to { target, files } where files are the tracked files it names (a file, or every tracked file under a
-// directory); files is empty when nothing tracked is there. Module reads (imports and aliases) resolve as modules do.
-function resolveTarget(read, file, tracked, trackedDirs) {
-  let target;
+// Resolves a read to { target, files, module }: files are the tracked files it names, empty when nothing tracked is
+// there. A path read names a file, or every tracked file under a directory. A module read (an import or an alias) names
+// every tracked file a resolver could load for it, since TypeScript, Vite and Node differ: the file itself, its
+// TypeScript sources and declarations (x.js also names x.ts, x.tsx and x.d.ts; x.mjs names x.mts and x.d.mts; x.cjs
+// names x.cts and x.d.cts), the file with each extension added, and the directory's index files. A specifier ending in
+// "/" (or "." or "..") names the directory's index files only. A package directory, an alias to a directory, and a
+// directory with no index file name every tracked file under the directory.
+export function resolveTarget(read, file, tracked, trackedDirs) {
   if (read.specifier !== undefined && !/^\.\.?(?:\/|$)/.test(read.specifier)) return null;
-  if (read.specifier !== undefined || read.form === "alias") {
-    target = read.specifier === undefined ? read.target.slice(1) : posix.join(posix.dirname(file), read.specifier.split("?")[0]).replace(/(.)\/+$/, "$1");
-    const swapped = target.replace(/\.([cm]?)js(x?)$/, ".$1ts$2");
-    const candidates = [target, swapped, ...RESOLVE_EXTENSIONS.map((ext) => target + ext), ...RESOLVE_EXTENSIONS.map((ext) => `${target}/index${ext}`)];
-    const found = candidates.find((candidate) => tracked.has(candidate));
-    if (found && !(trackedDirs.has(target) && tracked.has(`${target}/package.json`))) return { target: found, files: [found] };
-  } else {
-    target = read.target.slice(1);
+  const module = read.specifier !== undefined || read.form === "alias";
+  const specifier = read.specifier?.split("?")[0];
+  const target = (specifier === undefined ? read.target.slice(1) : posix.join(posix.dirname(file), specifier)).replace(/(.)\/+$/, "$1");
+  if (target === "" || target === "." || target === ".." || target.startsWith("../")) return null;
+  if (!module) return { target, files: tracked.has(target) ? [target] : trackedDirs.get(target) ?? [], module };
+  const found = new Set();
+  const add = (candidate) => tracked.has(candidate) && found.add(candidate);
+  if (specifier === undefined || !/(?:^|\/)\.{0,2}$/.test(specifier)) {
+    add(target);
+    const stem = target.replace(/\.(?:[cm]?js|jsx)$/, "");
+    if (stem !== target) TYPE_VARIANTS.forEach((ext) => add(stem + ext));
+    RESOLVE_EXTENSIONS.forEach((ext) => add(target + ext));
   }
-  if (target === "" || target === ".." || target.startsWith("../")) return null;
-  if (tracked.has(target)) return { target, files: [target] };
-  return { target, files: trackedDirs.get(target) ?? [] };
+  RESOLVE_EXTENSIONS.forEach((ext) => add(`${target}/index${ext}`));
+  const directory = trackedDirs.get(target);
+  if (directory && (read.form === "alias" || tracked.has(`${target}/package.json`) || found.size === 0)) directory.forEach((entry) => found.add(entry));
+  return { target, files: [...found], module };
 }
 
-// The scripts a package's build runs: prebuild, build and postbuild, and every script a word of their commands names.
-function buildCommands(manifest) {
-  const scripts = manifest?.scripts ?? {};
-  const seen = new Set();
-  const queue = BUILD_SCRIPTS.filter((name) => typeof scripts[name] === "string");
-  while (queue.length > 0) {
-    const name = queue.shift();
-    if (seen.has(name)) continue;
-    seen.add(name);
-    for (const word of scripts[name].split(/[\s;&|()]+/)) {
-      if (typeof scripts[word] === "string" && !seen.has(word)) queue.push(word);
-    }
-  }
-  return [...seen].map((name) => scripts[name]);
-}
-
-// The files of a package that its build may run or read: every file that is not a test file, every file the build
-// scripts name (with or without its extension), and every file of the package that one of these imports or names by a
-// literal path, transitively. `readsByFile` maps each scanned file to its resolved reads.
-function buildFiles(packageDir, readsByFile, commands) {
-  const queue = [...readsByFile.keys()].filter((file) => !TEST_FILE.test(file.slice(packageDir.length + 1)));
-  for (const command of commands) {
-    for (const word of command.split(/[\s;&|()'"=]+/)) {
-      const named = posix.join(packageDir, word);
-      if (!word || !within(named, packageDir)) continue;
-      queue.push(...[named, ...RESOLVE_EXTENSIONS.map((ext) => named + ext)].filter((file) => readsByFile.has(file)));
-    }
-  }
-  const reached = new Set();
-  while (queue.length > 0) {
-    const file = queue.pop();
-    if (reached.has(file)) continue;
-    reached.add(file);
-    for (const { resolved } of readsByFile.get(file)) {
-      if (readsByFile.has(resolved.target) && !reached.has(resolved.target)) queue.push(resolved.target);
-    }
-  }
-  return reached;
-}
-
-// Every read in the selected packages whose target lies outside the package and holds tracked files. packageDirs lists
-// every workspace package directory, selected or not. A read in a test file must be hashed by the test, typecheck and
-// lint tasks, and also by build when the build may run the file (see buildFiles); any other read by all four.
+// Every read in the selected packages whose target lies outside the package and holds tracked files, with the tracked
+// files it names; packageDirs lists every workspace package directory, selected or not. Each read must be hashed by all
+// four cacheable tasks of its package that exist: the guard does not try to tell which task runs a file. Returns
+// { reads, edgesOf }: edgesOf(file) lists the reads of any tracked file as [{ files, module }], for following what a
+// file outside the package goes on to read (see checkReads).
 export function findOutsideReads(root, packages, packageDirs = packages.map((pkg) => pkg.path)) {
   const entries = git(root, ["ls-files", "-s", "-z"]).split("\0").filter(Boolean).map((entry) => [entry.slice(0, entry.indexOf("\t")), entry.slice(entry.indexOf("\t") + 1)]);
   const trackedList = entries.map(([, file]) => file);
@@ -772,46 +900,65 @@ export function findOutsideReads(root, packages, packageDirs = packages.map((pkg
       // A broken link: the file itself.
     }
   }
-  const expand = (files) => [...new Set(files.flatMap((file) => linkedDirs.get(file) ?? [file]))];
   const packageDirSet = new Set(packageDirs);
+  // The files a resolved read names: a package directory names that package's files, not those of packages nested in
+  // it, and a symlink to a directory names the files of that directory.
+  const filesOf = ({ target, files }) => {
+    const owned = packageDirSet.has(target) ? files.filter((file) => !within(file, target) || owningPackage(file, packageDirs) === target) : files;
+    return [...new Set(owned.flatMap((file) => linkedDirs.get(file) ?? [file]))];
+  };
+  const scanned = new Map();
+  // The resolved reads of a tracked file; a file outside every package runs with its own directory as the cwd.
+  const readsOf = (file) => {
+    if (!scanned.has(file)) {
+      let found = [];
+      if (SCANNED_FILE.test(file) && tracked.has(file) && existsSync(path.join(root, file)) && statSync(path.join(root, file)).isFile()) {
+        const owner = owningPackage(file, packageDirs) ?? posix.dirname(file);
+        found = findReadsInSource(file, readFileSync(path.join(root, file), "utf8"), owner)
+          .map((read) => ({ read, resolved: resolveTarget(read, file, tracked, trackedDirs) }))
+          .filter(({ resolved }) => resolved && resolved.files.length > 0);
+      }
+      scanned.set(file, found);
+    }
+    return scanned.get(file);
+  };
+  const edges = new Map();
+  // A path read of a directory that holds the file is a base for other paths, not a read of its files.
+  const edgesOf = (file) => {
+    if (!edges.has(file)) {
+      edges.set(
+        file,
+        readsOf(file)
+          .filter(({ resolved }) => resolved.module || !within(file, resolved.target))
+          .map(({ resolved }) => ({ files: filesOf(resolved), module: resolved.module }))
+      );
+    }
+    return edges.get(file);
+  };
   const reads = [];
   for (const pkg of packages) {
-    let manifest = null;
-    try {
-      manifest = JSON.parse(readFileSync(path.join(root, pkg.path, "package.json"), "utf8"));
-    } catch {
-      manifest = null;
-    }
-    const readsByFile = new Map();
     for (const file of trackedDirs.get(pkg.path) ?? []) {
-      if (!SCANNED_FILE.test(file) || owningPackage(file, packageDirs) !== pkg.path || !existsSync(path.join(root, file))) continue;
-      const found = findReadsInSource(file, readFileSync(path.join(root, file), "utf8"), pkg.path)
-        .map((read) => ({ read, resolved: resolveTarget(read, file, tracked, trackedDirs) }))
-        .filter(({ resolved }) => resolved && resolved.files.length > 0);
-      readsByFile.set(file, found);
-    }
-    const build = buildFiles(pkg.path, readsByFile, buildCommands(manifest));
-    for (const [file, found] of readsByFile) {
-      const tasks = build.has(file) ? CACHEABLE_TASKS : TEST_TASKS;
-      for (const { read, resolved } of found) {
-        // A target inside the package is the package's own; a directory that holds the package (an ancestor or the
-        // repository root) is a base for other paths, whose literal reads are found as their own.
-        if (within(resolved.target, pkg.path) || within(pkg.path, resolved.target)) continue;
-        // A package directory reads that package's files, not those of packages nested in it.
-        const files = expand(
-          packageDirSet.has(resolved.target)
-            ? resolved.files.filter((candidate) => owningPackage(candidate, packageDirs) === resolved.target)
-            : resolved.files
-        );
-        reads.push({ package: pkg.name, file, line: read.line, form: read.form, target: resolved.target, files, tasks });
+      if (owningPackage(file, packageDirs) !== pkg.path) continue;
+      for (const { read, resolved } of readsOf(file)) {
+        // A target inside the package is the package's own. A path of a directory that holds the package (an ancestor or
+        // the repository root) is a base for other paths, whose literal reads are found as their own; an import or
+        // alias of one reads its files.
+        if (within(resolved.target, pkg.path) || (!resolved.module && within(pkg.path, resolved.target))) continue;
+        const files = filesOf(resolved).filter((entry) => !within(entry, pkg.path));
+        if (files.length === 0) continue;
+        reads.push({ package: pkg.name, file, line: read.line, form: read.form, target: resolved.target, module: resolved.module, files, tasks: CACHEABLE_TASKS });
       }
     }
   }
-  return reads;
+  return { reads, edgesOf };
 }
 
-// Checks each read against Turbo's dry run. Returns { checked, undeclared: [{ taskId, read, missing }] }.
-export function checkReads(reads, dryRun, packageDirs) {
+// Checks each read against Turbo's dry run. A file a read names passes when it is a global input, in the task's hashed
+// inputs, or in a package whose task the task depends on. What a file outside the reading package goes on to read is
+// read too: the guard follows the imports and literal path reads (edgesOf) of each file that a module read names
+// (a file a path read names is read, not run), up to a file of the reading package or of a dependency package, and
+// checks each file it reaches. Returns { checked, undeclared: [{ taskId, read, missing }] }.
+export function checkReads(reads, dryRun, packageDirs, edgesOf = () => []) {
   const tasks = new Map(dryRun.tasks.map((task) => [task.taskId, task]));
   const globalFiles = new Set(Object.keys(dryRun.globalCacheInputs?.files ?? {}));
   const hashed = new Map();
@@ -837,6 +984,22 @@ export function checkReads(reads, dryRun, packageDirs) {
     }
     return dependencyDirs.get(task.taskId);
   };
+  const missingFor = (task, read) => {
+    const missing = [];
+    const seen = new Map(); // file -> whether its reads were followed
+    const queue = read.files.map((file) => [file, read.module === true]);
+    while (queue.length > 0) {
+      const [file, follow] = queue.shift();
+      if (seen.has(file) && (seen.get(file) || !follow)) continue;
+      const first = !seen.has(file);
+      seen.set(file, follow);
+      if (within(file, task.directory) || dependencyPackages(task).has(owningPackage(file, packageDirs))) continue;
+      if (first && !globalFiles.has(file) && !hashedFiles(task).has(file)) missing.push(file);
+      if (!follow) continue;
+      for (const edge of edgesOf(file)) for (const next of edge.files) queue.push([next, edge.module]);
+    }
+    return missing;
+  };
   const undeclared = [];
   let checked = 0;
   for (const read of reads) {
@@ -844,9 +1007,7 @@ export function checkReads(reads, dryRun, packageDirs) {
       const task = tasks.get(`${read.package}#${name}`);
       if (!task || task.command === "<NONEXISTENT>" || task.resolvedTaskDefinition?.cache === false) continue;
       checked += 1;
-      const missing = read.files.filter(
-        (file) => !globalFiles.has(file) && !hashedFiles(task).has(file) && !dependencyPackages(task).has(owningPackage(file, packageDirs))
-      );
+      const missing = missingFor(task, read);
       if (missing.length > 0) undeclared.push({ taskId: task.taskId, read, missing });
     }
   }
@@ -879,11 +1040,11 @@ export function runGuard(options) {
   if (unknown.length > 0) throw new Error(`no workspace package named ${unknown.join(", ")}`);
   const selected = options.packages.length > 0 ? all.filter((pkg) => options.packages.includes(pkg.name)) : all;
   const packageDirs = all.map((pkg) => pkg.path);
-  const reads = findOutsideReads(root, selected, packageDirs);
+  const { reads, edgesOf } = findOutsideReads(root, selected, packageDirs);
   if (reads.length === 0) return { reads, checked: 0, undeclared: [] };
   const names = [...new Set(reads.map((read) => read.package))];
   const dryRun = JSON.parse(runTurbo(root, options.turbo, ["run", ...CACHEABLE_TASKS, "--dry=json", ...names.map((name) => `--filter=${name}`)]));
-  return { reads, ...checkReads(reads, dryRun, packageDirs) };
+  return { reads, ...checkReads(reads, dryRun, packageDirs, edgesOf) };
 }
 
 function main() {

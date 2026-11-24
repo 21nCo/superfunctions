@@ -41,7 +41,9 @@
         "!$TURBO_ROOT$/hostfn/**/node_modules/**",
         "!$TURBO_ROOT$/hostfn/**/.next/**",
         "!$TURBO_ROOT$/hostfn/**/dist/**",
-        "!$TURBO_ROOT$/hostfn/**/.turbo/**"
+        "!$TURBO_ROOT$/hostfn/**/.turbo/**",
+        "$TURBO_ROOT$/release-packages.json",
+        "$TURBO_ROOT$/billfn/*/package.json"
       ]
     }
   }

@@ -129,6 +129,18 @@
         "$TURBO_ROOT$/uifn/catalog/generated/catalog.json"
       ]
     },
+    "@uifn/react#build": {
+      "dependsOn": ["^build"],
+      "outputs": ["dist/**", ".next/**", "!.next/cache/**"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/uifn/catalog/generated/catalog.json",
+        "$TURBO_ROOT$/uifn/evidence/generated/phase-11/phase-11-react-compounds.json",
+        "$TURBO_ROOT$/uifn/evidence/generated/phase-14/phase-14-public-vectors.json",
+        "$TURBO_ROOT$/uifn/parity/src/trace.mjs",
+        "$TURBO_ROOT$/uifn/parity/src/trace.d.mts"
+      ]
+    },
     "@uifn/react#typecheck": {
       "dependsOn": ["^build"],
       "inputs": [
@@ -136,7 +148,8 @@
         "$TURBO_ROOT$/uifn/catalog/generated/catalog.json",
         "$TURBO_ROOT$/uifn/evidence/generated/phase-11/phase-11-react-compounds.json",
         "$TURBO_ROOT$/uifn/evidence/generated/phase-14/phase-14-public-vectors.json",
-        "$TURBO_ROOT$/uifn/parity/src/trace.mjs"
+        "$TURBO_ROOT$/uifn/parity/src/trace.mjs",
+        "$TURBO_ROOT$/uifn/parity/src/trace.d.mts"
       ]
     },
     "@uifn/react#test": {
@@ -147,7 +160,8 @@
         "$TURBO_ROOT$/uifn/catalog/generated/catalog.json",
         "$TURBO_ROOT$/uifn/evidence/generated/phase-11/phase-11-react-compounds.json",
         "$TURBO_ROOT$/uifn/evidence/generated/phase-14/phase-14-public-vectors.json",
-        "$TURBO_ROOT$/uifn/parity/src/trace.mjs"
+        "$TURBO_ROOT$/uifn/parity/src/trace.mjs",
+        "$TURBO_ROOT$/uifn/parity/src/trace.d.mts"
       ]
     },
     "@uifn/react#lint": {
@@ -157,7 +171,20 @@
         "$TURBO_ROOT$/uifn/catalog/generated/catalog.json",
         "$TURBO_ROOT$/uifn/evidence/generated/phase-11/phase-11-react-compounds.json",
         "$TURBO_ROOT$/uifn/evidence/generated/phase-14/phase-14-public-vectors.json",
-        "$TURBO_ROOT$/uifn/parity/src/trace.mjs"
+        "$TURBO_ROOT$/uifn/parity/src/trace.mjs",
+        "$TURBO_ROOT$/uifn/parity/src/trace.d.mts"
+      ]
+    },
+    "@uifn/solid#build": {
+      "dependsOn": ["^build"],
+      "outputs": ["dist/**", ".next/**", "!.next/cache/**"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/uifn/catalog/generated/catalog.json",
+        "$TURBO_ROOT$/uifn/evidence/generated/phase-13/phase-13-solid-compounds.json",
+        "$TURBO_ROOT$/uifn/evidence/generated/phase-14/phase-14-public-vectors.json",
+        "$TURBO_ROOT$/uifn/parity/src/trace.mjs",
+        "$TURBO_ROOT$/uifn/parity/src/trace.d.mts"
       ]
     },
     "@uifn/solid#typecheck": {
@@ -167,7 +194,8 @@
         "$TURBO_ROOT$/uifn/catalog/generated/catalog.json",
         "$TURBO_ROOT$/uifn/evidence/generated/phase-13/phase-13-solid-compounds.json",
         "$TURBO_ROOT$/uifn/evidence/generated/phase-14/phase-14-public-vectors.json",
-        "$TURBO_ROOT$/uifn/parity/src/trace.mjs"
+        "$TURBO_ROOT$/uifn/parity/src/trace.mjs",
+        "$TURBO_ROOT$/uifn/parity/src/trace.d.mts"
       ]
     },
     "@uifn/solid#test": {
@@ -178,7 +206,8 @@
         "$TURBO_ROOT$/uifn/catalog/generated/catalog.json",
         "$TURBO_ROOT$/uifn/evidence/generated/phase-13/phase-13-solid-compounds.json",
         "$TURBO_ROOT$/uifn/evidence/generated/phase-14/phase-14-public-vectors.json",
-        "$TURBO_ROOT$/uifn/parity/src/trace.mjs"
+        "$TURBO_ROOT$/uifn/parity/src/trace.mjs",
+        "$TURBO_ROOT$/uifn/parity/src/trace.d.mts"
       ]
     },
     "@uifn/solid#lint": {
@@ -188,7 +217,20 @@
         "$TURBO_ROOT$/uifn/catalog/generated/catalog.json",
         "$TURBO_ROOT$/uifn/evidence/generated/phase-13/phase-13-solid-compounds.json",
         "$TURBO_ROOT$/uifn/evidence/generated/phase-14/phase-14-public-vectors.json",
-        "$TURBO_ROOT$/uifn/parity/src/trace.mjs"
+        "$TURBO_ROOT$/uifn/parity/src/trace.mjs",
+        "$TURBO_ROOT$/uifn/parity/src/trace.d.mts"
+      ]
+    },
+    "@uifn/svelte#build": {
+      "dependsOn": ["^build"],
+      "outputs": ["dist/**", ".next/**", "!.next/cache/**"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/uifn/catalog/generated/catalog.json",
+        "$TURBO_ROOT$/uifn/evidence/generated/phase-12/phase-12-svelte-compounds.json",
+        "$TURBO_ROOT$/uifn/evidence/generated/phase-14/phase-14-public-vectors.json",
+        "$TURBO_ROOT$/uifn/parity/src/trace.mjs",
+        "$TURBO_ROOT$/uifn/parity/src/trace.d.mts"
       ]
     },
     "@uifn/svelte#typecheck": {
@@ -198,7 +240,8 @@
         "$TURBO_ROOT$/uifn/catalog/generated/catalog.json",
         "$TURBO_ROOT$/uifn/evidence/generated/phase-12/phase-12-svelte-compounds.json",
         "$TURBO_ROOT$/uifn/evidence/generated/phase-14/phase-14-public-vectors.json",
-        "$TURBO_ROOT$/uifn/parity/src/trace.mjs"
+        "$TURBO_ROOT$/uifn/parity/src/trace.mjs",
+        "$TURBO_ROOT$/uifn/parity/src/trace.d.mts"
       ]
     },
     "@uifn/svelte#test": {
@@ -209,7 +252,8 @@
         "$TURBO_ROOT$/uifn/catalog/generated/catalog.json",
         "$TURBO_ROOT$/uifn/evidence/generated/phase-12/phase-12-svelte-compounds.json",
         "$TURBO_ROOT$/uifn/evidence/generated/phase-14/phase-14-public-vectors.json",
-        "$TURBO_ROOT$/uifn/parity/src/trace.mjs"
+        "$TURBO_ROOT$/uifn/parity/src/trace.mjs",
+        "$TURBO_ROOT$/uifn/parity/src/trace.d.mts"
       ]
     },
     "@uifn/svelte#lint": {
@@ -219,7 +263,16 @@
         "$TURBO_ROOT$/uifn/catalog/generated/catalog.json",
         "$TURBO_ROOT$/uifn/evidence/generated/phase-12/phase-12-svelte-compounds.json",
         "$TURBO_ROOT$/uifn/evidence/generated/phase-14/phase-14-public-vectors.json",
-        "$TURBO_ROOT$/uifn/parity/src/trace.mjs"
+        "$TURBO_ROOT$/uifn/parity/src/trace.mjs",
+        "$TURBO_ROOT$/uifn/parity/src/trace.d.mts"
+      ]
+    },
+    "@uifn/registry#build": {
+      "dependsOn": ["^build"],
+      "outputs": ["dist/**", ".next/**", "!.next/cache/**"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/uifn/react/src/fixture.ts"
       ]
     },
     "@uifn/registry#typecheck": {
@@ -242,6 +295,14 @@
       "inputs": [
         "$TURBO_DEFAULT$",
         "$TURBO_ROOT$/uifn/react/src/fixture.ts"
+      ]
+    },
+    "@uifn/tokens#build": {
+      "dependsOn": ["^build"],
+      "outputs": ["dist/**", ".next/**", "!.next/cache/**"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/uifn/swift/Sources/UIFnSwiftUI/Tokens/UIFnTheme+UIFn.swift"
       ]
     },
     "@uifn/tokens#typecheck": {

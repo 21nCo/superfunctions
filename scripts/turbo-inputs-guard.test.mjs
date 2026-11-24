@@ -19,7 +19,7 @@ import path from "node:path";
 import { after, before, test } from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { findReadsInSource } from "./turbo-inputs-guard.mjs";
+import { findReadsInSource, resolveTarget } from "./turbo-inputs-guard.mjs";
 
 // SFNS-311: scripts/turbo-inputs-guard.mjs fails when a cacheable Turbo task reads a file outside its package that is
 // not in its Turbo hash. These tests add fixture packages to a copy of the repository, run the guard on them before and
@@ -84,7 +84,8 @@ const FORMS = [
   {
     name: "vitest-alias-suffixed", // A suffixed config name, and a target without its file extension.
     file: "vitest.workerd.config.mjs",
-    ext: "mjs",
+    target: `${TARGET_DIR}/data/vitest-alias-suffixed`,
+    files: [`${TARGET_DIR}/data/vitest-alias-suffixed.mjs`],
     source: `export default {\n  resolve: { alias: { "@guard/aliased": "../zz-guard-target/data/vitest-alias-suffixed" } },\n};\n`,
   },
   {
@@ -181,8 +182,112 @@ const FORMS = [
     },
     source: `import { readFileSync } from "node:fs";\nexport const read = () => readFileSync(new URL("${toTarget}/data/build-fixture-imported.json", import.meta.url));\n`,
   },
+  // Build checks every read of a package that has a build task, whatever the file's name or how the build reaches it.
+  {
+    name: "build-test-file", // A test-named file that a `tsc -p` build may include.
+    file: "src/index.test.mjs",
+    task: "build",
+    scripts: { build: "tsc -p ." },
+    source: `import { readFileSync } from "node:fs";\nexport const read = () => readFileSync(new URL("${toTarget}/data/build-test-file.json", import.meta.url));\n`,
+  },
+  {
+    name: "build-directory-edge", // A fixtures/ file the build reaches only through a read of its directory.
+    file: "fixtures/generate.mjs",
+    task: "build",
+    scripts: { build: "node src/index.mjs" },
+    extra: { "src/index.mjs": 'import path from "node:path";\nimport { readdirSync } from "node:fs";\nexport const list = () => readdirSync(path.join(import.meta.dirname, "../fixtures"));\n' },
+    source: `import { readFileSync } from "node:fs";\nexport const read = () => readFileSync(new URL("${toTarget}/data/build-directory-edge.json", import.meta.url));\n`,
+  },
+  // A module read names every file a resolver could load for it: x.js also names x.ts, x.mjs also x.d.mts.
+  {
+    name: "import-js-ts",
+    file: "src/index.mjs",
+    ext: "js",
+    files: [`${TARGET_DIR}/data/import-js-ts.js`, `${TARGET_DIR}/data/import-js-ts.ts`],
+    source: `export { value } from "${toTarget}/data/import-js-ts.js";\n`,
+  },
+  {
+    name: "import-mjs-dmts",
+    file: "src/index.mjs",
+    ext: "mjs",
+    files: [`${TARGET_DIR}/data/import-mjs-dmts.mjs`, `${TARGET_DIR}/data/import-mjs-dmts.d.mts`],
+    source: `export { value } from "${toTarget}/data/import-mjs-dmts.mjs";\n`,
+  },
+  // An alias of a directory that holds the package, and an import of a parent package, read their files.
+  {
+    name: "alias-ancestor",
+    dir: "zz-guard-nest/packages/alias-ancestor",
+    file: "vitest.config.mjs",
+    target: "zz-guard-nest/packages",
+    files: ["zz-guard-nest/packages/shared.mjs"],
+    outside: { "zz-guard-nest/packages/shared.mjs": "export const shared = 1;\n" },
+    source: `export default {\n  resolve: { alias: { "@guard/up": ".." } },\n};\n`,
+  },
+  {
+    name: "require-parent",
+    dir: "zz-guard-parent/typescript/child",
+    file: "index.cjs",
+    target: "zz-guard-parent/typescript",
+    files: [],
+    missingIncludes: ["zz-guard-parent/typescript/index.cjs", "zz-guard-parent/typescript/package.json"],
+    declare: "zz-guard-parent/typescript/*",
+    source: `module.exports = require("..");\n`,
+  },
+  // What a file outside every package goes on to import is read too.
+  {
+    name: "import-closure",
+    file: "src/index.mjs",
+    target: "zz-guard-nonpkg/closure-x.mjs",
+    files: ["zz-guard-nonpkg/closure-x.mjs", "zz-guard-nonpkg/closure-y.mjs"],
+    outside: {
+      "zz-guard-nonpkg/closure-x.mjs": 'export { y } from "./closure-y.mjs";\n',
+      "zz-guard-nonpkg/closure-y.mjs": "export const y = 1;\n",
+    },
+    source: `export { y } from "../../../zz-guard-nonpkg/closure-x.mjs";\n`,
+  },
+  // Reads in the markup expressions of components and in MDX expressions and export blocks.
+  {
+    name: "svelte-template",
+    file: "src/View.svelte",
+    ext: "mjs",
+    source: `<p>{#await import("${toTarget}/data/svelte-template.mjs") then m}{m.value}{/await}</p>\n`,
+  },
+  {
+    name: "vue-template",
+    file: "src/View.vue",
+    ext: "mjs",
+    source: `<template>\n  <button @click="import('${toTarget}/data/vue-template.mjs')">Load</button>\n</template>\n`,
+  },
+  {
+    name: "astro-template",
+    file: "src/page.astro",
+    ext: "mjs",
+    source: `---\nconst title = "Page";\n---\n<h1>{title}</h1>\n<p>{import("${toTarget}/data/astro-template.mjs")}</p>\n`,
+  },
+  {
+    name: "mdx-expression",
+    file: "docs/page.mdx",
+    ext: "mjs",
+    source: `# Page\n\nIt's loaded by {import("${toTarget}/data/mdx-expression.mjs")}.\n`,
+  },
+  {
+    name: "mdx-export-block",
+    file: "docs/page.mdx",
+    ext: "mjs",
+    source: `export function load() {\n  const name = "x";\n  return import("${toTarget}/data/mdx-export-block.mjs");\n}\n\n# Page\n`,
+  },
 ];
-const targetOf = (form) => form.target ?? `${TARGET_DIR}/data/${form.name}.${form.ext ?? "json"}`;
+// Packages that declare only part of what they read: each still fails, naming what is left.
+const PARTIAL = [
+  { name: "partial-js-ts", reads: "import-js-ts", declare: [`${TARGET_DIR}/data/import-js-ts.js`], missing: [`${TARGET_DIR}/data/import-js-ts.ts`] },
+  { name: "partial-mjs-dmts", reads: "import-mjs-dmts", declare: [`${TARGET_DIR}/data/import-mjs-dmts.mjs`], missing: [`${TARGET_DIR}/data/import-mjs-dmts.d.mts`] },
+  { name: "partial-closure", reads: "import-closure", declare: ["zz-guard-nonpkg/closure-x.mjs"], missing: ["zz-guard-nonpkg/closure-y.mjs"] },
+];
+const dirOf = (form) => form.dir ?? `packages/zz-guard-${form.name}`;
+const declaredOf = (form) => (Array.isArray(form.declare) ? form.declare : [form.declare ?? targetOf(form)]);
+function targetOf(form) {
+  return form.target ?? `${TARGET_DIR}/data/${form.name}.${form.ext ?? "json"}`;
+}
 
 const manifest = (name, scripts, dependencies = {}) =>
   `${JSON.stringify({ name, version: "0.0.0", private: true, type: "module", scripts, dependencies }, null, 2)}\n`;
@@ -194,6 +299,7 @@ let declaredRun;
 let symlinkedRun;
 let symlinkedUndeclaredRun;
 let brokenRun;
+let partialRun;
 
 function write(file, contents) {
   mkdirSync(path.dirname(path.join(copyRoot, file)), { recursive: true });
@@ -251,10 +357,19 @@ before(() => {
   write(`${TARGET_DIR}/src/index.cjs`, "module.exports = 1;\n");
   for (const form of FORMS) {
     for (const file of form.files ?? [targetOf(form)]) write(file, file.endsWith(".json") ? "{}\n" : "// A file a fixture package reads.\n");
-    write(`packages/zz-guard-${form.name}/package.json`, manifest(`@guard/${form.name}`, form.scripts ?? READER_SCRIPTS));
-    write(`packages/zz-guard-${form.name}/${form.file}`, form.source);
-    for (const [file, source] of Object.entries(form.extra ?? {})) write(`packages/zz-guard-${form.name}/${file}`, source);
+    for (const [file, source] of Object.entries(form.outside ?? {})) write(file, source);
+    write(`${dirOf(form)}/package.json`, manifest(`@guard/${form.name}`, form.scripts ?? READER_SCRIPTS));
+    write(`${dirOf(form)}/${form.file}`, form.source);
+    for (const [file, source] of Object.entries(form.extra ?? {})) write(`${dirOf(form)}/${file}`, source);
   }
+  for (const partial of PARTIAL) {
+    const form = FORMS.find((entry) => entry.name === partial.reads);
+    write(`packages/zz-guard-${partial.name}/package.json`, manifest(`@guard/${partial.name}`, READER_SCRIPTS));
+    write(`packages/zz-guard-${partial.name}/${form.file}`, form.source);
+  }
+  // The parent package that @guard/require-parent, nested in it, requires.
+  write("zz-guard-parent/typescript/package.json", manifest("@guard/parent", {}).replace('"type": "module"', '"main": "index.cjs"'));
+  write("zz-guard-parent/typescript/index.cjs", "module.exports = 1;\n");
   // Turbo hashes no symlink to a directory: a read of the target package counts this one as the directory's files.
   symlinkSync("directory", path.join(copyRoot, TARGET_DIR, "data", "directory-link"));
   // Reads a file of a package it depends on: its test task depends on that package's build through "^build".
@@ -280,6 +395,7 @@ before(() => {
   // Turbo hashes no "$TURBO_ROOT$/…" input in a repository without a commit.
   gitInCopy(["init", "-q"]);
   gitInCopy(["add", "-A"]);
+  gitInCopy(["add", "-f", `${TARGET_DIR}/data/import-js-ts.js`]); // The repository ignores *.js files.
   gitInCopy(["-c", "user.name=test", "-c", "user.email=test@example.invalid", "commit", "-q", "--no-verify", "--no-gpg-sign", "-m", "copy"]);
   undeclaredRun = runGuard(FIXTURE_PACKAGES);
   brokenRun = spawnSync(process.execPath, [guardScript, "--root", copyRoot, "--turbo", turboBin, "--package", "@guard/broken"], {
@@ -292,13 +408,15 @@ before(() => {
   symlinkSync(copyRoot, link);
   try {
     symlinkedUndeclaredRun = runGuard(["@guard/import"], link, linkedScript);
-    for (const form of FORMS) {
-      const task = form.task ?? "test";
-      const declared = { extends: ["//"], tasks: { [task]: { inputs: ["$TURBO_DEFAULT$", `$TURBO_ROOT$/${form.declare ?? targetOf(form)}`] } } };
-      write(`packages/zz-guard-${form.name}/turbo.json`, `${JSON.stringify(declared, null, 2)}\n`);
-    }
+    const declare = (directory, task, inputs) => {
+      const declared = { extends: ["//"], tasks: { [task]: { inputs: ["$TURBO_DEFAULT$", ...inputs.map((input) => `$TURBO_ROOT$/${input}`)] } } };
+      write(`${directory}/turbo.json`, `${JSON.stringify(declared, null, 2)}\n`);
+    };
+    for (const form of FORMS) declare(dirOf(form), form.task ?? "test", form.files && !form.declare ? form.files : declaredOf(form));
+    for (const partial of PARTIAL) declare(`packages/zz-guard-${partial.name}`, "test", partial.declare);
     gitInCopy(["add", "-A"]);
     declaredRun = runGuard(FIXTURE_PACKAGES);
+    partialRun = runGuard(PARTIAL.map((partial) => `@guard/${partial.name}`));
     symlinkedRun = runGuard(FIXTURE_PACKAGES, link, linkedScript);
   } finally {
     unlinkSync(link);
@@ -315,7 +433,7 @@ for (const form of FORMS) {
     const failures = undeclaredRun.undeclared.filter((entry) => entry.taskId === taskId);
     assert.deepEqual(
       failures.map(({ file, target }) => ({ file, target })),
-      [{ file: `packages/zz-guard-${form.name}/${form.file}`, target: targetOf(form) }]
+      [{ file: `${dirOf(form)}/${form.file}`, target: targetOf(form) }]
     );
     if (form.name === "package-require" || form.missingIncludes) {
       for (const file of form.missingIncludes ?? [`${TARGET_DIR}/src/index.cjs`]) assert.ok(failures[0].missing.includes(file), `${file} is read`);
@@ -328,6 +446,15 @@ for (const form of FORMS) {
     assert.deepEqual(declaredRun.undeclared.filter((entry) => entry.taskId === taskId), []);
   });
 }
+
+test("a read declared only in part still fails, naming each file left undeclared", () => {
+  for (const partial of PARTIAL) {
+    const failures = partialRun.undeclared.filter((entry) => entry.taskId === `@guard/${partial.name}#test`);
+    assert.equal(failures.length, 1, partial.name);
+    assert.deepEqual(failures[0].missing, partial.missing, partial.name);
+  }
+  assert.equal(partialRun.status, 1);
+});
 
 test("the guard passes once every read is declared, also when the root is reached through a symlink", () => {
   assert.deepEqual(declaredRun.undeclared, []);
@@ -449,6 +576,103 @@ test("URLs resolve as the WHATWG URL parser does, and string escapes are decoded
   ]);
 });
 
+test("a module read names every file a resolver could load for it", () => {
+  const files = ["b/x.ts", "b/x.d.ts", "b/x/index.ts", "b/x/util.ts", "b/y.mjs", "b/y.d.mts", "b/z.js", "b/z.tsx"];
+  const tracked = new Set(files);
+  const trackedDirs = new Map([
+    ["b", files],
+    ["b/x", ["b/x/index.ts", "b/x/util.ts"]],
+  ]);
+  const resolve = (read) => resolveTarget(read, "a/index.ts", tracked, trackedDirs).files;
+  // Extensionless: every extension, declarations included, and the directory's index files.
+  assert.deepEqual(resolve({ form: "import", specifier: "../b/x" }), ["b/x.ts", "b/x.d.ts", "b/x/index.ts"]);
+  // A trailing slash: the directory's index files only, never the file of the same name.
+  assert.deepEqual(resolve({ form: "import", specifier: "../b/x/" }), ["b/x/index.ts"]);
+  // An alias of a directory: every file under it, and the files a prefix of the same name resolves to.
+  assert.deepEqual(resolve({ form: "alias", target: "/b/x" }), ["b/x.ts", "b/x.d.ts", "b/x/index.ts", "b/x/util.ts"]);
+  // A JavaScript name also names its TypeScript sources and declarations.
+  assert.deepEqual(resolve({ form: "import", specifier: "../b/y.mjs" }), ["b/y.mjs", "b/y.d.mts"]);
+  assert.deepEqual(resolve({ form: "import", specifier: "../b/z.js" }), ["b/z.js", "b/z.tsx"]);
+});
+
+test("reads in component markup and MDX expressions are found; comments, prose and code examples are not reads", () => {
+  const svelte = [
+    '<script lang="ts" generics="T extends Record<string, number>">', // A ">" inside an attribute value.
+    '  import B from "../../b/B.svelte";',
+    "</script>",
+    '<!-- {import("../../b/comment.mjs")} -->',
+    '<p>Don\'t {#await import("../../b/await.mjs") then m}{m}{/await}</p>',
+    '<button on:click={() => import("../../b/click.mjs")} class="x {y}">x</button>',
+    "<style>p { color: red; }</style>",
+  ].join("\n");
+  const vue = [
+    "<template>",
+    '  <button @click="import(\'../../b/click.mjs\')" :a="b">{{ import(\'../../b/mustache.mjs\') }}</button>',
+    "  <p>it's { not code</p>",
+    "</template>",
+    '<script setup lang="ts">',
+    'import X from "../../b/x.ts";',
+    "</script>",
+  ].join("\n");
+  const astro = [
+    "---",
+    'import X from "../../b/x.ts";',
+    "---",
+    "<ul>{items.map((i) => <li>{i}</li>)}</ul>",
+    '<p>{import("../../b/expr.mjs")}</p>',
+    '<!-- {import("../../b/comment.mjs")} -->',
+    '<script>import "../../b/client.ts";</script>',
+  ].join("\n");
+  const mdx = [
+    "---",
+    "title: It's { not code",
+    "---",
+    "import A from '../../b/a.mjs'",
+    "export const meta = {",
+    "  a: [1, 2].map((n) => { const m = n; return m; }),", // A semicolon does not end the export block.
+    "  b: import('../../b/meta.mjs'),",
+    "};",
+    "",
+    "It's prose with `{import('../../b/inline.mjs')}` and {import('../../b/expr.mjs')}.",
+    "",
+    "```js",
+    "import x from '../../b/fenced.mjs'",
+    "```",
+    "",
+    "<Card href={import('../../b/attr.mjs')} />",
+    "\\{not an expression}",
+  ].join("\n");
+  const specifiers = (file, source) => findReadsInSource(file, source, "pkg/a").map(({ line, specifier }) => [line, specifier]);
+  assert.deepEqual(specifiers("pkg/a/src/A.svelte", svelte), [
+    [2, "../../b/B.svelte"],
+    [5, "../../b/await.mjs"],
+    [6, "../../b/click.mjs"],
+  ]);
+  assert.deepEqual(specifiers("pkg/a/src/A.vue", vue), [
+    [2, "../../b/click.mjs"],
+    [2, "../../b/mustache.mjs"],
+    [6, "../../b/x.ts"],
+  ]);
+  assert.deepEqual(specifiers("pkg/a/src/A.astro", astro), [
+    [2, "../../b/x.ts"],
+    [5, "../../b/expr.mjs"],
+    [7, "../../b/client.ts"],
+  ]);
+  assert.deepEqual(specifiers("pkg/a/docs/a.mdx", mdx), [
+    [4, "../../b/a.mjs"],
+    [7, "../../b/meta.mjs"],
+    [10, "../../b/expr.mjs"],
+    [16, "../../b/attr.mjs"],
+  ]);
+  // Markup the guard cannot read is an error too.
+  assert.throws(() => findReadsInSource("pkg/a/src/A.svelte", '<p>{import("../../b/x.mjs")\n</p>', "pkg/a"), {
+    message: /^pkg\/a\/src\/A\.svelte:[12]: cannot read /,
+  });
+  assert.throws(() => findReadsInSource("pkg/a/src/A.vue", "<template>\n<!-- never closed\n</template>", "pkg/a"), {
+    message: "pkg/a/src/A.vue:2: cannot read an unterminated HTML comment",
+  });
+});
+
 // Hash of each task in a dry run of the copy, with the given file's contents changed (none when file is null).
 function hashesAfterEditing(file, taskIds) {
   const target = file && path.join(copyRoot, file);
@@ -477,6 +701,8 @@ test("changing a declared outside file changes the hash of each task that reads 
     ["authfn/docs/static/llms-full.txt", ["authfn#test"]],
     ["packages/cli/src/utils/schema-generators.ts", ["authfn#test"]],
     ["datafn/docs/content/docs/cli/drizzle-codegen.mdx", ["@datafn/server#test"]],
+    // The declarations TypeScript resolves for uifn/parity/src/trace.mjs.
+    ["uifn/parity/src/trace.d.mts", ["@uifn/solid#typecheck", "@uifn/react#typecheck", "@uifn/svelte#typecheck"]],
   ];
   const taskIds = [...new Set(examples.flatMap(([, ids]) => ids))];
   const baseline = hashesAfterEditing(null, taskIds);

@@ -2,6 +2,14 @@
   "$schema": "https://turbo.build/schema.json",
   "extends": ["//"],
   "tasks": {
+    "build": {
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/filefn/client/src/**",
+        "$TURBO_ROOT$/filefn/viewer/src/**",
+        "$TURBO_ROOT$/packages/storage-r2/src/**"
+      ]
+    },
     "typecheck": {
       "inputs": [
         "$TURBO_DEFAULT$",

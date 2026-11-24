@@ -2,6 +2,16 @@
   "$schema": "https://turbo.build/schema.json",
   "extends": ["//"],
   "tasks": {
+    "build": {
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/datafn/docs/content/docs/**",
+        "$TURBO_ROOT$/datafn/python/tests/**",
+        "!$TURBO_ROOT$/datafn/python/tests/**/__pycache__/**",
+        "!$TURBO_ROOT$/datafn/python/tests/**/.pytest_cache/**",
+        "!$TURBO_ROOT$/datafn/python/tests/**/.venv/**"
+      ]
+    },
     "typecheck": {
       "inputs": [
         "$TURBO_DEFAULT$",

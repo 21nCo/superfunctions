@@ -2,6 +2,14 @@
   "$schema": "https://turbo.build/schema.json",
   "extends": ["//"],
   "tasks": {
+    "build": {
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/langfn/COMPATIBILITY.md",
+        "$TURBO_ROOT$/langfn/README.md",
+        "$TURBO_ROOT$/langfn/RELEASE_GATE.md"
+      ]
+    },
     "typecheck": {
       "inputs": [
         "$TURBO_DEFAULT$",
@@ -11,7 +19,10 @@
       ]
     },
     "test": {
-      "dependsOn": ["^build", "@superfunctions/observability#build"],
+      "dependsOn": [
+        "^build",
+        "@superfunctions/observability#build"
+      ],
       "inputs": [
         "$TURBO_DEFAULT$",
         "$TURBO_ROOT$/langfn/COMPATIBILITY.md",
