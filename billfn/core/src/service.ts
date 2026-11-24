@@ -2449,6 +2449,17 @@ function requirePriceById(plan: ReturnType<typeof requirePlan>, priceId: string)
   return price;
 }
 
+/** The catalog price with this id and its plan, or null. */
+function resolvePriceReference(catalog: BillFnCatalog, priceId: string) {
+  for (const plan of catalog.plans) {
+    const price = plan.prices.find((candidate) => candidate.priceId === priceId);
+    if (price) {
+      return { plan, price };
+    }
+  }
+  return null;
+}
+
 function requirePriceReference(catalog: BillFnCatalog, priceId: string) {
   for (const plan of catalog.plans) {
     const price = plan.prices.find((candidate) => candidate.priceId === priceId);
@@ -4367,12 +4378,13 @@ async function resolveProjectionContextForProviderState(
 async function processParsedWebhookEvent(
   deps: ServiceDeps,
   providerName: BillingProviderName,
-  event: ParsedProviderEvent
+  parsedEvent: ParsedProviderEvent
 ) {
-  const state = event.billingState;
+  const state = parsedEvent.billingState;
   if (!state) {
     return null;
   }
+  const event = await withTrustedCheckoutReference(deps, providerName, parsedEvent, state);
   let projection = await resolveProjectionContextForProviderState(deps, {
     provider: providerName,
     state,
@@ -5204,11 +5216,12 @@ async function applyUnlinkedWebhookEvent(
   deps: ServiceDeps,
   row: BillFnUnlinkedWebhookEvent
 ): Promise<UnlinkedReplayOutcome> {
-  const event = deserializeParsedWebhookEvent(row.event);
-  const state = event?.billingState;
-  if (!event || !state) {
+  const storedEvent = deserializeParsedWebhookEvent(row.event);
+  const state = storedEvent?.billingState;
+  if (!storedEvent || !state) {
     return { kind: 'unresolved' };
   }
+  const event = await withTrustedCheckoutReference(deps, row.provider, storedEvent, state);
   const projection = await resolveProjectionContextForProviderState(deps, {
     provider: row.provider,
     state,
@@ -5443,6 +5456,96 @@ async function refreshProjectionAfterReplay(deps: ServiceDeps, result: Projectio
     ? ((await getCheckoutSession(deps, result.checkoutSession.checkoutSessionId)) ?? result.checkoutSession)
     : undefined;
   return { checkoutSession, subscription, entitlements };
+}
+
+/**
+ * The event with its checkout reference kept only when it can be trusted. A reference equal to a provider's own
+ * checkout id, or to a session that already holds the event's provider references, is the provider's. A reference
+ * that names a BillFn checkout session id came from metadata anyone paying the provider can set, so it links the
+ * event to that session (and its plan and billing account) only when the event pays for the session's product
+ * and any billing account its metadata names is the session's. Otherwise it is dropped and the event is linked,
+ * bootstrapped or stored unlinked by its own references, as if it named no session.
+ */
+async function withTrustedCheckoutReference<T extends ParsedProviderEvent>(
+  deps: ServiceDeps,
+  provider: BillingProviderName,
+  event: T,
+  state: VerifiedBillingState
+): Promise<T> {
+  const reference = event.checkoutReferenceId;
+  if (!reference) {
+    return event;
+  }
+  const byProviderId = await deps.db.findOne<BillFnCheckoutSession>({
+    model: TABLES.checkoutSessions,
+    where: [
+      { field: 'provider', operator: 'eq', value: provider },
+      { field: 'providerCheckoutId', operator: 'eq', value: reference }
+    ],
+    namespace: deps.namespace
+  });
+  if (byProviderId) {
+    return event;
+  }
+  const session = await deps.db.findOne<BillFnCheckoutSession>({
+    model: TABLES.checkoutSessions,
+    where: [{ field: 'checkoutSessionId', operator: 'eq', value: reference }],
+    namespace: deps.namespace
+  });
+  if (!session || checkoutReferenceMatchesSession(deps, provider, event, state, session)) {
+    return event;
+  }
+  deps.metrics.track('webhook.checkout_reference.dropped', {
+    provider,
+    providerEventId: event.providerEventId
+  });
+  return { ...event, checkoutReferenceId: undefined };
+}
+
+function checkoutReferenceMatchesSession(
+  deps: ServiceDeps,
+  provider: BillingProviderName,
+  event: ParsedProviderEvent,
+  state: VerifiedBillingState,
+  session: BillFnCheckoutSession
+): boolean {
+  if (session.provider !== provider) {
+    return false;
+  }
+  const holdsReference =
+    (state.providerSubscriptionId !== undefined && session.providerSubscriptionId === state.providerSubscriptionId) ||
+    (state.providerChargeId !== undefined && session.providerChargeId === state.providerChargeId);
+  if (holdsReference) {
+    return true;
+  }
+  const metadataBillingAccountId = readBillingAccountMetadata(event, state);
+  if (metadataBillingAccountId && metadataBillingAccountId !== session.billingAccountId) {
+    return false;
+  }
+  const sessionPrice = resolvePriceReference(deps.catalog, session.priceId);
+  if (!sessionPrice) {
+    return false;
+  }
+  const raw = asRecord(state.raw);
+  const records = [raw, asRecord(raw?.transaction)];
+  const products = [
+    state.providerProductId,
+    event.priceId,
+    ...records.flatMap((record) =>
+      record ? ['product_id', 'productId', 'price_id', 'priceId'].map((key) => readString(record, key)) : []
+    )
+  ];
+  // The event must name the product the session sells: as the product itself, or as a catalog price of it.
+  return products.some((product) => {
+    if (!product) {
+      return false;
+    }
+    if (product === sessionPrice.price.providerProductId) {
+      return true;
+    }
+    const named = resolvePriceReference(deps.catalog, product);
+    return named?.price.provider === provider && named.price.providerProductId === sessionPrice.price.providerProductId;
+  });
 }
 
 function readBillingAccountMetadata(event: ParsedProviderEvent, state: VerifiedBillingState) {
