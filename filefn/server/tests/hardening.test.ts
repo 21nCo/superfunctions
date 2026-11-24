@@ -72,7 +72,7 @@ describe('FILE-30 low-severity hardening (F-13, F-14, F-16, F-18, F-24)', () => 
     expect((await get({ 'x-test-user': 'nobody', 'x-test-tenant': 't1' }))!.status).toBe(403);
   });
 
-  it('never lets the reserved anonymous principal write or delete through roles or role grants (F-02, F-18)', async () => {
+  it('never lets the reserved anonymous principal read, write or delete through roles or role grants (F-02, F-18)', async () => {
     const database = memoryAdapter();
     const authorizer = createDefaultAuthorizer({ db: database, namespace: 'filefn' });
     const file = { fileId: 'file_role01', ownerId: 'owner', tenantId: 't1', visibility: 'private' } as never;
@@ -89,6 +89,12 @@ describe('FILE-30 low-severity hardening (F-13, F-14, F-16, F-18, F-24)', () => 
     const editor = { principalId: 'ed', tenantId: 't1', roles: ['editor'] } as never;
     expect(await authorizer.canWrite(file, editor)).toBe(true);
     expect(await authorizer.canDelete(file, editor)).toBe(true);
+    // Roles don't let a guest read a private file either (role grant or admin role).
+    for (const principalId of ['anonymous', undefined]) {
+      expect(await authorizer.canRead(file, { principalId, tenantId: 't1', roles: ['editor'] } as never)).toBe(false);
+      expect(await authorizer.canRead(file, { principalId, tenantId: 't1', roles: ['admin'] } as never)).toBe(false);
+    }
+    expect(await authorizer.canRead(file, editor)).toBe(true);
   });
 
   it("keeps a tenant's admin away from files without a tenant (F-18)", async () => {

@@ -114,6 +114,13 @@ export function createDefaultAuthorizer(config: DefaultAuthorizerConfig): Author
     return (file.tenantId || null) === (ctx.tenantId || null);
   }
 
+  // Roles count only for a signed-in caller: roles a host attaches to a guest
+  // (no principal, or the reserved principal `anonymous`) are ignored, so a
+  // guest reads only through visibility, a grant to `anonymous`, or a tenant grant.
+  function rolesOf(ctx: DefaultAuthorizerContext): string[] {
+    return isAnonymousContext(ctx) ? [] : (ctx.roles ?? []);
+  }
+
   async function getApplicableGrants(
     file: FileRecord,
     ctx: DefaultAuthorizerContext
@@ -128,7 +135,7 @@ export function createDefaultAuthorizer(config: DefaultAuthorizerConfig): Author
       if (isGrantExpired(grant.expiresAt)) return false;
 
       if (grant.userId && grant.userId === ctx.principalId) return true;
-      if (grant.role && ctx.roles?.includes(grant.role) && inFileTenant(file, ctx)) return true;
+      if (grant.role && rolesOf(ctx).includes(grant.role) && inFileTenant(file, ctx)) return true;
       if (grant.tenantId && grant.tenantId === ctx.tenantId) return true;
 
       return false;
@@ -136,7 +143,7 @@ export function createDefaultAuthorizer(config: DefaultAuthorizerConfig): Author
   }
 
   function isAdmin(file: FileRecord, ctx: DefaultAuthorizerContext): boolean {
-    return inFileTenant(file, ctx) && (ctx.roles?.some(role => adminRoles.includes(role)) ?? false);
+    return inFileTenant(file, ctx) && rolesOf(ctx).some(role => adminRoles.includes(role));
   }
 
   function isOwner(file: FileRecord, ctx: FileProviderContext): boolean {
