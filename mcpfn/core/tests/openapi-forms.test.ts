@@ -2214,10 +2214,14 @@ describe("fromOpenAPI body fallback, synchronous schemas, per-kind alternatives 
     const sibling = { $ref: "#/components/schemas/S", allOf: shared };
     const rewritten = { type: "object", allOf: Array.from({ length: 16 }, () => sibling) };
     const sparse = { name: "q", in: "query", schema: { type: "string", default: new Array(90_000) } };
+    let chain: Record<string, unknown> = { $ref: "#/components/schemas/S", type: "object" };
+    for (let level = 1; level <= 16; level += 1) chain = { $ref: "#/components/schemas/S", allOf: [chain, chain] };
     for (const [content, parameters] of [
       [{ "application/json": { schema: repeated } }, []],
       [{ "application/json": { schema: rewritten } }, []],
       [{ "application/json": { schema: { type: "object" } } }, [sparse]],
+      // A shared chain of 3.1 $refs with siblings, each level used twice.
+      [{ "application/json": { schema: chain } }, []],
     ] as const) {
       const result = fromOpenAPI(
         {

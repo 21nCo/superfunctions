@@ -538,11 +538,13 @@ export class SchemaConverter {
     if (rest.allOf !== undefined && !(Array.isArray(rest.allOf) && rest.allOf.length > 0)) {
       throw new OpenApiSkip("invalid-schema", "allOf is not a non-empty array");
     }
-    // The generated allOf is not source: its members are credited through the original.
+    // What the rewrite builds is not source: its members are credited through the original.
     if (Array.isArray(rest.allOf)) this.budget.source(rest.allOf);
-    const allOf = [...arrayOf(rest.allOf), { $ref }];
-    this.budget.generated(allOf);
-    return this.convertObject({ ...rest, allOf }, mode, refs);
+    const reference = { $ref };
+    const allOf = [...arrayOf(rest.allOf), reference];
+    const rewritten = { ...rest, allOf };
+    for (const value of [reference, allOf, rewritten]) this.budget.generated(value);
+    return this.convertObject(rewritten, mode, refs);
   }
 
   private convertKeywords(schema: JsonObject, mode: SchemaMode, refs: Set<string>): McpFnJsonSchema {
