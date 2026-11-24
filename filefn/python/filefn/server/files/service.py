@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional, Protocol, Set, Tuple
 from pydantic import BaseModel
 
 from .. import errors
+from ..authz.ownership import is_anonymous_principal, is_file_owner
 from ..events import FileFnEventEmitter, create_file_deleted_event
 from ..models import FileProviderContext, FileRecord, FileVersionRecord, Visibility
 from ..policies import resolve_artifact_storage_target, resolve_storage_target
@@ -24,17 +25,17 @@ class DefaultAuthorizer:
     async def can_read(self, file: FileRecord, ctx: FileProviderContext) -> bool:
         if file.visibility == Visibility.PUBLIC:
             return True
-        if file.ownerId == ctx.principalId:
+        if is_file_owner(file, ctx):
             return True
         if file.visibility == Visibility.SHARED and file.tenantId and file.tenantId == ctx.tenantId:
             return True
         return False
 
     async def can_write(self, file: FileRecord, ctx: FileProviderContext) -> bool:
-        return file.ownerId == ctx.principalId
+        return is_file_owner(file, ctx)
 
     async def can_delete(self, file: FileRecord, ctx: FileProviderContext) -> bool:
-        return file.ownerId == ctx.principalId
+        return is_file_owner(file, ctx)
 
 
 class QuotaProvider(Protocol):
@@ -226,11 +227,14 @@ class FileService:
                 files_by_id[file.fileId] = file
 
         if ctx.principalId:
-            for file in await self._find_files(
-                [{"field": "ownerId", "operator": "eq", "value": ctx.principalId}],
-                limit=source_limit,
-            ):
-                files_by_id[file.fileId] = file
+            # An unauthenticated caller owns nothing (FILE-30 F-02); explicit
+            # grants still apply, as they do for direct reads.
+            if not is_anonymous_principal(ctx.principalId):
+                for file in await self._find_files(
+                    [{"field": "ownerId", "operator": "eq", "value": ctx.principalId}],
+                    limit=source_limit,
+                ):
+                    files_by_id[file.fileId] = file
 
             granted_file_ids = await self._get_readable_grant_file_ids(ctx)
             for file_id in granted_file_ids:

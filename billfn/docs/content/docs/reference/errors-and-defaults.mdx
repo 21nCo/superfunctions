@@ -11,6 +11,8 @@ These defaults come from the live implementation:
 | --- | --- |
 | Service namespace | `"billfn"` |
 | Router base path | `"/billfn"` |
+| Router subject without `auth.resolveSubject` | refused (401) unless `auth.allowClientSubject: true` |
+| Router refunds (`/subscriptions/refund`) | refused (403) unless `refunds.authorize` approves |
 | TypeScript client base URL | `"/billfn"` |
 | TypeScript client credentials | `"include"` |
 | Dodo environment | `"test_mode"` (`https://test.dodopayments.com`) |

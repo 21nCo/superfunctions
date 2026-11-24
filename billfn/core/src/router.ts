@@ -3,7 +3,13 @@ import { createBillFnError } from './errors.js';
 import { errorResponse, jsonResponse, successResponse } from './http.js';
 import { normalizeBasePath, resolveRequestSubject } from './helpers.js';
 import { createBillFnService } from './service.js';
-import type { BillFnConfig, BillFnReconciliationJobKind, BillableSubject, BillingProviderName } from './types.js';
+import type {
+  BillFnConfig,
+  BillFnRefundAuthorizationInput,
+  BillFnReconciliationJobKind,
+  BillableSubject,
+  BillingProviderName
+} from './types.js';
 
 const PROVIDER_NAMES: ReadonlySet<string> = new Set<BillingProviderName>([
   'dodo',
@@ -70,6 +76,15 @@ export function createBillFnRouter(config: BillFnConfig) {
       });
     }
   };
+  const ensureRefundAuthorized = async (input: BillFnRefundAuthorizationInput) => {
+    const authorized = await (config.refunds?.authorize?.(input) ?? false);
+    if (authorized !== true) {
+      throw createBillFnError({
+        code: 'BILLFN_UNAUTHORIZED',
+        message: 'Refunds through the BillFn router are not authorized'
+      });
+    }
+  };
   const ensureInternalTokenPresented = async (request: Request) => {
     const expected = config.region?.internalToken;
     const presented = readBearerToken(request);
@@ -116,7 +131,7 @@ export function createBillFnRouter(config: BillFnConfig) {
       method: 'GET',
       path: '/entitlements',
       handler: async (request) => {
-        const subject = await resolveRequestSubject(request, config.auth?.resolveSubject);
+        const subject = await resolveRequestSubject(request, config.auth);
         const response = await service.getEntitlements(subject);
         if (!response.ok) {
           return jsonResponse(response, response.error.status);
@@ -128,7 +143,7 @@ export function createBillFnRouter(config: BillFnConfig) {
       method: 'GET',
       path: '/usage',
       handler: async (request, context) => {
-        const subject = await resolveRequestSubject(request, config.auth?.resolveSubject);
+        const subject = await resolveRequestSubject(request, config.auth);
         const resource = context.query.get('resource') ?? undefined;
         const response = await service.getUsage(subject, resource);
         if (!response.ok) {
@@ -157,7 +172,7 @@ export function createBillFnRouter(config: BillFnConfig) {
           successUrl?: string;
           cancelUrl?: string;
         }>(request);
-        const subject = await resolveRequestSubject(request, config.auth?.resolveSubject, body.subject);
+        const subject = await resolveRequestSubject(request, config.auth, body.subject);
         const response = await service.createCheckout({
           subject,
           planKey: body.planKey,
@@ -185,7 +200,7 @@ export function createBillFnRouter(config: BillFnConfig) {
           checkoutSessionId: string;
           payload?: Record<string, unknown>;
         }>(request);
-        const subject = await resolveRequestSubject(request, config.auth?.resolveSubject, body.subject);
+        const subject = await resolveRequestSubject(request, config.auth, body.subject);
         const response = await service.verifyCheckout({
           subject,
           checkoutSessionId: body.checkoutSessionId,
@@ -206,7 +221,7 @@ export function createBillFnRouter(config: BillFnConfig) {
           subscriptionId?: string;
           reason?: string;
         }>(request);
-        const subject = await resolveRequestSubject(request, config.auth?.resolveSubject, body.subject);
+        const subject = await resolveRequestSubject(request, config.auth, body.subject);
         const response = await service.cancelSubscription({
           subject,
           subscriptionId: body.subscriptionId,
@@ -230,7 +245,7 @@ export function createBillFnRouter(config: BillFnConfig) {
           prorationBehavior?: 'provider_default' | 'prorate' | 'none';
           reason?: string;
         }>(request);
-        const subject = await resolveRequestSubject(request, config.auth?.resolveSubject, body.subject);
+        const subject = await resolveRequestSubject(request, config.auth, body.subject);
         const response = await service.changeSubscription({
           subject,
           subscriptionId: body.subscriptionId,
@@ -253,7 +268,7 @@ export function createBillFnRouter(config: BillFnConfig) {
           subject?: BillableSubject;
           subscriptionId?: string;
         }>(request);
-        const subject = await resolveRequestSubject(request, config.auth?.resolveSubject, body.subject);
+        const subject = await resolveRequestSubject(request, config.auth, body.subject);
         const response = await service.resumeSubscription({
           subject,
           subscriptionId: body.subscriptionId
@@ -276,15 +291,18 @@ export function createBillFnRouter(config: BillFnConfig) {
           amount?: number;
           reason?: string;
         }>(request);
-        const subject = await resolveRequestSubject(request, config.auth?.resolveSubject, body.subject);
-        const response = await service.refundCharge({
-          subject,
-          subscriptionId: body.subscriptionId,
-          providerChargeId: body.providerChargeId,
-          mode: body.mode,
-          amount: body.amount,
-          reason: body.reason
-        });
+        const subject = await resolveRequestSubject(request, config.auth, body.subject);
+        const response = await service.refundCharge(
+          {
+            subject,
+            subscriptionId: body.subscriptionId,
+            providerChargeId: body.providerChargeId,
+            mode: body.mode,
+            amount: body.amount,
+            reason: body.reason
+          },
+          { authorize: (target) => ensureRefundAuthorized({ request, ...target }) }
+        );
         if (!response.ok) {
           return jsonResponse(response, response.error.status);
         }
@@ -299,7 +317,7 @@ export function createBillFnRouter(config: BillFnConfig) {
           subject?: BillableSubject;
           subscriptionId?: string;
         }>(request);
-        const subject = await resolveRequestSubject(request, config.auth?.resolveSubject, body.subject);
+        const subject = await resolveRequestSubject(request, config.auth, body.subject);
         const response = await service.syncSubscription({
           subject,
           subscriptionId: body.subscriptionId
@@ -322,7 +340,7 @@ export function createBillFnRouter(config: BillFnConfig) {
           purchaseReference: string;
           payload?: Record<string, unknown>;
         }>(request);
-        const subject = await resolveRequestSubject(request, config.auth?.resolveSubject, body.subject);
+        const subject = await resolveRequestSubject(request, config.auth, body.subject);
         const response = await service.restorePurchases({
           subject,
           planKey: body.planKey,
