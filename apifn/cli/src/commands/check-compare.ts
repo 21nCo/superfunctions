@@ -211,7 +211,10 @@ class Dereferencer {
     return result;
   }
 
-  private expand(ref: string, value: Record<string, JsonValue>, mode: Mode, resource: Resource, at: string): JsonValue {
+  private expand(ref: string, node: Record<string, JsonValue>, mode: Mode, resource: Resource, at: string): JsonValue {
+    // A Reference Object outside a schema ignores every key beside it but `summary` and
+    // `description`, so an ignored key is never read (an external `$ref` inside it included).
+    const value = REFERENCE_MODES.has(mode) ? referenceFields(node) : node;
     const siblingMode = (key: string, item: JsonValue): Mode => (mode === "example" ? "literal" : childMode(key, item));
     // The validator's copy resolves nothing itself: the validator reports a reference that does
     // not resolve from the document root.
@@ -254,6 +257,15 @@ function withReferenceSiblings(target: JsonValue, siblings: JsonObject): JsonVal
   const result: JsonObject = { ...target };
   for (const key of ["summary", "description"]) {
     if (Object.hasOwn(siblings, key)) setOwn(result, key, siblings[key]);
+  }
+  return result;
+}
+
+/** The keys of a Reference Object outside a schema that are read: `$ref`, `summary`, `description`. */
+function referenceFields(value: Record<string, JsonValue>): Record<string, JsonValue> {
+  const result: Record<string, JsonValue> = {};
+  for (const key of ["$ref", "summary", "description"]) {
+    if (Object.hasOwn(value, key)) setOwn(result, key, value[key]);
   }
   return result;
 }

@@ -314,9 +314,9 @@ async function acceptBase(text: string, label: string): Promise<{ doc: JsonObjec
   return { doc, comparable: form };
 }
 
-async function loadBase(options: CheckCommandOptions, inputs: RunInputs): Promise<BaseSpec> {
+async function loadBase(options: CheckCommandOptions, inputs: RunInputs, cwd: string): Promise<BaseSpec> {
   if (options.base !== undefined) {
-    const baseline = readSpecAtRef(options.base, inputs.specPath);
+    const baseline = readSpecAtRef(options.base, inputs.specPath, cwd);
     if (baseline.text === null) {
       return { source: "git", ref: options.base, doc: null, comparable: null };
     }
@@ -516,7 +516,7 @@ export async function runCheckCommand(options: CheckCommandOptions): Promise<num
     const specTarget = observe(inputs.specPath);
     assertOutputsSeparate(options, inputs, { spec: specTarget, report: reportTarget }, cwd);
 
-    const base = await loadBase(options, inputs);
+    const base = await loadBase(options, inputs, cwd);
     const committed = readCommittedSpec(inputs.specPath, specTarget);
     const head = await readHead(inputs.generated);
     const { report, repair } = evaluate(options, inputs, base, committed, head, specTarget.destination);

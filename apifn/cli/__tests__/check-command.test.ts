@@ -40,6 +40,7 @@ import {
 } from "../src/commands/check.js";
 import { diffOpenAPI } from "@apifn/core";
 import { comparable } from "../src/commands/check-compare.js";
+import { leavesTree } from "../src/commands/check-git.js";
 import { fetchBounded } from "../src/commands/check-io.js";
 import { observe } from "../src/commands/check-publish.js";
 import type { PublishStep } from "../src/commands/check-publish.js";
@@ -3776,5 +3777,138 @@ describe("apifn check: the git baseline is read at the path the check reads and 
       });
       expect(report.breaking.length).toBeGreaterThan(0);
     }
+  });
+});
+
+describe("apifn check: the --base repository is the work tree the check runs in (API-25 round 1)", () => {
+  /**
+   * Repository A tracks the base contract at breaking/.apifn/openapi.yml while its router is the
+   * breaking one; repository B tracks the breaking contract itself. Returns both roots and A's
+   * service directory.
+   */
+  async function twoRepositories(): Promise<{ root: string; service: string; other: string }> {
+    const root = await fixtures();
+    git(root, "init", "-q");
+    const service = path.join(root, "breaking");
+    await mkdir(path.join(service, ".apifn"), { recursive: true });
+    await commitSpec(path.join(root, "base"));
+    await writeFile(path.join(service, SPEC), await readFile(path.join(root, "base", SPEC), "utf8"));
+    git(root, "add", "-A");
+    git(root, "commit", "-q", "-m", "base contract");
+    await commitSpec(service);
+    const other = await tempDir("apifn-check-other-repo-");
+    git(other, "init", "-q");
+    await mkdir(path.join(other, ".apifn"), { recursive: true });
+    await writeFile(path.join(other, SPEC), await readFile(path.join(service, SPEC), "utf8"));
+    git(other, "add", "-A");
+    git(other, "commit", "-q", "-m", "head contract");
+    return { root, service, other };
+  }
+
+  it.skipIf(POSIX_ONLY)("a spec directory symlinked into another repository exits 2 instead of passing against its commit", async () => {
+    const { service, other } = await twoRepositories();
+    // Without the link the breaking change fails the check.
+    expect((await runJson(["check", "--base", "HEAD"], service)).code).toBe(1);
+    await rm(path.join(service, ".apifn"), { recursive: true });
+    await symlink(path.join(other, ".apifn"), path.join(service, ".apifn"));
+    const before = await readFile(path.join(other, SPEC), "utf8");
+
+    for (const extra of [[], ["--write"]]) {
+      const result = await run(["check", "--base", "HEAD", ...extra], service);
+      expect({ code: result.code, stdout: result.stdout }).toEqual({ code: 2, stdout: "" });
+      expect(result.stderr).toContain("outside the git repository");
+    }
+    expect(await readFile(path.join(other, SPEC), "utf8")).toBe(before);
+  });
+
+  it("a spec inside another work tree nested below the repository exits 2, never a new contract", async () => {
+    const { root, service } = await twoRepositories();
+    // breaking/.apifn becomes an untracked clone of its own: the outer commit does not hold it.
+    await rm(path.join(service, ".apifn"), { recursive: true });
+    git(root, "rm", "-q", "-r", "--cached", "breaking/.apifn");
+    git(root, "commit", "-q", "-m", "drop the tracked spec");
+    await mkdir(path.join(service, ".apifn"), { recursive: true });
+    git(path.join(service, ".apifn"), "init", "-q");
+    await commitSpec(service);
+
+    const result = await run(["check", "--base", "HEAD"], service);
+    expect({ code: result.code, stdout: result.stdout }).toEqual({ code: 2, stdout: "" });
+    expect(result.stderr).toContain("belongs to the git work tree at");
+  });
+
+  it.each([
+    ["/abs/openapi.yml", "linux", true],
+    ["C:/abs/openapi.yml", "win32", true],
+    ["C:\\abs\\openapi.yml", "win32", true],
+    ["c:openapi.yml", "win32", true],
+    ["..\\..\\outside\\openapi.yml", "win32", true],
+    ["contracts\\openapi.yml", "win32", true],
+    ["../contracts/openapi.yml", "win32", false],
+    ["contracts\\openapi.yml", "linux", false],
+    ["C:/not-a-drive", "darwin", false],
+  ] as const)("a tracked link target %j on %s leaves the tree: %s", (target, platform, expected) => {
+    expect(leavesTree(target, platform)).toBe(expected);
+  });
+});
+
+describe("apifn check: every global flag spelling runs the same check for cac and the pre-parser (API-25 round 1)", () => {
+  it.each([
+    [["--noColor", "check"]],
+    [["check", "--noColor"]],
+    [["--no-color", "check"]],
+    [["check", "--no-color"]],
+  ])("`apifn %j` on a breaking contract fails the check (exit 1)", async (argv) => {
+    const root = await fixtures();
+    await commitSpec(path.join(root, "base"));
+    const dir = path.join(root, "breaking");
+    await commitSpec(dir);
+    const { code, report } = await runJson([...argv, "--base-spec", path.join("..", "base", SPEC)], dir);
+    expect({ code, verdict: report.verdict }).toEqual({ code: 1, verdict: "fail" });
+    expect(report.breaking.length).toBeGreaterThan(0);
+  });
+});
+
+describe("apifn check: ignored keys beside a Reference Object are never read (API-25 round 1)", () => {
+  it("an external $ref inside an ignored sibling neither fails nor reaches the comparable form", () => {
+    const merged = comparable({
+      openapi: "3.1.0",
+      info: { title: "S", version: "1.0.0" },
+      paths: {
+        "/u": {
+          get: {
+            responses: {
+              "200": {
+                $ref: "#/components/responses/Ok",
+                description: "here",
+                content: { "application/json": { schema: { $ref: "https://example.com/schema.json" } } },
+              },
+            },
+          },
+        },
+      },
+      components: { responses: { Ok: { description: "ok" } } },
+    }) as unknown as { paths: Record<string, { get: { responses: Record<string, unknown> } }> };
+    expect(merged.paths["/u"].get.responses["200"]).toEqual({ description: "here" });
+  });
+
+  it("a base spec whose Response $ref carries such a sibling is validated and compared, not refused (exit 2)", async () => {
+    const root = await fixtures();
+    const dir = path.join(root, "base");
+    await commitSpec(dir);
+    const doc = parseYaml(await readFile(path.join(dir, SPEC), "utf8")) as {
+      paths: Record<string, Record<string, { responses: Record<string, unknown> }>>;
+      components?: Record<string, Record<string, unknown>>;
+    };
+    const [operation] = Object.values(Object.values(doc.paths)[0]);
+    const [status, response] = Object.entries(operation.responses)[0];
+    doc.components = { ...doc.components, responses: { ...doc.components?.responses, Moved: response } };
+    operation.responses[status] = {
+      $ref: "#/components/responses/Moved",
+      content: { "application/json": { schema: { $ref: "https://example.com/schema.json" } } },
+    };
+    await writeFile(path.join(dir, "base.yml"), toYaml(doc));
+
+    const { code, report } = await runJson(["check", "--base-spec", "base.yml"], dir);
+    expect({ code, base: report.base.status, breaking: report.breaking }).toEqual({ code: 0, base: "compared", breaking: [] });
   });
 });

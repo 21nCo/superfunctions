@@ -24,6 +24,9 @@
  * - a component followed by `/` or `/.` must be a directory, as for the kernel: a blob there is
  *   an error, never the spec;
  * - git output is decoded as strict UTF-8; malformed bytes are an error;
+ * - the repository is the git work tree of the directory the check runs in; a spec whose file (its
+ *   symlinks followed) lies outside that work tree, or inside another work tree below it, is an
+ *   error, so a symlink can never make another repository's commit the baseline;
  * - every git failure is an error (exit 2), never a new contract.
  */
 
@@ -237,11 +240,21 @@ class Walk {
     this.links += 1;
     if (this.links > MAX_TREE_LINKS) this.fail(`Too many symbolic links in ${this.relative} at ${this.ref}.`);
     const target = this.git.ok(["cat-file", "blob", entry.object]);
-    if (target.startsWith("/")) {
+    if (leavesTree(target)) {
       this.fail(`${this.here(entry)} at ${this.ref} is a symbolic link that leaves the repository (${target}).`);
     }
     this.pending = [...target.split("/"), ...this.pending];
   }
+}
+
+/**
+ * True when a tracked link target is not a relative `/`-separated path inside the tree: absolute
+ * (`/x`), or on Windows drive-qualified (`C:/x`, `C:x`) or spelled with a backslash, which
+ * Windows reads as a separator (`\x`, `..\..\x`) and the walk, splitting on `/`, would not.
+ */
+export function leavesTree(target: string, platform: NodeJS.Platform = process.platform): boolean {
+  if (target.startsWith("/")) return true;
+  return platform === "win32" && (/^[A-Za-z]:/.test(target) || target.includes("\\"));
 }
 
 /**
@@ -332,24 +345,41 @@ export interface GitBaseline {
   text: string | null;
 }
 
-/** Reads the spec committed at `ref` (see the module comment). */
-export function readSpecAtRef(ref: string, specPath: string): GitBaseline {
+/** The native realpath of the git work tree holding `dir`, or null with git's reason. */
+function workTreeOf(executable: string, dir: string): { root: string } | { root: null; reason: string } {
+  const toplevel = new Git(executable, dir).run(["rev-parse", "--show-toplevel"]);
+  if (toplevel.code !== 0) return { root: null, reason: toplevel.stderr.trim() || `exit status ${toplevel.code}` };
+  return { root: realpathSync.native(toplevel.stdout.trim()) };
+}
+
+/**
+ * Reads the spec committed at `ref` (see the module comment). `cwd` is the directory the check
+ * runs in: its work tree is the repository, wherever the spec's symlinks lead.
+ */
+export function readSpecAtRef(ref: string, specPath: string, cwd: string): GitBaseline {
   if (ref.length === 0 || ref.startsWith("-")) {
     throw new CheckUsageError(`Invalid git ref '${ref}'`);
   }
   const executable = resolveGitExecutable();
-  const probe = new Git(executable, nearestExistingDir(specPath));
-  const toplevel = probe.run(["rev-parse", "--show-toplevel"]);
-  if (toplevel.code !== 0) {
-    throw new CheckUsageError(`--base needs a git work tree; ${probe.root} is not inside one: ${toplevel.stderr.trim()}`);
+  const here = workTreeOf(executable, cwd);
+  if (here.root === null) {
+    throw new CheckUsageError(`--base needs a git work tree; ${cwd} is not inside one: ${here.reason}`);
   }
-  const git = new Git(executable, realpathSync.native(toplevel.stdout.trim()));
+  const git = new Git(executable, here.root);
 
-  // The file the check reads and --write writes must be inside the repository.
+  // The file the check reads and --write writes must be inside the repository, and not inside
+  // another work tree nested in it (an untracked clone, or a submodule's checkout).
   const destination = canonicalPath(writeDestination(specPath));
   const destinationPath = toRepoPath(path.relative(git.root, destination));
   if (destinationPath === null) {
     throw new CheckUsageError(`Spec ${specPath} (${destination}) is outside the git repository at ${git.root}`);
+  }
+  const owner = workTreeOf(executable, nearestExistingDir(destination));
+  if (owner.root !== git.root) {
+    const where = owner.root === null ? `no git work tree (${owner.reason})` : `the git work tree at ${owner.root}`;
+    throw new CheckUsageError(
+      `Spec ${specPath} (${destination}) is outside the git repository at ${git.root}: it belongs to ${where}`
+    );
   }
 
   const resolved = git.run(["rev-parse", "--verify", "--quiet", `${ref}^{commit}`]);
