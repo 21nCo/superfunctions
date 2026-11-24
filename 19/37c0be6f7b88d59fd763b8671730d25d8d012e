@@ -1,0 +1,21 @@
+mcpfn/core/src/openapi/schema.ts
+  s_e222f4986e02b0::t_fc391180e49943 1539,1541-1542,1650,1652,1721-1723,1939-1944,1948-1949,1951-1954,1956-1962,1965-1966,1986
+mcpfn/core/tests/openapi-forms.test.ts
+  s_e222f4986e02b0::t_0b831c9cba60d9 2887-2951
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1937c0be6f7b88d59fd763b8671730d25d8d012e",
+  "prompts": {},
+  "sessions": {
+    "s_e222f4986e02b0": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a20e98-8cc6-7113-9056-583824cfa41a",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
