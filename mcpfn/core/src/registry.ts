@@ -1137,8 +1137,11 @@ export class McpFnRegistry<TContext = undefined> {
       const prompt = this.prompts.get(ref.name);
       if (!prompt)
         throw new McpFnValidationError(`Unknown MCP prompt: ${ref.name}`);
+      const completers = prompt.definition.complete;
       return (
-        prompt.definition.complete?.[argument.name]?.(
+        (completers && Object.hasOwn(completers, argument.name)
+          ? completers[argument.name]
+          : undefined)?.(
           argument.value,
           completionContext,
           context,
@@ -1155,8 +1158,11 @@ export class McpFnRegistry<TContext = undefined> {
         `Unknown MCP resource template: ${ref.uri}`,
       );
     }
+    const completers = template.definition.complete;
     return (
-      template.definition.complete?.[argument.name]?.(
+      (completers && Object.hasOwn(completers, argument.name)
+        ? completers[argument.name]
+        : undefined)?.(
         argument.value,
         completionContext,
         context,

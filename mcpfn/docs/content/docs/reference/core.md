@@ -107,6 +107,18 @@ that must map schema failures into a stable legacy envelope.
 
 When a tool declares a success `outputSchema`, error details remain in its JSON text content and `structuredContent` is omitted so the official SDK does not validate an error envelope against the success schema. Tools without an output schema retain both structured and text error envelopes.
 
+Only `McpFnError` (and its subclasses), the SDK's `McpError` and a thrown plain
+`{ code, message }` object reach the client with their code, message and
+details. Any other thrown value, such as a filesystem, database or upstream
+HTTP error, becomes `{ code: "MCPFN_TOOL_ERROR", message: "The tool failed",
+details: { errorId } }`; resource, prompt, completion and subscription handlers
+answer such errors with a JSON-RPC `InternalError` carrying the same `errorId`.
+The original error goes to the server's `onError({ error, errorId, method, tool })`
+sink. `exposeErrors: true` restores verbatim error text. Argument validation
+stops at the first failure, so invalid arguments report one schema issue, and
+each client may hold at most `maxResourceSubscriptions` (default 1000) resource
+subscriptions.
+
 One `McpFnServer` instance connects to one transport. Create a new instance per concurrent connection and share the registry.
 
 ## Authenticated client profiles
