@@ -6,9 +6,12 @@ import { afterEach } from "vitest";
 const created: string[] = [];
 
 // Each test file that imports this removes its temp directories after every test, whether the
-// test passes, fails or times out.
+// test passes, fails or times out. Retries absorb a git helper that is still writing into a
+// test repository's .git just after a commit (ENOTEMPTY).
 afterEach(async () => {
-  await Promise.all(created.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+  await Promise.all(
+    created.splice(0).map((dir) => rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }))
+  );
 });
 
 /** Creates a temp directory that is removed after the current test. */
