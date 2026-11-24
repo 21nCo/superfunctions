@@ -319,9 +319,8 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
     try { files = await attemptFiles(run, attempt, prompt); }
     catch (error) { return state.finish("failed", `The CLI attempt's files could not be created: ${message(error)}`); }
     const { outputFile } = files;
-    // Just before the spawn, the executable must still be the one whose version was read (Node cannot exec an open file,
-    // so only the stat-to-spawn gap remains, and the identity is read again after the CLI ends); the deadline is read
-    // once that and the file writes are done, so neither can extend it.
+    // Just before the spawn (Node cannot exec an open file), the executable must still be the one whose version was read;
+    // the deadline is read after that and the file writes, so neither can extend it.
     if (await this.changed(run)) return state.finish("failed", `The CLI executable changed after its version was read, so it was refused ${before}.`);
     const remaining = run.deadline - Date.now();
     if (remaining <= 0) return state.finish("timed_out", `The CLI exceeded its configured bound ${before}.`);
@@ -358,8 +357,7 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
     const output = await readAnswer(run, outputFile, result.stdout);
     const terminal = terminalOutcome(run, attempt, result, output, fileOverrun);
     if (terminal) return terminal;
-    // After cancellation and every overrun, but before an answer is accepted or earns a repair: an executable replaced
-    // while the attempt was prepared or ran is not the one whose version was read.
+    // After cancellation and every overrun, before an answer is accepted or repaired: the executable must be unchanged.
     if (await this.changed(run)) return run.state.finish("failed", "The CLI executable changed while the attempt ran, so its answer was refused.");
     return accept(run, attempt, output);
   }
@@ -406,7 +404,6 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
    * modification and change times), the version arguments and the probe's whole environment, hashed so no environment
    * value is kept in the key.
    */
-  /** Whether the executable's identity no longer matches the one whose version was read. */
   private async changed(run: AttemptContext): Promise<boolean> {
     return await this.versionKey(run.executable, run.profile, run.environment).catch(() => undefined) !== run.key;
   }
@@ -753,7 +750,6 @@ function watchOutputFile(file: string, maxBytes: number, parent: AbortSignal | u
     signal: controller.signal,
     stop: () => { clearInterval(timer); parent?.removeEventListener("abort", onParentAbort); },
     onOutput: bytes => { streamed += bytes; check(); },
-    // Checked once more when read, after the CLI ended, with every stream byte it wrote.
     overrun: () => { check(); return overrun; },
     peak: () => peak,
     settle: () => pending,
