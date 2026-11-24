@@ -156,6 +156,37 @@ describe('FILE-30 low-severity hardening (F-13, F-14, F-16, F-18, F-24)', () => 
     expect(usage).toEqual(['anonymous']);
   });
 
+  it('refuses a writer who lost access with 403 before looking at the owner quota (F-13)', async () => {
+    const quota = {
+      async checkQuota() {
+        return { allowed: false, current: 100, limit: 100 };
+      },
+      async recordUsage() {},
+    } as QuotaProvider;
+    const database = memoryAdapter();
+    const { fileFn } = makeFileFn({ database, authorizer: createDefaultAuthorizer({ db: database, namespace: 'filefn' }) });
+    const owner = { principalId: 'owner', tenantId: 't1' };
+    const writer = { principalId: 'writer', tenantId: 't1' };
+    const file = await upload(fileFn, owner);
+    const grant = await fileFn.services.grants.createGrant({ fileId: file.fileId, userId: 'writer', canWrite: true }, owner);
+    const limited = createFileFn({
+      database,
+      storage: createLocalStorageAdapter({ rootDir }),
+      namespace: 'filefn',
+      policies: [{ name: 'docs', contentTypes: ['text/plain'], visibility: 'private' }],
+      authorizer: createDefaultAuthorizer({ db: database, namespace: 'filefn' }),
+      quota,
+    });
+    const body = Buffer.from('hello');
+    const session = await fileFn.createUploadSession({ policy: 'docs', fileName: 'a.txt', size: body.length, mimeType: 'text/plain', fileId: file.fileId }, writer);
+    const part = await fileFn.services.uploads.uploadPartBytes(session.uploadSessionId, 1, body, body.length, writer, session.uploadSessionToken);
+    await fileFn.services.uploads.completePart(session.uploadSessionId, 1, part.etag, part.size, writer, session.uploadSessionToken);
+    await fileFn.services.grants.revokeGrant(file.fileId, grant.permissionId, owner);
+    await expect(limited.services.uploads.completeSession(session.uploadSessionId, writer, session.uploadSessionToken)).rejects.toMatchObject({
+      code: 'FILEFN_FORBIDDEN',
+    });
+  });
+
   it('warns once per process when uploads start before any cleanup sweep (F-24)', async () => {
     const warn = vi.fn();
     const logger = { info() {}, warn, error() {}, debug() {} };
@@ -167,5 +198,23 @@ describe('FILE-30 low-severity hardening (F-13, F-14, F-16, F-18, F-24)', () => 
     await upload(perRequest, { principalId: 'owner', tenantId: 't1' });
     const sweepWarnings = warn.mock.calls.filter(([message]) => String(message).includes('cleanupExpiredSessions'));
     expect(sweepWarnings).toHaveLength(1);
+  });
+
+  it('never fails an upload because the missing-sweep warning sink throws (F-24)', async () => {
+    const warn = vi.fn(() => {
+      throw new Error('sink down');
+    });
+    // A fresh module, so the process-wide warning has not been given yet.
+    vi.resetModules();
+    const fresh = await import('../src/index.js');
+    const fileFn = fresh.createFileFn({
+      database: memoryAdapter(),
+      storage: createLocalStorageAdapter({ rootDir }),
+      namespace: 'filefn',
+      policies: [{ name: 'docs', contentTypes: ['text/plain'], visibility: 'private' }],
+      observability: { logger: { info() {}, warn, error() {}, debug() {} } } as never,
+    });
+    await expect(upload(fileFn as never, { principalId: 'owner', tenantId: 't1' })).resolves.toBeDefined();
+    expect(warn).toHaveBeenCalledTimes(1);
   });
 });

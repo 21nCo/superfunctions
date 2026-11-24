@@ -392,12 +392,19 @@ export function createFileFn(config: FileFnConfig): FileFn {
   // only by the host's scheduled sweeps. Say so once per process (not per
   // FileFn instance: hosts that build one per request share the process) when
   // uploads start and no sweep has run in the process yet.
+  // Only a host logger with a warn method uses up the warning, and a sink that
+  // throws never fails the upload.
+  const hostWarn = typeof observabilityScope?.logger?.warn === 'function' ? logger?.warn : undefined;
   events.once('upload.started', () => {
-    if (logger && !sweepState.ran && !sweepState.warned) {
+    if (hostWarn && !sweepState.ran && !sweepState.warned) {
       sweepState.warned = true;
-      logger?.warn('Uploads started but cleanupExpiredSessions has not run in this process', {
-        hint: 'Schedule cleanupExpiredSessions() and cleanupOrphanedArtifacts(); without them expired sessions and their stored objects are never removed.',
-      });
+      try {
+        hostWarn('Uploads started but cleanupExpiredSessions has not run in this process', {
+          hint: 'Schedule cleanupExpiredSessions() and cleanupOrphanedArtifacts(); without them expired sessions and their stored objects are never removed.',
+        });
+      } catch {
+        // The warning is advisory.
+      }
     }
   });
 
