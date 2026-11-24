@@ -135,7 +135,7 @@ describe('upload init input (FILE-30 F-21, F-05)', () => {
 
   it('accepts ordinary names, zero-byte uploads and MIME parameters', async () => {
     const fileFn = makeFileFn([{ name: 'any' }]);
-    for (const [fileName, mimeType] of [['report.txt', 'text/plain; charset=utf-8'], ['résumé (final).pdf', 'application/pdf'], ['.hidden', 'text/plain;\tcharset=UTF-8'], ['a..b', 'application/octet-stream'], ['photo \u{1F600}.png', 'image/png'], ['trailing.txt', 'text/plain \t'], ['private.bin', 'application/x-example~v1'], ['empty-slot.png', 'image/png;'], ['quoted.txt', 'text/plain; name="a \\"b\\" c"'], ['data.jsonld', `application/ld+json; profile="https://example.com/${'p'.repeat(400)}"`]]) {
+    for (const [fileName, mimeType] of [['report.txt', 'text/plain; charset=utf-8'], ['résumé (final).pdf', 'application/pdf'], ['.hidden', 'text/plain;\tcharset=UTF-8'], ['a..b', 'application/octet-stream'], ['photo \u{1F600}.png', 'image/png'], ['trailing.txt', 'text/plain \t'], ['private.bin', 'application/x-example~v1'], ['empty-slot.png', 'image/png;'], ['quoted.txt', 'text/plain; name="a \\"b\\" c"'], ['latin1.txt', 'text/plain; name="caf\u00e9"'], ['data.jsonld', `application/ld+json; profile="https://example.com/${'p'.repeat(400)}"`]]) {
       await expect(
         fileFn.createUploadSession({ policy: 'any', fileName, size: 0, mimeType }, { principalId: 'alice' }),
       ).resolves.toMatchObject({ uploadSessionId: expect.any(String) });
@@ -202,5 +202,30 @@ describe('upload init input (FILE-30 F-21, F-05)', () => {
     const proto = { get policy() { return 'any'; } };
     const input = Object.assign(Object.create(proto), { fileName: 'a.txt', size: 1, mimeType: 'text/plain', metadata: { a: 1 } });
     await expect(fileFn.createUploadSession(input, { principalId: 'alice' })).resolves.toMatchObject({ uploadSessionId: expect.any(String) });
+  });
+
+  it('uses the fields it validated even if a metadata hook changes the caller object', async () => {
+    const fileFn = makeFileFn([{ name: 'any' }]);
+    const input: Record<string, unknown> = { policy: 'any', fileName: 'a.txt', size: 1, mimeType: 'text/plain' };
+    input.metadata = { toJSON: () => { input.size = -5; return { ok: true }; } };
+    const session = await fileFn.createUploadSession(input as never, { principalId: 'alice' });
+    expect(session.totalParts).toBe(1);
+  });
+
+  it('counts repeated references to one long string against the byte limit', async () => {
+    const fileFn = makeFileFn([{ name: 'any' }]);
+    const big = 'x'.repeat(10_000);
+    await expect(
+      fileFn.createUploadSession({ policy: 'any', fileName: 'a.txt', size: 1, mimeType: 'text/plain', metadata: { list: Array(1000).fill(big) } }, { principalId: 'alice' }),
+    ).rejects.toMatchObject({ code: 'FILEFN_INVALID_REQUEST' });
+  });
+
+  it('serializes boxed primitives as JSON.stringify does', async () => {
+    const fileFn = makeFileFn([{ name: 'any' }]);
+    const session = await fileFn.createUploadSession(
+      { policy: 'any', fileName: 'a.txt', size: 1, mimeType: 'text/plain', metadata: { count: new Number(1), name: new String('n'), flag: new Boolean(false) } } as never,
+      { principalId: 'alice' },
+    );
+    expect(session.uploadSessionId).toEqual(expect.any(String));
   });
 });

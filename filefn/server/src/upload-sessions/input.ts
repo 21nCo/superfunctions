@@ -29,6 +29,11 @@ const MAX_METADATA_NODES = MAX_METADATA_BYTES;
 
 class MetadataBudgetError extends Error {}
 
+function charge(budget: { bytes: number }, bytes: number): void {
+  budget.bytes -= bytes;
+  if (budget.bytes < 0) throw new MetadataBudgetError();
+}
+
 /**
  * The plain JSON value JSON.stringify would write for `value`: `toJSON` is
  * applied (with the property key), non-finite numbers become null, and
@@ -36,21 +41,38 @@ class MetadataBudgetError extends Error {}
  * Throws past MAX_METADATA_DEPTH or the node budget, before expanding a
  * structure that reuses children, and on BigInt.
  */
-function normalizeJson(value: unknown, key: string, depth: number, budget: { left: number }): unknown {
+function normalizeJson(value: unknown, key: string, depth: number, budget: { left: number; bytes: number }): unknown {
   budget.left -= 1;
   if (budget.left < 0 || depth > MAX_METADATA_DEPTH) throw new MetadataBudgetError();
   if (value !== null && (typeof value === 'object' || typeof value === 'bigint')) {
     const toJSON = (value as { toJSON?: unknown }).toJSON;
     if (typeof toJSON === 'function') value = toJSON.call(value, key);
   }
-  if (value === null || typeof value === 'string' || typeof value === 'boolean') return value;
-  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  // Boxed primitives serialize as their primitive value, as in JSON.stringify.
+  if (value instanceof Number) value = Number(value);
+  else if (value instanceof String) value = String(value);
+  else if (value instanceof Boolean) value = value.valueOf();
+  if (typeof value === 'string') {
+    // Count every occurrence at its escaped UTF-8 size, so repeated
+    // references to one long string cannot outgrow the byte limit unseen.
+    charge(budget, value.length > MAX_METADATA_BYTES ? MAX_METADATA_BYTES + 1 : new TextEncoder().encode(JSON.stringify(value)).byteLength);
+    return value;
+  }
+  if (value === null || typeof value === 'boolean') {
+    charge(budget, 5);
+    return value;
+  }
+  if (typeof value === 'number') {
+    charge(budget, Number.isFinite(value) ? String(value).length : 4);
+    return Number.isFinite(value) ? value : null;
+  }
   if (typeof value === 'bigint') throw new TypeError('BigInt is not JSON');
   if (typeof value !== 'object') return undefined;
   if (Array.isArray(value)) {
     const out: unknown[] = [];
     for (let i = 0; i < value.length; i++) {
       const item = normalizeJson(value[i], String(i), depth + 1, budget);
+      charge(budget, 1);
       out.push(item === undefined ? null : item);
     }
     return out;
@@ -60,7 +82,10 @@ function normalizeJson(value: unknown, key: string, depth: number, budget: { lef
     budget.left -= 1;
     if (budget.left < 0) throw new MetadataBudgetError();
     const item = normalizeJson((value as Record<string, unknown>)[name], name, depth + 1, budget);
-    if (item !== undefined) Object.defineProperty(out, name, { value: item, enumerable: true, writable: true, configurable: true });
+    if (item !== undefined) {
+      charge(budget, new TextEncoder().encode(JSON.stringify(name)).byteLength + 2);
+      Object.defineProperty(out, name, { value: item, enumerable: true, writable: true, configurable: true });
+    }
   }
   return out;
 }
@@ -92,10 +117,10 @@ function hasLoneSurrogate(value: unknown, depth = 0, budget = { left: MAX_METADA
 // type "/" subtype, each an HTTP token (RFC 9110), plus optional parameters.
 // Which types are allowed is the policy's decision, not this syntax check's.
 // Each parameter is `token=token` or `token=quoted-string` (quoted text and
-// quoted pairs limited to tab and visible ASCII); empty parameter slots are
-// allowed. The value ends up in Content-Type headers, which must be ASCII.
+// quoted pairs: tab, visible ASCII and Latin-1 obs-text); empty parameter
+// slots are allowed. Nothing above U+00FF, which no HTTP header can carry.
 const MIME_TOKEN = "[!#$%&'*+.^_`|~0-9A-Za-z-]+";
-const MIME_QUOTED = '"(?:[\\t \\x21\\x23-\\x5B\\x5D-\\x7E]|\\\\[\\t \\x21-\\x7E])*"';
+const MIME_QUOTED = '"(?:[\\t \\x21\\x23-\\x5B\\x5D-\\x7E\\x80-\\xFF]|\\\\[\\t \\x21-\\x7E\\x80-\\xFF])*"';
 const MIME_TYPE = new RegExp(
   `^${MIME_TOKEN}/${MIME_TOKEN}(?:[ \\t]*;(?:[ \\t]*${MIME_TOKEN}=(?:${MIME_TOKEN}|${MIME_QUOTED}))?)*[ \\t]*$`,
 );
@@ -183,10 +208,20 @@ export function assertValidUploadInit(input: UploadInitInput): { metadata?: Reco
     // depth and node budgets; the plain result is what gets checked, hashed
     // and stored.
     let normalized: unknown;
+    let overBytes = false;
     try {
-      normalized = normalizeJson(input.metadata, 'md', 0, { left: MAX_METADATA_NODES });
-    } catch {
+      // The byte budget has headroom over the limit; the exact size is
+      // checked on the final string below.
+      normalized = normalizeJson(input.metadata, 'md', 0, { left: MAX_METADATA_NODES, bytes: MAX_METADATA_BYTES * 2 });
+    } catch (error) {
+      overBytes = error instanceof MetadataBudgetError;
       normalized = undefined;
+    }
+    if (overBytes) {
+      throw invalidRequest(`metadata must be at most ${MAX_METADATA_BYTES} bytes as JSON, nested at most ${MAX_METADATA_DEPTH} levels`, {
+        field: 'metadata',
+        maxBytes: MAX_METADATA_BYTES,
+      });
     }
     if (normalized === null || typeof normalized !== 'object' || Array.isArray(normalized) || hasLoneSurrogate(normalized)) {
       throw invalidRequest(`metadata must be a JSON object of well-formed text, nested at most ${MAX_METADATA_DEPTH} levels`, { field: 'metadata' });
