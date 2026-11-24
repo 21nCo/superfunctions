@@ -128,11 +128,58 @@ const FORMS = [
     source: `export const View = () => <code>src/*.ts</code>;\nexport const load = () => import("${toTarget}/data/jsx-text.mjs");\n`,
   },
   {
+    name: "jsx-default-export", // JSX after `export default`, whose text looks like a comment opener.
+    file: "src/view.jsx",
+    ext: "mjs",
+    source: `export default <code>src/*.ts</code>;\nexport const load = () => import("${toTarget}/data/jsx-default-export.mjs");\n`,
+  },
+  {
+    name: "new-url-directory", // A URL that names a directory resolves the next URL inside it.
+    file: "src/index.mjs",
+    source:
+      `import { readFileSync } from "node:fs";\nconst data = new URL("${toTarget}/data/", import.meta.url);\n` +
+      `export const read = () => readFileSync(new URL("new-url-directory.json", data));\n`,
+  },
+  {
+    name: "path-base", // A name used only as the base of other paths is not itself a read; the path built on it is.
+    file: "src/index.mjs",
+    source:
+      `import path from "node:path";\nconst target = path.join(import.meta.dirname, "${toTarget}");\n` +
+      `export const file = path.join(target, "data", "path-base.json");\n`,
+  },
+  {
+    name: "package-root-path", // Another package's directory read by path: that package's files.
+    file: "src/index.mjs",
+    target: TARGET_DIR,
+    files: [],
+    missingIncludes: [`${TARGET_DIR}/src/index.cjs`, `${TARGET_DIR}/data/directory/entry.json`],
+    declare: `${TARGET_DIR}/**`,
+    source: `import path from "node:path";\nimport { readdirSync } from "node:fs";\nexport const list = () => readdirSync(path.join(import.meta.dirname, "${toTarget}"));\n`,
+  },
+  {
     name: "build-fixture", // A fixtures/ file that the build script runs reads for build, not only for tests.
     file: "fixtures/generate.mjs",
     task: "build",
     scripts: { build: "node fixtures/generate.mjs" },
     source: `import { readFileSync } from "node:fs";\nreadFileSync(new URL("${toTarget}/data/build-fixture.json", import.meta.url));\n`,
+  },
+  {
+    name: "build-fixture-extensionless", // The build script names the file without its extension.
+    file: "fixtures/generate.mjs",
+    task: "build",
+    scripts: { build: "tsx fixtures/generate" },
+    source: `import { readFileSync } from "node:fs";\nreadFileSync(new URL("${toTarget}/data/build-fixture-extensionless.json", import.meta.url));\n`,
+  },
+  {
+    name: "build-fixture-imported", // A fixtures/ file that a build source imports, through another fixtures/ file.
+    file: "fixtures/data.mjs",
+    task: "build",
+    scripts: { build: "node -e 0" },
+    extra: {
+      "src/index.mjs": 'export { helper } from "../fixtures/helper.mjs";\n',
+      "fixtures/helper.mjs": 'export { read as helper } from "./data.mjs";\n',
+    },
+    source: `import { readFileSync } from "node:fs";\nexport const read = () => readFileSync(new URL("${toTarget}/data/build-fixture-imported.json", import.meta.url));\n`,
   },
 ];
 const targetOf = (form) => form.target ?? `${TARGET_DIR}/data/${form.name}.${form.ext ?? "json"}`;
@@ -145,6 +192,8 @@ let copyRoot = "";
 let undeclaredRun;
 let declaredRun;
 let symlinkedRun;
+let symlinkedUndeclaredRun;
+let brokenRun;
 
 function write(file, contents) {
   mkdirSync(path.dirname(path.join(copyRoot, file)), { recursive: true });
@@ -155,14 +204,15 @@ function gitInCopy(args) {
   execFileSync("git", args, { cwd: copyRoot, stdio: "ignore", maxBuffer: 256 * 1024 * 1024 });
 }
 
-function runGuard(packages, root = copyRoot) {
+function runGuard(packages, root = copyRoot, script = guardScript) {
   const result = spawnSync(
     process.execPath,
-    [guardScript, "--root", root, "--turbo", turboBin, "--json", ...packages.flatMap((name) => ["--package", name])],
+    [script, "--root", root, "--turbo", turboBin, "--json", ...packages.flatMap((name) => ["--package", name])],
     { encoding: "utf8", env: TURBO_ENV, maxBuffer: 64 * 1024 * 1024 }
   );
   assert.ok(result.status === 0 || result.status === 1, `guard failed to run (${result.status}): ${result.stderr}`);
-  return { status: result.status, ...JSON.parse(result.stdout) };
+  // No output at all is a guard that did not run, which the tests report as a failure.
+  return { status: result.status, reads: [], undeclared: [], ...(result.stdout ? JSON.parse(result.stdout) : {}) };
 }
 
 const FIXTURE_PACKAGES = [
@@ -203,7 +253,10 @@ before(() => {
     for (const file of form.files ?? [targetOf(form)]) write(file, file.endsWith(".json") ? "{}\n" : "// A file a fixture package reads.\n");
     write(`packages/zz-guard-${form.name}/package.json`, manifest(`@guard/${form.name}`, form.scripts ?? READER_SCRIPTS));
     write(`packages/zz-guard-${form.name}/${form.file}`, form.source);
+    for (const [file, source] of Object.entries(form.extra ?? {})) write(`packages/zz-guard-${form.name}/${file}`, source);
   }
+  // Turbo hashes no symlink to a directory: a read of the target package counts this one as the directory's files.
+  symlinkSync("directory", path.join(copyRoot, TARGET_DIR, "data", "directory-link"));
   // Reads a file of a package it depends on: its test task depends on that package's build through "^build".
   write("packages/zz-guard-dependent/package.json", manifest("@guard/dependent", READER_SCRIPTS, { "@guard/target": "*" }));
   write("packages/zz-guard-dependent/src/index.mjs", `export { value } from "${toTarget}/src/index.mjs";\n`);
@@ -215,28 +268,38 @@ before(() => {
     "packages/zz-guard-inside/src/index.mjs",
     `import path from "node:path";\nimport "./local.mjs";\nexport const file = path.join(import.meta.dirname, "../data/own.json");\n`
   );
-  // Builds paths on another package's directory (packages/errors, which the guard runs are not given with --package):
-  // a base for other paths, not a read.
+  // Paths of directories that hold the package: the repository root and packages/. Bases, not reads.
   write("packages/zz-guard-base/package.json", manifest("@guard/base", READER_SCRIPTS));
-  write("packages/zz-guard-base/src/index.mjs", `import path from "node:path";\nexport const base = path.join(import.meta.dirname, "../../errors");\n`);
+  write(
+    "packages/zz-guard-base/src/index.mjs",
+    `import path from "node:path";\nexport const root = path.resolve(import.meta.dirname, "../../..");\nexport const packages = path.join(import.meta.dirname, "../..");\n`
+  );
+  // A file the tokenizer cannot read, in a package of its own (not in FIXTURE_PACKAGES).
+  write("packages/zz-guard-broken/package.json", manifest("@guard/broken", READER_SCRIPTS));
+  write("packages/zz-guard-broken/src/view.tsx", `export const View = () => <p>text</p>;\n/* never closed\nimport "${toTarget}/data/import.mjs";\n`);
   // Turbo hashes no "$TURBO_ROOT$/…" input in a repository without a commit.
   gitInCopy(["init", "-q"]);
   gitInCopy(["add", "-A"]);
   gitInCopy(["-c", "user.name=test", "-c", "user.email=test@example.invalid", "commit", "-q", "--no-verify", "--no-gpg-sign", "-m", "copy"]);
   undeclaredRun = runGuard(FIXTURE_PACKAGES);
-
-  for (const form of FORMS) {
-    const task = form.task ?? "test";
-    const declared = { extends: ["//"], tasks: { [task]: { inputs: ["$TURBO_DEFAULT$", `$TURBO_ROOT$/${form.declare ?? targetOf(form)}`] } } };
-    write(`packages/zz-guard-${form.name}/turbo.json`, `${JSON.stringify(declared, null, 2)}\n`);
-  }
-  gitInCopy(["add", "-A"]);
-  declaredRun = runGuard(FIXTURE_PACKAGES);
-  // The same repository reached through a symlink.
+  brokenRun = spawnSync(process.execPath, [guardScript, "--root", copyRoot, "--turbo", turboBin, "--package", "@guard/broken"], {
+    encoding: "utf8",
+    env: TURBO_ENV,
+  });
+  // The same repository, and the guard script in it, reached through a symlink: before and after declaring.
   const link = path.join(realpathSync(tmpdir()), `${path.basename(copyRoot)}-link`);
+  const linkedScript = path.join(link, "scripts", "turbo-inputs-guard.mjs");
   symlinkSync(copyRoot, link);
   try {
-    symlinkedRun = runGuard(FIXTURE_PACKAGES, link);
+    symlinkedUndeclaredRun = runGuard(["@guard/import"], link, linkedScript);
+    for (const form of FORMS) {
+      const task = form.task ?? "test";
+      const declared = { extends: ["//"], tasks: { [task]: { inputs: ["$TURBO_DEFAULT$", `$TURBO_ROOT$/${form.declare ?? targetOf(form)}`] } } };
+      write(`packages/zz-guard-${form.name}/turbo.json`, `${JSON.stringify(declared, null, 2)}\n`);
+    }
+    gitInCopy(["add", "-A"]);
+    declaredRun = runGuard(FIXTURE_PACKAGES);
+    symlinkedRun = runGuard(FIXTURE_PACKAGES, link, linkedScript);
   } finally {
     unlinkSync(link);
   }
@@ -254,8 +317,9 @@ for (const form of FORMS) {
       failures.map(({ file, target }) => ({ file, target })),
       [{ file: `packages/zz-guard-${form.name}/${form.file}`, target: targetOf(form) }]
     );
-    if (form.name === "package-require") {
-      assert.ok(failures[0].missing.includes(`${TARGET_DIR}/src/index.cjs`), "the package's main file is a read");
+    if (form.name === "package-require" || form.missingIncludes) {
+      for (const file of form.missingIncludes ?? [`${TARGET_DIR}/src/index.cjs`]) assert.ok(failures[0].missing.includes(file), `${file} is read`);
+      assert.ok(!failures[0].missing.includes(`${TARGET_DIR}/data/directory-link`), "a symlink to a directory is not itself a file to hash");
     } else {
       assert.deepEqual(failures[0].missing, form.files ?? [targetOf(form)]);
     }
@@ -270,6 +334,20 @@ test("the guard passes once every read is declared, also when the root is reache
   assert.equal(declaredRun.status, 0);
   assert.deepEqual(symlinkedRun.undeclared, []);
   assert.equal(symlinkedRun.status, 0);
+  assert.equal(symlinkedRun.reads.length, declaredRun.reads.length);
+});
+
+test("the guard runs when launched through a symlinked checkout, and fails on an undeclared read there", () => {
+  assert.equal(symlinkedUndeclaredRun.status, 1);
+  assert.deepEqual(
+    symlinkedUndeclaredRun.undeclared.map(({ taskId, target }) => ({ taskId, target })),
+    [{ taskId: "@guard/import#test", target: `${TARGET_DIR}/data/import.mjs` }]
+  );
+});
+
+test("a file the guard cannot tokenize fails the guard with its file and line", () => {
+  assert.equal(brokenRun.status, 2, brokenRun.stdout);
+  assert.match(brokenRun.stderr, /packages\/zz-guard-broken\/src\/view\.tsx:2: cannot read an unterminated block comment/);
 });
 
 test("a read of a dependency package's file passes without a declaration", () => {
@@ -281,7 +359,7 @@ test("a read inside the package is ignored", () => {
   assert.deepEqual(undeclaredRun.reads.filter((read) => read.package === "@guard/inside"), []);
 });
 
-test("a path on another package's directory is a base, also when that package is not selected", () => {
+test("a path of a directory that holds the package (the repository root or an ancestor) is not a read", () => {
   assert.deepEqual(undeclaredRun.reads.filter((read) => read.package === "@guard/base"), []);
 });
 
@@ -304,7 +382,7 @@ test("paths the closed set does not cover, comments and base directories are not
 test("JSX text, closing tags and TypeScript generics do not hide the reads after them", () => {
   const source = [
     "export const A = () => <p>Matches src/*.ts and `backticks`</p>;", // Neither a comment nor a template.
-    'export const B = () => <span>a</span><span>{import("../../other/same-line.mjs")}</span>;',
+    'export const B = () => <><span>a</span><span>{import("../../other/same-line.mjs")}</span></>;',
     "export const C = () => <div>",
     "</div>",
     'export const late = () => import("../../other/next-line.mjs");',
@@ -319,6 +397,55 @@ test("JSX text, closing tags and TypeScript generics do not hide the reads after
     [5, "../../other/next-line.mjs"],
     [7, "../../other/after-generic.mjs"],
     [9, "../../other/last.mjs"],
+  ]);
+});
+
+test("JSX after export default, generic components and comments in a tag do not hide the reads after them", () => {
+  const source = [
+    "export default <code>src/*.ts</code>;", // `default` starts an expression: JSX, not a comparison.
+    "export const List = () => <Table<string>>rows /* of text</Table>;", // A generic component.
+    'export const Tag = () => <div /* a comment */ id="x" // another',
+    ">/* text</div>;",
+    'export const late = () => import("../../other/late.mjs");',
+    "export const half = (row: { default: number }) => row.default / 2 / 1;", // A property named default: division.
+    "let i = 0;",
+    'export const next = () => [i++ / 2, import("../../other/next.mjs")];', // Division after a postfix increment.
+  ].join("\n");
+  const specifiers = findReadsInSource("pkg/a/src/view.tsx", source, "pkg/a").map(({ line, specifier }) => [line, specifier]);
+  assert.deepEqual(specifiers, [
+    [5, "../../other/late.mjs"],
+    [8, "../../other/next.mjs"],
+  ]);
+});
+
+test("code the tokenizer cannot read is an error with the file and line, not a silent skip", () => {
+  const cases = [
+    ["src/view.tsx", "const a = 1;\n/* never closed\nimport '../../other/x.mjs';", 2, "an unterminated block comment"],
+    ["src/view.tsx", "const a = b.match(/never closed\nimport '../../other/x.mjs';", 1, "an unterminated regular expression"],
+    ["src/view.tsx", "const a = `never closed ${b}\nimport '../../other/x.mjs';", 1, "an unterminated template literal"],
+    ["src/view.tsx", "const a = 'never closed\nimport '../../other/x.mjs';", 1, "an unterminated string"],
+    ["src/view.jsx", "const a = 1;\nexport const V = () => <div>\nimport '../../other/x.mjs';", 2, "an unclosed JSX element"],
+    ["src/index.ts", "const a = 1;\n/* never closed\nimport '../../other/x.mjs';", 2, "an unterminated block comment"],
+  ];
+  for (const [file, source, line, what] of cases) {
+    assert.throws(() => findReadsInSource(`pkg/a/${file}`, source, "pkg/a"), { message: `pkg/a/${file}:${line}: cannot read ${what}` });
+  }
+});
+
+test("URLs resolve as the WHATWG URL parser does, and string escapes are decoded", () => {
+  const source = [
+    'import path from "node:path";',
+    'const data = new URL("../../b/data/", import.meta.url);', // A directory URL: the next URL resolves inside it.
+    'export const a = new URL("a.json", data);',
+    'export const b = new URL("  ../../b/b.json?raw#top\\t", import.meta.url);', // Spaces, a tab, query and fragment.
+    'export const c = path.join(import.meta.dirname, "\\x2e\\u002e/\\u{2e}./b/c.json");', // Escaped dots.
+    'export const d = new URL("/etc/hosts", import.meta.url);', // Absolute: outside the repository.
+  ].join("\n");
+  const targets = findReadsInSource("pkg/a/src/index.mjs", source, "pkg/a").flatMap(({ line, target }) => (target ? [[line, target]] : []));
+  assert.deepEqual(targets, [
+    [3, "/pkg/b/data/a.json"],
+    [4, "/pkg/b/b.json"],
+    [5, "/pkg/b/c.json"],
   ]);
 });
 

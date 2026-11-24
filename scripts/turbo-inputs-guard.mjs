@@ -11,22 +11,26 @@
 //      package directory, where Turbo runs the task;
 //   3. `alias` values (and `replacement` entries) in vitest.config.*, vite.config.* and suffixed variants such as
 //      vitest.workerd.config.ts, as string literals or form 2.
-// Paths built from other values are computed reads, deferred to SFNS-306. These targets are skipped: one with no
-// tracked file (a file the task writes or generates, which no Turbo input can hash), and a form 2 directory that holds
-// the package itself or any workspace package (a repository, product or package root, used as a base for other paths or
-// for module resolution; the files a task reads under it by literal path are found as their own reads). An import or
-// alias of a package directory reads that package's files.
+// Paths built from other values are computed reads, deferred to SFNS-306, and so is a name bound to a path that is
+// only ever the base of other paths. These targets are skipped: one with no tracked file (a file the task writes or
+// generates, which no Turbo input can hash), and a directory that holds the reading package (an ancestor or the
+// repository root, a base for other paths whose literal reads are found as their own). A read of another package's
+// directory reads that package's files; a tracked symlink to a directory stands for the files of that directory.
+// A file the guard cannot tokenize (an unterminated comment, string, template, regular expression or JSX element) is
+// an error naming the file and line, never a silent skip of the code after it.
 // A read in a test file (a *.test.* or *.spec.* file, a file under a __tests__, test, tests, e2e, test-support or
 // fixtures directory, or a Vitest or Playwright config) must be hashed by the package's test, typecheck and lint tasks,
-// and also by build when the package's build scripts name the file; any other read by all four cacheable tasks, since
-// the guard cannot tell which task runs the file.
+// and also by build when the build may run it: when a build script names it, or a file the build may run imports it or
+// names it by a literal path. Any other read must be hashed by all four cacheable tasks, since the guard cannot tell
+// which task runs the file.
 //
 // Usage: node scripts/turbo-inputs-guard.mjs [--root <dir>] [--package <name>]... [--turbo <bin>] [--list] [--json]
 // Turbo comes from --turbo, then $TURBO_BIN, then <root>/node_modules/turbo/bin/turbo. Exit 1 lists each undeclared
 // read; declare it with "$TURBO_ROOT$/<path>" next to "$TURBO_DEFAULT$" in the task's inputs (the package's turbo.json).
+// Exit 2 reports an error, such as a file the guard cannot tokenize.
 
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -40,8 +44,8 @@ const RESOLVE_EXTENSIONS = [".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs"
 const PATH_MODULES = new Set(["path", "node:path", "path/posix", "node:path/posix"]);
 const URL_MODULES = new Set(["url", "node:url"]);
 const PATH_FUNCTIONS = new Set(["join", "resolve", "dirname", "normalize"]);
-const REGEX_AFTER = new Set(["return", "typeof", "instanceof", "in", "of", "new", "delete", "void", "throw", "case", "do", "else", "yield", "await"]);
-const MULTI_CHAR_PUNCTUATION = ["===", "!==", "...", "=>", "==", "!=", "?.", "??", "&&", "||", "<=", ">="];
+const REGEX_AFTER = new Set(["return", "typeof", "instanceof", "in", "of", "new", "delete", "void", "throw", "case", "do", "else", "yield", "await", "default"]);
+const MULTI_CHAR_PUNCTUATION = ["===", "!==", "...", "=>", "++", "--", "==", "!=", "?.", "??", "&&", "||", "<=", ">="];
 const STATEMENT_END = new Set([",", ")", "]", "}", ";"]);
 const TEST_FILE =
   /(?:^|\/)(?:__tests__|__mocks__|tests?|e2e|test-support|fixtures)\/|\.(?:test|spec)\.[cm]?[jt]sx?$|(?:^|\/)(?:vitest|playwright)(?:\.[\w-]+)?\.config\.[cm]?[jt]s$/;
@@ -51,57 +55,95 @@ const IDENTIFIER_START = /[\p{ID_Start}_$]/u;
 const IDENTIFIER = /^#?[\p{ID_Continue}$‌‍]+/u;
 const JSX_NAME = /^[\p{ID_Start}_$][\p{ID_Continue}$.:-]*/u;
 
-// JavaScript tokens: strings (`str`, with the value of a template that has no substitution), templates with
-// substitutions (`tpl`, whose expressions follow as ordinary tokens), identifiers, numbers, punctuation and, in JSX
+// Thrown when a file holds code the tokenizer cannot read: rather than skip what follows, the guard stops.
+export class SourceError extends Error {
+  constructor(message, line) {
+    super(message);
+    this.line = line;
+  }
+}
+
+const ESCAPES = { n: "\n", t: "\t", r: "\r", b: "\b", f: "\f", v: "\v" };
+
+// JavaScript tokens: strings (`str`, with the decoded value; a template that has no substitution is one too), templates
+// with substitutions (`tpl`, whose expressions follow as ordinary tokens), identifiers, numbers, punctuation and, in JSX
 // files, one `jsx` token after each JSX element (whose `{…}` expressions come before it as ordinary tokens). Comments,
-// regular expressions and JSX text are dropped. A quote string ends at a line break.
+// regular expressions and JSX text are dropped. Code it cannot read (an unterminated comment, string, template, regular
+// expression or JSX element) throws a SourceError, so a misread never hides the code after it.
 export function tokenize(source, { jsx = false } = {}) {
   const tokens = [];
   let i = 0;
   let line = 1;
-  const regexAllowed = () => {
+  const fail = (what, at) => {
+    throw new SourceError(`cannot read ${what}`, at);
+  };
+  // Whether a `/` or `<` at the current position starts an operand. `start` is the token count where the enclosing
+  // expression (the file, a `${…}` or a JSX `{…}`) began.
+  const operandExpected = (start) => {
+    if (tokens.length === start) return true;
     const previous = tokens.at(-1);
-    if (!previous) {
-      return true;
-    }
     if (previous.type === "id") {
-      return REGEX_AFTER.has(previous.value);
+      const member = tokens.at(-2)?.type === "punc" && tokens.at(-2).value === ".";
+      return REGEX_AFTER.has(previous.value) && !member;
     }
-    return previous.type === "punc" && ![")", "]", "}"].includes(previous.value);
+    return previous.type === "punc" && ![")", "]", "}", "++", "--"].includes(previous.value);
   };
   const step = () => {
     line += source[i] === "\n" ? 1 : 0;
     i += 1;
   };
-  const skipSpace = () => {
-    while (i < source.length && /\s/.test(source[i])) step();
+  // The value of the escape sequence whose backslash was just consumed.
+  const readEscape = () => {
+    const char = source[i];
+    if (char === "\r" || char === "\n") {
+      if (char === "\r" && source[i + 1] === "\n") step();
+      step();
+      return ""; // A line continuation.
+    }
+    const hex = /^(?:x([\da-f]{2})|u([\da-f]{4})|u\{([\da-f]{1,6})\})/i.exec(source.slice(i, i + 9));
+    if (hex) {
+      i += hex[0].length;
+      const code = Number.parseInt(hex[1] ?? hex[2] ?? hex[3], 16);
+      return code <= 0x10ffff ? String.fromCodePoint(code) : "";
+    }
+    step();
+    if (char === "0" && !/\d/.test(source[i] ?? "")) return "\0";
+    return ESCAPES[char] ?? char ?? "";
   };
-  const skipQuoted = (quote, stopAtLineEnd) => {
+  // A JavaScript string from its quote: it ends at the same quote, and a line break before it is an error.
+  const scanString = (quote) => {
+    const start = line;
     let value = "";
     step();
-    while (i < source.length && source[i] !== quote && !(stopAtLineEnd && source[i] === "\n")) {
-      if (source[i] === "\\" && stopAtLineEnd) step();
-      value += source[i] ?? "";
-      step();
+    while (source[i] !== quote) {
+      if (i >= source.length || source[i] === "\n" || source[i] === "\r") fail("an unterminated string", start);
+      if (source[i] === "\\") {
+        step();
+        value += readEscape();
+      } else {
+        value += source[i];
+        step();
+      }
     }
-    if (source[i] === quote) step();
+    step();
     return value;
   };
-
   // A template from its backtick; `${…}` expressions are tokenized as code.
   const scanTemplate = () => {
+    const start = line;
     const token = { type: "str", value: "", line };
     tokens.push(token);
     step();
-    while (i < source.length && source[i] !== "`") {
+    while (source[i] !== "`") {
+      if (i >= source.length) fail("an unterminated template literal", start);
       if (source[i] === "\\") {
         step();
-        token.value += source[i] ?? "";
-        step();
+        token.value += readEscape();
       } else if (source[i] === "$" && source[i + 1] === "{") {
         token.type = "tpl";
+        const open = line;
         i += 2;
-        scanCode(true);
+        scanCode(open);
       } else {
         token.value += source[i];
         step();
@@ -110,134 +152,182 @@ export function tokenize(source, { jsx = false } = {}) {
     step();
     if (token.type === "tpl") token.value = "";
   };
+  const skipBlockComment = () => {
+    const end = source.indexOf("*/", i + 2);
+    if (end === -1) fail("an unterminated block comment", line);
+    while (i < end + 2) step();
+  };
+  // Whitespace and comments between the parts of a JSX tag.
+  const skipJsxSpace = () => {
+    for (;;) {
+      if (/\s/.test(source[i] ?? "")) step();
+      else if (source.startsWith("//", i)) while (i < source.length && source[i] !== "\n") i += 1;
+      else if (source.startsWith("/*", i)) skipBlockComment();
+      else return;
+    }
+  };
 
-  // A JSX element from its `<`, or false (with nothing consumed) when the `<` does not open one: a TypeScript generic
-  // arrow function such as `<T,>(…) => …` or `<T extends U>(…) => …`, or an element that is never closed.
+  // A JSX element from its `<`. Returns false, with nothing consumed, when the `<` opens the type parameters of a
+  // generic arrow function (`<T,>(…) => …`, `<T extends U>(…) => …`, `<T = U,>`, `<const T,>`); throws when the
+  // element is not closed or has a part it cannot read.
   const scanJsxElement = () => {
-    const saved = { i, line, length: tokens.length };
-    const fail = () => {
-      i = saved.i;
-      line = saved.line;
-      tokens.length = saved.length;
-      return false;
-    };
+    const start = line;
+    const saved = i;
     step();
-    skipSpace();
+    skipJsxSpace();
     if (source[i] === ">") {
       step();
-      if (!scanJsxChildren()) return fail();
+      scanJsxChildren(start);
       tokens.push({ type: "jsx", value: "", line });
       return true;
     }
     const name = JSX_NAME.exec(source.slice(i, i + 256));
-    if (!name) return fail();
+    if (!name) fail("a JSX element", start);
     i += name[0].length;
+    const rest = source.slice(i, i + 256);
+    const typeParameter = /^\s*(?:,|=(?!>)|extends\s)/;
+    if (typeParameter.test(rest) || (name[0] === "const" && /^\s+[\p{ID_Start}_$][\p{ID_Continue}$]*\s*(?:,|=(?!>)|extends\s)/u.test(rest))) {
+      i = saved;
+      line = start;
+      return false;
+    }
+    skipJsxSpace();
+    if (source[i] === "<") {
+      // Type arguments of a generic component: <List<string>>.
+      let depth = 0;
+      do {
+        if (i >= source.length) fail("an unclosed JSX element", start);
+        if (source[i] === "<") depth += 1;
+        else if (source[i] === ">" && source[i - 1] !== "=") depth -= 1;
+        step();
+      } while (depth > 0);
+    }
     for (;;) {
-      skipSpace();
+      skipJsxSpace();
+      if (i >= source.length) fail("an unclosed JSX element", start);
       if (source.startsWith("/>", i)) {
         i += 2;
         break;
       }
       if (source[i] === ">") {
         step();
-        if (!scanJsxChildren()) return fail();
+        scanJsxChildren(start);
         break;
       }
       if (source[i] === "{") {
+        const open = line;
         step();
-        scanCode(true);
+        scanCode(open);
         continue;
       }
       const attribute = JSX_NAME.exec(source.slice(i, i + 256));
-      if (!attribute || attribute[0] === "extends") return fail();
+      if (!attribute) fail("a JSX attribute", line);
       i += attribute[0].length;
-      skipSpace();
+      skipJsxSpace();
       if (source[i] !== "=") continue;
       step();
-      skipSpace();
-      if (source[i] === '"' || source[i] === "'") skipQuoted(source[i], false);
-      else if (source[i] === "{") {
+      skipJsxSpace();
+      if (source[i] === '"' || source[i] === "'") {
+        // JSX attribute strings have no escapes and may span lines.
+        const quote = source[i];
+        const open = line;
         step();
-        scanCode(true);
-      } else if (source[i] !== "<" || !scanJsxElement()) return fail();
+        while (source[i] !== quote) {
+          if (i >= source.length) fail("an unterminated JSX attribute", open);
+          step();
+        }
+        step();
+      } else if (source[i] === "{") {
+        const open = line;
+        step();
+        scanCode(open);
+      } else if (source[i] !== "<" || !scanJsxElement()) {
+        fail("a JSX attribute value", line);
+      }
     }
     tokens.push({ type: "jsx", value: "", line });
     return true;
   };
-  // Children up to and including the closing tag; false when the source ends first.
-  const scanJsxChildren = () => {
-    while (i < source.length) {
+  // Children up to and including the closing tag.
+  const scanJsxChildren = (start) => {
+    for (;;) {
+      if (i >= source.length) fail("an unclosed JSX element", start);
       if (source[i] === "{") {
+        const open = line;
         step();
-        scanCode(true);
+        scanCode(open);
       } else if (source[i] === "<" && source[i + 1] === "/") {
         while (i < source.length && source[i] !== ">") step();
+        if (i >= source.length) fail("an unclosed JSX element", start);
         step();
-        return i <= source.length;
-      } else if (source[i] !== "<" || !scanJsxElement()) {
+        return;
+      } else if (source[i] === "<") {
+        if (!scanJsxElement()) fail("a JSX element", line);
+      } else {
         step();
       }
     }
-    return false;
   };
 
-  // Code up to the end of the source or, when nested, up to the `}` that closes the enclosing `${` or JSX `{`.
-  const scanCode = (nested) => {
+  // Code up to the end of the source or, when `open` (the line of the enclosing `${` or JSX `{`) is given, up to the `}`
+  // that closes it.
+  const scanCode = (open) => {
+    const nested = open !== undefined;
+    const start = tokens.length;
     let depth = 0;
     while (i < source.length) {
       const char = source[i];
-      const start = line;
+      const at = line;
       if (/\s/.test(char)) {
         step();
       } else if (char === "/" && source[i + 1] === "/") {
         while (i < source.length && source[i] !== "\n") i += 1;
       } else if (char === "/" && source[i + 1] === "*") {
-        const end = source.indexOf("*/", i + 2);
-        const stop = end === -1 ? source.length : end + 2;
-        while (i < stop) step();
+        skipBlockComment();
       } else if (char === "#" && i === 0 && source[1] === "!") {
         while (i < source.length && source[i] !== "\n") i += 1;
       } else if (char === "'" || char === '"') {
-        tokens.push({ type: "str", value: skipQuoted(char, true), line: start });
+        tokens.push({ type: "str", value: scanString(char), line: at });
       } else if (char === "`") {
         scanTemplate();
       } else if (char === "}" && depth === 0 && nested) {
         step();
         return;
-      } else if (char === "<" && jsx && regexAllowed() && /[\p{ID_Start}_$>]/u.test(source[i + 1] ?? "") && scanJsxElement()) {
+      } else if (char === "<" && jsx && operandExpected(start) && /[\p{ID_Start}_$>]/u.test(source[i + 1] ?? "") && scanJsxElement()) {
         // A JSX element; its expressions are already tokens.
-      } else if (char === "/" && regexAllowed()) {
+      } else if (char === "/" && operandExpected(start)) {
         let inClass = false;
         step();
-        while (i < source.length && source[i] !== "\n" && (inClass || source[i] !== "/")) {
-          if (source[i] === "\\" && source[i + 1] !== "\n") step();
+        while (inClass || source[i] !== "/") {
+          if (i >= source.length || source[i] === "\n") fail("an unterminated regular expression", at);
+          if (source[i] === "\\") step();
           else if (source[i] === "[") inClass = true;
           else if (source[i] === "]") inClass = false;
+          if (i >= source.length || source[i] === "\n") fail("an unterminated regular expression", at);
           step();
         }
-        if (source[i] === "/") {
-          step();
-          while (/[a-z]/i.test(source[i] ?? "")) step();
-        }
+        step();
+        while (/[a-z]/i.test(source[i] ?? "")) step();
       } else if (IDENTIFIER_START.test(char) || (char === "#" && IDENTIFIER_START.test(source[i + 1] ?? ""))) {
         const match = IDENTIFIER.exec(source.slice(i, i + 256));
-        tokens.push({ type: "id", value: match[0], line: start });
+        tokens.push({ type: "id", value: match[0], line: at });
         i += match[0].length;
       } else if (/\d/.test(char)) {
         const match = /^[\w.]+/.exec(source.slice(i, i + 64));
-        tokens.push({ type: "num", value: match[0], line: start });
+        tokens.push({ type: "num", value: match[0], line: at });
         i += match[0].length;
       } else {
         const value = MULTI_CHAR_PUNCTUATION.find((op) => source.startsWith(op, i)) ?? char;
         if (value === "{") depth += 1;
         if (value === "}") depth -= 1;
-        tokens.push({ type: "punc", value: value === "?." ? "." : value, line: start });
+        tokens.push({ type: "punc", value: value === "?." ? "." : value, line: at });
         i += value.length;
       }
     }
+    if (nested) fail("an unterminated `${…}` or JSX `{…}` expression", open);
   };
 
-  scanCode(false);
+  scanCode();
   return tokens;
 }
 
@@ -286,7 +376,13 @@ const isKey = (token, value) => (token?.type === "id" || token?.type === "str") 
 // absolute in a virtual file system whose root "/" is the repository root. Returns [{ line, form, target }] where the
 // target is "/"-rooted with no trailing slash, or [{ line, form, specifier }] for imports.
 export function findReadsInSource(file, source, packageDir) {
-  const tokens = tokenize(codeOf(file, source), { jsx: JSX_FILE.test(file) });
+  let tokens;
+  try {
+    tokens = tokenize(codeOf(file, source), { jsx: JSX_FILE.test(file) });
+  } catch (error) {
+    if (error instanceof SourceError) throw new SourceError(`${file}:${error.line}: ${error.message}`, error.line);
+    throw error;
+  }
   const fileAbs = `/${file}`;
   const fileDir = posix.dirname(fileAbs);
   const cwd = `/${packageDir}`;
@@ -536,10 +632,15 @@ function isAliasValue(tokens, k) {
   return false;
 }
 
-// new URL(relative, base) for a file URL base, as a decoded path; null when the relative URL does not decode.
+// new URL(relative, base) for a file URL base, as a decoded path that keeps a directory's trailing slash, so a later
+// new URL(name, directory) resolves inside it; null when the relative URL leaves the file scheme, is absolute (outside
+// the repository) or does not decode. The WHATWG parser applies the URL rules: ".." segments, "?" and "#", and removing
+// leading and trailing spaces, tabs and line breaks.
 function resolveUrl(base, relative) {
   try {
-    return posix.resolve(posix.dirname(base), decodeURIComponent(relative.split(/[?#]/)[0]));
+    const url = new URL(relative, `file://${base.split("/").map(encodeURIComponent).join("/")}`);
+    if (url.protocol !== "file:" || url.host !== "" || /^\s*[/\\]/.test(relative)) return null;
+    return decodeURIComponent(url.pathname);
   } catch {
     return null;
   }
@@ -622,10 +723,36 @@ function buildCommands(manifest) {
   return [...seen].map((name) => scripts[name]);
 }
 
+// The files of a package that its build may run or read: every file that is not a test file, every file the build
+// scripts name (with or without its extension), and every file of the package that one of these imports or names by a
+// literal path, transitively. `readsByFile` maps each scanned file to its resolved reads.
+function buildFiles(packageDir, readsByFile, commands) {
+  const queue = [...readsByFile.keys()].filter((file) => !TEST_FILE.test(file.slice(packageDir.length + 1)));
+  for (const command of commands) {
+    for (const word of command.split(/[\s;&|()'"=]+/)) {
+      const named = posix.join(packageDir, word);
+      if (!word || !within(named, packageDir)) continue;
+      queue.push(...[named, ...RESOLVE_EXTENSIONS.map((ext) => named + ext)].filter((file) => readsByFile.has(file)));
+    }
+  }
+  const reached = new Set();
+  while (queue.length > 0) {
+    const file = queue.pop();
+    if (reached.has(file)) continue;
+    reached.add(file);
+    for (const { resolved } of readsByFile.get(file)) {
+      if (readsByFile.has(resolved.target) && !reached.has(resolved.target)) queue.push(resolved.target);
+    }
+  }
+  return reached;
+}
+
 // Every read in the selected packages whose target lies outside the package and holds tracked files. packageDirs lists
-// every workspace package directory, selected or not.
+// every workspace package directory, selected or not. A read in a test file must be hashed by the test, typecheck and
+// lint tasks, and also by build when the build may run the file (see buildFiles); any other read by all four.
 export function findOutsideReads(root, packages, packageDirs = packages.map((pkg) => pkg.path)) {
-  const trackedList = git(root, ["ls-files", "-z"]).split("\0").filter(Boolean);
+  const entries = git(root, ["ls-files", "-s", "-z"]).split("\0").filter(Boolean).map((entry) => [entry.slice(0, entry.indexOf("\t")), entry.slice(entry.indexOf("\t") + 1)]);
+  const trackedList = entries.map(([, file]) => file);
   const tracked = new Set(trackedList);
   const trackedDirs = new Map();
   for (const file of trackedList) {
@@ -634,6 +761,18 @@ export function findOutsideReads(root, packages, packageDirs = packages.map((pkg
       trackedDirs.get(directory).push(file);
     }
   }
+  // Turbo hashes no symlink to a directory, so a tracked one stands for the tracked files of the directory it points to.
+  const linkedDirs = new Map();
+  for (const [mode, file] of entries.map(([info, file]) => [info.split(" ")[0], file])) {
+    if (mode !== "120000") continue;
+    try {
+      const real = path.relative(root, realpathSync(path.join(root, file))).split(path.sep).join("/");
+      if (statSync(path.join(root, file)).isDirectory() && !real.startsWith("..")) linkedDirs.set(file, trackedDirs.get(real) ?? []);
+    } catch {
+      // A broken link: the file itself.
+    }
+  }
+  const expand = (files) => [...new Set(files.flatMap((file) => linkedDirs.get(file) ?? [file]))];
   const packageDirSet = new Set(packageDirs);
   const reads = [];
   for (const pkg of packages) {
@@ -643,21 +782,27 @@ export function findOutsideReads(root, packages, packageDirs = packages.map((pkg
     } catch {
       manifest = null;
     }
-    const build = buildCommands(manifest);
+    const readsByFile = new Map();
     for (const file of trackedDirs.get(pkg.path) ?? []) {
       if (!SCANNED_FILE.test(file) || owningPackage(file, packageDirs) !== pkg.path || !existsSync(path.join(root, file))) continue;
-      const relative = file.slice(pkg.path.length + 1);
-      const runByBuild = build.some((command) => command.split(/[\s;&|()'"=]+/).some((word) => word.replace(/^\.\//, "") === relative));
-      const tasks = TEST_FILE.test(relative) && !runByBuild ? TEST_TASKS : CACHEABLE_TASKS;
-      for (const read of findReadsInSource(file, readFileSync(path.join(root, file), "utf8"), pkg.path)) {
-        const resolved = resolveTarget(read, file, tracked, trackedDirs);
-        if (!resolved || resolved.files.length === 0 || within(resolved.target, pkg.path)) continue;
-        let files = resolved.files;
-        if (packageDirs.some((directory) => within(directory, resolved.target))) {
-          // A module read of a package directory reads that package's files; any other such directory is a base.
-          if (read.form === "path" || !packageDirSet.has(resolved.target)) continue;
-          files = files.filter((candidate) => owningPackage(candidate, packageDirs) === resolved.target);
-        }
+      const found = findReadsInSource(file, readFileSync(path.join(root, file), "utf8"), pkg.path)
+        .map((read) => ({ read, resolved: resolveTarget(read, file, tracked, trackedDirs) }))
+        .filter(({ resolved }) => resolved && resolved.files.length > 0);
+      readsByFile.set(file, found);
+    }
+    const build = buildFiles(pkg.path, readsByFile, buildCommands(manifest));
+    for (const [file, found] of readsByFile) {
+      const tasks = build.has(file) ? CACHEABLE_TASKS : TEST_TASKS;
+      for (const { read, resolved } of found) {
+        // A target inside the package is the package's own; a directory that holds the package (an ancestor or the
+        // repository root) is a base for other paths, whose literal reads are found as their own.
+        if (within(resolved.target, pkg.path) || within(pkg.path, resolved.target)) continue;
+        // A package directory reads that package's files, not those of packages nested in it.
+        const files = expand(
+          packageDirSet.has(resolved.target)
+            ? resolved.files.filter((candidate) => owningPackage(candidate, packageDirs) === resolved.target)
+            : resolved.files
+        );
         reads.push({ package: pkg.name, file, line: read.line, form: read.form, target: resolved.target, files, tasks });
       }
     }
@@ -765,7 +910,23 @@ function main() {
   process.exitCode = result.undeclared.length > 0 ? 1 : 0;
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+// Whether Node runs this file as its entry point. argv[1] keeps the path it was given (a symlinked checkout, or the name
+// without its extension) while import.meta.url is the real path, so compare real paths.
+function isEntryPoint() {
+  if (import.meta.main !== undefined) return import.meta.main;
+  const entry = process.argv[1];
+  if (!entry) return false;
+  const self = realpathSync(fileURLToPath(import.meta.url));
+  return [entry, `${entry}.mjs`].some((candidate) => {
+    try {
+      return realpathSync(candidate) === self;
+    } catch {
+      return false;
+    }
+  });
+}
+
+if (isEntryPoint()) {
   try {
     main();
   } catch (error) {
