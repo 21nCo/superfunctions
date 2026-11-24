@@ -625,6 +625,9 @@ export function createFileService(config: FileServiceConfig) {
       const pdfPreview = (kinds: string[]) => {
         const artifact = selectArtifactByKind(previewArtifacts, kinds);
         if (artifact) return artifactDescriptor(artifact);
+        // A guest is never shown a private file's preview: not "processing",
+        // which a UI would poll forever.
+        if (guestOnPrivate) return placeholder('unsupported', 'generic-file');
         return placeholder('processing', 'pdf-processing', ['PDF preview artifact is not available yet.']);
       };
 

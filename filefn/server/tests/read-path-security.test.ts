@@ -377,4 +377,25 @@ describe('read path (FILE-30 F-03, F-04, F-23)', () => {
       'text/plain; charset="iso_8859-2:1987"',
     );
   });
+
+  it('never shows a guest a private PDF as still processing', async () => {
+    const fileFn = createFileFn({
+      database: memoryAdapter(),
+      storage: createLocalStorageAdapter({ rootDir }),
+      namespace: 'read_path_guest_pdf',
+      policies: [{ name: 'any', visibility: 'private' }],
+      // A host authorizer that lets anyone read.
+      authorizer: { async canRead() { return true; }, async canWrite() { return true; }, async canDelete() { return true; } },
+    });
+    const owner = { principalId: 'owner' };
+    const body = Buffer.from('%PDF-1.4 test');
+    const session = await fileFn.createUploadSession({ policy: 'any', fileName: 'a.pdf', size: body.length, mimeType: 'application/pdf' }, owner);
+    const part = await fileFn.services.uploads.uploadPartBytes(session.uploadSessionId, 1, body, body.length, owner);
+    await fileFn.completeUploadPart({ uploadSessionId: session.uploadSessionId, partNumber: 1, etag: part.etag, size: part.size }, owner);
+    const file = await fileFn.completeUploadSession({ uploadSessionId: session.uploadSessionId }, owner);
+    const guest = await fileFn.services.files.getRenderDescriptor(file.fileId, { intent: 'thumbnail' }, { principalId: 'anonymous' });
+    expect(guest.state).toBe('unsupported');
+    const ownerView = await fileFn.services.files.getRenderDescriptor(file.fileId, { intent: 'thumbnail' }, owner);
+    expect(ownerView.state).toBe('processing');
+  });
 });

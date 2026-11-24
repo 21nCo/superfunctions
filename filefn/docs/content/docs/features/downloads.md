@@ -79,10 +79,15 @@ filefn doesn't rewrite the filename you uploaded. Proxied downloads send it in `
 ```ts
 const url = await client.downloadUrl(fileId);
 
+// A proxied download URL is relative to where FileFn is mounted (the client's
+// baseUrl, e.g. "/files"); a signed storage URL is absolute.
+const fileFnBase = "/files";
+const target = new URL(url.startsWith("/") ? `${fileFnBase}${url}` : url, location.href);
+
 // Send cookies only to your own origin (a proxied download); a signed storage
 // URL needs no credentials and its CORS rules may refuse them.
-const sameOrigin = new URL(url, location.href).origin === location.origin;
-const response = await fetch(url, { credentials: sameOrigin ? "include" : "omit" });
+const sameOrigin = target.origin === location.origin;
+const response = await fetch(target, { credentials: sameOrigin ? "include" : "omit" });
 if (!response.ok) throw new Error(`Download failed: ${response.status}`);
 const objectUrl = URL.createObjectURL(await response.blob());
 const a = document.createElement("a");
