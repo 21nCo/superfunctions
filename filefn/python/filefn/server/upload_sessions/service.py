@@ -924,77 +924,91 @@ class UploadSessionService:
         version_id = session.completionVersionId or f"ver_{secrets.token_urlsafe(12)}"
         metadata = session_data.get("metadata") or {}
 
-        final_storage_key = session.storageKey
-        checksum_sha256_base64: Optional[str] = None
-        if self.dedup and self.dedup.is_enabled():
-            dedup_res = await self.dedup.compute_and_check_duplicate(
-                session.storageKey,
-                session.tenantId,
-                storage_target,
-                self.storage,
+        # A retry after an attempt that wrote this version and then failed (for
+        # example on the session update below) finds the version already
+        # published: it only finishes the session. Version IDs are unique.
+        published = None
+        if session.completionVersionId:
+            published = await self.db.find_one(
+                model="fileVersions",
+                where=[{"field": "versionId", "operator": "eq", "value": version_id}],
+                namespace=self.namespace,
             )
-            checksum_sha256_base64 = dedup_res.checksumSha256Base64
-            if dedup_res.isDuplicate and dedup_res.existingStorageKey:
-                final_storage_key = dedup_res.existingStorageKey
-                if final_storage_key != session.storageKey:
-                    try:
-                        await self.storage.delete_object(key=session.storageKey, target=storage_target)
-                    except Exception:
-                        pass
+        if published and published.get("fileId") == file_id:
+            final_storage_key = cast(str, published.get("storageKey") or session.storageKey)
+            checksum_sha256_base64: Optional[str] = published.get("checksumSha256Base64")
+        else:
+            final_storage_key = session.storageKey
+            checksum_sha256_base64 = None
+            if self.dedup and self.dedup.is_enabled():
+                dedup_res = await self.dedup.compute_and_check_duplicate(
+                    session.storageKey,
+                    session.tenantId,
+                    storage_target,
+                    self.storage,
+                )
+                checksum_sha256_base64 = dedup_res.checksumSha256Base64
+                if dedup_res.isDuplicate and dedup_res.existingStorageKey:
+                    final_storage_key = dedup_res.existingStorageKey
+                    if final_storage_key != session.storageKey:
+                        try:
+                            await self.storage.delete_object(key=session.storageKey, target=storage_target)
+                        except Exception:
+                            pass
 
-        existing_file = await self.db.find_one(
-            model="files",
-            where=[{"field": "fileId", "operator": "eq", "value": file_id}],
-            namespace=self.namespace,
-        )
-
-        if existing_file:
-            await self.db.update(
+            existing_file = await self.db.find_one(
                 model="files",
                 where=[{"field": "fileId", "operator": "eq", "value": file_id}],
-                data={
-                    "currentVersionId": version_id,
-                    "size": session.size,
-                    "mimeType": session.mimeType,
-                    "metadata": metadata,
-                    "updatedAt": now_str,
-                },
-                namespace=self.namespace,
-            )
-        else:
-            await self.db.create(
-                model="files",
-                data={
-                    "fileId": file_id,
-                    "currentVersionId": version_id,
-                    "ownerId": session.ownerId,
-                    "tenantId": session.tenantId,
-                    "visibility": getattr(policy, "visibility", "private"),
-                    "policy": session.policy,
-                    "mimeType": session.mimeType,
-                    "size": session.size,
-                    "name": session.fileName,
-                    "metadata": metadata,
-                    "createdAt": now_str,
-                    "updatedAt": now_str,
-                },
                 namespace=self.namespace,
             )
 
-        await self.db.create(
-            model="fileVersions",
-            data={
-                "versionId": version_id,
-                "fileId": file_id,
-                "storageKey": final_storage_key,
-                "mimeType": session.mimeType,
-                "size": session.size,
-                "checksumSha256Base64": checksum_sha256_base64,
-                "tenantId": session.tenantId,
-                "createdAt": now_str,
-            },
-            namespace=self.namespace,
-        )
+            if existing_file:
+                await self.db.update(
+                    model="files",
+                    where=[{"field": "fileId", "operator": "eq", "value": file_id}],
+                    data={
+                        "currentVersionId": version_id,
+                        "size": session.size,
+                        "mimeType": session.mimeType,
+                        "metadata": metadata,
+                        "updatedAt": now_str,
+                    },
+                    namespace=self.namespace,
+                )
+            else:
+                await self.db.create(
+                    model="files",
+                    data={
+                        "fileId": file_id,
+                        "currentVersionId": version_id,
+                        "ownerId": session.ownerId,
+                        "tenantId": session.tenantId,
+                        "visibility": getattr(policy, "visibility", "private"),
+                        "policy": session.policy,
+                        "mimeType": session.mimeType,
+                        "size": session.size,
+                        "name": session.fileName,
+                        "metadata": metadata,
+                        "createdAt": now_str,
+                        "updatedAt": now_str,
+                    },
+                    namespace=self.namespace,
+                )
+
+            await self.db.create(
+                model="fileVersions",
+                data={
+                    "versionId": version_id,
+                    "fileId": file_id,
+                    "storageKey": final_storage_key,
+                    "mimeType": session.mimeType,
+                    "size": session.size,
+                    "checksumSha256Base64": checksum_sha256_base64,
+                    "tenantId": session.tenantId,
+                    "createdAt": now_str,
+                },
+                namespace=self.namespace,
+            )
 
         await self.db.update(
             model="uploadSessions",

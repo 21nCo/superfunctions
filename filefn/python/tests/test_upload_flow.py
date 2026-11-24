@@ -1209,3 +1209,25 @@ def test_drive_qualified_keys_are_unsafe() -> None:
     assert unsafe_storage_key_reason("C:/Windows/x") == "absolute key"
     assert unsafe_storage_key_reason("c:") == "absolute key"
     assert unsafe_storage_key_reason("a:b/x") is None
+
+
+@pytest.mark.asyncio
+async def test_retry_after_the_version_was_written_finishes_the_session() -> None:
+    class FailOnceSessionUpdate(FakeDB):
+        failed = False
+
+        async def update(self, model: str, where: List[Dict[str, Any]], data: Dict[str, Any], namespace: Optional[str] = None):
+            if model == "uploadSessions" and data.get("status") == "completed" and not self.failed:
+                self.failed = True
+                raise RuntimeError("database timeout")
+            return await super().update(model, where, data, namespace)
+
+    db = FailOnceSessionUpdate()
+    storage = StatStorage(actual_size=3)
+    service = _make_service(db=db, storage=storage)
+    session = await _multipart_session(service)
+    with pytest.raises(RuntimeError):
+        await service.complete_session(session["uploadSessionId"], _ctx())
+    result = await service.complete_session(session["uploadSessionId"], _ctx())
+    assert db.tables["uploadSessions"][0]["status"] == "completed"
+    assert [row["versionId"] for row in db.tables["fileVersions"]] == [result["versionId"]]
