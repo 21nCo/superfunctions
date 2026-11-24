@@ -15,11 +15,13 @@ import {
   endpointIncludes,
   endpointList,
   findRelationMatch,
+  firstEndpoint,
   getCapabilityFields,
   getTemporalClauses,
   getTemporalGroupAliases,
   parseSortTerm,
   relationFkFieldForManyOne,
+  relationFkFieldForOneMany,
   relationTargetEndpoint,
   resolveCapabilities,
 } from "@datafn/core";
@@ -572,7 +574,24 @@ export function validateMutationAuthz(
   // SEC-009: Validate relation mutations for relate/modifyRelation/unrelate
   const op = mutation.operation as string;
   if (op === "relate" || op === "modifyRelation" || op === "unrelate") {
-    const relationAuthzResult = validateRelationAuthz(mutation, resource, writeFields);
+    // `defaultPermissions.relationWrites: "all"` grants relation writes on
+    // resources that use the defaults, even when the scalar write default is
+    // off. It applies to relation operations only, and only once the defaults
+    // resolve to a policy (read or write set to "allResourceFields"); with
+    // neither set the resource has no policy and is denied above.
+    const relationGrants =
+      !resource.permissions &&
+      resource.defaultPermissions !== false &&
+      schema.defaultPermissions &&
+      relationWriteModeEnabled(schema.defaultPermissions)
+        ? relationWriteFields(schema, resource.name)
+        : [];
+    const relationAuthzResult = validateRelationAuthz(
+      mutation,
+      resource,
+      relationGrants.length > 0 ? [...writeFields, ...relationGrants] : writeFields,
+      schema,
+    );
     if (!relationAuthzResult.ok) {
       return relationAuthzResult;
     }
@@ -582,33 +601,95 @@ export function validateMutationAuthz(
 }
 
 /**
- * Validate relation operation against write fields policy (SEC-009)
- * The "field" for relation authz is the FK field or relation name.
+ * Validate relation operation against write fields policy (SEC-009).
+ *
+ * DFN-06: relation operations name their relations as the keys of
+ * `mutation.relations`; every key must be writable. A relation counts as
+ * writable when `write.fields` lists the relation name or, for relations that
+ * store a foreign key on this resource, that FK field. The legacy singular
+ * `mutation.relation` is checked too. A relation operation without any
+ * relation name is denied.
  */
 export function validateRelationAuthz(
   mutation: Record<string, unknown>,
   resource: { fields: readonly { name: string }[]; name?: string },
   writeFields: readonly string[],
+  schema?: DatafnSchema,
 ): { ok: true } | AuthzError {
-  // The relation field name can be: mutation.relation (relation name) or mutation.fkField
-  const relation = mutation.relation as string | undefined;
-
-  if (!relation) {
-    // No relation name to check — cannot validate, allow by default
-    return { ok: true };
+  const names: string[] = [];
+  const relations = mutation.relations;
+  if (relations && typeof relations === "object" && !Array.isArray(relations)) {
+    names.push(...Object.keys(relations as Record<string, unknown>));
+  }
+  if (typeof mutation.relation === "string") {
+    names.push(mutation.relation);
   }
 
-  // Check if the relation name is in the write fields policy
-  if (!writeFields.includes(relation)) {
+  if (names.length === 0) {
     return {
       ok: false,
       code: "FORBIDDEN",
       message: "Authorization denied",
-      path: `relation`,
+      path: "relations",
+    };
+  }
+
+  for (const name of names) {
+    if (writeFields.includes(name)) continue;
+    const fkField = schema && resource.name
+      ? findOwnForeignKeyField(schema, resource.name, name)
+      : undefined;
+    if (fkField && writeFields.includes(fkField)) continue;
+    return {
+      ok: false,
+      code: "FORBIDDEN",
+      message: "Authorization denied",
+      path: `relations.${name}`,
     };
   }
 
   return { ok: true };
+}
+
+/**
+ * The FK field a relation write through `relationName` stores, resolved the
+ * same way the relation executor does (`findRelationMatch` plus the core FK
+ * helpers), so a policy that lists the FK field allows the relation.
+ */
+function findOwnForeignKeyField(
+  schema: DatafnSchema,
+  resourceName: string,
+  relationName: string,
+): string | undefined {
+  const match = findRelationMatch(schema, resourceName, relationName);
+  if (!match) return undefined;
+  const { relation, direction } = match;
+  // htree: only the inverse (parent) direction writes an FK, on the model the
+  // executor picks (the first `from` endpoint); the alias applies only when
+  // that is this resource, i.e. the write lands on the authorized record. A
+  // polymorphic `from` also writes the parent-resource discriminator, which
+  // the FK field alone never granted, so it needs the relation name.
+  if (relation.type === "htree" && direction === "inverse") {
+    const froms = endpointList(relation.from);
+    return froms.length === 1 && firstEndpoint(relation.from) === resourceName
+      ? relation.fkField || relation.foreignKey || relation.inverse || "parentId"
+      : undefined;
+  }
+  // many-one / one-many: when the referenced endpoint is polymorphic, link and
+  // unlink also write a resource discriminator next to the FK (`to` for a
+  // forward many-one, `from` for an inverse one-many, as in the executor's
+  // fkResourcePatch), so the alias then needs the relation name granted.
+  if (relation.type === "many-one" && direction === "forward") {
+    return endpointList(relation.to).length === 1
+      ? relationFkFieldForManyOne(relation)
+      : undefined;
+  }
+  if (relation.type === "one-many" && direction === "inverse") {
+    return endpointList(relation.from).length === 1
+      ? relationFkFieldForOneMany(relation)
+      : undefined;
+  }
+  return undefined;
 }
 
 export type ShareAccessLevel = "viewer" | "editor" | "owner";

@@ -5,7 +5,11 @@
 
 import type { Adapter } from "@superfunctions/db";
 import {
+  carryIdempotencyScope,
+  idempotencyRecordId,
+  markIdempotencyScope,
   isRetryableMutationResult,
+  type IdempotencyScope,
   type IdempotencyStore,
   type MutationResult,
 } from "./idempotency.js";
@@ -16,30 +20,54 @@ import type { DatafnLogger } from "../logger.js";
  * Adapter-backed idempotency store for durable deduplication
  */
 export class DbIdempotencyStore implements IdempotencyStore {
-  private ensured = false;
+  /**
+   * Shared by every scoped view of the same adapter, so the table is ensured
+   * once per server rather than once per request-scoped view.
+   */
+  private readiness: { ensured: boolean };
   private logger?: DatafnLogger;
 
   constructor(
     private db: Adapter,
     private namespace: string = "datafn",
     logger?: DatafnLogger,
-    ensured = false,
+    ensured: boolean | { ensured: boolean } = false,
+    private actorId?: string,
   ) {
     this.logger = logger;
-    this.ensured = ensured;
+    this.readiness = typeof ensured === "boolean" ? { ensured } : ensured;
   }
 
   withDb(db: Adapter): IdempotencyStore {
     // The outer store performs initialization before transactional mutation
     // execution. Preserve that state so rebinding does not issue DDL inside a
     // transaction (which implicitly commits on MySQL).
-    return new DbIdempotencyStore(db, this.namespace, this.logger, this.ensured);
+    return carryIdempotencyScope(
+      this,
+      // A copy, not the shared state: a transaction-bound view that ensures
+      // the table could be rolled back, which must not mark the root ready.
+      new DbIdempotencyStore(db, this.namespace, this.logger, this.readiness.ensured, this.actorId),
+    );
+  }
+
+  /**
+   * DFN-01: records are keyed by the request namespace and the actor, so the
+   * same (clientId, mutationId) from another tenant or user is a new mutation.
+   */
+  scoped(scope: IdempotencyScope): IdempotencyStore {
+    return markIdempotencyScope(this, scope, () =>
+      new DbIdempotencyStore(this.db, scope.namespace, this.logger, this.readiness, scope.actorId),
+    );
+  }
+
+  private recordId(clientId: string, mutationId: string): string {
+    return idempotencyRecordId(this.namespace, this.actorId, clientId, mutationId);
   }
 
   async ensureReady(): Promise<void> {
-    if (!this.ensured) {
+    if (!this.readiness.ensured) {
       await ensureInternalTable(this.db, "__datafn_idempotency");
-      this.ensured = true;
+      this.readiness.ensured = true;
     }
   }
 
@@ -50,10 +78,9 @@ export class DbIdempotencyStore implements IdempotencyStore {
     // EXE-007: DB errors propagate; only swallow JSON parse errors (SyntaxError)
     await this.ensureReady();
 
+    // Looked up by the versioned primary key, so 0.2.x records never match.
     const record = await this.db.internal.findOne("__datafn_idempotency", [
-      { field: "namespace", op: "eq", value: this.namespace },
-      { field: "client_id", op: "eq", value: clientId },
-      { field: "mutation_id", op: "eq", value: mutationId },
+      { field: "id", op: "eq", value: this.recordId(clientId, mutationId) },
     ]);
 
     if (!record) {
@@ -87,6 +114,18 @@ export class DbIdempotencyStore implements IdempotencyStore {
     ]);
   }
 
+  /**
+   * Delete idempotency records older than retentionDays in every namespace.
+   * Used by the server's retention pruner, since records are kept per tenant.
+   */
+  async pruneIdempotencyAllNamespaces(retentionDays: number): Promise<number> {
+    await this.ensureReady();
+    const cutoff = new Date(Date.now() - retentionDays * 86400000).toISOString();
+    return await this.db.internal.delete("__datafn_idempotency", [
+      { field: "created_at", op: "lt", value: cutoff },
+    ]);
+  }
+
   async set(
     clientId: string,
     mutationId: string,
@@ -96,9 +135,7 @@ export class DbIdempotencyStore implements IdempotencyStore {
       await this.ensureReady();
 
       const where = [
-        { field: "namespace", op: "eq" as const, value: this.namespace },
-        { field: "client_id", op: "eq" as const, value: clientId },
-        { field: "mutation_id", op: "eq" as const, value: mutationId },
+        { field: "id", op: "eq" as const, value: this.recordId(clientId, mutationId) },
       ];
       const existing = await this.db.internal.findOne(
         "__datafn_idempotency",
@@ -120,10 +157,13 @@ export class DbIdempotencyStore implements IdempotencyStore {
       }
 
       await this.db.internal.create("__datafn_idempotency", {
-        id: `${this.namespace}:${clientId}:${mutationId}`,
+        id: this.recordId(clientId, mutationId),
         namespace: this.namespace,
-        client_id: clientId,
-        mutation_id: mutationId,
+        // The legacy lookup columns stay NULL: 0.2.x workers sharing the
+        // database during a rolling upgrade match on them, so they can never
+        // read or overwrite scoped records, and the indexed bytes stay small.
+        client_id: null,
+        mutation_id: null,
         result: JSON.stringify(result),
         created_at: new Date().toISOString(),
       });
