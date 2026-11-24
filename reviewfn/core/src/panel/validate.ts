@@ -254,6 +254,8 @@ export function slotIdentityKey(identity: SlotIdentity): string {
   const profiled = identity.harnessExecutable !== undefined || identity.harnessProfile !== undefined ? [identity.harnessExecutable ?? null, identity.harnessProfile ?? null] : [];
   return digestJson([identity.harnessAdapter, identity.harnessVersion, identity.provider, identity.model, identity.auth, identity.credentialFingerprint ?? null, ...profiled]);
 }
+/** Whether two runs are one identity, as collapse treats them: a model-unverified side matches on its harness key. */
+export const sameSlotIdentity = (left: SlotIdentity, right: SlotIdentity) => slotIdentityKey(left) === slotIdentityKey(right) || ((left.modelVerified === false || right.modelVerified === false) && harnessKey(left) === harnessKey(right));
 const harnessKey = (identity: SlotIdentity) => digestJson(["model_unverified", identity.harnessAdapter, identity.harnessVersion, identity.harnessExecutable ?? null, identity.harnessProfile ?? null]);
 
 /**
@@ -261,12 +263,13 @@ const harnessKey = (identity: SlotIdentity) => digestJson(["model_unverified", i
  * run of an identity counts; verified runs go first, so a model-unverified run also collapses into a counted run of its
  * adapter version, executable and profile and never adds an identity a verified run represents.
  */
-export function slotCollapseTargets(runs: ReadonlyArray<{ slotId: string; stage: PanelSlot["stage"]; identity: SlotIdentity }>): Map<string, string> {
+export function slotCollapseTargets(runs: ReadonlyArray<{ slotId: string; stage: PanelSlot["stage"]; identity: SlotIdentity; terminal?: SlotRun["terminal"] }>): Map<string, string> {
   const targets = new Map<string, string>();
   const counted = new Map<string, string>();
   for (const run of [...runs.filter(item => item.identity.modelVerified !== false), ...runs.filter(item => item.identity.modelVerified === false)]) {
     const target = counted.get(`${String(run.stage)}\u0000${slotIdentityKey(run.identity)}`) ?? run.slotId;
     targets.set(run.slotId, target);
+    if (run.terminal === "collapsed") continue; // A stored collapse counts for no later run: its target must precede it.
     for (const key of [slotIdentityKey(run.identity), harnessKey(run.identity)]) if (!counted.has(`${String(run.stage)}\u0000${key}`)) counted.set(`${String(run.stage)}\u0000${key}`, target);
   }
   return targets;
@@ -522,10 +525,9 @@ function slotRunIssues(report: PanelReport, slots: Map<string, PanelSlot>, issue
   // Within a stage, the run that counts for an identity is the coordinator's (slotCollapseTargets); every other run of it
   // that would also count is collapsed; runs that did not complete neither count nor collapse.
   const counting = report.slotRuns.filter(run => COUNTING.has(run.terminal) && slots.has(run.slotId)).sort((left, right) => order.get(left.slotId)! - order.get(right.slotId)!).map(run => ({ ...run, stage: slots.get(run.slotId)!.stage }));
-  const targets = slotCollapseTargets(counting.filter(run => run.terminal === "completed"));
+  const targets = slotCollapseTargets(counting);
   report.slotRuns.forEach((run, index) => {
-    // A collapsed run is checked against the completed runs alone: one of them must count for its identity.
-    const target = run.terminal === "collapsed" ? slotCollapseTargets(counting.filter(other => other.terminal === "completed" || other.slotId === run.slotId)).get(run.slotId) : targets.get(run.slotId);
+    const target = targets.get(run.slotId);
     if (run.terminal === "completed" && target !== undefined && target !== run.slotId) add(issues, "REVIEWFN_PANEL_SLOT_DUPLICATE", `/slotRuns/${index}/terminal`, `Slot ${run.slotId} has the same identity as slot ${target}, which counts for its stage; it must be collapsed.`);
     if (run.terminal === "collapsed" && target === run.slotId) add(issues, "REVIEWFN_PANEL_SLOT_DUPLICATE", `/slotRuns/${index}/terminal`, `Slot ${run.slotId} is collapsed but no earlier completed slot in its stage has the same identity.`);
   });
@@ -602,8 +604,7 @@ async function findingIssues(context: EvidenceContext, policy: ReviewPolicy, slo
     // As for origins, collapse affects quorum only: a collapsed verifier run succeeded and its verification stands.
     if (!verifierRun || !COUNTING.has(verifierRun.terminal)) add(issues, "REVIEWFN_PANEL_VERIFICATION_INVALID", `${path}/verification/slotId`, `Verifier slot ${verifier.id} has no completed or collapsed run.`);
     else {
-      const key = slotIdentityKey(verifierRun.identity);
-      const shared = finding.origins.find(origin => { const run = runs.get(origin.slotId); return run !== undefined && slotIdentityKey(run.identity) === key; });
+      const shared = finding.origins.find(origin => { const run = runs.get(origin.slotId); return run !== undefined && sameSlotIdentity(run.identity, verifierRun.identity); });
       if (shared) add(issues, "REVIEWFN_PANEL_VERIFICATION_INVALID", `${path}/verification/slotId`, `Verifier slot ${verifier.id} has the same identity as origin slot ${shared.slotId}; verification must be independent.`);
     }
     for (const id of verification.evidenceIds) if (!evidence.has(id)) add(issues, "REVIEWFN_PANEL_VERIFICATION_INVALID", `${path}/verification/evidenceIds`, `Verification references unknown evidence ${id}.`);

@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   DEFAULT_POLICY, PANEL_PRIORITY_SEVERITY, PANEL_VALIDATION_CODES, credentialFingerprint, derivePanelVerdict, harnessOutputSchema, lensOutputSchema, panelFindingSchema, stableStringify, strictProviderSchema, unsupportedOutputSchema, validateStructuredOutput,
-  harnessProfileIssues, validateHarnessProfile, panelPolicyDigest, panelPolicySchema, panelReportSchema, panelStructureIssues, serializeChangeHunks, sha256, slotIdentityKey, slotIdentitySchema, slotRunSchema,
+  harnessProfileIssues, validateHarnessProfile, panelPolicyDigest, panelPolicySchema, panelReportSchema, panelStructureIssues, sameSlotIdentity, serializeChangeHunks, sha256, slotCollapseTargets, slotIdentityKey, slotIdentitySchema, slotRunSchema,
   validatePanelFinding, validatePanelPolicy, validatePanelReport as validateWithOptions, validateReport, validateSlotIdentity, validateSlotRun,
   type ArtifactStore, type ContextManifest, type LensOutput, type PanelFinding, type PanelPolicy, type PanelReport, type PanelReportValidationOptions, type PanelStructure, type ReviewPolicy, type ReviewReport, type SlotRun, type SourceControlAdapter,
 } from "../src/index.js";
@@ -707,6 +707,10 @@ describe("panel policy and slot identity", () => {
     expect(slotIdentityKey(unverified)).not.toBe(slotIdentityKey({ ...unverified, harnessProfile: "other" }));
     expect(slotIdentityKey(unverified)).not.toBe(slotIdentityKey({ ...unverified, harnessExecutable: "/opt/agent" }));
     expect(slotIdentityKey(unverified)).not.toBe(slotIdentityKey(generic));
+    // Collapse and verifier independence still treat an unverified run as the verified run of its executable and profile.
+    expect([sameSlotIdentity(unverified, generic), sameSlotIdentity(generic, unverified), sameSlotIdentity(unverified, { ...generic, harnessProfile: "other" }), sameSlotIdentity(generic, { ...generic, model: "other" })]).toEqual([true, true, false, false]);
+    const targets = slotCollapseTargets([{ slotId: "u", stage: 1, identity: unverified }, { slotId: "v", stage: 1, identity: generic }, { slotId: "w", stage: 2, identity: unverified }]);
+    expect(Object.fromEntries(targets)).toEqual({ u: "v", v: "v", w: "w" });
     // A verified model keeps the full identity, and the executable and profile distinguish CLIs.
     expect(slotIdentityKey(generic)).not.toBe(slotIdentityKey({ ...generic, model: "other" }));
     expect(slotIdentityKey(generic)).not.toBe(slotIdentityKey({ ...generic, harnessProfile: "other" }));

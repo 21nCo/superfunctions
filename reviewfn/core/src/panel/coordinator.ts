@@ -623,16 +623,18 @@ export class PanelCoordinator {
       }
       const reporting = slotProfile(slot, request.panelPolicy)?.modelReport !== "none";
       const reportedModel = reporting && nonblank(observed.model) ? observed.model : undefined;
+      // A reporter's raw verdict on an explicitly configured model, with or without a model label.
+      const verdict = reporting && slot.inference.model !== "configured" && typeof observed.modelMismatch === "boolean" ? observed.modelMismatch : undefined;
       const identity: SlotIdentity = {
         ...baseIdentity,
         ...(nonblank(observed.harnessVersion) ? { harnessVersion: redactText(observed.harnessVersion, context.secrets) } : {}),
-        ...(reportedModel !== undefined ? { model: slot.inference.model !== "configured" && observed.modelMismatch === false ? slot.inference.model : redactText(reportedModel, context.secrets) } : {}),
+        ...(verdict === false ? { model: slot.inference.model } : reportedModel !== undefined ? { model: redactText(reportedModel, context.secrets) } : {}),
         // The harness's raw comparison is kept with the identity: redaction or truncation can make the recorded model read
         // as the configured one, and the mismatch must still void the run and survive in the report.
-        ...(reporting && slot.inference.model !== "configured" && observed.modelMismatch === true ? { modelMismatch: true as const } : {}),
+        ...(verdict === true ? { modelMismatch: true as const } : {}),
       };
-      // A model the run reports, or its reporter's raw mismatch verdict without a model label, verifies the identity.
-      if (reportedModel !== undefined || identity.modelMismatch === true) delete identity.modelVerified;
+      // A model the run reports, or its reporter's raw verdict without a model label, verifies the identity.
+      if (reportedModel !== undefined || verdict !== undefined) delete identity.modelVerified;
       if (!identity.credentialFingerprint && nonblank(observed.accountIdentity)) identity.credentialFingerprint = credentialFingerprint(observed.accountIdentity);
       const voidReasons: SlotVoidReason[] = [];
       if (slot.inference.model !== "configured" && (identity.model !== slot.inference.model || identity.modelMismatch === true)) {

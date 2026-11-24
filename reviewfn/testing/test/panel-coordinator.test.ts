@@ -275,11 +275,11 @@ describe("PanelCoordinator isolation and voiding", () => {
   it("records a reporting profile's model as unverified when neither preflight nor the run reported one", async () => {
     const reporter = (modelReport: string) => ({ argv: ["--model", "{model}"], promptVia: "stdin" as const, outputVia: "stdout-last-json" as const, envAllowlist: [], modelReport, capabilities: { structuredOutput: false, sandbox: "enforced-read-only" as const } });
     const profiles = { json: reporter("json-path:model"), stderr: reporter("stderr-regex:model=(\\S+)") };
-    const cli = new FakePanelHarness({ id: "cli", behaviors: { seen: () => ({ ...clean(), observed: { model: "model-seen" } }), flagged: () => ({ ...clean(), observed: { modelMismatch: true } }) } });
+    const cli = new FakePanelHarness({ id: "cli", behaviors: { seen: () => ({ ...clean(), observed: { model: "model-seen" } }), flagged: () => ({ ...clean(), observed: { modelMismatch: true } }), matched: () => ({ ...clean(), observed: { modelMismatch: false } }) } });
     const preflight = cli.preflight.bind(cli);
     cli.preflight = async config => { const result = await preflight(config); return { ...result, resolved: { ...result.resolved!, model: undefined } }; };
     const profiled = (id: string, profile: string) => slot(id, 1, `model-${id}`, { harness: { adapter: "cli", version: "1", executable: "agent", profile } });
-    const panelPolicy = panel([profiled("json-a", "json"), profiled("json-b", "json"), profiled("stderr-a", "stderr"), profiled("stderr-b", "stderr"), profiled("seen", "json"), profiled("flagged", "stderr")], { profiles });
+    const panelPolicy = panel([profiled("json-a", "json"), profiled("json-b", "json"), profiled("stderr-a", "stderr"), profiled("stderr-b", "stderr"), profiled("seen", "json"), profiled("flagged", "stderr"), profiled("matched", "json")], { profiles });
     const setup = coordinator(cli, { harnessContractVersions: { cli: "1" } });
     const result = await setup.coordinator.run(request(panelPolicy));
     const runs = new Map(result.report.slotRuns.map(run => [run.slotId, run]));
@@ -295,7 +295,10 @@ describe("PanelCoordinator isolation and voiding", () => {
     // The reporter's raw mismatch verdict voids the run even without a model label.
     expect(runs.get("flagged")).toMatchObject({ terminal: "void", voidReasons: ["model_mismatch"], identity: { model: "model-flagged", modelMismatch: true } });
     expect(runs.get("flagged")!.identity).not.toHaveProperty("modelVerified");
-    expect(result.quorum[0]).toMatchObject({ completed: 2 });
+    // A raw match verifies the configured model without a model label.
+    expect(runs.get("matched")).toMatchObject({ terminal: "completed", identity: { model: "model-matched" } });
+    expect(runs.get("matched")!.identity).not.toHaveProperty("modelVerified");
+    expect(result.quorum[0]).toMatchObject({ completed: 3 });
     await expectValid(result, setup, panelPolicy);
   });
 

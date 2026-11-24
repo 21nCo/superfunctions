@@ -34,12 +34,10 @@ export function panelReportCanceled(report: Pick<PanelReport, "coverageReasons">
  * Why a slot run ended as it did, for the slot table: the void reasons of a `void` run, and for a `collapsed` run the
  * earlier completed slot in its stage whose identity it shares. Other terminals carry no recorded reason.
  */
-function slotRunReason(run: SlotRun, report: PanelReport, slots: Map<string, PanelSlot>): string {
+function slotRunReason(run: SlotRun, report: PanelReport, targets: Map<string, string>): string {
   if (run.terminal === "void") return `void: ${run.voidReasons.join(", ")}`;
   if (run.terminal !== "collapsed") return "";
-  const stage = slots.get(run.slotId)?.stage;
-  const target = slotCollapseTargets(report.slotRuns.filter(other => ["completed", "collapsed"].includes(other.terminal) && slots.get(other.slotId)?.stage === stage).map(other => ({ ...other, stage: stage! }))).get(run.slotId);
-  const counted = report.slotRuns.find(other => other.terminal === "completed" && other.slotId !== run.slotId && other.slotId === target);
+  const counted = report.slotRuns.find(other => other.terminal === "completed" && other.slotId !== run.slotId && other.slotId === targets.get(run.slotId));
   return counted ? `collapsed: same identity as ${counted.slotId}, which counts toward quorum` : "collapsed: same identity as an earlier completed slot";
 }
 
@@ -140,6 +138,8 @@ function setAsideLines(finding: PanelFinding, evidence: Map<string, Evidence>): 
 export function renderPanelMarkdownReport(report: PanelReport): string {
   const slots = new Map(report.slots.map(slot => [slot.id, slot]));
   const runs = new Map(report.slotRuns.map(run => [run.slotId, run]));
+  // The collapse targets of every counting run, in policy order, once per report.
+  const targets = slotCollapseTargets(report.slots.flatMap(slot => { const run = runs.get(slot.id); return run && ["completed", "collapsed"].includes(run.terminal) ? [{ ...run, stage: slot.stage }] : []; }));
   const reported = report.findings.filter(finding => finding.disposition === "reported");
   const setAside = report.findings.filter(finding => finding.disposition !== "reported");
   const evidence = new Map(report.evidence.map(item => [item.id, item]));
@@ -164,7 +164,7 @@ export function renderPanelMarkdownReport(report: PanelReport): string {
     const harness = run ? `${run.identity.harnessAdapter} ${run.identity.harnessVersion}` : `${slot.harness.adapter} ${slot.harness.version}`;
     const unverified = run?.identity.modelVerified === false ? " (unverified)" : "";
     const model = run ? `${run.identity.provider}/${run.identity.model}${unverified}` : `${slot.inference.provider}/${slot.inference.model}`;
-    const reason = run ? [slotRunReason(run, report, slots), ...(run.limitations?.length ? [`limitations: ${run.limitations.join(", ")}`] : [])].filter(Boolean).join("; ") : "";
+    const reason = run ? [slotRunReason(run, report, targets), ...(run.limitations?.length ? [`limitations: ${run.limitations.join(", ")}`] : [])].filter(Boolean).join("; ") : "";
     lines.push(`| ${escape(slot.id)} | ${slot.stage} | ${escape(slot.lens)} | ${escape(harness)} | ${escape(model)} | ${run?.terminal ?? "not run"} | ${escape(reason)} |`);
   }
   lines.push("");
