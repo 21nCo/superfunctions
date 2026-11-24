@@ -15,7 +15,7 @@ export async function listObjects(rootDir: string): Promise<string[]> {
     }
   }
   await walk(rootDir);
-  return out.sort();
+  return out.sort((a, b) => a.localeCompare(b));
 }
 
 export const DOCS_POLICY: Policy = { name: 'docs', contentTypes: ['text/plain'], visibility: 'public' };
