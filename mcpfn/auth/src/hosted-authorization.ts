@@ -1378,10 +1378,19 @@ async function resolveClient(
   if (clientUrl.protocol !== "https:" || clientUrl.pathname === "/") return null;
   const raw = await fetchClientMetadataDocument(clientUrl, options.clientMetadataDocuments);
   const record = raw as Record<string, unknown>;
-  if (record.client_id !== undefined && record.client_id !== clientId) {
+  if (record.client_id !== clientId) {
     throw new McpFnHostedAuthorizationError(
       "invalid_client_metadata",
-      "Client ID Metadata Document client_id does not match its URL",
+      "Client ID Metadata Document client_id must equal its URL",
+    );
+  }
+  // A metadata document is public, so it cannot carry a shared secret. An
+  // omitted method means client_secret_basic (RFC 7591) and is refused too.
+  const documentAuthMethod = (record as OAuthClientMetadata).token_endpoint_auth_method ?? "client_secret_basic";
+  if (documentAuthMethod !== "none" && documentAuthMethod !== "private_key_jwt") {
+    throw new McpFnHostedAuthorizationError(
+      "invalid_client_metadata",
+      "Client ID Metadata Document clients must use token_endpoint_auth_method none or private_key_jwt",
     );
   }
   const registration = normalizeMcpClientRegistration({
@@ -1389,8 +1398,7 @@ async function resolveClient(
     source: "client-metadata-document",
     metadata: normalizeClientMetadata({
       ...(record as OAuthClientMetadata),
-      token_endpoint_auth_method:
-        (record as OAuthClientMetadata).token_endpoint_auth_method ?? "client_secret_basic",
+      token_endpoint_auth_method: documentAuthMethod,
     }, options.redirectPolicy),
     redirectPolicy: options.redirectPolicy,
   });
@@ -1423,6 +1431,23 @@ function normalizeClientMetadata(
 ): OAuthClientMetadata {
   if (!value || typeof value !== "object") {
     throw new McpFnHostedAuthorizationError("invalid_client_metadata", "Client metadata must be an object");
+  }
+  // Consent pages may render these links; accept only absolute https URLs.
+  for (const field of ["client_uri", "logo_uri", "tos_uri", "policy_uri"] as const) {
+    const uri = (value as Record<string, unknown>)[field];
+    if (uri === undefined) continue;
+    let parsed: URL | undefined;
+    try {
+      parsed = typeof uri === "string" ? new URL(uri) : undefined;
+    } catch {
+      parsed = undefined;
+    }
+    if (!parsed || parsed.protocol !== "https:" || parsed.username || parsed.password) {
+      throw new McpFnHostedAuthorizationError(
+        "invalid_client_metadata",
+        `${field} must be an https URL`,
+      );
+    }
   }
   try {
     return {
@@ -1562,8 +1587,8 @@ async function assertClientMetadataResponse(response: Response): Promise<void> {
       "Client ID Metadata Document could not be loaded",
     );
   }
-  const contentType = response.headers.get("content-type")?.toLowerCase();
-  if (!contentType?.includes("application/json")) {
+  const mediaType = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
+  if (mediaType !== "application/json") {
     await response.body?.cancel().catch(() => undefined);
     throw new McpFnHostedAuthorizationError(
       "invalid_client",

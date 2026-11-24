@@ -1,6 +1,6 @@
 import { terminateConformanceRunner } from "./conformance-process.js";
 import { spawn } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import {
   createServer,
@@ -97,7 +97,8 @@ function validateAuthenticatedConformanceUrl(url: string): { upstream: URL; host
 /**
  * Start a loopback-only streaming proxy for runners that cannot send auth
  * headers. Authenticated requests use one fixed upstream authority and path.
- * Host-manipulation probes are forwarded without injected credentials.
+ * Host-manipulation probes, and requests outside the random path prefix in
+ * the returned URL, are forwarded without injected credentials.
  */
 export async function createAuthenticatedConformanceProxy(
   options: AuthenticatedConformanceProxyOptions,
@@ -110,6 +111,10 @@ export async function createAuthenticatedConformanceProxy(
   const activeRequests = new Set<ReturnType<typeof httpRequest>>();
   const activeSockets = new Set<Socket>();
   let proxyAuthority: string | undefined;
+  // Credentials are added only to requests under this unguessable path prefix,
+  // so another local process or a browser page that finds the port cannot use
+  // them: only the conformance runner is given the proxy URL.
+  const pathToken = `/mcpfn-proxy-${randomBytes(16).toString("hex")}`;
   const server = createServer((incoming, outgoing) => {
     if (!incoming.url?.startsWith("/")) {
       outgoing.writeHead(400).end();
@@ -117,7 +122,9 @@ export async function createAuthenticatedConformanceProxy(
     }
     const headers: IncomingHttpHeaders = { ...incoming.headers };
     delete headers.connection;
-    const usesProxyAuthority = incoming.headers.host === proxyAuthority;
+    const tokenPath = incoming.url === pathToken || incoming.url.startsWith(`${pathToken}/`) ||
+      incoming.url.startsWith(`${pathToken}?`);
+    const usesProxyAuthority = tokenPath && incoming.headers.host === proxyAuthority;
     injected.forEach((value, name) => {
       const normalizedName = name.toLowerCase();
       delete headers[normalizedName];
@@ -167,7 +174,7 @@ export async function createAuthenticatedConformanceProxy(
     throw new Error("Authenticated conformance proxy did not bind a TCP port");
   }
   const url = new URL(
-    upstream.pathname + upstream.search,
+    pathToken + upstream.pathname + upstream.search,
     `http://127.0.0.1:${address.port}`,
   );
   proxyAuthority = url.host;

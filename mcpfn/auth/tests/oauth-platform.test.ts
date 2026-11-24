@@ -1271,6 +1271,76 @@ describe("McpFn hosted authorization compatibility", () => {
     expect(authorize).not.toHaveBeenCalled();
   });
 
+  // MCP-21 audit, MCP-SEC-09 and MCP-SEC-10.
+  it.each([
+    ["javascript:alert(1)"],
+    ["http://client.example.com/logo.png"],
+    ["https://user:pass@client.example.com/"],
+    [42],
+  ])("rejects a dynamic registration whose logo_uri is %j", async (logoUri) => {
+    const register = vi.fn();
+    const compatibility = createMcpAuthorizationCompatibilityHandler({
+      issuer,
+      clients: { resolve: async () => null, register },
+      authorize: async () => Response.json({ ok: true }),
+      tokenAuthority: { exchangeAuthorizationCode: async () => ({ access_token: "opaque", token_type: "Bearer" }) },
+    });
+    const response = await compatibility(new Request(`${issuer}/register`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        redirect_uris: ["https://client.example.com/callback"],
+        token_endpoint_auth_method: "none",
+        logo_uri: logoUri,
+      }),
+    }));
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({ error: "invalid_client_metadata" });
+    expect(register).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["without client_id", { redirect_uris: ["https://client.example.com/callback"], token_endpoint_auth_method: "none" }, "application/json"],
+    ["with a secret auth method", { client_id: "https://clients.example.com/client.json", redirect_uris: ["https://client.example.com/callback"], token_endpoint_auth_method: "client_secret_post" }, "application/json"],
+    ["served as another media type", { client_id: "https://clients.example.com/client.json", redirect_uris: ["https://client.example.com/callback"], token_endpoint_auth_method: "none" }, "text/plain; note=application/json"],
+  ])("rejects a Client ID Metadata Document %s", async (_label, document, contentType) => {
+    const clientId = "https://clients.example.com/client.json";
+    const authorize = vi.fn(async () => Response.json({ ok: true }));
+    const compatibility = createMcpAuthorizationCompatibilityHandler({
+      issuer,
+      clients: { resolve: async () => null },
+      authorize,
+      tokenAuthority: { exchangeAuthorizationCode: async () => ({ access_token: "opaque", token_type: "Bearer" }) },
+      clientMetadataDocuments: {
+        enabled: true,
+        allow: async () => true,
+        fetch: async () => new Response(JSON.stringify(document), { headers: { "content-type": contentType } }),
+      },
+    });
+    const response = await compatibility(new Request(authorizationUrl(clientId, "https://client.example.com/callback")));
+    expect(response.status).toBeGreaterThanOrEqual(400);
+    expect(authorize).not.toHaveBeenCalled();
+  });
+
+  it("accepts a public Client ID Metadata Document served as application/json with parameters", async () => {
+    const clientId = "https://clients.example.com/client.json";
+    const authorize = vi.fn(async () => Response.json({ ok: true }));
+    const compatibility = createMcpAuthorizationCompatibilityHandler({
+      issuer,
+      clients: { resolve: async () => null },
+      authorize,
+      tokenAuthority: { exchangeAuthorizationCode: async () => ({ access_token: "opaque", token_type: "Bearer" }) },
+      clientMetadataDocuments: {
+        enabled: true,
+        allow: async () => true,
+        fetch: async () => new Response(JSON.stringify({ client_id: clientId, redirect_uris: ["https://client.example.com/callback"], token_endpoint_auth_method: "none" }), { headers: { "content-type": "application/json; charset=utf-8" } }),
+      },
+    });
+    const response = await compatibility(new Request(authorizationUrl(clientId, "https://client.example.com/callback")));
+    expect(response.status).toBe(200);
+    expect(authorize).toHaveBeenCalledOnce();
+  });
+
   it("maps metadata document failures to invalid_client at credential endpoints", async () => {
     const clientId = "https://clients.example.com/client.json";
     const compatibility = createMcpAuthorizationCompatibilityHandler({

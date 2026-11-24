@@ -504,6 +504,13 @@ External Client ID Metadata Documents require an explicit URL allow-policy.
 McpFn disables automatic redirects, reapplies that policy at every redirect,
 streams responses through a byte cap, and applies a ten-second deadline by
 default. `maxBytes`, `timeoutMs`, and `maxRedirects` can tighten those bounds.
+A Client ID Metadata Document must contain a `client_id` equal to its URL, be
+served as `application/json`, and use `token_endpoint_auth_method` `none` or
+`private_key_jwt` (an omitted method means `client_secret_basic` and is
+refused). Registrations and documents whose `client_uri`, `logo_uri`,
+`tos_uri` or `policy_uri` is not an absolute `https:` URL are refused with
+`invalid_client_metadata`. The `allow` policy sees only the URL: reject
+private, loopback and link-local hosts there.
 
 The AuthFn adapter uses a structural provider contract. `@superfunctions/auth`
 is an optional peer: installing or importing AuthFn is not required for other
@@ -975,6 +982,14 @@ await server.serveStdio();
 
 `transports` only declares the supported transports in the manifest; it does not bind one. The example serves stdio; for Streamable HTTP, create a server instance per connection and use its `createWebStandardHandler()` as described in [Build a server](https://github.com/21nCo/super-functions/blob/dev/mcpfn/docs/content/docs/server.md).
 
+Mutation tools need the function form of `clientId`, returning a value per
+credential: DataFn keys idempotency records by namespace, client ID and the
+model-supplied `mutationId`, so with one fixed string two users could share
+records. A fixed string is accepted for read-only exposure, or with
+`allowSharedClientId: true`. List filters accept scalar values only; `object`
+and `array` fields are left out of the default filters and refused in an
+explicit `filterFields`.
+
 This adapter is appropriate for bounded data operations. Domain workflows with additional authorization, auditing, asset grants, or version-resolution semantics should remain explicit McpFn tools.
 
 ## Exposure reference
@@ -1290,7 +1305,7 @@ It includes:
 - JSON and JUnit artifacts with package/runtime provenance and failure layers;
 - orchestration of the official `@modelcontextprotocol/conformance` runner.
 
-Official conformance validates protocol behavior. McpFn scenarios validate product behavior. Production MCP servers should run both. For a protected local endpoint, use `runAuthenticatedOfficialConformance({ url, credential })`; it requires a literal loopback upstream, binds a temporary loopback-only streaming proxy, pins every request to the configured upstream path, injects bounded credential headers without printing them, and closes the proxy and attempts credential revocation/disposal after the pinned official runner exits. Credential cleanup retries up to three times. If all attempts fail, it throws `McpFnConformanceCleanupError`; retain that error and call `await error.retryCleanup()` after the provider recovers. The error contains no raw credential fields, and a successful retry releases the retained lease.
+Official conformance validates protocol behavior. McpFn scenarios validate product behavior. Production MCP servers should run both. For a protected local endpoint, use `runAuthenticatedOfficialConformance({ url, credential })`; it requires a literal loopback upstream, binds a temporary loopback-only streaming proxy, pins every request to the configured upstream path, injects bounded credential headers without printing them only into requests under a random path prefix in the proxy URL given to the runner (so another local process or a web page that finds the port gets no credentials), and closes the proxy and attempts credential revocation/disposal after the pinned official runner exits. Credential cleanup retries up to three times. If all attempts fail, it throws `McpFnConformanceCleanupError`; retain that error and call `await error.retryCleanup()` after the provider recovers. The error contains no raw credential fields, and a successful retry releases the retained lease.
 
 Deterministic client-profile compatibility is a third, separate gate. It proves
 the effective authenticated catalog, schema portability, trusted enrichment,

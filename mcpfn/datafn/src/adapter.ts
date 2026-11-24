@@ -116,6 +116,15 @@ function fieldSchema(field: DatafnFieldSchema): McpFnJsonSchema {
   return base;
 }
 
+function scalarFilterSchema(field: DatafnFieldSchema): McpFnJsonSchema | undefined {
+  const schema = fieldSchema(field);
+  const types = (Array.isArray(schema.type) ? schema.type : [schema.type])
+    .filter((type) => type !== "object" && type !== "array");
+  if (!types.some((type) => type !== "null")) return undefined;
+  const { items: _items, additionalProperties: _additional, ...rest } = schema;
+  return { ...rest, type: types.length === 1 ? types[0] : types };
+}
+
 function capabilitiesFor(
   schema: DatafnSchema,
   resource: DatafnResourceSchema,
@@ -267,6 +276,15 @@ export function createDatafnMcpRegistry<TMcpContext, TDatafnContext>(
     throw new McpFnValidationError("DataFn clientId must be a non-empty string");
   }
   assertUniqueToolNames(registry, options.expose, prefix);
+  if (
+    typeof options.clientId === "string" &&
+    options.allowSharedClientId !== true &&
+    Object.values(options.expose).some((exposure) => exposure.create || exposure.update || exposure.delete)
+  ) {
+    throw new McpFnValidationError(
+      "DataFn mutation tools need a per-credential clientId resolver; a fixed string shares idempotency records between users (set allowSharedClientId to accept it)",
+    );
+  }
 
   for (const resourceName of Object.keys(options.expose).sort()) {
     const exposure = options.expose[resourceName]!;
@@ -286,12 +304,18 @@ export function createDatafnMcpRegistry<TMcpContext, TDatafnContext>(
       validateFieldList(`DataFn resource ${resourceName} filterFields`, filterFields);
       validateFieldList(`DataFn resource ${resourceName} sortFields`, sortFields);
       validateReadFields(schema, resource, [...filterFields, ...sortFields]);
-      const filterProperties = Object.fromEntries(
-        filterFields.map((field) => [
-          field,
-          field === "id" ? { type: "string" } : fieldSchema(maps.schemaFields.get(field)!),
-        ]),
-      );
+      // Filters take scalar values only: DataFn reads an object as an
+      // operator expression, which the model should not choose.
+      const filterProperties: Record<string, McpFnJsonSchema> = {};
+      for (const field of filterFields) {
+        const filter = field === "id" ? { type: "string" } : scalarFilterSchema(maps.schemaFields.get(field)!);
+        if (filter) filterProperties[field] = filter;
+        else if (list.filterFields) {
+          throw new McpFnValidationError(
+            `DataFn resource ${resourceName} cannot filter on non-scalar field ${field}`,
+          );
+        }
+      }
       const maxLimit = list.maxLimit ?? 100;
       validateLimit(`DataFn resource ${resourceName} maxLimit`, maxLimit);
       const defaultLimit = list.defaultLimit ?? Math.min(50, maxLimit);
