@@ -329,9 +329,12 @@ class UploadSessionService:
         # example two anonymous inits that are no longer replayed) never share
         # an object; a storagePath that drops it is refused, as in TypeScript.
         if version_id not in storage_key:
-            raise errors.invalid_request(
-                "The policy's storagePath must include the version ID",
-                {"policy": input.policy, "reason": "storage path not per version"},
+            # A policy misconfiguration, answered as the TypeScript server does.
+            raise errors.FileFnError(
+                "FILEFN_STORAGE_PATH_NOT_PER_VERSION",
+                "Policy storagePath must return a key that contains the full versionId",
+                500,
+                {"policy": input.policy},
             )
 
         storage_upload_id: Optional[str] = None

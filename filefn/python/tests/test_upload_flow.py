@@ -891,4 +891,4 @@ async def test_storage_path_without_the_version_id_is_refused() -> None:
         await service.create_session(
             CreateSessionInput(policy="flat", fileName="a.png", size=3, mimeType="image/png"), _ctx()
         )
-    assert getattr(exc_info.value, "code", "") == "FILEFN_INVALID_REQUEST"
+    assert getattr(exc_info.value, "code", "") == "FILEFN_STORAGE_PATH_NOT_PER_VERSION"
