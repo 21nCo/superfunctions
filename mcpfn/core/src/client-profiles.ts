@@ -516,12 +516,18 @@ function assertValidProfileSchema(schema: Record<string, unknown>, resources: re
   catch { throw new McpFnClientProfileError("MCPFN_INVALID_PROJECTED_CATALOG", "Projected schema must be valid JSON Schema"); }
 }
 
-function objectArguments(value: unknown): Record<string, unknown> {
+function objectArguments(value: unknown, source: "client" | "enricher" = "client"): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new McpFnClientProfileError(
-      "MCPFN_INVALID_PROFILE_ARGUMENTS",
-      "Tool arguments must be an object before trusted enrichment",
-    );
+    // A malformed enricher result is a server fault, not client input.
+    throw source === "client"
+      ? new McpFnClientProfileError(
+          "MCPFN_INVALID_PROFILE_ARGUMENTS",
+          "Tool arguments must be an object before trusted enrichment",
+        )
+      : new McpFnClientProfileError(
+          "MCPFN_PROFILE_ARGUMENT_MUTATION",
+          "Trusted enrichment must return an arguments object",
+        );
   }
   return value as Record<string, unknown>;
 }
@@ -585,6 +591,7 @@ export async function enrichMcpFnClientProfileCall<TContext>(input: {
       tool: structuredClone(input.tool),
       arguments: structuredClone(original),
     }),
+    "enricher",
   );
   for (const [name, value] of Object.entries(original)) {
     if (owned.has(name)) continue;

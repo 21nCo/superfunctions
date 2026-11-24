@@ -420,6 +420,14 @@ describe("McpFn client profiles", () => {
     });
   });
 
+  it.each([null, ["array"]])("treats an enricher returning %j as a server fault", async (returned) => {
+    await expect(enrichMcpFnClientProfileCall({
+      resolved: { context: undefined, extra: {} as McpFnRequestExtra, reportedClient: {}, verifiedIdentity: { subject: "trusted" }, profile: { id: "p", version: "1", matches: () => true, enrichArguments: () => returned as never } },
+      tool: { name: "lookup", description: "Lookup", inputSchema: { type: "object" } },
+      arguments: { query: "safe" },
+    })).rejects.toMatchObject({ code: "MCPFN_PROFILE_ARGUMENT_MUTATION" });
+  });
+
   it("answers a forged server-owned argument in a task-augmented call with InvalidParams", async () => {
     const createTask = vi.fn();
     const registry = new McpFnRegistry<RequestContext>().register({
