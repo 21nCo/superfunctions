@@ -16,7 +16,7 @@ import { buildSlotPrompt, PANEL_PROMPT_VERSION, type PriorStageFinding, type Slo
 import { lensOutputSchema, validateLensPayload } from "./schema.js";
 import { PANEL_CANCELED_REASON } from "./types.js";
 import type { HarnessProfile, PanelFinding, PanelFindingSeverity, PanelPolicy, PanelReport, PanelReportValidationResult, PanelSlot, SlotIdentity, SlotRun, SlotRunLimitation, SlotRunTerminal, SlotVoidReason } from "./types.js";
-import { credentialFingerprint, derivePanelVerdict, panelPolicyDigest, panelStructureIssues, slotIdentityKey, validatePanelPolicy, validatePanelReport } from "./validate.js";
+import { credentialFingerprint, derivePanelVerdict, panelPolicyDigest, panelStructureIssues, slotHarnessIssues, slotIdentityKey, validatePanelPolicy, validatePanelReport } from "./validate.js";
 import { GitSlotWorkspaceProvider, removeTree, type GitSlotWorkspaceOptions, type SlotWorkspace, type SlotWorkspaceProvider, type WorkspaceCheck } from "./workspace.js";
 
 /** Coverage reason code when a stage has fewer completed runs with distinct identities than its quorum. */
@@ -170,9 +170,6 @@ interface RunContext {
 const SEVERITY_RANK: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
 const COUNTING = new Set<SlotRunTerminal>(["completed", "collapsed"]);
 
-/** The one profile-driven harness, which runs only a profile the panel policy declares. */
-const PROFILE_HARNESS_ADAPTER = "cli";
-
 function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -192,14 +189,14 @@ export function slotConfiguration(config: ReviewFnConfig, slot: PanelSlot, contr
   if (!same && !nonblank(contractVersion)) throw new ReviewFnError("REVIEWFN_CONFIG_INVALID", `Slot ${slot.id} uses harness ${slot.harness.adapter}, whose adapter contract version is not configured.`);
   const version = same ? config.harness.version : contractVersion!;
   // A profile-driven slot runs its own executable with the trusted policy's profile; a file configuration never supplies either.
+  const pairing = slotHarnessIssues(slot, "/harness");
+  if (pairing.length) throw new ReviewFnError("REVIEWFN_CONFIG_INVALID", pairing.map(issue => issue.message).join(" "));
   const { executable, profile } = slot.harness;
   if (profile !== undefined) {
     const definition = profiles && Object.hasOwn(profiles, profile) ? profiles[profile] : undefined;
     if (!definition || executable === undefined) throw new ReviewFnError("REVIEWFN_CONFIG_INVALID", `Slot ${slot.id} names harness profile ${profile}, which the panel policy does not declare with an executable.`);
     return { ...config, harness: { adapter: slot.harness.adapter, version, executable, profile, profileDefinition: structuredClone(definition) }, inference: { ...slot.inference } };
   }
-  // The generic CLI harness runs only a declared profile: never a file configuration's executable, nor no profile at all.
-  if (slot.harness.adapter === PROFILE_HARNESS_ADAPTER) throw new ReviewFnError("REVIEWFN_CONFIG_INVALID", `Slot ${slot.id} uses the ${PROFILE_HARNESS_ADAPTER} harness without a harness profile and executable the panel policy declares.`);
   return { ...config, harness: { adapter: slot.harness.adapter, version, ...(same && config.harness.executable ? { executable: config.harness.executable } : {}) }, inference: { ...slot.inference } };
 }
 

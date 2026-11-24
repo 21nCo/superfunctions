@@ -656,6 +656,11 @@ describe("panel policy and slot identity", () => {
     expect(messages({ ...profile, modelReport: "stderr-regex:(.*)|\\" })).toEqual([expect.stringMatching(/not a valid regular expression/)]);
     expect(messages({ ...profile, modelReport: "stderr-regex:(a)|(b" })).toEqual([expect.stringMatching(/not a valid regular expression/)]);
     expect(validateHarnessProfile({ ...profile, modelReport: "stderr-regex:model (?:id )?(\\S+)" }).valid).toBe(true);
+    // Groups are counted without matching: a backtracking-prone source validates at once, named groups count, lookarounds and classes do not.
+    const started = performance.now();
+    expect(messages({ ...profile, modelReport: `stderr-regex:(${"(?:^|$)".repeat(40)})x` })).toEqual([]);
+    expect(performance.now() - started).toBeLessThan(1000);
+    expect(messages({ ...profile, modelReport: "stderr-regex:(?<=at )(?<model>[(\\]]+)(?!\\()(?<!x)" })).toEqual([]);
     for (const modelReport of ["json-path:", "json-path:a..b", "stdout", "none "]) expect(validateHarnessProfile({ ...profile, modelReport }).valid).toBe(false);
     expect(validateHarnessProfile({ ...profile, envAllowlist: ["PATH", "PATH"] }).valid).toBe(false);
     expect(validateHarnessProfile({ ...profile, envAllowlist: ["NOT-A-NAME"] }).valid).toBe(false);
@@ -713,6 +718,13 @@ describe("panel policy and slot identity", () => {
     expect((await issues(unverifiedMismatch)).map(issue => issue.message)).toEqual(expect.arrayContaining([expect.stringMatching(/needs a verified model/)]));
     const otherProfile = structuredClone(report); otherProfile.slotRuns[2].identity.harnessProfile = "other";
     expect((await issues(otherProfile)).map(issue => issue.message)).toEqual([expect.stringMatching(/harness executable or profile/)]);
+    // Without a bound panel policy the slot pairing still holds: only a cli slot names a profile and an executable, and always both.
+    const slotIssues = async (value: PanelReport) => (await validatePanelReport(value, policy, options)).issues.filter(issue => issue.path.startsWith("/slots/")).map(issue => `${issue.path} ${issue.message}`);
+    expect(await slotIssues(report)).toEqual([]);
+    const profiledCodex = structuredClone(report); profiledCodex.slots[0].harness = { ...profiledCodex.slots[0].harness, executable: "agent", profile: "agent" };
+    expect(await slotIssues(profiledCodex)).toEqual([expect.stringMatching(/^\/slots\/0\/harness .*harness codex, which takes no profile or executable/)]);
+    const noExecutable = structuredClone(report); delete noExecutable.slots[2].harness.executable;
+    expect(await slotIssues(noExecutable)).toEqual([expect.stringMatching(/^\/slots\/2\/harness .*profile without an executable/)]);
   });
 
   it("binds each run's model verification and limitations to its slot's profile in the bound panel policy", async () => {

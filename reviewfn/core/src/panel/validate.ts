@@ -250,15 +250,23 @@ const PROFILE_HARNESS_ADAPTER = "cli";
 
 const PLACEHOLDER_TOKEN = /\{[A-Za-z][A-Za-z0-9]*\}/u;
 
-/** Number of capture groups of a regular expression source, or undefined when it does not compile on its own. */
+/**
+ * Number of capture groups of a regular expression source, or undefined when it does not compile on its own. The groups
+ * are counted by one linear scan of the source, never by matching: a policy regex is untrusted and may backtrack.
+ */
 function captureGroups(source: string): number | undefined {
-  try {
-    // The source must compile alone: appended syntax could otherwise complete it, as an appended `|` completes a trailing backslash into an escape.
-    const alone = new RegExp(source, "u");
-    // Grouped, then alternated with the empty pattern, it always matches, and the match has one entry per capture group.
-    const match = new RegExp(`(?:${alone.source})|`, "u").exec("");
-    return match ? match.length - 1 : undefined;
-  } catch { return undefined; }
+  try { new RegExp(source, "u"); } catch { return undefined; }
+  let groups = 0;
+  let inClass = false;
+  for (let index = 0; index < source.length; index += 1) {
+    const char = source[index];
+    if (char === "\\") index += 1;
+    else if (inClass) inClass = char !== "]";
+    else if (char === "[") inClass = true;
+    // `(` captures unless it opens `(?:`, a lookaround or a modifier group; `(?<name>` captures, `(?<=` and `(?<!` do not.
+    else if (char === "(" && (source[index + 1] !== "?" || (source[index + 2] === "<" && source[index + 3] !== "=" && source[index + 3] !== "!"))) groups += 1;
+  }
+  return groups;
 }
 
 /**
@@ -295,6 +303,21 @@ export function validateHarnessProfile(value: unknown): PanelValidationResult<Pa
   return result(issues);
 }
 
+/**
+ * Issues of a slot's harness pairing, which holds whatever the policy: only the `cli` harness is profile-driven, and it
+ * always names both a profile and an executable; every other harness names neither.
+ */
+export function slotHarnessIssues(slot: PanelSlot, path: string): PanelValidationIssue<PanelValidationCode>[] {
+  const issues: Issues = [];
+  const { adapter, executable, profile } = slot.harness;
+  if (adapter !== PROFILE_HARNESS_ADAPTER) {
+    if (profile !== undefined || executable !== undefined) add(issues, "REVIEWFN_PANEL_SCHEMA", path, `Slot ${slot.id} uses harness ${adapter}, which takes no profile or executable; only the ${PROFILE_HARNESS_ADAPTER} harness is profile-driven.`);
+  } else if (profile === undefined && executable === undefined) add(issues, "REVIEWFN_PANEL_SCHEMA", path, `Slot ${slot.id} uses the ${PROFILE_HARNESS_ADAPTER} harness, which runs only a profile the policy declares, with an executable; it names neither.`);
+  else if (executable === undefined) add(issues, "REVIEWFN_PANEL_SCHEMA", path, `Slot ${slot.id} names a profile without an executable.`);
+  else if (profile === undefined) add(issues, "REVIEWFN_PANEL_SCHEMA", pointer(path, "executable"), `Slot ${slot.id} names an executable without a profile; only a profile-driven harness takes one from the slot.`);
+  return issues as PanelValidationIssue<PanelValidationCode>[];
+}
+
 /** Structure of a panel policy, unique slot IDs, a `requirementsSlot` naming a stage-1 or stage-2 slot, valid harness profiles, and slot profiles the policy declares, each with an executable; every `cli` slot names both. */
 export function validatePanelPolicy(value: unknown): PanelValidationResult<PanelValidationCode> {
   const issues = structural(panelPolicy, value);
@@ -306,12 +329,9 @@ export function validatePanelPolicy(value: unknown): PanelValidationResult<Panel
   // An entry set to undefined declares no profile: it is skipped like an absent one, never dereferenced.
   for (const [name, profile] of Object.entries(profiles)) if (profile !== undefined) issues.push(...harnessProfileIssues(profile, pointer("/profiles", name)));
   policy.slots.forEach((slot, index) => {
-    const { executable, profile } = slot.harness;
+    const { profile } = slot.harness;
     if (profile !== undefined && (!Object.hasOwn(profiles, profile) || profiles[profile] === undefined)) add(issues, "REVIEWFN_PANEL_SCHEMA", `/slots/${index}/harness/profile`, `Slot ${slot.id} names profile ${profile}, which the policy's profiles do not declare.`);
-    if (profile !== undefined && executable === undefined) add(issues, "REVIEWFN_PANEL_SCHEMA", `/slots/${index}/harness`, `Slot ${slot.id} names a profile without an executable.`);
-    if ((profile !== undefined || executable !== undefined) && slot.harness.adapter !== PROFILE_HARNESS_ADAPTER) add(issues, "REVIEWFN_PANEL_SCHEMA", `/slots/${index}/harness`, `Slot ${slot.id} uses harness ${slot.harness.adapter}, which takes no profile or executable; only the ${PROFILE_HARNESS_ADAPTER} harness is profile-driven.`);
-    if (profile === undefined && executable !== undefined) add(issues, "REVIEWFN_PANEL_SCHEMA", `/slots/${index}/harness/executable`, `Slot ${slot.id} names an executable without a profile; only a profile-driven harness takes one from the slot.`);
-    if (profile === undefined && executable === undefined && slot.harness.adapter === PROFILE_HARNESS_ADAPTER) add(issues, "REVIEWFN_PANEL_SCHEMA", `/slots/${index}/harness`, `Slot ${slot.id} uses the ${PROFILE_HARNESS_ADAPTER} harness, which runs only a profile the policy declares, with an executable; it names neither.`);
+    issues.push(...slotHarnessIssues(slot, `/slots/${index}/harness`));
   });
   return result(issues as PanelValidationIssue<PanelValidationCode>[]);
 }
@@ -629,6 +649,7 @@ export async function validatePanelReport(value: unknown, policy: ReviewPolicy, 
   report.slots.forEach((slot, index) => {
     if (slots.has(slot.id)) add(issues, "REVIEWFN_PANEL_SLOT_DUPLICATE", `/slots/${index}/id`, `Slot ${slot.id} is declared more than once.`);
     else slots.set(slot.id, slot);
+    issues.push(...slotHarnessIssues(slot, `/slots/${index}/harness`));
   });
   const requirements: ReviewReport | undefined = report.requirementsReport;
   if (requirements && report.contextManifestDigest !== undefined && report.contextManifestDigest !== requirements.contextManifestDigest) add(issues, "REVIEWFN_REPORT_INVALID", "/requirementsReport/contextManifestDigest", "The requirements report used a different frozen context than the panel.");

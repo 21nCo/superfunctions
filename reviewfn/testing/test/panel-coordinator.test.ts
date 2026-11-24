@@ -252,7 +252,10 @@ describe("PanelCoordinator isolation and voiding", () => {
     expect([refusing.preflights, refusing.calls]).toEqual([[], []]);
     // A cli slot naming no profile never runs, and never with the file configuration's executable.
     const bare = slot("bare", 1, undefined, { harness: { adapter: "cli", version: "1" } });
-    expect(() => slotConfiguration({ ...config, harness: { adapter: "cli", version: "1", executable: "file-agent" } }, bare, undefined, panelPolicy.profiles)).toThrow(expect.objectContaining({ code: "REVIEWFN_CONFIG_INVALID", message: expect.stringMatching(/bare uses the cli harness without a harness profile/) }));
+    expect(() => slotConfiguration({ ...config, harness: { adapter: "cli", version: "1", executable: "file-agent" } }, bare, undefined, panelPolicy.profiles)).toThrow(expect.objectContaining({ code: "REVIEWFN_CONFIG_INVALID", message: expect.stringMatching(/bare uses the cli harness, which runs only a profile .* it names neither/) }));
+    // Only the cli harness is profile-driven: another adapter naming a declared profile and an executable is refused too.
+    const profiledCodex = slot("profiled", 1, undefined, { harness: { adapter: "codex", version: "1", executable: "agent", profile: "unreported" } });
+    expect(() => slotConfiguration(config, profiledCodex, "1", { unreported })).toThrow(expect.objectContaining({ code: "REVIEWFN_CONFIG_INVALID", message: expect.stringMatching(/harness codex, which takes no profile or executable/) }));
     const unprofiled = new FakePanelHarness({ id: "cli" });
     await expect(coordinator(unprofiled, { harnessContractVersions: { cli: "1" } }).coordinator.run(request(panel([bare], { profiles: { unreported } })))).rejects.toMatchObject({ code: "REVIEWFN_PREFLIGHT_FAILED", details: { diagnostics: [expect.objectContaining({ code: "REVIEWFN_PANEL_SCHEMA", message: expect.stringMatching(/names neither/) })] } });
     expect([unprofiled.preflights, unprofiled.calls]).toEqual([[], []]);
