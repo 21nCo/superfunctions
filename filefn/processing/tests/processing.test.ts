@@ -574,6 +574,12 @@ describe('@filefn/processing', () => {
       expect(ffmpegInputArgs('audio/aac', loas)).toEqual(['-protocol_whitelist', 'file', '-f', 'loas']);
       expect(ffmpegInputArgs('audio/aac', new Uint8Array([0xff, 0xf1, 0x50]))).toEqual(['-protocol_whitelist', 'file', '-f', 'aac']);
       expect(ffmpegInputArgs('audio/mpeg', loas)).toEqual(['-protocol_whitelist', 'file', '-f', 'mp3']);
+      const id3 = new Uint8Array([...bytes('ID3'), 4, 0, 0, 0, 0, 0, 3, 1, 2, 3]);
+      expect(ffmpegInputArgs('audio/aac', new Uint8Array([...id3, ...loas]))).toEqual(['-protocol_whitelist', 'file', '-f', 'loas']);
+
+      const extendedUuid = new Uint8Array([0, 0, 0, 1, ...bytes('uuid'), 0, 0, 0, 0, 0, 0, 0, 32, ...new Array(16).fill(7)]);
+      expect(contentMatchesDeclaredType(new Uint8Array([...extendedUuid, ...bytes('\0\0\0\x18ftypisom')]), 'video/mp4')).toBe(true);
+      expect(contentMatchesDeclaredType(new Uint8Array([0, 0, 0, 200, ...bytes('uuid'), ...new Array(16).fill(7)]), 'video/mp4')).toBe(false);
     });
 
     it('accepts big-endian RIFX and broadcast BW64 WAVE files', () => {

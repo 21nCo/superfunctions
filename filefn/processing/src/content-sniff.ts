@@ -46,6 +46,9 @@ const IMAGE_BRANDS = new Set(['heic', 'heix', 'hevc', 'hevx', 'heim', 'heis', 'm
 const isHeifImage = (b: Uint8Array) => IMAGE_BRANDS.has(ftypBrand(b) ?? '');
 // ISO BMFF / QuickTime: an ftyp box, or a classic QuickTime file that starts
 // with another top-level atom.
+const readUint32 = (b: Uint8Array, offset: number) =>
+  ((b[offset] << 24) >>> 0) + (b[offset + 1] << 16) + (b[offset + 2] << 8) + b[offset + 3];
+
 // Top-level `uuid` boxes may come first; up to a few are skipped by their
 // declared sizes to reach the first recognised box.
 const QUICKTIME_ATOMS = ['moov', 'mdat', 'wide', 'free', 'skip', 'pnot'];
@@ -57,9 +60,17 @@ function isIsoBmff(b: Uint8Array): boolean {
     const type = String.fromCharCode(...b.subarray(offset + 4, offset + 8));
     if (type === 'ftyp' || QUICKTIME_ATOMS.includes(type)) return true;
     if (type !== 'uuid') return false;
-    const size = ((b[offset] << 24) >>> 0) + (b[offset + 1] << 16) + (b[offset + 2] << 8) + b[offset + 3];
-    // A uuid box holds at least its 8-byte header and 16-byte user type.
-    if (size < 24) return false;
+    let size = readUint32(b, offset);
+    let header = 8;
+    if (size === 1) {
+      // 64-bit extended size after the type.
+      if (offset + 16 > b.length) return false;
+      size = readUint32(b, offset + 8) * 2 ** 32 + readUint32(b, offset + 12);
+      header = 16;
+    }
+    // A uuid box holds at least its header and 16-byte user type, and must
+    // end inside the input.
+    if (size < header + 16 || offset + size > b.length) return false;
     offset += size;
   }
   return false;
@@ -71,7 +82,17 @@ const isId3 = (b: Uint8Array) => startsWith(b, ascii('ID3'));
 // MPEG audio frame or ADTS AAC: 11 (or 12) sync bits.
 const isMpegFrame = (b: Uint8Array) => b.length >= 2 && b[0] === 0xff && (b[1] & 0xe0) === 0xe0;
 // AAC in LOAS/LATM framing: the 11-bit sync word 0x2B7.
-const isLoas = (b: Uint8Array) => b.length >= 3 && b[0] === 0x56 && (b[1] & 0xe0) === 0xe0;
+const isLoasAt = (b: Uint8Array, offset: number) =>
+  b.length >= offset + 3 && b[offset] === 0x56 && (b[offset + 1] & 0xe0) === 0xe0;
+const isLoas = (b: Uint8Array) => isLoasAt(b, 0);
+// Where the audio starts after a leading ID3v2 tag (10-byte header, syncsafe
+// size, optional 10-byte footer), or 0 without one; -1 for a malformed tag.
+function afterId3(b: Uint8Array): number {
+  if (!isId3(b)) return 0;
+  if (b.length < 10 || [6, 7, 8, 9].some((i) => b[i] >= 0x80)) return -1;
+  const size = (b[6] << 21) | (b[7] << 14) | (b[8] << 7) | b[9];
+  return 10 + size + (b[5] & 0x10 ? 10 : 0);
+}
 
 /**
  * Where `%PDF-` starts within the first KiB (readers accept a little leading
@@ -163,7 +184,9 @@ const FFMPEG_INPUT_FORMATS: Record<string, string> = {
  */
 export function ffmpegInputArgs(mimeType: string, bytes?: Uint8Array): string[] {
   const essence = mimeType.split(';', 1)[0].trim().toLowerCase();
-  const format = essence === 'audio/aac' && bytes && isLoas(bytes) ? 'loas' : FFMPEG_INPUT_FORMATS[essence];
+  const audioStart = bytes ? afterId3(bytes) : -1;
+  const format =
+    essence === 'audio/aac' && bytes && audioStart >= 0 && isLoasAt(bytes, audioStart) ? 'loas' : FFMPEG_INPUT_FORMATS[essence];
   if (!format) throw new Error(CONTENT_TYPE_MISMATCH_ERROR);
   return ['-protocol_whitelist', 'file', '-f', format];
 }
