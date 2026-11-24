@@ -315,4 +315,22 @@ describe('upload init input (FILE-30 F-21, F-05)', () => {
     Object.defineProperty(parent, 'child', { enumerable: true, get() { reads += 1; return reads === 1 ? parent : 'x'; } });
     await expect(init(parent)).rejects.toMatchObject({ code: 'FILEFN_INVALID_REQUEST' });
   });
+
+  it('reports unreadable fields and BigInt array lengths as 400, and keys toJSON by fingerprint use', async () => {
+    const fileFn = makeFileFn([{ name: 'any' }]);
+    const throwing = { policy: 'nope', get fileName() { throw new Error('getter'); }, size: 1, mimeType: 'text/plain' };
+    await expect(fileFn.createUploadSession(throwing as never, { principalId: 'alice' })).rejects.toMatchObject({
+      code: 'FILEFN_INVALID_REQUEST',
+      details: { field: 'fileName' },
+    });
+    const bigLength = new Proxy([1], { get: (t, p) => (p === 'length' ? 1n : Reflect.get(t, p)) });
+    await expect(
+      fileFn.createUploadSession({ policy: 'any', fileName: 'a.txt', size: 1, mimeType: 'text/plain', metadata: { list: bigLength } } as never, { principalId: 'alice' }),
+    ).rejects.toMatchObject({ code: 'FILEFN_INVALID_REQUEST' });
+    const keys: string[] = [];
+    const metadata = { toJSON: (key: string) => { keys.push(key); return { ok: true }; } };
+    await fileFn.createUploadSession({ policy: 'any', fileName: 'a.txt', size: 1, mimeType: 'text/plain', metadata } as never, { principalId: 'alice' });
+    await fileFn.createUploadSession({ policy: 'any', fileName: 'a.txt', size: 1, mimeType: 'text/plain', metadata, idempotencyKey: 'k' } as never, { principalId: 'alice' });
+    expect(keys).toEqual(['', 'md']);
+  });
 });

@@ -110,7 +110,8 @@ function normalizeJson(
       const out: unknown[] = [];
       const parts: string[] = [];
       // ToLength of the length, read once, as JSON.stringify does.
-      const rawLength = Math.trunc(Number((value as { length: unknown }).length));
+      // Unary plus is ToNumber: a BigInt length throws, as in JSON.stringify.
+      const rawLength = Math.trunc(+((value as { length: unknown }).length as number));
       const length = Number.isFinite(rawLength) ? Math.min(Math.max(rawLength, 0), Number.MAX_SAFE_INTEGER) : rawLength > 0 ? Number.MAX_SAFE_INTEGER : 0;
       for (let i = 0; i < length; i++) {
         const item = normalizeJson((value as unknown[])[i], String(i), depth + 1, budget, ancestors);
@@ -255,8 +256,9 @@ export function assertValidUploadInit(input: UploadInitInput): { metadata?: Reco
   let snapshotJson: string | undefined;
   // Omitted metadata is fine; an explicit null is not an object.
   if (input.metadata !== undefined) {
-    // Normalized once, as JSON.stringify would (toJSON applied, with the key
-    // `md` the request fingerprint has always serialized it under), within
+    // Normalized once, as JSON.stringify would (toJSON applied with the key
+    // `md`, which the request fingerprint has always serialized it under, when
+    // there is a fingerprint; with the root key '' otherwise), within
     // depth and node budgets; the plain result is what gets checked, hashed
     // and stored.
     let normalized: unknown;
@@ -265,7 +267,7 @@ export function assertValidUploadInit(input: UploadInitInput): { metadata?: Reco
     try {
       // The byte budget has headroom over the limit; the exact size is
       // checked on the final string below.
-      const result = normalizeJson(input.metadata, 'md', 0, { left: MAX_METADATA_NODES, bytes: MAX_METADATA_BYTES * 2 });
+      const result = normalizeJson(input.metadata, input.idempotencyKey !== undefined && input.idempotencyKey !== null ? 'md' : '', 0, { left: MAX_METADATA_NODES, bytes: MAX_METADATA_BYTES * 2 });
       normalized = result.value;
       normalizedJson = result.json;
     } catch (error) {

@@ -1294,13 +1294,20 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       const source = input;
       let metadataRead = false;
       let metadataValue: unknown;
+      const readField = <K extends keyof CreateSessionInput>(field: K): CreateSessionInput[K] => {
+        try {
+          return source[field];
+        } catch {
+          throw errors.invalidRequest(`${String(field)} could not be read`, { field });
+        }
+      };
       const fields = {
-        policy: input.policy,
-        fileName: input.fileName,
-        size: input.size,
-        mimeType: input.mimeType,
-        fileId: input.fileId,
-        idempotencyKey: input.idempotencyKey,
+        policy: readField('policy'),
+        fileName: readField('fileName'),
+        size: readField('size'),
+        mimeType: readField('mimeType'),
+        fileId: readField('fileId'),
+        idempotencyKey: readField('idempotencyKey'),
         get metadata(): unknown {
           if (!metadataRead) {
             metadataRead = true;
