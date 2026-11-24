@@ -578,8 +578,13 @@ export function createHttpClient(config: FileFnClientConfig): HttpClient {
           const requestHeaders = mergeHeaders(
             toFileFn ? await readAuthHeaders() : undefined,
             headers,
-            sendToken ? { "x-upload-session-token": uploadSessionToken! } : undefined,
           );
+          // Whatever the auth or signed headers carried, the token is set only
+          // for a verified FileFn part request.
+          for (const name of Object.keys(requestHeaders)) {
+            if (name.toLowerCase() === "x-upload-session-token") delete requestHeaders[name];
+          }
+          if (sendToken) requestHeaders["x-upload-session-token"] = uploadSessionToken!;
           const response = await transport.send(finalUrl, {
             method: "PUT",
             headers: requestHeaders,

@@ -385,8 +385,10 @@ export function createFileFn(config: FileFnConfig): FileFn {
     auth,
   });
 
+  // The quota route reports the caller's own account as the host's provider
+  // names it (the anonymous normalisation applies to upload accounting only).
   const quotaRoutes = createQuotaRoutes({
-    quota,
+    quota: hostQuota,
     auth,
   });
 

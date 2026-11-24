@@ -11,7 +11,7 @@ export type RateLimitClientKey = (request: Request) => string | null | undefined
  * The part of a rate-limit key after the category. Authenticated callers and
  * anonymous ones get disjoint keys, and each part is JSON-encoded, so no
  * principal, tenant or client key can produce another caller's key:
- * `user:["<tenant|null>","<principal>"]`, or `anon:["<client>"]` / `anon:[]`.
+ * `user:["<tenant|null>","<principal>"]`, or `anon:["<tenant|null>","<client>"]` / `anon:["<tenant|null>"]`.
  */
 export async function rateLimitSubject(
   principal: Pick<FileFnPrincipal, 'principalId' | 'tenantId'> | null | undefined,
@@ -21,6 +21,8 @@ export async function rateLimitSubject(
   if (principal?.principalId && principal.principalId !== 'anonymous') {
     return `user:${JSON.stringify([principal.tenantId || null, principal.principalId])}`;
   }
+  // The tenant the resolver named (if any) keeps tenants' anonymous traffic apart.
+  const tenant = principal?.tenantId || null;
   const client = clientKey ? await clientKey(request) : undefined;
-  return client ? `anon:${JSON.stringify([client])}` : 'anon:[]';
+  return `anon:${JSON.stringify(client ? [tenant, client] : [tenant])}`;
 }

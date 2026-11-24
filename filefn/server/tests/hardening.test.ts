@@ -78,6 +78,10 @@ describe('FILE-30 low-severity hardening (F-13, F-14, F-16, F-18, F-24)', () => 
     const tenantUser = await rateLimitSubject({ principalId: 'b', tenantId: 'a:x' }, request);
     const otherTenantUser = await rateLimitSubject({ principalId: 'x:b', tenantId: 'a' }, request);
     expect(new Set([anon, user, tenantUser, otherTenantUser]).size).toBe(4);
+    // Anonymous traffic of different resolved tenants stays apart.
+    const anonT1 = await rateLimitSubject({ principalId: 'anonymous', tenantId: 't1' }, request);
+    const anonT2 = await rateLimitSubject({ principalId: 'anonymous', tenantId: 't2' }, request);
+    expect(anonT1).not.toBe(anonT2);
   });
 
   it('gives anonymous callers their own rate-limit bucket when the host names them (F-14)', async () => {

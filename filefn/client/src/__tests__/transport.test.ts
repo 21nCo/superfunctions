@@ -242,6 +242,15 @@ describe('client transport options', () => {
     expect(proxyPut.redirect).toBe('error');
   });
 
+  it('drops a session token the auth headers carry unless the request is the FileFn part endpoint', async () => {
+    const server = createFakeServer(() => `${BASE}/bucket/object`);
+    const http = createHttpClient({ baseUrl: BASE, fetch: server.fetch, getAuthHeaders: () => ({ 'X-Upload-Session-Token': 'upls_auth' }) });
+    await http.uploadPartToSignedUrl(`${BASE}/bucket/object`, {}, new Blob(['abc']), 'upls_1').catch(() => undefined);
+    await http.uploadPartToSignedUrl('/upload/sess_1/parts/1', {}, new Blob(['abc']), 'upls_1');
+    expect(server.calls[0]!.headers.get('x-upload-session-token')).toBeNull();
+    expect(server.calls[1]!.headers.get('x-upload-session-token')).toBe('upls_1');
+  });
+
   it('sends the token only to the exact part endpoint the upload names', async () => {
     const server = createFakeServer((n) => `/upload/sess_1/parts/${n}`);
     const http = createHttpClient({ baseUrl: BASE, fetch: server.fetch });
