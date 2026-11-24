@@ -187,6 +187,18 @@ describe('upload init input (FILE-30 F-21, F-05)', () => {
     expect(calls).toBe(1);
   });
 
+  it('trims HTTP whitespace around a mimeType in linear time', async () => {
+    const fileFn = makeFileFn([{ name: 'any' }]);
+    await expect(
+      fileFn.createUploadSession({ policy: 'any', fileName: 'a.txt', size: 1, mimeType: ' \ttext/plain\t ' } as never, { principalId: 'alice' }),
+    ).resolves.toMatchObject({ uploadSessionId: expect.any(String) });
+    const started = Date.now();
+    await expect(
+      fileFn.createUploadSession({ policy: 'any', fileName: 'a.txt', size: 1, mimeType: `a/b${'\t'.repeat(1000)}x` } as never, { principalId: 'alice' }),
+    ).rejects.toMatchObject({ code: 'FILEFN_INVALID_REQUEST' });
+    expect(Date.now() - started).toBeLessThan(1000);
+  });
+
   it('passes the root key to toJSON when there is no (or an empty) idempotency key', async () => {
     const fileFn = makeFileFn([{ name: 'any' }]);
     const metadata = { toJSON: (key: string) => (key === '' ? { ok: true } : null) };

@@ -176,6 +176,15 @@ function hasLoneSurrogate(value: unknown, depth = 0, budget = { left: MAX_METADA
 // Each parameter is `token=token` or `token=quoted-string` (quoted text and
 // quoted pairs: tab, visible ASCII and Latin-1 obs-text); empty parameter
 // slots are allowed. Nothing above U+00FF, which no HTTP header can carry.
+/** Strips leading and trailing spaces and tabs (HTTP whitespace) in linear time. */
+function trimHttpWhitespace(value: string): string {
+  let start = 0;
+  let end = value.length;
+  while (start < end && (value[start] === ' ' || value[start] === '\t')) start++;
+  while (end > start && (value[end - 1] === ' ' || value[end - 1] === '\t')) end--;
+  return value.slice(start, end);
+}
+
 const MIME_TOKEN = "[!#$%&'*+.^_`|~0-9A-Za-z-]+";
 const MIME_QUOTED = '"(?:[\\t \\x21\\x23-\\x5B\\x5D-\\x7E\\x80-\\xFF]|\\\\[\\t \\x21-\\x7E\\x80-\\xFF])*"';
 const MIME_TYPE = new RegExp(
@@ -249,7 +258,7 @@ export function assertValidUploadInit(input: UploadInitInput): { metadata?: Reco
   if (
     typeof input.mimeType !== 'string' ||
     // Leading and trailing spaces or tabs are HTTP whitespace, not part of the type.
-    !MIME_TYPE.test(input.mimeType.replace(/^[ \t]+|[ \t]+$/g, '')) ||
+    !MIME_TYPE.test(trimHttpWhitespace(input.mimeType)) ||
     // Tab is HTTP whitespace and may separate parameters; other controls may not.
     // C0 controls other than tab, and DEL; U+0080-U+00FF is left to the
     // quoted-string grammar (obs-text).
