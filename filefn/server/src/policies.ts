@@ -151,7 +151,8 @@ export function unsafeStorageKeyReason(key: string): string | null {
   if (typeof key !== 'string' || key.length === 0) return 'empty key';
   if (new RegExp(STORAGE_KEY_CONTROL_CHARACTERS.source).test(key)) return 'control character';
   if (key.includes('\\')) return 'backslash';
-  if (key.startsWith('/')) return 'absolute key';
+  // Slash-rooted, or drive-qualified as a Windows filesystem adapter would read it.
+  if (key.startsWith('/') || /^[A-Za-z]:(\/|$)/.test(key)) return 'absolute key';
   for (const segment of key.split('/')) {
     if (segment === '') return 'empty segment';
     if (segment === '.' || segment === '..') return 'dot segment';

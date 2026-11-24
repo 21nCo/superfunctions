@@ -118,6 +118,9 @@ describe('storage keys (FILE-30 F-01)', () => {
     expect(sanitizeStorageKeySegment('report..pdf')).toBe('report..pdf');
     expect(unsafeStorageKeyReason('a/./b')).toBe('dot segment');
     expect(unsafeStorageKeyReason('/a')).toBe('absolute key');
+    expect(unsafeStorageKeyReason('C:/Windows/x')).toBe('absolute key');
+    expect(unsafeStorageKeyReason('c:')).toBe('absolute key');
+    expect(unsafeStorageKeyReason('a:b/x')).toBeNull();
     expect(unsafeStorageKeyReason('a\\b')).toBe('backslash');
     expect(unsafeStorageKeyReason('acme.com/a..b')).toBeNull();
   });
