@@ -1137,10 +1137,19 @@ describe('parseWebhook with recorded Dodo payloads', () => {
   });
 
   it('fails the delivery when the payment does not say whether it belongs to a subscription', async () => {
-    const { subscription_id: _omitted, ...unclassified } = oneTimePayment;
+    const { subscription_id: _omitted, subscription_ids: _ids, ...unclassified } = oneTimePayment;
     const fetchMock = dodoReads({ [`/payments/${oneTimePayment.payment_id}`]: unclassified });
 
     await expect(parse(refund, fetchMock)).rejects.toMatchObject({ code: 'BILLFN_PROVIDER_ERROR' });
+  });
+
+  it('revokes a one-time payment whose answer omits the optional subscription_id but lists no subscriptions', async () => {
+    const { subscription_id: _omitted, ...withoutSubscriptionId } = oneTimePayment;
+    const fetchMock = dodoReads({ [`/payments/${oneTimePayment.payment_id}`]: withoutSubscriptionId });
+
+    const event = await parse(refund, fetchMock);
+
+    expect(event.billingState).toMatchObject({ subscriptionStatus: 'canceled', providerChargeId: oneTimePayment.payment_id });
   });
 
   it('dates a revocation when its Dodo read started, not when the refund happened', async () => {

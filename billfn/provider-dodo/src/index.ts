@@ -76,17 +76,21 @@ export function createDodoProvider(config: DodoProviderConfig): BillFnProviderAd
     }
     const observedAt = new Date().toISOString();
     const payment = asPlainRecord(await get('payments', paymentId));
-    if (
-      !payment ||
-      readString(payment, ['payment_id']) !== paymentId ||
-      !('subscription_id' in payment) ||
-      (payment.subscription_id !== null && typeof payment.subscription_id !== 'string')
-    ) {
+    if (!payment || readString(payment, ['payment_id']) !== paymentId) {
       throw unusableDodoRead(`payment ${paymentId}`);
     }
-    const subscriptionIds = Array.isArray(payment.subscription_ids) ? payment.subscription_ids : [];
-    if (payment.subscription_id || subscriptionIds.length > 0 || payment.is_multi_subscription === true) {
+    const subscriptionIds = Array.isArray(payment.subscription_ids) ? payment.subscription_ids : undefined;
+    if (
+      (typeof payment.subscription_id === 'string' && payment.subscription_id.length > 0) ||
+      (subscriptionIds !== undefined && subscriptionIds.length > 0) ||
+      payment.is_multi_subscription === true
+    ) {
       return undefined;
+    }
+    // One-time only when Dodo says so: a null subscription_id, or (Dodo may omit that optional field) an empty
+    // subscription_ids list. An answer that establishes neither cannot be classified.
+    if (payment.subscription_id !== null && subscriptionIds === undefined) {
+      throw unusableDodoRead(`payment ${paymentId}`);
     }
     return {
       state: {
