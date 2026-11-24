@@ -47,7 +47,7 @@ A slot names its executable and a profile. The profile itself lives in the panel
 | `envAllowlist` | Environment variable names only. The CLI gets exactly these variables, when set, plus the slot's `credentialEnv`. Nothing else is inherited, not even `PATH` or `HOME` unless they are listed. |
 | `modelReport` | `none`, `json-path:<dotted path>` in the output object, or `stderr-regex:<regex with exactly one capture group>`. |
 | `capabilities` | `structuredOutput` (the CLI enforces the schema itself, so `argv` must include `{schemaFile}`) and `sandbox`: `enforced-read-only` or `tree-verified-only`. |
-| `versionArgv` | Optional arguments that print the CLI's version, `["--version"]` by default. Placeholders are not allowed. The first dotted version token, such as `0.9.0` or `2025.08.25-896bbe1`, must equal the slot's `harness.version`. |
+| `versionArgv` | Optional arguments that print the CLI's version, `["--version"]` by default. Placeholders are not allowed. The first dotted version token, such as `0.9.0` or `2025.08.25-896bbe1`, must equal the slot's `harness.version`. An observed version satisfies only the invocation that reported it: the same resolved executable file (path, device, inode, size and times), version arguments and environment, so another profile's environment or a replaced executable is probed again. |
 
 `harness.executable` is an absolute path or a bare command name. A bare name is found on the adapter's `PATH`, in a trusted directory and never inside the repository. A relative path is refused, because it would resolve inside the repository under review. Either form is resolved through every link before the version is read or the CLI runs. It is refused when it lands in the working directory or the review checkout, under a directory that is world-writable or has a world-writable or Git-repository ancestor (the rule bare names follow), or when it is a world-writable file. The resolved path is what runs.
 
@@ -67,7 +67,7 @@ A slot names its executable and a profile. The profile itself lives in the panel
 
 ## Output validation
 
-The output is validated against the slot's output schema. One bounded repair attempt follows, in a new process with the validation errors and the rejected answer. Every `promptVia` × `outputVia` combination allows this re-run, because each attempt gets a fresh prompt and a fresh output file or stdout. A second invalid answer ends the slot `malformed`.
+The output is validated against the slot's output schema. One bounded repair attempt follows, in a new process with the validation errors and the rejected answer. Every `promptVia` × `outputVia` combination allows this re-run, because each attempt gets a fresh prompt and a fresh output file or stdout. Each attempt's prompt file is a new file, created exclusively so a link the CLI left in its run directory is never followed, and written only when the profile passes `{promptFile}`. The repair prompt echoes the rejected answer's own text (the output file or the stdout line, cut to 16,384 bytes), never a re-serialization of it. A second invalid answer ends the slot `malformed`.
 
 ## Example profiles
 

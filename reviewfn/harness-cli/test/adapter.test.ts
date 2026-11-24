@@ -1,4 +1,4 @@
-import { chmod, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -151,6 +151,41 @@ describe("CliHarnessAdapter process boundary", () => {
     expect(output.terminal).toBe("failed");
     expect(await calls()).toEqual([]);
   });
+  it.skipIf(process.platform === "win32")("writes each attempt's prompt to a new file, never through a link the CLI planted for the repair attempt", async () => {
+    const target = path.join(directory, "target.txt");
+    await writeFile(target, "untouched");
+    let attempts = 0;
+    const runner: CommandRunner = async (command, args, options) => {
+      const result = await runProcessGroup(command, args, options);
+      const prompt = args[args.indexOf("--prompt") + 1];
+      if (args.includes("--prompt") && (attempts += 1) === 1) {
+        // The CLI can write its run directory: it replaces its prompt file and plants the next one, both as links.
+        for (const name of [path.basename(prompt), "prompt.md", "prompt-2.md"]) {
+          await rm(path.join(path.dirname(prompt), name), { force: true });
+          await symlink(target, path.join(path.dirname(prompt), name));
+        }
+      }
+      return result;
+    };
+    const output = await new CliHarnessAdapter({ environment: environment(), runner }).run(input(configuration(profile({ promptVia: "file", extra: ["--answer", "invalid-once"] }))));
+    expect(await readFile(target, "utf8")).toBe("untouched");
+    expect(output.terminal).toBe("failed");
+    expect(output.error).toContain("The prompt file could not be created");
+    expect(await calls()).toHaveLength(1);
+  }, 30_000);
+
+  it("writes no prompt file when the CLI reads its prompt on stdin and is not given {promptFile}", async () => {
+    const listed: string[][] = [];
+    const runner: CommandRunner = async (command, args, options) => {
+      const result = await runProcessGroup(command, args, options);
+      if (args.includes("--out")) listed.push(await readdir(path.dirname(args[args.indexOf("--out") + 1])));
+      return result;
+    };
+    const output = await new CliHarnessAdapter({ environment: environment(), runner }).run(input(configuration(profile({ promptVia: "stdin", outputVia: "file", extra: ["--answer", "invalid-once"] }))));
+    expect(output.terminal).toBe("completed");
+    expect(listed).toHaveLength(2);
+    for (const names of listed) expect(names.filter(name => name.startsWith("prompt"))).toEqual([]);
+  }, 30_000);
 });
 
 describe("CliHarnessAdapter model reporting", () => {
@@ -494,6 +529,24 @@ describe("CliHarnessAdapter output validation", () => {
     expect(await calls()).toHaveLength(2);
   }, 30_000);
 
+  it("echoes the rejected answer's own stdout line, even one too deep to re-serialize, and still repairs it", async () => {
+    const deep = `{"findings":"none","nested":${'{"a":'.repeat(10_000)}1${"}".repeat(10_000)}}`;
+    expect(() => JSON.stringify(JSON.parse(deep))).toThrow(RangeError);
+    const prompts: string[] = [];
+    const runner: CommandRunner = async (_command, args, options) => {
+      if (args.includes("--version")) return { code: 0, signal: null, stdout: "fake-cli version 1.2.3\n", stderr: "", timedOut: false, canceled: false };
+      prompts.push(options.stdin ?? "");
+      const answer = prompts.length === 1 ? deep : JSON.stringify({ findings: [], evidence: [], inspectedPaths: ["src/index.ts"], uninspected: [] });
+      return { code: 0, signal: null, stdout: `progress\n${answer}\n`, stderr: "", timedOut: false, canceled: false };
+    };
+    const output = await new CliHarnessAdapter({ environment: environment(), runner }).run(input(configuration(profile())));
+    expect(output.error).toBeUndefined();
+    expect(output.terminal).toBe("completed");
+    expect(prompts).toHaveLength(2);
+    expect(prompts[1]).toContain("Repair: your previous answer was rejected");
+    expect(prompts[1]).toContain(`{"findings":"none","nested":{"a":{"a":`);
+  }, 30_000);
+
   it("treats a null requirements or assessments section the caller schema allows as empty", async () => {
     const nullable = { ...lensOutputSchema, properties: { ...lensOutputSchema.properties, requirements: { type: "null" }, assessments: { type: "null" } } };
     const output = await run(profile({ extra: ["--extra-json", JSON.stringify({ requirements: null, assessments: null })] }), undefined, { outputSchema: nullable });
@@ -616,6 +669,39 @@ describe("CliHarnessAdapter preflight and configuration", () => {
     expect((await harness.run(input(config))).terminal).toBe("failed");
     expect(await calls()).toEqual([]);
   }, 20_000);
+
+  it("satisfies a slot's pin only with the version its own environment reported, never another profile's observation", async () => {
+    // A shim selected by an environment variable reports another version: the two profiles differ only in that variable.
+    let probes = 0;
+    const runner: CommandRunner = async (command, args, options) => {
+      if (!args.includes("--version")) return runProcessGroup(command, args, options);
+      probes += 1;
+      return { code: 0, signal: null, stdout: `fake-cli version ${options.env?.SHIM_VERSION ?? "1.2.3"}\n`, stderr: "", timedOut: false, canceled: false };
+    };
+    const harness = new CliHarnessAdapter({ environment: { ...environment(), SHIM_VERSION: "9.9.9" }, runner });
+    const plain = configuration(profile());
+    const shimmed = configuration(profile({ envAllowlist: ["ALLOWED_ONE", "SHIM_VERSION"] }));
+    expect((await harness.preflight(plain)).resolved?.harnessVersion).toBe("1.2.3");
+    expect((await harness.preflight(shimmed)).resolved?.harnessVersion).toBe("9.9.9");
+    expect((await harness.run(input(plain))).observed?.harnessVersion).toBe("1.2.3");
+    expect((await harness.run(input(shimmed))).observed?.harnessVersion).toBe("9.9.9");
+    // Each run reuses the observation its own preflight made.
+    expect(probes).toBe(2);
+  }, 30_000);
+
+  it("ends a run whose version probe used up the deadline timed_out before the CLI started", async () => {
+    let spawned = 0;
+    const runner: CommandRunner = async (_command, args) => {
+      spawned += 1;
+      await new Promise(resolve => setTimeout(resolve, 150));
+      return { code: 0, signal: null, stdout: args.includes("--version") ? "fake-cli version 1.2.3\n" : "", stderr: "", timedOut: false, canceled: false };
+    };
+    const policy = { ...DEFAULT_POLICY, limits: { ...DEFAULT_POLICY.limits, harnessTimeoutMs: 50 } };
+    const output = await new CliHarnessAdapter({ environment: environment(), runner }).run(input(configuration(profile()), { policy }));
+    expect(output.terminal).toBe("timed_out");
+    expect(output.error).toBe("The CLI exceeded its configured bound before the CLI started.");
+    expect(spawned).toBe(1);
+  });
 
   it("keeps its contract version after preflight, for the CLI's harness contract versions", async () => {
     const harness = new CliHarnessAdapter({ environment: environment() });

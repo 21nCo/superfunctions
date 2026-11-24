@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import { access, lstat, mkdtemp, open, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -122,13 +123,17 @@ export function cliArguments(argv: readonly string[], values: CliPlaceholderValu
 
 /** The last line of `stdout` that parses as a JSON object, or undefined when none does. Progress lines before it are ignored. */
 export function lastJsonObjectLine(stdout: string): Record<string, unknown> | undefined {
+  return lastJsonObject(stdout)?.value;
+}
+
+function lastJsonObject(stdout: string): { value: Record<string, unknown>; line: string } | undefined {
   const lines = stdout.split(/\r?\n/);
   for (let index = lines.length - 1; index >= 0; index -= 1) {
     const line = lines[index].trim();
     if (!line.startsWith("{")) continue;
     try {
       const value: unknown = JSON.parse(line);
-      if (isRecord(value)) return value;
+      if (isRecord(value)) return { value, line };
     } catch { /* not JSON: keep looking */ }
   }
   return undefined;
@@ -186,7 +191,11 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
   private readonly runner: CommandRunner;
   private readonly executable: string | undefined;
   private readonly environment: NodeJS.ProcessEnv;
-  /** Versions observed by preflight, by executable and version arguments. */
+  /**
+   * Versions observed by a probe, by the exact invocation that reported them: the executable's path and file identity,
+   * the version arguments and the probe's environment. A pin is satisfied only by an observation of the invocation that
+   * serves the slot, never by another profile's environment or by an executable since replaced at the same path.
+   */
   private readonly versions = new Map<string, string>();
 
   public constructor(options: CliHarnessOptions = {}) {
@@ -206,7 +215,8 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
       const secrets = this.secrets(config, environment);
       try {
         const executable = await this.resolveExecutable(config);
-        const probed = await this.probeVersion(executable, profile, environment, secrets, VERSION_TIMEOUT_MS, signal);
+        const key = await this.versionKey(executable, profile, environment);
+        const probed = await this.probeVersion(executable, key, profile, environment, secrets, VERSION_TIMEOUT_MS, signal);
         if ("error" in probed) diagnostics.push({ code: "REVIEWFN_HARNESS_VERSION", level: "error", message: redactText(probed.error, secrets) });
         else version = probed.version;
       } catch (error) {
@@ -222,11 +232,14 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
     if ("terminal" in prepared) return prepared;
     const { state, profile } = prepared;
     let executable: string;
-    try { executable = await this.resolveExecutable(input.configuration, input.workspace); }
-    catch (error) { return state.finish("failed", `The CLI executable is unavailable: ${message(error)}`); }
-    const unconfirmed = await this.confirmVersion(prepared, executable);
+    let key: string;
+    try {
+      executable = await this.resolveExecutable(input.configuration, input.workspace);
+      key = await this.versionKey(executable, profile, prepared.environment);
+    } catch (error) { return state.finish("failed", `The CLI executable is unavailable: ${message(error)}`); }
+    const unconfirmed = await this.confirmVersion(prepared, executable, key);
     if (unconfirmed) return unconfirmed;
-    state.harnessVersion = this.versions.get(this.versionKey(executable, profile));
+    state.harnessVersion = this.versions.get(key);
     let directory: string | undefined;
     try {
       directory = await mkdtemp(path.join(tmpdir(), "reviewfn-cli-"));
@@ -254,10 +267,10 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
   }
 
   /** On a cold version cache, read the version first: a probe that hangs or overruns its output bound ends timed_out. */
-  private async confirmVersion(run: Prepared, executable: string): Promise<SlotHarnessOutput | undefined> {
-    if (this.versions.has(this.versionKey(executable, run.profile))) return undefined;
+  private async confirmVersion(run: Prepared, executable: string, key: string): Promise<SlotHarnessOutput | undefined> {
+    if (this.versions.has(key)) return undefined;
     const timeoutMs = Math.max(1, Math.min(VERSION_TIMEOUT_MS, run.deadline - Date.now()));
-    const probed = await this.probeVersion(executable, run.profile, run.environment, run.secrets, timeoutMs, run.input.signal);
+    const probed = await this.probeVersion(executable, key, run.profile, run.environment, run.secrets, timeoutMs, run.input.signal);
     if (run.input.signal?.aborted) return run.state.finish("canceled", "The CLI run was canceled while its version was read.");
     if (!("error" in probed)) return undefined;
     return run.state.finish(probed.timedOut ? "timed_out" : "failed", probed.error);
@@ -271,10 +284,10 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
     // only without that field where the slot's schema closes an object to it.
     const cliSchema = withModelReportField(prepared.schema, profile.modelReport);
     const basePrompt = `${input.prompt}\n\n${outputContract(cliSchema, profile)}`;
-    const run: AttemptContext = { ...prepared, promptFile: path.join(prepared.directory, "prompt.md"), schemaFile: path.join(prepared.directory, "schema.json") };
+    const run: AttemptContext = { ...prepared, schemaFile: path.join(prepared.directory, "schema.json") };
     await writeFile(run.schemaFile, JSON.stringify(cliSchema), { mode: 0o600, flag: "wx" });
     // Every promptVia × outputVia combination allows the re-run: each attempt is a new process with a new prompt (on
-    // stdin or a rewritten prompt file) and a fresh output (a new output file or its own stdout).
+    // stdin or a new prompt file) and a fresh output (a new output file or its own stdout).
     let prompt = basePrompt;
     for (let attempt = 1; attempt <= 2; attempt += 1) {
       const outcome = await this.attempt(run, attempt, prompt);
@@ -289,13 +302,20 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
   /** One CLI process: its terminal outcome, or the rejection that earns the repair attempt. */
   private async attempt(run: AttemptContext, attempt: number, prompt: string): Promise<SlotHarnessOutput | Rejection> {
     const { state, input, profile } = run;
+    const before = attempt === 1 ? "before the CLI started" : "before the repair attempt";
     const remaining = run.deadline - Date.now();
-    if (remaining <= 0) return state.finish("timed_out", "The CLI exceeded its configured bound before the repair attempt.");
+    if (remaining <= 0) return state.finish("timed_out", `The CLI exceeded its configured bound ${before}.`);
     const outputBytes = state.remainingOutputBytes();
-    if (outputBytes <= 0) return state.finish("timed_out", "The CLI output used its whole byte budget before the repair attempt.");
+    if (outputBytes <= 0) return state.finish("timed_out", `The CLI output used its whole byte budget ${before}.`);
     const outputFile = path.join(run.directory, `output-${attempt}.json`);
-    await writeFile(run.promptFile, prompt, { mode: 0o600 });
-    const args = cliArguments(profile.argv, { promptFile: run.promptFile, schemaFile: run.schemaFile, outputFile, workspace: input.workspace, model: input.configuration.inference.model });
+    // Each attempt's prompt goes to a new file, created exclusively, so a link the CLI planted in the run directory is
+    // never followed; it is written only when the CLI is given its path.
+    const promptFile = path.join(run.directory, `prompt-${attempt}.md`);
+    if (profile.promptVia === "file" || profile.argv.includes("{promptFile}")) {
+      try { await writeFile(promptFile, prompt, { mode: 0o600, flag: "wx" }); }
+      catch (error) { return state.finish("failed", `The prompt file could not be created: ${message(error)}`); }
+    }
+    const args = cliArguments(profile.argv, { promptFile, schemaFile: run.schemaFile, outputFile, workspace: input.workspace, model: input.configuration.inference.model });
     state.push("started", { attempt, promptVia: profile.promptVia, outputVia: profile.outputVia, sandbox: profile.capabilities.sandbox });
     // An output file is measured while the CLI runs: one that outgrows the remaining budget aborts the run, which
     // kills the whole process group, and the run ends timed_out like any other overrun, never canceled.
@@ -361,8 +381,16 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
     return executable;
   }
 
-  private versionKey(executable: string, profile: HarnessProfile): string {
-    return JSON.stringify([executable, profile.versionArgv ?? CLI_DEFAULT_VERSION_ARGV]);
+  /**
+   * The invocation a version observation belongs to: the canonical executable with its file identity (device, inode, size,
+   * modification and change times), the version arguments and the probe's whole environment, hashed so no environment
+   * value is kept in the key.
+   */
+  private async versionKey(executable: string, profile: HarnessProfile, environment: NodeJS.ProcessEnv): Promise<string> {
+    const file = await stat(executable, { bigint: true });
+    const identity = [file.dev, file.ino, file.size, file.mtimeNs, file.ctimeNs].map(String);
+    const variables = Object.entries(environment).filter(([, value]) => value !== undefined).sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0);
+    return createHash("sha256").update(JSON.stringify([executable, identity, profile.versionArgv ?? CLI_DEFAULT_VERSION_ARGV, variables])).digest("hex");
   }
 
   /**
@@ -370,7 +398,7 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
    * failure's detail is redacted before it is cut to length, so a secret that crosses the cut cannot leak its prefix. A
    * probe that hangs or overruns its output bound says so, so the run can end timed_out.
    */
-  private async probeVersion(executable: string, profile: HarnessProfile, environment: NodeJS.ProcessEnv, secrets: string[], timeoutMs: number, signal?: AbortSignal): Promise<{ version: string } | { error: string; timedOut: boolean }> {
+  private async probeVersion(executable: string, key: string, profile: HarnessProfile, environment: NodeJS.ProcessEnv, secrets: string[], timeoutMs: number, signal?: AbortSignal): Promise<{ version: string } | { error: string; timedOut: boolean }> {
     const args = [...(profile.versionArgv ?? CLI_DEFAULT_VERSION_ARGV)];
     let result: CommandResult;
     try { result = await this.runner(executable, args, { cwd: tmpdir(), env: environment, timeoutMs, maxOutputBytes: VERSION_OUTPUT_BYTES, signal }); }
@@ -379,7 +407,7 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
     if (result.code !== 0) return { error: `The CLI version command exited with ${String(result.code ?? result.signal)}: ${redactText(result.stderr, secrets).trim().slice(0, 500)}`, timedOut: false };
     const version = parseCliVersion(result.stdout, result.stderr);
     if (!version) return { error: "The CLI reported no recognizable version, so the slot's pinned version cannot be confirmed.", timedOut: false };
-    this.versions.set(this.versionKey(executable, profile), version);
+    this.versions.set(key, version);
     return { version };
   }
 
@@ -401,12 +429,13 @@ interface Prepared {
   deadline: number;
 }
 
-interface AttemptContext extends Prepared { executable: string; directory: string; promptFile: string; schemaFile: string }
+interface AttemptContext extends Prepared { executable: string; directory: string; schemaFile: string }
 
 /** An answer rejected by validation, with what the repair prompt echoes back. */
 interface Rejection { errors: string[]; rejected: string | undefined }
 
-type OutputRead = { value: Record<string, unknown>; text?: string } | { error: string; text?: string } | { overrun: string };
+/** A read answer: `text` is an output file's content, `line` the stdout line the answer was parsed from. */
+type OutputRead = { value: Record<string, unknown>; text?: string; line?: string } | { error: string; text?: string } | { overrun: string };
 
 /** The profile's own configuration errors: an invalid profile, and a model the CLI could read as an option. */
 function profileDiagnostics(config: ReviewFnConfig, error: (code: string, text: string) => void): void {
@@ -574,7 +603,10 @@ function inlineDefinitions(schema: unknown, definitions: Readonly<Record<string,
 /** The completed run for an answer that validates and confirms its model, or the rejection that earns a repair. */
 function accept(run: AttemptContext, attempt: number, output: OutputRead): SlotHarnessOutput | Rejection {
   if (!("value" in output)) return { errors: ["error" in output ? output.error : "The CLI produced no answer."], rejected: "text" in output ? output.text : undefined };
-  const rejection = (errors: string[]): Rejection => ({ errors, rejected: JSON.stringify(output.value) });
+  // The repair prompt echoes the answer's own text, never a re-serialization: an object JSON.parse accepted may still
+  // be too deep for JSON.stringify.
+  const rejected = output.text ?? output.line ?? serialized(output.value);
+  const rejection = (errors: string[]): Rejection => ({ errors, rejected });
   // An answer the slot's schema rejects goes to its repair attempt as it is, never through payload normalization.
   const { value, errors } = validated(run, output.value);
   if (errors.length) return rejection(errors);
@@ -588,10 +620,14 @@ function accept(run: AttemptContext, attempt: number, output: OutputRead): SlotH
   return run.state.complete(redactJson(payload, run.secrets));
 }
 
-/** The last JSON object line of stdout. */
+/** The last JSON object line of stdout, with the line it was parsed from. */
 function stdoutObject(stdout: string): OutputRead {
-  const value = lastJsonObjectLine(stdout);
-  return value ? { value } : { error: "No stdout line parses as a JSON object." };
+  return lastJsonObject(stdout) ?? { error: "No stdout line parses as a JSON object." };
+}
+
+/** `value` as JSON, or undefined when it cannot be serialized (too deep, say). */
+function serialized(value: unknown): string | undefined {
+  try { return JSON.stringify(value); } catch { return undefined; }
 }
 /** The output file, read without following a link, within the remaining output budget, as exactly one JSON object. */
 async function readOutputFile(file: string, maxBytes: number): Promise<OutputRead> {
