@@ -384,8 +384,8 @@ describe('Apple verifier and token signer on workerd', () => {
     const imported = await mf.dispatchFetch(`${ORIGIN}/fixture/apple-import`, { method: 'POST' });
     expect(await imported.json()).toEqual({ imported: null });
     const authorizations = (await (await mf.dispatchFetch(`${ORIGIN}/fixture/apple-authorizations`)).json()) as string[];
-    // StoreKit's not-found answer from production falls back to sandbox, so the import reads twice.
-    expect(authorizations).toHaveLength(2);
+    // A production adapter without allowSandbox reads only production, so the import reads once.
+    expect(authorizations).toHaveLength(1);
     for (const authorization of authorizations) {
       const [header, payload, signature] = authorization.replace(/^Bearer /, '').split('.');
       const signed = Buffer.from(`${header}.${payload}`);

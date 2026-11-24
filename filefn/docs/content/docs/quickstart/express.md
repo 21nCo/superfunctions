@@ -50,6 +50,9 @@ export function fileFnHandler(router: FileFnRouter): RequestHandler {
       const response = await router.handle(request);
       if (!response) { res.status(404).end(); return; }
       res.status(response.status);
+      // A request body FileFn stopped reading (e.g. a 413) is never drained:
+      // close the connection instead of leaving it paused.
+      if (!req.complete) res.setHeader("connection", "close");
       response.headers.forEach((value, name) => {
         if (name !== "set-cookie") res.setHeader(name, value);
       });
@@ -101,6 +104,8 @@ app.listen(3001);
 ```
 
 The bridge streams downloads with backpressure and preserves their bytes and headers. Unknown routes return 404. Keep JSON/raw body parsers off this mount; FileFn’s upload policy still controls accepted file size. The memory database is disposable and loses metadata on restart. Use your host’s persistent adapter, authentication, and policy configuration for production.
+
+`auth: { required: false }` keeps this quickstart short: anyone can upload, and because every unauthenticated caller is the same `anonymous` principal, nobody owns those uploads afterwards. They are readable only when the policy is `public`, and nobody can delete or share them over HTTP. Configure `auth.resolveSession` before real users upload (see [Security](../core-concepts/security)).
 
 ## When to use Express vs. Hono
 

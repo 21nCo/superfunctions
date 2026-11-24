@@ -1,6 +1,8 @@
 import type { Adapter } from '@superfunctions/db';
+import { isGrantExpired } from './grant-expiry.js';
 import type { FileProviderContext } from '@superfunctions/files';
 import type { FileRecord, Authorizer } from '../files/service.js';
+import { isFileOwner } from './ownership.js';
 
 export type AuthorizerStrategy = 'first-allow' | 'all-must-allow';
 
@@ -105,17 +107,6 @@ export interface DefaultAuthorizerContext extends FileProviderContext {
 export function createDefaultAuthorizer(config: DefaultAuthorizerConfig): Authorizer {
   const { db, namespace = 'filefn', adminRoles = ['admin'] } = config;
 
-  function isGrantExpired(expiresAt: string | null): boolean {
-    if (!expiresAt) {
-      return false;
-    }
-    const expiresAtMs = Date.parse(expiresAt);
-    if (Number.isNaN(expiresAtMs)) {
-      return true;
-    }
-    return expiresAtMs <= Date.now();
-  }
-
   async function getApplicableGrants(
     fileId: string,
     ctx: DefaultAuthorizerContext
@@ -142,7 +133,7 @@ export function createDefaultAuthorizer(config: DefaultAuthorizerConfig): Author
   }
 
   function isOwner(file: FileRecord, ctx: FileProviderContext): boolean {
-    return file.ownerId === ctx.principalId;
+    return isFileOwner(file, ctx);
   }
 
   return {

@@ -44,6 +44,14 @@ class AuthConfig(BaseModel):
     tenant_id_field: str = "tenantId"
 
 
+class GrantsConfig(BaseModel):
+    # Allow a grant to a tenant other than the file's own (off by default).
+    allow_cross_tenant: bool = Field(default=False, alias="allowCrossTenant")
+
+    class Config:
+        populate_by_name = True
+
+
 class DedupConfig(BaseModel):
     enabled: bool = False
 
@@ -72,6 +80,7 @@ class FileFnConfig(BaseModel):
     signed_url_ttl_seconds: Optional[int] = None
     dedup: Optional[DedupConfig] = None
     processing: Optional[ProcessingConfig] = None
+    grants: Optional[GrantsConfig] = None
 
     class Config:
         arbitrary_types_allowed = True
@@ -282,6 +291,7 @@ def create_file_fn(config: FileFnConfig) -> FileFn:
         GrantsServiceConfig(
             db=config.db,
             namespace=namespace,
+            allow_cross_tenant=config.grants.allow_cross_tenant if config.grants is not None else False,
         )
     )
 

@@ -18,7 +18,7 @@ import { createFileRoutes } from './files/routes.js';
 import { createDeduplicationService } from './dedup/service.js';
 import { createGrantsService, type GrantsService } from './authz/grants.service.js';
 import { createGrantsRoutes } from './authz/grants.routes.js';
-import { createSharesService, type SharesService } from './shares/service.js';
+import { createSharesService, type ShareLinkOptions, type SharesService } from './shares/service.js';
 import { createSharesRoutes } from './shares/routes.js';
 import { createProcessingService, type Processor, type FlowFnProvider, type ProcessingService } from './processing/service.js';
 import { createProcessingRoutes } from './processing/routes.js';
@@ -63,6 +63,19 @@ export interface FileFnConfig {
   };
   observability?: ObservabilityInput<FileFnObservationEvent>;
   authorizer?: Authorizer;
+  /**
+   * Share links. `enabled: false` removes the share-link routes (creating,
+   * listing, revoking and downloading); `requireAuth` makes every new link
+   * require a signed-in downloader; `maxTtlSeconds` caps a link's lifetime and
+   * is the lifetime of a link created without `expiresAt`. By default links
+   * are enabled, public and never expire unless the creator sets `expiresAt`.
+   */
+  shares?: { enabled?: boolean } & ShareLinkOptions;
+  /**
+   * Grants. `allowCrossTenant: true` lets an owner grant a tenant other than
+   * the file's own; by default such a grant is refused (403).
+   */
+  grants?: { allowCrossTenant?: boolean };
   namespace?: string;
   /**
    * Path prefix the router serves every route under, e.g. `/files` when the
@@ -258,6 +271,7 @@ export function createFileFn(config: FileFnConfig): FileFn {
     enabled: processingConfig?.enabled ?? false,
     background,
     writeChecker: fileService,
+    readChecker: fileService,
   });
 
   const uploadService = createUploadSessionService({
@@ -303,6 +317,7 @@ export function createFileFn(config: FileFnConfig): FileFn {
   const grantsService = createGrantsService({
     db: observedDb,
     namespace,
+    allowCrossTenantGrants: config.grants?.allowCrossTenant === true,
   });
 
   const grantsRoutes = createGrantsRoutes({
@@ -316,6 +331,7 @@ export function createFileFn(config: FileFnConfig): FileFn {
     policies: policyRegistry,
     namespace,
     signedUrlTtlSeconds,
+    options: { requireAuth: config.shares?.requireAuth, maxTtlSeconds: config.shares?.maxTtlSeconds },
   });
 
   const sharesRoutes = createSharesRoutes({
@@ -350,7 +366,7 @@ export function createFileFn(config: FileFnConfig): FileFn {
     uploadRoutes,
     fileRoutes,
     grantsRoutes,
-    sharesRoutes,
+    sharesRoutes: config.shares?.enabled === false ? undefined : sharesRoutes,
     processingRoutes,
     policyRoutes,
     quotaRoutes,
@@ -506,6 +522,8 @@ export {
   matchesContentType,
   resolveArtifactStorageTarget,
   resolveStorageTarget,
+  sanitizeStorageKeySegment,
+  unsafeStorageKeyReason,
   validatePolicyConstraints,
 } from './policies.js';
 export type { Policy, PolicyRegistry, Visibility } from './policies.js';
@@ -548,7 +566,7 @@ export type { GrantsRoutes, GrantsRouteContext } from './authz/grants.routes.js'
 
 // Share link exports
 export { createSharesService } from './shares/service.js';
-export type { SharesService, FileShareRecord, CreateShareLinkInput } from './shares/service.js';
+export type { SharesService, FileShareRecord, CreateShareLinkInput, ShareLinkOptions } from './shares/service.js';
 export { createSharesRoutes } from './shares/routes.js';
 export type { SharesRoutes, SharesRouteContext } from './shares/routes.js';
 
@@ -608,3 +626,10 @@ function fileFnLoggerFromObservability(logger: ObservationLogger | undefined): L
     debug: (message, context) => logger.debug?.(message, context),
   };
 }
+export {
+  INLINE_SAFE_CONTENT_TYPES,
+  buildDownloadHeaders,
+  contentDisposition,
+  isInlineSafeContentType,
+  signedDownloadConstraints,
+} from './download-headers.js';

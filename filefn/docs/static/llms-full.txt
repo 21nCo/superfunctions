@@ -851,7 +851,7 @@ If clients PUT directly to S3, the bucket needs CORS:
 ```json
 [{
   "AllowedOrigins": ["https://app.example.com"],
-  "AllowedMethods": ["PUT", "POST"],
+  "AllowedMethods": ["GET", "PUT", "POST"],
   "AllowedHeaders": ["*"],
   "ExposeHeaders": ["ETag"],
   "MaxAgeSeconds": 3000
@@ -1406,6 +1406,7 @@ Processing happens after the upload closes. Errors are isolated:
 ```ts
 fetch(`/filefn/${fileId}/process`, {
   method: "POST",
+  headers: { "content-type": "application/json" },
   body: JSON.stringify({
     storageKey: existing.storageKey,
     mimeType: existing.mimeType,
@@ -1577,6 +1578,7 @@ Every error response from filefn follows the same envelope:
 | `FILEFN_SHARE_EXPIRED` | 410 | The share link's `expiresAt` has passed. |
 | `FILEFN_SHARE_REVOKED` | 410 | The share link was revoked. |
 | `FILEFN_SHARE_DOWNLOADS_EXCEEDED` | 410 | The share link reached `maxDownloads`. |
+| `FILEFN_SHARE_DOWNLOAD_CONFLICT` | 409 | Too many concurrent downloads of the share link; retry. |
 | `FILEFN_SHARE_NOT_FOUND` | 404 | The share token doesn't match any row. |
 | `FILEFN_PERMISSION_NOT_FOUND` | 404 | Permission grant id doesn't exist. |
 | `FILEFN_PROCESSING_ENQUEUE_FAILED` | 503 | The processing queue / inline runner refused. |
@@ -1776,6 +1778,7 @@ Custom authorizers can implement org-wide read, project-scoped writes, anything 
 // We grant alice read + share for 24h.
 const grant = await fetch(`/filefn/file_xyz/permissions`, {
   method: "POST",
+  headers: { "content-type": "application/json" },
   body: JSON.stringify({
     userId: "alice",
     canRead: true,
@@ -1844,6 +1847,8 @@ The server:
 5. Otherwise → create a new session and store the key + hash.
 
 The window is the upload-session TTL. Re-using a key after the session expires creates a new session.
+
+Unauthenticated (anonymous) callers get no idempotency: they all share one scope, and only the caller that created a session holds its `uploadSessionToken`, so a retry always creates a fresh session with its own token. The abandoned session expires on its own.
 
 ## What's in the payload hash
 
@@ -2328,7 +2333,7 @@ When a client calls `POST /upload/init` with `policy: "public-image"`:
 - If `size > maxSizeBytes` → `FILEFN_POLICY_MAX_SIZE_EXCEEDED`.
 - If a `quota` is configured and would be exceeded → `FILEFN_QUOTA_EXCEEDED`.
 
-`contentTypes` accepts wildcards: `"image/*"`, `"video/*"`. The matcher is the same `matchesContentType` you can call yourself from `@filefn/server`.
+`contentTypes` accepts wildcards: `"image/*"`, `"video/*"`. The matcher is the same `matchesContentType` you can call yourself from `@filefn/server`. `"image/*"` does not match `image/svg+xml`, because an SVG can run script; list `"image/svg+xml"` explicitly to accept SVG uploads.
 
 ## Storage path layout
 
@@ -2362,7 +2367,9 @@ storagePath: ({ fileId, versionId }) => {
 }
 ```
 
-Any `..` and slashes in the input are sanitised before reaching `storagePath`.
+In the default layout every segment is sanitised without collisions: `%`, `/`, `\` and control characters are percent-encoded (`team/east` becomes `team%2Feast`), as are the dots of a segment that starts with `..` or is exactly `.`, and the colon of a segment that starts with a drive letter (`a:b` becomes `a%3Ab`); anything else is kept as it is. A tenant ID, principal ID, file ID or file name longer than 120 bytes is shortened in the key (its start, then `%~` and a 128-bit hash, and, for a file name, its extension); the full values are kept on the file.
+
+A custom `storagePath` receives the tenant and principal IDs exactly as your auth resolved them. Whatever it returns is checked: a key that is empty, starts with `/` or a drive letter and colon (`C:/x`, `C:x`), contains `\`, a control character, an empty segment, or a `.` or `..` segment is refused with `FILEFN_INVALID_REQUEST` (400). The examples above assume IDs without `/`, `\` or dot segments; if yours can contain them, pass each one through `sanitizeStorageKeySegment` from `@filefn/server` before putting it in the key.
 
 ## Visibility
 
@@ -2650,7 +2657,7 @@ filefn is a kernel; it inherits some risks from the host stack and adds a small 
 - **Bytes at rest** — the storage adapter handles encryption (S3 SSE, GCS CMEK, etc.). filefn doesn't add a second encryption layer.
 - **Bytes in flight** — TLS termination is the host stack's job. filefn assumes incoming requests are TLS-terminated and signed URLs are HTTPS.
 - **Multipart integrity** — every part is etagged; conflicts fail closed. The final SHA-256 (when supported by storage) is recorded in `fileVersions.checksumSha256Base64`.
-- **Idempotent retries** — `x-idempotency-key` prevents duplicate sessions from accidental retries.
+- **Idempotent retries** — `x-idempotency-key` prevents duplicate sessions from accidental retries by signed-in callers. Anonymous `init` calls are never replayed: a retry gets a new session.
 - **Anonymous upload tokens** — `uploadSessionToken` is hashed at rest and short-lived. Stealing the token gives access only for the session TTL and only for that one upload.
 - **Visibility** — `private` files require a session or grant. `shared` enforces the same. Share-link tokens are opaque and hashed.
 - **CSRF** — for routes that mutate, filefn requires either an `Authorization` header (bearer) or a CSRF-protected cookie. The kernel doesn't ship CSRF middleware itself; it expects the host framework to provide one.
@@ -2681,6 +2688,17 @@ auth: {
 }
 ```
 
+### Anonymous mode (`auth.required: false`)
+
+Every unauthenticated caller is the same principal, `anonymous`, so FileFn treats an anonymous upload as owned by nobody:
+
+- an unauthenticated caller can upload, but owns nothing: it has no owner's access to what was uploaded (a `public` upload stays readable and listable by anyone; under the default authorizer, a private one needs a read grant made to the principal `anonymous`), it cannot replace or delete it (the default authorizer decides writes and deletes by ownership; only a configured `authorizer` can allow more), and it can never create, list or revoke share links or grants, even with a `canShare` grant;
+- the file is readable only through its policy's visibility (`public`), a grant, or a share link that an authenticated user created.
+
+Use anonymous mode for public drop-offs. For uploads people should manage afterwards, configure `auth.resolveSession`.
+
+The principal ID `anonymous` is reserved for this: never return it from `auth.resolveSession` for a real user, who would own nothing. Share links and grants created on anonymous uploads before this rule keep working. Grants can no longer be listed or revoked over HTTP (only an owner manages grants), and share links only by a signed-in user holding a `canShare` grant on the file. Where no such user exists, review them in the database: set `revokedAt` on the `fileShares` rows, and delete the `filePermissions` rows you don't want, whose file is owned by `anonymous`.
+
 ### 2. Per-route rate limits
 
 Always configure `rateLimit.limits` in production. The unrestricted defaults are intentional (the kernel doesn't pretend to know your traffic), but they're not safe in the wild.
@@ -2688,6 +2706,10 @@ Always configure `rateLimit.limits` in production. The unrestricted defaults are
 ### 3. CORS
 
 Default to a strict origin list. Wide-open `Access-Control-Allow-Origin: *` works for proxy-mode public files, but anything that depends on credentials must scope down.
+
+### Cookie auth and CSRF
+
+Every FileFn route that takes a JSON body accepts only `Content-Type: application/json` (or a `+json` type) and answers anything else with `415 FILEFN_UNSUPPORTED_MEDIA_TYPE`, so a cross-site form or `no-cors` fetch cannot reach it without a CORS preflight. Routes that take raw bytes (upload-part `PUT`s and artifact uploads) are not covered by this check: they need a valid upload session or an authorized caller, so keep cookie auth `SameSite=Lax` or stricter, or check `Origin` in the host, for those too. A `POST` without a body (completing an upload) is still a simple request: when auth is a cookie, set it `SameSite=Lax` or stricter, or check `Origin` in the host. JSON bodies over 64 KiB are refused with `413 FILEFN_BODY_TOO_LARGE`.
 
 ### 4. Strict policies
 
@@ -2764,7 +2786,7 @@ curl -X POST https://example.com/filefn/file_xyz/share-links \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "expiresAt": "2025-01-31T23:59:59Z",
+    "expiresAt": "2099-01-31T23:59:59Z",
     "requiresAuth": false,
     "maxDownloads": 10
   }'
@@ -2778,7 +2800,7 @@ Response:
   "data": {
     "token": "shr_live_<random>",
     "url": "https://example.com/filefn/share-links/shr_live_<random>/download",
-    "expiresAt": "2025-01-31T23:59:59Z",
+    "expiresAt": "2099-01-31T23:59:59.000Z",
     "requiresAuth": false,
     "maxDownloads": 10
   }
@@ -2825,8 +2847,9 @@ After revoke, the token returns `FILEFN_SHARE_REVOKED` (HTTP 410).
 | `FILEFN_SHARE_EXPIRED` | The current time is past `expiresAt`. |
 | `FILEFN_SHARE_REVOKED` | The token was revoked. |
 | `FILEFN_SHARE_DOWNLOADS_EXCEEDED` | `maxDownloads` was reached. |
+| `FILEFN_SHARE_DOWNLOAD_CONFLICT` | Too many concurrent downloads of the link; retry. |
 
-All return HTTP 410 except `NOT_FOUND` (404). They're indistinguishable on purpose — clients that try a guessed token see "not found" instead of "exists but expired," which avoids leaking enumeration signal.
+All return HTTP 410 except `NOT_FOUND` (404) and `SHARE_DOWNLOAD_CONFLICT` (409). Retry a 409, treat a 410 as final, and read a 404 as no matching link. A token that matches no link gets 404 (once the request is past the rate limit, which answers 429 first), never one of the 410s, so trying tokens reveals nothing about links that exist.
 
 ## What share links don't do
 
@@ -2996,6 +3019,7 @@ This is what makes accidental double-clicks (and dropped responses on flaky netw
 - is stored only as a hash in `uploadSessions.uploadSessionTokenHash`
 - is required on `status`, `sign`, `complete`, `abort` (and the proxy `PUT` for parts)
 - is short-lived (the session TTL)
+- is returned only by the `init` call that created the session (anonymous `init` calls are never replayed; a retry gets a new session and token)
 
 This lets you do client-side / browser-side multipart uploads where the user has no long-lived auth token, without exposing the rest of the API.
 
@@ -3513,6 +3537,18 @@ Pass headers through the descriptor when the storage backend requires them:
 
 The bundled clients merge these into the `GET` automatically.
 
+## Response headers on proxied bytes
+
+The `/proxy/...` routes (files, versions, share links and artifacts) serve the type the uploader declared, so FileFn adds headers that keep a browser from running uploaded content on your origin:
+
+- `Content-Disposition: inline` only for types that cannot run script: PNG, JPEG, GIF, WebP, AVIF, BMP, PDF, plain text and common audio and video. Every other type, including HTML and SVG, is `attachment`, with the stored file name, and is served as `application/octet-stream`.
+- `X-Content-Type-Options: nosniff` on every response.
+- `Content-Security-Policy: sandbox; default-src 'none'; ...` on every response except PDF, which browsers' PDF viewers refuse to render under `sandbox`.
+
+Signed URLs always carry an explicit response content type: the type itself for the types above, `application/octet-stream` for any other, so the storage domain downloads those instead of rendering them. A stored type that is not one well-formed media type (for example a comma-separated list) is treated as unsafe. Render descriptors give such files, SVG included, no image preview: the thumbnail and preview intents return a placeholder instead of the original.
+
+Serving downloads from a separate origin (a dedicated download domain or the storage provider's) is still the stronger option when users upload arbitrary files.
+
 ## Authorization
 
 `auth.resolveSession` is required for `private` and `shared` files. The default `Authorizer` checks ownership and grants. See [Visibility](../core-concepts/visibility) for the matrix.
@@ -3521,15 +3557,28 @@ The bundled clients merge these into the `GET` automatically.
 
 ## Filenames
 
-filefn doesn't rewrite the filename you uploaded. If you want a download UX that suggests a different name (e.g. `Report - Acme Corp.pdf`), do it in your app code:
+filefn doesn't rewrite the filename you uploaded. Proxied downloads send it in `Content-Disposition`, and browsers prefer that header over an `<a download>` attribute, so to save a file under a different name (e.g. `Report - Acme Corp.pdf`), fetch it and save the blob:
 
 ```ts
-const { url, fileName, mimeType } = await client.downloadUrl(fileId);
+const url = await client.downloadUrl(fileId);
 
+// A proxied download URL is relative to where FileFn is mounted (the client's
+// baseUrl, e.g. "/files"); a signed storage URL is absolute.
+// Your client's baseUrl without a trailing slash ("" for a root mount).
+const fileFnBase = "/files".replace(/\/+$/, "");
+const target = new URL(url.startsWith("/") ? `${fileFnBase}${url}` : url, location.href);
+
+// Send cookies only to your own origin (a proxied download); a signed storage
+// URL needs no credentials and its CORS rules may refuse them.
+const sameOrigin = target.origin === location.origin;
+const response = await fetch(target, { credentials: sameOrigin ? "include" : "omit" });
+if (!response.ok) throw new Error(`Download failed: ${response.status}`);
+const objectUrl = URL.createObjectURL(await response.blob());
 const a = document.createElement("a");
-a.href = url;
+a.href = objectUrl;
 a.download = `Report - ${myAppContext.orgName}.pdf`;
 a.click();
+URL.revokeObjectURL(objectUrl);
 ```
 
 ## See also
@@ -3595,7 +3644,11 @@ The owner has all four implicitly. Grants supplement the owner's capabilities fo
 
 ## TTL
 
-`expiresAt` is enforced on every authorisation check. Expired grants are kept in the table for audit; you can prune them with a cron.
+`expiresAt` must be an ISO 8601 date or date-time (send a zone, e.g. `Z`: a date-time without one is read as the server's local time by the TypeScript server and as UTC by the Python server, as each always has; a date alone is UTC midnight) in the future when the grant is created, and it is enforced on every authorisation check; a stored value in any other format counts as expired. Expired grants are kept in the table for audit; you can prune them with a cron.
+
+## Tenants
+
+A grant to a `tenantId` other than the file's own is refused with `FILEFN_FORBIDDEN`, so one user cannot hand a file to every member of another tenant. Set `grants: { allowCrossTenant: true }` in `createFileFn` (in the Python server, `grants={"allowCrossTenant": True}` in `FileFnConfig`) to allow it. A grant extends what the configured authorizer allows: a matching read grant lets its holder read the file even when the authorizer alone would not.
 
 ## Roles vs. users
 
@@ -4296,7 +4349,22 @@ See [Core Concepts › Share links](../core-concepts/share-links) for the full l
 
 ## Enabling
 
-Share links are wired automatically when `auth` is configured. There's no separate `shares.enabled` flag — every server gets the routes by default. Disable by removing `auth` (or setting `auth.required: false` and not exposing the routes through your reverse proxy).
+Share links are on by default. Configure them with `shares` in `createFileFn`:
+
+```ts
+createFileFn({
+  // ...
+  shares: {
+    enabled: true,         // false removes every share-link route (not fileFn.services.shares)
+    requireAuth: false,    // true: every new link needs a signed-in downloader
+    maxTtlSeconds: 86_400, // cap on a link's lifetime (at most 100 years); also the lifetime of a link created without expiresAt
+  },
+});
+```
+
+Without `maxTtlSeconds`, a link created without `expiresAt` never expires.
+
+`enabled: false` removes the HTTP routes only. `fileFn.services.shares` (and the admin app, which uses it) can still create, list and revoke links, and links stored meanwhile work again once the routes are back.
 
 ## Routes
 
@@ -4334,7 +4402,7 @@ Anonymous downloads (no auth) work when `requiresAuth` is `false`. If `requiresA
 
 ## TTL and download caps
 
-Both fields are server-enforced. The download counter is incremented atomically when `GET /share-links/:token/download` resolves; a second concurrent request that would push the counter past `maxDownloads` fails with `FILEFN_SHARE_DOWNLOADS_EXCEEDED`.
+Both fields are server-enforced and checked when the link is created: `expiresAt` must be an ISO 8601 date (`2030-01-01`) or date-time (`2030-01-01T00:00:00Z`; without a zone it is read as UTC) in the future, and `maxDownloads` a positive integer, otherwise the request fails with `FILEFN_INVALID_REQUEST`. An empty `expiresAt` means no expiry. A stored `expiresAt` in any other format counts as expired. Each download is counted with a conditional write before any byte or URL is handed out, so concurrent downloads never exceed `maxDownloads`; the extra requests fail with `FILEFN_SHARE_DOWNLOADS_EXCEEDED`. A download that keeps losing that write to concurrent ones fails with `FILEFN_SHARE_DOWNLOAD_CONFLICT` (409, retryable). A proxied download opens its stream before it is counted (and hands it out only if the link is still valid after counting), and a signed one gives its count back if signing fails, so a storage failure never uses up a download. A signed download URL is signed right after the download is counted, with the server's signed-URL TTL or the whole seconds left before `expiresAt`, whichever is shorter, so it ends no later than the link (give or take the time the storage takes to sign). With less than a second left the TypeScript server names the proxy URL instead, which checks the link again when it is fetched; on storage that can only sign URLs, and on the Python server whenever it can sign, the link counts as expired then.
 
 ## Anti-enumeration
 
@@ -4952,6 +5020,8 @@ app.all("/filefn/*", async (c) => {
 });
 ```
 
+With `required: false`, requests without a session are served as the shared `anonymous` principal: they can upload, but nobody owns an anonymous upload, so they cannot read back a private one, share it or delete it. Set `required: true` if every upload should belong to a signed-in user.
+
 ## CSRF
 
 filefn's auth path is enforced by `auth.resolveSession`. For browser-issued proxy uploads (`PUT /upload/:id/parts/:n`), pair filefn with your authfn CSRF protection. The bundled clients send credentials by default; on the server, validate the `Origin` / `Referer` header on every state-changing route.
@@ -5180,6 +5250,8 @@ export const fileFn = createFileFn({
   },
 });
 ```
+
+With `required: false`, requests without a session are served as the shared `anonymous` principal: they can upload, but nobody owns an anonymous upload, so they cannot read back a private one, share it or delete it. Set `required: true` if every upload should belong to a signed-in user.
 
 ```ts
 // src/routes/filefn/[...path]/+server.ts
@@ -5590,6 +5662,8 @@ Bun.serve({
 });
 ```
 
+`auth: { required: false }` keeps this quickstart short: anyone can upload, and because every unauthenticated caller is the same `anonymous` principal, nobody owns those uploads afterwards. They are readable only when the policy is `public`, and nobody can delete or share them over HTTP. Configure `auth.resolveSession` before real users upload (see [Security](../core-concepts/security)).
+
 ## Why Bun is the fastest path
 
 - Native multipart upload streaming through `Bun.file`
@@ -5659,6 +5733,9 @@ export function fileFnHandler(router: FileFnRouter): RequestHandler {
       const response = await router.handle(request);
       if (!response) { res.status(404).end(); return; }
       res.status(response.status);
+      // A request body FileFn stopped reading (e.g. a 413) is never drained:
+      // close the connection instead of leaving it paused.
+      if (!req.complete) res.setHeader("connection", "close");
       response.headers.forEach((value, name) => {
         if (name !== "set-cookie") res.setHeader(name, value);
       });
@@ -5710,6 +5787,8 @@ app.listen(3001);
 ```
 
 The bridge streams downloads with backpressure and preserves their bytes and headers. Unknown routes return 404. Keep JSON/raw body parsers off this mount; FileFn’s upload policy still controls accepted file size. The memory database is disposable and loses metadata on restart. Use your host’s persistent adapter, authentication, and policy configuration for production.
+
+`auth: { required: false }` keeps this quickstart short: anyone can upload, and because every unauthenticated caller is the same `anonymous` principal, nobody owns those uploads afterwards. They are readable only when the policy is `public`, and nobody can delete or share them over HTTP. Configure `auth.resolveSession` before real users upload (see [Security](../core-concepts/security)).
 
 ## When to use Express vs. Hono
 
@@ -6087,6 +6166,8 @@ export const fileFn = createFileFn({
 });
 ```
 
+`auth: { required: false }` keeps this quickstart short: anyone can upload, and because every unauthenticated caller is the same `anonymous` principal, nobody owns those uploads afterwards. They are readable only when the policy is `public`, and nobody can delete or share them over HTTP. Configure `auth.resolveSession` before real users upload (see [Security](../core-concepts/security)).
+
 ## Catch-all route
 
 `app/filefn/[...path]/route.ts`:
@@ -6176,6 +6257,8 @@ export const fileFn = createFileFn({
   auth: { required: false },
 });
 ```
+
+`auth: { required: false }` keeps this quickstart short: anyone can upload, and because every unauthenticated caller is the same `anonymous` principal, nobody owns those uploads afterwards. They are readable only when the policy is `public`, and nobody can delete or share them over HTTP. Configure `auth.resolveSession` before real users upload (see [Security](../core-concepts/security)).
 
 ## Catch-all route
 
@@ -7154,7 +7237,7 @@ The container serves two routes and nothing else:
 - `GET /health` returns `200 {"status":"ok"}`.
 - `POST /jobs` takes `{"job": <queued message body>, "attempts": <delivery attempt>}` as `application/json`, runs the job through `createProcessingJobHandler`, and returns `200 {"outcome": …}`. Acknowledge the message unless `outcome.status` is `retry`. A request that arrives while `FILEFN_CONTAINER_MAX_CONCURRENT_JOBS` jobs are running waits up to `FILEFN_CONTAINER_JOB_WAIT_MS` (default 60 s) for a slot; after that it gets 503 with `Retry-After: 30`. A 503 or 500 asks for a delayed retry; a 400 or 413 body can never succeed.
 
-When `FILEFN_CONTAINER_TOKEN` is set, `POST /jobs` requires `Authorization: Bearer <token>`.
+`POST /jobs` requires `Authorization: Bearer <token>` with the `FILEFN_CONTAINER_TOKEN` value. The container refuses to start without a token unless `FILEFN_CONTAINER_ALLOW_UNAUTHENTICATED=true` is set, which leaves `POST /jobs` open to anything that can reach the port.
 
 The consumer retries with a delay, so a busy or failing container does not use up a message's attempts within seconds:
 
@@ -7214,6 +7297,7 @@ filefn ships share links with TTLs and download caps. This recipe shows how to c
 ```ts
 const share = await fetch(`/filefn/${fileId}/share-links`, {
   method: "POST",
+  headers: { "content-type": "application/json" },
   body: JSON.stringify({ maxDownloads: 1 }),
 }).then((r) => r.json());
 
@@ -7227,6 +7311,7 @@ The first download succeeds; the second returns `FILEFN_SHARE_DOWNLOADS_EXCEEDED
 ```ts
 await fetch(`/filefn/${fileId}/share-links`, {
   method: "POST",
+  headers: { "content-type": "application/json" },
   body: JSON.stringify({
     expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(), // 1 hour
   }),
@@ -7238,6 +7323,7 @@ await fetch(`/filefn/${fileId}/share-links`, {
 ```ts
 await fetch(`/filefn/${fileId}/share-links`, {
   method: "POST",
+  headers: { "content-type": "application/json" },
   body: JSON.stringify({
     requiresAuth: true,
     expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
@@ -8463,6 +8549,7 @@ Wire-format envelope:
 | `FILEFN_SHARE_REVOKED` | 410 | Share was revoked. | Surface a "this link is no longer valid" message. |
 | `FILEFN_SHARE_EXPIRED` | 410 | Share past `expiresAt`. | Same. |
 | `FILEFN_SHARE_DOWNLOADS_EXCEEDED` | 410 | `maxDownloads` exhausted. | Same. |
+| `FILEFN_SHARE_DOWNLOAD_CONFLICT` | 409 | Too many concurrent downloads of the link. | Retry. |
 
 ## Permissions
 

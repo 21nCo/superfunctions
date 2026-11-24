@@ -6,7 +6,7 @@ import type { Adapter, AdapterCapabilities } from '@superfunctions/db';
 
 const CAPS: AdapterCapabilities = {
   types: { json: true, dates: true, booleans: true, bigint: false, uuid: false, enum: false },
-  operations: { batch: false, upsert: true, streaming: false, fulltext: false, returning: false },
+  operations: { batch: false, upsert: true, streaming: false, fulltext: false, returning: true },
   transactions: { supported: false, nested: false },
   performance: { supportsJoins: false, supportsPreparedStatements: false },
   schema: { migrations: false, constraints: false, indexes: false },

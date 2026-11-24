@@ -12,8 +12,10 @@ import {
 
 function createMockVideoData(size: number = 1000): Uint8Array {
   const data = new Uint8Array(size);
+  // An ISO BMFF (MP4) box header, then a marker the mock provider ignores.
+  data.set(new TextEncoder().encode('\0\0\0\x18ftypisom'), 0);
   const header = new TextEncoder().encode('VIDEO_SOURCE_DATA');
-  data.set(header, 0);
+  data.set(header, 12);
   for (let i = header.length; i < size; i++) {
     data[i] = i % 251;
   }
@@ -84,7 +86,8 @@ function createMockVideoProvider(): VideoProcessorProvider {
 
 function createMockAudioData(size: number = 500): Uint8Array {
   const data = new Uint8Array(size);
-  const header = new TextEncoder().encode('MOCK_AUDIO_DATA');
+  // An ID3 tag header, as MP3 files start with.
+  const header = new TextEncoder().encode('ID3MOCK_AUDIO_DATA');
   data.set(header, 0);
   for (let i = header.length; i < size; i++) {
     data[i] = i % 251;
