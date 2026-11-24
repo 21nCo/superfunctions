@@ -59,6 +59,14 @@ class RoutedStorageAdapter:
         adapter, _ = self._pick(target)
         return dict(getattr(adapter, "capabilities", {}) or {})
 
+    async def stat_object(self, key: str, target: Optional[str] = None) -> Any:
+        """Stats an object on the chosen target; raises when that adapter can't stat objects."""
+        adapter, _ = self._pick(target)
+        stat = getattr(adapter, "stat_object", None)
+        if not callable(stat):
+            raise NotImplementedError(f"storage target {target or self.default_target!r} cannot stat objects")
+        return await stat(key=key)
+
     async def get_object(self, key: str, target: Optional[str] = None) -> Any:
         adapter, _ = self._pick(target)
         return await adapter.get_object(key=key)

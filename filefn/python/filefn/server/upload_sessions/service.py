@@ -75,13 +75,21 @@ class CreateSessionInput(BaseModel):
 
 
 MAX_FILE_NAME_LENGTH = 255
-MAX_MIME_TYPE_LENGTH = 255
+MAX_MIME_TYPE_LENGTH = 1024
 MAX_IDEMPOTENCY_KEY_LENGTH = 255
 MAX_METADATA_BYTES = 16 * 1024
 MAX_SAFE_INTEGER = 2**53 - 1
 _CONTROL_CHARACTERS = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 # type "/" subtype, each an HTTP token (RFC 9110), plus optional parameters.
-_MIME_TYPE = re.compile(r"^[!#$%&'*+.^_`|~0-9A-Za-z-]+/[!#$%&'*+.^_`|~0-9A-Za-z-]+([ \t]*;.*)?$", re.DOTALL)
+# RFC 9110 media type, as the TypeScript server checks it: type/subtype tokens,
+# then parameters `token=token` or `token=quoted-string` (quoted text and
+# quoted pairs: tab, visible ASCII and Latin-1 obs-text); empty parameter
+# slots are allowed. Nothing above U+00FF, which no HTTP header can carry.
+_MIME_TOKEN = r"[!#$%&'*+.^_`|~0-9A-Za-z-]+"
+_MIME_QUOTED = r'"(?:[\t \x21\x23-\x5B\x5D-\x7E\x80-\xFF]|\\[\t \x21-\x7E\x80-\xFF])*"'
+_MIME_TYPE = re.compile(
+    rf"{_MIME_TOKEN}/{_MIME_TOKEN}(?:[ \t]*;(?:[ \t]*{_MIME_TOKEN}=(?:{_MIME_TOKEN}|{_MIME_QUOTED}))?)*[ \t]*"
+)
 
 
 _LONE_SURROGATE = re.compile(r"[\ud800-\udfff]")
@@ -199,7 +207,7 @@ def _validate_upload_init(input: CreateSessionInput) -> None:
     if (
         not isinstance(mime_type, str)
         or _utf16_length(mime_type) > MAX_MIME_TYPE_LENGTH
-        or not _MIME_TYPE.match(mime_type.strip(" \t"))
+        or not _MIME_TYPE.fullmatch(mime_type.strip(" \t"))
         or _CONTROL_CHARACTERS.search(mime_type.replace("\t", " "))
         or _has_lone_surrogate(mime_type)
     ):
@@ -478,6 +486,14 @@ class UploadSessionService:
                 "The storage key for this upload is not safe",
                 {"policy": input.policy, "reason": unsafe_reason},
             )
+        # The key must contain this session's version ID, so two sessions never
+        # share an object (and cleanup of one never deletes another's); a
+        # storagePath that drops it is refused, as in TypeScript.
+        if version_id not in storage_key:
+            raise errors.invalid_request(
+                "The policy's storagePath must include the version ID",
+                {"policy": input.policy, "reason": "storage path not per version"},
+            )
 
         storage_upload_id: Optional[str] = None
         if upload_mode == "multipart-signed-url":
@@ -513,6 +529,8 @@ class UploadSessionService:
                 "totalParts": total_parts,
                 "storageKey": storage_key,
                 "storageUploadId": storage_upload_id,
+                # The version this session publishes; its ID is part of the key.
+                "completionVersionId": version_id,
                 "ownerId": owner_id,
                 "tenantId": ctx.tenantId,
                 "metadata": input.metadata or {},
@@ -609,7 +627,13 @@ class UploadSessionService:
         if part_number < 1 or part_number > session.totalParts:
             raise errors.invalid_part_number()
         part_limit = self._max_part_bytes(session, part_number)
-        if isinstance(content_length, bool) or not isinstance(content_length, int) or content_length < 1:
+        # Zero only for the empty part of a zero-byte upload.
+        if (
+            isinstance(content_length, bool)
+            or not isinstance(content_length, int)
+            or content_length < 0
+            or (content_length == 0 and part_limit != 0)
+        ):
             raise errors.invalid_request("contentLength must be a positive integer", {"field": "contentLength"})
         if content_length > part_limit:
             raise errors.part_too_large(part_number, part_limit)
@@ -662,6 +686,8 @@ class UploadSessionService:
             raise errors.upload_expired()
         if part_number < 1 or part_number > session.totalParts:
             raise errors.invalid_part_number()
+        if isinstance(size, bool) or not isinstance(size, int) or size < 0:
+            raise errors.invalid_request("size must be a non-negative integer", {"field": "size"})
         part_limit = self._max_part_bytes(session, part_number)
         if size > part_limit:
             raise errors.part_too_large(part_number, part_limit)
@@ -790,6 +816,11 @@ class UploadSessionService:
             except Exception:
                 pass
 
+    @staticmethod
+    def _key_is_session_owned(session: "UploadSessionRecord", session_data: Dict[str, Any]) -> bool:
+        """Whether the session's storage key contains its own version ID, so no other session shares it."""
+        return bool(session.completionVersionId) and session.completionVersionId in session.storageKey
+
     async def complete_session(self, upload_session_id: str, ctx: Any) -> Dict[str, str]:
         session_data = await self._get_session_data(upload_session_id)
         self._assert_session_binding(session_data, ctx)
@@ -806,6 +837,10 @@ class UploadSessionService:
                 "versionId": completion_version_id,
             }
 
+        # An aborted session (including one refused for a size mismatch) never
+        # reaches storage again.
+        if session.status == "aborted":
+            raise errors.upload_aborted()
         if self._is_expired(session.expiresAt):
             raise errors.upload_expired()
 
@@ -829,24 +864,49 @@ class UploadSessionService:
 
         if session.uploadMode == "multipart-signed-url":
             parts = sorted(parts_data, key=lambda p: p["partNumber"])
-            await self.storage.complete_multipart_upload(
-                key=session.storageKey,
-                upload_id=session.storageUploadId,
-                parts=[{"partNumber": p["partNumber"], "etag": p["etag"]} for p in parts],
-                target=storage_target,
-            )
+            stat_object = getattr(self.storage, "stat_object", None)
+            try:
+                await self.storage.complete_multipart_upload(
+                    key=session.storageKey,
+                    upload_id=session.storageUploadId,
+                    parts=[{"partNumber": p["partNumber"], "etag": p["etag"]} for p in parts],
+                    target=storage_target,
+                )
+            except Exception as complete_error:
+                # A retry after an earlier call finalized the upload (and then
+                # failed, for example at the stat below) finds the upload ID
+                # consumed. A session's key is its own (it contains the session's
+                # version ID), so an object there is that finalized upload, and
+                # the size check below decides. Sessions from before that rule
+                # may share a key and keep the original error.
+                if not callable(stat_object) or not self._key_is_session_owned(session, session_data):
+                    raise
+                try:
+                    await stat_object(key=session.storageKey, target=storage_target)
+                except Exception:
+                    raise complete_error
+
             # The client reports part sizes; the stored object is what counts. An
             # adapter that can stat objects lets the server refuse (and delete) an
             # object larger or smaller than declared.
-            stat_object = getattr(self.storage, "stat_object", None)
+            stat: Any = None
             if callable(stat_object):
-                stat = await stat_object(key=session.storageKey, target=storage_target)
+                try:
+                    stat = await stat_object(key=session.storageKey, target=storage_target)
+                except NotImplementedError:
+                    # A routed target that can't stat objects: as without stat_object.
+                    stat = None
+            if stat is not None:
                 actual = int(stat.get("size") if isinstance(stat, dict) else getattr(stat, "size"))
                 if actual != session.size:
-                    try:
-                        await self.storage.delete_object(key=session.storageKey, target=storage_target)
-                    except Exception:
-                        pass
+                    # Only a key this session owns is deleted: a session from
+                    # before per-version keys may share its key with a published
+                    # version.
+                    if self._key_is_session_owned(session, session_data):
+                        try:
+                            await self.storage.delete_object(key=session.storageKey, target=storage_target)
+                        except Exception:
+                            pass
                     await self.db.update(
                         model="uploadSessions",
                         where=[{"field": "uploadSessionId", "operator": "eq", "value": upload_session_id}],
@@ -859,7 +919,9 @@ class UploadSessionService:
 
         now_str = datetime.now(timezone.utc).isoformat()
         file_id = session.fileId or f"file_{secrets.token_urlsafe(12)}"
-        version_id = f"ver_{secrets.token_urlsafe(12)}"
+        # The version allocated at init (its ID is in the key); sessions created
+        # before that get a fresh one.
+        version_id = session.completionVersionId or f"ver_{secrets.token_urlsafe(12)}"
         metadata = session_data.get("metadata") or {}
 
         final_storage_key = session.storageKey

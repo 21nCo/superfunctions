@@ -150,7 +150,8 @@ def unsafe_storage_key_reason(key: str) -> Optional[str]:
         return "control character"
     if "\\" in key:
         return "backslash"
-    if key.startswith("/"):
+    # Slash-rooted, or drive-qualified as a Windows filesystem adapter would read it.
+    if key.startswith("/") or re.match(r"[A-Za-z]:(/|\Z)", key):
         return "absolute key"
     for segment in key.split("/"):
         if segment == "":

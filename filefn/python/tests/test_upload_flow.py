@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional
 
 import pytest
 
-from filefn.server import create_event_emitter, create_routed_storage_adapter
+from filefn.server import create_event_emitter, create_routed_storage_adapter, errors
 from filefn.server.policies import Policy, create_nucleus_policies, create_policy_registry
 from filefn.server.upload_sessions.service import (
     CreateSessionInput,
@@ -1066,3 +1066,146 @@ def test_long_key_parts_are_shortened_like_typescript() -> None:
     tenant, _, _, last = key.split("/")
     assert len(tenant.encode()) <= 120 and "%~" in tenant
     assert last.startswith("ver_1-") and last.endswith(".pdf") and "%~" in last
+
+
+class StatStorage(FakeStorage):
+    """Multipart storage that stores `actual_size` bytes, can stat, and consumes upload IDs."""
+
+    def __init__(self, actual_size: int, fail_stats: int = 0) -> None:
+        super().__init__({"signedUploadUrls": True, "multipart": True})
+        self.actual_size = actual_size
+        self.fail_stats = fail_stats
+
+    async def complete_multipart_upload(self, key: str, upload_id: str, parts: list, target: Optional[str] = None):
+        if upload_id not in self.multipart:
+            raise RuntimeError("NoSuchUpload")
+        del self.multipart[upload_id]
+        self.objects[key] = b"x" * self.actual_size
+        return {"key": key}
+
+    async def stat_object(self, key: str, target: Optional[str] = None) -> Dict[str, Any]:
+        if self.fail_stats:
+            self.fail_stats -= 1
+            raise RuntimeError("transient stat failure")
+        if key not in self.objects:
+            raise KeyError(key)
+        return {"key": key, "size": len(self.objects[key])}
+
+
+async def _multipart_session(service: UploadSessionService, size: int = 3) -> Dict[str, Any]:
+    session = await service.create_session(
+        CreateSessionInput(policy="user-avatar", fileName="a.png", size=size, mimeType="image/png"), _ctx()
+    )
+    for part_number in range(1, session["totalParts"] + 1):
+        part_size = min(3, size - (part_number - 1) * 3)
+        await service.complete_part(session["uploadSessionId"], part_number, f"etag-{part_number}", part_size, _ctx())
+    return session
+
+
+@pytest.mark.asyncio
+async def test_multipart_size_mismatch_deletes_only_the_session_object_and_aborts() -> None:
+    db = FakeDB()
+    storage = StatStorage(actual_size=50)
+    service = _make_service(db=db, storage=storage)
+    session = await _multipart_session(service)
+    key = db.tables["uploadSessions"][0]["storageKey"]
+    with pytest.raises(errors.FileFnError) as mismatch:
+        await service.complete_session(session["uploadSessionId"], _ctx())
+    assert mismatch.value.code == "FILEFN_UPLOAD_SIZE_MISMATCH"
+    assert key not in storage.objects
+    assert db.tables["uploadSessions"][0]["status"] == "aborted"
+    assert not db.tables.get("files") and not db.tables.get("fileVersions")
+    # A retry is refused before storage is touched again.
+    with pytest.raises(errors.FileFnError) as aborted:
+        await service.complete_session(session["uploadSessionId"], _ctx())
+    assert aborted.value.code == "FILEFN_UPLOAD_ABORTED"
+
+
+@pytest.mark.asyncio
+async def test_multipart_retry_after_a_failed_stat_verifies_the_finalized_object() -> None:
+    db = FakeDB()
+    storage = StatStorage(actual_size=3, fail_stats=1)
+    service = _make_service(db=db, storage=storage)
+    session = await _multipart_session(service)
+    with pytest.raises(RuntimeError):
+        await service.complete_session(session["uploadSessionId"], _ctx())
+    # The upload ID is consumed; the retry finds the session's own object and checks its size.
+    result = await service.complete_session(session["uploadSessionId"], _ctx())
+    assert result["versionId"] in db.tables["uploadSessions"][0]["storageKey"]
+
+
+@pytest.mark.asyncio
+async def test_routed_storage_forwards_stat_object() -> None:
+    from filefn.server.routed_storage import create_routed_storage_adapter
+
+    db = FakeDB()
+    inner = StatStorage(actual_size=50)
+    routed = create_routed_storage_adapter({"durable": inner}, default_target="durable")
+    routed.capabilities = inner.capabilities  # type: ignore[attr-defined]
+    service = _make_service(db=db, storage=routed)  # type: ignore[arg-type]
+    session = await _multipart_session(service)
+    with pytest.raises(errors.FileFnError) as mismatch:
+        await service.complete_session(session["uploadSessionId"], _ctx())
+    assert mismatch.value.code == "FILEFN_UPLOAD_SIZE_MISMATCH"
+
+
+@pytest.mark.asyncio
+async def test_policy_storage_path_must_include_the_version_id() -> None:
+    service = create_upload_session_service(
+        UploadSessionServiceConfig(
+            db=FakeDB(),
+            storage=FakeStorage({"proxyStreamingUpload": True}),
+            policies=create_policy_registry(
+                [Policy(name="shared", storagePath=lambda c: f"{c.tenantId}/{c.fileId}/{c.fileName}")]
+            ),
+            events=create_event_emitter(),
+            namespace="filefn",
+            default_chunk_size_bytes=3,
+            upload_session_ttl_seconds=3600,
+        )
+    )
+    with pytest.raises(errors.FileFnError) as refused:
+        await service.create_session(CreateSessionInput(policy="shared", fileName="a.png", size=3, mimeType="image/png"), _ctx())
+    assert refused.value.code == "FILEFN_INVALID_REQUEST"
+
+
+@pytest.mark.asyncio
+async def test_zero_byte_upload_signs_its_empty_part_and_parts_need_integer_sizes() -> None:
+    service = _make_service(storage=FakeStorage({"signedUploadUrls": True, "multipart": True}))
+    empty = await service.create_session(CreateSessionInput(policy="user-avatar", fileName="a.png", size=0, mimeType="image/png"), _ctx())
+    signed = await service.sign_part(empty["uploadSessionId"], 1, 0, _ctx())
+    assert signed["url"]
+    other = await service.create_session(CreateSessionInput(policy="user-avatar", fileName="b.png", size=3, mimeType="image/png"), _ctx())
+    with pytest.raises(errors.FileFnError):
+        await service.sign_part(other["uploadSessionId"], 1, 0, _ctx())
+    for bad in ["3", None, True, -1]:
+        with pytest.raises(errors.FileFnError) as invalid:
+            await service.complete_part(other["uploadSessionId"], 1, "etag-1", bad, _ctx())  # type: ignore[arg-type]
+        assert invalid.value.code == "FILEFN_INVALID_REQUEST"
+
+
+@pytest.mark.parametrize(
+    "mime_type,ok",
+    [
+        ("image/png", True),
+        ('image/png; name="a b"', True),
+        ("image/png; charset=utf-8", True),
+        ("image/png;", True),
+        ("image/png;\u20ac", False),
+        ("image/png; foo", False),
+        ('image/png;"x', False),
+        ("image/png; a=b c", False),
+    ],
+)
+def test_mime_type_grammar_matches_typescript(mime_type: str, ok: bool) -> None:
+    from filefn.server.upload_sessions.service import _MIME_TYPE
+
+    assert bool(_MIME_TYPE.fullmatch(mime_type)) is ok
+
+
+def test_drive_qualified_keys_are_unsafe() -> None:
+    from filefn.server.policies import unsafe_storage_key_reason
+
+    assert unsafe_storage_key_reason("C:/Windows/x") == "absolute key"
+    assert unsafe_storage_key_reason("c:") == "absolute key"
+    assert unsafe_storage_key_reason("a:b/x") is None
