@@ -1,0 +1,21 @@
+filefn/server/src/authz/authorizer.ts
+  s_b841cebdcfad95::t_fffcd92236d2f4 5,158-160,169
+filefn/server/tests/hardening.test.ts
+  s_b841cebdcfad95::t_4e2bece86609c0 75-93
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d1c4c42cda85cd52f4c399a6f1635b2efd8aa8b2",
+  "prompts": {},
+  "sessions": {
+    "s_b841cebdcfad95": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "436f4738-d86e-44e1-82bc-c432f9aaabf3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

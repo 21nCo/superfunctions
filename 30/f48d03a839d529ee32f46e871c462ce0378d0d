@@ -1,0 +1,32 @@
+billfn/admin/src/domain-service.ts
+  s_0d7e11293d5a4e::t_9d3aa1b5545669 70-75,81-91,114-116,118-126
+billfn/provider-apple/src/index.ts
+  s_0d7e11293d5a4e::t_be03869ebe98c7 348-349,595-596,599-613,1431-1451
+  s_0d7e11293d5a4e::t_2ee96edabf01e0 1452
+billfn/core/src/__tests__/refund-idempotency.test.ts
+  s_0d7e11293d5a4e::t_7113ba1219a2ea 405,423,425-547
+billfn/core/src/service.ts
+  s_0d7e11293d5a4e::t_2505afb6d3dbc9 1174-1191,1305,1323-1330,1333-1338,4331-4379,4382-4389,4393-4412,4467-4470,4479-4480,4508,4511
+billfn/provider-apple/src/__tests__/provider-builtins.test.ts
+  s_0d7e11293d5a4e::t_d4aa4baea797c5 267-302
+billfn/docs/content/docs/server/setup.mdx
+  s_0d7e11293d5a4e::t_673dc020a35ecf 170-172,177
+billfn/admin/src/__tests__/admin.test.ts
+  s_0d7e11293d5a4e::t_d4aa4baea797c5 571-611
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "30f48d03a839d529ee32f46e871c462ce0378d0d",
+  "prompts": {},
+  "sessions": {
+    "s_0d7e11293d5a4e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "97ac12a3-1bf1-4732-a6f3-ece8c28b207e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

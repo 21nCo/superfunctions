@@ -1,0 +1,79 @@
+filefn/docs/content/docs/core-concepts/idempotency.md
+  s_b841cebdcfad95::t_c56de8277dda17 31-32
+filefn/docs/content/docs/core-concepts/security.md
+  s_b841cebdcfad95::t_d35834d4868111 15,46-56
+filefn/docs/content/docs/core-concepts/upload-sessions.md
+  s_b841cebdcfad95::t_eef79236eaedb4 94
+filefn/docs/content/docs/frameworks/hono.md
+  s_b841cebdcfad95::t_0eb5c03b2326d0 63-64
+filefn/docs/content/docs/frameworks/sveltekit.md
+  s_b841cebdcfad95::t_521753ff1e267b 27-28
+filefn/docs/content/docs/quickstart/bun.md
+  s_b841cebdcfad95::t_9e931eee319a73 49-50
+filefn/docs/content/docs/quickstart/express.md
+  s_b841cebdcfad95::t_195421993191f3 105-106
+filefn/docs/content/docs/quickstart/nextjs.md
+  s_b841cebdcfad95::t_e8557a053e4819 41-42
+filefn/docs/content/docs/quickstart/sveltekit.md
+  s_b841cebdcfad95::t_7f840cef74eb0f 40-41
+filefn/docs/static/llms-full.txt
+  s_b841cebdcfad95::t_50b2520da2d9ba 1848-1849,2657,2688-2698,3024,5006-5007,5237-5238,5648-5649,5771-5772,6149-6150,6241-6242
+filefn/python/filefn/server/authz/grants_service.py
+  s_b841cebdcfad95::t_00b231428b634d 9,44
+filefn/python/filefn/server/authz/ownership.py
+  s_b841cebdcfad95::t_214d0a389246af 1-22
+filefn/python/filefn/server/errors.py
+  s_b841cebdcfad95::t_e38eee601c135e 50,166-168
+filefn/python/filefn/server/files/service.py
+  s_b841cebdcfad95::t_5190ef223e9d30 9,28,35,38,230-237
+filefn/python/filefn/server/processing/service.py
+  s_b841cebdcfad95::t_b47e770b758354 9,338
+filefn/python/filefn/server/shares/service.py
+  s_b841cebdcfad95::t_e9e25e88866f98 9,78
+filefn/python/filefn/server/upload_sessions/service.py
+  s_b841cebdcfad95::t_3406c22a818ee3 3,10,73-82,148-152,222-231,234,237-260,267,328-338,377-378,707-718,720-761,763-764,781-785
+filefn/python/tests/test_downloads.py
+  s_b841cebdcfad95::t_e3cb36907fc5a1 822-858
+filefn/python/tests/test_upload_flow.py
+  s_b841cebdcfad95::t_6150e50761b2c2 425-427,441,451-452,455-467,787-894
+filefn/server/src/__tests__/client-file-ids.test.ts
+  s_b841cebdcfad95::t_5cad9e4c467282 291-303
+filefn/server/src/__tests__/idempotency-complete.test.ts
+  s_b841cebdcfad95::t_977351d024d748 182,196-198,200-201
+filefn/server/src/__tests__/upload-sessions.test.ts
+  s_b841cebdcfad95::t_589cf7946dfa30 501,513,515-516
+filefn/server/src/__tests__/upload-size-validate.test.ts
+  s_b841cebdcfad95::t_933367b893f707 32,49-51
+filefn/server/src/authz/authorizer.ts
+  s_b841cebdcfad95::t_2bc5ace9ef9fee 4,146
+filefn/server/src/authz/grants.service.ts
+  s_b841cebdcfad95::t_7106e3f6dfb964 7,38
+filefn/server/src/authz/ownership.ts
+  s_b841cebdcfad95::t_dcc7c344291d50 1-22
+filefn/server/src/files/service.ts
+  s_b841cebdcfad95::t_d5d24808e06aee 20,153,158,161
+filefn/server/src/processing/service.ts
+  s_b841cebdcfad95::t_edf92fc46f46fa 20,656,758
+filefn/server/src/shares/service.ts
+  s_b841cebdcfad95::t_372d24ad16e1a9 9,78,81
+filefn/server/src/upload-sessions/service.ts
+  s_b841cebdcfad95::t_19e0689619837d 22,230-238,1290-1291,1293,1383-1395,1397,1400-1423,1578-1581
+filefn/server/tests/anonymous-isolation.test.ts
+  s_b841cebdcfad95::t_7b6baf447abacb 1-196
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8eb5c9f07c15795a384bf13a283c5735692d4cc6",
+  "prompts": {},
+  "sessions": {
+    "s_b841cebdcfad95": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "436f4738-d86e-44e1-82bc-c432f9aaabf3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

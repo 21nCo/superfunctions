@@ -1,0 +1,23 @@
+billfn/core/src/service.ts
+  s_0d7e11293d5a4e::t_2ce9025168b262 5653-5659
+billfn/core/src/types.ts
+  s_0d7e11293d5a4e::t_2ce9025168b262 470-471
+billfn/docs/content/docs/server/reconciliation.mdx
+  s_0d7e11293d5a4e::t_2ce9025168b262 34
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "764dea9842729dd136acaaf30653838681b87b18",
+  "prompts": {},
+  "sessions": {
+    "s_0d7e11293d5a4e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "97ac12a3-1bf1-4732-a6f3-ece8c28b207e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
