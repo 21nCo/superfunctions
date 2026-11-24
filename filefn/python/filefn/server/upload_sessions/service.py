@@ -693,11 +693,18 @@ class UploadSessionService:
         )
 
         async def refuse_replace() -> None:
-            # This completion's own object is not kept when it may not publish
-            # (unless dedup pointed it at another file's existing object).
+            # This completion's own object is not kept when it may not publish,
+            # unless a version references it (dedup, or another completion of
+            # the same session that published it).
             if final_storage_key == session.storageKey:
                 try:
-                    await self.storage.delete_object(key=session.storageKey, target=storage_target)
+                    referenced = await self.db.find_one(
+                        model="fileVersions",
+                        where=[{"field": "storageKey", "operator": "eq", "value": session.storageKey}],
+                        namespace=self.namespace,
+                    )
+                    if not referenced:
+                        await self.storage.delete_object(key=session.storageKey, target=storage_target)
                 except Exception:
                     pass
             raise errors.forbidden({"fileId": file_id, "operation": "replace"})
@@ -711,12 +718,16 @@ class UploadSessionService:
         if existing_file:
             # Conditional on the row that was authorized: a row deleted or
             # replaced since is not overwritten.
-            updated = await self.db.update(
-                model="files",
-                where=[
-                    {"field": "fileId", "operator": "eq", "value": file_id},
-                    {"field": "currentVersionId", "operator": "eq", "value": existing_file.get("currentVersionId")},
-                ],
+            # A single conditional UPDATE where the adapter has one (update_many
+            # returns the row count); a zero-row or not-found result is refused.
+            conditional_update = getattr(self.db, "update_many", None) or self.db.update
+            try:
+                updated = await conditional_update(
+                    model="files",
+                    where=[
+                        {"field": "fileId", "operator": "eq", "value": file_id},
+                        {"field": "currentVersionId", "operator": "eq", "value": existing_file.get("currentVersionId")},
+                    ],
                 data={
                     "currentVersionId": version_id,
                     "size": session.size,
@@ -725,11 +736,14 @@ class UploadSessionService:
                     "updatedAt": now_str,
                 },
                 namespace=self.namespace,
-            )
+                )
+            except Exception:
+                updated = None
             if not updated:
                 await refuse_replace()
         else:
-            await self.db.create(
+            try:
+                await self.db.create(
                 model="files",
                 data={
                     "fileId": file_id,
@@ -746,7 +760,11 @@ class UploadSessionService:
                     "updatedAt": now_str,
                 },
                 namespace=self.namespace,
-            )
+                )
+            except Exception:
+                # Another completion created this file ID first (unique key):
+                # this one may not publish over it.
+                await refuse_replace()
 
         await self.db.create(
             model="fileVersions",
