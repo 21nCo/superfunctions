@@ -6,6 +6,7 @@ from typing import Any, Callable, Dict, List, Optional, Protocol, Set, cast
 from pydantic import BaseModel
 
 from .. import errors
+from ..authz.ownership import is_file_owner
 from ..events import (
     FileFnEventEmitter,
     ProcessingCompletedEvent,
@@ -15,7 +16,6 @@ from ..events import (
 from ..models import FileProviderContext, FileRecord, Visibility
 from ..policies import resolve_artifact_storage_target, resolve_storage_target
 from ..routed_storage import get_storage_capabilities
-from ..authz.ownership import is_file_owner
 
 
 class ProcessorInput(BaseModel):

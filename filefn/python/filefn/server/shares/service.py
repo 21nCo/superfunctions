@@ -6,10 +6,10 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel
 
 from .. import errors
+from ..authz.ownership import is_file_owner
 from ..models import FileProviderContext, FileRecord, FileShareRecord, FileVersionRecord
 from ..policies import resolve_storage_target
 from ..routed_storage import get_storage_capabilities
-from ..authz.ownership import is_file_owner
 
 
 class CreateShareLinkInput(BaseModel):
