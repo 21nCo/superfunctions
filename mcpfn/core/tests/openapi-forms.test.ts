@@ -2169,6 +2169,27 @@ describe("fromOpenAPI body fallback, synchronous schemas, per-kind alternatives 
     }
   }, 60_000);
 
+  it("counts the entries of a schema's arrays as source values, not as shared expansion", () => {
+    const defs = Object.fromEntries(Array.from({ length: 100 }, (_, index) => [`d${index}`, {}]));
+    const filter = { name: "filter", in: "query", schema: { type: "string", $defs: defs } };
+    // 1,100 boolean members, none shared: the body's own budget must keep it.
+    const preferred = { schema: { type: "object", allOf: Array.from({ length: 1_100 }, () => true) } };
+    const chosen = (content: Record<string, unknown>, parameters: unknown[]) => {
+      const result = fromOpenAPI(
+        { openapi: "3.1.0", paths: { "/m": { patch: { operationId: "m", parameters, requestBody: { content }, responses: ok } } } },
+        options(),
+      );
+      expect(result.skipped).toEqual([]);
+      return tool(result.tools, "m").operation.requestBody?.contentType;
+    };
+    for (const parameters of [[filter], []]) {
+      expect(chosen({ "application/json": preferred }, parameters)).toBe("application/json");
+      expect(chosen({ "application/json": preferred, "application/example+json": { schema: { type: "string" } } }, parameters)).toBe(
+        "application/json",
+      );
+    }
+  });
+
   it("tries each request body entry in the whole input, checks a shared one once and falls through a too-deep one", () => {
     const fallback = { "application/example+json": { schema: { type: "string" } } };
     const patch = (operationId: string, content: Record<string, unknown>, extra: Record<string, unknown> = {}) =>

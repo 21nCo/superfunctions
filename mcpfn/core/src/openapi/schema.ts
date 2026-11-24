@@ -164,7 +164,7 @@ export class NodeBudget {
     this.produced += 1;
     if (typeof value === "object" && value !== null && !this.seen.has(value)) {
       this.seen.add(value);
-      this.sourceValues += 1 + Object.keys(value).length;
+      this.sourceValues += 1 + ownValues(value);
     }
     if (this.produced > this.limit) {
       throw new OpenApiSkip("schema-too-large", `${this.subject} to more than ${this.limit} nodes`);
@@ -177,6 +177,16 @@ export class NodeBudget {
       );
     }
   }
+}
+
+/**
+ * The values directly under `value`: its own keys plus the entries of its
+ * array values (an `allOf` of booleans is source, not shared expansion).
+ */
+function ownValues(value: object): number {
+  let count = 0;
+  for (const item of Object.values(value)) count += 1 + (Array.isArray(item) ? item.length : 0);
+  return count;
 }
 
 /** The values in a JSON-like tree, each shared object counted once. */
