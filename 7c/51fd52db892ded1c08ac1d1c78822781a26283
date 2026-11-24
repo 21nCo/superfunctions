@@ -1,0 +1,29 @@
+reviewfn/core/src/panel/validate.ts
+  s_4ab662f76033ab::t_ebba53f34d2b54 75-79
+reviewfn/core/test/panel.test.ts
+  s_63a501dc1c0ac4::t_190e11f464ccb1 665-671
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7c51fd52db892ded1c08ac1d1c78822781a26283",
+  "prompts": {},
+  "sessions": {
+    "s_4ab662f76033ab": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "aba9f86e-cc19-4d0d-bf59-4a32fce95ea2",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_63a501dc1c0ac4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e98a8fc0-1cb6-4789-abaf-c99f6658db02",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

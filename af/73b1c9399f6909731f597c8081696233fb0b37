@@ -1,0 +1,61 @@
+apifn/admin/turbo.json
+  s_406999f2751b58::t_53acb0be8f568d 5-19
+authfn/core/turbo.json
+  s_406999f2751b58::t_47558ff04e210f 5-19
+authfn/examples/shared/turbo.json
+  s_406999f2751b58::t_9c8952fe92fc64 5-20
+authfn/oauth-provider/turbo.json
+  s_406999f2751b58::t_0b2c5c7dfc26ed 5-10
+billfn/core/turbo.json
+  s_406999f2751b58::t_23e072812aeee2 5-10
+billfn/docs/turbo.json
+  s_406999f2751b58::t_d85ca69f8ae26a 44-46
+billfn/swift-bridge/turbo.json
+  s_406999f2751b58::t_64aa7f3cc7268d 5-10
+datafn/client/turbo.json
+  s_406999f2751b58::t_1bd02fb139d757 5-12
+datafn/server/turbo.json
+  s_406999f2751b58::t_f6e3b5e65fbb76 5-14
+datafn/swift-bridge/turbo.json
+  s_406999f2751b58::t_f8b13bc4f99a4b 5-10
+extfn/vite/turbo.json
+  s_406999f2751b58::t_c6d20b3a5d7491 5-10
+filefn/server/turbo.json
+  s_406999f2751b58::t_b9f418e8937fc2 5-12
+langfn/typescript/turbo.json
+  s_406999f2751b58::t_abb804c9c13ea5 5-12,22-25
+logfn/typescript/turbo.json
+  s_406999f2751b58::t_dd6cd7ed32709e 5-13,24-27
+mcpfn/cli/turbo.json
+  s_406999f2751b58::t_f37183efa2ae6b 5-10
+mcpfn/inspector/turbo.json
+  s_406999f2751b58::t_add1f37627af2c 5-10
+mcpfn/testing/turbo.json
+  s_406999f2751b58::t_99e5b23bb970fb 5-10
+packages/cli/turbo.json
+  s_406999f2751b58::t_77f7840b03ba65 5-18
+plugfn/core/turbo.json
+  s_406999f2751b58::t_dd2a54dd0f5ff8 5-13
+scripts/turbo-inputs-guard.mjs
+  s_406999f2751b58::t_7a2fab73d2f66f 14-15,18-26,44-45,71-73,75-76,330-333,338-383,385-449,451-454,456-523,538,731,848-855,857-868,870-873,876-880,904-937,941-949,953,956-961,987-1002,1010,1043,1047
+scripts/turbo-inputs-guard.test.mjs
+  s_406999f2751b58::t_14b917393117db 22,87-88,185-284,286-290,302,360-368,370-372,398,411-416,419,436,450-458,579-675,704-705
+turbo.json
+  s_406999f2751b58::t_5c222487e45efc 132-143,151-152,163-164,174-187,197-198,209-210,220-233,243-244,255-256,266-275,300-307
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "af73b1c9399f6909731f597c8081696233fb0b37",
+  "prompts": {},
+  "sessions": {
+    "s_406999f2751b58": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "57837a55-3d8e-4c35-8a93-0d864382a54c",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
