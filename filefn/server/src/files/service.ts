@@ -546,6 +546,12 @@ export function createFileService(config: FileServiceConfig) {
         namespace,
       });
 
+      // Thumbnails and previews must render in the browser: only inline-safe
+      // raster artifacts qualify, whatever their kind says.
+      const previewArtifacts = artifacts.filter(
+        (artifact) => artifact.mimeType?.startsWith('image/') && isInlineSafeContentType(artifact.mimeType),
+      );
+
       const originalDescriptor = async (): Promise<RenderDescriptor> => {
         const original = await this.getDownloadUrl(fileId, versionId, ctx);
         return {
@@ -590,7 +596,7 @@ export function createFileService(config: FileServiceConfig) {
 
       if (options.intent === 'thumbnail') {
         if (isImageMimeType(version.mimeType)) {
-          const artifact = selectArtifactByKind(artifacts, ['thumbnail-small', 'thumbnail-medium']);
+          const artifact = selectArtifactByKind(previewArtifacts, ['thumbnail-small', 'thumbnail-medium']);
           if (artifact) {
             return artifactDescriptor(artifact);
           }
@@ -611,7 +617,7 @@ export function createFileService(config: FileServiceConfig) {
         }
 
         if (isPdfMimeType(version.mimeType)) {
-          const artifact = selectArtifactByKind(artifacts, ['pdf-preview-page-1-small', 'pdf-preview-page-1-medium']);
+          const artifact = selectArtifactByKind(previewArtifacts, ['pdf-preview-page-1-small', 'pdf-preview-page-1-medium']);
           if (artifact) {
             return artifactDescriptor(artifact);
           }
@@ -641,7 +647,7 @@ export function createFileService(config: FileServiceConfig) {
       }
 
       if (isImageMimeType(version.mimeType)) {
-        const artifact = selectArtifactByKind(artifacts, ['thumbnail-large']);
+        const artifact = selectArtifactByKind(previewArtifacts, ['thumbnail-large']);
         if (artifact) {
           return artifactDescriptor(artifact);
         }
@@ -661,7 +667,7 @@ export function createFileService(config: FileServiceConfig) {
       }
 
       if (isPdfMimeType(version.mimeType)) {
-        const artifact = selectArtifactByKind(artifacts, ['pdf-preview-page-1-large', 'pdf-preview-page-1-medium']);
+        const artifact = selectArtifactByKind(previewArtifacts, ['pdf-preview-page-1-large', 'pdf-preview-page-1-medium']);
         if (artifact) {
           return artifactDescriptor(artifact);
         }

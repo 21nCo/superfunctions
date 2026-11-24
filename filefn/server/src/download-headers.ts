@@ -33,17 +33,76 @@ export const INLINE_SAFE_CONTENT_TYPES: ReadonlySet<string> = new Set([
   'video/quicktime',
 ]);
 
-// One `type/subtype` of RFC 9110 tokens with optional parameters, and no comma
-// anywhere: a comma-separated list is ambiguous (Fetch MIME sniffing may pick
-// another entry than this code did), so it is never treated as safe.
-const TOKEN = "[!#$%&'*+.^_`|~0-9A-Za-z-]+";
-const QUOTED = '"(?:[^"\\\\\\x00-\\x1f\\x7f]|\\\\.)*"';
-const SINGLE_MEDIA_TYPE = new RegExp(`^${TOKEN}/${TOKEN}(?:[ \\t]*;[ \\t]*${TOKEN}=(?:${TOKEN}|${QUOTED}))*[ \\t]*$`);
+const TOKEN = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
+const TOKEN_CHAR = /[!#$%&'*+.^_`|~0-9A-Za-z-]/;
 
-/** Whether the value is one well-formed media type (no list, no control characters). */
+interface ParsedMediaType {
+  essence: string;
+  parameters: Map<string, string>;
+}
+
+/**
+ * Parses one media type as RFC 9110 defines it: `type/subtype` tokens, then
+ * `; name=value` parameters whose value is a token or a quoted-string
+ * (quoted text and quoted pairs limited to tab and visible ASCII). Anything
+ * else (a list, control characters, non-ASCII, stray text) returns null, so
+ * the caller treats it as unsafe.
+ */
+function parseMediaType(value: string | null | undefined): ParsedMediaType | null {
+  if (typeof value !== 'string') return null;
+  const input = value.trim();
+  const slash = input.indexOf('/');
+  const semicolon = input.indexOf(';');
+  const typeEnd = semicolon === -1 ? input.length : semicolon;
+  if (slash <= 0 || slash > typeEnd) return null;
+  const type = input.slice(0, slash);
+  const subtype = input.slice(slash + 1, typeEnd).replace(/[ \t]+$/, '');
+  if (!TOKEN.test(type) || !TOKEN.test(subtype)) return null;
+  const parameters = new Map<string, string>();
+  let i = typeEnd;
+  while (i < input.length) {
+    if (input[i] !== ';') return null;
+    i += 1;
+    while (input[i] === ' ' || input[i] === '\t') i += 1;
+    const nameStart = i;
+    while (i < input.length && TOKEN_CHAR.test(input[i])) i += 1;
+    const name = input.slice(nameStart, i).toLowerCase();
+    if (!name || input[i] !== '=') return null;
+    i += 1;
+    let parsedValue = '';
+    if (input[i] === '"') {
+      i += 1;
+      let closed = false;
+      while (i < input.length) {
+        const code = input.charCodeAt(i);
+        if (input[i] === '"') { closed = true; i += 1; break; }
+        if (input[i] === '\\') {
+          const next = input.charCodeAt(i + 1);
+          if (!(next === 0x09 || (next >= 0x20 && next <= 0x7e))) return null;
+          parsedValue += input[i + 1];
+          i += 2;
+          continue;
+        }
+        if (!(code === 0x09 || (code >= 0x20 && code <= 0x7e))) return null;
+        parsedValue += input[i];
+        i += 1;
+      }
+      if (!closed) return null;
+    } else {
+      const valueStart = i;
+      while (i < input.length && TOKEN_CHAR.test(input[i])) i += 1;
+      parsedValue = input.slice(valueStart, i);
+      if (!parsedValue) return null;
+    }
+    while (input[i] === ' ' || input[i] === '\t') i += 1;
+    if (!parameters.has(name)) parameters.set(name, parsedValue);
+  }
+  return { essence: `${type}/${subtype}`.toLowerCase(), parameters };
+}
+
+/** Whether the value is one well-formed media type. */
 function isSingleMediaType(contentType: string | null | undefined): contentType is string {
-  // eslint-disable-next-line no-control-regex
-  return typeof contentType === 'string' && SINGLE_MEDIA_TYPE.test(contentType.trim()) && !/[\u0000-\u001f\u007f]/.test(contentType);
+  return parseMediaType(contentType) !== null;
 }
 
 /** The MIME type without parameters, lower-cased: `Text/HTML; charset=x` -> `text/html`. */
@@ -56,16 +115,18 @@ export function contentTypeEssence(contentType: string | null | undefined): stri
  * text/plain type (needed to decode it), when the charset is a plain token.
  */
 function safeInlineType(contentType: string): string {
-  const essence = contentTypeEssence(contentType);
-  if (essence === 'text/plain') {
-    const charset = /;\s*charset\s*=\s*"?([A-Za-z0-9._-]{1,40})"?/i.exec(contentType)?.[1];
-    if (charset) return `text/plain; charset=${charset.toLowerCase()}`;
+  const parsed = parseMediaType(contentType);
+  if (!parsed) return 'application/octet-stream';
+  if (parsed.essence === 'text/plain') {
+    const charset = parsed.parameters.get('charset');
+    if (charset && /^[A-Za-z0-9._-]{1,40}$/.test(charset)) return `text/plain; charset=${charset.toLowerCase()}`;
   }
-  return essence;
+  return parsed.essence;
 }
 
 export function isInlineSafeContentType(contentType: string | null | undefined): boolean {
-  return isSingleMediaType(contentType) && INLINE_SAFE_CONTENT_TYPES.has(contentTypeEssence(contentType));
+  const parsed = parseMediaType(contentType);
+  return parsed !== null && INLINE_SAFE_CONTENT_TYPES.has(parsed.essence);
 }
 
 // The PDF viewers in Chromium and Firefox refuse to render a document whose

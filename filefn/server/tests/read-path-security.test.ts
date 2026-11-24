@@ -177,6 +177,13 @@ describe('read path (FILE-30 F-03, F-04, F-23)', () => {
     expect(buildDownloadHeaders({ contentType: 'text/plain; charset=UTF-16LE', size: 1 })['Content-Type']).toBe('text/plain; charset=utf-16le');
     expect(signedDownloadConstraints('text/plain;charset="utf-8"')).toEqual({ constraints: { responseContentType: 'text/plain; charset=utf-8' } });
 
+    // Parameters are parsed, not searched: a quoted value cannot fake a charset.
+    expect(buildDownloadHeaders({ contentType: 'text/plain; note=";charset=windows-1252"; charset=utf-8', size: 1 })['Content-Type'])
+      .toBe('text/plain; charset=utf-8');
+    // Quoted text outside visible ASCII is not a well-formed type.
+    expect(buildDownloadHeaders({ contentType: 'application/pdf; name="\u03A9"', size: 1 })['Content-Disposition']).toBe('attachment');
+    expect(buildDownloadHeaders({ contentType: 'application/pdf; name="a\\"b"', size: 1 })['Content-Disposition']).toBe('inline');
+
     // A lone surrogate in a stored name does not break the header.
     expect(buildDownloadHeaders({ contentType: 'text/plain', size: 1, fileName: 'a\uD800.txt' })['Content-Disposition'])
       .toBe(`inline; filename="a_.txt"; filename*=UTF-8''a%EF%BF%BD.txt`);
@@ -188,7 +195,14 @@ describe('read path (FILE-30 F-03, F-04, F-23)', () => {
         name: 'thumb',
         supportedMimeTypes: ['image/tiff'],
         async process(input) {
-          return { success: true, artifacts: [{ kind: 'thumbnail-small', data: new Uint8Array([1]), mimeType: 'image/jpeg', storageKey: `${input.storageKey}-thumb-small.jpg` }] };
+          return {
+            success: true,
+            artifacts: [
+              // An SVG artifact is never a preview, whatever its kind says.
+              { kind: 'thumbnail-small', data: new Uint8Array([1]), mimeType: 'image/svg+xml', storageKey: `${input.storageKey}-thumb-small.svg` },
+              { kind: 'thumbnail-medium', data: new Uint8Array([1]), mimeType: 'image/jpeg', storageKey: `${input.storageKey}-thumb-medium.jpg` },
+            ],
+          };
         },
       }],
     });
@@ -199,6 +213,7 @@ describe('read path (FILE-30 F-03, F-04, F-23)', () => {
     await done;
     const thumb = await fileFn.services.files.getRenderDescriptor(tiff.fileId, { intent: 'thumbnail' }, alice);
     expect(thumb.source.mode).toBe('artifact');
+    expect(thumb.mimeType).toBe('image/jpeg');
   });
 
   it('gives SVG no image preview, so a render URL never depends on rendering it', async () => {
