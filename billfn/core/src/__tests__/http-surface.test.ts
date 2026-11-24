@@ -375,6 +375,19 @@ describe('request content type', () => {
   );
 });
 
+describe('content type parsing time', () => {
+  it('refuses a long malformed header of empty parameters promptly', async () => {
+    const env = await setup();
+    const header = `application/json${' ; '.repeat(5000)}x`;
+    const started = performance.now();
+
+    const response = await env.call('/checkouts', { method: 'POST', headers: { 'content-type': header }, body: '{}' });
+
+    expect(response.status).toBe(400);
+    expect(performance.now() - started).toBeLessThan(500);
+  });
+});
+
 describe('request size', () => {
   const large = JSON.stringify({ planKey: 'pro', provider: 'dodo', padding: 'x'.repeat(300 * 1024) });
 

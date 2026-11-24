@@ -72,26 +72,88 @@ function bodyTooLarge() {
   });
 }
 
-/** RFC 9110 media type: `type/subtype` then `; name=value` parameters, each value a token or a quoted string. */
-const TOKEN = "[a-z0-9!#$%&'*+.^_`|~-]+";
-const QUOTED_STRING = '"(?:[^"\\\\]|\\\\.)*"';
-const MEDIA_TYPE_HEADER = new RegExp(
-  `^[ \\t]*(${TOKEN})/(${TOKEN})(?:[ \\t]*;[ \\t]*(?:${TOKEN}=(?:${TOKEN}|${QUOTED_STRING}))?)*[ \\t]*$`,
-  'i'
-);
+/** RFC 9110 token characters. */
+const TOKEN_CHAR = /[A-Za-z0-9!#$%&'*+.^_`|~-]/;
 
 /**
- * application/json, or a type/subtype with the +json structured suffix. The whole header must be one well-formed
- * media type: a combined header (`application/json, text/plain`), a parameter without a value (`; charset`) or an
- * unterminated quoted value is refused; quoted values may hold commas and escaped quotes.
+ * Parses a header holding one RFC 9110 media type in a single left-to-right pass (no backtracking): `type/subtype`,
+ * then `;` parameters that are empty or `token=token` / `token="quoted string"` (backslash escapes inside quotes),
+ * with optional spaces or tabs around the separators. Returns the lowercased type and subtype, or null when the
+ * header is anything else (a second media type, a parameter without a value, an unterminated quote).
  */
+function parseMediaType(header: string): { type: string; subtype: string } | null {
+  let index = 0;
+  const skipSpaces = () => {
+    while (index < header.length && (header[index] === ' ' || header[index] === '\t')) {
+      index += 1;
+    }
+  };
+  const readToken = () => {
+    const start = index;
+    while (index < header.length && TOKEN_CHAR.test(header[index]!)) {
+      index += 1;
+    }
+    return header.slice(start, index);
+  };
+  skipSpaces();
+  const type = readToken();
+  if (!type || header[index] !== '/') {
+    return null;
+  }
+  index += 1;
+  const subtype = readToken();
+  if (!subtype) {
+    return null;
+  }
+  for (;;) {
+    skipSpaces();
+    if (index === header.length) {
+      return { type: type.toLowerCase(), subtype: subtype.toLowerCase() };
+    }
+    if (header[index] !== ';') {
+      return null;
+    }
+    index += 1;
+    skipSpaces();
+    // An empty parameter (`;;` or a trailing `;`) is allowed by the grammar.
+    if (index === header.length || header[index] === ';') {
+      continue;
+    }
+    if (!readToken() || header[index] !== '=') {
+      return null;
+    }
+    index += 1;
+    if (header[index] === '"') {
+      index += 1;
+      let closed = false;
+      while (index < header.length) {
+        const char = header[index]!;
+        if (char === '\\') {
+          index += 2;
+        } else if (char === '"') {
+          index += 1;
+          closed = true;
+          break;
+        } else {
+          index += 1;
+        }
+      }
+      if (!closed) {
+        return null;
+      }
+    } else if (!readToken()) {
+      return null;
+    }
+  }
+}
+
+/** application/json, or a type/subtype with the +json structured suffix, as the whole (single) media type. */
 function isJsonContentType(header: string | null) {
-  const match = header ? MEDIA_TYPE_HEADER.exec(header) : null;
-  if (!match) {
+  const parsed = header ? parseMediaType(header) : null;
+  if (!parsed) {
     return false;
   }
-  const type = match[1]!.toLowerCase();
-  const subtype = match[2]!.toLowerCase();
+  const { type, subtype } = parsed;
   return (type === 'application' && subtype === 'json') || (subtype.endsWith('+json') && subtype.length > '+json'.length);
 }
 
