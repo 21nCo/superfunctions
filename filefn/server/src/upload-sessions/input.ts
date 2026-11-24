@@ -55,9 +55,9 @@ function charge(budget: { bytes: number }, bytes: number): void {
 function normalizeJson(value: unknown, key: string, depth: number, budget: { left: number; bytes: number }): unknown {
   budget.left -= 1;
   if (budget.left < 0 || depth > MAX_METADATA_DEPTH) throw METADATA_BUDGET_EXCEEDED;
-  if (value !== null && (typeof value === 'object' || typeof value === 'bigint')) {
+  if (value !== null && (typeof value === 'object' || typeof value === 'bigint' || typeof value === 'function')) {
     const toJSON = (value as { toJSON?: unknown }).toJSON;
-    if (typeof toJSON === 'function') value = toJSON.call(value, key);
+    if (typeof toJSON === 'function') value = Reflect.apply(toJSON, value, [key]);
   }
   // Boxed primitives serialize as their primitive value, as in JSON.stringify,
   // detected by their internal slots (so wrappers from another realm count):
@@ -68,6 +68,8 @@ function normalizeJson(value: unknown, key: string, depth: number, budget: { lef
     if (hasSlot(Number.prototype.valueOf, value)) value = +(value as unknown as number);
     else if (hasSlot(String.prototype.valueOf, value)) value = String(value);
     else if (hasSlot(Boolean.prototype.valueOf, value)) value = Boolean.prototype.valueOf.call(value);
+    // A boxed BigInt is rejected, as JSON.stringify rejects a BigInt.
+    else if (hasSlot(BigInt.prototype.valueOf, value)) throw new TypeError('BigInt is not JSON');
   }
   if (typeof value === 'string') {
     // Count every occurrence at its escaped UTF-8 size, so repeated
@@ -87,7 +89,9 @@ function normalizeJson(value: unknown, key: string, depth: number, budget: { lef
   if (typeof value !== 'object') return undefined;
   if (Array.isArray(value)) {
     const out: unknown[] = [];
-    for (let i = 0; i < value.length; i++) {
+    // The length is read once, as JSON.stringify does.
+    const length = value.length;
+    for (let i = 0; i < length; i++) {
       const item = normalizeJson(value[i], String(i), depth + 1, budget);
       charge(budget, 1);
       out.push(item === undefined ? null : item);

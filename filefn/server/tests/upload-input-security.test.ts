@@ -270,4 +270,25 @@ describe('upload init input (FILE-30 F-21, F-05)', () => {
       fileFn.createUploadSession({ policy: 'any', fileName: 'a.txt', size: 1, mimeType: 'text/plain', metadata: { n: boxed } } as never, { principalId: 'alice' }),
     ).rejects.toMatchObject({ code: 'FILEFN_INVALID_REQUEST' });
   });
+
+  it('serializes metadata exactly as JSON.stringify does for functions, boxed BigInts and shrinking arrays', async () => {
+    const fileFn = makeFileFn([{ name: 'any' }]);
+    const init = (metadata: unknown, idempotencyKey?: string) =>
+      fileFn.createUploadSession({ policy: 'any', fileName: 'a.txt', size: 1, mimeType: 'text/plain', metadata, idempotencyKey } as never, { principalId: 'alice' });
+
+    // A function with toJSON serializes its hook result.
+    const fn = Object.assign(() => 1, { toJSON: () => 'hooked' });
+    const first = await init({ f: fn }, 'fn-key');
+    expect((await init({ f: 'hooked' }, 'fn-key')).uploadSessionId).toBe(first.uploadSessionId);
+
+    // A boxed BigInt is refused.
+    await expect(init({ n: Object(1n) })).rejects.toMatchObject({ code: 'FILEFN_INVALID_REQUEST' });
+
+    // An array that shrinks while being read keeps its original length (null holes).
+    const arr: unknown[] = [];
+    Object.defineProperty(arr, 0, { get() { arr.length = 1; return 0; }, configurable: true, enumerable: true });
+    arr.length = 2;
+    const shrinking = await init({ list: arr }, 'arr-key');
+    expect((await init({ list: [0, null] }, 'arr-key')).uploadSessionId).toBe(shrinking.uploadSessionId);
+  });
 });
