@@ -86,22 +86,26 @@ class SharesService:
         try:
             return (await asyncio.shield(task)).downloads
         except asyncio.CancelledError:
-
-            async def give_back() -> None:
-                try:
-                    reserved = await task
-                except asyncio.CancelledError:
-                    # This give-back itself was cancelled (shutdown): nothing to undo here.
-                    raise
-                except Exception:
-                    # The count never landed: nothing to give back.
-                    return
-                await self._release_download(token_hash, reserved.downloads)
-
-            pending = asyncio.ensure_future(give_back())
-            self._background.add(pending)
-            pending.add_done_callback(self._background.discard)
+            self._give_back_when_landed(task, token_hash)
             raise
+
+    def _give_back_when_landed(self, task: "asyncio.Future[FileShareRecord]", token_hash: str) -> None:
+        """In the background: once a reservation whose caller was cancelled lands, give its count back."""
+
+        async def give_back() -> None:
+            try:
+                reserved = await task
+            except asyncio.CancelledError:
+                # This give-back itself was cancelled (shutdown): nothing to undo here.
+                raise
+            except Exception:
+                # The count never landed: nothing to give back.
+                return
+            await self._release_download(token_hash, reserved.downloads)
+
+        pending = asyncio.ensure_future(give_back())
+        self._background.add(pending)
+        pending.add_done_callback(self._background.discard)
 
     async def _release_download(self, token_hash: str, written: int) -> None:
         """Gives back one download that could not be handed out: the current count goes down by one,
