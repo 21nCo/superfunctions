@@ -1236,17 +1236,33 @@ def test_drive_qualified_keys_are_unsafe() -> None:
     assert sanitize_storage_key_segment("ab:c") == "ab:c"
 
 
+class FailOnceSessionUpdate(FakeDB):
+    """Fails the first write of status `completed`, after the version row is written."""
+
+    failed = False
+
+    async def update(self, model: str, where: List[Dict[str, Any]], data: Dict[str, Any], namespace: Optional[str] = None):
+        if model == "uploadSessions" and data.get("status") == "completed" and not self.failed:
+            self.failed = True
+            raise RuntimeError("database timeout")
+        return await super().update(model, where, data, namespace)
+
+
+async def _proxy_session_published_without_completed() -> Any:
+    """A proxy session whose completion published its version, then failed to write `completed`."""
+    db = FailOnceSessionUpdate()
+    service = _make_service(db=db)
+    session = await service.create_session(
+        CreateSessionInput(policy="user-avatar", fileName="a.png", size=3, mimeType="image/png"), _ctx()
+    )
+    await service.record_proxy_part(session["uploadSessionId"], 1, b"abc", _ctx())
+    with pytest.raises(RuntimeError):
+        await service.complete_session(session["uploadSessionId"], _ctx())
+    return db, service, session
+
+
 @pytest.mark.asyncio
 async def test_retry_after_the_version_was_written_finishes_the_session() -> None:
-    class FailOnceSessionUpdate(FakeDB):
-        failed = False
-
-        async def update(self, model: str, where: List[Dict[str, Any]], data: Dict[str, Any], namespace: Optional[str] = None):
-            if model == "uploadSessions" and data.get("status") == "completed" and not self.failed:
-                self.failed = True
-                raise RuntimeError("database timeout")
-            return await super().update(model, where, data, namespace)
-
     db = FailOnceSessionUpdate()
     storage = StatStorage(actual_size=3)
     service = _make_service(db=db, storage=storage)
@@ -1260,23 +1276,7 @@ async def test_retry_after_the_version_was_written_finishes_the_session() -> Non
 
 @pytest.mark.asyncio
 async def test_proxy_retry_after_the_version_was_written_finishes_without_storage() -> None:
-    class FailOnceSessionUpdate(FakeDB):
-        failed = False
-
-        async def update(self, model: str, where: List[Dict[str, Any]], data: Dict[str, Any], namespace: Optional[str] = None):
-            if model == "uploadSessions" and data.get("status") == "completed" and not self.failed:
-                self.failed = True
-                raise RuntimeError("database timeout")
-            return await super().update(model, where, data, namespace)
-
-    db = FailOnceSessionUpdate()
-    service = _make_service(db=db)
-    session = await service.create_session(
-        CreateSessionInput(policy="user-avatar", fileName="a.png", size=3, mimeType="image/png"), _ctx()
-    )
-    await service.record_proxy_part(session["uploadSessionId"], 1, b"abc", _ctx())
-    with pytest.raises(RuntimeError):
-        await service.complete_session(session["uploadSessionId"], _ctx())
+    db, service, session = await _proxy_session_published_without_completed()
     # The staged parts are gone; the retry finishes from the published version alone.
     result = await service.complete_session(session["uploadSessionId"], _ctx())
     assert db.tables["uploadSessions"][0]["status"] == "completed"
@@ -1285,23 +1285,7 @@ async def test_proxy_retry_after_the_version_was_written_finishes_without_storag
 
 @pytest.mark.asyncio
 async def test_expiry_sweep_keeps_a_published_session_for_its_retry() -> None:
-    class FailOnceSessionUpdate(FakeDB):
-        failed = False
-
-        async def update(self, model: str, where: List[Dict[str, Any]], data: Dict[str, Any], namespace: Optional[str] = None):
-            if model == "uploadSessions" and data.get("status") == "completed" and not self.failed:
-                self.failed = True
-                raise RuntimeError("database timeout")
-            return await super().update(model, where, data, namespace)
-
-    db = FailOnceSessionUpdate()
-    service = _make_service(db=db)
-    session = await service.create_session(
-        CreateSessionInput(policy="user-avatar", fileName="a.png", size=3, mimeType="image/png"), _ctx()
-    )
-    await service.record_proxy_part(session["uploadSessionId"], 1, b"abc", _ctx())
-    with pytest.raises(RuntimeError):
-        await service.complete_session(session["uploadSessionId"], _ctx())
+    db, service, session = await _proxy_session_published_without_completed()
     db.tables["uploadSessions"][0]["expiresAt"] = "2001-01-01T00:00:00+00:00"
     await service.garbage_collect_expired_sessions()
     # The session survives untouched; the client's retry finishes it normally.
@@ -1313,23 +1297,7 @@ async def test_expiry_sweep_keeps_a_published_session_for_its_retry() -> None:
 
 @pytest.mark.asyncio
 async def test_retry_after_expiry_still_finishes_a_published_version() -> None:
-    class FailOnceSessionUpdate(FakeDB):
-        failed = False
-
-        async def update(self, model: str, where: List[Dict[str, Any]], data: Dict[str, Any], namespace: Optional[str] = None):
-            if model == "uploadSessions" and data.get("status") == "completed" and not self.failed:
-                self.failed = True
-                raise RuntimeError("database timeout")
-            return await super().update(model, where, data, namespace)
-
-    db = FailOnceSessionUpdate()
-    service = _make_service(db=db)
-    session = await service.create_session(
-        CreateSessionInput(policy="user-avatar", fileName="a.png", size=3, mimeType="image/png"), _ctx()
-    )
-    await service.record_proxy_part(session["uploadSessionId"], 1, b"abc", _ctx())
-    with pytest.raises(RuntimeError):
-        await service.complete_session(session["uploadSessionId"], _ctx())
+    db, service, session = await _proxy_session_published_without_completed()
     # The file is live; the session expired before the client retried.
     db.tables["uploadSessions"][0]["expiresAt"] = "2001-01-01T00:00:00+00:00"
     result = await service.complete_session(session["uploadSessionId"], _ctx())
