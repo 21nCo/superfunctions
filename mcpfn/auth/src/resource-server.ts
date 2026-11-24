@@ -29,6 +29,11 @@ export interface McpFnOAuthResourceServerOptions
   verifier: OAuthTokenVerifier;
   requiredScopes?: string[] | ((request: Request) => string[] | Promise<string[]>);
   clock?: () => number;
+  /**
+   * Accept tokens whose verified `AuthInfo` has no `expiresAt`. Off by
+   * default: such a token would never expire at this server.
+   */
+  allowTokensWithoutExpiry?: boolean;
 }
 
 export type McpFnWebStandardHandler = (
@@ -168,7 +173,13 @@ export function createOAuthResourceServerHandler(
       });
     }
     const now = Math.floor((options.clock?.() ?? Date.now()) / 1_000);
-    if (authInfo.expiresAt !== undefined && authInfo.expiresAt <= now) {
+    if (authInfo.expiresAt === undefined && options.allowTokensWithoutExpiry !== true) {
+      return bearerChallengeResponse(401, metadataUrl, {
+        error: "invalid_token",
+        description: "The access token has no expiry",
+      });
+    }
+    if (authInfo.expiresAt !== undefined && !(authInfo.expiresAt > now)) {
       return bearerChallengeResponse(401, metadataUrl, {
         error: "invalid_token",
         description: "The access token has expired",

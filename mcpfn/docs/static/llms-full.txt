@@ -32,6 +32,10 @@ const fetch = createOAuthResourceServerHandler(mcp, {
 });
 ```
 
+The verifier's `AuthInfo` must carry an `expiresAt` in the future and a
+`resource` equal to the configured resource. Tokens without `expiresAt` are
+refused unless `allowTokensWithoutExpiry: true` is set.
+
 The wrapper publishes protected-resource metadata and passes verified auth information to server context. Keep identity, tenant, scopes, and resource binding out of model-controlled arguments. The [authorization reference](https://github.com/21nCo/super-functions/blob/dev/mcpfn/docs/content/docs/reference/auth.md) covers the generic provider adapter and diagnostic entry points.
 
 ## Complete client OAuth
@@ -441,6 +445,10 @@ const fetch = createOAuthResourceServerHandler(mcp, {
 });
 ```
 
+The verifier's `AuthInfo` must carry an `expiresAt` in the future and a
+`resource` equal to the configured resource. Tokens without `expiresAt` are
+refused unless `allowTokensWithoutExpiry: true` is set.
+
 Enterprise-managed authorization helpers advertise the stable ID-JAG grant profile in authorization-server metadata and build the request metadata used by supporting clients.
 
 ## Client provider
@@ -450,6 +458,14 @@ Enterprise-managed authorization helpers advertise the stable ID-JAG grant profi
 metadata before opening a browser, correlates callback state, stores PKCE and
 tokens in memory unless an encrypted store is supplied, classifies token
 exchange/refresh/revocation diagnostics, and redacts credentials.
+Stored tokens and client information keep the `issuer` the MCP SDK records,
+so they are only sent to that authorization server. Tokens saved without an
+`issuer` (by an earlier version) are returned without their refresh token, so
+the client authorizes again when the access token expires instead of
+presenting the refresh token to whichever authorization server an MCP server
+names. Callback `state` is checked by this provider's
+`validateAuthorizationState()`; a plain SDK provider without that method gets
+PKCE protection only.
 
 ```ts
 const provider = createMcpFnOAuthClientProvider({
@@ -513,7 +529,13 @@ required. A bearer-specific provider can implement
 `authenticateBearer(token, request)` directly; a standard AuthFn
 `authenticate(request)` provider is invoked with a credential-isolated request
 containing only that exact Bearer token. An AuthProvider's `authorize()` hook
-receives the normalized MCP resource URL before trusted context is created. `auth-diagnose` and
+receives the normalized MCP resource URL before trusted context is created.
+Without that hook, the session's `resourceIds` must contain the resource URL;
+otherwise the credential is refused. `allowUnboundCredentials: true` accepts
+credentials with no binding, and then `authInfo.resource` is not set. Sessions
+past their `expiresAt` (or a mapped principal's) are refused. The default
+mapping sets `authInfo.clientId` to the session's `metadata.clientId`, or else
+`<actorType>:<actorId>`; it never uses the session ID. `auth-diagnose` and
 `diagnoseMcpAuthorization()` perform read-only discovery without browser or
 credential actions.
 

@@ -244,8 +244,17 @@ export class McpFnOAuthClientProvider implements OAuthClientProvider {
     }
   }
 
-  tokens(): Promise<OAuthTokens | undefined> {
-    return this.store.getTokens();
+  async tokens(): Promise<OAuthTokens | undefined> {
+    const tokens = await this.store.getTokens();
+    // Tokens saved before the MCP SDK recorded the authorization server's
+    // issuer cannot prove where their refresh token belongs. Withhold it, so a
+    // malicious MCP server naming another authorization server cannot receive
+    // it; the client authorizes again when the access token expires.
+    if (tokens?.refresh_token && typeof (tokens as { issuer?: unknown }).issuer !== "string") {
+      const { refresh_token: _withheld, ...rest } = tokens;
+      return rest;
+    }
+    return tokens;
   }
 
   async saveTokens(value: OAuthTokens): Promise<void> {

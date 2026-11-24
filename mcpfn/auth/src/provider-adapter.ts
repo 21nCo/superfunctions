@@ -79,6 +79,16 @@ export interface McpFnAuthProviderAdapterOptions<TSession extends McpFnAuthSessi
         principal: McpFnPrincipal;
         request: Request;
       }) => string[] | Promise<string[]>);
+  /**
+   * Audience check. When the provider implements `authorize`, it decides
+   * whether the session may use `resource`. Otherwise the principal's
+   * `resourceIds` must contain `resource`. Set this to true only when every
+   * credential the provider accepts is meant for this server: the check is
+   * then skipped and `authInfo.resource` is left unset.
+   */
+  allowUnboundCredentials?: boolean;
+  /** Current time in milliseconds, for expiry checks. Defaults to Date.now. */
+  clock?: () => number;
 }
 
 export interface McpFnAuthProviderAdapter<TSession extends McpFnAuthSessionLike> {
@@ -108,14 +118,20 @@ export function createMcpFnAuthProviderAdapter<TSession extends McpFnAuthSession
           credentials: "omit",
         }));
       if (!session) return null;
+      const now = options.clock?.() ?? Date.now();
+      if (session.expiresAt !== undefined && !(session.expiresAt.getTime() > now)) return null;
       const principal = options.map
         ? await withRequestClone(request, (mapRequest) =>
           options.map!(session, mapRequest))
         : defaultPrincipal(session);
-      if (
-        options.provider.authorize &&
-        !(await options.provider.authorize(session, resource.toString()))
-      ) {
+      if (principal.expiresAt !== undefined && !(principal.expiresAt * 1_000 > now)) return null;
+      let audienceVerified = false;
+      if (options.provider.authorize) {
+        if (!(await options.provider.authorize(session, resource.toString()))) return null;
+        audienceVerified = true;
+      } else if (principal.resourceIds.some((id) => sameResource(id, resource))) {
+        audienceVerified = true;
+      } else if (options.allowUnboundCredentials !== true) {
         return null;
       }
       if (
@@ -133,7 +149,7 @@ export function createMcpFnAuthProviderAdapter<TSession extends McpFnAuthSession
           clientId: principal.clientId,
           scopes: [...principal.scopes],
           ...(principal.expiresAt !== undefined ? { expiresAt: principal.expiresAt } : {}),
-          resource,
+          ...(audienceVerified ? { resource } : {}),
           extra: {
             ...principal.extra,
             subject: principal.subject,
@@ -146,6 +162,16 @@ export function createMcpFnAuthProviderAdapter<TSession extends McpFnAuthSession
       };
     },
   };
+}
+
+function sameResource(candidate: string, resource: URL): boolean {
+  try {
+    const parsed = new URL(candidate);
+    parsed.hash = "";
+    return parsed.toString() === resource.toString();
+  } catch {
+    return false;
+  }
 }
 
 async function withRequestClone<T>(
@@ -235,7 +261,8 @@ function invalidTokenResponse(metadataUrl: URL): Response {
 function defaultPrincipal(session: McpFnAuthSessionLike): McpFnPrincipal {
   return {
     subject: session.subject.actorId,
-    clientId: session.id,
+    // Never the session ID: authInfo.clientId reaches tool handlers and logs.
+    clientId: defaultClientId(session),
     scopes: [...(session.scopes ?? [])],
     resourceIds: [...(session.resourceIds ?? [])],
     ...(session.expiresAt
@@ -245,4 +272,13 @@ function defaultPrincipal(session: McpFnAuthSessionLike): McpFnPrincipal {
     ...(session.subject.regionId ? { regionId: session.subject.regionId } : {}),
     ...(session.methods ? { authMethods: [...session.methods] } : {}),
   };
+}
+
+function defaultClientId(session: McpFnAuthSessionLike): string {
+  const metadata = session.metadata;
+  if (metadata && typeof metadata === "object" && !Array.isArray(metadata)) {
+    const clientId = (metadata as { clientId?: unknown }).clientId;
+    if (typeof clientId === "string" && clientId) return clientId;
+  }
+  return `${session.subject.actorType}:${session.subject.actorId}`;
 }

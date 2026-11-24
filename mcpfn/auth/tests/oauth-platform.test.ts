@@ -1614,6 +1614,7 @@ describe("generic auth provider composition", () => {
         authenticateBearer: async () => ({
           id: "client-1",
           type: "oauth",
+          resourceIds: ["https://mcp.example.com/mcp"],
           subject: {
             actorId: "user-1",
             actorType: "user",
@@ -1628,7 +1629,7 @@ describe("generic auth provider composition", () => {
     }));
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({
-      clientId: "client-1",
+      clientId: "user:user-1",
       scopes: ["mcp:read"],
       extra: { subject: "user-1", tenantId: "workspace-1" },
     });
@@ -1640,6 +1641,7 @@ describe("generic auth provider composition", () => {
       ? {
           id: "client-1",
           type: "oauth",
+          resourceIds: ["https://mcp.example.com/mcp"],
           subject: { actorId: "user-1", actorType: "user" },
         }
       : null);
@@ -1667,6 +1669,7 @@ describe("generic auth provider composition", () => {
       return {
         id: "client-1",
         type: "oauth",
+          resourceIds: ["https://mcp.example.com/mcp"],
         subject: { actorId: "user-1", actorType: "user" },
       };
     });
@@ -1691,6 +1694,7 @@ describe("generic auth provider composition", () => {
     const session = {
       id: "client-1",
       type: "oauth",
+          resourceIds: ["https://mcp.example.com/mcp"],
       subject: { actorId: "user-1", actorType: "user" as const },
     };
     const authorize = vi.fn(async () => false);
@@ -1799,6 +1803,7 @@ describe("generic auth provider composition", () => {
         authenticateBearer: async () => ({
           id: "client-1",
           type: "oauth",
+          resourceIds: ["https://mcp.example.com/mcp"],
           subject: { actorId: "user-1", actorType: "user" },
           scopes: ["mcp:read"],
         }),
@@ -1831,6 +1836,7 @@ describe("generic auth provider composition", () => {
           return {
             id: "client-1",
             type: "oauth",
+            resourceIds: ["https://mcp.example.com/mcp"],
             subject: { actorId: "user-1", actorType: "user" },
           };
         },
@@ -1873,6 +1879,7 @@ describe("generic auth provider composition", () => {
           return {
             id: "client-1",
             type: "oauth",
+            resourceIds: ["https://mcp.example.com/mcp"],
             subject: { actorId: "user-1", actorType: "user" },
           };
         },
@@ -1883,7 +1890,7 @@ describe("generic auth provider composition", () => {
           subject: session.subject.actorId,
           clientId: session.id,
           scopes: [],
-          resourceIds: [],
+          resourceIds: ["https://mcp.example.com/mcp"],
         };
       },
       authorize: async ({ request }) => {
@@ -1916,6 +1923,7 @@ describe("generic auth provider composition", () => {
         authenticateBearer: async () => ({
           id: "client-1",
           type: "oauth",
+          resourceIds: ["https://mcp.example.com/mcp"],
           subject: { actorId: "user-1", actorType: "user" },
         }),
       },
@@ -1923,7 +1931,7 @@ describe("generic auth provider composition", () => {
         subject: "trusted-user",
         clientId: "trusted-client",
         scopes: ["mcp:read"],
-        resourceIds: ["trusted-resource"],
+        resourceIds: ["https://mcp.example.com/mcp"],
         tenantId: "trusted-tenant",
         extra: {
           subject: "attacker",
@@ -1941,7 +1949,7 @@ describe("generic auth provider composition", () => {
     await expect(response.json()).resolves.toMatchObject({
       extra: {
         subject: "trusted-user",
-        resourceIds: ["trusted-resource"],
+        resourceIds: ["https://mcp.example.com/mcp"],
         tenantId: "trusted-tenant",
         visible: "retained",
       },
