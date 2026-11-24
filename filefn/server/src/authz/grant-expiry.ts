@@ -26,12 +26,18 @@ export function parseIsoInstant(value: unknown): number | null {
   ) {
     return null;
   }
-  if (!zone || zone === 'Z') return utc;
-  const sign = zone[0] === '-' ? -1 : 1;
-  const zoneHours = Number(zone.slice(1, 3));
-  const zoneMinutes = Number(zone.slice(4, 6));
-  if (zoneHours > 23 || zoneMinutes > 59) return null;
-  return utc - sign * (zoneHours * 60 + zoneMinutes) * 60_000;
+  let instant = utc;
+  if (zone && zone !== 'Z') {
+    const sign = zone[0] === '-' ? -1 : 1;
+    const zoneHours = Number(zone.slice(1, 3));
+    const zoneMinutes = Number(zone.slice(4, 6));
+    if (zoneHours > 23 || zoneMinutes > 59) return null;
+    instant = utc - sign * (zoneHours * 60 + zoneMinutes) * 60_000;
+  }
+  // The stored form is UTC ISO with a four-digit year; an instant outside
+  // years 0001-9999 in UTC could not be read back.
+  const utcYear = new Date(instant).getUTCFullYear();
+  return utcYear >= 1 && utcYear <= 9999 ? instant : null;
 }
 
 /**

@@ -226,13 +226,16 @@ export function createSharesService(config: SharesServiceConfig) {
     );
   }
 
-  /** Signed URL lifetime: the configured TTL, but never past the link's own expiry. */
-  function signedUrlLifetime(share: FileShareRecord): number {
+  /**
+   * Signed URL lifetime: the configured TTL, but never past the link's own
+   * expiry. Null when less than a whole second is left: the checked proxy
+   * serves the link then.
+   */
+  function signedUrlLifetime(share: FileShareRecord): number | null {
     const expiresAtMs = share.expiresAt ? parseIsoInstant(share.expiresAt) : null;
     if (expiresAtMs === null) return signedUrlTtlSeconds;
     const remaining = Math.floor((expiresAtMs - Date.now()) / 1000);
-    if (remaining < 1) throw errors.shareExpired();
-    return Math.min(signedUrlTtlSeconds, remaining);
+    return remaining < 1 ? null : Math.min(signedUrlTtlSeconds, remaining);
   }
 
   async function resolveDownload(
@@ -326,15 +329,22 @@ export function createSharesService(config: SharesServiceConfig) {
       const { tokenHash, share, file, version } = await resolveDownload(token, ctx);
       const storageTarget = resolveStorageTarget(policies?.get(file.policy) ?? {});
 
-      if (getStorageCapabilities(storage, storageTarget).signedDownloadUrls && storage.signDownloadUrl) {
+      const lifetime = signedUrlLifetime(share);
+      if (lifetime !== null && getStorageCapabilities(storage, storageTarget).signedDownloadUrls && storage.signDownloadUrl) {
         // Signed first and handed out only once the download is counted.
         const result = await storage.signDownloadUrl({
           key: version.storageKey,
           target: storageTarget,
-          expiresInSeconds: signedUrlLifetime(share),
+          expiresInSeconds: lifetime,
         });
-        await reserveDownload(tokenHash, share, ctx);
-        return { url: result.url, headers: result.headers, fileName: file.name, mimeType: file.mimeType };
+        // The signer fixed the URL's expiry no later than now + lifetime. If
+        // signing took long enough for that to pass the link's own expiry, the
+        // URL is dropped and the checked proxy serves the link instead.
+        const linkExpiresAtMs = share.expiresAt ? parseIsoInstant(share.expiresAt) : null;
+        if (linkExpiresAtMs === null || Date.now() + lifetime * 1000 <= linkExpiresAtMs) {
+          await reserveDownload(tokenHash, share, ctx);
+          return { url: result.url, headers: result.headers, fileName: file.name, mimeType: file.mimeType };
+        }
       }
 
       return {

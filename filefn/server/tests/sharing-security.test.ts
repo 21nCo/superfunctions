@@ -276,6 +276,84 @@ describe('share links, grants and JSON routes (FILE-30 F-07, F-08, F-09, F-15)',
     await expect(fileFn.services.shares.downloadViaShareLink(noExpiry.token, {})).rejects.toMatchObject({ code: 'FILEFN_SHARE_EXPIRED' });
   });
 
+  it('serves a link through the checked proxy when a signed URL could outlive it', async () => {
+    const local = createLocalStorageAdapter({ rootDir });
+    let delayMs = 0;
+    const storage = new Proxy(local, {
+      get(target, prop, receiver) {
+        if (prop === 'capabilities') return { ...target.capabilities, signedDownloadUrls: true };
+        if (prop === 'signDownloadUrl') {
+          return async () => {
+            await new Promise((resolve) => setTimeout(resolve, delayMs));
+            return { url: 'https://storage.example/object' };
+          };
+        }
+        return Reflect.get(target, prop, receiver);
+      },
+    });
+    const database = memoryAdapter();
+    const fileFn = createFileFn({
+      database,
+      storage,
+      namespace: 'filefn',
+      policies: [{ name: 'docs', contentTypes: ['text/plain'], visibility: 'private' }],
+    });
+    const file = await upload(fileFn);
+    const share = await fileFn.services.shares.createShareLink({ fileId: file.fileId }, owner);
+    const setExpiry = (ms: number) =>
+      database.updateMany({
+        model: 'fileShares',
+        where: [{ field: 'fileId', operator: 'eq', value: file.fileId }],
+        data: { expiresAt: new Date(Date.now() + ms).toISOString() },
+        namespace: 'filefn',
+      });
+
+    // Under a second left: nothing to sign, the proxy (which checks expiry) serves it.
+    await setExpiry(500);
+    expect((await fileFn.services.shares.downloadViaShareLink(share.token, {})).url).toMatch(/^\/proxy\/share-links\//);
+
+    // Signing slower than the slack left: the URL would outlive the link, so it is dropped.
+    await setExpiry(1900);
+    delayMs = 1000;
+    expect((await fileFn.services.shares.downloadViaShareLink(share.token, {})).url).toMatch(/^\/proxy\/share-links\//);
+
+    await setExpiry(3_600_000);
+    delayMs = 0;
+    expect((await fileFn.services.shares.downloadViaShareLink(share.token, {})).url).toBe('https://storage.example/object');
+  });
+
+  it('treats the anonymous principal as a guest for links that require auth', async () => {
+    const database = memoryAdapter();
+    const fileFn = createFileFn({
+      database,
+      storage: createLocalStorageAdapter({ rootDir }),
+      namespace: 'filefn',
+      policies: [{ name: 'docs', contentTypes: ['text/plain'], visibility: 'private' }],
+      auth: { resolveSession: async () => ({ principalId: 'anonymous' }) },
+      shares: { requireAuth: true },
+    });
+    const file = await upload(fileFn);
+    const share = await fileFn.services.shares.createShareLink({ fileId: file.fileId }, owner);
+    expect((await call(fileFn, 'GET', `/share-links/${share.token}/download`)).status).toBe(401);
+    expect((await call(fileFn, 'GET', `/proxy/share-links/${share.token}/download`)).status).toBe(401);
+  });
+
+  it('refuses expiry dates that leave years 0001-9999 once converted to UTC', async () => {
+    const { fileFn } = makeFileFn();
+    const file = await upload(fileFn);
+    for (const expiresAt of ['9999-12-31T23:59:59-01:00']) {
+      await expect(fileFn.services.shares.createShareLink({ fileId: file.fileId, expiresAt }, owner)).rejects.toMatchObject({
+        code: 'FILEFN_INVALID_REQUEST',
+      });
+      await expect(fileFn.services.grants.createGrant({ fileId: file.fileId, userId: 'reader', expiresAt }, owner)).rejects.toMatchObject({
+        code: 'FILEFN_INVALID_REQUEST',
+      });
+    }
+    const latest = await fileFn.services.shares.createShareLink({ fileId: file.fileId, expiresAt: '9999-12-31T22:59:59-01:00' }, owner);
+    expect(latest.expiresAt).toBe('9999-12-31T23:59:59.000Z');
+    await expect(fileFn.services.shares.getDownloadStreamViaShareLink(latest.token, {})).resolves.toBeDefined();
+  });
+
   it('accepts any valid +json media type and refuses malformed ones', async () => {
     const { fileFn } = makeFileFn();
     const file = await upload(fileFn);

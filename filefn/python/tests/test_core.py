@@ -93,3 +93,12 @@ def test_grant_expiry_helper_fails_closed() -> None:
     assert is_grant_expired("2001-01-01T00:00:00Z")
     assert not is_grant_expired("2999-01-01T00:00:00Z")
     assert not is_grant_expired(None)
+
+
+def test_iso_instant_outside_utc_year_range_is_refused() -> None:
+    from filefn.server.authz.grant_expiry import is_grant_expired, parse_iso_instant
+
+    assert parse_iso_instant("9999-12-31T23:59:59-01:00") is None
+    assert parse_iso_instant("0001-01-01T00:00:00+01:00") is None
+    assert is_grant_expired("9999-12-31T23:59:59-01:00")
+    assert parse_iso_instant("9999-12-31T22:59:59-01:00") is not None

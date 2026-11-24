@@ -1,6 +1,6 @@
 import hashlib
 import secrets
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel
@@ -51,15 +51,20 @@ class SharesService:
     def _generate_token(self) -> str:
         return secrets.token_urlsafe(32)
 
-    def _signed_url_lifetime(self, share: FileShareRecord) -> int:
-        """The signed URL TTL, but never past the link's own expiry."""
+    def _signed_url_lifetime(self, share: FileShareRecord) -> Optional[int]:
+        """The signed URL TTL, but never past the link's own expiry; None (use the proxy) under a second."""
         expires = parse_iso_instant(share.expiresAt) if share.expiresAt else None
         if expires is None:
             return self.signed_url_ttl_seconds
         remaining = int((expires - datetime.now(timezone.utc)).total_seconds())
         if remaining < 1:
-            raise errors.share_expired()
+            return None
         return min(self.signed_url_ttl_seconds, remaining)
+
+    def _signed_url_within_link(self, share: FileShareRecord, lifetime: int) -> bool:
+        """Whether a URL signed with this lifetime, now, still ends before the link does."""
+        expires = parse_iso_instant(share.expiresAt) if share.expiresAt else None
+        return expires is None or datetime.now(timezone.utc) + timedelta(seconds=lifetime) <= expires
 
     def _as_utc(self, value: str) -> datetime:
         normalized = value.replace("Z", "+00:00")
@@ -213,13 +218,21 @@ class SharesService:
         storage_target = self._storage_target_for_file(file)
 
         descriptor: Dict[str, Any]
-        if hasattr(self.storage, "sign_download_url") and get_storage_capabilities(self.storage, storage_target).get("signedDownloadUrls"):
+        lifetime = self._signed_url_lifetime(share)
+        if (
+            lifetime is not None
+            and hasattr(self.storage, "sign_download_url")
+            and get_storage_capabilities(self.storage, storage_target).get("signedDownloadUrls")
+        ):
             try:
                 result = await self.storage.sign_download_url(
                     key=version.storageKey,
-                    expires_in_seconds=self._signed_url_lifetime(share),
+                    expires_in_seconds=lifetime,
                     target=storage_target,
                 )
+                # If signing took long enough for the URL to outlive the link, the checked proxy serves it.
+                if not self._signed_url_within_link(share, lifetime):
+                    raise errors.share_expired()
                 await self._reserve_download(token_hash)
                 descriptor = {
                     "url": result["url"],

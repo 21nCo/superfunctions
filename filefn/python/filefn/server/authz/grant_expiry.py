@@ -36,7 +36,11 @@ def parse_iso_instant(value: Any) -> Optional[datetime]:
         if zone_hours > 23 or zone_minutes > 59:
             return None
         offset = timedelta(hours=zone_hours, minutes=zone_minutes)
-        parsed = parsed - offset if zone[0] == "+" else parsed + offset
+        try:
+            parsed = parsed - offset if zone[0] == "+" else parsed + offset
+        except OverflowError:
+            # Outside years 1-9999 once converted to UTC.
+            return None
     return parsed
 
 
