@@ -348,4 +348,43 @@ describe('event prices named outside the provider record', () => {
 
     expect((await env.entitlements())?.subscription?.planKey).toBe('enterprise');
   });
+
+  it('does not let a one-time cart item choose the plan of a payment that also starts a subscription', async () => {
+    const env = setup();
+    await env.openCheckout('enterprise');
+
+    await env.deliver({
+      providerSubscriptionId: 'sub_mixed',
+      providerChargeId: 'pay_mixed',
+      billingState: {
+        subscriptionStatus: 'active',
+        checkoutStatus: 'succeeded',
+        providerSubscriptionId: 'sub_mixed',
+        providerChargeId: 'pay_mixed',
+        autoRenew: true,
+        raw: {
+          subscription_id: 'sub_mixed',
+          product_cart: [{ product_id: 'pdt_starter_month', quantity: 1 }],
+          metadata: { billfn_billing_account_id: 'ba_user_attacker' }
+        }
+      },
+      raw: {}
+    });
+
+    expect((await env.entitlements())?.subscription?.planKey).not.toBe('starter');
+  });
+
+  it('takes an adapter providerProductId that names the catalog price itself as that price', async () => {
+    const env = setup();
+    const session = await env.openCheckout('enterprise');
+    const event = paidEvent(session.checkoutSessionId, 'pdt_enterprise_month');
+
+    await env.deliver({
+      ...event,
+      checkoutReferenceSource: 'metadata',
+      billingState: { ...event.billingState, providerProductId: 'price_enterprise_month', raw: { metadata: {} } }
+    });
+
+    expect((await env.entitlements())?.subscription).toMatchObject({ planKey: 'enterprise' });
+  });
 });

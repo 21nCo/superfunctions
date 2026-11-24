@@ -5530,7 +5530,12 @@ function checkoutReferenceMatchesSession(
   );
   // The event must pay for the session's product, as the provider itself reported it; a price id from metadata
   // proves nothing.
-  return sessionPrice !== undefined && providerReportedProducts(state).includes(sessionPrice.providerProductId);
+  // The adapter's providerProductId may name the catalog price itself (see BillFnVerifiedBillingState).
+  return (
+    sessionPrice !== undefined &&
+    (providerReportedProducts(state).includes(sessionPrice.providerProductId) ||
+      state.providerProductId === sessionPrice.priceId)
+  );
 }
 
 /**
@@ -5540,7 +5545,13 @@ function checkoutReferenceMatchesSession(
 function providerReportedProducts(state: VerifiedBillingState | undefined): string[] {
   const raw = asRecord(state?.raw);
   const records = [raw, asRecord(raw?.transaction)];
-  const cart = Array.isArray(raw?.product_cart) ? raw.product_cart : [];
+  // A Dodo cart lists a payment's one-time items; a payment that also charges a subscription keeps the
+  // subscription's product elsewhere, so its cart says nothing about the subscription's plan.
+  const chargesSubscription =
+    Boolean(state?.providerSubscriptionId) ||
+    Boolean(readString(raw ?? {}, 'subscription_id')) ||
+    (Array.isArray(raw?.subscription_ids) && raw.subscription_ids.length > 0);
+  const cart = !chargesSubscription && Array.isArray(raw?.product_cart) ? raw.product_cart : [];
   return [
     state?.providerProductId,
     ...records.flatMap((record) => (record ? [readString(record, 'product_id'), readString(record, 'productId')] : [])),
@@ -5602,7 +5613,7 @@ async function resolveProviderEventPriceReference(
     const resolved =
       paidProducts.length === 0
         ? findCatalogPriceReference(deps.catalog, provider, references, subscription?.priceId)
-        : (selectPaidPriceById(deps.catalog, provider, references, paidProducts) ??
+        : (selectPaidPriceById(deps.catalog, provider, references, paidProducts, event.billingState?.providerProductId) ??
           findCatalogPriceReference(deps.catalog, provider, paidProducts, subscription?.priceId, { productsOnly: true }));
     if (resolved) {
       return resolved;
@@ -5626,12 +5637,17 @@ async function resolveProviderEventPriceReference(
   return latest ? requirePriceReference(deps.catalog, latest.targetPriceId) : null;
 }
 
-/** The first catalog price of this provider whose id a reference names and whose product was paid for. */
+/**
+ * The first catalog price of this provider whose id a reference names and whose product was paid for, or that the
+ * adapter's own providerProductId names directly.
+ */
 function selectPaidPriceById(
   catalog: BillFnCatalog,
   provider: BillingProviderName,
   references: Array<string | null | undefined>,
-  paidProducts: readonly string[]
+  paidProducts: readonly string[],
+  /** The adapter's providerProductId, which may name the catalog price itself rather than a product. */
+  adapterPriceReference?: string
 ): CatalogSelection | null {
   for (const reference of references) {
     if (!reference) {
@@ -5640,7 +5656,9 @@ function selectPaidPriceById(
     for (const plan of catalog.plans) {
       const price = plan.prices.find(
         (candidate) =>
-          candidate.priceId === reference && candidate.provider === provider && paidProducts.includes(candidate.providerProductId)
+          candidate.priceId === reference &&
+          candidate.provider === provider &&
+          (paidProducts.includes(candidate.providerProductId) || candidate.priceId === adapterPriceReference)
       );
       if (price) {
         return { plan, price };
