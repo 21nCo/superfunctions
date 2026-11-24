@@ -4594,9 +4594,9 @@ describe("apifn check: git ignores inherited repository selectors (API-25 round 
     const shim = path.join(shimDir, "git");
     await shellScript(
       shim,
-      // After the second call (discovery, then the spec's own work tree), another repository takes the .git name.
+      // After discovery and the spec's own work tree (three rev-parse calls each), another repository takes the .git name.
       `n=$(cat '${shimDir}/n' 2>/dev/null || echo 0); n=$((n + 1)); echo $n > '${shimDir}/n'\n'${realGit()}' "$@"; code=$?\n` +
-        `if [ $n -eq 2 ]; then mv '${root}/.git' '${root}/.git-orig'; mv '${other}/.git' '${root}/.git'; fi\nexit $code`
+        `if [ $n -eq 6 ]; then mv '${root}/.git' '${root}/.git-orig'; mv '${other}/.git' '${root}/.git'; fi\nexit $code`
     );
     const result = await withEnv("APIFN_GIT", shim, () => run(["check", "--spec", path.join(".apifn", "openapi.yml"), "--base", "HEAD"], service));
     expect({ code: result.code, stdout: result.stdout }).toEqual({ code: 2, stdout: "" });
@@ -4621,7 +4621,7 @@ describe("apifn check: git ignores inherited repository selectors (API-25 round 
     await shellScript(
       shim,
       `n=$(cat '${shimDir}/n' 2>/dev/null || echo 0); n=$((n + 1)); echo $n > '${shimDir}/n'\n'${realGit()}' "$@"; code=$?\n` +
-        `if [ $n -eq 2 ]; then echo '${path.join(other, ".git")}' > '${commondir}'; fi\nexit $code`
+        `if [ $n -eq 6 ]; then echo '${path.join(other, ".git")}' > '${commondir}'; fi\nexit $code`
     );
     const result = await withEnv("APIFN_GIT", shim, () => run(["check", "--spec", path.join(".apifn", "openapi.yml"), "--base", "HEAD"], service));
     expect(result.code).toBe(1);
@@ -4746,15 +4746,17 @@ describe("apifn check: a backup is bound to the file this run made, and cleanup 
     expect(await readFile(path.join(dir, SPEC), "utf8")).toBe("openapi: 3.1.0\n");
   });
 
-  it.skipIf(POSIX_ONLY || process.getuid?.() === 0)("an existing report the run may replace but not read is backed up and published (PR round 2)", async () => {
+  it.skipIf(POSIX_ONLY || process.getuid?.() === 0)("an existing report the run may replace but not read is published; its unverifiable backup is kept and named (PR round 2)", async () => {
     const control = await check(await staleService(), () => {});
     const dir = await staleService();
     chmodSync(path.join(dir, "report.md"), 0o200);
     const { code, errors, stdout } = await check(dir, () => {});
-    expect({ code, errors, stdout }).toEqual({ code: control.code, errors: "", stdout: control.stdout });
+    expect({ code, stdout }).toEqual({ code: control.code, stdout: control.stdout });
     chmodSync(path.join(dir, "report.md"), 0o600);
     expect(await readFile(path.join(dir, "report.md"), "utf8")).toBe(stdout);
-    expect(await leftovers(dir)).toEqual([]);
+    const left = await leftovers(dir);
+    expect(left).toHaveLength(1);
+    expect(errors).toContain(`${path.join(realpathSync(dir), left[0])}, apifn check's backup of`);
   });
 
   it("staged bytes altered before they are recorded abort the run with no rename (PR round 2)", async () => {

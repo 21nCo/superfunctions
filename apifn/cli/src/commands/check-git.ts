@@ -380,9 +380,14 @@ export interface GitBaseline {
 
 /** The native realpath of the git work tree holding `dir` and its git directory, or null with git's reason. */
 function workTreeOf(executable: string, dir: string): { root: string; gitDir: string; commonDir: string } | { root: null; reason: string } {
-  const toplevel = new Git(executable, dir).run(["rev-parse", "--show-toplevel", "--absolute-git-dir", "--git-common-dir"]);
-  const [top, gitDir, common] = toplevel.stdout.trim().split("\n");
-  if (toplevel.code !== 0 || !common) return { root: null, reason: toplevel.stderr.trim() || `exit status ${toplevel.code}` };
+  // One path per call, without its line terminator only, so every valid path name is kept exactly.
+  const paths: string[] = [];
+  for (const flag of ["--show-toplevel", "--absolute-git-dir", "--git-common-dir"]) {
+    const out = new Git(executable, dir).run(["rev-parse", flag]);
+    if (out.code !== 0) return { root: null, reason: out.stderr.trim() || `exit status ${out.code}` };
+    paths.push(out.stdout.replace(/\n$/, ""));
+  }
+  const [top, gitDir, common] = paths;
   return { root: realpathSync.native(top), gitDir, commonDir: path.resolve(dir, common) };
 }
 

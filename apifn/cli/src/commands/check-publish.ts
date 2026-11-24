@@ -419,32 +419,34 @@ function removeTemp(staged: Staged): string | null {
 function backupOwned(staged: Staged, now: FileState): boolean {
   const made = staged.backupState;
   if (!dirsHold(staged) || !made || staged.backupFd === undefined) return false; // never made (another's name): not this run's
-  return sameFile(now, stateOf(fstatSync(staged.backupFd, BIG))) && (staged.linked ? linkedIntact(staged, now) : sameState(now, made));
+  return sameFile(now, stateOf(fstatSync(staged.backupFd, BIG))) && (staged.linked ? linkedIntact(staged) : sameState(now, made));
 }
 
-/** True while a linked backup holds the observed bytes: its digest, read through its descriptor; without
- * one (unreadable or above MAX_SPEC_BYTES), its state with the change time as made. */
-function linkedIntact(staged: Staged, now: FileState): boolean {
-  return staged.digest === null ? sameState(now, staged.backupState as FileState) : digestOf(staged.backupFd as number) === staged.digest;
+/** True while a linked backup holds the observed bytes, by its digest read through its descriptor; one
+ * without a digest (unreadable or above MAX_SPEC_BYTES) cannot be verified, so it is kept and named. */
+function linkedIntact(staged: Staged): boolean {
+  return typeof staged.digest === "string" && digestOf(staged.backupFd as number) === staged.digest;
 }
 
-/** The SHA-256 of the file open as `fd`, read from its start; null when it cannot be read through `fd`. */
+/** The SHA-256 of the file open as `fd`, read from its start; null when it cannot be read through `fd`
+ * or holds more than MAX_SPEC_BYTES (no read goes past that bound). */
 function digestOf(fd: number): string | null {
   const hash = createHash("sha256");
   const chunk = Buffer.alloc(64 * 1024);
   try {
-    for (let at = 0, count = 0; (count = readSync(fd, chunk, 0, chunk.length, at)) > 0; at += count) hash.update(chunk.subarray(0, count));
+    let at = 0;
+    for (let count = 0; at <= MAX_SPEC_BYTES && (count = readSync(fd, chunk, 0, chunk.length, at)) > 0; at += count) hash.update(chunk.subarray(0, count));
+    return at > MAX_SPEC_BYTES ? null : hash.digest("hex");
   } catch {
     return null;
   }
-  return hash.digest("hex");
 }
 
 /** True while the backup still holds the observed file's bytes exactly as this run made it. */
 function backupHoldsPrevious(staged: Staged): boolean {
   const made = staged.backupState;
   return staged.backup !== undefined && !!made && dirsHold(staged) && sameState(currentState(staged.backup), made) &&
-    (staged.linked ? linkedIntact(staged, currentState(staged.backup)) : holdsBytes(staged.backupFd as number, staged.previous as Buffer));
+    (staged.linked ? linkedIntact(staged) : holdsBytes(staged.backupFd as number, staged.previous as Buffer));
 }
 
 /** Removes the backup while it is still this run's (backupOwned); another writer's is left and named. */
@@ -663,9 +665,11 @@ function backUp(staged: Staged): void {
   staged.backup = backup;
   // The observed file is opened (never blocking, never through a link) before the link: the link must be that very inode.
   staged.backupFd = openHeld(staged.destination);
-  // The digest is of the observed bytes: read before the link, with the change time unchanged after the read.
-  staged.digest = before.size <= BigInt(MAX_SPEC_BYTES) ? digestOf(staged.backupFd) : null;
-  if (!sameState(stateOf(fstatSync(staged.backupFd, BIG)), before)) throw changed(staged);
+  // The digest is of the observed bytes: read before the link, the descriptor's state unchanged before and after.
+  const held = (fd: number) => sameState(stateOf(fstatSync(fd, BIG)), before);
+  if (!held(staged.backupFd)) throw changed(staged);
+  staged.digest = digestOf(staged.backupFd);
+  if (!held(staged.backupFd)) throw changed(staged);
   try {
     linkSync(staged.destination, backup);
     staged.linked = true;

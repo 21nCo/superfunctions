@@ -1,7 +1,7 @@
 import { createJiti } from "jiti";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import type { Router } from "@superfunctions/http";
 
 function isRouter(value: unknown): value is Router<unknown> {
@@ -32,7 +32,9 @@ export async function loadRouterModule(
     file = url.startsWith("file:") ? fileURLToPath(url) : url;
     // esmResolve applied JITI_ALIAS once: `file` itself is evaluated (no second alias lookup), and
     // its dependencies resolve with the caller's alias table unchanged.
-    load = async () => jiti.evalModule(readFileSync(file, "utf8"), { id: file, filename: file, async: true });
+    const evaluate = async () => jiti.evalModule(readFileSync(file, "utf8"), { id: file, filename: file, async: true });
+    // With tryNative, jiti.import loaded the file natively first (no alias applies to a file URL) and fell back to jiti.
+    load = jiti.options.tryNative ? () => import(pathToFileURL(file).href).catch(evaluate) : evaluate;
   } catch {
     // Not resolvable: the import below reports the missing module as it always has.
   }
