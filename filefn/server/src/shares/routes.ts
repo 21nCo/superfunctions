@@ -3,6 +3,7 @@ import type { FileFnPrincipal, AuthConfig } from '../auth.js';
 import type { RateLimiter } from '@superfunctions/middleware';
 import { resolvePrincipal } from '../auth.js';
 import { FileFnError, authRequired, rateLimited } from '../errors.js';
+import { readJsonBody } from '../http-body.js';
 
 export interface SharesRouteContext {
   service: SharesService;
@@ -70,7 +71,7 @@ export function createSharesRoutes(ctx: SharesRouteContext) {
       const requestId = getRequestId(request);
       try {
         const principal = await requireAuth(request);
-        const body = await request.json() as {
+        const body = await readJsonBody(request) as {
           versionId?: string;
           expiresAt?: string;
           requiresAuth?: boolean;

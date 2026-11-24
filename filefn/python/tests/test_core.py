@@ -75,3 +75,21 @@ def test_policy_registry_define_accepts_policy_dicts() -> None:
     assert policy is not None
     assert policy.storageTarget == "durable"
     assert policy.visibility == "private"
+
+
+def test_unparseable_grant_expiry_counts_as_expired() -> None:
+    # FILE-30 F-08: a grant whose expiresAt does not parse must not live forever.
+    from filefn.server.files.service import FileService
+
+    assert FileService._is_grant_expired(object.__new__(FileService), "not-a-date") is True
+    assert FileService._is_grant_expired(object.__new__(FileService), None) is False
+    assert FileService._is_grant_expired(object.__new__(FileService), "2999-01-01T00:00:00Z") is False
+
+
+def test_grant_expiry_helper_fails_closed() -> None:
+    from filefn.server.authz.grant_expiry import is_grant_expired
+
+    assert is_grant_expired("not-a-date")
+    assert is_grant_expired("2001-01-01T00:00:00Z")
+    assert not is_grant_expired("2999-01-01T00:00:00Z")
+    assert not is_grant_expired(None)

@@ -15,6 +15,7 @@ from ..events import (
 from ..models import FileProviderContext, FileRecord, Visibility
 from ..policies import resolve_artifact_storage_target, resolve_storage_target
 from ..routed_storage import get_storage_capabilities
+from ..authz.grant_expiry import is_grant_expired
 
 
 class ProcessorInput(BaseModel):
@@ -142,7 +143,7 @@ class ProcessingService:
 
         readable: Set[str] = set()
         for grant in grants:
-            if not grant.get("canRead"):
+            if not grant.get("canRead") or is_grant_expired(grant.get("expiresAt")):
                 continue
             if (
                 grant.get("principalId") == ctx.principalId

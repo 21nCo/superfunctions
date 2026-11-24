@@ -9,7 +9,20 @@ See [Core Concepts › Share links](../core-concepts/share-links) for the full l
 
 ## Enabling
 
-Share links are wired automatically when `auth` is configured. There's no separate `shares.enabled` flag — every server gets the routes by default. Disable by removing `auth` (or setting `auth.required: false` and not exposing the routes through your reverse proxy).
+Share links are on by default. Configure them with `shares` in `createFileFn`:
+
+```ts
+createFileFn({
+  // ...
+  shares: {
+    enabled: true,         // false removes every share-link route
+    requireAuth: false,    // true: every new link needs a signed-in downloader
+    maxTtlSeconds: 86_400, // cap on a link's lifetime; also the lifetime of a link created without expiresAt
+  },
+});
+```
+
+Without `maxTtlSeconds`, a link created without `expiresAt` never expires.
 
 ## Routes
 
@@ -47,7 +60,7 @@ Anonymous downloads (no auth) work when `requiresAuth` is `false`. If `requiresA
 
 ## TTL and download caps
 
-Both fields are server-enforced. The download counter is incremented atomically when `GET /share-links/:token/download` resolves; a second concurrent request that would push the counter past `maxDownloads` fails with `FILEFN_SHARE_DOWNLOADS_EXCEEDED`.
+Both fields are server-enforced and checked when the link is created: `expiresAt` must be an ISO 8601 date-time in the future and `maxDownloads` a positive integer, otherwise the request fails with `FILEFN_INVALID_REQUEST`. A stored `expiresAt` that does not parse counts as expired. Each download is counted with a conditional write before any byte or URL is handed out, so concurrent downloads never exceed `maxDownloads`; the extra requests fail with `FILEFN_SHARE_DOWNLOADS_EXCEEDED`.
 
 ## Anti-enumeration
 

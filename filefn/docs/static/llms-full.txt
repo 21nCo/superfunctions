@@ -2689,6 +2689,10 @@ Always configure `rateLimit.limits` in production. The unrestricted defaults are
 
 Default to a strict origin list. Wide-open `Access-Control-Allow-Origin: *` works for proxy-mode public files, but anything that depends on credentials must scope down.
 
+### Cookie auth and CSRF
+
+Every FileFn route that takes a body accepts only `Content-Type: application/json` (or a `+json` type) and answers anything else with `415 FILEFN_UNSUPPORTED_MEDIA_TYPE`, so a cross-site form or `no-cors` fetch cannot reach it without a CORS preflight. A `POST` without a body (completing an upload) is still a simple request: when auth is a cookie, set it `SameSite=Lax` or stricter, or check `Origin` in the host. JSON bodies over 64 KiB are refused with `413 FILEFN_BODY_TOO_LARGE`.
+
 ### 4. Strict policies
 
 - Upper-bound every policy's `maxSizeBytes`. Don't ship a policy with unlimited size unless you really mean it.
@@ -3595,7 +3599,11 @@ The owner has all four implicitly. Grants supplement the owner's capabilities fo
 
 ## TTL
 
-`expiresAt` is enforced on every authorisation check. Expired grants are kept in the table for audit; you can prune them with a cron.
+`expiresAt` must be an ISO 8601 date-time in the future when the grant is created, and it is enforced on every authorisation check; a stored value that does not parse counts as expired. Expired grants are kept in the table for audit; you can prune them with a cron.
+
+## Tenants
+
+A grant to a `tenantId` other than the file's own is refused with `FILEFN_FORBIDDEN`, so one user cannot hand a file to every member of another tenant. Set `grants: { allowCrossTenant: true }` in `createFileFn` to allow it. A grant extends what the configured authorizer allows: a matching read grant lets its holder read the file even when the authorizer alone would not.
 
 ## Roles vs. users
 
@@ -4296,7 +4304,20 @@ See [Core Concepts › Share links](../core-concepts/share-links) for the full l
 
 ## Enabling
 
-Share links are wired automatically when `auth` is configured. There's no separate `shares.enabled` flag — every server gets the routes by default. Disable by removing `auth` (or setting `auth.required: false` and not exposing the routes through your reverse proxy).
+Share links are on by default. Configure them with `shares` in `createFileFn`:
+
+```ts
+createFileFn({
+  // ...
+  shares: {
+    enabled: true,         // false removes every share-link route
+    requireAuth: false,    // true: every new link needs a signed-in downloader
+    maxTtlSeconds: 86_400, // cap on a link's lifetime; also the lifetime of a link created without expiresAt
+  },
+});
+```
+
+Without `maxTtlSeconds`, a link created without `expiresAt` never expires.
 
 ## Routes
 
@@ -4334,7 +4355,7 @@ Anonymous downloads (no auth) work when `requiresAuth` is `false`. If `requiresA
 
 ## TTL and download caps
 
-Both fields are server-enforced. The download counter is incremented atomically when `GET /share-links/:token/download` resolves; a second concurrent request that would push the counter past `maxDownloads` fails with `FILEFN_SHARE_DOWNLOADS_EXCEEDED`.
+Both fields are server-enforced and checked when the link is created: `expiresAt` must be an ISO 8601 date-time in the future and `maxDownloads` a positive integer, otherwise the request fails with `FILEFN_INVALID_REQUEST`. A stored `expiresAt` that does not parse counts as expired. Each download is counted with a conditional write before any byte or URL is handed out, so concurrent downloads never exceed `maxDownloads`; the extra requests fail with `FILEFN_SHARE_DOWNLOADS_EXCEEDED`.
 
 ## Anti-enumeration
 

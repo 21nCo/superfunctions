@@ -1,5 +1,6 @@
 import type { PolicyRegistry } from './policies.js';
-import type { AuthConfig } from './auth.js';
+import { resolvePrincipal, type AuthConfig } from './auth.js';
+import { FileFnError, authRequired } from './errors.js';
 
 export interface PolicyRoutesContext {
   policyRegistry: PolicyRegistry;
@@ -15,11 +16,18 @@ function successResponse(data: unknown, requestId?: string): Response {
 }
 
 export function createPolicyRoutes(ctx: PolicyRoutesContext) {
-  const { policyRegistry } = ctx;
+  const { policyRegistry, auth } = ctx;
 
   return {
     async listPolicies(request: Request): Promise<Response> {
       const requestId = getRequestId(request);
+      // Same rule as the upload routes: a caller who could not start an upload
+      // does not learn the policies' names, limits and visibility either.
+      const principal = await resolvePrincipal(request, auth);
+      if (!principal && auth.required !== false) {
+        const error: FileFnError = authRequired();
+        return Response.json({ ok: false, error: error.toJSON(), requestId }, { status: error.statusCode });
+      }
 
       const policies = policyRegistry.list().map((p) => ({
         name: p.name,

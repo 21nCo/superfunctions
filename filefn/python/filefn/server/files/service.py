@@ -141,7 +141,8 @@ class FileService:
         try:
             return self._parse_timestamp(expires_at) <= datetime.now(timezone.utc)
         except Exception:
-            return False
+            # An expiry that does not parse counts as expired (fails closed).
+            return True
 
     async def _get_readable_grant_file_ids(self, ctx: FileProviderContext) -> Set[str]:
         if not ctx.principalId:
