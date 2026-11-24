@@ -242,6 +242,9 @@ export function createSharesService(config: SharesServiceConfig) {
       if (!reread) throw errors.shareNotFound();
       current = reread;
     }
+    // The last reread may show the link used up (or revoked) meanwhile: that is
+    // the answer, not a retryable conflict.
+    assertShareUsable(current, ctx);
     throw new errors.FileFnError(
       errors.ErrorCodes.SHARE_DOWNLOAD_CONFLICT,
       'Too many concurrent downloads of this share link; retry',

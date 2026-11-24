@@ -178,6 +178,42 @@ describe('share links, grants and JSON routes (FILE-30 F-07, F-08, F-09, F-15)',
     expect(huge.status).toBe(413);
   });
 
+  it('answers DOWNLOADS_EXCEEDED, not a retryable conflict, when the last lost write used the link up', async () => {
+    const database = memoryAdapter();
+    let lost = 0;
+    // Every counting write loses; the 20th loses to a download that takes the last slot.
+    const contended = new Proxy(database, {
+      get(target, prop, receiver) {
+        if (prop === 'capabilities') {
+          return { ...target.capabilities, operations: { ...target.capabilities.operations, returning: false } };
+        }
+        if (prop === 'updateMany') {
+          return async (params: Parameters<typeof target.updateMany>[0]) => {
+            if (params.model === 'fileShares' && params.where.some((w) => w.field === 'downloads')) {
+              lost += 1;
+              if (lost === 20) await target.updateMany({ ...params, where: [params.where[0]!], data: { downloads: 1 } });
+              return 0;
+            }
+            return target.updateMany(params);
+          };
+        }
+        return Reflect.get(target, prop, receiver);
+      },
+    });
+    const fileFn = createFileFn({
+      database: contended,
+      storage: createLocalStorageAdapter({ rootDir }),
+      namespace: 'filefn',
+      policies: [{ name: 'docs', contentTypes: ['text/plain'], visibility: 'private' }],
+    });
+    const file = await upload(fileFn);
+    const share = await fileFn.services.shares.createShareLink({ fileId: file.fileId, maxDownloads: 1 }, owner);
+    await expect(fileFn.services.shares.getDownloadStreamViaShareLink(share.token, {})).rejects.toMatchObject({
+      code: 'FILEFN_SHARE_DOWNLOADS_EXCEEDED',
+    });
+    expect(lost).toBe(20);
+  });
+
   it('counts downloads on adapters that read the row back after update (Prisma, MySQL)', async () => {
     const database = memoryAdapter();
     // Like Prisma or MySQL: no RETURNING, and update() re-reads the row with the

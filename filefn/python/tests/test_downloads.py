@@ -1097,3 +1097,31 @@ async def test_list_files_never_lists_private_anonymous_uploads_to_an_anonymous_
     )
     page = await file_service.list_files(_ctx("anonymous"), {"limit": 10})
     assert [file["fileId"] for file in page["files"]] == ["file_anon"]
+
+
+@pytest.mark.asyncio
+async def test_share_reservation_reports_a_link_used_up_by_the_writes_that_won() -> None:
+    from filefn.server import errors
+
+    db = FakeDB()
+    await _seed_file_rows(db)
+    shares_service = create_shares_service(
+        SharesServiceConfig(db=db, storage=FakeStorage(with_signing=True), namespace="filefn")
+    )
+    created = await shares_service.create_share_link(CreateShareLinkInput(fileId="file_0001", maxDownloads=1), _ctx("user_123"))
+    lost = 0
+
+    async def always_loses(token_hash: str, from_count: int, to_count: int) -> bool:
+        nonlocal lost
+        lost += 1
+        if lost == 5:
+            # The last lost write loses to a download that takes the last slot.
+            for row in db.tables["fileShares"]:
+                row["downloads"] = 1
+        return False
+
+    shares_service._set_downloads_if = always_loses  # type: ignore[method-assign]
+    with pytest.raises(errors.FileFnError) as used_up:
+        await shares_service.get_download_stream_via_share_link(created["token"], _ctx(None), is_authenticated=False)
+    assert used_up.value.code == "FILEFN_SHARE_DOWNLOADS_EXCEEDED"
+    assert lost == 5

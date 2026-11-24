@@ -179,27 +179,32 @@ class SharesService:
                 return False
             raise
 
+    async def _read_usable_share(self, token_hash: str) -> FileShareRecord:
+        current_data = await self.db.find_one(
+            model="fileShares",
+            where=[{"field": "tokenHash", "operator": "eq", "value": token_hash}],
+            namespace=self.namespace,
+        )
+        if not current_data:
+            raise errors.share_not_found()
+        current = FileShareRecord(**current_data)
+        if current.revokedAt:
+            raise errors.share_revoked()
+        if is_grant_expired(current.expiresAt):
+            raise errors.share_expired()
+        if current.maxDownloads is not None and current.downloads >= current.maxDownloads:
+            raise errors.share_downloads_exceeded()
+        return current
+
     async def _reserve_download(self, token_hash: str) -> FileShareRecord:
         for _ in range(5):
-            current_data = await self.db.find_one(
-                model="fileShares",
-                where=[{"field": "tokenHash", "operator": "eq", "value": token_hash}],
-                namespace=self.namespace,
-            )
-            if not current_data:
-                raise errors.share_not_found()
-
-            current = FileShareRecord(**current_data)
-            if current.revokedAt:
-                raise errors.share_revoked()
-            if is_grant_expired(current.expiresAt):
-                raise errors.share_expired()
-            if current.maxDownloads is not None and current.downloads >= current.maxDownloads:
-                raise errors.share_downloads_exceeded()
-
+            current = await self._read_usable_share(token_hash)
             if await self._set_downloads_if(token_hash, current.downloads, current.downloads + 1):
                 return current.model_copy(update={"downloads": current.downloads + 1})
 
+        # The link may have been used up (or revoked) by the writes that won:
+        # that is the answer, not a retryable conflict.
+        await self._read_usable_share(token_hash)
         raise errors.FileFnError(
             code="FILEFN_SHARE_DOWNLOAD_CONFLICT",
             message="Could not reserve share download",

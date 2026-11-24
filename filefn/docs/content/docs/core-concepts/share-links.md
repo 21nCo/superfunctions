@@ -90,7 +90,7 @@ After revoke, the token returns `FILEFN_SHARE_REVOKED` (HTTP 410).
 | `FILEFN_SHARE_DOWNLOADS_EXCEEDED` | `maxDownloads` was reached. |
 | `FILEFN_SHARE_DOWNLOAD_CONFLICT` | Too many concurrent downloads of the link; retry. |
 
-All return HTTP 410 except `NOT_FOUND` (404). They're indistinguishable on purpose — clients that try a guessed token see "not found" instead of "exists but expired," which avoids leaking enumeration signal.
+All return HTTP 410 except `NOT_FOUND` (404) and `SHARE_DOWNLOAD_CONFLICT` (409; retry). They're indistinguishable on purpose — clients that try a guessed token see "not found" instead of "exists but expired," which avoids leaking enumeration signal.
 
 ## What share links don't do
 
