@@ -786,5 +786,25 @@ describe("Idempotency record ids and in-process search context", () => {
     ).resolves.toEqual({ results: [] });
     expect(nullGetActorId).not.toHaveBeenCalled();
     await nullServer.close();
+
+    // An explicit null ctx never inherits a static configured context's actor.
+    const staticGetActorId = vi.fn((ctx: Ctx) => ctx.actor);
+    const aliceStaticServer = await createDatafnServer<Ctx>({
+      schema,
+      database: db,
+      searchProvider,
+      context: { ns: "tenant:a", actor: "alice" },
+      namespaceProvider: {
+        getNamespace: (ctx) => ctx?.ns ?? "tenant:a",
+        getActorId: staticGetActorId,
+      },
+    });
+    await expect(
+      aliceStaticServer.search({ query: "x", namespace: "tenant:a" }, null as unknown as Ctx),
+    ).resolves.toEqual({ results: [] });
+    expect(staticGetActorId).not.toHaveBeenCalled();
+    await aliceStaticServer.search({ query: "x", namespace: "tenant:a" });
+    expect(staticGetActorId).toHaveBeenCalledTimes(1);
+    await aliceStaticServer.close();
   });
 });

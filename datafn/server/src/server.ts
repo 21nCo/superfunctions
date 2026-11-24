@@ -1816,12 +1816,13 @@ export async function createDatafnServer<TContext = any>(
     const limitPerResource = Math.min(params.limitPerResource ?? limit, 1_000);
     // Without a context argument, use a static configured context like the
     // executor does; with none, the namespace resolver gets an empty object.
-    // A null context (argument or configured) counts as absent.
+    // A configured null context counts as absent. An explicit null argument
+    // runs anonymous and never falls back to the configured context.
     const staticCtx =
-      _ctx == null && typeof config.context !== "function"
+      _ctx === undefined && typeof config.context !== "function"
         ? (config.context ?? undefined)
         : undefined;
-    const searchCtx = _ctx ?? staticCtx;
+    const searchCtx = _ctx === undefined ? staticCtx : (_ctx ?? undefined);
     const ctxNamespace = async () => extractNamespace((searchCtx ?? {}) as TContext);
     const namespaceOverride =
       params.namespace && params.namespace.trim() !== "" ? params.namespace : undefined;
