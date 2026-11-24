@@ -1126,7 +1126,7 @@ authorize: async (ctx, input) => {
 
 ## Static-token authorizer
 
-For legacy internal tools or scripts, the bundled `createStaticAdminKeyAuthorizer` accepts a fixed token from a header. Super Console's bundled `createAuthFnOperatorAuth` accepts only interactive operator sessions (API keys and other service credentials are rejected), so unattended automation through Super Console needs a host-supplied operator auth that supports service principals:
+For legacy internal tools or scripts, the bundled `createStaticAdminKeyAuthorizer` accepts a fixed token from a header. Super Console's bundled `createAuthFnOperatorAuth` accepts only an operator's user session (cookie or bearer session token) and rejects API keys, so service-credential automation through Super Console needs a host-supplied operator auth that supports service principals:
 
 ```ts
 import { createStaticAdminKeyAuthorizer } from '@authfn/admin';
