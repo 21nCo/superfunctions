@@ -112,7 +112,7 @@ describe("renderPanelMarkdownReport", () => {
     twin.identity = { ...twin.identity, modelVerified: false };
     twin.limitations = ["model_unverified", "sandbox_tree_verified_only"];
     const markdown = renderPanelMarkdownReport(report);
-    expect(markdown).toContain("| openai/model-a \\(unverified\\) | collapsed | collapsed: same identity as an earlier completed slot; limitations: model\\_unverified, sandbox\\_tree\\_verified\\_only |");
+    expect(markdown).toContain("| openai/model-a \\(unverified\\) | collapsed | collapsed: same identity as alpha, which counts toward quorum; limitations: model\\_unverified, sandbox\\_tree\\_verified\\_only |");
   });
 
   it("escapes harness-supplied categories and every other untrusted string outside code spans", () => {

@@ -250,9 +250,26 @@ export function credentialFingerprint(value: string): string {
 export function slotIdentityKey(identity: SlotIdentity): string {
   // An unverified model identifies nothing: such runs of one executable and profile are one identity, whatever their
   // configured provider, model, auth or credential.
-  if (identity.modelVerified === false) return digestJson(["model_unverified", identity.harnessAdapter, identity.harnessVersion, identity.harnessExecutable ?? null, identity.harnessProfile ?? null]);
+  if (identity.modelVerified === false) return harnessKey(identity);
   const profiled = identity.harnessExecutable !== undefined || identity.harnessProfile !== undefined ? [identity.harnessExecutable ?? null, identity.harnessProfile ?? null] : [];
   return digestJson([identity.harnessAdapter, identity.harnessVersion, identity.provider, identity.model, identity.auth, identity.credentialFingerprint ?? null, ...profiled]);
+}
+const harnessKey = (identity: SlotIdentity) => digestJson(["model_unverified", identity.harnessAdapter, identity.harnessVersion, identity.harnessExecutable ?? null, identity.harnessProfile ?? null]);
+
+/**
+ * The slot each counting run of `runs` (in policy order) collapses into, itself when it counts. Within a stage the first
+ * run of an identity counts; verified runs go first, so a model-unverified run also collapses into a counted run of its
+ * adapter version, executable and profile and never adds an identity a verified run represents.
+ */
+export function slotCollapseTargets(runs: ReadonlyArray<{ slotId: string; stage: PanelSlot["stage"]; identity: SlotIdentity }>): Map<string, string> {
+  const targets = new Map<string, string>();
+  const counted = new Map<string, string>();
+  for (const run of [...runs.filter(item => item.identity.modelVerified !== false), ...runs.filter(item => item.identity.modelVerified === false)]) {
+    const target = counted.get(`${String(run.stage)}\u0000${slotIdentityKey(run.identity)}`) ?? run.slotId;
+    targets.set(run.slotId, target);
+    for (const key of [slotIdentityKey(run.identity), harnessKey(run.identity)]) if (!counted.has(`${String(run.stage)}\u0000${key}`)) counted.set(`${String(run.stage)}\u0000${key}`, target);
+  }
+  return targets;
 }
 
 /** The one profile-driven harness: only its slots name a profile and an executable. */
@@ -306,7 +323,7 @@ export function harnessProfileIssues(profile: HarnessProfile, path: string): Pan
 /** Structure and semantics of one harness profile, as `validatePanelPolicy` checks each entry of `profiles`. */
 export function validateHarnessProfile(value: unknown): PanelValidationResult<PanelValidationCode> {
   const issues = structural(harnessProfile, value) as PanelValidationIssue<PanelValidationCode>[];
-  if (!issues.length) issues.push(...harnessProfileIssues(value as HarnessProfile, ""));
+  if (!issues.length) for (const issue of harnessProfileIssues(value as HarnessProfile, "")) issues.push(issue);
   return result(issues);
 }
 
@@ -334,7 +351,7 @@ export function validatePanelPolicy(value: unknown): PanelValidationResult<Panel
   if (policy.requirementsSlot !== null && !policy.slots.some(slot => slot.id === policy.requirementsSlot && slot.stage !== "verifier")) add(issues, "REVIEWFN_PANEL_SLOT_UNKNOWN", "/requirementsSlot", `requirementsSlot ${policy.requirementsSlot} names no stage-1 or stage-2 slot.`);
   const profiles = policy.profiles ?? {};
   // An entry set to undefined declares no profile: it is skipped like an absent one, never dereferenced.
-  for (const [name, profile] of Object.entries(profiles)) if (profile !== undefined) issues.push(...harnessProfileIssues(profile, pointer("/profiles", name)));
+  for (const [name, profile] of Object.entries(profiles)) if (profile !== undefined) for (const issue of harnessProfileIssues(profile, pointer("/profiles", name))) issues.push(issue);
   policy.slots.forEach((slot, index) => {
     const { profile } = slot.harness;
     if (profile !== undefined && (!Object.hasOwn(profiles, profile) || profiles[profile] === undefined)) add(issues, "REVIEWFN_PANEL_SCHEMA", `/slots/${index}/harness/profile`, `Slot ${slot.id} names profile ${profile}, which the policy's profiles do not declare.`);
@@ -472,7 +489,6 @@ function requirementsProvenanceIssues(report: PanelReport, policy: PanelPolicy |
 function slotRunIssues(report: PanelReport, slots: Map<string, PanelSlot>, issues: Issues, profiles?: PanelPolicy["profiles"]): void {
   const order = new Map([...slots.keys()].map((id, index) => [id, index]));
   for (const { index, key } of duplicates(report.slotRuns, run => run.slotId)) add(issues, "REVIEWFN_PANEL_SLOT_DUPLICATE", `/slotRuns/${index}/slotId`, `Slot ${key} has more than one run.`);
-  const groups = new Map<string, Array<{ run: SlotRun; index: number }>>();
   report.slotRuns.forEach((run, index) => {
     const path = `/slotRuns/${index}`;
     for (const key of ["startedAt", "finishedAt"] as const) if (!timestampExists(run[key])) add(issues, "REVIEWFN_PANEL_SCHEMA", `${path}/${key}`, `${run[key]} is not a real UTC time.`);
@@ -502,19 +518,17 @@ function slotRunIssues(report: PanelReport, slots: Map<string, PanelSlot>, issue
     if (mismatch && run.terminal !== "void") add(issues, "REVIEWFN_PANEL_SCHEMA", `${path}/terminal`, `Resolved model ${identity.model} differs from configured model ${slot.inference.model}; the run must be void with model_mismatch.`);
     else if (mismatch && !run.voidReasons.includes("model_mismatch")) add(issues, "REVIEWFN_PANEL_SCHEMA", `${path}/voidReasons`, `Resolved model ${identity.model} differs from configured model ${slot.inference.model}; the void reasons must include model_mismatch.`);
     if (!mismatch && run.voidReasons.includes("model_mismatch")) add(issues, "REVIEWFN_PANEL_SCHEMA", `${path}/voidReasons`, "model_mismatch requires a resolved model that differs from the configured model, or a harness-reported model mismatch.");
-    const group = `${String(slot.stage)}\u0000${slotIdentityKey(identity)}`;
-    groups.set(group, [...(groups.get(group) ?? []), { run, index }]);
   });
-  // Within a stage, the first completed run of an identity (in policy order) counts. A later run of that identity that
-  // would also count is collapsed; runs that did not complete neither count nor collapse.
-  for (const members of groups.values()) {
-    const sorted = [...members].sort((left, right) => order.get(left.run.slotId)! - order.get(right.run.slotId)!);
-    const counted = sorted.findIndex(({ run }) => run.terminal === "completed");
-    sorted.forEach(({ run, index }, position) => {
-      if (run.terminal === "completed" && position > counted) add(issues, "REVIEWFN_PANEL_SLOT_DUPLICATE", `/slotRuns/${index}/terminal`, `Slot ${run.slotId} has the same identity as slot ${sorted[counted].run.slotId}, which counts for its stage; it must be collapsed.`);
-      if (run.terminal === "collapsed" && (counted < 0 || position < counted)) add(issues, "REVIEWFN_PANEL_SLOT_DUPLICATE", `/slotRuns/${index}/terminal`, `Slot ${run.slotId} is collapsed but no earlier completed slot in its stage has the same identity.`);
-    });
-  }
+  // Within a stage, the run that counts for an identity is the coordinator's (slotCollapseTargets); every other run of it
+  // that would also count is collapsed; runs that did not complete neither count nor collapse.
+  const counting = report.slotRuns.filter(run => COUNTING.has(run.terminal) && slots.has(run.slotId)).sort((left, right) => order.get(left.slotId)! - order.get(right.slotId)!).map(run => ({ ...run, stage: slots.get(run.slotId)!.stage }));
+  const targets = slotCollapseTargets(counting.filter(run => run.terminal === "completed"));
+  report.slotRuns.forEach((run, index) => {
+    // A collapsed run is checked against the completed runs alone: one of them must count for its identity.
+    const target = run.terminal === "collapsed" ? slotCollapseTargets(counting.filter(other => other.terminal === "completed" || other.slotId === run.slotId)).get(run.slotId) : targets.get(run.slotId);
+    if (run.terminal === "completed" && target !== undefined && target !== run.slotId) add(issues, "REVIEWFN_PANEL_SLOT_DUPLICATE", `/slotRuns/${index}/terminal`, `Slot ${run.slotId} has the same identity as slot ${target}, which counts for its stage; it must be collapsed.`);
+    if (run.terminal === "collapsed" && target === run.slotId) add(issues, "REVIEWFN_PANEL_SLOT_DUPLICATE", `/slotRuns/${index}/terminal`, `Slot ${run.slotId} is collapsed but no earlier completed slot in its stage has the same identity.`);
+  });
 }
 
 interface EvidenceContext {

@@ -1,6 +1,6 @@
 import type { CodeAnchor, Evidence } from "../types.js";
 import { PANEL_CANCELED_REASON, type PanelFinding, type PanelFindingSeverity, type PanelReport, type PanelSlot, type SlotRun } from "./types.js";
-import { slotIdentityKey } from "./validate.js";
+import { slotCollapseTargets } from "./validate.js";
 
 const SEVERITIES: readonly PanelFindingSeverity[] = ["critical", "high", "medium", "low"];
 const SEVERITY_TITLES: Readonly<Record<PanelFindingSeverity, string>> = { critical: "Critical (P0)", high: "High (P1)", medium: "Medium (P2)", low: "Low (P3)" };
@@ -38,8 +38,8 @@ function slotRunReason(run: SlotRun, report: PanelReport, slots: Map<string, Pan
   if (run.terminal === "void") return `void: ${run.voidReasons.join(", ")}`;
   if (run.terminal !== "collapsed") return "";
   const stage = slots.get(run.slotId)?.stage;
-  const key = slotIdentityKey(run.identity);
-  const counted = report.slotRuns.find(other => other.terminal === "completed" && other.slotId !== run.slotId && slots.get(other.slotId)?.stage === stage && slotIdentityKey(other.identity) === key);
+  const target = slotCollapseTargets(report.slotRuns.filter(other => ["completed", "collapsed"].includes(other.terminal) && slots.get(other.slotId)?.stage === stage).map(other => ({ ...other, stage: stage! }))).get(run.slotId);
+  const counted = report.slotRuns.find(other => other.terminal === "completed" && other.slotId !== run.slotId && other.slotId === target);
   return counted ? `collapsed: same identity as ${counted.slotId}, which counts toward quorum` : "collapsed: same identity as an earlier completed slot";
 }
 

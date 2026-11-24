@@ -275,23 +275,38 @@ describe("PanelCoordinator isolation and voiding", () => {
   it("records a reporting profile's model as unverified when neither preflight nor the run reported one", async () => {
     const reporter = (modelReport: string) => ({ argv: ["--model", "{model}"], promptVia: "stdin" as const, outputVia: "stdout-last-json" as const, envAllowlist: [], modelReport, capabilities: { structuredOutput: false, sandbox: "enforced-read-only" as const } });
     const profiles = { json: reporter("json-path:model"), stderr: reporter("stderr-regex:model=(\\S+)") };
-    const cli = new FakePanelHarness({ id: "cli", behaviors: { seen: () => ({ ...clean(), observed: { model: "model-seen" } }) } });
+    const cli = new FakePanelHarness({ id: "cli", behaviors: { seen: () => ({ ...clean(), observed: { model: "model-seen" } }), flagged: () => ({ ...clean(), observed: { modelMismatch: true } }) } });
     const preflight = cli.preflight.bind(cli);
     cli.preflight = async config => { const result = await preflight(config); return { ...result, resolved: { ...result.resolved!, model: undefined } }; };
     const profiled = (id: string, profile: string) => slot(id, 1, `model-${id}`, { harness: { adapter: "cli", version: "1", executable: "agent", profile } });
-    const panelPolicy = panel([profiled("json-a", "json"), profiled("json-b", "json"), profiled("stderr-a", "stderr"), profiled("stderr-b", "stderr"), profiled("seen", "json")], { profiles });
+    const panelPolicy = panel([profiled("json-a", "json"), profiled("json-b", "json"), profiled("stderr-a", "stderr"), profiled("stderr-b", "stderr"), profiled("seen", "json"), profiled("flagged", "stderr")], { profiles });
     const setup = coordinator(cli, { harnessContractVersions: { cli: "1" } });
     const result = await setup.coordinator.run(request(panelPolicy));
     const runs = new Map(result.report.slotRuns.map(run => [run.slotId, run]));
-    // Slots differing only in requested model are one identity when no model was observed: the second of each collapses.
-    for (const [id, terminal] of [["json-a", "completed"], ["json-b", "collapsed"], ["stderr-a", "completed"], ["stderr-b", "collapsed"]]) {
+    // Slots differing only in requested model are one identity when no model was observed: the second of each collapses,
+    // and an unverified run collapses into the verified run ("seen") of its executable, profile and version.
+    for (const [id, terminal] of [["json-a", "collapsed"], ["json-b", "collapsed"], ["stderr-a", "completed"], ["stderr-b", "collapsed"]]) {
       expect(runs.get(id)).toMatchObject({ terminal, limitations: ["model_unverified"], identity: { model: `model-${id}`, modelVerified: false } });
     }
     // A model the run reports verifies the identity.
     expect(runs.get("seen")).toMatchObject({ terminal: "completed", identity: { model: "model-seen" } });
     expect(runs.get("seen")).not.toHaveProperty("limitations");
     expect(runs.get("seen")!.identity).not.toHaveProperty("modelVerified");
+    // The reporter's raw mismatch verdict voids the run even without a model label.
+    expect(runs.get("flagged")).toMatchObject({ terminal: "void", voidReasons: ["model_mismatch"], identity: { model: "model-flagged", modelMismatch: true } });
+    expect(runs.get("flagged")!.identity).not.toHaveProperty("modelVerified");
+    expect(result.quorum[0]).toMatchObject({ completed: 2 });
     await expectValid(result, setup, panelPolicy);
+  });
+
+  it("returns a very large set of policy schema issues as preflight diagnostics, never a RangeError", async () => {
+    const huge = { argv: Array.from({ length: 200_000 }, () => 0), promptVia: "stdin", outputVia: "stdout-last-json", envAllowlist: [], modelReport: "none", capabilities: { structuredOutput: false, sandbox: "tree-verified-only" } };
+    const cli = new FakePanelHarness({ id: "cli" });
+    const panelPolicy = panel([slot("cli-a", 1, undefined, { harness: { adapter: "cli", version: "1", executable: "agent", profile: "huge" } })], { profiles: { huge } as unknown as PanelPolicy["profiles"] });
+    const setup = coordinator(cli, { harnessContractVersions: { cli: "1" } });
+    expect((await setup.coordinator.preflight(request(panelPolicy))).length).toBeGreaterThanOrEqual(200_000);
+    await expect(setup.coordinator.run(request(panelPolicy))).rejects.toMatchObject({ code: "REVIEWFN_PREFLIGHT_FAILED", details: { diagnostics: expect.arrayContaining([expect.objectContaining({ code: "REVIEWFN_PANEL_SCHEMA" })]) } });
+    expect(cli.calls).toEqual([]);
   });
 
   it("runs the panel policy it was given, whatever the caller changes during the run", async () => {

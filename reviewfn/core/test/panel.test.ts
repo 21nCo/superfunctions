@@ -674,6 +674,10 @@ describe("panel policy and slot identity", () => {
     const argvIssues = validateHarnessProfile({ ...profile, argv: invalidItems }).issues;
     expect([argvIssues.length >= 200_000, argvIssues.some(issue => issue.path === "/argv/199999")]).toEqual([true, true]);
     expect(validateSlotRun({ ...panelReport().slotRuns[0], limitations: invalidItems }).issues.length).toBeGreaterThanOrEqual(200_000);
+    // So do the profile's semantic issues: 200k misplaced placeholders yield issues for the profile and the policy.
+    const misplaced = { ...profile, argv: [...profile.argv, ...Array.from({ length: 200_000 }, () => "{bad}")] };
+    expect(validateHarnessProfile(misplaced).issues.length).toBeGreaterThanOrEqual(200_000);
+    expect(validatePanelPolicy({ ...withProfile, profiles: { agent: misplaced } }).issues.length).toBeGreaterThanOrEqual(200_000);
     expect(validateHarnessProfile({ ...profile, envAllowlist: ["NOT-A-NAME"] }).valid).toBe(false);
     expect(validateHarnessProfile({ ...profile, shell: true }).valid).toBe(false);
     expect(harnessProfileIssues(profile, "/profiles/agent")).toEqual([]);
@@ -756,7 +760,8 @@ describe("panel policy and slot identity", () => {
     const distinct = structuredClone(report);
     const { modelVerified: _dropped, ...claimed } = distinct.slotRuns[1].identity;
     distinct.slotRuns[1] = { ...distinct.slotRuns[1], terminal: "completed", identity: claimed, limitations: ["sandbox_tree_verified_only"] };
-    expect(await messages(distinct)).toEqual([expect.stringMatching(/^\/slotRuns\/1\/identity\/modelVerified .*reports no model, so its run must record modelVerified false/)]);
+    // The claimed verified run then counts first, and the unverified run of its executable and profile must collapse into it.
+    expect(await messages(distinct)).toEqual([expect.stringMatching(/^\/slotRuns\/1\/identity\/modelVerified .*reports no model, so its run must record modelVerified false/), "/slotRuns/0/terminal Slot lens-a has the same identity as slot lens-b, which counts for its stage; it must be collapsed."]);
     const unlimited = structuredClone(report); unlimited.slotRuns[0].limitations = ["model_unverified"];
     expect(await messages(unlimited)).toEqual(expect.arrayContaining([expect.stringMatching(/^\/slotRuns\/0\/limitations .*must record sandbox_tree_verified_only/)]));
     // A profile with a model reporter verifies only a model it reports: a run that observed none records the configured model unverified.

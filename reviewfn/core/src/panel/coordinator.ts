@@ -16,7 +16,7 @@ import { buildSlotPrompt, PANEL_PROMPT_VERSION, type PriorStageFinding, type Slo
 import { lensOutputSchema, validateLensPayload } from "./schema.js";
 import { PANEL_CANCELED_REASON } from "./types.js";
 import type { HarnessProfile, PanelFinding, PanelFindingSeverity, PanelPolicy, PanelReport, PanelReportValidationResult, PanelSlot, SlotIdentity, SlotRun, SlotRunLimitation, SlotRunTerminal, SlotVoidReason } from "./types.js";
-import { credentialFingerprint, derivePanelVerdict, panelPolicyDigest, panelStructureIssues, slotHarnessIssues, slotIdentityKey, validatePanelPolicy, validatePanelReport } from "./validate.js";
+import { credentialFingerprint, derivePanelVerdict, panelPolicyDigest, panelStructureIssues, slotCollapseTargets, slotHarnessIssues, validatePanelPolicy, validatePanelReport } from "./validate.js";
 import { GitSlotWorkspaceProvider, removeTree, type GitSlotWorkspaceOptions, type SlotWorkspace, type SlotWorkspaceProvider, type WorkspaceCheck } from "./workspace.js";
 
 /** Coverage reason code when a stage has fewer completed runs with distinct identities than its quorum. */
@@ -394,7 +394,7 @@ export class PanelCoordinator {
     const resolved = new Map<string, PreflightResult["resolved"]>();
     const validation = validatePanelPolicy(request.panelPolicy);
     if (!validation.valid) {
-      diagnostics.push(...validation.issues.map(issue => ({ code: issue.code, level: "error" as const, message: `panel policy ${issue.path || "/"}: ${issue.message}` })));
+      for (const issue of validation.issues) diagnostics.push({ code: issue.code, level: "error", message: `panel policy ${issue.path || "/"}: ${issue.message}` });
       return { diagnostics, resolved };
     }
     const harnesses = new Map(this.dependencies.harnesses.map(harness => [harness.capabilities.id, harness]));
@@ -621,16 +621,18 @@ export class PanelCoordinator {
             ? { terminal: "timed_out", reason: `The checkout comparison did not finish within its ${comparisonMs} ms bound, so the checkout was not shown to be unchanged.` }
             : { terminal: "failed", reason: `The checkout was not compared with head: ${check.reason ?? "the comparison did not complete"}` };
       }
-      const reportedModel = slotProfile(slot, request.panelPolicy)?.modelReport !== "none" && nonblank(observed.model) ? observed.model : undefined;
+      const reporting = slotProfile(slot, request.panelPolicy)?.modelReport !== "none";
+      const reportedModel = reporting && nonblank(observed.model) ? observed.model : undefined;
       const identity: SlotIdentity = {
         ...baseIdentity,
         ...(nonblank(observed.harnessVersion) ? { harnessVersion: redactText(observed.harnessVersion, context.secrets) } : {}),
         ...(reportedModel !== undefined ? { model: slot.inference.model !== "configured" && observed.modelMismatch === false ? slot.inference.model : redactText(reportedModel, context.secrets) } : {}),
         // The harness's raw comparison is kept with the identity: redaction or truncation can make the recorded model read
         // as the configured one, and the mismatch must still void the run and survive in the report.
-        ...((reportedModel !== undefined || baseIdentity.modelVerified !== false) && slot.inference.model !== "configured" && observed.modelMismatch === true ? { modelMismatch: true as const } : {}),
+        ...(reporting && slot.inference.model !== "configured" && observed.modelMismatch === true ? { modelMismatch: true as const } : {}),
       };
-      if (reportedModel !== undefined) delete identity.modelVerified; // A model the run reports verifies the identity.
+      // A model the run reports, or its reporter's raw mismatch verdict without a model label, verifies the identity.
+      if (reportedModel !== undefined || identity.modelMismatch === true) delete identity.modelVerified;
       if (!identity.credentialFingerprint && nonblank(observed.accountIdentity)) identity.credentialFingerprint = credentialFingerprint(observed.accountIdentity);
       const voidReasons: SlotVoidReason[] = [];
       if (slot.inference.model !== "configured" && (identity.model !== slot.inference.model || identity.modelMismatch === true)) {
@@ -897,19 +899,16 @@ export class PanelCoordinator {
 
 /**
  * Collapse duplicate identities within each stage and count quorum. The first completed run of an identity in policy
- * order counts; a later completed run of that identity is collapsed. Other terminals neither count nor collapse.
+ * order counts; a later completed run of that identity is collapsed (slotCollapseTargets). Other terminals neither count nor collapse.
  */
 function collapseAndCount(records: SlotRecord[], policy: PanelPolicy): PanelQuorumStatus[] {
   return ([1, 2] as const).map(stage => {
-    const counted = new Set<string>();
-    for (const record of records.filter(item => item.slot.stage === stage)) {
-      if (record.run.terminal !== "completed") continue;
-      const key = slotIdentityKey(record.run.identity);
-      if (counted.has(key)) record.run.terminal = "collapsed";
-      else counted.add(key);
-    }
+    const completed = records.filter(item => item.slot.stage === stage && item.run.terminal === "completed");
+    const targets = slotCollapseTargets(completed.map(record => ({ slotId: record.slot.id, stage, identity: record.run.identity })));
+    for (const record of completed) if (targets.get(record.slot.id) !== record.slot.id) record.run.terminal = "collapsed";
+    const counted = completed.filter(record => record.run.terminal === "completed").length;
     const required = stage === 1 ? policy.quorum.stage1 : policy.quorum.stage2;
-    return { stage, required, completed: counted.size, met: counted.size >= required };
+    return { stage, required, completed: counted, met: counted >= required };
   });
 }
 
