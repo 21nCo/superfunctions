@@ -43,7 +43,7 @@ type BillFnConfig = {
 ## Recommended Production Wiring
 
 ```ts
-import { createBillFn, type BillingAccountResolver } from "@billfn/core";
+import { createBillFn, createBillFnError, type BillingAccountResolver } from "@billfn/core";
 import { createDodoProvider } from "@billfn/provider-dodo";
 
 const billingAccountResolver: BillingAccountResolver = {
@@ -77,7 +77,13 @@ const billfn = createBillFn({
     // a header or field the browser can set.
     resolveSubject: async (request) => {
       const session = await getSession(request);
-      return session ? { principalId: session.userId } : null;
+      if (!session) return null;
+      // A cookie session also needs a CSRF check on writes, or another site
+      // can post with the user's cookie.
+      if (request.method !== "GET" && !verifyCsrf(request, session)) {
+        throw createBillFnError({ code: "BILLFN_UNAUTHORIZED", message: "CSRF check failed" });
+      }
+      return { principalId: session.userId };
     },
   },
   providers: {
@@ -91,7 +97,9 @@ const billfn = createBillFn({
 ```
 
 `getSession` stands for your app's own authentication (a signed session cookie
-or a verified bearer token).
+or a verified bearer token), and `verifyCsrf` for its CSRF check (for example a
+token header that must match the session), as in the
+[multi-region Workers recipe](/docs/recipes/multi-region-workers).
 
 ## Who the Router Acts For
 
@@ -129,8 +137,12 @@ refund that reaches this step does:
 const billfn = createBillFn({
   // ...
   refunds: {
-    // Operators only. A self-service policy (for example one refund per
-    // charge within 14 days) would check the subject's history here instead.
+    // Operators only, and the session check above has already run. A
+    // self-service policy (for example one refund per charge within 14 days)
+    // would check the subject's history here instead; to enforce "once"
+    // against concurrent requests, reserve the charge atomically in your own
+    // store here (and release it if the refund fails), because two requests
+    // can both see no earlier refund.
     authorize: async ({ request }) => (await getSession(request))?.role === "billing-operator",
   },
 });

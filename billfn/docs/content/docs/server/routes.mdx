@@ -19,7 +19,7 @@ BillFn’s router divides its surface into:
 | `GET` | `/billfn/entitlements` | Returns billing account, entitlement snapshot, and current subscription |
 | `GET` | `/billfn/usage` | Returns usage and limit information for the account |
 
-`/billfn/entitlements`, `/billfn/usage` and every write route below act for the subject that `auth.resolveSubject` returns. Without a resolver they answer `401 BILLFN_UNAUTHENTICATED`, unless the host sets `auth.allowClientSubject: true`; the router then takes the subject from query params (reads) or the body `subject` (writes). Only trusted server-to-server callers should use that mode, because any caller can name any account. See [Setup](/docs/server/setup#who-the-router-acts-for).
+`/billfn/entitlements`, `/billfn/usage` and every write route below act for the subject that `auth.resolveSubject` returns. Without a resolver they answer `401 BILLFN_UNAUTHENTICATED`, unless the host sets `auth.allowClientSubject: true`; the router then takes the body `subject` when it names one, and otherwise the subject in the query params (for reads and writes alike). Only trusted server-to-server callers should use that mode, because any caller can name any account. See [Setup](/docs/server/setup#who-the-router-acts-for).
 
 ## Write Routes
 
