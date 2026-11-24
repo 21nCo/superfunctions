@@ -919,7 +919,8 @@ export interface BillFnCheckoutCreateRequest {
    * provider and interval.
    */
   priceId?: string;
-  metadata?: Record<string, unknown>;
+  /** At most 20 entries; keys up to 40 characters; string (up to 500 characters), finite number or boolean values. */
+  metadata?: Record<string, string | number | boolean>;
   customer?: {
     email?: string;
     name?: string;

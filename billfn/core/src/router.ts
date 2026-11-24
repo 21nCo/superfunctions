@@ -252,7 +252,8 @@ export function createBillFnRouter(config: BillFnConfig) {
           provider: body.provider as never,
           interval: body.interval as never,
           priceId: body.priceId as string | undefined,
-          metadata: body.metadata,
+          // Checked by the service (assertCheckoutMetadata) before anything is stored.
+          metadata: body.metadata as Record<string, string | number | boolean> | undefined,
           customer: body.customer,
           returnUrl: body.returnUrl,
           successUrl: body.successUrl,

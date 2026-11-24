@@ -196,8 +196,10 @@ describe('error details returned to callers', () => {
   it('answers details with a throwing toJSON getter without reading it', async () => {
     const env = await setup();
     const details = { status: 502 };
+    let reads = 0;
     Object.defineProperty(details, 'toJSON', {
       get() {
+        reads += 1;
         throw new Error('test-getter-read');
       },
       enumerable: false
@@ -209,6 +211,7 @@ describe('error details returned to callers', () => {
 
     expect(response.status).toBe(502);
     expect(payload.error.code).toBe('BILLFN_PROVIDER_ERROR');
+    expect(reads).toBe(0);
   });
 
   it('leaves out objects in the details that are not plain data', async () => {
