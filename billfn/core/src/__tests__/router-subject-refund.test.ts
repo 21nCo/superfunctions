@@ -109,7 +109,8 @@ async function setup(config: Partial<BillFnConfig> = {}) {
     );
     return { status: response.status, payload: (await response.json()) as { ok: boolean; data?: any; error?: { code: string } } };
   };
-  return { billfn, call, cancelSubscription, refundCharge, refunds };
+  const accounts = () => db.findMany<{ id: string }>({ model: 'billingAccounts', where: [], namespace: 'billfn' });
+  return { billfn, call, cancelSubscription, refundCharge, refunds, accounts };
 }
 
 describe('router subjects without auth.resolveSubject', () => {
@@ -261,6 +262,92 @@ describe('router refunds', () => {
     expect(status).toBe(409);
     expect(authorize).not.toHaveBeenCalled();
     expect(env.refundCharge).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [{ mode: 'custom' }],
+    [{ mode: 'prorated_remaining_period' }],
+    [{ mode: 'custom', amount: 0 }],
+    [{ mode: 'custom', amount: -5 }],
+    [{ mode: 'custom', amount: 2.5 }],
+    [{ mode: 'custom', amount: '600' }],
+    [{ mode: 'full', amount: 600 }],
+    [{ mode: 'everything' }]
+  ])('answers 400 for %j before asking the host or the provider', async (body) => {
+    const authorize = vi.fn<RefundAuthorizer>(() => true);
+    const env = await setup({ auth: { resolveSubject: () => CALLER }, refunds: { authorize } });
+
+    const { status, payload } = await env.call('POST', '/subscriptions/refund', body);
+
+    expect(status).toBe(400);
+    expect(payload.error?.code).toBe('BILLFN_VALIDATION_ERROR');
+    expect(authorize).not.toHaveBeenCalled();
+    expect(env.refundCharge).not.toHaveBeenCalled();
+  });
+
+  it('passes a valid partial refund amount to the host and the provider', async () => {
+    const authorize = vi.fn<RefundAuthorizer>(() => true);
+    const env = await setup({ auth: { resolveSubject: () => CALLER }, refunds: { authorize } });
+
+    const { status } = await env.call('POST', '/subscriptions/refund', { mode: 'custom', amount: 600 });
+
+    expect(status).toBe(200);
+    expect(authorize.mock.calls[0][0]).toMatchObject({ mode: 'custom', amount: 600 });
+    expect(env.refundCharge.mock.calls[0][0]).toMatchObject({ mode: 'custom', amount: 600 });
+  });
+
+  it('does not create a billing account for a subject that has none', async () => {
+    const env = await setup({ auth: { resolveSubject: () => ({ principalId: 'newcomer' }) } });
+    const before = (await env.accounts()).length;
+
+    const { status } = await env.call('POST', '/subscriptions/refund', {});
+
+    expect(status).toBe(404);
+    expect(await env.accounts()).toHaveLength(before);
+  });
+
+  it('answers 403, not 501, when the provider cannot refund and no hook approves', async () => {
+    const env = await setup({ auth: { resolveSubject: () => CALLER } });
+    const { provider } = createProvider();
+    const noRefunds = createBillFn({
+      db: memoryAdapter({ debug: false }),
+      catalog,
+      providers: { dodo: { ...provider, capabilities: { ...provider.capabilities, refundCharge: false }, refundCharge: undefined } },
+      auth: { resolveSubject: () => CALLER }
+    });
+    const created = await noRefunds.createCheckout({ subject: CALLER, planKey: 'pro', provider: 'dodo', interval: 'month' });
+    if (!created.ok) {
+      throw new Error('expected a checkout');
+    }
+    await noRefunds.verifyCheckout({ subject: CALLER, checkoutSessionId: created.data.checkoutSession.checkoutSessionId });
+
+    const response = await noRefunds.router.handle(
+      new Request('https://billfn.example.test/billfn/subscriptions/refund', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: '{}'
+      })
+    );
+
+    expect(response.status).toBe(403);
+    expect(env.refundCharge).not.toHaveBeenCalled();
+  });
+
+  it('refuses with 409 when the subscription changes while the host is deciding', async () => {
+    let env: Awaited<ReturnType<typeof setup>> | undefined;
+    const authorize = vi.fn<(input: BillFnRefundAuthorizationInput) => Promise<boolean>>(async () => {
+      await env!.billfn.cancelSubscription({ subject: CALLER });
+      return true;
+    });
+    env = await setup({ auth: { resolveSubject: () => CALLER }, refunds: { authorize } });
+
+    const { status, payload } = await env.call('POST', '/subscriptions/refund', {});
+
+    expect(status).toBe(409);
+    expect(payload.error?.code).toBe('BILLFN_CONFLICT');
+    expect(authorize).toHaveBeenCalledTimes(1);
+    expect(env.refundCharge).not.toHaveBeenCalled();
+    expect(await env.refunds()).toHaveLength(0);
   });
 
   it('keeps in-process refundCharge available to host code without the router hook', async () => {

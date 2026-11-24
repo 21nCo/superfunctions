@@ -114,8 +114,8 @@ needs a subject:
 `POST /billfn/subscriptions/refund` is off by default. Refunds move money, so
 the host decides who may ask for one through `refunds.authorize`. The route
 first parses the body (400 when it is not a JSON object), resolves the subject
-(401 or 400 as above) and finds the subscription and charge it would refund
-(404 or 409). Only then does it call `refunds.authorize` with the request, the
+(401 or 400 as above), checks the mode and amount (400, see below) and finds
+the subscription and charge it would refund (404 or 409). Only then does it call `refunds.authorize` with the request, the
 subject, and the exact target: `billingAccountId`, `subscriptionId`,
 `providerChargeId`, `mode` (default `full`), `amount` and `reason`. Anything
 but `true` answers `403 BILLFN_UNAUTHORIZED`, and without the hook every
@@ -131,6 +131,18 @@ const billfn = createBillFn({
   },
 });
 ```
+
+If the subscription changes while `refunds.authorize` is deciding (a renewal
+or a cancellation), the refund answers `409 BILLFN_CONFLICT` instead of
+refunding the state that was approved; retry it.
+
+Every refund, through the router, `billfn.refundCharge()` or the admin
+package, checks its mode and amount before the provider is called: `full`
+takes no `amount`, and `custom` or `prorated_remaining_period` needs a
+positive integer `amount` in the currency minor unit (BillFn does not compute
+a prorated amount; the caller supplies it). Anything else answers
+`400 BILLFN_VALIDATION_ERROR`. A refund never creates a billing account; a
+subject without one gets `404 BILLFN_NOT_FOUND`.
 
 The router refund acts on the resolved subject's own account. To refund
 another account, use `@billfn/admin` or call `billfn.refundCharge()` from host
