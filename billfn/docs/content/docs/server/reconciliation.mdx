@@ -26,7 +26,7 @@ These routes require `operations.authorize(request)` to succeed.
 
 ## Events for subscriptions BillFn has not seen
 
-A provider event can name its BillFn checkout session in two ways. The provider's own checkout id, taken from the provider's record (for Dodo, `checkout_session_id`), is trusted. A reference copied from metadata (for Dodo, `billfn_checkout_session_id`, which an adapter marks with `checkoutReferenceSource: "metadata"`), or one naming a BillFn checkout session id, is something the payer can set. It links the event to that session's plan and billing account only when:
+A provider event can name its BillFn checkout session in two ways. The provider's own checkout id, taken from the provider's record (for Dodo, `checkout_session_id`), is trusted. A reference copied from metadata (for Dodo, `billfn_checkout_session_id`, which an adapter marks with `checkoutReferenceSource: "metadata"`; a reference without a source is treated the same way), or one naming a BillFn checkout session id, is something the payer can set. It links the event to that session's plan and billing account only when:
 
 - the event pays for the session's product, as the provider itself reported it (a price id from metadata proves nothing); and
 - any `billfn_billing_account_id` in its metadata is the session's account.

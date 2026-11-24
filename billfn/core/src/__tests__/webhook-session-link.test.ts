@@ -49,7 +49,7 @@ const catalog: BillFnCatalog = {
 
 const ATTACKER = { principalId: 'attacker' };
 
-function setup() {
+function setup(catalogOverride: BillFnCatalog = catalog) {
   let next: Partial<BillFnParsedWebhookEvent> = {};
   const provider: BillFnProviderAdapter = {
     provider: 'dodo',
@@ -80,7 +80,7 @@ function setup() {
       ];
     }
   };
-  const billfn = createBillFn({ db: memoryAdapter({ debug: false }), catalog, providers: { dodo: provider } });
+  const billfn = createBillFn({ db: memoryAdapter({ debug: false }), catalog: catalogOverride, providers: { dodo: provider } });
   const deliver = async (event: Partial<BillFnParsedWebhookEvent>) => {
     next = event;
     const response = await billfn.handleWebhook({ provider: 'dodo', rawBody: '{}', headers: new Headers() });
@@ -207,8 +207,68 @@ describe('webhook events linked to a checkout session by its BillFn id', () => {
     const env = setup();
     const session = await env.openCheckout('enterprise');
 
-    await env.deliver({ ...paidEvent(`cks_${session.checkoutSessionId}`, 'pdt_any'), checkoutReferenceId: `cks_${session.checkoutSessionId}` });
+    await env.deliver({
+      ...paidEvent(`cks_${session.checkoutSessionId}`, 'pdt_any'),
+      checkoutReferenceId: `cks_${session.checkoutSessionId}`,
+      checkoutReferenceSource: 'provider'
+    });
 
     expect((await env.entitlements())?.subscription).toMatchObject({ planKey: 'enterprise' });
+  });
+
+  it('checks a provider checkout id whose event does not say where it came from', async () => {
+    const env = setup();
+    const session = await env.openCheckout('enterprise');
+
+    // An event stored before sources were recorded, or from an adapter that does not set one.
+    await env.deliver(paidEvent(`cks_${session.checkoutSessionId}`, 'pdt_cheap_not_in_catalog'));
+
+    expect((await env.entitlements())?.subscription).toBeNull();
+  });
+});
+
+describe('event prices named outside the provider record', () => {
+  it('does not bootstrap a plan through a price id another provider shares', async () => {
+    // An Apple price listed first shares its id with the Dodo enterprise price.
+    const shared: BillFnCatalog = {
+      plans: [
+        {
+          ...catalog.plans[1]!,
+          prices: [{ ...catalog.plans[1]!.prices[0]!, priceId: 'monthly', provider: 'apple', providerProductId: 'apple.starter' }]
+        },
+        { ...catalog.plans[0]!, prices: [{ ...catalog.plans[0]!.prices[0]!, priceId: 'monthly' }] }
+      ]
+    };
+    const env = setup(shared);
+    await env.openCheckout('enterprise').catch(() => undefined);
+    const forged = paidEvent('chk_unknown_session', 'pdt_cheap_not_in_catalog', { billfn_billing_account_id: 'ba_user_attacker' });
+
+    await env.deliver({ ...forged, priceId: 'monthly', checkoutReferenceSource: 'metadata' });
+
+    expect((await env.entitlements())?.subscription?.planKey).not.toBe('enterprise');
+  });
+
+  it('resolves a one-time payment by the product in its cart when the price hint is not that product\'s', async () => {
+    const env = setup();
+    await env.openCheckout('starter');
+    const cart = {
+      checkoutReferenceId: 'chk_unknown_session',
+      checkoutReferenceSource: 'metadata' as const,
+      priceId: 'price_enterprise_month',
+      providerChargeId: 'pay_cart',
+      billingState: {
+        subscriptionStatus: 'active' as const,
+        checkoutStatus: 'succeeded' as const,
+        providerChargeId: 'pay_cart',
+        autoRenew: false,
+        raw: { product_cart: [{ product_id: 'pdt_starter_month', quantity: 1 }], metadata: { billfn_billing_account_id: 'ba_user_attacker' } }
+      },
+      raw: {}
+    };
+
+    await env.deliver(cart);
+
+    const data = await env.entitlements();
+    expect(data?.subscription?.planKey).toBe('starter');
   });
 });

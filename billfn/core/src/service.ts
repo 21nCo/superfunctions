@@ -2450,17 +2450,6 @@ function requirePriceById(plan: ReturnType<typeof requirePlan>, priceId: string)
   return price;
 }
 
-/** The catalog price with this id and its plan, or null. */
-function resolvePriceReference(catalog: BillFnCatalog, priceId: string) {
-  for (const plan of catalog.plans) {
-    const price = plan.prices.find((candidate) => candidate.priceId === priceId);
-    if (price) {
-      return { plan, price };
-    }
-  }
-  return null;
-}
-
 function requirePriceReference(catalog: BillFnCatalog, priceId: string) {
   for (const plan of catalog.plans) {
     const price = plan.prices.find((candidate) => candidate.priceId === priceId);
@@ -5487,7 +5476,9 @@ async function withTrustedCheckoutReference<T extends ParsedProviderEvent>(
     ],
     namespace: deps.namespace
   });
-  if (byProviderId && event.checkoutReferenceSource !== 'metadata') {
+  // Only a reference the adapter says it read from the provider's own record is trusted as the provider's; one
+  // without a source (an adapter that does not say, or an event stored before sources were recorded) is checked.
+  if (byProviderId && event.checkoutReferenceSource === 'provider') {
     return event;
   }
   const session =
@@ -5608,13 +5599,20 @@ async function resolveProviderEventPriceReference(
     const trustedReferences =
       paidProducts.length === 0
         ? references
-        : references.filter((reference) => {
-            if (!reference || paidProducts.includes(reference)) {
-              return true;
-            }
-            const named = resolvePriceReference(deps.catalog, reference);
-            return !named || named.price.provider !== provider || paidProducts.includes(named.price.providerProductId);
-          });
+        : [
+            ...references.filter((reference) => {
+              if (!reference || paidProducts.includes(reference)) {
+                return true;
+              }
+              // Every price of this provider with that id must sell a paid product (ids may repeat across plans).
+              const named = deps.catalog.plans.flatMap((plan) =>
+                plan.prices.filter((price) => price.priceId === reference && price.provider === provider)
+              );
+              return named.every((price) => paidProducts.includes(price.providerProductId));
+            }),
+            // The products the provider reported (a Dodo payment's cart among them) are references too.
+            ...paidProducts
+          ];
     const resolved = findCatalogPriceReference(deps.catalog, provider, trustedReferences, subscription?.priceId);
     if (resolved) {
       return resolved;

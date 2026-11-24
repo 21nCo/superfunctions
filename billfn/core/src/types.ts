@@ -466,9 +466,9 @@ export interface BillFnParsedWebhookEvent {
   providerChargeId?: string;
   checkoutReferenceId?: string;
   /**
-   * Where `checkoutReferenceId` came from: `provider` for the provider's own checkout id in its record (the
-   * default), `metadata` for a value copied from metadata the payer can set. BillFn links an event to a checkout
-   * session through a metadata reference only when the event pays for the session's product.
+   * Where `checkoutReferenceId` came from: `provider` for the provider's own checkout id in its record, `metadata`
+   * for a value copied from metadata the payer can set. BillFn links an event to a checkout session through any
+   * reference other than an explicit `provider` one only when the event pays for the session's product.
    */
   checkoutReferenceSource?: 'provider' | 'metadata';
   billingState?: BillFnVerifiedBillingState;
