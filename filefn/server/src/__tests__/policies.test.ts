@@ -14,8 +14,8 @@ describe('policy storage paths', () => {
       },
     );
 
-    expect(path).toBe('_tenant/user_123/file_id/ver_001-_avatar.png');
-    expect(path).not.toContain('..');
+    expect(path).toBe('%2E%2E%2Ftenant/user%2F123/file%5Cid/ver%2F001-%2E%2E%2F..%2Favatar.png');
+    expect(path.split('/')).not.toContain('..');
     expect(path).not.toContain('\\');
   });
 });
