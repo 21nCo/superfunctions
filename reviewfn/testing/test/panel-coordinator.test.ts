@@ -229,6 +229,24 @@ describe("PanelCoordinator isolation and voiding", () => {
     await expectValid(result, setup, panelPolicy);
   });
 
+  it("runs profile slots with the trusted profile, records unverified models and limitations, and voids a raw model mismatch", async () => {
+    const unreported = { argv: ["--model", "{model}"], promptVia: "stdin" as const, outputVia: "stdout-last-json" as const, envAllowlist: ["PATH"], modelReport: "none", capabilities: { structuredOutput: false, sandbox: "tree-verified-only" as const } };
+    const reported = { ...unreported, modelReport: "json-path:model", capabilities: { structuredOutput: false, sandbox: "enforced-read-only" as const } };
+    const cli = new FakePanelHarness({ id: "cli", behaviors: { "cli-a": () => ({ ...clean(), observed: { model: "served-other" } }), "cli-b": clean, "cli-r": () => ({ ...clean(), observed: { model: "model-cli-r", modelMismatch: true } }) } });
+    const profiled = (id: string, profile: string) => slot(id, 1, `model-${id}`, { harness: { adapter: "cli", version: "1", executable: "agent", profile } });
+    const panelPolicy = panel([profiled("cli-a", "unreported"), profiled("cli-b", "unreported"), profiled("cli-r", "reported")], { profiles: { unreported, reported } });
+    const setup = coordinator(cli, { harnessContractVersions: { cli: "1" } });
+    const result = await setup.coordinator.run(request(panelPolicy));
+    expect(cli.preflights.map(item => item.harness)).toEqual(expect.arrayContaining([{ adapter: "cli", version: "1", executable: "agent", profile: "unreported", profileDefinition: unreported }]));
+    const runs = new Map(result.report.slotRuns.map(run => [run.slotId, run]));
+    // Without a model report, the configured model stands unconfirmed, so both runs are one identity and the second collapses.
+    expect(runs.get("cli-a")).toMatchObject({ terminal: "completed", limitations: ["model_unverified", "sandbox_tree_verified_only"], identity: { model: "model-cli-a", modelVerified: false, harnessExecutable: "agent", harnessProfile: "unreported" } });
+    expect(runs.get("cli-b")).toMatchObject({ terminal: "collapsed", identity: { model: "model-cli-b", modelVerified: false } });
+    expect(runs.get("cli-r")).toMatchObject({ terminal: "void", voidReasons: ["model_mismatch"], identity: { model: "model-cli-r", modelMismatch: true } });
+    expect(runs.get("cli-r")).not.toHaveProperty("limitations");
+    await expectValid(result, setup, panelPolicy);
+  });
+
   it("never counts a run whose harness reports another version than the slot pins, nor one that used a forbidden tool", async () => {
     const harness = new FakePanelHarness({ behaviors: { drift: () => ({ ...clean(), observed: { harnessVersion: "2" } }), tools: () => ({ ...clean(), observed: { disallowedTools: ["shell"] } }) } });
     const panelPolicy = panel([slot("drift", 1), slot("tools", 1)]);
