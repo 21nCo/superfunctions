@@ -6,31 +6,36 @@
 // globs. It finds a closed set of forms only:
 //   1. relative `import`, `export … from`, `require()` and `import()` specifiers;
 //   2. string-literal path segments given to path.join, path.resolve, fileURLToPath(new URL(…, import.meta.url)) or
-//      new URL(…, import.meta.url), on a base it can resolve (__dirname, import.meta.dirname/url, process.cwd() or a
-//      const bound to one of these forms in the same file);
-//   3. string-literal `alias` values (and `replacement` entries) in vitest.config.* and vite.config.*; alias values
-//      built with form 2 are found as form 2.
+//      new URL(…, import.meta.url): on a base it can resolve (__dirname, __filename, import.meta.dirname/filename/url,
+//      process.cwd() or a const bound in the same file to one of these forms), or on none, which is relative to the
+//      package directory, where Turbo runs the task;
+//   3. `alias` values (and `replacement` entries) in vitest.config.*, vite.config.* and suffixed variants such as
+//      vitest.workerd.config.ts, as string literals or form 2.
 // Paths built from other values are computed reads, deferred to SFNS-306. These targets are skipped: one with no
-// tracked file (a file the task writes or generates, which no Turbo input can hash), and a directory that holds the
-// package itself or any workspace package (a repository, product or package root, used as a base for other paths or
-// for module resolution; the files a task reads under it by literal path are found as their own reads).
+// tracked file (a file the task writes or generates, which no Turbo input can hash), and a form 2 directory that holds
+// the package itself or any workspace package (a repository, product or package root, used as a base for other paths or
+// for module resolution; the files a task reads under it by literal path are found as their own reads). An import or
+// alias of a package directory reads that package's files.
 // A read in a test file (a *.test.* or *.spec.* file, a file under a __tests__, test, tests, e2e, test-support or
-// fixtures directory, or a Vitest or Playwright config) must be hashed by the package's test, typecheck and lint
-// tasks; any other read by all four cacheable tasks, since the guard cannot tell which task runs the file.
+// fixtures directory, or a Vitest or Playwright config) must be hashed by the package's test, typecheck and lint tasks,
+// and also by build when the package's build scripts name the file; any other read by all four cacheable tasks, since
+// the guard cannot tell which task runs the file.
 //
 // Usage: node scripts/turbo-inputs-guard.mjs [--root <dir>] [--package <name>]... [--turbo <bin>] [--list] [--json]
 // Turbo comes from --turbo, then $TURBO_BIN, then <root>/node_modules/turbo/bin/turbo. Exit 1 lists each undeclared
 // read; declare it with "$TURBO_ROOT$/<path>" next to "$TURBO_DEFAULT$" in the task's inputs (the package's turbo.json).
 
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const posix = path.posix;
 export const CACHEABLE_TASKS = ["build", "typecheck", "test", "lint"];
 const SCANNED_FILE = /\.(?:[cm]?[jt]sx?|svelte|vue|astro|mdx)$/;
-const CONFIG_FILE = /(?:^|\/)(?:vitest|vite)\.config\.[cm]?[jt]s$/;
+// Files that may hold JSX. TypeScript's `<Type>value` assertions are valid only in .ts, .mts and .cts files.
+const JSX_FILE = /\.(?:[cm]?jsx?|tsx)$/;
+const CONFIG_FILE = /(?:^|\/)(?:vitest|vite)(?:\.[\w-]+)?\.config\.[cm]?[jt]s$/;
 const RESOLVE_EXTENSIONS = [".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs", ".json", ".svelte", ".vue", ".d.ts"];
 const PATH_MODULES = new Set(["path", "node:path", "path/posix", "node:path/posix"]);
 const URL_MODULES = new Set(["url", "node:url"]);
@@ -41,13 +46,17 @@ const STATEMENT_END = new Set([",", ")", "]", "}", ";"]);
 const TEST_FILE =
   /(?:^|\/)(?:__tests__|__mocks__|tests?|e2e|test-support|fixtures)\/|\.(?:test|spec)\.[cm]?[jt]sx?$|(?:^|\/)(?:vitest|playwright)(?:\.[\w-]+)?\.config\.[cm]?[jt]s$/;
 const TEST_TASKS = ["test", "typecheck", "lint"];
+const BUILD_SCRIPTS = ["prebuild", "build", "postbuild"];
+const IDENTIFIER_START = /[\p{ID_Start}_$]/u;
+const IDENTIFIER = /^#?[\p{ID_Continue}$‌‍]+/u;
+const JSX_NAME = /^[\p{ID_Start}_$][\p{ID_Continue}$.:-]*/u;
 
 // JavaScript tokens: strings (`str`, with the value of a template that has no substitution), templates with
-// substitutions (`tpl`, whose expressions follow as ordinary tokens), identifiers, numbers and punctuation. Comments and
-// regular expressions are dropped. A quote string ends at a line break, so a stray apostrophe (JSX text) stays local.
-export function tokenize(source) {
+// substitutions (`tpl`, whose expressions follow as ordinary tokens), identifiers, numbers, punctuation and, in JSX
+// files, one `jsx` token after each JSX element (whose `{…}` expressions come before it as ordinary tokens). Comments,
+// regular expressions and JSX text are dropped. A quote string ends at a line break.
+export function tokenize(source, { jsx = false } = {}) {
   const tokens = [];
-  const braces = [];
   let i = 0;
   let line = 1;
   const regexAllowed = () => {
@@ -60,91 +69,175 @@ export function tokenize(source) {
     }
     return previous.type === "punc" && ![")", "]", "}"].includes(previous.value);
   };
-  // Reads template text from i to its closing backtick or next substitution; true when the template ended.
-  const readTemplate = () => {
-    let text = "";
+  const step = () => {
+    line += source[i] === "\n" ? 1 : 0;
+    i += 1;
+  };
+  const skipSpace = () => {
+    while (i < source.length && /\s/.test(source[i])) step();
+  };
+  const skipQuoted = (quote, stopAtLineEnd) => {
+    let value = "";
+    step();
+    while (i < source.length && source[i] !== quote && !(stopAtLineEnd && source[i] === "\n")) {
+      if (source[i] === "\\" && stopAtLineEnd) step();
+      value += source[i] ?? "";
+      step();
+    }
+    if (source[i] === quote) step();
+    return value;
+  };
+
+  // A template from its backtick; `${…}` expressions are tokenized as code.
+  const scanTemplate = () => {
+    const token = { type: "str", value: "", line };
+    tokens.push(token);
+    step();
+    while (i < source.length && source[i] !== "`") {
+      if (source[i] === "\\") {
+        step();
+        token.value += source[i] ?? "";
+        step();
+      } else if (source[i] === "$" && source[i + 1] === "{") {
+        token.type = "tpl";
+        i += 2;
+        scanCode(true);
+      } else {
+        token.value += source[i];
+        step();
+      }
+    }
+    step();
+    if (token.type === "tpl") token.value = "";
+  };
+
+  // A JSX element from its `<`, or false (with nothing consumed) when the `<` does not open one: a TypeScript generic
+  // arrow function such as `<T,>(…) => …` or `<T extends U>(…) => …`, or an element that is never closed.
+  const scanJsxElement = () => {
+    const saved = { i, line, length: tokens.length };
+    const fail = () => {
+      i = saved.i;
+      line = saved.line;
+      tokens.length = saved.length;
+      return false;
+    };
+    step();
+    skipSpace();
+    if (source[i] === ">") {
+      step();
+      if (!scanJsxChildren()) return fail();
+      tokens.push({ type: "jsx", value: "", line });
+      return true;
+    }
+    const name = JSX_NAME.exec(source.slice(i, i + 256));
+    if (!name) return fail();
+    i += name[0].length;
+    for (;;) {
+      skipSpace();
+      if (source.startsWith("/>", i)) {
+        i += 2;
+        break;
+      }
+      if (source[i] === ">") {
+        step();
+        if (!scanJsxChildren()) return fail();
+        break;
+      }
+      if (source[i] === "{") {
+        step();
+        scanCode(true);
+        continue;
+      }
+      const attribute = JSX_NAME.exec(source.slice(i, i + 256));
+      if (!attribute || attribute[0] === "extends") return fail();
+      i += attribute[0].length;
+      skipSpace();
+      if (source[i] !== "=") continue;
+      step();
+      skipSpace();
+      if (source[i] === '"' || source[i] === "'") skipQuoted(source[i], false);
+      else if (source[i] === "{") {
+        step();
+        scanCode(true);
+      } else if (source[i] !== "<" || !scanJsxElement()) return fail();
+    }
+    tokens.push({ type: "jsx", value: "", line });
+    return true;
+  };
+  // Children up to and including the closing tag; false when the source ends first.
+  const scanJsxChildren = () => {
+    while (i < source.length) {
+      if (source[i] === "{") {
+        step();
+        scanCode(true);
+      } else if (source[i] === "<" && source[i + 1] === "/") {
+        while (i < source.length && source[i] !== ">") step();
+        step();
+        return i <= source.length;
+      } else if (source[i] !== "<" || !scanJsxElement()) {
+        step();
+      }
+    }
+    return false;
+  };
+
+  // Code up to the end of the source or, when nested, up to the `}` that closes the enclosing `${` or JSX `{`.
+  const scanCode = (nested) => {
+    let depth = 0;
     while (i < source.length) {
       const char = source[i];
-      if (char === "\\") {
-        text += source[i + 1] ?? "";
-        line += source[i + 1] === "\n" ? 1 : 0;
-        i += 2;
+      const start = line;
+      if (/\s/.test(char)) {
+        step();
+      } else if (char === "/" && source[i + 1] === "/") {
+        while (i < source.length && source[i] !== "\n") i += 1;
+      } else if (char === "/" && source[i + 1] === "*") {
+        const end = source.indexOf("*/", i + 2);
+        const stop = end === -1 ? source.length : end + 2;
+        while (i < stop) step();
+      } else if (char === "#" && i === 0 && source[1] === "!") {
+        while (i < source.length && source[i] !== "\n") i += 1;
+      } else if (char === "'" || char === '"') {
+        tokens.push({ type: "str", value: skipQuoted(char, true), line: start });
       } else if (char === "`") {
-        i += 1;
-        return { ended: true, text };
-      } else if (char === "$" && source[i + 1] === "{") {
-        i += 2;
-        braces.push("template");
-        return { ended: false, text };
+        scanTemplate();
+      } else if (char === "}" && depth === 0 && nested) {
+        step();
+        return;
+      } else if (char === "<" && jsx && regexAllowed() && /[\p{ID_Start}_$>]/u.test(source[i + 1] ?? "") && scanJsxElement()) {
+        // A JSX element; its expressions are already tokens.
+      } else if (char === "/" && regexAllowed()) {
+        let inClass = false;
+        step();
+        while (i < source.length && source[i] !== "\n" && (inClass || source[i] !== "/")) {
+          if (source[i] === "\\" && source[i + 1] !== "\n") step();
+          else if (source[i] === "[") inClass = true;
+          else if (source[i] === "]") inClass = false;
+          step();
+        }
+        if (source[i] === "/") {
+          step();
+          while (/[a-z]/i.test(source[i] ?? "")) step();
+        }
+      } else if (IDENTIFIER_START.test(char) || (char === "#" && IDENTIFIER_START.test(source[i + 1] ?? ""))) {
+        const match = IDENTIFIER.exec(source.slice(i, i + 256));
+        tokens.push({ type: "id", value: match[0], line: start });
+        i += match[0].length;
+      } else if (/\d/.test(char)) {
+        const match = /^[\w.]+/.exec(source.slice(i, i + 64));
+        tokens.push({ type: "num", value: match[0], line: start });
+        i += match[0].length;
       } else {
-        line += char === "\n" ? 1 : 0;
-        text += char;
-        i += 1;
+        const value = MULTI_CHAR_PUNCTUATION.find((op) => source.startsWith(op, i)) ?? char;
+        if (value === "{") depth += 1;
+        if (value === "}") depth -= 1;
+        tokens.push({ type: "punc", value: value === "?." ? "." : value, line: start });
+        i += value.length;
       }
     }
-    return { ended: true, text };
   };
-  while (i < source.length) {
-    const char = source[i];
-    const start = line;
-    if (char === "\n") {
-      line += 1;
-      i += 1;
-    } else if (/\s/.test(char)) {
-      i += 1;
-    } else if (char === "/" && source[i + 1] === "/") {
-      while (i < source.length && source[i] !== "\n") i += 1;
-    } else if (char === "/" && source[i + 1] === "*") {
-      const end = source.indexOf("*/", i + 2);
-      const stop = end === -1 ? source.length : end + 2;
-      for (let k = i; k < stop; k += 1) line += source[k] === "\n" ? 1 : 0;
-      i = stop;
-    } else if (char === "'" || char === '"') {
-      let value = "";
-      i += 1;
-      while (i < source.length && source[i] !== char && source[i] !== "\n") {
-        value += source[i] === "\\" ? source[(i += 1)] ?? "" : source[i];
-        i += 1;
-      }
-      i += source[i] === char ? 1 : 0;
-      tokens.push({ type: "str", value, line: start });
-    } else if (char === "`") {
-      i += 1;
-      const { ended, text } = readTemplate();
-      tokens.push(ended ? { type: "str", value: text, line: start } : { type: "tpl", value: "", line: start });
-    } else if (char === "}" && braces.at(-1) === "template") {
-      braces.pop();
-      i += 1;
-      readTemplate();
-    } else if (char === "/" && regexAllowed()) {
-      let inClass = false;
-      i += 1;
-      while (i < source.length && source[i] !== "\n" && (inClass || source[i] !== "/")) {
-        if (source[i] === "\\") i += 1;
-        else if (source[i] === "[") inClass = true;
-        else if (source[i] === "]") inClass = false;
-        i += 1;
-      }
-      i += 1;
-      while (/[a-z]/i.test(source[i] ?? "")) i += 1;
-    } else if (char === "#" && i === 0 && source[1] === "!") {
-      while (i < source.length && source[i] !== "\n") i += 1;
-    } else if (/[\p{ID_Start}_$]/u.test(char) || (char === "#" && /[\p{ID_Start}_$]/u.test(source[i + 1] ?? ""))) {
-      const match = /^#?[\p{ID_Continue}$\u200c\u200d]+/u.exec(source.slice(i, i + 256));
-      tokens.push({ type: "id", value: match[0], line: start });
-      i += match[0].length;
-    } else if (/\d/.test(char)) {
-      const match = /^[\w.]+/.exec(source.slice(i, i + 64));
-      tokens.push({ type: "num", value: match[0], line: start });
-      i += match[0].length;
-    } else {
-      const value = MULTI_CHAR_PUNCTUATION.find((op) => source.startsWith(op, i)) ?? char;
-      if (value === "{") braces.push("brace");
-      if (value === "}") braces.pop();
-      tokens.push({ type: "punc", value: value === "?." ? "." : value, line: start });
-      i += value.length;
-    }
-  }
+
+  scanCode(false);
   return tokens;
 }
 
@@ -161,16 +254,23 @@ function codeOf(file, source) {
     return front ? `   \n${front[1]}${blank(source.slice(front[0].length - 4))}` : blank(source);
   }
   if (file.endsWith(".mdx")) {
-    // Only top-level import and export lines; fenced code blocks are examples, not reads.
+    // Only top-level import and export statements, which may span lines up to a blank line, their module specifier or
+    // a semicolon. Fenced code blocks are examples, not reads.
     let fenced = false;
+    let statement = false;
     return source
       .split("\n")
       .map((text) => {
         if (/^\s*(?:```|~~~)/.test(text)) {
           fenced = !fenced;
+          statement = false;
           return "";
         }
-        return !fenced && /^(?:import|export)\s/.test(text) ? text : "";
+        if (fenced) return "";
+        statement ||= /^(?:import|export)\s/.test(text);
+        const kept = statement ? text : "";
+        if (statement && (text.trim() === "" || /\bfrom\s*['"]|^import\s*['"]|;\s*$/.test(text))) statement = false;
+        return kept;
       })
       .join("\n");
   }
@@ -179,15 +279,18 @@ function codeOf(file, source) {
 
 const isId = (token, value) => token?.type === "id" && (value === undefined || token.value === value);
 const isPunc = (token, value) => token?.type === "punc" && token.value === value;
+// A property name written as an identifier or a string literal.
+const isKey = (token, value) => (token?.type === "id" || token?.type === "str") && token.value === value;
 
 // Finds the reads in one file. `file` is the repository-relative path, `packageDir` the package's. Path values are
 // absolute in a virtual file system whose root "/" is the repository root. Returns [{ line, form, target }] where the
-// target is "/"-rooted; imports also carry `specifier`.
+// target is "/"-rooted with no trailing slash, or [{ line, form, specifier }] for imports.
 export function findReadsInSource(file, source, packageDir) {
-  const tokens = tokenize(codeOf(file, source));
+  const tokens = tokenize(codeOf(file, source), { jsx: JSX_FILE.test(file) });
   const fileAbs = `/${file}`;
   const fileDir = posix.dirname(fileAbs);
   const cwd = `/${packageDir}`;
+  const isConfig = CONFIG_FILE.test(file);
   const reads = [];
   const namespaces = new Set();
   const functions = new Map([["fileURLToPath", "fileURLToPath"]]);
@@ -314,7 +417,8 @@ export function findReadsInSource(file, source, packageDir) {
       const { values, end } = evaluateArgs(k + 2, used);
       const [relative, base] = values ?? [];
       const ok = values?.length === 2 && relative?.str !== undefined && base?.url && !/^[a-z][\w+.-]*:/i.test(relative.str);
-      return { value: ok ? { url: resolveUrl(base.url, relative.str) } : null, end };
+      const url = ok ? resolveUrl(base.url, relative.str) : null;
+      return { value: url ? { url } : null, end };
     }
     const call = callee(k);
     if (call) {
@@ -331,6 +435,11 @@ export function findReadsInSource(file, source, packageDir) {
   };
   const startsPathExpression = (k) =>
     callee(k) !== null || (isId(tokens[k], "new") && isId(tokens[k + 1], "URL") && isPunc(tokens[k + 2], "("));
+  // The path a recorded expression reads: a relative string from a path function is relative to the task's cwd.
+  const readPath = (value, fromCall) => {
+    const target = value?.path ?? value?.url ?? (fromCall && value?.str !== undefined ? posix.resolve(cwd, value.str) : undefined);
+    return target === undefined ? undefined : target.replace(/(.)\/+$/, "$1");
+  };
 
   const candidates = [];
   const referencedOutside = new Set();
@@ -354,10 +463,10 @@ export function findReadsInSource(file, source, packageDir) {
     if (["const", "let", "var"].includes(token.value) && token.type === "id" && isId(tokens[k + 1]) && isPunc(tokens[k + 2], "=")) {
       const used = new Set();
       const { value, end } = evaluate(k + 3, used);
-      const target = value?.path ?? value?.url;
+      const target = readPath(value, startsPathExpression(k + 3));
       if (target) {
         used.forEach((name) => usedAsBase.add(name));
-        bindings.set(tokens[k + 1].value, { value: { path: target } });
+        bindings.set(tokens[k + 1].value, { value });
         candidates.push({ line: tokens[k + 3].line, form: "path", target, binding: tokens[k + 1].value });
         k = end - 1;
       } else {
@@ -366,18 +475,19 @@ export function findReadsInSource(file, source, packageDir) {
       continue;
     }
     // Form 3: a string-literal alias value in a Vite or Vitest config.
-    if (CONFIG_FILE.test(file) && token.type === "str" && /^\.\.?\//.test(token.value) && isAliasValue(tokens, k)) {
-      candidates.push({ line: token.line, form: "alias", target: posix.join(fileDir, token.value) });
+    if (isConfig && token.type === "str" && /^\.\.?\//.test(token.value) && isAliasValue(tokens, k)) {
+      candidates.push({ line: token.line, form: "alias", target: readPath({ path: posix.join(fileDir, token.value) }) });
       continue;
     }
-    // Form 2 unbound: path.join(…), path.resolve(…), fileURLToPath(new URL(…)), new URL(…, import.meta.url).
+    // Form 2 unbound: path.join(…), path.resolve(…), fileURLToPath(new URL(…)), new URL(…, import.meta.url); an alias
+    // value when it is one in a Vite or Vitest config.
     if (startsPathExpression(k)) {
       const used = new Set();
       const { value, end } = evaluate(k, used);
-      const target = value?.path ?? value?.url;
-      if (target && !["dirname"].includes(callee(k)?.name)) {
+      const target = readPath(value, callee(k) !== null);
+      if (target && callee(k)?.name !== "dirname") {
         used.forEach((name) => usedAsBase.add(name));
-        candidates.push({ line: token.line, form: "path", target });
+        candidates.push({ line: token.line, form: isConfig && isAliasValue(tokens, k) ? "alias" : "path", target });
         k = end - 1;
       }
       continue;
@@ -392,34 +502,47 @@ export function findReadsInSource(file, source, packageDir) {
   return reads;
 }
 
-// True when the string token at k is a value inside an `alias` object or array (a value after `key:`, or an entry's
-// `replacement:`), as Vite and Vitest configs write them.
+// True when the token at k starts a value inside an `alias` object or array (a value after `key:`, or an entry's
+// `replacement:`), as Vite and Vitest configs write them, with the property names quoted or not.
 function isAliasValue(tokens, k) {
   if (!isPunc(tokens[k - 1], ":")) return false;
   let depth = 0;
   for (let j = k - 1; j >= 0; j -= 1) {
     const value = tokens[j].type === "punc" ? tokens[j].value : "";
-    if (value === "}" || value === "]") depth += 1;
-    if (value === "{" || value === "[") {
+    if (value === "}" || value === "]" || value === ")") depth += 1;
+    if (value === "{" || value === "[" || value === "(") {
       if (depth > 0) {
         depth -= 1;
         continue;
       }
       // The enclosing container: alias: { … } or alias: [ { … } ].
-      if (isPunc(tokens[j - 1], ":") && isId(tokens[j - 2], "alias")) return true;
-      if (value === "{" && isPunc(tokens[j - 1], "[") && isPunc(tokens[j - 2], ":") && isId(tokens[j - 3], "alias")) {
-        return isId(tokens[k - 2], "replacement");
+      if (value === "{" && isPunc(tokens[j - 1], ":") && isKey(tokens[j - 2], "alias")) return true;
+      if (value === "{" && (isPunc(tokens[j - 1], "[") || isPunc(tokens[j - 1], ","))) {
+        // An entry of an array: find the array's `[` and check it is the alias value.
+        let arrayDepth = 0;
+        for (let a = j - 1; a >= 0; a -= 1) {
+          const punctuation = tokens[a].type === "punc" ? tokens[a].value : "";
+          if (punctuation === "}" || punctuation === "]" || punctuation === ")") arrayDepth += 1;
+          else if (punctuation === "{" || punctuation === "(") arrayDepth -= 1;
+          else if (punctuation === "[" && arrayDepth-- === 0) {
+            return isPunc(tokens[a - 1], ":") && isKey(tokens[a - 2], "alias") && isKey(tokens[k - 2], "replacement");
+          }
+          if (arrayDepth < 0) return false;
+        }
       }
-      if (value === "{" && isPunc(tokens[j - 1], ",")) continue; // A later entry of an alias array; keep looking.
       return false;
     }
   }
   return false;
 }
 
-// new URL(relative, base) for a file URL base, as a path.
+// new URL(relative, base) for a file URL base, as a decoded path; null when the relative URL does not decode.
 function resolveUrl(base, relative) {
-  return posix.resolve(posix.dirname(base), relative.split(/[?#]/)[0]);
+  try {
+    return posix.resolve(posix.dirname(base), decodeURIComponent(relative.split(/[?#]/)[0]));
+  } catch {
+    return null;
+  }
 }
 
 function applyPathFunction(name, values, cwd) {
@@ -465,12 +588,12 @@ function owningPackage(file, packageDirs) {
 }
 
 // Resolves a read to { target, files } where files are the tracked files it names (a file, or every tracked file under a
-// directory); files is empty when nothing tracked is there.
+// directory); files is empty when nothing tracked is there. Module reads (imports and aliases) resolve as modules do.
 function resolveTarget(read, file, tracked, trackedDirs) {
   let target;
-  if (read.specifier !== undefined) {
-    if (!/^\.\.?(?:\/|$)/.test(read.specifier)) return null;
-    target = posix.join(posix.dirname(file), read.specifier.split("?")[0]);
+  if (read.specifier !== undefined && !/^\.\.?(?:\/|$)/.test(read.specifier)) return null;
+  if (read.specifier !== undefined || read.form === "alias") {
+    target = read.specifier === undefined ? read.target.slice(1) : posix.join(posix.dirname(file), read.specifier.split("?")[0]).replace(/(.)\/+$/, "$1");
     const swapped = target.replace(/\.([cm]?)js(x?)$/, ".$1ts$2");
     const candidates = [target, swapped, ...RESOLVE_EXTENSIONS.map((ext) => target + ext), ...RESOLVE_EXTENSIONS.map((ext) => `${target}/index${ext}`)];
     const found = candidates.find((candidate) => tracked.has(candidate));
@@ -478,13 +601,30 @@ function resolveTarget(read, file, tracked, trackedDirs) {
   } else {
     target = read.target.slice(1);
   }
-  if (target === ".." || target.startsWith("../")) return null;
+  if (target === "" || target === ".." || target.startsWith("../")) return null;
   if (tracked.has(target)) return { target, files: [target] };
   return { target, files: trackedDirs.get(target) ?? [] };
 }
 
-// Every read in the selected packages whose target lies outside the package and holds tracked files.
-export function findOutsideReads(root, packages) {
+// The scripts a package's build runs: prebuild, build and postbuild, and every script a word of their commands names.
+function buildCommands(manifest) {
+  const scripts = manifest?.scripts ?? {};
+  const seen = new Set();
+  const queue = BUILD_SCRIPTS.filter((name) => typeof scripts[name] === "string");
+  while (queue.length > 0) {
+    const name = queue.shift();
+    if (seen.has(name)) continue;
+    seen.add(name);
+    for (const word of scripts[name].split(/[\s;&|()]+/)) {
+      if (typeof scripts[word] === "string" && !seen.has(word)) queue.push(word);
+    }
+  }
+  return [...seen].map((name) => scripts[name]);
+}
+
+// Every read in the selected packages whose target lies outside the package and holds tracked files. packageDirs lists
+// every workspace package directory, selected or not.
+export function findOutsideReads(root, packages, packageDirs = packages.map((pkg) => pkg.path)) {
   const trackedList = git(root, ["ls-files", "-z"]).split("\0").filter(Boolean);
   const tracked = new Set(trackedList);
   const trackedDirs = new Map();
@@ -494,18 +634,31 @@ export function findOutsideReads(root, packages) {
       trackedDirs.get(directory).push(file);
     }
   }
-  const packageDirs = packages.map((pkg) => pkg.path);
+  const packageDirSet = new Set(packageDirs);
   const reads = [];
   for (const pkg of packages) {
+    let manifest = null;
+    try {
+      manifest = JSON.parse(readFileSync(path.join(root, pkg.path, "package.json"), "utf8"));
+    } catch {
+      manifest = null;
+    }
+    const build = buildCommands(manifest);
     for (const file of trackedDirs.get(pkg.path) ?? []) {
       if (!SCANNED_FILE.test(file) || owningPackage(file, packageDirs) !== pkg.path || !existsSync(path.join(root, file))) continue;
+      const relative = file.slice(pkg.path.length + 1);
+      const runByBuild = build.some((command) => command.split(/[\s;&|()'"=]+/).some((word) => word.replace(/^\.\//, "") === relative));
+      const tasks = TEST_FILE.test(relative) && !runByBuild ? TEST_TASKS : CACHEABLE_TASKS;
       for (const read of findReadsInSource(file, readFileSync(path.join(root, file), "utf8"), pkg.path)) {
         const resolved = resolveTarget(read, file, tracked, trackedDirs);
         if (!resolved || resolved.files.length === 0 || within(resolved.target, pkg.path)) continue;
-        if (packageDirs.some((directory) => within(directory, resolved.target))) continue;
-        // A read reaches files of the target that belong to another package; nested packages keep their own files.
-        const tasks = TEST_FILE.test(file.slice(pkg.path.length + 1)) ? TEST_TASKS : CACHEABLE_TASKS;
-        reads.push({ package: pkg.name, file, line: read.line, form: read.form, target: resolved.target, files: resolved.files, tasks });
+        let files = resolved.files;
+        if (packageDirs.some((directory) => within(directory, resolved.target))) {
+          // A module read of a package directory reads that package's files; any other such directory is a base.
+          if (read.form === "path" || !packageDirSet.has(resolved.target)) continue;
+          files = files.filter((candidate) => owningPackage(candidate, packageDirs) === resolved.target);
+        }
+        reads.push({ package: pkg.name, file, line: read.line, form: read.form, target: resolved.target, files, tasks });
       }
     }
   }
@@ -556,7 +709,7 @@ export function checkReads(reads, dryRun, packageDirs) {
 }
 
 function parseArgs(argv) {
-  const options = { root: path.resolve(fileURLToPath(new URL("..", import.meta.url))), packages: [], turbo: process.env.TURBO_BIN || "", list: false, json: false };
+  const options = { root: fileURLToPath(new URL("..", import.meta.url)), packages: [], turbo: process.env.TURBO_BIN || "", list: false, json: false };
   for (let k = 0; k < argv.length; k += 1) {
     const arg = argv[k];
     if (arg === "--root") options.root = path.resolve(argv[++k]);
@@ -574,24 +727,26 @@ export function runGuard(options) {
   if (!existsSync(options.turbo)) {
     throw new Error(`Turbo is not installed at ${options.turbo}; run npm ci, or pass --turbo or TURBO_BIN`);
   }
-  const all = JSON.parse(runTurbo(options.root, options.turbo, ["ls", "--output=json"])).packages.items;
+  // Turbo matches no "$TURBO_ROOT$/…" input when it runs in a root reached through a symlink.
+  const root = realpathSync(options.root);
+  const all = JSON.parse(runTurbo(root, options.turbo, ["ls", "--output=json"])).packages.items.filter((pkg) => pkg.path && pkg.path !== ".");
   const unknown = options.packages.filter((name) => !all.some((pkg) => pkg.name === name));
   if (unknown.length > 0) throw new Error(`no workspace package named ${unknown.join(", ")}`);
   const selected = options.packages.length > 0 ? all.filter((pkg) => options.packages.includes(pkg.name)) : all;
-  const reads = findOutsideReads(options.root, selected.filter((pkg) => pkg.path && pkg.path !== "."));
+  const packageDirs = all.map((pkg) => pkg.path);
+  const reads = findOutsideReads(root, selected, packageDirs);
   if (reads.length === 0) return { reads, checked: 0, undeclared: [] };
   const names = [...new Set(reads.map((read) => read.package))];
-  const dryRun = JSON.parse(
-    runTurbo(options.root, options.turbo, ["run", ...CACHEABLE_TASKS, "--dry=json", ...names.map((name) => `--filter=${name}`)])
-  );
-  return { reads, ...checkReads(reads, dryRun, all.map((pkg) => pkg.path)) };
+  const dryRun = JSON.parse(runTurbo(root, options.turbo, ["run", ...CACHEABLE_TASKS, "--dry=json", ...names.map((name) => `--filter=${name}`)]));
+  return { reads, ...checkReads(reads, dryRun, packageDirs) };
 }
 
 function main() {
   const options = parseArgs(process.argv.slice(2));
   const result = runGuard(options);
   if (options.json) {
-    process.stdout.write(`${JSON.stringify({ reads: result.reads.map(({ files, ...read }) => read), checked: result.checked, undeclared: result.undeclared.map(({ taskId, read, missing }) => ({ taskId, file: read.file, line: read.line, form: read.form, target: read.target, missing })) }, null, 2)}\n`);
+    const undeclared = result.undeclared.map(({ taskId, read, missing }) => ({ taskId, file: read.file, line: read.line, form: read.form, target: read.target, missing }));
+    process.stdout.write(`${JSON.stringify({ reads: result.reads.map(({ files, ...read }) => read), checked: result.checked, undeclared }, null, 2)}\n`);
   } else {
     if (options.list) {
       for (const read of result.reads) console.log(`${read.package}: ${read.file}:${read.line} (${read.form}) -> ${read.target}`);
@@ -601,7 +756,11 @@ function main() {
       console.log(`undeclared: ${taskId} reads ${read.target}${more} at ${read.file}:${read.line} (${read.form})`);
     }
     const summary = `${result.reads.length} outside reads, ${result.checked} task checks, ${result.undeclared.length} undeclared`;
-    console.log(result.undeclared.length > 0 ? `turbo-inputs-guard: FAILED: ${summary}. Declare each as "$TURBO_ROOT$/<path>" in the task's inputs, after "$TURBO_DEFAULT$".` : `turbo-inputs-guard: ok: ${summary}`);
+    console.log(
+      result.undeclared.length > 0
+        ? `turbo-inputs-guard: FAILED: ${summary}. Declare each as "$TURBO_ROOT$/<path>" in the task's inputs, after "$TURBO_DEFAULT$".`
+        : `turbo-inputs-guard: ok: ${summary}`
+    );
   }
   process.exitCode = result.undeclared.length > 0 ? 1 : 0;
 }

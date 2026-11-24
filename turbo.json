@@ -98,7 +98,174 @@
     "@devfn/testing#build": { "dependsOn": ["^build"], "cache": false },
     "@devfn/testing#typecheck": { "dependsOn": ["^build"], "cache": false },
     "@devfn/testing#test": { "dependsOn": ["^build"], "cache": false },
-    "@devfn/testing#lint": { "dependsOn": ["^build"], "cache": false }
+    "@devfn/testing#lint": { "dependsOn": ["^build"], "cache": false },
+    "@uifn/core#build": {
+      "dependsOn": ["^build"],
+      "outputs": ["dist/**", ".next/**", "!.next/cache/**"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/uifn/catalog/generated/catalog.json"
+      ]
+    },
+    "@uifn/core#typecheck": {
+      "dependsOn": ["^build"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/uifn/catalog/generated/catalog.json"
+      ]
+    },
+    "@uifn/core#test": {
+      "dependsOn": ["^build"],
+      "outputs": ["coverage/**"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/uifn/catalog/generated/catalog.json"
+      ]
+    },
+    "@uifn/core#lint": {
+      "dependsOn": ["^build"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/uifn/catalog/generated/catalog.json"
+      ]
+    },
+    "@uifn/react#typecheck": {
+      "dependsOn": ["^build"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/uifn/catalog/generated/catalog.json",
+        "$TURBO_ROOT$/uifn/evidence/generated/phase-11/phase-11-react-compounds.json",
+        "$TURBO_ROOT$/uifn/evidence/generated/phase-14/phase-14-public-vectors.json",
+        "$TURBO_ROOT$/uifn/parity/src/trace.mjs"
+      ]
+    },
+    "@uifn/react#test": {
+      "dependsOn": ["^build"],
+      "outputs": ["coverage/**"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/uifn/catalog/generated/catalog.json",
+        "$TURBO_ROOT$/uifn/evidence/generated/phase-11/phase-11-react-compounds.json",
+        "$TURBO_ROOT$/uifn/evidence/generated/phase-14/phase-14-public-vectors.json",
+        "$TURBO_ROOT$/uifn/parity/src/trace.mjs"
+      ]
+    },
+    "@uifn/react#lint": {
+      "dependsOn": ["^build"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/uifn/catalog/generated/catalog.json",
+        "$TURBO_ROOT$/uifn/evidence/generated/phase-11/phase-11-react-compounds.json",
+        "$TURBO_ROOT$/uifn/evidence/generated/phase-14/phase-14-public-vectors.json",
+        "$TURBO_ROOT$/uifn/parity/src/trace.mjs"
+      ]
+    },
+    "@uifn/solid#typecheck": {
+      "dependsOn": ["^build"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/uifn/catalog/generated/catalog.json",
+        "$TURBO_ROOT$/uifn/evidence/generated/phase-13/phase-13-solid-compounds.json",
+        "$TURBO_ROOT$/uifn/evidence/generated/phase-14/phase-14-public-vectors.json",
+        "$TURBO_ROOT$/uifn/parity/src/trace.mjs"
+      ]
+    },
+    "@uifn/solid#test": {
+      "dependsOn": ["^build"],
+      "outputs": ["coverage/**"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/uifn/catalog/generated/catalog.json",
+        "$TURBO_ROOT$/uifn/evidence/generated/phase-13/phase-13-solid-compounds.json",
+        "$TURBO_ROOT$/uifn/evidence/generated/phase-14/phase-14-public-vectors.json",
+        "$TURBO_ROOT$/uifn/parity/src/trace.mjs"
+      ]
+    },
+    "@uifn/solid#lint": {
+      "dependsOn": ["^build"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/uifn/catalog/generated/catalog.json",
+        "$TURBO_ROOT$/uifn/evidence/generated/phase-13/phase-13-solid-compounds.json",
+        "$TURBO_ROOT$/uifn/evidence/generated/phase-14/phase-14-public-vectors.json",
+        "$TURBO_ROOT$/uifn/parity/src/trace.mjs"
+      ]
+    },
+    "@uifn/svelte#typecheck": {
+      "dependsOn": ["^build"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/uifn/catalog/generated/catalog.json",
+        "$TURBO_ROOT$/uifn/evidence/generated/phase-12/phase-12-svelte-compounds.json",
+        "$TURBO_ROOT$/uifn/evidence/generated/phase-14/phase-14-public-vectors.json",
+        "$TURBO_ROOT$/uifn/parity/src/trace.mjs"
+      ]
+    },
+    "@uifn/svelte#test": {
+      "dependsOn": ["^build"],
+      "outputs": ["coverage/**"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/uifn/catalog/generated/catalog.json",
+        "$TURBO_ROOT$/uifn/evidence/generated/phase-12/phase-12-svelte-compounds.json",
+        "$TURBO_ROOT$/uifn/evidence/generated/phase-14/phase-14-public-vectors.json",
+        "$TURBO_ROOT$/uifn/parity/src/trace.mjs"
+      ]
+    },
+    "@uifn/svelte#lint": {
+      "dependsOn": ["^build"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/uifn/catalog/generated/catalog.json",
+        "$TURBO_ROOT$/uifn/evidence/generated/phase-12/phase-12-svelte-compounds.json",
+        "$TURBO_ROOT$/uifn/evidence/generated/phase-14/phase-14-public-vectors.json",
+        "$TURBO_ROOT$/uifn/parity/src/trace.mjs"
+      ]
+    },
+    "@uifn/registry#typecheck": {
+      "dependsOn": ["^build"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/uifn/react/src/fixture.ts"
+      ]
+    },
+    "@uifn/registry#test": {
+      "dependsOn": ["^build"],
+      "outputs": ["coverage/**"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/uifn/react/src/fixture.ts"
+      ]
+    },
+    "@uifn/registry#lint": {
+      "dependsOn": ["^build"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/uifn/react/src/fixture.ts"
+      ]
+    },
+    "@uifn/tokens#typecheck": {
+      "dependsOn": ["^build"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/uifn/swift/Sources/UIFnSwiftUI/Tokens/UIFnTheme+UIFn.swift"
+      ]
+    },
+    "@uifn/tokens#test": {
+      "dependsOn": ["^build"],
+      "outputs": ["coverage/**"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/uifn/swift/Sources/UIFnSwiftUI/Tokens/UIFnTheme+UIFn.swift"
+      ]
+    },
+    "@uifn/tokens#lint": {
+      "dependsOn": ["^build"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/uifn/swift/Sources/UIFnSwiftUI/Tokens/UIFnTheme+UIFn.swift"
+      ]
+    }
   },
   "globalEnv": ["CLOUDFLARE_DOCS_DEPLOY", "CLOUDFLARE_DOCS_PUBLIC_ORIGIN", "CLOUDFLARE_DOCS_ASSETS_ORIGIN"]
 }
