@@ -573,6 +573,8 @@ describe('@filefn/processing', () => {
       const id3 = new Uint8Array([...bytes('ID3'), 4, 0, 0, 0, 0, 0, 3, 1, 2, 3]);
       expect(ffmpegInputArgs('audio/aac', new Uint8Array([...id3, ...loas]))).toEqual(['-protocol_whitelist', 'file', '-f', 'loas']);
       expect(ffmpegInputArgs('audio/aac', new Uint8Array([...id3, ...id3, ...loas]))).toEqual(['-protocol_whitelist', 'file', '-f', 'loas']);
+      const nineTags = Array.from({ length: 9 }, () => [...id3]).flat();
+      expect(ffmpegInputArgs('audio/aac', new Uint8Array([...nineTags, ...loas]))).toEqual(['-protocol_whitelist', 'file', '-f', 'loas']);
     });
 
     it('thumbnails only raster bytes even for a MIME alias an integrator added', async () => {

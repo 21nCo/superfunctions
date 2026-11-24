@@ -45,13 +45,13 @@ const isId3 = (b: Uint8Array) => startsWith(b, ascii('ID3'));
 // AAC in LOAS/LATM framing: the 11-bit sync word 0x2B7.
 const isLoasAt = (b: Uint8Array, offset: number) =>
   b.length >= offset + 3 && b[offset] === 0x56 && (b[offset + 1] & 0xe0) === 0xe0;
-// Where the audio starts after up to MAX_ID3_TAGS consecutive leading ID3v2
-// tags (10-byte header, syncsafe size, optional 10-byte footer), or 0 without
-// one; -1 for a malformed tag.
-const MAX_ID3_TAGS = 8;
+// Where the audio starts after any consecutive leading ID3v2 tags (10-byte
+// header, syncsafe size, optional 10-byte footer), or 0 without one; -1 for a
+// malformed tag. Each tag advances at least 10 bytes, so the walk is bounded by
+// the input.
 function afterId3(b: Uint8Array): number {
   let offset = 0;
-  for (let tag = 0; tag < MAX_ID3_TAGS && isId3(b.subarray(offset)); tag++) {
+  while (offset < b.length && isId3(b.subarray(offset))) {
     if (offset + 10 > b.length || [6, 7, 8, 9].some((i) => b[offset + i] >= 0x80)) return -1;
     const size = (b[offset + 6] << 21) | (b[offset + 7] << 14) | (b[offset + 8] << 7) | b[offset + 9];
     offset += 10 + size + (b[offset + 5] & 0x10 ? 10 : 0);
