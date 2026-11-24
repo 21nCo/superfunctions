@@ -1162,6 +1162,41 @@ describe('parseWebhook with recorded Dodo payloads', () => {
     expect(Date.parse(event.occurredAt!)).toBeGreaterThanOrEqual(before - 1000);
   });
 
+  it('dates a revocation with the configured clock', async () => {
+    const fetchMock = dodoReads({ [`/payments/${oneTimePayment.payment_id}`]: oneTimePayment });
+    const rawBody = JSON.stringify(refund);
+    const timestamp = String(Math.floor(Date.now() / 1000));
+    const signature = createHmac('sha256', secretBytes).update(`msg_contract.${timestamp}.${rawBody}`).digest('base64');
+
+    const [event] = await createDodoProvider({
+      apiKey: 'dodo_test_key',
+      webhookSecret,
+      fetch: fetchMock,
+      now: () => new Date('2030-01-01T00:00:00.000Z')
+    }).parseWebhook!({
+      rawBody,
+      headers: new Headers({ 'webhook-id': 'msg_contract', 'webhook-timestamp': timestamp, 'webhook-signature': `v1,${signature}` })
+    });
+
+    expect(event!.occurredAt).toBe('2030-01-01T00:00:00.000Z');
+  });
+
+  it('treats a payment flagged is_multi_subscription as a subscription charge on restore, as the webhook does', async () => {
+    const { subscription_ids: _ids, ...multi } = { ...oneTimePayment, is_multi_subscription: true, subscription_id: null };
+    const refunded = { ...multi, refunds: [{ refund_id: 'ref_1', status: 'succeeded', is_partial: false }] };
+    const fetchMock = dodoReads({ [`/payments/${oneTimePayment.payment_id}`]: refunded });
+
+    const [restored] = await createDodoProvider({ apiKey: 'dodo_test_key', fetch: fetchMock }).restorePurchases!({
+      billingAccount: { id: 'ba_user_123' },
+      price: { kind: 'one_time', providerProductId: 'pdt_nucleus_lifetime' },
+      purchaseReference: oneTimePayment.payment_id
+    } as never);
+    const event = await parse({ ...refund }, fetchMock);
+
+    expect(event.billingState).toBeUndefined();
+    expect(restored).toMatchObject({ subscriptionStatus: 'active', providerChargeId: oneTimePayment.payment_id });
+  });
+
   it('keeps the signed refund time when Dodo\'s clock runs ahead of BillFn\'s', async () => {
     const fetchMock = dodoReads({ [`/payments/${oneTimePayment.payment_id}`]: oneTimePayment });
     const ahead = new Date(Date.now() + 60_000).toISOString();

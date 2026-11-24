@@ -71,6 +71,8 @@ function dodoWebhook(id: string, payload: unknown) {
 }
 
 async function purchased() {
+  let tick = Date.parse('2026-11-10T00:00:00.000Z');
+  const clock = () => new Date((tick += 1000));
   const api = createDodoApi();
   const { fetchMock } = api;
   const billfn = createBillFn({
@@ -91,11 +93,13 @@ async function purchased() {
       dodo: createDodoProvider({
         apiKey: 'test-key',
         fetch: fetchMock,
-        webhookSecret: `whsec_${webhookSecretBytes.toString('base64')}`
+        webhookSecret: `whsec_${webhookSecretBytes.toString('base64')}`,
+        now: clock
       })
     },
-    // The real clock: webhook revocations are dated by when their Dodo read started, and a restore must come later.
-    now: () => new Date()
+    // One controllable clock for BillFn and the adapter, which dates a revocation by when its Dodo read started;
+    // each call moves it on, so a restore comes after the revocation it follows.
+    now: clock
   });
   const subject = { principalId: 'user_1' };
   const created = await billfn.createCheckout({ subject, planKey: 'nucleus', provider: 'dodo', priceId: lifetimePrice.priceId });
