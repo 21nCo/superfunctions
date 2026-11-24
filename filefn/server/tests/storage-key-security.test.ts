@@ -105,7 +105,8 @@ describe('storage keys (FILE-30 F-01)', () => {
     expect(sanitizeStorageKeySegment('../a/b')).toBe('%2E%2E%2Fa%2Fb');
     expect(sanitizeStorageKeySegment('..')).toBe('%2E%2E');
     expect(sanitizeStorageKeySegment('.')).toBe('%2E');
-    expect(sanitizeStorageKeySegment('')).toBe('_');
+    expect(sanitizeStorageKeySegment('')).toBe('%20');
+    expect(sanitizeStorageKeySegment('_')).toBe('_');
     expect(sanitizeStorageKeySegment('\u0000')).toBe('%00');
     expect(sanitizeStorageKeySegment('team/east')).toBe('team%2Feast');
     expect(sanitizeStorageKeySegment('team_east')).toBe('team_east');
@@ -132,5 +133,13 @@ describe('storage keys (FILE-30 F-01)', () => {
     const other = computeStoragePath({ name: 'p' }, { fileName: `${'f'.repeat(140)}/${'m'.repeat(120)}.txt`, fileId: 'file_1', versionId: 'ver_1' });
     const same = computeStoragePath({ name: 'p' }, { fileName: longName, fileId: 'file_1', versionId: 'ver_1' });
     expect(other).not.toBe(same);
+  });
+
+  it('bounds long tenant and principal segments too', () => {
+    const key = computeStoragePath({ name: 'p' }, { tenantId: '%'.repeat(86), principalId: 'p'.repeat(300), fileName: 'x', fileId: 'file_1', versionId: 'ver_1' });
+    for (const segment of key.split('/')) {
+      expect(new TextEncoder().encode(segment).length).toBeLessThanOrEqual(130);
+    }
+    expect(unsafeStorageKeyReason(key)).toBeNull();
   });
 });

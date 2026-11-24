@@ -101,19 +101,21 @@ function percentEncode(char: string): string {
  * Everything else is kept as it is (dots inside a name, underscores, spaces),
  * so safe IDs keep their own segment and distinct IDs never share one (for
  * example `team/east` becomes `team%2Feast`, never `team_east`). An empty
- * value becomes `_`.
+ * value becomes `%20`, which no other value produces.
  */
 export function sanitizeStorageKeySegment(value: string): string {
   const encoded = String(value)
     .replace(/[%\\/\u0000-\u001f\u007f-\u009f]/g, percentEncode)
     .replace(/^\.\.+/, (dots) => '%2E'.repeat(dots.length));
-  if (encoded.length === 0) return '_';
+  // `%20` is never produced for a nonempty value (a space is kept verbatim and
+  // `%` itself is encoded), so it marks an empty value without colliding.
+  if (encoded.length === 0) return '%20';
   if (encoded === '.') return '%2E';
   return encoded;
 }
 
-/** Longest file-name part of a default key, in UTF-8 bytes. */
-const MAX_KEY_FILE_NAME_BYTES = 120;
+/** Longest tenant, principal, file ID or file-name part of a default key, in UTF-8 bytes. */
+const MAX_KEY_PART_BYTES = 120;
 
 function fnv1a(value: string): string {
   let hash = 0x811c9dc5;
@@ -125,21 +127,21 @@ function fnv1a(value: string): string {
 }
 
 /**
- * The file-name part of a default key: the sanitized name, shortened when it
- * is longer than MAX_KEY_FILE_NAME_BYTES so the whole segment (with the
- * version ID before it and part suffixes after it) stays within the 255-byte
- * name limit of common filesystems. A shortened name keeps its start, a short
- * hash of the full name and its extension; the full name stays in the files row.
+ * A sanitized key part, shortened when it is longer than MAX_KEY_PART_BYTES so
+ * each key segment stays within the 255-byte name limit of common
+ * filesystems. A shortened part keeps its start, a hash of the whole part and
+ * (for file names) its extension. The hash is a marker, not the uniqueness
+ * guarantee: default keys stay unique through the version ID.
  */
-function keyFileName(fileName: string): string {
-  const sanitized = sanitizeStorageKeySegment(fileName);
+function boundedKeyPart(value: string, keepExtension: boolean): string {
+  const sanitized = sanitizeStorageKeySegment(value);
   const encoder = new TextEncoder();
-  if (encoder.encode(sanitized).length <= MAX_KEY_FILE_NAME_BYTES) return sanitized;
-  const extension = /\.[A-Za-z0-9]{1,10}$/.exec(sanitized)?.[0] ?? '';
+  if (encoder.encode(sanitized).length <= MAX_KEY_PART_BYTES) return sanitized;
+  const extension = keepExtension ? /\.[A-Za-z0-9]{1,10}$/.exec(sanitized)?.[0] ?? '' : '';
   const suffix = `~${fnv1a(sanitized)}${extension}`;
   let head = '';
   for (const char of sanitized) {
-    if (encoder.encode(head + char).length + suffix.length > MAX_KEY_FILE_NAME_BYTES) break;
+    if (encoder.encode(head + char).length + suffix.length > MAX_KEY_PART_BYTES) break;
     head += char;
   }
   // Never end the head inside a percent-escape.
@@ -172,10 +174,10 @@ export function computeStoragePath(
     return policy.storagePath(ctx);
   }
   const parts: string[] = [];
-  if (ctx.tenantId) parts.push(sanitizeStorageKeySegment(ctx.tenantId));
-  if (ctx.principalId) parts.push(sanitizeStorageKeySegment(ctx.principalId));
-  parts.push(sanitizeStorageKeySegment(ctx.fileId));
-  parts.push(`${sanitizeStorageKeySegment(ctx.versionId)}-${keyFileName(ctx.fileName)}`);
+  if (ctx.tenantId) parts.push(boundedKeyPart(ctx.tenantId, false));
+  if (ctx.principalId) parts.push(boundedKeyPart(ctx.principalId, false));
+  parts.push(boundedKeyPart(ctx.fileId, false));
+  parts.push(`${sanitizeStorageKeySegment(ctx.versionId)}-${boundedKeyPart(ctx.fileName, true)}`);
   return parts.join('/');
 }
 
