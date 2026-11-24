@@ -19,6 +19,7 @@ import {
   OpenApiSkip,
   parseComponentRef,
   SchemaConverter,
+  TOO_DEEP,
   type OpenApiVersion,
 } from "./schema.js";
 import type {
@@ -883,8 +884,6 @@ function remembered(failures: WeakMap<object, OpenApiSkip>, key: object, task: (
   }
 }
 
-/** A stack overflow means schemas or references nest too deeply to walk. */
-const TOO_DEEP = "a schema or reference chain nests too deeply";
 
 /** Why building a tool from one alternative failed, as a skip; anything else is rethrown. */
 function candidateFailure(error: unknown): OpenApiSkip {

@@ -75,14 +75,27 @@ describe("fromOpenAPI scale", () => {
 
   it("settles a wide productive cycle and a widely shared type list beside a broken $ref within 2 seconds", () => {
     // H = allOf of 3,000 members whose items refer back to H: each narrowing reaches the list once, not once per member.
-    const members = Array.from({ length: 3000 }, () => ({ type: "object", items: { $ref: "#/components/schemas/H" } }));
+    // Counted as reads of each member's own keywords (its schema is compiled by the registry too, so time is not the measure).
+    let reads = 0;
+    const members = Array.from({ length: 3000 }, () => {
+      const member: Record<string, unknown> = {};
+      for (const [key, value] of Object.entries({ type: "object", items: { $ref: "#/components/schemas/H" } })) {
+        Object.defineProperty(member, key, {
+          enumerable: true,
+          get: () => {
+            reads += 1;
+            return value;
+          },
+        });
+      }
+      return member;
+    });
     const response = { "200": { description: "OK", content: { "application/json": { schema: { $ref: "#/components/schemas/H" } } } } };
-    let started = performance.now();
     const wide = fromOpenAPI(
       { openapi: "3.1.0", paths: { "/h": { get: { operationId: "h", responses: response }, head: { operationId: "hh", responses: response } } }, components: { schemas: { H: { type: "object", allOf: members } } } },
       { executor: recordingExecutor() },
     );
-    expect(performance.now() - started).toBeLessThan(2000);
+    expect(reads).toBeLessThanOrEqual(20 * members.length);
     expect(wide.skipped).toEqual([]);
     expect(wide.tools.map((entry) => [entry.name, entry.outputSchema !== undefined])).toEqual([["h", true], ["hh", false]]);
     // 2,000 roots share one 20,000-entry type list beside a $ref whose target fails: the list is read once.
@@ -91,7 +104,7 @@ describe("fromOpenAPI scale", () => {
     for (let index = 0; index < 2000; index += 1) {
       paths[`/r${index}`] = { get: { operationId: `r${index}`, responses: { "200": { description: "OK", content: { "application/json": { schema: { $ref: "#/components/schemas/Broken", type } } } } } } };
     }
-    started = performance.now();
+    let started = performance.now();
     const broken = fromOpenAPI({ openapi: "3.1.0", paths, components: { schemas: { Broken: { $ref: "#/components/schemas/Missing" } } } }, { executor: recordingExecutor() });
     expect(performance.now() - started).toBeLessThan(2000);
     expect(broken.tools.map((entry) => entry.name)).toEqual(["ok"]);

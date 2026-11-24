@@ -511,63 +511,127 @@ export class SchemaConverter {
   admits(schema: unknown): AdmittedKinds {
     if (schema === false) return NOTHING;
     if (!isObject(schema)) return EVERYTHING;
-    const known = this.admitted.get(schema);
-    if (known instanceof OpenApiSkip) throw known;
-    if (known) return known;
-    this.walkKinds(schema);
-    return this.admitted.get(schema) as AdmittedKinds;
+    if (!this.admitted.has(schema)) this.walkKinds(schema);
+    const verdict = this.admitted.get(schema)!;
+    if (verdict instanceof OpenApiSkip) throw verdict;
+    return verdict;
   }
 
   /**
-   * Tarjan's walk from `root` over schema objects and member lists: each
-   * strongly connected component is settled once its successors are, and a
-   * failure is kept for every node on the path that reached it.
+   * Tarjan's walk from `root` over schema objects and member lists, with an
+   * explicit stack (so no reference chain is too deep for it). It reads each
+   * node once, its own keywords before its edges, and walks on past a
+   * failure; each strongly connected component is settled, or failed, once
+   * its successors are, so every verdict depends only on what the node
+   * reaches, never on which root reached it first.
    */
   private walkKinds(root: object): void {
     const order = new Map<object, number>();
     const low = new Map<object, number>();
-    const terms = new Map<object, KindsTerms>();
+    const terms = new Map<object, KindsTerms | OpenApiSkip>();
     const open: object[] = [];
     const onStack = new Set<object>();
-    const follow = (node: object, child: object): void => {
-      const known = this.admitted.get(child);
-      if (known instanceof OpenApiSkip) throw known;
-      if (known) return;
-      if (!order.has(child)) {
-        visit(child);
-        low.set(node, Math.min(low.get(node)!, low.get(child)!));
-      } else if (onStack.has(child)) {
-        low.set(node, Math.min(low.get(node)!, order.get(child)!));
-      }
-    };
-    const visit = (node: object): void => {
-      const index = order.size;
-      order.set(node, index);
-      low.set(node, index);
+    const path: Array<{ node: object; next: number }> = [];
+    const enter = (node: object): void => {
+      order.set(node, order.size);
+      low.set(node, order.get(node)!);
       open.push(node);
       onStack.add(node);
-      try {
-        const nodeTerms = this.kindsTerms(node);
-        terms.set(node, nodeTerms);
-        for (const child of nodeTerms.children) follow(node, child);
-      } catch (error) {
-        if (error instanceof OpenApiSkip) this.admitted.set(node, error);
-        throw error;
+      terms.set(node, this.ownTerms(node));
+      path.push({ node, next: 0 });
+    };
+    enter(root);
+    while (path.length > 0) {
+      const frame = path.at(-1)!;
+      const children = childrenOf(terms.get(frame.node)!);
+      if (frame.next < children.length) {
+        const child = children[frame.next++];
+        if (this.admitted.has(child)) continue;
+        if (!order.has(child)) enter(child);
+        else if (onStack.has(child)) low.set(frame.node, Math.min(low.get(frame.node)!, order.get(child)!));
+        continue;
       }
-      if (low.get(node) !== index) return;
+      path.pop();
+      const { node } = frame;
+      const parent = path.at(-1);
+      if (parent) low.set(parent.node, Math.min(low.get(parent.node)!, low.get(node)!));
+      if (low.get(node) !== order.get(node)) continue;
       // `node` roots a component: it and everything above it on the open stack.
       const component = open.splice(open.lastIndexOf(node));
       for (const member of component) onStack.delete(member);
-      this.settleKinds(component, terms);
-    };
+      const failures = this.componentFailures(component, terms);
+      if (failures) for (const [member, failure] of failures) this.admitted.set(member, failure);
+      else this.settleKinds(component, terms as Map<object, KindsTerms>);
+    }
+  }
+
+  /** A node's own terms, or the skip reading its own keywords raised. */
+  private ownTerms(node: object): KindsTerms | OpenApiSkip {
     try {
-      visit(root);
+      return this.kindsTerms(node);
     } catch (error) {
-      // A node still open reaches a node on the failing path (Tarjan's
-      // invariant), so it fails too: keep that, not a rescan per root.
-      if (error instanceof OpenApiSkip) for (const node of open) this.admitted.set(node, error);
+      if (error instanceof OpenApiSkip) return error;
       throw error;
     }
+  }
+
+  /**
+   * The failures of a component whose successors are settled, or undefined
+   * when nothing it reaches fails. Each node reaches every other, so all fail
+   * once one does. A node takes the nearest failure: its own, else that of
+   * its first child (in document order) one step nearer, a failed successor
+   * outside the component being one step away.
+   */
+  private componentFailures(
+    component: object[],
+    terms: Map<object, KindsTerms | OpenApiSkip>,
+  ): Map<object, OpenApiSkip> | undefined {
+    const inComponent = new Set(component);
+    const failedOutside = (child: object) => !inComponent.has(child) && this.admitted.get(child) instanceof OpenApiSkip;
+    const failures = new Map<object, OpenApiSkip>();
+    const depth = new Map<object, number>();
+    let frontier: object[] = [];
+    let candidates: object[] = [];
+    for (const node of component) {
+      const nodeTerms = terms.get(node)!;
+      if (nodeTerms instanceof OpenApiSkip) {
+        failures.set(node, nodeTerms);
+        depth.set(node, 0);
+        frontier.push(node);
+      } else if (nodeTerms.children.some(failedOutside)) {
+        candidates.push(node);
+      }
+    }
+    if (frontier.length === 0 && candidates.length === 0) return undefined;
+    const parents = new Map<object, object[]>();
+    for (const node of component) {
+      for (const child of childrenOf(terms.get(node)!)) {
+        if (!inComponent.has(child)) continue;
+        const list = parents.get(child);
+        if (list) list.push(node);
+        else parents.set(child, [node]);
+      }
+    }
+    for (let step = 1; frontier.length > 0 || candidates.length > 0; step++) {
+      for (const node of frontier) for (const parent of parents.get(node) ?? []) candidates.push(parent);
+      const reached: object[] = [];
+      for (const node of candidates) {
+        if (depth.has(node)) continue;
+        depth.set(node, step);
+        reached.push(node);
+      }
+      for (const node of reached) {
+        for (const child of childrenOf(terms.get(node)!)) {
+          const nearer = inComponent.has(child) ? depth.get(child) === step - 1 : step === 1 && failedOutside(child);
+          if (!nearer) continue;
+          failures.set(node, (failures.get(child) ?? this.admitted.get(child)) as OpenApiSkip);
+          break;
+        }
+      }
+      frontier = reached;
+      candidates = [];
+    }
+    return failures;
   }
 
   /**
@@ -641,9 +705,8 @@ export class SchemaConverter {
     const members: unknown[] = [];
     if (Object.hasOwn(schema, "$ref")) {
       const target = this.component(parseComponentRef(schema.$ref, "schemas"));
-      // A target known to fail fails this schema before its siblings are read.
-      const failed = isObject(target) ? this.admitted.get(target) : undefined;
-      if (failed instanceof OpenApiSkip) throw failed;
+      // Whether or not the target is settled yet, the siblings are read here
+      // and the target is followed only afterwards, by the walk.
       // OpenAPI 3.0 ignores $ref siblings; 3.1 applies them too.
       if (this.version === "3.0") return termsOf("both", EVERYTHING, [target]);
       members.push(target);
@@ -1694,23 +1757,52 @@ function inPlaceReferences(schema: McpFnJsonSchema | boolean): Set<string> {
  * `A: { $ref: B }, B: { $ref: A }` or a 3.1 `X: { $ref: X, type: object }`
  * never descends into a child value; validators recurse on it without end.
  */
+/**
+ * The longest chain of in-place references (a definition applied to the same
+ * value as the one referring to it) a closure may hold: validators recurse
+ * once per link, so a longer chain is refused for the closure, the same way
+ * for every operation reaching it.
+ */
+const MAX_IN_PLACE_DEPTH = 64;
+
+/** A stack overflow, or a chain longer than validators walk, means schemas or references nest too deeply. */
+export const TOO_DEEP = "a schema or reference chain nests too deeply";
+
+/** Walked with an explicit stack, so no chain is too long to check. */
 function assertProductiveRecursion(entries: ReadonlyMap<string, ConvertedComponent>): void {
-  const done = new Set<string>();
+  const links = (key: string): Iterator<string> => (entries.get(key)?.inPlace ?? new Set<string>()).values();
+  // The longest in-place chain starting at each finished key.
+  const depth = new Map<string, number>();
   const active = new Set<string>();
-  const visit = (key: string): void => {
-    if (done.has(key)) return;
-    if (active.has(key)) {
-      throw new OpenApiSkip(
-        "unresolved-ref",
-        `#/components/schemas/${key} refers back to itself without descending into a property or array item`,
-      );
+  let longest = 0;
+  for (const start of entries.keys()) {
+    if (depth.has(start)) continue;
+    active.add(start);
+    const stack = [{ key: start, next: links(start) }];
+    while (stack.length > 0) {
+      const frame = stack.at(-1)!;
+      const step = frame.next.next();
+      if (!step.done) {
+        if (depth.has(step.value)) continue;
+        if (active.has(step.value)) {
+          throw new OpenApiSkip(
+            "unresolved-ref",
+            `#/components/schemas/${step.value} refers back to itself without descending into a property or array item`,
+          );
+        }
+        active.add(step.value);
+        stack.push({ key: step.value, next: links(step.value) });
+        continue;
+      }
+      stack.pop();
+      active.delete(frame.key);
+      let below = 0;
+      for (const next of entries.get(frame.key)?.inPlace ?? []) below = Math.max(below, depth.get(next) ?? 0);
+      depth.set(frame.key, below + 1);
+      longest = Math.max(longest, below + 1);
     }
-    active.add(key);
-    for (const next of entries.get(key)?.inPlace ?? []) visit(next);
-    active.delete(key);
-    done.add(key);
-  };
-  for (const key of entries.keys()) visit(key);
+  }
+  if (longest > MAX_IN_PLACE_DEPTH) throw new OpenApiSkip("schema-too-large", TOO_DEEP);
 }
 
 // OpenAPI 3.0.3: `nullable: true` adds "null" only to an explicitly defined
@@ -1818,6 +1910,10 @@ interface KindsTerms {
   readonly items: unknown;
   /** The object members and items: the nodes this one's kinds depend on. */
   readonly children: readonly object[];
+}
+
+function childrenOf(terms: KindsTerms | OpenApiSkip): readonly object[] {
+  return terms instanceof OpenApiSkip ? [] : terms.children;
 }
 
 function termsOf(combine: "both" | "either", own: AdmittedKinds, members: readonly unknown[], items?: unknown): KindsTerms {

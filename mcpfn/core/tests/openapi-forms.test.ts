@@ -2491,6 +2491,111 @@ describe("fromOpenAPI body fallback, synchronous schemas, per-kind alternatives 
     }
   });
 
+  it("reads a $ref's siblings before its target, whether or not an earlier operation reached the target", () => {
+    const irregular = {
+      sparse: () => Object.assign(["object"], { length: 3 }),
+      shadowed: () => Object.defineProperty(["object"], "map", { value: 1, enumerable: true }),
+    };
+    for (const version of ["3.1.0", "3.0.3"]) {
+      for (const make of Object.values(irregular)) {
+        const outcomes = [false, true].map((warm) => {
+          const paths: Record<string, unknown> = {};
+          if (warm) paths["/a"] = { get: { operationId: "warm", responses: json({ $ref: "#/components/schemas/Broken" }) } };
+          paths["/b"] = { get: { operationId: "target", responses: json({ $ref: "#/components/schemas/Broken", type: make() }) } };
+          paths["/ok"] = { get: { operationId: "ok", responses: json({ type: "object", properties: { n: { type: "integer" } } }) } };
+          const result = fromOpenAPI(
+            { openapi: version, paths, components: { schemas: { Broken: { $ref: "#/components/schemas/Missing" } } } },
+            options(),
+          );
+          expect(registered(result)).toEqual([["ok", true]]);
+          expectArguments(tool(result.tools, "ok").outputSchema!, { valid: [{ n: 1 }], invalid: [{ n: "x" }] });
+          return result.skipped.filter((entry) => entry.operation.operationId === "target").map(({ code, reason }) => [code, reason]);
+        });
+        // 3.0 ignores $ref siblings, so only the target's failure remains.
+        expect(outcomes[0]![0]![0]).toBe(version === "3.0.3" ? "unresolved-ref" : "invalid-schema");
+        expect(outcomes[1]).toEqual(outcomes[0]);
+      }
+    }
+  });
+
+  it("fails a reference cycle with two failures the same way whichever operation reaches it first", () => {
+    // Y and P reach each other; P also reaches F1 and Y also reaches F2, nearer to Y.
+    const ref = (name: string) => ({ $ref: `#/components/schemas/${name}` });
+    const schemas = () => ({
+      R: { allOf: [ref("P"), ref("Y")] },
+      P: { allOf: [ref("Y"), ref("F1")] },
+      Y: { allOf: [ref("P"), ref("F2")] },
+      F1: ref("Missing"),
+      F2: { type: Object.assign(["object"], { length: 2 }) },
+    });
+    const run = (names: string[]) =>
+      fromOpenAPI(
+        {
+          openapi: "3.1.0",
+          paths: Object.fromEntries(names.map((name) => [`/${name}`, { get: { operationId: name, responses: json(ref(name.toUpperCase())) } }])),
+          components: { schemas: schemas() },
+        },
+        options(),
+      );
+    const byOperation = (result: Result) =>
+      Object.fromEntries(result.skipped.map((entry) => [entry.operation.operationId, [entry.code, entry.reason]]));
+    const outcomes = [["r", "y", "p"], ["y", "r", "p"], ["p", "y", "r"], ["y", "p", "r"]].map((names) => byOperation(run(names)));
+    for (const outcome of outcomes) expect(outcome).toEqual(outcomes[0]);
+    expect(outcomes[0]!.y![0]).toBe("invalid-schema");
+    expect(outcomes[0]!.p![0]).toBe("unresolved-ref");
+  });
+
+  it("refuses a too-long reference chain once per call, whatever the stack left to walk it", () => {
+    const depth = 20_000;
+    const build = (operations: number, deepest: { reads: number }) => {
+      const schemas: Record<string, unknown> = {};
+      for (let index = 0; index < depth - 1; index += 1) schemas[`D${index}`] = { allOf: [{ $ref: `#/components/schemas/D${index + 1}` }] };
+      schemas[`D${depth - 1}`] = Object.defineProperty({}, "type", {
+        enumerable: true,
+        get: () => {
+          deepest.reads += 1;
+          return "object";
+        },
+      });
+      schemas.W = { allOf: [...Array.from({ length: 1000 }, () => ({ type: "object" })), { $ref: "#/components/schemas/D0" }] };
+      schemas.Short = { allOf: [{ $ref: `#/components/schemas/D${depth - 10}` }] };
+      const paths: Record<string, unknown> = { "/ok": { get: { operationId: "ok", responses: ok } } };
+      for (let index = 0; index < operations; index += 1) {
+        paths[`/r${index}`] = { get: { operationId: `r${index}`, responses: json({ $ref: "#/components/schemas/W" }) } };
+      }
+      paths["/short"] = { get: { operationId: "short", responses: json({ $ref: "#/components/schemas/Short" }) } };
+      return { openapi: "3.1.0", paths, components: { schemas } };
+    };
+    const outcome = (result: Result) => [registered(result), [...new Set(result.skipped.map(({ code, reason }) => `${code}: ${reason}`))]];
+    const one = { reads: 0 };
+    const single = outcome(fromOpenAPI(build(1, one), options()));
+    const many = { reads: 0 };
+    const repeated = outcome(fromOpenAPI(build(1000, many), options()));
+    expect(single).toEqual([[["ok", false], ["short", true]], ["schema-too-large: a schema or reference chain nests too deeply"]]);
+    expect(repeated).toEqual(single);
+    // The deep end of the chain is read as often for 1,000 operations as for one.
+    expect(many.reads).toBe(one.reads);
+    // Run with thousands of frames already on the stack: the same result.
+    const nested = (frames: number): ReturnType<typeof outcome> =>
+      frames === 0 ? outcome(fromOpenAPI(build(10, { reads: 0 }), options())) : nested(frames - 1);
+    expect(nested(3000)).toEqual(single);
+  }, 60_000);
+
+  it("gives a shallow root the same result whether or not a deeper root sharing its chain came first", () => {
+    const schemas: Record<string, unknown> = { C99: { type: "object" } };
+    for (let index = 0; index < 99; index += 1) schemas[`C${index}`] = { allOf: [{ $ref: `#/components/schemas/C${index + 1}` }] };
+    const deep = { get: { operationId: "deep", responses: json({ $ref: "#/components/schemas/C0" }) } };
+    const shallow = { get: { operationId: "shallow", responses: json({ $ref: "#/components/schemas/C90" }) } };
+    const run = (first: string) =>
+      fromOpenAPI({ openapi: "3.1.0", paths: first === "deep" ? { "/d": deep, "/s": shallow } : { "/s": shallow, "/d": deep }, components: { schemas } }, options());
+    for (const first of ["deep", "shallow"]) {
+      const result = run(first);
+      expect(registered(result)).toEqual([["shallow", true]]);
+      expect(skips(result)).toEqual([["deep", "schema-too-large", "a schema or reference chain nests too deeply"]]);
+      expectArguments(tool(result.tools, "shallow").outputSchema!, { valid: [{}], invalid: [] });
+    }
+  });
+
   it("skips a sparse array by its own members, not its length, wherever a schema holds one", () => {
     const sparse = (member: unknown) => {
       const array: unknown[] = [];

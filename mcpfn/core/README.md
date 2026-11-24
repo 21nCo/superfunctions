@@ -187,7 +187,9 @@ for (const { operation, code, reason } of skipped) {
   to check a schema does). A schema compiled only to be checked (a `HEAD` or
   non-object response, or one with properties to leave out) is compiled once
   per distinct schema. A schema
-  or reference chain nested too deeply to walk is skipped the same way. A
+  or reference chain nested too deeply to walk, or a chain of more than 64
+  references applied to the same value (such as `allOf: [{ $ref }]` links),
+  is skipped the same way. A
   Swagger 2.0 document throws.
 - **Catalog.** `tools` holds copies of the registered schemas, so changing
   them changes neither what the registry lists nor what it validates. In a
