@@ -1,0 +1,19 @@
+mcpfn/core/tests/openapi-scale.test.ts
+  s_b841cebdcfad95::t_80b5371f8a11c9 49-75
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5fcf1472682fc3091d3b965980ab8605866a29e1",
+  "prompts": {},
+  "sessions": {
+    "s_b841cebdcfad95": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "436f4738-d86e-44e1-82bc-c432f9aaabf3",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

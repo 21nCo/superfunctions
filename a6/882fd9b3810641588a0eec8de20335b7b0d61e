@@ -1,0 +1,23 @@
+reviewfn/docs/content/docs/reference/panel-report-schema.md
+  s_b841cebdcfad95::t_fd52016c9f42d6 22,32
+reviewfn/docs/panel-report-schema.md
+  s_b841cebdcfad95::t_f2d7bf468c4aac 19,29
+reviewfn/docs/static/llms-full.txt
+  s_b841cebdcfad95::t_cae8afa87cf60e 228,238
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a6882fd9b3810641588a0eec8de20335b7b0d61e",
+  "prompts": {},
+  "sessions": {
+    "s_b841cebdcfad95": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "436f4738-d86e-44e1-82bc-c432f9aaabf3",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
