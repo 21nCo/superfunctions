@@ -131,6 +131,24 @@ describe('anonymous uploads and idempotency (FILE-30 F-02, F-11, F-18)', () => {
     });
     const replay = await call(fileFn, 'POST', '/upload/init', { body, headers: { 'x-idempotency-key': 'legacy-key', 'x-test-user': 'alice' } });
     expect(replay.json.data.uploadSessionId).toBe(first.json.data.uploadSessionId);
+
+    // Another caller never replays (or reuses) alice's legacy row.
+    const bob = await call(fileFn, 'POST', '/upload/init', { body, headers: { 'x-idempotency-key': 'legacy-key', 'x-test-user': 'bob' } });
+    expect(bob.json.data.uploadSessionId).not.toBe(first.json.data.uploadSessionId);
+  });
+
+  it('never treats a raw key shaped like a scoped one as legacy', async () => {
+    const { fileFn, database } = makeFileFn();
+    const body = { policy: 'private', fileName: 'a.txt', size: 3, mimeType: 'text/plain' };
+    const first = await call(fileFn, 'POST', '/upload/init', { body, headers: { 'x-idempotency-key': 'first-key', 'x-test-user': 'alice' } });
+    const row = await database.findOne<{ idempotencyKey: string }>({
+      model: 'uploadSessions',
+      where: [{ field: 'uploadSessionId', operator: 'eq', value: first.json.data.uploadSessionId }],
+      namespace: 'filefn',
+    });
+    const reused = await call(fileFn, 'POST', '/upload/init', { body, headers: { 'x-idempotency-key': row!.idempotencyKey, 'x-test-user': 'alice' } });
+    expect(reused.status).toBe(200);
+    expect(reused.json.data.uploadSessionId).not.toBe(first.json.data.uploadSessionId);
   });
 
   it('scopes idempotency keys to the caller', async () => {

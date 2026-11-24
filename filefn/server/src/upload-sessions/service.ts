@@ -214,6 +214,8 @@ function hashPayload(input: CreateSessionInput, ctx: { principalId?: string; ten
  * The value stored in `uploadSessions.idempotencyKey`: the client's key hashed
  * with the caller's owner and tenant, so the (unique) column is per caller.
  */
+const SCOPED_IDEMPOTENCY_KEY = /^idem_[0-9a-f]{64}$/;
+
 function scopeIdempotencyKey(idempotencyKey: string, ctx: FileProviderContext): string {
   const scope = JSON.stringify([ctx.principalId || 'anonymous', ctx.tenantId || null, idempotencyKey]);
   return `idem_${createHash('sha256').update(scope).digest('hex')}`;
@@ -1293,9 +1295,15 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
           where: [{ field: 'idempotencyKey', operator: 'eq', value: scopedIdempotencyKey }],
           namespace,
         });
-        if (!existing) {
+        // A row found under the scoped value must be this caller's (a legacy
+        // raw key could equal it); otherwise it is not this caller's session.
+        if (existing && (existing.ownerId !== ctx.principalId || (existing.tenantId ?? null) !== (ctx.tenantId ?? null))) {
+          throw errors.idempotencyConflict();
+        }
+        if (!existing && !SCOPED_IDEMPOTENCY_KEY.test(input.idempotencyKey)) {
           // A session created before keys were scoped stores the raw key; it is
-          // this caller's only if owner and tenant match.
+          // this caller's only if owner and tenant match. A raw key shaped like
+          // a scoped one is never treated as legacy.
           const legacy = await db.findOne<UploadSession>({
             model: 'uploadSessions',
             where: [{ field: 'idempotencyKey', operator: 'eq', value: input.idempotencyKey }],

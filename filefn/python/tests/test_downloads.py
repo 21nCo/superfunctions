@@ -848,3 +848,11 @@ async def test_list_files_never_lists_private_anonymous_uploads_to_an_anonymous_
     )
     page = await file_service.list_files(_ctx("anonymous"), {"limit": 10})
     assert [file["fileId"] for file in page["files"]] == []
+
+    # An explicit grant to the anonymous principal still lists, as it reads.
+    await db.create(
+        model="filePermissions",
+        data={"permissionId": "perm_1", "fileId": "file_anon", "userId": "anonymous", "canRead": True, "expiresAt": None},
+    )
+    page = await file_service.list_files(_ctx("anonymous"), {"limit": 10})
+    assert [file["fileId"] for file in page["files"]] == ["file_anon"]

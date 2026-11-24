@@ -52,7 +52,7 @@ Every unauthenticated caller is the same principal, `anonymous`, so FileFn treat
 
 Use anonymous mode for public drop-offs. For uploads people should manage afterwards, configure `auth.resolveSession`.
 
-The principal ID `anonymous` is reserved for this: never return it from `auth.resolveSession` for a real user, who would own nothing. Share links created on anonymous uploads before this rule cannot be revoked over HTTP any more; revoke them in the database (set `revokedAt` on `fileShares` rows whose file is owned by `anonymous`).
+The principal ID `anonymous` is reserved for this: never return it from `auth.resolveSession` for a real user, who would own nothing. Share links and grants created on anonymous uploads before this rule keep working but can no longer be listed or revoked over HTTP. Review them in the database: set `revokedAt` on the `fileShares` rows, and delete the `filePermissions` rows you don't want, whose file is owned by `anonymous`.
 
 ### 2. Per-route rate limits
 

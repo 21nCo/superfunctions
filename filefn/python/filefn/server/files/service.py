@@ -226,13 +226,15 @@ class FileService:
             ):
                 files_by_id[file.fileId] = file
 
-        # An unauthenticated caller owns nothing (FILE-30 F-02).
-        if ctx.principalId and not is_anonymous_principal(ctx.principalId):
-            for file in await self._find_files(
-                [{"field": "ownerId", "operator": "eq", "value": ctx.principalId}],
-                limit=source_limit,
-            ):
-                files_by_id[file.fileId] = file
+        if ctx.principalId:
+            # An unauthenticated caller owns nothing (FILE-30 F-02); explicit
+            # grants still apply, as they do for direct reads.
+            if not is_anonymous_principal(ctx.principalId):
+                for file in await self._find_files(
+                    [{"field": "ownerId", "operator": "eq", "value": ctx.principalId}],
+                    limit=source_limit,
+                ):
+                    files_by_id[file.fileId] = file
 
             granted_file_ids = await self._get_readable_grant_file_ids(ctx)
             for file_id in granted_file_ids:

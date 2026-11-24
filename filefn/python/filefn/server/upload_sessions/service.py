@@ -1,5 +1,6 @@
 import hashlib
 import json
+import re
 import secrets
 from datetime import datetime, timedelta, timezone
 from tempfile import SpooledTemporaryFile
@@ -232,9 +233,17 @@ class UploadSessionService:
                 where=[{"field": "idempotencyKey", "operator": "eq", "value": scoped_idempotency_key}],
                 namespace=self.namespace,
             )
-            if not existing_data:
+            # A row found under the scoped value must be this caller's (a legacy raw
+            # key could equal it).
+            if existing_data and (
+                existing_data.get("ownerId") != ctx.principalId
+                or (existing_data.get("tenantId") or None) != (getattr(ctx, "tenantId", None) or None)
+            ):
+                raise errors.idempotency_conflict()
+            if not existing_data and not re.fullmatch(r"idem_[0-9a-f]{64}", input.idempotencyKey or ""):
                 # A session created before keys were scoped stores the raw key; it
-                # is this caller's only if owner and tenant match.
+                # is this caller's only if owner and tenant match. A raw key shaped
+                # like a scoped one is never treated as legacy.
                 legacy = await self.db.find_one(
                     model="uploadSessions",
                     where=[{"field": "idempotencyKey", "operator": "eq", "value": input.idempotencyKey}],
