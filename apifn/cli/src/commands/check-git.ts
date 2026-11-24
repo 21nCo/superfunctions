@@ -354,9 +354,11 @@ function workTreeOf(executable: string, dir: string): { root: string } | { root:
 
 /**
  * Reads the spec committed at `ref` (see the module comment). `cwd` is the directory the check
- * runs in: its work tree is the repository, wherever the spec's symlinks lead.
+ * runs in: its work tree is the repository, wherever the spec's symlinks lead. `destination` is
+ * where the spec leads as the run bound it (observe), the file drift reads and --write writes:
+ * the path is never resolved again here, so one binding selects the baseline too.
  */
-export function readSpecAtRef(ref: string, specPath: string, cwd: string): GitBaseline {
+export function readSpecAtRef(ref: string, specPath: string, destination: string, cwd: string): GitBaseline {
   if (ref.length === 0 || ref.startsWith("-")) {
     throw new CheckUsageError(`Invalid git ref '${ref}'`);
   }
@@ -369,16 +371,16 @@ export function readSpecAtRef(ref: string, specPath: string, cwd: string): GitBa
 
   // The file the check reads and --write writes must be inside the repository, and not inside
   // another work tree nested in it (an untracked clone, or a submodule's checkout).
-  const destination = canonicalPath(writeDestination(specPath));
-  const destinationPath = toRepoPath(path.relative(git.root, destination));
+  const canonical = canonicalPath(destination);
+  const destinationPath = toRepoPath(path.relative(git.root, canonical));
   if (destinationPath === null) {
-    throw new CheckUsageError(`Spec ${specPath} (${destination}) is outside the git repository at ${git.root}`);
+    throw new CheckUsageError(`Spec ${specPath} (${canonical}) is outside the git repository at ${git.root}`);
   }
-  const owner = workTreeOf(executable, nearestExistingDir(destination));
+  const owner = workTreeOf(executable, nearestExistingDir(canonical));
   if (owner.root !== git.root) {
     const where = owner.root === null ? `no git work tree (${owner.reason})` : `the git work tree at ${owner.root}`;
     throw new CheckUsageError(
-      `Spec ${specPath} (${destination}) is outside the git repository at ${git.root}: it belongs to ${where}`
+      `Spec ${specPath} (${canonical}) is outside the git repository at ${git.root}: it belongs to ${where}`
     );
   }
 

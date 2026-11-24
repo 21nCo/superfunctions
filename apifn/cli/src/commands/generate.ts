@@ -31,6 +31,8 @@ export async function buildSpecFromRouter(options: {
   routerPath?: string;
   cwd: string;
   config: ApifnConfig;
+  /** Called with the router module's file right before it is imported. */
+  beforeImport?: (file: string) => void;
 }): Promise<{ doc: OpenAPIDocument; routeCount: number; routerFile: string }> {
   const routerPath = options.routerPath ?? options.config.router;
 
@@ -38,7 +40,7 @@ export async function buildSpecFromRouter(options: {
     throw new Error("Router path is required. Pass [router-path] or set config.router.");
   }
 
-  const { router, file: routerFile } = await loadRouterModule(routerPath, options.cwd);
+  const { router, file: routerFile } = await loadRouterModule(routerPath, options.cwd, options.beforeImport);
   const routes = router.getRoutes();
 
   const configuredInfo = options.config.openapi?.info;

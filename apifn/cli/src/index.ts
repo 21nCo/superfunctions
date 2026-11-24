@@ -7,7 +7,7 @@ import { runValidateCommand } from "./commands/validate.js";
 import { runTestCommand } from "./commands/test.js";
 import { runImportOpenApiCommand } from "./commands/import.js";
 import { runDiffCommand } from "./commands/diff.js";
-import { runCheckCommand } from "./commands/check.js";
+import { bindConfigCandidates, runCheckCommand } from "./commands/check.js";
 import { attachCheckValues, isCheckInvocation, parseCheckArgv } from "./commands/check-args.js";
 import { runServeCommand } from "./commands/serve.js";
 import { runMockCommand } from "./commands/mock.js";
@@ -332,10 +332,15 @@ export async function runCli(
       let args;
       let config;
       let configFile: string | undefined;
+      let configRead;
       try {
         const { configPath, ...checkArgs } = parseCheckArgv(argv);
         args = checkArgs;
+        // Bound before loading: a config file changed after the load fails the check (exit 2).
+        const candidates = bindConfigCandidates(runOptions.cwd, configPath);
         ({ config, path: configFile } = await loadConfig({ cwd: runOptions.cwd, configPath }));
+        // loadConfig returns the candidate path it loaded, as bindConfigCandidates resolved it.
+        configRead = configFile === undefined ? undefined : candidates.get(configFile);
       } catch (error) {
         output.error(error instanceof Error ? error.message : String(error));
         exitCode = 2;
@@ -347,6 +352,7 @@ export async function runCli(
         cwd: runOptions.cwd,
         config,
         configFile,
+        configRead,
         output,
         writeStdout: runOptions.stdout,
         signal: runOptions.signal,

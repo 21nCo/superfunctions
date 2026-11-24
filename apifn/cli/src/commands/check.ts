@@ -37,8 +37,8 @@ import { fetchBounded, isHttpUrl, readBoundedFile, unreadableMessage } from "./c
 import { canonicalJson, parseContract } from "./check-parse.js";
 import type { JsonObject } from "./check-parse.js";
 import { CheckUsageError, errorMessage, isMissingPath, resolveOperand, writeDestination } from "./check-paths.js";
-import { assertSeparateFiles, guardOf, observe, publish } from "./check-publish.js";
-import type { FileState, Guarded, NamedFile, Observed, PlannedOutput, PublishHook } from "./check-publish.js";
+import { assertSeparateFiles, bindBeforeRead, observe, publish } from "./check-publish.js";
+import type { Bound, FileState, Guarded, NamedFile, Observed, PlannedOutput, PublishHook } from "./check-publish.js";
 import { CHECK_FORMATS, plural, renderReport } from "./check-report.js";
 import type { CheckFormat, CheckReport, CheckVerdict, DriftState } from "./check-report.js";
 
@@ -67,11 +67,19 @@ export interface CheckCommandOptions {
   config: ApifnConfig;
   /** The config file `config` was loaded from; no output may land on it. */
   configFile?: string;
+  /**
+   * Where `configFile` led and its state, bound before it was loaded (bindBeforeRead): a change
+   * after that exits 2 before anything is published. Without it the run binds the config file
+   * when it starts.
+   */
+  configRead?: Binding;
   output: Output;
   /** Writes the report to stdout; a returned promise must settle once the write has completed. */
   writeStdout?: (text: string) => void | Promise<void>;
   /** Called between the publisher's steps (tests change the filesystem there). */
   publishHook?: PublishHook;
+  /** Called once every input has been read, before publication (tests change inputs there). */
+  readHook?: () => void;
   /** Cancels the run: an abort before the stdout write completes rolls back and exits 2. */
   signal?: AbortSignal;
   /** Called with true when the run starts writing files and with false once they are committed or rolled back. */
@@ -170,7 +178,9 @@ interface RunInputs {
   specLabel: string;
   generated: OpenAPIDocument;
   routerFile: string;
-  /** A local --base-spec file (never an HTTP URL). */
+  /** The router module bound right before its import. */
+  routerRead: Binding;
+  /** A local --base-spec file (never an HTTP URL) the run reads (not with --base). */
   baseSpecFile?: string;
   reportPath?: string;
 }
@@ -188,20 +198,30 @@ function checkedFormat(options: CheckCommandOptions): CheckFormat {
 
 async function generate(options: CheckCommandOptions, cwd: string): Promise<RunInputs> {
   let built: Awaited<ReturnType<typeof buildSpecFromRouter>>;
+  let routerRead: Binding | undefined;
   try {
-    built = await buildSpecFromRouter({ routerPath: options.routerPath, cwd, config: options.config });
+    built = await buildSpecFromRouter({
+      routerPath: options.routerPath,
+      cwd,
+      config: options.config,
+      beforeImport: (file) => {
+        routerRead = bindInput(file);
+      },
+    });
   } catch (error) {
     throw new CheckUsageError(`Failed to generate the spec from the router: ${errorMessage(error)}`);
   }
+  if (routerRead === undefined) throw new CheckUsageError(`The router module ${built.routerFile} was not bound before it was loaded.`);
   const specPath = options.specPath
     ? resolveOperand(cwd, options.specPath)
     : resolveSpecPath({ cwd, config: options.config });
-  const local = options.baseSpec !== undefined && !isHttpUrl(options.baseSpec);
+  const local = options.base === undefined && options.baseSpec !== undefined && !isHttpUrl(options.baseSpec);
   return {
     specPath,
     specLabel: path.relative(cwd, specPath).split(path.sep).join("/") || specPath,
     generated: built.doc,
     routerFile: built.routerFile,
+    routerRead,
     baseSpecFile: local ? resolveOperand(cwd, options.baseSpec as string) : undefined,
     reportPath: options.reportPath === undefined ? undefined : resolveOperand(cwd, options.reportPath),
   };
@@ -212,17 +232,65 @@ interface Targets {
   report?: Observed;
 }
 
+/**
+ * An input bound when the run read it, or why it could not be bound. Only a run that writes a
+ * file guards its inputs, so a failure counts only there (guardsOf).
+ */
+export type Binding = Bound | { failure: unknown };
+
+function bindInput(file: string): Binding {
+  try {
+    return bindBeforeRead(file);
+  } catch (failure) {
+    return { failure };
+  }
+}
+
+/** The files loadConfig tries, in its order, when no --config is given. */
+const CONFIG_CANDIDATES = ["apifn.config.ts", "apifn.config.js", "apifn.config.mjs"];
+
+/**
+ * Binds each file loadConfig may load (bindBeforeRead), resolved as it resolves them, before it
+ * loads one: the entry for the path it returns is `configRead`.
+ */
+export function bindConfigCandidates(cwd: string | undefined, configPath: string | undefined): Map<string, Binding> {
+  const base = cwd ?? process.cwd();
+  const bound = new Map<string, Binding>();
+  for (const candidate of configPath ? [configPath] : CONFIG_CANDIDATES) {
+    const resolved = path.isAbsolute(candidate) ? candidate : path.resolve(base, candidate);
+    bound.set(resolved, bindInput(resolved));
+  }
+  return bound;
+}
+
+type SourceKind = "router" | "config" | "base";
+
 /** The files the run reads besides the spec: the router module, the config file and a local base. */
-function sourcesOf(options: CheckCommandOptions, inputs: RunInputs, cwd: string): NamedFile[] {
+function sourcesOf(options: CheckCommandOptions, inputs: RunInputs, cwd: string): Array<NamedFile & { kind: SourceKind }> {
   const shown = (file: string) => path.relative(cwd, file) || file;
-  const sources: NamedFile[] = [{ role: `the router module ${shown(inputs.routerFile)}`, file: inputs.routerFile }];
+  const sources: Array<NamedFile & { kind: SourceKind }> = [
+    { kind: "router", role: `the router module ${shown(inputs.routerFile)}`, file: inputs.routerFile },
+  ];
   if (options.configFile !== undefined) {
-    sources.push({ role: `the config file ${shown(options.configFile)}`, file: options.configFile });
+    sources.push({ kind: "config", role: `the config file ${shown(options.configFile)}`, file: options.configFile });
   }
   if (inputs.baseSpecFile !== undefined) {
-    sources.push({ role: `the --base-spec file ${options.baseSpec}`, file: inputs.baseSpecFile });
+    sources.push({ kind: "base", role: `the --base-spec file ${options.baseSpec}`, file: inputs.baseSpecFile });
   }
   return sources;
+}
+
+/** Each input guarded with the destination and state bound when the run read it. */
+function guardsOf(sources: Array<NamedFile & { kind: SourceKind }>, reads: Partial<Record<SourceKind, Binding>>): Guarded[] {
+  return sources.map((source) => {
+    const read = reads[source.kind];
+    if (read === undefined) throw new CheckUsageError(`apifn check did not bind ${source.role} when it read it.`);
+    if ("failure" in read) {
+      if (read.failure instanceof CheckUsageError) throw read.failure;
+      throw new CheckUsageError(`Cannot guard ${source.role}: ${errorMessage(read.failure)}`);
+    }
+    return { role: source.role, file: source.file, destination: read.destination, observed: read.observed };
+  });
 }
 
 /** No output of the run may land on a file it reads or on the other output (refused early). */
@@ -278,20 +346,37 @@ interface BaseSpec {
   doc: JsonObject | null;
   /** The validated, dereferenced form the differ reads. */
   comparable: OpenAPIDocument | null;
+  /** A local --base-spec file: where it led and its state when the run read it. */
+  read?: Bound;
 }
 
-async function readBaseText(options: CheckCommandOptions, inputs: RunInputs): Promise<string> {
+/**
+ * Reads the base text: an HTTP(S) URL, or a local file read at the destination its path leads to
+ * now, which must still be where the path leads after the read; the state read is kept (`read`).
+ */
+async function readBaseText(options: CheckCommandOptions, inputs: RunInputs): Promise<{ text: string; read?: Bound }> {
   const ref = options.baseSpec as string;
-  try {
-    if (inputs.baseSpecFile === undefined) {
-      return await fetchBounded(ref, options.httpTimeoutMs);
+  const file = inputs.baseSpecFile;
+  if (file === undefined) {
+    try {
+      return { text: await fetchBounded(ref, options.httpTimeoutMs) };
+    } catch (error) {
+      throw new CheckUsageError(`Failed to load base spec '${ref}': ${errorMessage(error)}`);
     }
-    const { text, unreadable } = readBoundedFile(inputs.baseSpecFile);
-    if (text === null) throw new Error(unreadableMessage(unreadable ?? "too-large"));
-    return text;
+  }
+  let destination: string;
+  let read: ReturnType<typeof readBoundedFile>;
+  try {
+    destination = writeDestination(file);
+    read = readBoundedFile(destination);
+    if (read.text === null) throw new Error(unreadableMessage(read.unreadable ?? "too-large"));
   } catch (error) {
     throw new CheckUsageError(`Failed to load base spec '${ref}': ${errorMessage(error)}`);
   }
+  if (writeDestination(file) !== destination) {
+    throw new CheckUsageError(`The --base-spec file ${ref} changed while apifn check read it (it no longer leads to ${destination}).`);
+  }
+  return { text: read.text, read: { destination, observed: read.state } };
 }
 
 /** Parses, dereferences and validates a base; any problem is a load error (exit 2). */
@@ -314,9 +399,9 @@ async function acceptBase(text: string, label: string): Promise<{ doc: JsonObjec
   return { doc, comparable: form };
 }
 
-async function loadBase(options: CheckCommandOptions, inputs: RunInputs, cwd: string): Promise<BaseSpec> {
+async function loadBase(options: CheckCommandOptions, inputs: RunInputs, spec: Observed, cwd: string): Promise<BaseSpec> {
   if (options.base !== undefined) {
-    const baseline = readSpecAtRef(options.base, inputs.specPath, cwd);
+    const baseline = readSpecAtRef(options.base, inputs.specPath, spec.destination, cwd);
     if (baseline.text === null) {
       return { source: "git", ref: options.base, doc: null, comparable: null };
     }
@@ -324,8 +409,9 @@ async function loadBase(options: CheckCommandOptions, inputs: RunInputs, cwd: st
     return { source: "git", ref: options.base, ...accepted };
   }
   if (options.baseSpec !== undefined) {
-    const accepted = await acceptBase(await readBaseText(options, inputs), `'${options.baseSpec}'`);
-    return { source: "file", ref: options.baseSpec, ...accepted };
+    const { text, read } = await readBaseText(options, inputs);
+    const accepted = await acceptBase(text, `'${options.baseSpec}'`);
+    return { source: "file", ref: options.baseSpec, ...accepted, read };
   }
   return { source: "none", ref: null, doc: null, comparable: null };
 }
@@ -510,13 +596,16 @@ export async function runCheckCommand(options: CheckCommandOptions): Promise<num
 
   try {
     const format = checkedFormat(options);
+    // The config file is bound before the run reads anything (the CLI binds it before loading it).
+    const configRead =
+      options.configFile === undefined ? undefined : (options.configRead ?? bindInput(options.configFile));
     // 1. Generate in memory through the `apifn generate` code path.
     const inputs = await generate(options, cwd);
     const reportTarget = inputs.reportPath === undefined ? undefined : observe(inputs.reportPath);
     const specTarget = observe(inputs.specPath);
     assertOutputsSeparate(options, inputs, { spec: specTarget, report: reportTarget }, cwd);
 
-    const base = await loadBase(options, inputs, cwd);
+    const base = await loadBase(options, inputs, specTarget, cwd);
     const committed = readCommittedSpec(inputs.specPath, specTarget);
     const head = await readHead(inputs.generated);
     const { report, repair } = evaluate(options, inputs, base, committed, head, specTarget.destination);
@@ -544,15 +633,21 @@ export async function runCheckCommand(options: CheckCommandOptions): Promise<num
         text: repair,
       });
     }
-    // Publication re-checks these after every change it makes: the inputs, and the spec when the
-    // run does not write it (missing must stay missing), whatever their names look like. A run
-    // that writes no file makes no change, so it resolves no guard.
-    const guarded: Guarded[] =
-      outputs.length === 0 ? [] : sourcesOf(options, inputs, cwd).map((source) => guardOf(source.role, source.file));
+    options.readHook?.();
+    // Each input as the run read it (its bound destination and state then): publication exits 2
+    // before writing or printing anything when one changed since, and re-checks them after every
+    // change it makes, with the spec when the run does not write it (missing must stay missing),
+    // whatever their names look like. A run that writes no file makes no change, so it resolves
+    // no guard.
+    const guarded =
+      outputs.length === 0
+        ? []
+        : guardsOf(sourcesOf(options, inputs, cwd), { router: inputs.routerRead, config: configRead, base: base.read });
     if (outputs.length > 0 && repair === null) {
       guarded.push({ role: `the spec ${inputs.specLabel}`, file: inputs.specPath, destination: specTarget.destination, observed: committed.observed });
     }
-    await publish(outputs, guarded, () => writeStdout(rendered), options.publishHook, options.signal, options.onPublishing);
+    const notices = await publish(outputs, guarded, () => writeStdout(rendered), options.publishHook, options.signal, options.onPublishing);
+    for (const notice of notices) options.output.warn(notice);
 
     return report.verdict === "fail" ? 1 : 0;
   } catch (error) {

@@ -34,7 +34,10 @@
  * - stdout is part of the transaction: the backups are kept until the stdout write has completed
  *   (its callback, not its return), which is the commit. If a step before it fails, every
  *   published output is rolled back; bytes another writer put there are left alone and the error
- *   names the conflict.
+ *   names the conflict. Temp files and backups are removed (on rollback or at the commit) only
+ *   while they are still this run's, in their bound directories: the temp the inode its kept
+ *   descriptor names, the backup the file this run made. A rollback names a backup as the
+ *   recovery file only while it still holds the previous bytes.
  * - Cancellation is an AbortSignal, never a process signal: this module installs, inspects,
  *   removes and raises no process signal listener, so an embedding host's own handling is left
  *   alone. An abort before the commit rolls every output back (checked after each step and after
@@ -187,7 +190,7 @@ function probeNames(anchor: Anchor, a: string, b: string): Alias {
     return isMissingPath(error) && stillAnchored(anchor) ? "distinct" : "unknown";
   } finally {
     try {
-      if (sameInode(lstatSync(probe, BIG), own)) unlinkSync(probe);
+      if (stillAnchored(anchor) && sameInode(lstatSync(probe, BIG), own)) unlinkSync(probe);
     } catch {
       // Already gone or replaced: another process's file is left alone.
     }
@@ -279,30 +282,54 @@ export function assertSeparateFiles(checks: Array<{ output: NamedFile; at: Obser
   }
 }
 
-/**
- * A path publication must leave as it found it: an input or the spec when the run does not write
- * it. `observed` is its state when the run read it (null when missing).
- */
-export interface Guarded {
-  /** How errors name the file, such as "the spec .apifn/openapi.yml". */
-  role: string;
-  /** The path as the run was given it: it must still lead to `destination`. */
-  file: string;
+/** Where a path the run reads leads (symlinks followed) and the state it had when the run read it. */
+export interface Bound {
   destination: string;
   observed: FileState;
 }
 
-/** `file` guarded at the destination a write would reach, in the state it is in now. */
-export function guardOf(role: string, file: string): Guarded {
+/**
+ * Binds `file` before the run reads it: where it leads and its state now. Taken before the read
+ * (a module import, which reports no state of its own), a change made during or after the read
+ * no longer matches at publication.
+ */
+export function bindBeforeRead(file: string): Bound {
   const destination = writeDestination(file);
-  return { role, file, destination, observed: currentState(destination) };
+  return { destination, observed: currentState(destination) };
+}
+
+/**
+ * A path publication must leave as it found it: an input or the spec when the run does not write
+ * it. `observed` is its state when the run read it (null when missing), bound at the read, never
+ * looked up again when publication starts.
+ */
+export interface Guarded extends Bound {
+  /** How errors name the file, such as "the spec .apifn/openapi.yml". */
+  role: string;
+  /** The path as the run was given it: it must still lead to `destination`. */
+  file: string;
+}
+
+/** True while `guard`'s path still leads to its destination, in the state the run read. */
+function guardHolds(guard: Guarded): boolean {
+  return sameDestination(guard.file, guard.destination) && sameState(currentState(guard.destination), guard.observed);
+}
+
+/** Exit 2 before anything is written or printed when an input changed after the run read it. */
+function assertInputsUnchanged(guarded: Guarded[]): void {
+  const broken = guarded.find((guard) => !guardHolds(guard));
+  if (broken === undefined) return;
+  throw new CheckUsageError(
+    `${broken.role} (${broken.destination}) changed after apifn check read it; nothing was written or printed.`
+  );
 }
 
 /** A step of the publisher, for tests that change the filesystem between steps (`mkdir`: after
  * the run created one directory for a destination, named in place of the destination;
  * `reserved`: right after an empty reservation was created at a missing destination;
- * `installed`: right after an output was renamed into place). */
-export type PublishStep = "mkdir" | "reserved" | "backup" | "rename" | "installed" | "rollback";
+ * `installed`: right after an output was renamed into place; `committed`: after stdout completed,
+ * before the backups are removed). */
+export type PublishStep = "mkdir" | "reserved" | "backup" | "rename" | "installed" | "rollback" | "committed";
 export type PublishHook = (step: PublishStep, destination: string) => void;
 
 interface Staged {
@@ -335,13 +362,66 @@ function tempName(destination: string): string {
   return path.join(path.dirname(destination), `.${path.basename(destination)}.apifn-${suffix}.tmp`);
 }
 
-function removeQuietly(file: string | undefined): void {
-  if (file === undefined) return;
+/** Same device and inode (both present). */
+function sameFile(a: FileState, b: FileState): boolean {
+  return a !== null && b !== null && a.dev === b.dev && a.ino === b.ino;
+}
+
+/** Unlinks `file`; a name already gone is fine, any other failure is reported. */
+function unlinkReported(file: string): string | null {
   try {
     unlinkSync(file);
-  } catch {
-    // Already gone.
+    return null;
+  } catch (error) {
+    return isMissingPath(error) ? null : `Failed to remove ${file}: ${errorMessage(error)}`;
   }
+}
+
+/**
+ * Removes the staged temp file while it is still this run's: the inode open as `staged.fd`, in
+ * the bound directories. A replacement, or a name in a directory swapped in meanwhile, is another
+ * writer's: it is left alone and named.
+ */
+function removeTemp(staged: Staged): string | null {
+  const temp = staged.temp;
+  if (temp === undefined) return null;
+  const now = currentState(temp);
+  const held = dirsHold(staged);
+  if (held && now === null) return null;
+  if (!held || staged.fd === undefined || !sameFile(now, stateOf(fstatSync(staged.fd, BIG)))) {
+    return `${temp}, apifn check's temp file, or its directory changed while apifn check ran, so it was left as it is.`;
+  }
+  staged.temp = undefined;
+  return unlinkReported(temp);
+}
+
+/**
+ * True while the backup is still the file this run made, in the bound directories: a copy (this
+ * run's own inode) unchanged; a hard link the same inode (it shares its change time and bytes with
+ * the observed file, so another link's edit shows there too and is not a replacement).
+ */
+function backupOwned(staged: Staged, now: FileState): boolean {
+  if (!dirsHold(staged)) return false;
+  const made = staged.backupState as FileState;
+  return staged.linked ? sameFile(now, made) : sameState(now, made);
+}
+
+/** True while the backup still holds the observed file's bytes exactly as this run made it. */
+function backupHoldsPrevious(staged: Staged): boolean {
+  return staged.backup !== undefined && dirsHold(staged) && sameState(currentState(staged.backup), staged.backupState as FileState);
+}
+
+/** Removes the backup while it is still this run's (backupOwned); another writer's is left and named. */
+function removeBackup(staged: Staged): string | null {
+  const backup = staged.backup;
+  if (backup === undefined) return null;
+  const now = currentState(backup);
+  if (now === null && dirsHold(staged)) return null;
+  if (!backupOwned(staged, now)) {
+    return `${backup}, apifn check's backup of ${staged.destination}, or its directory changed while apifn check ran, so it was left as it is.`;
+  }
+  staged.backup = undefined;
+  return unlinkReported(backup);
 }
 
 /**
@@ -430,8 +510,7 @@ function verifier(all: Staged[], guarded: Guarded[]): Verify {
         `${staged.output.option} reached ${role} (${destination}) while apifn check wrote it: the filesystem treats the two names as one file, or another process changed it; pick another file.`
       );
     for (const guard of guarded) {
-      const holds = sameDestination(guard.file, guard.destination) && sameState(currentState(guard.destination), guard.observed);
-      if (!holds) throw reached(guard.role, guard.destination);
+      if (!guardHolds(guard)) throw reached(guard.role, guard.destination);
     }
     for (const other of all) {
       // Each output's own path must still lead to its bound destination, too (placeHolds).
@@ -567,18 +646,28 @@ function install(staged: Staged, hook: PublishHook | undefined, verify: Verify):
 /** Undoes one published output while the destination still holds exactly what this run installed. */
 function rollBack(staged: Staged, hook: PublishHook | undefined): string | null {
   if (!staged.published) {
-    removeQuietly(staged.temp);
-    removeQuietly(staged.backup);
-    const conflict = releaseReservation(staged);
+    const conflicts = [removeTemp(staged), removeBackup(staged), releaseReservation(staged)].filter(
+      (conflict): conflict is string => conflict !== null
+    );
     removeCreatedDirs(staged);
-    return conflict;
+    return conflicts.length === 0 ? null : conflicts.join(" ");
   }
   hook?.("rollback", staged.destination);
-  const kept = staged.backup ? ` Its previous bytes are in ${staged.backup}.` : "";
-  const conflict = `${staged.destination} changed after apifn check wrote it, so it was left as it is.${kept}`;
-  if (!stillOwned(staged)) return conflict;
+  // A backup is named as the recovery file only while it still holds the previous bytes.
+  const previous = staged.backup !== undefined && backupHoldsPrevious(staged);
+  if (!stillOwned(staged)) {
+    let kept = "";
+    if (staged.backup !== undefined) {
+      kept = previous
+        ? ` Its previous bytes are in ${staged.backup}.`
+        : ` Its backup ${staged.backup} changed or is gone too, so it holds no copy of the previous bytes apifn check can vouch for.`;
+    }
+    return `${staged.destination} changed after apifn check wrote it, so it was left as it is.${kept}`;
+  }
   if (staged.backup) {
-    if (!sameState(currentState(staged.backup), staged.backupState as FileState)) return conflict;
+    if (!previous) {
+      return `${staged.backup}, apifn check's backup of ${staged.destination}, changed or is gone, so ${staged.destination} was left with the bytes apifn check wrote and the backup was left as it is.`;
+    }
     renameSync(staged.backup, staged.destination);
   } else {
     unlinkSync(staged.destination);
@@ -615,10 +704,13 @@ function nextTurn(): Promise<void> {
 }
 
 /**
- * Publishes the outputs (in order), then awaits `emit` (stdout). After every change it makes, the
- * guarded paths and the other outputs must be as expected (see the module comment). Any failure,
- * including one stdout reports after its write returned, or an abort of `signal` before the
- * commit, rolls back what was published and throws a CheckUsageError.
+ * Publishes the outputs (in order), then awaits `emit` (stdout). The guarded paths must still be
+ * as the run read them before anything is written or printed (with or without outputs), and after
+ * every change it makes the guarded paths and the other outputs must be as expected (see the
+ * module comment). Any failure, including one stdout reports after its write returned, or an
+ * abort of `signal` before the commit, rolls back what was published and throws a
+ * CheckUsageError. Returns notices for entries the commit left alone (a backup another writer
+ * replaced).
  */
 export async function publish(
   outputs: PlannedOutput[],
@@ -627,7 +719,9 @@ export async function publish(
   hook?: PublishHook,
   signal?: AbortSignal,
   onPublishing?: (publishing: boolean) => void
-): Promise<void> {
+): Promise<string[]> {
+  // An input that changed after the run read it fails the run before any change or output.
+  assertInputsUnchanged(guarded);
   const all: Staged[] = outputs.map((output) => ({
     output,
     destination: output.target.destination,
@@ -640,7 +734,7 @@ export async function publish(
   // Only a run that writes files has anything to roll back on an abort.
   if (all.length > 0) onPublishing?.(true);
   try {
-    await publishAll(all, verifier(all, guarded), emit, hook, signal);
+    return await publishAll(all, verifier(all, guarded), guarded, emit, hook, signal);
   } finally {
     for (const staged of all) if (staged.fd !== undefined) closeSync(staged.fd);
     if (all.length > 0) onPublishing?.(false);
@@ -679,10 +773,11 @@ function eachOutput(all: Staged[], hook: PublishHook | undefined, step: (staged:
 async function publishAll(
   all: Staged[],
   verify: Verify,
+  guarded: Guarded[],
   emit: () => void | Promise<void>,
   hook: PublishHook | undefined,
   signal: AbortSignal | undefined
-): Promise<void> {
+): Promise<string[]> {
   if (signal?.aborted) throw abortError(signal);
   // Every check after a change also stops on an abort: the outputs are then rolled back.
   const checked: Verify = (staged) => {
@@ -695,7 +790,10 @@ async function publishAll(
     await nextTurn();
     const last = all.at(-1);
     if (signal?.aborted && last === undefined) throw abortError(signal);
-    if (last === undefined) return;
+    if (last === undefined) {
+      assertInputsUnchanged(guarded);
+      return;
+    }
     try {
       checked(last);
     } catch (error) {
@@ -728,5 +826,7 @@ async function publishAll(
     throw rollBackAll(all, new CheckUsageError(`Failed to write the report to stdout: ${errorMessage(outcome.error)}`), hook);
   }
   // Committed: the report is delivered, so nothing after this point undoes the outputs it names.
-  for (const staged of all) removeQuietly(staged.backup);
+  // A backup another writer replaced is left alone; the returned notices name it.
+  hook?.("committed", all.at(-1)?.destination ?? "");
+  return all.map(removeBackup).filter((notice): notice is string => notice !== null);
 }

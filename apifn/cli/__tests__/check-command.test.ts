@@ -8,9 +8,11 @@ import {
   closeSync,
   existsSync,
   linkSync,
+  mkdirSync,
   mkdtempSync,
   openSync,
   readFileSync,
+  readdirSync,
   readlinkSync,
   realpathSync,
   renameSync,
@@ -40,7 +42,7 @@ import {
 } from "../src/commands/check.js";
 import { diffOpenAPI } from "@apifn/core";
 import { comparable } from "../src/commands/check-compare.js";
-import { leavesTree } from "../src/commands/check-git.js";
+import { leavesTree, readSpecAtRef } from "../src/commands/check-git.js";
 import { fetchBounded } from "../src/commands/check-io.js";
 import { observe } from "../src/commands/check-publish.js";
 import type { PublishStep } from "../src/commands/check-publish.js";
@@ -3910,5 +3912,281 @@ describe("apifn check: ignored keys beside a Reference Object are never read (AP
 
     const { code, report } = await runJson(["check", "--base-spec", "base.yml"], dir);
     expect({ code, base: report.base.status, breaking: report.breaking }).toEqual({ code: 0, base: "compared", breaking: [] });
+  });
+});
+
+describe("apifn check: temp files and backups are removed only while they are still the run's (API-25 round 2)", () => {
+  const CONFIG = { router: "./router.ts", openapi: { info: { title: "Check fixture", version: "1.0.0" } } };
+
+  /** A stale spec (so --write repairs it) and an existing report, both published by the run. */
+  async function staleService(): Promise<string> {
+    const root = await fixtures();
+    const dir = path.join(root, "base");
+    await mkdir(path.join(dir, ".apifn"));
+    await writeFile(path.join(dir, SPEC), "openapi: 3.1.0\n");
+    await writeFile(path.join(dir, "report.md"), "previous report\n");
+    return dir;
+  }
+
+  async function check(
+    dir: string,
+    hook: (step: PublishStep, destination: string) => void,
+    stdout: (text: string) => void = () => {}
+  ): Promise<{ code: number; errors: string; warnings: string }> {
+    const errors: string[] = [];
+    const warnings: string[] = [];
+    const output = {
+      error: (message: string) => errors.push(message),
+      warn: (message: string) => warnings.push(message),
+    } as unknown as Output;
+    const code = await runCheckCommand({
+      cwd: dir,
+      config: CONFIG,
+      output,
+      write: true,
+      reportPath: "report.md",
+      writeStdout: stdout,
+      publishHook: hook,
+    });
+    return { code, errors: errors.join("\n"), warnings: warnings.join("\n") };
+  }
+
+  /** The spec's staged entry with `suffix` (".tmp" or ".bak") in `dir`. */
+  function stagedEntry(dir: string, suffix: string): string {
+    const found = readdirSync(dir).filter((name) => name.startsWith(".openapi.yml.apifn-") && name.endsWith(suffix));
+    expect(found).toHaveLength(1);
+    return path.join(dir, found[0]);
+  }
+
+  /** Puts another writer's file at `file` (a new inode). */
+  function replaceWith(file: string, text: string): void {
+    rmSync(file);
+    writeFileSync(file, text);
+  }
+
+  it("a temp file replaced before the rename is left in place and named, and the run's own backup is removed", async () => {
+    const dir = await staleService();
+    const specDir = path.join(dir, ".apifn");
+    let temp = "";
+    const { code, errors } = await check(dir, (step, destination) => {
+      if (step !== "rename" || !destination.endsWith("openapi.yml")) return;
+      temp = stagedEntry(path.dirname(destination), ".tmp");
+      replaceWith(temp, "another writer's temp\n");
+    });
+    expect(code).toBe(2);
+    expect(errors).toContain(`${temp}, apifn check's temp file, or its directory changed while apifn check ran, so it was left as it is.`);
+    expect(await readFile(temp, "utf8")).toBe("another writer's temp\n");
+    expect(await leftovers(specDir)).toEqual([path.basename(temp)]);
+    expect(await readFile(path.join(dir, SPEC), "utf8")).toBe("openapi: 3.1.0\n");
+    expect(await readFile(path.join(dir, "report.md"), "utf8")).toBe("previous report\n");
+  });
+
+  it("a backup replaced after the install survives the commit, and the run warns that it left it", async () => {
+    const dir = await staleService();
+    let backup = "";
+    const { code, errors, warnings } = await check(dir, (step, destination) => {
+      if (step !== "installed" || !destination.endsWith("openapi.yml")) return;
+      backup = stagedEntry(path.dirname(destination), ".bak");
+      replaceWith(backup, "another writer's backup\n");
+    });
+    expect({ code, errors }).toEqual({ code: 0, errors: "" });
+    expect(warnings).toContain(`${backup}, apifn check's backup of`);
+    expect(await readFile(backup, "utf8")).toBe("another writer's backup\n");
+    expect(await readFile(path.join(dir, SPEC), "utf8")).not.toBe("openapi: 3.1.0\n");
+  });
+
+  it("on a stdout failure a replaced backup is neither restored nor named as the previous bytes", async () => {
+    const dir = await staleService();
+    let spec = "";
+    let backup = "";
+    let written = "";
+    const { code, errors } = await check(
+      dir,
+      (step, destination) => {
+        if (step !== "installed" || !destination.endsWith("openapi.yml")) return;
+        spec = destination;
+        backup = stagedEntry(path.dirname(destination), ".bak");
+        written = readFileSync(destination, "utf8");
+        replaceWith(backup, "another writer's backup\n");
+      },
+      () => {
+        throw new Error("stdout closed");
+      }
+    );
+    expect(code).toBe(2);
+    expect(errors).toContain(`${backup}, apifn check's backup of ${spec}, changed or is gone`);
+    expect(errors).not.toContain("Its previous bytes are in");
+    expect(await readFile(backup, "utf8")).toBe("another writer's backup\n");
+    expect(await readFile(path.join(dir, SPEC), "utf8")).toBe(written);
+    // The report's own rollback is unaffected.
+    expect(await readFile(path.join(dir, "report.md"), "utf8")).toBe("previous report\n");
+  });
+
+  it("a destination and its backup both replaced: the error does not name the backup as the previous bytes", async () => {
+    const dir = await staleService();
+    let backup = "";
+    const { code, errors } = await check(dir, (step, destination) => {
+      if (step !== "installed" || !destination.endsWith("openapi.yml")) return;
+      backup = stagedEntry(path.dirname(destination), ".bak");
+      replaceWith(backup, "another writer's backup\n");
+      replaceWith(destination, "another writer's spec\n");
+    });
+    expect(code).toBe(2);
+    expect(errors).toContain("changed after apifn check wrote it, so it was left as it is.");
+    expect(errors).toContain(`Its backup ${backup} changed or is gone too`);
+    expect(errors).not.toContain("Its previous bytes are in");
+    expect(await readFile(backup, "utf8")).toBe("another writer's backup\n");
+    expect(await readFile(path.join(dir, SPEC), "utf8")).toBe("another writer's spec\n");
+  });
+
+  it.skipIf(POSIX_ONLY)("after a directory swap, entries with the run's temp and backup names in the new directory are left alone", async () => {
+    const dir = await staleService();
+    const specDir = path.join(dir, ".apifn");
+    const moved = path.join(dir, ".apifn.moved");
+    let names: string[] = [];
+    const { code, errors } = await check(dir, (step, destination) => {
+      if (step !== "rename" || !destination.endsWith("openapi.yml")) return;
+      names = [stagedEntry(path.dirname(destination), ".tmp"), stagedEntry(path.dirname(destination), ".bak")].map((file) => path.basename(file));
+      renameSync(specDir, moved);
+      mkdirSync(specDir);
+      for (const name of names) writeFileSync(path.join(specDir, name), `another writer's ${name}\n`);
+    });
+    expect(code).toBe(2);
+    expect(errors).toContain("changed while apifn check ran");
+    for (const name of names) {
+      expect(await readFile(path.join(specDir, name), "utf8")).toBe(`another writer's ${name}\n`);
+      expect(errors).toContain(`${path.join(realpathSync(dir), ".apifn", name)}`);
+    }
+    expect(await readFile(path.join(moved, "openapi.yml"), "utf8")).toBe("openapi: 3.1.0\n");
+    expect(await readFile(path.join(dir, "report.md"), "utf8")).toBe("previous report\n");
+  });
+});
+
+describe("apifn check: inputs are guarded as the run read them, not as publication finds them (API-25 round 2)", () => {
+  const CONFIG = { router: "./router.ts", openapi: { info: { title: "Check fixture", version: "1.0.0" } } };
+
+  /** The base fixture with its contract copied to base.yml and a stale spec for --write. */
+  async function service(): Promise<string> {
+    const root = await fixtures();
+    const dir = path.join(root, "base");
+    await commitSpec(dir);
+    await writeFile(path.join(dir, "base.yml"), await readFile(path.join(dir, SPEC), "utf8"));
+    await writeFile(path.join(dir, SPEC), "openapi: 3.1.0\n");
+    return dir;
+  }
+
+  async function checkWithReadHook(
+    dir: string,
+    readHook: () => void,
+    extra: { baseSpec?: string; configFile?: string } = {}
+  ): Promise<{ code: number; errors: string; stdout: string }> {
+    const errors: string[] = [];
+    let stdout = "";
+    const code = await runCheckCommand({
+      cwd: dir,
+      config: CONFIG,
+      output: { error: (message: string) => errors.push(message) } as unknown as Output,
+      write: true,
+      reportPath: "report.md",
+      ...extra,
+      writeStdout: (text) => {
+        stdout += text;
+      },
+      readHook,
+    });
+    return { code, errors: errors.join("\n"), stdout };
+  }
+
+  async function expectNothingPublished(dir: string, result: { code: number; stdout: string }): Promise<void> {
+    expect({ code: result.code, stdout: result.stdout }).toEqual({ code: 2, stdout: "" });
+    expect(await readFile(path.join(dir, SPEC), "utf8")).toBe("openapi: 3.1.0\n");
+    expect(existsSync(path.join(dir, "report.md"))).toBe(false);
+    expect(await leftovers(path.join(dir, ".apifn"))).toEqual([]);
+  }
+
+  it("a --base-spec file edited after it was read exits 2 and publishes nothing", async () => {
+    const dir = await service();
+    const result = await checkWithReadHook(dir, () => appendFileSync(path.join(dir, "base.yml"), "# edited\n"), { baseSpec: "base.yml" });
+    expect(result.errors).toContain("the --base-spec file base.yml");
+    expect(result.errors).toContain("changed after apifn check read it");
+    await expectNothingPublished(dir, result);
+  });
+
+  it.skipIf(POSIX_ONLY)("a --base-spec link retargeted after the read exits 2, even to identical bytes", async () => {
+    const dir = await service();
+    await rename(path.join(dir, "base.yml"), path.join(dir, "a.yml"));
+    await writeFile(path.join(dir, "b.yml"), await readFile(path.join(dir, "a.yml"), "utf8"));
+    await symlink("a.yml", path.join(dir, "base.yml"));
+    const result = await checkWithReadHook(
+      dir,
+      () => {
+        rmSync(path.join(dir, "base.yml"));
+        symlinkSync("b.yml", path.join(dir, "base.yml"));
+      },
+      { baseSpec: "base.yml" }
+    );
+    expect(result.errors).toContain("the --base-spec file base.yml");
+    await expectNothingPublished(dir, result);
+  });
+
+  it("a router module or config file edited after it was loaded exits 2 and publishes nothing", async () => {
+    for (const file of ["router.ts", "apifn.config.ts"]) {
+      const dir = await service();
+      const result = await checkWithReadHook(dir, () => appendFileSync(path.join(dir, file), "// edited\n"), {
+        configFile: path.join(dir, "apifn.config.ts"),
+      });
+      expect(result.errors).toContain(file === "router.ts" ? "the router module router.ts" : "the config file apifn.config.ts");
+      expect(result.errors).toContain("changed after apifn check read it");
+      await expectNothingPublished(dir, result);
+    }
+  });
+
+  /** A router that, once loaded, edits `target` (as a build step or a second process might). */
+  async function editingRouter(dir: string, target: string): Promise<void> {
+    await writeFile(
+      path.join(dir, "router.ts"),
+      [
+        `import { appendFileSync } from "node:fs";`,
+        `export default {`,
+        `  getRoutes() {`,
+        `    appendFileSync(${JSON.stringify(path.join(dir, target))}, "// edited after the load\\n");`,
+        `    return [{ method: "GET", path: "/users", handler: async () => Response.json([]), meta: { operationId: "listUsers", responses: { 200: { description: "All users" } } } }];`,
+        `  },`,
+        `};`,
+        ``,
+      ].join("\n")
+    );
+  }
+
+  it.each(["router.ts", "apifn.config.ts"])("through the CLI, %s edited after its load fails a --write run (exit 2), not a stdout-only run", async (target) => {
+    const root = await fixtures();
+    const dir = path.join(root, "base");
+    await mkdir(path.join(dir, ".apifn"));
+    await writeFile(path.join(dir, SPEC), "openapi: 3.1.0\n");
+    await editingRouter(dir, target);
+
+    const written = await run(["check", "--write"], dir);
+    expect({ code: written.code, stdout: written.stdout }).toEqual({ code: 2, stdout: "" });
+    expect(written.stderr).toContain(target === "router.ts" ? "the router module router.ts" : "the config file apifn.config.ts");
+    expect(written.stderr).toContain("changed after apifn check read it");
+    expect(await readFile(path.join(dir, SPEC), "utf8")).toBe("openapi: 3.1.0\n");
+
+    // A run that writes no file resolves no guard: the drift verdict stands.
+    expect((await run(["check"], dir)).code).toBe(1);
+  });
+
+  it("the git baseline is looked up at the spec destination the run bound, not a second resolution of the path", async () => {
+    const root = await tempDir("apifn-check-bound-spec-");
+    git(root, "init", "-q");
+    await mkdir(path.join(root, "a"));
+    await mkdir(path.join(root, "b"));
+    await writeFile(path.join(root, "a", "openapi.yml"), "a: 1\n");
+    await writeFile(path.join(root, "b", "openapi.yml"), "b: 1\n");
+    git(root, "add", "-A");
+    git(root, "commit", "-q", "-m", "two contracts");
+    // An untracked alias that leads to b now; the run bound it to a.
+    await symlink(path.join("b", "openapi.yml"), path.join(root, "spec.yml"));
+    const baseline = readSpecAtRef("HEAD", path.join(root, "spec.yml"), path.join(root, "a", "openapi.yml"), root);
+    expect({ path: baseline.path, text: baseline.text }).toEqual({ path: "a/openapi.yml", text: "a: 1\n" });
   });
 });

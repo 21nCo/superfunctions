@@ -14,11 +14,13 @@ function isRouter(value: unknown): value is Router<unknown> {
 /**
  * Loads the router module once and returns it with the file that load read: the operand
  * (extensionless or a directory) is resolved once, and that very file is imported, so the file
- * named is the module loaded, never a second lookup made after the import.
+ * named is the module loaded, never a second lookup made after the import. `beforeImport` is
+ * called with that file right before the import (apifn check binds its state there).
  */
 export async function loadRouterModule(
   routerPath: string,
-  cwd = process.cwd()
+  cwd = process.cwd(),
+  beforeImport?: (file: string) => void
 ): Promise<{ router: Router<unknown>; file: string }> {
   const resolved = path.isAbsolute(routerPath) ? routerPath : path.resolve(cwd, routerPath);
   const jiti = createJiti(cwd, { moduleCache: false });
@@ -29,6 +31,7 @@ export async function loadRouterModule(
   } catch {
     // Not resolvable: the import below reports the missing module as it always has.
   }
+  beforeImport?.(file);
   const loaded = await jiti.import(file) as Record<string, unknown>;
 
   const candidates = [loaded?.default, loaded?.router, loaded];
