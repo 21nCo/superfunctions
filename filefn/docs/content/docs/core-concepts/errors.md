@@ -48,6 +48,7 @@ Every error response from filefn follows the same envelope:
 | `FILEFN_SHARE_EXPIRED` | 410 | The share link's `expiresAt` has passed. |
 | `FILEFN_SHARE_REVOKED` | 410 | The share link was revoked. |
 | `FILEFN_SHARE_DOWNLOADS_EXCEEDED` | 410 | The share link reached `maxDownloads`. |
+| `FILEFN_SHARE_DOWNLOAD_CONFLICT` | 409 | Too many concurrent downloads of the share link; retry. |
 | `FILEFN_SHARE_NOT_FOUND` | 404 | The share token doesn't match any row. |
 | `FILEFN_PERMISSION_NOT_FOUND` | 404 | Permission grant id doesn't exist. |
 | `FILEFN_PROCESSING_ENQUEUE_FAILED` | 503 | The processing queue / inline runner refused. |

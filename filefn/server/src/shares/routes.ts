@@ -1,10 +1,11 @@
 import type { SharesService } from './service.js';
 import type { FileFnPrincipal, AuthConfig } from '../auth.js';
 import type { RateLimiter } from '@superfunctions/middleware';
-import { resolvePrincipal } from '../auth.js';
+import { isAnonymousPrincipal, resolvePrincipal } from '../auth.js';
 import { FileFnError, authRequired, rateLimited } from '../errors.js';
 import { rateLimitSubject, type RateLimitCategory, type RateLimitClientKey } from '../rate-limit-key.js';
 import { buildDownloadHeaders } from '../download-headers.js';
+import { readJsonBody } from '../http-body.js';
 
 export interface SharesRouteContext {
   service: SharesService;
@@ -74,7 +75,7 @@ export function createSharesRoutes(ctx: SharesRouteContext) {
       try {
         const principal = await requireAuth(request);
         await checkRateLimit(request, 'share-create', principal, rateLimits?.shareCreate);
-        const body = await request.json() as {
+        const body = await readJsonBody(request) as {
           versionId?: string;
           expiresAt?: string;
           requiresAuth?: boolean;
@@ -109,7 +110,7 @@ export function createSharesRoutes(ctx: SharesRouteContext) {
           principalId: principal?.principalId || 'anonymous',
           tenantId: principal?.tenantId,
           roles: principal?.roles,
-          isAuthenticated: !!principal,
+          isAuthenticated: !isAnonymousPrincipal(principal),
           requestId,
         });
 
@@ -135,7 +136,7 @@ export function createSharesRoutes(ctx: SharesRouteContext) {
           principalId: principal?.principalId || 'anonymous',
           tenantId: principal?.tenantId,
           roles: principal?.roles,
-          isAuthenticated: !!principal,
+          isAuthenticated: !isAnonymousPrincipal(principal),
           requestId,
         });
 

@@ -82,6 +82,7 @@ Wire-format envelope:
 | `FILEFN_SHARE_REVOKED` | 410 | Share was revoked. | Surface a "this link is no longer valid" message. |
 | `FILEFN_SHARE_EXPIRED` | 410 | Share past `expiresAt`. | Same. |
 | `FILEFN_SHARE_DOWNLOADS_EXCEEDED` | 410 | `maxDownloads` exhausted. | Same. |
+| `FILEFN_SHARE_DOWNLOAD_CONFLICT` | 409 | Too many concurrent downloads of the link. | Retry. |
 
 ## Permissions
 

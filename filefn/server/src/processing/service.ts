@@ -17,6 +17,7 @@ import {
   normalizeMimeType,
   type ClientArtifactProcessingMetadata,
 } from './client-artifacts.js';
+import { isGrantExpired } from '../authz/grant-expiry.js';
 import { isFileOwner } from '../authz/ownership.js';
 
 export interface Processor {
@@ -546,16 +547,6 @@ function excludeClientCovered<T>(
   });
 }
 
-function isGrantExpired(expiresAt: string | null | undefined): boolean {
-  if (!expiresAt) {
-    return false;
-  }
-  const expiresAtMs = Date.parse(expiresAt);
-  if (Number.isNaN(expiresAtMs)) {
-    return false;
-  }
-  return expiresAtMs <= Date.now();
-}
 
 /**
  * Reads a client artifact body chunk by chunk, a Blob as a stream so it is

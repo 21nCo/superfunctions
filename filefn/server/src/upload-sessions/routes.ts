@@ -4,6 +4,7 @@ import type { RateLimiter } from '@superfunctions/middleware';
 import { resolvePrincipal } from '../auth.js';
 import { FileFnError, authRequired, rateLimited } from '../errors.js';
 import { rateLimitSubject, type RateLimitClientKey } from '../rate-limit-key.js';
+import { readJsonBody } from '../http-body.js';
 
 export interface RouteContext {
   service: UploadSessionService;
@@ -54,7 +55,7 @@ function errorResponse(error: FileFnError, requestId?: string): Response {
 }
 
 async function parseJsonBody<T>(request: Request): Promise<T> {
-  return await request.json() as T;
+  return await readJsonBody<T>(request);
 }
 
 export function createUploadSessionRoutes(ctx: RouteContext) {

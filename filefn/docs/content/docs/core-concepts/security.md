@@ -62,6 +62,10 @@ Always configure `rateLimit.limits` in production. The unrestricted defaults are
 
 Default to a strict origin list. Wide-open `Access-Control-Allow-Origin: *` works for proxy-mode public files, but anything that depends on credentials must scope down.
 
+### Cookie auth and CSRF
+
+Every FileFn route that takes a JSON body accepts only `Content-Type: application/json` (or a `+json` type) and answers anything else with `415 FILEFN_UNSUPPORTED_MEDIA_TYPE`, so a cross-site form or `no-cors` fetch cannot reach it without a CORS preflight. Routes that take raw bytes (upload-part `PUT`s and artifact uploads) are not covered by this check: they need a valid upload session or an authorized caller, so keep cookie auth `SameSite=Lax` or stricter, or check `Origin` in the host, for those too. A `POST` without a body (completing an upload) is still a simple request: when auth is a cookie, set it `SameSite=Lax` or stricter, or check `Origin` in the host. JSON bodies over 64 KiB are refused with `413 FILEFN_BODY_TOO_LARGE`.
+
 ### 4. Strict policies
 
 - Upper-bound every policy's `maxSizeBytes`. Don't ship a policy with unlimited size unless you really mean it.

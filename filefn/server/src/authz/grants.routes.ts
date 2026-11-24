@@ -2,6 +2,7 @@ import type { GrantsService } from './grants.service.js';
 import type { FileFnPrincipal, AuthConfig } from '../auth.js';
 import { resolvePrincipal } from '../auth.js';
 import { FileFnError, authRequired, rateLimited } from '../errors.js';
+import { readJsonBody } from '../http-body.js';
 import type { RateLimiter } from '@superfunctions/middleware';
 import { rateLimitSubject, type RateLimitCategory, type RateLimitClientKey } from '../rate-limit-key.js';
 
@@ -59,7 +60,7 @@ export function createGrantsRoutes(ctx: GrantsRouteContext) {
       try {
         const principal = await requireAuth(request);
         await checkGrantCreateRateLimit(request, principal);
-        const body = await request.json() as {
+        const body = await readJsonBody(request) as {
           userId?: string;
           role?: string;
           tenantId?: string;
