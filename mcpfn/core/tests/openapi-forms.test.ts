@@ -2423,6 +2423,29 @@ describe("fromOpenAPI body fallback, synchronous schemas, per-kind alternatives 
     expect(tails.skipped.map((entry) => entry.code)).toEqual(Array.from({ length: 200 }, () => "circular-object"));
   });
 
+  it("keeps a 3.1 $ref's $defs checked beside an undefined allOf, and maps arrays that shadow their own methods", () => {
+    const ref = "#/components/schemas/S";
+    const fallback = { "application/example+json": { schema: { type: "string" } } };
+    const shadowed = Object.assign([{ type: "object" }], { map: null });
+    const document = {
+      openapi: "3.1.0",
+      paths: {
+        "/d": { patch: { operationId: "d", requestBody: { content: { "application/json": { schema: { $ref: ref, allOf: undefined, definitions: {}, $defs: { Bad: { required: 3 } } } }, ...fallback } }, responses: ok } },
+        "/m": { patch: { operationId: "m", requestBody: { content: { "application/json": { schema: { $ref: ref, allOf: shadowed } }, ...fallback } }, responses: ok } },
+        "/g": { get: { operationId: "g", responses: json({ allOf: shadowed }) } },
+      },
+      components: { schemas: { S: { type: "object" } } },
+    };
+    const result = fromOpenAPI(document, options());
+    expect(result.skipped).toEqual([]);
+    expect(result.tools.map((entry) => [entry.name, entry.operation.requestBody?.contentType])).toEqual([
+      ["d", "application/example+json"],
+      ["m", "application/json"],
+      ["g", undefined],
+    ]);
+    expect(tool(result.tools, "g").outputSchema).toBeDefined();
+  });
+
   it("credits a 3.1 $ref's sibling allOf before its other siblings, whatever their order", () => {
     const repeated = { allOf: Array.from({ length: 300 }, () => true) };
     const properties = Object.fromEntries(Array.from({ length: 9 }, (_, index) => [`p${index}`, repeated]));

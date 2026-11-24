@@ -377,6 +377,11 @@ function memoFor<K, V>(memos: Map<K, WeakMap<object, V>>, key: K): WeakMap<objec
   return memo;
 }
 
+/** The items of a document array mapped without calling methods the array itself may shadow (such as an own `map`). */
+function mapItems<T>(items: unknown[], map: (item: unknown) => T): T[] {
+  return Array.prototype.map.call(items, map) as T[];
+}
+
 function arrayOf(value: unknown): unknown[] {
   return Array.isArray(value) ? value : [];
 }
@@ -523,7 +528,7 @@ export class SchemaConverter {
     if (known) return known;
     const cuts = this.cuts;
     try {
-      const kinds = members.map((member) => this.admits(member, stack));
+      const kinds = mapItems(members, (member) => this.admits(member, stack));
       const result = combine === "both" ? kinds.reduce(both, EVERYTHING) : either(kinds);
       if (this.cuts === cuts) memo.set(members, result);
       return result;
@@ -647,6 +652,8 @@ export class SchemaConverter {
     // copied) and the reference joins their allOf as its last member. The
     // allOf is credited first, whatever the order of the siblings.
     if (Array.isArray(rest.allOf)) this.budget.source(rest.allOf);
+    // An own `allOf: undefined` is no allOf: the reference becomes one.
+    else delete rest.allOf;
     this.budget.generated(rest);
     const converted = this.convertObject(rest, mode, refs);
     this.budget.charge();
@@ -696,7 +703,7 @@ export class SchemaConverter {
     }
     if ((SCHEMA_ARRAY_KEYWORDS.has(keyword) || keyword === "items") && Array.isArray(value)) {
       this.budget.source(value);
-      return [keyword, value.map((item) => this.convert(item, mode, refs))];
+      return [keyword, mapItems(value, (item) => this.convert(item, mode, refs))];
     }
     if (keyword === "items") return [keyword, this.convert(value, mode, refs)];
     if (SCHEMA_KEYWORDS.has(keyword)) return [keyword, this.convert(value, mode, refs)];
