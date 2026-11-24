@@ -1,41 +1,31 @@
 #!/usr/bin/env node
-// SFNS-312: CI runs that must verify every task (pushes, the nightly run, manual runs) replay nothing from Turbo's
-// local cache, yet the cache entry they save is the one every later pull request restores, so it must still hold an
-// entry for each task. Such a run restores the latest entry and sets its `.turbo/cache` aside, so Turbo reads none of
-// it, records the current task hashes (`turbo run … --dry=json`) before any task runs, then runs every selected task
-// while Turbo writes the cache. This script then merges the set-aside entries back:
-//   - every entry this run wrote is kept: Turbo wrote it for a task hash of this commit;
-//   - a set-aside entry is kept only when its hash is one of the current task hashes and this run wrote no entry with
-//     that hash (the new entry wins);
-//   - every other set-aside entry is pruned, so the saved cache never grows past one entry per current task.
-// Turbo names an entry's files after its task hash (`<hash>.tar.zst` and `<hash>-meta.json`); a set-aside file whose
-// name does not start with a hash is pruned too. The set-aside directory is removed afterwards.
-// A pull request replays the restored entries, so it sets none aside: it lists the restored files instead, and the
-// same rules prune the restored entries whose hash is not current, so a pull request's saved cache does not keep every
-// stale entry of its earlier pushes.
-// A replayed task restores only the outputs turbo.json declares for it. A task that also rewrites a tracked file (a
-// generated source or doc that a later task checks) passes when it runs, since it regenerates the file first, and fails
-// when it is replayed, since the stale committed file stays. With `--check-clean` the script fails when a tracked file
-// differs from HEAD after the tasks, so such a run fails whether its tasks ran or were replayed. A tracked file that a
-// task in the dry run declares as an output is exempt: a replay restores it, so a run that replays the task leaves it
-// as a run that executes the task does. The dry run lists every task the step's `turbo run` could select, so on a
-// partial plan the exempt files are those of every selectable task, not only of the tasks that ran.
+// SFNS-312: Turbo's local task cache in the JavaScript and DevFn tests CI jobs.
 //
-// Usage: node scripts/turbo-cache-merge.mjs --cache-dir <dir> --dry-run <turbo --dry=json output>
-//          (--aside-dir <dir> | --restored-list <file listing the restored cache files, one name per line>)
-//        node scripts/turbo-cache-merge.mjs --check-clean --dry-run <turbo --dry=json output>
+// Taint. A replayed task restores only the outputs turbo.json declares for it. A task that also writes a file outside
+// them (a tracked file, or an untracked one that is not ignored) leaves it behind when it runs and not when it is
+// replayed, so its entry is not saved. Each Turbo step runs with `--summarize`, then records (`--record <step>`) its
+// run summary, the cache directory's files and a drift snapshot (changed tracked and untracked unignored files, each
+// with a content hash); `--baseline` records the same before any task runs. Before saving, the merge deletes every
+// entry that first appeared during a step whose snapshot changed outside the declared outputs of the tasks summarised
+// so far, every entry of a step without a readable summary, listing or snapshot, and every entry no step recorded.
+// Drift only warns: the cache never changes a job's result.
+//
+// Merge. Runs that must verify every task (pushes, the nightly run, manual runs) replay nothing, yet the entry they
+// save is the one pull requests restore, so it must hold an entry for each task. Such a run sets the restored
+// `.turbo/cache` aside before any task runs; afterwards a set-aside entry is moved back when its hash is current and
+// the run wrote no entry with that hash (the new entry wins); every other one is pruned. A pull request replays the
+// restored entries (the baseline listing) and prunes those whose hash is not current. The current hashes are the
+// pre-task `--dry=json` hashes (the whole graph, so a per-package push still saves a complete entry) and every step
+// summary hash (a task whose hash changed during the run keeps its entry). Entry files are `<hash>.tar.zst` and
+// `<hash>-meta.json`; a restored or set-aside file of another name is pruned.
+//
+// Usage: node scripts/turbo-cache-merge.mjs --record <step> --steps-dir <dir> [--baseline]
+//        node scripts/turbo-cache-merge.mjs --merge --steps-dir <dir> --cache-dir <dir> --dry-run <file>
+//          [--aside-dir <dir>]
 
 import { execFileSync } from "node:child_process";
-import {
-  copyFileSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  readdirSync,
-  realpathSync,
-  renameSync,
-  rmSync,
-} from "node:fs";
+import { createHash } from "node:crypto";
+import * as fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -46,125 +36,24 @@ export function entryHash(fileName) {
   return ENTRY_FILE.exec(fileName)?.[1] ?? null;
 }
 
-// The task hashes in Turbo's `--dry=json` output. An output without tasks would prune every set-aside entry, so it is
-// an error rather than an empty set.
-export function readDryRunHashes(dryRunJson) {
+// The tasks of a Turbo run summary or `--dry=json` output, each with a task hash and a directory. A summary without
+// tasks would prune every restored entry, so it is an error rather than an empty list.
+export function readSummaryTasks(json, what) {
   let summary;
   try {
-    summary = JSON.parse(dryRunJson);
+    summary = JSON.parse(json);
   } catch (error) {
-    throw new Error(`the dry run is not JSON: ${error.message}`);
+    throw new Error(`the ${what} is not JSON: ${error.message}`);
   }
   const tasks = summary?.tasks;
-  if (!Array.isArray(tasks) || tasks.length === 0) {
-    throw new Error("the dry run lists no tasks");
-  }
-  const hashes = new Set();
-  for (const task of tasks) {
-    if (typeof task?.hash !== "string" || entryHash(`${task.hash}.tar.zst`) === null) {
-      throw new Error(`the dry run gives task ${JSON.stringify(task?.taskId)} no task hash`);
+  if (!Array.isArray(tasks) || tasks.length === 0) throw new Error(`the ${what} lists no tasks`);
+  return tasks.map((task) => {
+    if (entryHash(`${task?.hash}.tar.zst`) !== task?.hash || typeof task.directory !== "string") {
+      throw new Error(`the ${what} gives task ${JSON.stringify(task?.taskId)} no task hash or directory`);
     }
-    hashes.add(task.hash);
-  }
-  return hashes;
-}
-
-function filesIn(directory) {
-  if (!existsSync(directory)) return [];
-  return readdirSync(directory, { withFileTypes: true })
-    .filter((entry) => entry.isFile())
-    .map((entry) => entry.name)
-    .sort();
-}
-
-function moveFile(from, to) {
-  try {
-    renameSync(from, to);
-  } catch (error) {
-    if (error.code !== "EXDEV") throw error;
-    copyFileSync(from, to);
-    rmSync(from);
-  }
-}
-
-// Merges the set-aside entries into cacheDir as described above and returns the hashes of each outcome, sorted.
-export function mergeTurboCache({ cacheDir, asideDir, currentHashes }) {
-  const newHashes = new Set();
-  for (const fileName of filesIn(cacheDir)) {
-    const hash = entryHash(fileName);
-    if (hash !== null) newHashes.add(hash);
-  }
-
-  const restored = new Set();
-  const superseded = new Set();
-  const pruned = new Set();
-  for (const fileName of filesIn(asideDir)) {
-    const hash = entryHash(fileName);
-    if (hash === null || !currentHashes.has(hash)) {
-      pruned.add(hash ?? fileName);
-    } else if (newHashes.has(hash)) {
-      superseded.add(hash);
-    } else {
-      mkdirSync(cacheDir, { recursive: true });
-      moveFile(path.join(asideDir, fileName), path.join(cacheDir, fileName));
-      restored.add(hash);
-    }
-  }
-  rmSync(asideDir, { recursive: true, force: true });
-
-  const sorted = (set) => [...set].sort();
-  return {
-    kept: sorted(newHashes),
-    // Entries this run wrote whose hash the dry run did not report: kept, but a sign the dry run and the tasks hash
-    // differently (an untracked file a task writes into a package, say), which would prune entries pull requests need.
-    keptNotInDryRun: sorted([...newHashes].filter((hash) => !currentHashes.has(hash))),
-    restored: sorted(restored),
-    superseded: sorted(superseded),
-    pruned: sorted(pruned),
-  };
-}
-
-// Prunes, in place, the restored entries of cacheDir (restoredFiles names their files) whose hash is not current,
-// keeping every entry this run wrote. Returns the hashes of each outcome, sorted, as mergeTurboCache does.
-export function pruneRestoredTurboCache({ cacheDir, restoredFiles, currentHashes }) {
-  const restoredNames = new Set(restoredFiles);
-  const present = filesIn(cacheDir);
-  const newHashes = new Set();
-  for (const fileName of present) {
-    const hash = entryHash(fileName);
-    if (hash !== null && !restoredNames.has(fileName)) newHashes.add(hash);
-  }
-
-  const restored = new Set();
-  const pruned = new Set();
-  for (const fileName of present.filter((name) => restoredNames.has(name))) {
-    const hash = entryHash(fileName);
-    if (hash !== null && (currentHashes.has(hash) || newHashes.has(hash))) {
-      if (!newHashes.has(hash)) restored.add(hash);
-    } else {
-      rmSync(path.join(cacheDir, fileName));
-      pruned.add(hash ?? fileName);
-    }
-  }
-
-  const sorted = (set) => [...set].sort();
-  return {
-    kept: sorted(newHashes),
-    keptNotInDryRun: sorted([...newHashes].filter((hash) => !currentHashes.has(hash))),
-    restored: sorted(restored),
-    superseded: [],
-    pruned: sorted(pruned),
-  };
-}
-
-// The tracked files of the Git checkout at `cwd` that differ from HEAD (changed, deleted or staged), sorted.
-// Untracked files are not reported.
-export function changedTrackedFiles(cwd) {
-  const output = execFileSync("git", ["diff", "HEAD", "--name-only", "-z", "--no-renames"], {
-    cwd,
-    encoding: "utf8",
+    const { taskId, hash, directory, outputs, excludedOutputs } = task;
+    return { taskId, hash, directory, outputs, excludedOutputs };
   });
-  return output.split("\0").filter(Boolean).sort();
 }
 
 // A regular expression source for one Turbo output glob: `**` as a whole path segment matches any number of segments,
@@ -193,8 +82,7 @@ function globSource(glob) {
     } else if (char === "[") {
       const end = glob.indexOf("]", index + 2);
       if (end === -1) throw new Error(`unsupported output glob ${JSON.stringify(glob)}`);
-      const body = glob.slice(index + 1, end).replace(/^!/, "^").replaceAll("\\", "\\\\");
-      source += `[${body}]`;
+      source += `[${glob.slice(index + 1, end).replace(/^!/, "^").replaceAll("\\", "\\\\")}]`;
       index = end;
     } else if (char === "{") {
       braces += 1;
@@ -212,158 +100,269 @@ function globSource(glob) {
   return source;
 }
 
-// The repository-relative glob for an output glob of the task in `directory`. Turbo reads output globs relative to the
-// task's package directory, or to the repository root after `$TURBO_ROOT$/`.
-function repositoryGlob(directory, glob) {
-  const relative = glob.startsWith("$TURBO_ROOT$/")
-    ? glob.slice("$TURBO_ROOT$/".length)
-    : path.posix.join(directory, glob);
+// The repository-relative pattern for an output glob of the task in `directory`. Turbo reads output globs relative to
+// the task's package directory, or to the repository root after `$TURBO_ROOT$/`.
+function outputPattern(directory, glob) {
+  const relative = glob.startsWith("$TURBO_ROOT$/") ? glob.slice(13) : path.posix.join(directory, glob);
   const normalized = path.posix.normalize(relative).replace(/^\.\//, "");
   if (normalized === ".." || normalized.startsWith("../") || path.posix.isAbsolute(normalized)) {
     throw new Error(`output glob ${JSON.stringify(glob)} of ${JSON.stringify(directory)} is outside the repository`);
   }
-  return normalized;
+  return new RegExp(`^${globSource(normalized)}$`);
 }
 
-// A predicate for repository-relative file paths: whether a task in Turbo's `--dry=json` output declares the file as
-// one of its outputs. Turbo lists a task's `!` output globs under `excludedOutputs`; a file a task's excluded glob
-// matches is not that task's output. A dry run without tasks, or a task without a directory, is an error.
-export function declaredOutputMatcher(dryRunJson) {
-  let summary;
-  try {
-    summary = JSON.parse(dryRunJson);
-  } catch (error) {
-    throw new Error(`the dry run is not JSON: ${error.message}`);
-  }
-  const tasks = summary?.tasks;
-  if (!Array.isArray(tasks) || tasks.length === 0) throw new Error("the dry run lists no tasks");
-  const matchers = [];
-  for (const task of tasks) {
-    if (typeof task?.directory !== "string") {
-      throw new Error(`the dry run gives task ${JSON.stringify(task?.taskId)} no directory`);
-    }
+// A predicate for repository-relative paths: whether one of `tasks` declares the file as an output. Turbo lists a
+// task's `!` output globs under `excludedOutputs`; a file a task excludes is not that task's output.
+export function declaredOutputMatcher(tasks) {
+  const matchers = tasks.map(({ taskId, directory, outputs, excludedOutputs }) => {
     const included = [];
     const excluded = [];
     for (const [list, globs] of [
-      [included, task.outputs],
-      [excluded, task.excludedOutputs],
+      [included, outputs ?? []],
+      [excluded, excludedOutputs ?? []],
     ]) {
-      if (globs === undefined || globs === null) continue;
       if (!Array.isArray(globs) || globs.some((glob) => typeof glob !== "string" || glob === "")) {
-        throw new Error(`the dry run gives task ${JSON.stringify(task.taskId)} malformed outputs`);
+        throw new Error(`task ${JSON.stringify(taskId)} has malformed outputs`);
       }
       for (const glob of globs) {
         const negated = glob.startsWith("!");
-        const target = negated ? excluded : list;
-        const pattern = repositoryGlob(task.directory, negated ? glob.slice(1) : glob);
-        target.push(new RegExp(`^${globSource(pattern)}$`));
+        (negated ? excluded : list).push(outputPattern(directory, negated ? glob.slice(1) : glob));
       }
     }
-    if (included.length > 0) matchers.push({ included, excluded });
-  }
+    return { included, excluded };
+  });
   return (file) =>
     matchers.some(
-      ({ included, excluded }) =>
-        included.some((pattern) => pattern.test(file)) && !excluded.some((pattern) => pattern.test(file))
+      ({ included, excluded }) => included.some((re) => re.test(file)) && !excluded.some((re) => re.test(file))
     );
+}
+
+function filesIn(directory) {
+  if (!fs.existsSync(directory)) return [];
+  return fs
+    .readdirSync(directory, { withFileTypes: true })
+    .filter((entry) => entry.isFile())
+    .map((entry) => entry.name)
+    .sort();
+}
+
+// The files of the Git checkout at `cwd` that differ from HEAD (changed, deleted or staged) and the untracked files
+// that are not ignored, each with a hash of its content ("deleted" for a missing file).
+export function driftSnapshot(cwd) {
+  const args = ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--no-renames"];
+  const status = execFileSync("git", args, { cwd, encoding: "utf8", maxBuffer: 1 << 28 });
+  const snapshot = {};
+  for (const line of status.split("\0").filter(Boolean)) {
+    const file = line.slice(3);
+    const full = path.join(cwd, file);
+    const stat = fs.lstatSync(full, { throwIfNoEntry: false });
+    const link = stat?.isSymbolicLink() ? `link:${fs.readlinkSync(full)}` : null;
+    const content = !stat ? null : (link ?? (stat.isFile() ? fs.readFileSync(full) : "directory"));
+    snapshot[file] = content === null ? "deleted" : createHash("sha256").update(content).digest("hex");
+  }
+  return snapshot;
+}
+
+// Records one step's evidence in stepsDir: the run summary Turbo wrote to `.turbo/runs` during the step (exactly one,
+// which is then removed, or null), the cache directory's files and the drift snapshot. A piece that cannot be read is
+// recorded as null, so the merge taints the step's entries.
+export function recordStep({ name, stepsDir, cwd, baseline = false }) {
+  const record = { name, baseline, tasks: baseline ? [] : null, listing: null, snapshot: null, errors: [] };
+  const attempt = (field, read) => {
+    try {
+      record[field] = read();
+    } catch (error) {
+      record.errors.push(`${field}: ${error.message}`);
+    }
+  };
+  const runsDir = path.join(cwd, ".turbo/runs");
+  const summaries = filesIn(runsDir).filter((file) => file.endsWith(".json"));
+  if (!baseline) {
+    attempt("tasks", () => {
+      if (summaries.length !== 1) throw new Error(`found ${summaries.length} Turbo run summaries, expected 1`);
+      return readSummaryTasks(fs.readFileSync(path.join(runsDir, summaries[0]), "utf8"), "run summary");
+    });
+  }
+  for (const file of summaries) fs.rmSync(path.join(runsDir, file));
+  attempt("listing", () => filesIn(path.join(cwd, ".turbo/cache")));
+  attempt("snapshot", () => driftSnapshot(cwd));
+  fs.mkdirSync(stepsDir, { recursive: true });
+  const index = filesIn(stepsDir).filter((file) => file.endsWith(".json")).length;
+  fs.writeFileSync(path.join(stepsDir, `${String(index).padStart(2, "0")}-${name}.json`), JSON.stringify(record));
+  return record;
+}
+
+export function readRecords(stepsDir) {
+  return filesIn(stepsDir)
+    .filter((file) => file.endsWith(".json"))
+    .map((file) => JSON.parse(fs.readFileSync(path.join(stepsDir, file), "utf8")));
+}
+
+// The hashes of the entries to delete, from the step records in order (baseline first) and the cache directory's files
+// now, plus a report of each tainted step.
+export function taintedEntries(records, finalListing) {
+  const [baseline, ...steps] = records;
+  if (!baseline?.baseline || !Array.isArray(baseline.listing) || !baseline.snapshot) {
+    throw new Error("the first step record is not a complete baseline");
+  }
+  const tainted = new Set();
+  const reports = [];
+  const tasks = [];
+  let listing = new Set(baseline.listing);
+  let snapshot = baseline.snapshot;
+  let carried = null;
+  const taint = (files, report) => {
+    const hashes = files.map(entryHash).filter((hash) => hash !== null);
+    for (const hash of hashes) tainted.add(hash);
+    reports.push({ ...report, entries: new Set(hashes).size });
+  };
+  for (const step of steps) {
+    if (Array.isArray(step.tasks)) tasks.push(...step.tasks);
+    if (!Array.isArray(step.listing)) {
+      carried ??= `step ${step.name} has no cache listing`;
+      snapshot = null;
+      continue;
+    }
+    let reason = carried ?? (step.tasks ? null : "no readable Turbo run summary");
+    let drift = [];
+    if (!reason && (!step.snapshot || !snapshot)) reason = "no drift snapshot";
+    if (!reason) {
+      try {
+        const isOutput = declaredOutputMatcher(tasks);
+        const files = new Set([...Object.keys(snapshot), ...Object.keys(step.snapshot)]);
+        drift = [...files].filter((file) => snapshot[file] !== step.snapshot[file] && !isOutput(file)).sort();
+        if (drift.length > 0) reason = "files changed outside the declared outputs";
+      } catch (error) {
+        reason = error.message;
+      }
+    }
+    if (reason) taint(step.listing.filter((file) => !listing.has(file)), { step: step.name, reason, drift });
+    listing = new Set(step.listing);
+    snapshot = step.snapshot ?? null;
+    carried = null;
+  }
+  const unrecorded = finalListing.filter((file) => !listing.has(file));
+  if (unrecorded.length > 0 || carried) {
+    taint(unrecorded, { step: "after the last record", reason: carried ?? "entries no step recorded", drift: [] });
+  }
+  return { tainted, reports };
+}
+
+function moveFile(from, to) {
+  try {
+    fs.renameSync(from, to);
+  } catch (error) {
+    if (error.code !== "EXDEV") throw error;
+    fs.copyFileSync(from, to);
+    fs.rmSync(from);
+  }
+}
+
+// Deletes the tainted entries of cacheDir, then merges the set-aside entries (asideDir) or prunes the restored ones
+// (restoredFiles, the baseline listing) as described above. Returns the hashes of each outcome, sorted.
+export function mergeTurboCache({ cacheDir, asideDir, restoredFiles = [], currentHashes, tainted = new Set() }) {
+  const restoredNames = new Set(asideDir === undefined ? restoredFiles : []);
+  const newHashes = new Set();
+  const outcome = { dropped: new Set(), restored: new Set(), superseded: new Set(), pruned: new Set() };
+  const candidates = [];
+  for (const fileName of filesIn(cacheDir)) {
+    const hash = entryHash(fileName);
+    if (restoredNames.has(fileName)) {
+      candidates.push({ fileName, hash, from: cacheDir });
+    } else if (hash !== null && tainted.has(hash)) {
+      fs.rmSync(path.join(cacheDir, fileName));
+      outcome.dropped.add(hash);
+    } else if (hash !== null) {
+      newHashes.add(hash);
+    }
+  }
+  if (asideDir !== undefined) {
+    for (const fileName of filesIn(asideDir)) candidates.push({ fileName, hash: entryHash(fileName), from: asideDir });
+  }
+  for (const { fileName, hash, from } of candidates) {
+    const source = path.join(from, fileName);
+    if (hash === null || !currentHashes.has(hash) || tainted.has(hash)) {
+      fs.rmSync(source);
+      outcome.pruned.add(hash ?? fileName);
+    } else if (from === cacheDir) {
+      outcome.restored.add(hash);
+    } else if (newHashes.has(hash)) {
+      fs.rmSync(source);
+      outcome.superseded.add(hash);
+    } else {
+      fs.mkdirSync(cacheDir, { recursive: true });
+      moveFile(source, path.join(cacheDir, fileName));
+      outcome.restored.add(hash);
+    }
+  }
+  if (asideDir !== undefined) fs.rmSync(asideDir, { recursive: true, force: true });
+  const sorted = (set) => [...set].sort();
+  return Object.fromEntries(Object.entries({ kept: newHashes, ...outcome }).map(([key, set]) => [key, sorted(set)]));
 }
 
 // A value for a GitHub Actions annotation property (`file=…`).
 function annotationProperty(value) {
-  return value
-    .replaceAll("%", "%25")
-    .replaceAll("\r", "%0D")
-    .replaceAll("\n", "%0A")
-    .replaceAll(":", "%3A")
-    .replaceAll(",", "%2C");
-}
-
-function checkClean(dryRun) {
-  const isDeclaredOutput = declaredOutputMatcher(readFileSync(dryRun, "utf8"));
-  const allChanged = changedTrackedFiles(process.cwd());
-  const declared = allChanged.filter(isDeclaredOutput);
-  const changed = allChanged.filter((file) => !isDeclaredOutput(file));
-  if (declared.length > 0) {
-    console.log(
-      `turbo-cache-merge: ${declared.length} changed tracked files are declared task outputs, ` +
-        `which a replay restores: ${declared.join(", ")}`
-    );
-  }
-  if (changed.length === 0) {
-    console.log("turbo-cache-merge: no task changed a tracked file outside its declared outputs");
-    return;
-  }
-  for (const file of changed) {
-    console.log(
-      `::error file=${annotationProperty(file)},title=Tracked file changed by a task::A task changed this tracked ` +
-        "file, which no task declares as an output. A replayed task restores only its declared outputs, so " +
-        "regenerate the file and commit it."
-    );
-  }
-  execFileSync("git", ["--no-pager", "diff", "HEAD", "--stat", "--no-renames", "--", ...changed], { stdio: "inherit" });
-  throw new Error(`${changed.length} tracked files changed after the tasks ran: ${changed.join(", ")}`);
+  return value.replace(/[%\r\n:,]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase().padStart(2, "0")}`);
 }
 
 const USAGE =
-  "usage: node scripts/turbo-cache-merge.mjs --cache-dir <dir> --dry-run <dry-run JSON file> " +
-  "(--aside-dir <dir> | --restored-list <file>), or node scripts/turbo-cache-merge.mjs --check-clean " +
-  "--dry-run <dry-run JSON file>";
+  "usage: node scripts/turbo-cache-merge.mjs --record <step> --steps-dir <dir> [--baseline], or " +
+  "--merge --steps-dir <dir> --cache-dir <dir> --dry-run <dry-run JSON file> [--aside-dir <dir>]";
 
 function parseArgs(argv) {
-  const options = {};
-  const names = {
-    "--cache-dir": "cacheDir",
-    "--aside-dir": "asideDir",
-    "--restored-list": "restoredList",
-    "--dry-run": "dryRun",
-  };
-  for (let index = 0; index < argv.length; index += 2) {
-    const name = names[argv[index]];
-    const value = argv[index + 1];
-    if (name === undefined || value === undefined || value === "" || options[name] !== undefined) {
-      throw new Error(USAGE);
+  const options = { baseline: false, merge: false };
+  const names = { "--record": "record", "--steps-dir": "stepsDir", "--cache-dir": "cacheDir" };
+  Object.assign(names, { "--dry-run": "dryRun", "--aside-dir": "asideDir" });
+  for (let index = 0; index < argv.length; index++) {
+    if (argv[index] === "--baseline" || argv[index] === "--merge") {
+      options[argv[index].slice(2)] = true;
+      continue;
     }
+    const name = names[argv[index]];
+    const value = argv[++index];
+    if (name === undefined || !value || options[name] !== undefined) throw new Error(USAGE);
     options[name] = value;
   }
-  if (options.cacheDir === undefined) throw new Error("--cache-dir is required");
-  if (options.dryRun === undefined) throw new Error("--dry-run is required");
-  if ((options.asideDir === undefined) === (options.restoredList === undefined)) {
-    throw new Error("give exactly one of --aside-dir and --restored-list");
-  }
+  const merging = ["cacheDir", "dryRun", "asideDir"].some((name) => options[name] !== undefined);
+  const valid = options.merge
+    ? options.record === undefined && !options.baseline && options.cacheDir && options.dryRun
+    : /^[a-z][a-z0-9-]*$/.test(options.record ?? "") && !merging;
+  if (!valid || !options.stepsDir) throw new Error(USAGE);
   return options;
 }
 
 function main() {
-  const argv = process.argv.slice(2);
-  if (argv.includes("--check-clean")) {
-    const [mode, flag, dryRun] = argv;
-    if (argv.length !== 3 || mode !== "--check-clean" || flag !== "--dry-run" || !dryRun) throw new Error(USAGE);
-    checkClean(dryRun);
+  const options = parseArgs(process.argv.slice(2));
+  if (!options.merge) {
+    const { record: name, stepsDir, baseline } = options;
+    const record = recordStep({ name, stepsDir, baseline, cwd: process.cwd() });
+    for (const error of record.errors) console.log(`::warning title=Turbo cache record::${name}: ${error}`);
     return;
   }
-  const { cacheDir, asideDir, restoredList, dryRun } = parseArgs(argv);
-  const currentHashes = readDryRunHashes(readFileSync(dryRun, "utf8"));
+  const { stepsDir, cacheDir, dryRun, asideDir } = options;
+  const records = readRecords(stepsDir);
+  const currentHashes = new Set(readSummaryTasks(fs.readFileSync(dryRun, "utf8"), "dry run").map((task) => task.hash));
+  for (const record of records) for (const task of record.tasks ?? []) currentHashes.add(task.hash);
+  const { tainted, reports } = taintedEntries(records, filesIn(cacheDir));
+  for (const { step, reason, drift, entries } of reports) {
+    console.log(`::warning title=Turbo cache not saved for ${step}::${reason}; dropping ${entries} new entries`);
+    for (const file of drift) {
+      console.log(
+        `::warning file=${annotationProperty(file)},title=Changed outside Turbo outputs::The ${step} step changed ` +
+          "this file, which no task declares as an output, so a replay would not restore it. Its cache entries are " +
+          "not saved. Commit the regenerated file or declare it as an output."
+      );
+    }
+  }
+  const restoredFiles = asideDir === undefined ? records[0].listing : [];
+  const result = mergeTurboCache({ cacheDir, asideDir, restoredFiles, currentHashes, tainted });
   const source = asideDir === undefined ? "restored" : "set-aside";
-  const result =
-    asideDir === undefined
-      ? pruneRestoredTurboCache({
-          cacheDir,
-          restoredFiles: readFileSync(restoredList, "utf8").split("\n").filter(Boolean),
-          currentHashes,
-        })
-      : mergeTurboCache({ cacheDir, asideDir, currentHashes });
   console.log(
     `turbo-cache-merge: ${currentHashes.size} current task hashes; kept ${result.kept.length} new entries, ` +
-      `kept ${result.restored.length} ${source} entries, dropped ${result.superseded.length} ${source} entries ` +
-      `this run rewrote, pruned ${result.pruned.length} ${source} entries not in the current hashes`
+      `dropped ${result.dropped.length} tainted new entries, kept ${result.restored.length} ${source} entries, ` +
+      `dropped ${result.superseded.length} ${source} entries this run rewrote, pruned ${result.pruned.length} ` +
+      `${source} entries not current or tainted`
   );
-  if (result.keptNotInDryRun.length > 0) {
-    const sample = result.keptNotInDryRun.slice(0, 20).join(", ");
-    console.log(
-      `::warning title=Turbo cache merge::${result.keptNotInDryRun.length} new cache entries have a hash the dry run ` +
-        `did not report, so the dry run and the tasks hash differently: ${sample}`
-    );
-  }
 }
 
 // Whether Node runs this file as its entry point. argv[1] keeps the path it was given (a symlinked checkout, or the
@@ -372,10 +371,10 @@ function isEntryPoint() {
   if (import.meta.main !== undefined) return import.meta.main;
   const entry = process.argv[1];
   if (!entry) return false;
-  const self = realpathSync(fileURLToPath(import.meta.url));
+  const self = fs.realpathSync(fileURLToPath(import.meta.url));
   return [entry, `${entry}.mjs`].some((candidate) => {
     try {
-      return realpathSync(candidate) === self;
+      return fs.realpathSync(candidate) === self;
     } catch {
       return false;
     }

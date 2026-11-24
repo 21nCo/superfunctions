@@ -7,12 +7,14 @@ import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
-  changedTrackedFiles,
   declaredOutputMatcher,
+  driftSnapshot,
   entryHash,
   mergeTurboCache,
-  pruneRestoredTurboCache,
-  readDryRunHashes,
+  readRecords,
+  readSummaryTasks,
+  recordStep,
+  taintedEntries,
 } from "./turbo-cache-merge.mjs";
 
 const script = fileURLToPath(new URL("./turbo-cache-merge.mjs", import.meta.url));
@@ -24,10 +26,13 @@ const KEPT = "aaaa000000000001";
 const STALE = "bbbb000000000002";
 const REWRITTEN = "cccc000000000003";
 const NEW = "dddd000000000004";
+const BUILD = "eeee000000000005";
+const TYPECHECK = "ffff000000000006";
 
 let caseNumber = 0;
 function freshDirs() {
   const root = path.join(scratch, `case-${++caseNumber}`);
+  mkdirSync(root, { recursive: true });
   return { root, cacheDir: path.join(root, "cache"), asideDir: path.join(root, "aside") };
 }
 
@@ -37,8 +42,12 @@ function writeEntry(directory, hash, label) {
   writeFileSync(path.join(directory, `${hash}-meta.json`), JSON.stringify({ hash, label }));
 }
 
-function dryRun(hashes) {
-  return JSON.stringify({ tasks: hashes.map((hash, index) => ({ taskId: `pkg-${index}#build`, hash })) });
+const files = (...hashes) => hashes.flatMap((hash) => [`${hash}-meta.json`, `${hash}.tar.zst`]).sort();
+
+function summary(hashes, extra = {}) {
+  return JSON.stringify({
+    tasks: hashes.map((hash, index) => ({ taskId: `pkg-${index}#build`, hash, directory: `pkg-${index}`, ...extra })),
+  });
 }
 
 function cacheContents(cacheDir) {
@@ -70,7 +79,7 @@ test("set-aside entries in the current hashes are kept, others are pruned, and n
   });
   assert.deepEqual(result, {
     kept: [REWRITTEN, NEW],
-    keptNotInDryRun: [],
+    dropped: [],
     restored: [KEPT],
     superseded: [REWRITTEN],
     pruned: [STALE, "notes.txt"],
@@ -78,86 +87,58 @@ test("set-aside entries in the current hashes are kept, others are pruned, and n
   assert.equal(existsSync(asideDir), false, "the set-aside directory is removed");
 });
 
-test("an entry this run wrote is kept even when the dry run did not report its hash", () => {
+test("tainted new entries are dropped and a set-aside entry with a tainted hash is pruned", () => {
   const { cacheDir, asideDir } = freshDirs();
+  writeEntry(asideDir, KEPT, "aside");
+  writeEntry(asideDir, BUILD, "aside");
+  writeEntry(cacheDir, BUILD, "new");
   writeEntry(cacheDir, NEW, "new");
-  writeEntry(asideDir, NEW, "aside");
+  const currentHashes = new Set([KEPT, BUILD, NEW]);
 
-  const result = mergeTurboCache({ cacheDir, asideDir, currentHashes: new Set([KEPT]) });
+  const result = mergeTurboCache({ cacheDir, asideDir, currentHashes, tainted: new Set([BUILD]) });
 
-  assert.deepEqual(Object.keys(cacheContents(cacheDir)), [`${NEW}-meta.json`, `${NEW}.tar.zst`]);
-  assert.equal(cacheContents(cacheDir)[`${NEW}.tar.zst`], "new archive");
-  assert.deepEqual(result.keptNotInDryRun, [NEW]);
-  assert.deepEqual(result.pruned, [NEW], "a set-aside entry is pruned when its hash is not current");
+  assert.deepEqual(Object.keys(cacheContents(cacheDir)), files(KEPT, NEW));
+  assert.deepEqual(result, { kept: [NEW], dropped: [BUILD], restored: [KEPT], superseded: [], pruned: [BUILD] });
 });
 
-test("a run that wrote no cache still keeps the current set-aside entries", () => {
+test("a run that wrote no cache keeps the current set-aside entries, and missing directories are not an error", () => {
   const { cacheDir, asideDir } = freshDirs();
   writeEntry(asideDir, KEPT, "aside");
   writeEntry(asideDir, STALE, "aside");
 
   const result = mergeTurboCache({ cacheDir, asideDir, currentHashes: new Set([KEPT]) });
 
-  assert.deepEqual(Object.keys(cacheContents(cacheDir)), [`${KEPT}-meta.json`, `${KEPT}.tar.zst`]);
-  assert.deepEqual(result.restored, [KEPT]);
+  assert.deepEqual(Object.keys(cacheContents(cacheDir)), files(KEPT));
   assert.deepEqual(result.pruned, [STALE]);
+  const empty = freshDirs();
+  assert.deepEqual(mergeTurboCache({ ...empty, currentHashes: new Set() }).kept, []);
+  assert.deepEqual(mergeTurboCache({ cacheDir: empty.cacheDir, currentHashes: new Set() }).kept, []);
 });
 
-test("a run that restored nothing leaves its new entries as they are", () => {
-  const { cacheDir, asideDir } = freshDirs();
-  writeEntry(cacheDir, NEW, "new");
-
-  const result = mergeTurboCache({ cacheDir, asideDir, currentHashes: new Set([NEW]) });
-
-  assert.deepEqual(Object.keys(cacheContents(cacheDir)), [`${NEW}-meta.json`, `${NEW}.tar.zst`]);
-  assert.deepEqual(result, { kept: [NEW], keptNotInDryRun: [], restored: [], superseded: [], pruned: [] });
-});
-
-test("a pull request's restored entries outside the current hashes are pruned, and every new entry is kept", () => {
+test("a pull request prunes its restored entries that are stale or tainted and keeps every untainted new entry", () => {
   const { cacheDir } = freshDirs();
   writeEntry(cacheDir, KEPT, "restored");
   writeEntry(cacheDir, STALE, "restored");
+  writeEntry(cacheDir, BUILD, "restored");
   writeFileSync(path.join(cacheDir, "notes.txt"), "restored, not an entry");
   const restoredFiles = readdirSync(cacheDir);
   writeEntry(cacheDir, NEW, "new");
   writeEntry(cacheDir, REWRITTEN, "new");
+  writeEntry(cacheDir, TYPECHECK, "new");
   writeFileSync(path.join(cacheDir, "turbo-scratch"), "new, not an entry");
+  const currentHashes = new Set([KEPT, BUILD, NEW]);
 
-  const result = pruneRestoredTurboCache({ cacheDir, restoredFiles, currentHashes: new Set([KEPT, NEW]) });
+  const result = mergeTurboCache({ cacheDir, restoredFiles, currentHashes, tainted: new Set([BUILD, TYPECHECK]) });
 
-  assert.deepEqual(Object.keys(cacheContents(cacheDir)), [
-    `${KEPT}-meta.json`,
-    `${KEPT}.tar.zst`,
-    `${REWRITTEN}-meta.json`,
-    `${REWRITTEN}.tar.zst`,
-    `${NEW}-meta.json`,
-    `${NEW}.tar.zst`,
-    "turbo-scratch",
-  ]);
+  assert.deepEqual(Object.keys(cacheContents(cacheDir)), [...files(KEPT, REWRITTEN, NEW), "turbo-scratch"]);
   assert.equal(cacheContents(cacheDir)[`${KEPT}.tar.zst`], "restored archive");
   assert.deepEqual(result, {
     kept: [REWRITTEN, NEW],
-    keptNotInDryRun: [REWRITTEN],
+    dropped: [TYPECHECK],
     restored: [KEPT],
     superseded: [],
-    pruned: [STALE, "notes.txt"],
+    pruned: [BUILD, STALE, "notes.txt"].sort(),
   });
-});
-
-test("a pull request that restored nothing keeps its new entries", () => {
-  const { cacheDir } = freshDirs();
-  writeEntry(cacheDir, NEW, "new");
-
-  const result = pruneRestoredTurboCache({ cacheDir, restoredFiles: [], currentHashes: new Set([NEW]) });
-
-  assert.deepEqual(Object.keys(cacheContents(cacheDir)), [`${NEW}-meta.json`, `${NEW}.tar.zst`]);
-  assert.deepEqual(result, { kept: [NEW], keptNotInDryRun: [], restored: [], superseded: [], pruned: [] });
-  assert.deepEqual(
-    pruneRestoredTurboCache({ cacheDir: path.join(cacheDir, "missing"), restoredFiles: [], currentHashes: new Set() })
-      .kept,
-    [],
-    "a run that wrote no cache directory is not an error"
-  );
 });
 
 test("entry files are recognised by Turbo's names only", () => {
@@ -170,226 +151,34 @@ test("entry files are recognised by Turbo's names only", () => {
   assert.equal(entryHash(`${KEPT}0.tar.zst`), null);
 });
 
-test("the dry run's task hashes are read, and a dry run without them is an error", () => {
-  assert.deepEqual(readDryRunHashes(dryRun([KEPT, NEW, KEPT])), new Set([KEPT, NEW]));
-  assert.throws(() => readDryRunHashes("turbo 2.6.1\n{}"), /not JSON/);
-  assert.throws(() => readDryRunHashes(JSON.stringify({ tasks: [] })), /lists no tasks/);
-  assert.throws(() => readDryRunHashes(JSON.stringify({})), /lists no tasks/);
-  assert.throws(
-    () => readDryRunHashes(JSON.stringify({ tasks: [{ taskId: "pkg#build" }] })),
-    /gives task "pkg#build" no task hash/
-  );
-  // A hash that is not 16 hex digits is not a Turbo task hash: such a dry run would keep no entry, so it is refused.
-  for (const hash of ["a", `${KEPT}0`, KEPT.slice(1)]) {
-    assert.throws(() => readDryRunHashes(dryRun([KEPT, hash])), /gives task "pkg-1#build" no task hash/);
+test("a summary's tasks are read, and a summary without tasks, hashes or directories is an error", () => {
+  const tasks = readSummaryTasks(summary([KEPT, NEW], { outputs: ["dist/**"], cache: { status: "HIT" } }), "x");
+  assert.deepEqual(tasks[1], {
+    taskId: "pkg-1#build",
+    hash: NEW,
+    directory: "pkg-1",
+    outputs: ["dist/**"],
+    excludedOutputs: undefined,
+  });
+  assert.throws(() => readSummaryTasks("turbo 2.6.1\n{}", "dry run"), /dry run is not JSON/);
+  assert.throws(() => readSummaryTasks(JSON.stringify({ tasks: [] }), "dry run"), /lists no tasks/);
+  assert.throws(() => readSummaryTasks(JSON.stringify({}), "dry run"), /lists no tasks/);
+  const noDirectory = JSON.stringify({ tasks: [{ taskId: "pkg#build", hash: KEPT }] });
+  assert.throws(() => readSummaryTasks(noDirectory, "dry run"), /gives task "pkg#build" no task hash or directory/);
+  // A hash that is not 16 hex digits is not a Turbo task hash: such a summary would keep no entry, so it is refused.
+  for (const hash of ["a", `${KEPT}0`, KEPT.slice(1), undefined]) {
+    assert.throws(() => readSummaryTasks(summary([KEPT, hash]), "x"), /gives task "pkg-1#build" no task hash/);
   }
-});
-
-function runCli(args) {
-  return spawnSync(process.execPath, [script, ...args], { encoding: "utf8" });
-}
-
-test("the command merges with the dry run's hashes and reports the counts", () => {
-  const { root, cacheDir, asideDir } = freshDirs();
-  writeEntry(asideDir, KEPT, "aside");
-  writeEntry(asideDir, STALE, "aside");
-  writeEntry(cacheDir, NEW, "new");
-  const dryRunFile = path.join(root, "dry-run.json");
-  writeFileSync(dryRunFile, dryRun([KEPT, NEW]));
-
-  const run = runCli(["--cache-dir", cacheDir, "--aside-dir", asideDir, "--dry-run", dryRunFile]);
-
-  assert.equal(run.status, 0, run.stderr);
-  assert.match(
-    run.stdout,
-    /2 current task hashes; kept 1 new entries, kept 1 set-aside entries, dropped 0 .* pruned 1 set-aside /
-  );
-  assert.doesNotMatch(run.stdout, /::warning/);
-  assert.deepEqual(Object.keys(cacheContents(cacheDir)), [
-    `${KEPT}-meta.json`,
-    `${KEPT}.tar.zst`,
-    `${NEW}-meta.json`,
-    `${NEW}.tar.zst`,
-  ]);
-});
-
-test("the command prunes a pull request's restored entries from the restored list", () => {
-  const { root, cacheDir } = freshDirs();
-  writeEntry(cacheDir, KEPT, "restored");
-  writeEntry(cacheDir, STALE, "restored");
-  const restoredList = path.join(root, "restored.txt");
-  writeFileSync(restoredList, `${readdirSync(cacheDir).join("\n")}\n`);
-  writeEntry(cacheDir, NEW, "new");
-  const dryRunFile = path.join(root, "dry-run.json");
-  writeFileSync(dryRunFile, dryRun([KEPT, NEW]));
-
-  const run = runCli(["--cache-dir", cacheDir, "--restored-list", restoredList, "--dry-run", dryRunFile]);
-
-  assert.equal(run.status, 0, run.stderr);
-  assert.match(run.stdout, /kept 1 new entries, kept 1 restored entries, .* pruned 1 restored entries /);
-  assert.deepEqual(Object.keys(cacheContents(cacheDir)), [
-    `${KEPT}-meta.json`,
-    `${KEPT}.tar.zst`,
-    `${NEW}-meta.json`,
-    `${NEW}.tar.zst`,
-  ]);
-});
-
-test("the command warns when a new entry's hash is missing from the dry run", () => {
-  const { root, cacheDir, asideDir } = freshDirs();
-  writeEntry(cacheDir, NEW, "new");
-  const dryRunFile = path.join(root, "dry-run.json");
-  mkdirSync(root, { recursive: true });
-  writeFileSync(dryRunFile, dryRun([KEPT]));
-
-  const run = runCli(["--cache-dir", cacheDir, "--aside-dir", asideDir, "--dry-run", dryRunFile]);
-
-  assert.equal(run.status, 0, run.stderr);
-  assert.match(run.stdout, new RegExp(`::warning title=Turbo cache merge::1 new cache entries .*: ${NEW}`));
-});
-
-test("the command fails, leaving the set-aside entries, on a bad dry run or bad arguments", () => {
-  const { root, cacheDir, asideDir } = freshDirs();
-  writeEntry(asideDir, KEPT, "aside");
-  const dryRunFile = path.join(root, "dry-run.json");
-  writeFileSync(dryRunFile, JSON.stringify({ tasks: [] }));
-
-  const badDryRun = runCli(["--cache-dir", cacheDir, "--aside-dir", asideDir, "--dry-run", dryRunFile]);
-  assert.equal(badDryRun.status, 1);
-  assert.match(badDryRun.stderr, /turbo-cache-merge: the dry run lists no tasks/);
-  assert.equal(existsSync(path.join(asideDir, `${KEPT}.tar.zst`)), true);
-
-  for (const args of [
-    ["--cache-dir", cacheDir, "--aside-dir", asideDir],
-    ["--cache-dir", cacheDir, "--aside-dir", asideDir, "--dry-run"],
-    ["--cache-dir", cacheDir, "--aside-dir", asideDir, "--dry-run", dryRunFile, "--extra", "x"],
-    ["--cache-dir", cacheDir, "--cache-dir", cacheDir, "--aside-dir", asideDir, "--dry-run", dryRunFile],
-    ["--cache-dir", cacheDir, "--dry-run", dryRunFile],
-    ["--cache-dir", cacheDir, "--aside-dir", asideDir, "--restored-list", dryRunFile, "--dry-run", dryRunFile],
-  ]) {
-    const run = runCli(args);
-    assert.equal(run.status, 1, `${args.join(" ")} must fail`);
-    assert.match(run.stderr, /turbo-cache-merge: /);
-  }
-});
-
-function git(cwd, ...args) {
-  const run = spawnSync("git", args, { cwd, encoding: "utf8" });
-  assert.equal(run.status, 0, run.stderr);
-  return run.stdout;
-}
-
-function commit(cwd, message) {
-  const identity = ["-c", "user.name=test", "-c", "user.email=test@example.invalid", "-c", "commit.gpgsign=false"];
-  git(cwd, ...identity, "commit", "--quiet", "-m", message);
-}
-
-// A Git checkout with two committed files: a template and the file generated from it, as a build writes it.
-function freshCheckout() {
-  const { root } = freshDirs();
-  mkdirSync(path.join(root, "pkg"), { recursive: true });
-  writeFileSync(path.join(root, "pkg", "template.txt"), "v1\n");
-  writeFileSync(path.join(root, "pkg", "generated.txt"), "generated from v1\n");
-  git(root, "init", "--quiet");
-  git(root, "add", ".");
-  commit(root, "init");
-  return root;
-}
-
-// A dry run whose only task, pkg#build, declares `outputs` (and `excludedOutputs`) in the package directory `pkg`.
-function writeDryRun(root, outputs = ["dist/**"], excludedOutputs = null) {
-  const file = path.join(root, "..", `${path.basename(root)}-dry-run.json`);
-  const task = { taskId: "pkg#build", hash: KEPT, directory: "pkg", outputs, excludedOutputs };
-  writeFileSync(file, JSON.stringify({ tasks: [task] }));
-  return file;
-}
-
-function runCheckClean(cwd, args = ["--check-clean", "--dry-run", writeDryRun(cwd)]) {
-  return spawnSync(process.execPath, [script, ...args], { cwd, encoding: "utf8" });
-}
-
-test("tracked files that differ from HEAD are reported, untracked files are not", () => {
-  const root = freshCheckout();
-  assert.deepEqual(changedTrackedFiles(root), []);
-
-  writeFileSync(path.join(root, "pkg", "untracked.txt"), "a build output");
-  assert.deepEqual(changedTrackedFiles(root), []);
-
-  writeFileSync(path.join(root, "pkg", "generated.txt"), "generated from v2\n");
-  rmSync(path.join(root, "pkg", "template.txt"));
-  assert.deepEqual(changedTrackedFiles(root), ["pkg/generated.txt", "pkg/template.txt"]);
-
-  git(root, "add", "pkg/generated.txt");
-  assert.deepEqual(changedTrackedFiles(root), ["pkg/generated.txt", "pkg/template.txt"]);
-});
-
-test("--check-clean passes on a clean checkout and fails, naming each file, when a task changed a tracked file", () => {
-  const root = freshCheckout();
-  writeFileSync(path.join(root, "pkg", "untracked.txt"), "a build output");
-  const clean = runCheckClean(root);
-  assert.equal(clean.status, 0, clean.stderr);
-  assert.match(clean.stdout, /no task changed a tracked file/);
-
-  // A build regenerated the committed file: the run fails, whether a later task would have read it or not.
-  writeFileSync(path.join(root, "pkg", "generated.txt"), "generated from v2\n");
-  const dirty = runCheckClean(root);
-  assert.equal(dirty.status, 1);
-  assert.match(dirty.stdout, /^::error file=pkg\/generated\.txt,title=Tracked file changed by a task::/m);
-  assert.match(dirty.stdout, /pkg\/generated\.txt \| /);
-  assert.match(dirty.stderr, /turbo-cache-merge: 1 tracked files changed after the tasks ran: pkg\/generated\.txt/);
-
-  for (const args of [["--check-clean"], ["--check-clean", "--cache-dir", root], ["--dry-run", "x", "--check-clean"]]) {
-    const wrong = runCheckClean(root, args);
-    assert.equal(wrong.status, 1, args.join(" "));
-    assert.match(wrong.stderr, /usage: /);
-  }
-});
-
-test("--check-clean passes a changed tracked file a task declares as an output and still fails an undeclared one", () => {
-  const root = freshCheckout();
-  writeFileSync(path.join(root, "pkg", "generated.txt"), "generated from v2\n");
-
-  // pkg#build declares the generated file as an output, so a replay restores it: the run passes.
-  const declared = runCheckClean(root, ["--check-clean", "--dry-run", writeDryRun(root, ["dist/**", "generated.txt"])]);
-  assert.equal(declared.status, 0, declared.stdout + declared.stderr);
-  assert.match(declared.stdout, /1 changed tracked files are declared task outputs, which a replay restores: pkg\/generated\.txt/);
-  assert.doesNotMatch(declared.stdout, /::error/);
-
-  // The template is no task's output: the run fails, naming only the undeclared file.
-  writeFileSync(path.join(root, "pkg", "template.txt"), "v2\n");
-  const mixed = runCheckClean(root, ["--check-clean", "--dry-run", writeDryRun(root, ["generated.txt"])]);
-  assert.equal(mixed.status, 1);
-  assert.match(mixed.stdout, /^::error file=pkg\/template\.txt,/m);
-  assert.doesNotMatch(mixed.stdout, /::error file=pkg\/generated\.txt/);
-  assert.match(mixed.stderr, /1 tracked files changed after the tasks ran: pkg\/template\.txt$/m);
-
-  // A `!` glob takes the file out of the task's outputs again.
-  const excluded = runCheckClean(root, [
-    "--check-clean",
-    "--dry-run",
-    writeDryRun(root, ["*.txt"], ["template.txt"]),
-  ]);
-  assert.equal(excluded.status, 1);
-  assert.match(excluded.stdout, /^::error file=pkg\/template\.txt,/m);
-  assert.doesNotMatch(excluded.stdout, /::error file=pkg\/generated\.txt/);
-
-  const malformed = runCheckClean(root, ["--check-clean", "--dry-run", path.join(root, "missing.json")]);
-  assert.equal(malformed.status, 1);
-  assert.doesNotMatch(malformed.stdout, /no task changed/);
 });
 
 test("declared outputs follow Turbo's globs relative to each task's directory", () => {
-  const isOutput = declaredOutputMatcher(
-    JSON.stringify({
-      tasks: [
-        { taskId: "a#build", directory: "apps/a", outputs: [".next/**", "dist/**"], excludedOutputs: [".next/cache/**"] },
-        { taskId: "b#build", directory: "libs/b", outputs: ["src/*.generated.{ts,js}", "!src/skip.generated.ts", "?.md"] },
-        { taskId: "c#build", directory: "libs/c", outputs: ["$TURBO_ROOT$/shared/out/**", "lib/**/index.d.ts"] },
-        { taskId: "//#lint", directory: "", outputs: ["report.json"] },
-        { taskId: "d#test", directory: "libs/d" },
-      ],
-    })
-  );
+  const isOutput = declaredOutputMatcher([
+    { taskId: "a#build", directory: "apps/a", outputs: [".next/**", "dist/**"], excludedOutputs: [".next/cache/**"] },
+    { taskId: "b#build", directory: "libs/b", outputs: ["src/*.generated.{ts,js}", "!src/skip.generated.ts", "?.md"] },
+    { taskId: "c#build", directory: "libs/c", outputs: ["$TURBO_ROOT$/shared/out/**", "lib/**/index.d.ts"] },
+    { taskId: "//#lint", directory: "", outputs: ["report.json"] },
+    { taskId: "d#test", directory: "libs/d" },
+  ]);
   const cases = {
     "apps/a/.next/server/page.js": true,
     "apps/a/dist/index.js": true,
@@ -410,28 +199,274 @@ test("declared outputs follow Turbo's globs relative to each task's directory", 
     "libs/d/report.json": false,
   };
   for (const [file, expected] of Object.entries(cases)) assert.equal(isOutput(file), expected, file);
+  const matcher = (outputs) => () => declaredOutputMatcher([{ taskId: "a#build", directory: "a", outputs }]);
+  assert.throws(matcher("dist/**"), /malformed outputs/);
+  assert.throws(matcher([""]), /malformed outputs/);
+  assert.throws(matcher(["../../x/**"]), /outside the repository/);
+  assert.throws(matcher(["dist**"]), /unsupported output glob/);
+  assert.throws(matcher(["{a,b"]), /unsupported output glob/);
 });
 
-test("a dry run without tasks, directories or well-formed output globs is an error", () => {
-  const matcher = (tasks) => () => declaredOutputMatcher(JSON.stringify({ tasks }));
-  assert.throws(() => declaredOutputMatcher("not json"), /not JSON/);
-  assert.throws(matcher([]), /lists no tasks/);
-  assert.throws(matcher([{ taskId: "a#build", outputs: ["dist/**"] }]), /no directory/);
-  assert.throws(matcher([{ taskId: "a#build", directory: "a", outputs: "dist/**" }]), /malformed outputs/);
-  assert.throws(matcher([{ taskId: "a#build", directory: "a", outputs: [""] }]), /malformed outputs/);
-  assert.throws(matcher([{ taskId: "a#build", directory: "a", outputs: ["../../x/**"] }]), /outside the repository/);
-  assert.throws(matcher([{ taskId: "a#build", directory: "a", outputs: ["dist**"] }]), /unsupported output glob/);
-  assert.throws(matcher([{ taskId: "a#build", directory: "a", outputs: ["{a,b"] }]), /unsupported output glob/);
+// Step records as recordStep writes them: `listing` names the cache files, `snapshot` maps drift paths to hashes.
+const baseline = (listing = [], snapshot = {}) => ({ name: "prepare", baseline: true, tasks: [], listing, snapshot });
+const step = (name, listing, snapshot, tasks = [{ taskId: `${name}#x`, hash: KEPT, directory: "pkg" }]) => ({
+  name,
+  tasks,
+  listing,
+  snapshot,
 });
 
-test("--check-clean escapes annotation properties in a file name", () => {
-  const root = freshCheckout();
-  writeFileSync(path.join(root, "pkg", "a,b:c%.txt"), "x");
+test("only the entries that first appeared in a step that changed files outside declared outputs are tainted", () => {
+  const drift = { "pkg/src/generated.ts": "v2", "pkg/notes.txt": "new" };
+  const records = [
+    baseline(files(KEPT)),
+    step("build", files(KEPT, BUILD), drift),
+    step("typecheck", files(KEPT, BUILD, TYPECHECK), drift), // reads the regenerated file, writes nothing new
+    step("test", files(KEPT, BUILD, TYPECHECK), drift), // replays every task
+  ];
+
+  const { tainted, reports } = taintedEntries(records, files(KEPT, BUILD, TYPECHECK));
+
+  assert.deepEqual([...tainted], [BUILD]);
+  assert.deepEqual(reports, [
+    {
+      step: "build",
+      reason: "files changed outside the declared outputs",
+      drift: ["pkg/notes.txt", "pkg/src/generated.ts"],
+      entries: 1,
+    },
+  ]);
+  // A later step that changes a drifted file again, or deletes it, is tainted too.
+  const all = files(KEPT, BUILD, TYPECHECK);
+  for (const later of [{ ...drift, "pkg/notes.txt": "v3" }, { "pkg/notes.txt": "new" }]) {
+    const records2 = [...records.slice(0, 2), step("typecheck", all, later)];
+    assert.deepEqual([...taintedEntries(records2, all).tainted].sort(), [BUILD, TYPECHECK].sort());
+  }
+});
+
+test("files the summarised tasks declare as outputs, in this or an earlier step, are not drift", () => {
+  const buildTasks = [
+    {
+      taskId: "ui#build",
+      hash: BUILD,
+      directory: "ui",
+      outputs: ["src/*.generated.ts", "dist/**"],
+      excludedOutputs: ["dist/skip/**"],
+    },
+  ];
+  const snapshot = { "ui/src/catalog.generated.ts": "v2", "ui/dist/index.js": "v2" };
+  const records = [
+    baseline(),
+    step("build", files(BUILD), snapshot, buildTasks),
+    step("typecheck", files(BUILD, TYPECHECK), { ...snapshot, "ui/src/catalog.generated.ts": "v3" }),
+  ];
+  assert.deepEqual([...taintedEntries(records, files(BUILD, TYPECHECK)).tainted], []);
+
+  const excluded = [baseline(), step("build", files(BUILD), { ...snapshot, "ui/dist/skip/x.js": "v1" }, buildTasks)];
+  const { tainted, reports } = taintedEntries(excluded, files(BUILD));
+  assert.deepEqual([...tainted], [BUILD]);
+  assert.deepEqual(reports[0].drift, ["ui/dist/skip/x.js"]);
+});
+
+test("missing evidence taints: no summary, no listing, no snapshot, no record or a malformed output glob", () => {
+  const built = files(BUILD);
+  const both = files(BUILD, TYPECHECK);
+  const TC = TYPECHECK;
+  const malformed = [{ taskId: "x#build", hash: BUILD, directory: "x", outputs: [7] }];
+  const cases = [
+    ["no readable Turbo run summary", [baseline(), step("build", built, {}, null)], built, [BUILD]],
+    // Without the build's listing, its entries first show up in the typecheck record, which is tainted for them.
+    ["has no cache listing", [baseline(), step("build", null, {}), step("typecheck", both, {})], both, [BUILD, TC]],
+    // A step without a snapshot cannot be compared, so it and the step after it are tainted.
+    ["no drift snapshot", [baseline(), step("build", built, null), step("typecheck", both, {})], both, [BUILD, TC]],
+    ["entries no step recorded", [baseline(), step("build", built, {})], files(BUILD, NEW), [NEW]],
+    ["has no cache listing", [baseline(), step("build", built, {}), step("lint", null, {})], files(BUILD, NEW), [NEW]],
+    ["malformed outputs", [baseline(), step("build", built, {}, malformed)], built, [BUILD]],
+  ];
+  for (const [reason, records, finalListing, expected] of cases) {
+    const { tainted, reports } = taintedEntries(records, finalListing);
+    assert.deepEqual([...tainted].sort(), expected.sort(), reason);
+    assert.ok(reports.some((report) => report.reason.includes(reason)), `${reason}: ${JSON.stringify(reports)}`);
+  }
+  assert.deepEqual([...taintedEntries([baseline(), step("build", files(BUILD), {})], files(BUILD)).tainted], []);
+  const incomplete = [[], [step("build", [], {})], [{ ...baseline(), snapshot: null }]];
+  incomplete.push([{ ...baseline(), listing: null }]);
+  for (const records of incomplete) {
+    assert.throws(() => taintedEntries(records, []), /not a complete baseline/);
+  }
+});
+
+function git(cwd, ...args) {
+  const run = spawnSync("git", args, { cwd, encoding: "utf8" });
+  assert.equal(run.status, 0, run.stderr);
+  return run.stdout;
+}
+
+// A Git checkout with a committed template, the file generated from it and a .gitignore for Turbo's directories.
+function freshCheckout() {
+  const { root } = freshDirs();
+  mkdirSync(path.join(root, "pkg"), { recursive: true });
+  writeFileSync(path.join(root, ".gitignore"), ".turbo/\ndist/\n");
+  writeFileSync(path.join(root, "pkg", "template.txt"), "v1\n");
+  writeFileSync(path.join(root, "pkg", "generated.txt"), "generated from v1\n");
+  git(root, "init", "--quiet");
   git(root, "add", ".");
-  commit(root, "more");
-  writeFileSync(path.join(root, "pkg", "a,b:c%.txt"), "y");
+  const identity = ["-c", "user.name=test", "-c", "user.email=test@example.invalid", "-c", "commit.gpgsign=false"];
+  git(root, ...identity, "commit", "--quiet", "-m", "init");
+  return root;
+}
 
-  const run = runCheckClean(root);
-  assert.equal(run.status, 1);
-  assert.match(run.stdout, /^::error file=pkg\/a%2Cb%3Ac%25\.txt,title=/m);
+test("the drift snapshot hashes changed and deleted tracked files and untracked files that are not ignored", () => {
+  const root = freshCheckout();
+  assert.deepEqual(driftSnapshot(root), {});
+  mkdirSync(path.join(root, "pkg", "dist"), { recursive: true });
+  writeFileSync(path.join(root, "pkg", "dist", "index.js"), "ignored output");
+  writeFileSync(path.join(root, "pkg", "generated.txt"), "generated from v2\n");
+  writeFileSync(path.join(root, "pkg", "new file.txt"), "untracked");
+  rmSync(path.join(root, "pkg", "template.txt"));
+
+  const first = driftSnapshot(root);
+  assert.deepEqual(Object.keys(first).sort(), ["pkg/generated.txt", "pkg/new file.txt", "pkg/template.txt"]);
+  assert.equal(first["pkg/template.txt"], "deleted");
+  assert.match(first["pkg/generated.txt"], /^[0-9a-f]{64}$/);
+  writeFileSync(path.join(root, "pkg", "new file.txt"), "untracked, rewritten");
+  const second = driftSnapshot(root);
+  assert.notEqual(second["pkg/new file.txt"], first["pkg/new file.txt"]);
+  assert.equal(second["pkg/generated.txt"], first["pkg/generated.txt"]);
+});
+
+test("a step record holds the step's one run summary, which it removes, the cache files and the snapshot", () => {
+  const root = freshCheckout();
+  const stepsDir = path.join(root, ".turbo", "steps");
+  const runsDir = path.join(root, ".turbo", "runs");
+  const base = recordStep({ name: "prepare", stepsDir, cwd: root, baseline: true });
+  assert.deepEqual(base, { name: "prepare", baseline: true, tasks: [], listing: [], snapshot: {}, errors: [] });
+
+  writeEntry(path.join(root, ".turbo", "cache"), BUILD, "new");
+  mkdirSync(runsDir, { recursive: true });
+  writeFileSync(path.join(runsDir, "run-1.json"), summary([BUILD], { outputs: ["dist/**"] }));
+  writeFileSync(path.join(root, "pkg", "generated.txt"), "generated from v2\n");
+  const build = recordStep({ name: "build", stepsDir, cwd: root });
+  assert.deepEqual(build.tasks.map((task) => task.hash), [BUILD]);
+  assert.deepEqual(build.listing, files(BUILD));
+  assert.deepEqual(Object.keys(build.snapshot), ["pkg/generated.txt"]);
+  assert.deepEqual(readdirSync(runsDir), []);
+
+  writeFileSync(path.join(runsDir, "run-2.json"), summary([TYPECHECK]));
+  writeFileSync(path.join(runsDir, "run-3.json"), summary([TYPECHECK]));
+  const ambiguous = recordStep({ name: "typecheck", stepsDir, cwd: root });
+  assert.equal(ambiguous.tasks, null);
+  assert.match(ambiguous.errors[0], /found 2 Turbo run summaries, expected 1/);
+  assert.equal(recordStep({ name: "lint", stepsDir, cwd: root }).tasks, null, "a step without a summary has none");
+  assert.deepEqual(readdirSync(stepsDir), ["00-prepare.json", "01-build.json", "02-typecheck.json", "03-lint.json"]);
+  assert.deepEqual(readRecords(stepsDir).map((record) => record.name), ["prepare", "build", "typecheck", "lint"]);
+});
+
+function runCli(cwd, args) {
+  return spawnSync(process.execPath, [script, ...args], { cwd, encoding: "utf8" });
+}
+
+// Runs one Turbo step as CI does: the step's task writes `entries` and changes `writes`, Turbo writes a summary of
+// `tasks`, and the step records its evidence.
+function runStep(root, name, { entries = [], tasks = [], writes = {} }) {
+  for (const hash of entries) writeEntry(path.join(root, ".turbo", "cache"), hash, name);
+  for (const [file, content] of Object.entries(writes)) writeFileSync(path.join(root, file), content);
+  mkdirSync(path.join(root, ".turbo", "runs"), { recursive: true });
+  const summaryTasks = tasks.map(([hash, outputs]) => ({ taskId: `pkg#${name}`, hash, directory: "pkg", outputs }));
+  writeFileSync(path.join(root, ".turbo", "runs", `${name}.json`), JSON.stringify({ tasks: summaryTasks }));
+  const run = runCli(root, ["--record", name, "--steps-dir", path.join(root, "..", `${path.basename(root)}-steps`)]);
+  assert.equal(run.status, 0, run.stderr);
+}
+
+function merge(root, extra = []) {
+  const dryRunFile = path.join(root, "..", `${path.basename(root)}-dry-run.json`);
+  const stepsDir = path.join(root, "..", `${path.basename(root)}-steps`);
+  const args = ["--merge", "--steps-dir", stepsDir, "--cache-dir", ".turbo/cache", "--dry-run", dryRunFile];
+  return runCli(root, [...args, ...extra]);
+}
+
+test("a pull request saves no entry of a step that changed a tracked file, keeping hashes only a summary gives", () => {
+  const root = freshCheckout();
+  // The pull request restored KEPT (current) and STALE (not current); REWRITTEN is a task hash that only a step summary
+  // gives, as when an earlier step rewrote a declared output that the task reads.
+  writeEntry(path.join(root, ".turbo", "cache"), KEPT, "restored");
+  writeEntry(path.join(root, ".turbo", "cache"), STALE, "restored");
+  writeEntry(path.join(root, ".turbo", "cache"), REWRITTEN, "restored");
+  writeFileSync(path.join(root, "..", `${path.basename(root)}-dry-run.json`), summary([KEPT, BUILD, TYPECHECK]));
+  const steps = path.join(root, "..", `${path.basename(root)}-steps`);
+  assert.equal(runCli(root, ["--record", "prepare", "--baseline", "--steps-dir", steps]).status, 0);
+
+  runStep(root, "build", { entries: [BUILD], tasks: [[BUILD, ["dist/**"]]], writes: { "pkg/generated.txt": "v2\n" } });
+  runStep(root, "typecheck", { entries: [TYPECHECK], tasks: [[BUILD], [TYPECHECK], [REWRITTEN]] });
+  const run = merge(root);
+
+  assert.equal(run.status, 0, run.stderr);
+  assert.deepEqual(Object.keys(cacheContents(path.join(root, ".turbo", "cache"))), files(KEPT, REWRITTEN, TYPECHECK));
+  assert.match(
+    run.stdout,
+    /^::warning title=Turbo cache not saved for build::files changed outside the declared outputs; dropping 1 new /m
+  );
+  assert.match(run.stdout, /^::warning file=pkg\/generated\.txt,title=Changed outside Turbo outputs::The build step /m);
+  assert.match(
+    run.stdout,
+    /4 current task hashes; kept 1 new entries, dropped 1 tainted new entries, kept 2 restored entries, .* pruned 1 /
+  );
+});
+
+test("a push merges the set-aside entries, drops tainted ones and escapes annotation file names", () => {
+  const root = freshCheckout();
+  const aside = path.join(root, "..", `${path.basename(root)}-aside`);
+  writeEntry(aside, KEPT, "aside");
+  writeEntry(aside, STALE, "aside");
+  writeEntry(aside, BUILD, "aside");
+  writeFileSync(path.join(root, "..", `${path.basename(root)}-dry-run.json`), summary([KEPT, BUILD, NEW]));
+  const steps = path.join(root, "..", `${path.basename(root)}-steps`);
+  assert.equal(runCli(root, ["--record", "prepare", "--baseline", "--steps-dir", steps]).status, 0);
+
+  runStep(root, "build", { entries: [BUILD], tasks: [[BUILD]], writes: { "pkg/a,b:c%.txt": "x" } });
+  runStep(root, "test", { entries: [NEW], tasks: [[NEW]] });
+  const run = merge(root, ["--aside-dir", aside]);
+
+  assert.equal(run.status, 0, run.stderr);
+  assert.deepEqual(Object.keys(cacheContents(path.join(root, ".turbo", "cache"))), files(KEPT, NEW));
+  assert.match(run.stdout, /^::warning file=pkg\/a%2Cb%3Ac%25\.txt,title=/m);
+  assert.equal(existsSync(aside), false);
+});
+
+test("the command fails without a complete baseline, on a bad dry run or on bad arguments, changing nothing", () => {
+  const root = freshCheckout();
+  const aside = path.join(root, "..", `${path.basename(root)}-aside`);
+  writeEntry(aside, KEPT, "aside");
+  const dryRunFile = path.join(root, "..", `${path.basename(root)}-dry-run.json`);
+  writeFileSync(dryRunFile, summary([KEPT]));
+  const noBaseline = merge(root, ["--aside-dir", aside]);
+  assert.equal(noBaseline.status, 1);
+  assert.match(noBaseline.stderr, /turbo-cache-merge: the first step record is not a complete baseline/);
+
+  const steps = path.join(root, "..", `${path.basename(root)}-steps`);
+  assert.equal(runCli(root, ["--record", "prepare", "--baseline", "--steps-dir", steps]).status, 0);
+  writeFileSync(dryRunFile, JSON.stringify({ tasks: [] }));
+  const badDryRun = merge(root, ["--aside-dir", aside]);
+  assert.equal(badDryRun.status, 1);
+  assert.match(badDryRun.stderr, /turbo-cache-merge: the dry run lists no tasks/);
+  assert.equal(existsSync(path.join(aside, `${KEPT}.tar.zst`)), true);
+
+  for (const args of [
+    [],
+    ["--record", "build"],
+    ["--record", "../build", "--steps-dir", steps],
+    ["--record", "build", "--steps-dir", steps, "--cache-dir", "c"],
+    ["--merge", "--steps-dir", steps, "--cache-dir", "c"],
+    ["--merge", "--steps-dir", steps, "--dry-run", dryRunFile],
+    ["--merge", "--record", "build", "--steps-dir", steps, "--cache-dir", "c", "--dry-run", dryRunFile],
+    ["--merge", "--baseline", "--steps-dir", steps, "--cache-dir", "c", "--dry-run", dryRunFile],
+    ["--merge", "--steps-dir", steps, "--cache-dir", "c", "--cache-dir", "c", "--dry-run", dryRunFile],
+    ["--merge", "--steps-dir", steps, "--cache-dir", "c", "--dry-run", dryRunFile, "--extra", "x"],
+    ["--merge", "--steps-dir", steps, "--cache-dir", "c", "--dry-run"],
+  ]) {
+    const run = runCli(root, args);
+    assert.equal(run.status, 1, `${args.join(" ")} must fail`);
+    assert.match(run.stderr, /turbo-cache-merge: /);
+  }
+  assert.deepEqual(readdirSync(steps), ["00-prepare.json"]);
 });

@@ -215,16 +215,20 @@ jobs:
           echo "typecheck filters: ${{ needs.plan.outputs.js_typecheck_filters }}"
           echo "devfn tests (DevFn tests job): ${{ needs.plan.outputs.devfn_test_filters }}"
 
-      # Turbo's task cache (SFNS-312). Every run records the current task hashes before any task runs. A pull request
-      # replays each task whose Turbo inputs are unchanged, then prunes the restored entries whose hash is not current
-      # and saves its entry, even when a task failed, unless a task changed a tracked file. Every other run (a push,
-      # the nightly run, a manual run) replays nothing, because the release CI gate needs every task run on the release
-      # commit: it sets the restored entries aside, runs every selected task while Turbo writes the cache, then merges
-      # back the set-aside entries for current hashes the run did not rewrite (scripts/turbo-cache-merge.mjs), so the
-      # entry it saves, which pull requests restore, holds every task and not only those the run selected. It saves
-      # only when every step passed, so a failed run leaves the last complete entry in place. `--cache=local:w` is not used for this: each step would
-      # then rebuild every `^build` instead of reading the Build step's results. The Node major and the job are in the
-      # key, so another Node version or job never reuses an entry.
+      # Turbo's task cache (SFNS-312, scripts/turbo-cache-merge.mjs). Every run records the current task hashes and a
+      # baseline before any task runs, and each Turbo step runs with --summarize and records its summary, the cache
+      # files and the changed or untracked files. Before saving, the merge deletes each entry written by a step that
+      # changed a file outside its tasks' declared outputs (a replay would not restore that file) or that left no
+      # record, and reports those files as warnings; the cache never changes a job's result. A pull request replays
+      # each task whose Turbo inputs are unchanged, prunes the restored entries whose hash is not current and saves its
+      # entry even when a task failed. Every other run (a push, the nightly run, a manual run) replays nothing, because
+      # the release CI gate needs every task run on the release commit: it sets the restored entries aside, runs every
+      # selected task while Turbo writes the cache, then merges back the set-aside entries for current hashes the run
+      # did not rewrite, so the entry it saves, which pull requests restore, holds every task and not only those the
+      # run selected. It saves only when every step passed, so a failed run leaves the last complete entry in place.
+      # `--cache=local:w` is not used for this: each step would then rebuild every `^build` instead of reading the
+      # Build step's results. The Node major and the job are in the key, so another Node version or job never reuses
+      # an entry.
       - name: Turbo cache key
         id: turbo-cache-key
         run: echo "prefix=turbo-${RUNNER_OS}-node$(node -p 'process.versions.node.split(".")[0]')-${GITHUB_JOB}" >> "$GITHUB_OUTPUT"
@@ -243,74 +247,75 @@ jobs:
       - name: Record the Turbo task hashes and the restored cache
         id: turbo-cache-prepare
         run: |
-          ./node_modules/.bin/turbo run build typecheck test lint --dry=json > "$RUNNER_TEMP/turbo-dry-run.json"
-          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
-            ls -1 .turbo/cache > "$RUNNER_TEMP/turbo-cache-restored.txt" 2>/dev/null || true
-          elif [ -d .turbo/cache ]; then
+          if [ "$GITHUB_EVENT_NAME" != "pull_request" ] && [ -d .turbo/cache ]; then
             mv .turbo/cache "$RUNNER_TEMP/turbo-cache-aside"
           fi
+          ./node_modules/.bin/turbo run build typecheck test lint --dry=json > "$RUNNER_TEMP/turbo-dry-run.json"
+          node scripts/turbo-cache-merge.mjs --record prepare --baseline --steps-dir "$RUNNER_TEMP/turbo-steps"
 
       - name: Build
         if: needs.plan.outputs.has_js_build == 'true'
         run: |
+          status=0
           if [ "${{ needs.plan.outputs.full_js }}" = "true" ]; then
-            ./node_modules/.bin/turbo run build
+            ./node_modules/.bin/turbo run build --summarize || status=$?
           else
-            ./node_modules/.bin/turbo run build ${{ needs.plan.outputs.js_build_filters }}
+            ./node_modules/.bin/turbo run build --summarize ${{ needs.plan.outputs.js_build_filters }} || status=$?
           fi
+          node scripts/turbo-cache-merge.mjs --record build --steps-dir "$RUNNER_TEMP/turbo-steps" || true
+          exit "$status"
 
       - name: Typecheck
         if: needs.plan.outputs.has_js_typecheck == 'true'
         run: |
+          status=0
           if [ "${{ needs.plan.outputs.full_js }}" = "true" ]; then
-            ./node_modules/.bin/turbo run typecheck
+            ./node_modules/.bin/turbo run typecheck --summarize || status=$?
           else
-            ./node_modules/.bin/turbo run typecheck ${{ needs.plan.outputs.js_typecheck_filters }}
+            ./node_modules/.bin/turbo run typecheck --summarize ${{ needs.plan.outputs.js_typecheck_filters }} || status=$?
           fi
+          node scripts/turbo-cache-merge.mjs --record typecheck --steps-dir "$RUNNER_TEMP/turbo-steps" || true
+          exit "$status"
 
       # Avoid oversubscribing hosted runners with many concurrent Vitest pools. The filters exclude every DevFn
       # package, even on a full run: the DevFn tests job runs those.
       - name: Test
         if: needs.plan.outputs.has_js_test == 'true'
-        run: ./node_modules/.bin/turbo run test --concurrency=2 ${{ needs.plan.outputs.js_test_filters }}
+        run: |
+          status=0
+          ./node_modules/.bin/turbo run test --concurrency=2 --summarize ${{ needs.plan.outputs.js_test_filters }} || status=$?
+          node scripts/turbo-cache-merge.mjs --record test --steps-dir "$RUNNER_TEMP/turbo-steps" || true
+          exit "$status"
 
       - name: Lint
         if: needs.plan.outputs.has_js_lint == 'true'
         run: |
+          status=0
           if [ "${{ needs.plan.outputs.full_js }}" = "true" ]; then
-            ./node_modules/.bin/turbo run lint
+            ./node_modules/.bin/turbo run lint --summarize || status=$?
           else
-            ./node_modules/.bin/turbo run lint ${{ needs.plan.outputs.js_lint_filters }}
+            ./node_modules/.bin/turbo run lint --summarize ${{ needs.plan.outputs.js_lint_filters }} || status=$?
           fi
-
-      # A replayed task restores only its declared outputs. A task that rewrites a tracked file, such as a generated
-      # source or doc a later task checks, would pass when it runs and fail when it is replayed, so a run fails when any
-      # task left a tracked file changed that no task declares as an output, and then no run, a pull request included,
-      # merges or saves a cache entry: an entry hashed from the stale file would let a later run replay the task and
-      # pass. Commit the regenerated file (SFNS-312). A changed tracked file that a task declares as an output passes,
-      # since a replay restores it. When this check passes, a pull request still saves its entry if a task failed.
-      - name: Check that no task changed a tracked file
-        id: turbo-cache-check
-        if: ${{ !cancelled() && steps.turbo-cache-prepare.outcome == 'success' }}
-        run: node scripts/turbo-cache-merge.mjs --check-clean --dry-run "$RUNNER_TEMP/turbo-dry-run.json"
+          node scripts/turbo-cache-merge.mjs --record lint --steps-dir "$RUNNER_TEMP/turbo-steps" || true
+          exit "$status"
 
       - name: Merge and prune the Turbo cache
         id: turbo-cache-merge
         if: >-
-          ${{ steps.turbo-cache-prepare.outcome == 'success' && steps.turbo-cache-check.outcome == 'success' &&
+          ${{ steps.turbo-cache-prepare.outcome == 'success' &&
           (success() || (github.event_name == 'pull_request' && !cancelled())) }}
         run: |
-          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
-            restored=(--restored-list "$RUNNER_TEMP/turbo-cache-restored.txt")
-          else
-            restored=(--aside-dir "$RUNNER_TEMP/turbo-cache-aside")
+          aside=()
+          if [ "$GITHUB_EVENT_NAME" != "pull_request" ]; then
+            aside=(--aside-dir "$RUNNER_TEMP/turbo-cache-aside")
           fi
-          node scripts/turbo-cache-merge.mjs --cache-dir .turbo/cache "${restored[@]}" --dry-run "$RUNNER_TEMP/turbo-dry-run.json"
+          node scripts/turbo-cache-merge.mjs --merge --steps-dir "$RUNNER_TEMP/turbo-steps" --cache-dir .turbo/cache \
+            --dry-run "$RUNNER_TEMP/turbo-dry-run.json" "${aside[@]}"
 
       - name: Save Turbo cache
         if: >-
-          ${{ !cancelled() && steps.turbo-cache-check.outcome == 'success' &&
-          steps.turbo-cache-merge.outcome == 'success' && steps.turbo-cache-restore.outputs.cache-hit != 'true' }}
+          ${{ !cancelled() && steps.turbo-cache-merge.outcome == 'success' &&
+          steps.turbo-cache-restore.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .turbo/cache
@@ -376,40 +381,36 @@ jobs:
       - name: Record the Turbo task hashes and the restored cache
         id: turbo-cache-prepare
         run: |
-          ./node_modules/.bin/turbo run test --dry=json > "$RUNNER_TEMP/turbo-dry-run.json"
-          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
-            ls -1 .turbo/cache > "$RUNNER_TEMP/turbo-cache-restored.txt" 2>/dev/null || true
-          elif [ -d .turbo/cache ]; then
+          if [ "$GITHUB_EVENT_NAME" != "pull_request" ] && [ -d .turbo/cache ]; then
             mv .turbo/cache "$RUNNER_TEMP/turbo-cache-aside"
           fi
+          ./node_modules/.bin/turbo run test --dry=json > "$RUNNER_TEMP/turbo-dry-run.json"
+          node scripts/turbo-cache-merge.mjs --record prepare --baseline --steps-dir "$RUNNER_TEMP/turbo-steps"
 
       - name: Test
-        run: ./node_modules/.bin/turbo run test --concurrency=1 ${{ needs.plan.outputs.devfn_test_filters }}
-
-      # As in the JavaScript job: the Test step's `^build` tasks are replayed too, so a changed tracked file that no
-      # task declares as an output fails the run and no run merges or saves a cache entry.
-      - name: Check that no task changed a tracked file
-        id: turbo-cache-check
-        if: ${{ !cancelled() && steps.turbo-cache-prepare.outcome == 'success' }}
-        run: node scripts/turbo-cache-merge.mjs --check-clean --dry-run "$RUNNER_TEMP/turbo-dry-run.json"
+        run: |
+          status=0
+          ./node_modules/.bin/turbo run test --concurrency=1 --summarize ${{ needs.plan.outputs.devfn_test_filters }} || status=$?
+          node scripts/turbo-cache-merge.mjs --record test --steps-dir "$RUNNER_TEMP/turbo-steps" || true
+          exit "$status"
 
       - name: Merge and prune the Turbo cache
         id: turbo-cache-merge
         if: >-
-          ${{ steps.turbo-cache-prepare.outcome == 'success' && steps.turbo-cache-check.outcome == 'success' &&
+          ${{ steps.turbo-cache-prepare.outcome == 'success' &&
           (success() || (github.event_name == 'pull_request' && !cancelled())) }}
         run: |
-          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
-            restored=(--restored-list "$RUNNER_TEMP/turbo-cache-restored.txt")
-          else
-            restored=(--aside-dir "$RUNNER_TEMP/turbo-cache-aside")
+          aside=()
+          if [ "$GITHUB_EVENT_NAME" != "pull_request" ]; then
+            aside=(--aside-dir "$RUNNER_TEMP/turbo-cache-aside")
           fi
-          node scripts/turbo-cache-merge.mjs --cache-dir .turbo/cache "${restored[@]}" --dry-run "$RUNNER_TEMP/turbo-dry-run.json"
+          node scripts/turbo-cache-merge.mjs --merge --steps-dir "$RUNNER_TEMP/turbo-steps" --cache-dir .turbo/cache \
+            --dry-run "$RUNNER_TEMP/turbo-dry-run.json" "${aside[@]}"
 
       - name: Save Turbo cache
         if: >-
-          ${{ !cancelled() && steps.turbo-cache-check.outcome == 'success' &&
-          steps.turbo-cache-merge.outcome == 'success' && steps.turbo-cache-restore.outputs.cache-hit != 'true' }}
+          ${{ !cancelled() && steps.turbo-cache-merge.outcome == 'success' &&
+          steps.turbo-cache-restore.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .turbo/cache
