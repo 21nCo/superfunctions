@@ -147,7 +147,7 @@ The cleanest production setup is:
 - `billingAccountResolver` turns that subject into a stable billing account
 - consumers use entitlement and quota providers rather than inventing their own account mapping
 
-If you configure `auth.resolveSubject`, that auth-resolved subject takes precedence over any `subject` passed in the request body.
+The router needs `auth.resolveSubject` to know who a request acts for; a `subject` in the request body or query string is ignored when it is set. Without a resolver the account routes answer 401, unless you set `auth.allowClientSubject: true` for trusted server-to-server callers. See [Server setup](/docs/server/setup#who-the-router-acts-for).
 
 ## Next Steps
 

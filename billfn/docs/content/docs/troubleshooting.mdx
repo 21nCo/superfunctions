@@ -41,6 +41,19 @@ If that value is missing, the adapter raises `BILLFN_VALIDATION_ERROR`.
 
 Do not assume every provider supports every lifecycle action. Check the mounted adapter capabilities and keep your route or UI flow provider-aware where needed.
 
+## Account routes answer 401 `BILLFN_UNAUTHENTICATED`
+
+The router refuses to act for a subject it cannot establish itself. Configure
+`auth.resolveSubject` from your app's session or token check. A `subject` in
+the request body or query string is honoured only with
+`auth.allowClientSubject: true`, which is meant for trusted server-to-server
+callers. See [Server setup](/docs/server/setup#who-the-router-acts-for).
+
+## Refund route answers 403 `BILLFN_UNAUTHORIZED`
+
+`POST /billfn/subscriptions/refund` is off until `refunds.authorize` approves
+the request. See [Server setup](/docs/server/setup#refunds-through-the-router).
+
 ## Entitlements or usage return empty state
 
 BillFn only has something meaningful to project once it can resolve a billing account and there is subscription state to read.

@@ -146,6 +146,8 @@ function createRegion(env: SmokeEnv, id: string, basePath: string, subscriptionI
     catalog,
     basePath,
     region: { id, internalToken: env.INTERNAL_TOKEN },
+    // The smoke test names its subject in the request, as a trusted caller would.
+    auth: { allowClientSubject: true },
     providers: {
       dodo: createDodoProvider({
         apiKey: 'dodo_test_key',

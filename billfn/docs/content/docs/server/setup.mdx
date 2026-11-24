@@ -19,6 +19,12 @@ type BillFnConfig = {
   queue?: QueueAdapter<{ type: "webhook-event"; provider: BillingProviderName; providerEventId: string }>;
   auth?: {
     resolveSubject?: (request: Request) => Promise<BillableSubject | null> | BillableSubject | null;
+    /** Trust a `subject` sent in the request; only for trusted server-to-server callers. */
+    allowClientSubject?: boolean;
+  };
+  refunds?: {
+    /** Approves `POST /billfn/subscriptions/refund`; without it the route answers 403. */
+    authorize?: (input: BillFnRefundAuthorizationInput) => Promise<boolean> | boolean;
   };
   checkout?: {
     isPriceEligible?: (input: {
@@ -67,10 +73,11 @@ const billfn = createBillFn({
   catalog,
   billingAccountResolver,
   auth: {
+    // Resolve the subject from your own session or token check, never from
+    // a header or field the browser can set.
     resolveSubject: async (request) => {
-      return request.headers.get("x-principal-id")
-        ? { principalId: request.headers.get("x-principal-id") ?? undefined }
-        : null;
+      const session = await getSession(request);
+      return session ? { principalId: session.userId } : null;
     },
   },
   providers: {
@@ -82,6 +89,47 @@ const billfn = createBillFn({
   },
 });
 ```
+
+`getSession` stands for your app's own authentication (a signed session cookie
+or a verified bearer token).
+
+## Who the Router Acts For
+
+Every route that reads or changes an account (`/entitlements`, `/usage`,
+`/checkouts`, `/checkouts/verify`, `/subscriptions/*` and `/purchases/restore`)
+needs a subject:
+
+- With `auth.resolveSubject`, the subject is whatever it returns. A `subject`
+  in the request body or query string is ignored. Returning `null` answers
+  `400 BILLFN_VALIDATION_ERROR`; throw `BILLFN_UNAUTHENTICATED` to answer 401.
+- Without a resolver, these routes answer `401 BILLFN_UNAUTHENTICATED`.
+- `auth.allowClientSubject: true` makes the router take the `subject` from the
+  request body or query string when no resolver is set. Any caller can then
+  read or change any account, so use it only when every caller that can reach
+  the router is trusted, such as a backend-only deployment behind its own
+  authentication.
+
+## Refunds Through the Router
+
+`POST /billfn/subscriptions/refund` is off by default and answers
+`403 BILLFN_UNAUTHORIZED`. Refunds move money, so the host decides who may ask
+for one through `refunds.authorize`. It receives the request, the resolved
+subject and the refund fields, and only `true` approves:
+
+```ts
+const billfn = createBillFn({
+  // ...
+  refunds: {
+    // Operators only. A self-service policy (for example one refund per
+    // charge within 14 days) would check the subject's history here instead.
+    authorize: async ({ request }) => (await getSession(request))?.role === "billing-operator",
+  },
+});
+```
+
+The router refund acts on the resolved subject's own account. To refund
+another account, use `@billfn/admin` or call `billfn.refundCharge()` from host
+code, which do not use this hook.
 
 Production must set `environment: "live_mode"` with a live mode Dodo key. The
 Dodo adapter calls Dodo's test mode (`https://test.dodopayments.com`) when

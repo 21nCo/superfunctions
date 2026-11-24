@@ -28,7 +28,6 @@ The default `credentials` mode is `"include"`.
 
 ```ts
 const response = await client.createCheckout({
-  subject: { principalId: "user_123" },
   planKey: "pro",
   provider: "dodo",
   interval: "month",
@@ -41,6 +40,10 @@ if (response.ok) {
   }
 }
 ```
+
+The server decides who the checkout is for through its `auth.resolveSubject`
+(the client sends the browser's cookies by default). A `subject` field is used
+only by a server that sets `auth.allowClientSubject` for trusted callers.
 
 Without `priceId`, checkout uses the plan's first price for the provider and
 interval that has no `eligibility` tag. To sell another catalog price of the
@@ -72,7 +75,7 @@ interval, when given) fails with `400 BILLFN_VALIDATION_ERROR`. A price with an
 - `cancelSubscription(input)`
 - `changeSubscription(input)`
 - `resumeSubscription(input)`
-- `refundCharge(input)`
+- `refundCharge(input)` (the server answers 403 unless its `refunds.authorize` hook approves the request)
 - `syncSubscription(input)`
 - `restorePurchases(input)`
 - `enqueueReconciliationJob(input)`

@@ -19,7 +19,7 @@ BillFn’s router divides its surface into:
 | `GET` | `/billfn/entitlements` | Returns billing account, entitlement snapshot, and current subscription |
 | `GET` | `/billfn/usage` | Returns usage and limit information for the account |
 
-`/billfn/entitlements` and `/billfn/usage` resolve the subject from query params or from the configured auth resolver.
+`/billfn/entitlements`, `/billfn/usage` and every write route below act for the subject that `auth.resolveSubject` returns. Without a resolver they answer `401 BILLFN_UNAUTHENTICATED`, unless the host sets `auth.allowClientSubject: true`; the router then takes the subject from query params (reads) or the body `subject` (writes). Only trusted server-to-server callers should use that mode, because any caller can name any account. See [Setup](/docs/server/setup#who-the-router-acts-for).
 
 ## Write Routes
 
@@ -30,7 +30,7 @@ BillFn’s router divides its surface into:
 | `POST` | `/billfn/subscriptions/cancel` | Cancel a subscription when the provider supports it |
 | `POST` | `/billfn/subscriptions/change` | Change a subscription to a target price id |
 | `POST` | `/billfn/subscriptions/resume` | Resume or reactivate a subscription |
-| `POST` | `/billfn/subscriptions/refund` | Create a refund or provider-managed revoke flow |
+| `POST` | `/billfn/subscriptions/refund` | Create a refund or provider-managed revoke flow; answers 403 unless `refunds.authorize` approves ([Setup](/docs/server/setup#refunds-through-the-router)) |
 | `POST` | `/billfn/subscriptions/sync` | Re-fetch normalized subscription state from the provider |
 | `POST` | `/billfn/purchases/restore` | Restore a purchase into an existing billing account context |
 
@@ -65,9 +65,6 @@ Current provider support:
   "planKey": "pro",
   "provider": "dodo",
   "interval": "month",
-  "subject": {
-    "principalId": "user_123"
-  },
   "customer": {
     "email": "user@example.com",
     "name": "Nucleus User"
