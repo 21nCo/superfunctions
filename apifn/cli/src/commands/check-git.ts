@@ -27,7 +27,8 @@
  * - the repository is the git work tree of the directory the check runs in; a spec whose file (its
  *   symlinks followed) lies outside that work tree, or inside another work tree below it, is an
  *   error, so a symlink can never make another repository's commit the baseline; it is discovered
- *   once, and every later git call names its git directory and work tree (GIT_DIR, GIT_WORK_TREE);
+ *   once, and every later git call names its git, common and work tree directories (GIT_DIR,
+ *   GIT_COMMON_DIR, GIT_WORK_TREE);
  * - every git failure is an error (exit 2), never a new contract.
  */
 
@@ -378,11 +379,11 @@ export interface GitBaseline {
 }
 
 /** The native realpath of the git work tree holding `dir` and its git directory, or null with git's reason. */
-function workTreeOf(executable: string, dir: string): { root: string; gitDir: string } | { root: null; reason: string } {
-  const toplevel = new Git(executable, dir).run(["rev-parse", "--show-toplevel", "--absolute-git-dir"]);
-  const [top, gitDir] = toplevel.stdout.trim().split("\n");
-  if (toplevel.code !== 0 || !gitDir) return { root: null, reason: toplevel.stderr.trim() || `exit status ${toplevel.code}` };
-  return { root: realpathSync.native(top), gitDir };
+function workTreeOf(executable: string, dir: string): { root: string; gitDir: string; commonDir: string } | { root: null; reason: string } {
+  const toplevel = new Git(executable, dir).run(["rev-parse", "--show-toplevel", "--absolute-git-dir", "--git-common-dir"]);
+  const [top, gitDir, common] = toplevel.stdout.trim().split("\n");
+  if (toplevel.code !== 0 || !common) return { root: null, reason: toplevel.stderr.trim() || `exit status ${toplevel.code}` };
+  return { root: realpathSync.native(top), gitDir, commonDir: path.resolve(dir, common) };
 }
 
 /**
@@ -400,12 +401,13 @@ export function readSpecAtRef(ref: string, specPath: string, destination: string
   if (here.root === null) {
     throw new CheckUsageError(`--base needs a git work tree; ${cwd} is not inside one: ${here.reason}`);
   }
-  const git = new Git(executable, here.root, { GIT_DIR: here.gitDir, GIT_WORK_TREE: here.root });
-  // The git directory discovered once must still be that directory once every read is done.
-  const repository = statSync(here.gitDir, { bigint: true });
+  const git = new Git(executable, here.root, { GIT_DIR: here.gitDir, GIT_COMMON_DIR: here.commonDir, GIT_WORK_TREE: here.root });
+  // The git and common directories discovered once must still be those directories once every read is done.
+  const bound = [here.gitDir, here.commonDir];
+  const repository = bound.map((dir) => statSync(dir, { bigint: true }));
   const done = (baseline: GitBaseline): GitBaseline => {
-    const now = statSync(here.gitDir, { bigint: true, throwIfNoEntry: false });
-    if (now?.dev !== repository.dev || now.ino !== repository.ino) throw new CheckUsageError(`The git repository at ${here.gitDir} was replaced while apifn check read it.`);
+    const now = bound.map((dir) => statSync(dir, { bigint: true, throwIfNoEntry: false }));
+    if (now.some((id, i) => id?.dev !== repository[i].dev || id.ino !== repository[i].ino)) throw new CheckUsageError(`The git repository at ${here.gitDir} was replaced while apifn check read it.`);
     return baseline;
   };
 

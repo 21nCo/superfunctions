@@ -4602,6 +4602,32 @@ describe("apifn check: git ignores inherited repository selectors (API-25 round 
     expect({ code: result.code, stdout: result.stdout }).toEqual({ code: 2, stdout: "" });
     expect(result.stderr).toContain("was replaced while apifn check read it");
   });
+
+  it.skipIf(POSIX_ONLY)("a linked worktree's commondir retargeted after discovery never supplies the baseline (PR round 2)", async () => {
+    const { root } = await breakingAtHead();
+    const linked = path.join(await tempDir("apifn-check-linked-"), "wt");
+    git(root, "worktree", "add", "-q", "--detach", linked, "HEAD");
+    const service = path.join(linked, "breaking");
+    await commitSpec(service);
+    const other = await tempDir("apifn-check-common-");
+    git(other, "init", "-q");
+    await mkdir(path.join(other, "breaking", ".apifn"), { recursive: true });
+    await writeFile(path.join(other, "breaking", SPEC), await readFile(path.join(service, SPEC), "utf8"));
+    git(other, "add", "-A");
+    git(other, "commit", "-q", "-m", "head contract");
+    const commondir = path.join(git(linked, "rev-parse", "--absolute-git-dir").trim(), "commondir");
+    const shimDir = await tempDir("apifn-check-git-");
+    const shim = path.join(shimDir, "git");
+    await shellScript(
+      shim,
+      `n=$(cat '${shimDir}/n' 2>/dev/null || echo 0); n=$((n + 1)); echo $n > '${shimDir}/n'\n'${realGit()}' "$@"; code=$?\n` +
+        `if [ $n -eq 2 ]; then echo '${path.join(other, ".git")}' > '${commondir}'; fi\nexit $code`
+    );
+    const result = await withEnv("APIFN_GIT", shim, () => run(["check", "--spec", path.join(".apifn", "openapi.yml"), "--base", "HEAD"], service));
+    expect(result.code).toBe(1);
+    expect(result.stdout).toContain("Breaking changes:");
+    expect(result.stdout).not.toContain("Breaking changes: 0");
+  });
 });
 
 describe("apifn check: a backup is bound to the file this run made, and cleanup never changes the verdict (API-25 round 4)", () => {

@@ -82,6 +82,7 @@ import {
 import type { BigIntStats } from "node:fs";
 import { createHash, randomBytes } from "node:crypto";
 import path from "node:path";
+import { MAX_SPEC_BYTES } from "./check-parse.js";
 import { CheckUsageError, errorMessage, foldPath, isMissingPath, nearestExistingDir, writeDestination } from "./check-paths.js";
 
 /**
@@ -366,7 +367,7 @@ interface Staged {
   /** The backup's inode, open until publish ends (an open inode's number is never reused), and a copy's bytes. */
   backupFd?: number;
   previous?: Buffer;
-  /** A linked backup's SHA-256 when made (null: the file cannot be read, its held inode decides). */
+  /** The observed bytes' SHA-256, taken before the link (null: unreadable or above MAX_SPEC_BYTES). */
   digest?: string | null;
   /** Descriptors that pin the reservation and each created directory until publish ends. */
   held: number[];
@@ -418,12 +419,13 @@ function removeTemp(staged: Staged): string | null {
 function backupOwned(staged: Staged, now: FileState): boolean {
   const made = staged.backupState;
   if (!dirsHold(staged) || !made || staged.backupFd === undefined) return false; // never made (another's name): not this run's
-  return sameFile(now, stateOf(fstatSync(staged.backupFd, BIG))) && (staged.linked ? linkedIntact(staged) : sameState(now, made));
+  return sameFile(now, stateOf(fstatSync(staged.backupFd, BIG))) && (staged.linked ? linkedIntact(staged, now) : sameState(now, made));
 }
 
-/** True while a linked backup holds the bytes it had when made (its digest, read through its descriptor). */
-function linkedIntact(staged: Staged): boolean {
-  return staged.digest === null || digestOf(staged.backupFd as number) === staged.digest;
+/** True while a linked backup holds the observed bytes: its digest, read through its descriptor; without
+ * one (unreadable or above MAX_SPEC_BYTES), its state with the change time as made. */
+function linkedIntact(staged: Staged, now: FileState): boolean {
+  return staged.digest === null ? sameState(now, staged.backupState as FileState) : digestOf(staged.backupFd as number) === staged.digest;
 }
 
 /** The SHA-256 of the file open as `fd`, read from its start; null when it cannot be read through `fd`. */
@@ -442,7 +444,7 @@ function digestOf(fd: number): string | null {
 function backupHoldsPrevious(staged: Staged): boolean {
   const made = staged.backupState;
   return staged.backup !== undefined && !!made && dirsHold(staged) && sameState(currentState(staged.backup), made) &&
-    (staged.linked ? linkedIntact(staged) : holdsBytes(staged.backupFd as number, staged.previous as Buffer));
+    (staged.linked ? linkedIntact(staged, currentState(staged.backup)) : holdsBytes(staged.backupFd as number, staged.previous as Buffer));
 }
 
 /** Removes the backup while it is still this run's (backupOwned); another writer's is left and named. */
@@ -612,9 +614,10 @@ function stage(staged: Staged, hook: PublishHook | undefined, verify: Verify): v
   writeFileSync(fd, staged.bytes);
   fsyncSync(fd);
   hook?.("staged", staged.destination);
-  // The identity recorded is of the bytes this run wrote, read back through the descriptor.
-  if (!holdsBytes(fd, staged.bytes)) throw changed(staged);
-  staged.installed = stateOf(fstatSync(fd, BIG));
+  // The identity recorded is of the bytes this run wrote, read back while the file's state held still.
+  const written = stateOf(fstatSync(fd, BIG));
+  if (!holdsBytes(fd, staged.bytes) || !sameState(stateOf(fstatSync(fd, BIG)), written)) throw changed(staged);
+  staged.installed = written;
   verify(staged);
 }
 
@@ -660,6 +663,8 @@ function backUp(staged: Staged): void {
   staged.backup = backup;
   // The observed file is opened (never blocking, never through a link) before the link: the link must be that very inode.
   staged.backupFd = openHeld(staged.destination);
+  // The digest is of the observed bytes: read before the link, with the change time unchanged after the read.
+  staged.digest = before.size <= BigInt(MAX_SPEC_BYTES) ? digestOf(staged.backupFd) : null;
   if (!sameState(stateOf(fstatSync(staged.backupFd, BIG)), before)) throw changed(staged);
   try {
     linkSync(staged.destination, backup);
@@ -672,7 +677,6 @@ function backUp(staged: Staged): void {
     // Not the observed inode: never this run's backup (null owns nothing), so it is left and named.
     staged.backupState = sameContent(made, before) && sameFile(made, stateOf(fstatSync(staged.backupFd, BIG))) ? made : null;
     if (staged.backupState === null) throw changed(staged);
-    staged.digest = digestOf(staged.backupFd);
     return;
   }
   const source = staged.backupFd;
