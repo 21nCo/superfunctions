@@ -817,6 +817,44 @@ describe('refundCharge -> POST /refunds', () => {
     });
   });
 
+  it('refuses a partial amount in another currency than the payment before creating a refund', async () => {
+    const api = dodoApi({
+      [`GET /payments/${PAYMENT_ID}`]: recorded.getSubscriptionPayment.response,
+      [`GET /payments/${PAYMENT_ID}/line-items`]: recorded.getPaymentLineItems.response,
+      'POST /refunds': recorded.createRefund.response
+    });
+
+    await expect(
+      provider(api.fetchMock).refundCharge?.(refundInput({ mode: 'custom', amount: 600, currency: 'JPY' }))
+    ).rejects.toMatchObject({ code: 'BILLFN_VALIDATION_ERROR', details: { refundCurrency: 'JPY', paymentCurrency: 'USD' } });
+    expect(paths(api.calls)).not.toContain('POST /refunds');
+  });
+
+  it('refuses a partial refund whose currency is not a string', async () => {
+    const api = dodoApi({
+      [`GET /payments/${PAYMENT_ID}`]: recorded.getSubscriptionPayment.response,
+      [`GET /payments/${PAYMENT_ID}/line-items`]: recorded.getPaymentLineItems.response,
+      'POST /refunds': recorded.createRefund.response
+    });
+
+    await expect(
+      provider(api.fetchMock).refundCharge?.(refundInput({ mode: 'custom', amount: 600, currency: null }))
+    ).rejects.toMatchObject({ code: 'BILLFN_VALIDATION_ERROR' });
+    expect(paths(api.calls)).not.toContain('POST /refunds');
+  });
+
+  it('refunds a partial amount whose currency is the payment\'s', async () => {
+    const api = dodoApi({
+      [`GET /payments/${PAYMENT_ID}`]: recorded.getSubscriptionPayment.response,
+      [`GET /payments/${PAYMENT_ID}/line-items`]: recorded.getPaymentLineItems.response,
+      'POST /refunds': recorded.createRefund.response
+    });
+
+    await provider(api.fetchMock).refundCharge?.(refundInput({ mode: 'custom', amount: 600, currency: 'usd' }));
+
+    expect(paths(api.calls)).toContain('POST /refunds');
+  });
+
   it.each([
     ['more than remains refundable', { amount: 1201 }, recorded.getPaymentLineItems.response],
     ['a non-integer amount', { amount: 10.5 }, recorded.getPaymentLineItems.response],

@@ -68,7 +68,9 @@ import type {
   BillFnReconciliationJobKind,
   BillFnReconciliationJobResponse,
   BillFnRefund,
+  BillFnRefundAuthorizationInput,
   BillFnRefundChargeRequest,
+  BillFnRefundMode,
   BillFnRefundChargeResponse,
   BillFnRestorePurchasesRequest,
   BillFnRestorePurchasesResponse,
@@ -273,6 +275,43 @@ type ParsedProviderEvent = {
   raw: Record<string, unknown>;
 };
 type ProviderProjectionContext = NonNullable<Awaited<ReturnType<typeof resolveProjectionContextForProviderState>>>;
+
+const REFUND_MODES: ReadonlySet<string> = new Set<BillFnRefundMode>(['full', 'prorated_remaining_period', 'custom']);
+
+/**
+ * A full refund takes no amount; a partial one (`custom`, or `prorated_remaining_period` with the amount the
+ * host computed) needs a positive integer amount in the currency minor unit. Checked before any provider call,
+ * so a partial request is never sent as a full refund.
+ */
+function assertRefundModeAndAmount(mode: unknown, amount: unknown): asserts mode is BillFnRefundMode {
+  if (typeof mode !== 'string' || !REFUND_MODES.has(mode)) {
+    throw createBillFnError({
+      code: 'BILLFN_VALIDATION_ERROR',
+      message: "Refund mode must be 'full', 'prorated_remaining_period' or 'custom'"
+    });
+  }
+  if (mode === 'full') {
+    if (amount !== undefined) {
+      throw createBillFnError({
+        code: 'BILLFN_VALIDATION_ERROR',
+        message: 'A full refund takes no amount'
+      });
+    }
+    return;
+  }
+  if (typeof amount !== 'number' || !Number.isSafeInteger(amount) || amount <= 0) {
+    throw createBillFnError({
+      code: 'BILLFN_VALIDATION_ERROR',
+      message: 'A partial refund needs a positive integer amount in the currency minor unit'
+    });
+  }
+}
+
+/** Internal options for `refundCharge`; the public instance method takes none. */
+export interface RefundChargeOptions {
+  /** Runs once the refund target is resolved and before the provider is called; throws to refuse. */
+  authorize?: (target: Omit<BillFnRefundAuthorizationInput, 'request'>) => Promise<void>;
+}
 
 export function createBillFnService(config: BillFnConfig) {
   return createBillFnServiceWithInternals(config).service;
@@ -1086,36 +1125,81 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
         })
       );
     },
-    async refundCharge(input: BillFnRefundChargeRequest): Promise<BillFnRefundChargeResponse> {
+    async refundCharge(
+      input: BillFnRefundChargeRequest,
+      options: RefundChargeOptions = {}
+    ): Promise<BillFnRefundChargeResponse> {
       const subject = requireSubject(input.subject);
-      const { billingAccount } = await getOrCreateBillingAccount(deps, subject);
-      const subscription = input.subscriptionId
-        ? await getSubscriptionForAccount(deps, billingAccount.id, input.subscriptionId)
-        : await findActiveSubscription(deps, billingAccount.id);
-      if (!subscription) {
+      // Read the caller's input once: the validated values are the ones dispatched and recorded, even if the
+      // caller's object changes while the refund awaits.
+      const { amount, reason } = input;
+      const requestedChargeId = input.providerChargeId;
+      const requestedSubscriptionId = input.subscriptionId;
+      // Only an absent mode means a full refund; an explicit null or other value is refused below.
+      const mode = input.mode === undefined ? 'full' : input.mode;
+      assertRefundModeAndAmount(mode, amount);
+      // A refund never creates a billing account: an account without one has nothing to refund.
+      const billingAccount = await findBillingAccountForSubject(deps, subject);
+      const subscription = billingAccount
+        ? requestedSubscriptionId
+          ? await getSubscriptionForAccount(deps, billingAccount.id, requestedSubscriptionId)
+          : await findActiveSubscription(deps, billingAccount.id)
+        : null;
+      if (!billingAccount || !subscription) {
         throw createBillFnError({
           code: 'BILLFN_NOT_FOUND',
           message: 'Subscription not found for refund'
         });
       }
-      if (input.providerChargeId && input.providerChargeId !== subscription.providerChargeId) {
+      if (requestedChargeId && requestedChargeId !== subscription.providerChargeId) {
         throw createBillFnError({
           code: 'BILLFN_CONFLICT',
           message: 'Refund charge does not belong to the resolved subscription'
         });
       }
       const providerName = subscription.provider;
+      const providerChargeId = requestedChargeId ?? subscription.providerChargeId;
+      const currency = requirePriceById(requirePlan(deps.catalog, subscription.planKey), subscription.priceId).currency;
+      let liveStateObservedAt = toIsoString(deps.now());
+      if (options.authorize) {
+        // The router's host check sees the exact account, subscription and charge this call refunds.
+        await options.authorize({
+          subject,
+          billingAccountId: billingAccount.id,
+          subscriptionId: subscription.id,
+          providerSubscriptionId: subscription.providerSubscriptionId,
+          providerChargeId,
+          mode,
+          amount,
+          currency,
+          reason
+        });
+        // The approval covers the subscription as it was read; one that changed meanwhile (a renewal, a
+        // cancellation) is refused rather than refunded from a stale snapshot. The provider-state clock restarts
+        // before the re-read, so a write that lands after it is newer than the refund's projection.
+        liveStateObservedAt = toIsoString(deps.now());
+        const current = await getSubscriptionForAccount(deps, billingAccount.id, subscription.id);
+        if (
+          !current ||
+          current.updatedAt !== subscription.updatedAt ||
+          current.providerChargeId !== subscription.providerChargeId ||
+          current.status !== subscription.status
+        ) {
+          throw createBillFnError({
+            code: 'BILLFN_CONFLICT',
+            message: 'The subscription changed while the refund was being authorized; retry the refund'
+          });
+        }
+      }
       const provider = requireProvider(deps, providerName, 'refundCharge');
-      const mode = input.mode ?? 'full';
-      const providerChargeId = input.providerChargeId ?? subscription.providerChargeId;
-      const liveStateObservedAt = toIsoString(deps.now());
       const operation = await provider.refundCharge({
         subscription,
         billingAccount,
         providerChargeId,
         mode,
-        amount: input.amount,
-        reason: input.reason
+        amount,
+        currency,
+        reason
       });
 
       const timestamp = toIsoString(deps.now());
@@ -1126,9 +1210,9 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
         providerChargeId,
         providerRefundId: operation.providerRefundId,
         mode,
-        amount: input.amount,
-        currency: requirePriceById(requirePlan(deps.catalog, subscription.planKey), subscription.priceId).currency,
-        reason: input.reason,
+        amount,
+        currency,
+        reason,
         status: operation.operationStatus === 'applied' ? 'succeeded' : 'requires_action',
         operationStatus: operation.operationStatus,
         metadata: operation.raw,

@@ -530,6 +530,11 @@ export interface BillFnRefundChargeInput {
   providerChargeId?: string;
   mode: BillFnRefundMode;
   amount?: number;
+  /**
+   * The currency `amount` is in and the refund is recorded in: the subscription's catalog price currency. A
+   * provider refunds a partial amount only when it is the currency the charge was paid in.
+   */
+  currency?: string;
   reason?: string;
 }
 
@@ -676,7 +681,31 @@ export interface BillFnConfig {
   metrics?: MetricsEmitter;
   queue?: BillFnQueueAdapter<BillFnQueuedJob>;
   auth?: {
+    /**
+     * Resolves the billing subject of a router request from the host's own
+     * session or token check. When it is set, a `subject` in the request body
+     * or query string is ignored. A `null` result (or one with no subject
+     * field) answers 400; throw `BILLFN_UNAUTHENTICATED` to answer 401.
+     */
     resolveSubject?: (request: Request) => Promise<BillableSubject | null> | BillableSubject | null;
+    /**
+     * Lets the router take the subject from the request body or query string
+     * when no `resolveSubject` is configured. Any caller can then act for any
+     * account, so set it only when every caller that can reach the router is
+     * trusted (a server-to-server deployment behind its own authentication).
+     * Without it and without `resolveSubject`, subject routes answer 401.
+     */
+    allowClientSubject?: boolean;
+  };
+  /**
+   * Router refunds (`POST <basePath>/subscriptions/refund`). The route is off
+   * until `authorize` approves the request: refunds move money, so a host
+   * decides who may ask for one (an operator check, or a self-service policy
+   * such as one refund per charge within a window). In-process
+   * `refundCharge` calls and the admin package do not use this hook.
+   */
+  refunds?: {
+    authorize?: (input: BillFnRefundAuthorizationInput) => Promise<boolean> | boolean;
   };
   operations?: {
     authorize?: (request: Request) => Promise<boolean> | boolean;
@@ -929,6 +958,32 @@ export interface BillFnRefundChargeRequest {
   providerChargeId?: string;
   mode?: BillFnRefundMode;
   amount?: number;
+  reason?: string;
+}
+
+/**
+ * What `refunds.authorize` sees for a router refund request: the target the
+ * refund will act on, resolved before the hook runs (the subscription and
+ * charge the request named, or the account's active subscription and its
+ * latest charge), so an approval cannot apply to another charge.
+ */
+export interface BillFnRefundAuthorizationInput {
+  request: Request;
+  /** The subject the router resolved for the request. */
+  subject: BillableSubject;
+  billingAccountId: string;
+  subscriptionId: string;
+  /**
+   * The provider's subscription reference. A provider refunds by it when the
+   * subscription has no charge id (Apple revokes the original transaction).
+   */
+  providerSubscriptionId?: string;
+  providerChargeId?: string;
+  mode: BillFnRefundMode;
+  /** For a partial refund: the amount in minor units of `currency`. */
+  amount?: number;
+  /** The currency BillFn records the refund in: that of the subscription's catalog price. */
+  currency: string;
   reason?: string;
 }
 
