@@ -272,20 +272,25 @@ describe("PanelCoordinator isolation and voiding", () => {
     await expectValid(result, setup, panelPolicy);
   });
 
-  it("records a reporting profile's model as unverified when neither preflight nor the run reported one", async () => {
+  it("records a reporting profile's model as unverified when neither preflight nor the run observed one", async () => {
     const reporter = (modelReport: string) => ({ argv: ["--model", "{model}"], promptVia: "stdin" as const, outputVia: "stdout-last-json" as const, envAllowlist: [], modelReport, capabilities: { structuredOutput: false, sandbox: "enforced-read-only" as const } });
     const profiles = { json: reporter("json-path:model"), stderr: reporter("stderr-regex:model=(\\S+)") };
     const cli = new FakePanelHarness({ id: "cli", behaviors: { seen: () => ({ ...clean(), observed: { model: "model-seen" } }), flagged: () => ({ ...clean(), observed: { modelMismatch: true } }), matched: () => ({ ...clean(), observed: { modelMismatch: false } }) } });
+    // Preflight resolves (echoes) each configured model; only "observed" and "drifted" say they observed it.
     const preflight = cli.preflight.bind(cli);
-    cli.preflight = async config => { const result = await preflight(config); return { ...result, resolved: { ...result.resolved!, model: undefined } }; };
+    cli.preflight = async config => {
+      const result = await preflight(config);
+      if (config.inference.model === "model-drifted") return { ...result, resolved: { ...result.resolved!, model: "model-other", modelObserved: true } };
+      return config.inference.model === "model-observed" ? { ...result, resolved: { ...result.resolved!, modelObserved: true } } : result;
+    };
     const profiled = (id: string, profile: string) => slot(id, 1, `model-${id}`, { harness: { adapter: "cli", version: "1", executable: "agent", profile } });
-    const panelPolicy = panel([profiled("json-a", "json"), profiled("json-b", "json"), profiled("stderr-a", "stderr"), profiled("stderr-b", "stderr"), profiled("seen", "json"), profiled("flagged", "stderr"), profiled("matched", "json")], { profiles });
+    const panelPolicy = panel([profiled("json-a", "json"), profiled("json-b", "json"), profiled("stderr-a", "stderr"), profiled("stderr-b", "stderr"), profiled("seen", "json"), profiled("flagged", "stderr"), profiled("matched", "json"), profiled("observed", "stderr"), profiled("drifted", "json")], { profiles });
     const setup = coordinator(cli, { harnessContractVersions: { cli: "1" } });
     const result = await setup.coordinator.run(request(panelPolicy));
     const runs = new Map(result.report.slotRuns.map(run => [run.slotId, run]));
     // Slots differing only in requested model are one identity when no model was observed: the second of each collapses,
-    // and an unverified run collapses into the verified run ("seen") of its executable, profile and version.
-    for (const [id, terminal] of [["json-a", "collapsed"], ["json-b", "collapsed"], ["stderr-a", "completed"], ["stderr-b", "collapsed"]]) {
+    // and an unverified run collapses into the verified run ("seen", "observed") of its executable, profile and version.
+    for (const [id, terminal] of [["json-a", "collapsed"], ["json-b", "collapsed"], ["stderr-a", "collapsed"], ["stderr-b", "collapsed"]]) {
       expect(runs.get(id)).toMatchObject({ terminal, limitations: ["model_unverified"], identity: { model: `model-${id}`, modelVerified: false } });
     }
     // A model the run reports verifies the identity.
@@ -298,6 +303,10 @@ describe("PanelCoordinator isolation and voiding", () => {
     // A raw match verifies the configured model without a model label.
     expect(runs.get("matched")).toMatchObject({ terminal: "completed", identity: { model: "model-matched" } });
     expect(runs.get("matched")!.identity).not.toHaveProperty("modelVerified");
+    // A model preflight explicitly observed verifies the identity, and an observed other model voids the run.
+    expect(runs.get("observed")).toMatchObject({ terminal: "completed", identity: { model: "model-observed" } });
+    expect(runs.get("observed")!.identity).not.toHaveProperty("modelVerified");
+    expect(runs.get("drifted")).toMatchObject({ terminal: "void", voidReasons: ["model_mismatch"], identity: { model: "model-other" } });
     expect(result.quorum[0]).toMatchObject({ completed: 3 });
     await expectValid(result, setup, panelPolicy);
   });

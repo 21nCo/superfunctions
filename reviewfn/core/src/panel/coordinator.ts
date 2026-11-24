@@ -484,7 +484,7 @@ export class PanelCoordinator {
     const harness = this.dependencies.harnesses.find(item => item.capabilities.id === slot.harness.adapter);
     const resolved = context.resolved.get(slot.id);
     const credential = slot.inference.credentialEnv ? (this.dependencies.environment ?? process.env)[slot.inference.credentialEnv] : undefined;
-    const unverified = slotProfile(slot, context.request.panelPolicy)?.modelReport === "none" || (slot.harness.profile !== undefined && !nonblank(resolved?.model));
+    const unverified = slotProfile(slot, context.request.panelPolicy)?.modelReport === "none" || (slot.harness.profile !== undefined && !(resolved?.modelObserved === true && nonblank(resolved.model)));
     return {
       harnessAdapter: slot.harness.adapter,
       // The slot's pin is never recorded as a version: it is what the reported version is checked against.

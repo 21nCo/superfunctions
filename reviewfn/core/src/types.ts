@@ -268,7 +268,8 @@ export interface PreflightDiagnostic {
 
 export interface PreflightResult {
   ok: boolean;
-  resolved?: { provider: string; model: string; auth: string; harnessVersion: string };
+  /** `modelObserved: true` means the harness observed `model` from the agent itself; a harness profile slot's model is verified only then. */
+  resolved?: { provider: string; model: string; auth: string; harnessVersion: string; modelObserved?: boolean };
   diagnostics: PreflightDiagnostic[];
 }
 
