@@ -360,6 +360,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
   // failed; callers that must not lose track of the parts keep the session.
   // The S3-compatible multipart part limit, applied to every upload mode.
   const MAX_UPLOAD_PARTS = 10_000;
+  const PART_DELETE_BATCH = 32;
 
   async function deleteProxyTempPartObjects(session: UploadSession): Promise<boolean> {
     if (session.uploadMode !== 'proxy' || !storage.deleteObject) {
@@ -378,17 +379,30 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
     const partNumbers = new Set<number>(recorded.map((part) => part.partNumber));
     // Storage adapters that write in place and keep bytes on abort (for
     // example an older storage-local) can leave an unrecorded part: every part
-    // number the session can have is covered (at most MAX_UPLOAD_PARTS).
-    for (let n = 1; n <= Math.min(session.totalParts ?? 0, MAX_UPLOAD_PARTS); n++) partNumbers.add(n);
+    // number the session can have is covered (at most MAX_UPLOAD_PARTS). Only
+    // for sessions with their own per-version key: a session created before
+    // per-version keys can share its key with another session of the same
+    // file, so only its recorded parts are its own.
+    if (session.completionVersionId) {
+      for (let n = 1; n <= Math.min(session.totalParts ?? 0, MAX_UPLOAD_PARTS); n++) partNumbers.add(n);
+    }
 
+    const deleteObject = storage.deleteObject.bind(storage);
     let allDeleted = true;
-    for (const partNumber of partNumbers) {
-      try {
-        await storage.deleteObject({ key: proxyPartKey(session.storageKey, partNumber), target: storageTarget });
-      } catch (error) {
-        // A part that was never written is already gone.
-        if ((error as { code?: string } | null)?.code !== 'STORAGE_NOT_FOUND') allDeleted = false;
-      }
+    const pending = [...partNumbers];
+    // Bounded batches, so a large session's cleanup neither runs one delete at
+    // a time nor fires thousands at once.
+    for (let i = 0; i < pending.length; i += PART_DELETE_BATCH) {
+      await Promise.all(
+        pending.slice(i, i + PART_DELETE_BATCH).map(async (partNumber) => {
+          try {
+            await deleteObject({ key: proxyPartKey(session.storageKey, partNumber), target: storageTarget });
+          } catch (error) {
+            // A part that was never written is already gone.
+            if ((error as { code?: string } | null)?.code !== 'STORAGE_NOT_FOUND') allDeleted = false;
+          }
+        }),
+      );
     }
     return allDeleted;
   }

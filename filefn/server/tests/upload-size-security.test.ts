@@ -219,6 +219,39 @@ describe('declared upload size is enforced (FILE-30 F-05)', () => {
     expect(files.filter((entry) => entry.isFile())).toEqual([]);
   });
 
+  it('leaves parts it never recorded alone for a session created before per-version keys', async () => {
+    const database = memoryAdapter();
+    const fileFn = createFileFn({
+      database,
+      storage: createLocalStorageAdapter({ rootDir }),
+      policies: [{ name: 'small', maxSizeBytes: 1024 }],
+    });
+    const active = await fileFn.createUploadSession({ policy: 'small', fileName: 'a.bin', size: 4, mimeType: 'application/octet-stream' }, alice);
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(4));
+        controller.close();
+      },
+    });
+    await fileFn.services.uploads.uploadPartBytes(active.uploadSessionId, 1, body, 4, alice);
+    const [activeRow] = await database.findMany<{ storageKey: string }>({
+      model: 'uploadSessions',
+      where: [{ field: 'uploadSessionId', operator: 'eq', value: active.uploadSessionId }],
+    });
+
+    // A pre-upgrade session: no completionVersionId, and the same key as the active one.
+    const legacy = await fileFn.createUploadSession({ policy: 'small', fileName: 'a.bin', size: 4, mimeType: 'application/octet-stream' }, alice);
+    await database.update({
+      model: 'uploadSessions',
+      where: [{ field: 'uploadSessionId', operator: 'eq', value: legacy.uploadSessionId }],
+      data: { storageKey: activeRow!.storageKey, completionVersionId: null },
+    });
+    await fileFn.abortUploadSession({ uploadSessionId: legacy.uploadSessionId }, alice);
+
+    const files = await readdir(rootDir, { recursive: true, withFileTypes: true });
+    expect(files.filter((entry) => entry.isFile()).map((entry) => entry.name)).toEqual([expect.stringMatching(/\.part1$/)]);
+  });
+
   it('refuses an upload that would need more than 10,000 parts', async () => {
     const fileFn = createFileFn({
       database: memoryAdapter(),
