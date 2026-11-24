@@ -109,7 +109,7 @@ class FileFn:
             session_input = CreateSessionInput(**input)
         except ValidationError as error:
             fields = sorted({str(item["loc"][0]) for item in error.errors() if item.get("loc")})
-            raise errors.invalid_request("Upload init body does not match the contract", {"fields": fields})
+            raise errors.invalid_request("Upload init body does not match the contract", {"fields": fields}) from None
         result = await self.upload_service.create_session(session_input, ctx)
         return cast(Dict[str, Any], result)
 

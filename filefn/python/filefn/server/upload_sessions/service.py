@@ -1,9 +1,9 @@
 import hashlib
-from decimal import Decimal
 import json
 import re
 import secrets
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from tempfile import SpooledTemporaryFile
 from typing import Any, Dict, List, Optional, Protocol, Union, cast
 
@@ -20,9 +20,9 @@ from ..models import FileProviderContext, UploadSessionRecord
 from ..policies import (
     PolicyStoragePathContext,
     compute_storage_path,
-    unsafe_storage_key_reason,
     matches_content_type,
     resolve_storage_target,
+    unsafe_storage_key_reason,
 )
 from ..routed_storage import get_storage_capabilities
 
@@ -239,7 +239,7 @@ def _validate_upload_init(input: CreateSessionInput) -> None:
             # surrogatepass: a lone surrogate is counted (3 bytes) rather than raising.
             encoded_size = len(encoded.encode("utf-8", "surrogatepass"))
         except (TypeError, ValueError):
-            raise errors.invalid_request("metadata must be a JSON object with finite numbers", {"field": "metadata"})
+            raise errors.invalid_request("metadata must be a JSON object with finite numbers", {"field": "metadata"}) from None
         if encoded_size > MAX_METADATA_BYTES:
             raise errors.invalid_request(
                 f"metadata must be at most {MAX_METADATA_BYTES} bytes as JSON",
@@ -453,7 +453,7 @@ class UploadSessionService:
         if policy.contentTypes and not any(matches_content_type(pattern, input.mimeType) for pattern in policy.contentTypes):
             raise errors.policy_content_type_not_allowed(input.policy, input.mimeType)
         if policy.maxSizeBytes is not None and input.size > policy.maxSizeBytes:
-            raise errors.policy_max_size_exceeded(input.policy, policy.maxSizeBytes, input.size)
+            raise errors.policy_max_size_exceeded(input.policy, policy.maxSizeBytes, int(input.size))
 
         if input.fileId and self.file_write_checker:
             if not await self.file_write_checker.can_write_file(input.fileId, ctx):
@@ -471,7 +471,7 @@ class UploadSessionService:
                 raise errors.quota_exceeded(
                     quota_result.get("current", 0),
                     quota_result.get("limit", 0),
-                    input.size,
+                    int(input.size),
                 )
             warning = quota_result.get("warning")
             if warning:
@@ -839,7 +839,8 @@ class UploadSessionService:
     @staticmethod
     def _key_is_session_owned(session: "UploadSessionRecord", session_data: Dict[str, Any]) -> bool:
         """Whether the session's storage key contains its own version ID, so no other session shares it."""
-        return bool(session.completionVersionId) and session.completionVersionId in session.storageKey
+        version_id = session.completionVersionId
+        return bool(version_id) and version_id is not None and version_id in session.storageKey
 
     async def _finalize_upload_storage(
         self,
