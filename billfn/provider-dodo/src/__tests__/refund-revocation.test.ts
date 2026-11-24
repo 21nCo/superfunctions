@@ -153,12 +153,14 @@ describe('Dodo refunds and disputes of a one-time purchase', () => {
   });
 
   it('keeps the purchase after a partial refund', async () => {
-    const { billfn, entitlementStatus } = await purchased();
+    const { billfn, entitlementStatus, api } = await purchased();
+    api.takeBack({ refund_status: 'partial', refunds: [{ refund_id: 'ref_2', status: 'succeeded', is_partial: true, amount: 600 }] });
 
-    await billfn.handleWebhook(
+    const handled = await billfn.handleWebhook(
       dodoWebhook('msg_partial', event('refund.succeeded', { payload_type: 'Refund', refund_id: 'ref_2', status: 'succeeded', is_partial: true }))
     );
 
+    expect(handled.ok).toBe(true);
     expect(await entitlementStatus()).toBe('active');
   });
 

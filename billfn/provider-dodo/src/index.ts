@@ -96,6 +96,16 @@ export function createDodoProvider(config: DodoProviderConfig): BillFnProviderAd
     // A partial refund revokes the purchase once Dodo reports the payment fully refunded (it marks the refund of a
     // remaining balance as partial too).
     if (revocation === 'partial' && !isDodoPaymentRevoked(payment)) {
+      // A payment read that does not list the delivered refund as succeeded yet is stale: its refund_status may
+      // not count this refund, so the delivery fails and Dodo retries it once the payment catches up.
+      const refundId = readString(data, ['refund_id']);
+      const listed = (Array.isArray(payment.refunds) ? payment.refunds : []).some((refund) => {
+        const record = asPlainRecord(refund);
+        return record !== null && readString(record, ['refund_id']) === refundId && readString(record, ['status']) === 'succeeded';
+      });
+      if (refundId && !listed) {
+        throw unusableDodoRead(`payment ${paymentId} (refund ${refundId} not listed yet)`);
+      }
       return undefined;
     }
     return {

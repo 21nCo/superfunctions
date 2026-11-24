@@ -1102,8 +1102,17 @@ describe('parseWebhook with recorded Dodo payloads', () => {
     expect(event.billingState).toMatchObject({ subscriptionStatus: 'canceled', providerChargeId: oneTimePayment.payment_id });
   });
 
+  it('fails the delivery for a partial refund the payment does not list yet, so Dodo retries it', async () => {
+    const fetchMock = dodoReads({ [`/payments/${oneTimePayment.payment_id}`]: { ...oneTimePayment, refund_status: 'partial' } });
+
+    await expect(parse({ ...refund, data: { ...refund.data, is_partial: true, amount: 600 } }, fetchMock)).rejects.toMatchObject({
+      code: 'BILLFN_PROVIDER_ERROR'
+    });
+  });
+
   it('keeps the purchase on a partial refund that leaves part of the payment paid', async () => {
-    const fetchMock = dodoReads({ [`/payments/${oneTimePayment.payment_id}`]: oneTimePayment });
+    const listed = { refund_id: refund.data.refund_id, status: 'succeeded', is_partial: true, amount: 600 };
+    const fetchMock = dodoReads({ [`/payments/${oneTimePayment.payment_id}`]: { ...oneTimePayment, refund_status: 'partial', refunds: [listed] } });
 
     const event = await parse({ ...refund, data: { ...refund.data, is_partial: true, amount: 600 } }, fetchMock);
 
@@ -1113,8 +1122,9 @@ describe('parseWebhook with recorded Dodo payloads', () => {
   it('keeps the purchase while Dodo reports the payment only partially refunded, whatever the amounts', async () => {
     // Amounts in an adaptive currency are not comparable with the payment total; Dodo's refund_status decides.
     const earlier = { refund_id: 'ref_first', status: 'succeeded', is_partial: true, amount: 9300, currency: 'USD' };
+    const rest = { refund_id: 'ref_rest', status: 'succeeded', is_partial: true, amount: 600, currency: 'USD' };
     const fetchMock = dodoReads({
-      [`/payments/${oneTimePayment.payment_id}`]: { ...oneTimePayment, refund_status: 'partial', refunds: [earlier] }
+      [`/payments/${oneTimePayment.payment_id}`]: { ...oneTimePayment, refund_status: 'partial', refunds: [earlier, rest] }
     });
 
     const event = await parse({ ...refund, data: { ...refund.data, refund_id: 'ref_rest', is_partial: true, amount: 600 } }, fetchMock);
