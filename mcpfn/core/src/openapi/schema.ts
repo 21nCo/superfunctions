@@ -204,8 +204,9 @@ export class NodeBudget {
 
   /** The conversion budget of a whole call for `document`, counted as its values (shared ones once). */
   static forDocument(document: unknown): NodeBudget {
-    const limit = DOCUMENT_NODE_FLOOR + DOCUMENT_NODE_FACTOR * countValues(document);
-    return new NodeBudget(limit, undefined, "the document's schemas expand in total");
+    const call = { keys: new WeakMap<object, readonly string[]>(), circular: new WeakSet<object>() };
+    const limit = DOCUMENT_NODE_FLOOR + DOCUMENT_NODE_FACTOR * surveyValues(document, call.keys);
+    return new NodeBudget(limit, undefined, "the document's schemas expand in total", call);
   }
 
   /** A budget for one input, output or component conversion, also charged to this one. */
@@ -248,8 +249,26 @@ export class NodeBudget {
   }
 }
 
-/** The values in a JSON-like tree, each shared object counted once. */
-function countValues(root: unknown): number {
+/**
+ * Arrays of a private document copy that hold anything but their indices:
+ * holes (a length beyond their members) or other own keys, such as `map` or
+ * `constructor`, that would shadow what array methods read. Marked once by
+ * `surveyValues`; the copy is never changed, so the mark stays true.
+ */
+const IRREGULAR_ARRAYS = new WeakSet<object>();
+
+/** Whether `keys` (the own keys of `array`, indices first) are exactly its indices. */
+function holdsOnlyIndices(array: unknown[], keys: readonly string[]): boolean {
+  // Index keys come first in ascending order and other keys after them, so
+  // `length` keys ending with index `length - 1` are the indices 0..length-1.
+  return keys.length === array.length && (keys.length === 0 || keys[keys.length - 1] === String(keys.length - 1));
+}
+
+/**
+ * The values in a JSON-like tree, each shared object counted once. Lists the
+ * own keys of each object for the call (`keys`) and marks irregular arrays.
+ */
+function surveyValues(root: unknown, keys: WeakMap<object, readonly string[]>): number {
   const seen = new Set<object>();
   const stack: unknown[] = [root];
   let count = 0;
@@ -258,9 +277,28 @@ function countValues(root: unknown): number {
     count += 1;
     if (typeof value !== "object" || value === null || seen.has(value)) continue;
     seen.add(value);
-    for (const item of Object.values(value)) stack.push(item);
+    const own = Object.keys(value);
+    keys.set(value, own);
+    if (Array.isArray(value) && !holdsOnlyIndices(value, own)) IRREGULAR_ARRAYS.add(value);
+    for (const key of own) stack.push((value as Record<string, unknown>)[key]);
   }
   return count;
+}
+
+/**
+ * A document array, read only when it holds exactly its indices: its length
+ * is then its member count, and the array methods it inherits are not
+ * shadowed. Every read of a document array goes through this (or `arrayOf`
+ * and `listOf`, which use it).
+ */
+export function documentItems(
+  value: unknown[],
+  code: "invalid-schema" | "invalid-operation" = "invalid-schema",
+): unknown[] {
+  if (IRREGULAR_ARRAYS.has(value)) {
+    throw new OpenApiSkip(code, "an array has holes or own keys other than its indices");
+  }
+  return value;
 }
 
 function unescapePointerToken(token: string): string {
@@ -377,25 +415,13 @@ function memoFor<K, V>(memos: Map<K, WeakMap<object, V>>, key: K): WeakMap<objec
   return memo;
 }
 
-/**
- * The items of a document array mapped (holes kept) without reading what the
- * array itself may shadow, such as an own `map` or `constructor`.
- */
-function mapItems<T>(items: unknown[], map: (item: unknown) => T): T[] {
-  const result = new Array<T>(items.length);
-  for (let index = 0; index < items.length; index += 1) {
-    if (Object.hasOwn(items, index)) result[index] = map(items[index]);
-  }
-  return result;
-}
-
 function arrayOf(value: unknown): unknown[] {
-  return Array.isArray(value) ? value : [];
+  return Array.isArray(value) ? documentItems(value) : [];
 }
 
 /** A keyword that takes one value or an array of them (such as `type`). */
 function listOf(value: unknown): unknown[] {
-  return Array.isArray(value) ? value : [value];
+  return Array.isArray(value) ? documentItems(value) : [value];
 }
 
 function objectEntries(value: unknown): Array<[string, unknown]> {
@@ -418,11 +444,10 @@ function objectEntries(value: unknown): Array<[string, unknown]> {
 export class SchemaConverter {
   private readonly cache = new Map<string, ConvertedComponent>();
   private readonly ancestors = new Set<object>();
-  private readonly admitted = new WeakMap<object, AdmittedKinds>();
-  /** The kinds of an allOf (`both`) or anyOf/oneOf (`either`) member array, or why it failed, once per array. */
-  private readonly memberKinds = new Map<"both" | "either", WeakMap<object, AdmittedKinds | OpenApiSkip>>();
-  /** Reference cycles cut so far: a result that needed a cut depends on the schemas being checked. */
-  private cuts = 0;
+  /** The settled kinds of each schema object and member list, or why reading them failed. */
+  private readonly admitted = new WeakMap<object, AdmittedKinds | OpenApiSkip>();
+  /** The node of an allOf (`both`) or anyOf/oneOf (`either`) member array, once per array. */
+  private readonly memberLists = new Map<"both" | "either", WeakMap<object, MemberList>>();
   /** The kinds of the values an `enum` array or a `const` object lists, once per object. */
   private readonly literalKinds = new Map<"enum" | "const", WeakMap<object, AdmittedKinds>>();
   private readonly flags = new Map<DirectionalKeyword, WeakMap<object, boolean>>();
@@ -478,76 +503,145 @@ export class SchemaConverter {
   }
 
   /**
-   * The kinds of value `schema` accepts, following local `$ref`s and
-   * `allOf`/`anyOf`/`oneOf`. A schema without `type`, `enum` or `const`
-   * accepts every kind; a reference cycle is treated as accepting every kind.
-   * Results are memoised per schema object (a cycle cut only widens them).
+   * The kinds of value `schema` accepts, following local `$ref`s, one `items`
+   * schema and `allOf`/`anyOf`/`oneOf`. A schema without `type`, `enum` or
+   * `const` accepts every kind. Schemas that reach each other (a reference
+   * cycle) get the greatest fixed point of their kinds, the same whichever
+   * of them is asked first, so results are kept per schema object.
    */
-  admits(schema: unknown, stack: Set<unknown> = new Set()): AdmittedKinds {
+  admits(schema: unknown): AdmittedKinds {
     if (schema === false) return NOTHING;
     if (!isObject(schema)) return EVERYTHING;
-    if (stack.has(schema)) {
-      this.cuts += 1;
-      return EVERYTHING;
-    }
     const known = this.admitted.get(schema);
+    if (known instanceof OpenApiSkip) throw known;
     if (known) return known;
-    stack.add(schema);
-    try {
-      const result = this.admitsObject(schema, stack);
-      this.admitted.set(schema, result);
-      return result;
-    } finally {
-      stack.delete(schema);
-    }
-  }
-
-  private admitsObject(schema: JsonObject, stack: Set<unknown>): AdmittedKinds {
-    let result = EVERYTHING;
-    if (Object.hasOwn(schema, "$ref")) {
-      const target = this.admits(this.component(parseComponentRef(schema.$ref, "schemas")), stack);
-      // OpenAPI 3.0 ignores $ref siblings; 3.1 applies them too.
-      if (this.version === "3.0") return target;
-      result = target;
-    }
-    result = this.narrowByValues(result, schema);
-    if (Object.hasOwn(schema, "items") && !Array.isArray(schema.items)) {
-      result = { ...result, items: intersect(result.items, this.admits(schema.items, stack).values) };
-    }
-    if (Array.isArray(schema.allOf)) result = both(result, this.admitsMembers(schema.allOf, "both", stack));
-    for (const keyword of ["anyOf", "oneOf"] as const) {
-      const members = schema[keyword];
-      if (Array.isArray(members)) result = both(result, this.admitsMembers(members, "either", stack));
-    }
-    const excluded = typeOnlyKinds(schema.not);
-    return excluded.length === 0 ? result : { ...result, values: without(result.values, excluded) };
+    this.walkKinds(schema);
+    return this.admitted.get(schema) as AdmittedKinds;
   }
 
   /**
-   * The kinds all (`both`) or some (`either`) of `members` admit. Kept per
-   * array, failure included, so roots that share one are not walked again;
-   * a result that needed a cycle cut is not kept, since it is provisional.
+   * Tarjan's walk from `root` over schema objects and member lists: each
+   * strongly connected component is settled once its successors are, and a
+   * failure is kept for every node on the path that reached it.
    */
-  private admitsMembers(members: unknown[], combine: "both" | "either", stack: Set<unknown>): AdmittedKinds {
-    const memo = memoFor(this.memberKinds, combine);
-    const known = memo.get(members);
-    if (known instanceof OpenApiSkip) throw known;
-    if (known) return known;
-    const cuts = this.cuts;
-    try {
-      const kinds = mapItems(members, (member) => this.admits(member, stack));
-      const result = combine === "both" ? kinds.reduce(both, EVERYTHING) : either(kinds);
-      if (this.cuts === cuts) memo.set(members, result);
-      return result;
-    } catch (error) {
-      if (error instanceof OpenApiSkip) memo.set(members, error);
-      throw error;
+  private walkKinds(root: object): void {
+    const order = new Map<object, number>();
+    const low = new Map<object, number>();
+    const terms = new Map<object, KindsTerms>();
+    const open: object[] = [];
+    const onStack = new Set<object>();
+    const follow = (node: object, child: object): void => {
+      const known = this.admitted.get(child);
+      if (known instanceof OpenApiSkip) throw known;
+      if (known) return;
+      if (!order.has(child)) {
+        visit(child);
+        low.set(node, Math.min(low.get(node)!, low.get(child)!));
+      } else if (onStack.has(child)) {
+        low.set(node, Math.min(low.get(node)!, order.get(child)!));
+      }
+    };
+    const visit = (node: object): void => {
+      const index = order.size;
+      order.set(node, index);
+      low.set(node, index);
+      open.push(node);
+      onStack.add(node);
+      try {
+        const nodeTerms = this.kindsTerms(node);
+        terms.set(node, nodeTerms);
+        for (const child of nodeTerms.children) follow(node, child);
+      } catch (error) {
+        if (error instanceof OpenApiSkip) this.admitted.set(node, error);
+        throw error;
+      }
+      if (low.get(node) !== index) return;
+      // `node` roots a component: it and everything above it on the open stack.
+      const component = open.splice(open.lastIndexOf(node));
+      for (const member of component) onStack.delete(member);
+      this.settleKinds(component, terms);
+    };
+    visit(root);
+  }
+
+  /**
+   * Narrow every node of a component from EVERYTHING until nothing changes,
+   * re-evaluating only the nodes whose children narrowed: a node narrows at
+   * most once per kind, so the work stays linear in the component's edges.
+   */
+  private settleKinds(component: object[], terms: Map<object, KindsTerms>): void {
+    const current = new Map<object, AdmittedKinds>();
+    const parents = new Map<object, object[]>();
+    for (const node of component) current.set(node, EVERYTHING);
+    for (const node of component) {
+      for (const child of terms.get(node)!.children) {
+        if (!current.has(child)) continue;
+        const list = parents.get(child);
+        if (list) list.push(node);
+        else parents.set(child, [node]);
+      }
     }
+    const read = (value: unknown): AdmittedKinds => {
+      if (value === false) return NOTHING;
+      if (!isObject(value)) return EVERYTHING;
+      return current.get(value) ?? (this.admitted.get(value) as AdmittedKinds);
+    };
+    const pending = [...component];
+    const queued = new Set(component);
+    while (pending.length > 0) {
+      const node = pending.pop()!;
+      queued.delete(node);
+      const next = combineKinds(terms.get(node)!, read);
+      if (sameKinds(next, current.get(node)!)) continue;
+      current.set(node, next);
+      for (const parent of parents.get(node) ?? []) {
+        if (!queued.has(parent)) {
+          queued.add(parent);
+          pending.push(parent);
+        }
+      }
+    }
+    for (const [node, kinds] of current) this.admitted.set(node, kinds);
+  }
+
+  /** The member list node of `members` combined as `combine`, one per array and combination. */
+  private memberList(members: unknown[], combine: "both" | "either"): MemberList {
+    const lists = memoFor(this.memberLists, combine);
+    let list = lists.get(members);
+    if (!list) {
+      list = { members: documentItems(members), combine };
+      memberListNodes.add(list);
+      lists.set(members, list);
+    }
+    return list;
+  }
+
+  /** What the kinds of a schema object or member list combine, read (and checked) once. */
+  private kindsTerms(node: object): KindsTerms {
+    if (isMemberList(node)) return termsOf(node.combine, EVERYTHING, node.members);
+    const schema = node as JsonObject;
+    const members: unknown[] = [];
+    if (Object.hasOwn(schema, "$ref")) {
+      const target = this.component(parseComponentRef(schema.$ref, "schemas"));
+      // OpenAPI 3.0 ignores $ref siblings; 3.1 applies them too.
+      if (this.version === "3.0") return termsOf("both", EVERYTHING, [target]);
+      members.push(target);
+    }
+    if (Array.isArray(schema.allOf)) members.push(this.memberList(schema.allOf, "both"));
+    for (const keyword of ["anyOf", "oneOf"] as const) {
+      const value = schema[keyword];
+      if (Array.isArray(value)) members.push(this.memberList(value, "either"));
+    }
+    const excluded = typeOnlyKinds(schema.not);
+    const narrowed = this.narrowByValues(EVERYTHING, schema);
+    const own = excluded.length === 0 ? narrowed : { ...narrowed, values: without(narrowed.values, excluded) };
+    const items = Object.hasOwn(schema, "items") && !Array.isArray(schema.items) ? schema.items : undefined;
+    return termsOf("both", own, members, items);
   }
 
   /** The kinds of the literals an `enum` array (or a `const` value) lists, kept per object. */
   private literals(keyword: "enum" | "const", value: unknown): AdmittedKinds {
-    const listed = keyword === "enum" ? (value as unknown[]) : [value];
+    const listed = keyword === "enum" ? documentItems(value as unknown[]) : [value];
     if (typeof value !== "object" || value === null) return kindsOfLiterals(listed);
     const memo = memoFor(this.literalKinds, keyword);
     let kinds = memo.get(value);
@@ -709,8 +803,8 @@ export class SchemaConverter {
       return [keyword, this.convertMap(value, mode, refs)];
     }
     if ((SCHEMA_ARRAY_KEYWORDS.has(keyword) || keyword === "items") && Array.isArray(value)) {
-      this.budget.source(value);
-      return [keyword, mapItems(value, (item) => this.convert(item, mode, refs))];
+      this.budget.source(documentItems(value));
+      return [keyword, value.map((item) => this.convert(item, mode, refs))];
     }
     if (keyword === "items") return [keyword, this.convert(value, mode, refs)];
     if (SCHEMA_KEYWORDS.has(keyword)) return [keyword, this.convert(value, mode, refs)];
@@ -727,7 +821,7 @@ export class SchemaConverter {
   }
 
   private convertDependencies(value: JsonObject, mode: SchemaMode, refs: Set<string>): JsonObject {
-    return this.convertMembers(value, (item) => (Array.isArray(item) ? item : this.convert(item, mode, refs)));
+    return this.convertMembers(value, (item) => (Array.isArray(item) ? documentItems(item) : this.convert(item, mode, refs)));
   }
 
   /** A map's members converted one by one, so a failing member ends the work before the rest are read. */
@@ -758,7 +852,7 @@ export class SchemaConverter {
     }
     converted.properties = properties as McpFnJsonSchema["properties"];
     if (Array.isArray(converted.required)) {
-      converted.required = converted.required.filter((name) => !flagged.includes(name as string));
+      converted.required = documentItems(converted.required).filter((name) => !flagged.includes(name as string));
       if ((converted.required as unknown[]).length === 0) delete converted.required;
     }
   }
@@ -993,7 +1087,7 @@ export class SchemaConverter {
       }
     }
     for (const { schema } of arrays) {
-      if (Array.isArray(schema.items) && schema.items.some(reaches)) {
+      if (Array.isArray(schema.items) && documentItems(schema.items).some(reaches)) {
         return childConflict(keyword, "items", "its position in a tuple");
       }
     }
@@ -1105,7 +1199,7 @@ export class SchemaConverter {
   private childSchemas(schema: JsonObject, keyword: string): unknown[] {
     const value = schema[keyword];
     if (value === undefined) return [];
-    if (Array.isArray(value)) return value;
+    if (Array.isArray(value)) return documentItems(value);
     if (SCHEMA_MAP_KEYWORDS.has(keyword) || keyword === "dependencies" || keyword === "dependentSchemas") {
       return isObject(value) ? Object.values(value).filter((entry) => !Array.isArray(entry)) : [];
     }
@@ -1551,7 +1645,7 @@ function nullableSchema(schema: McpFnJsonSchema): McpFnJsonSchema {
   if (typeof schema.type === "string") {
     return schema.type === "null" ? schema : { ...schema, type: [schema.type, "null"] };
   }
-  if (Array.isArray(schema.type) && !schema.type.includes("null")) {
+  if (Array.isArray(schema.type) && !documentItems(schema.type).includes("null")) {
     return { ...schema, type: [...schema.type, "null"] };
   }
   return schema;
@@ -1646,13 +1740,63 @@ function both(left: AdmittedKinds, right: AdmittedKinds): AdmittedKinds {
   return { values: intersect(left.values, right.values), items: intersect(left.items, right.items) };
 }
 
-/** `anyOf`/`oneOf`: a value matches some member; item kinds come from members that accept arrays. */
-function either(members: AdmittedKinds[]): AdmittedKinds {
-  const values = new Set<ValueKind>();
-  const items = new Set<ValueKind>();
-  for (const member of members) {
-    for (const kind of member.values) values.add(kind);
-    if (member.values.has("array")) for (const kind of member.items) items.add(kind);
+/** An allOf (`both`) or anyOf/oneOf (`either`) member array as a node of the kinds walk. */
+interface MemberList {
+  readonly members: unknown[];
+  readonly combine: "both" | "either";
+}
+
+const memberListNodes = new WeakSet<object>();
+
+function isMemberList(node: object): node is MemberList {
+  return memberListNodes.has(node);
+}
+
+/** What a node's kinds combine: its own narrowing and its members' kinds (an `items` schema narrows only `items`). */
+interface KindsTerms {
+  readonly combine: "both" | "either";
+  readonly own: AdmittedKinds;
+  readonly members: readonly unknown[];
+  readonly items: unknown;
+  /** The object members and items: the nodes this one's kinds depend on. */
+  readonly children: readonly object[];
+}
+
+function termsOf(combine: "both" | "either", own: AdmittedKinds, members: readonly unknown[], items?: unknown): KindsTerms {
+  const children: object[] = [];
+  for (const member of members) if (isObject(member)) children.push(member);
+  if (isObject(items)) children.push(items);
+  return { combine, own, members, items, children };
+}
+
+/**
+ * `both`: the value matches `own` and every member. `either` (anyOf/oneOf):
+ * it matches some member, and item kinds come from members that accept
+ * arrays. Folded member by member, with no array of member kinds.
+ */
+function combineKinds(terms: KindsTerms, read: (value: unknown) => AdmittedKinds): AdmittedKinds {
+  if (terms.combine === "either") {
+    const values = new Set<ValueKind>();
+    const items = new Set<ValueKind>();
+    for (const member of terms.members) {
+      const kinds = read(member);
+      for (const kind of kinds.values) values.add(kind);
+      if (kinds.values.has("array")) for (const kind of kinds.items) items.add(kind);
+    }
+    return { values, items };
   }
-  return { values, items };
+  let result = terms.own;
+  for (const member of terms.members) result = both(result, read(member));
+  if (terms.items !== undefined) result = { ...result, items: intersect(result.items, read(terms.items).values) };
+  return result;
+}
+
+function sameKinds(left: AdmittedKinds, right: AdmittedKinds): boolean {
+  return sameSet(left.values, right.values) && sameSet(left.items, right.items);
+}
+
+function sameSet(left: ReadonlySet<ValueKind>, right: ReadonlySet<ValueKind>): boolean {
+  if (left.size !== right.size) return false;
+  for (const kind of left) if (!right.has(kind)) return false;
+  return true;
 }

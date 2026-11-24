@@ -12,6 +12,7 @@ import {
 } from "@mcpfn/core";
 import {
   CONTEXT_FREE_FAILURES,
+  documentItems,
   isDefaultDialect,
   isObject,
   NodeBudget,
@@ -184,7 +185,7 @@ function optionalString(value: unknown): string | undefined {
 function servers(...levels: unknown[]): OpenApiServer[] {
   for (const level of levels) {
     if (!Array.isArray(level)) continue;
-    const usable = level
+    const usable = documentItems(level, "invalid-operation")
       .filter((server): server is JsonObject => isObject(server) && typeof server.url === "string")
       .map((server) => ({
         url: server.url as string,
@@ -201,7 +202,7 @@ function servers(...levels: unknown[]): OpenApiServer[] {
 function security(...levels: unknown[]): OpenApiOperation["security"] {
   for (const level of levels) {
     if (Array.isArray(level)) {
-      return level.filter(isObject) as Record<string, string[]>[];
+      return documentItems(level, "invalid-operation").filter(isObject) as Record<string, string[]>[];
     }
   }
   return undefined;
@@ -313,7 +314,7 @@ class OperationConverter {
       ...(optionalString(raw.operationId) ? { operationId: raw.operationId as string } : {}),
       ...(optionalString(raw.summary) ? { summary: raw.summary as string } : {}),
       ...(optionalString(raw.description) ? { description: raw.description as string } : {}),
-      tags: Array.isArray(raw.tags) ? raw.tags.filter((tag): tag is string => typeof tag === "string") : [],
+      tags: tagsOf(raw),
       deprecated: raw.deprecated === true,
       parameters: parameters.map(({ parameter }) => parameter),
       ...(body ? { requestBody: body.info } : {}),
@@ -632,7 +633,7 @@ class OperationConverter {
       if (!Array.isArray(list)) {
         throw new OpenApiSkip("invalid-operation", "parameters is not an array");
       }
-      for (const entry of list) {
+      for (const entry of documentItems(list, "invalid-operation")) {
         const parameter = this.resolve(entry, "parameters");
         if (typeof parameter.name !== "string" || typeof parameter.in !== "string") {
           throw new OpenApiSkip("invalid-operation", "a parameter has no name or in");
@@ -814,7 +815,7 @@ function treeCopy<T>(value: T, budget: NodeBudget, values: CopiedValues = { json
 function copyMembers(value: object, budget: NodeBudget, values: CopiedValues, ancestors: Set<object>): unknown {
   let copy: unknown;
   if (Array.isArray(value)) {
-    copy = Array.from(value, (item) => treeCopy(item, budget, values, ancestors));
+    copy = documentItems(value).map((item) => treeCopy(item, budget, values, ancestors));
   } else {
     // Member by member through the call's key lists, so a failing member ends the work.
     const entries: Array<[string, unknown]> = [];
@@ -1031,21 +1032,22 @@ function convertOperation<TContext>(
   if (!isObject(value)) {
     return { skip: { operation: ref, code: "invalid-operation", reason: "operation is not an object" } };
   }
-  // Filtering needs only identity fields, so it runs before conversion.
-  const identity: OperationIdentity = {
-    method,
-    path,
-    operationId,
-    tags: Array.isArray(value.tags) ? value.tags.filter((tag): tag is string => typeof tag === "string") : [],
-  };
-  const filtered = filterReason(identity, value.deprecated === true, include, exclude, options);
-  if (filtered) return { skip: { operation: ref, ...filtered } };
   try {
+    // Filtering needs only identity fields, so it runs before conversion.
+    const identity: OperationIdentity = { method, path, operationId, tags: tagsOf(value) };
+    const filtered = filterReason(identity, value.deprecated === true, include, exclude, options);
+    if (filtered) return { skip: { operation: ref, ...filtered } };
     return { candidate: converter.candidate(path, pathItem, method, value) };
   } catch (error) {
     const skip = candidateFailure(error);
     return { skip: { operation: ref, code: skip.code, reason: skip.message } };
   }
+}
+
+function tagsOf(raw: JsonObject): string[] {
+  return Array.isArray(raw.tags)
+    ? documentItems(raw.tags, "invalid-operation").filter((tag): tag is string => typeof tag === "string")
+    : [];
 }
 
 function register<TContext>(

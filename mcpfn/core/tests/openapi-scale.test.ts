@@ -46,6 +46,33 @@ describe("fromOpenAPI scale", () => {
     expect(elapsed).toBeLessThan(2000);
   });
 
+  it("settles the kinds of a recursive diamond of schemas once for 2,000 operations within 2 seconds", () => {
+    // A -> (B, C) -> D, and D's items refer back to A: one cycle every response and body reaches.
+    const ref = (name: string) => ({ $ref: `#/components/schemas/${name}` });
+    const schemas = {
+      A: { properties: { x: { type: "string" } }, allOf: [ref("B"), ref("C")] },
+      B: { anyOf: [ref("D"), { type: "object" }] },
+      C: { allOf: [ref("D")] },
+      D: { type: "object", items: ref("A") },
+    };
+    const names = Object.keys(schemas);
+    const paths: Record<string, unknown> = {};
+    for (let index = 0; index < 1000; index += 1) {
+      const schema = ref(names[index % names.length]!);
+      paths[`/d${index}`] = {
+        get: { operationId: `get${index}`, responses: { "200": { description: "OK", content: { "application/json": { schema } } } } },
+        post: { operationId: `post${index}`, requestBody: { content: { "application/json": { schema: { ...schema } } } }, responses: ok },
+      };
+    }
+    const started = performance.now();
+    const { tools, skipped } = fromOpenAPI({ openapi: "3.1.0", paths, components: { schemas } }, { executor: recordingExecutor(), allowMutations: true });
+    const elapsed = performance.now() - started;
+    expect(skipped).toEqual([]);
+    expect(tools).toHaveLength(2000);
+    expect(tools.filter((entry) => entry.outputSchema)).toHaveLength(1000);
+    expect(elapsed).toBeLessThan(2000);
+  });
+
   it("suffixes 2,000 colliding names within 2 seconds", () => {
     const shared = "o".repeat(128);
     const paths: Record<string, unknown> = {};

@@ -2210,18 +2210,18 @@ describe("fromOpenAPI body fallback, synchronous schemas, per-kind alternatives 
     // One 400-member array shared by 16 wrappers is still expansion of a shared object; the sibling stays.
     const shared = booleans().slice(0, 400);
     const repeated = { type: "object", allOf: Array.from({ length: 16 }, () => ({ allOf: shared })) };
-    // The same through the allOf a 3.1 $ref with siblings is rewritten to, and through the holes of a sparse default.
+    // The same through the allOf a 3.1 $ref with siblings is rewritten to; a sparse default is not a JSON value.
     const sibling = { $ref: "#/components/schemas/S", allOf: shared };
     const rewritten = { type: "object", allOf: Array.from({ length: 16 }, () => sibling) };
     const sparse = { name: "q", in: "query", schema: { type: "string", default: new Array(90_000) } };
     let chain: Record<string, unknown> = { $ref: "#/components/schemas/S", type: "object" };
     for (let level = 1; level <= 16; level += 1) chain = { $ref: "#/components/schemas/S", allOf: [chain, chain] };
-    for (const [content, parameters] of [
-      [{ "application/json": { schema: repeated } }, []],
-      [{ "application/json": { schema: rewritten } }, []],
-      [{ "application/json": { schema: { type: "object" } } }, [sparse]],
+    for (const [content, parameters, code] of [
+      [{ "application/json": { schema: repeated } }, [], "schema-too-large"],
+      [{ "application/json": { schema: rewritten } }, [], "schema-too-large"],
+      [{ "application/json": { schema: { type: "object" } } }, [sparse], "invalid-schema"],
       // A shared chain of 3.1 $refs with siblings, each level used twice.
-      [{ "application/json": { schema: chain } }, []],
+      [{ "application/json": { schema: chain } }, [], "schema-too-large"],
     ] as const) {
       const result = fromOpenAPI(
         {
@@ -2234,7 +2234,7 @@ describe("fromOpenAPI body fallback, synchronous schemas, per-kind alternatives 
         },
         options(),
       );
-      expect(result.skipped.map(({ code }) => code)).toEqual(["schema-too-large"]);
+      expect(result.skipped.map((entry) => entry.code)).toEqual([code]);
       expect(result.tools.map(({ name }) => name)).toEqual(["n"]);
     }
   });
@@ -2423,7 +2423,7 @@ describe("fromOpenAPI body fallback, synchronous schemas, per-kind alternatives 
     expect(tails.skipped.map((entry) => entry.code)).toEqual(Array.from({ length: 200 }, () => "circular-object"));
   });
 
-  it("keeps a 3.1 $ref's $defs checked beside an undefined allOf, and maps arrays that shadow their own methods", () => {
+  it("keeps a 3.1 $ref's $defs checked beside an undefined allOf, and skips arrays that shadow their own methods", () => {
     const ref = "#/components/schemas/S";
     const fallback = { "application/example+json": { schema: { type: "string" } } };
     const shadowed = Object.assign([{ type: "object" }], { map: null, constructor: null });
@@ -2437,13 +2437,12 @@ describe("fromOpenAPI body fallback, synchronous schemas, per-kind alternatives 
       components: { schemas: { S: { type: "object" } } },
     };
     const result = fromOpenAPI(document, options());
-    expect(result.skipped).toEqual([]);
+    // The shadowed allOf is refused wherever it is, never read through its own `map`: the body takes its next entry.
+    expect(result.skipped.map(({ operation, code }) => [operation.operationId, code])).toEqual([["g", "invalid-schema"]]);
     expect(result.tools.map((entry) => [entry.name, entry.operation.requestBody?.contentType])).toEqual([
       ["d", "application/example+json"],
-      ["m", "application/json"],
-      ["g", undefined],
+      ["m", "application/example+json"],
     ]);
-    expect(tool(result.tools, "g").outputSchema).toBeDefined();
   });
 
   it("credits a 3.1 $ref's sibling allOf before its other siblings, whatever their order", () => {
@@ -2469,8 +2468,9 @@ describe("fromOpenAPI body fallback, synchronous schemas, per-kind alternatives 
     // R refers to A, whose items refer to B = { anyOf: L }, and L = [R]: a HEAD reaching L through R first must not fix L's kinds.
     const ref = { $ref: "#/components/schemas/A" };
     const members = [ref];
-    for (const headFirst of [true, false]) {
-      const head = { "/h": { head: { operationId: "h", responses: json(ref) } } };
+    // Also with a HEAD root distinct from the member: a cached kind set must not depend on where a cycle was cut.
+    for (const [headFirst, root] of [[true, ref], [false, ref], [true, { ...ref }], [false, { ...ref }]] as const) {
+      const head = { "/h": { head: { operationId: "h", responses: json(root) } } };
       const get = { "/g": { get: { operationId: "g", responses: json({ anyOf: members }) } } };
       const result = fromOpenAPI(
         {
@@ -2488,6 +2488,81 @@ describe("fromOpenAPI body fallback, synchronous schemas, per-kind alternatives 
       expect(result.skipped).toEqual([]);
       expect(tool(result.tools, "h").outputSchema).toBeUndefined();
       expectArguments(tool(result.tools, "g").outputSchema!, { valid: [{ n: 1 }], invalid: [{}, { n: "x" }] });
+    }
+  });
+
+  it("skips a sparse array by its own members, not its length, wherever a schema holds one", () => {
+    const sparse = (member: unknown) => {
+      const array: unknown[] = [];
+      array[0] = member;
+      array.length = 100_000_000;
+      return array;
+    };
+    const schemas = [
+      { allOf: sparse({ type: "object" }) },
+      { anyOf: sparse({ type: "object" }) },
+      { oneOf: sparse({ type: "object" }) },
+      { type: "array", items: sparse({ type: "string" }) },
+      { type: "object", enum: sparse({}) },
+    ];
+    for (const schema of schemas) {
+      const started = performance.now();
+      const result = fromOpenAPI(
+        {
+          openapi: "3.1.0",
+          paths: {
+            "/s": { get: { operationId: "sparseGet", responses: json(schema) }, head: { operationId: "sparseHead", responses: json(schema) } },
+            "/p": { post: { operationId: "sparsePost", requestBody: { content: { "application/json": { schema } } }, responses: ok } },
+            "/ok": { get: { operationId: "okGet", responses: json({ type: "object" }) } },
+          },
+        },
+        options(),
+      );
+      expect(performance.now() - started).toBeLessThan(1000);
+      expect(result.skipped.map(({ operation, code }) => [operation.operationId, code])).toEqual([
+        ["sparseGet", "invalid-schema"],
+        ["sparseHead", "invalid-schema"],
+        ["sparsePost", "invalid-schema"],
+      ]);
+      expect(result.tools.map(({ name }) => name)).toEqual(["okGet"]);
+    }
+  });
+
+  it("skips, without throwing, an operation whose schema array has an own key that shadows an array method", () => {
+    const arrays: Record<string, () => unknown[]> = {
+      enum: () => ["a", "b"],
+      type: () => ["string", "null"],
+      notType: () => ["string", "null"],
+      allOf: () => [{ type: "object" }],
+      anyOf: () => [{ type: "object" }],
+      oneOf: () => [{ type: "object" }],
+      required: () => ["a"],
+    };
+    const schemaWith = (where: string, array: unknown[]) => {
+      if (where === "enum") return { type: "string", enum: array };
+      if (where === "type") return { type: array };
+      if (where === "notType") return { type: "object", not: { type: array } };
+      if (where === "required") return { type: "object", properties: { a: { type: "string" } }, required: array };
+      return { [where]: array };
+    };
+    for (const method of ["map", "flatMap", "some", "every", "filter", "reduce", "constructor"]) {
+      for (const [where, build] of Object.entries(arrays)) {
+        const schema = schemaWith(where, Object.assign(build(), { [method]: 1 }));
+        const result = fromOpenAPI(
+          {
+            openapi: "3.1.0",
+            paths: {
+              "/r": { get: { operationId: "response", responses: json(schema) } },
+              "/b": { post: { operationId: "body", requestBody: { content: { "application/json": { schema } } }, responses: ok } },
+              "/q": { get: { operationId: "query", parameters: [{ name: "q", in: "query", schema }], responses: ok } },
+              "/ok": { get: { operationId: "okGet", responses: json({ type: "object" }) } },
+            },
+          },
+          options(),
+        );
+        expect(result.skipped.map(({ operation }) => operation.operationId), `${method} on ${where}`).toEqual(["response", "body", "query"]);
+        expect(result.tools.map(({ name }) => name)).toEqual(["okGet"]);
+      }
     }
   });
 
