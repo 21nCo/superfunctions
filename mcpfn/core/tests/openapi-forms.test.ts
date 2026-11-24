@@ -2607,30 +2607,30 @@ describe("fromOpenAPI body fallback, synchronous schemas, per-kind alternatives 
     expect(registered(result)).toEqual([["short", true]]);
     expect(new Set(result.skipped.map(({ code, reason }) => `${code}: ${reason}`))).toEqual(new Set(["schema-too-large: a schema or reference chain nests too deeply"]));
     expect(result.skipped).toHaveLength(100);
-    // A closure's own failing component is reported, and nothing past it is converted
-    // first: the chain's shared 10,000-entry maps never exhaust the call's budget.
-    const wide = Object.fromEntries(Array.from({ length: 10_000 }, (_, index) => [`p${index}`, { type: "string" }]));
-    const links = chain(190);
-    for (const [name, schema] of Object.entries(links)) links[name] = { ...(schema as object), properties: wide };
-    const isolated = fromOpenAPI(
-      {
-        openapi: "3.1.0",
-        paths: {
-          "/p": { post: { operationId: "post", requestBody: { required: true, content: { "application/json": { schema: { $ref: "#/components/schemas/Root" } } } }, responses: ok } },
-          "/g": { get: { operationId: "get", responses: json({ type: "object" }) } },
-        },
-        components: {
-          schemas: {
-            ...links,
-            Root: { type: "object", properties: { bad: { $ref: "#/components/schemas/Bad" } }, allOf: [{ $ref: "#/components/schemas/T0" }] },
-            Bad: { type: "array", prefixItems: [{ type: "string" }] },
+    // A closure's own failing component is reported, and nothing past it is
+    // converted first (so its conversions cannot exhaust the call's budget).
+    const [isolated, converted] = countCalls("convertedComponent", () =>
+      fromOpenAPI(
+        {
+          openapi: "3.1.0",
+          paths: {
+            "/p": { post: { operationId: "post", requestBody: { required: true, content: { "application/json": { schema: { $ref: "#/components/schemas/Root" } } } }, responses: ok } },
+            "/g": { get: { operationId: "get", responses: json({ type: "object" }) } },
+          },
+          components: {
+            schemas: {
+              ...chain(190),
+              Root: { type: "object", properties: { bad: { $ref: "#/components/schemas/Bad" } }, allOf: [{ $ref: "#/components/schemas/T0" }] },
+              Bad: { type: "array", prefixItems: [{ type: "string" }] },
+            },
           },
         },
-      },
-      options(),
+        options(),
+      ),
     );
     expect(registered(isolated)).toEqual([["get", true]]);
     expect(isolated.skipped.map(({ code }) => code)).toEqual(["unsupported-schema-keyword"]);
+    expect(converted).toBeLessThan(10);
     // 65 to 128 links register as a response, a HEAD response, a body and a query parameter, under both engines.
     for (const length of [65, 128]) {
       const schemas = { ...chain(length), Q: { allOf: [{ $ref: "#/components/schemas/T0" }] } };
