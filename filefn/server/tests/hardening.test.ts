@@ -217,4 +217,30 @@ describe('FILE-30 low-severity hardening (F-13, F-14, F-16, F-18, F-24)', () => 
     await expect(upload(fileFn as never, { principalId: 'owner', tenantId: 't1' })).resolves.toBeDefined();
     expect(warn).toHaveBeenCalledTimes(1);
   });
+
+  it('never leaves an unhandled rejection from an async warning sink that rejects (F-24)', async () => {
+    const warn = vi.fn(async () => {
+      throw new Error('sink down');
+    });
+    vi.resetModules();
+    const fresh = await import('../src/index.js');
+    const fileFn = fresh.createFileFn({
+      database: memoryAdapter(),
+      storage: createLocalStorageAdapter({ rootDir }),
+      namespace: 'filefn',
+      policies: [{ name: 'docs', contentTypes: ['text/plain'], visibility: 'private' }],
+      observability: { logger: { info() {}, warn, error() {}, debug() {} } } as never,
+    });
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      await expect(upload(fileFn as never, { principalId: 'owner', tenantId: 't1' })).resolves.toBeDefined();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(unhandled).toEqual([]);
+  });
 });

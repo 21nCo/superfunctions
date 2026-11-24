@@ -521,19 +521,24 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
     if (parts.length !== session.totalParts) {
       return { error: errors.uploadIncomplete() };
     }
-    // A caller who can't write an existing file is refused (403) by the
-    // completion's own write check, which also fences and cleans the session;
-    // its owner's quota is not looked at (or reported) for it here.
-    const refusedWriter =
-      Boolean(session.fileId) && (await isRivalFile(session)) && !(await canWriteFileNow(session.fileId!, ctx));
-    if (quota && !refusedWriter) {
-      const quotaResult = await quota.checkQuota({
-        ...(await quotaAccountFor(session.fileId, ctx, session)),
-        requestedBytes: session.size,
-      });
-      if (!quotaResult.allowed) {
-        return { error: errors.quotaExceeded(quotaResult.current, quotaResult.limit, session.size) };
+    if (!quota) return { parts };
+    // One read of the file decides both the account and whether the caller
+    // may write it: an existing file (not written by this session) is charged
+    // to its owner, a new one to the session's owner.
+    const file = session.fileId ? await rivalFile(session) : null;
+    const account: QuotaAccount = file
+      ? { principalId: file.ownerId, tenantId: file.tenantId ?? undefined }
+      : sessionQuotaAccount(session);
+    const quotaResult = await quota.checkQuota({ ...account, requestedBytes: session.size });
+    if (!quotaResult.allowed) {
+      // A caller who can't write the file learns nothing about its owner's
+      // usage: plain 403 (the session is left for the expiry sweep). One who
+      // can't write it but passes is refused (403), fenced and cleaned by the
+      // completion's own write check.
+      if (file && !(await canWriteFileNow(session.fileId!, ctx))) {
+        return { error: errors.forbidden({ fileId: session.fileId!, operation: 'replace' }) };
       }
+      return { error: errors.quotaExceeded(quotaResult.current, quotaResult.limit, session.size) };
     }
     return { parts };
   }
@@ -1172,16 +1177,17 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
   // The account a file's storage is charged to: its owner. Usage is recorded
   // and refunded (when the file is deleted) against the same account, so a
   // writer with a grant adds to the owner's usage, not their own.
-  // Whether the session's file exists and was not written by this session
+  // The session's file when it exists and was not written by this session
   // itself (a files row pointing at the session's own version, as the write
-  // checks at completion also treat it).
-  async function isRivalFile(session: UploadSession): Promise<boolean> {
-    const file = await db.findOne<{ currentVersionId: string }>({
+  // checks at completion also treat it); otherwise null.
+  async function rivalFile(session: UploadSession): Promise<{ ownerId: string; tenantId?: string | null } | null> {
+    const file = await db.findOne<{ currentVersionId: string; ownerId: string; tenantId?: string | null }>({
       model: 'files',
       where: [{ field: 'fileId', operator: 'eq', value: session.fileId! }],
       namespace,
     });
-    return Boolean(file) && (!session.completionVersionId || file!.currentVersionId !== session.completionVersionId);
+    if (!file) return null;
+    return session.completionVersionId && file.currentVersionId === session.completionVersionId ? null : file;
   }
 
   // A session's own account: the owner and tenant it was created for.

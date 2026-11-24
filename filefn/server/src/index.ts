@@ -399,9 +399,13 @@ export function createFileFn(config: FileFnConfig): FileFn {
     if (hostWarn && !sweepState.ran && !sweepState.warned) {
       sweepState.warned = true;
       try {
-        hostWarn('Uploads started but cleanupExpiredSessions has not run in this process', {
+        const sent: unknown = hostWarn('Uploads started but cleanupExpiredSessions has not run in this process', {
           hint: 'Schedule cleanupExpiredSessions() and cleanupOrphanedArtifacts(); without them expired sessions and their stored objects are never removed.',
         });
+        // An async sink that rejects must not become an unhandled rejection.
+        if (sent && typeof (sent as PromiseLike<unknown>).then === 'function') {
+          (sent as PromiseLike<unknown>).then(undefined, () => {});
+        }
       } catch {
         // The warning is advisory.
       }
