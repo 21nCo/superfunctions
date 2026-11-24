@@ -1553,10 +1553,10 @@ export class SchemaConverter {
   /**
    * The longest chain of in-place references from component `name` (1 when
    * it has none), or -1 when it reaches an in-place cycle. Walked with an
-   * explicit stack and kept for the whole call, so a tail that many roots
-   * share is walked once.
+   * explicit stack over a converted closure holding `name`, and kept for the
+   * whole call, so a tail that many closures share is walked once.
    */
-  private inPlaceDepth(name: string, mode: SchemaMode): number {
+  private inPlaceDepth(name: string, mode: SchemaMode, closure: ReadonlyMap<string, ConvertedComponent>): number {
     let depths = this.inPlaceDepths.get(mode);
     if (!depths) {
       depths = new Map();
@@ -1564,7 +1564,7 @@ export class SchemaConverter {
     }
     const known = depths.get(name);
     if (known !== undefined) return known;
-    const linksOf = (key: string) => this.convertedComponent(key, mode).inPlace ?? new Set<string>();
+    const linksOf = (key: string) => closure.get(key)?.inPlace ?? new Set<string>();
     const active = new Set([name]);
     const stack = [{ key: name, next: linksOf(name).values() }];
     while (stack.length > 0) {
@@ -1602,13 +1602,15 @@ export class SchemaConverter {
       if (entries.has(key)) continue;
       const entry = this.convertedComponent(key, mode);
       if (entry.error) throw entry.error;
-      if (this.inPlaceDepth(key, mode) > MAX_IN_PLACE_DEPTH) throw new OpenApiSkip("schema-too-large", TOO_DEEP);
       entries.set(key, entry);
       result.push([key, entry.schema!]);
       for (const next of entry.refs!) if (!entries.has(next)) queue.push(next);
     }
-    // Only a closure reaching an in-place cycle is walked again, to name the cycle.
-    if ([...entries.keys()].some((key) => this.inPlaceDepth(key, mode) < 0)) assertProductiveRecursion(entries);
+    // Checked once the whole closure is converted, in the order it was
+    // read: only a closure reaching an in-place cycle is walked again, to name the cycle.
+    const depths = [...entries.keys()].map((key) => this.inPlaceDepth(key, mode, entries));
+    if (depths.some((depth) => depth < 0)) assertProductiveRecursion(entries);
+    if (depths.some((depth) => depth > MAX_IN_PLACE_DEPTH)) throw new OpenApiSkip("schema-too-large", TOO_DEEP);
     return Object.fromEntries(result);
   }
 }
