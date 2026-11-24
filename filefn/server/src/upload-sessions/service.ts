@@ -195,18 +195,32 @@ function generateDefaultId(): string {
   return generateFileFnId('upl');
 }
 
-function hashPayload(input: CreateSessionInput, ctx: { principalId?: string; tenantId?: string }): string {
+// Stands in for the metadata in the fingerprint payload, to be replaced by
+// the metadata's JSON text (no field before `md` can hold control characters).
+const METADATA_PLACEHOLDER = '\u0000filefn-metadata\u0000';
+
+function hashPayload(
+  input: CreateSessionInput,
+  ctx: { principalId?: string; tenantId?: string },
+  metadataJson?: string,
+): string {
   const payload = {
     p: input.policy,
     fn: input.fileName,
     s: input.size,
     mt: input.mimeType,
     fid: input.fileId,
-    md: input.metadata,
+    md: metadataJson === undefined ? input.metadata : METADATA_PLACEHOLDER,
     pr: ctx.principalId,
     tn: ctx.tenantId
   };
-  const str = JSON.stringify(payload);
+  let str = JSON.stringify(payload);
+  if (metadataJson !== undefined) {
+    // The metadata as JSON.stringify wrote it from the caller's value (its
+    // property order included), so fingerprints match those made before
+    // metadata was normalized.
+    str = str.replace(`"md":${JSON.stringify(METADATA_PLACEHOLDER)}`, () => `"md":${metadataJson}`);
+  }
   return createHash('sha256').update(str).digest('hex');
 }
 
@@ -1300,6 +1314,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         },
       };
       const checked = assertValidUploadInit(fields as unknown as UploadInitInput);
+      const checkedMetadataJson = checked.metadataJson;
       input = {
         policy: fields.policy,
         fileName: fields.fileName,
@@ -1320,7 +1335,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         });
 
         if (existing) {
-          const expectedHash = hashPayload(input, { principalId: ctx.principalId, tenantId: ctx.tenantId });
+          const expectedHash = hashPayload(input, { principalId: ctx.principalId, tenantId: ctx.tenantId }, checkedMetadataJson);
           if (existing.idempotencyPayloadHash !== expectedHash) {
             throw errors.idempotencyConflict();
           }
@@ -1472,7 +1487,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
           tenantId: ctx.tenantId || null,
           metadata: input.metadata ?? {},
           idempotencyKey: input.idempotencyKey || null,
-          idempotencyPayloadHash: input.idempotencyKey ? hashPayload(input, { principalId: ctx.principalId, tenantId: ctx.tenantId }) : null,
+          idempotencyPayloadHash: input.idempotencyKey ? hashPayload(input, { principalId: ctx.principalId, tenantId: ctx.tenantId }, checkedMetadataJson) : null,
           uploadSessionToken: uploadSessionToken || null,
           uploadSessionTokenHash,
           expiresAt,

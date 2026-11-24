@@ -1904,9 +1904,10 @@
         "name": "x-idempotency-key",
         "in": "header",
         "required": false,
-        "description": "Optional idempotency key used for upload initialization.",
+        "description": "Optional idempotency key used for upload initialization: at most 255 characters, no control characters or lone surrogates.",
         "schema": {
-          "type": "string"
+          "type": "string",
+          "maxLength": 255
         }
       },
       "XUploadSessionToken": {

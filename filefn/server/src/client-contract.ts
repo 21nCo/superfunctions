@@ -537,8 +537,8 @@ export const fileFnClientContract = {
         name: 'x-idempotency-key',
         in: 'header',
         required: false,
-        description: 'Optional idempotency key used for upload initialization.',
-        schema: { type: 'string' },
+        description: 'Optional idempotency key used for upload initialization: at most 255 characters, no control characters or lone surrogates.',
+        schema: { type: 'string', maxLength: 255 },
       },
       XUploadSessionToken: {
         name: 'x-upload-session-token',

@@ -291,4 +291,28 @@ describe('upload init input (FILE-30 F-21, F-05)', () => {
     const shrinking = await init({ list: arr }, 'arr-key');
     expect((await init({ list: [0, null] }, 'arr-key')).uploadSessionId).toBe(shrinking.uploadSessionId);
   });
+
+  it('fingerprints proxied metadata exactly as JSON.stringify did, and refuses cycles made by getters', async () => {
+    const fileFn = makeFileFn([{ name: 'any' }]);
+    const base = { policy: 'any', fileName: 'a.txt', size: 1, mimeType: 'text/plain' };
+    const init = (metadata: unknown, idempotencyKey?: string) =>
+      fileFn.createUploadSession({ ...base, metadata, idempotencyKey } as never, { principalId: 'alice' });
+
+    // A proxied array reporting length 1.5 has one element (ToLength).
+    const arrayProxy = new Proxy(['x', 'y'], { get: (t, p) => (p === 'length' ? 1.5 : Reflect.get(t, p)) });
+    const a = await init({ list: arrayProxy }, 'len-key');
+    expect((await init({ list: ['x'] }, 'len-key')).uploadSessionId).toBe(a.uploadSessionId);
+
+    // A proxy listing integer keys 2, 1 is fingerprinted in that order: a
+    // second identical proxied request replays the first.
+    const ordered = () => new Proxy({ 1: 'one', 2: 'two' } as Record<string, string>, { ownKeys: () => ['2', '1'] });
+    const o = await init(ordered(), 'order-key');
+    expect((await init(ordered(), 'order-key')).uploadSessionId).toBe(o.uploadSessionId);
+
+    // A getter that returns its parent on the first read is circular.
+    let reads = 0;
+    const parent: Record<string, unknown> = {};
+    Object.defineProperty(parent, 'child', { enumerable: true, get() { reads += 1; return reads === 1 ? parent : 'x'; } });
+    await expect(init(parent)).rejects.toMatchObject({ code: 'FILEFN_INVALID_REQUEST' });
+  });
 });

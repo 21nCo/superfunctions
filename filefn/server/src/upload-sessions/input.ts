@@ -52,7 +52,19 @@ function charge(budget: { bytes: number }, bytes: number): void {
  * Throws past MAX_METADATA_DEPTH or the node budget, before expanding a
  * structure that reuses children, and on BigInt.
  */
-function normalizeJson(value: unknown, key: string, depth: number, budget: { left: number; bytes: number }): unknown {
+interface Normalized {
+  value: unknown;
+  /** The JSON text JSON.stringify would write, in the original property order; undefined when dropped. */
+  json: string | undefined;
+}
+
+function normalizeJson(
+  value: unknown,
+  key: string,
+  depth: number,
+  budget: { left: number; bytes: number },
+  ancestors: Set<object> = new Set(),
+): Normalized {
   budget.left -= 1;
   if (budget.left < 0 || depth > MAX_METADATA_DEPTH) throw METADATA_BUDGET_EXCEEDED;
   if (value !== null && (typeof value === 'object' || typeof value === 'bigint' || typeof value === 'function')) {
@@ -74,41 +86,57 @@ function normalizeJson(value: unknown, key: string, depth: number, budget: { lef
   if (typeof value === 'string') {
     // Count every occurrence at its escaped UTF-8 size, so repeated
     // references to one long string cannot outgrow the byte limit unseen.
-    charge(budget, value.length > MAX_METADATA_BYTES ? MAX_METADATA_BYTES + 1 : new TextEncoder().encode(JSON.stringify(value)).byteLength);
-    return value;
+    if (value.length > MAX_METADATA_BYTES) charge(budget, MAX_METADATA_BYTES + 1);
+    const json = JSON.stringify(value);
+    charge(budget, new TextEncoder().encode(json).byteLength);
+    return { value, json };
   }
   if (value === null || typeof value === 'boolean') {
     charge(budget, 5);
-    return value;
+    return { value, json: JSON.stringify(value) };
   }
   if (typeof value === 'number') {
-    charge(budget, Number.isFinite(value) ? String(value).length : 4);
-    return Number.isFinite(value) ? value : null;
+    const json = JSON.stringify(value);
+    charge(budget, json.length);
+    return { value: Number.isFinite(value) ? value : null, json };
   }
   if (typeof value === 'bigint') throw new TypeError('BigInt is not JSON');
-  if (typeof value !== 'object') return undefined;
-  if (Array.isArray(value)) {
-    const out: unknown[] = [];
-    // The length is read once, as JSON.stringify does.
-    const length = value.length;
-    for (let i = 0; i < length; i++) {
-      const item = normalizeJson(value[i], String(i), depth + 1, budget);
-      charge(budget, 1);
-      out.push(item === undefined ? null : item);
+  if (typeof value !== 'object') return { value: undefined, json: undefined };
+  // A value that is its own ancestor is circular, which JSON.stringify refuses.
+  if (ancestors.has(value)) throw new TypeError('circular metadata');
+  ancestors.add(value);
+  try {
+    if (Array.isArray(value)) {
+      const out: unknown[] = [];
+      const parts: string[] = [];
+      // ToLength of the length, read once, as JSON.stringify does.
+      const rawLength = Math.trunc(Number((value as { length: unknown }).length));
+      const length = Number.isFinite(rawLength) ? Math.min(Math.max(rawLength, 0), Number.MAX_SAFE_INTEGER) : rawLength > 0 ? Number.MAX_SAFE_INTEGER : 0;
+      for (let i = 0; i < length; i++) {
+        const item = normalizeJson((value as unknown[])[i], String(i), depth + 1, budget, ancestors);
+        charge(budget, 1);
+        out.push(item.value === undefined ? null : item.value);
+        parts.push(item.json ?? 'null');
+      }
+      return { value: out, json: `[${parts.join(',')}]` };
     }
-    return out;
-  }
-  const out: Record<string, unknown> = {};
-  for (const name of Object.keys(value)) {
-    budget.left -= 1;
-    if (budget.left < 0) throw METADATA_BUDGET_EXCEEDED;
-    const item = normalizeJson((value as Record<string, unknown>)[name], name, depth + 1, budget);
-    if (item !== undefined) {
-      charge(budget, new TextEncoder().encode(JSON.stringify(name)).byteLength + 2);
-      Object.defineProperty(out, name, { value: item, enumerable: true, writable: true, configurable: true });
+    const out: Record<string, unknown> = {};
+    const parts: string[] = [];
+    for (const name of Object.keys(value)) {
+      budget.left -= 1;
+      if (budget.left < 0) throw METADATA_BUDGET_EXCEEDED;
+      const item = normalizeJson((value as Record<string, unknown>)[name], name, depth + 1, budget, ancestors);
+      if (item.json !== undefined) {
+        const keyJson = JSON.stringify(name);
+        charge(budget, new TextEncoder().encode(keyJson).byteLength + 2);
+        Object.defineProperty(out, name, { value: item.value, enumerable: true, writable: true, configurable: true });
+        parts.push(`${keyJson}:${item.json}`);
+      }
     }
+    return { value: out, json: `{${parts.join(',')}}` };
+  } finally {
+    ancestors.delete(value);
   }
-  return out;
 }
 
 /**
@@ -192,7 +220,7 @@ export interface UploadInitInput {
  * (`CreateUploadSessionRequest`). Throws `FILEFN_INVALID_REQUEST` (400) on the
  * first field that does not conform.
  */
-export function assertValidUploadInit(input: UploadInitInput): { metadata?: Record<string, unknown> } {
+export function assertValidUploadInit(input: UploadInitInput): { metadata?: Record<string, unknown>; metadataJson?: string } {
   // No length cap: the name must match a registered policy anyway.
   if (typeof input.policy !== 'string' || input.policy.length === 0 || LONE_SURROGATE.test(input.policy)) {
     throw invalidRequest('policy must be a non-empty string', { field: 'policy' });
@@ -224,6 +252,7 @@ export function assertValidUploadInit(input: UploadInitInput): { metadata?: Reco
   }
 
   let snapshot: Record<string, unknown> | undefined;
+  let snapshotJson: string | undefined;
   // Omitted metadata is fine; an explicit null is not an object.
   if (input.metadata !== undefined) {
     // Normalized once, as JSON.stringify would (toJSON applied, with the key
@@ -231,11 +260,14 @@ export function assertValidUploadInit(input: UploadInitInput): { metadata?: Reco
     // depth and node budgets; the plain result is what gets checked, hashed
     // and stored.
     let normalized: unknown;
+    let normalizedJson: string | undefined;
     let overBytes = false;
     try {
       // The byte budget has headroom over the limit; the exact size is
       // checked on the final string below.
-      normalized = normalizeJson(input.metadata, 'md', 0, { left: MAX_METADATA_NODES, bytes: MAX_METADATA_BYTES * 2 });
+      const result = normalizeJson(input.metadata, 'md', 0, { left: MAX_METADATA_NODES, bytes: MAX_METADATA_BYTES * 2 });
+      normalized = result.value;
+      normalizedJson = result.json;
     } catch (error) {
       overBytes = error === METADATA_BUDGET_EXCEEDED;
       normalized = undefined;
@@ -249,7 +281,7 @@ export function assertValidUploadInit(input: UploadInitInput): { metadata?: Reco
     if (normalized === null || typeof normalized !== 'object' || Array.isArray(normalized) || hasLoneSurrogate(normalized)) {
       throw invalidRequest(`metadata must be a JSON object of well-formed text, nested at most ${MAX_METADATA_DEPTH} levels`, { field: 'metadata' });
     }
-    const encoded = JSON.stringify(normalized);
+    const encoded = normalizedJson ?? JSON.stringify(normalized);
     if (new TextEncoder().encode(encoded).byteLength > MAX_METADATA_BYTES) {
       throw invalidRequest(`metadata must be at most ${MAX_METADATA_BYTES} bytes as JSON`, {
         field: 'metadata',
@@ -257,6 +289,7 @@ export function assertValidUploadInit(input: UploadInitInput): { metadata?: Reco
       });
     }
     snapshot = normalized as Record<string, unknown>;
+    snapshotJson = encoded;
   }
 
   if (input.idempotencyKey !== undefined && input.idempotencyKey !== null) {
@@ -272,5 +305,7 @@ export function assertValidUploadInit(input: UploadInitInput): { metadata?: Reco
     }
   }
 
-  return snapshot === undefined ? {} : { metadata: snapshot };
+  // metadataJson is the JSON text in the caller's property order, for the
+  // request fingerprint; metadata is the plain copy that is stored.
+  return snapshot === undefined ? {} : { metadata: snapshot, metadataJson: snapshotJson };
 }
