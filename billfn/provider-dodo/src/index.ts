@@ -1068,6 +1068,14 @@ function mapDodoSubscriptionState(payload: Record<string, unknown>): BillFnVerif
  * `subscription_ids` or `is_multi_subscription` means a subscription charge. One-time only when Dodo says so: a
  * `null` `subscription_id`, or (Dodo may omit that optional field) an empty `subscription_ids` list.
  */
+/** Whether a payment names a subscription it charges (as opposed to only flagging `is_multi_subscription`). */
+function hasDodoPaymentSubscriptionId(payment: Record<string, unknown>): boolean {
+  return (
+    (typeof payment.subscription_id === 'string' && payment.subscription_id.length > 0) ||
+    (Array.isArray(payment.subscription_ids) && payment.subscription_ids.length > 0)
+  );
+}
+
 function classifyDodoPayment(payment: Record<string, unknown>): 'one_time' | 'subscription' | 'unknown' {
   const subscriptionIds = Array.isArray(payment.subscription_ids) ? payment.subscription_ids : undefined;
   if (
@@ -1111,8 +1119,19 @@ function mapDodoPaymentState(
   const paid = normalizeDodoPaymentStatus(readString(payload, ['status']));
   // A one-time purchase whose money went back no longer grants access, whichever read (verification, restore,
   // a payment webhook) sees it; a subscription charge leaves that to the subscription's own state.
-  const kind = knownKind ?? classifyDodoPayment(payload);
-  const revoked = paid === 'active' && kind !== 'subscription' && isDodoPaymentRevoked(payload);
+  // The caller's one-time price decides only when the payment's own fields are inconclusive; a payment that names
+  // a subscription (a cart mixing a one-time item with a subscription) is never projected as a revoked one-time
+  // purchase, which would cancel the subscription it names.
+  const namesSubscription = hasDodoPaymentSubscriptionId(payload);
+  const kind = knownKind && !namesSubscription ? knownKind : classifyDodoPayment(payload);
+  const reversed = paid === 'active' && isDodoPaymentRevoked(payload);
+  if (reversed && knownKind === 'one_time' && namesSubscription) {
+    throw createBillFnError({
+      code: 'BILLFN_CONFLICT',
+      message: 'The refunded Dodo payment also charges a subscription; BillFn cannot revoke its one-time item alone'
+    });
+  }
+  const revoked = reversed && kind !== 'subscription';
   if (revoked && kind === 'unknown') {
     // A reversed payment that does not say whether it is a one-time purchase is neither granted nor revoked.
     throw unusableDodoRead(`payment ${readString(payload, ['payment_id']) ?? ''}`.trim());

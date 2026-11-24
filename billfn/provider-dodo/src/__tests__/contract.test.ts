@@ -1199,6 +1199,24 @@ describe('parseWebhook with recorded Dodo payloads', () => {
     expect(restored).toMatchObject({ subscriptionStatus: 'canceled', providerChargeId: oneTimePayment.payment_id });
   });
 
+  it('refuses to restore a refunded cart that also charges a subscription, instead of canceling that subscription', async () => {
+    const mixed = {
+      ...oneTimePayment,
+      subscription_id: SUBSCRIPTION_ID,
+      subscription_ids: [SUBSCRIPTION_ID],
+      refunds: [{ refund_id: 'ref_1', status: 'succeeded', is_partial: false }]
+    };
+    const fetchMock = dodoReads({ [`/payments/${oneTimePayment.payment_id}`]: mixed });
+
+    await expect(
+      createDodoProvider({ apiKey: 'dodo_test_key', fetch: fetchMock }).restorePurchases!({
+        billingAccount: { id: 'ba_user_123' },
+        price: { kind: 'one_time', providerProductId: 'pdt_nucleus_lifetime' },
+        purchaseReference: oneTimePayment.payment_id
+      } as never)
+    ).rejects.toMatchObject({ code: 'BILLFN_CONFLICT', message: expect.stringContaining('also charges a subscription') });
+  });
+
   it('revokes a reversed one-time restore whose payment omits both subscription fields', async () => {
     const { subscription_id: _id, subscription_ids: _ids, ...unclassified } = oneTimePayment;
     const reversed = { ...unclassified, refunds: [{ refund_id: 'ref_1', status: 'succeeded', is_partial: false }] };
