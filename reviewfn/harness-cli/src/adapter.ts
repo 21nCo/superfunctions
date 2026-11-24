@@ -311,8 +311,6 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
     const before = attempt === 1 ? "before the CLI started" : "before the repair attempt";
     const outputBytes = state.remainingOutputBytes();
     if (outputBytes <= 0) return state.finish("timed_out", `The CLI output used its whole byte budget ${before}.`);
-    // Each attempt runs only the executable whose version was read: one replaced at the same path since is refused.
-    if (await this.changed(run)) return state.finish("failed", `The CLI executable changed after its version was read, so it was refused ${before}.`);
     // Each attempt gets its own directory, created exclusively with an unpredictable name once the previous attempt has
     // ended, holding its schema, its prompt (written only when the CLI is given its path) and its output path, which is
     // therefore absent when it starts. Nothing an earlier attempt left (a link, a rewritten schema, a planted answer) is
@@ -321,7 +319,10 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
     try { files = await attemptFiles(run, attempt, prompt); }
     catch (error) { return state.finish("failed", `The CLI attempt's files could not be created: ${message(error)}`); }
     const { outputFile } = files;
-    // The deadline is read once the preparation above is done, so a slow identity read or file write cannot extend it.
+    // Just before the spawn, the executable must still be the one whose version was read (Node cannot exec an open file,
+    // so only the stat-to-spawn gap remains, and the identity is read again after the CLI ends); the deadline is read
+    // once that and the file writes are done, so neither can extend it.
+    if (await this.changed(run)) return state.finish("failed", `The CLI executable changed after its version was read, so it was refused ${before}.`);
     const remaining = run.deadline - Date.now();
     if (remaining <= 0) return state.finish("timed_out", `The CLI exceeded its configured bound ${before}.`);
     const args = cliArguments(profile.argv, { ...files, workspace: input.workspace, model: input.configuration.inference.model });
@@ -463,22 +464,24 @@ const SHORT_ESCAPES: Record<string, string> = { '"': '\\"', "\\": "\\\\", "/": "
 const JSON_FORMS = new WeakMap<readonly string[], RegExp | undefined>();
 
 /**
- * `text` with every secret redacted: as written, and as any JSON string can write it, each UTF-16 unit raw, as its short
- * escape or as `\uXXXX` in either hex case, so a credential the CLI echoes inside JSON is redacted whatever escaped it.
+ * `text` with every secret redacted, longest first: as any JSON string can write it (each UTF-16 unit raw, as its short
+ * escape or as `\uXXXX` in either hex case), then as written. Each unit commits to its first matching form (an atomic
+ * group emulated with a lookahead and a backreference), so matching stays linear and never backtracks.
  */
 function redact(text: string, secrets: readonly string[]): string {
   if (!JSON_FORMS.has(secrets)) {
+    let group = 0;
     const unit = (char: string) => {
       const hex = char.charCodeAt(0).toString(16).padStart(4, "0").replaceAll(/[a-f]/g, digit => `[${digit}${digit.toUpperCase()}]`);
       const short = SHORT_ESCAPES[char];
-      return `(?:${char.replaceAll(/[\\^$.*+?()[\]{}|/-]/g, "\\$&")}|\\\\u${hex}${short ? `|${short.replaceAll("\\", "\\\\")}` : ""})`;
+      group += 1;
+      return `(?=(${short ? `${short.replaceAll("\\", "\\\\")}|` : ""}\\\\u${hex}|${char.replaceAll(/[\\^$.*+?()[\]{}|/-]/g, "\\$&")}))\\${group}`;
     };
-    const forms = secrets.filter(secret => secret.length > 0).sort((left, right) => right.length - left.length).map(secret => [...secret.split("")].map(unit).join(""));
+    const forms = secrets.filter(secret => secret.length > 0).sort((left, right) => right.length - left.length).map(secret => secret.split("").map(unit).join(""));
     JSON_FORMS.set(secrets, forms.length ? new RegExp(forms.join("|"), "g") : undefined);
   }
   const pattern = JSON_FORMS.get(secrets);
-  const literal = redactText(text, secrets);
-  return pattern ? literal.replace(pattern, "[REDACTED]") : literal;
+  return redactText(pattern ? text.replace(pattern, "[REDACTED]") : text, secrets);
 }
 
 /** An answer rejected by validation, with what the repair prompt echoes back. */
@@ -712,11 +715,10 @@ function watchOutputFile(file: string, maxBytes: number, parent: AbortSignal | u
   let overrun: string | undefined;
   let checking = false;
   let streamed = 0;
-  let fileSize = 0;
   let peak = 0;
   const check = () => {
-    if (streamed + fileSize <= maxBytes || controller.signal.aborted) return;
-    overrun = `The CLI output file (${fileSize} bytes) grew past the remaining ${Math.max(0, maxBytes)}-byte output budget with ${streamed} bytes of stdout and stderr while it ran.`;
+    if (streamed + peak <= maxBytes || overrun !== undefined) return;
+    overrun = `The CLI output file (${peak} bytes at its largest) grew past the remaining ${Math.max(0, maxBytes)}-byte output budget with ${streamed} bytes of stdout and stderr while it ran.`;
     controller.abort();
   };
   const onParentAbort = () => controller.abort(parent?.reason);
@@ -725,14 +727,15 @@ function watchOutputFile(file: string, maxBytes: number, parent: AbortSignal | u
   const timer = setInterval(() => {
     if (checking || controller.signal.aborted) return;
     checking = true;
-    lstat(file).then(stat => { fileSize = stat.size; peak = Math.max(peak, fileSize); check(); }, () => { /* not written yet */ }).finally(() => { checking = false; });
+    lstat(file).then(stat => { peak = Math.max(peak, stat.size); check(); }, () => { /* not written yet */ }).finally(() => { checking = false; });
   }, OUTPUT_FILE_POLL_MS);
   timer.unref();
   return {
     signal: controller.signal,
     stop: () => { clearInterval(timer); parent?.removeEventListener("abort", onParentAbort); },
     onOutput: bytes => { streamed += bytes; check(); },
-    overrun: () => overrun,
+    // Checked once more when read, after the CLI ended, with every stream byte it wrote.
+    overrun: () => { check(); return overrun; },
     peak: () => peak,
   };
 }

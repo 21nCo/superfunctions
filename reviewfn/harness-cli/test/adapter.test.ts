@@ -9,7 +9,7 @@ import { AGENT, LAUNCH } from "./launcher.js";
 import { CliHarnessAdapter, cliArguments, cliEnvironment, lastJsonObjectLine, matchReporter, parseCliVersion, valueAtPath, withModelReportField } from "../src/index.js";
 
 // Lets a test replace the executable's file identity (its inode), as a reinstall at the same path would.
-const identity = vi.hoisted(() => ({ shift: 0n, delayMs: 0 }));
+const identity = vi.hoisted(() => ({ shift: 0n, delayMs: 0, shiftOnAttemptDirectory: false }));
 vi.mock("node:fs/promises", async importOriginal => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
   const stat = (async (...args: Parameters<typeof actual.stat>) => {
@@ -17,7 +17,12 @@ vi.mock("node:fs/promises", async importOriginal => {
     const info = await actual.stat(...args);
     return typeof info.ino === "bigint" && identity.shift ? Object.assign(info, { ino: info.ino + identity.shift }) : info;
   }) as typeof actual.stat;
-  return { ...actual, stat, default: { ...actual, stat } };
+  // A reinstall while the first attempt's files are written, after any identity read before them.
+  const mkdtemp = (async (prefix: string, ...rest: unknown[]) => {
+    if (identity.shiftOnAttemptDirectory && prefix.includes("attempt-1-")) identity.shift = 1n;
+    return (actual.mkdtemp as (...args: unknown[]) => Promise<string>)(prefix, ...rest);
+  }) as typeof actual.mkdtemp;
+  return { ...actual, stat, mkdtemp, default: { ...actual, stat, mkdtemp } };
 });
 
 const CREDENTIAL = "reviewfn-cli-fixture-credential-5521";
@@ -35,7 +40,7 @@ beforeEach(async () => {
   await mkdir(state);
   await mkdir(workspace);
 });
-afterEach(async () => { identity.shift = 0n; identity.delayMs = 0; await rm(directory, { recursive: true, force: true }); });
+afterEach(async () => { Object.assign(identity, { shift: 0n, delayMs: 0, shiftOnAttemptDirectory: false }); await rm(directory, { recursive: true, force: true }); });
 
 const environment = () => ({ PATH: process.env.PATH, HOME: "/home/operator", ALLOWED_ONE: "one", FIXTURE_API_KEY: ALLOWED_SECRET, OTHER_VAR: "other", GITHUB_TOKEN: "publication-private-token", REVIEW_AUTH: CREDENTIAL });
 
@@ -270,7 +275,8 @@ describe("CliHarnessAdapter process boundary", () => {
       const stdout = [echoed, echoed.replaceAll("/", "\\/"), htmlSafe, upper, ...(outputVia === "file" ? [] : [answer])].join("\n");
       return { code: 0, signal: null, stdout: `${stdout}\n`, stderr: `${echoed}\n`, timedOut: false, canceled: false };
     };
-    const output = await new CliHarnessAdapter({ environment: { ...environment(), REVIEW_AUTH: credential }, runner }).run(input(configuration(profile({ outputVia }))));
+    // An allowlisted secret that is a prefix of the credential must not hide the rest of it from the JSON-aware pass.
+    const output = await new CliHarnessAdapter({ environment: { ...environment(), REVIEW_AUTH: credential, FIXTURE_API_KEY: "test-credential" }, runner }).run(input(configuration(profile({ outputVia, envAllowlist: ["ALLOWED_ONE", "FIXTURE_API_KEY"] }))));
     expect(output.terminal).toBe("completed");
     expect(prompts).toHaveLength(2);
     expect(prompts[1]).toContain('{"findings":"leaked [REDACTED]"}');
@@ -280,8 +286,20 @@ describe("CliHarnessAdapter process boundary", () => {
       // No JSON object line, once parsed, holds the credential either.
       const lines = text.split("\n").filter(line => line.startsWith("{"));
       expect(lines.length).toBeGreaterThan(0);
-      for (const line of lines) expect(Object.values(JSON.parse(line) as Record<string, unknown>).map(String).join("\n")).not.toContain(credential);
+      for (const line of lines) expect(Object.values(JSON.parse(line) as Record<string, unknown>).map(String).join("\n")).not.toMatch(/quoted|slash|credential/);
     }
+  });
+
+  it("redacts in linear time a credential of many backslashes that the output nearly repeats", async () => {
+    const credential = `test-${"\\".repeat(22)}x`;
+    const text = `test-${"\\\\".repeat(22)}y `.repeat(20);
+    const runner: CommandRunner = async (_command, args) => args.includes("--version")
+      ? { code: 0, signal: null, stdout: "fake-cli version 1.2.3\n", stderr: "", timedOut: false, canceled: false }
+      : { code: 0, signal: null, stdout: `${text}\n${JSON.stringify({ findings: [], evidence: [], inspectedPaths: ["src/index.ts"], uninspected: [] })}\n`, stderr: "", timedOut: false, canceled: false };
+    const started = Date.now();
+    const output = await new CliHarnessAdapter({ environment: { ...environment(), REVIEW_AUTH: credential }, runner }).run(input(configuration(profile())));
+    expect(output.terminal).toBe("completed");
+    expect(Date.now() - started).toBeLessThan(2_000);
   });
 
   it("ends a run canceled when the caller aborts after the CLI exited, while its answer is read", async () => {
@@ -907,6 +925,37 @@ describe("CliHarnessAdapter preflight and configuration", () => {
     expect(reviews).toBe(0);
     expect(output.terminal).toBe("timed_out");
     expect(output.error).toBe("The CLI exceeded its configured bound before the CLI started.");
+  });
+
+  it("ends timed_out a CLI whose output file was measured over the budget with its streams, even after it shrank the file and completed", async () => {
+    const runner: CommandRunner = async (_command, args, options) => {
+      if (args.includes("--version")) return { code: 0, signal: null, stdout: "fake-cli version 1.2.3\n", stderr: "", timedOut: false, canceled: false };
+      const out = args[args.indexOf("--out") + 1];
+      await writeFile(out, "x".repeat(60_000));
+      await new Promise(resolve => setTimeout(resolve, 400));
+      await writeFile(out, JSON.stringify({ findings: [], evidence: [], inspectedPaths: ["src/index.ts"], uninspected: [] }));
+      await new Promise(resolve => setTimeout(resolve, 400));
+      // 50,000 stream bytes, reported as the shared runner reports them.
+      options.onOutput?.(50_000);
+      return { code: 0, signal: null, stdout: "z".repeat(50_000), stderr: "", timedOut: false, canceled: false };
+    };
+    const policy = { ...DEFAULT_POLICY, limits: { ...DEFAULT_POLICY.limits, maxOutputBytes: 100_000 } };
+    const output = await new CliHarnessAdapter({ environment: environment(), runner }).run(input(configuration(profile({ outputVia: "file" })), { policy }));
+    expect(output.terminal).toBe("timed_out");
+    expect(output.error).toMatch(/at its largest\) grew past the remaining/);
+  });
+
+  it("never starts an executable replaced while its attempt's files were written", async () => {
+    let reviews = 0;
+    const runner: CommandRunner = async (_command, args) => {
+      if (args.includes("--version")) { identity.shiftOnAttemptDirectory = true; return { code: 0, signal: null, stdout: "fake-cli version 1.2.3\n", stderr: "", timedOut: false, canceled: false }; }
+      reviews += 1;
+      return { code: 0, signal: null, stdout: "", stderr: "", timedOut: false, canceled: false };
+    };
+    const output = await new CliHarnessAdapter({ environment: environment(), runner }).run(input(configuration(profile())));
+    expect(reviews).toBe(0);
+    expect(output.terminal).toBe("failed");
+    expect(output.error).toBe("The CLI executable changed after its version was read, so it was refused before the CLI started.");
   });
 
   it("charges the repair attempt for an output file measured larger while the first attempt ran than the file it left", async () => {
