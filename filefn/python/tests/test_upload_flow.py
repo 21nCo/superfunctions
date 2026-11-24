@@ -875,6 +875,20 @@ async def test_a_second_completion_rechecks_write_access_to_a_file_created_meanw
         return await original_update(model=model, where=where, data=data, namespace=namespace)
 
     db.update = racing_update  # type: ignore[method-assign]
+    # The conditional update misses once (the row moved); the owner is
+    # re-authorized against the new row and the replacement goes through.
+    result = await service.complete_session(second["uploadSessionId"], owner)
+    row = next(r for r in db._table("files") if r["fileId"] == "file_owned001")
+    assert row["currentVersionId"] == result["versionId"]
+
+
+@pytest.mark.asyncio
+async def test_storage_path_without_the_version_id_is_refused() -> None:
+    db = FakeDB()
+    service = _make_service(db=db)
+    service.policies.register(Policy(name="flat", storagePath=lambda ctx: f"{ctx.fileId}/{ctx.fileName}"))
     with pytest.raises(Exception) as exc_info:
-        await service.complete_session(second["uploadSessionId"], owner)
-    assert getattr(exc_info.value, "code", "") == "FILEFN_FORBIDDEN"
+        await service.create_session(
+            CreateSessionInput(policy="flat", fileName="a.png", size=3, mimeType="image/png"), _ctx()
+        )
+    assert getattr(exc_info.value, "code", "") == "FILEFN_INVALID_REQUEST"

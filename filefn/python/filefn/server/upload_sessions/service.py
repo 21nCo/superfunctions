@@ -325,6 +325,14 @@ class UploadSessionService:
             versionId=version_id,
         )
         storage_key = compute_storage_path(policy, storage_ctx)
+        # The key must contain this session's version ID, so two sessions (for
+        # example two anonymous inits that are no longer replayed) never share
+        # an object; a storagePath that drops it is refused, as in TypeScript.
+        if version_id not in storage_key:
+            raise errors.invalid_request(
+                "The policy's storagePath must include the version ID",
+                {"policy": input.policy, "reason": "storage path not per version"},
+            )
 
         storage_upload_id: Optional[str] = None
         if upload_mode == "multipart-signed-url":
@@ -711,25 +719,41 @@ class UploadSessionService:
             # A single conditional UPDATE where the adapter has one (update_many
             # returns the row count); a zero-row or not-found result is refused.
             conditional_update = getattr(self.db, "update_many", None) or self.db.update
-            try:
-                updated = await conditional_update(
+            current = existing_file
+            updated = None
+            # A concurrent authorized replacement may advance the row between the
+            # read and the update: reload, re-authorize and try again (bounded).
+            for _ in range(3):
+                try:
+                    updated = await conditional_update(
+                        model="files",
+                        where=[
+                            {"field": "fileId", "operator": "eq", "value": file_id},
+                            {"field": "currentVersionId", "operator": "eq", "value": current.get("currentVersionId")},
+                        ],
+                        data={
+                            "currentVersionId": version_id,
+                            "size": session.size,
+                            "mimeType": session.mimeType,
+                            "metadata": metadata,
+                            "updatedAt": now_str,
+                        },
+                        namespace=self.namespace,
+                    )
+                except NotFoundError:
+                    # Only a missing row counts as losing it; other errors propagate.
+                    updated = None
+                if updated:
+                    break
+                current = await self.db.find_one(
                     model="files",
-                    where=[
-                        {"field": "fileId", "operator": "eq", "value": file_id},
-                        {"field": "currentVersionId", "operator": "eq", "value": existing_file.get("currentVersionId")},
-                    ],
-                data={
-                    "currentVersionId": version_id,
-                    "size": session.size,
-                    "mimeType": session.mimeType,
-                    "metadata": metadata,
-                    "updatedAt": now_str,
-                },
-                namespace=self.namespace,
+                    where=[{"field": "fileId", "operator": "eq", "value": file_id}],
+                    namespace=self.namespace,
                 )
-            except NotFoundError:
-                # Only a missing row counts as losing it; other errors propagate.
-                updated = None
+                if not current:
+                    break
+                if self.file_write_checker and not await self.file_write_checker.can_write_file(file_id, ctx):
+                    break
             if not updated:
                 refuse_replace()
         else:
