@@ -392,6 +392,7 @@ export class McpFnServer<TContext = undefined> {
               resolved,
               tool: listedTool,
               arguments: request.params.arguments,
+              clientProfiles: this.clientProfiles,
             });
             await this.emitProfileEvidence({
               stage: currentStage,

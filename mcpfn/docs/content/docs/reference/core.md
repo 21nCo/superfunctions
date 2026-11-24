@@ -162,8 +162,15 @@ or `@cfworker/json-schema` on Cloudflare Workers and other runtimes that forbid
 code generation). Declared
 server-owned fields must be canonical required properties, must be absent from
 the projected schema, and must be supplied by the enricher. A profile cannot
-invent or duplicate tools or mutate model-owned arguments. No matching profile
-preserves canonical behavior.
+invent or duplicate tools or mutate model-owned arguments.
+
+A client that matches no profile (no verified identity, or one no profile
+accepts) sees the canonical catalog. Its calls still may not supply an argument
+that any profile declares server-owned for that tool: they fail with
+`MCPFN_FORGED_SERVER_ARGUMENT` before the handler runs, so a client cannot pick
+a tenant or workspace by not matching a profile. Set
+`unmatchedServerOwnedArguments: "allow"` to pass such arguments through
+unchanged; the handler must then derive the value from trusted context itself.
 
 The optional `evidence` sink receives only bounded structural lifecycle
 events. It is observational: a sink failure cannot fail or change a request.
