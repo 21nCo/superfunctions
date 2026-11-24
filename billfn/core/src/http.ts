@@ -57,10 +57,12 @@ function stripPrivateDetails(value: unknown, depth = 0): unknown {
   if (Array.isArray(value)) {
     return value.map((item) => stripPrivateDetails(item, depth + 1));
   }
+  // A key whose value is left out is dropped too, so details made only of left-out values answer as none.
   return Object.fromEntries(
     Object.entries(value as Record<string, unknown>)
       .filter(([key]) => !PRIVATE_DETAIL_KEYS.has(key))
       .map(([key, item]) => [key, stripPrivateDetails(item, depth + 1)])
+      .filter(([, item]) => item !== undefined)
   );
 }
 

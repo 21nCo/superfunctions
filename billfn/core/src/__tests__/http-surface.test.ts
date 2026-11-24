@@ -248,6 +248,23 @@ describe('error details returned to callers', () => {
 
     expect(payload.error.details).toEqual({ status: 502, response: { status: 502 }, attempts: [{ at: 1 }] });
   });
+
+  it('answers no details when every value in them is left out', async () => {
+    const env = await setup();
+    class ProviderResponse {
+      data = 'left-out';
+    }
+    env.parseWebhookError.current = createBillFnError({
+      code: 'BILLFN_PROVIDER_ERROR',
+      message: 'Provider request failed',
+      details: { response: new ProviderResponse() }
+    });
+
+    const response = await env.call('/webhooks/dodo', { method: 'POST', body: '{}' });
+    const payload = (await response.json()) as { error: Record<string, unknown> };
+
+    expect(payload.error).not.toHaveProperty('details');
+  });
 });
 
 describe('request content type', () => {
