@@ -15,6 +15,7 @@ import * as errors from '../errors.js';
 import { createHash, randomBytes } from 'crypto';
 import { generateFileFnId } from '../ids.js';
 import { parseRequestedFileId, SERIALIZED_WAIT_TIMEOUT_MS } from './file-id.js';
+import { assertValidUploadInit, type UploadInitInput } from './input.js';
 import { createFileCommitLock, runFileFnSerialized } from '../files/file-commit-lock.js';
 import { findReferencedStorageRefs, storageRef } from '../storage-references.js';
 import {
@@ -1268,6 +1269,9 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       uploadSessionToken?: string;
     }> {
       const warnings: string[] = [];
+      // The route passes the JSON body through unchanged, so check every field
+      // against the contract before it reaches storage keys, quota or the DB.
+      assertValidUploadInit(input as unknown as UploadInitInput);
       const requestedFileId = parseRequestedFileId(input.fileId as unknown);
 
       // Check idempotency
