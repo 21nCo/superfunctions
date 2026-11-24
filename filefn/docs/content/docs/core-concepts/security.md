@@ -47,7 +47,7 @@ auth: {
 
 Every unauthenticated caller is the same principal, `anonymous`, so FileFn treats an anonymous upload as owned by nobody:
 
-- an unauthenticated caller can upload, but owns nothing: it cannot read back or list what was uploaded unless a read grant made to the principal `anonymous` allows that, it cannot replace or delete it (the default authorizer decides writes and deletes by ownership; only a configured `authorizer` can allow more), and it can never create, list or revoke share links or grants, even with a `canShare` grant;
+- an unauthenticated caller can upload, but owns nothing: it has no owner's access to what was uploaded (a `public` upload stays readable and listable by anyone; under the default authorizer, a private one needs a read grant made to the principal `anonymous`), it cannot replace or delete it (the default authorizer decides writes and deletes by ownership; only a configured `authorizer` can allow more), and it can never create, list or revoke share links or grants, even with a `canShare` grant;
 - the file is readable only through its policy's visibility (`public`), a grant, or a share link that an authenticated user created.
 
 Use anonymous mode for public drop-offs. For uploads people should manage afterwards, configure `auth.resolveSession`.
