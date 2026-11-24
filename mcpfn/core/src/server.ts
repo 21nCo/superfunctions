@@ -42,7 +42,7 @@ import {
   type McpFnClientProfilesOptions,
   type McpFnResolvedClientProfile,
 } from "./client-profiles.js";
-import { errorResult, McpFnError, McpFnClientProfileError, McpFnValidationError, McpFnOutputValidationError } from "./errors.js";
+import { errorResult, jsonSafe, McpFnError, McpFnClientProfileError, McpFnValidationError, McpFnOutputValidationError } from "./errors.js";
 import { assertMcpAppContracts } from "./apps.js";
 import { createManifest, type CreateManifestOptions } from "./manifest.js";
 import type { McpFnRegistry } from "./registry.js";
@@ -510,11 +510,11 @@ export class McpFnServer<TContext = undefined> {
             // McpFn code of an argument-enrichment rejection as InvalidParams
             // data instead of letting the SDK turn it into InternalError.
             if (isTaskRequest && currentStage === "argument-enrichment" && lifecycleError instanceof McpFnError) {
+              const data = jsonSafe(lifecycleError.details);
               throw new McpError(ErrorCode.InvalidParams, lifecycleError.message, {
+                ...(data !== null && typeof data === "object" && !Array.isArray(data) ? data : {}),
+                // The McpFn code stays authoritative over a detail named code.
                 code: lifecycleError.code,
-                ...(lifecycleError.details !== null && typeof lifecycleError.details === "object" && !Array.isArray(lifecycleError.details)
-                  ? lifecycleError.details as Record<string, unknown>
-                  : {}),
               });
             }
             if (isTaskRequest) throw lifecycleError;

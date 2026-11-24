@@ -87,14 +87,15 @@ export interface McpFnClientProfilesOptions<TContext = undefined> {
     | Promise<McpFnVerifiedClientIdentity | undefined>;
   evidence?(event: McpFnClientProfileEvidence): void | Promise<void>;
   /**
-   * Calls from a client that matches no profile (no verified identity, or an
-   * identity no profile accepts) keep the canonical catalog. By default
-   * (`"reject"`) such a call still fails with `MCPFN_FORGED_SERVER_ARGUMENT`
-   * when it supplies an argument that any profile declares server-owned for
-   * that tool, so a client cannot choose a tenant or workspace value merely by
-   * not matching a profile. `"allow"` passes those arguments to the handler
-   * unchanged; the handler must then derive the value from trusted context
-   * itself.
+   * A client that matches no profile (no verified identity, or an identity no
+   * profile accepts) keeps the canonical catalog, except that by default
+   * (`"reject"`) it does not see tools for which any profile declares
+   * server-owned arguments, and calling one answers like an unknown tool. It
+   * could not call them anyway: it may not supply those required arguments,
+   * so it cannot choose a tenant or workspace value merely by not matching a
+   * profile. `"allow"` lists those tools and passes their arguments to the
+   * handler unchanged; the handler must then derive the value from trusted
+   * context itself.
    */
   unmatchedServerOwnedArguments?: "reject" | "allow";
 }
@@ -374,10 +375,13 @@ export async function buildMcpFnEffectiveCatalog<TContext>(input: {
     if (!options || options.unmatchedServerOwnedArguments === "allow") {
       return { tools: canonicalTools, changes: [] };
     }
-    return {
-      tools: canonicalTools.filter((tool) => unmatchedServerOwned(options.profiles, tool.name).length === 0),
-      changes: [],
-    };
+    const tools: McpFnListedTool[] = [];
+    const changes: McpFnCatalogChange[] = [];
+    for (const tool of canonicalTools) {
+      if (unmatchedServerOwned(options.profiles, tool.name).length === 0) tools.push(tool);
+      else changes.push({ kind: "removed", path: `tools.${tool.name}`, tool: tool.name, beforeHash: sha256(tool) });
+    }
+    return { tools, changes };
   }
   assertTrustedProfileIdentity(input.resolved);
   const projected = profile.projectCatalog
