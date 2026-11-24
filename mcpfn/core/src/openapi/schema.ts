@@ -1547,6 +1547,51 @@ export class SchemaConverter {
   }
 
   private readonly closures = new Map<string, { value?: Record<string, McpFnJsonSchema | boolean>; error?: OpenApiSkip }>();
+  /** The longest in-place reference chain from each component (-1: it reaches a cycle), by mode, for the whole call. */
+  private readonly inPlaceDepths = new Map<SchemaMode, Map<string, number>>();
+
+  /**
+   * The longest chain of in-place references from component `name` (1 when
+   * it has none), or -1 when it reaches an in-place cycle. Walked with an
+   * explicit stack and kept for the whole call, so a tail that many roots
+   * share is walked once.
+   */
+  private inPlaceDepth(name: string, mode: SchemaMode): number {
+    let depths = this.inPlaceDepths.get(mode);
+    if (!depths) {
+      depths = new Map();
+      this.inPlaceDepths.set(mode, depths);
+    }
+    const known = depths.get(name);
+    if (known !== undefined) return known;
+    const linksOf = (key: string) => this.convertedComponent(key, mode).inPlace ?? new Set<string>();
+    const active = new Set([name]);
+    const stack = [{ key: name, next: linksOf(name).values() }];
+    while (stack.length > 0) {
+      const frame = stack.at(-1)!;
+      const step = frame.next.next();
+      if (!step.done) {
+        if (depths.has(step.value)) continue;
+        if (active.has(step.value)) {
+          // Every component still open reaches the cycle.
+          for (const open of stack) depths.set(open.key, -1);
+          break;
+        }
+        active.add(step.value);
+        stack.push({ key: step.value, next: linksOf(step.value).values() });
+        continue;
+      }
+      stack.pop();
+      active.delete(frame.key);
+      let below = 0;
+      for (const next of linksOf(frame.key)) {
+        const depth = depths.get(next)!;
+        below = depth < 0 || below < 0 ? -1 : Math.max(below, depth);
+      }
+      depths.set(frame.key, below < 0 ? -1 : below + 1);
+    }
+    return depths.get(name)!;
+  }
 
   private closureOf(refs: string[], mode: SchemaMode): Record<string, McpFnJsonSchema | boolean> {
     const result: Array<[string, McpFnJsonSchema | boolean]> = [];
@@ -1557,11 +1602,13 @@ export class SchemaConverter {
       if (entries.has(key)) continue;
       const entry = this.convertedComponent(key, mode);
       if (entry.error) throw entry.error;
+      if (this.inPlaceDepth(key, mode) > MAX_IN_PLACE_DEPTH) throw new OpenApiSkip("schema-too-large", TOO_DEEP);
       entries.set(key, entry);
       result.push([key, entry.schema!]);
       for (const next of entry.refs!) if (!entries.has(next)) queue.push(next);
     }
-    assertProductiveRecursion(entries);
+    // Only a closure reaching an in-place cycle is walked again, to name the cycle.
+    if ([...entries.keys()].some((key) => this.inPlaceDepth(key, mode) < 0)) assertProductiveRecursion(entries);
     return Object.fromEntries(result);
   }
 }
@@ -1759,50 +1806,43 @@ function inPlaceReferences(schema: McpFnJsonSchema | boolean): Set<string> {
  */
 /**
  * The longest chain of in-place references (a definition applied to the same
- * value as the one referring to it) a closure may hold: validators recurse
- * once per link, so a longer chain is refused for the closure, the same way
- * for every operation reaching it.
+ * value as the one referring to it) a closure may hold. Validators recurse
+ * once per link while compiling: both engines compile 150 links in a tool's
+ * schema and overflow by 180, so a longer chain is refused, the same way for
+ * every operation reaching it.
  */
-const MAX_IN_PLACE_DEPTH = 64;
+const MAX_IN_PLACE_DEPTH = 128;
 
 /** A stack overflow, or a chain longer than validators walk, means schemas or references nest too deeply. */
 export const TOO_DEEP = "a schema or reference chain nests too deeply";
 
-/** Walked with an explicit stack, so no chain is too long to check. */
+/** Names the in-place cycle a closure reaches; walked with an explicit stack, so no chain is too long to check. */
 function assertProductiveRecursion(entries: ReadonlyMap<string, ConvertedComponent>): void {
   const links = (key: string): Iterator<string> => (entries.get(key)?.inPlace ?? new Set<string>()).values();
-  // The longest in-place chain starting at each finished key.
-  const depth = new Map<string, number>();
+  const done = new Set<string>();
   const active = new Set<string>();
-  let longest = 0;
   for (const start of entries.keys()) {
-    if (depth.has(start)) continue;
+    if (done.has(start)) continue;
     active.add(start);
     const stack = [{ key: start, next: links(start) }];
     while (stack.length > 0) {
       const frame = stack.at(-1)!;
       const step = frame.next.next();
-      if (!step.done) {
-        if (depth.has(step.value)) continue;
-        if (active.has(step.value)) {
-          throw new OpenApiSkip(
-            "unresolved-ref",
-            `#/components/schemas/${step.value} refers back to itself without descending into a property or array item`,
-          );
-        }
+      if (step.done) {
+        stack.pop();
+        active.delete(frame.key);
+        done.add(frame.key);
+      } else if (active.has(step.value)) {
+        throw new OpenApiSkip(
+          "unresolved-ref",
+          `#/components/schemas/${step.value} refers back to itself without descending into a property or array item`,
+        );
+      } else if (!done.has(step.value)) {
         active.add(step.value);
         stack.push({ key: step.value, next: links(step.value) });
-        continue;
       }
-      stack.pop();
-      active.delete(frame.key);
-      let below = 0;
-      for (const next of entries.get(frame.key)?.inPlace ?? []) below = Math.max(below, depth.get(next) ?? 0);
-      depth.set(frame.key, below + 1);
-      longest = Math.max(longest, below + 1);
     }
   }
-  if (longest > MAX_IN_PLACE_DEPTH) throw new OpenApiSkip("schema-too-large", TOO_DEEP);
 }
 
 // OpenAPI 3.0.3: `nullable: true` adds "null" only to an explicitly defined
