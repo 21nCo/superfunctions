@@ -1,0 +1,19 @@
+mcpfn/core/vitest.config.ts
+  s_31adf62e8db81f::t_4cf41452b627e7 5-6,18,20-21
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a6a8ad3bd14d6f8cc29cbc72ab34b23f874bbfc9",
+  "prompts": {},
+  "sessions": {
+    "s_31adf62e8db81f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4fdace15-6e28-4e3b-a169-f33838035535",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

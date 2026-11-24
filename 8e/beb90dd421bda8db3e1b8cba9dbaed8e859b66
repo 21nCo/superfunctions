@@ -1,0 +1,24 @@
+datafn/server/__tests__/security-audit-identity.test.ts
+  s_f18df82a896877::t_7a5b18fff458e1 527-551,557-560
+  s_f18df82a896877::t_fffec468be032a 552-556
+datafn/server/src/validation/authz.ts
+  s_f18df82a896877::t_7a5b18fff458e1 578-581,669-671,673-674
+datafn/docs/content/docs/documentation/advanced/idempotency.mdx
+  s_f18df82a896877::t_7a5b18fff458e1 74
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8ebeb90dd421bda8db3e1b8cba9dbaed8e859b66",
+  "prompts": {},
+  "sessions": {
+    "s_f18df82a896877": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "34b8cb5e-0b73-4388-8bd0-7e93d063a3ee",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
