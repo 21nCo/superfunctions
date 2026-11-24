@@ -1130,7 +1130,8 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
       options: RefundChargeOptions = {}
     ): Promise<BillFnRefundChargeResponse> {
       const subject = requireSubject(input.subject);
-      const mode = input.mode ?? 'full';
+      // Only an absent mode means a full refund; an explicit null or other value is refused below.
+      const mode = input.mode === undefined ? 'full' : input.mode;
       assertRefundModeAndAmount(mode, input.amount);
       // A refund never creates a billing account: an account without one has nothing to refund.
       const billingAccount = await findBillingAccountForSubject(deps, subject);
@@ -1153,6 +1154,7 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
       }
       const providerName = subscription.provider;
       const providerChargeId = input.providerChargeId ?? subscription.providerChargeId;
+      let liveStateObservedAt = toIsoString(deps.now());
       if (options.authorize) {
         // The router's host check sees the exact account, subscription and charge this call refunds.
         await options.authorize({
@@ -1165,7 +1167,9 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
           reason: input.reason
         });
         // The approval covers the subscription as it was read; one that changed meanwhile (a renewal, a
-        // cancellation) is refused rather than refunded from a stale snapshot.
+        // cancellation) is refused rather than refunded from a stale snapshot. The provider-state clock restarts
+        // before the re-read, so a write that lands after it is newer than the refund's projection.
+        liveStateObservedAt = toIsoString(deps.now());
         const current = await getSubscriptionForAccount(deps, billingAccount.id, subscription.id);
         if (
           !current ||
@@ -1180,7 +1184,6 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
         }
       }
       const provider = requireProvider(deps, providerName, 'refundCharge');
-      const liveStateObservedAt = toIsoString(deps.now());
       const operation = await provider.refundCharge({
         subscription,
         billingAccount,

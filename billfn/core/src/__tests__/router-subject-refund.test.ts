@@ -272,7 +272,8 @@ describe('router refunds', () => {
     [{ mode: 'custom', amount: 2.5 }],
     [{ mode: 'custom', amount: '600' }],
     [{ mode: 'full', amount: 600 }],
-    [{ mode: 'everything' }]
+    [{ mode: 'everything' }],
+    [{ mode: null }]
   ])('answers 400 for %j before asking the host or the provider', async (body) => {
     const authorize = vi.fn<RefundAuthorizer>(() => true);
     const env = await setup({ auth: { resolveSubject: () => CALLER }, refunds: { authorize } });

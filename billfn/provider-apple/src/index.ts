@@ -294,6 +294,14 @@ export function createAppleProvider(providerConfig: AppleProviderConfig): BillFn
       return manageSubscriptionAction('Apple subscription resume is handled by Apple-managed subscription surfaces');
     },
     async refundCharge(input: BillFnRefundChargeInput) {
+      // Apple refunds or revokes a whole transaction; it has no partial refund, so a partial request is
+      // refused before anything reaches Apple rather than sent as a revoke.
+      if (input.mode !== undefined && input.mode !== 'full') {
+        throw createBillFnError({
+          code: 'BILLFN_VALIDATION_ERROR',
+          message: 'Apple supports only full refunds'
+        });
+      }
       const transactionId = input.providerChargeId ?? input.subscription?.providerChargeId ?? input.subscription?.providerSubscriptionId;
       if (!transactionId) {
         throw createBillFnError({

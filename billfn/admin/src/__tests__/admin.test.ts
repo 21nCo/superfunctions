@@ -520,6 +520,25 @@ describe("@billfn/admin", () => {
     expect(changeSubscription).not.toHaveBeenCalled();
   });
 
+  it("refuses refund mode and amount combinations at input validation, before confirmation", () => {
+    const operation = billFnAdminCapability.operations.find((candidate) => candidate.id.endsWith(".refund-payment"))!;
+    const schema = operation.inputSchema!;
+    for (const payload of [{}, { mode: "full" }, { mode: "custom", amount: 600 }, { mode: "prorated_remaining_period", amount: 1 }]) {
+      expect(validateAdminValue(schema, { id: "pay_1", payload })).toEqual([]);
+    }
+    for (const payload of [
+      { amount: 600 },
+      { mode: "full", amount: 600 },
+      { mode: "custom" },
+      { mode: "prorated_remaining_period" },
+      { mode: "custom", amount: 0 },
+      { mode: "custom", amount: 2.5 },
+      { mode: "custom", amount: null },
+    ]) {
+      expect(validateAdminValue(schema, { id: "pay_1", payload })).not.toEqual([]);
+    }
+  });
+
   describe("grant-entitlement", () => {
     function grantingBillFn(db: ReturnType<typeof memoryAdapter> = memoryAdapter()) {
       const billfn = createBillFn({

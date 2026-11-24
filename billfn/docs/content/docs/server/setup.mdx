@@ -140,8 +140,9 @@ Every refund, through the router, `billfn.refundCharge()` or the admin
 package, checks its mode and amount before the provider is called: `full`
 takes no `amount`, and `custom` or `prorated_remaining_period` needs a
 positive integer `amount` in the currency minor unit (BillFn does not compute
-a prorated amount; the caller supplies it). Anything else answers
-`400 BILLFN_VALIDATION_ERROR`. A refund never creates a billing account; a
+a prorated amount; the caller supplies it). A `mode` of `null` is not the
+default. Anything else answers `400 BILLFN_VALIDATION_ERROR`, as does a
+partial refund on Apple, which refunds only whole transactions. A refund never creates a billing account; a
 subject without one gets `404 BILLFN_NOT_FOUND`.
 
 The router refund acts on the resolved subject's own account. To refund

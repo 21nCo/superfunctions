@@ -263,6 +263,24 @@ describe('createAppleProvider with several bundle IDs', () => {
     ]);
   });
 
+  it.each(['custom', 'prorated_remaining_period'] as const)(
+    'refuses a %s (partial) refund before any Apple request instead of revoking the transaction',
+    async (mode) => {
+      const fetchMock = vi.fn(async () => Response.json({}));
+      const provider = createAppleProvider({
+        bundleIds,
+        appStoreServerApiKey,
+        fetch: fetchMock as typeof fetch,
+        advancedCommerce: { enabled: true, tokenProvider: async () => 'test-advanced-commerce-token' }
+      });
+
+      await expect(
+        provider.refundCharge!({ providerChargeId: 'txn_1', mode, amount: 600, reason: 'customer_request' } as never)
+      ).rejects.toMatchObject({ code: 'BILLFN_VALIDATION_ERROR' });
+      expect(fetchMock).not.toHaveBeenCalled();
+    }
+  );
+
   it('restores a one-time purchase from the transaction history of the app its price is sold in', async () => {
     const price = { kind: 'one_time', providerProductId: 'com.example.product', metadata: { appleBundleId: owner } };
     const checkout = await createAppleProvider({ bundleIds, appStoreServerApiKey }).createCheckout!({

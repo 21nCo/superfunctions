@@ -550,11 +550,20 @@ const domainActionInputSchemas: Record<string, AdminObjectSchema> = {
   "refund-payment": payloadSchema(
     {
       id: { type: "string", minLength: 1 },
-      payload: payloadSchema({
-        subscriptionId: { type: "string", minLength: 1 },
-        mode: { type: "string", enum: ["full", "prorated_remaining_period", "custom"] },
-        amount: { type: "number", minimum: 0 },
-      }),
+      payload: payloadSchema(
+        {
+          subscriptionId: { type: "string", minLength: 1 },
+          mode: { type: "string", enum: ["full", "prorated_remaining_period", "custom"] },
+          amount: { type: "integer", minimum: 1 },
+        },
+        [],
+        // A full refund (the default mode) takes no amount; a partial one needs a positive integer amount in the
+        // currency minor unit. No number is null, so the first branch refuses any amount.
+        [
+          { properties: { mode: { const: "full" }, amount: { type: "null" } } },
+          { properties: { mode: { enum: ["prorated_remaining_period", "custom"] } }, required: ["mode", "amount"] },
+        ],
+      ),
       reason: { type: "string", minLength: 1, maxLength: 2000 },
     },
     ["id", "payload"],
