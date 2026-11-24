@@ -276,7 +276,6 @@ type ParsedProviderEvent = {
 };
 type ProviderProjectionContext = NonNullable<Awaited<ReturnType<typeof resolveProjectionContextForProviderState>>>;
 
-/** Internal options for `refundCharge`; the public instance method takes none. */
 const REFUND_MODES: ReadonlySet<string> = new Set<BillFnRefundMode>(['full', 'prorated_remaining_period', 'custom']);
 
 /**
@@ -308,6 +307,7 @@ function assertRefundModeAndAmount(mode: unknown, amount: unknown): asserts mode
   }
 }
 
+/** Internal options for `refundCharge`; the public instance method takes none. */
 export interface RefundChargeOptions {
   /** Runs once the refund target is resolved and before the provider is called; throws to refuse. */
   authorize?: (target: Omit<BillFnRefundAuthorizationInput, 'request'>) => Promise<void>;
