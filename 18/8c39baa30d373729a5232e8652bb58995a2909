@@ -1,0 +1,25 @@
+filefn/python/tests/test_upload_flow.py
+  s_b841cebdcfad95::t_160f529cc3b41c 980-1012
+filefn/python/filefn/server/upload_sessions/service.py
+  s_b841cebdcfad95::t_d8997126a8e773 193,195-196,233,245-246,269-273,423,549
+filefn/server/tests/upload-input-security.test.ts
+  s_b841cebdcfad95::t_160f529cc3b41c 179-186
+filefn/server/src/upload-sessions/input.ts
+  s_b841cebdcfad95::t_d8997126a8e773 84-85
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "188c39baa30d373729a5232e8652bb58995a2909",
+  "prompts": {},
+  "sessions": {
+    "s_b841cebdcfad95": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "436f4738-d86e-44e1-82bc-c432f9aaabf3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,53 @@
+authfn/adapters/lookup-cloudflare-do/package.json
+  s_aac68e49d9b4ad::t_67e8932d8de098 34
+authfn/adapters/lookup-dynamodb/package.json
+  s_aac68e49d9b4ad::t_4968a43026c642 36
+authfn/admin/package.json
+  s_aac68e49d9b4ad::t_5486e0e3266a95 43
+authfn/api-keys/package.json
+  s_aac68e49d9b4ad::t_52719967839667 29
+authfn/client/package.json
+  s_aac68e49d9b4ad::t_9154b9d98555aa 33,41
+authfn/core/package.json
+  s_aac68e49d9b4ad::t_6e7b50b3a26c27 3
+authfn/docs/package.json
+  s_aac68e49d9b4ad::t_1779b6b98237d3 31,44
+authfn/email-otp/package.json
+  s_aac68e49d9b4ad::t_d6fa40506b82de 29
+authfn/multi-region/package.json
+  s_aac68e49d9b4ad::t_6e2c76a0be7790 29
+authfn/native-handoff/package.json
+  s_aac68e49d9b4ad::t_042a5eb58c77a0 29
+authfn/oauth-provider/package.json
+  s_aac68e49d9b4ad::t_149c85ef9b5e68 30
+authfn/password/package.json
+  s_aac68e49d9b4ad::t_7062801846900d 29
+authfn/schema-plugin/package.json
+  s_aac68e49d9b4ad::t_24f87a2d827f73 29
+authfn/social-oauth/package.json
+  s_aac68e49d9b4ad::t_ee5629ea593290 3,33
+authfn/two-factor/package.json
+  s_aac68e49d9b4ad::t_7777b2f5061b9d 29
+billfn/docs/package.json
+  s_aac68e49d9b4ad::t_dbfcdf9118c420 42
+filefn/docs/package.json
+  s_aac68e49d9b4ad::t_7319c802b68a21 50
+package-lock.json
+  s_aac68e49d9b4ad::t_ad92bb7d100fad 1275,1301,1327,1361,1394,1401,1429,1526,1539,1849,3896,3929,3962,4004,4036,4056,4065,4154,4335,12002
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "dc698f813f3c40cbd046ad425b513e62fe36691b",
+  "prompts": {},
+  "sessions": {
+    "s_aac68e49d9b4ad": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b7cccf41-f4f8-408a-a490-96bc097cf2f8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
