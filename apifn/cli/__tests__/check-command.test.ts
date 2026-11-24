@@ -3258,14 +3258,14 @@ describe("apifn check: directory requirements and created directories survive bi
       execFileSync("mkdir", [path.join(root, "new")]);
       throw new Error("injected staging failure");
     });
-    expect(displaced.errors).toContain(`${path.join(displaced.dir, "new", "deep")}, a directory apifn check created, and those it created above it were left as they are: it is gone or no longer`);
+    expect(displaced.errors).toContain(`${path.join(realpathSync(displaced.dir), "new", "deep")}, a directory apifn check created, and those it created above it were left as they are: it is gone or no longer`);
     const refused = await stagedFailure((created) => {
       if (path.basename(created) !== "deep") return;
       writeFileSync(path.join(created, "foreign.txt"), "kept\n");
       throw new Error("injected staging failure");
     });
     expect(refused.code).toBe(2);
-    expect(refused.errors).toContain(`${path.join(refused.dir, "new", "deep")}, a directory apifn check created, and those it created above it were left as they are: ENOTEMPTY`);
+    expect(refused.errors).toContain(`${path.join(realpathSync(refused.dir), "new", "deep")}, a directory apifn check created, and those it created above it were left as they are: ENOTEMPTY`);
     expect(readFileSync(path.join(refused.dir, "new", "deep", "foreign.txt"), "utf8")).toBe("kept\n");
     for (const { errors } of [displaced, refused]) expect(errors).not.toContain("No output it wrote is kept");
   });
@@ -3290,7 +3290,7 @@ describe("apifn check: directory requirements and created directories survive bi
       },
     });
     expect(code).toBe(2);
-    expect(errors.join("\n")).toContain(`${path.join(dir, "new", "deep")}, a directory apifn check created, and those it created above it were left as they are: it is gone`);
+    expect(errors.join("\n")).toContain(`${path.join(realpathSync(dir), "new", "deep")}, a directory apifn check created, and those it created above it were left as they are: it is gone`);
     expect(errors.join("\n")).not.toContain("No output it wrote is kept");
     expect(statSync(path.join(dir, "moved", "deep")).isDirectory()).toBe(true);
   });
@@ -5012,7 +5012,7 @@ describe("apifn check: a backup is bound to the file this run made, and cleanup 
       fsFaults.chmodBeforeLink = 0;
     });
     expect({ code, stdout }).toEqual({ code: 2, stdout: "" });
-    expect(errors).toContain(`${path.join(dir, "report.md")} changed while apifn check ran`);
+    expect(errors).toContain(`${path.join(realpathSync(dir), "report.md")} changed while apifn check ran`);
     expect(statSync(path.join(dir, "report.md")).mode & 0o777).toBe(0o600);
     expect(await readFile(path.join(dir, "report.md"), "utf8")).toBe("previous report\n");
     expect(await readFile(path.join(dir, SPEC), "utf8")).toBe("openapi: 3.1.0\n");
