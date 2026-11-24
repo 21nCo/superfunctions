@@ -216,7 +216,10 @@ export function createAppleProvider(providerConfig: AppleProviderConfig): BillFn
         // the sandbox, is not found in production: it has expired for this deployment, so sync and account scans
         // end its access instead of failing on it. Any other not-found stays an error, since StoreKit can answer
         // it for a real production transaction too.
-        if (!acceptsSandbox(config) && isStoreKitNotFound(error) && storedFromNonProduction(input.subscription.metadata)) {
+        if (!acceptsSandbox(config) && isStoreKitNotFound(error) && storedFromNonProduction(input.subscription.metadata, [
+            input.subscription.providerSubscriptionId,
+            input.subscription.providerChargeId
+          ])) {
           return {
             subscriptionStatus: 'expired',
             checkoutStatus: 'failed',
@@ -1019,11 +1022,29 @@ function mapAppleNotificationEvent(
 
 /**
  * Whether a stored subscription came from a non-production StoreKit environment, by the provider record BillFn merged
- * into its metadata: a StoreKit response's `environment`, or a notification transaction's.
+ * into its metadata: a StoreKit response's `environment`, a notification transaction's, or the environment of a
+ * stored signed transaction for the subscription's references (StoreKit's response `environment` is optional).
  */
-function storedFromNonProduction(metadata: Record<string, unknown> | undefined): boolean {
-  const environments = [readString(metadata ?? {}, ['environment']), readString(asRecord(metadata?.transaction) ?? {}, ['environment'])];
-  const stated = environments.filter((environment): environment is string => typeof environment === 'string');
+function storedFromNonProduction(
+  metadata: Record<string, unknown> | undefined,
+  references: ReadonlyArray<string | undefined>
+): boolean {
+  const record = metadata ?? {};
+  const referenced = new Set(references.filter((reference): reference is string => typeof reference === 'string'));
+  const signedTransactions = [
+    ...extractLastTransactionRecords(record).map((entry) => decodeSignedPayload(entry, 'signedTransactionInfo')),
+    ...extractHistoryTransactions(record)
+  ].filter(
+    (transaction): transaction is Record<string, unknown> =>
+      transaction !== null &&
+      (referenced.has(readString(transaction, ['originalTransactionId']) ?? '') ||
+        referenced.has(readString(transaction, ['transactionId']) ?? ''))
+  );
+  const stated = [
+    readString(record, ['environment']),
+    readString(asRecord(record.transaction) ?? {}, ['environment']),
+    ...signedTransactions.map((transaction) => readString(transaction, ['environment']))
+  ].filter((environment): environment is string => typeof environment === 'string');
   return stated.length > 0 && stated.every((environment) => environment !== 'Production');
 }
 

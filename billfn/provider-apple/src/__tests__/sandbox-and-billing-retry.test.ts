@@ -114,6 +114,34 @@ describe('sandbox purchases in a production deployment', () => {
     expect(state).toMatchObject({ subscriptionStatus: 'expired' });
   });
 
+  it('expires a stored subscription whose stored signed transaction came from the sandbox, without a response environment', async () => {
+    const fetchMock = vi.fn(async () => notFound()) as unknown as typeof fetch;
+    const metadata = {
+      data: [
+        {
+          lastTransactions: [
+            { status: 1, signedTransactionInfo: encodePayload(transaction({ originalTransactionId: 'orig_legacy', environment: 'Sandbox' })) }
+          ]
+        }
+      ]
+    };
+
+    const state = await provider(fetchMock).fetchSubscription!(withMetadata(metadata) as never);
+
+    expect(state).toMatchObject({ subscriptionStatus: 'expired' });
+  });
+
+  it('does not take the sandbox environment of another subscription\'s stored transaction as evidence', async () => {
+    const fetchMock = vi.fn(async () => notFound()) as unknown as typeof fetch;
+    const metadata = {
+      data: [{ lastTransactions: [{ status: 1, signedTransactionInfo: encodePayload(transaction({ originalTransactionId: 'orig_other', transactionId: 'txn_other', environment: 'Sandbox' })) }] }]
+    };
+
+    await expect(provider(fetchMock).fetchSubscription!(withMetadata(metadata) as never)).rejects.toMatchObject({
+      code: 'BILLFN_PROVIDER_ERROR'
+    });
+  });
+
   it.each([
     ['a production subscription', { environment: 'Production' }],
     ['a subscription with no recorded environment', undefined]
