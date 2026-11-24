@@ -1,5 +1,6 @@
 import { createJiti } from "jiti";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import type { Router } from "@superfunctions/http";
 
 function isRouter(value: unknown): value is Router<unknown> {
@@ -10,13 +11,25 @@ function isRouter(value: unknown): value is Router<unknown> {
   );
 }
 
-export async function loadRouter(
+/**
+ * Loads the router module once and returns it with the file that load read: the operand
+ * (extensionless or a directory) is resolved once, and that very file is imported, so the file
+ * named is the module loaded, never a second lookup made after the import.
+ */
+export async function loadRouterModule(
   routerPath: string,
   cwd = process.cwd()
-): Promise<Router<unknown>> {
+): Promise<{ router: Router<unknown>; file: string }> {
   const resolved = path.isAbsolute(routerPath) ? routerPath : path.resolve(cwd, routerPath);
   const jiti = createJiti(cwd, { moduleCache: false });
-  const loaded = await jiti.import(resolved) as Record<string, unknown>;
+  let file = resolved;
+  try {
+    const url = jiti.esmResolve(resolved);
+    file = url.startsWith("file:") ? fileURLToPath(url) : url;
+  } catch {
+    // Not resolvable: the import below reports the missing module as it always has.
+  }
+  const loaded = await jiti.import(file) as Record<string, unknown>;
 
   const candidates = [loaded?.default, loaded?.router, loaded];
   const router = candidates.find((candidate) => isRouter(candidate));
@@ -27,5 +40,12 @@ export async function loadRouter(
     );
   }
 
-  return router;
+  return { router, file };
+}
+
+export async function loadRouter(
+  routerPath: string,
+  cwd = process.cwd()
+): Promise<Router<unknown>> {
+  return (await loadRouterModule(routerPath, cwd)).router;
 }

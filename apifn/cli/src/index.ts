@@ -7,6 +7,8 @@ import { runValidateCommand } from "./commands/validate.js";
 import { runTestCommand } from "./commands/test.js";
 import { runImportOpenApiCommand } from "./commands/import.js";
 import { runDiffCommand } from "./commands/diff.js";
+import { runCheckCommand } from "./commands/check.js";
+import { attachCheckValues, isCheckInvocation, parseCheckArgv } from "./commands/check-args.js";
 import { runServeCommand } from "./commands/serve.js";
 import { runMockCommand } from "./commands/mock.js";
 import { runSnippetCommand } from "./commands/snippet.js";
@@ -19,6 +21,14 @@ export interface CliRunOptions {
   cwd?: string;
   stdout?: (text: string) => void;
   stderr?: (text: string) => void;
+  /**
+   * Cancels `apifn check`: an abort before its report reaches stdout rolls back every file it wrote
+   * and exits 2. The library installs no process signal listener; the `apifn` binary turns
+   * SIGINT, SIGTERM and SIGHUP into this abort while `onPublishing` says files are being written.
+   */
+  signal?: AbortSignal;
+  /** Called with true when `apifn check` starts writing files and with false once they are committed or rolled back. */
+  onPublishing?: (publishing: boolean) => void;
 }
 
 function toArray(value: string | string[] | undefined): string[] | undefined {
@@ -295,6 +305,57 @@ export async function runCli(
     );
 
   cli
+    .command(
+      "check [routerPath]",
+      "Regenerate the spec, fail on drift, validate it and block unversioned breaking changes"
+    )
+    .option("--spec <path>", "Committed spec (default: <config.output or .apifn>/openapi.yml)")
+    .option("--base <ref>", "Git ref whose committed spec is the base")
+    .option("--base-spec <pathOrUrl>", "Base spec file path or HTTP(S) URL")
+    .option("--allow-breaking", "Report breaking changes without failing")
+    .option("--write", "Rewrite a drifted spec instead of failing")
+    .option("--format <type>", "Report format: text | json | markdown (default: text)")
+    .option("--report <path>", "Also write the report to this file")
+    // The options above are declared for help and for cac's own parse errors; the action reads
+    // the arguments itself (see check-args.ts), so cac's coercions and dropped arguments never
+    // reach the check.
+    .action(async () => {
+      const globals = getGlobals();
+      const output = createOutput({
+        quiet: globals.quiet,
+        verbose: globals.verbose,
+        color: globals.color !== false,
+        writeStdout: runOptions.stdout,
+        writeStderr: runOptions.stderr,
+      });
+
+      let args;
+      let config;
+      let configFile: string | undefined;
+      try {
+        const { configPath, ...checkArgs } = parseCheckArgv(argv);
+        args = checkArgs;
+        ({ config, path: configFile } = await loadConfig({ cwd: runOptions.cwd, configPath }));
+      } catch (error) {
+        output.error(error instanceof Error ? error.message : String(error));
+        exitCode = 2;
+        return;
+      }
+
+      const result = await runCheckCommand({
+        ...args,
+        cwd: runOptions.cwd,
+        config,
+        configFile,
+        output,
+        writeStdout: runOptions.stdout,
+        signal: runOptions.signal,
+        onPublishing: runOptions.onPublishing,
+      });
+      if (result !== 0) exitCode = result;
+    });
+
+  cli
     .command("serve [specPath]", "Serve interactive API explorer")
     .option("--port <port>", "Port to bind (default: 4100)")
     .option("--open", "Open browser automatically")
@@ -445,12 +506,29 @@ export async function runCli(
     });
 
   cli.help();
-  cli.version("0.0.2");
+  cli.version("0.1.0");
+
+  // `apifn check` reads its own arguments first: cac would print help (exit 0) for a malformed
+  // check invocation that also names --help, instead of the usage error (exit 2).
+  let cacArgv = argv;
+  if (isCheckInvocation(argv)) {
+    try {
+      parseCheckArgv(argv);
+      cacArgv = attachCheckValues(argv);
+    } catch (error) {
+      createOutput({ writeStdout: runOptions.stdout, writeStderr: runOptions.stderr, color: false }).error(
+        error instanceof Error ? error.message : String(error)
+      );
+      return 2;
+    }
+  }
 
   try {
-    cli.parse(["node", "apifn", ...argv], { run: false });
+    cli.parse(["node", "apifn", ...cacArgv], { run: false });
     await cli.runMatchedCommand();
   } catch (error) {
+    // `apifn check` reserves exit 1 for a failed contract check: a usage error exits 2.
+    const usageExit = cli.matchedCommandName === "check" ? 2 : 1;
     const message = error instanceof Error ? error.message : String(error);
     const output = createOutput({
       writeStdout: runOptions.stdout,
@@ -458,7 +536,7 @@ export async function runCli(
       color: false,
     });
     output.error(message);
-    return 1;
+    return usageExit;
   }
 
   return exitCode;

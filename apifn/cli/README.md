@@ -16,6 +16,7 @@ npx @apifn/cli --help
 |---------|-------------|
 | `init [dir]` | Scaffold a new OpenCollection directory |
 | `generate [router]` | Generate an OpenAPI document from a router |
+| `check [router]` | Regenerate the spec, fail on drift, validate it and block unversioned breaking changes |
 | `export [format] [output]` | Export a generated spec as YAML or JSON |
 | `import <kind> <source>` | Import an OpenAPI document as an OpenCollection |
 | `test [collectionDir]` | Run a collection's tests |
@@ -105,6 +106,106 @@ apifn test .apifn/collection --env development --reporter json --output test-rep
 | `--reporter <type>` | `console` (default), `json`, `junit`, `silent` |
 
 Exit codes: `0` all passed · `1` failures/errors · `2` load/run error.
+
+## check
+
+The one command a developer or CI runs: it regenerates the spec from the router in memory (the
+`generate` code path), fails when the committed spec is stale, validates it, diffs it against a
+base and fails a breaking change unless the contract version (`info.version`) was bumped.
+
+```bash
+apifn check --base origin/dev --format markdown --report apifn-check.md
+apifn check --write   # rewrite a stale spec instead of failing
+```
+
+- `[router]` — router module (default `config.router`)
+- `--spec <path>` — committed spec, YAML or JSON (default `<config.output or .apifn>/openapi.yml`)
+- `--base <git-ref>` — base is the spec committed at that ref. Git resolves the ref once to a commit; the spec's path (as given, relative to the repository root, keeping the spelling of a symlinked directory on the way, even one back to the root) is then walked in that commit's tree one component at a time, as the kernel would: a tracked symbolic link met on the way is followed inside the same tree from the directory that holds it, and `..` returns to the directory actually walked. Only when that path is absent is the file a write to the spec lands on (an untracked spec symlink followed) tried; when the repository sets `core.ignorecase`, a missing name matches a tracked name equal under case folding and Unicode normalization. The blob is read as the object the walk found (`git cat-file blob <object>`), with replace objects disabled on every git call, and must be valid UTF-8; a file followed by `/` or `/.` in a link target is an error, not the spec. A path proven absent means a new contract, so the diff is skipped and reported, not failed; any git failure (including an unreadable `core.ignorecase`), several matching names, a link leaving the repository, a match that is not a file or a spec outside the repository exits `2`
+- `--base-spec <path|url>` — base spec file or HTTP(S) URL (only one of `--base` and `--base-spec`); one 30-second deadline covers the request and the whole response body
+- `--allow-breaking` — report breaking changes without failing
+- `--write` — rewrite a drifted (stale, missing or unparseable) spec instead of failing, in the committed file's format: a file starting with `{` stays JSON, a YAML file stays the YAML `generate` writes, and a missing or unreadable file follows its suffix (`.json` is JSON)
+- `--format <type>` — `text` (default), `json` or `markdown`
+- `--report <path>` — also write the report to a file
+
+git runs from one absolute path: `APIFN_GIT` when set (it must name an executable by absolute
+path), otherwise the first of `/usr/bin/git`, `/usr/local/bin/git`, `/opt/homebrew/bin/git` and
+`/bin/git` (`%ProgramFiles%\Git\cmd\git.exe` on Windows). A `git` found earlier on `PATH` is never
+run.
+
+The base must pass the same validator as the generated spec (a base it rejects, such as one with
+`paths: []`, exits `2`), and both sides are compared with every local `$ref` replaced by its
+target, so a change behind a shared schema counts like the same change written inline. Keys
+beside a `$ref` apply together with its target (`required` lists and `properties` combine, bounds
+keep the tighter one, `integer` is the part of `number` both allow, and a side closed by
+`additionalProperties: false` keeps only its own property names); a `$ref` that leaves the
+document, does not resolve, or has a sibling with no exact combined form, or one that would change
+what a keyword such as `additionalProperties` or `items` applies to, exits `2`. Literal data
+(`example`, `default`, `const`, `enum`, schema `examples`, an Example Object's value, `x-`
+extensions) is compared as written, and a fragment inside a schema with its own `$id` resolves in
+that schema.
+
+Writes are safe. Loading, generation, parsing, validation and the comparison finish before any file
+is touched; a failure there writes nothing. Publication can still fail (exit `2`) after it has
+started, and then rolls back every output it wrote. No output may land on a
+file the run reads (the spec, a local `--base-spec` file, the router module, the config file) or on
+the other output; paths are compared after symlinks, by directory identity and, conservatively,
+ignoring case and Unicode normalization, so `--report router.ts` exits `2`. The report and the
+repaired spec are written to temp files beside their destinations and renamed into place (a spec
+symlink keeps pointing at its target, which is replaced). The directory and the destination are
+checked again right before each rename: if either changed while the check ran, nothing is written.
+stdout is part of the same transaction: if writing it fails, even after the write returned (a
+closed pipe), the check exits `2` and both are rolled back, unless another writer replaced or
+edited them in the meantime (the run restores a file only while it holds the inode and the exact
+bytes this run wrote), in which case their bytes are kept and the error says so. `--write` keeps
+the committed format: text `JSON.parse` accepts stays JSON, other YAML stays YAML (flow style
+included), and a missing or unreadable spec follows the suffix of the file written (a symlink's
+target). A missing destination is first reserved as an empty file and every protected path is
+checked again before any byte is written. POSIX has no compare-and-swap
+rename, so a replacement made between the last check and the rename itself is not detected.
+
+Interruption: the `apifn` binary turns SIGINT, SIGTERM and SIGHUP during `check` into a
+cancellation: what the run wrote is rolled back (a pending stdout write is abandoned), then the
+signal is raised again. Embedded through `runCli`, the library installs no process signal listener
+and leaves the host's handling alone; pass `signal` (an `AbortSignal`) to cancel it the same way
+(exit `2`). A run that cannot clean up (SIGKILL, a crash) can leave an empty file at a missing
+output's own name, or a staged temp file beside it; it never leaves output bytes at a protected
+name. That empty file is the accepted residue (owner decision, 2026-11-22).
+
+Path and ref values are read literally, so `--base 0123` or `--base-spec 1.10` are not read as numbers.
+`check` accepts only this grammar: a second positional (for example a ref given without
+`--base`), any argument after `--`, a value on `--write`, `--allow-breaking` or `--help` (`=value`,
+or a separate `true` or `false`; a router named `false` is `./false`), or a
+repeated value option is a usage error, also when `--help` is given.
+
+Committed, base and generated documents are read by one strict parser (YAML 1.2, which contains
+JSON): at most 32 MB of text, a mapping at the root, no duplicate mapping keys and no YAML merge
+keys. They may use any number of aliases, but a document whose aliases expand past 5,000,000 nodes
+or 64 MB of text, or form a cycle, is rejected. So is a document with no faithful JSON form: a
+`.nan` or `.inf` value, an integer literal that is neither the double it reads as nor that
+double's shortest decimal (`9007199254740993`; `9223372036854776000` for 2^63 is read), a collection used as a mapping
+key, or two keys that become the same JSON key (`200` and `"200"`, or an alias key naming a literal
+key beside it). A committed spec that fails is drift (`unparseable`, repaired by `--write`); a base
+that fails is a load error (exit `2`); a generated spec that fails is invalid (exit `1`, never
+written).
+
+Drift means the committed spec, parsed as YAML or JSON, differs from the generated document in
+canonical JSON (key order and formatting do not count).
+
+Version rule: versions are semver 2.0 `MAJOR.MINOR.PATCH` with optional pre-release and build;
+anything else is unversioned and never covers a breaking change. A breaking change passes when the
+head major is greater than the base major, or both majors are `0` and the head minor is greater.
+A non-breaking change with an unchanged version is a warning. `diff: { failOnBreaking: false }` in
+`apifn.config.ts` reports breaking changes without failing.
+
+Reports: JSON is `{ drift, valid, breaking, versions: { base, head }, verdict, diff, ... }` with
+`verdict` `pass`, `warn` or `fail`; Markdown starts with `<!-- apifn-ci-report -->`, the marker the
+API check workflow updates in place.
+
+Exit codes: `0` pass (warnings allowed) · `1` drift, invalid spec, or a breaking change the version
+rule does not cover · `2` usage or load error, including an unknown option or a missing option
+value (message on stderr, no report). When the generated spec is invalid and the differ cannot
+read it, the diff is skipped (`base.status: "skipped"`) and the check exits `1` with the
+validation errors.
 
 ## diff
 
