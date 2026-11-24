@@ -5530,11 +5530,7 @@ function checkoutReferenceMatchesSession(
   );
   // The event must pay for the session's product, as the provider itself reported it; a price id from metadata
   // proves nothing.
-  const paidProducts = providerReportedProducts(state);
-  return (
-    sessionPrice !== undefined &&
-    (paidProducts.includes(sessionPrice.providerProductId) || paidProducts.includes(sessionPrice.priceId))
-  );
+  return sessionPrice !== undefined && providerReportedProducts(state).includes(sessionPrice.providerProductId);
 }
 
 /**

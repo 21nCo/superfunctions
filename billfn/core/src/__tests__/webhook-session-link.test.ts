@@ -163,6 +163,17 @@ describe('webhook events linked to a checkout session by its BillFn id', () => {
     expect(data?.entitlements?.status).toBe('active');
   });
 
+  it('does not take a reported product whose id equals the session price id as the session product', async () => {
+    const env = setup();
+    const session = await env.openCheckout('enterprise');
+
+    await env.deliver(paidEvent(session.checkoutSessionId, 'price_enterprise_month'));
+
+    const data = await env.entitlements();
+    expect(data?.subscription).toBeNull();
+    expect(data?.entitlements?.status ?? 'inactive').not.toBe('active');
+  });
+
   it('does not trust a provider checkout id that came from metadata', async () => {
     const env = setup();
     const session = await env.openCheckout('enterprise');
