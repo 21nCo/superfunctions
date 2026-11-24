@@ -94,7 +94,8 @@ async function purchased() {
         webhookSecret: `whsec_${webhookSecretBytes.toString('base64')}`
       })
     },
-    now: () => new Date('2026-11-10T00:00:00.000Z')
+    // The real clock: webhook revocations are dated by when their Dodo read started, and a restore must come later.
+    now: () => new Date()
   });
   const subject = { principalId: 'user_1' };
   const created = await billfn.createCheckout({ subject, planKey: 'nucleus', provider: 'dodo', priceId: lifetimePrice.priceId });
@@ -172,7 +173,7 @@ describe('Dodo refunds and disputes of a one-time purchase', () => {
       )
     );
 
-    await billfn.restorePurchases({
+    const restored = await billfn.restorePurchases({
       subject,
       planKey: 'nucleus',
       provider: 'dodo',
@@ -180,6 +181,8 @@ describe('Dodo refunds and disputes of a one-time purchase', () => {
       purchaseReference: 'pay_dodo_lifetime'
     });
 
+    expect(restored.ok).toBe(true);
+    expect(restored.ok && restored.data.subscription.status).toBe('canceled');
     expect(await entitlementStatus()).toBe('inactive');
   });
 
@@ -187,7 +190,7 @@ describe('Dodo refunds and disputes of a one-time purchase', () => {
     const { billfn, subject, entitlementStatus, api } = await purchased();
     api.takeBack({ refunds: [{ refund_id: 'ref_1', status: 'succeeded', is_partial: false }] });
 
-    await billfn.restorePurchases({
+    const restored = await billfn.restorePurchases({
       subject,
       planKey: 'nucleus',
       provider: 'dodo',
@@ -195,6 +198,8 @@ describe('Dodo refunds and disputes of a one-time purchase', () => {
       purchaseReference: 'pay_dodo_lifetime'
     });
 
+    expect(restored.ok).toBe(true);
+    expect(restored.ok && restored.data.subscription.status).toBe('canceled');
     expect(await entitlementStatus()).toBe('inactive');
   });
 
