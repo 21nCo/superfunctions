@@ -231,6 +231,20 @@ describe('upload init input (FILE-30 F-21, F-05)', () => {
     expect(checked.metadataJson).toBe('{"count":42}');
   });
 
+  it('hashes a JSON.rawJSON number as the value that gets stored', async () => {
+    const rawJSON = (JSON as { rawJSON?: (text: string) => unknown }).rawJSON;
+    if (typeof rawJSON !== 'function') return;
+    const checked = assertValidUploadInit({
+      policy: 'any',
+      fileName: 'a.txt',
+      size: 1,
+      mimeType: 'text/plain',
+      metadata: { big: rawJSON('9007199254740993') },
+    } as never);
+    expect(checked.metadata).toEqual({ big: 9007199254740992 });
+    expect(checked.metadataJson).toBe('{"big":9007199254740992}');
+  });
+
   it('applies the budgets to what toJSON returns, too', async () => {
     const fileFn = makeFileFn([{ name: 'any' }]);
     let node: Record<string, unknown> = { leaf: 1 };

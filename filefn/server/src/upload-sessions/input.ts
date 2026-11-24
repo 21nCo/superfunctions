@@ -104,12 +104,14 @@ function normalizeJson(
   }
   if (typeof value === 'bigint') throw new TypeError('BigInt is not JSON');
   if (typeof value !== 'object') return { value: undefined, json: undefined };
-  // JSON.rawJSON values (newer runtimes) serialize as their raw JSON text.
+  // JSON.rawJSON values (newer runtimes): the decoded value is what gets
+  // stored, so it is what gets hashed too (a number past 2^53 rounds).
   const isRawJSON = (JSON as { isRawJSON?: (v: unknown) => boolean }).isRawJSON;
   if (typeof isRawJSON === 'function' && isRawJSON(value)) {
-    const json = String((value as { rawJSON: unknown }).rawJSON);
-    charge(budget, json.length);
-    return { value: JSON.parse(json), json };
+    const raw = String((value as { rawJSON: unknown }).rawJSON);
+    charge(budget, raw.length);
+    const decoded: unknown = JSON.parse(raw);
+    return { value: decoded, json: JSON.stringify(decoded) };
   }
   // A value that is its own ancestor is circular, which JSON.stringify refuses.
   if (ancestors.has(value)) throw new TypeError('circular metadata');
