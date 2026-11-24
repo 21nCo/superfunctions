@@ -668,6 +668,15 @@ export function createDodoProvider(config: DodoProviderConfig): BillFnProviderAd
               : (readString(data, ['checkout_session_id']) ??
                 readMetadataString(data, DODO_CHECKOUT_SESSION_METADATA_KEY) ??
                 undefined),
+          // Dodo's own checkout_session_id is the provider's; the metadata key is whatever the payer's link set.
+          checkoutReferenceSource:
+            recordKind === 'other'
+              ? undefined
+              : readString(data, ['checkout_session_id'])
+                ? 'provider'
+                : readMetadataString(data, DODO_CHECKOUT_SESSION_METADATA_KEY)
+                  ? 'metadata'
+                  : undefined,
           billingState,
           raw: payload
         }
@@ -1224,8 +1233,11 @@ function readDodoPriceReference(kind: 'subscription' | 'payment', data: Record<s
   if (kind === 'subscription') {
     return readString(data, ['product_id']);
   }
+  // A cart lists a payment's one-time items, so it names the product only for a payment that charges no
+  // subscription; a subscription payment's own product is in product_id, if anywhere.
   const product =
-    readString(data, ['product_id']) ?? readString(asArrayOfRecords(data.product_cart)[0] ?? {}, ['product_id']);
+    readString(data, ['product_id']) ??
+    (isDodoOneTimePayment(data) ? readString(asArrayOfRecords(data.product_cart)[0] ?? {}, ['product_id']) : undefined);
   const priceId = readMetadataString(data, DODO_PRICE_METADATA_KEY);
   if (
     priceId &&
@@ -1238,12 +1250,9 @@ function readDodoPriceReference(kind: 'subscription' | 'payment', data: Record<s
   return product;
 }
 
-/** A payment that charges no subscription: neither `subscription_id` nor any `subscription_ids` entry. */
+/** A payment Dodo says charges no subscription (the one classification `classifyDodoPayment` gives). */
 function isDodoOneTimePayment(payment: Record<string, unknown>): boolean {
-  if (readString(payment, ['subscription_id'])) {
-    return false;
-  }
-  return !(Array.isArray(payment.subscription_ids) && payment.subscription_ids.length > 0);
+  return classifyDodoPayment(payment) === 'one_time';
 }
 
 function readMetadataString(record: Record<string, unknown>, key: string): string | undefined {

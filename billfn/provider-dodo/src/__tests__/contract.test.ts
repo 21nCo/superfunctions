@@ -1022,6 +1022,30 @@ describe('parseWebhook with recorded Dodo payloads', () => {
     return events![0]!;
   }
 
+  it.each([
+    ['charges a subscription', { subscription_id: 'sub_mixed' }],
+    ['is flagged multi-subscription', { subscription_id: null, subscription_ids: [], is_multi_subscription: true }]
+  ])('names no product from the cart of a payment that %s', async (_name, patch) => {
+    const payment = recorded.webhooks.paymentSucceededOneTime;
+    const event = await parse({
+      ...payment,
+      data: { ...payment.data, ...patch, product_cart: [{ product_id: 'pdt_nucleus_lifetime', quantity: 1 }] }
+    });
+
+    expect(event.priceId).toBeUndefined();
+  });
+
+  it('marks a checkout reference read from metadata as metadata, and Dodo\'s own one as the provider\'s', async () => {
+    const fromMetadata = await parse(recorded.webhooks.subscriptionPastDue);
+    const fromDodo = await parse({
+      ...recorded.webhooks.subscriptionPastDue,
+      data: { ...recorded.webhooks.subscriptionPastDue.data, checkout_session_id: 'cks_native' }
+    });
+
+    expect(fromMetadata).toMatchObject({ checkoutReferenceId: 'chk_123', checkoutReferenceSource: 'metadata' });
+    expect(fromDodo).toMatchObject({ checkoutReferenceId: 'cks_native', checkoutReferenceSource: 'provider' });
+  });
+
   it('maps subscription.past_due to grace, names its product (not the checkout price) and the session', async () => {
     const event = await parse(recorded.webhooks.subscriptionPastDue);
 
@@ -1057,14 +1081,18 @@ describe('parseWebhook with recorded Dodo payloads', () => {
     });
   });
 
-  it('names only the product of a subscription payment that carries its product, never the checkout price', async () => {
+  it('names a subscription payment\'s product only from its product_id, never from its cart or the checkout price', async () => {
+    // Dodo's cart lists a payment's one-time items, so it does not name the subscription's product; the
+    // subscription keeps its stored plan, and its own events carry product_id.
     const payment = recorded.webhooks.paymentSucceededForSubscription;
-    const event = await parse({
+    const fromCart = await parse({
       ...payment,
       data: { ...payment.data, product_cart: [{ product_id: 'pdt_nucleus_month', quantity: 1 }] }
     });
+    const fromProduct = await parse({ ...payment, data: { ...payment.data, product_id: 'pdt_nucleus_month' } });
 
-    expect(event.priceId).toBe('pdt_nucleus_month');
+    expect(fromCart.priceId).toBeUndefined();
+    expect(fromProduct.priceId).toBe('pdt_nucleus_month');
   });
 
   it('leaves a declined renewal payment to the subscription events instead of failing the subscription', async () => {

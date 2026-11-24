@@ -4300,12 +4300,21 @@ const fileFn = createFileFn({
       download:          { windowSeconds: 60, maxRequests: 120 },
       shareDownload:     { windowSeconds: 60, maxRequests: 60 },
       artifactDownload:  { windowSeconds: 60, maxRequests: 600 },
+      list:              { windowSeconds: 60, maxRequests: 120 },
+      processing:        { windowSeconds: 60, maxRequests: 30 },
+      grantCreate:       { windowSeconds: 60, maxRequests: 30 },
+      shareCreate:       { windowSeconds: 60, maxRequests: 30 },
     },
+    // Gives each unauthenticated caller its own bucket, for example by the
+    // client IP your proxy reports.
+    clientKey: (request) => request.headers.get("x-client-ip"),
   },
 });
 ```
 
-`rateLimit.limits` accepts any subset of categories — categories you don't list aren't limited.
+`rateLimit.limits` accepts any subset of categories — categories you don't list aren't limited. `list` covers listing files, `processing` covers starting processing (`POST /:fileId/process`), and `grantCreate` and `shareCreate` cover creating grants and share links.
+
+Buckets are per tenant and principal for signed-in callers. Unauthenticated callers share one bucket per category unless `rateLimit.clientKey` names them; only use a value your own proxy sets, never one the client can choose. With `mode: "local"`, each distinct client key keeps an in-memory bucket until that key is seen again, so for anonymous traffic from many clients use `"strict"` or `"best-effort"` with a store that expires entries.
 
 `rateLimit.algorithm` is one of `"fixed-window" | "sliding-window" | "token-bucket"`.
 
