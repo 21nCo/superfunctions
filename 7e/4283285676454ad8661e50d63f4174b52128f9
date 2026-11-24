@@ -1,0 +1,23 @@
+scripts/turbo-inputs-guard.mjs
+  s_1eb217f2cbe12c::t_c6ee6767d12704 31-32,827-830,839-840,983-989
+scripts/turbo-inputs-guard.test.mjs
+  s_1eb217f2cbe12c::t_382f3aefbc1a50 779-794
+uifn/examples/shared/turbo.json
+  s_1eb217f2cbe12c::t_b4e504e4213ac7 9-10
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7e4283285676454ad8661e50d63f4174b52128f9",
+  "prompts": {},
+  "sessions": {
+    "s_1eb217f2cbe12c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2b2155d1-b0bb-4e5e-bb89-8414e78e1489",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
