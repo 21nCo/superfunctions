@@ -98,6 +98,18 @@ describe('FILE-30 low-severity hardening (F-13, F-14, F-16, F-18, F-24)', () => 
     expect(anonT1).not.toBe(anonT2);
   });
 
+  it('lets a role grant with canShare create share links within the file tenant (F-18)', async () => {
+    const database = memoryAdapter();
+    const { fileFn } = makeFileFn({ database, authorizer: createDefaultAuthorizer({ db: database, namespace: 'filefn' }) });
+    const owner = { principalId: 'owner', tenantId: 't1' };
+    const file = await upload(fileFn, owner);
+    await fileFn.services.grants.createGrant({ fileId: file.fileId, role: 'editor', canShare: true }, owner);
+    const editor = { principalId: 'ed', tenantId: 't1', roles: ['editor'] };
+    await expect(fileFn.services.shares.createShareLink({ fileId: file.fileId }, editor as never)).resolves.toMatchObject({ token: expect.any(String) });
+    const outsider = { principalId: 'ed2', tenantId: 't2', roles: ['editor'] };
+    await expect(fileFn.services.shares.createShareLink({ fileId: file.fileId }, outsider as never)).rejects.toMatchObject({ code: 'FILEFN_FORBIDDEN' });
+  });
+
   it('gives anonymous callers their own rate-limit bucket when the host names them (F-14)', async () => {
     const { fileFn } = makeFileFn({
       rateLimit: {

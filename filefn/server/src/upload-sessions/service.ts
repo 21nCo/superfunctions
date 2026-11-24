@@ -532,7 +532,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
     // to its owner, a new one to the session's owner.
     const file = session.fileId ? await rivalFile(session) : null;
     const account: QuotaAccount = file
-      ? { principalId: file.ownerId, tenantId: file.tenantId ?? undefined }
+      ? quotaAccountOf(file.ownerId, file.tenantId)
       : sessionQuotaAccount(session);
     const quotaResult = await quota.checkQuota({ ...account, requestedBytes: session.size });
     if (!quotaResult.allowed) {
@@ -1136,7 +1136,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       // charge never depends on a later lookup the file may be deleted under.
       const published = await findFile();
       const quotaAccount: QuotaAccount = published?.ownerId
-        ? { principalId: published.ownerId, tenantId: published.tenantId ?? undefined }
+        ? quotaAccountOf(published.ownerId, published.tenantId)
         : sessionQuotaAccount(session);
       const finishedBy = randomBytes(6).toString('hex');
       const finished = await updateSessionIf(
@@ -1203,7 +1203,17 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
 
   // A session's own account: the owner and tenant it was created for.
   function sessionQuotaAccount(session: Pick<UploadSession, 'ownerId' | 'tenantId'>): QuotaAccount {
-    return { principalId: session.ownerId || 'anonymous', tenantId: session.tenantId ?? undefined };
+    return quotaAccountOf(session.ownerId, session.tenantId);
+  }
+
+  // The quota provider's account for an owner: the reserved owner 'anonymous'
+  // (or none) is the provider's unset principal, as anonymous uploads have
+  // always been checked and charged.
+  function quotaAccountOf(ownerId: string | null | undefined, tenantId: string | null | undefined): QuotaAccount {
+    return {
+      principalId: ownerId && ownerId !== 'anonymous' ? ownerId : undefined,
+      tenantId: tenantId ?? undefined,
+    };
   }
 
   // The effects of a completion, run once by the call that completed the
@@ -1414,8 +1424,8 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
           throw errors.forbidden({ fileId: requestedFileId, operation: 'replace' });
         }
         const account: QuotaAccount = existing
-          ? { principalId: existing.ownerId, tenantId: existing.tenantId ?? undefined }
-          : { principalId: ctx.principalId || 'anonymous', tenantId: ctx.tenantId };
+          ? quotaAccountOf(existing.ownerId, existing.tenantId)
+          : quotaAccountOf(ctx.principalId, ctx.tenantId);
         const quotaResult = await quota.checkQuota({ ...account, requestedBytes: input.size });
 
         if (!quotaResult.allowed) {
