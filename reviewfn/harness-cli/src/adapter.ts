@@ -221,10 +221,10 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
         const executable = await this.resolveExecutable(config);
         const key = await this.versionKey(executable, profile, environment);
         const probed = await this.probeVersion(executable, key, profile, environment, secrets, VERSION_TIMEOUT_MS, signal);
-        if ("error" in probed) diagnostics.push({ code: "REVIEWFN_HARNESS_VERSION", level: "error", message: redactText(probed.error, secrets) });
+        if ("error" in probed) diagnostics.push({ code: "REVIEWFN_HARNESS_VERSION", level: "error", message: redact(probed.error, secrets) });
         else version = probed.version;
       } catch (error) {
-        diagnostics.push({ code: "REVIEWFN_CLI_UNAVAILABLE", level: "error", message: redactText(`The CLI executable is unavailable: ${message(error)}`, secrets) });
+        diagnostics.push({ code: "REVIEWFN_CLI_UNAVAILABLE", level: "error", message: redact(`The CLI executable is unavailable: ${message(error)}`, secrets) });
       }
     }
     const ok = diagnostics.every(item => item.level !== "error");
@@ -309,13 +309,10 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
   private async attempt(run: AttemptContext, attempt: number, prompt: string): Promise<SlotHarnessOutput | Rejection> {
     const { state, input, profile } = run;
     const before = attempt === 1 ? "before the CLI started" : "before the repair attempt";
-    const remaining = run.deadline - Date.now();
-    if (remaining <= 0) return state.finish("timed_out", `The CLI exceeded its configured bound ${before}.`);
     const outputBytes = state.remainingOutputBytes();
     if (outputBytes <= 0) return state.finish("timed_out", `The CLI output used its whole byte budget ${before}.`);
     // Each attempt runs only the executable whose version was read: one replaced at the same path since is refused.
-    const current = await this.versionKey(run.executable, profile, run.environment).catch(() => undefined);
-    if (current !== run.key) return state.finish("failed", `The CLI executable changed after its version was read, so it was refused ${before}.`);
+    if (await this.changed(run)) return state.finish("failed", `The CLI executable changed after its version was read, so it was refused ${before}.`);
     // Each attempt gets its own directory, created exclusively with an unpredictable name once the previous attempt has
     // ended, holding its schema, its prompt (written only when the CLI is given its path) and its output path, which is
     // therefore absent when it starts. Nothing an earlier attempt left (a link, a rewritten schema, a planted answer) is
@@ -324,6 +321,9 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
     try { files = await attemptFiles(run, attempt, prompt); }
     catch (error) { return state.finish("failed", `The CLI attempt's files could not be created: ${message(error)}`); }
     const { outputFile } = files;
+    // The deadline is read once the preparation above is done, so a slow identity read or file write cannot extend it.
+    const remaining = run.deadline - Date.now();
+    if (remaining <= 0) return state.finish("timed_out", `The CLI exceeded its configured bound ${before}.`);
     const args = cliArguments(profile.argv, { ...files, workspace: input.workspace, model: input.configuration.inference.model });
     state.push("started", { attempt, promptVia: profile.promptVia, outputVia: profile.outputVia, sandbox: profile.capabilities.sandbox });
     // An output file is measured while the CLI runs, together with the stdout and stderr bytes the runner reports: once
@@ -342,7 +342,11 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
       // a run that served another model is void whether it then completed, failed, hung or overran its bounds.
       const unreported = reporter ? await reportStderrModel(run, reporter, result.stderr) : undefined;
       if (unreported) return unreported;
-      return await this.judge(run, attempt, outputFile, result, watch?.overrun());
+      // An executable replaced while the attempt was prepared or ran is not the one whose version was read.
+      if (await this.changed(run)) return state.finish("failed", "The CLI executable changed while the attempt ran, so its answer was refused.");
+      const outcome = await this.judge(run, attempt, outputFile, result, watch?.overrun());
+      if (watch) state.chargeMeasured(watch.peak());
+      return outcome;
     } finally {
       reporter?.dispose();
     }
@@ -396,6 +400,11 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
    * modification and change times), the version arguments and the probe's whole environment, hashed so no environment
    * value is kept in the key.
    */
+  /** Whether the executable's identity no longer matches the one whose version was read. */
+  private async changed(run: AttemptContext): Promise<boolean> {
+    return await this.versionKey(run.executable, run.profile, run.environment).catch(() => undefined) !== run.key;
+  }
+
   private async versionKey(executable: string, profile: HarnessProfile, environment: NodeJS.ProcessEnv): Promise<string> {
     const file = await stat(executable, { bigint: true });
     const identity = [file.dev, file.ino, file.size, file.mtimeNs, file.ctimeNs].map(String);
@@ -412,9 +421,9 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
     const args = [...(profile.versionArgv ?? CLI_DEFAULT_VERSION_ARGV)];
     let result: CommandResult;
     try { result = await this.runner(executable, args, { cwd: tmpdir(), env: environment, timeoutMs, maxOutputBytes: VERSION_OUTPUT_BYTES, signal }); }
-    catch (error) { return { error: redactText(`The CLI version could not be read: ${message(error)}`, secrets), timedOut: false }; }
+    catch (error) { return { error: redact(`The CLI version could not be read: ${message(error)}`, secrets), timedOut: false }; }
     if (result.timedOut) return { error: `The CLI version command exceeded its ${timeoutMs} ms or ${VERSION_OUTPUT_BYTES}-byte bound.`, timedOut: true };
-    if (result.code !== 0) return { error: `The CLI version command exited with ${String(result.code ?? result.signal)}: ${redactText(result.stderr, secrets).trim().slice(0, 500)}`, timedOut: false };
+    if (result.code !== 0) return { error: `The CLI version command exited with ${String(result.code ?? result.signal)}: ${redact(result.stderr, secrets).trim().slice(0, 500)}`, timedOut: false };
     const version = parseCliVersion(result.stdout, result.stderr);
     if (!version) return { error: "The CLI reported no recognizable version, so the slot's pinned version cannot be confirmed.", timedOut: false };
     this.versions.set(key, version);
@@ -423,8 +432,8 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
 
   private secrets(config: ReviewFnConfig, environment: NodeJS.ProcessEnv): string[] {
     const credential = config.inference.credentialEnv ? this.environment[config.inference.credentialEnv] : undefined;
-    // The credential, and every allowlisted value whose name marks it as a secret, each also as escaped in a JSON string.
-    return withJsonEscapes(collectSecrets(environment, credential ? [credential] : []));
+    // The credential, and every allowlisted value whose name marks it as a secret.
+    return collectSecrets(environment, credential ? [credential] : []);
   }
 }
 
@@ -450,18 +459,26 @@ async function attemptFiles(run: AttemptContext, attempt: number, prompt: string
   return files;
 }
 
+const SHORT_ESCAPES: Record<string, string> = { '"': '\\"', "\\": "\\\\", "/": "\\/", "\b": "\\b", "\f": "\\f", "\n": "\\n", "\r": "\\r", "\t": "\\t" };
+const JSON_FORMS = new WeakMap<readonly string[], RegExp | undefined>();
+
 /**
- * Each secret and the forms a JSON string writes it in (quote, backslash and control characters escaped, optionally `/`
- * as `\/` and non-ASCII as `\uXXXX`), longest first, so a credential the CLI echoes inside JSON is redacted too.
+ * `text` with every secret redacted: as written, and as any JSON string can write it, each UTF-16 unit raw, as its short
+ * escape or as `\uXXXX` in either hex case, so a credential the CLI echoes inside JSON is redacted whatever escaped it.
  */
-function withJsonEscapes(secrets: readonly string[]): string[] {
-  const forms = secrets.flatMap(secret => {
-    const escaped = JSON.stringify(secret).slice(1, -1);
-    // Without the u flag each UTF-16 unit, a surrogate half included, is escaped on its own, as JSON writes it.
-    const ascii = escaped.replaceAll(/[^\x20-\x7e]/g, unit => `\\u${unit.charCodeAt(0).toString(16).padStart(4, "0")}`);
-    return [secret, escaped, escaped.replaceAll("/", "\\/"), ascii, ascii.replaceAll("/", "\\/")];
-  });
-  return [...new Set(forms)].sort((left, right) => right.length - left.length);
+function redact(text: string, secrets: readonly string[]): string {
+  if (!JSON_FORMS.has(secrets)) {
+    const unit = (char: string) => {
+      const hex = char.charCodeAt(0).toString(16).padStart(4, "0").replaceAll(/[a-f]/g, digit => `[${digit}${digit.toUpperCase()}]`);
+      const short = SHORT_ESCAPES[char];
+      return `(?:${char.replaceAll(/[\\^$.*+?()[\]{}|/-]/g, "\\$&")}|\\\\u${hex}${short ? `|${short.replaceAll("\\", "\\\\")}` : ""})`;
+    };
+    const forms = secrets.filter(secret => secret.length > 0).sort((left, right) => right.length - left.length).map(secret => [...secret.split("")].map(unit).join(""));
+    JSON_FORMS.set(secrets, forms.length ? new RegExp(forms.join("|"), "g") : undefined);
+  }
+  const pattern = JSON_FORMS.get(secrets);
+  const literal = redactText(text, secrets);
+  return pattern ? literal.replace(pattern, "[REDACTED]") : literal;
 }
 
 /** An answer rejected by validation, with what the repair prompt echoes back. */
@@ -690,12 +707,13 @@ async function readOutputFile(file: string, maxBytes: number): Promise<OutputRea
  * `onOutput`, against one output budget, and abort the returned signal, which also follows the caller's, once together
  * they outgrow it.
  */
-function watchOutputFile(file: string, maxBytes: number, parent: AbortSignal | undefined): { signal: AbortSignal; stop: () => void; overrun: () => string | undefined; onOutput: (bytes: number) => void } {
+function watchOutputFile(file: string, maxBytes: number, parent: AbortSignal | undefined): { signal: AbortSignal; stop: () => void; overrun: () => string | undefined; onOutput: (bytes: number) => void; peak: () => number } {
   const controller = new AbortController();
   let overrun: string | undefined;
   let checking = false;
   let streamed = 0;
   let fileSize = 0;
+  let peak = 0;
   const check = () => {
     if (streamed + fileSize <= maxBytes || controller.signal.aborted) return;
     overrun = `The CLI output file (${fileSize} bytes) grew past the remaining ${Math.max(0, maxBytes)}-byte output budget with ${streamed} bytes of stdout and stderr while it ran.`;
@@ -707,7 +725,7 @@ function watchOutputFile(file: string, maxBytes: number, parent: AbortSignal | u
   const timer = setInterval(() => {
     if (checking || controller.signal.aborted) return;
     checking = true;
-    lstat(file).then(stat => { fileSize = stat.size; check(); }, () => { /* not written yet */ }).finally(() => { checking = false; });
+    lstat(file).then(stat => { fileSize = stat.size; peak = Math.max(peak, fileSize); check(); }, () => { /* not written yet */ }).finally(() => { checking = false; });
   }, OUTPUT_FILE_POLL_MS);
   timer.unref();
   return {
@@ -715,6 +733,7 @@ function watchOutputFile(file: string, maxBytes: number, parent: AbortSignal | u
     stop: () => { clearInterval(timer); parent?.removeEventListener("abort", onParentAbort); },
     onOutput: bytes => { streamed += bytes; check(); },
     overrun: () => overrun,
+    peak: () => peak,
   };
 }
 
@@ -904,8 +923,8 @@ function outputContract(schema: Readonly<Record<string, unknown>>, profile: Harn
  * the run's secrets before the cut, as the transcript is, so no credential the CLI echoed reaches the next prompt.
  */
 function repairPrompt(basePrompt: string, errors: readonly string[], previous: string | undefined, secrets: readonly string[]): string {
-  const listed = redactText(errors.slice(0, 50).map(error => `- ${error}`).join("\n"), secrets);
-  const echoed = previous === undefined ? "(no JSON object was found)" : Buffer.from(redactText(previous, secrets), "utf8").subarray(0, REPAIR_ECHO_BYTES).toString("utf8");
+  const listed = redact(errors.slice(0, 50).map(error => `- ${error}`).join("\n"), secrets);
+  const echoed = previous === undefined ? "(no JSON object was found)" : Buffer.from(redact(previous, secrets), "utf8").subarray(0, REPAIR_ECHO_BYTES).toString("utf8");
   const sections = [basePrompt, "Repair: your previous answer was rejected and this is the only repair attempt."];
   sections.push(`Validation errors:\n${listed}`, `Previous answer (at most ${REPAIR_ECHO_BYTES} bytes):\n${echoed}`);
   sections.push("Reply with exactly one JSON object that validates against the schema above.");
@@ -939,6 +958,7 @@ class RunState {
   private readonly transcript: string[] = [];
   /** Raw bytes counted against the output budget: stdout and stderr as the runner capped them, and each output file read. */
   private rawBytes = 0;
+  private fileBytes = 0;
   /**
    * Whether any reported model differed from the configured one, compared on the raw values. It is carried to the panel
    * on its own, because the stored model (redacted and cut to length) can read the same as the configured model.
@@ -954,13 +974,20 @@ class RunState {
 
   public record(result: CommandResult): void {
     this.reported = undefined;
+    this.fileBytes = 0;
     this.rawBytes += Buffer.byteLength(result.stdout) + Buffer.byteLength(result.stderr);
-    this.transcript.push(redactText(`${result.stdout}\n${result.stderr}`, this.secrets));
+    this.transcript.push(redact(`${result.stdout}\n${result.stderr}`, this.secrets));
   }
 
   public recordOutputFile(text: string): void {
-    this.rawBytes += Buffer.byteLength(text);
-    this.transcript.push(redactText(text, this.secrets));
+    this.fileBytes = Buffer.byteLength(text);
+    this.rawBytes += this.fileBytes;
+    this.transcript.push(redact(text, this.secrets));
+  }
+
+  /** The largest output file size measured while the attempt ran: bytes beyond the file then read still count. */
+  public chargeMeasured(peak: number): void {
+    this.rawBytes += Math.max(0, peak - this.fileBytes);
   }
 
   /** A model the reporter named: a nonblank string, compared with the configured model before it is stored. */
@@ -994,7 +1021,7 @@ class RunState {
   }
 
   public retain(value: string, max: number): string {
-    const redacted = redactText(value, this.secrets);
+    const redacted = redact(value, this.secrets);
     return redacted.length > max ? `${redacted.slice(0, max)}…` : redacted;
   }
 
@@ -1005,7 +1032,7 @@ class RunState {
   }
 
   public finish(terminal: HarnessOutput["terminal"], reason: string): SlotHarnessOutput {
-    return this.bounded(failure(terminal, redactText(reason, this.secrets)));
+    return this.bounded(failure(terminal, redact(reason, this.secrets)));
   }
 
   public push(type: NormalizedRunEvent["type"], data: Record<string, JsonValue>): void {
