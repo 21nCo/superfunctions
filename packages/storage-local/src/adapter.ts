@@ -167,8 +167,14 @@ export function createLocalStorageAdapter(config: LocalStorageConfig): StorageAd
       // Removes the temporary file once the stream has closed, unless it was
       // renamed over the key. Runs for abort, close errors and write errors
       // (a failed write errors the Web stream, so its abort never reaches us).
+      // Only a file this writer created: a failed exclusive open (EEXIST) never
+      // opened it, so another file at that path is left alone.
+      let opened = false;
+      nodeStream.on('open', () => {
+        opened = true;
+      });
       const removeTemp = () => {
-        if (!committed) unlink(tempPath).catch(() => {});
+        if (opened && !committed) unlink(tempPath).catch(() => {});
       };
       nodeStream.on('close', removeTemp);
       nodeStream.on('error', (err) => {

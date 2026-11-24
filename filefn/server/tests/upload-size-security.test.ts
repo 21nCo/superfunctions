@@ -252,6 +252,20 @@ describe('declared upload size is enforced (FILE-30 F-05)', () => {
     expect(files.filter((entry) => entry.isFile()).map((entry) => entry.name)).toEqual([expect.stringMatching(/\.part1$/)]);
   });
 
+  it('lets a session created before the part cap use its whole declared part range', async () => {
+    const database = memoryAdapter();
+    const store = createMultipartStore();
+    const fileFn = createFileFn({ database, storage: store.storage, policies: [{ name: 'any' }] });
+    const session = await fileFn.createUploadSession({ policy: 'any', fileName: 'a.bin', size: 10, mimeType: 'application/octet-stream' }, alice);
+    // As if initialized before the cap: 10,001 parts of 1 byte.
+    await database.update({
+      model: 'uploadSessions',
+      where: [{ field: 'uploadSessionId', operator: 'eq', value: session.uploadSessionId }],
+      data: { totalParts: 10_001, chunkSizeBytes: 1, size: 10_001 },
+    });
+    await expect(fileFn.services.uploads.signPart(session.uploadSessionId, 10_001, 1, alice)).resolves.toMatchObject({ url: expect.any(String) });
+  });
+
   it('refuses an upload that would need more than 10,000 parts', async () => {
     const fileFn = createFileFn({
       database: memoryAdapter(),

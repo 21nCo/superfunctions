@@ -1592,9 +1592,10 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       // The completion has read the parts it publishes.
       if (session.status === 'completing' || session.status === 'publishing') throw errors.uploadCompletionInProgress();
       if (isExpiredAt(session.expiresAt)) throw errors.uploadExpired();
-      // Sessions created before the 10,000-part cap may declare more parts;
-      // parts past it would be outside cleanup.
-      if (partNumber < 1 || partNumber > session.totalParts || partNumber > MAX_UPLOAD_PARTS) throw errors.invalidPartNumber();
+      // Init refuses more than 10,000 parts; a session created before that
+      // keeps its declared part range (cleanup of its unrecorded parts stops
+      // at the cap).
+      if (partNumber < 1 || partNumber > session.totalParts) throw errors.invalidPartNumber();
       const partLimit = maxPartBytes(session, partNumber);
       if (!Number.isSafeInteger(contentLength) || contentLength < 1) {
         throw errors.invalidRequest('contentLength must be a positive integer', { field: 'contentLength' });
@@ -1655,9 +1656,10 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       // The completion has read the parts it publishes.
       if (session.status === 'completing' || session.status === 'publishing') throw errors.uploadCompletionInProgress();
       if (isExpiredAt(session.expiresAt)) throw errors.uploadExpired();
-      // Sessions created before the 10,000-part cap may declare more parts;
-      // parts past it would be outside cleanup.
-      if (partNumber < 1 || partNumber > session.totalParts || partNumber > MAX_UPLOAD_PARTS) throw errors.invalidPartNumber();
+      // Init refuses more than 10,000 parts; a session created before that
+      // keeps its declared part range (cleanup of its unrecorded parts stops
+      // at the cap).
+      if (partNumber < 1 || partNumber > session.totalParts) throw errors.invalidPartNumber();
       if (session.uploadMode !== 'proxy') throw errors.noSupportedUploadMode();
       // Counted while streaming: the declared Content-Length is only an early refusal.
       const partLimit = maxPartBytes(session, partNumber);
@@ -1784,9 +1786,10 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       // The completion has read the parts it publishes.
       if (session.status === 'completing' || session.status === 'publishing') throw errors.uploadCompletionInProgress();
       if (isExpiredAt(session.expiresAt)) throw errors.uploadExpired();
-      // Sessions created before the 10,000-part cap may declare more parts;
-      // parts past it would be outside cleanup.
-      if (partNumber < 1 || partNumber > session.totalParts || partNumber > MAX_UPLOAD_PARTS) throw errors.invalidPartNumber();
+      // Init refuses more than 10,000 parts; a session created before that
+      // keeps its declared part range (cleanup of its unrecorded parts stops
+      // at the cap).
+      if (partNumber < 1 || partNumber > session.totalParts) throw errors.invalidPartNumber();
       if (!etag || etag.trim() === '') throw errors.invalidEtag();
 
       const existingPart = await db.findOne<{ partNumber: number; etag: string; size: number }>({
