@@ -132,6 +132,8 @@ function createMultipartStorage() {
     createMultipartUpload: vi.fn(async () => ({ uploadId: 'up_1' })),
     completeMultipartUpload: vi.fn(async () => {}),
     signMultipartUploadPartUrl: vi.fn(async () => ({ url: 'https://signed.example/upload', headers: {} })),
+    // Every session in these tests declares 3 bytes; completion verifies the size.
+    statObject: vi.fn(async ({ key }: { key: string }) => ({ key, size: 3 })),
   };
 }
 

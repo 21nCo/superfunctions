@@ -1,5 +1,6 @@
 import { createReadStream, createWriteStream } from 'node:fs';
-import { mkdir, lstat, stat, unlink, realpath } from 'node:fs/promises';
+import { mkdir, lstat, stat, unlink, realpath, rename } from 'node:fs/promises';
+import { randomBytes } from 'node:crypto';
 import { dirname, join, normalize, resolve, isAbsolute, relative } from 'node:path';
 import type { StorageAdapter, StorageAdapterCapabilities, StorageObjectStat } from '@superfunctions/storage';
 import { createNotFoundError } from '@superfunctions/storage/internal/errors';
@@ -162,8 +163,30 @@ export function createLocalStorageAdapter(config: LocalStorageConfig): StorageAd
         }
       }
 
-      const nodeStream = createWriteStream(filePath);
+      // Written to a temporary file next to the target and renamed over it on
+      // close, so an aborted or failed upload never leaves partial bytes at the
+      // key, and a reader never sees a half-written object.
+      // A short, fixed-length name in the same directory, so a key whose last
+      // segment is near the filesystem's name limit still fits.
+      const tempPath = join(dir, `.upl-${randomBytes(8).toString('hex')}.tmp`);
+      const nodeStream = createWriteStream(tempPath, { flags: 'wx' });
       let streamError: Error | null = null;
+      // Set once the stream finished cleanly: the rename then owns the file
+      // (and removes it itself if the rename fails).
+      let committed = false;
+      // Removes the temporary file once the stream has closed, unless it was
+      // renamed over the key. Runs for abort, close errors and write errors
+      // (a failed write errors the Web stream, so its abort never reaches us).
+      // Only a file this writer created: a failed exclusive open (EEXIST) never
+      // opened it, so another file at that path is left alone.
+      let opened = false;
+      nodeStream.on('open', () => {
+        opened = true;
+      });
+      const removeTemp = () => {
+        if (opened && !committed) unlink(tempPath).catch(() => {});
+      };
+      nodeStream.on('close', removeTemp);
       nodeStream.on('error', (err) => {
         streamError = err;
       });
@@ -209,11 +232,19 @@ export function createLocalStorageAdapter(config: LocalStorageConfig): StorageAd
             };
             const onFinish = () => {
               cleanup();
-              resolve(undefined);
+              committed = true;
+              rename(tempPath, filePath).then(
+                () => resolve(undefined),
+                async (err: unknown) => {
+                  await unlink(tempPath).catch(() => {});
+                  reject(err);
+                },
+              );
             };
             const onError = (err: Error) => {
               cleanup();
-              reject(err);
+              const removed = opened ? unlink(tempPath).catch(() => {}) : Promise.resolve();
+              removed.finally(() => reject(err));
             };
             nodeStream.once('finish', onFinish);
             nodeStream.once('error', onError);
@@ -221,7 +252,20 @@ export function createLocalStorageAdapter(config: LocalStorageConfig): StorageAd
           });
         },
         abort(reason) {
-          nodeStream.destroy(reason instanceof Error ? reason : new Error(String(reason)));
+          // Resolves once the stream is closed and its temporary file removed.
+          return new Promise<void>((resolve) => {
+            const done = () => {
+              // Only a file this writer created (see removeTemp).
+              const removed = opened ? unlink(tempPath).catch(() => {}) : Promise.resolve();
+              removed.finally(() => resolve());
+            };
+            if (nodeStream.closed) {
+              done();
+              return;
+            }
+            nodeStream.once('close', done);
+            nodeStream.destroy(reason instanceof Error ? reason : new Error(String(reason)));
+          });
         },
       });
     },
