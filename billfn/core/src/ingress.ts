@@ -6,6 +6,9 @@ import type { BillingProviderName } from './types.js';
  * Provider metadata key naming the region whose BillFn owns the provider
  * record. Checkout writes it when `region` is configured; the ingress reads it.
  */
+/** The largest webhook body the ingress reads, as the regions' routers do. */
+const MAX_INGRESS_BODY_BYTES = 256 * 1024;
+
 export const BILLFN_REGION_METADATA_KEY = 'billfn_region';
 
 /** A region whose BillFn receives the events it owns. */
@@ -236,6 +239,9 @@ export function createWebhookIngress(config: BillFnWebhookIngressConfig): BillFn
     }
   }
 
+  const tooLarge = () =>
+    createBillFnError({ code: 'BILLFN_VALIDATION_ERROR', message: `Webhook body must be at most ${MAX_INGRESS_BODY_BYTES} bytes` });
+
   return {
     async handle(provider, request) {
       if (request.method !== 'POST') {
@@ -243,7 +249,15 @@ export function createWebhookIngress(config: BillFnWebhookIngressConfig): BillFn
           createBillFnError({ code: 'BILLFN_VALIDATION_ERROR', message: 'Webhooks are delivered with POST' })
         );
       }
+      // Provider webhooks are a few kilobytes; a larger body is refused before any owner lookup.
+      const declared = Number(request.headers.get('content-length') ?? '');
+      if (Number.isFinite(declared) && declared > MAX_INGRESS_BODY_BYTES) {
+        return errorResponse(tooLarge());
+      }
       const body = await request.arrayBuffer();
+      if (body.byteLength > MAX_INGRESS_BODY_BYTES) {
+        return errorResponse(tooLarge());
+      }
       const rawBody = new TextDecoder().decode(body);
       const keys = readRoutingKeys(provider, rawBody);
       const decision = await route(provider, keys, request.headers, rawBody);

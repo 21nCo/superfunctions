@@ -44,10 +44,63 @@ function readBearerToken(request: Request): string | null {
   return match ? match[1] : null;
 }
 
+/** The largest request body the router reads: account routes and provider webhooks are a few kilobytes. */
+export const MAX_REQUEST_BODY_BYTES = 256 * 1024;
+
+/** Reads a request body as text, refusing one larger than MAX_REQUEST_BODY_BYTES before or while reading it. */
+async function readBoundedText(request: Request): Promise<string> {
+  const declared = Number(request.headers.get('content-length') ?? '');
+  if (Number.isFinite(declared) && declared > MAX_REQUEST_BODY_BYTES) {
+    throw bodyTooLarge();
+  }
+  if (!request.body) {
+    return '';
+  }
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+    size += value.byteLength;
+    if (size > MAX_REQUEST_BODY_BYTES) {
+      await reader.cancel().catch(() => undefined);
+      throw bodyTooLarge();
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(bytes);
+}
+
+function bodyTooLarge() {
+  return createBillFnError({
+    code: 'BILLFN_VALIDATION_ERROR',
+    message: `Request body must be at most ${MAX_REQUEST_BODY_BYTES} bytes`
+  });
+}
+
 async function parseJsonBody<T>(request: Request): Promise<T> {
+  // A JSON content type is required, so a cross-site form post (text/plain, sent without a CORS preflight) is
+  // refused instead of parsed.
+  const contentType = (request.headers.get('content-type') ?? '').split(';')[0]!.trim().toLowerCase();
+  if (contentType !== 'application/json' && !contentType.endsWith('+json')) {
+    throw createBillFnError({
+      code: 'BILLFN_VALIDATION_ERROR',
+      message: 'Request body must be sent as application/json'
+    });
+  }
+  const text = await readBoundedText(request);
   let body: unknown;
   try {
-    body = await request.json();
+    body = JSON.parse(text);
   } catch {
     throw createBillFnError({
       code: 'BILLFN_VALIDATION_ERROR',
@@ -359,7 +412,7 @@ export function createBillFnRouter(config: BillFnConfig) {
       method: 'POST',
       path: '/webhooks/:provider',
       handler: async (request, context) => {
-        const rawBody = await request.text();
+        const rawBody = await readBoundedText(request);
         const response = await service.handleWebhook({
           provider: context.params.provider as never,
           rawBody,
