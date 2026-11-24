@@ -338,13 +338,13 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
       try { result = await this.runner(run.executable, args, { cwd: input.workspace, env: run.environment, timeoutMs: remaining, maxOutputBytes: outputBytes, signal: watch?.signal ?? input.signal, onOutput: watch?.onOutput, stdin: profile.promptVia === "stdin" ? prompt : "" }); }
       catch (error) { return state.finish(input.signal?.aborted ? "canceled" : "failed", `The CLI could not be started: ${message(error)}`); }
       finally { watch?.stop(); }
+      // A measurement still in flight when the CLI ended is settled before the answer is judged.
+      await watch?.settle();
       state.record(result);
       // Every model report is read from what this attempt left, within the output budget, before any terminal return:
       // a run that served another model is void whether it then completed, failed, hung or overran its bounds.
       const unreported = reporter ? await reportStderrModel(run, reporter, result.stderr) : undefined;
       if (unreported) return unreported;
-      // An executable replaced while the attempt was prepared or ran is not the one whose version was read.
-      if (await this.changed(run)) return state.finish("failed", "The CLI executable changed while the attempt ran, so its answer was refused.");
       const outcome = await this.judge(run, attempt, outputFile, result, watch?.overrun());
       if (watch) state.chargeMeasured(watch.peak());
       return outcome;
@@ -356,7 +356,12 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
   /** The attempt's outcome once its process ended: its answer read, then its terminal outcome or the answer judged. */
   private async judge(run: AttemptContext, attempt: number, outputFile: string, result: CommandResult, fileOverrun: string | undefined): Promise<SlotHarnessOutput | Rejection> {
     const output = await readAnswer(run, outputFile, result.stdout);
-    return terminalOutcome(run, attempt, result, output, fileOverrun) ?? accept(run, attempt, output);
+    const terminal = terminalOutcome(run, attempt, result, output, fileOverrun);
+    if (terminal) return terminal;
+    // After cancellation and every overrun, but before an answer is accepted or earns a repair: an executable replaced
+    // while the attempt was prepared or ran is not the one whose version was read.
+    if (await this.changed(run)) return run.state.finish("failed", "The CLI executable changed while the attempt ran, so its answer was refused.");
+    return accept(run, attempt, output);
   }
 
   /** Configuration errors that refuse both preflight and run before any process starts. */
@@ -460,28 +465,41 @@ async function attemptFiles(run: AttemptContext, attempt: number, prompt: string
   return files;
 }
 
-const SHORT_ESCAPES: Record<string, string> = { '"': '\\"', "\\": "\\\\", "/": "\\/", "\b": "\\b", "\f": "\\f", "\n": "\\n", "\r": "\\r", "\t": "\\t" };
-const JSON_FORMS = new WeakMap<readonly string[], RegExp | undefined>();
+const SHORT_ESCAPES: Record<string, string> = { '"': '"', "\\": "\\", "/": "/", b: "\b", f: "\f", n: "\n", r: "\r", t: "\t" };
 
 /**
- * `text` with every secret redacted, longest first: as any JSON string can write it (each UTF-16 unit raw, as its short
- * escape or as `\uXXXX` in either hex case), then as written. Each unit commits to its first matching form (an atomic
- * group emulated with a lookahead and a backreference), so matching stays linear and never backtracks.
+ * `text` with every secret redacted as written and as a JSON string can escape it (a short escape, or `\uXXXX` in either
+ * hex case): the text's escapes are decoded once, keeping where each decoded unit started, and every occurrence in either
+ * form marks its whole original span, overlapping spans merged, so a shorter secret never leaves part of a longer one.
  */
 function redact(text: string, secrets: readonly string[]): string {
-  if (!JSON_FORMS.has(secrets)) {
-    let group = 0;
-    const unit = (char: string) => {
-      const hex = char.charCodeAt(0).toString(16).padStart(4, "0").replaceAll(/[a-f]/g, digit => `[${digit}${digit.toUpperCase()}]`);
-      const short = SHORT_ESCAPES[char];
-      group += 1;
-      return `(?=(${short ? `${short.replaceAll("\\", "\\\\")}|` : ""}\\\\u${hex}|${char.replaceAll(/[\\^$.*+?()[\]{}|/-]/g, "\\$&")}))\\${group}`;
-    };
-    const forms = secrets.filter(secret => secret.length > 0).sort((left, right) => right.length - left.length).map(secret => secret.split("").map(unit).join(""));
-    JSON_FORMS.set(secrets, forms.length ? new RegExp(forms.join("|"), "g") : undefined);
+  const values = secrets.filter(secret => secret.length > 0);
+  let decoded = "";
+  const starts = new Uint32Array(text.length + 1);
+  let size = 0;
+  const escaped = text.includes("\\");
+  for (let index = 0; escaped && index < text.length;) {
+    starts[size++] = index;
+    const next = text[index + 1] ?? "";
+    const hex = text.slice(index + 2, index + 6);
+    if (text[index] === "\\" && Object.hasOwn(SHORT_ESCAPES, next)) { decoded += SHORT_ESCAPES[next]; index += 2; }
+    else if (text[index] === "\\" && next === "u" && /^[\da-f]{4}$/i.test(hex)) { decoded += String.fromCharCode(Number.parseInt(hex, 16)); index += 6; }
+    else { decoded += text[index]; index += 1; }
   }
-  const pattern = JSON_FORMS.get(secrets);
-  return redactText(pattern ? text.replace(pattern, "[REDACTED]") : text, secrets);
+  starts[size] = text.length;
+  const spans: Array<[number, number]> = [];
+  for (const value of values) {
+    for (let at = text.indexOf(value); at !== -1; at = text.indexOf(value, at + 1)) spans.push([at, at + value.length]);
+    for (let at = size ? decoded.indexOf(value) : -1; at !== -1; at = decoded.indexOf(value, at + 1)) spans.push([starts[at], starts[at + value.length]]);
+  }
+  let result = "";
+  let end = -1;
+  for (const [from, to] of spans.sort((left, right) => left[0] - right[0])) {
+    if (from <= end) { end = Math.max(end, to); continue; }
+    result += `${text.slice(Math.max(end, 0), from)}[REDACTED]`;
+    end = to;
+  }
+  return redactText(result + text.slice(Math.max(end, 0)), secrets);
 }
 
 /** An answer rejected by validation, with what the repair prompt echoes back. */
@@ -710,12 +728,13 @@ async function readOutputFile(file: string, maxBytes: number): Promise<OutputRea
  * `onOutput`, against one output budget, and abort the returned signal, which also follows the caller's, once together
  * they outgrow it.
  */
-function watchOutputFile(file: string, maxBytes: number, parent: AbortSignal | undefined): { signal: AbortSignal; stop: () => void; overrun: () => string | undefined; onOutput: (bytes: number) => void; peak: () => number } {
+function watchOutputFile(file: string, maxBytes: number, parent: AbortSignal | undefined): { signal: AbortSignal; stop: () => void; overrun: () => string | undefined; onOutput: (bytes: number) => void; peak: () => number; settle: () => Promise<void> } {
   const controller = new AbortController();
   let overrun: string | undefined;
   let checking = false;
   let streamed = 0;
   let peak = 0;
+  let pending: Promise<void> = Promise.resolve();
   const check = () => {
     if (streamed + peak <= maxBytes || overrun !== undefined) return;
     overrun = `The CLI output file (${peak} bytes at its largest) grew past the remaining ${Math.max(0, maxBytes)}-byte output budget with ${streamed} bytes of stdout and stderr while it ran.`;
@@ -727,7 +746,7 @@ function watchOutputFile(file: string, maxBytes: number, parent: AbortSignal | u
   const timer = setInterval(() => {
     if (checking || controller.signal.aborted) return;
     checking = true;
-    lstat(file).then(stat => { peak = Math.max(peak, stat.size); check(); }, () => { /* not written yet */ }).finally(() => { checking = false; });
+    pending = lstat(file).then(stat => { peak = Math.max(peak, stat.size); check(); }, () => { /* not written yet */ }).finally(() => { checking = false; });
   }, OUTPUT_FILE_POLL_MS);
   timer.unref();
   return {
@@ -737,6 +756,7 @@ function watchOutputFile(file: string, maxBytes: number, parent: AbortSignal | u
     // Checked once more when read, after the CLI ended, with every stream byte it wrote.
     overrun: () => { check(); return overrun; },
     peak: () => peak,
+    settle: () => pending,
   };
 }
 

@@ -290,16 +290,28 @@ describe("CliHarnessAdapter process boundary", () => {
     }
   });
 
-  it("redacts in linear time a credential of many backslashes that the output nearly repeats", async () => {
+  it("redacts in linear time, without throwing, a credential of many backslashes the output nearly repeats and a long secret", async () => {
     const credential = `test-${"\\".repeat(22)}x`;
-    const text = `test-${"\\\\".repeat(22)}y `.repeat(20);
+    const long = `test-${"long-value-".repeat(400)}`;
+    const text = `${`test-${"\\\\".repeat(22)}y `.repeat(20)}${JSON.stringify({ echo: `${long}"` })}`;
     const runner: CommandRunner = async (_command, args) => args.includes("--version")
       ? { code: 0, signal: null, stdout: "fake-cli version 1.2.3\n", stderr: "", timedOut: false, canceled: false }
       : { code: 0, signal: null, stdout: `${text}\n${JSON.stringify({ findings: [], evidence: [], inspectedPaths: ["src/index.ts"], uninspected: [] })}\n`, stderr: "", timedOut: false, canceled: false };
     const started = Date.now();
-    const output = await new CliHarnessAdapter({ environment: { ...environment(), REVIEW_AUTH: credential }, runner }).run(input(configuration(profile())));
+    const output = await new CliHarnessAdapter({ environment: { ...environment(), REVIEW_AUTH: credential, FIXTURE_API_KEY: long }, runner }).run(input(configuration(profile({ envAllowlist: ["ALLOWED_ONE", "FIXTURE_API_KEY"] }))));
     expect(output.terminal).toBe("completed");
+    expect(output.transcript).not.toContain("long-value-");
     expect(Date.now() - started).toBeLessThan(2_000);
+  });
+
+  it("redacts the whole span where two secrets overlap, as written and JSON-escaped", async () => {
+    const runner: CommandRunner = async (_command, args) => args.includes("--version")
+      ? { code: 0, signal: null, stdout: "fake-cli version 1.2.3\n", stderr: "", timedOut: false, canceled: false }
+      : { code: 0, signal: null, stdout: `test-prefix-long-value\n{"echo":"test-prefix\\u002Dlong-value"}\n${JSON.stringify({ findings: [], evidence: [], inspectedPaths: ["src/index.ts"], uninspected: [] })}\n`, stderr: "", timedOut: false, canceled: false };
+    const output = await new CliHarnessAdapter({ environment: { ...environment(), REVIEW_AUTH: "test-prefix", FIXTURE_API_KEY: "prefix-long-value" }, runner }).run(input(configuration(profile({ envAllowlist: ["ALLOWED_ONE", "FIXTURE_API_KEY"] }))));
+    expect(output.terminal).toBe("completed");
+    expect(output.transcript).toContain('[REDACTED]\n{"echo":"[REDACTED]"}');
+    expect(output.transcript).not.toMatch(/test-|long-value/);
   });
 
   it("ends a run canceled when the caller aborts after the CLI exited, while its answer is read", async () => {
@@ -910,6 +922,18 @@ describe("CliHarnessAdapter preflight and configuration", () => {
     expect(reviews).toBe(1);
     expect(output.terminal).toBe("failed");
     expect(output.error).toBe("The CLI executable changed while the attempt ran, so its answer was refused.");
+  });
+
+  it("keeps a caller's cancellation authoritative over an executable also replaced while the attempt ran", async () => {
+    const controller = new AbortController();
+    const runner: CommandRunner = async (_command, args) => {
+      if (args.includes("--version")) return { code: 0, signal: null, stdout: "fake-cli version 1.2.3\n", stderr: "", timedOut: false, canceled: false };
+      identity.shift = 1n;
+      controller.abort();
+      return { code: 0, signal: null, stdout: `${JSON.stringify({ findings: [], evidence: [], inspectedPaths: ["src/index.ts"], uninspected: [] })}\n`, stderr: "", timedOut: false, canceled: false };
+    };
+    const output = await new CliHarnessAdapter({ environment: environment(), runner }).run(input(configuration(profile()), { signal: controller.signal }));
+    expect(output.terminal).toBe("canceled");
   });
 
   it("reads the deadline after the executable's identity is re-read, so a slow read cannot start the CLI past it", async () => {
