@@ -7,13 +7,14 @@ const base = {
   FILEFN_R2_ACCESS_KEY_ID: 'key',
   FILEFN_R2_SECRET_ACCESS_KEY: 'secret',
   FILEFN_DATABASE: './db.js',
+  FILEFN_CONTAINER_TOKEN: 'test-container-token',
 };
 
 describe('readContainerConfig', () => {
   it('reads an R2 account configuration with defaults', () => {
     expect(readContainerConfig(base)).toEqual({
       port: 8080,
-      token: undefined,
+      token: 'test-container-token',
       storage: { accountId: 'acct123', bucket: 'files-eu', accessKeyId: 'key', secretAccessKey: 'secret' },
       database: './db.js',
       namespace: undefined,
@@ -73,5 +74,13 @@ describe('readContainerConfig', () => {
     expect(() => readContainerConfig({ ...base, ...override })).toThrow(
       expect.objectContaining({ message: expect.stringMatching(new RegExp(`^FILEFN_CONTAINER_CONFIG_INVALID: .*${key}`)) }),
     );
+  });
+
+  it('refuses to start without a token unless unauthenticated jobs are allowed explicitly (FILE-30 F-17)', () => {
+    const { FILEFN_CONTAINER_TOKEN: _token, ...noToken } = base;
+    expect(() => readContainerConfig(noToken)).toThrow(/FILEFN_CONTAINER_TOKEN is required/);
+    expect(() => readContainerConfig({ ...noToken, FILEFN_CONTAINER_ALLOW_UNAUTHENTICATED: 'false' })).toThrow(/FILEFN_CONTAINER_TOKEN is required/);
+    expect(() => readContainerConfig({ ...noToken, FILEFN_CONTAINER_ALLOW_UNAUTHENTICATED: 'yes' })).toThrow(/must be true or false/);
+    expect(readContainerConfig({ ...noToken, FILEFN_CONTAINER_ALLOW_UNAUTHENTICATED: 'true' }).token).toBeUndefined();
   });
 });

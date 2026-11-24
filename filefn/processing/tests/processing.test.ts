@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import sharp from 'sharp';
 import {
+  createImageTransformProcessor,
   createThumbnailProcessor,
   createPdfPreviewProcessor,
   createCompressionProcessor,
@@ -9,6 +10,7 @@ import {
   PDF_PREVIEW_SUPPORTED_MIME_TYPES,
   COMPRESSION_SUPPORTED_MIME_TYPES,
 } from '../src/index.js';
+import { CONTENT_TYPE_MISMATCH_ERROR, contentMatchesDeclaredType } from '../src/content-sniff.js';
 
 async function createTestImage(width: number, height: number): Promise<Uint8Array> {
   const buffer = await sharp({
@@ -476,6 +478,75 @@ describe('@filefn/processing', () => {
 
       expect(result.success).toBe(false);
       expect(result.error).toBe('FILEFN_PROCESSING_PDF_PREVIEW_FAILED');
+    });
+  });
+
+  describe('artifact keys stay inside the source key (FILE-30 F-06)', () => {
+    // P10: tenant `acme.com`, extensionless file names. The old /\.[^.]+$/ matched
+    // from the dot in the tenant across `/`, so every such file's thumbnails
+    // collapsed onto `acme-thumb-small.jpg`.
+    const sources = [
+      { fileId: 'file_a', versionId: 'ver_a', storageKey: 'acme.com/alice/file_a/ver_a-passport-scan' },
+      { fileId: 'file_b', versionId: 'ver_b', storageKey: 'acme.com/bob/file_b/ver_b-holiday' },
+    ];
+
+    it('thumbnail keys of different files never collide', async () => {
+      const processor = createThumbnailProcessor();
+      const image = await createTestImage(64, 64);
+      const keys: string[] = [];
+      for (const source of sources) {
+        const result = await processor.process({ ...source, mimeType: 'image/png', size: image.length, fileName: 'x' }, async () => image);
+        expect(result.success).toBe(true);
+        for (const artifact of result.artifacts) {
+          expect(artifact.storageKey.startsWith(`${source.storageKey}-thumb-`)).toBe(true);
+          keys.push(artifact.storageKey);
+        }
+      }
+      expect(new Set(keys).size).toBe(keys.length);
+    });
+
+    it('image transform keys keep the full source prefix and drop only a real extension', async () => {
+      const processor = createImageTransformProcessor({ operations: [{ operation: 'resize', options: { width: 8, height: 8 } }] });
+      const image = await createTestImage(16, 16);
+      const result = await processor.process(
+        { fileId: 'file_a', versionId: 'ver_a', storageKey: 'acme.com/alice/file_a/ver_a-photo.png', mimeType: 'image/png', size: image.length, fileName: 'photo.png' },
+        async () => image,
+      );
+      expect(result.success).toBe(true);
+      for (const artifact of result.artifacts) {
+        expect(artifact.storageKey.startsWith('acme.com/alice/file_a/ver_a-photo')).toBe(true);
+      }
+    });
+  });
+
+  describe('declared type is checked against the bytes (FILE-30 F-12)', () => {
+    const input = { fileId: 'file_a', versionId: 'ver_a', storageKey: 't/a/file_a/ver_a-x', fileName: 'x' };
+
+    it.each([
+      ['an SVG', '<svg xmlns="http://www.w3.org/2000/svg"><script>1</script></svg>'],
+      ['a PDF', '%PDF-1.7\n1 0 obj'],
+      ['HTML', '<html><body>hi</body></html>'],
+    ])('refuses %s declared as image/png before any decoder sees it', async (_label, text) => {
+      const bytes = new TextEncoder().encode(text);
+      const result = await createThumbnailProcessor().process({ ...input, mimeType: 'image/png', size: bytes.length }, async () => bytes);
+      expect(result.success).toBe(false);
+      expect(result.error).toBe(CONTENT_TYPE_MISMATCH_ERROR);
+    });
+
+    it('accepts a PNG declared as image/jpeg (same family)', async () => {
+      const image = await createTestImage(32, 32);
+      const result = await createThumbnailProcessor().process({ ...input, mimeType: 'image/jpeg', size: image.length }, async () => image);
+      expect(result.success).toBe(true);
+    });
+
+    it('classifies media and documents by family', () => {
+      const playlist = new TextEncoder().encode('#EXTM3U\n#EXTINF:1,\nfile:///etc/passwd\n');
+      expect(contentMatchesDeclaredType(playlist, 'video/mp4')).toBe(false);
+      expect(contentMatchesDeclaredType(new TextEncoder().encode('\0\0\0\x18ftypisom'), 'video/mp4')).toBe(true);
+      expect(contentMatchesDeclaredType(new TextEncoder().encode('OggS'), 'audio/ogg')).toBe(true);
+      expect(contentMatchesDeclaredType(new TextEncoder().encode('junk%PDF-1.4'), 'application/pdf')).toBe(true);
+      expect(contentMatchesDeclaredType(new TextEncoder().encode('<svg/>'), 'application/pdf')).toBe(false);
+      expect(contentMatchesDeclaredType(new TextEncoder().encode('anything'), 'text/plain')).toBe(true);
     });
   });
 });

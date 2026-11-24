@@ -7154,7 +7154,7 @@ The container serves two routes and nothing else:
 - `GET /health` returns `200 {"status":"ok"}`.
 - `POST /jobs` takes `{"job": <queued message body>, "attempts": <delivery attempt>}` as `application/json`, runs the job through `createProcessingJobHandler`, and returns `200 {"outcome": …}`. Acknowledge the message unless `outcome.status` is `retry`. A request that arrives while `FILEFN_CONTAINER_MAX_CONCURRENT_JOBS` jobs are running waits up to `FILEFN_CONTAINER_JOB_WAIT_MS` (default 60 s) for a slot; after that it gets 503 with `Retry-After: 30`. A 503 or 500 asks for a delayed retry; a 400 or 413 body can never succeed.
 
-When `FILEFN_CONTAINER_TOKEN` is set, `POST /jobs` requires `Authorization: Bearer <token>`.
+`POST /jobs` requires `Authorization: Bearer <token>` with the `FILEFN_CONTAINER_TOKEN` value. The container refuses to start without a token unless `FILEFN_CONTAINER_ALLOW_UNAUTHENTICATED=true` is set, which leaves `POST /jobs` open to anything that can reach the port.
 
 The consumer retries with a delay, so a busy or failing container does not use up a message's attempts within seconds:
 

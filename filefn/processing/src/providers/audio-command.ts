@@ -169,6 +169,8 @@ export function createCommandAudioProvider(config: CommandAudioProviderConfig = 
 
       const args = [
         '-y',
+        '-protocol_whitelist',
+        'file',
         '-i',
         inputPath,
         ...(AUDIO_CODEC_ARGS[request.codec] ?? AUDIO_CODEC_ARGS.aac),
@@ -200,6 +202,8 @@ export function createCommandAudioProvider(config: CommandAudioProviderConfig = 
 
       await runBinary(ffmpegPath, [
         '-y',
+        '-protocol_whitelist',
+        'file',
         '-i',
         inputPath,
         '-ac',

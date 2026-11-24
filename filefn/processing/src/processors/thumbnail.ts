@@ -1,5 +1,6 @@
 import sharp from 'sharp';
 import type { Processor, ProcessorInput, ProcessorResult, ThumbnailConfig, ThumbnailSize } from '../types.js';
+import { CONTENT_TYPE_MISMATCH_ERROR, SHARP_INPUT_OPTIONS, contentMatchesDeclaredType } from '../content-sniff.js';
 
 const UNSUPPORTED_MIME_TYPE_ERROR = 'FILEFN_PROCESSING_UNSUPPORTED_MIME_TYPE';
 const THUMBNAIL_FAILED_ERROR = 'FILEFN_PROCESSING_THUMBNAIL_FAILED';
@@ -30,6 +31,10 @@ export function createThumbnailProcessor(config: ThumbnailConfig = { sizes: DEFA
 
       try {
         const imageData = await getData();
+        // The decoders pick a format from the bytes; refuse bytes that are not the declared type.
+        if (!contentMatchesDeclaredType(imageData, input.mimeType)) {
+          return { success: false, artifacts: [], error: CONTENT_TYPE_MISMATCH_ERROR };
+        }
         const artifacts = [];
 
         for (const size of sizes) {
@@ -37,7 +42,7 @@ export function createThumbnailProcessor(config: ThumbnailConfig = { sizes: DEFA
           const outputMimeType = format === 'png' ? 'image/png' : format === 'webp' ? 'image/webp' : 'image/jpeg';
           const extension = format === 'png' ? 'png' : format === 'webp' ? 'webp' : 'jpg';
 
-          const baseKey = input.storageKey.replace(/\.[^.]+$/, '');
+          const baseKey = input.storageKey.replace(/\.[^/.]+$/, '');
 
           artifacts.push({
             kind: `thumbnail-${size.name}`,
@@ -81,7 +86,7 @@ async function generateThumbnail(
 ): Promise<Uint8Array> {
   const buffer = Buffer.from(imageData);
 
-  let pipeline = sharp(buffer)
+  let pipeline = sharp(buffer, SHARP_INPUT_OPTIONS)
     .resize(size.width, size.height, {
       fit: 'inside',
       withoutEnlargement: true,

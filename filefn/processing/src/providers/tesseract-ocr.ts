@@ -1,10 +1,11 @@
 import sharp from 'sharp';
+import { SHARP_INPUT_OPTIONS } from '../content-sniff.js';
 import { createWorker, PSM } from 'tesseract.js';
 
 import type { OCRProcessorProvider, OCRProviderRequest, OCRProviderResult } from '../types.js';
 
 async function preprocessImage(imageData: Uint8Array): Promise<Buffer> {
-  return await sharp(Buffer.from(imageData))
+  return await sharp(Buffer.from(imageData), SHARP_INPUT_OPTIONS)
     .grayscale()
     .normalize()
     .sharpen()

@@ -87,6 +87,8 @@ export function createCommandVideoProvider(config: CommandVideoProviderConfig = 
         'json',
         '-show_streams',
         '-show_format',
+        '-protocol_whitelist',
+        'file',
         inputPath,
       ], ffprobeTimeoutMs);
 
@@ -144,6 +146,10 @@ export function createCommandVideoProvider(config: CommandVideoProviderConfig = 
         '-y',
         '-ss',
         String(safeTimestamp),
+        // Read only the local temp file: no network or other protocols, even
+        // if the input is a playlist that names other resources.
+        '-protocol_whitelist',
+        'file',
         '-i',
         inputPath,
         '-frames:v',
@@ -176,6 +182,10 @@ export function createCommandVideoProvider(config: CommandVideoProviderConfig = 
 
       const args = [
         '-y',
+        // Read only the local temp file: no network or other protocols, even
+        // if the input is a playlist that names other resources.
+        '-protocol_whitelist',
+        'file',
         '-i',
         inputPath,
         '-vf',

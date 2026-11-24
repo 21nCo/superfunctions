@@ -1,5 +1,6 @@
 import sharp from 'sharp';
 import type { Processor, ProcessorInput, ProcessorResult } from '../types.js';
+import { CONTENT_TYPE_MISMATCH_ERROR, SHARP_INPUT_OPTIONS, contentMatchesDeclaredType } from '../content-sniff.js';
 
 const SUPPORTED_MIME_TYPES = [
   'image/png',
@@ -63,6 +64,10 @@ export function createImageTransformProcessor(config: ImageTransformConfig): Pro
 
       try {
         const imageData = await getData();
+        // The decoders pick a format from the bytes; refuse bytes that are not the declared type.
+        if (!contentMatchesDeclaredType(imageData, input.mimeType)) {
+          return { success: false, artifacts: [], error: CONTENT_TYPE_MISMATCH_ERROR };
+        }
         const artifacts = [];
 
         for (const { operation, options, suffix } of operations) {
@@ -78,7 +83,7 @@ export function createImageTransformProcessor(config: ImageTransformConfig): Pro
             outputFormat === 'png' ? 'image/png' : outputFormat === 'webp' ? 'image/webp' : 'image/jpeg';
           const extension = outputFormat === 'png' ? 'png' : outputFormat === 'webp' ? 'webp' : 'jpg';
 
-          const baseKey = input.storageKey.replace(/\.[^.]+$/, '');
+          const baseKey = input.storageKey.replace(/\.[^/.]+$/, '');
           const operationSuffix = suffix || `${operation}`;
 
           artifacts.push({
@@ -122,7 +127,7 @@ async function applyTransform(
   outputQuality: number
 ): Promise<Uint8Array> {
   const buffer = Buffer.from(imageData);
-  let pipeline = sharp(buffer);
+  let pipeline = sharp(buffer, SHARP_INPUT_OPTIONS);
 
   switch (operation) {
     case 'resize': {
