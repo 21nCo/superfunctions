@@ -644,9 +644,10 @@ function backUp(staged: Staged): void {
     if (staged.backupState === null) throw changed(staged);
     return;
   }
-  staged.previous = readFileSync(staged.backupFd);
-  closeSync(staged.backupFd);
-  staged.backupFd = undefined;
+  const source = staged.backupFd;
+  staged.previous = readFileSync(source);
+  staged.backupFd = undefined; // cleared first: a close that fails after releasing it is never retried
+  closeSync(source);
   const fd = openSync(backup, constants.O_RDWR | constants.O_CREAT | constants.O_EXCL, 0o600);
   staged.backupFd = fd;
   try {
