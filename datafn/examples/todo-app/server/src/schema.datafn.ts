@@ -36,7 +36,7 @@ const schema = defineSchema({
           fields: ["id", "text", "completed", "priority"],
         },
         write: {
-          fields: ["text", "completed", "priority"],
+          fields: ["text", "completed", "priority", "tags"],
         },
       },
     },

@@ -431,6 +431,14 @@ export function createSearchHandler(
           details: err.details,
         }, err.code === "INTERNAL" ? 500 : 400);
       }
+      if ((err as { code?: unknown } | null)?.code === "ACTOR_UNRESOLVED") {
+        logger?.error("Search failed: actor could not be resolved", { error: String(err), operation: "search" });
+        return errorResponse({
+          code: "INTERNAL",
+          message: "Internal error",
+          details: { path: "$" },
+        }, 500);
+      }
       if (!searchProvider) {
         return errorResponse({
           code: "DFQL_UNSUPPORTED",

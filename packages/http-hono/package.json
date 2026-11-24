@@ -1,6 +1,6 @@
 {
   "name": "@superfunctions/http-hono",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Hono adapter for @superfunctions/http",
   "type": "module",
   "main": "./dist/index.js",
@@ -23,7 +23,7 @@
     "clean": "rm -rf dist"
   },
   "peerDependencies": {
-    "@superfunctions/observability": "0.0.4",
+    "@superfunctions/observability": "0.0.3 || 0.0.4",
     "@superfunctions/http": "^0.2.0 || ^0.3.0",
     "hono": "^4.0.0"
   },

@@ -12,6 +12,7 @@ import {
 import type { Adapter } from "@superfunctions/db";
 import {
   isRetryableMutationResult,
+  scopeIdempotencyStore,
   type IdempotencyStore,
   type MutationResult,
 } from "../idempotency.js";
@@ -246,6 +247,8 @@ export async function executePush(
   logger?: DatafnLogger,
   multiRegionRuntime?: DatafnMultiRegionRuntimeConfig | null,
 ): Promise<PushResult> {
+  // DFN-01: idempotency records belong to the request's namespace and actor.
+  idempotencyStore = scopeIdempotencyStore(idempotencyStore, { namespace, actorId });
   // Validate clientId at request level - this is a critical error
   if (!request.clientId || typeof request.clientId !== "string") {
     // Return error structure that handler will convert to error response
