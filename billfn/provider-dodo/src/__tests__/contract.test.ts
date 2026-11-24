@@ -830,6 +830,19 @@ describe('refundCharge -> POST /refunds', () => {
     expect(paths(api.calls)).not.toContain('POST /refunds');
   });
 
+  it('refuses a partial refund whose currency is not a string', async () => {
+    const api = dodoApi({
+      [`GET /payments/${PAYMENT_ID}`]: recorded.getSubscriptionPayment.response,
+      [`GET /payments/${PAYMENT_ID}/line-items`]: recorded.getPaymentLineItems.response,
+      'POST /refunds': recorded.createRefund.response
+    });
+
+    await expect(
+      provider(api.fetchMock).refundCharge?.(refundInput({ mode: 'custom', amount: 600, currency: null }))
+    ).rejects.toMatchObject({ code: 'BILLFN_VALIDATION_ERROR' });
+    expect(paths(api.calls)).not.toContain('POST /refunds');
+  });
+
   it('refunds a partial amount whose currency is the payment\'s', async () => {
     const api = dodoApi({
       [`GET /payments/${PAYMENT_ID}`]: recorded.getSubscriptionPayment.response,

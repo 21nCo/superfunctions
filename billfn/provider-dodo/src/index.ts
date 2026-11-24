@@ -1177,7 +1177,7 @@ function assertDodoRefundCurrency(
       details
     });
   }
-  if (input.currency !== undefined && input.currency.toUpperCase() !== paid) {
+  if (input.currency !== undefined && (typeof input.currency !== 'string' || input.currency.toUpperCase() !== paid)) {
     throw createBillFnError({
       code: 'BILLFN_VALIDATION_ERROR',
       message: 'The refund amount is in a different currency than the Dodo payment; refund it in full or in Dodo',
