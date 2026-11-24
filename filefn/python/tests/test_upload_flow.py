@@ -1328,3 +1328,30 @@ async def test_expiry_sweep_deletes_an_unpublished_object_whose_delete_failed() 
     await service.garbage_collect_expired_sessions()
     assert key not in storage.objects
     assert not db.tables["uploadSessions"]
+
+
+@pytest.mark.asyncio
+async def test_refused_session_keeps_its_object_for_the_sweep_and_replays_ask_for_a_new_key() -> None:
+    class DeleteFails(StatStorage):
+        async def delete_object(self, key: str, target: Optional[str] = None) -> None:
+            raise RuntimeError("storage unavailable")
+
+    db = FakeDB()
+    storage = DeleteFails(actual_size=50)
+    service = _make_service(db=db, storage=storage)
+    init = CreateSessionInput(policy="user-avatar", fileName="a.png", size=3, mimeType="image/png", idempotencyKey="key-1")
+    session = await service.create_session(init, _ctx())
+    await service.complete_part(session["uploadSessionId"], 1, "etag-1", 3, _ctx())
+    with pytest.raises(errors.FileFnError):
+        await service.complete_session(session["uploadSessionId"], _ctx())
+    assert db.tables["uploadSessions"][0]["status"] == "refused"
+    # An abort leaves it refused, so the sweep still deletes the object.
+    await service.abort_session(session["uploadSessionId"], _ctx())
+    assert db.tables["uploadSessions"][0]["status"] == "refused"
+    with pytest.raises(errors.FileFnError) as replay:
+        await service.create_session(init, _ctx())
+    assert replay.value.code == "FILEFN_UPLOAD_ABORTED"
+    # The sweep keeps the row while the delete keeps failing.
+    db.tables["uploadSessions"][0]["expiresAt"] = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    await service.garbage_collect_expired_sessions()
+    assert db.tables["uploadSessions"]

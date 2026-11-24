@@ -414,6 +414,14 @@ class UploadSessionService:
                 expected_hash = self._hash_payload(input, ctx)
                 if existing.idempotencyPayloadHash != expected_hash:
                     raise errors.idempotency_conflict()
+                # An ended session can't take parts: a restart needs a new key.
+                if existing.status in ("aborted", "refused"):
+                    raise errors.FileFnError(
+                        errors.ErrorCodes.UPLOAD_ABORTED,
+                        "The upload session for this idempotency key was aborted; start again with a new idempotency key",
+                        410,
+                        {"reason": "aborted", "field": "idempotencyKey"},
+                    )
 
                 result: Dict[str, Any] = {
                     "uploadSessionId": existing.uploadSessionId,
@@ -621,7 +629,7 @@ class UploadSessionService:
         self._assert_session_binding(session_data, ctx)
 
         session = UploadSessionRecord(**session_data)
-        if session.status == "aborted":
+        if session.status in ("aborted", "refused"):
             raise errors.upload_aborted()
         if session.status == "completed":
             raise errors.upload_already_completed()
@@ -682,7 +690,7 @@ class UploadSessionService:
         self._assert_session_binding(session_data, ctx)
 
         session = UploadSessionRecord(**session_data)
-        if session.status == "aborted":
+        if session.status in ("aborted", "refused"):
             raise errors.upload_aborted()
         if session.status == "completed":
             raise errors.upload_already_completed()
@@ -748,7 +756,7 @@ class UploadSessionService:
             raise errors.no_supported_upload_mode()
 
         etag = hashlib.md5(data).hexdigest()
-        if session.status == "aborted":
+        if session.status in ("aborted", "refused"):
             raise errors.upload_aborted()
         if session.status == "completed":
             raise errors.upload_already_completed()
@@ -892,14 +900,16 @@ class UploadSessionService:
                     {"uploadSessionId": upload_session_id},
                 )
             if actual != session.size:
-                # Aborted first, so a retry never reaches storage again; then
-                # only a key this session owns is deleted.
-                await self._mark_aborted(upload_session_id)
-                if owned:
-                    try:
-                        await self.storage.delete_object(key=session.storageKey, target=storage_target)
-                    except Exception:
-                        pass
+                # Refused first, so a retry never reaches storage again and the
+                # expiry sweep knows a finalized, unpublished object is left;
+                # once that (session-owned) object is deleted it is aborted.
+                await self._set_status(upload_session_id, "refused")
+                try:
+                    await self.storage.delete_object(key=session.storageKey, target=storage_target)
+                except Exception:
+                    pass
+                else:
+                    await self._set_status(upload_session_id, "aborted")
                 raise errors.upload_size_mismatch(session.size, actual)
         elif session.uploadMode == "proxy":
             await self._finalize_proxy_upload(session, parts_data)
@@ -921,10 +931,13 @@ class UploadSessionService:
                 raise
 
     async def _mark_aborted(self, upload_session_id: str) -> None:
+        await self._set_status(upload_session_id, "aborted")
+
+    async def _set_status(self, upload_session_id: str, status: str) -> None:
         await self.db.update(
             model="uploadSessions",
             where=[{"field": "uploadSessionId", "operator": "eq", "value": upload_session_id}],
-            data={"status": "aborted"},
+            data={"status": status},
             namespace=self.namespace,
         )
 
@@ -971,7 +984,7 @@ class UploadSessionService:
 
         # An aborted session (including one refused for a size mismatch) never
         # reaches storage again.
-        if session.status == "aborted":
+        if session.status in ("aborted", "refused"):
             raise errors.upload_aborted()
         if self._is_expired(session.expiresAt):
             raise errors.upload_expired()
@@ -1143,6 +1156,10 @@ class UploadSessionService:
 
         if session.status == "completed":
             raise errors.upload_already_completed()
+        # A refused session keeps that status: the expiry sweep still has its
+        # unpublished object to delete.
+        if session.status == "refused":
+            return
 
         policy = self.policies.get(session.policy)
         storage_target = resolve_storage_target(policy)
@@ -1180,7 +1197,7 @@ class UploadSessionService:
         now = datetime.now(timezone.utc)
         sessions: List[Dict[str, Any]] = []
         seen_session_ids: set[str] = set()
-        for status in ("pending", "in_progress", "aborted", "expired"):
+        for status in ("pending", "in_progress", "aborted", "refused", "expired"):
             status_rows = await self.db.find_many(
                 model="uploadSessions",
                 where=[{"field": "status", "operator": "eq", "value": status}],
@@ -1225,25 +1242,15 @@ class UploadSessionService:
                 except Exception:
                     pass
 
-            # An aborted multipart session may have finalized an object that was
-            # never published (refused for its size, with the delete failing).
-            # Its key is its own and no version references it, so it is deleted
-            # here; if that fails, the session row stays for the next sweep.
-            if (
-                session.status == "aborted"
-                and session.uploadMode == "multipart-signed-url"
-                and self._key_is_session_owned(session, session_data)
-            ):
-                referencing = await self.db.find_many(
-                    model="fileVersions",
-                    where=[{"field": "storageKey", "operator": "eq", "value": session.storageKey}],
-                    namespace=self.namespace,
-                )
-                if not referencing and await self._stored_size(session.storageKey, storage_target, None) is not None:
-                    try:
-                        await self.storage.delete_object(key=session.storageKey, target=storage_target)
-                    except Exception:
-                        continue
+            # A refused session finalized an object that was never published (it
+            # failed the size check) and whose delete failed. Its key is its own
+            # (only session-owned keys are finalized), so the object is deleted
+            # here; until that succeeds, the session row stays for the next sweep.
+            if session.status == "refused":
+                try:
+                    await self.storage.delete_object(key=session.storageKey, target=storage_target)
+                except Exception:
+                    continue
 
             parts = await self.db.find_many(
                 model="uploadParts",
