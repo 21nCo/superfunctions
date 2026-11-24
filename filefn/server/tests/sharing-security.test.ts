@@ -533,10 +533,59 @@ describe('share links, grants and JSON routes (FILE-30 F-07, F-08, F-09, F-15)',
     expect(allowed.headers.get('cache-control')).toBe('private, no-store');
   });
 
-  it('reads a stored zone-less expiry in local time, as Date.parse always did', async () => {
+  it('keeps the old reading of a stored zone-less expiry: local for grants, UTC for share links', async () => {
     const { parseIsoInstant } = await import('../src/authz/grant-expiry.js');
     expect(parseIsoInstant('2030-01-01T18:00:00')).toBe(new Date(2030, 0, 1, 18, 0, 0).getTime());
+    expect(parseIsoInstant('2030-01-01T18:00:00', 'utc')).toBe(Date.UTC(2030, 0, 1, 18));
     expect(parseIsoInstant('2030-01-01T18:00:00Z')).toBe(Date.UTC(2030, 0, 1, 18));
     expect(parseIsoInstant('2030-01-01')).toBe(Date.UTC(2030, 0, 1));
+  });
+
+  it('hands out no proxied stream for a link revoked while it was being counted', async () => {
+    const database = memoryAdapter();
+    let revokeOnNextUpdate = false;
+    const racing = new Proxy(database, {
+      get(target, prop, receiver) {
+        if (prop === 'update') {
+          return async (params: Parameters<typeof target.update>[0]) => {
+            const result = await target.update(params);
+            if (revokeOnNextUpdate && params.model === 'fileShares') {
+              revokeOnNextUpdate = false;
+              await target.updateMany({ model: 'fileShares', where: [], data: { revokedAt: new Date().toISOString() }, namespace: 'filefn' });
+            }
+            return result;
+          };
+        }
+        return Reflect.get(target, prop, receiver);
+      },
+    });
+    const fileFn = createFileFn({
+      database: racing,
+      storage: createLocalStorageAdapter({ rootDir }),
+      namespace: 'filefn',
+      policies: [{ name: 'docs', contentTypes: ['text/plain'], visibility: 'private' }],
+    });
+    const file = await upload(fileFn);
+    const share = await fileFn.services.shares.createShareLink({ fileId: file.fileId, maxDownloads: 1 }, owner);
+    revokeOnNextUpdate = true;
+    await expect(fileFn.services.shares.getDownloadStreamViaShareLink(share.token, {})).rejects.toMatchObject({ code: 'FILEFN_SHARE_REVOKED' });
+    const [row] = await database.findMany<{ downloads: number }>({ model: 'fileShares', where: [], namespace: 'filefn' });
+    expect(row!.downloads).toBe(0);
+  });
+
+  it('treats the anonymous principal as a guest on GET /policies and refuses non-object JSON bodies', async () => {
+    const fileFn = createFileFn({
+      database: memoryAdapter(),
+      storage: createLocalStorageAdapter({ rootDir }),
+      namespace: 'filefn',
+      policies: [{ name: 'docs', contentTypes: ['text/plain'], visibility: 'private' }],
+      auth: { resolveSession: async (request) => (request.headers.get('x-test-user') ? { principalId: request.headers.get('x-test-user')! } : { principalId: 'anonymous' }) },
+    });
+    expect((await call(fileFn, 'GET', '/policies'))!.status).toBe(401);
+    const file = await upload(fileFn);
+    for (const body of ['null', '[]', '42']) {
+      const response = await call(fileFn, 'POST', `/${file.fileId}/permissions`, { body, headers: { 'content-type': 'application/json', 'x-test-user': 'owner' } });
+      expect(response.status).toBe(400);
+    }
   });
 });

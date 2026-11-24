@@ -32,11 +32,17 @@ export async function readJsonBody<T>(request: Request, maxBytes = MAX_JSON_BODY
     throw bodyTooLarge(maxBytes);
   }
   const text = await readTextBounded(request, maxBytes);
+  let parsed: unknown;
   try {
-    return JSON.parse(text) as T;
+    parsed = JSON.parse(text);
   } catch {
     throw invalidRequest('Request body must be valid JSON');
   }
+  // Every JSON route reads fields from an object.
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw invalidRequest('Request body must be a JSON object');
+  }
+  return parsed as T;
 }
 
 async function readTextBounded(request: Request, maxBytes: number): Promise<string> {

@@ -1,5 +1,5 @@
 import type { PolicyRegistry } from './policies.js';
-import { resolvePrincipal, type AuthConfig } from './auth.js';
+import { isAnonymousPrincipal, resolvePrincipal, type AuthConfig } from './auth.js';
 import { FileFnError, authRequired } from './errors.js';
 
 export interface PolicyRoutesContext {
@@ -25,7 +25,8 @@ export function createPolicyRoutes(ctx: PolicyRoutesContext) {
       // Same rule as the upload routes: a caller who could not start an upload
       // does not learn the policies' names, limits and visibility either.
       const principal = await resolvePrincipal(request, auth);
-      if (!principal && auth.required !== false) {
+      // The shared 'anonymous' principal is a guest, as on the share routes.
+      if (isAnonymousPrincipal(principal) && auth.required !== false) {
         const error: FileFnError = authRequired();
         return Response.json({ ok: false, error: error.toJSON(), requestId }, { status: error.statusCode });
       }

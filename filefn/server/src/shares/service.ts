@@ -94,7 +94,7 @@ export function createSharesService(config: SharesServiceConfig) {
     let expiresAtMs: number | null = null;
     // An empty string means no expiry, as it always has.
     if (input.expiresAt !== undefined && input.expiresAt !== null && input.expiresAt !== '') {
-      expiresAtMs = parseIsoInstant(input.expiresAt);
+      expiresAtMs = parseIsoInstant(input.expiresAt, 'utc');
       if (expiresAtMs === null) {
         throw errors.invalidRequest('expiresAt must be an ISO 8601 date-time', { field: 'expiresAt' });
       }
@@ -163,7 +163,7 @@ export function createSharesService(config: SharesServiceConfig) {
       throw errors.shareRevoked();
     }
     // Compared as instants: a stored value that is not an ISO 8601 date-time counts as expired.
-    if (isGrantExpired(share.expiresAt)) {
+    if (isGrantExpired(share.expiresAt, 'utc')) {
       throw errors.shareExpired();
     }
     if (share.maxDownloads !== null && share.maxDownloads !== undefined && share.downloads >= share.maxDownloads) {
@@ -254,7 +254,7 @@ export function createSharesService(config: SharesServiceConfig) {
    * left.
    */
   function signedUrlLifetime(share: FileShareRecord): number | null {
-    const expiresAtMs = share.expiresAt ? parseIsoInstant(share.expiresAt) : null;
+    const expiresAtMs = share.expiresAt ? parseIsoInstant(share.expiresAt, 'utc') : null;
     if (expiresAtMs === null) return signedUrlTtlSeconds;
     const remaining = Math.floor((expiresAtMs - Date.now()) / 1000);
     return remaining < 1 ? null : Math.min(signedUrlTtlSeconds, remaining);
@@ -389,7 +389,7 @@ export function createSharesService(config: SharesServiceConfig) {
             await releaseDownload(tokenHash, written);
             throw error;
           }
-          if (!after || after.revokedAt || isGrantExpired(after.expiresAt)) {
+          if (!after || after.revokedAt || isGrantExpired(after.expiresAt, 'utc')) {
             await releaseDownload(tokenHash, written);
             if (!after) throw errors.shareNotFound();
             throw after.revokedAt ? errors.shareRevoked() : errors.shareExpired();
@@ -399,7 +399,7 @@ export function createSharesService(config: SharesServiceConfig) {
       }
 
       // Only a link that is still valid gets the proxy URL.
-      if (isGrantExpired(share.expiresAt)) throw errors.shareExpired();
+      if (isGrantExpired(share.expiresAt, 'utc')) throw errors.shareExpired();
       return {
         url: `/proxy/share-links/${encodeURIComponent(token)}/download`,
         fileName: file.name,
@@ -418,10 +418,24 @@ export function createSharesService(config: SharesServiceConfig) {
         throw new Error('Storage adapter does not support streaming');
       }
 
-      // Opened first and handed out only once the download is counted.
+      // Opened first and handed out only once the download is counted, and the
+      // link is checked again after counting: one revoked or expired meanwhile
+      // gives the count back and hands nothing out.
       const stream = await storage.openDownloadStream({ key: version.storageKey, target: storageTarget });
       try {
-        await reserveDownload(tokenHash, share, ctx);
+        const written = await reserveDownload(tokenHash, share, ctx);
+        let after: FileShareRecord | null;
+        try {
+          after = await readShare(tokenHash);
+        } catch (error) {
+          await releaseDownload(tokenHash, written);
+          throw error;
+        }
+        if (!after || after.revokedAt || isGrantExpired(after.expiresAt, 'utc')) {
+          await releaseDownload(tokenHash, written);
+          if (!after) throw errors.shareNotFound();
+          throw after.revokedAt ? errors.shareRevoked() : errors.shareExpired();
+        }
       } catch (error) {
         // Not awaited: a stream that never settles must not hold the error back.
         const unread = stream as unknown as { cancel?: () => unknown; destroy?: () => unknown };

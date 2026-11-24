@@ -33,6 +33,7 @@ async def _close_stream(stream: Any) -> None:
                 if asyncio.iscoroutine(result):
                     await result
             except Exception:
+                # Best effort: the stream is discarded either way.
                 pass
             return
 
@@ -345,7 +346,7 @@ class SharesService:
                         where=[{"field": "tokenHash", "operator": "eq", "value": token_hash}],
                         namespace=self.namespace,
                     )
-                except BaseException:
+                except (asyncio.CancelledError, Exception):
                     await asyncio.shield(self._release_download(token_hash, written))
                     raise
                 if not after or after.get("revokedAt") or is_grant_expired(after.get("expiresAt")):
@@ -410,7 +411,7 @@ class SharesService:
         stream = await self.storage.open_download_stream(key=version.storageKey, target=storage_target)
         try:
             await self._reserve_download_cancel_safe(token_hash)
-        except BaseException:
+        except (asyncio.CancelledError, Exception):
             # Not counted (or given back): the opened stream is never handed out.
             await asyncio.shield(_close_stream(stream))
             raise
