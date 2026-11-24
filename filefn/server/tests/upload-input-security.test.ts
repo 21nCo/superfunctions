@@ -157,4 +157,31 @@ describe('upload init input (FILE-30 F-21, F-05)', () => {
       fileFn.createUploadSession({ policy: 'any', fileName: 'a.txt', size: 1, mimeType: 'text/plain', metadata: { tags } }, { principalId: 'alice' }),
     ).resolves.toMatchObject({ uploadSessionId: expect.any(String) });
   });
+
+  it('refuses metadata that reuses one child many times without expanding it', async () => {
+    const fileFn = makeFileFn([{ name: 'any' }]);
+    let node: Record<string, unknown> = { leaf: 1 };
+    for (let i = 0; i < 30; i++) node = { a: node, b: node };
+    const started = Date.now();
+    await expect(
+      fileFn.createUploadSession({ policy: 'any', fileName: 'a.txt', size: 1, mimeType: 'text/plain', metadata: node }, { principalId: 'alice' }),
+    ).rejects.toMatchObject({ code: 'FILEFN_INVALID_REQUEST' });
+    expect(Date.now() - started).toBeLessThan(2000);
+  });
+
+  it('hashes and stores the metadata snapshot it checked', async () => {
+    const fileFn = makeFileFn([{ name: 'any' }]);
+    let calls = 0;
+    const metadata = {
+      toJSON() {
+        calls += 1;
+        if (calls > 1) throw new Error('second serialization');
+        return { tag: 'once' };
+      },
+    };
+    const input = { policy: 'any', fileName: 'a.txt', size: 1, mimeType: 'text/plain', metadata, idempotencyKey: 'test-key' };
+    const first = await fileFn.createUploadSession(input as never, { principalId: 'alice' });
+    expect(first.uploadSessionId).toEqual(expect.any(String));
+    expect(calls).toBe(1);
+  });
 });

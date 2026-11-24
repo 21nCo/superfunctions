@@ -19,20 +19,34 @@ const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[
 /** Deepest metadata nesting accepted; deeper metadata is refused. */
 export const MAX_METADATA_DEPTH = 32;
 
-/** Whether the value holds a lone surrogate, or nests deeper than MAX_METADATA_DEPTH (also refused). */
-function hasLoneSurrogate(value: unknown, depth = 0): boolean {
+/**
+ * Most values (objects, arrays, keys and leaves) the metadata walk visits. A
+ * JSON object within MAX_METADATA_BYTES has far fewer; the budget stops a
+ * structure that reuses one child many times (whose serialization would
+ * explode) before it is expanded.
+ */
+const MAX_METADATA_NODES = MAX_METADATA_BYTES;
+
+/**
+ * Whether the value holds a lone surrogate, nests deeper than
+ * MAX_METADATA_DEPTH, or has more than MAX_METADATA_NODES values (all refused).
+ */
+function hasLoneSurrogate(value: unknown, depth = 0, budget = { left: MAX_METADATA_NODES }): boolean {
+  budget.left -= 1;
+  if (budget.left < 0) return true;
   if (typeof value === 'string') return LONE_SURROGATE.test(value);
   if (value === null || typeof value !== 'object') return false;
   if (depth >= MAX_METADATA_DEPTH) return true;
   // Plain loops and Object.keys only: no method of the value itself is called.
   if (Array.isArray(value)) {
     for (let i = 0; i < value.length; i++) {
-      if (hasLoneSurrogate(value[i], depth + 1)) return true;
+      if (hasLoneSurrogate(value[i], depth + 1, budget)) return true;
     }
     return false;
   }
   for (const key of Object.keys(value)) {
-    if (LONE_SURROGATE.test(key) || hasLoneSurrogate((value as Record<string, unknown>)[key], depth + 1)) return true;
+    budget.left -= 1;
+    if (budget.left < 0 || LONE_SURROGATE.test(key) || hasLoneSurrogate((value as Record<string, unknown>)[key], depth + 1, budget)) return true;
   }
   return false;
 }
@@ -94,7 +108,7 @@ export interface UploadInitInput {
  * (`CreateUploadSessionRequest`). Throws `FILEFN_INVALID_REQUEST` (400) on the
  * first field that does not conform.
  */
-export function assertValidUploadInit(input: UploadInitInput): void {
+export function assertValidUploadInit(input: UploadInitInput): { metadata?: Record<string, unknown> } {
   // No length cap: the name must match a registered policy anyway.
   if (typeof input.policy !== 'string' || input.policy.length === 0 || LONE_SURROGATE.test(input.policy)) {
     throw invalidRequest('policy must be a non-empty string', { field: 'policy' });
@@ -123,6 +137,7 @@ export function assertValidUploadInit(input: UploadInitInput): void {
     throw invalidRequest('mimeType must be a MIME type such as "image/png"', { field: 'mimeType' });
   }
 
+  let snapshot: Record<string, unknown> | undefined;
   // Omitted metadata is fine; an explicit null is not an object.
   if (input.metadata !== undefined) {
     let unsafe = true;
@@ -140,11 +155,18 @@ export function assertValidUploadInit(input: UploadInitInput): void {
     } catch {
       throw invalidRequest('metadata must be a JSON object', { field: 'metadata' });
     }
-    if (new TextEncoder().encode(encoded).byteLength > MAX_METADATA_BYTES) {
+    if (typeof encoded !== 'string' || new TextEncoder().encode(encoded).byteLength > MAX_METADATA_BYTES) {
       throw invalidRequest(`metadata must be at most ${MAX_METADATA_BYTES} bytes as JSON`, {
         field: 'metadata',
         maxBytes: MAX_METADATA_BYTES,
       });
+    }
+    // The plain JSON snapshot that was checked is what gets hashed and stored,
+    // so a value that serializes differently the next time cannot slip by.
+    snapshot = JSON.parse(encoded) as Record<string, unknown>;
+    // toJSON may have changed the shape: check what will actually be stored.
+    if (snapshot === null || typeof snapshot !== 'object' || Array.isArray(snapshot) || hasLoneSurrogate(snapshot)) {
+      throw invalidRequest(`metadata must be a JSON object of well-formed text, nested at most ${MAX_METADATA_DEPTH} levels`, { field: 'metadata' });
     }
   }
 
@@ -160,4 +182,6 @@ export function assertValidUploadInit(input: UploadInitInput): void {
       });
     }
   }
+
+  return snapshot === undefined ? {} : { metadata: snapshot };
 }
