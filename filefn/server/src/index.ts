@@ -501,9 +501,11 @@ export function createFileFn(config: FileFnConfig): FileFn {
       return getSchema({ namespace });
     },
 
-    cleanupExpiredSessions() {
+    async cleanupExpiredSessions() {
+      const result = await uploadService.cleanupExpiredSessions();
+      // Counted once a sweep has actually run.
       sweepState.ran = true;
-      return uploadService.cleanupExpiredSessions();
+      return result;
     },
 
     cleanupOrphanedArtifacts() {

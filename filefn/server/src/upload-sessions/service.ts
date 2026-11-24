@@ -543,7 +543,11 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       if (file && !(await canWriteFileNow(session.fileId!, ctx))) {
         return { error: errors.forbidden({ fileId: session.fileId!, operation: 'replace' }) };
       }
-      return { error: errors.quotaExceeded(quotaResult.current, quotaResult.limit, session.size) };
+      return {
+        error: isCallersAccount(account, ctx)
+          ? errors.quotaExceeded(quotaResult.current, quotaResult.limit, session.size)
+          : errors.ownerQuotaExceeded(session.size),
+      };
     }
     return { parts };
   }
@@ -1192,6 +1196,11 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
     return session.completionVersionId && file.currentVersionId === session.completionVersionId ? null : file;
   }
 
+  // Whether a quota account is the caller's own (same principal and tenant).
+  function isCallersAccount(account: QuotaAccount, ctx: FileProviderContext): boolean {
+    return (account.principalId || 'anonymous') === (ctx.principalId || 'anonymous') && (account.tenantId || null) === (ctx.tenantId || null);
+  }
+
   // A session's own account: the owner and tenant it was created for.
   function sessionQuotaAccount(session: Pick<UploadSession, 'ownerId' | 'tenantId'>): QuotaAccount {
     return { principalId: session.ownerId || 'anonymous', tenantId: session.tenantId ?? undefined };
@@ -1410,10 +1419,13 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         const quotaResult = await quota.checkQuota({ ...account, requestedBytes: input.size });
 
         if (!quotaResult.allowed) {
-          throw errors.quotaExceeded(quotaResult.current, quotaResult.limit, input.size);
+          // Another account's usage and limit (a file owner's) are not the caller's to see.
+          throw isCallersAccount(account, ctx)
+            ? errors.quotaExceeded(quotaResult.current, quotaResult.limit, input.size)
+            : errors.ownerQuotaExceeded(input.size);
         }
 
-        if (quotaResult.warning) {
+        if (quotaResult.warning && isCallersAccount(account, ctx)) {
           warnings.push(quotaResult.warning);
         }
       }

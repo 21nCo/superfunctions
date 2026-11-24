@@ -187,6 +187,36 @@ describe('FILE-30 low-severity hardening (F-13, F-14, F-16, F-18, F-24)', () => 
     });
   });
 
+  it("refuses a grantee over the owner's quota without the owner's usage figures (F-13)", async () => {
+    const quota = {
+      async checkQuota(input) {
+        return input.principalId === 'owner'
+          ? { allowed: false, current: 99, limit: 100, warning: 'owner nearly full' }
+          : { allowed: true, current: 0, limit: 100 };
+      },
+      async recordUsage() {},
+    } as QuotaProvider;
+    const database = memoryAdapter();
+    const { fileFn } = makeFileFn({ database, authorizer: createDefaultAuthorizer({ db: database, namespace: 'filefn' }) });
+    const owner = { principalId: 'owner', tenantId: 't1' };
+    const file = await upload(fileFn, owner);
+    await fileFn.services.grants.createGrant({ fileId: file.fileId, userId: 'writer', canWrite: true }, owner);
+    const limited = createFileFn({
+      database,
+      storage: createLocalStorageAdapter({ rootDir }),
+      namespace: 'filefn',
+      policies: [{ name: 'docs', contentTypes: ['text/plain'], visibility: 'private' }],
+      authorizer: createDefaultAuthorizer({ db: database, namespace: 'filefn' }),
+      quota,
+    });
+    const error = await limited
+      .createUploadSession({ policy: 'docs', fileName: 'a.txt', size: 5, mimeType: 'text/plain', fileId: file.fileId }, { principalId: 'writer', tenantId: 't1' })
+      .catch((caught) => caught);
+    expect(error).toMatchObject({ code: 'FILEFN_QUOTA_EXCEEDED', details: { requested: 5 } });
+    expect(error.details).not.toHaveProperty('current');
+    expect(error.details).not.toHaveProperty('limit');
+  });
+
   it('warns once per process when uploads start before any cleanup sweep (F-24)', async () => {
     const warn = vi.fn();
     const logger = { info() {}, warn, error() {}, debug() {} };
