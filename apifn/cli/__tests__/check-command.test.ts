@@ -5,6 +5,7 @@
 import { execFileSync, spawn } from "node:child_process";
 import {
   appendFileSync,
+  chmodSync,
   closeSync,
   existsSync,
   linkSync,
@@ -19,6 +20,8 @@ import {
   rmSync,
   statSync,
   symlinkSync,
+  unlinkSync,
+  utimesSync,
   writeFileSync,
   writeSync,
 } from "node:fs";
@@ -59,9 +62,9 @@ const FIXTURES = path.join(import.meta.dirname, "fixtures", "check");
  * (the backup takes its copy path), a new .bak file is displaced right after it is created, or
  * the lookup of a .bak whose name contains `failBackupLookup` fails, or another writer takes a .bak
  * name (`occupyBackup` bytes) right before the run creates it, or every close reports EIO after
- * closing (`failClose`).
+ * closing (`failClose`), or the lookup of a staged temp file fails (`failTempLookup`).
  */
-const fsFaults = vi.hoisted(() => ({ noLink: false, displaceBackup: "", failBackupLookup: "", occupyBackup: "", failClose: false }));
+const fsFaults = vi.hoisted(() => ({ noLink: false, displaceBackup: "", failBackupLookup: "", occupyBackup: "", failClose: false, failTempLookup: false }));
 vi.mock("node:fs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs")>();
   const displace = (file: unknown): void => {
@@ -94,6 +97,7 @@ vi.mock("node:fs", async (importOriginal) => {
       if (fsFaults.failClose) throw Object.assign(new Error("EIO: injected close"), { code: "EIO" });
     }) as typeof actual.closeSync,
     lstatSync: ((...args: Parameters<typeof actual.lstatSync>) => {
+      if (fsFaults.failTempLookup && /\.apifn-[^/\\]*\.tmp$/.test(String(args[0]))) throw Object.assign(new Error("EACCES: injected temp lookup"), { code: "EACCES" });
       if (fsFaults.failBackupLookup && String(args[0]).endsWith(".bak") && String(args[0]).includes(fsFaults.failBackupLookup)) {
         throw Object.assign(new Error("EACCES: injected"), { code: "EACCES" });
       }
@@ -2503,7 +2507,7 @@ describe("apifn check: the git baseline is the pinned object (round 4)", () => {
       await writeFile(path.join(service, "report.md"), "previous report\n");
 
       const result = await run(["check", "--base", "HEAD", "--report", "report.md"], service);
-      expect({ code: result.code, stdout: result.stdout }).toEqual({ code: 2, stdout: "" });
+    expect({ code: result.code, stdout: result.stdout }).toEqual({ code: 2, stdout: "" });
       expect(result.stderr).toContain("breaking/.apifn/contract.yml at HEAD");
       expect(result.stderr).toContain("is a file, but the spec path needs it to be a directory");
       expect(await readFile(path.join(service, "report.md"), "utf8")).toBe("previous report\n");
@@ -2801,6 +2805,33 @@ describe("apifn check: the router module is the one file loaded (round 4)", () =
     const report = await run(["check", "./router", "--report", "router.ts"], dir);
     expect(report.code).toBe(2);
     expect(report.stderr).toContain("the router module");
+    // The module that moves itself while it loads is still the one file check binds (PR round 2).
+    await writeFile(moving, `import { renameSync } from "node:fs";\nrenameSync(${JSON.stringify(moving)}, ${JSON.stringify(path.join(dir, "moved.ts"))});\n${source}`);
+    const moved = await run(["check", "./moving", "--report", "moving.ts"], dir);
+    expect(moved.code).toBe(2);
+    expect(moved.stderr).toContain("the router module");
+    expect(existsSync(moving)).toBe(false);
+  });
+
+  it("an exact-path JITI_ALIAS for the router file still applies to its dependencies (PR round 2)", async () => {
+    const dir = realpathSync(path.join(await fixtures(), "base"));
+    const router = path.join(dir, "src", "router.ts");
+    await mkdir(path.join(dir, "src"), { recursive: true });
+    // The router's helper imports the router's own path, which the user aliases to another module.
+    await writeFile(router, `import { id } from "./helper.ts";\nexport default { getRoutes() { return [{ method: "GET", path: "/exact", handler: async () => Response.json({}), meta: { operationId: id } }]; } };\n`);
+    await writeFile(path.join(dir, "src", "helper.ts"), `import { id } from ${JSON.stringify(router)};\nexport { id };\n`);
+    await writeFile(path.join(dir, "src", "other.ts"), 'export const id = "aliasExact";\n');
+    vi.stubEnv("JITI_ALIAS", JSON.stringify({ [router]: path.join(dir, "src", "other.ts") }));
+    try {
+      const loaded = await loadRouterModule("./src/router", dir);
+      expect(loaded.file).toBe(router);
+      expect(loaded.router.getRoutes().map((r) => r.meta?.operationId)).toEqual(["aliasExact"]);
+      const generated = await run(["generate", "./src/router", "--output", "out.yml"], dir);
+      expect(generated.code).toBe(0);
+      expect(await readFile(path.join(dir, "out.yml"), "utf8")).toContain("aliasExact");
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("JITI_ALIAS is applied once: generate and check load the router the alias selects, not an alias of it (PR round 1)", async () => {
@@ -3924,6 +3955,33 @@ describe("apifn check: the git baseline is read at the path the check reads and 
       expect(report.breaking.length).toBeGreaterThan(0);
     }
   });
+
+  it.skipIf(POSIX_ONLY)("a link retargeted after observe never makes the lexical spelling the baseline (PR round 2)", async () => {
+    const root = await fixtures();
+    git(root, "init", "-q");
+    const service = path.join(root, "breaking");
+    await commitSpec(path.join(root, "base"));
+    await commitSpec(service);
+    await cp(path.join(service, SPEC), path.join(service, "openapi.yml"));
+    await cp(path.join(root, "base", SPEC), path.join(service, SPEC));
+    await mkdir(path.join(service, ".apifn", "inner"));
+    await writeFile(path.join(service, ".apifn", "inner", "keep"), "");
+    await symlink(path.join(".apifn", "inner"), path.join(service, "link"));
+    git(root, "add", "-A");
+    git(root, "commit", "-q", "-m", "base contract and a decoy");
+    await commitSpec(service);
+    // observe bound .apifn/openapi.yml; then the link is retargeted, so the lexical spelling leads to the decoy.
+    const spec = `${realpathSync(service)}/link/../openapi.yml`;
+    const bound = observe(spec).destination;
+    await rm(path.join(service, "link"));
+    await symlink(".apifn", path.join(service, "link"));
+    expect(realpathSync(path.join(service, "link", ".."))).toBe(realpathSync(service));
+    const baseline = readSpecAtRef("HEAD", spec, bound, service);
+    expect({ path: baseline.path, text: baseline.text }).toEqual({
+      path: "breaking/.apifn/openapi.yml",
+      text: await readFile(path.join(root, "base", SPEC), "utf8"),
+    });
+  });
 });
 
 describe("apifn check: the --base repository is the work tree the check runs in (API-25 round 1)", () => {
@@ -3961,7 +4019,7 @@ describe("apifn check: the --base repository is the work tree the check runs in 
 
     for (const extra of [[], ["--write"]]) {
       const result = await run(["check", "--base", "HEAD", ...extra], service);
-      expect({ code: result.code, stdout: result.stdout }).toEqual({ code: 2, stdout: "" });
+    expect({ code: result.code, stdout: result.stdout }).toEqual({ code: 2, stdout: "" });
       expect(result.stderr).toContain("outside the git repository");
     }
     expect(await readFile(path.join(other, SPEC), "utf8")).toBe(before);
@@ -4503,6 +4561,47 @@ describe("apifn check: git ignores inherited repository selectors (API-25 round 
       expect({ env, code: result.code, base: result.report.base.status }).toEqual({ env, code: 1, base: "compared" });
     }
   });
+
+  it("core.ignorecase comes from the repository's own config, never an ambient ~/.gitconfig (PR round 2)", async () => {
+    const { root, service } = await breakingAtHead();
+    git(root, "config", "core.ignorecase", "true");
+    git(root, "mv", path.join("breaking", SPEC), path.join("breaking", ".apifn", "OpenAPI.yml"));
+    git(root, "commit", "-q", "-m", "case-variant base contract");
+    await rename(path.join(service, ".apifn", "OpenAPI.yml"), path.join(service, ".apifn", "tmp.yml"));
+    await rename(path.join(service, ".apifn", "tmp.yml"), path.join(service, SPEC));
+    git(root, "config", "--unset", "core.ignorecase");
+    const home = await tempDir("apifn-check-home-");
+    await writeFile(path.join(home, ".gitconfig"), "[core]\n\tignorecase = true\n");
+    const result = await checkWith({ HOME: home, XDG_CONFIG_HOME: home }, service);
+    expect({ code: result.code, base: result.report.base.status }).toEqual({ code: 0, base: "new-contract" });
+  });
+
+  it("inherited discovery limits are dropped: a GIT_CEILING_DIRECTORIES at the repository root still compares (PR round 2)", async () => {
+    const { root, service } = await breakingAtHead();
+    const result = await checkWith({ GIT_CEILING_DIRECTORIES: realpathSync(root), GIT_DISCOVERY_ACROSS_FILESYSTEM: "0" }, service);
+    expect({ code: result.code, base: result.report.base.status }).toEqual({ code: 1, base: "compared" });
+  });
+
+  it.skipIf(POSIX_ONLY)("a .git replaced after discovery never supplies the baseline: exit 2 (PR round 2)", async () => {
+    const { root, service } = await breakingAtHead();
+    const other = await tempDir("apifn-check-replaced-repo-");
+    git(other, "init", "-q");
+    await mkdir(path.join(other, "breaking", ".apifn"), { recursive: true });
+    await writeFile(path.join(other, "breaking", SPEC), await readFile(path.join(service, SPEC), "utf8"));
+    git(other, "add", "-A");
+    git(other, "commit", "-q", "-m", "head contract");
+    const shimDir = await tempDir("apifn-check-git-");
+    const shim = path.join(shimDir, "git");
+    await shellScript(
+      shim,
+      // After the second call (discovery, then the spec's own work tree), another repository takes the .git name.
+      `n=$(cat '${shimDir}/n' 2>/dev/null || echo 0); n=$((n + 1)); echo $n > '${shimDir}/n'\n'${realGit()}' "$@"; code=$?\n` +
+        `if [ $n -eq 2 ]; then mv '${root}/.git' '${root}/.git-orig'; mv '${other}/.git' '${root}/.git'; fi\nexit $code`
+    );
+    const result = await withEnv("APIFN_GIT", shim, () => run(["check", "--spec", path.join(".apifn", "openapi.yml"), "--base", "HEAD"], service));
+    expect({ code: result.code, stdout: result.stdout }).toEqual({ code: 2, stdout: "" });
+    expect(result.stderr).toContain("was replaced while apifn check read it");
+  });
 });
 
 describe("apifn check: a backup is bound to the file this run made, and cleanup never changes the verdict (API-25 round 4)", () => {
@@ -4538,7 +4637,7 @@ describe("apifn check: a backup is bound to the file this run made, and cleanup 
       });
       return { code, errors: errors.join("\n"), stdout };
     } finally {
-      Object.assign(fsFaults, { noLink: false, displaceBackup: "", failBackupLookup: "", occupyBackup: "", failClose: false });
+      Object.assign(fsFaults, { noLink: false, displaceBackup: "", failBackupLookup: "", occupyBackup: "", failClose: false, failTempLookup: false });
     }
   }
 
@@ -4619,5 +4718,73 @@ describe("apifn check: a backup is bound to the file this run made, and cleanup 
     expect(await readFile(path.join(specDir, left[0]), "utf8")).toBe("another writer's backup\n");
     expect(errors).toContain(`${path.join(realpathSync(specDir), left[0])}, apifn check's backup of`);
     expect(await readFile(path.join(dir, SPEC), "utf8")).toBe("openapi: 3.1.0\n");
+  });
+
+  it.skipIf(POSIX_ONLY || process.getuid?.() === 0)("an existing report the run may replace but not read is backed up and published (PR round 2)", async () => {
+    const control = await check(await staleService(), () => {});
+    const dir = await staleService();
+    chmodSync(path.join(dir, "report.md"), 0o200);
+    const { code, errors, stdout } = await check(dir, () => {});
+    expect({ code, errors, stdout }).toEqual({ code: control.code, errors: "", stdout: control.stdout });
+    chmodSync(path.join(dir, "report.md"), 0o600);
+    expect(await readFile(path.join(dir, "report.md"), "utf8")).toBe(stdout);
+    expect(await leftovers(dir)).toEqual([]);
+  });
+
+  it("staged bytes altered before they are recorded abort the run with no rename (PR round 2)", async () => {
+    const dir = await staleService();
+    const { code, errors } = await check(dir, (step, destination) => {
+      if (step !== "staged" || !destination.endsWith("report.md")) return;
+      const temp = path.join(dir, readdirSync(dir).find((name) => name.endsWith(".tmp")) as string);
+      const bytes = readFileSync(temp);
+      bytes[0] ^= 1;
+      writeFileSync(temp, bytes);
+    });
+    expect(code).toBe(2);
+    expect(errors).toContain("changed while apifn check ran");
+    expect(await readFile(path.join(dir, "report.md"), "utf8")).toBe("previous report\n");
+    expect(await readFile(path.join(dir, SPEC), "utf8")).toBe("openapi: 3.1.0\n");
+    expect(await leftovers(dir)).toEqual([]);
+  });
+
+  it("a linked backup edited in place with its mtime restored is kept and named at the commit (PR round 2)", async () => {
+    const dir = await staleService();
+    let backup = "";
+    const { code, errors } = await check(dir, (step, destination) => {
+      if (step !== "installed" || !destination.endsWith("report.md")) return;
+      backup = path.join(realpathSync(dir), readdirSync(dir).find((name) => name.endsWith(".bak")) as string);
+      const { atime, mtime } = statSync(backup);
+      writeFileSync(backup, "previous REPORT\n");
+      utimesSync(backup, atime, mtime);
+    });
+    expect(code).toBe(0);
+    expect(await readFile(backup, "utf8")).toBe("previous REPORT\n");
+    expect(errors).toContain(`${backup}, apifn check's backup of`);
+  });
+
+  it("a cleanup step that fails during rollback skips none of the others (PR round 2)", async () => {
+    const dir = await staleService();
+    const errors: string[] = [];
+    const code = await runCheckCommand({
+      cwd: dir,
+      config: CONFIG,
+      output: { error: (message: string) => errors.push(message), warn: () => {} } as unknown as Output,
+      reportPath: path.join("out", "deep", "report.md"),
+      writeStdout: () => {},
+      publishHook: (step, destination) => {
+        if (step !== "staged") return;
+        // The temp is gone and its lookup fails: the reservation and the created directories are still cleaned up.
+        unlinkSync(path.join(path.dirname(destination), readdirSync(path.dirname(destination)).find((name) => name.endsWith(".tmp")) as string));
+        fsFaults.failTempLookup = true;
+        throw new Error("injected staging failure");
+      },
+    }).finally(() => {
+      fsFaults.failTempLookup = false;
+    });
+    expect(code).toBe(2);
+    expect(errors.join("\n")).toContain("injected staging failure");
+    expect(errors.join("\n")).toContain("EACCES: injected temp lookup");
+    expect(errors.join("\n")).not.toContain("Failed to restore");
+    expect(existsSync(path.join(dir, "out"))).toBe(false);
   });
 });

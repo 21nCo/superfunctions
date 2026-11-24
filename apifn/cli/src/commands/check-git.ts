@@ -26,7 +26,8 @@
  * - git output is decoded as strict UTF-8; malformed bytes are an error;
  * - the repository is the git work tree of the directory the check runs in; a spec whose file (its
  *   symlinks followed) lies outside that work tree, or inside another work tree below it, is an
- *   error, so a symlink can never make another repository's commit the baseline;
+ *   error, so a symlink can never make another repository's commit the baseline; it is discovered
+ *   once, and every later git call names its git directory and work tree (GIT_DIR, GIT_WORK_TREE);
  * - every git failure is an error (exit 2), never a new contract.
  */
 
@@ -93,6 +94,9 @@ const REPOSITORY_SELECTORS = new Set([
   "GIT_OBJECT_DIRECTORY",
   "GIT_ALTERNATE_OBJECT_DIRECTORIES",
   "GIT_NAMESPACE",
+  // Discovery limits: the repository is the one git's default discovery finds from that directory.
+  "GIT_CEILING_DIRECTORIES",
+  "GIT_DISCOVERY_ACROSS_FILESYSTEM",
 ]);
 
 /** The environment of every git child: the caller's, without repository selectors (any case). */
@@ -109,10 +113,12 @@ class Git {
 
   constructor(
     private readonly executable: string,
-    readonly root: string
+    readonly root: string,
+    /** GIT_DIR and GIT_WORK_TREE of the repository discovered once: every later child reads that one. */
+    private readonly bound: NodeJS.ProcessEnv = {}
   ) {}
 
-  run(args: string[], options: { maxBuffer?: number } = {}): { code: number; stdout: string; stderr: string } {
+  run(args: string[], options: { maxBuffer?: number; env?: NodeJS.ProcessEnv } = {}): { code: number; stdout: string; stderr: string } {
     const result = this.spawn(args, options);
     const stdout = decodeUtf8(result.stdout);
     if (stdout === null) {
@@ -121,10 +127,10 @@ class Git {
     return { ...result, stdout };
   }
 
-  private spawn(args: string[], options: { maxBuffer?: number }): { code: number; stdout: Buffer; stderr: string } {
+  private spawn(args: string[], options: { maxBuffer?: number; env?: NodeJS.ProcessEnv }): { code: number; stdout: Buffer; stderr: string } {
     const result = spawnSync(this.executable, ["--no-replace-objects", ...args], {
       cwd: this.root,
-      env: gitEnvironment(),
+      env: { ...gitEnvironment(), ...this.bound, ...options.env },
       maxBuffer: options.maxBuffer ?? 64 * 1024 * 1024,
       windowsHide: true,
     });
@@ -134,7 +140,7 @@ class Git {
     return { code: result.status ?? 1, stdout: result.stdout, stderr: result.stderr.toString("utf8") };
   }
 
-  ok(args: string[], options?: { maxBuffer?: number }): string {
+  ok(args: string[], options?: { maxBuffer?: number; env?: NodeJS.ProcessEnv }): string {
     const result = this.run(args, options);
     if (result.code !== 0) {
       const detail = result.stderr.trim() || `exit status ${result.code}`;
@@ -163,7 +169,8 @@ class Git {
 
   ignoresCase(): boolean {
     if (this.ignoreCase === undefined) {
-      const value = this.ok(["config", "--type=bool", "--default=false", "--get", "core.ignorecase"]).trim();
+      // The repository's own config (local and worktree) only: no global or system file decides.
+      const value = this.ok(["config", "--type=bool", "--default=false", "--get", "core.ignorecase"], { env: { GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null" } }).trim();
       if (value !== "true" && value !== "false") {
         throw new CheckUsageError(`git config core.ignorecase returned '${value}', not a boolean`);
       }
@@ -335,10 +342,11 @@ function throughFile(walk: Walk, entry: TreeEntry): Lookup {
  * reads and writes (the filesystem applies a `..` after a symlink in the link target's parent):
  * then only the destination's own path is looked up.
  */
-function literalRepoPath(target: string, root: string): string | null {
+function literalRepoPath(target: string, root: string, destination: string): string | null {
   const resolved = path.resolve(target);
   try {
-    if (writeDestination(resolved) !== writeDestination(target)) return null;
+    // Both spellings must still lead to the destination observe bound (a link retargeted since is not).
+    if (writeDestination(resolved) !== destination || writeDestination(target) !== destination) return null;
   } catch {
     return null;
   }
@@ -369,11 +377,12 @@ export interface GitBaseline {
   text: string | null;
 }
 
-/** The native realpath of the git work tree holding `dir`, or null with git's reason. */
-function workTreeOf(executable: string, dir: string): { root: string } | { root: null; reason: string } {
-  const toplevel = new Git(executable, dir).run(["rev-parse", "--show-toplevel"]);
-  if (toplevel.code !== 0) return { root: null, reason: toplevel.stderr.trim() || `exit status ${toplevel.code}` };
-  return { root: realpathSync.native(toplevel.stdout.trim()) };
+/** The native realpath of the git work tree holding `dir` and its git directory, or null with git's reason. */
+function workTreeOf(executable: string, dir: string): { root: string; gitDir: string } | { root: null; reason: string } {
+  const toplevel = new Git(executable, dir).run(["rev-parse", "--show-toplevel", "--absolute-git-dir"]);
+  const [top, gitDir] = toplevel.stdout.trim().split("\n");
+  if (toplevel.code !== 0 || !gitDir) return { root: null, reason: toplevel.stderr.trim() || `exit status ${toplevel.code}` };
+  return { root: realpathSync.native(top), gitDir };
 }
 
 /**
@@ -391,7 +400,14 @@ export function readSpecAtRef(ref: string, specPath: string, destination: string
   if (here.root === null) {
     throw new CheckUsageError(`--base needs a git work tree; ${cwd} is not inside one: ${here.reason}`);
   }
-  const git = new Git(executable, here.root);
+  const git = new Git(executable, here.root, { GIT_DIR: here.gitDir, GIT_WORK_TREE: here.root });
+  // The git directory discovered once must still be that directory once every read is done.
+  const repository = statSync(here.gitDir, { bigint: true });
+  const done = (baseline: GitBaseline): GitBaseline => {
+    const now = statSync(here.gitDir, { bigint: true, throwIfNoEntry: false });
+    if (now?.dev !== repository.dev || now.ino !== repository.ino) throw new CheckUsageError(`The git repository at ${here.gitDir} was replaced while apifn check read it.`);
+    return baseline;
+  };
 
   // The file the check reads and --write writes must be inside the repository, and not inside
   // another work tree nested in it (an untracked clone, or a submodule's checkout).
@@ -416,7 +432,7 @@ export function readSpecAtRef(ref: string, specPath: string, destination: string
   const commit = resolved.stdout.trim();
   const label = `${ref} (${commit})`;
 
-  const candidates = [literalRepoPath(specPath, git.root), destinationPath].filter(
+  const candidates = [literalRepoPath(specPath, git.root, destination), destinationPath].filter(
     (candidate, index, all): candidate is string => candidate !== null && all.indexOf(candidate) === index
   );
   for (const candidate of candidates) {
@@ -427,7 +443,7 @@ export function readSpecAtRef(ref: string, specPath: string, destination: string
     }
     // The blob object the walk found, by its id: nothing resolves the path a second time.
     const text = git.ok(["cat-file", "blob", lookup.entry.object], { maxBuffer: MAX_SPEC_BYTES + 1 });
-    return { commit, path: lookup.path, text };
+    return done({ commit, path: lookup.path, text });
   }
-  return { commit, path: null, text: null };
+  return done({ commit, path: null, text: null });
 }

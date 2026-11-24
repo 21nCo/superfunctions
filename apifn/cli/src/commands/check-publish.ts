@@ -52,7 +52,9 @@
  *   loop before stdout, every protected path is checked again.
  *
  * Residual: POSIX has no compare-and-swap rename, so a replacement made between the last check
- * and the rename (a window of one system call) is not detected. A run that cannot clean up (killed
+ * and the rename (a window of one system call) is not detected. Node has no mkdirat either: a
+ * directory swapped in between the run's mkdir and its open of that name (one system call) is held
+ * as the run's; rollback removes it only while it is empty. A run that cannot clean up (killed
  * by SIGKILL, a crash) can leave an empty reservation at an output's own name or a staged temp
  * file beside it; output bytes never become reachable through a protected name, because every
  * name that holds them was checked while it was still empty.
@@ -78,7 +80,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import type { BigIntStats } from "node:fs";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import path from "node:path";
 import { CheckUsageError, errorMessage, foldPath, isMissingPath, nearestExistingDir, writeDestination } from "./check-paths.js";
 
@@ -185,15 +187,16 @@ function probeNames(anchor: Anchor, a: string, b: string): Alias {
   } catch {
     return "unknown";
   }
-  const own = fstatSync(fd, BIG);
+  let own: BigIntStats | undefined;
   try {
+    own = fstatSync(fd, BIG);
     const found = lstatSync(path.join(anchor.dir, prefix + b), BIG);
     return sameInode(found, own) && stillAnchored(anchor) ? "same" : "unknown";
   } catch (error) {
-    return isMissingPath(error) && stillAnchored(anchor) ? "distinct" : "unknown";
+    return own !== undefined && isMissingPath(error) && stillAnchored(anchor) ? "distinct" : "unknown";
   } finally {
     try {
-      if (stillAnchored(anchor) && sameInode(lstatSync(probe, BIG), own)) unlinkSync(probe);
+      if (own !== undefined && stillAnchored(anchor) && sameInode(lstatSync(probe, BIG), own)) unlinkSync(probe);
     } catch {
       // Already gone or replaced: another process's file is left alone.
     }
@@ -330,9 +333,10 @@ function assertInputsUnchanged(guarded: Guarded[]): void {
 /** A step of the publisher, for tests that change the filesystem between steps (`mkdir`: after
  * the run created one directory for a destination, named in place of the destination;
  * `reserved`: right after an empty reservation was created at a missing destination;
- * `installed`: right after an output was renamed into place; `committed`: after stdout completed,
+ * `staged`: right after an output's bytes were written to its temp file; `installed`: right after an
+ * output was renamed into place; `committed`: after stdout completed,
  * before the backups are removed). */
-export type PublishStep = "mkdir" | "reserved" | "backup" | "rename" | "installed" | "rollback" | "committed";
+export type PublishStep = "mkdir" | "reserved" | "staged" | "backup" | "rename" | "installed" | "rollback" | "committed";
 export type PublishHook = (step: PublishStep, destination: string) => void;
 
 interface Staged {
@@ -341,6 +345,8 @@ interface Staged {
   before: FileState;
   /** The empty file this run created at a missing destination, until the rename replaces it. */
   reserved?: FileState;
+  /** The reservation's descriptor, recorded as soon as it exists. */
+  reservedFd?: number;
   anchor: Anchor;
   /** The destination's own directory once it exists. */
   parent?: Anchor;
@@ -360,6 +366,8 @@ interface Staged {
   /** The backup's inode, open until publish ends (an open inode's number is never reused), and a copy's bytes. */
   backupFd?: number;
   previous?: Buffer;
+  /** A linked backup's SHA-256 when made (null: the file cannot be read, its held inode decides). */
+  digest?: string | null;
   /** Descriptors that pin the reservation and each created directory until publish ends. */
   held: number[];
   published: boolean;
@@ -405,20 +413,36 @@ function removeTemp(staged: Staged): string | null {
 
 /**
  * True while the backup is still the file this run made, in the bound directories: a copy (this
- * run's own inode) unchanged; a hard link the same inode (it shares its change time and bytes with
- * the observed file, so another link's edit shows there too and is not a replacement).
+ * run's own inode) unchanged; a hard link the same inode still holding the bytes it was made with.
  */
 function backupOwned(staged: Staged, now: FileState): boolean {
   const made = staged.backupState;
   if (!dirsHold(staged) || !made || staged.backupFd === undefined) return false; // never made (another's name): not this run's
-  return sameFile(now, stateOf(fstatSync(staged.backupFd, BIG))) && (staged.linked || sameState(now, made));
+  return sameFile(now, stateOf(fstatSync(staged.backupFd, BIG))) && (staged.linked ? linkedIntact(staged) : sameState(now, made));
+}
+
+/** True while a linked backup holds the bytes it had when made (its digest, read through its descriptor). */
+function linkedIntact(staged: Staged): boolean {
+  return staged.digest === null || digestOf(staged.backupFd as number) === staged.digest;
+}
+
+/** The SHA-256 of the file open as `fd`, read from its start; null when it cannot be read through `fd`. */
+function digestOf(fd: number): string | null {
+  const hash = createHash("sha256");
+  const chunk = Buffer.alloc(64 * 1024);
+  try {
+    for (let at = 0, count = 0; (count = readSync(fd, chunk, 0, chunk.length, at)) > 0; at += count) hash.update(chunk.subarray(0, count));
+  } catch {
+    return null;
+  }
+  return hash.digest("hex");
 }
 
 /** True while the backup still holds the observed file's bytes exactly as this run made it. */
 function backupHoldsPrevious(staged: Staged): boolean {
   const made = staged.backupState;
   return staged.backup !== undefined && !!made && dirsHold(staged) && sameState(currentState(staged.backup), made) &&
-    (staged.previous === undefined || holdsBytes(staged.backupFd as number, staged.previous));
+    (staged.linked ? linkedIntact(staged) : holdsBytes(staged.backupFd as number, staged.previous as Buffer));
 }
 
 /** Removes the backup while it is still this run's (backupOwned); another writer's is left and named. */
@@ -473,7 +497,8 @@ function makeParents(staged: Staged, hook: PublishHook | undefined, verify: Veri
 }
 
 /** Opens a directory this run created without following a link and keeps it open (POSIX), so its
- * identity cannot pass to another directory while the run may remove it. */
+ * identity cannot pass to another directory while the run may remove it. Windows opens no directory
+ * handle here; its file ID carries a sequence number that a reused file record changes. */
 function holdDir(staged: Staged, dir: string): BigIntStats {
   if (process.platform === "win32") return lstatSync(dir, BIG);
   const fd = openSync(dir, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
@@ -556,17 +581,19 @@ function reserve(staged: Staged, hook: PublishHook | undefined, verify: Verify):
   if (staged.before !== null) return;
   const fd = openSync(staged.destination, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600);
   staged.held.push(fd);
+  staged.reservedFd = fd;
   staged.reserved = stateOf(fstatSync(fd, BIG));
   hook?.("reserved", staged.destination);
   verify(staged);
 }
 
-/** Removes the reservation while it is still this run's empty file; another writer's is kept. */
+/** Removes the reservation while it is still this run's empty file (its held inode); another writer's is kept. */
 function releaseReservation(staged: Staged): string | null {
-  if (staged.reserved === undefined) return null;
+  if (staged.reservedFd === undefined) return null;
   const now = currentState(staged.destination);
   if (now === null) return null;
-  if (!dirsHold(staged) || !sameState(now, staged.reserved)) {
+  const own = stateOf(fstatSync(staged.reservedFd, BIG));
+  if (!dirsHold(staged) || !sameFile(now, own) || !sameState(now, staged.reserved ?? own) || now.size !== 0n) {
     return `${staged.destination} changed after apifn check reserved it, so it was left as it is.`;
   }
   unlinkSync(staged.destination);
@@ -574,7 +601,7 @@ function releaseReservation(staged: Staged): string | null {
 }
 
 /** Stages the output's bytes in a temp file that was checked while still empty. */
-function stage(staged: Staged, verify: Verify): void {
+function stage(staged: Staged, hook: PublishHook | undefined, verify: Verify): void {
   if (!placeHolds(staged)) throw changed(staged);
   const temp = tempName(staged.destination);
   const fd = openSync(temp, constants.O_RDWR | constants.O_CREAT | constants.O_EXCL, 0o666);
@@ -584,6 +611,9 @@ function stage(staged: Staged, verify: Verify): void {
   if (staged.before !== null) fchmodSync(fd, staged.before.mode & 0o7777);
   writeFileSync(fd, staged.bytes);
   fsyncSync(fd);
+  hook?.("staged", staged.destination);
+  // The identity recorded is of the bytes this run wrote, read back through the descriptor.
+  if (!holdsBytes(fd, staged.bytes)) throw changed(staged);
   staged.installed = stateOf(fstatSync(fd, BIG));
   verify(staged);
 }
@@ -629,7 +659,7 @@ function backUp(staged: Staged): void {
   const backup = tempName(staged.destination).replace(/\.tmp$/, ".bak");
   staged.backup = backup;
   // The observed file is opened (never blocking, never through a link) before the link: the link must be that very inode.
-  staged.backupFd = openSync(staged.destination, constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW);
+  staged.backupFd = openHeld(staged.destination);
   if (!sameState(stateOf(fstatSync(staged.backupFd, BIG)), before)) throw changed(staged);
   try {
     linkSync(staged.destination, backup);
@@ -642,6 +672,7 @@ function backUp(staged: Staged): void {
     // Not the observed inode: never this run's backup (null owns nothing), so it is left and named.
     staged.backupState = sameContent(made, before) && sameFile(made, stateOf(fstatSync(staged.backupFd, BIG))) ? made : null;
     if (staged.backupState === null) throw changed(staged);
+    staged.digest = digestOf(staged.backupFd);
     return;
   }
   const source = staged.backupFd;
@@ -659,6 +690,17 @@ function backUp(staged: Staged): void {
   }
   if (!sameFile(currentState(backup), staged.backupState) || !sameState(currentState(staged.destination), before)) {
     throw changed(staged);
+  }
+}
+
+/** Opens `file` to hold its inode: for reading, or (a file the run may replace but not read) write-only, writing nothing. */
+function openHeld(file: string): number {
+  const flags = constants.O_NONBLOCK | constants.O_NOFOLLOW;
+  try {
+    return openSync(file, constants.O_RDONLY | flags);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EACCES") throw error;
+    return openSync(file, constants.O_WRONLY | flags);
   }
 }
 
@@ -694,10 +736,16 @@ function install(staged: Staged, hook: PublishHook | undefined, verify: Verify):
 /** Undoes one published output while the destination still holds exactly what this run installed. */
 function rollBack(staged: Staged, hook: PublishHook | undefined): string | null {
   if (!staged.published) {
-    const conflicts = [removeTemp(staged), removeBackup(staged), releaseReservation(staged)].filter(
-      (conflict): conflict is string => conflict !== null
-    );
-    removeCreatedDirs(staged);
+    // Each cleanup step runs on its own: a failure in one is named and never skips the others.
+    const conflicts: string[] = [];
+    for (const step of [removeTemp, removeBackup, releaseReservation, (s: Staged) => (removeCreatedDirs(s), null)]) {
+      try {
+        const conflict = step(staged);
+        if (conflict !== null) conflicts.push(conflict);
+      } catch (error) {
+        conflicts.push(`Failed to clean up after ${staged.destination}: ${errorMessage(error)}`);
+      }
+    }
     return conflicts.length === 0 ? null : conflicts.join(" ");
   }
   hook?.("rollback", staged.destination);
@@ -854,7 +902,7 @@ async function publishAll(
   };
   // Reservation, staging and installation run in one synchronous stretch.
   eachOutput(all, hook, (staged) => reserve(staged, hook, checked));
-  eachOutput(all, hook, (staged) => stage(staged, checked));
+  eachOutput(all, hook, (staged) => stage(staged, hook, checked));
   eachOutput(all, hook, (staged) => install(staged, hook, checked));
   await checkpoint();
   // A stdout write can wait on its reader indefinitely: an abort does not wait for it.
