@@ -52,7 +52,7 @@ function createDodoApi() {
   return {
     fetchMock,
     /** Records a refund or dispute on the payment, as Dodo does beside its unchanged `succeeded` status. */
-    takeBack(patch: { refunds?: unknown[]; disputes?: unknown[] }) {
+    takeBack(patch: { refunds?: unknown[]; disputes?: unknown[]; total_amount?: number }) {
       payment = { ...payment!, ...patch };
     }
   };
@@ -204,6 +204,27 @@ describe('Dodo refunds and disputes of a one-time purchase', () => {
 
     expect(restored.ok).toBe(true);
     expect(restored.ok && restored.data.subscription.status).toBe('canceled');
+    expect(await entitlementStatus()).toBe('inactive');
+  });
+
+  it('revokes the purchase on restore when partial refunds add up to the whole payment', async () => {
+    const { billfn, subject, entitlementStatus, api } = await purchased();
+    api.takeBack({
+      total_amount: 9900,
+      refunds: [
+        { refund_id: 'ref_a', status: 'succeeded', is_partial: true, amount: 4900 },
+        { refund_id: 'ref_b', status: 'succeeded', is_partial: true, amount: 5000 }
+      ]
+    } as never);
+
+    await billfn.restorePurchases({
+      subject,
+      planKey: 'nucleus',
+      provider: 'dodo',
+      priceId: lifetimePrice.priceId,
+      purchaseReference: 'pay_dodo_lifetime'
+    });
+
     expect(await entitlementStatus()).toBe('inactive');
   });
 

@@ -1102,8 +1102,34 @@ describe('parseWebhook with recorded Dodo payloads', () => {
     expect(event.billingState).toMatchObject({ subscriptionStatus: 'canceled', providerChargeId: oneTimePayment.payment_id });
   });
 
+  it('keeps the purchase on a partial refund that leaves part of the payment paid', async () => {
+    const fetchMock = dodoReads({ [`/payments/${oneTimePayment.payment_id}`]: oneTimePayment });
+
+    const event = await parse({ ...refund, data: { ...refund.data, is_partial: true, amount: 600 } }, fetchMock);
+
+    expect(event.billingState).toBeUndefined();
+  });
+
+  it('revokes the purchase when partial refunds add up to the whole payment', async () => {
+    // Dodo marks the refund of the remaining balance as partial too.
+    const earlier = { refund_id: 'ref_first', status: 'succeeded', is_partial: true, amount: 9300 };
+    const fetchMock = dodoReads({ [`/payments/${oneTimePayment.payment_id}`]: { ...oneTimePayment, refunds: [earlier] } });
+
+    const event = await parse({ ...refund, data: { ...refund.data, refund_id: 'ref_rest', is_partial: true, amount: 600 } }, fetchMock);
+
+    expect(event.billingState).toMatchObject({ subscriptionStatus: 'canceled', providerChargeId: oneTimePayment.payment_id });
+  });
+
+  it('counts a refund the payment already lists once', async () => {
+    const listed = { refund_id: 'ref_rest', status: 'succeeded', is_partial: true, amount: 600 };
+    const fetchMock = dodoReads({ [`/payments/${oneTimePayment.payment_id}`]: { ...oneTimePayment, refunds: [listed] } });
+
+    const event = await parse({ ...refund, data: { ...refund.data, refund_id: 'ref_rest', is_partial: true, amount: 600 } }, fetchMock);
+
+    expect(event.billingState).toBeUndefined();
+  });
+
   it.each([
-    ['a partial refund', { ...refund, data: { ...refund.data, is_partial: true } }],
     ['an opened dispute', dispute('dispute.opened', 'dispute_opened')],
     ['a won dispute', dispute('dispute.won', 'dispute_won')],
     ['a challenged dispute', dispute('dispute.challenged', 'dispute_challenged')]

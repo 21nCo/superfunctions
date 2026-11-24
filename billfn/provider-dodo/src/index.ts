@@ -76,7 +76,8 @@ export function createDodoProvider(config: DodoProviderConfig): BillFnProviderAd
     data: Record<string, unknown>
   ): Promise<{ state: BillFnVerifiedBillingState; observedAt: string } | undefined> => {
     const paymentId = readString(data, ['payment_id']);
-    if (!paymentId || !isDodoRevocationEvent(type, data)) {
+    const revocation = isDodoRevocationEvent(type, data);
+    if (!paymentId || !revocation) {
       return undefined;
     }
     const observedAt = (config.now?.() ?? new Date()).toISOString();
@@ -89,6 +90,11 @@ export function createDodoProvider(config: DodoProviderConfig): BillFnProviderAd
       throw unusableDodoRead(`payment ${paymentId}`);
     }
     if (kind === 'subscription') {
+      return undefined;
+    }
+    // A partial refund revokes the purchase once the refunds together return the whole payment (Dodo marks the
+    // refund of a remaining balance as partial too).
+    if (revocation === 'partial' && !isDodoPaymentRevoked(payment, data)) {
       return undefined;
     }
     return {
@@ -976,12 +982,18 @@ function storedDodoSubscriptionState(
 }
 
 /** Whether a refund or dispute event means the merchant lost the charge's money. */
-function isDodoRevocationEvent(type: string, data: Record<string, unknown>): boolean {
+/**
+ * Whether a refund or dispute event may take a charge's money back: `full` for a full refund or a lost or accepted
+ * dispute, `partial` for a partial refund (which revokes only once the payment's refunds add up to its total).
+ */
+function isDodoRevocationEvent(type: string, data: Record<string, unknown>): 'full' | 'partial' | null {
   if (type === 'refund.succeeded') {
-    // A partial refund leaves the purchase paid for; only a full refund (is_partial false) revokes it.
-    return data.is_partial === false && readString(data, ['status']) !== 'failed';
+    if (readString(data, ['status']) === 'failed') {
+      return null;
+    }
+    return data.is_partial === false ? 'full' : 'partial';
   }
-  return type === 'dispute.lost' || type === 'dispute.accepted';
+  return type === 'dispute.lost' || type === 'dispute.accepted' ? 'full' : null;
 }
 
 /** Dodo's `SubscriptionStatus` values (and `paused`, which older answers report for a held subscription). */
@@ -1087,19 +1099,33 @@ function classifyDodoPayment(payment: Record<string, unknown>): 'one_time' | 'su
  * Whether a payment's money went back: a succeeded full refund, or a dispute the merchant lost or accepted. Dodo
  * keeps such a payment's own status `succeeded`, and records the refunds and disputes beside it.
  */
-function isDodoPaymentRevoked(payment: Record<string, unknown>): boolean {
-  const refunds = Array.isArray(payment.refunds) ? payment.refunds : [];
+function isDodoPaymentRevoked(payment: Record<string, unknown>, latestRefund?: Record<string, unknown>): boolean {
+  const refunds = (Array.isArray(payment.refunds) ? payment.refunds : [])
+    .map((refund) => asPlainRecord(refund))
+    .filter((refund): refund is Record<string, unknown> => refund !== null && readString(refund, ['status']) === 'succeeded');
+  // A refund the payment does not list yet (its webhook can arrive before the payment shows it) counts too.
+  const latestId = latestRefund ? readString(latestRefund, ['refund_id']) : undefined;
+  if (latestRefund && latestId && !refunds.some((refund) => readString(refund, ['refund_id']) === latestId)) {
+    refunds.push(latestRefund);
+  }
   const disputes = Array.isArray(payment.disputes) ? payment.disputes : [];
+  const total = readMinorAmount(payment.total_amount);
+  const refunded = refunds.reduce((sum, refund) => sum + (readMinorAmount(refund.amount) ?? 0), 0);
   return (
-    refunds.some((refund) => {
-      const record = asPlainRecord(refund);
-      return record !== null && record.is_partial === false && readString(record, ['status']) === 'succeeded';
-    }) ||
+    refunds.some((refund) => refund.is_partial === false) ||
+    // Refunds in installments: Dodo marks each one, the last included, as partial.
+    (total !== undefined && total > 0 && refunded >= total) ||
     disputes.some((dispute) => {
       const status = readString(asPlainRecord(dispute) ?? {}, ['dispute_status']);
       return status === 'dispute_lost' || status === 'dispute_accepted';
     })
   );
+}
+
+/** An integer amount in the currency minor unit, as a number or numeric string; undefined otherwise. */
+function readMinorAmount(value: unknown): number | undefined {
+  const amount = typeof value === 'string' && value.trim() !== '' ? Number(value) : value;
+  return typeof amount === 'number' && Number.isSafeInteger(amount) && amount >= 0 ? amount : undefined;
 }
 
 /**
