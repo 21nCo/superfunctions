@@ -1398,15 +1398,18 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
               namespace,
             })
           : null;
+        // A file that appeared since the write check above is checked again
+        // before its owner's quota is looked at: a caller who can't write it
+        // learns nothing (no usage, limit or warning) about that owner.
+        if (existing && requestedFileId && !(await canWriteFileNow(requestedFileId, ctx))) {
+          throw errors.forbidden({ fileId: requestedFileId, operation: 'replace' });
+        }
         const account: QuotaAccount = existing
           ? { principalId: existing.ownerId, tenantId: existing.tenantId ?? undefined }
           : { principalId: ctx.principalId || 'anonymous', tenantId: ctx.tenantId };
         const quotaResult = await quota.checkQuota({ ...account, requestedBytes: input.size });
 
         if (!quotaResult.allowed) {
-          if (existing && requestedFileId && !(await canWriteFileNow(requestedFileId, ctx))) {
-            throw errors.forbidden({ fileId: requestedFileId, operation: 'replace' });
-          }
           throw errors.quotaExceeded(quotaResult.current, quotaResult.limit, input.size);
         }
 
@@ -1899,7 +1902,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         // them; the move to 'publishing' records it before anything uses it.
         const versionId = session.completionVersionId || generateFileFnId('ver');
 
-        const findFile = () => db.findOne<{ fileId: string; currentVersionId: string }>({
+        const findFile = () => db.findOne<{ fileId: string; currentVersionId: string; ownerId: string; tenantId?: string | null }>({
           model: 'files',
           where: [{ field: 'fileId', operator: 'eq', value: fileId }],
           namespace,
@@ -2064,11 +2067,26 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
           unusedKeys: [...unused],
         };
         const publishingClaim = revisedClaim(claim);
-        const decision = await runSerialized(fileKey, async (): Promise<'publishing' | 'refused' | 'lost'> => {
+        let quotaDenied: { current: number; limit: number } | undefined;
+        const decision = await runSerialized(fileKey, async (): Promise<'publishing' | 'refused' | 'lost' | 'quota'> => {
           const current = await findFile();
           if (current && !isOwnRow(current) && !(await canWriteFileNow(fileId, ctx))) {
             // Fenced under the key; its storage deletes run after release.
             return (await fenceRefusedSession(uploadSessionId, claim)) ? 'refused' : 'lost';
+          }
+          // The version is charged to the owner of the file it joins. Checked
+          // again here, under the file's key, so an owner that appeared (or
+          // filled up) since admission is held to their own quota.
+          if (quota && current && !isOwnRow(current)) {
+            const quotaResult = await quota.checkQuota({
+              principalId: current.ownerId,
+              tenantId: current.tenantId ?? undefined,
+              requestedBytes: session.size,
+            });
+            if (!quotaResult.allowed) {
+              quotaDenied = { current: quotaResult.current, limit: quotaResult.limit };
+              return 'quota';
+            }
           }
           publication.baseVersionId = current?.currentVersionId ?? null;
           const moved = await updateSessionIf(
@@ -2086,6 +2104,11 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
           // Taken over and published by another call: help finish it.
           if (now?.status === 'publishing') return publishSession(now, ctx);
           return lostClaimResult(uploadSessionId, now);
+        }
+        if (decision === 'quota') {
+          // Nothing was published; the claim is released (with the stitched
+          // object discarded) by the caller's error path, so the client can retry.
+          throw errors.quotaExceeded(quotaDenied!.current, quotaDenied!.limit, session.size);
         }
         if (decision === 'refused') {
           // The session's own object is deleted (or kept for the sweep) here;

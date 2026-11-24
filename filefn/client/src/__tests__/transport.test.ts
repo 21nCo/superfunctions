@@ -242,6 +242,17 @@ describe('client transport options', () => {
     expect(proxyPut.redirect).toBe('error');
   });
 
+  it('sends the token only to the exact part endpoint the upload names', async () => {
+    const server = createFakeServer((n) => `/upload/sess_1/parts/${n}`);
+    const http = createHttpClient({ baseUrl: BASE, fetch: server.fetch });
+    await http.uploadPartToSignedUrl('/upload/sess_1/parts/1', {}, new Blob(['abc']), 'upls_1', undefined, { uploadSessionId: 'sess_1', partNumber: 1 });
+    await http
+      .uploadPartToSignedUrl('/upload/sess_1/parts/2', {}, new Blob(['abc']), 'upls_1', undefined, { uploadSessionId: 'sess_1', partNumber: 1 })
+      .catch(() => undefined);
+    expect(server.calls[0]!.headers.get('x-upload-session-token')).toBe('upls_1');
+    expect(server.calls[1]!.headers.get('x-upload-session-token')).toBeNull();
+  });
+
   it('keeps the session token off a presigned URL served under the FileFn origin and prefix', async () => {
     const server = createFakeServer(() => `${BASE}/bucket/object?X-Amz-Signature=test-signature`);
     const http = createHttpClient({ baseUrl: BASE, fetch: server.fetch });
