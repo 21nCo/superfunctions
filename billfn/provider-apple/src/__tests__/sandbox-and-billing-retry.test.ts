@@ -153,6 +153,26 @@ describe('sandbox purchases in a production deployment', () => {
     });
   });
 
+  it('expires a stored subscription with no recorded environment that the sandbox knows, without using the sandbox state', async () => {
+    const fetchMock = vi.fn(async (url: RequestInfo | URL) =>
+      new URL(String(url)).hostname === 'api.storekit-sandbox.itunes.apple.com' ? statusAnswer(1) : notFound()
+    ) as unknown as typeof fetch;
+
+    const state = await provider(fetchMock).fetchSubscription!(withMetadata(undefined) as never);
+
+    expect(state).toMatchObject({ subscriptionStatus: 'expired', autoRenew: false });
+  });
+
+  it('keeps the sync an error when the sandbox probe fails for another reason', async () => {
+    const fetchMock = vi.fn(async (url: RequestInfo | URL) =>
+      new URL(String(url)).hostname === 'api.storekit-sandbox.itunes.apple.com' ? new Response('', { status: 500 }) : notFound()
+    ) as unknown as typeof fetch;
+
+    await expect(provider(fetchMock).fetchSubscription!(withMetadata(undefined) as never)).rejects.toMatchObject({
+      code: 'BILLFN_PROVIDER_ERROR'
+    });
+  });
+
   it('keeps a not-found sync an error when the sandbox is allowed', async () => {
     const fetchMock = vi.fn(async () => notFound()) as unknown as typeof fetch;
 
