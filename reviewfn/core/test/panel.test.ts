@@ -752,7 +752,7 @@ describe("panel policy and slot identity", () => {
     const { modelVerified: _dropped, ...claimed } = distinct.slotRuns[1].identity;
     distinct.slotRuns[1] = { ...distinct.slotRuns[1], terminal: "completed", identity: claimed, limitations: ["sandbox_tree_verified_only"] };
     expect(await messages(distinct)).toEqual([expect.stringMatching(/^\/slotRuns\/1\/identity\/modelVerified .*reports no model, so its run must record modelVerified false/)]);
-    const unlimited = structuredClone(report); delete unlimited.slotRuns[0].limitations;
+    const unlimited = structuredClone(report); unlimited.slotRuns[0].limitations = ["model_unverified"];
     expect(await messages(unlimited)).toEqual(expect.arrayContaining([expect.stringMatching(/^\/slotRuns\/0\/limitations .*must record sandbox_tree_verified_only/)]));
     // A profile with a model reporter verifies the model, so its run never claims an unverified one.
     const reporting: PanelPolicy = { ...genericPolicy, slots: [cli(panelPolicy.slots[0], "reported", "model-a"), cli(panelPolicy.slots[1], "quiet", "model-b"), panelPolicy.slots[2], panelPolicy.slots[3]] };
@@ -954,13 +954,27 @@ describe("JSON Schema and TypeScript validator agreement", () => {
     ["slotRun", panel.slotRuns[0]], ["slotRun", panel.slotRuns[2]], ["panelFinding", panel.findings[1]], ["panelFinding", panel.findings[2]], ["lensOutput", lensOutput],
     ["panelPolicy", { ...panelPolicy, slots: [...panelPolicy.slots, { ...panelPolicy.slots[0], id: "generic", harness: { adapter: "cli", version: "1.0.0", executable: "agent", profile: "agent" } }], profiles: { agent: { argv: ["--model", "{model}"], promptVia: "file", outputVia: "file", envAllowlist: ["PATH"], modelReport: "stderr-regex:model (\\S+)", capabilities: { structuredOutput: true, sandbox: "enforced-read-only" }, versionArgv: ["--version"] } } }],
     ["slotIdentity", { ...panel.slotRuns[0].identity, harnessExecutable: "agent", harnessProfile: "agent", modelVerified: false }],
-    ["slotRun", { ...panel.slotRuns[0], limitations: ["model_unverified", "sandbox_tree_verified_only"] }],
+    ["slotRun", { ...panel.slotRuns[0], identity: { ...panel.slotRuns[0].identity, modelVerified: false }, limitations: ["model_unverified", "sandbox_tree_verified_only"] }],
   ];
 
   it("agrees on every negative fixture", () => {
     for (const [, change] of negatives) {
       const value = mutate(panelReport(), change);
       expect(ajvValid("panelReport", value)).toBe(panelStructureIssues("panelReport", value).length === 0);
+    }
+  });
+
+  it("rejects, in both, a harness pairing other than cli with a profile and an executable, and model_unverified apart from an unverified model", () => {
+    const report = (change: (value: PanelReport) => void) => { const value = panelReport(); change(value); return value; };
+    const cases = {
+      "/slots/0/harness": report(value => { value.slots[0].harness = { ...value.slots[0].harness, executable: "agent", profile: "agent" }; }),
+      "/slots/1/harness": report(value => { value.slots[1].harness = { adapter: "cli", version: "1.0.0", profile: "agent" }; }),
+      "/slotRuns/0/limitations": report(value => { value.slotRuns[0].identity.modelVerified = false; }),
+      "/slotRuns/1/limitations": report(value => { value.slotRuns[1].limitations = ["model_unverified"]; }),
+    };
+    for (const [path, value] of Object.entries(cases)) {
+      expect(ajvValid("panelReport", value)).toBe(false);
+      expect(panelStructureIssues("panelReport", value).map(issue => issue.path)).toEqual([path]);
     }
   });
 

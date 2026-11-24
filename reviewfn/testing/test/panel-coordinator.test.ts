@@ -272,6 +272,32 @@ describe("PanelCoordinator isolation and voiding", () => {
     await expectValid(result, setup, panelPolicy);
   });
 
+  it("runs the panel policy it was given, whatever the caller changes during the run", async () => {
+    const unreported = { argv: ["--model", "{model}"], promptVia: "stdin" as const, outputVia: "stdout-last-json" as const, envAllowlist: [], modelReport: "none", capabilities: { structuredOutput: false, sandbox: "tree-verified-only" as const } };
+    const cli = new FakePanelHarness({ id: "cli" });
+    const panelPolicy = panel([slot("cli-s", 1, undefined, { harness: { adapter: "cli", version: "1", executable: "agent", profile: "unreported" } })], { profiles: { unreported } });
+    const original = structuredClone(panelPolicy);
+    const preflight = cli.preflight.bind(cli);
+    cli.preflight = async config => { panelPolicy.profiles!.unreported.argv = ["--changed"]; panelPolicy.slots[0].inference.model = "model-changed"; return preflight(config); };
+    const setup = coordinator(cli, { harnessContractVersions: { cli: "1" } });
+    const result = await setup.coordinator.run(request(panelPolicy));
+    expect(cli.input("cli-s").configuration.harness).toEqual(cli.preflights[0].harness);
+    expect(cli.input("cli-s").configuration).toMatchObject({ harness: { profileDefinition: { argv: ["--model", "{model}"] } }, inference: { model: "model-cli-s" } });
+    expect(result.report.slots).toEqual(original.slots);
+    await expectValid(result, setup, original);
+  });
+
+  it("records the configured model when the harness's raw comparison matched it, and voids a raw mismatch", async () => {
+    const harness = new FakePanelHarness({ behaviors: { test: () => ({ ...clean(), observed: { model: "model-test", modelMismatch: false } }), other: () => ({ ...clean(), observed: { model: "model-other", modelMismatch: true } }) } });
+    const inference = (model: string) => ({ provider: "fake", model, auth: "none", credentialEnv: "PANEL_TEST_KEY" });
+    const panelPolicy = panel([slot("test", 1, undefined, { inference: inference("model-test") }), slot("other", 1, undefined, { inference: inference("model-other") })]);
+    // The credential reads like part of the model, so the redacted reported model no longer matches the configured one.
+    const setup = coordinator(harness, { environment: { PANEL_TEST_KEY: "test" } });
+    const result = await setup.coordinator.run(request(panelPolicy));
+    expect(result.report.slotRuns.map(run => [run.slotId, run.terminal, run.identity.model])).toEqual([["test", "completed", "model-test"], ["other", "void", expect.any(String)]]);
+    await expectValid(result, setup, panelPolicy);
+  });
+
   it("never counts a run whose harness reports another version than the slot pins, nor one that used a forbidden tool", async () => {
     const harness = new FakePanelHarness({ behaviors: { drift: () => ({ ...clean(), observed: { harnessVersion: "2" } }), tools: () => ({ ...clean(), observed: { disallowedTools: ["shell"] } }) } });
     const panelPolicy = panel([slot("drift", 1), slot("tools", 1)]);

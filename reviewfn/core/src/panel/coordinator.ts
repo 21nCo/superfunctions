@@ -43,7 +43,7 @@ export interface SlotObservation {
   model?: string;
   /**
    * The harness compared the raw reported model with the configured one and they differ. It voids the run even when
-   * `model`, as redacted and cut to length, reads the same as the configured model.
+   * `model`, as redacted and cut to length, reads the same as the configured model. `false` (they match) records the configured model.
    */
   modelMismatch?: boolean;
   /** Provider account identity; only its fingerprint is recorded. */
@@ -330,10 +330,12 @@ export class PanelCoordinator {
   }
 
   public async preflight(request: PanelRunRequest): Promise<PreflightDiagnostic[]> {
-    return (await this.preflightRun(request)).diagnostics;
+    return (await this.preflightRun({ ...request, panelPolicy: structuredClone(request.panelPolicy) })).diagnostics;
   }
 
   public async run(request: PanelRunRequest): Promise<PanelRunResult> {
+    // The run reads one copy of the panel policy, so a later change to the caller's object never reaches it.
+    request = { ...request, panelPolicy: structuredClone(request.panelPolicy) };
     if (request.signal?.aborted) throw new ReviewFnError("REVIEWFN_CANCELED", "Panel review canceled before preflight.");
     const { diagnostics, resolved } = await this.preflightRun(request);
     const errors = diagnostics.filter(diagnostic => diagnostic.level === "error");
@@ -622,7 +624,7 @@ export class PanelCoordinator {
       const identity: SlotIdentity = {
         ...baseIdentity,
         ...(nonblank(observed.harnessVersion) ? { harnessVersion: redactText(observed.harnessVersion, context.secrets) } : {}),
-        ...(baseIdentity.modelVerified !== false && nonblank(observed.model) ? { model: redactText(observed.model, context.secrets) } : {}),
+        ...(baseIdentity.modelVerified !== false && nonblank(observed.model) ? { model: slot.inference.model !== "configured" && observed.modelMismatch === false ? slot.inference.model : redactText(observed.model, context.secrets) } : {}),
         // The harness's raw comparison is kept with the identity: redaction or truncation can make the recorded model read
         // as the configured one, and the mismatch must still void the run and survive in the report.
         ...(baseIdentity.modelVerified !== false && slot.inference.model !== "configured" && observed.modelMismatch === true ? { modelMismatch: true as const } : {}),

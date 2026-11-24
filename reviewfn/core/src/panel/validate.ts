@@ -157,7 +157,10 @@ const panelSlot = object({
   harness: object({ adapter: nonblank, version: nonblank, executable: nonblank, profile: profileName }, ["adapter", "version"]),
   inference: object({ provider: nonblank, model: nonblank, auth: nonblank, credentialEnv: nonblank }, ["provider", "model", "auth"]),
   lens: nonblank, budget: object({ timeoutMs: positive, maxOutputBytes: positive }, ["timeoutMs", "maxOutputBytes"]),
-}, defs.panelSlot.required);
+}, defs.panelSlot.required, (value, path, issues) => {
+  // Mirrors the harness's if/then/else: only the cli harness names a profile and an executable, and always both.
+  if (isRecord(value.harness) && value.harness.adapter !== undefined) issues.push(...slotHarnessIssues(value as unknown as PanelSlot, pointer(path, "harness")));
+});
 const panelPolicy = object({
   version: oneOf([1]), slots: array(panelSlot, { min: 1 }), quorum: object({ stage1: count, stage2: count }, ["stage1", "stage2"]),
   requirementsSlot: nullable(slotId), maxConcurrentSlots: numeric(true, 1, 8), incremental: oneOf(defs.panelPolicy.properties.incremental.enum),
@@ -174,6 +177,11 @@ const slotRun = object({
   usage: object({ inputTokens: count, outputTokens: count, costUsd: numeric(false, 0) }, []),
   limitations: array(oneOf(defs.slotRun.properties.limitations.items.enum), { unique: true }),
 }, defs.slotRun.required, (value, path, issues) => {
+  // Mirrors the allOf if/then/else: model_unverified is recorded exactly when the identity's model is unverified.
+  const unverified = isRecord(value.identity) && value.identity.modelVerified === false;
+  const recorded = Array.isArray(value.limitations) && value.limitations.includes("model_unverified");
+  if (unverified && !recorded && (value.limitations === undefined || Array.isArray(value.limitations))) add(issues, "REVIEWFN_PANEL_SCHEMA", pointer(path, "limitations"), "A run whose model is unverified must record the model_unverified limitation.");
+  if (!unverified && recorded) add(issues, "REVIEWFN_PANEL_SCHEMA", pointer(path, "limitations"), "model_unverified is recorded only for a run whose model is unverified (modelVerified false).");
   // Mirrors the schema's if/then/else: an absent terminal satisfies the `if`, as in JSON Schema.
   if (!Array.isArray(value.voidReasons)) return;
   const isVoid = value.terminal === undefined || value.terminal === "void";
@@ -253,10 +261,7 @@ const PROFILE_HARNESS_ADAPTER = "cli";
 
 const PLACEHOLDER_TOKEN = /\{[A-Za-z][A-Za-z0-9]*\}/u;
 
-/**
- * Number of capture groups of a regular expression source, or undefined when it does not compile on its own. The groups
- * are counted by one linear scan of the source, never by matching: a policy regex is untrusted and may backtrack.
- */
+/** Number of capture groups of a regular expression source, or undefined when it does not compile on its own; counted by a linear scan, never by matching an untrusted regex. */
 function captureGroups(source: string): number | undefined {
   try { new RegExp(source, "u"); } catch { return undefined; }
   let groups = 0;
@@ -321,7 +326,7 @@ export function slotHarnessIssues(slot: PanelSlot, path: string): PanelValidatio
   return issues as PanelValidationIssue<PanelValidationCode>[];
 }
 
-/** Structure of a panel policy, unique slot IDs, a `requirementsSlot` naming a stage-1 or stage-2 slot, valid harness profiles, and slot profiles the policy declares, each with an executable; every `cli` slot names both. */
+/** Structure of a panel policy, unique slot IDs, a `requirementsSlot` naming a stage-1 or stage-2 slot, valid harness profiles, and slot profiles the policy declares, each with an executable. */
 export function validatePanelPolicy(value: unknown): PanelValidationResult<PanelValidationCode> {
   const issues = structural(panelPolicy, value);
   if (issues.length) return result(issues as PanelValidationIssue<PanelValidationCode>[]);
@@ -334,7 +339,6 @@ export function validatePanelPolicy(value: unknown): PanelValidationResult<Panel
   policy.slots.forEach((slot, index) => {
     const { profile } = slot.harness;
     if (profile !== undefined && (!Object.hasOwn(profiles, profile) || profiles[profile] === undefined)) add(issues, "REVIEWFN_PANEL_SCHEMA", `/slots/${index}/harness/profile`, `Slot ${slot.id} names profile ${profile}, which the policy's profiles do not declare.`);
-    issues.push(...slotHarnessIssues(slot, `/slots/${index}/harness`));
   });
   return result(issues as PanelValidationIssue<PanelValidationCode>[]);
 }
@@ -480,9 +484,7 @@ function slotRunIssues(report: PanelReport, slots: Map<string, PanelSlot>, issue
     if (identity.harnessAdapter !== slot.harness.adapter || identity.provider !== slot.inference.provider || identity.auth !== slot.inference.auth) add(issues, "REVIEWFN_PANEL_SCHEMA", `${path}/identity`, `Run identity does not match slot ${slot.id}'s harness adapter, provider or auth mode.`);
     if (identity.harnessExecutable !== slot.harness.executable || identity.harnessProfile !== slot.harness.profile) add(issues, "REVIEWFN_PANEL_SCHEMA", `${path}/identity`, `Run identity does not match slot ${slot.id}'s harness executable or profile.`);
     // An unverified model is always recorded as a limitation, and the model it stands for is the configured one.
-    if (identity.modelVerified === false && !(run.limitations ?? []).includes("model_unverified")) add(issues, "REVIEWFN_PANEL_SCHEMA", `${path}/limitations`, "A run whose model is unverified must record the model_unverified limitation.");
     if (identity.modelVerified === false && identity.model !== slot.inference.model) add(issues, "REVIEWFN_PANEL_SCHEMA", `${path}/identity/model`, "A run whose model is unverified records the configured model.");
-    if (identity.modelVerified !== false && (run.limitations ?? []).includes("model_unverified")) add(issues, "REVIEWFN_PANEL_SCHEMA", `${path}/limitations`, "model_unverified is recorded only for a run whose model is unverified (modelVerified false).");
     if (identity.modelVerified === false && slot.harness.profile === undefined) add(issues, "REVIEWFN_PANEL_SCHEMA", `${path}/identity/modelVerified`, `Slot ${slot.id} runs no harness profile, so its model is never recorded as unverified.`);
     // With the bound panel policy, the slot's profile fixes what its runs record, so a report cannot drop a limitation, or
     // claim a verified model and count as a distinct identity, where the profile reports no model.
@@ -652,7 +654,6 @@ export async function validatePanelReport(value: unknown, policy: ReviewPolicy, 
   report.slots.forEach((slot, index) => {
     if (slots.has(slot.id)) add(issues, "REVIEWFN_PANEL_SLOT_DUPLICATE", `/slots/${index}/id`, `Slot ${slot.id} is declared more than once.`);
     else slots.set(slot.id, slot);
-    issues.push(...slotHarnessIssues(slot, `/slots/${index}/harness`));
   });
   const requirements: ReviewReport | undefined = report.requirementsReport;
   if (requirements && report.contextManifestDigest !== undefined && report.contextManifestDigest !== requirements.contextManifestDigest) add(issues, "REVIEWFN_REPORT_INVALID", "/requirementsReport/contextManifestDigest", "The requirements report used a different frozen context than the panel.");

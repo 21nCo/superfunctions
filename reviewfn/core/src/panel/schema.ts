@@ -81,7 +81,9 @@ export const panelSchemaDefs = {
     type: "object", additionalProperties: false, required: ["id", "stage", "harness", "inference", "lens", "budget"],
     properties: {
       id: slotId, stage: { enum: [1, 2, "verifier"] },
-      harness: { type: "object", additionalProperties: false, required: ["adapter", "version"], properties: { adapter: nonblank, version: nonblank, executable: nonblank, profile: profileName } },
+      harness: { type: "object", additionalProperties: false, required: ["adapter", "version"], properties: { adapter: nonblank, version: nonblank, executable: nonblank, profile: profileName },
+        // Only the cli harness is profile-driven, and it names both a profile and an executable; every other harness names neither.
+        if: { required: ["adapter"], properties: { adapter: { const: "cli" } } }, then: { required: ["profile", "executable"], properties: { executable: nonblank, profile: profileName } }, else: { properties: { executable: false, profile: false } } },
       inference: { type: "object", additionalProperties: false, required: ["provider", "model", "auth"], properties: { provider: nonblank, model: nonblank, auth: nonblank, credentialEnv: nonblank } },
       lens: nonblank,
       budget: { type: "object", additionalProperties: false, required: ["timeoutMs", "maxOutputBytes"], properties: { timeoutMs: positive, maxOutputBytes: positive } },
@@ -127,6 +129,12 @@ export const panelSchemaDefs = {
     if: { properties: { terminal: { const: "void" } } },
     then: { properties: { voidReasons: { type: "array", minItems: 1 } } },
     else: { properties: { voidReasons: { type: "array", maxItems: 0 } } },
+    // A run whose model is unverified records model_unverified; no other run may.
+    allOf: [{
+      if: { required: ["identity"], properties: { identity: { type: "object", required: ["modelVerified"], properties: { modelVerified: { const: false } } } } },
+      then: { required: ["limitations"], properties: { limitations: { type: "array", contains: { const: "model_unverified" } } } },
+      else: { properties: { limitations: { type: "array", not: { contains: { const: "model_unverified" } } } } },
+    }],
   },
   panelFindingOrigin: { type: "object", additionalProperties: false, required: ["slotId", "lens"], properties: { slotId, lens: nonblank } },
   panelFindingVerification: {
