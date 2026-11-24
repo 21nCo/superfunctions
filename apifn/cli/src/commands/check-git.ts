@@ -27,8 +27,7 @@
  * - the repository is the git work tree of the directory the check runs in; a spec whose file (its
  *   symlinks followed) lies outside that work tree, or inside another work tree below it, is an
  *   error, so a symlink can never make another repository's commit the baseline; it is discovered
- *   once (its three paths from one rev-parse, the `.git` entries discovery reads bound before it
- *   runs and checked again before any ref is resolved and after every read), and every later git
+ *   once (one rev-parse; the `.git` entries it reads are bound first and re-checked), and every later git
  *   call names its git, common and work tree directories (GIT_DIR, GIT_COMMON_DIR, GIT_WORK_TREE);
  * - every git failure is an error (exit 2), never a new contract.
  */
@@ -427,9 +426,7 @@ export function readSpecAtRef(ref: string, specPath: string, destination: string
   const repository = bound.map((dir) => statSync(dir, { bigint: true }));
   const done = (baseline: GitBaseline): GitBaseline => {
     const now = bound.map((dir) => statSync(dir, { bigint: true, throwIfNoEntry: false }));
-    if (discoveryEntries(cwd) !== entries || now.some((id, i) => id?.dev !== repository[i].dev || id.ino !== repository[i].ino)) {
-      throw new CheckUsageError(`The git repository at ${here.gitDir} was replaced while apifn check read it.`);
-    }
+    if (discoveryEntries(cwd) !== entries || now.some((id, i) => id?.dev !== repository[i].dev || id.ino !== repository[i].ino)) throw new CheckUsageError(`The git repository at ${here.gitDir} was replaced while apifn check read it.`);
     return baseline;
   };
   // The identities are taken before any ref is resolved: a repository replaced during discovery stops here.

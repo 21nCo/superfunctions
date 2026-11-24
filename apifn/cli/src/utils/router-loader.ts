@@ -44,8 +44,7 @@ export async function loadRouterModule(
     // esmResolve applied JITI_ALIAS once: `file` itself is evaluated (no second alias lookup), and
     // its dependencies resolve with the caller's alias table unchanged.
     const evaluate = async () => jiti.evalModule(readFileSync(file, "utf8"), { id: file, filename: file, async: true });
-    // With tryNative, jiti.import loaded the file natively first (no alias applies to a file URL), with its
-    // default/CommonJS interop, and fell back to jiti.
+    // With tryNative, jiti.import loaded the file natively first (no alias applies to a file URL) with its interop, then fell back.
     const native = async () => interopDefault(await import(pathToFileURL(file).href), jiti.options.interopDefault !== false);
     load = jiti.options.tryNative ? () => native().catch(evaluate) : evaluate;
   } catch {

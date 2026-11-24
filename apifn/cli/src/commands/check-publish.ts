@@ -39,10 +39,8 @@
  *   while they are still this run's, in their bound directories: the temp the inode its kept
  *   descriptor names, the backup the inode its kept descriptor names. Every name the run may remove
  *   (temp, backup, reservation, created directory) has its inode held open until publish ends, so a
- *   freed inode number cannot pass to another writer's file. Only a file the run can read whole (read
- *   permission, at most MAX_SPEC_BYTES) is replaced: its backup is verified by those bytes. Right before
- *   a rollback restores a backup, or a cleanup removes it, the backup's held inode, its bytes read back
- *   through that descriptor and then its name are checked again.
+ *   freed inode number cannot pass to another writer's file. Only a file the run can read whole is replaced;
+ *   right before a backup is restored or removed, its held inode, its bytes and then its name are re-checked.
  * - Cancellation is an AbortSignal, never a process signal: this module installs, inspects,
  *   removes and raises no process signal listener, so an embedding host's own handling is left
  *   alone. An abort before the commit rolls every output back (checked after each step and after
@@ -56,8 +54,7 @@
  * Residual: POSIX has no compare-and-swap rename, so a replacement made between the last check
  * and the rename (a window of one system call) is not detected. Node has no mkdirat either: a
  * directory swapped in between the run's mkdir and its open of that name (one system call) is held
- * as the run's; rollback removes it only while it is empty. Windows holds no directory handle, so a
- * directory created there is never removed by rollback: it is named. A run that cannot clean up (killed
+ * as the run's; rollback removes it only while it is empty (on Windows, which holds no handle, it is named). A run that cannot clean up (killed
  * by SIGKILL, a crash) can leave an empty reservation at an output's own name or a staged temp
  * file beside it; output bytes never become reachable through a protected name, because every
  * name that holds them was checked while it was still empty.
@@ -361,8 +358,7 @@ interface Staged {
   bytes: Buffer;
   /** The staged file's identity (after the rename, its change time then), read through `fd`. */
   installed?: FileState;
-  /** The directories this run created for the destination, deepest first, with their identities
-   * (`held`: its handle is open until publish ends, so rollback may remove it). */
+  /** The directories this run created for the destination, deepest first, with their identities and whether a handle holds them. */
   created: Array<Anchor & { held: boolean }>;
   backup?: string;
   backupState?: FileState;
@@ -416,15 +412,8 @@ function removeTemp(staged: Staged): string | null {
   return unlinkReported(temp);
 }
 
-/**
- * True while the backup is still the file this run made and holds the previous bytes, checked right
- * before it is restored or removed, in this order: its held inode is the one the run made, with the
- * size and modification time it recorded (a link's change time also moves when another writer
- * renames over the destination that shares it); its bytes (a link's digest, a copy's bytes) read
- * through that descriptor match; the inode's full state is unchanged across that read; and last its
- * name leads to that inode in that very state, in the bound directories, so nothing changed between
- * the verified read and the name check.
- */
+/** Right before a restore or removal: the held inode's content identity (a link's change time moves when
+ * the shared destination is renamed over), its bytes, its state unchanged across that read, then its name in that state. */
 function backupVerified(staged: Staged): boolean {
   const made = staged.backupState;
   const fd = staged.backupFd;
@@ -432,7 +421,7 @@ function backupVerified(staged: Staged): boolean {
   const was = stateOf(fstatSync(fd, BIG));
   if (!sameContent(was, made)) return false;
   const intact = staged.linked ? typeof staged.digest === "string" && digestOf(fd) === staged.digest : holdsBytes(fd, staged.previous as Buffer);
-  const read = stateOf(fstatSync(fd, BIG)); // an edit during the read, even one that restores the mtime, changes the change time
+  const read = stateOf(fstatSync(fd, BIG)); // an edit, even one restoring the mtime, changes the change time
   return intact && sameState(read, was) && sameState(currentState(staged.backup), read);
 }
 
@@ -464,8 +453,7 @@ function removeBackup(staged: Staged): string | null {
 
 /**
  * Removes the directories this run created for a destination, deepest first, while empty and
- * still the directory this run created (another process's replacement is left alone). One the run
- * holds no handle on (Windows) cannot be told from another writer's: it is left and named.
+ * still the directory this run created (another process's replacement is left alone); one without a held handle is named.
  */
 function removeCreatedDirs(staged: Staged): string | null {
   for (const created of staged.created) {
@@ -718,9 +706,7 @@ function openHeld(staged: Staged): number {
 
 /** The refusal to replace a file the run cannot read whole, so it could neither verify nor restore a backup. */
 function unverifiable(staged: Staged): CheckUsageError {
-  return new CheckUsageError(
-    `${staged.output.option} would replace ${staged.destination}, which apifn check cannot read whole (no read permission, or more than ${MAX_SPEC_BYTES} bytes), so it could not keep a backup it can verify and restore; that file was left as it is. Make it readable or remove it, then run apifn check again.`
-  );
+  return new CheckUsageError(`${staged.output.option} would replace ${staged.destination}, which apifn check cannot read whole (no read permission, or more than ${MAX_SPEC_BYTES} bytes), so it could not keep a backup it can verify and restore; that file was left as it is. Make it readable or remove it, then run apifn check again.`);
 }
 
 /** What the destination must be right before the rename: the backup's inode (the link changed its
@@ -858,12 +844,9 @@ export async function publish(
   } finally {
     // A close failure (each temp was fsynced) never changes the verdict: after the commit it is a notice.
     for (const staged of all) for (const fd of [staged.fd, staged.backupFd, ...staged.held]) if (fd !== undefined) try { closeSync(fd); } catch (error) { notices.push(`Failed to close a descriptor apifn check held for ${staged.destination}: ${errorMessage(error)}`); }
-    // The caller's callback runs after the verdict is settled: a throw is a notice and changes nothing.
-    try {
+    try { // after the verdict is settled, a throwing callback is a notice
       if (all.length > 0) onPublishing?.(false);
-    } catch (error) {
-      notices.push(`The onPublishing callback failed after apifn check finished writing: ${errorMessage(error)}`);
-    }
+    } catch (error) { notices.push(`The onPublishing callback failed after apifn check finished writing: ${errorMessage(error)}`); }
   }
 }
 
