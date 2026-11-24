@@ -1,5 +1,7 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { InMemoryTaskStore } from "@modelcontextprotocol/sdk/experimental/tasks/stores/in-memory.js";
+import { CreateTaskResultSchema, ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
 import Ajv from "ajv";
 import Ajv2020 from "ajv/dist/2020.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -351,20 +353,61 @@ describe("McpFn client profiles", () => {
   it.each([
     ["an identity no profile matches", { subject: "generic-client" }],
     ["no verified identity", {}],
-  ])("rejects server-owned arguments from a client with %s", async (_label, context) => {
+  ])("hides and refuses tools with server-owned arguments for a client with %s", async (_label, context) => {
     const { registry, handler } = lookupRegistry();
     const { client } = await connect(context, tenantProfile(), registry);
-    expect((await client.listTools()).tools[0]?.inputSchema.required).toEqual([
-      "query",
-      "tenantId",
-    ]);
-    const result = await client.callTool({
+    expect((await client.listTools()).tools).toEqual([]);
+    await expect(client.callTool({
       name: "lookup",
       arguments: { query: "safe", tenantId: "model-value" },
-    });
-    expect(result.isError).toBe(true);
-    expect(JSON.stringify(result.content)).toContain("MCPFN_FORGED_SERVER_ARGUMENT");
+    })).rejects.toThrow(/Tool lookup not found/);
     expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("rejects server-owned arguments of unmatched calls passed straight to enrichment", async () => {
+    await expect(enrichMcpFnClientProfileCall({
+      resolved: { context: undefined, extra: {} as McpFnRequestExtra, reportedClient: {} },
+      tool: { name: "lookup", description: "Lookup", inputSchema: { type: "object" } },
+      arguments: { query: "safe", tenantId: "model-value" },
+      clientProfiles: { profiles: [tenantProfile() as McpFnClientProfile<undefined>] },
+    })).rejects.toMatchObject({ code: "MCPFN_FORGED_SERVER_ARGUMENT" });
+  });
+
+  it("answers a forged server-owned argument in a task-augmented call with InvalidParams", async () => {
+    const createTask = vi.fn();
+    const registry = new McpFnRegistry<RequestContext>().register({
+      name: "lookup",
+      description: "Look up a value in the authenticated tenant.",
+      inputSchema: { type: "object", properties: { query: { type: "string" }, tenantId: { type: "string" } }, required: ["query", "tenantId"], additionalProperties: false },
+      execution: { taskSupport: "optional" },
+      handler: async (args) => structuredResult(args),
+      taskHandler: { createTask, getTask: vi.fn(), getTaskResult: vi.fn() } as never,
+    });
+    const server = createMcpFnServer({
+      info: { name: "profile-server", version: "1.0.0" },
+      registry,
+      context: () => ({ subject: "authenticated-client", tenantId: "trusted-tenant" }),
+      taskStore: new InMemoryTaskStore(),
+      clientProfiles: {
+        profiles: [tenantProfile()],
+        resolveVerifiedIdentity: ({ context: trusted }) => trusted.subject ? { subject: trusted.subject } : undefined,
+      },
+    });
+    const client = new Client({ name: "reported-client", version: "9.9.9" }, { capabilities: {} });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    closeables.push(client, server);
+    const error = await client.request(
+      { method: "tools/call", params: { name: "lookup", arguments: { query: "safe", tenantId: "model-value" }, task: { ttl: 60_000 } } },
+      CreateTaskResultSchema,
+    ).then(() => undefined, (failure: unknown) => failure);
+    expect(error).toBeInstanceOf(McpError);
+    expect(error).toMatchObject({
+      code: ErrorCode.InvalidParams,
+      data: { code: "MCPFN_FORGED_SERVER_ARGUMENT", rejectedProperty: "tenantId", lifecycleStage: "argument-enrichment" },
+    });
+    expect(createTask).not.toHaveBeenCalled();
   });
 
   it("keeps generic calls canonical when unmatchedServerOwnedArguments is allow", async () => {

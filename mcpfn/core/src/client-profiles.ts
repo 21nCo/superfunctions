@@ -355,11 +355,30 @@ export async function buildMcpFnEffectiveCatalog<TContext>(input: {
   /** All registered resources, including schemas of hidden tools and prompts. */
   schemaResources?: readonly object[];
   resolved: McpFnResolvedClientProfile<TContext>;
+  /**
+   * The server's profile options. With them, a client that matches no profile
+   * does not see tools that a profile gives server-owned arguments unless
+   * `unmatchedServerOwnedArguments` is `"allow"`: such a client could never
+   * call them.
+   */
+  clientProfiles?: Pick<
+    McpFnClientProfilesOptions<TContext>,
+    "profiles" | "unmatchedServerOwnedArguments"
+  >;
 }): Promise<{ tools: McpFnListedTool[]; changes: McpFnCatalogChange[] }> {
   const canonicalTools = structuredClone(input.canonicalTools);
   const knownTools = structuredClone(input.knownTools ?? input.canonicalTools);
   const profile = input.resolved.profile;
-  if (!profile) return { tools: canonicalTools, changes: [] };
+  if (!profile) {
+    const options = input.clientProfiles;
+    if (!options || options.unmatchedServerOwnedArguments === "allow") {
+      return { tools: canonicalTools, changes: [] };
+    }
+    return {
+      tools: canonicalTools.filter((tool) => unmatchedServerOwned(options.profiles, tool.name).length === 0),
+      changes: [],
+    };
+  }
   assertTrustedProfileIdentity(input.resolved);
   const projected = profile.projectCatalog
     ? await profile.projectCatalog({
@@ -406,6 +425,11 @@ export async function buildMcpFnEffectiveCatalog<TContext>(input: {
     }
   }
   return { tools, changes };
+}
+
+/** Every argument any profile declares server-owned for this tool. */
+function unmatchedServerOwned<T>(profiles: readonly McpFnClientProfile<T>[], name: string): string[] {
+  return [...new Set(profiles.flatMap((profile) => ownedArguments(profile, name)))];
 }
 
 function ownedArguments<T>(profile: McpFnClientProfile<T>, name: string): readonly string[] {
@@ -515,20 +539,20 @@ export async function enrichMcpFnClientProfileCall<TContext>(input: {
   const profile = input.resolved.profile;
   if (!profile) {
     const value = input.arguments ?? {};
+    // Defence in depth: the effective catalog already hides these tools from
+    // unmatched clients, so a direct caller of this function is the only way here.
     if (
       input.clientProfiles &&
       input.clientProfiles.unmatchedServerOwnedArguments !== "allow" &&
       value && typeof value === "object" && !Array.isArray(value)
     ) {
-      for (const candidate of input.clientProfiles.profiles) {
-        for (const name of ownedArguments(candidate, input.tool.name)) {
-          if (Object.hasOwn(value, name)) {
-            throw new McpFnClientProfileError(
-              "MCPFN_FORGED_SERVER_ARGUMENT",
-              `Model arguments may not provide server-owned property ${name}`,
-              { tool: input.tool.name, rejectedProperty: name },
-            );
-          }
+      for (const name of unmatchedServerOwned(input.clientProfiles.profiles, input.tool.name)) {
+        if (Object.hasOwn(value, name)) {
+          throw new McpFnClientProfileError(
+            "MCPFN_FORGED_SERVER_ARGUMENT",
+            `Model arguments may not provide server-owned property ${name}`,
+            { tool: input.tool.name, rejectedProperty: name },
+          );
         }
       }
     }

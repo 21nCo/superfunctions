@@ -506,6 +506,17 @@ export class McpFnServer<TContext = undefined> {
                     ...(profile ? { profile } : {}),
                   })
                 : error;
+            // Task-augmented calls answer with a JSON-RPC error. Keep the
+            // McpFn code of an argument-enrichment rejection as InvalidParams
+            // data instead of letting the SDK turn it into InternalError.
+            if (isTaskRequest && currentStage === "argument-enrichment" && lifecycleError instanceof McpFnError) {
+              throw new McpError(ErrorCode.InvalidParams, lifecycleError.message, {
+                code: lifecycleError.code,
+                ...(lifecycleError.details !== null && typeof lifecycleError.details === "object" && !Array.isArray(lifecycleError.details)
+                  ? lifecycleError.details as Record<string, unknown>
+                  : {}),
+              });
+            }
             if (isTaskRequest) throw lifecycleError;
             return errorResult(lifecycleError, {
               includeStructuredContent: !this.registry.hasOutputSchema(
@@ -722,6 +733,7 @@ export class McpFnServer<TContext = undefined> {
         knownTools,
         schemaResources: this.registry.schemaDefinitions(),
         resolved,
+        clientProfiles: this.clientProfiles,
       });
       await this.emitProfileEvidence({
         stage: "catalog-projection",
