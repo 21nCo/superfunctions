@@ -54,6 +54,44 @@ import { tempDir } from "./temp-dirs.js";
 
 const FIXTURES = path.join(import.meta.dirname, "fixtures", "check");
 
+/**
+ * Injected filesystem faults (API-25 round 4), off unless a test turns one on: hard links fail
+ * (the backup takes its copy path), a new .bak file is displaced right after it is created, or a
+ * .bak lookup fails.
+ */
+const fsFaults = vi.hoisted(() => ({ noLink: false, displaceBackup: "", failBackupLookup: false }));
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  const displace = (file: unknown): void => {
+    if (!fsFaults.displaceBackup || !String(file).endsWith(".bak")) return;
+    const foreign = `${String(file)}.foreign`;
+    actual.writeFileSync(foreign, fsFaults.displaceBackup);
+    actual.renameSync(foreign, String(file));
+  };
+  return {
+    ...actual,
+    linkSync: ((...args: Parameters<typeof actual.linkSync>) => {
+      if (fsFaults.noLink) throw Object.assign(new Error("EXDEV: injected"), { code: "EXDEV" });
+      return actual.linkSync(...args);
+    }) as typeof actual.linkSync,
+    copyFileSync: ((...args: Parameters<typeof actual.copyFileSync>) => {
+      actual.copyFileSync(...args);
+      displace(args[1]);
+    }) as typeof actual.copyFileSync,
+    openSync: ((...args: Parameters<typeof actual.openSync>) => {
+      const fd = actual.openSync(...args);
+      displace(args[0]);
+      return fd;
+    }) as typeof actual.openSync,
+    lstatSync: ((...args: Parameters<typeof actual.lstatSync>) => {
+      if (fsFaults.failBackupLookup && String(args[0]).endsWith(".bak")) {
+        throw Object.assign(new Error("EACCES: injected"), { code: "EACCES" });
+      }
+      return actual.lstatSync(...args);
+    }) as typeof actual.lstatSync,
+  };
+});
+
 /** True when the temp directory's filesystem ignores case (macOS and Windows defaults). */
 const CASE_INSENSITIVE_FS = (() => {
   const dir = mkdtempSync(path.join(tmpdir(), "apifn-check-case-"));
@@ -4244,5 +4282,137 @@ describe("apifn check: a spec path through a regular file is a load error, and n
     expect(stderr).toContain(`${backup}, apifn check's backup of`);
     expect(JSON.parse(stdout)).toEqual(JSON.parse(await readFile(path.join(dir, "report.json"), "utf8")));
     expect(stdout).toBe(await readFile(path.join(dir, "report.json"), "utf8"));
+  });
+});
+
+describe("apifn check: git ignores inherited repository selectors (API-25 round 4)", () => {
+  /** breaking/ commits the base contract under a breaking router; the working tree regenerates it. */
+  async function breakingAtHead(): Promise<{ root: string; service: string }> {
+    const root = await fixtures();
+    git(root, "init", "-q");
+    const service = path.join(root, "breaking");
+    await mkdir(path.join(service, ".apifn"), { recursive: true });
+    await commitSpec(path.join(root, "base"));
+    await writeFile(path.join(service, SPEC), await readFile(path.join(root, "base", SPEC), "utf8"));
+    git(root, "add", "-A");
+    git(root, "commit", "-q", "-m", "base contract");
+    await commitSpec(service);
+    return { root, service };
+  }
+
+  async function checkWith(env: Record<string, string>, cwd: string): Promise<{ code: number; report: CheckReport }> {
+    for (const [name, value] of Object.entries(env)) vi.stubEnv(name, value);
+    try {
+      return await runJson(["check", "--spec", path.join(".apifn", "openapi.yml"), "--base", "HEAD"], cwd);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  }
+
+  it("an absolute GIT_DIR from a package directory still compares against the committed spec", async () => {
+    const { root, service } = await breakingAtHead();
+    const result = await checkWith({ GIT_DIR: path.join(root, ".git") }, service);
+    expect(result.code).toBe(1);
+    expect(result.report.breaking.length).toBeGreaterThan(0);
+  });
+
+  it("GIT_DIR and GIT_WORK_TREE naming another repository never supply the baseline", async () => {
+    const { root, service } = await breakingAtHead();
+    const other = await tempDir("apifn-check-selected-repo-");
+    git(other, "init", "-q");
+    await mkdir(path.join(other, "breaking", ".apifn"), { recursive: true });
+    await writeFile(path.join(other, "breaking", SPEC), await readFile(path.join(service, SPEC), "utf8"));
+    git(other, "add", "-A");
+    git(other, "commit", "-q", "-m", "head contract");
+    const result = await checkWith({ GIT_DIR: path.join(other, ".git"), GIT_WORK_TREE: root }, service);
+    expect(result.code).toBe(1);
+    expect(result.report.breaking.length).toBeGreaterThan(0);
+  });
+
+  it("a linked worktree, with or without the GIT_DIR git exports to its hooks, still compares", async () => {
+    const { root } = await breakingAtHead();
+    const linked = path.join(await tempDir("apifn-check-linked-"), "wt");
+    git(root, "worktree", "add", "-q", "--detach", linked, "HEAD");
+    const service = path.join(linked, "breaking");
+    await commitSpec(service);
+    const gitDir = git(linked, "rev-parse", "--absolute-git-dir").trim();
+    for (const env of [{}, { GIT_DIR: gitDir }]) {
+      const result = await checkWith(env, service);
+      expect(result.code).toBe(1);
+      expect(result.report.breaking.length).toBeGreaterThan(0);
+    }
+  });
+});
+
+describe("apifn check: a backup is bound to the file this run made, and cleanup never changes the verdict (API-25 round 4)", () => {
+  const CONFIG = { router: "./router.ts", openapi: { info: { title: "Check fixture", version: "1.0.0" } } };
+
+  async function staleService(): Promise<string> {
+    const root = await fixtures();
+    const dir = path.join(root, "base");
+    await mkdir(path.join(dir, ".apifn"));
+    await writeFile(path.join(dir, SPEC), "openapi: 3.1.0\n");
+    await writeFile(path.join(dir, "report.md"), "previous report\n");
+    return dir;
+  }
+
+  async function check(dir: string, hook: (step: PublishStep, destination: string) => void): Promise<{ code: number; errors: string }> {
+    const errors: string[] = [];
+    const output = { error: (message: string) => errors.push(message), warn: () => {} } as unknown as Output;
+    try {
+      const code = await runCheckCommand({
+        cwd: dir,
+        config: CONFIG,
+        output,
+        write: true,
+        reportPath: "report.md",
+        writeStdout: () => {},
+        publishHook: hook,
+      });
+      return { code, errors: errors.join("\n") };
+    } finally {
+      Object.assign(fsFaults, { noLink: false, displaceBackup: "", failBackupLookup: false });
+    }
+  }
+
+  it("a copy backup displaced right after its creation is never restored or removed, and is named", async () => {
+    const dir = await staleService();
+    const { code, errors } = await check(dir, (step, destination) => {
+      if (step === "backup" && destination.endsWith("openapi.yml")) Object.assign(fsFaults, { noLink: true, displaceBackup: "another writer's backup\n" });
+    });
+    expect(code).toBe(2);
+    const specDir = path.join(dir, ".apifn");
+    const left = await leftovers(specDir);
+    expect(left).toHaveLength(1);
+    expect(left[0]).toMatch(/\.bak$/);
+    expect(await readFile(path.join(specDir, left[0]), "utf8")).toBe("another writer's backup\n");
+    expect(errors).toContain(`${path.join(realpathSync(specDir), left[0])}, apifn check's backup of`);
+    expect(await readFile(path.join(dir, SPEC), "utf8")).toBe("openapi: 3.1.0\n");
+  });
+
+  it("a copy backup holds the observed bytes and is removed after the commit", async () => {
+    const dir = await staleService();
+    let copied = "";
+    const { code, errors } = await check(dir, (step, destination) => {
+      if (!destination.endsWith("openapi.yml")) return;
+      if (step === "backup") fsFaults.noLink = true;
+      if (step === "rename") {
+        const specDir = path.join(dir, ".apifn");
+        copied = readFileSync(path.join(specDir, readdirSync(specDir).find((name) => name.endsWith(".bak")) as string), "utf8");
+      }
+    });
+    expect({ code, errors, copied }).toEqual({ code: 0, errors: "", copied: "openapi: 3.1.0\n" });
+    expect(await leftovers(path.join(dir, ".apifn"))).toEqual([]);
+  });
+
+  it("a cleanup error after the commit is a stderr notice: the verdict stands and the other backup is removed", async () => {
+    const dir = await staleService();
+    const { code, errors } = await check(dir, (step) => {
+      if (step === "committed") fsFaults.failBackupLookup = true;
+    });
+    expect(code).toBe(0);
+    expect(errors).toContain("EACCES: injected");
+    expect(await readFile(path.join(dir, "report.md"), "utf8")).not.toBe("previous report\n");
+    expect(await readFile(path.join(dir, SPEC), "utf8")).not.toBe("openapi: 3.1.0\n");
   });
 });

@@ -80,6 +80,27 @@ export function resolveGitExecutable(): string {
   return found;
 }
 
+/**
+ * Variables that select a repository, index or object store other than the one git discovers from
+ * the directory it runs in (git exports GIT_DIR to hooks, wrappers set it): the check's repository
+ * is the work tree of the directory it runs in, so no inherited selector reaches a git child.
+ */
+const REPOSITORY_SELECTORS = new Set([
+  "GIT_DIR",
+  "GIT_WORK_TREE",
+  "GIT_COMMON_DIR",
+  "GIT_INDEX_FILE",
+  "GIT_OBJECT_DIRECTORY",
+  "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+  "GIT_NAMESPACE",
+]);
+
+/** The environment of every git child: the caller's, without repository selectors (any case). */
+export function gitEnvironment(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const kept = Object.entries(env).filter(([name]) => !REPOSITORY_SELECTORS.has(name.toUpperCase()));
+  return { ...Object.fromEntries(kept), GIT_NO_REPLACE_OBJECTS: "1" };
+}
+
 class Git {
   private readonly listings = new Map<string, TreeEntry[]>();
   private ignoreCase: boolean | undefined;
@@ -101,7 +122,7 @@ class Git {
   private spawn(args: string[], options: { maxBuffer?: number }): { code: number; stdout: Buffer; stderr: string } {
     const result = spawnSync(this.executable, ["--no-replace-objects", ...args], {
       cwd: this.root,
-      env: { ...process.env, GIT_NO_REPLACE_OBJECTS: "1" },
+      env: gitEnvironment(),
       maxBuffer: options.maxBuffer ?? 64 * 1024 * 1024,
       windowsHide: true,
     });

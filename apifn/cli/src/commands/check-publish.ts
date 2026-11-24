@@ -57,7 +57,6 @@
 
 import {
   closeSync,
-  copyFileSync,
   constants,
   existsSync,
   fchmodSync,
@@ -67,6 +66,7 @@ import {
   lstatSync,
   mkdirSync,
   openSync,
+  readFileSync,
   readSync,
   renameSync,
   rmdirSync,
@@ -452,7 +452,11 @@ function makeParents(staged: Staged, hook: PublishHook | undefined, verify: Veri
   }
   for (const dir of missing) {
     mkdirSync(dir);
-    staged.created.unshift(anchorOf(dir));
+    // Bound without following a link: a name swapped for a link or file is not a directory this
+    // run made, so it is never recorded and rollback never removes it.
+    const made = lstatSync(dir, BIG);
+    if (!made.isDirectory()) throw changed(staged);
+    staged.created.unshift({ dir, dev: made.dev, ino: made.ino });
     hook?.("mkdir", dir);
     verify(staged);
   }
@@ -597,19 +601,50 @@ function stillOwned(staged: Staged): boolean {
   );
 }
 
+/**
+ * Backs the observed file up as a file bound to this run: a hard link must be the observed inode
+ * itself; a copy is a new file (O_EXCL) written through its descriptor, whose identity is read
+ * from that descriptor. A backup name that holds anything else is another writer's: the run stops,
+ * and rollback leaves it and names it.
+ */
 function backUp(staged: Staged): void {
-  if (staged.before === null) return;
+  const before = staged.before;
+  if (before === null) return;
   const backup = tempName(staged.destination).replace(/\.tmp$/, ".bak");
   try {
     linkSync(staged.destination, backup);
+    staged.linked = true;
   } catch {
-    copyFileSync(staged.destination, backup, constants.COPYFILE_EXCL);
+    staged.linked = false;
   }
   staged.backup = backup;
-  staged.backupState = currentState(backup);
-  // A link made by name must name the observed file; a copy must have copied it.
-  staged.linked = sameContent(staged.backupState, staged.before);
-  if (!staged.linked && !sameState(currentState(staged.destination), staged.before)) throw changed(staged);
+  if (staged.linked) {
+    const made = currentState(backup);
+    // Not the observed inode: never this run's backup (null owns nothing), so it is left and named.
+    staged.backupState = sameContent(made, before) ? made : null;
+    if (staged.backupState === null) throw changed(staged);
+    return;
+  }
+  const source = openSync(staged.destination, constants.O_RDONLY);
+  let bytes: Buffer;
+  try {
+    if (!sameState(stateOf(fstatSync(source, BIG)), before)) throw changed(staged);
+    bytes = readFileSync(source);
+  } finally {
+    closeSync(source);
+  }
+  const fd = openSync(backup, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600);
+  try {
+    fchmodSync(fd, before.mode & 0o7777);
+    writeFileSync(fd, bytes);
+    fsyncSync(fd);
+  } finally {
+    staged.backupState = stateOf(fstatSync(fd, BIG));
+    closeSync(fd);
+  }
+  if (!sameFile(currentState(backup), staged.backupState) || !sameState(currentState(staged.destination), before)) {
+    throw changed(staged);
+  }
 }
 
 /** What the destination must be right before the rename: the backup's inode (the link changed its
@@ -828,5 +863,14 @@ async function publishAll(
   // Committed: the report is delivered, so nothing after this point undoes the outputs it names.
   // A backup another writer replaced is left alone; the returned notices name it.
   hook?.("committed", all.at(-1)?.destination ?? "");
-  return all.map(removeBackup).filter((notice): notice is string => notice !== null);
+  // Each backup is cleaned up on its own: a failure there is a notice, never a change of verdict.
+  return all
+    .map((staged) => {
+      try {
+        return removeBackup(staged);
+      } catch (error) {
+        return `Failed to remove ${staged.backup}, apifn check's backup of ${staged.destination}: ${errorMessage(error)}`;
+      }
+    })
+    .filter((notice): notice is string => notice !== null);
 }
