@@ -1,0 +1,14 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "extends": ["//"],
+  "tasks": {
+    "build": {
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/uifn/examples/svelte-workbench/src/**",
+        "$TURBO_ROOT$/uifn/examples/react-workbench/src/styles.css",
+        "$TURBO_ROOT$/uifn/examples/react-workbench/src/catalog.css"
+      ]
+    }
+  }
+}

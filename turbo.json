@@ -62,6 +62,270 @@
     },
     "clean": {
       "cache": false
+    },
+    "@devfn/cli#build": { "dependsOn": ["^build"], "cache": false },
+    "@devfn/cli#typecheck": { "dependsOn": ["^build"], "cache": false },
+    "@devfn/cli#test": { "dependsOn": ["^build"], "cache": false },
+    "@devfn/cli#lint": { "dependsOn": ["^build"], "cache": false },
+    "@devfn/compose#build": { "dependsOn": ["^build"], "cache": false },
+    "@devfn/compose#typecheck": { "dependsOn": ["^build"], "cache": false },
+    "@devfn/compose#test": { "dependsOn": ["^build"], "cache": false },
+    "@devfn/compose#lint": { "dependsOn": ["^build"], "cache": false },
+    "@devfn/config#build": { "dependsOn": ["^build"], "cache": false },
+    "@devfn/config#typecheck": { "dependsOn": ["^build"], "cache": false },
+    "@devfn/config#test": { "dependsOn": ["^build"], "cache": false },
+    "@devfn/config#lint": { "dependsOn": ["^build"], "cache": false },
+    "@devfn/core#build": { "dependsOn": ["^build"], "cache": false },
+    "@devfn/core#typecheck": { "dependsOn": ["^build"], "cache": false },
+    "@devfn/core#test": { "dependsOn": ["^build"], "cache": false },
+    "@devfn/core#lint": { "dependsOn": ["^build"], "cache": false },
+    "@devfn/docs#build": { "dependsOn": ["^build"], "cache": false },
+    "@devfn/docs#typecheck": { "dependsOn": ["^build"], "cache": false },
+    "@devfn/docs#test": { "dependsOn": ["^build"], "cache": false },
+    "@devfn/docs#lint": { "dependsOn": ["^build"], "cache": false },
+    "@devfn/ports#build": { "dependsOn": ["^build"], "cache": false },
+    "@devfn/ports#typecheck": { "dependsOn": ["^build"], "cache": false },
+    "@devfn/ports#test": { "dependsOn": ["^build"], "cache": false },
+    "@devfn/ports#lint": { "dependsOn": ["^build"], "cache": false },
+    "@devfn/processes#build": { "dependsOn": ["^build"], "cache": false },
+    "@devfn/processes#typecheck": { "dependsOn": ["^build"], "cache": false },
+    "@devfn/processes#test": { "dependsOn": ["^build"], "cache": false },
+    "@devfn/processes#lint": { "dependsOn": ["^build"], "cache": false },
+    "@devfn/proxy#build": { "dependsOn": ["^build"], "cache": false },
+    "@devfn/proxy#typecheck": { "dependsOn": ["^build"], "cache": false },
+    "@devfn/proxy#test": { "dependsOn": ["^build"], "cache": false },
+    "@devfn/proxy#lint": { "dependsOn": ["^build"], "cache": false },
+    "@devfn/testing#build": { "dependsOn": ["^build"], "cache": false },
+    "@devfn/testing#typecheck": { "dependsOn": ["^build"], "cache": false },
+    "@devfn/testing#test": { "dependsOn": ["^build"], "cache": false },
+    "@devfn/testing#lint": { "dependsOn": ["^build"], "cache": false },
+    "@uifn/core#build": {
+      "dependsOn": ["^build"],
+      "outputs": ["dist/**", ".next/**", "!.next/cache/**"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/uifn/catalog/generated/catalog.json"
+      ]
+    },
+    "@uifn/core#typecheck": {
+      "dependsOn": ["^build"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/uifn/catalog/generated/catalog.json"
+      ]
+    },
+    "@uifn/core#test": {
+      "dependsOn": ["^build"],
+      "outputs": ["coverage/**"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/uifn/catalog/generated/catalog.json"
+      ]
+    },
+    "@uifn/core#lint": {
+      "dependsOn": ["^build"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/uifn/catalog/generated/catalog.json"
+      ]
+    },
+    "@uifn/react#build": {
+      "dependsOn": ["^build"],
+      "outputs": ["dist/**", ".next/**", "!.next/cache/**"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/uifn/catalog/generated/catalog.json",
+        "$TURBO_ROOT$/uifn/evidence/generated/phase-11/phase-11-react-compounds.json",
+        "$TURBO_ROOT$/uifn/evidence/generated/phase-14/phase-14-public-vectors.json",
+        "$TURBO_ROOT$/uifn/parity/src/trace.mjs",
+        "$TURBO_ROOT$/uifn/parity/src/trace.d.mts"
+      ]
+    },
+    "@uifn/react#typecheck": {
+      "dependsOn": ["^build"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/uifn/catalog/generated/catalog.json",
+        "$TURBO_ROOT$/uifn/evidence/generated/phase-11/phase-11-react-compounds.json",
+        "$TURBO_ROOT$/uifn/evidence/generated/phase-14/phase-14-public-vectors.json",
+        "$TURBO_ROOT$/uifn/parity/src/trace.mjs",
+        "$TURBO_ROOT$/uifn/parity/src/trace.d.mts"
+      ]
+    },
+    "@uifn/react#test": {
+      "dependsOn": ["^build"],
+      "outputs": ["coverage/**"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/uifn/catalog/generated/catalog.json",
+        "$TURBO_ROOT$/uifn/evidence/generated/phase-11/phase-11-react-compounds.json",
+        "$TURBO_ROOT$/uifn/evidence/generated/phase-14/phase-14-public-vectors.json",
+        "$TURBO_ROOT$/uifn/parity/src/trace.mjs",
+        "$TURBO_ROOT$/uifn/parity/src/trace.d.mts"
+      ]
+    },
+    "@uifn/react#lint": {
+      "dependsOn": ["^build"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/uifn/catalog/generated/catalog.json",
+        "$TURBO_ROOT$/uifn/evidence/generated/phase-11/phase-11-react-compounds.json",
+        "$TURBO_ROOT$/uifn/evidence/generated/phase-14/phase-14-public-vectors.json",
+        "$TURBO_ROOT$/uifn/parity/src/trace.mjs",
+        "$TURBO_ROOT$/uifn/parity/src/trace.d.mts"
+      ]
+    },
+    "@uifn/solid#build": {
+      "dependsOn": ["^build"],
+      "outputs": ["dist/**", ".next/**", "!.next/cache/**"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/uifn/catalog/generated/catalog.json",
+        "$TURBO_ROOT$/uifn/evidence/generated/phase-13/phase-13-solid-compounds.json",
+        "$TURBO_ROOT$/uifn/evidence/generated/phase-14/phase-14-public-vectors.json",
+        "$TURBO_ROOT$/uifn/parity/src/trace.mjs",
+        "$TURBO_ROOT$/uifn/parity/src/trace.d.mts"
+      ]
+    },
+    "@uifn/solid#typecheck": {
+      "dependsOn": ["^build"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/uifn/catalog/generated/catalog.json",
+        "$TURBO_ROOT$/uifn/evidence/generated/phase-13/phase-13-solid-compounds.json",
+        "$TURBO_ROOT$/uifn/evidence/generated/phase-14/phase-14-public-vectors.json",
+        "$TURBO_ROOT$/uifn/parity/src/trace.mjs",
+        "$TURBO_ROOT$/uifn/parity/src/trace.d.mts"
+      ]
+    },
+    "@uifn/solid#test": {
+      "dependsOn": ["^build"],
+      "outputs": ["coverage/**"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/uifn/catalog/generated/catalog.json",
+        "$TURBO_ROOT$/uifn/evidence/generated/phase-13/phase-13-solid-compounds.json",
+        "$TURBO_ROOT$/uifn/evidence/generated/phase-14/phase-14-public-vectors.json",
+        "$TURBO_ROOT$/uifn/parity/src/trace.mjs",
+        "$TURBO_ROOT$/uifn/parity/src/trace.d.mts"
+      ]
+    },
+    "@uifn/solid#lint": {
+      "dependsOn": ["^build"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/uifn/catalog/generated/catalog.json",
+        "$TURBO_ROOT$/uifn/evidence/generated/phase-13/phase-13-solid-compounds.json",
+        "$TURBO_ROOT$/uifn/evidence/generated/phase-14/phase-14-public-vectors.json",
+        "$TURBO_ROOT$/uifn/parity/src/trace.mjs",
+        "$TURBO_ROOT$/uifn/parity/src/trace.d.mts"
+      ]
+    },
+    "@uifn/svelte#build": {
+      "dependsOn": ["^build"],
+      "outputs": ["dist/**", ".next/**", "!.next/cache/**"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/uifn/catalog/generated/catalog.json",
+        "$TURBO_ROOT$/uifn/evidence/generated/phase-12/phase-12-svelte-compounds.json",
+        "$TURBO_ROOT$/uifn/evidence/generated/phase-14/phase-14-public-vectors.json",
+        "$TURBO_ROOT$/uifn/parity/src/trace.mjs",
+        "$TURBO_ROOT$/uifn/parity/src/trace.d.mts"
+      ]
+    },
+    "@uifn/svelte#typecheck": {
+      "dependsOn": ["^build"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/uifn/catalog/generated/catalog.json",
+        "$TURBO_ROOT$/uifn/evidence/generated/phase-12/phase-12-svelte-compounds.json",
+        "$TURBO_ROOT$/uifn/evidence/generated/phase-14/phase-14-public-vectors.json",
+        "$TURBO_ROOT$/uifn/parity/src/trace.mjs",
+        "$TURBO_ROOT$/uifn/parity/src/trace.d.mts"
+      ]
+    },
+    "@uifn/svelte#test": {
+      "dependsOn": ["^build"],
+      "outputs": ["coverage/**"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/uifn/catalog/generated/catalog.json",
+        "$TURBO_ROOT$/uifn/evidence/generated/phase-12/phase-12-svelte-compounds.json",
+        "$TURBO_ROOT$/uifn/evidence/generated/phase-14/phase-14-public-vectors.json",
+        "$TURBO_ROOT$/uifn/parity/src/trace.mjs",
+        "$TURBO_ROOT$/uifn/parity/src/trace.d.mts"
+      ]
+    },
+    "@uifn/svelte#lint": {
+      "dependsOn": ["^build"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/uifn/catalog/generated/catalog.json",
+        "$TURBO_ROOT$/uifn/evidence/generated/phase-12/phase-12-svelte-compounds.json",
+        "$TURBO_ROOT$/uifn/evidence/generated/phase-14/phase-14-public-vectors.json",
+        "$TURBO_ROOT$/uifn/parity/src/trace.mjs",
+        "$TURBO_ROOT$/uifn/parity/src/trace.d.mts"
+      ]
+    },
+    "@uifn/registry#build": {
+      "dependsOn": ["^build"],
+      "outputs": ["dist/**", ".next/**", "!.next/cache/**"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/uifn/react/src/fixture.ts"
+      ]
+    },
+    "@uifn/registry#typecheck": {
+      "dependsOn": ["^build"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/uifn/react/src/fixture.ts"
+      ]
+    },
+    "@uifn/registry#test": {
+      "dependsOn": ["^build"],
+      "outputs": ["coverage/**"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/uifn/react/src/fixture.ts"
+      ]
+    },
+    "@uifn/registry#lint": {
+      "dependsOn": ["^build"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/uifn/react/src/fixture.ts"
+      ]
+    },
+    "@uifn/tokens#build": {
+      "dependsOn": ["^build"],
+      "outputs": ["dist/**", ".next/**", "!.next/cache/**"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/uifn/swift/Sources/UIFnSwiftUI/Tokens/UIFnTheme+UIFn.swift"
+      ]
+    },
+    "@uifn/tokens#typecheck": {
+      "dependsOn": ["^build"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/uifn/swift/Sources/UIFnSwiftUI/Tokens/UIFnTheme+UIFn.swift"
+      ]
+    },
+    "@uifn/tokens#test": {
+      "dependsOn": ["^build"],
+      "outputs": ["coverage/**"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/uifn/swift/Sources/UIFnSwiftUI/Tokens/UIFnTheme+UIFn.swift"
+      ]
+    },
+    "@uifn/tokens#lint": {
+      "dependsOn": ["^build"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/uifn/swift/Sources/UIFnSwiftUI/Tokens/UIFnTheme+UIFn.swift"
+      ]
     }
   },
   "globalEnv": ["CLOUDFLARE_DOCS_DEPLOY", "CLOUDFLARE_DOCS_PUBLIC_ORIGIN", "CLOUDFLARE_DOCS_ASSETS_ORIGIN"]
