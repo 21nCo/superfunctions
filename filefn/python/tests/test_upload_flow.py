@@ -852,3 +852,29 @@ async def test_a_second_completion_rechecks_write_access_to_a_file_created_meanw
     with pytest.raises(Exception) as exc_info:
         await service.complete_session(sessions[1][0], sessions[1][1])
     assert getattr(exc_info.value, "code", "") == "FILEFN_FORBIDDEN"
+
+    # A file replaced between the check and the update is not overwritten.
+    owner = _ctx(principal_id="owner_1")
+    created = await service.create_session(
+        CreateSessionInput(policy="user-avatar", fileName="c.png", size=3, mimeType="image/png", fileId="file_owned001"), owner
+    )
+    await service.record_proxy_part(created["uploadSessionId"], 1, b"abc", owner)
+    await service.complete_session(created["uploadSessionId"], owner)
+    second = await service.create_session(
+        CreateSessionInput(policy="user-avatar", fileName="d.png", size=3, mimeType="image/png", fileId="file_owned001"), owner
+    )
+    await service.record_proxy_part(second["uploadSessionId"], 1, b"abc", owner)
+    original_update = db.update
+
+    async def racing_update(model: str, where: Any, data: Any, namespace: Any = None) -> Any:
+        if model == "files":
+            # Another writer replaced the row after the authorization.
+            for row in db._table("files"):
+                if row["fileId"] == "file_owned001":
+                    row["currentVersionId"] = "ver_other"
+        return await original_update(model=model, where=where, data=data, namespace=namespace)
+
+    db.update = racing_update  # type: ignore[method-assign]
+    with pytest.raises(Exception) as exc_info:
+        await service.complete_session(second["uploadSessionId"], owner)
+    assert getattr(exc_info.value, "code", "") == "FILEFN_FORBIDDEN"

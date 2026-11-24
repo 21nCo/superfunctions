@@ -692,16 +692,31 @@ class UploadSessionService:
             namespace=self.namespace,
         )
 
+        async def refuse_replace() -> None:
+            # This completion's own object is not kept when it may not publish
+            # (unless dedup pointed it at another file's existing object).
+            if final_storage_key == session.storageKey:
+                try:
+                    await self.storage.delete_object(key=session.storageKey, target=storage_target)
+                except Exception:
+                    pass
+            raise errors.forbidden({"fileId": file_id, "operation": "replace"})
+
         if existing_file and existing_file.get("currentVersionId") != version_id:
             # Another completion created the file meanwhile: replacing it needs
             # write access to that row, checked now (FILE-30 F-02).
             if self.file_write_checker and not await self.file_write_checker.can_write_file(file_id, ctx):
-                raise errors.forbidden({"fileId": file_id, "operation": "replace"})
+                await refuse_replace()
 
         if existing_file:
-            await self.db.update(
+            # Conditional on the row that was authorized: a row deleted or
+            # replaced since is not overwritten.
+            updated = await self.db.update(
                 model="files",
-                where=[{"field": "fileId", "operator": "eq", "value": file_id}],
+                where=[
+                    {"field": "fileId", "operator": "eq", "value": file_id},
+                    {"field": "currentVersionId", "operator": "eq", "value": existing_file.get("currentVersionId")},
+                ],
                 data={
                     "currentVersionId": version_id,
                     "size": session.size,
@@ -711,6 +726,8 @@ class UploadSessionService:
                 },
                 namespace=self.namespace,
             )
+            if not updated:
+                await refuse_replace()
         else:
             await self.db.create(
                 model="files",
