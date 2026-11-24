@@ -5595,27 +5595,15 @@ async function resolveProviderEventPriceReference(
         record ? ['product_id', 'productId', 'price_id', 'priceId'].map((key) => readString(record, key)) : []
       )
     ];
-    // When the provider reported what the event paid for, a price id (which can come from metadata) selects a
-    // price only when every price of this provider with that id sells a reported product; the reported products
-    // then select by product id alone, so neither can stand in for the other.
+    // When the provider reported what the event paid for, a price id (which can come from metadata) selects only
+    // a catalog price of this provider with that id that sells a reported product; the reported products then
+    // select by product id alone, so neither can stand in for the other.
     const paidProducts = providerReportedProducts(event.billingState);
-    const providerPricesWithId = (id: string) =>
-      deps.catalog.plans.flatMap((plan) => plan.prices.filter((price) => price.priceId === id && price.provider === provider));
     const resolved =
       paidProducts.length === 0
         ? findCatalogPriceReference(deps.catalog, provider, references, subscription?.priceId)
-        : (findCatalogPriceReference(
-            deps.catalog,
-            provider,
-            references.filter((reference): reference is string => {
-              if (!reference) {
-                return false;
-              }
-              const named = providerPricesWithId(reference);
-              return named.length > 0 && named.every((price) => paidProducts.includes(price.providerProductId));
-            }),
-            subscription?.priceId
-          ) ?? findCatalogPriceReference(deps.catalog, provider, paidProducts, subscription?.priceId, { productsOnly: true }));
+        : (selectPaidPriceById(deps.catalog, provider, references, paidProducts) ??
+          findCatalogPriceReference(deps.catalog, provider, paidProducts, subscription?.priceId, { productsOnly: true }));
     if (resolved) {
       return resolved;
     }
@@ -5644,6 +5632,30 @@ async function resolveProviderEventPriceReference(
  * price if it is one of them, else the first of them when they are all in one
  * plan; across plans it names none, so the caller keeps its stored selection.
  */
+/** The first catalog price of this provider whose id a reference names and whose product was paid for. */
+function selectPaidPriceById(
+  catalog: BillFnCatalog,
+  provider: BillingProviderName,
+  references: Array<string | null | undefined>,
+  paidProducts: readonly string[]
+): CatalogSelection | null {
+  for (const reference of references) {
+    if (!reference) {
+      continue;
+    }
+    for (const plan of catalog.plans) {
+      const price = plan.prices.find(
+        (candidate) =>
+          candidate.priceId === reference && candidate.provider === provider && paidProducts.includes(candidate.providerProductId)
+      );
+      if (price) {
+        return { plan, price };
+      }
+    }
+  }
+  return null;
+}
+
 function findCatalogPriceReference(
   catalog: BillFnCatalog,
   provider: BillingProviderName,

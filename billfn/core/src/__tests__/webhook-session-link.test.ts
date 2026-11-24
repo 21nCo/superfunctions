@@ -329,4 +329,23 @@ describe('event prices named outside the provider record', () => {
 
     expect((await env.entitlements())?.subscription?.planKey).toBe('starter');
   });
+
+  it('selects the price with the hinted id that sells the reported product when the id repeats across plans', async () => {
+    // Two apps of one provider reuse a price id for different products (as an Apple multi-app catalog can).
+    const reused: BillFnCatalog = {
+      plans: [
+        { ...catalog.plans[1]!, prices: [{ ...catalog.plans[1]!.prices[0]!, priceId: 'shared_monthly', providerProductId: 'pdt_app_one' }] },
+        { ...catalog.plans[0]!, prices: [{ ...catalog.plans[0]!.prices[0]!, priceId: 'shared_monthly', providerProductId: 'pdt_app_two' }] },
+        // The reported product is sold in another plan too, so the product alone cannot choose the plan.
+        { ...catalog.plans[1]!, planKey: 'team', prices: [{ ...catalog.plans[1]!.prices[0]!, priceId: 'team_monthly', providerProductId: 'pdt_app_two' }] }
+      ]
+    };
+    const env = setup(reused);
+    await env.openCheckout('starter');
+    const event = paidEvent('chk_unknown_session', 'pdt_app_two', { billfn_billing_account_id: 'ba_user_attacker' });
+
+    await env.deliver({ ...event, priceId: 'shared_monthly', checkoutReferenceSource: 'metadata' });
+
+    expect((await env.entitlements())?.subscription?.planKey).toBe('enterprise');
+  });
 });
