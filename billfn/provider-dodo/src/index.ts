@@ -1101,8 +1101,13 @@ function mapDodoPaymentState(payload: Record<string, unknown>): BillFnVerifiedBi
   const paid = normalizeDodoPaymentStatus(readString(payload, ['status']));
   // A one-time purchase whose money went back no longer grants access, whichever read (verification, restore,
   // a payment webhook) sees it; a subscription charge leaves that to the subscription's own state.
-  const oneTime = classifyDodoPayment(payload) === 'one_time';
-  const normalized = paid === 'active' && oneTime && isDodoPaymentRevoked(payload) ? 'canceled' : paid;
+  const kind = classifyDodoPayment(payload);
+  const revoked = paid === 'active' && kind !== 'subscription' && isDodoPaymentRevoked(payload);
+  if (revoked && kind === 'unknown') {
+    // A reversed payment that does not say whether it is a one-time purchase is neither granted nor revoked.
+    throw unusableDodoRead(`payment ${readString(payload, ['payment_id']) ?? ''}`.trim());
+  }
+  const normalized = revoked ? 'canceled' : paid;
   return {
     subscriptionStatus: normalized,
     checkoutStatus: paid === 'active' ? 'succeeded' : paid,

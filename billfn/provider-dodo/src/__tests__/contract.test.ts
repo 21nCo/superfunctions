@@ -1197,6 +1197,20 @@ describe('parseWebhook with recorded Dodo payloads', () => {
     expect(restored).toMatchObject({ subscriptionStatus: 'active', providerChargeId: oneTimePayment.payment_id });
   });
 
+  it('refuses to restore a reversed payment that does not say whether it is a one-time purchase', async () => {
+    const { subscription_id: _id, subscription_ids: _ids, ...unclassified } = oneTimePayment;
+    const reversed = { ...unclassified, refunds: [{ refund_id: 'ref_1', status: 'succeeded', is_partial: false }] };
+    const fetchMock = dodoReads({ [`/payments/${oneTimePayment.payment_id}`]: reversed });
+
+    await expect(
+      createDodoProvider({ apiKey: 'dodo_test_key', fetch: fetchMock }).restorePurchases!({
+        billingAccount: { id: 'ba_user_123' },
+        price: { kind: 'one_time', providerProductId: 'pdt_nucleus_lifetime' },
+        purchaseReference: oneTimePayment.payment_id
+      } as never)
+    ).rejects.toMatchObject({ code: 'BILLFN_PROVIDER_ERROR' });
+  });
+
   it('keeps the signed refund time when Dodo\'s clock runs ahead of BillFn\'s', async () => {
     const fetchMock = dodoReads({ [`/payments/${oneTimePayment.payment_id}`]: oneTimePayment });
     const ahead = new Date(Date.now() + 60_000).toISOString();
