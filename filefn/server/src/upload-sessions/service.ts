@@ -249,7 +249,8 @@ async function forEachBodyChunk(
       }
     } catch (err) {
       // Stop the producer (an oversized or failed upload), keeping the error.
-      await reader.cancel(err).catch(() => {});
+      // Not awaited: cancelling one branch of a tee can wait on the other.
+      void reader.cancel(err).catch(() => {});
       throw err;
     } finally {
       reader.releaseLock();
@@ -1404,6 +1405,19 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       const uploadMode = selectUploadMode(storageTarget);
       const chunkSizeBytes = defaultChunkSizeBytes;
       const totalParts = computeTotalParts(input.size, chunkSizeBytes);
+      // At most 10,000 parts (the S3-compatible multipart limit), which also
+      // bounds part cleanup.
+      if (totalParts > MAX_SWEPT_PART_NUMBERS) {
+        throw errors.invalidRequest(`size needs more than ${MAX_SWEPT_PART_NUMBERS} parts of ${chunkSizeBytes} bytes`, {
+          field: 'size',
+          maxParts: MAX_SWEPT_PART_NUMBERS,
+        });
+      }
+      // Completion verifies the stored size with statObject; refuse before any
+      // upload starts rather than after storage was finalized.
+      if (typeof storage.statObject !== 'function') {
+        throw new Error('Storage adapter cannot stat objects; upload size cannot be verified');
+      }
       const uploadSessionId = generateId();
       const now = new Date();
       const expiresAt = new Date(now.getTime() + uploadSessionTtlSeconds * 1000).toISOString();
@@ -1692,7 +1706,10 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         await writer.abort(err).catch(() => {});
         // If the session ended meanwhile (an expiry sweep removed it), no later
         // cleanup will see this key: remove what this write left.
-        if (storage.deleteObject && !(await readSession(uploadSessionId).catch(() => undefined))) {
+        // Only a successful read that finds no row counts: a read error leaves
+        // the key alone (a concurrent upload may have committed it).
+        const now = await readSession(uploadSessionId).catch(() => 'unknown' as const);
+        if (storage.deleteObject && now === null) {
           await storage.deleteObject({ key: partKey, target: storageTarget }).catch(() => {});
         }
         throw err;
