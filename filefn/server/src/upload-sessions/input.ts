@@ -27,11 +27,22 @@ export const MAX_METADATA_DEPTH = 32;
  */
 const MAX_METADATA_NODES = MAX_METADATA_BYTES;
 
-class MetadataBudgetError extends Error {}
+// Thrown for a budget failure and recognised by identity, never by inspecting
+// a value a caller's hook threw.
+const METADATA_BUDGET_EXCEEDED: unique symbol = Symbol('metadata budget exceeded');
+
+function hasSlot(intrinsic: (this: unknown) => unknown, value: object): boolean {
+  try {
+    intrinsic.call(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 function charge(budget: { bytes: number }, bytes: number): void {
   budget.bytes -= bytes;
-  if (budget.bytes < 0) throw new MetadataBudgetError();
+  if (budget.bytes < 0) throw METADATA_BUDGET_EXCEEDED;
 }
 
 /**
@@ -43,15 +54,20 @@ function charge(budget: { bytes: number }, bytes: number): void {
  */
 function normalizeJson(value: unknown, key: string, depth: number, budget: { left: number; bytes: number }): unknown {
   budget.left -= 1;
-  if (budget.left < 0 || depth > MAX_METADATA_DEPTH) throw new MetadataBudgetError();
+  if (budget.left < 0 || depth > MAX_METADATA_DEPTH) throw METADATA_BUDGET_EXCEEDED;
   if (value !== null && (typeof value === 'object' || typeof value === 'bigint')) {
     const toJSON = (value as { toJSON?: unknown }).toJSON;
     if (typeof toJSON === 'function') value = toJSON.call(value, key);
   }
-  // Boxed primitives serialize as their primitive value, as in JSON.stringify.
-  if (value instanceof Number) value = Number(value);
-  else if (value instanceof String) value = String(value);
-  else if (value instanceof Boolean) value = value.valueOf();
+  // Boxed primitives serialize as their primitive value, as in JSON.stringify,
+  // detected by their internal slots (so wrappers from another realm count):
+  // Number and String are converted with ToNumber/ToString, Boolean read with
+  // the intrinsic valueOf.
+  if (value !== null && typeof value === 'object') {
+    if (hasSlot(Number.prototype.valueOf, value)) value = Number(value);
+    else if (hasSlot(String.prototype.valueOf, value)) value = String(value);
+    else if (hasSlot(Boolean.prototype.valueOf, value)) value = Boolean.prototype.valueOf.call(value);
+  }
   if (typeof value === 'string') {
     // Count every occurrence at its escaped UTF-8 size, so repeated
     // references to one long string cannot outgrow the byte limit unseen.
@@ -80,7 +96,7 @@ function normalizeJson(value: unknown, key: string, depth: number, budget: { lef
   const out: Record<string, unknown> = {};
   for (const name of Object.keys(value)) {
     budget.left -= 1;
-    if (budget.left < 0) throw new MetadataBudgetError();
+    if (budget.left < 0) throw METADATA_BUDGET_EXCEEDED;
     const item = normalizeJson((value as Record<string, unknown>)[name], name, depth + 1, budget);
     if (item !== undefined) {
       charge(budget, new TextEncoder().encode(JSON.stringify(name)).byteLength + 2);
@@ -194,7 +210,9 @@ export function assertValidUploadInit(input: UploadInitInput): { metadata?: Reco
     // Leading and trailing spaces or tabs are HTTP whitespace, not part of the type.
     !MIME_TYPE.test(input.mimeType.replace(/^[ \t]+|[ \t]+$/g, '')) ||
     // Tab is HTTP whitespace and may separate parameters; other controls may not.
-    CONTROL_CHARACTERS.test(input.mimeType.replace(/\t/g, ' ')) ||
+    // C0 controls other than tab, and DEL; U+0080-U+00FF is left to the
+    // quoted-string grammar (obs-text).
+    /[\u0000-\u0008\u000a-\u001f\u007f]/.test(input.mimeType) ||
     LONE_SURROGATE.test(input.mimeType)
   ) {
     throw invalidRequest('mimeType must be a MIME type such as "image/png"', { field: 'mimeType' });
@@ -214,7 +232,7 @@ export function assertValidUploadInit(input: UploadInitInput): { metadata?: Reco
       // checked on the final string below.
       normalized = normalizeJson(input.metadata, 'md', 0, { left: MAX_METADATA_NODES, bytes: MAX_METADATA_BYTES * 2 });
     } catch (error) {
-      overBytes = error instanceof MetadataBudgetError;
+      overBytes = error === METADATA_BUDGET_EXCEEDED;
       normalized = undefined;
     }
     if (overBytes) {

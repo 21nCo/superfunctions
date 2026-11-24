@@ -1274,19 +1274,41 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       // Read each field once (accessors included, never a spread) before any
       // caller hook such as metadata.toJSON runs, then validate and use that
       // same snapshot, with metadata replaced by its checked plain copy.
+      // Metadata is read last and lazily (once), so the scalar fields are
+      // checked before any metadata accessor or hook runs; a metadata accessor
+      // that throws is an invalid request.
+      const source = input;
+      let metadataRead = false;
+      let metadataValue: unknown;
       const fields = {
         policy: input.policy,
         fileName: input.fileName,
         size: input.size,
         mimeType: input.mimeType,
         fileId: input.fileId,
-        metadata: input.metadata,
         idempotencyKey: input.idempotencyKey,
+        get metadata(): unknown {
+          if (!metadataRead) {
+            metadataRead = true;
+            try {
+              metadataValue = source.metadata;
+            } catch {
+              throw errors.invalidRequest('metadata could not be read', { field: 'metadata' });
+            }
+          }
+          return metadataValue;
+        },
       };
       const checked = assertValidUploadInit(fields as unknown as UploadInitInput);
-      const { metadata: _unchecked, ...rest } = fields;
-      void _unchecked;
-      input = { ...rest, ...(checked.metadata !== undefined ? { metadata: checked.metadata } : {}) };
+      input = {
+        policy: fields.policy,
+        fileName: fields.fileName,
+        size: fields.size,
+        mimeType: fields.mimeType,
+        fileId: fields.fileId,
+        idempotencyKey: fields.idempotencyKey,
+        ...(checked.metadata !== undefined ? { metadata: checked.metadata } : {}),
+      };
       const requestedFileId = parseRequestedFileId(input.fileId as unknown);
 
       // Check idempotency

@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { memoryAdapter } from '@superfunctions/db/adapters/memory';
 import { createLocalStorageAdapter } from '@superfunctions/storage-local';
+import { runInNewContext } from 'node:vm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createFileFn, type Policy } from '../src/index.js';
 
@@ -135,7 +136,7 @@ describe('upload init input (FILE-30 F-21, F-05)', () => {
 
   it('accepts ordinary names, zero-byte uploads and MIME parameters', async () => {
     const fileFn = makeFileFn([{ name: 'any' }]);
-    for (const [fileName, mimeType] of [['report.txt', 'text/plain; charset=utf-8'], ['résumé (final).pdf', 'application/pdf'], ['.hidden', 'text/plain;\tcharset=UTF-8'], ['a..b', 'application/octet-stream'], ['photo \u{1F600}.png', 'image/png'], ['trailing.txt', 'text/plain \t'], ['private.bin', 'application/x-example~v1'], ['empty-slot.png', 'image/png;'], ['quoted.txt', 'text/plain; name="a \\"b\\" c"'], ['latin1.txt', 'text/plain; name="caf\u00e9"'], ['data.jsonld', `application/ld+json; profile="https://example.com/${'p'.repeat(400)}"`]]) {
+    for (const [fileName, mimeType] of [['report.txt', 'text/plain; charset=utf-8'], ['résumé (final).pdf', 'application/pdf'], ['.hidden', 'text/plain;\tcharset=UTF-8'], ['a..b', 'application/octet-stream'], ['photo \u{1F600}.png', 'image/png'], ['trailing.txt', 'text/plain \t'], ['private.bin', 'application/x-example~v1'], ['empty-slot.png', 'image/png;'], ['quoted.txt', 'text/plain; name="a \\"b\\" c"'], ['latin1.txt', 'text/plain; name="caf\u00e9"'], ['c1.txt', 'text/plain; name="a\u0093b"'], ['data.jsonld', `application/ld+json; profile="https://example.com/${'p'.repeat(400)}"`]]) {
       await expect(
         fileFn.createUploadSession({ policy: 'any', fileName, size: 0, mimeType }, { principalId: 'alice' }),
       ).resolves.toMatchObject({ uploadSessionId: expect.any(String) });
@@ -227,5 +228,38 @@ describe('upload init input (FILE-30 F-21, F-05)', () => {
       { principalId: 'alice' },
     );
     expect(session.uploadSessionId).toEqual(expect.any(String));
+  });
+
+  it('unboxes primitives from another realm, matching the JSON.stringify fingerprint', async () => {
+    const fileFn = makeFileFn([{ name: 'any' }]);
+    const foreign = runInNewContext('({ count: new Number(1), flag: new Boolean(true) })');
+    const input = { policy: 'any', fileName: 'a.txt', size: 1, mimeType: 'text/plain', idempotencyKey: 'realm-key' };
+    const first = await fileFn.createUploadSession({ ...input, metadata: foreign } as never, { principalId: 'alice' });
+    // A plain retry with the primitive values replays the same session.
+    const retry = await fileFn.createUploadSession({ ...input, metadata: { count: 1, flag: true } }, { principalId: 'alice' });
+    expect(retry.uploadSessionId).toBe(first.uploadSessionId);
+  });
+
+  it('reports invalid metadata as 400 even when a hook throws a hostile value', async () => {
+    const fileFn = makeFileFn([{ name: 'any' }]);
+    const hostile = new Proxy({}, { getPrototypeOf() { throw new Error('trap'); } });
+    const metadata = { toJSON() { throw hostile; } };
+    await expect(
+      fileFn.createUploadSession({ policy: 'any', fileName: 'a.txt', size: 1, mimeType: 'text/plain', metadata } as never, { principalId: 'alice' }),
+    ).rejects.toMatchObject({ code: 'FILEFN_INVALID_REQUEST' });
+  });
+
+  it('checks scalar fields before reading metadata', async () => {
+    const fileFn = makeFileFn([{ name: 'any' }]);
+    const input = { policy: 'any', fileName: 'a.txt', size: -1, mimeType: 'text/plain', get metadata() { throw new Error('getter'); } };
+    await expect(fileFn.createUploadSession(input as never, { principalId: 'alice' })).rejects.toMatchObject({
+      code: 'FILEFN_INVALID_REQUEST',
+      details: { field: 'size' },
+    });
+    const valid = { policy: 'any', fileName: 'a.txt', size: 1, mimeType: 'text/plain', get metadata() { throw new Error('getter'); } };
+    await expect(fileFn.createUploadSession(valid as never, { principalId: 'alice' })).rejects.toMatchObject({
+      code: 'FILEFN_INVALID_REQUEST',
+      details: { field: 'metadata' },
+    });
   });
 });
