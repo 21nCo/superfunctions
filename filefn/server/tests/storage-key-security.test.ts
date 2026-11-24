@@ -120,7 +120,10 @@ describe('storage keys (FILE-30 F-01)', () => {
     expect(unsafeStorageKeyReason('/a')).toBe('absolute key');
     expect(unsafeStorageKeyReason('C:/Windows/x')).toBe('absolute key');
     expect(unsafeStorageKeyReason('c:')).toBe('absolute key');
-    expect(unsafeStorageKeyReason('a:b/x')).toBeNull();
+    expect(unsafeStorageKeyReason('C:x/y')).toBe('absolute key');
+    expect(unsafeStorageKeyReason('ab:c/x')).toBeNull();
+    expect(sanitizeStorageKeySegment('a:b')).toBe('a%3Ab');
+    expect(sanitizeStorageKeySegment('ab:c')).toBe('ab:c');
     expect(unsafeStorageKeyReason('a\\b')).toBe('backslash');
     expect(unsafeStorageKeyReason('acme.com/a..b')).toBeNull();
   });

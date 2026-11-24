@@ -107,7 +107,9 @@ function percentEncode(char: string): string {
 export function sanitizeStorageKeySegment(value: string): string {
   const encoded = String(value)
     .replace(/[%\\/\u0000-\u001f\u007f-\u009f]/g, percentEncode)
-    .replace(/^\.\.+/, (dots) => '%2E'.repeat(dots.length));
+    .replace(/^\.\.+/, (dots) => '%2E'.repeat(dots.length))
+    // A leading drive letter and colon (`C:`), which Windows would read as a drive.
+    .replace(/^([A-Za-z]):/, '$1%3A');
   // `%20` is never produced for a nonempty value (a space is kept verbatim and
   // `%` itself is encoded), so it marks an empty value without colliding.
   if (encoded.length === 0) return '%20';
@@ -151,8 +153,8 @@ export function unsafeStorageKeyReason(key: string): string | null {
   if (typeof key !== 'string' || key.length === 0) return 'empty key';
   if (new RegExp(STORAGE_KEY_CONTROL_CHARACTERS.source).test(key)) return 'control character';
   if (key.includes('\\')) return 'backslash';
-  // Slash-rooted, or drive-qualified as a Windows filesystem adapter would read it.
-  if (key.startsWith('/') || /^[A-Za-z]:(\/|$)/.test(key)) return 'absolute key';
+  // Slash-rooted, or starting with a Windows drive (`C:/x` or drive-relative `C:x`).
+  if (key.startsWith('/') || /^[A-Za-z]:/.test(key)) return 'absolute key';
   for (const segment of key.split('/')) {
     if (segment === '') return 'empty segment';
     if (segment === '.' || segment === '..') return 'dot segment';
