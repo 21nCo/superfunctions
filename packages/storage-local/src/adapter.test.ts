@@ -315,6 +315,38 @@ describe('@superfunctions/storage-local', () => {
       }
     });
 
+    it('should refuse dot segments that stay inside the root', async () => {
+      // Regression for FILE-30 F-01: `t1/bob/f/v-../../../alice/f/v-report.txt`
+      // normalizes to a path inside the root, so it used to name alice's object.
+      const adapter = createLocalStorageAdapter({ rootDir: testDir });
+      await mkdir(join(testDir, 'alice'), { recursive: true });
+      await writeFile(join(testDir, 'alice', 'report.txt'), 'alice data');
+
+      const keys = ['bob/x/../../alice/report.txt', './alice/report.txt', 'alice/./report.txt'];
+      for (const key of keys) {
+        await expect(adapter.statObject({ key })).rejects.toThrow('path traversal');
+        await expect(adapter.deleteObject({ key })).rejects.toThrow('path traversal');
+      }
+      expect(await readFile(join(testDir, 'alice', 'report.txt'), 'utf8')).toBe('alice data');
+    });
+
+    it('should treat a backslash as part of a name on POSIX', async () => {
+      if (process.platform === 'win32') return;
+      const adapter = createLocalStorageAdapter({ rootDir: testDir });
+      await writeFile(join(testDir, 'archive\\.\\report.txt'), 'literal name');
+      const stat = await adapter.statObject({ key: 'archive\\.\\report.txt' });
+      expect(stat.size).toBe(12);
+    });
+
+    it('should still allow dots inside a segment', async () => {
+      const adapter = createLocalStorageAdapter({ rootDir: testDir });
+      await mkdir(join(testDir, 'acme.com'), { recursive: true });
+      await writeFile(join(testDir, 'acme.com', 'a..b.txt'), 'content');
+
+      const stat = await adapter.statObject({ key: 'acme.com/a..b.txt' });
+      expect(stat.size).toBe(7);
+    });
+
     it('should allow safe nested paths', async () => {
       const adapter = createLocalStorageAdapter({ rootDir: testDir });
       const nestedPath = join(testDir, 'a', 'b', 'c');

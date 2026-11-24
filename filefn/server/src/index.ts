@@ -506,6 +506,8 @@ export {
   matchesContentType,
   resolveArtifactStorageTarget,
   resolveStorageTarget,
+  sanitizeStorageKeySegment,
+  unsafeStorageKeyReason,
   validatePolicyConstraints,
 } from './policies.js';
 export type { Policy, PolicyRegistry, Visibility } from './policies.js';
