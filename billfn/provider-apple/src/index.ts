@@ -77,6 +77,13 @@ export interface AppleProviderConfig {
   fetch?: typeof fetch;
   environment?: 'production' | 'sandbox';
   /**
+   * With `environment: 'production'` (the default), whether sandbox purchases count: StoreKit reads retry against
+   * the sandbox when production does not know a transaction, and notifications from the sandbox are applied.
+   * Off by default, because a sandbox or TestFlight purchase costs nothing. Turn it on only where it is needed,
+   * such as a build under App Review, which buys in the sandbox against the production server.
+   */
+  allowSandbox?: boolean;
+  /**
    * The app's bundle ID. With it the built-in verifier checks notifications (x5c chain to the pinned Apple Root CA - G3,
    * Apple's OIDs, ES256 signature, certificate validity, bundle ID). Signed data is accepted for this app or any app in
    * `bundleIds`, and rejected for any other app. The built-in signer claims, as `bid`, the app being asked about,
@@ -183,11 +190,11 @@ export function createAppleProvider(providerConfig: AppleProviderConfig): BillFn
         bundleId
       };
       if (input.price.kind === 'subscription') {
-        const response = await requestStoreKitForPrice(fetchImpl, config, bundleId, `/inApps/v1/subscriptions/${transactionId}`);
+        const response = await requestStoreKitForPrice(fetchImpl, config, bundleId, `/inApps/v1/subscriptions/${encodeURIComponent(transactionId)}`);
         return mapAppleSubscriptionResponse(response.payload, expectation, config.catalogPriceIdFor, input.price.priceId);
       }
 
-      const response = await requestStoreKitForPrice(fetchImpl, config, bundleId, `/inApps/v2/history/${transactionId}`);
+      const response = await requestStoreKitForPrice(fetchImpl, config, bundleId, `/inApps/v2/history/${encodeURIComponent(transactionId)}`);
       return mapAppleHistoryResponse(response.payload, expectation, config.catalogPriceIdFor, input.price.priceId);
     },
     async fetchSubscription(input: BillFnSyncSubscriptionInput) {
@@ -201,7 +208,7 @@ export function createAppleProvider(providerConfig: AppleProviderConfig): BillFn
       // Sync reads a stored subscription whose reference verification, restore or an operator's import already bound to
       // its app, so it grants no new price. BillFn picks the price it passes by product alone, which with several apps may
       // be another app's price of the same product, so the subscription is read from whichever listed app owns it.
-      const response = await requestStoreKitForTransaction(fetchImpl, config, `/inApps/v1/subscriptions/${transactionId}`);
+      const response = await requestStoreKitForTransaction(fetchImpl, config, `/inApps/v1/subscriptions/${encodeURIComponent(transactionId)}`);
       // An imported purchase was made outside BillFn, so its token is not derived from the billing account.
       const imported = typeof input.subscription.metadata?.[BILLFN_IMPORTED_AT_METADATA_KEY] === 'string';
       return mapAppleSubscriptionResponse(response.payload, {
@@ -267,7 +274,7 @@ export function createAppleProvider(providerConfig: AppleProviderConfig): BillFn
         fetchImpl,
         config,
         transactionId,
-        `/subscription/cancel/${transactionId}`,
+        `/subscription/cancel/${encodeURIComponent(transactionId)}`,
         {
           method: 'POST'
         }
@@ -308,7 +315,7 @@ export function createAppleProvider(providerConfig: AppleProviderConfig): BillFn
         fetchImpl,
         config,
         transactionId,
-        `/subscription/revoke/${transactionId}`,
+        `/subscription/revoke/${encodeURIComponent(transactionId)}`,
         {
           method: 'POST',
           body: JSON.stringify({
@@ -341,8 +348,8 @@ export function createAppleProvider(providerConfig: AppleProviderConfig): BillFn
         config,
         bundleId,
         input.price.kind === 'subscription'
-          ? `/inApps/v1/subscriptions/${input.purchaseReference}`
-          : `/inApps/v2/history/${input.purchaseReference}`
+          ? `/inApps/v1/subscriptions/${encodeURIComponent(input.purchaseReference)}`
+          : `/inApps/v2/history/${encodeURIComponent(input.purchaseReference)}`
       );
       const expectation = {
         productId: input.price.providerProductId,
@@ -378,7 +385,7 @@ export function createAppleProvider(providerConfig: AppleProviderConfig): BillFn
         signedPayload
       });
 
-      return [mapAppleNotificationEvent(decoded, signedPayload, config.catalogPriceIdFor)];
+      return [mapAppleNotificationEvent(decoded, signedPayload, config.catalogPriceIdFor, acceptsSandbox(config))];
     },
     async fetchNotificationHistory(input: BillFnFetchNotificationHistoryInput): Promise<BillFnNotificationHistoryPage> {
       if (!config.verifyNotification) {
@@ -419,7 +426,7 @@ export function createAppleProvider(providerConfig: AppleProviderConfig): BillFn
           rawBody: JSON.stringify({ signedPayload }),
           signedPayload
         });
-        events.push(mapAppleNotificationEvent(decoded, signedPayload, config.catalogPriceIdFor));
+        events.push(mapAppleNotificationEvent(decoded, signedPayload, config.catalogPriceIdFor, acceptsSandbox(config)));
       }
 
       return {
@@ -510,7 +517,9 @@ async function requestStoreKitWithFallback(
   init: RequestInit = {}
 ) {
   const initial = config.environment ?? 'production';
-  const environments: Array<'production' | 'sandbox'> = initial === 'production' ? ['production', 'sandbox'] : ['sandbox'];
+  // Production falls back to the sandbox only when the host allows sandbox purchases.
+  const environments: Array<'production' | 'sandbox'> =
+    initial === 'production' ? (config.allowSandbox === true ? ['production', 'sandbox'] : ['production']) : ['sandbox'];
   let lastError: unknown;
 
   for (const environment of environments) {
@@ -937,14 +946,21 @@ function mapAppleNotificationEvent(
     signatureVerified: boolean;
   },
   signedPayload: string,
-  catalogPriceIdFor: CatalogPriceIdResolver
+  catalogPriceIdFor: CatalogPriceIdResolver,
+  sandboxAccepted: boolean
 ): BillFnParsedWebhookEvent {
   const notification = decoded.payload;
   const data = asRecord(notification.data) ?? {};
-  const transaction = decodeSignedPayload(data, 'signedTransactionInfo');
-  const renewal = decodeSignedPayload(data, 'signedRenewalInfo');
+  const decodedTransaction = decodeSignedPayload(data, 'signedTransactionInfo');
   const notificationType = readString(notification, ['notificationType']) ?? 'UNKNOWN';
   const subtype = readString(notification, ['subtype']) ?? undefined;
+  // A sandbox notification reaching a production deployment that does not accept sandbox purchases is
+  // acknowledged and ignored: no billing state, and no reference to link it to a subscription.
+  const ignored =
+    !sandboxAccepted &&
+    (readString(data, ['environment']) === 'Sandbox' || readString(decodedTransaction ?? {}, ['environment']) === 'Sandbox');
+  const transaction = ignored ? null : decodedTransaction;
+  const renewal = ignored ? null : decodeSignedPayload(data, 'signedRenewalInfo');
   const state = mapAppleNotificationState(notificationType, subtype, transaction, renewal);
 
   return {
@@ -958,6 +974,11 @@ function mapAppleNotificationEvent(
     billingState: state,
     raw: notification
   };
+}
+
+/** Whether sandbox purchases and notifications count for this adapter. */
+function acceptsSandbox(config: AppleProviderConfig): boolean {
+  return (config.environment ?? 'production') === 'sandbox' || config.allowSandbox === true;
 }
 
 function mapAppleNotificationState(
@@ -986,7 +1007,8 @@ function mapAppleNotificationState(
     case 'DID_FAIL_TO_RENEW':
       return {
         ...transactionState,
-        subscriptionStatus: subtype === 'GRACE_PERIOD' ? 'grace' : 'past_due',
+        // Without the grace period subtype the subscription is in billing retry, which grants no access.
+        subscriptionStatus: subtype === 'GRACE_PERIOD' ? 'grace' : 'paused',
         checkoutStatus: 'succeeded'
       };
     case 'EXPIRED':
@@ -1219,7 +1241,10 @@ function normalizeAppleStatus(statusCode: number): BillFnVerifiedBillingState['s
     case 2:
       return 'expired';
     case 3:
+      // Billing retry: Apple is still trying to collect the renewal and nothing was paid, so it grants no access.
+      return 'paused';
     case 4:
+      // Billing grace period: the developer chose to keep access while Apple retries.
       return 'grace';
     case 5:
       return 'canceled';
