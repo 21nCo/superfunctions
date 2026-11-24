@@ -448,6 +448,8 @@ export class SchemaConverter {
   private readonly admitted = new WeakMap<object, AdmittedKinds | OpenApiSkip>();
   /** The node of an allOf (`both`) or anyOf/oneOf (`either`) member array, once per array. */
   private readonly memberLists = new Map<"both" | "either", WeakMap<object, MemberList>>();
+  /** The kinds of each `type` array and type-only `not` object (see `listedKinds`). */
+  private readonly typeKinds = new WeakMap<object, readonly ValueKind[]>();
   /** The kinds of the values an `enum` array or a `const` object lists, once per object. */
   private readonly literalKinds = new Map<"enum" | "const", WeakMap<object, AdmittedKinds>>();
   private readonly flags = new Map<DirectionalKeyword, WeakMap<object, boolean>>();
@@ -565,43 +567,55 @@ export class SchemaConverter {
   }
 
   /**
-   * Narrow every node of a component from EVERYTHING until nothing changes,
-   * re-evaluating only the nodes whose children narrowed: a node narrows at
-   * most once per kind, so the work stays linear in the component's edges.
+   * Settle a component to its greatest fixed point: every node starts from
+   * its kinds with each member in the component taken as EVERYTHING, then a
+   * member that narrowed narrows its parents incrementally (an intersection
+   * with its new kinds, or new counts for anyOf/oneOf). A node narrows at
+   * most once per kind and each step costs its parents O(1), so the work is
+   * linear in the component's edges, however wide a member list is.
    */
   private settleKinds(component: object[], terms: Map<object, KindsTerms>): void {
-    const current = new Map<object, AdmittedKinds>();
-    const parents = new Map<object, object[]>();
-    for (const node of component) current.set(node, EVERYTHING);
-    for (const node of component) {
-      for (const child of terms.get(node)!.children) {
-        if (!current.has(child)) continue;
-        const list = parents.get(child);
-        if (list) list.push(node);
-        else parents.set(child, [node]);
-      }
-    }
+    const inComponent = new Set(component);
     const read = (value: unknown): AdmittedKinds => {
       if (value === false) return NOTHING;
       if (!isObject(value)) return EVERYTHING;
-      return current.get(value) ?? (this.admitted.get(value) as AdmittedKinds);
+      return inComponent.has(value) ? EVERYTHING : (this.admitted.get(value) as AdmittedKinds);
     };
-    const pending = [...component];
-    const queued = new Set(component);
+    const settling = new Map<object, SettlingKinds>();
+    const parents = new Map<object, Array<{ parent: SettlingKinds; role: "member" | "items" }>>();
+    for (const node of component) {
+      const nodeTerms = terms.get(node)!;
+      const state = new SettlingKinds(nodeTerms, read);
+      settling.set(node, state);
+      const occurrences: Array<[unknown, "member" | "items"]> = nodeTerms.members.map((member) => [member, "member"]);
+      if (nodeTerms.items !== undefined) occurrences.push([nodeTerms.items, "items"]);
+      for (const [child, role] of occurrences) {
+        if (!isObject(child) || !inComponent.has(child)) continue;
+        const list = parents.get(child);
+        if (list) list.push({ parent: state, role });
+        else parents.set(child, [{ parent: state, role }]);
+      }
+    }
+    // What each node's parents last took it to be.
+    const seen = new Map<object, AdmittedKinds>();
+    const pending = component.filter((node) => !sameKinds(settling.get(node)!.kinds, EVERYTHING));
+    const queued = new Set(pending);
+    const nodes = new Map<SettlingKinds, object>([...settling].map(([node, state]) => [state, node]));
     while (pending.length > 0) {
-      const node = pending.pop()!;
-      queued.delete(node);
-      const next = combineKinds(terms.get(node)!, read);
-      if (sameKinds(next, current.get(node)!)) continue;
-      current.set(node, next);
-      for (const parent of parents.get(node) ?? []) {
-        if (!queued.has(parent)) {
-          queued.add(parent);
-          pending.push(parent);
+      const child = pending.pop()!;
+      queued.delete(child);
+      const before = seen.get(child) ?? EVERYTHING;
+      const after = settling.get(child)!.kinds;
+      seen.set(child, after);
+      for (const { parent, role } of parents.get(child) ?? []) {
+        const node = nodes.get(parent)!;
+        if (parent.narrow(role, before, after) && !queued.has(node)) {
+          queued.add(node);
+          pending.push(node);
         }
       }
     }
-    for (const [node, kinds] of current) this.admitted.set(node, kinds);
+    for (const [node, state] of settling) this.admitted.set(node, state.kinds);
   }
 
   /** The member list node of `members` combined as `combine`, one per array and combination. */
@@ -623,6 +637,9 @@ export class SchemaConverter {
     const members: unknown[] = [];
     if (Object.hasOwn(schema, "$ref")) {
       const target = this.component(parseComponentRef(schema.$ref, "schemas"));
+      // A target known to fail fails this schema before its siblings are read.
+      const failed = isObject(target) ? this.admitted.get(target) : undefined;
+      if (failed instanceof OpenApiSkip) throw failed;
       // OpenAPI 3.0 ignores $ref siblings; 3.1 applies them too.
       if (this.version === "3.0") return termsOf("both", EVERYTHING, [target]);
       members.push(target);
@@ -632,11 +649,21 @@ export class SchemaConverter {
       const value = schema[keyword];
       if (Array.isArray(value)) members.push(this.memberList(value, "either"));
     }
-    const excluded = typeOnlyKinds(schema.not);
+    const excluded = isObject(schema.not) ? this.listedKinds(schema.not, () => typeOnlyKinds(schema.not)) : [];
     const narrowed = this.narrowByValues(EVERYTHING, schema);
     const own = excluded.length === 0 ? narrowed : { ...narrowed, values: without(narrowed.values, excluded) };
     const items = Object.hasOwn(schema, "items") && !Array.isArray(schema.items) ? schema.items : undefined;
     return termsOf("both", own, members, items);
+  }
+
+  /** The kinds a `type` array lists or a `not` object refuses, read once per object. */
+  private listedKinds(value: object, read: () => ValueKind[]): readonly ValueKind[] {
+    let kinds = this.typeKinds.get(value);
+    if (kinds === undefined) {
+      kinds = read();
+      this.typeKinds.set(value, kinds);
+    }
+    return kinds;
   }
 
   /** The kinds of the literals an `enum` array (or a `const` value) lists, kept per object. */
@@ -656,9 +683,10 @@ export class SchemaConverter {
   private narrowByValues(result: AdmittedKinds, schema: JsonObject): AdmittedKinds {
     let narrowed = result;
     if (schema.type !== undefined) {
-      const kinds = listOf(schema.type).flatMap(kindsOfType);
-      if (this.version === "3.0" && schema.nullable === true) kinds.push("null");
-      narrowed = { ...narrowed, values: intersect(narrowed.values, kinds) };
+      const { type } = schema;
+      const kinds = Array.isArray(type) ? this.listedKinds(type, () => listOf(type).flatMap(kindsOfType)) : kindsOfType(type);
+      const nullable = this.version === "3.0" && schema.nullable === true;
+      narrowed = { ...narrowed, values: intersect(narrowed.values, nullable ? [...kinds, "null"] : kinds) };
     }
     if (Array.isArray(schema.enum)) narrowed = both(narrowed, this.literals("enum", schema.enum));
     if (Object.hasOwn(schema, "const")) narrowed = both(narrowed, this.literals("const", schema.const));
@@ -804,7 +832,10 @@ export class SchemaConverter {
     }
     if ((SCHEMA_ARRAY_KEYWORDS.has(keyword) || keyword === "items") && Array.isArray(value)) {
       this.budget.source(documentItems(value));
-      return [keyword, value.map((item) => this.convert(item, mode, refs))];
+      // Grown member by member, so the budget stops the work before the result is as long as the source.
+      const converted: unknown[] = [];
+      for (const item of value) converted.push(this.convert(item, mode, refs));
+      return [keyword, converted];
     }
     if (keyword === "items") return [keyword, this.convert(value, mode, refs)];
     if (SCHEMA_KEYWORDS.has(keyword)) return [keyword, this.convert(value, mode, refs)];
@@ -1257,14 +1288,15 @@ export class SchemaConverter {
 
   /**
    * `localFlags` of a component. One too deeply nested to scan (a stack
-   * overflow) counts as flagged, so any operation reaching it is checked in
+   * overflow) or holding a value conversion refuses (such as an irregular
+   * array) counts as flagged, so any operation reaching it is checked in
    * full, and fails there with its own skip; others are unaffected.
    */
   private componentFlags(schema: unknown, keyword: DirectionalKeyword): { flagged: boolean; refs: Set<string> } {
     try {
       return this.localFlags(schema, keyword);
     } catch (error) {
-      if (!(error instanceof RangeError)) throw error;
+      if (!(error instanceof RangeError || error instanceof OpenApiSkip)) throw error;
       return { flagged: true, refs: new Set() };
     }
   }
@@ -1770,25 +1802,62 @@ function termsOf(combine: "both" | "either", own: AdmittedKinds, members: readon
 }
 
 /**
- * `both`: the value matches `own` and every member. `either` (anyOf/oneOf):
- * it matches some member, and item kinds come from members that accept
- * arrays. Folded member by member, with no array of member kinds.
+ * The kinds of one node while its component settles. `both`: the value
+ * matches `own` and every member (an `items` member narrows only `items`).
+ * `either` (anyOf/oneOf): it matches some member, so each kind is counted
+ * by the members admitting it, and item kinds come from members that accept
+ * arrays. Members are folded one by one, with no array of their kinds.
  */
-function combineKinds(terms: KindsTerms, read: (value: unknown) => AdmittedKinds): AdmittedKinds {
-  if (terms.combine === "either") {
-    const values = new Set<ValueKind>();
-    const items = new Set<ValueKind>();
-    for (const member of terms.members) {
-      const kinds = read(member);
-      for (const kind of kinds.values) values.add(kind);
-      if (kinds.values.has("array")) for (const kind of kinds.items) items.add(kind);
+class SettlingKinds {
+  kinds: AdmittedKinds;
+  private readonly values = new Map<ValueKind, number>();
+  private readonly items = new Map<ValueKind, number>();
+
+  constructor(
+    private readonly terms: KindsTerms,
+    read: (value: unknown) => AdmittedKinds,
+  ) {
+    if (terms.combine === "either") {
+      for (const member of terms.members) this.count(read(member), 1);
+      this.kinds = this.counted();
+      return;
     }
-    return { values, items };
+    let result = terms.own;
+    for (const member of terms.members) result = both(result, read(member));
+    if (terms.items !== undefined) result = narrowItems(result, read(terms.items));
+    this.kinds = result;
   }
-  let result = terms.own;
-  for (const member of terms.members) result = both(result, read(member));
-  if (terms.items !== undefined) result = { ...result, items: intersect(result.items, read(terms.items).values) };
-  return result;
+
+  /** Take one occurrence of a member as narrowed from `before` to `after`; whether this node's kinds narrowed. */
+  narrow(role: "member" | "items", before: AdmittedKinds, after: AdmittedKinds): boolean {
+    let next: AdmittedKinds;
+    if (this.terms.combine === "either") {
+      this.count(before, -1);
+      this.count(after, 1);
+      next = this.counted();
+    } else {
+      // Kinds only narrow, so intersecting with the member's new kinds is the new fold.
+      next = role === "items" ? narrowItems(this.kinds, after) : both(this.kinds, after);
+    }
+    if (sameKinds(next, this.kinds)) return false;
+    this.kinds = next;
+    return true;
+  }
+
+  private count(kinds: AdmittedKinds, step: number): void {
+    for (const kind of kinds.values) this.values.set(kind, (this.values.get(kind) ?? 0) + step);
+    if (kinds.values.has("array")) for (const kind of kinds.items) this.items.set(kind, (this.items.get(kind) ?? 0) + step);
+  }
+
+  private counted(): AdmittedKinds {
+    const listed = (counts: Map<ValueKind, number>) => new Set([...counts].filter(([, count]) => count > 0).map(([kind]) => kind));
+    return { values: listed(this.values), items: listed(this.items) };
+  }
+}
+
+/** An `items` schema narrows the kinds of an array value's items to the kinds it admits. */
+function narrowItems(kinds: AdmittedKinds, items: AdmittedKinds): AdmittedKinds {
+  return { ...kinds, items: intersect(kinds.items, items.values) };
 }
 
 function sameKinds(left: AdmittedKinds, right: AdmittedKinds): boolean {

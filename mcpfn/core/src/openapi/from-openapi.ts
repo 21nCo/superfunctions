@@ -815,7 +815,10 @@ function treeCopy<T>(value: T, budget: NodeBudget, values: CopiedValues = { json
 function copyMembers(value: object, budget: NodeBudget, values: CopiedValues, ancestors: Set<object>): unknown {
   let copy: unknown;
   if (Array.isArray(value)) {
-    copy = documentItems(value).map((item) => treeCopy(item, budget, values, ancestors));
+    // Grown member by member, so the budget stops the copy before it is as long as the source.
+    const items: unknown[] = [];
+    for (const item of documentItems(value)) items.push(treeCopy(item, budget, values, ancestors));
+    copy = items;
   } else {
     // Member by member through the call's key lists, so a failing member ends the work.
     const entries: Array<[string, unknown]> = [];

@@ -2566,6 +2566,25 @@ describe("fromOpenAPI body fallback, synchronous schemas, per-kind alternatives 
     }
   });
 
+  it("fails only the operations that reach a component holding an irregular array", () => {
+    const flagged = { type: "object", properties: { a: { type: "string", readOnly: true }, b: { type: "string" } } };
+    const result = fromOpenAPI(
+      {
+        openapi: "3.1.0",
+        paths: {
+          "/g": { get: { operationId: "g", responses: json(flagged) } },
+          "/p": { post: { operationId: "p", requestBody: { content: { "application/json": { schema: flagged } } }, responses: ok } },
+          "/u": { get: { operationId: "u", responses: json({ $ref: "#/components/schemas/Unused" }) } },
+        },
+        components: { schemas: { Unused: { allOf: Object.assign([{ type: "object" }], { map: null }) } } },
+      },
+      options(),
+    );
+    expect(result.skipped.map(({ operation, code }) => [operation.operationId, code])).toEqual([["u", "invalid-schema"]]);
+    expectArguments(tool(result.tools, "p").inputSchema, { valid: [{ body: { b: "x" } }], invalid: [{ body: { a: "x" } }] });
+    expect(tool(result.tools, "g").outputSchema).toBeDefined();
+  });
+
   it("does not remember a budget skip inside a shared schema for operations where it fits", () => {
     const small = { type: "object", properties: Object.fromEntries(Array.from({ length: 20 }, (_, index) => [`s${index}`, { type: "string" }])) };
     const big = { type: "object", properties: Object.fromEntries(Array.from({ length: 99_990 }, (_, index) => [`b${index}`, true])) };

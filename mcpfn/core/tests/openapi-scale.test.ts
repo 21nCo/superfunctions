@@ -73,6 +73,31 @@ describe("fromOpenAPI scale", () => {
     expect(elapsed).toBeLessThan(2000);
   });
 
+  it("settles a wide productive cycle and a widely shared type list beside a broken $ref within 2 seconds", () => {
+    // H = allOf of 3,000 members whose items refer back to H: each narrowing reaches the list once, not once per member.
+    const members = Array.from({ length: 3000 }, () => ({ type: "object", items: { $ref: "#/components/schemas/H" } }));
+    const response = { "200": { description: "OK", content: { "application/json": { schema: { $ref: "#/components/schemas/H" } } } } };
+    let started = performance.now();
+    const wide = fromOpenAPI(
+      { openapi: "3.1.0", paths: { "/h": { get: { operationId: "h", responses: response }, head: { operationId: "hh", responses: response } } }, components: { schemas: { H: { type: "object", allOf: members } } } },
+      { executor: recordingExecutor() },
+    );
+    expect(performance.now() - started).toBeLessThan(2000);
+    expect(wide.skipped).toEqual([]);
+    expect(wide.tools.map((entry) => [entry.name, entry.outputSchema !== undefined])).toEqual([["h", true], ["hh", false]]);
+    // 2,000 roots share one 20,000-entry type list beside a $ref whose target fails: the list is read once.
+    const type = Array.from({ length: 20_000 }, () => "object");
+    const paths: Record<string, unknown> = { "/ok": { get: { operationId: "ok", responses: ok } } };
+    for (let index = 0; index < 2000; index += 1) {
+      paths[`/r${index}`] = { get: { operationId: `r${index}`, responses: { "200": { description: "OK", content: { "application/json": { schema: { $ref: "#/components/schemas/Broken", type } } } } } } };
+    }
+    started = performance.now();
+    const broken = fromOpenAPI({ openapi: "3.1.0", paths, components: { schemas: { Broken: { $ref: "#/components/schemas/Missing" } } } }, { executor: recordingExecutor() });
+    expect(performance.now() - started).toBeLessThan(2000);
+    expect(broken.tools.map((entry) => entry.name)).toEqual(["ok"]);
+    expect(broken.skipped.map((entry) => entry.code)).toEqual(Array.from({ length: 2000 }, () => "unresolved-ref"));
+  });
+
   it("suffixes 2,000 colliding names within 2 seconds", () => {
     const shared = "o".repeat(128);
     const paths: Record<string, unknown> = {};
