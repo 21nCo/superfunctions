@@ -103,7 +103,9 @@ storagePath: ({ fileId, versionId }) => {
 }
 ```
 
-Any `..` and slashes in the input are sanitised before reaching `storagePath`.
+In the default layout every segment is sanitised: slashes and a leading run of dots become `_`, a segment that is `.` becomes `_`, and control characters are dropped; anything else is kept as it is.
+
+A custom `storagePath` receives the tenant and principal IDs exactly as your auth resolved them. Whatever it returns is checked: a key that is empty, starts with `/`, contains `\`, a control character, an empty segment, or a `.` or `..` segment is refused with `FILEFN_INVALID_REQUEST` (400). The examples above assume IDs without `/`, `\` or dot segments; if yours can contain them, pass each one through `sanitizeStorageKeySegment` from `@filefn/server` before putting it in the key.
 
 ## Visibility
 

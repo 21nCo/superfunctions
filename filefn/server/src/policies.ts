@@ -86,6 +86,48 @@ export function validatePolicyConstraints(
   return { valid: true };
 }
 
+// C0 controls, DEL and C1 controls.
+// eslint-disable-next-line no-control-regex
+const STORAGE_KEY_CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/g;
+
+/**
+ * Turns one value into a single storage key segment: path separators become
+ * `_`, control characters are dropped, a leading run of two or more dots
+ * becomes `_`, and a segment that is empty or `.` becomes `_`. Everything else is kept as it is
+ * (repeated underscores, dots inside a name, surrounding spaces), so a safe ID
+ * keeps its own segment and a name keeps its extension. Unsafe values can
+ * still map onto one segment; default keys stay unique because they end in
+ * the version ID.
+ */
+export function sanitizeStorageKeySegment(value: string): string {
+  const sanitized = String(value)
+    .replace(STORAGE_KEY_CONTROL_CHARACTERS, '')
+    .replace(/[\\/]/g, '_')
+    // A segment never starts with `..` (some adapters read that as traversal).
+    .replace(/^\.\.+/, '_');
+  if (sanitized.length === 0 || /^\.+$/.test(sanitized)) {
+    return '_';
+  }
+  return sanitized;
+}
+
+/**
+ * Returns why a storage key is unsafe, or null when it is safe. A safe key is
+ * relative, uses `/` only, has no empty, `.` or `..` segment and no control
+ * characters, so no adapter can resolve it outside its own path.
+ */
+export function unsafeStorageKeyReason(key: string): string | null {
+  if (typeof key !== 'string' || key.length === 0) return 'empty key';
+  if (new RegExp(STORAGE_KEY_CONTROL_CHARACTERS.source).test(key)) return 'control character';
+  if (key.includes('\\')) return 'backslash';
+  if (key.startsWith('/')) return 'absolute key';
+  for (const segment of key.split('/')) {
+    if (segment === '') return 'empty segment';
+    if (segment === '.' || segment === '..') return 'dot segment';
+  }
+  return null;
+}
+
 export function computeStoragePath(
   policy: Policy,
   ctx: PolicyStoragePathContext
@@ -93,18 +135,11 @@ export function computeStoragePath(
   if (policy.storagePath) {
     return policy.storagePath(ctx);
   }
-  const sanitizePathSegment = (value: string): string =>
-    value
-      .replace(/[\\/]+/g, '_')
-      .replace(/\.\.+/g, '_')
-      .replace(/[\u0000-\u001f\u007f]+/g, '')
-      .replace(/_+/g, '_')
-      .trim() || '_';
   const parts: string[] = [];
-  if (ctx.tenantId) parts.push(sanitizePathSegment(ctx.tenantId));
-  if (ctx.principalId) parts.push(sanitizePathSegment(ctx.principalId));
-  parts.push(sanitizePathSegment(ctx.fileId));
-  parts.push(`${sanitizePathSegment(ctx.versionId)}-${sanitizePathSegment(ctx.fileName)}`);
+  if (ctx.tenantId) parts.push(sanitizeStorageKeySegment(ctx.tenantId));
+  if (ctx.principalId) parts.push(sanitizeStorageKeySegment(ctx.principalId));
+  parts.push(sanitizeStorageKeySegment(ctx.fileId));
+  parts.push(`${sanitizeStorageKeySegment(ctx.versionId)}-${sanitizeStorageKeySegment(ctx.fileName)}`);
   return parts.join('/');
 }
 
