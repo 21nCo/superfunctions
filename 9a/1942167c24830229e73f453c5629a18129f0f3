@@ -1,0 +1,37 @@
+testfn/admin/src/__tests__/admin.test.ts
+  s_cca2118238ab45::t_983dae8828d758 670-721
+testfn/admin/src/domain-service.ts
+  s_cca2118238ab45::t_f2f9e93e5bde2c 134-141
+testfn/typescript/README.md
+  s_cca2118238ab45::t_b6ae7d8bbe731c 255
+testfn/typescript/src/core/test-runner.ts
+  s_cca2118238ab45::t_e2847725a98371 123-124
+testfn/typescript/src/core/worker-pool.ts
+  s_cca2118238ab45::t_559a0a10b54e26 31-50,52,55,64,66-72,75,80,117,126,128-134,140,149
+testfn/typescript/src/storage/artifacts.ts
+  s_cca2118238ab45::t_d1a74042249b31 72-75,77,96-102
+testfn/typescript/src/storage/test-storage.ts
+  s_cca2118238ab45::t_15167bdf3d3196 16,153-211,213-236,238-272,287-390,392-396,398-402
+testfn/typescript/src/types.ts
+  s_cca2118238ab45::t_780fe52d99ee10 125-130
+testfn/typescript/tests/framework-failure-contract.test.ts
+  s_cca2118238ab45::t_c2567bfdeb6181 10,185-242
+testfn/typescript/tests/storage.test.ts
+  s_cca2118238ab45::t_fcc3eaab5079cf 104-118,281-405
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9a1942167c24830229e73f453c5629a18129f0f3",
+  "prompts": {},
+  "sessions": {
+    "s_cca2118238ab45": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9776c6ff-1a95-4d3d-8cd4-96317b37ba6d",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

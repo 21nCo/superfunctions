@@ -1,0 +1,21 @@
+cmsfn/server/src/__tests__/releases.test.ts
+  s_50ef6e6dfdb1ab::t_ba5879e95c2066 273
+cmsfn/studio/src/__tests__/richtext-authoring.test.tsx
+  s_50ef6e6dfdb1ab::t_92a363feeffa02 87
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "edbdcdce3112674f1fc16ad6cf775d10b8f815b0",
+  "prompts": {},
+  "sessions": {
+    "s_50ef6e6dfdb1ab": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_50ef6e6dfdb1ab",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

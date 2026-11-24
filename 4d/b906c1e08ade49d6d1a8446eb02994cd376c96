@@ -1,0 +1,39 @@
+flowfn/typescript/docs/API.md
+  s_e5ac07859c1bc9::t_369515d6d28ae3 215-220
+flowfn/typescript/src/adapters/base.ts
+  s_2cd8e700ac0da3::t_ae14ebecb4f5a4 77-85,133-134,137-144
+flowfn/typescript/src/adapters/postgres/transactional-enqueue.test.ts
+  s_2cd8e700ac0da3::t_4601f46f1ca1d5 16,861-936
+flowfn/typescript/src/core/flow-fn.ts
+  s_2cd8e700ac0da3::t_78d8f1e36548d6 159-161
+flowfn/typescript/src/queue/queue.ts
+  s_e5ac07859c1bc9::t_af3c579bcde084 16,319-321,327,336-338,355,357-360,364-367,369,371
+flowfn/typescript/src/queue/transactional-enqueue.test.ts
+  s_e5ac07859c1bc9::t_e86e4d928233c8 151-169
+flowfn/typescript/src/adapters/postgres/index.ts
+  s_2cd8e700ac0da3::t_8d122d985e070d 9,42-48,53,89-92,103-123,207-208,428-434,436,454-469
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4db906c1e08ade49d6d1a8446eb02994cd376c96",
+  "prompts": {},
+  "sessions": {
+    "s_2cd8e700ac0da3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fa56bf8e-3da2-4a0b-b4bc-43acc85ec3b5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_e5ac07859c1bc9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5142ca70-a18b-4d6e-8f19-4855393dcdd0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

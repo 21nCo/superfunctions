@@ -1,0 +1,53 @@
+cmsfn/.conduct/studio-browser-acceptance.mjs
+  s_0b0647615a23f7::t_8c3b3ae8553188 87
+cmsfn/.conduct/studio-ops-readiness.md
+  s_0b0647615a23f7::t_1e06cacb542e38 5
+cmsfn/server/README.md
+  s_f058f999ab46b7::t_c4eb9ec4ed301b 55-60,67,73-76
+cmsfn/server/src/__tests__/capability-enforcement.test.ts
+  s_f058f999ab46b7::t_dd9f1be1ad72e6 17
+cmsfn/server/src/__tests__/ops-boundary.test.ts
+  s_f058f999ab46b7::t_dfcca9df80f64c 15,25,31,38,45,52-64
+cmsfn/server/src/__tests__/ops.test.ts
+  s_f058f999ab46b7::t_9ae95050541b01 24
+cmsfn/server/src/http/ops.ts
+  s_f058f999ab46b7::t_ee449843f85ac3 10-14,22,29-30,35,43
+cmsfn/server/src/releases/executor.ts
+  s_f058f999ab46b7::t_c34cb5648e8709 15-19,88-98,122-123,170-172
+cmsfn/server/src/storage/releases.ts
+  s_f058f999ab46b7::t_dde08c63c4dcdb 7,163-165,169-174
+cmsfn/studio/README.md
+  s_0b0647615a23f7::t_d677c6b839938e 47
+cmsfn/studio/src/__tests__/editor.test.tsx
+  s_f058f999ab46b7::t_a9f5a14d7b1638 209-235
+cmsfn/studio/src/editor/save/buildPatchOps.ts
+  s_f058f999ab46b7::t_64e526cd1a9f6b 5-10
+cmsfn/studio/src/panes/editor/DocumentEditorPane.tsx
+  s_f058f999ab46b7::t_c98aa427b96f01 10,106
+cmsfn/server/src/__tests__/scheduled-releases.test.ts
+  s_f058f999ab46b7::t_47f61b40a08318 20,31,40-41,257-296
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f7bbd7c8c40164eeb67202589726c3a364e09960",
+  "prompts": {},
+  "sessions": {
+    "s_0b0647615a23f7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0aafa1b2-a7f2-4512-9059-2cef1b423535",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_f058f999ab46b7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fb025346-b9a2-48b2-b8e1-3df0ee912478",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

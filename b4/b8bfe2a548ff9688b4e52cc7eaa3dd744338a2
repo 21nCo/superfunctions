@@ -1,0 +1,19 @@
+flowfn/typescript/src/adapters/postgres/transactional-enqueue.test.ts
+  s_6f31b440476edd::t_ed549e011c8702 122
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b4b8bfe2a548ff9688b4e52cc7eaa3dd744338a2",
+  "prompts": {},
+  "sessions": {
+    "s_6f31b440476edd": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_6f31b440476edd",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

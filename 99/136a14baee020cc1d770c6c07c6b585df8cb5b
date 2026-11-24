@@ -1,0 +1,21 @@
+browsefn/typescript/src/core/cache-storage.ts
+  s_df516aeb1e4603::t_c31668ba3d6e8a 252
+browsefn/typescript/tests/cache-file-lock.test.ts
+  s_df516aeb1e4603::t_ea3a58d03734a3 199,244
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "99136a14baee020cc1d770c6c07c6b585df8cb5b",
+  "prompts": {},
+  "sessions": {
+    "s_df516aeb1e4603": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1d3e0-e997-7cc1-991a-a4224770c7e9",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

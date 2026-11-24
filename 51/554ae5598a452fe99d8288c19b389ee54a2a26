@@ -1,0 +1,27 @@
+logfn/python/src/logfn/default_redaction.py
+  s_eb00f9c1d93d74::t_8dd73a20e98ce2 473-475
+logfn/python/tests/test_default_redaction.py
+  s_eb00f9c1d93d74::t_ce5a73ae90057f 507-508
+logfn/typescript/src/core/default-redaction.test.ts
+  s_eb00f9c1d93d74::t_ec8b6a829a5c67 510
+watchfn/typescript/src/collectors/errors/exception-handler.ts
+  s_eb00f9c1d93d74::t_9e8724a7ee4892 35-36,46-47
+watchfn/typescript/tests/collectors/exception-lifecycle.test.ts
+  s_eb00f9c1d93d74::t_21566edc1dd97d 258-260,268
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "51554ae5598a452fe99d8288c19b389ee54a2a26",
+  "prompts": {},
+  "sessions": {
+    "s_eb00f9c1d93d74": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_eb00f9c1d93d74",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

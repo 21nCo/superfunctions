@@ -1,0 +1,39 @@
+flowfn/typescript/src/queue/snapshot.test.ts
+  s_6ecdca3bc53805::t_3d0937ecd2842a 1-12
+flowfn/admin/src/__tests__/admin.test.ts
+  s_6ecdca3bc53805::t_c63d2f2bd2edff 3,9,49-50,131-152
+flowfn/admin/src/domain-service.ts
+  s_6ecdca3bc53805::t_04d7bfef6beca5 45-53,55,65
+flowfn/typescript/src/adapters/base.ts
+  s_6ecdca3bc53805::t_50051f754dcb43 19,27-33
+flowfn/typescript/src/adapters/memory.ts
+  s_6ecdca3bc53805::t_8a9ae8b8cf0199 45-47,83,88-95
+flowfn/typescript/src/adapters/postgres/index.ts
+  s_6ecdca3bc53805::t_33468ec45d92b5 165-166,239-240,288-310,315,349,352,360,363
+flowfn/typescript/src/adapters/postgres/postgres.test.ts
+  s_6ecdca3bc53805::t_43f7c6fb4a67ec 6,34-35
+flowfn/typescript/src/adapters/redis.test.ts
+  s_6ecdca3bc53805::t_21193e249fbd3d 6,443-488
+flowfn/typescript/src/adapters/redis.ts
+  s_6ecdca3bc53805::t_cacfa2d0a07156 20-97,102,104,106-107,112,114-115,117-119,121-123,129-130,142-145,149,171,187,194-197,200,212-215,217-218,220-221,226-241,248-249,251-259,264,348,408,419-420,422-423,426,428,433,443-453,457,471,474,481,484
+flowfn/typescript/src/queue/queue.ts
+  s_6ecdca3bc53805::t_2877c4908b94ca 164-167,175-176,182,482-487,490-513
+flowfn/typescript/src/storage/queue-snapshot-contract.ts
+  s_6ecdca3bc53805::t_6c9145b7f3bfac 1-77
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "257cd8af6db76c598c67a3448cd9cb82cd4abaf0",
+  "prompts": {},
+  "sessions": {
+    "s_6ecdca3bc53805": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "04ae556c-c870-4032-b170-7847cd346b68",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

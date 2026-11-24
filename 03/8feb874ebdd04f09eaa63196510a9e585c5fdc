@@ -1,0 +1,19 @@
+cachefn/typescript/src/storage/db/db-storage.ts
+  s_84a3fb9303d0ec::t_2f0905713c6a06 162-169
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "038feb874ebdd04f09eaa63196510a9e585c5fdc",
+  "prompts": {},
+  "sessions": {
+    "s_84a3fb9303d0ec": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_84a3fb9303d0ec",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

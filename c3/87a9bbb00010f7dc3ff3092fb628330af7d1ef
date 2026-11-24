@@ -1,0 +1,18 @@
+.depot/workflows/ci.yml
+  h_a39f9495f9ec1d 66-67
+release-packages.json
+  h_a39f9495f9ec1d 47
+scripts/check-release-paths.test.mjs
+  h_a39f9495f9ec1d 1-109
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c387a9bbb00010f7dc3ff3092fb628330af7d1ef",
+  "prompts": {},
+  "humans": {
+    "h_a39f9495f9ec1d": {
+      "author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

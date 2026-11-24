@@ -1,0 +1,21 @@
+testfn/.conduct/process-ownership-readiness.md
+  s_6239520b601896::t_9051b1f933361a 12-14,28
+testfn/typescript/tests/process-lifecycle.test.ts
+  s_6239520b601896::t_f5ddb18315d330 284-287
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a2cabc0759a64c6181b2385a04209b4aa290fc46",
+  "prompts": {},
+  "sessions": {
+    "s_6239520b601896": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "18d1304a-00fe-48a1-aa3d-1eb341de621d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

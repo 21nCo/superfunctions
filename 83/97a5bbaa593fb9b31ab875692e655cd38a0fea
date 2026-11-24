@@ -1,0 +1,35 @@
+.depot/workflows/ci.yml
+  s_0f8a6617467e5b::t_8c50dc2f2f263e 105-113
+recfn/README.md
+  s_0f8a6617467e5b::t_507db0b365eaa1 259-261
+recfn/platforms/zoom/__tests__/zoom-adapter.test.ts
+  s_0f8a6617467e5b::t_a1bbc1d22a1146 185-187,196,199-200,214-216,228,427-429
+recfn/platforms/zoom/src/audio-capture.ts
+  s_0f8a6617467e5b::t_5357972094c333 24,75
+recfn/platforms/zoom/src/meeting-sdk.ts
+  s_0f8a6617467e5b::t_7e06d3dd6ce161 26-29,31-33,41-45
+recfn/platforms/zoom/src/video-capture.ts
+  s_0f8a6617467e5b::t_2b1cc901379e7a 20
+recfn/server/__tests__/recording-capture.test.ts
+  s_0f8a6617467e5b::t_4ea10650e319ef 8-10,127-138
+recfn/server/__tests__/zoom-capture-contract.test.ts
+  s_0f8a6617467e5b::t_c40279a9521529 1-76
+recfn/server/src/recording/capture.ts
+  s_0f8a6617467e5b::t_e5601940d82c30 6,102-109,119,159,277
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8397a5bbaa593fb9b31ab875692e655cd38a0fea",
+  "prompts": {},
+  "sessions": {
+    "s_0f8a6617467e5b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_0f8a6617467e5b",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

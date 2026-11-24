@@ -1,0 +1,21 @@
+recfn/server/__tests__/recording-capture.test.ts
+  s_22015c8072285d::t_b78f9e087aa7d3 101-111
+recfn/server/src/recording/capture.ts
+  s_22015c8072285d::t_88ac9ca23f277a 245-246,254-256
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fc4596c9aefb96fded616167460b76f3c319f458",
+  "prompts": {},
+  "sessions": {
+    "s_22015c8072285d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "44dfaca2-64e0-4022-b5e6-afa9cce28189",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
