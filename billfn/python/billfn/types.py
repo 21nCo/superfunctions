@@ -6,7 +6,17 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Annotated, Any, Callable, Dict, Generic, List, Mapping, Optional, TypeVar, Union
 
-from pydantic import AllowInfNan, BaseModel, ConfigDict, Field, Strict, StrictBool, StrictInt, StrictStr, ValidationError
+from pydantic import (
+    AllowInfNan,
+    BaseModel,
+    ConfigDict,
+    Field,
+    Strict,
+    StrictBool,
+    StrictInt,
+    StrictStr,
+    ValidationError,
+)
 
 from .errors import BillFnApiError, BillFnCanonicalError
 
