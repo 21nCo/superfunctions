@@ -4,6 +4,7 @@ import type { FileProviderContext } from '@superfunctions/files';
 import type { FileRecord, FileVersionRecord } from '../files/service.js';
 import { resolveStorageTarget, type PolicyRegistry } from '../policies.js';
 import { createHash, randomBytes } from 'crypto';
+import { signedDownloadConstraints } from '../download-headers.js';
 import * as errors from '../errors.js';
 
 export interface FileShareRecord {
@@ -213,6 +214,7 @@ export function createSharesService(config: SharesServiceConfig) {
           key: version.storageKey,
           target: storageTarget,
           expiresInSeconds: signedUrlTtlSeconds,
+          ...signedDownloadConstraints(version.mimeType),
         });
         await incrementDownloads(tokenHash, share.downloads);
         return { url: result.url, headers: result.headers, fileName: file.name, mimeType: file.mimeType };

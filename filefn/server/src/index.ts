@@ -284,6 +284,7 @@ export function createFileFn(config: FileFnConfig): FileFn {
     enabled: processingConfig?.enabled ?? false,
     background,
     writeChecker: fileService,
+    readChecker: fileService,
   });
 
   const uploadService = createUploadSessionService({
@@ -581,6 +582,8 @@ export {
   matchesContentType,
   resolveArtifactStorageTarget,
   resolveStorageTarget,
+  sanitizeStorageKeySegment,
+  unsafeStorageKeyReason,
   validatePolicyConstraints,
 } from './policies.js';
 export type { Policy, PolicyRegistry, Visibility } from './policies.js';
@@ -725,3 +728,10 @@ export function redactObservedPath(pathname: string, mountPath = ''): string {
   return pathname;
 }
 export type { RateLimitClientKey } from './rate-limit-key.js';
+export {
+  INLINE_SAFE_CONTENT_TYPES,
+  buildDownloadHeaders,
+  contentDisposition,
+  isInlineSafeContentType,
+  signedDownloadConstraints,
+} from './download-headers.js';

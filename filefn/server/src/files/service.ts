@@ -5,6 +5,7 @@ import type { FileFnEventEmitter } from '../events.js';
 import type { Logger } from '../observability/logger.js';
 import { FILE_DELETED_CLAIM, type QuotaProvider } from '../upload-sessions/service.js';
 import { resolveArtifactStorageTarget, resolveStorageTarget, type PolicyRegistry } from '../policies.js';
+import { contentTypeEssence, isInlineSafeContentType, signedDownloadConstraints } from '../download-headers.js';
 import * as errors from '../errors.js';
 import { createFileDeletedEvent } from '../events.js';
 import { artifactSourceOf } from '../processing/client-artifacts.js';
@@ -341,6 +342,7 @@ export function createFileService(config: FileServiceConfig) {
         key: artifact.storageKey,
         target: artifactStorageTarget,
         expiresInSeconds: signedUrlTtlSeconds,
+        ...signedDownloadConstraints(artifact.mimeType),
       });
       return { url: result.url, headers: result.headers };
     }
@@ -491,6 +493,7 @@ export function createFileService(config: FileServiceConfig) {
           key: version.storageKey,
           target: storageTarget,
           expiresInSeconds: signedUrlTtlSeconds,
+          ...signedDownloadConstraints(version.mimeType),
         });
         return { url: result.url, headers: result.headers };
       }
@@ -506,6 +509,7 @@ export function createFileService(config: FileServiceConfig) {
       stream: ReadableStream;
       contentType: string;
       size: number;
+      fileName: string;
     }> {
       const file = await this.getFile(fileId, ctx);
       const targetVersionId = versionId || file.currentVersionId;
@@ -521,6 +525,7 @@ export function createFileService(config: FileServiceConfig) {
         stream: stream as unknown as ReadableStream,
         contentType: version.mimeType,
         size: version.size,
+        fileName: file.name,
       };
     },
 
@@ -540,6 +545,16 @@ export function createFileService(config: FileServiceConfig) {
         ],
         namespace,
       });
+
+      // Thumbnails and previews must render in the browser: only inline-safe
+      // raster artifacts qualify, whatever their kind says.
+      // A guest (no principal, or the shared 'anonymous' one) reads artifacts
+      // of public files only, as the artifact routes do, so a descriptor never
+      // names an artifact URL its proxy would refuse.
+      const guestOnPrivate = (!ctx.principalId || ctx.principalId === 'anonymous') && file.visibility !== 'public';
+      const previewArtifacts = (guestOnPrivate ? [] : artifacts).filter(
+        (artifact) => contentTypeEssence(artifact.mimeType).startsWith('image/') && isInlineSafeContentType(artifact.mimeType),
+      );
 
       const originalDescriptor = async (): Promise<RenderDescriptor> => {
         const original = await this.getDownloadUrl(fileId, versionId, ctx);
@@ -583,85 +598,55 @@ export function createFileService(config: FileServiceConfig) {
         return originalDescriptor();
       }
 
+      const placeholder = (
+        state: 'unsupported' | 'processing',
+        placeholderKind: RenderPlaceholderKind,
+        warnings?: string[],
+      ): RenderDescriptor =>
+        createPlaceholderDescriptor({
+          fileId,
+          versionId,
+          intent: options.intent,
+          state,
+          mimeType: version.mimeType,
+          name: file.name,
+          size: version.size,
+          placeholderKind,
+          ...(warnings ? { warnings } : {}),
+        });
+      // An image: its preview artifact, else the original when it renders
+      // inline; SVG and other images served only as downloads get no preview.
+      const imagePreview = (kinds: string[], unsupportedKind: 'generic-file' | 'unsupported-preview') => {
+        const artifact = selectArtifactByKind(previewArtifacts, kinds);
+        if (artifact) return artifactDescriptor(artifact);
+        if (isInlineSafeContentType(version.mimeType)) return originalDescriptor();
+        return placeholder('unsupported', unsupportedKind);
+      };
+      const pdfPreview = (kinds: string[]) => {
+        const artifact = selectArtifactByKind(previewArtifacts, kinds);
+        if (artifact) return artifactDescriptor(artifact);
+        // A guest is never shown a private file's preview: not "processing",
+        // which a UI would poll forever.
+        if (guestOnPrivate) return placeholder('unsupported', 'generic-file');
+        return placeholder('processing', 'pdf-processing', ['PDF preview artifact is not available yet.']);
+      };
+
       if (options.intent === 'thumbnail') {
-        if (isImageMimeType(version.mimeType)) {
-          const artifact = selectArtifactByKind(artifacts, ['thumbnail-small', 'thumbnail-medium']);
-          if (artifact) {
-            return artifactDescriptor(artifact);
-          }
-          return originalDescriptor();
-        }
-
-        if (isPdfMimeType(version.mimeType)) {
-          const artifact = selectArtifactByKind(artifacts, ['pdf-preview-page-1-small', 'pdf-preview-page-1-medium']);
-          if (artifact) {
-            return artifactDescriptor(artifact);
-          }
-          return createPlaceholderDescriptor({
-            fileId,
-            versionId,
-            intent: options.intent,
-            state: 'processing',
-            mimeType: version.mimeType,
-            name: file.name,
-            size: version.size,
-            placeholderKind: 'pdf-processing',
-            warnings: ['PDF preview artifact is not available yet.'],
-          });
-        }
-
-        return createPlaceholderDescriptor({
-          fileId,
-          versionId,
-          intent: options.intent,
-          state: 'unsupported',
-          mimeType: version.mimeType,
-          name: file.name,
-          size: version.size,
-          placeholderKind: 'generic-file',
-        });
+        if (isImageMimeType(version.mimeType)) return imagePreview(['thumbnail-small', 'thumbnail-medium'], 'generic-file');
+        if (isPdfMimeType(version.mimeType)) return pdfPreview(['pdf-preview-page-1-small', 'pdf-preview-page-1-medium']);
+        return placeholder('unsupported', 'generic-file');
       }
 
-      if (isImageMimeType(version.mimeType)) {
-        const artifact = selectArtifactByKind(artifacts, ['thumbnail-large']);
-        if (artifact) {
-          return artifactDescriptor(artifact);
-        }
+      if (isImageMimeType(version.mimeType)) return imagePreview(['thumbnail-large'], 'unsupported-preview');
+      if (isPdfMimeType(version.mimeType)) return pdfPreview(['pdf-preview-page-1-large', 'pdf-preview-page-1-medium']);
+
+      // Only media the browser may play from the original (it is otherwise
+      // served as a download).
+      if (isMediaPreviewMimeType(version.mimeType) && isInlineSafeContentType(version.mimeType)) {
         return originalDescriptor();
       }
 
-      if (isPdfMimeType(version.mimeType)) {
-        const artifact = selectArtifactByKind(artifacts, ['pdf-preview-page-1-large', 'pdf-preview-page-1-medium']);
-        if (artifact) {
-          return artifactDescriptor(artifact);
-        }
-        return createPlaceholderDescriptor({
-          fileId,
-          versionId,
-          intent: options.intent,
-          state: 'processing',
-          mimeType: version.mimeType,
-          name: file.name,
-          size: version.size,
-          placeholderKind: 'pdf-processing',
-          warnings: ['PDF preview artifact is not available yet.'],
-        });
-      }
-
-      if (isMediaPreviewMimeType(version.mimeType)) {
-        return originalDescriptor();
-      }
-
-      return createPlaceholderDescriptor({
-        fileId,
-        versionId,
-        intent: options.intent,
-        state: 'unsupported',
-        mimeType: version.mimeType,
-        name: file.name,
-        size: version.size,
-        placeholderKind: 'unsupported-preview',
-      });
+      return placeholder('unsupported', 'unsupported-preview');
     },
 
     async deleteFile(fileId: string, ctx: FileProviderContext): Promise<void> {
@@ -986,6 +971,19 @@ export function createFileService(config: FileServiceConfig) {
       });
 
       return { versions };
+    },
+
+    /** Whether the principal may read an existing file: the authorizer or a read grant. Missing files read as false. */
+    async canReadFile(fileId: string, ctx: FileProviderContext): Promise<boolean> {
+      const file = await db.findOne<FileRecord>({
+        model: 'files',
+        where: [{ field: 'fileId', operator: 'eq', value: fileId }],
+        namespace,
+      });
+      if (!file) {
+        return false;
+      }
+      return canReadFile(file, ctx, await getReadableGrantFileIds(ctx));
     },
 
     async canWriteFile(fileId: string, ctx: FileProviderContext): Promise<boolean> {

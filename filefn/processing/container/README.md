@@ -47,8 +47,8 @@ database.
 
 ### `POST /jobs`
 
-Runs one job. Send `Content-Type: application/json` and, when
-`FILEFN_CONTAINER_TOKEN` is set, `Authorization: Bearer <token>`.
+Runs one job. Send `Content-Type: application/json` and
+`Authorization: Bearer <token>` with the `FILEFN_CONTAINER_TOKEN` value.
 
 ```json
 { "job": { "fileId": "…", "versionId": "…", "idempotencyKey": "…" }, "attempts": 1 }
@@ -148,7 +148,8 @@ the process with `FILEFN_CONTAINER_CONFIG_INVALID: …`.
 | `FILEFN_PROCESSORS` | `thumbnail,pdf-preview,ocr` | Comma-separated processors to run. |
 | `FILEFN_OCR_LANGUAGE` | `eng` | Tesseract languages, e.g. `eng+deu`; each needs its language data in the image. |
 | `FILEFN_PROCESSING_MAX_RETRIES` | `3` | The queue consumer's `max_retries`. |
-| `FILEFN_CONTAINER_TOKEN` | none | Bearer token `POST /jobs` requires. Set it unless only a trusted Worker can reach the container. |
+| `FILEFN_CONTAINER_TOKEN` | required | Bearer token `POST /jobs` requires. The container refuses to start without it. |
+| `FILEFN_CONTAINER_ALLOW_UNAUTHENTICATED` | `false` | `true` lets the container start without a token, so `POST /jobs` is open to anything that reaches the port. Use it only when nothing but a trusted caller can. |
 | `FILEFN_CONTAINER_MAX_CONCURRENT_JOBS` | `2` | Jobs run at once (1 to 64). |
 | `FILEFN_CONTAINER_JOB_WAIT_MS` | `60000` | How long a job request waits for a free slot before 503 (0 to 600000). |
 | `FILEFN_CONTAINER_MAX_BODY_BYTES` | `262144` | Largest `POST /jobs` body. |

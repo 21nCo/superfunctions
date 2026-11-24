@@ -2,8 +2,10 @@ import type { Adapter, WhereClause } from '@superfunctions/db';
 import { getStorageCapabilities, type StorageAdapter, type StorageTargetName } from '@superfunctions/storage';
 import type { FileProviderContext } from '@superfunctions/files';
 import {
+  computeStoragePath,
   matchesContentType,
   resolveStorageTarget,
+  unsafeStorageKeyReason,
   type Policy,
   type PolicyRegistry,
 } from '../policies.js';
@@ -247,12 +249,21 @@ async function forEachBodyChunk(
 ): Promise<void> {
   if (body instanceof ReadableStream) {
     const reader = body.getReader();
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      if (!value) continue;
-      const chunk = value instanceof Uint8Array ? value : new Uint8Array(value);
-      await onChunk(chunk);
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (!value) continue;
+        const chunk = value instanceof Uint8Array ? value : new Uint8Array(value);
+        await onChunk(chunk);
+      }
+    } catch (err) {
+      // Stop the producer (an oversized or failed upload), keeping the error.
+      // Not awaited: cancelling one branch of a tee can wait on the other.
+      void reader.cancel(err).catch(() => {});
+      throw err;
+    } finally {
+      reader.releaseLock();
     }
     return;
   }
@@ -268,21 +279,6 @@ async function forEachBodyChunk(
   }
 
   throw new Error('Unsupported body type for proxy upload');
-}
-
-function computeStorageKey(
-  policy: Policy,
-  ctx: { fileName: string; principalId?: string; tenantId?: string; fileId: string; versionId: string }
-): string {
-  if (policy.storagePath) {
-    return policy.storagePath(ctx);
-  }
-  const parts: string[] = [];
-  if (ctx.tenantId) parts.push(ctx.tenantId);
-  if (ctx.principalId) parts.push(ctx.principalId);
-  parts.push(ctx.fileId);
-  parts.push(`${ctx.versionId}-${ctx.fileName}`);
-  return parts.join('/');
 }
 
 export function createUploadSessionService(config: UploadSessionServiceConfig) {
@@ -343,12 +339,24 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
     return Math.ceil(size / chunkSize);
   }
 
+  // The most bytes one part may hold: the chunk size, or what is left of the
+  // declared size for the last part. Bounds every part, so a session can never
+  // store more than it declared (and was checked against policy and quota for).
+  function maxPartBytes(session: Pick<UploadSession, 'size' | 'chunkSizeBytes' | 'totalParts'>, partNumber: number): number {
+    if (partNumber < session.totalParts) return session.chunkSizeBytes;
+    return Math.max(0, session.size - (session.totalParts - 1) * session.chunkSizeBytes);
+  }
+
   function proxyPartKey(storageKey: string, partNumber: number): string {
     return `${storageKey}.part${partNumber}`;
   }
 
   // Deletes the session's proxy part objects. Returns false if any delete
   // failed; callers that must not lose track of the parts keep the session.
+  // The S3-compatible multipart part limit, applied to every upload mode.
+  const MAX_UPLOAD_PARTS = 10_000;
+  const PART_DELETE_BATCH = 32;
+
   async function deleteProxyTempPartObjects(session: UploadSession): Promise<boolean> {
     if (session.uploadMode !== 'proxy' || !storage.deleteObject) {
       return true;
@@ -356,20 +364,40 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
     const policy = policies.get(session.policy);
     const storageTarget = policy ? resolveStorageTarget(policy) : undefined;
 
-    const parts = await db.findMany<{ partNumber: number }>({
+    // The recorded parts, and every part number of the session (below).
+    const recorded = await db.findMany<{ partNumber: number }>({
       model: 'uploadParts',
       where: [{ field: 'uploadSessionId', operator: 'eq', value: session.uploadSessionId }],
       select: ['partNumber'],
       namespace,
     });
+    const partNumbers = new Set<number>(recorded.map((part) => part.partNumber));
+    // Storage adapters that write in place and keep bytes on abort (for
+    // example an older storage-local) can leave an unrecorded part: every part
+    // number the session can have is covered (at most MAX_UPLOAD_PARTS). Only
+    // for sessions with their own per-version key: a session created before
+    // per-version keys can share its key with another session of the same
+    // file, so only its recorded parts are its own.
+    if (session.completionVersionId) {
+      for (let n = 1; n <= Math.min(session.totalParts ?? 0, MAX_UPLOAD_PARTS); n++) partNumbers.add(n);
+    }
 
+    const deleteObject = storage.deleteObject.bind(storage);
     let allDeleted = true;
-    for (const part of parts) {
-      try {
-        await storage.deleteObject({ key: proxyPartKey(session.storageKey, part.partNumber), target: storageTarget });
-      } catch {
-        allDeleted = false;
-      }
+    const pending = [...partNumbers];
+    // Bounded batches, so a large session's cleanup neither runs one delete at
+    // a time nor fires thousands at once.
+    for (let i = 0; i < pending.length; i += PART_DELETE_BATCH) {
+      await Promise.all(
+        pending.slice(i, i + PART_DELETE_BATCH).map(async (partNumber) => {
+          try {
+            await deleteObject({ key: proxyPartKey(session.storageKey, partNumber), target: storageTarget });
+          } catch (error) {
+            // A part that was never written is already gone.
+            if ((error as { code?: string } | null)?.code !== 'STORAGE_NOT_FOUND') allDeleted = false;
+          }
+        }),
+      );
     }
     return allDeleted;
   }
@@ -623,6 +651,17 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
     try {
       const stat = await storage.statObject({ key: session.storageKey, target });
       return stat.size === session.size;
+    } catch {
+      return false;
+    }
+  }
+
+  // Whether the session's final object exists (any size).
+  async function storageObjectExists(session: UploadSession, target: StorageTargetName | undefined): Promise<boolean> {
+    if (!storage.statObject) return false;
+    try {
+      await storage.statObject({ key: session.storageKey, target });
+      return true;
     } catch {
       return false;
     }
@@ -1444,6 +1483,19 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       const uploadMode = selectUploadMode(storageTarget);
       const chunkSizeBytes = defaultChunkSizeBytes;
       const totalParts = computeTotalParts(input.size, chunkSizeBytes);
+      // At most 10,000 parts (the S3-compatible multipart limit), which also
+      // bounds part cleanup.
+      if (totalParts > MAX_UPLOAD_PARTS) {
+        throw errors.invalidRequest(`size needs more than ${MAX_UPLOAD_PARTS} parts of ${chunkSizeBytes} bytes`, {
+          field: 'size',
+          maxParts: MAX_UPLOAD_PARTS,
+        });
+      }
+      // Completion verifies the stored size with statObject; refuse before any
+      // upload starts rather than after storage was finalized.
+      if (typeof storage.statObject !== 'function') {
+        throw new Error('Storage adapter cannot stat objects; upload size cannot be verified');
+      }
       const uploadSessionId = generateId();
       const now = new Date();
       const expiresAt = new Date(now.getTime() + uploadSessionTtlSeconds * 1000).toISOString();
@@ -1451,13 +1503,25 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       // The version this session will publish is fixed here, so its storage key is
       // the one object key no other session can write.
       const versionId = generateFileFnId('ver');
-      const storageKey = computeStorageKey(policy, {
+      const storageKey = computeStoragePath(policy, {
         fileName: input.fileName,
         principalId: ctx.principalId,
         tenantId: ctx.tenantId,
         fileId,
         versionId,
       });
+
+      // A key with a `.`/`..` segment, a backslash or a control character could
+      // resolve onto another file's object on adapters that normalize paths.
+      // Default keys are built from sanitized segments; this also covers a
+      // policy's own storagePath.
+      const unsafeReason = unsafeStorageKeyReason(storageKey);
+      if (unsafeReason) {
+        throw errors.invalidRequest('The storage key for this upload is not safe', {
+          policy: input.policy,
+          reason: unsafeReason,
+        });
+      }
 
       // The key must contain this session's whole versionId. Every session gets a
       // fresh random versionId, so two sessions can then never share a key (or the
@@ -1606,7 +1670,17 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       // The completion has read the parts it publishes.
       if (session.status === 'completing' || session.status === 'publishing') throw errors.uploadCompletionInProgress();
       if (isExpiredAt(session.expiresAt)) throw errors.uploadExpired();
+      // Init refuses more than 10,000 parts; a session created before that
+      // keeps its declared part range (cleanup of its unrecorded parts stops
+      // at the cap).
       if (partNumber < 1 || partNumber > session.totalParts) throw errors.invalidPartNumber();
+      const partLimit = maxPartBytes(session, partNumber);
+      if (!Number.isSafeInteger(contentLength) || contentLength < 1) {
+        throw errors.invalidRequest('contentLength must be a positive integer', { field: 'contentLength' });
+      }
+      if (contentLength > partLimit) {
+        throw errors.partTooLarge(partNumber, partLimit);
+      }
 
       if (session.uploadMode === 'proxy') {
         // Return URL to the proxy PUT endpoint
@@ -1647,7 +1721,6 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
     },
 
     async uploadPartBytes(uploadSessionId: string, partNumber: number, body: ReadableStream | Blob | Buffer, contentLength: number, ctx: FileProviderContext, uploadSessionToken?: string): Promise<{ etag: string; size: number }> {
-      void contentLength;
       const session = await db.findOne<UploadSession>({
         model: 'uploadSessions',
         where: [{ field: 'uploadSessionId', operator: 'eq', value: uploadSessionId }],
@@ -1661,8 +1734,16 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       // The completion has read the parts it publishes.
       if (session.status === 'completing' || session.status === 'publishing') throw errors.uploadCompletionInProgress();
       if (isExpiredAt(session.expiresAt)) throw errors.uploadExpired();
+      // Init refuses more than 10,000 parts; a session created before that
+      // keeps its declared part range (cleanup of its unrecorded parts stops
+      // at the cap).
       if (partNumber < 1 || partNumber > session.totalParts) throw errors.invalidPartNumber();
       if (session.uploadMode !== 'proxy') throw errors.noSupportedUploadMode();
+      // Counted while streaming: the declared Content-Length is only an early refusal.
+      const partLimit = maxPartBytes(session, partNumber);
+      if (Number.isFinite(contentLength) && contentLength > partLimit) {
+        throw errors.partTooLarge(partNumber, partLimit);
+      }
 
       const existingPart = await db.findOne<{ etag: string; size: number }>({
         model: 'uploadParts',
@@ -1677,8 +1758,9 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         const hasher = createHash('sha256');
         let incomingSize = 0;
         await forEachBodyChunk(body, (chunk) => {
-          hasher.update(chunk);
           incomingSize += chunk.byteLength;
+          if (incomingSize > partLimit) throw errors.partTooLarge(partNumber, partLimit);
+          hasher.update(chunk);
         });
 
         const incomingEtag = `proxy-sha256-${hasher.digest('hex')}`;
@@ -1707,12 +1789,39 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       const writer = writeStream.getWriter();
       try {
         await forEachBodyChunk(body, async (chunk) => {
-          hasher.update(chunk);
           size += chunk.byteLength;
+          if (size > partLimit) throw errors.partTooLarge(partNumber, partLimit);
+          hasher.update(chunk);
           await writer.write(chunk);
         });
-      } finally {
-        await writer.close();
+      } catch (err) {
+        // The write is aborted, never committed. The shared part key is not
+        // deleted: a concurrent upload of the same part may have committed it.
+        // At most the part's bound was written, and the expiry sweep removes
+        // part objects of sessions that never complete.
+        await writer.abort(err).catch(() => {});
+        // If the session ended meanwhile (an expiry sweep removed it), no later
+        // cleanup will see this key: remove what this write left.
+        // Only a successful read that finds no row counts: a read error leaves
+        // the key alone (a concurrent upload may have committed it).
+        const now = await readSession(uploadSessionId).catch(() => 'unknown' as const);
+        if (storage.deleteObject && now === null) {
+          await storage.deleteObject({ key: partKey, target: storageTarget }).catch(() => {});
+        }
+        throw err;
+      }
+      await writer.close();
+      // A sweep may have ended the session while this write ran; then nothing
+      // would ever clean up the part it just committed.
+      // The same when it ended as refused, aborted or completed: such a
+      // session's parts are never used again, and its cleanup may already
+      // have run.
+      const afterWrite = await readSession(uploadSessionId).catch(() => 'unknown' as const);
+      if (afterWrite === null || (afterWrite !== 'unknown' && (isAbortedStatus(afterWrite.status) || afterWrite.status === 'completed'))) {
+        if (storage.deleteObject) {
+          await storage.deleteObject({ key: partKey, target: storageTarget }).catch(() => {});
+        }
+        throw afterWrite === null ? errors.sessionNotFound() : errors.uploadAborted();
       }
 
       const etag = `proxy-sha256-${hasher.digest('hex')}`;
@@ -1755,6 +1864,9 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       // The completion has read the parts it publishes.
       if (session.status === 'completing' || session.status === 'publishing') throw errors.uploadCompletionInProgress();
       if (isExpiredAt(session.expiresAt)) throw errors.uploadExpired();
+      // Init refuses more than 10,000 parts; a session created before that
+      // keeps its declared part range (cleanup of its unrecorded parts stops
+      // at the cap).
       if (partNumber < 1 || partNumber > session.totalParts) throw errors.invalidPartNumber();
       if (!etag || etag.trim() === '') throw errors.invalidEtag();
 
@@ -1971,6 +2083,11 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
           session.storageUploadId
         ) {
           if (!(await holdsClaim(uploadSessionId, claim))) return lostClaimResult(uploadSessionId);
+          // Checked before storage is finalized (sessions created before init
+          // checked it): the size is verified with statObject below.
+          if (typeof storage.statObject !== 'function') {
+            throw new Error('Storage adapter cannot stat objects; upload size cannot be verified');
+          }
           try {
             await storage.completeMultipartUpload({
               key: session.storageKey,
@@ -1980,7 +2097,16 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
             });
           } catch (err) {
             // S3 and R2 answer NoSuchUpload for an upload already completed.
-            if (!(await isStorageFinalized(session, policyStorageTarget))) throw err;
+            // Continue when the upload was consumed and the object exists, at
+            // any size: the size check below then refuses an oversized one and
+            // deletes it, instead of leaving it for good.
+            // Only a per-session key (a pre-allocated version ID) is known to
+            // hold this upload's object; a legacy shared key may hold another
+            // version's, so it keeps the exact-size check.
+            const finalized = session.completionVersionId
+              ? await storageObjectExists(session, policyStorageTarget)
+              : await isStorageFinalized(session, policyStorageTarget);
+            if (!finalized) throw err;
           }
         } else if (session.uploadMode === 'proxy') {
           // Stitch proxy parts
@@ -2029,17 +2155,34 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
           }
         }
 
-        // Validate size if supported
-        if (storage.statObject) {
-          try {
-            const stat = await storage.statObject({ key: attemptKey, target: policyStorageTarget });
-            if (stat.size !== session.size) {
-              throw errors.uploadSizeMismatch(session.size, stat.size);
+        // The stored object must be exactly the declared size: policy limits and
+        // quota were checked against it. A stat that fails (or an adapter that
+        // cannot stat) fails the completion, which can be retried; it never
+        // publishes an object of unknown size.
+        if (typeof storage.statObject !== 'function') {
+          throw new Error('Storage adapter cannot stat objects; upload size cannot be verified');
+        }
+        const stat = await storage.statObject({ key: attemptKey, target: policyStorageTarget });
+        if (stat.size !== session.size) {
+          // Refused while this call still holds the session, then everything it
+          // uploaded is deleted: an oversized object is never left in storage.
+          if (!(await fenceRefusedSession(uploadSessionId, claim))) {
+            // Taken over meanwhile: this call's own stitch is never published.
+            if (session.uploadMode === 'proxy') {
+              // Reference-checked: never removes what the winner published.
+              await deleteAttemptObject(session, attemptKey, policyStorageTarget).catch(() => false);
             }
-          } catch (err) {
-              if (err instanceof errors.FileFnError) throw err;
-              // Ignore stat errors if object doesn't exist (should exist though)
+            return lostClaimResult(uploadSessionId);
           }
+          // Refused for good; a cleanup failure leaves the row for the sweep
+          // and never replaces the size error.
+          await deleteRefusedUploads(session).catch((error: unknown) => {
+            logger?.warn('Refused upload not fully cleaned up; the expiry sweep retries it', {
+              uploadSessionId,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          });
+          throw errors.uploadSizeMismatch(session.size, stat.size);
         }
 
         // Check for deduplication

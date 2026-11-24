@@ -851,7 +851,7 @@ If clients PUT directly to S3, the bucket needs CORS:
 ```json
 [{
   "AllowedOrigins": ["https://app.example.com"],
-  "AllowedMethods": ["PUT", "POST"],
+  "AllowedMethods": ["GET", "PUT", "POST"],
   "AllowedHeaders": ["*"],
   "ExposeHeaders": ["ETag"],
   "MaxAgeSeconds": 3000
@@ -2328,7 +2328,7 @@ When a client calls `POST /upload/init` with `policy: "public-image"`:
 - If `size > maxSizeBytes` → `FILEFN_POLICY_MAX_SIZE_EXCEEDED`.
 - If a `quota` is configured and would be exceeded → `FILEFN_QUOTA_EXCEEDED`.
 
-`contentTypes` accepts wildcards: `"image/*"`, `"video/*"`. The matcher is the same `matchesContentType` you can call yourself from `@filefn/server`.
+`contentTypes` accepts wildcards: `"image/*"`, `"video/*"`. The matcher is the same `matchesContentType` you can call yourself from `@filefn/server`. `"image/*"` does not match `image/svg+xml`, because an SVG can run script; list `"image/svg+xml"` explicitly to accept SVG uploads.
 
 ## Storage path layout
 
@@ -2362,7 +2362,9 @@ storagePath: ({ fileId, versionId }) => {
 }
 ```
 
-Any `..` and slashes in the input are sanitised before reaching `storagePath`.
+In the default layout every segment is sanitised without collisions: `%`, `/`, `\` and control characters are percent-encoded (`team/east` becomes `team%2Feast`), as are the dots of a segment that starts with `..` or is exactly `.`, and the colon of a segment that starts with a drive letter (`a:b` becomes `a%3Ab`); anything else is kept as it is. A tenant ID, principal ID, file ID or file name longer than 120 bytes is shortened in the key (its start, then `%~` and a 128-bit hash, and, for a file name, its extension); the full values are kept on the file.
+
+A custom `storagePath` receives the tenant and principal IDs exactly as your auth resolved them. Whatever it returns is checked: a key that is empty, starts with `/` or a drive letter and colon (`C:/x`, `C:x`), contains `\`, a control character, an empty segment, or a `.` or `..` segment is refused with `FILEFN_INVALID_REQUEST` (400). The examples above assume IDs without `/`, `\` or dot segments; if yours can contain them, pass each one through `sanitizeStorageKeySegment` from `@filefn/server` before putting it in the key.
 
 ## Visibility
 
@@ -3513,6 +3515,18 @@ Pass headers through the descriptor when the storage backend requires them:
 
 The bundled clients merge these into the `GET` automatically.
 
+## Response headers on proxied bytes
+
+The `/proxy/...` routes (files, versions, share links and artifacts) serve the type the uploader declared, so FileFn adds headers that keep a browser from running uploaded content on your origin:
+
+- `Content-Disposition: inline` only for types that cannot run script: PNG, JPEG, GIF, WebP, AVIF, BMP, PDF, plain text and common audio and video. Every other type, including HTML and SVG, is `attachment`, with the stored file name, and is served as `application/octet-stream`.
+- `X-Content-Type-Options: nosniff` on every response.
+- `Content-Security-Policy: sandbox; default-src 'none'; ...` on every response except PDF, which browsers' PDF viewers refuse to render under `sandbox`.
+
+Signed URLs always carry an explicit response content type: the type itself for the types above, `application/octet-stream` for any other, so the storage domain downloads those instead of rendering them. A stored type that is not one well-formed media type (for example a comma-separated list) is treated as unsafe. Render descriptors give such files, SVG included, no image preview: the thumbnail and preview intents return a placeholder instead of the original.
+
+Serving downloads from a separate origin (a dedicated download domain or the storage provider's) is still the stronger option when users upload arbitrary files.
+
 ## Authorization
 
 `auth.resolveSession` is required for `private` and `shared` files. The default `Authorizer` checks ownership and grants. See [Visibility](../core-concepts/visibility) for the matrix.
@@ -3521,15 +3535,28 @@ The bundled clients merge these into the `GET` automatically.
 
 ## Filenames
 
-filefn doesn't rewrite the filename you uploaded. If you want a download UX that suggests a different name (e.g. `Report - Acme Corp.pdf`), do it in your app code:
+filefn doesn't rewrite the filename you uploaded. Proxied downloads send it in `Content-Disposition`, and browsers prefer that header over an `<a download>` attribute, so to save a file under a different name (e.g. `Report - Acme Corp.pdf`), fetch it and save the blob:
 
 ```ts
-const { url, fileName, mimeType } = await client.downloadUrl(fileId);
+const url = await client.downloadUrl(fileId);
 
+// A proxied download URL is relative to where FileFn is mounted (the client's
+// baseUrl, e.g. "/files"); a signed storage URL is absolute.
+// Your client's baseUrl without a trailing slash ("" for a root mount).
+const fileFnBase = "/files".replace(/\/+$/, "");
+const target = new URL(url.startsWith("/") ? `${fileFnBase}${url}` : url, location.href);
+
+// Send cookies only to your own origin (a proxied download); a signed storage
+// URL needs no credentials and its CORS rules may refuse them.
+const sameOrigin = target.origin === location.origin;
+const response = await fetch(target, { credentials: sameOrigin ? "include" : "omit" });
+if (!response.ok) throw new Error(`Download failed: ${response.status}`);
+const objectUrl = URL.createObjectURL(await response.blob());
 const a = document.createElement("a");
-a.href = url;
+a.href = objectUrl;
 a.download = `Report - ${myAppContext.orgName}.pdf`;
 a.click();
+URL.revokeObjectURL(objectUrl);
 ```
 
 ## See also
@@ -7163,7 +7190,7 @@ The container serves two routes and nothing else:
 - `GET /health` returns `200 {"status":"ok"}`.
 - `POST /jobs` takes `{"job": <queued message body>, "attempts": <delivery attempt>}` as `application/json`, runs the job through `createProcessingJobHandler`, and returns `200 {"outcome": …}`. Acknowledge the message unless `outcome.status` is `retry`. A request that arrives while `FILEFN_CONTAINER_MAX_CONCURRENT_JOBS` jobs are running waits up to `FILEFN_CONTAINER_JOB_WAIT_MS` (default 60 s) for a slot; after that it gets 503 with `Retry-After: 30`. A 503 or 500 asks for a delayed retry; a 400 or 413 body can never succeed.
 
-When `FILEFN_CONTAINER_TOKEN` is set, `POST /jobs` requires `Authorization: Bearer <token>`.
+`POST /jobs` requires `Authorization: Bearer <token>` with the `FILEFN_CONTAINER_TOKEN` value. The container refuses to start without a token unless `FILEFN_CONTAINER_ALLOW_UNAUTHENTICATED=true` is set, which leaves `POST /jobs` open to anything that can reach the port.
 
 The consumer retries with a delay, so a busy or failing container does not use up a message's attempts within seconds:
 

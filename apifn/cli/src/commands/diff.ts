@@ -38,7 +38,8 @@ export interface DiffCommandOptions {
 // Spec loading — file path or HTTP URL
 // ---------------------------------------------------------------------------
 
-async function loadSpec(specRef: string, cwd: string): Promise<string> {
+/** Reads an OpenAPI document from a file path (relative to `cwd`) or an HTTP(S) URL. */
+export async function loadSpec(specRef: string, cwd: string): Promise<string> {
     if (/^https?:\/\//i.test(specRef)) {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 10_000);

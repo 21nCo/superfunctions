@@ -4,6 +4,7 @@ import type { RateLimiter } from '@superfunctions/middleware';
 import { resolvePrincipal } from '../auth.js';
 import { FileFnError, authRequired, rateLimited } from '../errors.js';
 import { rateLimitSubject, type RateLimitCategory, type RateLimitClientKey } from '../rate-limit-key.js';
+import { buildDownloadHeaders } from '../download-headers.js';
 
 export interface SharesRouteContext {
   service: SharesService;
@@ -140,10 +141,7 @@ export function createSharesRoutes(ctx: SharesRouteContext) {
 
         return new Response(result.stream, {
           status: 200,
-          headers: {
-            'Content-Type': result.contentType,
-            'Content-Length': result.size.toString(),
-          },
+          headers: buildDownloadHeaders(result),
         });
       } catch (err) {
         if (err instanceof FileFnError) return errorResponse(err, requestId);
