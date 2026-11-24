@@ -150,6 +150,29 @@ describe('error details returned to callers', () => {
     expect(await answer.text()).not.toContain('array-serializer-internal');
   });
 
+  it('leaves out an array subclass with an inherited serializer', async () => {
+    const env = await setup();
+    class Attempts extends Array<{ data: string }> {
+      static get [Symbol.species]() {
+        return Array;
+      }
+      toJSON() {
+        return [];
+      }
+    }
+    const attempts = new Attempts();
+    attempts.push({ data: 'subclass-serializer-internal' });
+    env.parseWebhookError.current = createBillFnError({
+      code: 'BILLFN_PROVIDER_ERROR',
+      message: 'Provider request failed',
+      details: { status: 502, attempts }
+    });
+
+    const answer = await env.call('/webhooks/dodo', { method: 'POST', body: '{}' });
+
+    expect(await answer.text()).not.toContain('subclass-serializer-internal');
+  });
+
   it('leaves out objects in the details that are not plain data', async () => {
     const env = await setup();
     class ProviderResponse {
