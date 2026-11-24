@@ -1,0 +1,37 @@
+filefn/docs/content/docs/core-concepts/security.md
+  s_b841cebdcfad95::t_1415fa9ebd83ec 56
+filefn/docs/content/docs/features/share-links.md
+  s_b841cebdcfad95::t_6e9d3f9563ebc1 63
+filefn/docs/static/llms-full.txt
+  s_b841cebdcfad95::t_0066084cf666f8 2696,4360
+filefn/python/filefn/server/authz/grant_expiry.py
+  s_b841cebdcfad95::t_68dc0c1d0ab796 39-43
+filefn/python/filefn/server/shares/service.py
+  s_b841cebdcfad95::t_17ad0323eacb2a 3,54-55,61,64-68,221-226,230,233-235
+filefn/python/tests/test_core.py
+  s_b841cebdcfad95::t_fea0cc8ddf5c76 96-104
+filefn/server/src/authz/grant-expiry.ts
+  s_b841cebdcfad95::t_06c6e04cb72805 29-40
+filefn/server/src/shares/routes.ts
+  s_b841cebdcfad95::t_2ba912803e2597 4,108,133
+filefn/server/src/shares/service.ts
+  s_b841cebdcfad95::t_8256c23a7a78ca 229-234,238,332-333,338,340-347
+filefn/server/tests/sharing-security.test.ts
+  s_b841cebdcfad95::t_7bc3b86c84b1cd 279-356
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b11227f791d10e4d8ec6053dff9e49ad1917463b",
+  "prompts": {},
+  "sessions": {
+    "s_b841cebdcfad95": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "436f4738-d86e-44e1-82bc-c432f9aaabf3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

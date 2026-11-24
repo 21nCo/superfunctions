@@ -1,0 +1,27 @@
+filefn/docs/content/docs/features/grants.md
+  s_b841cebdcfad95::t_4262116978c28b 53
+filefn/docs/content/docs/features/share-links.md
+  s_b841cebdcfad95::t_0a93636d71a5fb 63
+filefn/docs/static/llms-full.txt
+  s_b841cebdcfad95::t_d9521bec6fb83d 3604,4360
+filefn/server/src/authz/grant-expiry.ts
+  s_b841cebdcfad95::t_0b87f4d2d0946a 2-4,17-18,33-35
+filefn/server/tests/sharing-security.test.ts
+  s_b841cebdcfad95::t_7e9d1ecf4dc561 535-541
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5ed7d413453d776a21b4a9c22366920d9076cbf0",
+  "prompts": {},
+  "sessions": {
+    "s_b841cebdcfad95": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "436f4738-d86e-44e1-82bc-c432f9aaabf3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

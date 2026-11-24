@@ -1,0 +1,159 @@
+apifn/cli/__tests__/__snapshots__/check-command.test.ts.snap
+  s_8dfe250ba7ae1b::t_f31a74cedc970b 1-92
+apifn/cli/__tests__/check-command.test.ts
+  s_8dfe250ba7ae1b::t_e03b51a2fdf2b0 1-5107
+apifn/cli/__tests__/fixtures/check/base-zero/apifn.config.ts
+  s_8dfe250ba7ae1b::t_fa6e6e22069cc6 1-5
+apifn/cli/__tests__/fixtures/check/base/apifn.config.ts
+  s_8dfe250ba7ae1b::t_fe45e4663f15f6 1-4
+apifn/cli/__tests__/fixtures/check/base/router.ts
+  s_8dfe250ba7ae1b::t_9cf450176309bf 1-29
+apifn/cli/__tests__/fixtures/check/breaking-major/apifn.config.ts
+  s_8dfe250ba7ae1b::t_a1d2b6fda7d01b 1-4
+apifn/cli/__tests__/fixtures/check/breaking-major/router.ts
+  s_8dfe250ba7ae1b::t_3863cfd806460f 1-18
+apifn/cli/__tests__/fixtures/check/breaking-zero-minor/apifn.config.ts
+  s_8dfe250ba7ae1b::t_1a175796498bdc 1-5
+apifn/cli/__tests__/fixtures/check/breaking/apifn.config.ts
+  s_8dfe250ba7ae1b::t_7c26a60f4b3d4d 1-4
+apifn/cli/__tests__/fixtures/check/breaking/router.ts
+  s_8dfe250ba7ae1b::t_d911fb78c0b0dd 1-18
+apifn/cli/__tests__/fixtures/check/compatible/apifn.config.ts
+  s_8dfe250ba7ae1b::t_b9ebfa51a0d664 1-4
+apifn/cli/__tests__/fixtures/check/compatible/router.ts
+  s_8dfe250ba7ae1b::t_a2d4c0e783e7db 1-40
+apifn/cli/__tests__/fixtures/check/invalid-diff/apifn.config.ts
+  s_8dfe250ba7ae1b::t_9c2c03e71a43a0 1-4
+apifn/cli/__tests__/fixtures/check/invalid-diff/router.ts
+  s_8dfe250ba7ae1b::t_005a4c12af430e 1-31
+apifn/cli/__tests__/fixtures/check/invalid/apifn.config.ts
+  s_8dfe250ba7ae1b::t_c17b731f7e2acf 1-4
+apifn/cli/__tests__/fixtures/check/invalid/router.ts
+  s_8dfe250ba7ae1b::t_a66ede13e86a48 1-29
+apifn/cli/__tests__/fixtures/check/non-semver/apifn.config.ts
+  s_8dfe250ba7ae1b::t_6f881855d4bfde 1-5
+apifn/cli/__tests__/temp-dirs.ts
+  s_8dfe250ba7ae1b::t_7d143ba52fdc06 9-10,12-14
+apifn/cli/package.json
+  s_8dfe250ba7ae1b::t_e76943dc5e33cc 3
+apifn/cli/src/bin.ts
+  s_8dfe250ba7ae1b::t_a6a118631e3ff0 3,5,8-11
+apifn/cli/src/commands/check-args.ts
+  s_8dfe250ba7ae1b::t_454df8584c29fa 1-199
+apifn/cli/src/commands/check-compare.ts
+  s_8dfe250ba7ae1b::t_7fe70f4d827eac 1-483
+apifn/cli/src/commands/check-git.ts
+  s_8dfe250ba7ae1b::t_3c3994224590ef 1-448
+apifn/cli/src/commands/check-io.ts
+  s_8dfe250ba7ae1b::t_d7a037cf9afeda 1-124
+apifn/cli/src/commands/check-parse.ts
+  s_8dfe250ba7ae1b::t_b7a8149b83ee1d 1-314
+apifn/cli/src/commands/check-paths.ts
+  s_8dfe250ba7ae1b::t_fd94f77b6591b8 1-136
+apifn/cli/src/commands/check-publish.ts
+  s_8dfe250ba7ae1b::t_27a0e42a628313 1-954
+apifn/cli/src/commands/check-report.ts
+  s_8dfe250ba7ae1b::t_0a5316f1c99b9c 1-182
+apifn/cli/src/commands/check.ts
+  s_8dfe250ba7ae1b::t_443fa6552d8b7a 1-662
+apifn/cli/src/commands/diff.ts
+  s_8dfe250ba7ae1b::t_610d6df9e99e62 41-42
+apifn/cli/src/commands/generate.ts
+  s_8dfe250ba7ae1b::t_85e0264fe38f83 5,7,10-30,32,34-36,43,56-73,76,78,81
+apifn/cli/src/index.ts
+  s_8dfe250ba7ae1b::t_e0b913cff060c4 10-11,24-31,307-363,515-530,533,536-537,545
+apifn/cli/src/signals.ts
+  s_8dfe250ba7ae1b::t_3e42d721e17e5e 1-56
+apifn/cli/src/utils/router-loader.ts
+  s_8dfe250ba7ae1b::t_30493ab88453fa 3,14-20,22-24,27-35,47-54
+filefn/docs/content/docs/core-concepts/policies.md
+  s_8dfe250ba7ae1b::t_9d61912d4690cf 106-108
+filefn/docs/static/llms-full.txt
+  s_8dfe250ba7ae1b::t_436eac1c11d10f 2367-2369
+filefn/server/src/__tests__/idempotency-complete.test.ts
+  s_8dfe250ba7ae1b::t_21cc2ca880b369 135-136
+filefn/server/src/__tests__/policies.test.ts
+  s_8dfe250ba7ae1b::t_f33e2a460833e4 17-18
+filefn/server/src/__tests__/upload-size-validate.test.ts
+  s_b841cebdcfad95::t_cac5f874a4b2f0 13-14,22,51,68-70
+filefn/server/src/errors.ts
+  s_8dfe250ba7ae1b::t_4a1417ddb733a3 43,230-238
+filefn/server/src/index.ts
+  s_8dfe250ba7ae1b::t_d031859ebc777d 509-510
+filefn/server/src/policies.ts
+  s_8dfe250ba7ae1b::t_6cd67ad755d8be 1,90-164,173-176
+filefn/server/src/upload-sessions/service.ts
+  s_8dfe250ba7ae1b::t_4b1c3d5dcf3180 5,8,252-266,342-349,356-359,367-368,374-383,385,387-400,646-656,1425-1437,1445,1453-1464,1613-1615,1617-1623,1677-1679,1682-1686,1702-1703,1733-1734,1737-1764,1807-1809,2026-2030,2040-2049,2098-2113,2115,2117-2125
+filefn/server/tests/storage-key-security.test.ts
+  s_8dfe250ba7ae1b::t_90e697176327f6 1-155
+filefn/server/tests/upload-size-security.test.ts
+  s_8dfe250ba7ae1b::t_be871d1f50ff1f 1-280
+package-lock.json
+  s_8dfe250ba7ae1b::t_8fd502b980fbfe 110
+packages/storage-local/src/adapter.test.ts
+  s_8dfe250ba7ae1b::t_f96c637a5c3e14 265-306,360-391
+packages/storage-local/src/adapter.ts
+  s_8dfe250ba7ae1b::t_92b81b738f6529 2-3,51-60,166-172,174-189,235-242,246-247,255-268
+reviewfn/core/src/coordinator.ts
+  s_8dfe250ba7ae1b::t_aee72df304a000 105,108,317,319-320
+reviewfn/core/src/executable.ts
+  s_8dfe250ba7ae1b::t_cd90c9efe88a7b 21,31-46
+reviewfn/core/src/panel/coordinator.ts
+  s_8dfe250ba7ae1b::t_744d0f7ea5b5ac 18-19,44-48,54-55,187,191-199,203-216,328-329,333,337-338,351,397,402-403,408-410,420-421,487,493-494,497-498,513-516,519,530,570,624-627,631-634,636-637,640-643,660-661,768,904,908-911,913
+reviewfn/core/src/panel/policy.ts
+  s_8dfe250ba7ae1b::t_7574d431e0e860 51-59
+reviewfn/core/src/panel/render.ts
+  s_8dfe250ba7ae1b::t_79f436dd150c92 3,37,40,141-142,165-168
+reviewfn/core/src/panel/schema.ts
+  s_8dfe250ba7ae1b::t_aadb661cce6ec5 10-15,26,84-86,98-108,113-116,126,132-137
+reviewfn/core/src/panel/types.ts
+  s_8dfe250ba7ae1b::t_bd5b18a2733769 16-21,28-50,62-63,87-101,115-120,134-135
+reviewfn/core/src/panel/validate.ts
+  s_8dfe250ba7ae1b::t_11cb51fed7a9ec 7-9,52-66,75-76,78,147-153,156,159-162,166,170,177,179-183,251-323,326-348,355-361,492,503-514,517-520,523-532,607,678-680
+reviewfn/core/src/types.ts
+  s_8dfe250ba7ae1b::t_80f454f35e6020 1-2,236-240,271-272
+reviewfn/core/test/panel-orchestrator.test.ts
+  s_8dfe250ba7ae1b::t_49e2e53ac5d034 56-74
+reviewfn/core/test/panel-render.test.ts
+  s_8dfe250ba7ae1b::t_d61aa615fce931 109-117
+reviewfn/core/test/panel.test.ts
+  s_8dfe250ba7ae1b::t_f906a4fe92825c 6,322-335,639-786,969-971,981-994
+reviewfn/docs/content/docs/reference/panel-report-schema.md
+  s_8dfe250ba7ae1b::t_0ff687c738d53e 14,16-18,22,24,26,32-33,50,92,98
+reviewfn/docs/content/docs/reference/panel.md
+  s_8dfe250ba7ae1b::t_81bd5503faa679 50-51,60
+reviewfn/docs/panel-report-schema.md
+  s_8dfe250ba7ae1b::t_9e18bc9e6891c3 11,13-15,19,21,23,29-30,47,89,95
+reviewfn/docs/panel.md
+  s_8dfe250ba7ae1b::t_93701debc6a6ff 47-48,57
+reviewfn/docs/static/llms-full.txt
+  s_8dfe250ba7ae1b::t_1a13757ceb37bc 220,222-224,228,230,232,238-239,256,298,304,366-367,376
+reviewfn/testing/test/coordinator.test.ts
+  s_8dfe250ba7ae1b::t_96d3ba476b7828 2,128-141
+reviewfn/testing/test/panel-coordinator.test.ts
+  s_8dfe250ba7ae1b::t_69ef1740adf47b 11,232-349
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8c9dd929868ee2b42bd6a6bd9379dc0391186da3",
+  "prompts": {},
+  "sessions": {
+    "s_8dfe250ba7ae1b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a20eed-f304-7c80-8041-9ba0b9164a4a",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_b841cebdcfad95": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "436f4738-d86e-44e1-82bc-c432f9aaabf3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
