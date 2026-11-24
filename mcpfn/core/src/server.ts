@@ -128,19 +128,23 @@ export type McpFnWebStandardHandlerOptions<TContext> = ConstructorParameters<
   }) => string | undefined | Promise<string | undefined>;
   /**
    * Stateful mode: most sessions kept at once. Creating one more closes the
-   * least recently used session, idle sessions first. Defaults to 1000.
+   * least recently used idle session (no request or open stream in progress);
+   * when every session is busy the new one is refused with HTTP 503.
+   * Defaults to 1000.
    */
   maxSessions?: number;
   /**
    * Stateful mode: most sessions one principal may hold. Creating one more
-   * closes that principal's least recently used session. Sessions without a
-   * principal count only against `maxSessions`. Defaults to 100.
+   * closes that principal's least recently used idle session, or is refused
+   * with HTTP 429 when all of them are busy. Sessions without a principal
+   * share one such allowance. Defaults to 100.
    */
   maxSessionsPerPrincipal?: number;
   /**
    * Stateful mode: a session with no request or open stream for this long is
    * closed. Checked whenever the handler runs. Defaults to 30 minutes;
-   * `Infinity` keeps idle sessions until they are deleted or evicted.
+   * `Infinity` keeps idle sessions until they are deleted or evicted. A
+   * session closed by expiry or eviction runs `onsessionclosed` like DELETE.
    */
   sessionIdleTimeoutMs?: number;
 };
@@ -953,68 +957,104 @@ export class McpFnServer<TContext = undefined> {
     interface Session {
       server: McpFnServer<TContext>;
       transport: WebStandardStreamableHTTPServerTransport;
+      /** Principal bucket: the principal key, or ANONYMOUS. */
+      bucket: string;
       principal: string | undefined;
       lastActive: number;
       /** Increases on every use; orders sessions when timestamps tie. */
       lastUse: number;
+      /** Requests and open streams in progress, including initialization. */
       active: number;
-      release: () => Promise<void>;
+      /** Close once: run the host's onsessionclosed, then release the server. */
+      close: (fromDelete: boolean) => Promise<void>;
     }
+    // Sessions without a principal share one bucket for maxSessionsPerPrincipal.
+    const ANONYMOUS = "\u0000anonymous";
     const sessions = new Map<string, Session>();
+    // Session slots held by requests whose initialization is still running.
+    const reservations = new Map<string, number>();
+    let reservedTotal = 0;
     let useCounter = 0;
     const sessionNotFound = () =>
       jsonRpcErrorResponse(404, -32001, "Session not found");
-    const evict = async (id: string) => {
-      const session = sessions.get(id);
-      if (!session) return;
-      sessions.delete(id);
-      await session.release().catch(() => undefined);
-    };
-    // Idle sessions go first; among equals, the one used least recently.
-    const leastRecentlyUsed = (candidates: Array<[string, Session]>) => {
+    const closeQuietly = (sessions: Session[]) =>
+      Promise.all(sessions.map((session) => session.close(false).catch(() => undefined)));
+    // The idle session used least recently, if any. Busy sessions are never
+    // evicted: closing one would leave its pending requests unanswered.
+    const leastRecentlyUsedIdle = (bucket?: string) => {
       let chosen: [string, Session] | undefined;
-      for (const entry of candidates) {
+      for (const entry of sessions) {
         const session = entry[1];
-        if (!chosen) {
-          chosen = entry;
-          continue;
-        }
-        const current = chosen[1];
-        const idle = session.active === 0;
-        if (idle !== (current.active === 0)) {
-          if (idle) chosen = entry;
-        } else if (session.lastUse < current.lastUse) {
-          chosen = entry;
-        }
+        if (session.active !== 0 || (bucket !== undefined && session.bucket !== bucket)) continue;
+        if (!chosen || session.lastUse < chosen[1].lastUse) chosen = entry;
       }
-      return chosen?.[0];
+      return chosen;
     };
-    const sweepIdle = async () => {
-      if (!Number.isFinite(idleTimeoutMs)) return;
+    const takeSession = (entry: [string, Session]) => {
+      sessions.delete(entry[0]);
+      return entry[1];
+    };
+    const sweepIdle = () => {
+      if (!Number.isFinite(idleTimeoutMs)) return [];
       const now = Date.now();
-      const expired = [...sessions]
+      return [...sessions]
         .filter(([, session]) => session.active === 0 && now - session.lastActive >= idleTimeoutMs)
-        .map(([id]) => id);
-      await Promise.all(expired.map(evict));
+        .map(takeSession);
     };
-    const makeRoom = async (principal: string | undefined) => {
-      if (principal !== undefined) {
-        const owned = [...sessions].filter(([, session]) => session.principal === principal);
-        while (owned.length >= maxPerPrincipal) {
-          const id = leastRecentlyUsed(owned)!;
-          owned.splice(owned.findIndex(([key]) => key === id), 1);
-          await evict(id);
+    // Reserve a slot for a new session without any await between counting and
+    // reserving, so concurrent initializations cannot exceed the limits.
+    // Returns the evicted sessions to close, or a refusal when every session
+    // that could make room is busy.
+    const reserve = (bucket: string):
+      | { victims: Session[]; release: () => void }
+      | { refused: Response } => {
+      const victims: Session[] = [];
+      const owned = () =>
+        [...sessions.values()].filter((session) => session.bucket === bucket).length +
+        (reservations.get(bucket) ?? 0);
+      while (owned() >= maxPerPrincipal) {
+        const entry = leastRecentlyUsedIdle(bucket);
+        if (!entry) {
+          restore(victims);
+          return { refused: jsonRpcErrorResponse(429, -32000, "Too many sessions for this principal") };
         }
+        victims.push(takeSession(entry));
       }
-      while (sessions.size >= maxSessions) {
-        await evict(leastRecentlyUsed([...sessions])!);
+      while (sessions.size + reservedTotal >= maxSessions) {
+        const entry = leastRecentlyUsedIdle();
+        if (!entry) {
+          restore(victims);
+          return { refused: jsonRpcErrorResponse(503, -32000, "Too many sessions") };
+        }
+        victims.push(takeSession(entry));
+      }
+      reservations.set(bucket, (reservations.get(bucket) ?? 0) + 1);
+      reservedTotal += 1;
+      let held = true;
+      return {
+        victims,
+        release: () => {
+          if (!held) return;
+          held = false;
+          reservedTotal -= 1;
+          const count = (reservations.get(bucket) ?? 1) - 1;
+          if (count === 0) reservations.delete(bucket);
+          else reservations.set(bucket, count);
+        },
+      };
+    };
+    // A refused reservation puts back the sessions it had taken out.
+    const restore = (victims: Session[]) => {
+      for (const victim of victims) {
+        const id = victim.transport.sessionId;
+        if (id !== undefined && !sessions.has(id)) sessions.set(id, victim);
       }
     };
 
     return async (request: Request, handleOptions?: HandleRequestOptions) => {
       const refused = rejectOrigin(request);
       if (refused) return refused;
-      await sweepIdle();
+      await closeQuietly(sweepIdle());
       const principal = await sessionPrincipal({
         authInfo: handleOptions?.authInfo,
         request,
@@ -1042,43 +1082,60 @@ export class McpFnServer<TContext = undefined> {
         }
       }
 
+      const bucket = principal ?? ANONYMOUS;
+      const reservation = reserve(bucket);
+      if ("refused" in reservation) return reservation.refused;
+      await closeQuietly(reservation.victims);
+
       const requestServer = new McpFnServer(this.serverOptions);
-      let initializedSessionId: string | undefined;
+      let initialized: Session | undefined;
       let released = false;
       let transport: WebStandardStreamableHTTPServerTransport;
       const release = async () => {
         if (released) return;
         released = true;
-        if (initializedSessionId && sessions.get(initializedSessionId)?.server === requestServer) {
-          sessions.delete(initializedSessionId);
-        }
+        reservation.release();
+        const id = transport.sessionId;
+        if (id !== undefined && sessions.get(id)?.server === requestServer) sessions.delete(id);
         this.requestServers.delete(requestServer);
         await requestServer.close();
+      };
+      let closing: Promise<void> | undefined;
+      const close = (fromDelete: boolean) => {
+        closing ??= (async () => {
+          const id = transport.sessionId;
+          if (id !== undefined && sessions.get(id)?.server === requestServer) sessions.delete(id);
+          try {
+            if (id !== undefined) await transportOptions.onsessionclosed?.(id);
+          } catch (error) {
+            if (fromDelete) throw error;
+          } finally {
+            await release();
+          }
+        })();
+        return closing;
       };
       transport = new WebStandardStreamableHTTPServerTransport({
         ...transportOptions,
         onsessioninitialized: async (id) => {
           await transportOptions.onsessioninitialized?.(id);
-          await makeRoom(principal);
-          initializedSessionId = id;
-          sessions.set(id, {
+          // The reservation becomes the session in the same step.
+          reservation.release();
+          initialized = {
             server: requestServer,
             transport,
+            bucket,
             principal,
             lastActive: Date.now(),
             lastUse: ++useCounter,
-            active: 0,
-            release,
-          });
+            // The initialize response itself is in progress.
+            active: 1,
+            close,
+          };
+          sessions.set(id, initialized);
         },
-        onsessionclosed: async (id) => {
-          if (sessions.get(id)?.server === requestServer) sessions.delete(id);
-          try {
-            await transportOptions.onsessionclosed?.(id);
-          } finally {
-            await release();
-          }
-        },
+        // DELETE from the session's own principal.
+        onsessionclosed: () => close(true),
       });
       this.requestServers.add(requestServer);
 
@@ -1086,7 +1143,16 @@ export class McpFnServer<TContext = undefined> {
         await configureRequestServer?.(requestServer);
         await requestServer.connect(transport);
         const response = await transport.handleRequest(request, handleOptions);
-        if (initializedSessionId) return response;
+        const session = initialized;
+        if (session) {
+          let settled = false;
+          return releaseAfterResponse(response, async () => {
+            if (settled) return;
+            settled = true;
+            session.active -= 1;
+            session.lastActive = Date.now();
+          });
+        }
         return releaseAfterResponse(response, release);
       } catch (error) {
         await release();

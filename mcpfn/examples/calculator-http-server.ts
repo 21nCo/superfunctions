@@ -1,9 +1,31 @@
-import { createServer } from "node:http";
+import { createServer, type IncomingMessage } from "node:http";
 import type { AddressInfo } from "node:net";
 
 import createCalculatorServer from "./calculator-server.js";
 
 const MAX_BODY_BYTES = 1_048_576;
+
+/** The request body, or undefined once it exceeds MAX_BODY_BYTES (the rest is discarded). */
+function readBody(request: IncomingMessage): Promise<Buffer | undefined> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    const onData = (chunk: Buffer | string) => {
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      size += buffer.length;
+      if (size > MAX_BODY_BYTES) {
+        request.off("data", onData);
+        request.resume();
+        resolve(undefined);
+        return;
+      }
+      chunks.push(buffer);
+    };
+    request.on("data", onData);
+    request.once("end", () => resolve(size > MAX_BODY_BYTES ? undefined : Buffer.concat(chunks)));
+    request.once("error", reject);
+  });
+}
 
 const mcp = createCalculatorServer();
 // The handler refuses browser requests whose Origin is not listed (DNS
@@ -25,19 +47,12 @@ const httpServer = createServer(async (request, response) => {
       return;
     }
 
-    const chunks: Buffer[] = [];
-    let size = 0;
-    for await (const chunk of request) {
-      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-      size += buffer.length;
-      if (size > MAX_BODY_BYTES) {
-        response.writeHead(413, { connection: "close" }).end("Payload too large");
-        request.destroy();
-        return;
-      }
-      chunks.push(buffer);
+    const body = await readBody(request);
+    if (!body) {
+      // Let the queued 413 flush; "connection: close" ends the socket after it.
+      response.writeHead(413, { connection: "close" }).end("Payload too large");
+      return;
     }
-    const body = Buffer.concat(chunks);
     const webRequest = new Request(url, {
       method: request.method,
       headers: new Headers(

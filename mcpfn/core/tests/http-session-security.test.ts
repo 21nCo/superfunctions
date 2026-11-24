@@ -14,6 +14,7 @@ import {
 
 const closeables: Array<{ close(): Promise<void> }> = [];
 afterEach(async () => {
+  gate = undefined;
   vi.useRealTimers();
   await Promise.all(closeables.splice(0).map((value) => value.close().catch(() => undefined)));
 });
@@ -22,12 +23,17 @@ function authInfo(subject: string, clientId = "client-a"): AuthInfo {
   return { token: "test-access-token", clientId, scopes: [], extra: { subject } };
 }
 
+let gate: Promise<void> | undefined;
+
 async function setup(options: McpFnWebStandardHandlerOptions<undefined> = {}) {
   const registry = new McpFnRegistry().register({
     name: "echo",
     description: "Echo a value.",
     inputSchema: { type: "object", properties: { value: { type: "string" } }, required: ["value"] },
-    handler: async ({ value }) => structuredResult({ value }),
+    handler: async ({ value }) => {
+      await gate;
+      return structuredResult({ value });
+    },
   });
   const server = createMcpFnServer({ info: { name: "session-security", version: "1.0.0" }, registry });
   closeables.push(server);
@@ -156,6 +162,58 @@ describe("createWebStandardHandler session limits (MCP-SEC-04)", () => {
     vi.advanceTimersByTime(30_000);
     expect((await call(idle.sessionId!)).status).toBe(404);
     expect((await call(busy.sessionId!)).status).toBe(200);
+  });
+
+  it("does not exceed the per-principal limit under concurrent initialization", async () => {
+    const { initialize } = await setup({ maxSessionsPerPrincipal: 1 });
+    const results = await Promise.all([initialize(authInfo("alice")), initialize(authInfo("alice"))]);
+    expect(results.map(({ status }) => status).sort()).toEqual([200, 429]);
+  });
+
+  it("does not exceed maxSessions under concurrent initialization", async () => {
+    const { initialize } = await setup({ maxSessions: 1 });
+    const results = await Promise.all([initialize(), initialize(authInfo("bob"))]);
+    expect(results.map(({ status }) => status).sort()).toEqual([200, 503]);
+  });
+
+  it("never evicts a session with a request in progress", async () => {
+    const { initialize, call } = await setup({ maxSessions: 1 });
+    const busy = await initialize();
+    let open!: () => void;
+    gate = new Promise((resolve) => { open = resolve; });
+    const pending = call(busy.sessionId!);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect((await initialize()).status).toBe(503);
+    open();
+    const answered = await pending;
+    expect(answered.status).toBe(200);
+    expect(answered.text).toContain("hi");
+  });
+
+  it("lets sessions without a principal share one per-principal allowance", async () => {
+    const { initialize, call } = await setup({ maxSessionsPerPrincipal: 2 });
+    const first = await initialize();
+    await initialize();
+    await initialize();
+    expect((await call(first.sessionId!)).status).toBe(404);
+  });
+
+  it("runs onsessionclosed for expired and evicted sessions", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const closed: string[] = [];
+    const { initialize } = await setup({
+      maxSessions: 2,
+      sessionIdleTimeoutMs: 60_000,
+      onsessionclosed: (id) => { closed.push(id); },
+    });
+    const first = await initialize();
+    await initialize();
+    const third = await initialize();
+    expect(closed).toEqual([first.sessionId]);
+    vi.advanceTimersByTime(61_000);
+    await initialize();
+    expect(closed).toContain(third.sessionId);
+    expect(closed).toHaveLength(3);
   });
 
   it.each([
