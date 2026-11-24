@@ -47,6 +47,8 @@ A slot's `harness.adapter` is resolved through a fixed table to an installed pac
 | `claude-code` | `@superfunctions/reviewfn-harness-claude-code` | `ClaudeCodeHarnessAdapter` |
 | `cli` | `@superfunctions/reviewfn-harness-cli` | `CliHarnessAdapter` |
 
+A `cli` slot runs any agent CLI that reads a prompt and writes JSON. It names its `executable` and a `profile` that the panel policy's `profiles` declares, and the profile sets the argv template, the prompt and output channels, the environment allowlist, the model reporting and the sandbox capability. No profile ships as a default. The package README gives unverified example profiles. A `cli` slot missing its profile or executable is invalid (`REVIEWFN_PANEL_SCHEMA`), and a `cli` slot never runs the configuration file's `harness.executable`. The `cli` adapter refuses pull-request review (`REVIEWFN_PR_AUTH_REQUIRED`), as `claude-code` does, and a refused slot's harness is never preflighted or run.
+
 The CLI constructs each adapter once with `{ executable?, environment }`. The executable is passed only to the adapter that `config.harness` names. A slot whose adapter package is not installed fails preflight with `REVIEWFN_HARNESS_NOT_INSTALLED`. An adapter outside the table fails with `REVIEWFN_HARNESS_UNSUPPORTED`. A package that does not export a matching adapter fails with `REVIEWFN_HARNESS_LOAD_FAILED`. For an adapter other than the configured harness, the adapter contract version is read from its capabilities before any preflight. Verifier slots are not run by this release, so their adapters are not loaded.
 
 ## Report rendering
@@ -55,7 +57,7 @@ The Markdown report shows:
 
 - the run summary: run ID, reviewed head, base, coverage, verdict and finding counts;
 - coverage limits;
-- a table with each slot's stage, lens, harness, model and terminal state, with the reasons for a `void` run and, for a `collapsed` run, the slot whose identity it shares;
+- a table with each slot's stage, lens, harness, model (marked unverified when the harness reports none) and terminal state, with the reasons for a `void` run, for a `collapsed` run the slot whose identity it shares, and the run's limitations;
 - the requirements summary, when the panel extracted requirements;
 - reported findings, grouped by severity and then by file. Each finding shows its origins, its verification verdict, its on-base label (also present on base, new in this change, or not checked against base) and each piece of evidence it or its verification cites, with its kind, description and location (code anchor, source anchor, test receipt or artifact), so a finding without its own anchor can still be located;
 - dropped and suppressed findings, with their reasons, in a collapsed section;
