@@ -63,7 +63,8 @@ export function createImageTransformProcessor(config: ImageTransformConfig): Pro
       }
 
       try {
-        const imageData = await getData();
+        // A private copy: the caller's buffer can't change between the check and the decode.
+        const imageData = Buffer.from(await getData());
         // The decoders pick a format from the bytes; refuse bytes that are not the declared type.
         if (!contentMatchesDeclaredType(imageData, input.mimeType)) {
           return { success: false, artifacts: [], error: CONTENT_TYPE_MISMATCH_ERROR };

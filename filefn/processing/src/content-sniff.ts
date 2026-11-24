@@ -46,14 +46,32 @@ const IMAGE_BRANDS = new Set(['heic', 'heix', 'hevc', 'hevx', 'heim', 'heis', 'm
 const isHeifImage = (b: Uint8Array) => IMAGE_BRANDS.has(ftypBrand(b) ?? '');
 // ISO BMFF / QuickTime: an ftyp box, or a classic QuickTime file that starts
 // with another top-level atom.
+// Top-level `uuid` boxes may come first; up to a few are skipped by their
+// declared sizes to reach the first recognised box.
 const QUICKTIME_ATOMS = ['moov', 'mdat', 'wide', 'free', 'skip', 'pnot'];
-const isIsoBmff = (b: Uint8Array) => ftypBrand(b) !== null || QUICKTIME_ATOMS.some((atom) => startsWith(b, ascii(atom), 4));
+const MAX_LEADING_UUID_BOXES = 4;
+function isIsoBmff(b: Uint8Array): boolean {
+  let offset = 0;
+  for (let box = 0; box <= MAX_LEADING_UUID_BOXES; box++) {
+    if (offset + 8 > b.length) return false;
+    const type = String.fromCharCode(...b.subarray(offset + 4, offset + 8));
+    if (type === 'ftyp' || QUICKTIME_ATOMS.includes(type)) return true;
+    if (type !== 'uuid') return false;
+    const size = ((b[offset] << 24) >>> 0) + (b[offset + 1] << 16) + (b[offset + 2] << 8) + b[offset + 3];
+    // A uuid box holds at least its 8-byte header and 16-byte user type.
+    if (size < 24) return false;
+    offset += size;
+  }
+  return false;
+}
 const isEbml = (b: Uint8Array) => startsWith(b, [0x1a, 0x45, 0xdf, 0xa3]);
 const isOgg = (b: Uint8Array) => startsWith(b, ascii('OggS'));
 const isFlac = (b: Uint8Array) => startsWith(b, ascii('fLaC'));
 const isId3 = (b: Uint8Array) => startsWith(b, ascii('ID3'));
 // MPEG audio frame or ADTS AAC: 11 (or 12) sync bits.
 const isMpegFrame = (b: Uint8Array) => b.length >= 2 && b[0] === 0xff && (b[1] & 0xe0) === 0xe0;
+// AAC in LOAS/LATM framing: the 11-bit sync word 0x2B7.
+const isLoas = (b: Uint8Array) => b.length >= 3 && b[0] === 0x56 && (b[1] & 0xe0) === 0xe0;
 
 /**
  * Where `%PDF-` starts within the first KiB (readers accept a little leading
@@ -78,7 +96,7 @@ const isPdf = (b: Uint8Array) => pdfStart(b) >= 0;
 const isRasterImage = (b: Uint8Array) =>
   isPng(b) || isJpeg(b) || isGif(b) || isRiff(b, 'WEBP') || isTiff(b) || isBmp(b) || isHeifImage(b);
 const isMediaContainer = (b: Uint8Array) =>
-  isIsoBmff(b) || isEbml(b) || isOgg(b) || isRiff(b, 'AVI ') || isWave(b) || isFlac(b) || isId3(b) || isMpegFrame(b);
+  isIsoBmff(b) || isEbml(b) || isOgg(b) || isRiff(b, 'AVI ') || isWave(b) || isFlac(b) || isId3(b) || isMpegFrame(b) || isLoas(b);
 
 const FAMILIES: Array<[RegExp, (bytes: Uint8Array) => boolean]> = [
   [/^image\/(png|jpe?g|gif|webp|tiff|bmp|avif|heic|heif)$/, isRasterImage],
@@ -138,10 +156,14 @@ const FFMPEG_INPUT_FORMATS: Record<string, string> = {
   'audio/flac': 'flac',
 };
 
-/** ffmpeg/ffprobe input options for an untrusted file of the declared type. */
-export function ffmpegInputArgs(mimeType: string): string[] {
+/**
+ * ffmpeg/ffprobe input options for an untrusted file of the declared type.
+ * `audio/aac` is ADTS or LOAS framing; the bytes pick which of the two
+ * demuxers, and nothing else.
+ */
+export function ffmpegInputArgs(mimeType: string, bytes?: Uint8Array): string[] {
   const essence = mimeType.split(';', 1)[0].trim().toLowerCase();
-  const format = FFMPEG_INPUT_FORMATS[essence];
+  const format = essence === 'audio/aac' && bytes && isLoas(bytes) ? 'loas' : FFMPEG_INPUT_FORMATS[essence];
   if (!format) throw new Error(CONTENT_TYPE_MISMATCH_ERROR);
   return ['-protocol_whitelist', 'file', '-f', format];
 }

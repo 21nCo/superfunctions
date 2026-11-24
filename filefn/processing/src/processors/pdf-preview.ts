@@ -34,7 +34,8 @@ export function createPdfPreviewProcessor(config: PdfPreviewConfig = {}): Proces
       }
 
       try {
-        const pdfData = await getData();
+        // A private copy: the caller's buffer can't change between the check and the decode.
+        const pdfData = Buffer.from(await getData());
         const renderedFirstPage = await renderPdfFirstPage(pdfData, density);
         const artifacts = [];
 

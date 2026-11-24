@@ -562,6 +562,20 @@ describe('@filefn/processing', () => {
       expect(contentMatchesDeclaredType(bytes('\0\0\0\x08wide\0\0\0\x10mdat'), 'video/quicktime')).toBe(true);
     });
 
+    it('skips leading uuid boxes to find ftyp, and pins LOAS AAC to the loas demuxer', () => {
+      const uuidBox = new Uint8Array([0, 0, 0, 24, ...bytes('uuid'), ...new Array(16).fill(7)]);
+      const mp4 = new Uint8Array([...uuidBox, ...bytes('\0\0\0\x18ftypisom')]);
+      expect(contentMatchesDeclaredType(mp4, 'video/mp4')).toBe(true);
+      expect(contentMatchesDeclaredType(new Uint8Array([...uuidBox, ...bytes('#EXTM3U\n')]), 'video/mp4')).toBe(false);
+      expect(contentMatchesDeclaredType(new Uint8Array([0, 0, 0, 4, ...bytes('uuid')]), 'video/mp4')).toBe(false);
+
+      const loas = new Uint8Array([0x56, 0xe0, 0x20, 0, 0]);
+      expect(contentMatchesDeclaredType(loas, 'audio/aac')).toBe(true);
+      expect(ffmpegInputArgs('audio/aac', loas)).toEqual(['-protocol_whitelist', 'file', '-f', 'loas']);
+      expect(ffmpegInputArgs('audio/aac', new Uint8Array([0xff, 0xf1, 0x50]))).toEqual(['-protocol_whitelist', 'file', '-f', 'aac']);
+      expect(ffmpegInputArgs('audio/mpeg', loas)).toEqual(['-protocol_whitelist', 'file', '-f', 'mp3']);
+    });
+
     it('accepts big-endian RIFX and broadcast BW64 WAVE files', () => {
       expect(contentMatchesDeclaredType(bytes('RIFX\0\0\0\0WAVEfmt '), 'audio/wav')).toBe(true);
       expect(contentMatchesDeclaredType(bytes('BW64\0\0\0\0WAVEds64'), 'audio/wav')).toBe(true);

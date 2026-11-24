@@ -79,8 +79,9 @@ export function createCommandVideoProvider(config: CommandVideoProviderConfig = 
   async function extractMetadata(request: VideoMetadataRequest): Promise<Record<string, unknown>> {
     return await withTempDir('filefn-processing-video-', async (dir) => {
       const inputPath = join(dir, `input.${outputExtensionForInput(request.input.mimeType)}`);
-      assertContentMatchesDeclaredType(request.videoData, request.input.mimeType);
-      await writeFile(inputPath, Buffer.from(request.videoData));
+      const inputData = Buffer.from(request.videoData);
+      assertContentMatchesDeclaredType(inputData, request.input.mimeType);
+      await writeFile(inputPath, inputData);
 
       const stdout = await runBinaryCapture(ffprobePath, [
         '-v',
@@ -89,7 +90,7 @@ export function createCommandVideoProvider(config: CommandVideoProviderConfig = 
         'json',
         '-show_streams',
         '-show_format',
-        ...ffmpegInputArgs(request.input.mimeType),
+        ...ffmpegInputArgs(request.input.mimeType, inputData),
         inputPath,
       ], ffprobeTimeoutMs);
 
@@ -127,9 +128,10 @@ export function createCommandVideoProvider(config: CommandVideoProviderConfig = 
       const inputPath = join(dir, `input.${outputExtensionForInput(request.input.mimeType)}`);
       const outputPath = join(dir, `poster.${request.format === 'jpeg' ? 'jpg' : request.format}`);
 
-      assertContentMatchesDeclaredType(request.videoData, request.input.mimeType);
+      const inputData = Buffer.from(request.videoData);
+      assertContentMatchesDeclaredType(inputData, request.input.mimeType);
 
-      await writeFile(inputPath, Buffer.from(request.videoData));
+      await writeFile(inputPath, inputData);
 
       const duration = request.duration ?? coerceDuration(await extractMetadata({
         input: request.input,
@@ -150,7 +152,7 @@ export function createCommandVideoProvider(config: CommandVideoProviderConfig = 
         '-ss',
         String(safeTimestamp),
         // Only the local temp file, read with the declared type's demuxer.
-        ...ffmpegInputArgs(request.input.mimeType),
+        ...ffmpegInputArgs(request.input.mimeType, inputData),
         '-i',
         inputPath,
         '-frames:v',
@@ -179,14 +181,15 @@ export function createCommandVideoProvider(config: CommandVideoProviderConfig = 
       const outputPath = join(dir, `output.${outputInfo.extension}`);
       const targetHeight = RESOLUTION_HEIGHTS[request.resolution] ?? RESOLUTION_HEIGHTS['720p'];
 
-      assertContentMatchesDeclaredType(request.videoData, request.input.mimeType);
+      const inputData = Buffer.from(request.videoData);
+      assertContentMatchesDeclaredType(inputData, request.input.mimeType);
 
-      await writeFile(inputPath, Buffer.from(request.videoData));
+      await writeFile(inputPath, inputData);
 
       const args = [
         '-y',
         // Only the local temp file, read with the declared type's demuxer.
-        ...ffmpegInputArgs(request.input.mimeType),
+        ...ffmpegInputArgs(request.input.mimeType, inputData),
         '-i',
         inputPath,
         '-vf',
