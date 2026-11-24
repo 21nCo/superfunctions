@@ -178,10 +178,10 @@ describe('share links, grants and JSON routes (FILE-30 F-07, F-08, F-09, F-15)',
     expect(huge.status).toBe(413);
   });
 
-  it('answers DOWNLOADS_EXCEEDED, not a retryable conflict, when the last lost write used the link up', async () => {
+  /** A FileFn whose counting writes always lose; `onLost(n)` runs before the n-th loss is reported. */
+  function contendedFileFn(onLost: (count: number, settle: () => Promise<unknown>) => Promise<void>) {
     const database = memoryAdapter();
     let lost = 0;
-    // Every counting write loses; the 20th loses to a download that takes the last slot.
     const contended = new Proxy(database, {
       get(target, prop, receiver) {
         if (prop === 'capabilities') {
@@ -191,7 +191,7 @@ describe('share links, grants and JSON routes (FILE-30 F-07, F-08, F-09, F-15)',
           return async (params: Parameters<typeof target.updateMany>[0]) => {
             if (params.model === 'fileShares' && params.where.some((w) => w.field === 'downloads')) {
               lost += 1;
-              if (lost === 20) await target.updateMany({ ...params, where: [params.where[0]!], data: { downloads: 1 } });
+              await onLost(lost, () => target.updateMany({ ...params, where: [params.where[0]!], data: { downloads: 1 } }));
               return 0;
             }
             return target.updateMany(params);
@@ -206,12 +206,32 @@ describe('share links, grants and JSON routes (FILE-30 F-07, F-08, F-09, F-15)',
       namespace: 'filefn',
       policies: [{ name: 'docs', contentTypes: ['text/plain'], visibility: 'private' }],
     });
+    return { fileFn, lost: () => lost };
+  }
+
+  it('answers DOWNLOADS_EXCEEDED, not a retryable conflict, when the last lost write used the link up', async () => {
+    // The 20th lost write loses to a download that takes the last slot.
+    const { fileFn, lost } = contendedFileFn(async (count, takeLastSlot) => {
+      if (count === 20) await takeLastSlot();
+    });
     const file = await upload(fileFn);
     const share = await fileFn.services.shares.createShareLink({ fileId: file.fileId, maxDownloads: 1 }, owner);
     await expect(fileFn.services.shares.getDownloadStreamViaShareLink(share.token, {})).rejects.toMatchObject({
       code: 'FILEFN_SHARE_DOWNLOADS_EXCEEDED',
     });
-    expect(lost).toBe(20);
+    expect(lost()).toBe(20);
+  });
+
+  it('answers a retryable 409 SHARE_DOWNLOAD_CONFLICT when the link still has room after 20 lost writes', async () => {
+    const { fileFn, lost } = contendedFileFn(async () => {});
+    const file = await upload(fileFn);
+    const share = await fileFn.services.shares.createShareLink({ fileId: file.fileId, maxDownloads: 5 }, owner);
+    await expect(fileFn.services.shares.getDownloadStreamViaShareLink(share.token, {})).rejects.toMatchObject({
+      code: 'FILEFN_SHARE_DOWNLOAD_CONFLICT',
+      status: 409,
+      details: { retryable: true },
+    });
+    expect(lost()).toBe(20);
   });
 
   it('counts downloads on adapters that read the row back after update (Prisma, MySQL)', async () => {

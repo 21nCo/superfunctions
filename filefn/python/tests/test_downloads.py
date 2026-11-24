@@ -1063,6 +1063,7 @@ async def test_url_signed_while_the_link_was_revoked_is_withheld() -> None:
     assert [row["downloads"] for row in db.tables["fileShares"]] == [0]
 
 
+@pytest.mark.asyncio
 async def test_list_files_never_lists_private_anonymous_uploads_to_an_anonymous_caller() -> None:
     # FILE-30 F-02: every unauthenticated caller is `anonymous`; nobody owns those uploads.
     db = FakeDB()
