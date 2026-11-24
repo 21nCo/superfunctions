@@ -1536,15 +1536,10 @@ export class SchemaConverter {
     if (!entry) {
       try {
         const refs = new Set<string>();
-        let nodes = 0;
-        const schema = this.budgeted(() => {
-          const converted = this.convertRoot(this.component(name), mode, refs);
-          nodes = this.budget.used;
-          return converted;
-        });
+        const schema = this.budgeted(() => this.convertRoot(this.component(name), mode, refs));
         // Only references the conversion made are edges: a malformed keyword it kept as written makes none.
-        const applied = new Set([...appliedReferences(schema)].filter((name) => refs.has(name)));
-        entry = { schema, refs, inPlace: inPlaceReferences(schema), applied, nodes: Math.max(nodes, expandedSize(schema)) };
+        const made = (found: Set<string>) => new Set([...found].filter((key) => refs.has(key)));
+        entry = { schema, refs, inPlace: made(inPlaceReferences(schema)), applied: made(appliedReferences(schema)) };
       } catch (error) {
         if (!(error instanceof OpenApiSkip)) throw error;
         entry = {
@@ -1652,8 +1647,9 @@ export class SchemaConverter {
   /** By mode, for the whole call: the most definitions a chain of applied references from a component holds. */
   private readonly referenceDepths = new Map<SchemaMode, Map<string, number>>();
 
+  /** A converted component of a checked closure (none: no references, no schema). */
   private converted(name: string, mode: SchemaMode): ConvertedComponent {
-    return this.cache.get(`${mode}:${name}`)!;
+    return this.cache.get(`${mode}:${name}`) ?? NO_COMPONENT;
   }
 
   /**
@@ -1722,7 +1718,9 @@ export class SchemaConverter {
     const result: Array<[string, McpFnJsonSchema | boolean]> = [];
     for (const [key, entry] of this.closureEntries(names, mode)) {
       result.push([key, entry.schema!]);
-      nodes += entry.nodes!;
+      // Counted once a closure is emitted, so nothing a rejected candidate holds is read again.
+      entry.nodes ??= distinctValues(entry.schema);
+      nodes += entry.nodes;
     }
     const definitions = Object.fromEntries(result);
     this.emittedNodes.set(definitions, nodes);
@@ -1938,37 +1936,33 @@ const IN_PLACE_ARRAY_KEYWORDS = ["allOf", "anyOf", "oneOf"] as const;
 const IN_PLACE_KEYWORDS = ["not", "if", "then", "else"] as const;
 
 const APPLIED_MAPS = new Set(["properties", "patternProperties", "dependencies"]);
+
+/** Whether validators ignore `keyword` of `schema`: `then`/`else` without `if`, `additionalItems` without an `items` array. */
+function isIgnored(schema: JsonObject, keyword: string): boolean {
+  if (keyword === "then" || keyword === "else") return !Object.hasOwn(schema, "if");
+  return keyword === "additionalItems" && !Array.isArray(schema.items);
+}
 const APPLIED_KEYWORDS = new Set<string>(SUBSCHEMA_KEYWORDS.filter((keyword) => keyword !== "definitions" && keyword !== "$defs"));
 
 /**
- * The values a copy of `schema` holds, literals included (each shared object
- * as often as it is referred to). Kept per object; walked with an explicit stack.
+ * The values `schema` holds, literals included, each shared object once: a
+ * copy that repeats shared objects is bounded by its own budget (`copyBudget`).
  */
-function expandedSize(schema: unknown): number {
-  const sizes = new Map<object, number>();
-  const open = new Set<object>();
-  const stack: Array<{ value: object; read: boolean }> = isObject(schema) || Array.isArray(schema) ? [{ value: schema, read: false }] : [];
+function distinctValues(schema: unknown): number {
+  const seen = new Set<object>();
+  const stack = [schema];
+  let count = 0;
   while (stack.length > 0) {
-    const frame = stack.at(-1)!;
-    if (sizes.has(frame.value) || (!frame.read && open.has(frame.value))) {
-      stack.pop();
-      continue;
-    }
-    const members = Object.values(frame.value).filter((member): member is object => typeof member === "object" && member !== null);
-    if (!frame.read) {
-      frame.read = true;
-      open.add(frame.value);
-      for (const member of members) if (!sizes.has(member) && !open.has(member)) stack.push({ value: member, read: false });
-      continue;
-    }
-    stack.pop();
-    open.delete(frame.value);
-    let size = 1 + Object.keys(frame.value).length - members.length;
-    for (const member of members) size += sizes.get(member) ?? 1;
-    sizes.set(frame.value, Math.min(size, Number.MAX_SAFE_INTEGER));
+    const value = stack.pop();
+    count += 1;
+    if (typeof value !== "object" || value === null || seen.has(value)) continue;
+    seen.add(value);
+    for (const member of Object.values(value)) stack.push(member);
   }
-  return isObject(schema) || Array.isArray(schema) ? sizes.get(schema)! : 1;
+  return count;
 }
+
+const NO_COMPONENT: ConvertedComponent = { refs: new Set(), inPlace: new Set(), applied: new Set() };
 
 /**
  * Definitions a converted schema applies, in place or to a child value:
@@ -1989,7 +1983,7 @@ function appliedReferences(schema: unknown): Set<string> {
     // Pushed last to first, so they are read in document order.
     const children: unknown[] = [];
     for (const [keyword, value] of Object.entries(current)) {
-      if (!APPLIED_KEYWORDS.has(keyword) || typeof value !== "object" || value === null) continue;
+      if (!APPLIED_KEYWORDS.has(keyword) || typeof value !== "object" || value === null || isIgnored(current, keyword)) continue;
       if (Array.isArray(value) || APPLIED_MAPS.has(keyword)) for (const member of Object.values(value)) children.push(member);
       else children.push(value);
     }

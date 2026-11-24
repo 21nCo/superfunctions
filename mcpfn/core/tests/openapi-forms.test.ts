@@ -2884,6 +2884,71 @@ describe("fromOpenAPI body fallback, synchronous schemas, per-kind alternatives 
     expect(skips(result).map(([name, code]) => [name, code]).sort()).toEqual([["bad", "invalid-schema"], ["badHead", "invalid-schema"]]);
   });
 
+  it("never takes an edge, in place or applied, from a malformed dependency map or a branch validators ignore", () => {
+    const ghost = { $ref: "#/definitions/Ghost" };
+    for (const openapi of ["3.0.3", "3.1.0"]) {
+      const result = fromOpenAPI(
+        {
+          openapi,
+          paths: {
+            "/required": { get: { operationId: "required", responses: json({ $ref: "#/components/schemas/Required" }) } },
+            "/dependencies": { get: { operationId: "dependencies", responses: json({ $ref: "#/components/schemas/Dependencies" }) } },
+            "/good": { get: { operationId: "good", responses: json({ type: "object" }) } },
+          },
+          components: {
+            schemas: {
+              Required: { type: "object", dependentRequired: { trigger: ghost } },
+              Dependencies: { type: "object", dependencies: { trigger: [ghost] } },
+            },
+          },
+        },
+        options(),
+      );
+      expect(result.tools.map(({ name }) => name)).toContain("good");
+      expect(result.skipped.map(({ code }) => code).every((code) => code === "invalid-schema")).toBe(true);
+    }
+    // A 151-definition chain behind `then` without `if` is never applied, so it nests nothing.
+    const schemas: Record<string, unknown> = { P150: { type: "object" } };
+    for (let index = 0; index < 150; index += 1) schemas[`P${index}`] = { type: "object", properties: { next: { $ref: `#/components/schemas/P${index + 1}` } } };
+    schemas.Root = { type: "object", properties: { n: { type: "integer" } }, then: { $ref: "#/components/schemas/P0" } };
+    const root = { $ref: "#/components/schemas/Root" };
+    const ignored = fromOpenAPI(
+      {
+        openapi: "3.0.3",
+        paths: {
+          "/r": {
+            get: { operationId: "g", responses: json(root) },
+            head: { operationId: "h", responses: json(root) },
+            post: { operationId: "p", requestBody: { required: true, content: { "application/json": { schema: root }, "application/merge-patch+json": { schema: { type: "object" } } } }, responses: ok },
+          },
+        },
+        components: { schemas },
+      },
+      options(),
+    );
+    expect(registered(ignored)).toEqual([["g", true], ["h", false], ["p", false]]);
+    expect(tool(ignored.tools, "p").operation.requestBody?.contentType).toBe("application/json");
+    expectArguments(tool(ignored.tools, "g").outputSchema!, { valid: [{ n: 1 }], invalid: [{ n: "bad" }] });
+  });
+
+  it("charges a closure by its distinct values, so a default sharing objects is refused by its own limit, not the call's", () => {
+    let shared: unknown = { leaf: true };
+    for (let level = 0; level < 22; level += 1) shared = { left: shared, right: shared };
+    const result = fromOpenAPI(
+      {
+        openapi: "3.0.3",
+        paths: {
+          "/shared": { get: { operationId: "shared", responses: json({ $ref: "#/components/schemas/Shared" }) } },
+          "/small": { get: { operationId: "small", responses: json({ type: "object", properties: { a: { type: "string" } } }) } },
+        },
+        components: { schemas: { Shared: { type: "object", default: shared } } },
+      },
+      options(),
+    );
+    expect(registered(result)).toEqual([["small", true]]);
+    expect(skips(result).map(([name, code]) => [name, code])).toEqual([["shared", "schema-too-large"]]);
+  });
+
   it("gives a shallow root the same result whether or not a deeper root sharing its chain came first", () => {
     const schemas: Record<string, unknown> = { C199: { type: "object" } };
     for (let index = 0; index < 199; index += 1) schemas[`C${index}`] = { allOf: [{ $ref: `#/components/schemas/C${index + 1}` }] };
