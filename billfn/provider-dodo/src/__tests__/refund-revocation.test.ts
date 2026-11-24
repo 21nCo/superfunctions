@@ -49,7 +49,13 @@ function createDodoApi() {
     }
     return Response.json({ message: 'not found' }, { status: 404 });
   }) as typeof fetch;
-  return { fetchMock };
+  return {
+    fetchMock,
+    /** Records a refund or dispute on the payment, as Dodo does beside its unchanged `succeeded` status. */
+    takeBack(patch: { refunds?: unknown[]; disputes?: unknown[] }) {
+      payment = { ...payment!, ...patch };
+    }
+  };
 }
 
 /** A Dodo webhook delivery signed as Standard Webhooks specifies. */
@@ -65,7 +71,8 @@ function dodoWebhook(id: string, payload: unknown) {
 }
 
 async function purchased() {
-  const { fetchMock } = createDodoApi();
+  const api = createDodoApi();
+  const { fetchMock } = api;
   const billfn = createBillFn({
     db: memoryAdapter({ debug: false }),
     catalog: {
@@ -102,7 +109,7 @@ async function purchased() {
     const entitlements = await billfn.getEntitlements(subject);
     return entitlements.ok ? entitlements.data.entitlements?.status : undefined;
   };
-  return { billfn, subject, entitlementStatus };
+  return { billfn, subject, entitlementStatus, api };
 }
 
 const event = (type: string, data: Record<string, unknown>) => ({
@@ -146,6 +153,62 @@ describe('Dodo refunds and disputes of a one-time purchase', () => {
     await billfn.handleWebhook(
       dodoWebhook('msg_partial', event('refund.succeeded', { payload_type: 'Refund', refund_id: 'ref_2', status: 'succeeded', is_partial: true }))
     );
+
+    expect(await entitlementStatus()).toBe('active');
+  });
+
+  it.each([
+    ['a full refund', { refunds: [{ refund_id: 'ref_1', status: 'succeeded', is_partial: false }] }],
+    ['a lost dispute', { disputes: [{ dispute_id: 'dsp_1', dispute_status: 'dispute_lost' }] }]
+  ])('keeps the purchase revoked when the customer restores it after %s', async (_name, takeBack) => {
+    const { billfn, subject, entitlementStatus, api } = await purchased();
+    api.takeBack(takeBack);
+    await billfn.handleWebhook(
+      dodoWebhook(
+        'msg_take_back',
+        takeBack.refunds
+          ? event('refund.succeeded', { payload_type: 'Refund', refund_id: 'ref_1', status: 'succeeded', is_partial: false })
+          : event('dispute.lost', { payload_type: 'Dispute', dispute_id: 'dsp_1', dispute_status: 'dispute_lost' })
+      )
+    );
+
+    await billfn.restorePurchases({
+      subject,
+      planKey: 'nucleus',
+      provider: 'dodo',
+      priceId: lifetimePrice.priceId,
+      purchaseReference: 'pay_dodo_lifetime'
+    });
+
+    expect(await entitlementStatus()).toBe('inactive');
+  });
+
+  it('restores nothing for a refunded purchase whose refund webhook has not arrived yet', async () => {
+    const { billfn, subject, entitlementStatus, api } = await purchased();
+    api.takeBack({ refunds: [{ refund_id: 'ref_1', status: 'succeeded', is_partial: false }] });
+
+    await billfn.restorePurchases({
+      subject,
+      planKey: 'nucleus',
+      provider: 'dodo',
+      priceId: lifetimePrice.priceId,
+      purchaseReference: 'pay_dodo_lifetime'
+    });
+
+    expect(await entitlementStatus()).toBe('inactive');
+  });
+
+  it('keeps the purchase after a partial refund recorded on the payment', async () => {
+    const { billfn, subject, entitlementStatus, api } = await purchased();
+    api.takeBack({ refunds: [{ refund_id: 'ref_2', status: 'succeeded', is_partial: true }] });
+
+    await billfn.restorePurchases({
+      subject,
+      planKey: 'nucleus',
+      provider: 'dodo',
+      priceId: lifetimePrice.priceId,
+      purchaseReference: 'pay_dodo_lifetime'
+    });
 
     expect(await entitlementStatus()).toBe('active');
   });

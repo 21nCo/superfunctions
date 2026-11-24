@@ -57,37 +57,56 @@ export function createDodoProvider(config: DodoProviderConfig): BillFnProviderAd
     requestJson(fetchImpl, dodoUrl(baseUrl, segments), { method: 'GET', headers: createHeaders(config.apiKey) });
   /**
    * The billing state a refund or dispute leaves the charge in, for an event that takes the money back: a full
-   * refund that succeeded, or a dispute the merchant lost or accepted. A one-time purchase is revoked (`canceled`);
-   * a subscription charge re-reads the subscription, so BillFn follows whatever Dodo did with it. Other refund and
-   * dispute events (partial or pending refunds, opened, challenged or won disputes) change nothing.
+   * refund that succeeded, or a dispute the merchant lost or accepted. The charge's payment is read from Dodo: a
+   * one-time purchase is revoked (`canceled`); a subscription charge takes the subscription's state as Dodo holds
+   * it, so BillFn follows whatever Dodo did with it; a payment for several subscriptions changes nothing. Other
+   * refund and dispute events (partial or pending refunds, opened, challenged or won disputes) read nothing.
+   *
+   * The state is live, so it is dated when the read started rather than when the refund happened: a renewal or
+   * verification BillFn applied in between does not make it look stale. An unusable or mismatched answer fails
+   * the delivery, so Dodo retries it.
    */
   const readDodoRevocationState = async (
     type: string,
     data: Record<string, unknown>
-  ): Promise<BillFnVerifiedBillingState | undefined> => {
+  ): Promise<{ state: BillFnVerifiedBillingState; observedAt: string } | undefined> => {
     const paymentId = readString(data, ['payment_id']);
     if (!paymentId || !isDodoRevocationEvent(type, data)) {
       return undefined;
     }
-    const payment = asPlainRecord(await get('payments', paymentId)) ?? {};
+    const observedAt = new Date().toISOString();
+    const payment = asPlainRecord(await get('payments', paymentId));
+    if (!payment || readString(payment, ['payment_id']) !== paymentId) {
+      throw unusableDodoRead(`payment ${paymentId}`);
+    }
     const subscriptionIds = Array.isArray(payment.subscription_ids)
       ? payment.subscription_ids.filter((id): id is string => typeof id === 'string' && id.length > 0)
       : [];
     const subscriptionId = readDodoPaymentSubscriptionId(payment);
     if (subscriptionId) {
       const subscription = asPlainRecord(await get('subscriptions', subscriptionId));
-      return subscription ? mapDodoSubscriptionState(subscription) : undefined;
+      if (
+        !subscription ||
+        readString(subscription, ['subscription_id']) !== subscriptionId ||
+        !DODO_SUBSCRIPTION_STATUSES.has(readString(subscription, ['status']) ?? '')
+      ) {
+        throw unusableDodoRead(`subscription ${subscriptionId}`);
+      }
+      return { state: mapDodoSubscriptionState(subscription), observedAt };
     }
     if (subscriptionIds.length > 0) {
       // A payment for several subscriptions: no single subscription to re-read.
       return undefined;
     }
     return {
-      subscriptionStatus: 'canceled',
-      checkoutStatus: 'succeeded',
-      providerChargeId: paymentId,
-      autoRenew: false,
-      raw: data
+      state: {
+        subscriptionStatus: 'canceled',
+        checkoutStatus: 'succeeded',
+        providerChargeId: paymentId,
+        autoRenew: false,
+        raw: data
+      },
+      observedAt
     };
   };
   const patchInit = (body: Record<string, unknown>): RequestInit => ({
@@ -633,15 +652,15 @@ export function createDodoProvider(config: DodoProviderConfig): BillFnProviderAd
       const eventId = webhookId;
       const data = asRecord(payload.data) ?? payload;
       const recordKind = dodoWebhookRecordKind(type, data);
-      const billingState =
-        recordKind === 'other' ? await readDodoRevocationState(type, data) : mapDodoWebhookState(recordKind, data);
+      const revocation = recordKind === 'other' ? await readDodoRevocationState(type, data) : undefined;
+      const billingState = recordKind === 'other' ? revocation?.state : mapDodoWebhookState(recordKind, data);
 
       return [
         {
           providerEventId: eventId,
           type,
           signatureVerified: true,
-          occurredAt: readString(payload, ['timestamp', 'created_at']) ?? undefined,
+          occurredAt: revocation?.observedAt ?? readString(payload, ['timestamp', 'created_at']) ?? undefined,
           priceId: recordKind === 'other' ? undefined : readDodoPriceReference(recordKind, data),
           providerSubscriptionId: readString(data, ['subscription_id']) ?? undefined,
           providerChargeId: readString(data, ['payment_id']) ?? undefined,
@@ -1061,11 +1080,35 @@ function mapDodoSubscriptionState(payload: Record<string, unknown>): BillFnVerif
   };
 }
 
+/**
+ * Whether a payment's money went back: a succeeded full refund, or a dispute the merchant lost or accepted. Dodo
+ * keeps such a payment's own status `succeeded`, and records the refunds and disputes beside it.
+ */
+function isDodoPaymentRevoked(payment: Record<string, unknown>): boolean {
+  const refunds = Array.isArray(payment.refunds) ? payment.refunds : [];
+  const disputes = Array.isArray(payment.disputes) ? payment.disputes : [];
+  return (
+    refunds.some((refund) => {
+      const record = asPlainRecord(refund);
+      return record !== null && record.is_partial === false && readString(record, ['status']) === 'succeeded';
+    }) ||
+    disputes.some((dispute) => {
+      const status = readString(asPlainRecord(dispute) ?? {}, ['dispute_status']);
+      return status === 'dispute_lost' || status === 'dispute_accepted';
+    })
+  );
+}
+
 function mapDodoPaymentState(payload: Record<string, unknown>): BillFnVerifiedBillingState {
-  const normalized = normalizeDodoPaymentStatus(readString(payload, ['status']));
+  const paid = normalizeDodoPaymentStatus(readString(payload, ['status']));
+  const subscriptionIds = Array.isArray(payload.subscription_ids) ? payload.subscription_ids : [];
+  // A one-time purchase whose money went back no longer grants access, whichever read (verification, restore,
+  // a payment webhook) sees it; a subscription charge leaves that to the subscription's own state.
+  const oneTime = !readDodoPaymentSubscriptionId(payload) && subscriptionIds.length === 0;
+  const normalized = paid === 'active' && oneTime && isDodoPaymentRevoked(payload) ? 'canceled' : paid;
   return {
     subscriptionStatus: normalized,
-    checkoutStatus: normalized === 'active' ? 'succeeded' : normalized,
+    checkoutStatus: paid === 'active' ? 'succeeded' : paid,
     providerSubscriptionId: readDodoPaymentSubscriptionId(payload),
     providerChargeId: readString(payload, ['payment_id']),
     autoRenew: false,
@@ -1326,6 +1369,14 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 }
 
 /** A JSON object: not null, not an array. */
+/** A retryable failure for a Dodo read whose answer is not the record asked for. */
+function unusableDodoRead(resource: string) {
+  return createBillFnError({
+    code: 'BILLFN_PROVIDER_ERROR',
+    message: `Dodo answered the read of ${resource} with an unusable record`
+  });
+}
+
 function asPlainRecord(value: unknown): Record<string, unknown> | null {
   return typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
 }
