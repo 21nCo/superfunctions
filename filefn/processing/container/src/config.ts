@@ -93,9 +93,23 @@ export function readContainerConfig(env: ContainerEnv): ContainerConfig {
   if (region) storage.region = region;
   if (storageJurisdiction) storage.jurisdiction = storageJurisdiction;
 
+  // Without a token anyone who reaches the port can run (and force) jobs for
+  // any file, so one is required unless the deployment opts out explicitly.
+  const token = text(env, 'FILEFN_CONTAINER_TOKEN');
+  // Read raw: a blank value is refused too, not treated as unset.
+  const allowUnauthenticated = env.FILEFN_CONTAINER_ALLOW_UNAUTHENTICATED;
+  if (allowUnauthenticated !== undefined && allowUnauthenticated !== 'true' && allowUnauthenticated !== 'false') {
+    throw new ContainerConfigError('FILEFN_CONTAINER_ALLOW_UNAUTHENTICATED must be true or false');
+  }
+  if (!token && allowUnauthenticated !== 'true') {
+    throw new ContainerConfigError(
+      'FILEFN_CONTAINER_TOKEN is required (set FILEFN_CONTAINER_ALLOW_UNAUTHENTICATED=true only when nothing but a trusted caller can reach the container)',
+    );
+  }
+
   return {
     port: integer(env, 'PORT', 8080, 0, 65_535)!,
-    token: text(env, 'FILEFN_CONTAINER_TOKEN'),
+    token,
     storage,
     database: required(env, 'FILEFN_DATABASE'),
     namespace: text(env, 'FILEFN_NAMESPACE'),

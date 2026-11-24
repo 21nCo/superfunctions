@@ -1,6 +1,7 @@
 import type { OCRProcessorProvider, Processor, ProcessorInput, ProcessorResult } from '../types.js';
 import { createTesseractJsOCRProvider } from '../providers/tesseract-ocr.js';
 import type { OCRConfig } from '../types.js';
+import { CONTENT_TYPE_MISMATCH_ERROR, contentMatchesDeclaredType } from '../content-sniff.js';
 
 const SUPPORTED_MIME_TYPES = [
   'image/png',
@@ -68,6 +69,10 @@ export function createOCRProcessor(config: OCRConfig = {}): Processor {
 
       try {
         const imageData = await getData();
+        // The decoders pick a format from the bytes; refuse bytes that are not the declared type.
+        if (!contentMatchesDeclaredType(imageData, input.mimeType)) {
+          return { success: false, artifacts: [], error: CONTENT_TYPE_MISMATCH_ERROR };
+        }
         const artifacts = [];
         const baseKey = input.storageKey.replace(/\.[^/.]+$/, '');
         const runtime = resolveProvider(provider);
