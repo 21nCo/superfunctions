@@ -2932,15 +2932,17 @@ describe("apifn check: the router module is the one file loaded (round 4)", () =
     // An ES module default router with its own `default` method and an `__esModule` export stays the router.
     await writeFile(path.join(dir, "router.mjs"), 'export const __esModule = true;\nexport default { default() {}, getRoutes() { return [{ meta: { operationId: "nativeEsm" } }]; } };\n');
     // A default router's unused, throwing `router` getter is never read, and the loaded module is never evaluated again.
+    // A named router beside a default object whose `default` getter throws: the default is never unwrapped.
+    await writeFile(path.join(dir, "named.mjs"), 'export const router = { getRoutes() { return [{ meta: { operationId: "nativeNamed" } }]; } };\nexport default { get default() { throw new Error("unused default"); } };\n');
     await writeFile(path.join(dir, "getter.mjs"), 'globalThis.loads = (globalThis.loads ?? 0) + 1;\nexport default { get router() { throw new Error("unused getter"); }, getRoutes() { return [{ meta: { operationId: `nativeGetter${globalThis.loads}` } }]; } };\n');
     const loader = pathToFileURL(path.join(import.meta.dirname, "..", "src", "utils", "router-loader.ts")).href;
-    const script = `const { loadRouterModule } = await import(${JSON.stringify(loader)});\nfor (const file of ["./router.cjs", "./router.mjs", "./getter.mjs"]) { const { router } = await loadRouterModule(file, ${JSON.stringify(dir)}); console.log(router.getRoutes()[0].meta.operationId); }`;
+    const script = `const { loadRouterModule } = await import(${JSON.stringify(loader)});\nfor (const file of ["./router.cjs", "./router.mjs", "./named.mjs", "./getter.mjs"]) { const { router } = await loadRouterModule(file, ${JSON.stringify(dir)}); console.log(router.getRoutes()[0].meta.operationId); }`;
     const out = execFileSync(process.execPath, ["--experimental-strip-types", "--no-warnings", "--input-type=module", "-e", script], {
       cwd: dir,
       env: { ...process.env, JITI_TRY_NATIVE: "true" },
       encoding: "utf8",
     });
-    expect(out.trim().split("\n")).toEqual(["nativeCjs", "nativeEsm", "nativeGetter1"]);
+    expect(out.trim().split("\n")).toEqual(["nativeCjs", "nativeEsm", "nativeNamed", "nativeGetter1"]);
   });
 });
 
@@ -4711,13 +4713,13 @@ describe("apifn check: git ignores inherited repository selectors (API-25 round 
     expect(await readFile(path.join(shimDir, "n"), "utf8")).toBe("1\n");
   });
 
-  for (const change of ["rewritten in place", "whose git directory is replaced", "a symlink whose target is replaced"] as const) {
+  for (const change of ["rewritten in place", "whose git directory is replaced", "a symlink whose target is replaced", "with CRLF whose git directory is replaced"] as const) {
     it.skipIf(POSIX_ONLY)(`a .git file ${change} during discovery exits 2 with no stdout (PR round 3 delta)`, async () => {
       const { root, service } = await breakingAtHead();
       const external = path.join(await tempDir("apifn-check-gitdir-"), "repo.git");
       await rename(path.join(root, ".git"), external);
       if (change === "a symlink whose target is replaced") await symlink(external, path.join(root, ".git"));
-      else await writeFile(path.join(root, ".git"), `gitdir: ${external}\n`);
+      else await writeFile(path.join(root, ".git"), `gitdir: ${external}${change.includes("CRLF") ? "\r" : ""}\n`);
       const other = await tempDir("apifn-check-gitfile-other-");
       git(other, "init", "-q");
       await mkdir(path.join(other, "breaking", ".apifn"), { recursive: true });

@@ -399,12 +399,14 @@ function discoveryEntries(dir: string): string {
   const id = (file: string, depth = 0): string => {
     try {
       const stats = lstatSync(file, { bigint: true, throwIfNoEntry: false });
-      const followed = stats?.isSymbolicLink() ? statSync(file, { bigint: true, throwIfNoEntry: false }) : stats; // a .git symlink's target too
-      if (!stats?.isFile() || depth > 2) return stats ? `${stats.dev}:${stats.ino}>${followed?.dev}:${followed?.ino}` : "-";
+      const followed = stats?.isSymbolicLink() ? statSync(file, { bigint: true, throwIfNoEntry: false }) : stats; // a symlink's target too
+      const own = stats ? `${stats.dev}:${stats.ino}>${followed?.dev}:${followed?.ino}` : "-";
+      if (!followed || depth > 2) return own;
+      if (followed.isDirectory()) return `${own}>${id(path.join(file, "commondir"), depth + 1)}`;
       const text = readFileSync(file, "utf8");
-      const named = path.basename(file) === "commondir" ? text.replace(/\n$/, "") : /^gitdir: (.+)\n?$/.exec(text)?.[1];
+      const named = path.basename(file) === "commondir" ? text.replace(/\r?\n$/, "") : /^gitdir: (.+)\r?\n?$/.exec(text)?.[1];
       const target = named === undefined ? null : path.resolve(path.dirname(file), named);
-      return `${stats.dev}:${stats.ino}:${stats.ctimeNs}:${text}` + (target ? `>${id(target)}>${id(path.join(target, "commondir"), depth + 1)}` : "");
+      return `${own}:${followed.ctimeNs}:${text}` + (target ? `>${id(target, depth + 1)}` : "");
     } catch {
       return "?";
     }
