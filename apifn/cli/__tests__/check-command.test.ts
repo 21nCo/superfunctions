@@ -42,7 +42,7 @@ import {
 } from "../src/commands/check.js";
 import { diffOpenAPI } from "@apifn/core";
 import { comparable } from "../src/commands/check-compare.js";
-import { leavesTree, readSpecAtRef } from "../src/commands/check-git.js";
+import { gitEnvironment, leavesTree, readSpecAtRef } from "../src/commands/check-git.js";
 import { fetchBounded } from "../src/commands/check-io.js";
 import { observe } from "../src/commands/check-publish.js";
 import type { PublishStep } from "../src/commands/check-publish.js";
@@ -158,6 +158,10 @@ async function commitSpec(dir: string): Promise<void> {
   expect(result.code).toBe(0);
 }
 
+/** Fixture git runs without inherited repository selectors or config (a hook's GIT_DIR, GIT_INDEX_FILE,
+ * GIT_CONFIG_*), so it only ever touches the temp fixture; only the CLI under test is given them. */
+const FIXTURE_GIT_ENV = gitEnvironment(process.env);
+
 function git(cwd: string, ...args: string[]): string {
   return execFileSync(
     "git",
@@ -172,7 +176,7 @@ function git(cwd: string, ...args: string[]): string {
       "core.hooksPath=/dev/null",
       ...args,
     ],
-    { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }
+    { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env: FIXTURE_GIT_ENV }
   );
 }
 
@@ -2517,9 +2521,9 @@ describe("apifn check: the git baseline is the pinned object (round 4)", () => {
   it("an unrelated tracked name that is not UTF-8 beside the spec path does not stop the walk", async () => {
     const { root, service } = await gitBase();
     const blob = git(root, "rev-parse", "HEAD:breaking/.apifn/openapi.yml").trim();
-    const listing = execFileSync("git", ["ls-tree", "HEAD"], { cwd: root });
+    const listing = execFileSync("git", ["ls-tree", "HEAD"], { cwd: root, env: FIXTURE_GIT_ENV });
     const entry = Buffer.concat([Buffer.from(`100644 blob ${blob}\t`), Buffer.from([0x6c, 0x61, 0x74, 0x69, 0x6e, 0xe9, 0x2e, 0x79, 0x6d, 0x6c]), Buffer.from("\n")]);
-    const tree = execFileSync("git", ["mktree"], { cwd: root, input: Buffer.concat([listing, entry]) }).toString().trim();
+    const tree = execFileSync("git", ["mktree"], { cwd: root, env: FIXTURE_GIT_ENV, input: Buffer.concat([listing, entry]) }).toString().trim();
     const commit = git(root, "commit-tree", tree, "-p", "HEAD", "-m", "latin-1 sibling").trim();
     git(root, "update-ref", "HEAD", commit);
 
@@ -2792,6 +2796,32 @@ describe("apifn check: the router module is the one file loaded (round 4)", () =
     const report = await run(["check", "./router", "--report", "router.ts"], dir);
     expect(report.code).toBe(2);
     expect(report.stderr).toContain("the router module");
+  });
+
+  it("JITI_ALIAS is applied once: generate and check load the router the alias selects, not an alias of it (PR round 1)", async () => {
+    const dir = realpathSync(path.join(await fixtures(), "base"));
+    const route = (id: string) =>
+      `export default { getRoutes() { return [{ method: "GET", path: "/${id}", handler: async () => Response.json({}), meta: { operationId: "${id}" } }]; } };\n`;
+    await mkdir(path.join(dir, "src", "generated", "generated"), { recursive: true });
+    await writeFile(path.join(dir, "src", "router.ts"), route("aliasSource"));
+    await writeFile(path.join(dir, "src", "generated", "router.ts"), route("aliasSelected"));
+    await writeFile(path.join(dir, "src", "generated", "generated", "router.ts"), route("aliasTwice"));
+    vi.stubEnv("JITI_ALIAS", JSON.stringify({ [path.join(dir, "src")]: path.join(dir, "src", "generated") }));
+    try {
+      const generated = await run(["generate", "./src/router", "--output", "out.yml"], dir);
+      expect(generated.code).toBe(0);
+      const out = await readFile(path.join(dir, "out.yml"), "utf8");
+      expect({ selected: out.includes("aliasSelected"), twice: out.includes("aliasTwice") }).toEqual({ selected: true, twice: false });
+
+      const loaded = await loadRouterModule("./src/router", dir);
+      expect(loaded.file).toBe(path.join(dir, "src", "generated", "router.ts"));
+      expect(loaded.router.getRoutes().map((r) => r.meta?.operationId)).toEqual(["aliasSelected"]);
+      const bound = await run(["check", "./src/router", "--report", path.join("src", "generated", "router.ts")], dir);
+      expect(bound.code).toBe(2);
+      expect(bound.stderr).toContain("the router module");
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });
 
@@ -4076,6 +4106,32 @@ describe("apifn check: temp files and backups are removed only while they are st
     expect(await readFile(path.join(dir, SPEC), "utf8")).not.toBe("openapi: 3.1.0\n");
   });
 
+  it("a removed backup's inode stays the run's: no new file takes its number, and the replacement is left and named (PR round 1)", async () => {
+    const dir = await staleService();
+    let backup = "";
+    let freed = 0n;
+    const numbers: bigint[] = [];
+    const { code, errors, warnings } = await check(dir, (step, destination) => {
+      if (step !== "installed" || !destination.endsWith("openapi.yml")) return;
+      backup = stagedEntry(path.dirname(destination), ".bak");
+      freed = statSync(backup, { bigint: true }).ino;
+      rmSync(backup);
+      // Linux hands a freed inode number to the next file created: the replacement and its siblings.
+      writeFileSync(backup, "another writer's backup\n");
+      numbers.push(statSync(backup, { bigint: true }).ino);
+      for (let i = 0; i < 16; i += 1) {
+        const sibling = path.join(path.dirname(destination), `sibling-${i}`);
+        writeFileSync(sibling, "x");
+        numbers.push(statSync(sibling, { bigint: true }).ino);
+        rmSync(sibling);
+      }
+    });
+    expect(numbers).not.toContain(freed);
+    expect({ code, warnings }).toEqual({ code: 0, warnings: "" });
+    expect(errors).toContain(`${backup}, apifn check's backup of`);
+    expect(await readFile(backup, "utf8")).toBe("another writer's backup\n");
+  });
+
   it("on a stdout failure a replaced backup is neither restored nor named as the previous bytes", async () => {
     const dir = await staleService();
     let spec = "";
@@ -4381,6 +4437,37 @@ describe("apifn check: git ignores inherited repository selectors (API-25 round 
       const result = await checkWith(env, service);
       expect(result.code).toBe(1);
       expect(result.report.breaking.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("inherited GIT_CONFIG_* (a core.worktree elsewhere) never change the baseline (PR round 1)", async () => {
+    const { service } = await breakingAtHead();
+    const other = await tempDir("apifn-check-config-worktree-");
+    const config = path.join(other, "gitconfig");
+    await writeFile(config, "[core]\n\tworktree = " + other + "\n");
+    for (const env of [
+      { GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "core.worktree", GIT_CONFIG_VALUE_0: other },
+      { GIT_CONFIG_PARAMETERS: `'core.worktree'='${other}'` },
+      { GIT_CONFIG: config, GIT_CONFIG_GLOBAL: config },
+    ]) {
+      const result = await checkWith(env, service);
+      expect({ env, code: result.code, base: result.report.base.status }).toEqual({ env, code: 1, base: "compared" });
+      expect(result.report.breaking.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("an inherited GIT_CONFIG that turns core.ignorecase off does not hide a case-variant baseline (PR round 1)", async () => {
+    const { root, service } = await breakingAtHead();
+    git(root, "config", "core.ignorecase", "true");
+    git(root, "mv", path.join("breaking", SPEC), path.join("breaking", ".apifn", "OpenAPI.yml"));
+    git(root, "commit", "-q", "-m", "case-variant base contract");
+    await rename(path.join(service, ".apifn", "OpenAPI.yml"), path.join(service, ".apifn", "tmp.yml"));
+    await rename(path.join(service, ".apifn", "tmp.yml"), path.join(service, SPEC));
+    const config = path.join(await tempDir("apifn-check-config-case-"), "gitconfig");
+    await writeFile(config, "[core]\n\tignorecase = false\n");
+    for (const env of [{}, { GIT_CONFIG: config }, { GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "core.ignorecase", GIT_CONFIG_VALUE_0: "false" }]) {
+      const result = await checkWith(env, service);
+      expect({ env, code: result.code, base: result.report.base.status }).toEqual({ env, code: 1, base: "compared" });
     }
   });
 });

@@ -37,8 +37,10 @@
  *   published output is rolled back; bytes another writer put there are left alone and the error
  *   names the conflict. Temp files and backups are removed (on rollback or at the commit) only
  *   while they are still this run's, in their bound directories: the temp the inode its kept
- *   descriptor names, the backup the file this run made. A rollback names a backup as the
- *   recovery file only while it still holds the previous bytes.
+ *   descriptor names, the backup the inode its kept descriptor names. Every name the run may remove
+ *   (temp, backup, reservation, created directory) has its inode held open until publish ends, so a
+ *   freed inode number cannot pass to another writer's file. A rollback restores a backup only while
+ *   it still holds the previous bytes, read back through that descriptor.
  * - Cancellation is an AbortSignal, never a process signal: this module installs, inspects,
  *   removes and raises no process signal listener, so an embedding host's own handling is left
  *   alone. An abort before the commit rolls every output back (checked after each step and after
@@ -355,6 +357,11 @@ interface Staged {
   backupState?: FileState;
   /** True when the backup is a hard link to the observed file (not a copy). */
   linked?: boolean;
+  /** The backup's inode, open until publish ends (an open inode's number is never reused), and the bytes it must hold. */
+  backupFd?: number;
+  previous?: Buffer;
+  /** Descriptors that pin the reservation and each created directory until publish ends. */
+  held: number[];
   published: boolean;
 }
 
@@ -403,14 +410,15 @@ function removeTemp(staged: Staged): string | null {
  */
 function backupOwned(staged: Staged, now: FileState): boolean {
   const made = staged.backupState;
-  if (!dirsHold(staged) || !made) return false; // never made (another's name): not this run's
-  return staged.linked ? sameFile(now, made) : sameState(now, made);
+  if (!dirsHold(staged) || !made || staged.backupFd === undefined) return false; // never made (another's name): not this run's
+  return sameFile(now, stateOf(fstatSync(staged.backupFd, BIG))) && (staged.linked || sameState(now, made));
 }
 
 /** True while the backup still holds the observed file's bytes exactly as this run made it. */
 function backupHoldsPrevious(staged: Staged): boolean {
   const made = staged.backupState;
-  return staged.backup !== undefined && !!made && dirsHold(staged) && sameState(currentState(staged.backup), made);
+  return staged.backup !== undefined && !!made && dirsHold(staged) && sameState(currentState(staged.backup), made) &&
+    holdsBytes(staged.backupFd as number, staged.previous as Buffer);
 }
 
 /** Removes the backup while it is still this run's (backupOwned); another writer's is left and named. */
@@ -456,12 +464,21 @@ function makeParents(staged: Staged, hook: PublishHook | undefined, verify: Veri
     mkdirSync(dir);
     // Bound without following a link: a name swapped for a link or file is not a directory this
     // run made, so it is never recorded and rollback never removes it.
-    const made = lstatSync(dir, BIG);
+    const made = holdDir(staged, dir);
     if (!made.isDirectory()) throw changed(staged);
     staged.created.unshift({ dir, dev: made.dev, ino: made.ino });
     hook?.("mkdir", dir);
     verify(staged);
   }
+}
+
+/** Opens a directory this run created without following a link and keeps it open (POSIX), so its
+ * identity cannot pass to another directory while the run may remove it. */
+function holdDir(staged: Staged, dir: string): BigIntStats {
+  if (process.platform === "win32") return lstatSync(dir, BIG);
+  const fd = openSync(dir, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+  staged.held.push(fd);
+  return fstatSync(fd, BIG);
 }
 
 /** True when `file` still leads where it led when the run observed it (no link was retargeted). */
@@ -538,11 +555,8 @@ function reserve(staged: Staged, hook: PublishHook | undefined, verify: Verify):
   staged.parent = anchorOf(path.dirname(staged.destination));
   if (staged.before !== null) return;
   const fd = openSync(staged.destination, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600);
-  try {
-    staged.reserved = stateOf(fstatSync(fd, BIG));
-  } finally {
-    closeSync(fd);
-  }
+  staged.held.push(fd);
+  staged.reserved = stateOf(fstatSync(fd, BIG));
   hook?.("reserved", staged.destination);
   verify(staged);
 }
@@ -613,36 +627,34 @@ function backUp(staged: Staged): void {
   const before = staged.before;
   if (before === null) return;
   const backup = tempName(staged.destination).replace(/\.tmp$/, ".bak");
+  staged.backup = backup;
+  // The observed file is opened before the link: the link must be that very inode.
+  staged.backupFd = openSync(staged.destination, constants.O_RDONLY);
+  if (!sameState(stateOf(fstatSync(staged.backupFd, BIG)), before)) throw changed(staged);
+  staged.previous = readFileSync(staged.backupFd);
   try {
     linkSync(staged.destination, backup);
     staged.linked = true;
   } catch {
     staged.linked = false;
   }
-  staged.backup = backup;
   if (staged.linked) {
     const made = currentState(backup);
     // Not the observed inode: never this run's backup (null owns nothing), so it is left and named.
-    staged.backupState = sameContent(made, before) ? made : null;
+    staged.backupState = sameFile(made, stateOf(fstatSync(staged.backupFd, BIG))) ? made : null;
     if (staged.backupState === null) throw changed(staged);
     return;
   }
-  const source = openSync(staged.destination, constants.O_RDONLY);
-  let bytes: Buffer;
-  try {
-    if (!sameState(stateOf(fstatSync(source, BIG)), before)) throw changed(staged);
-    bytes = readFileSync(source);
-  } finally {
-    closeSync(source);
-  }
-  const fd = openSync(backup, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600);
+  closeSync(staged.backupFd);
+  staged.backupFd = undefined;
+  const fd = openSync(backup, constants.O_RDWR | constants.O_CREAT | constants.O_EXCL, 0o600);
+  staged.backupFd = fd;
   try {
     fchmodSync(fd, before.mode & 0o7777);
-    writeFileSync(fd, bytes);
+    writeFileSync(fd, staged.previous);
     fsyncSync(fd);
   } finally {
     staged.backupState = stateOf(fstatSync(fd, BIG));
-    closeSync(fd);
   }
   if (!sameFile(currentState(backup), staged.backupState) || !sameState(currentState(staged.destination), before)) {
     throw changed(staged);
@@ -672,10 +684,7 @@ function install(staged: Staged, hook: PublishHook | undefined, verify: Verify):
   // The rename changes the change time of the installed inode and, by dropping a link, of the
   // backup's link: record both now, the installed one through the descriptor (a copy keeps its own).
   staged.installed = stateOf(fstatSync(staged.fd as number, BIG));
-  if (staged.linked && staged.backup !== undefined) {
-    const backupNow = currentState(staged.backup);
-    if (sameContent(backupNow, staged.backupState as FileState)) staged.backupState = backupNow;
-  }
+  if (staged.linked) staged.backupState = stateOf(fstatSync(staged.backupFd as number, BIG));
   hook?.("installed", staged.destination);
   verify(staged);
 }
@@ -766,6 +775,7 @@ export async function publish(
     anchor: output.target.anchor,
     bytes: Buffer.from(output.text, "utf8"),
     created: [],
+    held: [],
     published: false,
   }));
   // Only a run that writes files has anything to roll back on an abort.
@@ -773,7 +783,9 @@ export async function publish(
   try {
     return await publishAll(all, verifier(all, guarded), guarded, emit, hook, signal);
   } finally {
-    for (const staged of all) if (staged.fd !== undefined) closeSync(staged.fd);
+    for (const staged of all) {
+      for (const fd of [staged.fd, staged.backupFd, ...staged.held]) if (fd !== undefined) closeSync(fd);
+    }
     if (all.length > 0) onPublishing?.(false);
   }
 }

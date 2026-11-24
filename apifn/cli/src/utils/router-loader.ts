@@ -25,14 +25,19 @@ export async function loadRouterModule(
   const resolved = path.isAbsolute(routerPath) ? routerPath : path.resolve(cwd, routerPath);
   const jiti = createJiti(cwd, { moduleCache: false });
   let file = resolved;
+  let load = () => jiti.import(resolved);
   try {
     const url = jiti.esmResolve(resolved);
     file = url.startsWith("file:") ? fileURLToPath(url) : url;
+    // Imported relative to its own directory: esmResolve applied JITI_ALIAS once, and no alias
+    // key matches "./<name>", so the file loaded is `file` (nested imports keep the aliases).
+    const own = createJiti(path.dirname(file), { moduleCache: false });
+    load = () => own.import(`./${path.basename(file)}`);
   } catch {
     // Not resolvable: the import below reports the missing module as it always has.
   }
   beforeImport?.(file);
-  const loaded = await jiti.import(file) as Record<string, unknown>;
+  const loaded = await load() as Record<string, unknown>;
 
   const candidates = [loaded?.default, loaded?.router, loaded];
   const router = candidates.find((candidate) => isRouter(candidate));

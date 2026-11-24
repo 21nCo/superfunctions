@@ -97,7 +97,9 @@ const REPOSITORY_SELECTORS = new Set([
 
 /** The environment of every git child: the caller's, without repository selectors (any case). */
 export function gitEnvironment(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
-  const kept = Object.entries(env).filter(([name]) => !REPOSITORY_SELECTORS.has(name.toUpperCase()));
+  // Inherited config (GIT_CONFIG*, GIT_CONFIG_KEY_n/VALUE_n) could set core.worktree or core.ignorecase.
+  const config = /^GIT_CONFIG(_GLOBAL|_COUNT|_PARAMETERS|_KEY_\d+|_VALUE_\d+)?$/;
+  const kept = Object.entries(env).filter(([name]) => !REPOSITORY_SELECTORS.has(name.toUpperCase()) && !config.test(name.toUpperCase()));
   return { ...Object.fromEntries(kept), GIT_NO_REPLACE_OBJECTS: "1" };
 }
 
