@@ -1,0 +1,29 @@
+testfn/python/README.md
+  s_9f4ff1b29f9e95::t_f99aca04f595e8 137-138
+testfn/python/testfn/adapters/pytest.py
+  s_9f4ff1b29f9e95::t_2e11d0bf65d5c7 240-251
+testfn/python/tests/test_execution_contract.py
+  s_9f4ff1b29f9e95::t_6849bc47bfb3d2 8,57,135,159,576,731-809
+testfn/typescript/README.md
+  s_9f4ff1b29f9e95::t_7b16cc4ec90a77 210
+testfn/typescript/src/integrations/process.ts
+  s_9f4ff1b29f9e95::t_9bb878a36b7fb1 66-113,123-124,127-130,133-136,198-200
+testfn/typescript/tests/process-lifecycle.test.ts
+  s_9f4ff1b29f9e95::t_ee62c2ebfce982 91,93-95,97,99,102,104,107,118-126,128,131,136-138,167-194
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "de37c1b992807b6288ad7e5c2d9953a843cc3593",
+  "prompts": {},
+  "sessions": {
+    "s_9f4ff1b29f9e95": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_9f4ff1b29f9e95",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

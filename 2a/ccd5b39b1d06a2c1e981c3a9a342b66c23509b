@@ -1,0 +1,23 @@
+testfn/typescript/README.md
+  s_69955f2e9dce72::t_47ff6068572b37 210
+testfn/typescript/src/integrations/process.ts
+  s_69955f2e9dce72::t_48e5ad2dfa7f4f 78-80,83,93-102,107-115,145,153
+testfn/typescript/tests/process-lifecycle.test.ts
+  s_69955f2e9dce72::t_6e2b7e09f4213e 46-56,58,61,103,119-121,181-183,188-189,191-192
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2accd5b39b1d06a2c1e981c3a9a342b66c23509b",
+  "prompts": {},
+  "sessions": {
+    "s_69955f2e9dce72": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_69955f2e9dce72",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

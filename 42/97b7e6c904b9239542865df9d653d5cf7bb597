@@ -1,0 +1,31 @@
+logfn/python/src/logfn/default_redaction.py
+  s_537a46fd812579::t_fcf6e2c14ada3e 422-431,435,463
+logfn/python/tests/test_default_redaction.py
+  s_537a46fd812579::t_4c00dd403484fc 510-527
+logfn/typescript/src/core/default-redaction.test.ts
+  s_537a46fd812579::t_d0ac621a8ef2e9 511-523
+logfn/typescript/src/pipeline/default-redaction.ts
+  s_537a46fd812579::t_16465c1bfe80dd 323-331,334,356
+watchfn/typescript/src/collectors/errors/exception-handler.ts
+  s_537a46fd812579::t_bed589c78b2982 86-99
+watchfn/typescript/src/core/watch-fn.ts
+  s_537a46fd812579::t_6c6031dcce296e 146-151
+watchfn/typescript/tests/collectors/exception-lifecycle.test.ts
+  s_537a46fd812579::t_2edd802e2a808e 198-229
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4297b7e6c904b9239542865df9d653d5cf7bb597",
+  "prompts": {},
+  "sessions": {
+    "s_537a46fd812579": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_537a46fd812579",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

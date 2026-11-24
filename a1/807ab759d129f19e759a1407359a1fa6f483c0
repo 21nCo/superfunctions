@@ -3,7 +3,7 @@ scripts/assert-release-ci.test.mjs
 scripts/owners.test.mjs
   s_6711cdb746a587::t_322f7ed8cc087b 127-128,131-132,134-138,154-160
 scripts/assert-release-ci.mjs
-  s_6711cdb746a587::t_0dfdb157bbd427 11-17,36,51,54-56,70,74-75,78,82-91,94-99,102-112,115-116,135-142,149,155-156,158,165-166,172,175-207,224,261-263
+  s_6711cdb746a587::t_0dfdb157bbd427 11-17,36,51,54-56,70,74-75,78,82-91,94-99,102-112,115-116,135-142,149,155-156,158,165-166,172,175-207,175-196,198-207,224,261-263
 .github/workflows/publish-tag.yml
   s_6711cdb746a587::t_aab724f769ee5d 76,89
 scripts/release-gate-workflows.test.mjs

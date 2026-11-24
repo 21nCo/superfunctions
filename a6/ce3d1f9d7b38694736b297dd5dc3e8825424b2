@@ -1,0 +1,27 @@
+flowfn/typescript/docs/queue-ownership.md
+  s_124319b903d839::t_2b115cf3320b92 59-64
+flowfn/typescript/src/adapters/postgres/wakeup.test.ts
+  s_124319b903d839::t_83842752f69139 225-228,234-238
+flowfn/typescript/src/queue/claim-many.test.ts
+  s_124319b903d839::t_237e478c324243 23,33,35,401-429
+flowfn/typescript/src/queue/idle-wakeup.test.ts
+  s_124319b903d839::t_b072f4678ee311 759-760,767-770,785-790
+flowfn/typescript/src/queue/queue.ts
+  s_124319b903d839::t_b69686af28938c 1076-1077,1098-1107,1110,1129,1136
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a6ce3d1f9d7b38694736b297dd5dc3e8825424b2",
+  "prompts": {},
+  "sessions": {
+    "s_124319b903d839": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "459fa815-0e7a-4823-b25b-3c85bd3d320a",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

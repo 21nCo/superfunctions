@@ -1,0 +1,39 @@
+cifn/typescript/control-plane/src/api/api.test.ts
+  s_292557ebf82e64::t_9183eb256ab729 726
+cifn/typescript/control-plane/src/observability/lifecycle.test.ts
+  s_292557ebf82e64::t_5a7301ecdea47d 10
+cifn/typescript/control-plane/src/queue/flowfn-client.ts
+  s_292557ebf82e64::t_792a9f87ad37e1 78-81
+cifn/typescript/control-plane/src/secrets/redact.ts
+  s_292557ebf82e64::t_a9bf42047b17a4 5-6,11-16,21,49,86-88,93,101-108,110
+cifn/typescript/control-plane/src/store/database-store.test.ts
+  s_292557ebf82e64::t_da702d44d1c392 471,473,783
+cifn/typescript/control-plane/src/triggers/triggers.test.ts
+  s_292557ebf82e64::t_0defcaa0eab76b 494-501
+cifn/typescript/runner/src/hostfn-integration.test.ts
+  s_292557ebf82e64::t_94334b6693c737 127
+cifn/typescript/runner/src/log-spool.test.ts
+  s_292557ebf82e64::t_7d672220125bf3 26,117,127,209
+cifn/typescript/runner/src/remote-runner.test.ts
+  s_292557ebf82e64::t_c0a0605c0f41ce 203,815-839
+cifn/typescript/runner/src/remote-runner.ts
+  s_292557ebf82e64::t_40cc2065f4e321 58-59,102-109,131-132,135,397,399-400
+cifn/typescript/runner/src/secrets-steps.test.ts
+  s_292557ebf82e64::t_9d41bd0e412f50 99,107,123,125-126,131,138,141-147,157,160-169,175,178-179,194-195,201,204,209,218,269,312,604
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "36e8ca5bcd21dfdf05b0cf9ec3c58060dbe4ce97",
+  "prompts": {},
+  "sessions": {
+    "s_292557ebf82e64": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_292557ebf82e64",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

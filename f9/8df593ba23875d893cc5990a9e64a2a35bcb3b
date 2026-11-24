@@ -1,0 +1,27 @@
+testfn/python/testfn/adapters/pytest.py
+  s_2ad683b9c4db61::t_94c3a1940ce571 46-49,407-410,414-434,436-454,459-461
+testfn/python/tests/test_execution_contract.py
+  s_2ad683b9c4db61::t_eb0575ef16df0a 665-725
+testfn/typescript/README.md
+  s_2ad683b9c4db61::t_98ee268925645b 251
+testfn/typescript/src/visual/images.ts
+  s_2ad683b9c4db61::t_e494c752682a59 4-6,26,79-84,88-107,109-110,112-144
+testfn/typescript/tests/visual-contract.test.ts
+  s_2ad683b9c4db61::t_ce53268047cb73 217-254
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f98df593ba23875d893cc5990a9e64a2a35bcb3b",
+  "prompts": {},
+  "sessions": {
+    "s_2ad683b9c4db61": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_2ad683b9c4db61",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

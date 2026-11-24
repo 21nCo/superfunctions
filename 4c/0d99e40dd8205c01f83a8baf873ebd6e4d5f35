@@ -1,0 +1,21 @@
+flowfn/typescript/docs/API.md
+  s_860fc459b6ff2b::t_e4f6edd791387b 150-156
+flowfn/typescript/src/queue/queue.ts
+  s_860fc459b6ff2b::t_bb88357ea0c23e 296-299
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4c0d99e40dd8205c01f83a8baf873ebd6e4d5f35",
+  "prompts": {},
+  "sessions": {
+    "s_860fc459b6ff2b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_860fc459b6ff2b",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

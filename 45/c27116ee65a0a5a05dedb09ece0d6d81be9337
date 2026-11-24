@@ -1,0 +1,31 @@
+logfn/python/README.md
+  s_d67e2b7b90f6a5::t_1f0b06cb8ed1fd 70-81
+logfn/python/src/logfn/core.py
+  s_d67e2b7b90f6a5::t_d1f55a9e38379c 97-102
+logfn/python/src/logfn/serialization.py
+  s_d67e2b7b90f6a5::t_c244329b21fd56 173-177,185-187
+logfn/python/tests/test_serialization.py
+  s_d67e2b7b90f6a5::t_0388edb8be4873 237-253
+logfn/typescript/README.md
+  s_d67e2b7b90f6a5::t_4f61dd294e3c99 545
+logfn/typescript/src/core/logger.ts
+  s_d67e2b7b90f6a5::t_4d549c9d3991e4 18-24
+logfn/typescript/src/validation.ts
+  s_d67e2b7b90f6a5::t_9b56eb75ad7078 88-91
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "45c27116ee65a0a5a05dedb09ece0d6d81be9337",
+  "prompts": {},
+  "sessions": {
+    "s_d67e2b7b90f6a5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_d67e2b7b90f6a5",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

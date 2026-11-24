@@ -1,0 +1,63 @@
+logfn/.conduct/readiness.md
+  s_4a3eca309de950::t_da07c5bfc15b11 26,32,121
+logfn/python/README.md
+  s_4a3eca309de950::t_c31c53a5c916e1 59-62,98
+logfn/python/src/logfn/core.py
+  s_4a3eca309de950::t_523f9213194762 50-53,55,84-87,109-117,124-125,129-130,301-302,358-362
+logfn/python/src/logfn/default_redaction.py
+  s_4a3eca309de950::t_732fa0ad2fa958 20-23,62-63
+logfn/python/src/logfn/sinks.py
+  s_4a3eca309de950::t_d4c0069ebcf67f 62-67
+logfn/python/tests/test_async_sinks.py
+  s_4a3eca309de950::t_80bd4d12bd9afb 126-168
+logfn/python/tests/test_default_redaction.py
+  s_4a3eca309de950::t_4a58bd4ab450f8 3,145-167
+logfn/python/tests/test_http_delivery.py
+  s_4a3eca309de950::t_849c4a3dbca0b8 48-49,51,57,60,64
+logfn/scripts/packed-http-acceptance.mjs
+  s_4a3eca309de950::t_de7f21c15e3822 9,18,24,34-46,50
+logfn/typescript/README.md
+  s_4a3eca309de950::t_31deabb029dfeb 406-411,449-452,517,520
+logfn/typescript/package.json
+  s_4a3eca309de950::t_7f854d4f2834a1 29-32
+logfn/typescript/src/core/default-redaction.test.ts
+  s_4a3eca309de950::t_d180ff57e52e82 8,66-95
+logfn/typescript/src/core/error-hook.test.ts
+  s_4a3eca309de950::t_5ac4b561d4c449 50-66
+logfn/typescript/src/core/logger.ts
+  s_4a3eca309de950::t_73ad02852f7d94 213-216,226
+logfn/typescript/src/http/middleware.ts
+  s_4a3eca309de950::t_551373580af26d 9,199-200,216-219,221
+logfn/typescript/src/http/watch-router.test.ts
+  s_4a3eca309de950::t_890363755c2c87 2
+logfn/typescript/src/http/watch-router.ts
+  s_4a3eca309de950::t_5170ec60cbdf0e 1-25
+logfn/typescript/src/http/watch.test.ts
+  s_4a3eca309de950::t_ce7f268f4bc1ca 5,413-425
+logfn/typescript/src/pipeline/default-redaction.ts
+  s_4a3eca309de950::t_e4f9b21d7d1ea2 14-17,37-38
+logfn/typescript/src/sinks/http-delivery.test.ts
+  s_4a3eca309de950::t_12f74cfc9ef3fb 65,69,74,129-141
+logfn/typescript/src/sinks/http.ts
+  s_4a3eca309de950::t_b130e7b5733acd 54-55,63-65,72
+logfn/typescript/src/sinks/indexeddb-queue.test.ts
+  s_4a3eca309de950::t_ee856f45fb3fb1 47-60
+logfn/typescript/src/validation.ts
+  s_4a3eca309de950::t_3637fc2dee304a 126-127,129
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0da691b490eb7c41ac89018234a85cd3b8986ef2",
+  "prompts": {},
+  "sessions": {
+    "s_4a3eca309de950": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a3f38814-6ad4-4c39-93ed-53324ec51330",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

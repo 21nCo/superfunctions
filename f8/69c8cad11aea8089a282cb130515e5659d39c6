@@ -1,0 +1,31 @@
+watchfn/python/README.md
+  s_e71667cb130011::t_813e54ccfd6f5e 129-130,179-180,231-233
+watchfn/python/tests/test_bounded_scan.py
+  s_e71667cb130011::t_4aaac2facbfa25 119-168
+watchfn/python/watchfn/alerts/observations.py
+  s_e71667cb130011::t_f5712f24dc321c 196-218,220-226,236-237
+watchfn/python/watchfn/business/stored_funnels.py
+  s_e71667cb130011::t_66a6b74eee7805 97-101,188-196,205
+watchfn/python/watchfn/client.py
+  s_e71667cb130011::t_64d58a1633b67c 14,100-105,220
+watchfn/python/watchfn/integrations/logfn.py
+  s_e71667cb130011::t_40f6cafaf5b0d9 246
+watchfn/python/watchfn/query.py
+  s_e71667cb130011::t_604a2d1d1a0635 403-410,412-414,417-423,426-428,431-437
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f869c8cad11aea8089a282cb130515e5659d39c6",
+  "prompts": {},
+  "sessions": {
+    "s_e71667cb130011": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_e71667cb130011",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
