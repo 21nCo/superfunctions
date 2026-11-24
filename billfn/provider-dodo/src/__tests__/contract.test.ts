@@ -1162,6 +1162,15 @@ describe('parseWebhook with recorded Dodo payloads', () => {
     expect(Date.parse(event.occurredAt!)).toBeGreaterThanOrEqual(before - 1000);
   });
 
+  it('keeps the signed refund time when Dodo\'s clock runs ahead of BillFn\'s', async () => {
+    const fetchMock = dodoReads({ [`/payments/${oneTimePayment.payment_id}`]: oneTimePayment });
+    const ahead = new Date(Date.now() + 60_000).toISOString();
+
+    const event = await parse({ ...refund, timestamp: ahead }, fetchMock);
+
+    expect(event.occurredAt).toBe(ahead);
+  });
+
   it('fails the delivery when Dodo cannot answer the payment read, so Dodo retries it', async () => {
     const fetchMock = dodoReads({});
 

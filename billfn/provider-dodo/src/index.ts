@@ -62,8 +62,8 @@ export function createDodoProvider(config: DodoProviderConfig): BillFnProviderAd
    * subscription events, which carry whatever Dodo did with the subscription. Other refund and dispute events
    * (partial or pending refunds, opened, challenged or won disputes) read nothing.
    *
-   * The state is dated when the read started, so a verification BillFn applied in between does not make it look
-   * stale. A payment answer that is not the payment asked for, or that does not say whether it belongs to a
+   * The state is dated when the read started (or at the signed event time, when that is later), so a verification
+   * BillFn applied in between does not make it look stale. A payment answer that is not the payment asked for, or that does not say whether it belongs to a
    * subscription, fails the delivery, so Dodo retries it.
    */
   const readDodoRevocationState = async (
@@ -637,7 +637,9 @@ export function createDodoProvider(config: DodoProviderConfig): BillFnProviderAd
           providerEventId: eventId,
           type,
           signatureVerified: true,
-          occurredAt: revocation?.observedAt ?? readString(payload, ['timestamp', 'created_at']) ?? undefined,
+          occurredAt: revocation
+            ? laterTimestamp(revocation.observedAt, readString(payload, ['timestamp', 'created_at']))
+            : (readString(payload, ['timestamp', 'created_at']) ?? undefined),
           priceId: recordKind === 'other' ? undefined : readDodoPriceReference(recordKind, data),
           providerSubscriptionId: readString(data, ['subscription_id']) ?? undefined,
           providerChargeId: readString(data, ['payment_id']) ?? undefined,
@@ -1346,6 +1348,15 @@ function readString(record: Record<string, unknown>, keys: string[]): string | u
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : null;
+}
+
+/**
+ * The later of two times: a revocation is dated no earlier than its signed event time, so a provider clock running
+ * ahead of BillFn's cannot make it look older than the payment it revokes.
+ */
+function laterTimestamp(local: string, signed: string | undefined): string {
+  const signedMs = signed === undefined ? Number.NaN : Date.parse(signed);
+  return Number.isFinite(signedMs) && signedMs > Date.parse(local) ? signed! : local;
 }
 
 /** A retryable failure for a Dodo read whose answer is not the record asked for. */
