@@ -1,0 +1,25 @@
+filefn/python/filefn/server/shares/service.py
+  s_b841cebdcfad95::t_583492e3764502 69-70,76,116-136,155-156,275,291
+filefn/python/tests/test_downloads.py
+  s_b841cebdcfad95::t_05fbaf3e5b19fc 965-1005
+filefn/server/src/http-body.ts
+  s_b841cebdcfad95::t_35adea2b408152 12-16
+filefn/server/tests/sharing-security.test.ts
+  s_b841cebdcfad95::t_44e036725b54c9 424
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "143a71f353216173cf0aa73b63d180925f9b9dd6",
+  "prompts": {},
+  "sessions": {
+    "s_b841cebdcfad95": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "436f4738-d86e-44e1-82bc-c432f9aaabf3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,21 @@
+filefn/server/src/policies.ts
+  s_b841cebdcfad95::t_3e03433db9c367 110-112,156-157
+filefn/server/tests/storage-key-security.test.ts
+  s_b841cebdcfad95::t_1c0f8a09995d25 123-126
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3043d4c9b6299985a7775983cd3a77a99be73e19",
+  "prompts": {},
+  "sessions": {
+    "s_b841cebdcfad95": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "436f4738-d86e-44e1-82bc-c432f9aaabf3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

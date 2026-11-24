@@ -1,0 +1,27 @@
+filefn/python/filefn/server/routed_storage.py
+  s_b841cebdcfad95::t_ec113ce69d3c7f 60-68
+filefn/python/filefn/server/shares/service.py
+  s_b841cebdcfad95::t_d1b1b1bfd149ed 5,46-47,69-87,276-280,285
+filefn/python/tests/test_downloads.py
+  s_b841cebdcfad95::t_578362d69883e2 940-943,1008-1034
+filefn/server/src/http-body.ts
+  s_b841cebdcfad95::t_9f7a5a02686366 52-59
+filefn/server/tests/sharing-security.test.ts
+  s_b841cebdcfad95::t_7147d552cd0433 415-435
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e6641695baffccbe6a3098e648825a9bf2f0b21e",
+  "prompts": {},
+  "sessions": {
+    "s_b841cebdcfad95": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "436f4738-d86e-44e1-82bc-c432f9aaabf3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
