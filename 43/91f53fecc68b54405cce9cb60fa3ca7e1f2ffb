@@ -1,0 +1,21 @@
+filefn/admin/package.json
+  s_f18df82a896877::t_b37a2865cbb8f4 46
+package-lock.json
+  s_f18df82a896877::t_8be32e4f6b5a64 11807
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4391f53fecc68b54405cce9cb60fa3ca7e1f2ffb",
+  "prompts": {},
+  "sessions": {
+    "s_f18df82a896877": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "34b8cb5e-0b73-4388-8bd0-7e93d063a3ee",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
