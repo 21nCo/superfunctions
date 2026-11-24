@@ -47,6 +47,7 @@ import { fetchBounded } from "../src/commands/check-io.js";
 import { observe } from "../src/commands/check-publish.js";
 import type { PublishStep } from "../src/commands/check-publish.js";
 import { loadRouterModule } from "../src/utils/router-loader.js";
+import { createOutput } from "../src/utils/output.js";
 import type { Output } from "../src/utils/output.js";
 import type { CheckReport } from "../src/commands/check.js";
 import { tempDir } from "./temp-dirs.js";
@@ -854,7 +855,8 @@ describe("apifn check: usage and load errors", () => {
 
     const result = await run(["check", "--write", "--report", path.join("not-a-dir", "report.md")], dir);
     expect(result.code).toBe(2);
-    expect(result.stderr).toContain("Failed to write report");
+    // Rejected before anything is written (API-25 round 3): a name below a file is a path error.
+    expect(result.stderr).toContain("not-a-dir, which is not a directory");
     if (committed === null) {
       expect(existsSync(path.join(dir, SPEC))).toBe(false);
     } else {
@@ -3989,8 +3991,8 @@ describe("apifn check: temp files and backups are removed only while they are st
       backup = stagedEntry(path.dirname(destination), ".bak");
       replaceWith(backup, "another writer's backup\n");
     });
-    expect({ code, errors }).toEqual({ code: 0, errors: "" });
-    expect(warnings).toContain(`${backup}, apifn check's backup of`);
+    expect({ code, warnings }).toEqual({ code: 0, warnings: "" });
+    expect(errors).toContain(`${backup}, apifn check's backup of`);
     expect(await readFile(backup, "utf8")).toBe("another writer's backup\n");
     expect(await readFile(path.join(dir, SPEC), "utf8")).not.toBe("openapi: 3.1.0\n");
   });
@@ -4188,5 +4190,59 @@ describe("apifn check: inputs are guarded as the run read them, not as publicati
     await symlink(path.join("b", "openapi.yml"), path.join(root, "spec.yml"));
     const baseline = readSpecAtRef("HEAD", path.join(root, "spec.yml"), path.join(root, "a", "openapi.yml"), root);
     expect({ path: baseline.path, text: baseline.text }).toEqual({ path: "a/openapi.yml", text: "a: 1\n" });
+  });
+});
+
+describe("apifn check: a spec path through a regular file is a load error, and notices stay off stdout (API-25 round 3)", () => {
+  it.each([
+    ["no flags", []],
+    ["--write", ["--write"]],
+    ["--report", ["--report", "report.md"]],
+  ])(
+    "--spec below a regular file with %s exits 2, names the path and writes nothing",
+    async (_label: string, flags: string[]) => {
+      const root = await fixtures();
+      const dir = path.join(root, "base");
+      await writeFile(path.join(dir, "notdir.txt"), "a regular file\n");
+      const result = await run(["check", "--spec", "notdir.txt/openapi.yml", ...flags], dir);
+      expect(result.code).toBe(2);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain("which is not a directory");
+      expect(result.stderr).not.toContain("--write");
+      expect(await readFile(path.join(dir, "notdir.txt"), "utf8")).toBe("a regular file\n");
+      expect(existsSync(path.join(dir, "report.md"))).toBe(false);
+    }
+  );
+
+  it("a cleanup notice after the commit goes to stderr: stdout is exactly the JSON report", async () => {
+    const root = await fixtures();
+    const dir = path.join(root, "base");
+    await mkdir(path.join(dir, ".apifn"));
+    await writeFile(path.join(dir, SPEC), "openapi: 3.1.0\n");
+    let stdout = "";
+    let stderr = "";
+    let backup = "";
+    const code = await runCheckCommand({
+      cwd: dir,
+      config: { router: "./router.ts", openapi: { info: { title: "Check fixture", version: "1.0.0" } } },
+      output: createOutput({ color: false, writeStdout: (text) => (stdout += text), writeStderr: (text) => (stderr += text) }),
+      write: true,
+      format: "json",
+      reportPath: "report.json",
+      writeStdout: (text) => {
+        stdout += text;
+      },
+      publishHook: (step, destination) => {
+        if (step !== "installed" || !destination.endsWith("openapi.yml")) return;
+        const name = readdirSync(path.dirname(destination)).find((entry) => entry.endsWith(".bak")) as string;
+        backup = path.join(path.dirname(destination), name);
+        rmSync(backup);
+        writeFileSync(backup, "another writer's backup\n");
+      },
+    });
+    expect(code).toBe(0);
+    expect(stderr).toContain(`${backup}, apifn check's backup of`);
+    expect(JSON.parse(stdout)).toEqual(JSON.parse(await readFile(path.join(dir, "report.json"), "utf8")));
+    expect(stdout).toBe(await readFile(path.join(dir, "report.json"), "utf8"));
   });
 });

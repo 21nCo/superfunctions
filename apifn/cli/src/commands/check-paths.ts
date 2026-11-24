@@ -99,6 +99,10 @@ export function writeDestination(target: string): string {
       resolved = path.dirname(resolved);
       continue;
     }
+    // A name below an existing non-directory fails (ENOTDIR): a path error, never an absent file.
+    if (isNonDirectory(resolved)) {
+      throw new CheckUsageError(`${target} leads through ${resolved}, which is not a directory.`);
+    }
     const candidate = path.join(resolved, part);
     const link = symlinkTarget(candidate);
     if (link === null) {

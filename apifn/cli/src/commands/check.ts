@@ -36,7 +36,7 @@ import { readSpecAtRef } from "./check-git.js";
 import { fetchBounded, isHttpUrl, readBoundedFile, unreadableMessage } from "./check-io.js";
 import { canonicalJson, parseContract } from "./check-parse.js";
 import type { JsonObject } from "./check-parse.js";
-import { CheckUsageError, errorMessage, isMissingPath, resolveOperand, writeDestination } from "./check-paths.js";
+import { CheckUsageError, errorMessage, resolveOperand, writeDestination } from "./check-paths.js";
 import { assertSeparateFiles, bindBeforeRead, observe, publish } from "./check-publish.js";
 import type { Bound, FileState, Guarded, NamedFile, Observed, PlannedOutput, PublishHook } from "./check-publish.js";
 import { CHECK_FORMATS, plural, renderReport } from "./check-report.js";
@@ -324,7 +324,10 @@ function readCommittedSpec(specPath: string, target: Observed): CommittedSpec {
   try {
     read = readBoundedFile(target.destination);
   } catch (error) {
-    if (!isMissingPath(error)) throw new CheckUsageError(`Failed to read spec ${specPath}: ${errorMessage(error)}`);
+    // Only ENOENT is a missing spec; ENOTDIR means a path error, never drift to repair.
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      throw new CheckUsageError(`Failed to read spec ${specPath}: ${errorMessage(error)}`);
+    }
     read = null;
   }
   if (writeDestination(specPath) !== target.destination) {
@@ -647,7 +650,8 @@ export async function runCheckCommand(options: CheckCommandOptions): Promise<num
       guarded.push({ role: `the spec ${inputs.specLabel}`, file: inputs.specPath, destination: specTarget.destination, observed: committed.observed });
     }
     const notices = await publish(outputs, guarded, () => writeStdout(rendered), options.publishHook, options.signal, options.onPublishing);
-    for (const notice of notices) options.output.warn(notice);
+    // Notices go to stderr: stdout holds exactly the rendered report.
+    for (const notice of notices) options.output.error(notice);
 
     return report.verdict === "fail" ? 1 : 0;
   } catch (error) {
