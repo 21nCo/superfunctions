@@ -582,6 +582,29 @@ describe('@filefn/processing', () => {
       expect(contentMatchesDeclaredType(new Uint8Array([0, 0, 0, 200, ...bytes('uuid'), ...new Array(16).fill(7)]), 'video/mp4')).toBe(false);
     });
 
+    it('thumbnails only raster bytes even for a MIME alias an integrator added', async () => {
+      THUMBNAIL_SUPPORTED_MIME_TYPES.push('image/x-png');
+      try {
+        const svg = bytes('<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"/>');
+        const result = await createThumbnailProcessor().process(
+          { fileId: 'f', versionId: 'v', storageKey: 't/f/v-x.png', mimeType: 'image/x-png', size: svg.length, fileName: 'x.png' },
+          async () => svg,
+        );
+        expect(result).toMatchObject({ success: false, error: CONTENT_TYPE_MISMATCH_ERROR });
+      } finally {
+        THUMBNAIL_SUPPORTED_MIME_TYPES.splice(THUMBNAIL_SUPPORTED_MIME_TYPES.indexOf('image/x-png'), 1);
+      }
+    });
+
+    it('skips a leading QuickTime junk atom and maps common media MIME aliases to the pinned demuxer', () => {
+      const junk = new Uint8Array([0, 0, 0, 12, ...bytes('junk'), 0, 0, 0, 0]);
+      expect(contentMatchesDeclaredType(new Uint8Array([...junk, ...bytes('\0\0\0\x08moov')]), 'video/quicktime')).toBe(true);
+      expect(contentMatchesDeclaredType(new Uint8Array([0, 0, 0, 4, ...bytes('junk')]), 'video/quicktime')).toBe(false);
+      expect(ffmpegInputArgs('audio/x-wav')).toEqual(['-protocol_whitelist', 'file', '-f', 'wav']);
+      expect(ffmpegInputArgs('audio/x-flac')).toEqual(['-protocol_whitelist', 'file', '-f', 'flac']);
+      expect(ffmpegInputArgs('audio/x-aac', new Uint8Array([0x56, 0xe0, 0x20]))).toEqual(['-protocol_whitelist', 'file', '-f', 'loas']);
+    });
+
     it('accepts big-endian RIFX and broadcast BW64 WAVE files', () => {
       expect(contentMatchesDeclaredType(bytes('RIFX\0\0\0\0WAVEfmt '), 'audio/wav')).toBe(true);
       expect(contentMatchesDeclaredType(bytes('BW64\0\0\0\0WAVEds64'), 'audio/wav')).toBe(true);

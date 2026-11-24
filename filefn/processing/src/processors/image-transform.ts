@@ -1,6 +1,6 @@
 import sharp from 'sharp';
 import type { Processor, ProcessorInput, ProcessorResult } from '../types.js';
-import { CONTENT_TYPE_MISMATCH_ERROR, SHARP_INPUT_OPTIONS, contentMatchesDeclaredType } from '../content-sniff.js';
+import { CONTENT_TYPE_MISMATCH_ERROR, SHARP_INPUT_OPTIONS, isRasterImageBytes } from '../content-sniff.js';
 
 const SUPPORTED_MIME_TYPES = [
   'image/png',
@@ -65,8 +65,8 @@ export function createImageTransformProcessor(config: ImageTransformConfig): Pro
       try {
         // A private copy: the caller's buffer can't change between the check and the decode.
         const imageData = Buffer.from(await getData());
-        // The decoders pick a format from the bytes; refuse bytes that are not the declared type.
-        if (!contentMatchesDeclaredType(imageData, input.mimeType)) {
+        // The decoders pick a format from the bytes: raster bytes only, whatever MIME types the processor was configured for.
+        if (!isRasterImageBytes(imageData)) {
           return { success: false, artifacts: [], error: CONTENT_TYPE_MISMATCH_ERROR };
         }
         const artifacts = [];

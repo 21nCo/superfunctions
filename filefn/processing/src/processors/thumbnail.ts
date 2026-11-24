@@ -1,6 +1,6 @@
 import sharp from 'sharp';
 import type { Processor, ProcessorInput, ProcessorResult, ThumbnailConfig, ThumbnailSize } from '../types.js';
-import { CONTENT_TYPE_MISMATCH_ERROR, SHARP_INPUT_OPTIONS, contentMatchesDeclaredType } from '../content-sniff.js';
+import { CONTENT_TYPE_MISMATCH_ERROR, SHARP_INPUT_OPTIONS, isRasterImageBytes } from '../content-sniff.js';
 
 const UNSUPPORTED_MIME_TYPE_ERROR = 'FILEFN_PROCESSING_UNSUPPORTED_MIME_TYPE';
 const THUMBNAIL_FAILED_ERROR = 'FILEFN_PROCESSING_THUMBNAIL_FAILED';
@@ -32,8 +32,8 @@ export function createThumbnailProcessor(config: ThumbnailConfig = { sizes: DEFA
       try {
         // A private copy: the caller's buffer can't change between the check and the decode.
         const imageData = Buffer.from(await getData());
-        // The decoders pick a format from the bytes; refuse bytes that are not the declared type.
-        if (!contentMatchesDeclaredType(imageData, input.mimeType)) {
+        // The decoders pick a format from the bytes: raster bytes only, whatever MIME types the processor was configured for.
+        if (!isRasterImageBytes(imageData)) {
           return { success: false, artifacts: [], error: CONTENT_TYPE_MISMATCH_ERROR };
         }
         const artifacts = [];

@@ -49,8 +49,9 @@ const isHeifImage = (b: Uint8Array) => IMAGE_BRANDS.has(ftypBrand(b) ?? '');
 const readUint32 = (b: Uint8Array, offset: number) =>
   ((b[offset] << 24) >>> 0) + (b[offset + 1] << 16) + (b[offset + 2] << 8) + b[offset + 3];
 
-// Top-level `uuid` boxes may come first; up to a few are skipped by their
-// declared sizes to reach the first recognised box.
+// Top-level `uuid` boxes and QuickTime `junk` padding atoms may come first;
+// up to a few are skipped by their declared sizes to reach the first
+// recognised box.
 const QUICKTIME_ATOMS = ['moov', 'mdat', 'wide', 'free', 'skip', 'pnot'];
 const MAX_LEADING_UUID_BOXES = 4;
 function isIsoBmff(b: Uint8Array): boolean {
@@ -59,7 +60,7 @@ function isIsoBmff(b: Uint8Array): boolean {
     if (offset + 8 > b.length) return false;
     const type = String.fromCharCode(...b.subarray(offset + 4, offset + 8));
     if (type === 'ftyp' || QUICKTIME_ATOMS.includes(type)) return true;
-    if (type !== 'uuid') return false;
+    if (type !== 'uuid' && type !== 'junk') return false;
     let size = readUint32(b, offset);
     let header = 8;
     if (size === 1) {
@@ -68,9 +69,9 @@ function isIsoBmff(b: Uint8Array): boolean {
       size = readUint32(b, offset + 8) * 2 ** 32 + readUint32(b, offset + 12);
       header = 16;
     }
-    // A uuid box holds at least its header and 16-byte user type, and must
-    // end inside the input.
-    if (size < header + 16 || offset + size > b.length) return false;
+    // A uuid box holds at least its header and 16-byte user type, a junk atom
+    // at least its header; either must end inside the input.
+    if (size < header + (type === 'uuid' ? 16 : 0) || offset + size > b.length) return false;
     offset += size;
   }
   return false;
@@ -142,6 +143,10 @@ export function contentMatchesDeclaredType(bytes: Uint8Array, mimeType: string):
  * For providers that hand the bytes to sharp: unlike the declared-type check,
  * this one fails closed for an unknown or non-image type.
  */
+export function isRasterImageBytes(bytes: Uint8Array): boolean {
+  return isRasterImage(bytes);
+}
+
 export function assertRasterImage(bytes: Uint8Array): void {
   if (!isRasterImage(bytes)) throw new Error(CONTENT_TYPE_MISMATCH_ERROR);
 }
@@ -175,18 +180,29 @@ const FFMPEG_INPUT_FORMATS: Record<string, string> = {
   'audio/webm': 'matroska',
   'audio/wav': 'wav',
   'audio/flac': 'flac',
+  // Common aliases of the types above.
+  'video/x-m4v': 'mov',
+  'audio/x-mpeg': 'mp3',
+  'audio/x-mp3': 'mp3',
+  'audio/x-aac': 'aac',
+  'audio/m4a': 'mov',
+  'audio/x-wav': 'wav',
+  'audio/wave': 'wav',
+  'audio/vnd.wave': 'wav',
+  'audio/x-pn-wav': 'wav',
+  'audio/x-flac': 'flac',
 };
 
 /**
  * ffmpeg/ffprobe input options for an untrusted file of the declared type.
- * `audio/aac` is ADTS or LOAS framing; the bytes pick which of the two
+ * `audio/aac` (and its alias) is ADTS or LOAS framing; the bytes pick which of the two
  * demuxers, and nothing else.
  */
 export function ffmpegInputArgs(mimeType: string, bytes?: Uint8Array): string[] {
   const essence = mimeType.split(';', 1)[0].trim().toLowerCase();
   const audioStart = bytes ? afterId3(bytes) : -1;
-  const format =
-    essence === 'audio/aac' && bytes && audioStart >= 0 && isLoasAt(bytes, audioStart) ? 'loas' : FFMPEG_INPUT_FORMATS[essence];
+  const pinned = FFMPEG_INPUT_FORMATS[essence];
+  const format = pinned === 'aac' && bytes && audioStart >= 0 && isLoasAt(bytes, audioStart) ? 'loas' : pinned;
   if (!format) throw new Error(CONTENT_TYPE_MISMATCH_ERROR);
   return ['-protocol_whitelist', 'file', '-f', format];
 }
