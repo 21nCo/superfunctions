@@ -108,6 +108,9 @@ describe('FILE-30 low-severity hardening (F-13, F-14, F-16, F-18, F-24)', () => 
     await expect(fileFn.services.shares.createShareLink({ fileId: file.fileId }, editor as never)).resolves.toMatchObject({ token: expect.any(String) });
     const outsider = { principalId: 'ed2', tenantId: 't2', roles: ['editor'] };
     await expect(fileFn.services.shares.createShareLink({ fileId: file.fileId }, outsider as never)).rejects.toMatchObject({ code: 'FILEFN_FORBIDDEN' });
+    // Revoking someone else's link keeps the owner/user/tenant rule.
+    const ownerLink = await fileFn.services.shares.createShareLink({ fileId: file.fileId }, owner);
+    await expect(fileFn.services.shares.revokeShareLink(file.fileId, ownerLink.token, editor as never)).rejects.toMatchObject({ code: 'FILEFN_FORBIDDEN' });
   });
 
   it('gives anonymous callers their own rate-limit bucket when the host names them (F-14)', async () => {
