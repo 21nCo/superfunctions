@@ -313,9 +313,11 @@ export class ReviewCoordinator {
 
   public async preflight(request: ReviewRunRequest): Promise<PreflightDiagnostic[]> {
     const harnessId = this.dependencies.harness.capabilities.id;
-    const diagnostics: PreflightDiagnostic[] = [...harnessAuthDiagnostics(request, harnessId, request.config.inference.auth)];
+    const refusal = harnessAuthDiagnostics(request, harnessId, request.config.inference.auth);
+    const diagnostics: PreflightDiagnostic[] = [...refusal];
     diagnostics.push(...await preflightContexts(this.dependencies, request));
-    diagnostics.push(...componentDiagnostics(harnessId, await this.dependencies.harness.preflight(request.config, request.signal), "Harness preflight refused execution."));
+    // A harness that refuses this request is never preflighted, so its executable never runs.
+    if (!refusal.length) diagnostics.push(...componentDiagnostics(harnessId, await this.dependencies.harness.preflight(request.config, request.signal), "Harness preflight refused execution."));
     diagnostics.push(...await preflightExecution(this.dependencies, request));
     for (const message of await preflightPublishers(this.dependencies.publishers ?? [])) diagnostics.push({ code: "REVIEWFN_PUBLISHER_PREFLIGHT", level: "error", message });
     diagnostics.push(...preflightSince(this.dependencies, request));

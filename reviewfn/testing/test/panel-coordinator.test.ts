@@ -8,7 +8,7 @@ import { runInNewContext } from "node:vm";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import {
-  DEFAULT_CONFIG, DEFAULT_POLICY, GENERAL_LENS, GitSlotWorkspaceProvider, LensRegistry, PANEL_QUORUM_UNMET, PanelCoordinator, validatePanelReport,
+  DEFAULT_CONFIG, DEFAULT_POLICY, GENERAL_LENS, GitSlotWorkspaceProvider, LensRegistry, PANEL_QUORUM_UNMET, PanelCoordinator, slotConfiguration, validatePanelReport,
   type ChangeHunks, type Evidence, type Finding, type HarnessOutput, type PanelCoordinatorDependencies, type PanelHarnessAdapter, type PanelPolicy, type PanelRunRequest, type PanelSlot, type SlotHarnessInput, type SlotHarnessOutput, type SlotWorkspace, type WorkspaceCheck,
 } from "@superfunctions/reviewfn-core";
 import { FakeContextAdapter, FakeExecutionAdapter, FakePanelHarness, FakeSourceControlAdapter, MemoryArtifactStore, abortableDelay, slotOutput } from "../src/index.js";
@@ -232,7 +232,7 @@ describe("PanelCoordinator isolation and voiding", () => {
   it("runs profile slots with the trusted profile, records unverified models and limitations, and voids a raw model mismatch", async () => {
     const unreported = { argv: ["--model", "{model}"], promptVia: "stdin" as const, outputVia: "stdout-last-json" as const, envAllowlist: ["PATH"], modelReport: "none", capabilities: { structuredOutput: false, sandbox: "tree-verified-only" as const } };
     const reported = { ...unreported, modelReport: "json-path:model", capabilities: { structuredOutput: false, sandbox: "enforced-read-only" as const } };
-    const cli = new FakePanelHarness({ id: "cli", behaviors: { "cli-a": () => ({ ...clean(), observed: { model: "served-other" } }), "cli-b": clean, "cli-r": () => ({ ...clean(), observed: { model: "model-cli-r", modelMismatch: true } }) } });
+    const cli = new FakePanelHarness({ id: "cli", behaviors: { "cli-a": () => ({ ...clean(), observed: { model: "served-other" } }), "cli-b": clean, "cli-r": () => ({ ...clean(), observed: { model: "model-cli-r", modelMismatch: true, limitations: ["model_unverified"] } }) } });
     const profiled = (id: string, profile: string) => slot(id, 1, `model-${id}`, { harness: { adapter: "cli", version: "1", executable: "agent", profile } });
     const panelPolicy = panel([profiled("cli-a", "unreported"), profiled("cli-b", "unreported"), profiled("cli-r", "reported")], { profiles: { unreported, reported } });
     const setup = coordinator(cli, { harnessContractVersions: { cli: "1" } });
@@ -243,7 +243,29 @@ describe("PanelCoordinator isolation and voiding", () => {
     expect(runs.get("cli-a")).toMatchObject({ terminal: "completed", limitations: ["model_unverified", "sandbox_tree_verified_only"], identity: { model: "model-cli-a", modelVerified: false, harnessExecutable: "agent", harnessProfile: "unreported" } });
     expect(runs.get("cli-b")).toMatchObject({ terminal: "collapsed", identity: { model: "model-cli-b", modelVerified: false } });
     expect(runs.get("cli-r")).toMatchObject({ terminal: "void", voidReasons: ["model_mismatch"], identity: { model: "model-cli-r", modelMismatch: true } });
+    // A model-reporting profile verifies the model, so a harness-reported model_unverified is dropped.
     expect(runs.get("cli-r")).not.toHaveProperty("limitations");
+    await expectValid(result, setup, panelPolicy);
+    // A pull request is refused for the generic CLI harness before any slot's executable is preflighted or run.
+    const refusing = new FakePanelHarness({ id: "cli" });
+    await expect(coordinator(refusing, { harnessContractVersions: { cli: "1" } }).coordinator.run(request(panelPolicy, { pullRequest: 3 }))).rejects.toMatchObject({ code: "REVIEWFN_PREFLIGHT_FAILED", details: { diagnostics: expect.arrayContaining([expect.objectContaining({ code: "REVIEWFN_PR_AUTH_REQUIRED", message: expect.stringMatching(/^Slot cli-a: /) })]) } });
+    expect([refusing.preflights, refusing.calls]).toEqual([[], []]);
+    // A cli slot naming no profile never runs, and never with the file configuration's executable.
+    const bare = slot("bare", 1, undefined, { harness: { adapter: "cli", version: "1" } });
+    expect(() => slotConfiguration({ ...config, harness: { adapter: "cli", version: "1", executable: "file-agent" } }, bare, undefined, panelPolicy.profiles)).toThrow(expect.objectContaining({ code: "REVIEWFN_CONFIG_INVALID", message: expect.stringMatching(/bare uses the cli harness without a harness profile/) }));
+    const unprofiled = new FakePanelHarness({ id: "cli" });
+    await expect(coordinator(unprofiled, { harnessContractVersions: { cli: "1" } }).coordinator.run(request(panel([bare], { profiles: { unreported } })))).rejects.toMatchObject({ code: "REVIEWFN_PREFLIGHT_FAILED", details: { diagnostics: [expect.objectContaining({ code: "REVIEWFN_PANEL_SCHEMA", message: expect.stringMatching(/names neither/) })] } });
+    expect([unprofiled.preflights, unprofiled.calls]).toEqual([[], []]);
+  });
+
+  it("records model_unverified only for a run whose model is unverified, whatever the harness reports", async () => {
+    const harness = new FakePanelHarness({ behaviors: { plain: () => ({ ...clean(), observed: { limitations: ["model_unverified"] } }) } });
+    const panelPolicy = panel([slot("plain", 1)]);
+    const setup = coordinator(harness);
+    const result = await setup.coordinator.run(request(panelPolicy));
+    expect(result.report.slotRuns[0]).toMatchObject({ terminal: "completed", identity: { model: "model-plain" } });
+    expect(result.report.slotRuns[0]).not.toHaveProperty("limitations");
+    expect(result.report.slotRuns[0].identity).not.toHaveProperty("modelVerified");
     await expectValid(result, setup, panelPolicy);
   });
 

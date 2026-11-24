@@ -170,6 +170,9 @@ interface RunContext {
 const SEVERITY_RANK: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
 const COUNTING = new Set<SlotRunTerminal>(["completed", "collapsed"]);
 
+/** The one profile-driven harness, which runs only a profile the panel policy declares. */
+const PROFILE_HARNESS_ADAPTER = "cli";
+
 function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -195,6 +198,8 @@ export function slotConfiguration(config: ReviewFnConfig, slot: PanelSlot, contr
     if (!definition || executable === undefined) throw new ReviewFnError("REVIEWFN_CONFIG_INVALID", `Slot ${slot.id} names harness profile ${profile}, which the panel policy does not declare with an executable.`);
     return { ...config, harness: { adapter: slot.harness.adapter, version, executable, profile, profileDefinition: structuredClone(definition) }, inference: { ...slot.inference } };
   }
+  // The generic CLI harness runs only a declared profile: never a file configuration's executable, nor no profile at all.
+  if (slot.harness.adapter === PROFILE_HARNESS_ADAPTER) throw new ReviewFnError("REVIEWFN_CONFIG_INVALID", `Slot ${slot.id} uses the ${PROFILE_HARNESS_ADAPTER} harness without a harness profile and executable the panel policy declares.`);
   return { ...config, harness: { adapter: slot.harness.adapter, version, ...(same && config.harness.executable ? { executable: config.harness.executable } : {}) }, inference: { ...slot.inference } };
 }
 
@@ -395,11 +400,15 @@ export class PanelCoordinator {
     }
     const harnesses = new Map(this.dependencies.harnesses.map(harness => [harness.capabilities.id, harness]));
     const reviewSlots = request.panelPolicy.slots.filter(slot => slot.stage !== "verifier");
+    // A slot its harness refuses for this request never reaches the harness: no preflight, so no executable or profile is run.
+    const refused = new Set<string>();
     for (const slot of reviewSlots) {
       if (!this.lenses.has(slot.lens)) diagnostics.push({ code: "REVIEWFN_PANEL_LENS_UNKNOWN", level: "error", message: `Slot ${slot.id} uses lens ${slot.lens}, which is not registered.` });
       if (!harnesses.has(slot.harness.adapter)) diagnostics.push({ code: "REVIEWFN_PANEL_HARNESS_MISSING", level: "error", message: `Slot ${slot.id} uses harness ${slot.harness.adapter}, which is not installed.` });
       else if (slot.harness.adapter !== request.config.harness.adapter && !nonblank(this.contractVersions.get(slot.harness.adapter))) diagnostics.push({ code: "REVIEWFN_PANEL_HARNESS_CONTRACT_UNKNOWN", level: "error", message: `Slot ${slot.id} uses harness ${slot.harness.adapter}, which differs from the configured harness; set its adapter contract version in harnessContractVersions.` });
-      diagnostics.push(...harnessAuthDiagnostics(request, slot.harness.adapter, slot.inference.auth).map(item => ({ ...item, message: `Slot ${slot.id}: ${item.message}` })));
+      const refusal = harnessAuthDiagnostics(request, slot.harness.adapter, slot.inference.auth);
+      if (refusal.length) refused.add(slot.id);
+      diagnostics.push(...refusal.map(item => ({ ...item, message: `Slot ${slot.id}: ${item.message}` })));
     }
     const verifiers = request.panelPolicy.slots.filter(slot => slot.stage === "verifier");
     if (verifiers.length) diagnostics.push({ code: "REVIEWFN_PANEL_VERIFIER_DEFERRED", level: "warning", message: `Verifier slots ${verifiers.map(slot => slot.id).join(", ")} are not run by this release; panel findings are reported unverified.` });
@@ -409,7 +418,7 @@ export class PanelCoordinator {
     const results = new Map<string, Promise<PreflightResult>>();
     for (const slot of reviewSlots) {
       const harness = harnesses.get(slot.harness.adapter);
-      if (!harness || (slot.harness.adapter !== request.config.harness.adapter && !nonblank(this.contractVersions.get(slot.harness.adapter)))) continue;
+      if (!harness || refused.has(slot.id) || (slot.harness.adapter !== request.config.harness.adapter && !nonblank(this.contractVersions.get(slot.harness.adapter)))) continue;
       const config = this.slotConfig(request.config, slot, request.panelPolicy.profiles);
       const key = stableStringify({ adapter: slot.harness.adapter, harness: config.harness, inference: config.inference });
       let pending = results.get(key);
@@ -503,7 +512,9 @@ export class PanelCoordinator {
     const finish = (terminal: SlotRunTerminal, reasons: string[], output: SlotHarnessOutput, extra: Partial<SlotRun> = {}, promptDigest = "", transcriptArtifact?: string): SlotRecord => {
       const identity = extra.identity ?? baseIdentity;
       // The profile's limitations hold for every run of the slot, whatever its terminal; the harness may add others it observed.
-      const limitations = [...new Set([...profileLimitations(slotProfile(slot, request.panelPolicy)), ...(extra.limitations ?? [])])];
+      // model_unverified holds only for an identity whose model is unverified; a harness report never adds it to a verified one.
+      const { limitations: observedLimitations, ...recorded } = extra;
+      const limitations = [...new Set([...profileLimitations(slotProfile(slot, request.panelPolicy)), ...(observedLimitations ?? [])])].filter(item => item !== "model_unverified" || identity.modelVerified === false);
       const voidReasons = [...(extra.voidReasons ?? [])];
       const allReasons = [...reasons];
       if (slot.inference.model !== "configured" && (identity.model !== slot.inference.model || identity.modelMismatch === true) && !voidReasons.includes("model_mismatch")) {
@@ -517,7 +528,7 @@ export class PanelCoordinator {
       const finishedAt = Date.parse(finished) < Date.parse(startedAt) ? startedAt : finished;
       return {
         slot, output: redactJson(output, context.secrets), reasons: allReasons.map(reason => redactText(reason, context.secrets)), promptDigest, ...(transcriptArtifact ? { transcriptArtifact } : {}),
-        run: { slotId: slot.id, ...extra, identity, terminal: voidReasons.length ? "void" : terminal, voidReasons, startedAt, finishedAt, ...(limitations.length ? { limitations } : {}) },
+        run: { slotId: slot.id, ...recorded, identity, terminal: voidReasons.length ? "void" : terminal, voidReasons, startedAt, finishedAt, ...(limitations.length ? { limitations } : {}) },
       };
     };
     if (context.runSignal.aborted) return finish("canceled", ["The panel run was canceled before the slot started."], emptyOutput("canceled", "The panel run was canceled before the slot started."));

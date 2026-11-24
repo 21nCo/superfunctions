@@ -652,6 +652,9 @@ describe("panel policy and slot identity", () => {
     expect(messages({ ...profile, modelReport: "stderr-regex:model (\\S+) on (\\S+)" })).toEqual([expect.stringMatching(/exactly one capture group, not 2/)]);
     expect(messages({ ...profile, modelReport: "stderr-regex:model \\S+" })).toEqual([expect.stringMatching(/exactly one capture group, not 0/)]);
     expect(messages({ ...profile, modelReport: "stderr-regex:(" })).toEqual([expect.stringMatching(/not a valid regular expression/)]);
+    // A trailing backslash compiles only once something is appended to it, so it is rejected as written.
+    expect(messages({ ...profile, modelReport: "stderr-regex:(.*)|\\" })).toEqual([expect.stringMatching(/not a valid regular expression/)]);
+    expect(messages({ ...profile, modelReport: "stderr-regex:(a)|(b" })).toEqual([expect.stringMatching(/not a valid regular expression/)]);
     expect(validateHarnessProfile({ ...profile, modelReport: "stderr-regex:model (?:id )?(\\S+)" }).valid).toBe(true);
     for (const modelReport of ["json-path:", "json-path:a..b", "stdout", "none "]) expect(validateHarnessProfile({ ...profile, modelReport }).valid).toBe(false);
     expect(validateHarnessProfile({ ...profile, envAllowlist: ["PATH", "PATH"] }).valid).toBe(false);
@@ -662,6 +665,8 @@ describe("panel policy and slot identity", () => {
     expect(slotIssues({ ...generic, harness: { ...generic.harness, profile: "ghost" } })).toEqual([expect.stringMatching(/names profile ghost, which the policy's profiles do not declare/)]);
     expect(slotIssues({ ...generic, harness: { adapter: "cli", version: "1.0.0", profile: "agent" } })).toEqual([expect.stringMatching(/profile without an executable/)]);
     expect(slotIssues({ ...generic, harness: { adapter: "cli", version: "1.0.0", executable: "agent" } })).toEqual([expect.stringMatching(/executable without a profile/)]);
+    // The generic CLI harness runs only a declared profile, so a cli slot naming neither is no slot at all.
+    expect(slotIssues({ ...generic, harness: { adapter: "cli", version: "1.0.0" } })).toEqual([expect.stringMatching(/uses the cli harness, which runs only a profile the policy declares, with an executable; it names neither/)]);
     expect(slotIssues(generic, { agent: { ...profile, argv: ["--model={model}"] } })).toEqual([expect.stringMatching(/not a whole-argument placeholder/)]);
     expect(slotIssues({ ...panelPolicy.slots[0], id: "profiled-codex", harness: { ...panelPolicy.slots[0].harness, executable: "agent", profile: "agent" } })).toEqual([expect.stringMatching(/harness codex, which takes no profile or executable/)]);
     expect(validatePanelPolicy({ ...withProfile, profiles: { Agent: profile } }).valid).toBe(false);
@@ -739,6 +744,12 @@ describe("panel policy and slot identity", () => {
     // A slot that runs no profile never records an unverified model.
     const verifier = structuredClone(report); verifier.slotRuns[3].identity.modelVerified = false; verifier.slotRuns[3].limitations = ["model_unverified"];
     expect(await messages(verifier)).toEqual([expect.stringMatching(/^\/slotRuns\/3\/identity\/modelVerified .*runs no harness profile/)]);
+    // model_unverified belongs only to an unverified model: never on a verified identity, with or without a profile.
+    const verifiedClaim = structuredClone(report); verifiedClaim.slotRuns[3].limitations = ["model_unverified"];
+    expect(await messages(verifiedClaim)).toEqual([expect.stringMatching(/^\/slotRuns\/3\/limitations model_unverified is recorded only for a run whose model is unverified/)]);
+    const reportedClaim = structuredClone(misreported); delete reportedClaim.slotRuns[0].identity.modelVerified;
+    sign(reportedClaim, reporting);
+    expect(await messages(reportedClaim)).toEqual(expect.arrayContaining([expect.stringMatching(/^\/slotRuns\/0\/limitations model_unverified is recorded only/)]));
   });
 
   it("fingerprints credentials without exposing them", () => {
