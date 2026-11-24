@@ -437,4 +437,24 @@ describe('event prices named outside the provider record', () => {
 
     expect((await env.entitlements())?.subscription?.planKey).not.toBe('starter');
   });
+
+  it('keeps the price hint of a subscription event whose record has an empty or null cart', async () => {
+    const env = setup();
+    await env.openCheckout('starter');
+
+    await env.deliver({
+      priceId: 'price_enterprise_month',
+      providerSubscriptionId: 'sub_other_adapter',
+      billingState: {
+        subscriptionStatus: 'active',
+        checkoutStatus: 'succeeded',
+        providerSubscriptionId: 'sub_other_adapter',
+        autoRenew: true,
+        raw: { product_cart: null, metadata: { billfn_billing_account_id: 'ba_user_attacker' } }
+      },
+      raw: {}
+    });
+
+    expect((await env.entitlements())?.subscription?.planKey).toBe('enterprise');
+  });
 });

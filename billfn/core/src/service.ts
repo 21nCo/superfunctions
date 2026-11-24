@@ -5606,9 +5606,18 @@ async function resolveProviderEventPriceReference(
     const raw = asRecord(event.billingState?.raw);
     // A provider record may carry its product on the transaction it describes (Apple).
     const records = [raw, asRecord(raw?.transaction)];
+    // A Dodo subscription payment that reports no product names its plan nowhere: a hint the adapter stored
+    // from its cart (before cart items stopped counting for subscription payments) is not used.
+    const rawCart = asRecord(event.billingState?.raw)?.product_cart;
+    const staleCartHint =
+      provider === 'dodo' &&
+      Array.isArray(rawCart) &&
+      rawCart.length > 0 &&
+      chargesSubscription(event.billingState) &&
+      providerReportedProducts(event.billingState).length === 0;
     const references = [
       event.billingState?.providerProductId,
-      event.priceId,
+      staleCartHint ? undefined : event.priceId,
       ...records.flatMap((record) =>
         record ? ['product_id', 'productId', 'price_id', 'priceId'].map((key) => readString(record, key)) : []
       )
@@ -5617,15 +5626,9 @@ async function resolveProviderEventPriceReference(
     // a catalog price of this provider with that id that sells a reported product; the reported products then
     // select by product id alone, so neither can stand in for the other.
     const paidProducts = providerReportedProducts(event.billingState);
-    // A subscription charge that reports no product names its plan nowhere: a stored hint (an event parsed before
-    // cart items stopped counting for subscription payments) is not used.
-    const usableReferences =
-      paidProducts.length === 0 && chargesSubscription(event.billingState) && asRecord(event.billingState?.raw)?.product_cart !== undefined
-        ? references.filter((reference) => reference !== event.priceId)
-        : references;
     const resolved =
       paidProducts.length === 0
-        ? findCatalogPriceReference(deps.catalog, provider, usableReferences, subscription?.priceId)
+        ? findCatalogPriceReference(deps.catalog, provider, references, subscription?.priceId)
         : (selectPaidPriceById(deps.catalog, provider, references, paidProducts, event.billingState?.providerProductId) ??
           findCatalogPriceReference(deps.catalog, provider, paidProducts, subscription?.priceId, { productsOnly: true }));
     if (resolved) {
