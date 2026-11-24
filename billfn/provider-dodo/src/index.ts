@@ -274,7 +274,8 @@ export function createDodoProvider(config: DodoProviderConfig): BillFnProviderAd
         if (sessionCheckoutId) {
           assertDodoPaymentSession(sessionCheckoutId, response);
         }
-        return mapDodoPaymentState(response);
+        // Ownership matched the payment to the checkout's one-time price, so it is a one-time purchase.
+        return mapDodoPaymentState(response, 'one_time');
       }
       // A Dodo subscription does not name its payment; the payment that started it is BillFn's refundable charge.
       const state = mapDodoSubscriptionState(response);
@@ -535,7 +536,8 @@ export function createDodoProvider(config: DodoProviderConfig): BillFnProviderAd
 
       assertDodoRestoreOwnership(input, isSubscription, response);
 
-      return [isSubscription ? mapDodoSubscriptionState(response) : mapDodoPaymentState(response)];
+      // Ownership matched a non-subscription restore to its one-time price, so the payment is a one-time purchase.
+      return [isSubscription ? mapDodoSubscriptionState(response) : mapDodoPaymentState(response, 'one_time')];
     },
     async importSubscription(input: BillFnImportSubscriptionInput) {
       // A subscription created outside BillFn carries no billfn_* metadata, so only its identity is checked.
@@ -1097,11 +1099,19 @@ function isDodoPaymentRevoked(payment: Record<string, unknown>): boolean {
   );
 }
 
-function mapDodoPaymentState(payload: Record<string, unknown>): BillFnVerifiedBillingState {
+/**
+ * A payment's billing state. `knownKind` is the purchase kind the caller already established (checkout
+ * verification and restore match the payment to a one-time price first); without it the payment's own
+ * subscription fields decide.
+ */
+function mapDodoPaymentState(
+  payload: Record<string, unknown>,
+  knownKind?: 'one_time'
+): BillFnVerifiedBillingState {
   const paid = normalizeDodoPaymentStatus(readString(payload, ['status']));
   // A one-time purchase whose money went back no longer grants access, whichever read (verification, restore,
   // a payment webhook) sees it; a subscription charge leaves that to the subscription's own state.
-  const kind = classifyDodoPayment(payload);
+  const kind = knownKind ?? classifyDodoPayment(payload);
   const revoked = paid === 'active' && kind !== 'subscription' && isDodoPaymentRevoked(payload);
   if (revoked && kind === 'unknown') {
     // A reversed payment that does not say whether it is a one-time purchase is neither granted nor revoked.

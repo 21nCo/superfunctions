@@ -1181,7 +1181,7 @@ describe('parseWebhook with recorded Dodo payloads', () => {
     expect(event!.occurredAt).toBe('2030-01-01T00:00:00.000Z');
   });
 
-  it('treats a payment flagged is_multi_subscription as a subscription charge on restore, as the webhook does', async () => {
+  it('revokes a refunded one-time restore even when the payment is flagged is_multi_subscription', async () => {
     const { subscription_ids: _ids, ...multi } = { ...oneTimePayment, is_multi_subscription: true, subscription_id: null };
     const refunded = { ...multi, refunds: [{ refund_id: 'ref_1', status: 'succeeded', is_partial: false }] };
     const fetchMock = dodoReads({ [`/payments/${oneTimePayment.payment_id}`]: refunded });
@@ -1193,22 +1193,34 @@ describe('parseWebhook with recorded Dodo payloads', () => {
     } as never);
     const event = await parse({ ...refund }, fetchMock);
 
+    // The webhook has no price to go by and leaves a subscription-flagged payment alone; a restore has matched
+    // the payment to its one-time price, so the refund revokes it.
     expect(event.billingState).toBeUndefined();
-    expect(restored).toMatchObject({ subscriptionStatus: 'active', providerChargeId: oneTimePayment.payment_id });
+    expect(restored).toMatchObject({ subscriptionStatus: 'canceled', providerChargeId: oneTimePayment.payment_id });
   });
 
-  it('refuses to restore a reversed payment that does not say whether it is a one-time purchase', async () => {
+  it('revokes a reversed one-time restore whose payment omits both subscription fields', async () => {
     const { subscription_id: _id, subscription_ids: _ids, ...unclassified } = oneTimePayment;
     const reversed = { ...unclassified, refunds: [{ refund_id: 'ref_1', status: 'succeeded', is_partial: false }] };
     const fetchMock = dodoReads({ [`/payments/${oneTimePayment.payment_id}`]: reversed });
 
-    await expect(
-      createDodoProvider({ apiKey: 'dodo_test_key', fetch: fetchMock }).restorePurchases!({
-        billingAccount: { id: 'ba_user_123' },
-        price: { kind: 'one_time', providerProductId: 'pdt_nucleus_lifetime' },
-        purchaseReference: oneTimePayment.payment_id
-      } as never)
-    ).rejects.toMatchObject({ code: 'BILLFN_PROVIDER_ERROR' });
+    const [restored] = await createDodoProvider({ apiKey: 'dodo_test_key', fetch: fetchMock }).restorePurchases!({
+      billingAccount: { id: 'ba_user_123' },
+      price: { kind: 'one_time', providerProductId: 'pdt_nucleus_lifetime' },
+      purchaseReference: oneTimePayment.payment_id
+    } as never);
+
+    expect(restored).toMatchObject({ subscriptionStatus: 'canceled' });
+  });
+
+  it('fails a payment webhook for a reversed payment that does not say whether it is a one-time purchase', async () => {
+    const { subscription_id: _id, subscription_ids: _ids, ...unclassified } = recorded.webhooks.paymentSucceededOneTime.data;
+    const reversed = {
+      ...recorded.webhooks.paymentSucceededOneTime,
+      data: { ...unclassified, refunds: [{ refund_id: 'ref_1', status: 'succeeded', is_partial: false }] }
+    };
+
+    await expect(parse(reversed)).rejects.toMatchObject({ code: 'BILLFN_PROVIDER_ERROR' });
   });
 
   it('keeps the signed refund time when Dodo\'s clock runs ahead of BillFn\'s', async () => {
