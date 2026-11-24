@@ -379,6 +379,9 @@ describe('share links, grants and JSON routes (FILE-30 F-07, F-08, F-09, F-15)',
     expect(dateOnly.expiresAt).toBe('2099-12-31T00:00:00.000Z');
     const noExpiry = await fileFn.services.shares.createShareLink({ fileId: file.fileId, expiresAt: '' }, owner);
     expect(noExpiry.expiresAt).toBeNull();
+    // An empty versionId still means the current version.
+    const currentVersion = await fileFn.services.shares.createShareLink({ fileId: file.fileId, versionId: '' }, owner);
+    await expect(fileFn.services.shares.downloadViaShareLink(currentVersion.token, {})).resolves.toBeDefined();
 
     // A legacy row stored in a non-ISO format counts as expired.
     await database.updateMany({

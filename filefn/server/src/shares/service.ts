@@ -97,7 +97,9 @@ export function createSharesService(config: SharesServiceConfig) {
   }
 
   function validateShareInput(input: CreateShareLinkInput): { expiresAt: string | null; maxDownloads: number | null; requiresAuth: boolean } {
-    if (input.versionId !== undefined && input.versionId !== null && (typeof input.versionId !== 'string' || input.versionId.length === 0)) {
+    // An empty versionId means the current version, as it always has (and as
+    // the Python server reads it).
+    if (input.versionId !== undefined && input.versionId !== null && typeof input.versionId !== 'string') {
       throw errors.invalidRequest('versionId must be a version ID', { field: 'versionId' });
     }
     if (input.requiresAuth !== undefined && input.requiresAuth !== null && typeof input.requiresAuth !== 'boolean') {
