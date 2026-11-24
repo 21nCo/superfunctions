@@ -93,7 +93,8 @@ describe("CliHarnessAdapter prompt and output channels", () => {
   it.each([["without", []], ["with", ["--stderr", "rate limit exceeded"]]] as const)("ends an oversized output file timed_out even after a fast nonzero exit, %s quota stderr", async (_name, stderr) => {
     const output = await run(profile({ outputVia: "file", extra: ["--exit", "3", "--extra-json", JSON.stringify({ pad: "x".repeat(8_000) }), ...stderr] }), undefined, { policy: { ...DEFAULT_POLICY, limits: { ...DEFAULT_POLICY.limits, maxOutputBytes: 4_000 } } });
     expect(output.terminal).toBe("timed_out");
-    expect(output.error).toMatch(/output file .*exceeded the remaining/);
+    // The run-time watcher or the post-exit size check may see the overrun first; either names the output file overrun.
+    expect(output.error).toMatch(/output file .*(exceeded|grew past) the remaining/);
   }, 20_000);
 
   it("kills a CLI that keeps appending to its output file as soon as the file outgrows the budget, as a timeout", async () => {
