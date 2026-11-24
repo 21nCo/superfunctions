@@ -1367,7 +1367,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
           return metadataValue;
         },
       };
-      const checked = assertValidUploadInit(fields as unknown as UploadInitInput);
+      const checked = assertValidUploadInit(fields as unknown as UploadInitInput, { fingerprinted: !isAnonymousContext(ctx) });
       const checkedMetadataJson = checked.metadataJson;
       input = {
         policy: fields.policy,

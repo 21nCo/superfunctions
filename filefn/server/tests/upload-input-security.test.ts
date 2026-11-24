@@ -217,6 +217,16 @@ describe('upload init input (FILE-30 F-21, F-05)', () => {
     });
   });
 
+  it('passes the root key to toJSON for an anonymous caller, whose idempotency key is not used', async () => {
+    const fileFn = makeFileFn([{ name: 'any' }]);
+    const metadata = { toJSON: (key: string) => (key === '' ? { ok: true } : null) };
+    const input = { policy: 'any', fileName: 'a.txt', size: 1, mimeType: 'text/plain', metadata, idempotencyKey: 'k' };
+    await expect(fileFn.createUploadSession(input as never, {})).resolves.toMatchObject({ uploadSessionId: expect.any(String) });
+    await expect(fileFn.createUploadSession(input as never, { principalId: 'anonymous' })).resolves.toMatchObject({
+      uploadSessionId: expect.any(String),
+    });
+  });
+
   it('serializes JSON.rawJSON values as their raw text', async () => {
     const rawJSON = (JSON as { rawJSON?: (text: string) => unknown }).rawJSON;
     if (typeof rawJSON !== 'function') return;

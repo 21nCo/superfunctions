@@ -249,7 +249,15 @@ export interface UploadInitInput {
  * (`CreateUploadSessionRequest`). Throws `FILEFN_INVALID_REQUEST` (400) on the
  * first field that does not conform.
  */
-export function assertValidUploadInit(input: UploadInitInput): { metadata?: Record<string, unknown>; metadataJson?: string } {
+/**
+ * `options.fingerprinted`: whether this request's idempotency key will be used
+ * (the service skips it for anonymous callers). Only then is metadata
+ * normalized under the fingerprint's key `md`; otherwise under the root key.
+ */
+export function assertValidUploadInit(
+  input: UploadInitInput,
+  options: { fingerprinted?: boolean } = {},
+): { metadata?: Record<string, unknown>; metadataJson?: string } {
   // No length cap: the name must match a registered policy anyway.
   if (typeof input.policy !== 'string' || input.policy.length === 0 || LONE_SURROGATE.test(input.policy)) {
     throw invalidRequest('policy must be a non-empty string', { field: 'policy' });
@@ -295,7 +303,7 @@ export function assertValidUploadInit(input: UploadInitInput): { metadata?: Reco
     try {
       // The byte budget has headroom over the limit; the exact size is
       // checked on the final string below.
-      const result = normalizeJson(input.metadata, input.idempotencyKey ? 'md' : '', 0, { left: MAX_METADATA_NODES, bytes: MAX_METADATA_BYTES * 2 });
+      const result = normalizeJson(input.metadata, input.idempotencyKey && options.fingerprinted !== false ? 'md' : '', 0, { left: MAX_METADATA_NODES, bytes: MAX_METADATA_BYTES * 2 });
       normalized = result.value;
       normalizedJson = result.json;
     } catch (error) {
