@@ -166,7 +166,7 @@ test("a summary's tasks are read, and a summary without tasks, hashes or directo
   const noDirectory = JSON.stringify({ tasks: [{ taskId: "pkg#build", hash: KEPT }] });
   assert.throws(() => readSummaryTasks(noDirectory, "dry run"), /gives task "pkg#build" no task hash or directory/);
   // A hash that is not 16 hex digits is not a Turbo task hash: such a summary would keep no entry, so it is refused.
-  for (const hash of ["a", `${KEPT}0`, KEPT.slice(1), undefined]) {
+  for (const hash of ["a", `${KEPT}0`, KEPT.slice(1), undefined, null]) {
     assert.throws(() => readSummaryTasks(summary([KEPT, hash]), "x"), /gives task "pkg-1#build" no task hash/);
   }
 });
@@ -358,8 +358,15 @@ test("a step record holds the step's one run summary, which it removes, the cach
   assert.equal(ambiguous.tasks, null);
   assert.match(ambiguous.errors[0], /found 2 Turbo run summaries, expected 1/);
   assert.equal(recordStep({ name: "lint", stepsDir, cwd: root }).tasks, null, "a step without a summary has none");
-  assert.deepEqual(readdirSync(stepsDir), ["00-prepare.json", "01-build.json", "02-typecheck.json", "03-lint.json"]);
-  assert.deepEqual(readRecords(stepsDir).map((record) => record.name), ["prepare", "build", "typecheck", "lint"]);
+  // A summary task with a null hash makes the summary unreadable, so the step's entries are tainted.
+  const nullHash = JSON.stringify({ tasks: [{ taskId: "pkg#test", hash: null, directory: "pkg" }] });
+  writeFileSync(path.join(runsDir, "run-4.json"), nullHash);
+  const unreadable = recordStep({ name: "test", stepsDir, cwd: root });
+  assert.equal(unreadable.tasks, null);
+  assert.match(unreadable.errors[0], /gives task "pkg#test" no task hash/);
+  const names = ["prepare", "build", "typecheck", "lint", "test"];
+  assert.deepEqual(readdirSync(stepsDir), names.map((name, index) => `0${index}-${name}.json`));
+  assert.deepEqual(readRecords(stepsDir).map((record) => record.name), names);
 });
 
 function runCli(cwd, args) {
@@ -449,6 +456,11 @@ test("the command fails without a complete baseline, on a bad dry run or on bad 
   const badDryRun = merge(root, ["--aside-dir", aside]);
   assert.equal(badDryRun.status, 1);
   assert.match(badDryRun.stderr, /turbo-cache-merge: the dry run lists no tasks/);
+  assert.equal(existsSync(path.join(aside, `${KEPT}.tar.zst`)), true);
+  writeFileSync(dryRunFile, JSON.stringify({ tasks: [{ taskId: "pkg#build", hash: null, directory: "pkg" }] }));
+  const nullDryRun = merge(root, ["--aside-dir", aside]);
+  assert.equal(nullDryRun.status, 1);
+  assert.match(nullDryRun.stderr, /turbo-cache-merge: the dry run gives task "pkg#build" no task hash/);
   assert.equal(existsSync(path.join(aside, `${KEPT}.tar.zst`)), true);
 
   for (const args of [

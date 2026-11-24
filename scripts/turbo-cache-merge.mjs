@@ -48,10 +48,11 @@ export function readSummaryTasks(json, what) {
   const tasks = summary?.tasks;
   if (!Array.isArray(tasks) || tasks.length === 0) throw new Error(`the ${what} lists no tasks`);
   return tasks.map((task) => {
-    if (entryHash(`${task?.hash}.tar.zst`) !== task?.hash || typeof task.directory !== "string") {
+    const hash = typeof task?.hash === "string" ? entryHash(`${task.hash}.tar.zst`) : null;
+    if (hash === null || hash !== task.hash || typeof task.directory !== "string") {
       throw new Error(`the ${what} gives task ${JSON.stringify(task?.taskId)} no task hash or directory`);
     }
-    const { taskId, hash, directory, outputs, excludedOutputs } = task;
+    const { taskId, directory, outputs, excludedOutputs } = task;
     return { taskId, hash, directory, outputs, excludedOutputs };
   });
 }
@@ -385,7 +386,7 @@ if (isEntryPoint()) {
   try {
     main();
   } catch (error) {
-    console.error(`turbo-cache-merge: ${error.message}`);
+    console.error(`::warning title=Turbo cache not saved::turbo-cache-merge: ${error.message.replace(/\r?\n/g, " ")}`);
     process.exitCode = 1;
   }
 }

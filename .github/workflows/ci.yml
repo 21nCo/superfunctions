@@ -219,16 +219,18 @@ jobs:
       # baseline before any task runs, and each Turbo step runs with --summarize and records its summary, the cache
       # files and the changed or untracked files. Before saving, the merge deletes each entry written by a step that
       # changed a file outside its tasks' declared outputs (a replay would not restore that file) or that left no
-      # record, and reports those files as warnings; the cache never changes a job's result. A pull request replays
-      # each task whose Turbo inputs are unchanged, prunes the restored entries whose hash is not current and saves its
-      # entry even when a task failed. Every other run (a push, the nightly run, a manual run) replays nothing, because
-      # the release CI gate needs every task run on the release commit: it sets the restored entries aside, runs every
-      # selected task while Turbo writes the cache, then merges back the set-aside entries for current hashes the run
-      # did not rewrite, so the entry it saves, which pull requests restore, holds every task and not only those the
-      # run selected. It saves only when every step passed, so a failed run leaves the last complete entry in place.
-      # `--cache=local:w` is not used for this: each step would then rebuild every `^build` instead of reading the
-      # Build step's results. The Node major and the job are in the key, so another Node version or job never reuses
-      # an entry.
+      # record, and reports those files as warnings. The cache bookkeeping never changes a job's result: recording the
+      # hashes, merging and saving continue on error, and a run whose record or merge failed saves nothing. The one
+      # fatal cache step is a run that cannot set its restored entries aside, since it must not replay them. A pull
+      # request replays each task whose Turbo inputs are unchanged, prunes the restored entries whose hash is not
+      # current and saves its entry even when a task failed. Every other run (a push, the nightly run, a manual run)
+      # replays nothing, because the release CI gate needs every task run on the release commit: it sets the restored
+      # entries aside, runs every selected task while Turbo writes the cache, then merges back the set-aside entries for
+      # current hashes the run did not rewrite, so the entry it saves, which pull requests restore, holds every task and
+      # not only those the run selected. It saves only when every step passed, so a failed run leaves the last complete
+      # entry in place. `--cache=local:w` is not used for this: each step would then rebuild every `^build` instead of
+      # reading the Build step's results. The Node major and the job are in the key, so another Node version or job
+      # never reuses an entry.
       - name: Turbo cache key
         id: turbo-cache-key
         run: echo "prefix=turbo-${RUNNER_OS}-node$(node -p 'process.versions.node.split(".")[0]')-${GITHUB_JOB}" >> "$GITHUB_OUTPUT"
@@ -244,12 +246,17 @@ jobs:
             ${{ steps.turbo-cache-key.outputs.prefix }}-${{ hashFiles('package-lock.json') }}-
             ${{ steps.turbo-cache-key.outputs.prefix }}-
 
-      - name: Record the Turbo task hashes and the restored cache
-        id: turbo-cache-prepare
+      - name: Set the restored Turbo cache aside
+        if: github.event_name != 'pull_request'
         run: |
-          if [ "$GITHUB_EVENT_NAME" != "pull_request" ] && [ -d .turbo/cache ]; then
+          if [ -d .turbo/cache ]; then
             mv .turbo/cache "$RUNNER_TEMP/turbo-cache-aside"
           fi
+
+      - name: Record the Turbo task hashes and the restored cache
+        id: turbo-cache-prepare
+        continue-on-error: true
+        run: |
           ./node_modules/.bin/turbo run build typecheck test lint --dry=json > "$RUNNER_TEMP/turbo-dry-run.json"
           node scripts/turbo-cache-merge.mjs --record prepare --baseline --steps-dir "$RUNNER_TEMP/turbo-steps"
 
@@ -301,6 +308,7 @@ jobs:
 
       - name: Merge and prune the Turbo cache
         id: turbo-cache-merge
+        continue-on-error: true
         if: >-
           ${{ steps.turbo-cache-prepare.outcome == 'success' &&
           (success() || (github.event_name == 'pull_request' && !cancelled())) }}
@@ -313,6 +321,7 @@ jobs:
             --dry-run "$RUNNER_TEMP/turbo-dry-run.json" "${aside[@]}"
 
       - name: Save Turbo cache
+        continue-on-error: true
         if: >-
           ${{ !cancelled() && steps.turbo-cache-merge.outcome == 'success' &&
           steps.turbo-cache-restore.outputs.cache-hit != 'true' }}
@@ -378,12 +387,17 @@ jobs:
             ${{ steps.turbo-cache-key.outputs.prefix }}-${{ hashFiles('package-lock.json') }}-
             ${{ steps.turbo-cache-key.outputs.prefix }}-
 
-      - name: Record the Turbo task hashes and the restored cache
-        id: turbo-cache-prepare
+      - name: Set the restored Turbo cache aside
+        if: github.event_name != 'pull_request'
         run: |
-          if [ "$GITHUB_EVENT_NAME" != "pull_request" ] && [ -d .turbo/cache ]; then
+          if [ -d .turbo/cache ]; then
             mv .turbo/cache "$RUNNER_TEMP/turbo-cache-aside"
           fi
+
+      - name: Record the Turbo task hashes and the restored cache
+        id: turbo-cache-prepare
+        continue-on-error: true
+        run: |
           ./node_modules/.bin/turbo run test --dry=json > "$RUNNER_TEMP/turbo-dry-run.json"
           node scripts/turbo-cache-merge.mjs --record prepare --baseline --steps-dir "$RUNNER_TEMP/turbo-steps"
 
@@ -396,6 +410,7 @@ jobs:
 
       - name: Merge and prune the Turbo cache
         id: turbo-cache-merge
+        continue-on-error: true
         if: >-
           ${{ steps.turbo-cache-prepare.outcome == 'success' &&
           (success() || (github.event_name == 'pull_request' && !cancelled())) }}
@@ -408,6 +423,7 @@ jobs:
             --dry-run "$RUNNER_TEMP/turbo-dry-run.json" "${aside[@]}"
 
       - name: Save Turbo cache
+        continue-on-error: true
         if: >-
           ${{ !cancelled() && steps.turbo-cache-merge.outcome == 'success' &&
           steps.turbo-cache-restore.outputs.cache-hit != 'true' }}
