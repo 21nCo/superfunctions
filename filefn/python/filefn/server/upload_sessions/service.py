@@ -80,6 +80,7 @@ MAX_IDEMPOTENCY_KEY_LENGTH = 255
 MAX_METADATA_BYTES = 16 * 1024
 MAX_SAFE_INTEGER = 2**53 - 1
 _CONTROL_CHARACTERS = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+_MIME_CONTROL_CHARACTERS = re.compile(r"[\x00-\x08\x0a-\x1f\x7f]")
 # type "/" subtype, each an HTTP token (RFC 9110), plus optional parameters.
 # RFC 9110 media type, as the TypeScript server checks it: type/subtype tokens,
 # then parameters `token=token` or `token=quoted-string` (quoted text and
@@ -219,11 +220,16 @@ def _validate_upload_init(input: CreateSessionInput) -> None:
         not isinstance(mime_type, str)
         or _utf16_length(mime_type) > MAX_MIME_TYPE_LENGTH
         or not _MIME_TYPE.fullmatch(mime_type.strip(" \t"))
-        or _CONTROL_CHARACTERS.search(mime_type.replace("\t", " "))
+        # C0 controls other than tab, and DEL; U+0080-U+00FF is left to the
+        # quoted-string grammar (obs-text), as in TypeScript.
+        or _MIME_CONTROL_CHARACTERS.search(mime_type)
         or _has_lone_surrogate(mime_type)
     ):
         raise errors.invalid_request('mimeType must be a MIME type such as "image/png"', {"field": "mimeType"})
 
+    # An explicit `metadata: null` is refused, as in TypeScript; omitting it is fine.
+    if input.metadata is None and "metadata" in input.model_fields_set:
+        raise errors.invalid_request("metadata must be a JSON object", {"field": "metadata"})
     if input.metadata is not None:
         if not isinstance(input.metadata, dict) or _has_lone_surrogate(input.metadata):
             raise errors.invalid_request(
@@ -920,10 +926,11 @@ class UploadSessionService:
                 await self._set_status(upload_session_id, "refused")
                 try:
                     await self.storage.delete_object(key=session.storageKey, target=storage_target)
-                except Exception:
-                    pass
-                else:
                     await self._set_status(upload_session_id, "aborted")
+                except Exception:
+                    # The session stays refused: the sweep finishes the cleanup,
+                    # and the caller still learns why the upload was refused.
+                    pass
                 raise errors.upload_size_mismatch(session.size, actual)
         elif session.uploadMode == "proxy":
             await self._finalize_proxy_upload(session, parts_data)

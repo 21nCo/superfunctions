@@ -1380,3 +1380,31 @@ async def test_abort_and_sweep_never_overwrite_a_session_refused_meanwhile() -> 
     db.tables["uploadSessions"][0]["expiresAt"] = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
     await service.garbage_collect_expired_sessions()
     assert [row["status"] for row in db.tables["uploadSessions"]] == ["refused"]
+
+
+@pytest.mark.asyncio
+async def test_init_body_shape_null_metadata_and_mime_controls_match_typescript() -> None:
+    from filefn.server.core import FileFn
+
+    service = _make_service()
+    with pytest.raises(errors.FileFnError) as null_metadata:
+        await service.create_session(
+            CreateSessionInput(policy="user-avatar", fileName="a.png", size=3, mimeType="image/png", metadata=None), _ctx()
+        )
+    assert null_metadata.value.code == "FILEFN_INVALID_REQUEST"
+    # Quoted obs-text such as U+0085 is allowed by the grammar, as in TypeScript.
+    from filefn.server.upload_sessions.service import _validate_upload_init
+
+    _validate_upload_init(CreateSessionInput(policy="any", fileName="b.png", size=3, mimeType='image/png; name="a\u0085b"'))
+
+    fake = object.__new__(FileFn)
+    fake.upload_service = service  # type: ignore[attr-defined]
+    with pytest.raises(errors.FileFnError) as not_object:
+        await fake.create_upload_session([1, 2], _ctx())  # type: ignore[arg-type]
+    assert not_object.value.code == "FILEFN_INVALID_REQUEST"
+
+
+def test_explicit_surrogate_pairs_are_read_as_code_points_in_keys() -> None:
+    from filefn.server.policies import sanitize_storage_key_segment
+
+    assert sanitize_storage_key_segment("😀") == "\U0001F600"

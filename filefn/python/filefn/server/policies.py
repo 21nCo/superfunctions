@@ -110,7 +110,10 @@ def sanitize_storage_key_segment(value: str) -> str:
     ``team%2Feast``, never ``team_east``). An empty value becomes ``%20``,
     which no other value produces.
     """
-    encoded = _ENCODED_CHARACTERS.sub(_percent_encode, str(value))
+    # Explicit surrogate pairs become the code points they encode (as JavaScript
+    # iterates them); a lone surrogate stays and is replaced when encoded.
+    value = str(value).encode("utf-16", "surrogatepass").decode("utf-16", "surrogatepass")
+    encoded = _ENCODED_CHARACTERS.sub(_percent_encode, value)
     encoded = re.sub(r"^\.\.+", lambda dots: "%2E" * len(dots.group(0)), encoded)
     # A leading drive letter and colon (`C:`), which Windows would read as a drive.
     encoded = re.sub(r"^([A-Za-z]):", r"\1%3A", encoded)

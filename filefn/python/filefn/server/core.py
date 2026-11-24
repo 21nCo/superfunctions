@@ -105,8 +105,10 @@ class FileFn:
         from . import errors
         from .upload_sessions.service import CreateSessionInput
 
+        if not isinstance(input, dict):
+            raise errors.invalid_request("Upload init body must be a JSON object", {"field": "body"})
         try:
-            session_input = CreateSessionInput(**input)
+            session_input = CreateSessionInput.model_validate(input)
         except ValidationError as error:
             fields = sorted({str(item["loc"][0]) for item in error.errors() if item.get("loc")})
             raise errors.invalid_request("Upload init body does not match the contract", {"fields": fields}) from None
