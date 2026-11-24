@@ -1037,12 +1037,6 @@ class UploadSessionService:
         # reaches storage again.
         if session.status in ("aborted", "refused"):
             raise errors.upload_aborted()
-        if self._is_expired(session.expiresAt):
-            raise errors.upload_expired()
-
-        if session.fileId and self.file_write_checker:
-            if not await self.file_write_checker.can_write_file(session.fileId, ctx):
-                raise errors.forbidden({"fileId": session.fileId, "operation": "replace"})
 
         file_id = session.fileId or f"file_{secrets.token_urlsafe(12)}"
         # The version allocated at init (its ID is in the key); sessions created
@@ -1062,6 +1056,15 @@ class UploadSessionService:
             )
             if published and published.get("fileId") != file_id:
                 published = None
+
+        # A published version only needs its session finished, even after the
+        # session expired (the file is live); anything else is checked first.
+        if not published:
+            if self._is_expired(session.expiresAt):
+                raise errors.upload_expired()
+            if session.fileId and self.file_write_checker:
+                if not await self.file_write_checker.can_write_file(session.fileId, ctx):
+                    raise errors.forbidden({"fileId": session.fileId, "operation": "replace"})
 
         policy = self.policies.get(session.policy)
         storage_target = resolve_storage_target(policy)
