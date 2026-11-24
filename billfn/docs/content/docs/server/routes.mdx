@@ -113,6 +113,6 @@ Failures remain envelope-based:
 }
 ```
 
-Error `details` never carry a provider's raw response body or BillFn configuration (bundle ids, catalog price ids); those stay on the thrown error for the host's logs.
+Error `details` never carry a provider's raw response body or BillFn configuration (bundle ids, catalog price ids); the router leaves them out of the response (BillFn does not log them).
 
 The client SDKs preserve this shape instead of flattening it away.

@@ -72,40 +72,27 @@ function bodyTooLarge() {
   });
 }
 
-/** A media type token (RFC 9110): the type and subtype each a run of token characters. */
-const MEDIA_TYPE = /^[a-z0-9!#$%&'*+.^_`|~-]+\/[a-z0-9!#$%&'*+.^_`|~-]+$/;
-
-/** application/json, or a valid type/subtype with the +json structured suffix; parameters are ignored. */
-function isJsonContentType(header: string | null) {
-  // One media type only: a combined header (`application/json; charset=utf-8, text/plain`) is refused.
-  if (!header || !isSingleMediaType(header)) {
-    return false;
-  }
-  const essence = header.split(';')[0]!.trim().toLowerCase();
-  if (!MEDIA_TYPE.test(essence)) {
-    return false;
-  }
-  const subtype = essence.slice(essence.indexOf('/') + 1);
-  return essence === 'application/json' || (subtype.endsWith('+json') && subtype.length > '+json'.length);
-}
+/** RFC 9110 media type: `type/subtype` then `; name=value` parameters, each value a token or a quoted string. */
+const TOKEN = "[a-z0-9!#$%&'*+.^_`|~-]+";
+const QUOTED_STRING = '"(?:[^"\\\\]|\\\\.)*"';
+const MEDIA_TYPE_HEADER = new RegExp(
+  `^[ \\t]*(${TOKEN})/(${TOKEN})(?:[ \\t]*;[ \\t]*(?:${TOKEN}=(?:${TOKEN}|${QUOTED_STRING}))?)*[ \\t]*$`,
+  'i'
+);
 
 /**
- * Whether a header holds one well-formed media type: no comma outside a quoted parameter value, and every quoted
- * value closed (backslash escapes inside quotes).
+ * application/json, or a type/subtype with the +json structured suffix. The whole header must be one well-formed
+ * media type: a combined header (`application/json, text/plain`), a parameter without a value (`; charset`) or an
+ * unterminated quoted value is refused; quoted values may hold commas and escaped quotes.
  */
-function isSingleMediaType(header: string) {
-  let quoted = false;
-  for (let index = 0; index < header.length; index += 1) {
-    const char = header[index];
-    if (quoted && char === '\\') {
-      index += 1;
-    } else if (char === '"') {
-      quoted = !quoted;
-    } else if (char === ',' && !quoted) {
-      return false;
-    }
+function isJsonContentType(header: string | null) {
+  const match = header ? MEDIA_TYPE_HEADER.exec(header) : null;
+  if (!match) {
+    return false;
   }
-  return !quoted;
+  const type = match[1]!.toLowerCase();
+  const subtype = match[2]!.toLowerCase();
+  return (type === 'application' && subtype === 'json') || (subtype.endsWith('+json') && subtype.length > '+json'.length);
 }
 
 async function parseJsonBody<T>(request: Request): Promise<T> {

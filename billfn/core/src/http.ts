@@ -16,7 +16,7 @@ export function successResponse<T>(data: T, status: number = 200): Response {
 
 /**
  * Error detail keys never returned to a caller: a provider's raw response body and configuration (bundle ids,
- * catalog price ids). They stay on the thrown error for the host's logs.
+ * catalog price ids). They stay on the thrown error itself; the response leaves them out.
  */
 const PRIVATE_DETAIL_KEYS: ReadonlySet<string> = new Set(['body', 'raw', 'rawBody', 'bundleIds', 'matchingPriceIds']);
 
@@ -36,7 +36,14 @@ export function publicErrorDetails(details: unknown): Record<string, unknown> | 
 }
 
 function stripPrivateDetails(value: unknown, depth = 0): unknown {
-  if (value === null || typeof value !== 'object') {
+  if (value === null) {
+    return value;
+  }
+  // A bigint cannot be serialized, and a symbol or function (which may carry its own toJSON) is not data.
+  if (typeof value === 'bigint' || typeof value === 'symbol' || typeof value === 'function') {
+    return undefined;
+  }
+  if (typeof value !== 'object') {
     return value;
   }
   // Details are small; anything nested deeper than this is not returned at all.
@@ -57,7 +64,14 @@ function stripPrivateDetails(value: unknown, depth = 0): unknown {
   // Left-out values are dropped (array items and object keys alike), and an array or object that held something but
   // is left with nothing is left out in turn, so details made only of left-out values, at any depth, answer as none.
   if (Array.isArray(value)) {
-    const items = value.map((item) => stripPrivateDetails(item, depth + 1)).filter((item) => item !== undefined);
+    // Walked by index into a new array, never through the input's own methods (an own `map` could replace them).
+    const items: unknown[] = [];
+    for (let index = 0; index < value.length; index += 1) {
+      const item = stripPrivateDetails(value[index], depth + 1);
+      if (item !== undefined) {
+        items.push(item);
+      }
+    }
     return items.length > 0 || value.length === 0 ? items : undefined;
   }
   const entries = Object.entries(value as Record<string, unknown>);
@@ -71,8 +85,8 @@ function stripPrivateDetails(value: unknown, depth = 0): unknown {
 /**
  * Reads a request body as bytes, up to `limit`: a larger body (declared by content-length, or found while reading)
  * answers 'too_large' without reading the rest, and a body something else already started reading answers
- * 'already_read' (its remainder is not the request's body). The stream is cancelled without waiting, so an unread
- * clone of the request cannot hold the answer back.
+ * 'already_read' (its remainder is not the request's body). The stream is released, not cancelled, so neither an
+ * unread clone of the request nor the host's transport holds the answer back.
  */
 export async function readBoundedBytes(request: Request, limit: number): Promise<Uint8Array | 'too_large' | 'already_read'> {
   if (request.bodyUsed) {
@@ -95,7 +109,13 @@ export async function readBoundedBytes(request: Request, limit: number): Promise
     }
     size += value.byteLength;
     if (size > limit) {
-      void reader.cancel().catch(() => undefined);
+      // Stop reading without cancelling the body: cancelling a bridged Node stream (Readable.toWeb) destroys the
+      // socket before the host can send the 400. The host drains or closes the connection.
+      try {
+        reader.releaseLock();
+      } catch {
+        // A pending read keeps the lock; nothing more is read either way.
+      }
       return 'too_large';
     }
     chunks.push(value);

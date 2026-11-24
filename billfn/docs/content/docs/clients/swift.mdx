@@ -112,13 +112,17 @@ let dispatcher = BillFnBridgeDispatcher(
     storeKit: storeKit // the BillFnStoreKit above
 )
 
-// Forward each processed transaction to the web view as a transaction.updated event.
+// Forward each processed transaction to the web view as a transaction.updated event,
+// only while the web view still shows the trusted page.
 Task {
     for await outcome in storeKit.outcomes {
+        guard isTrustedPage(webView.url) else { continue } // your trusted-origin check
         postToWebView(dispatcher.transactionEvent(outcome)) // your WKWebView message delivery
     }
 }
 ```
+
+Outgoing messages carry transaction identifiers, the app account token and billing state, so they need the same care as incoming ones: post `transaction.updated` events and the replies to bridge requests only to the trusted main-frame document, and drop a reply when the page that asked has navigated away. The simplest way is to keep the bridge web view on the trusted origin (refuse other navigations in `WKNavigationDelegate`); a web view that may navigate elsewhere should stop delivering bridge messages when it does.
 
 The full sample lives in [embedded-web.swift](https://github.com/21nCo/super-functions/blob/dev/billfn/swift/examples/embedded-web.swift).
 

@@ -132,7 +132,9 @@ describe('error details returned to callers', () => {
 
     const answer = await env.call('/webhooks/dodo', { method: 'POST', body: '{}' });
 
-    expect(await answer.text()).not.toContain('serializer-internal');
+    const text = await answer.text();
+    expect(text).not.toContain('serializer-internal');
+    expect((JSON.parse(text) as { error: { details?: unknown } }).error.details).toEqual({ status: 502 });
   });
 
   it('leaves out an array with its own serializer', async () => {
@@ -147,7 +149,9 @@ describe('error details returned to callers', () => {
 
     const answer = await env.call('/webhooks/dodo', { method: 'POST', body: '{}' });
 
-    expect(await answer.text()).not.toContain('array-serializer-internal');
+    const text = await answer.text();
+    expect(text).not.toContain('array-serializer-internal');
+    expect((JSON.parse(text) as { error: { details?: unknown } }).error.details).toEqual({ status: 502 });
   });
 
   it('leaves out an array subclass with an inherited serializer', async () => {
@@ -170,7 +174,9 @@ describe('error details returned to callers', () => {
 
     const answer = await env.call('/webhooks/dodo', { method: 'POST', body: '{}' });
 
-    expect(await answer.text()).not.toContain('subclass-serializer-internal');
+    const text = await answer.text();
+    expect(text).not.toContain('subclass-serializer-internal');
+    expect((JSON.parse(text) as { error: { details?: unknown } }).error.details).toEqual({ status: 502 });
   });
 
   it('answers a deeply nested details object with its own code and status, cut off at depth', async () => {
@@ -212,6 +218,40 @@ describe('error details returned to callers', () => {
     expect(response.status).toBe(502);
     expect(payload.error.code).toBe('BILLFN_PROVIDER_ERROR');
     expect(reads).toBe(0);
+  });
+
+  it('leaves out bigint and function values, including a function with its own serializer', async () => {
+    const env = await setup();
+    const serialized = Object.assign(() => undefined, { toJSON: () => ({ body: 'function-internal' }) });
+    env.parseWebhookError.current = createBillFnError({
+      code: 'BILLFN_PROVIDER_ERROR',
+      message: 'Provider request failed',
+      details: { status: 502, amount: BigInt(10), serialized }
+    });
+
+    const response = await env.call('/webhooks/dodo', { method: 'POST', body: '{}' });
+    const text = await response.text();
+
+    expect(response.status).toBe(502);
+    expect(text).not.toContain('function-internal');
+    expect((JSON.parse(text) as { error: { details?: unknown } }).error.details).toEqual({ status: 502 });
+  });
+
+  it('walks an array without its own methods, so an own map cannot replace the filtering', async () => {
+    const env = await setup();
+    const attempts: unknown[] = [{ at: 1, body: 'item-internal' }];
+    Object.defineProperty(attempts, 'map', { value: () => [{ body: 'map-internal' }], enumerable: false });
+    env.parseWebhookError.current = createBillFnError({
+      code: 'BILLFN_PROVIDER_ERROR',
+      message: 'Provider request failed',
+      details: { status: 502, attempts }
+    });
+
+    const response = await env.call('/webhooks/dodo', { method: 'POST', body: '{}' });
+    const text = await response.text();
+
+    expect(text).not.toContain('internal');
+    expect((JSON.parse(text) as { error: { details?: unknown } }).error.details).toEqual({ status: 502, attempts: [{ at: 1 }] });
   });
 
   it('leaves out objects in the details that are not plain data', async () => {
@@ -302,7 +342,7 @@ describe('error details returned to callers', () => {
 });
 
 describe('request content type', () => {
-  it.each(['text/plain', 'application/x-www-form-urlencoded', '', 'example+json', '+json', 'application/+json', 'application/json/x', 'application/json; charset=utf-8, text/plain', 'application/json; profile="unfinished'])(
+  it.each(['text/plain', 'application/x-www-form-urlencoded', '', 'example+json', '+json', 'application/+json', 'application/json/x', 'application/json; charset=utf-8, text/plain', 'application/json; profile="unfinished', 'application/json; charset', 'application/json; =utf-8'])(
     'refuses a write sent as %j before acting on it',
     async (contentType) => {
       const env = await setup();
@@ -319,7 +359,7 @@ describe('request content type', () => {
     }
   );
 
-  it.each(['application/json', 'application/json; charset=utf-8', 'application/vnd.example+json', 'application/vnd.example+json; profile="a,b"'])(
+  it.each(['application/json', 'application/json; charset=utf-8', 'Application/JSON', 'application/vnd.example+json', 'application/vnd.example+json; profile="a,b"', 'application/json; profile="a\\"b"'])(
     'accepts a write sent as %s',
     async (contentType) => {
       const env = await setup();
