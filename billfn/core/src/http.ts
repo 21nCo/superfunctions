@@ -33,6 +33,12 @@ function stripPrivateDetails(value: unknown, depth = 0): unknown {
   if (value === null || typeof value !== 'object') {
     return value;
   }
+  // Only plain data is rebuilt; another object (a class instance with its own toJSON, a Date, an Error) is left out
+  // rather than serialized from its own properties.
+  const prototype = Array.isArray(value) ? Array.prototype : Object.getPrototypeOf(value);
+  if (prototype !== Array.prototype && prototype !== Object.prototype && prototype !== null) {
+    return undefined;
+  }
   // Details are small; anything nested deeper than this is not returned at all.
   if (depth >= 8) {
     return undefined;
@@ -49,13 +55,17 @@ function stripPrivateDetails(value: unknown, depth = 0): unknown {
 
 /**
  * Reads a request body as bytes, up to `limit`: a larger body (declared by content-length, or found while reading)
- * answers null without reading the rest. The stream is cancelled without waiting, so an unread clone of the request
- * cannot hold the answer back.
+ * answers 'too_large' without reading the rest, and a body something else already started reading answers
+ * 'already_read' (its remainder is not the request's body). The stream is cancelled without waiting, so an unread
+ * clone of the request cannot hold the answer back.
  */
-export async function readBoundedBytes(request: Request, limit: number): Promise<Uint8Array | null> {
+export async function readBoundedBytes(request: Request, limit: number): Promise<Uint8Array | 'too_large' | 'already_read'> {
+  if (request.bodyUsed) {
+    return 'already_read';
+  }
   const declared = Number(request.headers.get('content-length') ?? '');
   if (Number.isFinite(declared) && declared > limit) {
-    return null;
+    return 'too_large';
   }
   if (!request.body) {
     return new Uint8Array(0);
@@ -71,7 +81,7 @@ export async function readBoundedBytes(request: Request, limit: number): Promise
     size += value.byteLength;
     if (size > limit) {
       void reader.cancel().catch(() => undefined);
-      return null;
+      return 'too_large';
     }
     chunks.push(value);
   }

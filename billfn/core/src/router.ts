@@ -50,8 +50,11 @@ export const MAX_REQUEST_BODY_BYTES = 256 * 1024;
 /** Reads a request body as text, refusing one larger than MAX_REQUEST_BODY_BYTES before or while reading it. */
 async function readBoundedText(request: Request): Promise<string> {
   const bytes = await readBoundedBytes(request, MAX_REQUEST_BODY_BYTES);
-  if (!bytes) {
+  if (bytes === 'too_large') {
     throw bodyTooLarge();
+  }
+  if (bytes === 'already_read') {
+    throw createBillFnError({ code: 'BILLFN_VALIDATION_ERROR', message: 'The request body was already read before BillFn' });
   }
   return new TextDecoder().decode(bytes);
 }
@@ -68,7 +71,11 @@ const MEDIA_TYPE = /^[a-z0-9!#$%&'*+.^_`|~-]+\/[a-z0-9!#$%&'*+.^_`|~-]+$/;
 
 /** application/json, or a valid type/subtype with the +json structured suffix; parameters are ignored. */
 function isJsonContentType(header: string | null) {
-  const essence = (header ?? '').split(';')[0]!.trim().toLowerCase();
+  // One media type only: a combined header (`application/json; charset=utf-8, text/plain`) is refused.
+  if (!header || header.includes(',')) {
+    return false;
+  }
+  const essence = header.split(';')[0]!.trim().toLowerCase();
   if (!MEDIA_TYPE.test(essence)) {
     return false;
   }

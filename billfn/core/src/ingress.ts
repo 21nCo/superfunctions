@@ -252,8 +252,13 @@ export function createWebhookIngress(config: BillFnWebhookIngressConfig): BillFn
       // Provider webhooks are a few kilobytes; a larger body is refused, without reading the rest of it, before any
       // owner lookup.
       const bytes = await readBoundedBytes(request, MAX_INGRESS_BODY_BYTES);
-      if (!bytes) {
+      if (bytes === 'too_large') {
         return errorResponse(tooLarge());
+      }
+      if (bytes === 'already_read') {
+        return errorResponse(
+          createBillFnError({ code: 'BILLFN_VALIDATION_ERROR', message: 'The webhook body was already read before the ingress' })
+        );
       }
       // The exact bytes received are forwarded, so the owning region verifies the provider's signature over them.
       const body = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;

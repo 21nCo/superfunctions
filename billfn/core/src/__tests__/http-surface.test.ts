@@ -102,6 +102,27 @@ describe('error details returned to callers', () => {
     expect(JSON.stringify(payload)).not.toContain('provider-internal');
   });
 
+  it('leaves out objects in the details that are not plain data', async () => {
+    const env = await setup();
+    class ProviderResponse {
+      constructor(public data: string) {}
+      toJSON() {
+        return { hidden: true };
+      }
+    }
+    env.parseWebhookError.current = createBillFnError({
+      code: 'BILLFN_PROVIDER_ERROR',
+      message: 'Provider request failed',
+      details: { status: 502, response: new ProviderResponse('class-internal') }
+    });
+
+    const response = await env.call('/webhooks/dodo', { method: 'POST', body: '{}' });
+    const text = await response.text();
+
+    expect(text).not.toContain('class-internal');
+    expect((JSON.parse(text) as { error: { details?: unknown } }).error.details).toEqual({ status: 502 });
+  });
+
   it('leaves out a provider response body nested anywhere in the details', async () => {
     const env = await setup();
     env.parseWebhookError.current = createBillFnError({
@@ -118,7 +139,7 @@ describe('error details returned to callers', () => {
 });
 
 describe('request content type', () => {
-  it.each(['text/plain', 'application/x-www-form-urlencoded', '', 'example+json', '+json', 'application/+json', 'application/json/x'])(
+  it.each(['text/plain', 'application/x-www-form-urlencoded', '', 'example+json', '+json', 'application/+json', 'application/json/x', 'application/json; charset=utf-8, text/plain'])(
     'refuses a write sent as %j before acting on it',
     async (contentType) => {
       const env = await setup();
@@ -239,6 +260,24 @@ describe('streamed request bodies', () => {
 
     expect(response.status).toBe(400);
     expect(held.bodyUsed).toBe(false);
+  });
+});
+
+describe('partly read bodies', () => {
+  it('refuses a body middleware already started reading instead of parsing its remainder', async () => {
+    const env = await setup();
+    const request = new Request('https://billfn.example.test/billfn/checkouts', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ planKey: 'pro', provider: 'dodo', interval: 'month' })
+    });
+    const reader = request.body!.getReader();
+    await reader.read();
+    reader.releaseLock();
+
+    const response = await env.billfn.router.handle(request);
+
+    expect(response.status).toBe(400);
   });
 });
 
