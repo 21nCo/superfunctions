@@ -25,8 +25,8 @@ export function publicErrorDetails(details: unknown): Record<string, unknown> | 
   if (details === null || typeof details !== 'object' || Array.isArray(details)) {
     return undefined;
   }
-  const kept = stripPrivateDetails(details) as Record<string, unknown>;
-  return Object.keys(kept).length > 0 ? kept : undefined;
+  const kept = stripPrivateDetails(details) as Record<string, unknown> | undefined;
+  return kept && Object.keys(kept).length > 0 ? kept : undefined;
 }
 
 function stripPrivateDetails(value: unknown, depth = 0): unknown {

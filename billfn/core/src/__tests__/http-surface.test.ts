@@ -102,6 +102,24 @@ describe('error details returned to callers', () => {
     expect(JSON.stringify(payload)).not.toContain('provider-internal');
   });
 
+  it('keeps the error code and status when the details object itself is not plain data', async () => {
+    const env = await setup();
+    class ProviderDetails {
+      status = 418;
+    }
+    env.parseWebhookError.current = createBillFnError({
+      code: 'BILLFN_PROVIDER_ERROR',
+      message: 'Provider request failed',
+      details: new ProviderDetails() as unknown as Record<string, unknown>
+    });
+
+    const response = await env.call('/webhooks/dodo', { method: 'POST', body: '{}' });
+    const payload = (await response.json()) as { error: { code: string; details?: unknown } };
+
+    expect(payload.error.code).toBe('BILLFN_PROVIDER_ERROR');
+    expect(payload.error.details).toBeUndefined();
+  });
+
   it('leaves out objects in the details that are not plain data', async () => {
     const env = await setup();
     class ProviderResponse {
@@ -156,7 +174,7 @@ describe('request content type', () => {
     }
   );
 
-  it.each(['application/json', 'application/json; charset=utf-8', 'application/vnd.example+json'])(
+  it.each(['application/json', 'application/json; charset=utf-8', 'application/vnd.example+json', 'application/vnd.example+json; profile="a,b"'])(
     'accepts a write sent as %s',
     async (contentType) => {
       const env = await setup();
@@ -266,11 +284,24 @@ describe('streamed request bodies', () => {
 describe('partly read bodies', () => {
   it('refuses a body middleware already started reading instead of parsing its remainder', async () => {
     const env = await setup();
+    // A prefix chunk, then a complete JSON body: parsing the remainder alone would succeed.
+    const encoder = new TextEncoder();
+    const chunks = [encoder.encode('{"ignored": '), encoder.encode(JSON.stringify({ planKey: 'pro', provider: 'dodo', interval: 'month' }))];
     const request = new Request('https://billfn.example.test/billfn/checkouts', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ planKey: 'pro', provider: 'dodo', interval: 'month' })
-    });
+      body: new ReadableStream<Uint8Array>({
+        pull(controller) {
+          const next = chunks.shift();
+          if (next) {
+            controller.enqueue(next);
+          } else {
+            controller.close();
+          }
+        }
+      }),
+      duplex: 'half'
+    } as RequestInit);
     const reader = request.body!.getReader();
     await reader.read();
     reader.releaseLock();
@@ -278,6 +309,7 @@ describe('partly read bodies', () => {
     const response = await env.billfn.router.handle(request);
 
     expect(response.status).toBe(400);
+    expect(((await response.json()) as { error: { message: string } }).error.message).toContain('already read');
   });
 });
 

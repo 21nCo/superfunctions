@@ -72,7 +72,7 @@ const MEDIA_TYPE = /^[a-z0-9!#$%&'*+.^_`|~-]+\/[a-z0-9!#$%&'*+.^_`|~-]+$/;
 /** application/json, or a valid type/subtype with the +json structured suffix; parameters are ignored. */
 function isJsonContentType(header: string | null) {
   // One media type only: a combined header (`application/json; charset=utf-8, text/plain`) is refused.
-  if (!header || header.includes(',')) {
+  if (!header || hasUnquotedComma(header)) {
     return false;
   }
   const essence = header.split(';')[0]!.trim().toLowerCase();
@@ -81,6 +81,22 @@ function isJsonContentType(header: string | null) {
   }
   const subtype = essence.slice(essence.indexOf('/') + 1);
   return essence === 'application/json' || (subtype.endsWith('+json') && subtype.length > '+json'.length);
+}
+
+/** Whether a header has a comma outside a quoted parameter value (with backslash escapes inside quotes). */
+function hasUnquotedComma(header: string) {
+  let quoted = false;
+  for (let index = 0; index < header.length; index += 1) {
+    const char = header[index];
+    if (quoted && char === '\\') {
+      index += 1;
+    } else if (char === '"') {
+      quoted = !quoted;
+    } else if (char === ',' && !quoted) {
+      return true;
+    }
+  }
+  return false;
 }
 
 async function parseJsonBody<T>(request: Request): Promise<T> {
