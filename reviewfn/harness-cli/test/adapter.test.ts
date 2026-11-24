@@ -936,6 +936,19 @@ describe("CliHarnessAdapter preflight and configuration", () => {
     expect(output.terminal).toBe("canceled");
   });
 
+  it("ends canceled a valid answer whose caller aborted while the executable's identity was read after the CLI ended", async () => {
+    const controller = new AbortController();
+    const runner: CommandRunner = async (_command, args) => {
+      if (args.includes("--version")) return { code: 0, signal: null, stdout: "fake-cli version 1.2.3\n", stderr: "", timedOut: false, canceled: false };
+      // The identity read that follows the CLI is slow, and the caller aborts during it.
+      identity.delayMs = 200;
+      setTimeout(() => controller.abort(), 100);
+      return { code: 0, signal: null, stdout: `${JSON.stringify({ findings: [], evidence: [], inspectedPaths: ["src/index.ts"], uninspected: [] })}\n`, stderr: "", timedOut: false, canceled: false };
+    };
+    const output = await new CliHarnessAdapter({ environment: environment(), runner }).run(input(configuration(profile()), { signal: controller.signal }));
+    expect(output.terminal).toBe("canceled");
+  });
+
   it("reads the deadline after the executable's identity is re-read, so a slow read cannot start the CLI past it", async () => {
     let reviews = 0;
     const runner: CommandRunner = async (_command, args) => {

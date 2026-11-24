@@ -358,7 +358,8 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
     const terminal = terminalOutcome(run, attempt, result, output, fileOverrun);
     if (terminal) return terminal;
     // After cancellation and every overrun, before an answer is accepted or repaired: the executable must be unchanged.
-    if (await this.changed(run)) return run.state.finish("failed", "The CLI executable changed while the attempt ran, so its answer was refused.");
+    const changed = await this.changed(run) && !run.input.signal?.aborted;
+    if (changed || run.input.signal?.aborted) return run.state.finish(changed ? "failed" : "canceled", changed ? "The CLI executable changed while the attempt ran, so its answer was refused." : "The CLI run was canceled.");
     return accept(run, attempt, output);
   }
 
@@ -486,8 +487,8 @@ function redact(text: string, secrets: readonly string[]): string {
   starts[size] = text.length;
   const spans: Array<[number, number]> = [];
   for (const value of values) {
-    for (let at = text.indexOf(value); at !== -1; at = text.indexOf(value, at + 1)) spans.push([at, at + value.length]);
-    for (let at = size ? decoded.indexOf(value) : -1; at !== -1; at = decoded.indexOf(value, at + 1)) spans.push([starts[at], starts[at + value.length]]);
+    for (let at = text.indexOf(value); at !== -1; at = text.indexOf(value, at + value.length)) spans.push([at, at + value.length]);
+    for (let at = size ? decoded.indexOf(value) : -1; at !== -1; at = decoded.indexOf(value, at + value.length)) spans.push([starts[at], starts[at + value.length]]);
   }
   let result = "";
   let end = -1;
