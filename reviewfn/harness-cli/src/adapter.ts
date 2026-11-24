@@ -44,7 +44,10 @@ const isDigit = (char: string | undefined): boolean => char !== undefined && cha
 const isAlphanumeric = (char: string | undefined): boolean => char !== undefined && /^[0-9A-Za-z]$/.test(char);
 /** A character that may not adjoin a version token: a word character or a dot. */
 const joinsToken = (char: string | undefined): boolean => char !== undefined && (char === "." || /^\w$/.test(char));
-const isSuffixCharacter = (char: string | undefined): boolean => char === "-" || char === "." || isAlphanumeric(char);
+/** A character of a pre-release or build suffix; `+` starts build metadata after a pre-release (`1.2.3-rc.1+build.7`). */
+const isSuffixCharacter = (char: string | undefined): boolean => char === "-" || char === "+" || char === "." || isAlphanumeric(char);
+/** A `-` or `+` that follows a letter or digit: a suffix may end just before one. */
+const isSuffixBreak = (text: string, index: number): boolean => (text[index] === "-" || text[index] === "+") && isAlphanumeric(text[index - 1]);
 
 function digitsEnd(text: string, index: number): number {
   let end = index;
@@ -54,8 +57,8 @@ function digitsEnd(text: string, index: number): number {
 
 /**
  * Where a pre-release or build suffix starting at each position can end, computed in one pass from the right so the
- * whole scan stays linear: the end of the run of suffix characters, and the last `-` in that run that follows a letter
- * or digit (a suffix may also end just before such a `-`).
+ * whole scan stays linear: the end of the run of suffix characters, and the last `-` or `+` in that run that follows a
+ * letter or digit (a suffix may also end just before one).
  */
 function suffixTable(text: string): { runEnd: Int32Array; lastDash: Int32Array } {
   const runEnd = new Int32Array(text.length + 1).fill(text.length);
@@ -63,7 +66,7 @@ function suffixTable(text: string): { runEnd: Int32Array; lastDash: Int32Array }
   for (let index = text.length - 1; index >= 0; index -= 1) {
     if (!isSuffixCharacter(text[index])) { runEnd[index] = index; continue; }
     runEnd[index] = runEnd[index + 1];
-    const dash = text[index] === "-" && isAlphanumeric(text[index - 1]) ? index : -1;
+    const dash = isSuffixBreak(text, index) ? index : -1;
     lastDash[index] = lastDash[index + 1] === -1 ? dash : lastDash[index + 1];
   }
   return { runEnd, lastDash };
@@ -103,7 +106,8 @@ function firstVersion(text: string): string | undefined {
 
 /**
  * The version a CLI's version output reports: the first dotted version token of stdout, else of stderr. A token has an
- * optional `v` prefix and pre-release or build suffix (`v1.2.3`, `2025.08.25-896bbe1`) and adjoins no word character or dot.
+ * optional `v` prefix and pre-release and build suffixes (`v1.2.3`, `2025.08.25-896bbe1`, `1.2.3-rc.1+build.7`) and
+ * adjoins no word character or dot.
  */
 export function parseCliVersion(stdout: string, stderr = ""): string | undefined {
   return firstVersion(stdout) ?? firstVersion(stderr);
@@ -284,17 +288,16 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
     // only without that field where the slot's schema closes an object to it.
     const cliSchema = withModelReportField(prepared.schema, profile.modelReport);
     const basePrompt = `${input.prompt}\n\n${outputContract(cliSchema, profile)}`;
-    const run: AttemptContext = { ...prepared, schemaFile: path.join(prepared.directory, "schema.json") };
-    await writeFile(run.schemaFile, JSON.stringify(cliSchema), { mode: 0o600, flag: "wx" });
+    const run: AttemptContext = { ...prepared, schemaText: JSON.stringify(cliSchema) };
     // Every promptVia × outputVia combination allows the re-run: each attempt is a new process with a new prompt (on
-    // stdin or a new prompt file) and a fresh output (a new output file or its own stdout).
+    // stdin or a new prompt file), its own schema file and a fresh output (a new output file or its own stdout).
     let prompt = basePrompt;
     for (let attempt = 1; attempt <= 2; attempt += 1) {
       const outcome = await this.attempt(run, attempt, prompt);
       if (!("errors" in outcome)) return outcome;
       state.push("warning", { attempt, message: "The CLI output did not match the output schema." });
       if (attempt === 2) return state.finish("malformed", `The CLI output did not match the output schema after one repair attempt: ${outcome.errors.slice(0, 20).join("; ")}`);
-      prompt = repairPrompt(basePrompt, outcome.errors, outcome.rejected);
+      prompt = repairPrompt(basePrompt, outcome.errors, outcome.rejected, run.secrets);
     }
     return state.finish("malformed", "The CLI produced no structured output.");
   }
@@ -307,15 +310,15 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
     if (remaining <= 0) return state.finish("timed_out", `The CLI exceeded its configured bound ${before}.`);
     const outputBytes = state.remainingOutputBytes();
     if (outputBytes <= 0) return state.finish("timed_out", `The CLI output used its whole byte budget ${before}.`);
-    const outputFile = path.join(run.directory, `output-${attempt}.json`);
-    // Each attempt's prompt goes to a new file, created exclusively, so a link the CLI planted in the run directory is
-    // never followed; it is written only when the CLI is given its path.
-    const promptFile = path.join(run.directory, `prompt-${attempt}.md`);
-    if (profile.promptVia === "file" || profile.argv.includes("{promptFile}")) {
-      try { await writeFile(promptFile, prompt, { mode: 0o600, flag: "wx" }); }
-      catch (error) { return state.finish("failed", `The prompt file could not be created: ${message(error)}`); }
-    }
-    const args = cliArguments(profile.argv, { promptFile, schemaFile: run.schemaFile, outputFile, workspace: input.workspace, model: input.configuration.inference.model });
+    // Each attempt gets its own directory, created exclusively with an unpredictable name once the previous attempt has
+    // ended, holding its schema, its prompt (written only when the CLI is given its path) and its output path, which is
+    // therefore absent when it starts. Nothing an earlier attempt left (a link, a rewritten schema, a planted answer) is
+    // ever followed, shown to or read for a later one.
+    let files: { promptFile: string; schemaFile: string; outputFile: string };
+    try { files = await attemptFiles(run, attempt, prompt); }
+    catch (error) { return state.finish("failed", `The CLI attempt's files could not be created: ${message(error)}`); }
+    const { outputFile } = files;
+    const args = cliArguments(profile.argv, { ...files, workspace: input.workspace, model: input.configuration.inference.model });
     state.push("started", { attempt, promptVia: profile.promptVia, outputVia: profile.outputVia, sandbox: profile.capabilities.sandbox });
     // An output file is measured while the CLI runs: one that outgrows the remaining budget aborts the run, which
     // kills the whole process group, and the run ends timed_out like any other overrun, never canceled.
@@ -429,7 +432,16 @@ interface Prepared {
   deadline: number;
 }
 
-interface AttemptContext extends Prepared { executable: string; directory: string; schemaFile: string }
+interface AttemptContext extends Prepared { executable: string; directory: string; schemaText: string }
+
+/** A new directory for one attempt, created exclusively inside the run directory, with its schema and prompt files. */
+async function attemptFiles(run: AttemptContext, attempt: number, prompt: string): Promise<{ promptFile: string; schemaFile: string; outputFile: string }> {
+  const directory = await mkdtemp(path.join(run.directory, `attempt-${attempt}-`));
+  const files = { promptFile: path.join(directory, "prompt.md"), schemaFile: path.join(directory, "schema.json"), outputFile: path.join(directory, "output.json") };
+  await writeFile(files.schemaFile, run.schemaText, { mode: 0o600, flag: "wx" });
+  if (run.profile.promptVia === "file" || run.profile.argv.includes("{promptFile}")) await writeFile(files.promptFile, prompt, { mode: 0o600, flag: "wx" });
+  return files;
+}
 
 /** An answer rejected by validation, with what the repair prompt echoes back. */
 interface Rejection { errors: string[]; rejected: string | undefined }
@@ -558,14 +570,15 @@ function validated(run: AttemptContext, value: Record<string, unknown>): { value
 }
 
 /**
- * The attempt's terminal outcome before its answer is judged, in one precedence: a caller's cancellation; then any
+ * The attempt's terminal outcome before its answer is judged, in one precedence: a caller's cancellation, including one
+ * that arrived after the process exited while its answer and model report were read; then any
  * overrun of the time or output bound, whether the watcher, the runner or the output read found it; then a reported
  * model mismatch; then a nonzero exit (quota_exhausted when stderr says so). A file overrun is never classified by the
  * exit that followed it.
  */
 function terminalOutcome(run: AttemptContext, attempt: number, result: CommandResult, output: OutputRead, fileOverrun: string | undefined): SlotHarnessOutput | undefined {
   const { state } = run;
-  if (result.canceled && (fileOverrun === undefined || run.input.signal?.aborted)) return state.finish("canceled", "The CLI run was canceled.");
+  if (run.input.signal?.aborted || (result.canceled && fileOverrun === undefined)) return state.finish("canceled", "The CLI run was canceled.");
   const overrun = fileOverrun ?? ("overrun" in output ? output.overrun : undefined);
   if (overrun !== undefined) return state.finish("timed_out", overrun);
   if (result.timedOut) return state.finish("timed_out", "The CLI run exceeded its configured time or output bound.");
@@ -873,10 +886,13 @@ function outputContract(schema: Readonly<Record<string, unknown>>, profile: Harn
   return `Output contract: your final answer must be exactly one JSON object, with no prose and no code fence, that validates against this JSON Schema:\n${JSON.stringify(schema)}${lastLine}`;
 }
 
-/** The base prompt again, with the rejected answer (cut to its first bytes) and why it was rejected. */
-function repairPrompt(basePrompt: string, errors: readonly string[], previous: string | undefined): string {
-  const listed = errors.slice(0, 50).map(error => `- ${error}`).join("\n");
-  const echoed = previous === undefined ? "(no JSON object was found)" : Buffer.from(previous, "utf8").subarray(0, REPAIR_ECHO_BYTES).toString("utf8");
+/**
+ * The base prompt again, with the rejected answer (cut to its first bytes) and why it was rejected. Both are redacted with
+ * the run's secrets before the cut, as the transcript is, so no credential the CLI echoed reaches the next prompt.
+ */
+function repairPrompt(basePrompt: string, errors: readonly string[], previous: string | undefined, secrets: readonly string[]): string {
+  const listed = redactText(errors.slice(0, 50).map(error => `- ${error}`).join("\n"), secrets);
+  const echoed = previous === undefined ? "(no JSON object was found)" : Buffer.from(redactText(previous, secrets), "utf8").subarray(0, REPAIR_ECHO_BYTES).toString("utf8");
   const sections = [basePrompt, "Repair: your previous answer was rejected and this is the only repair attempt."];
   sections.push(`Validation errors:\n${listed}`, `Previous answer (at most ${REPAIR_ECHO_BYTES} bytes):\n${echoed}`);
   sections.push("Reply with exactly one JSON object that validates against the schema above.");

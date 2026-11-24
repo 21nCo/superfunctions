@@ -154,25 +154,99 @@ describe("CliHarnessAdapter process boundary", () => {
   it.skipIf(process.platform === "win32")("writes each attempt's prompt to a new file, never through a link the CLI planted for the repair attempt", async () => {
     const target = path.join(directory, "target.txt");
     await writeFile(target, "untouched");
-    let attempts = 0;
+    const prompts: string[] = [];
     const runner: CommandRunner = async (command, args, options) => {
       const result = await runProcessGroup(command, args, options);
+      if (!args.includes("--prompt")) return result;
       const prompt = args[args.indexOf("--prompt") + 1];
-      if (args.includes("--prompt") && (attempts += 1) === 1) {
-        // The CLI can write its run directory: it replaces its prompt file and plants the next one, both as links.
-        for (const name of [path.basename(prompt), "prompt.md", "prompt-2.md"]) {
-          await rm(path.join(path.dirname(prompt), name), { force: true });
-          await symlink(target, path.join(path.dirname(prompt), name));
+      prompts.push(prompt);
+      if (prompts.length === 1) {
+        // The CLI can write its run directory: it replaces its prompt file and plants links at every name it can guess.
+        for (const file of [prompt, ...["prompt.md", "prompt-2.md", "schema.json", "output.json"].flatMap(name => [path.join(path.dirname(prompt), name), path.join(path.dirname(path.dirname(prompt)), name)])]) {
+          await rm(file, { force: true });
+          await symlink(target, file);
         }
       }
       return result;
     };
     const output = await new CliHarnessAdapter({ environment: environment(), runner }).run(input(configuration(profile({ promptVia: "file", extra: ["--answer", "invalid-once"] }))));
     expect(await readFile(target, "utf8")).toBe("untouched");
-    expect(output.terminal).toBe("failed");
-    expect(output.error).toContain("The prompt file could not be created");
-    expect(await calls()).toHaveLength(1);
+    expect(output.error).toBeUndefined();
+    expect(output.terminal).toBe("completed");
+    expect(prompts).toHaveLength(2);
+    expect(path.dirname(prompts[1])).not.toBe(path.dirname(prompts[0]));
+    expect((await calls())[1].prompt).toContain("Repair: your previous answer was rejected");
   }, 30_000);
+
+  it("never completes a repair attempt with an answer the first attempt planted at a path it could predict", async () => {
+    const outputs: string[] = [];
+    const runner: CommandRunner = async (_command, args) => {
+      if (args.includes("--version")) return { code: 0, signal: null, stdout: "fake-cli version 1.2.3\n", stderr: "", timedOut: false, canceled: false };
+      const out = args[args.indexOf("--out") + 1];
+      outputs.push(out);
+      if (outputs.length === 1) {
+        // A malformed answer, and a valid one at the next attempt's predictable name, beside its own and in the run directory.
+        await writeFile(out, JSON.stringify({ findings: "none" }));
+        const valid = JSON.stringify({ findings: [], evidence: [], inspectedPaths: ["src/index.ts"], uninspected: [] });
+        for (const dir of [path.dirname(out), path.dirname(path.dirname(out))]) for (const name of ["output-2.json", "output.json"]) await writeFile(path.join(dir, name), valid, { flag: "a" });
+      }
+      // The repair attempt exits 0 without writing its output file.
+      return { code: 0, signal: null, stdout: "", stderr: "", timedOut: false, canceled: false };
+    };
+    const output = await new CliHarnessAdapter({ environment: environment(), runner }).run(input(configuration(profile({ outputVia: "file" }))));
+    expect(outputs).toHaveLength(2);
+    expect(path.dirname(outputs[1])).not.toBe(path.dirname(outputs[0]));
+    expect(output.terminal).toBe("malformed");
+    expect(output.error).toContain("wrote no output file");
+  });
+
+  it("shows the repair attempt the original schema even when the first attempt rewrote its schema file", async () => {
+    const schemas: string[] = [];
+    const runner: CommandRunner = async (_command, args) => {
+      if (args.includes("--version")) return { code: 0, signal: null, stdout: "fake-cli version 1.2.3\n", stderr: "", timedOut: false, canceled: false };
+      const schemaFile = args[args.indexOf("--schema") + 1];
+      schemas.push(await readFile(schemaFile, "utf8"));
+      if (schemas.length === 1) await writeFile(schemaFile, JSON.stringify({ type: "object", description: "tampered" }));
+      const answer = schemas.length === 1 ? { findings: "none" } : { findings: [], evidence: [], inspectedPaths: ["src/index.ts"], uninspected: [] };
+      return { code: 0, signal: null, stdout: `${JSON.stringify(answer)}\n`, stderr: "", timedOut: false, canceled: false };
+    };
+    const output = await new CliHarnessAdapter({ environment: environment(), runner }).run(input(configuration(profile({ extra: ["--schema", "{schemaFile}"] }))));
+    expect(output.terminal).toBe("completed");
+    expect(schemas).toHaveLength(2);
+    expect(schemas[1]).toBe(schemas[0]);
+    expect(schemas[1]).not.toContain("tampered");
+  });
+
+  it.each(["stdin", "file"] as const)("redacts the credential from the rejected answer the repair prompt echoes (prompt via %s)", async promptVia => {
+    const prompts: string[] = [];
+    const runner: CommandRunner = async (_command, args, options) => {
+      if (args.includes("--version")) return { code: 0, signal: null, stdout: "fake-cli version 1.2.3\n", stderr: "", timedOut: false, canceled: false };
+      prompts.push(promptVia === "file" ? await readFile(args[args.indexOf("--prompt") + 1], "utf8") : options.stdin ?? "");
+      const answer = prompts.length === 1 ? { findings: `leaked ${CREDENTIAL} and ${ALLOWED_SECRET}` } : { findings: [], evidence: [], inspectedPaths: ["src/index.ts"], uninspected: [] };
+      return { code: 0, signal: null, stdout: `${JSON.stringify(answer)}\n`, stderr: "", timedOut: false, canceled: false };
+    };
+    const output = await new CliHarnessAdapter({ environment: environment(), runner }).run(input(configuration(profile({ promptVia, envAllowlist: ["ALLOWED_ONE", "FIXTURE_API_KEY"] }))));
+    expect(output.terminal).toBe("completed");
+    expect(prompts).toHaveLength(2);
+    expect(prompts[1]).toContain("Repair: your previous answer was rejected");
+    expect(prompts[1]).toContain('{"findings":"leaked [REDACTED] and [REDACTED]"}');
+    expect(prompts[1]).not.toContain(CREDENTIAL);
+    expect(prompts[1]).not.toContain(ALLOWED_SECRET);
+  });
+
+  it("ends a run canceled when the caller aborts after the CLI exited, while its answer is read", async () => {
+    const controller = new AbortController();
+    const runner: CommandRunner = async (_command, args) => {
+      if (args.includes("--version")) return { code: 0, signal: null, stdout: "fake-cli version 1.2.3\n", stderr: "", timedOut: false, canceled: false };
+      await writeFile(args[args.indexOf("--out") + 1], JSON.stringify({ findings: [], evidence: [], inspectedPaths: ["src/index.ts"], uninspected: [] }));
+      // The process has exited successfully; the caller cancels before the adapter reads its answer.
+      controller.abort();
+      return { code: 0, signal: null, stdout: "", stderr: "", timedOut: false, canceled: false };
+    };
+    const output = await new CliHarnessAdapter({ environment: environment(), runner }).run(input(configuration(profile({ outputVia: "file" })), { signal: controller.signal }));
+    expect(output.terminal).toBe("canceled");
+    expect(output.findings).toEqual([]);
+  });
 
   it("writes no prompt file when the CLI reads its prompt on stdin and is not given {promptFile}", async () => {
     const listed: string[][] = [];
@@ -574,6 +648,9 @@ describe("CliHarnessAdapter preflight and configuration", () => {
 
   it("parses version tokens with a linear scan, as the documented token rule reads them", () => {
     expect(parseCliVersion("tool 1.2.3+build.7 (x)")).toBe("1.2.3+build.7");
+    expect(parseCliVersion("tool 1.2.3-rc.1+build.7 (x)")).toBe("1.2.3-rc.1+build.7");
+    expect(parseCliVersion("1.2.3-rc.1+")).toBe("1.2.3-rc.1");
+    expect(parseCliVersion("1.2.3-rc.1+build.")).toBe("1.2.3-rc.1");
     expect(parseCliVersion("1.2.3-rc.1-")).toBe("1.2.3-rc.1");
     expect(parseCliVersion("1.2.3-beta.")).toBe("1.2.3");
     expect(parseCliVersion("1.2.3.")).toBeUndefined();
