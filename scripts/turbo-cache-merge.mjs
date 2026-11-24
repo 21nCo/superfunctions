@@ -15,12 +15,15 @@
 // stale entry of its earlier pushes.
 // A replayed task restores only the outputs turbo.json declares for it. A task that also rewrites a tracked file (a
 // generated source or doc that a later task checks) passes when it runs, since it regenerates the file first, and fails
-// when it is replayed, since the stale committed file stays. With `--check-clean` the script fails when the checkout's
-// tracked files differ from HEAD after the tasks, so such a run fails whether its tasks ran or were replayed.
+// when it is replayed, since the stale committed file stays. With `--check-clean` the script fails when a tracked file
+// differs from HEAD after the tasks, so such a run fails whether its tasks ran or were replayed. A tracked file that a
+// task in the dry run declares as an output is exempt: a replay restores it, so a run that replays the task leaves it
+// as a run that executes the task does. The dry run lists every task the step's `turbo run` could select, so on a
+// partial plan the exempt files are those of every selectable task, not only of the tasks that ran.
 //
 // Usage: node scripts/turbo-cache-merge.mjs --cache-dir <dir> --dry-run <turbo --dry=json output>
 //          (--aside-dir <dir> | --restored-list <file listing the restored cache files, one name per line>)
-//        node scripts/turbo-cache-merge.mjs --check-clean
+//        node scripts/turbo-cache-merge.mjs --check-clean --dry-run <turbo --dry=json output>
 
 import { execFileSync } from "node:child_process";
 import {
@@ -164,6 +167,107 @@ export function changedTrackedFiles(cwd) {
   return output.split("\0").filter(Boolean).sort();
 }
 
+// A regular expression source for one Turbo output glob: `**` as a whole path segment matches any number of segments,
+// `*` and `?` match within one segment, `{a,b}` matches either alternative and `[…]` (or `[!…]`) a character class.
+function globSource(glob) {
+  let source = "";
+  let braces = 0;
+  for (let index = 0; index < glob.length; index++) {
+    const char = glob[index];
+    if (char === "*" && glob[index + 1] === "*") {
+      const segmentStart = index === 0 || glob[index - 1] === "/";
+      const segmentEnd = index + 2 === glob.length || glob[index + 2] === "/";
+      if (!segmentStart || !segmentEnd) throw new Error(`unsupported output glob ${JSON.stringify(glob)}`);
+      if (index + 2 === glob.length) {
+        // A trailing `**` matches everything below the directory, or the directory's own path.
+        source = source.endsWith("/") ? `${source.slice(0, -1)}(?:/.*)?` : `${source}.*`;
+      } else {
+        source += "(?:[^/]*/)*";
+        index += 1; // also skip the `/` after `**`
+      }
+      index += 1;
+    } else if (char === "*") {
+      source += "[^/]*";
+    } else if (char === "?") {
+      source += "[^/]";
+    } else if (char === "[") {
+      const end = glob.indexOf("]", index + 2);
+      if (end === -1) throw new Error(`unsupported output glob ${JSON.stringify(glob)}`);
+      const body = glob.slice(index + 1, end).replace(/^!/, "^").replaceAll("\\", "\\\\");
+      source += `[${body}]`;
+      index = end;
+    } else if (char === "{") {
+      braces += 1;
+      source += "(?:";
+    } else if (char === "}" && braces > 0) {
+      braces -= 1;
+      source += ")";
+    } else if (char === "," && braces > 0) {
+      source += "|";
+    } else {
+      source += char.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+    }
+  }
+  if (braces !== 0) throw new Error(`unsupported output glob ${JSON.stringify(glob)}`);
+  return source;
+}
+
+// The repository-relative glob for an output glob of the task in `directory`. Turbo reads output globs relative to the
+// task's package directory, or to the repository root after `$TURBO_ROOT$/`.
+function repositoryGlob(directory, glob) {
+  const relative = glob.startsWith("$TURBO_ROOT$/")
+    ? glob.slice("$TURBO_ROOT$/".length)
+    : path.posix.join(directory, glob);
+  const normalized = path.posix.normalize(relative).replace(/^\.\//, "");
+  if (normalized === ".." || normalized.startsWith("../") || path.posix.isAbsolute(normalized)) {
+    throw new Error(`output glob ${JSON.stringify(glob)} of ${JSON.stringify(directory)} is outside the repository`);
+  }
+  return normalized;
+}
+
+// A predicate for repository-relative file paths: whether a task in Turbo's `--dry=json` output declares the file as
+// one of its outputs. Turbo lists a task's `!` output globs under `excludedOutputs`; a file a task's excluded glob
+// matches is not that task's output. A dry run without tasks, or a task without a directory, is an error.
+export function declaredOutputMatcher(dryRunJson) {
+  let summary;
+  try {
+    summary = JSON.parse(dryRunJson);
+  } catch (error) {
+    throw new Error(`the dry run is not JSON: ${error.message}`);
+  }
+  const tasks = summary?.tasks;
+  if (!Array.isArray(tasks) || tasks.length === 0) throw new Error("the dry run lists no tasks");
+  const matchers = [];
+  for (const task of tasks) {
+    if (typeof task?.directory !== "string") {
+      throw new Error(`the dry run gives task ${JSON.stringify(task?.taskId)} no directory`);
+    }
+    const included = [];
+    const excluded = [];
+    for (const [list, globs] of [
+      [included, task.outputs],
+      [excluded, task.excludedOutputs],
+    ]) {
+      if (globs === undefined || globs === null) continue;
+      if (!Array.isArray(globs) || globs.some((glob) => typeof glob !== "string" || glob === "")) {
+        throw new Error(`the dry run gives task ${JSON.stringify(task.taskId)} malformed outputs`);
+      }
+      for (const glob of globs) {
+        const negated = glob.startsWith("!");
+        const target = negated ? excluded : list;
+        const pattern = repositoryGlob(task.directory, negated ? glob.slice(1) : glob);
+        target.push(new RegExp(`^${globSource(pattern)}$`));
+      }
+    }
+    if (included.length > 0) matchers.push({ included, excluded });
+  }
+  return (file) =>
+    matchers.some(
+      ({ included, excluded }) =>
+        included.some((pattern) => pattern.test(file)) && !excluded.some((pattern) => pattern.test(file))
+    );
+}
+
 // A value for a GitHub Actions annotation property (`file=…`).
 function annotationProperty(value) {
   return value
@@ -174,25 +278,36 @@ function annotationProperty(value) {
     .replaceAll(",", "%2C");
 }
 
-function checkClean() {
-  const changed = changedTrackedFiles(process.cwd());
+function checkClean(dryRun) {
+  const isDeclaredOutput = declaredOutputMatcher(readFileSync(dryRun, "utf8"));
+  const allChanged = changedTrackedFiles(process.cwd());
+  const declared = allChanged.filter(isDeclaredOutput);
+  const changed = allChanged.filter((file) => !isDeclaredOutput(file));
+  if (declared.length > 0) {
+    console.log(
+      `turbo-cache-merge: ${declared.length} changed tracked files are declared task outputs, ` +
+        `which a replay restores: ${declared.join(", ")}`
+    );
+  }
   if (changed.length === 0) {
-    console.log("turbo-cache-merge: no task changed a tracked file");
+    console.log("turbo-cache-merge: no task changed a tracked file outside its declared outputs");
     return;
   }
   for (const file of changed) {
     console.log(
       `::error file=${annotationProperty(file)},title=Tracked file changed by a task::A task changed this tracked ` +
-        "file. A replayed task restores only its declared outputs, so regenerate the file and commit it."
+        "file, which no task declares as an output. A replayed task restores only its declared outputs, so " +
+        "regenerate the file and commit it."
     );
   }
-  execFileSync("git", ["--no-pager", "diff", "HEAD", "--stat", "--no-renames"], { stdio: "inherit" });
+  execFileSync("git", ["--no-pager", "diff", "HEAD", "--stat", "--no-renames", "--", ...changed], { stdio: "inherit" });
   throw new Error(`${changed.length} tracked files changed after the tasks ran: ${changed.join(", ")}`);
 }
 
 const USAGE =
   "usage: node scripts/turbo-cache-merge.mjs --cache-dir <dir> --dry-run <dry-run JSON file> " +
-  "(--aside-dir <dir> | --restored-list <file>), or node scripts/turbo-cache-merge.mjs --check-clean";
+  "(--aside-dir <dir> | --restored-list <file>), or node scripts/turbo-cache-merge.mjs --check-clean " +
+  "--dry-run <dry-run JSON file>";
 
 function parseArgs(argv) {
   const options = {};
@@ -221,8 +336,9 @@ function parseArgs(argv) {
 function main() {
   const argv = process.argv.slice(2);
   if (argv.includes("--check-clean")) {
-    if (argv.length !== 1) throw new Error(USAGE);
-    checkClean();
+    const [mode, flag, dryRun] = argv;
+    if (argv.length !== 3 || mode !== "--check-clean" || flag !== "--dry-run" || !dryRun) throw new Error(USAGE);
+    checkClean(dryRun);
     return;
   }
   const { cacheDir, asideDir, restoredList, dryRun } = parseArgs(argv);

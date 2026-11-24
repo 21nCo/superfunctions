@@ -285,13 +285,14 @@ jobs:
 
       # A replayed task restores only its declared outputs. A task that rewrites a tracked file, such as a generated
       # source or doc a later task checks, would pass when it runs and fail when it is replayed, so a run fails when any
-      # task left a tracked file changed, and then no run, a pull request included, merges or saves a cache entry: an
-      # entry hashed from the stale file would let a later run replay the task and pass. Commit the regenerated file
-      # (SFNS-312). When this check passes, a pull request still saves its entry if a task failed.
+      # task left a tracked file changed that no task declares as an output, and then no run, a pull request included,
+      # merges or saves a cache entry: an entry hashed from the stale file would let a later run replay the task and
+      # pass. Commit the regenerated file (SFNS-312). A changed tracked file that a task declares as an output passes,
+      # since a replay restores it. When this check passes, a pull request still saves its entry if a task failed.
       - name: Check that no task changed a tracked file
         id: turbo-cache-check
         if: ${{ !cancelled() && steps.turbo-cache-prepare.outcome == 'success' }}
-        run: node scripts/turbo-cache-merge.mjs --check-clean
+        run: node scripts/turbo-cache-merge.mjs --check-clean --dry-run "$RUNNER_TEMP/turbo-dry-run.json"
 
       - name: Merge and prune the Turbo cache
         id: turbo-cache-merge
@@ -385,12 +386,12 @@ jobs:
       - name: Test
         run: ./node_modules/.bin/turbo run test --concurrency=1 ${{ needs.plan.outputs.devfn_test_filters }}
 
-      # As in the JavaScript job: the Test step's `^build` tasks are replayed too, so a changed tracked file fails the
-      # run and no run merges or saves a cache entry.
+      # As in the JavaScript job: the Test step's `^build` tasks are replayed too, so a changed tracked file that no
+      # task declares as an output fails the run and no run merges or saves a cache entry.
       - name: Check that no task changed a tracked file
         id: turbo-cache-check
         if: ${{ !cancelled() && steps.turbo-cache-prepare.outcome == 'success' }}
-        run: node scripts/turbo-cache-merge.mjs --check-clean
+        run: node scripts/turbo-cache-merge.mjs --check-clean --dry-run "$RUNNER_TEMP/turbo-dry-run.json"
 
       - name: Merge and prune the Turbo cache
         id: turbo-cache-merge

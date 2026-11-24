@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 
 import {
   changedTrackedFiles,
+  declaredOutputMatcher,
   entryHash,
   mergeTurboCache,
   pruneRestoredTurboCache,
@@ -295,7 +296,15 @@ function freshCheckout() {
   return root;
 }
 
-function runCheckClean(cwd, args = ["--check-clean"]) {
+// A dry run whose only task, pkg#build, declares `outputs` (and `excludedOutputs`) in the package directory `pkg`.
+function writeDryRun(root, outputs = ["dist/**"], excludedOutputs = null) {
+  const file = path.join(root, "..", `${path.basename(root)}-dry-run.json`);
+  const task = { taskId: "pkg#build", hash: KEPT, directory: "pkg", outputs, excludedOutputs };
+  writeFileSync(file, JSON.stringify({ tasks: [task] }));
+  return file;
+}
+
+function runCheckClean(cwd, args = ["--check-clean", "--dry-run", writeDryRun(cwd)]) {
   return spawnSync(process.execPath, [script, ...args], { cwd, encoding: "utf8" });
 }
 
@@ -329,9 +338,90 @@ test("--check-clean passes on a clean checkout and fails, naming each file, when
   assert.match(dirty.stdout, /pkg\/generated\.txt \| /);
   assert.match(dirty.stderr, /turbo-cache-merge: 1 tracked files changed after the tasks ran: pkg\/generated\.txt/);
 
-  const withOthers = runCheckClean(root, ["--check-clean", "--cache-dir", root]);
-  assert.equal(withOthers.status, 1);
-  assert.match(withOthers.stderr, /usage: /);
+  for (const args of [["--check-clean"], ["--check-clean", "--cache-dir", root], ["--dry-run", "x", "--check-clean"]]) {
+    const wrong = runCheckClean(root, args);
+    assert.equal(wrong.status, 1, args.join(" "));
+    assert.match(wrong.stderr, /usage: /);
+  }
+});
+
+test("--check-clean passes a changed tracked file a task declares as an output and still fails an undeclared one", () => {
+  const root = freshCheckout();
+  writeFileSync(path.join(root, "pkg", "generated.txt"), "generated from v2\n");
+
+  // pkg#build declares the generated file as an output, so a replay restores it: the run passes.
+  const declared = runCheckClean(root, ["--check-clean", "--dry-run", writeDryRun(root, ["dist/**", "generated.txt"])]);
+  assert.equal(declared.status, 0, declared.stdout + declared.stderr);
+  assert.match(declared.stdout, /1 changed tracked files are declared task outputs, which a replay restores: pkg\/generated\.txt/);
+  assert.doesNotMatch(declared.stdout, /::error/);
+
+  // The template is no task's output: the run fails, naming only the undeclared file.
+  writeFileSync(path.join(root, "pkg", "template.txt"), "v2\n");
+  const mixed = runCheckClean(root, ["--check-clean", "--dry-run", writeDryRun(root, ["generated.txt"])]);
+  assert.equal(mixed.status, 1);
+  assert.match(mixed.stdout, /^::error file=pkg\/template\.txt,/m);
+  assert.doesNotMatch(mixed.stdout, /::error file=pkg\/generated\.txt/);
+  assert.match(mixed.stderr, /1 tracked files changed after the tasks ran: pkg\/template\.txt$/m);
+
+  // A `!` glob takes the file out of the task's outputs again.
+  const excluded = runCheckClean(root, [
+    "--check-clean",
+    "--dry-run",
+    writeDryRun(root, ["*.txt"], ["template.txt"]),
+  ]);
+  assert.equal(excluded.status, 1);
+  assert.match(excluded.stdout, /^::error file=pkg\/template\.txt,/m);
+  assert.doesNotMatch(excluded.stdout, /::error file=pkg\/generated\.txt/);
+
+  const malformed = runCheckClean(root, ["--check-clean", "--dry-run", path.join(root, "missing.json")]);
+  assert.equal(malformed.status, 1);
+  assert.doesNotMatch(malformed.stdout, /no task changed/);
+});
+
+test("declared outputs follow Turbo's globs relative to each task's directory", () => {
+  const isOutput = declaredOutputMatcher(
+    JSON.stringify({
+      tasks: [
+        { taskId: "a#build", directory: "apps/a", outputs: [".next/**", "dist/**"], excludedOutputs: [".next/cache/**"] },
+        { taskId: "b#build", directory: "libs/b", outputs: ["src/*.generated.{ts,js}", "!src/skip.generated.ts", "?.md"] },
+        { taskId: "c#build", directory: "libs/c", outputs: ["$TURBO_ROOT$/shared/out/**", "lib/**/index.d.ts"] },
+        { taskId: "//#lint", directory: "", outputs: ["report.json"] },
+        { taskId: "d#test", directory: "libs/d" },
+      ],
+    })
+  );
+  const cases = {
+    "apps/a/.next/server/page.js": true,
+    "apps/a/dist/index.js": true,
+    "apps/a/.next/cache/entry": false, // excluded output
+    "apps/a/src/index.ts": false,
+    "apps/b/dist/index.js": false, // another package
+    "libs/b/src/catalog.generated.ts": true,
+    "libs/b/src/catalog.generated.js": true,
+    "libs/b/src/nested/catalog.generated.ts": false, // `*` stays within one segment
+    "libs/b/src/skip.generated.ts": false, // `!` output glob
+    "libs/b/x.md": true,
+    "libs/b/xy.md": false,
+    "shared/out/a/b.txt": true, // $TURBO_ROOT$ is the repository root
+    "libs/c/shared/out/a.txt": false,
+    "libs/c/lib/index.d.ts": true, // `**/` matches no directory too
+    "libs/c/lib/x/y/index.d.ts": true,
+    "report.json": true,
+    "libs/d/report.json": false,
+  };
+  for (const [file, expected] of Object.entries(cases)) assert.equal(isOutput(file), expected, file);
+});
+
+test("a dry run without tasks, directories or well-formed output globs is an error", () => {
+  const matcher = (tasks) => () => declaredOutputMatcher(JSON.stringify({ tasks }));
+  assert.throws(() => declaredOutputMatcher("not json"), /not JSON/);
+  assert.throws(matcher([]), /lists no tasks/);
+  assert.throws(matcher([{ taskId: "a#build", outputs: ["dist/**"] }]), /no directory/);
+  assert.throws(matcher([{ taskId: "a#build", directory: "a", outputs: "dist/**" }]), /malformed outputs/);
+  assert.throws(matcher([{ taskId: "a#build", directory: "a", outputs: [""] }]), /malformed outputs/);
+  assert.throws(matcher([{ taskId: "a#build", directory: "a", outputs: ["../../x/**"] }]), /outside the repository/);
+  assert.throws(matcher([{ taskId: "a#build", directory: "a", outputs: ["dist**"] }]), /unsupported output glob/);
+  assert.throws(matcher([{ taskId: "a#build", directory: "a", outputs: ["{a,b"] }]), /unsupported output glob/);
 });
 
 test("--check-clean escapes annotation properties in a file name", () => {
