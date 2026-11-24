@@ -52,22 +52,20 @@ describe('storage keys (FILE-30 F-01)', () => {
     return fileFn.completeUploadSession({ uploadSessionId: session.uploadSessionId }, ctx);
   }
 
-  it('a traversal file name stays inside its own key, so it cannot overwrite or delete the owner object (P1)', async () => {
+  it('a traversal file name is refused at init, and the key builder keeps one inside its own key anyway (P1)', async () => {
     const fileFn = makeFileFn();
     const alice = { principalId: 'alice', tenantId: 't1' };
     const bob = { principalId: 'bob', tenantId: 't1' };
     const aliceFile = await upload(fileFn, alice, 'report.txt', 'alice original');
     const [aliceKey] = await listObjects(rootDir);
 
-    const bobFile = await upload(fileFn, bob, `../../../../${aliceKey}`, 'BOB-WAS-HERE');
-    const objects = await listObjects(rootDir);
-    expect(objects).toHaveLength(2);
-    const bobKey = objects.find((key) => key !== aliceKey)!;
-    expect(bobKey.startsWith(`t1/bob/${bobFile.fileId}/`)).toBe(true);
+    await expect(
+      fileFn.createUploadSession({ policy: 'docs', fileName: `../../../../${aliceKey}`, size: 1, mimeType: 'text/plain' }, bob),
+    ).rejects.toMatchObject({ code: 'FILEFN_INVALID_REQUEST' });
+    // A name reaching the key builder another way still stays in its segment.
+    const bobKey = computeStoragePath({ name: 'p' }, { tenantId: 't1', principalId: 'bob', fileName: `../../../../${aliceKey}`, fileId: 'file_1', versionId: 'ver_1' });
+    expect(bobKey.startsWith('t1/bob/file_1/')).toBe(true);
     expect(unsafeStorageKeyReason(bobKey)).toBeNull();
-    expect(await readFile(join(rootDir, aliceKey), 'utf8')).toBe('alice original');
-
-    await fileFn.deleteFile({ fileId: bobFile.fileId }, bob);
     expect(await listObjects(rootDir)).toEqual([aliceKey]);
     const download = await fileFn.services.files.getDownloadStream(aliceFile.fileId, undefined, alice);
     expect(await new Response(download.stream).text()).toBe('alice original');
@@ -130,14 +128,15 @@ describe('storage keys (FILE-30 F-01)', () => {
 
   it('shortens a long file name in the key so the segment fits a 255-byte filesystem name', async () => {
     const fileFn = makeFileFn();
-    const longName = `${'f'.repeat(140)}/${'n'.repeat(120)}.txt`;
+    // 204 characters (allowed) but 404 bytes in UTF-8.
+    const longName = `${'é'.repeat(200)}.txt`;
     await upload(fileFn, { principalId: 'alice', tenantId: 't1' }, longName, 'hello');
     const [key] = await listObjects(rootDir);
     const last = key.split('/').pop()!;
     expect(new TextEncoder().encode(last).length).toBeLessThan(200);
     expect(last.endsWith('.txt')).toBe(true);
     const other = computeStoragePath({ name: 'p' }, { fileName: `${'f'.repeat(140)}/${'m'.repeat(120)}.txt`, fileId: 'file_1', versionId: 'ver_1' });
-    const same = computeStoragePath({ name: 'p' }, { fileName: longName, fileId: 'file_1', versionId: 'ver_1' });
+    const same = computeStoragePath({ name: 'p' }, { fileName: `${'f'.repeat(140)}/${'n'.repeat(120)}.txt`, fileId: 'file_1', versionId: 'ver_1' });
     expect(other).not.toBe(same);
   });
 
