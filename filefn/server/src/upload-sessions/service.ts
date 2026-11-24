@@ -19,6 +19,7 @@ import { generateFileFnId } from '../ids.js';
 import { parseRequestedFileId, SERIALIZED_WAIT_TIMEOUT_MS } from './file-id.js';
 import { assertValidUploadInit, type UploadInitInput } from './input.js';
 import { createFileCommitLock, runFileFnSerialized } from '../files/file-commit-lock.js';
+import { isAnonymousContext } from '../authz/ownership.js';
 import { findReferencedStorageRefs, storageRef } from '../storage-references.js';
 import {
   createUploadStartedEvent,
@@ -226,8 +227,15 @@ function hashPayload(
   return createHash('sha256').update(str).digest('hex');
 }
 
-function isAnonymousContext(ctx: FileProviderContext): boolean {
-  return !ctx.principalId || ctx.principalId === 'anonymous';
+/**
+ * The value stored in `uploadSessions.idempotencyKey`: the client's key hashed
+ * with the caller's owner and tenant, so the (unique) column is per caller.
+ */
+const SCOPED_IDEMPOTENCY_KEY = /^idem_[0-9a-f]{64}$/;
+
+function scopeIdempotencyKey(idempotencyKey: string, ctx: FileProviderContext): string {
+  const scope = JSON.stringify([ctx.principalId || 'anonymous', ctx.tenantId || null, idempotencyKey]);
+  return `idem_${createHash('sha256').update(scope).digest('hex')}`;
 }
 
 function isAnonymousSession(session: UploadSession): boolean {
@@ -1279,10 +1287,10 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
 
   const service = {
     assertSessionAccess(session: UploadSession, ctx: FileProviderContext, uploadSessionToken?: string): void {
-      // Legacy safety: pre-binding records may not carry ownerId.
-      // Current sessions always persist ownerId, so this only preserves older fixtures.
+      // Every session row records its owner. A row without one is refused rather
+      // than treated as open to every caller.
       if (!session.ownerId) {
-        return;
+        throw errors.forbidden();
       }
 
       if (!isAnonymousSession(session)) {
@@ -1372,41 +1380,52 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       };
       const requestedFileId = parseRequestedFileId(input.fileId as unknown);
 
-      // Check idempotency
-      if (input.idempotencyKey) {
-        const existing = await db.findOne<UploadSession>({
+      // Check idempotency. The stored key is scoped to the caller (owner and
+      // tenant), so one caller's key never finds or blocks another caller's
+      // session.
+      // Anonymous callers get no idempotency: they all share one scope, and a
+      // replay could only return the session without its token (which only
+      // the creator holds), dead-ending the client's retry. A retry instead
+      // gets a fresh session and token; the abandoned one expires.
+      const scopedIdempotencyKey = input.idempotencyKey && !isAnonymousContext(ctx)
+        ? scopeIdempotencyKey(input.idempotencyKey, ctx)
+        : null;
+      if (scopedIdempotencyKey && input.idempotencyKey) {
+        const expectedHash = hashPayload(input, { principalId: ctx.principalId, tenantId: ctx.tenantId }, checkedMetadataJson);
+        let existing = await db.findOne<UploadSession>({
           model: 'uploadSessions',
-          where: [{ field: 'idempotencyKey', operator: 'eq', value: input.idempotencyKey }],
+          where: [{ field: 'idempotencyKey', operator: 'eq', value: scopedIdempotencyKey }],
           namespace,
         });
+        // A row found under the scoped value must be this caller's (a legacy
+        // raw key could equal it); otherwise it is not this caller's session.
+        if (existing && (existing.ownerId !== ctx.principalId || (existing.tenantId || null) !== (ctx.tenantId || null))) {
+          throw errors.idempotencyConflict();
+        }
+        if (!existing && !SCOPED_IDEMPOTENCY_KEY.test(input.idempotencyKey)) {
+          // A session created before keys were scoped stores the raw key; it is
+          // this caller's only if owner and tenant match. A raw key shaped like
+          // a scoped one is never treated as legacy.
+          const legacy = await db.findOne<UploadSession>({
+            model: 'uploadSessions',
+            where: [{ field: 'idempotencyKey', operator: 'eq', value: input.idempotencyKey }],
+            namespace,
+          });
+          if (
+            legacy &&
+            // Exactly the key sent (a case-insensitive column could match another).
+            legacy.idempotencyKey === input.idempotencyKey &&
+            legacy.ownerId === ctx.principalId &&
+            (legacy.tenantId || null) === (ctx.tenantId || null)
+          ) {
+            existing = legacy;
+          }
+        }
 
         if (existing) {
-          const expectedHash = hashPayload(input, { principalId: ctx.principalId, tenantId: ctx.tenantId }, checkedMetadataJson);
           if (existing.idempotencyPayloadHash !== expectedHash) {
             throw errors.idempotencyConflict();
           }
-
-          let uploadSessionToken: string | undefined;
-          if (isAnonymousSession(existing)) {
-            if (existing.uploadSessionToken) {
-              uploadSessionToken = existing.uploadSessionToken;
-            } else {
-              // Older sessions may only have the hash persisted. Preserve access by
-              // minting and persisting a replacement token once, then replay it
-              // deterministically for future idempotent responses.
-              uploadSessionToken = generateUploadSessionToken();
-              await db.update({
-                model: 'uploadSessions',
-                where: [{ field: 'uploadSessionId', operator: 'eq', value: existing.uploadSessionId }],
-                data: {
-                  uploadSessionToken,
-                  uploadSessionTokenHash: hashUploadSessionToken(uploadSessionToken),
-                },
-                namespace,
-              });
-            }
-          }
-
           return {
             uploadSessionId: existing.uploadSessionId,
             uploadMode: existing.uploadMode,
@@ -1414,7 +1433,6 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
             totalParts: existing.totalParts,
             expiresAt: existing.expiresAt,
             warnings: [],
-            uploadSessionToken,
           };
         }
       }
@@ -1557,9 +1575,10 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
           ownerId: ctx.principalId || 'anonymous',
           tenantId: ctx.tenantId || null,
           metadata: input.metadata ?? {},
-          idempotencyKey: input.idempotencyKey || null,
-          idempotencyPayloadHash: input.idempotencyKey ? hashPayload(input, { principalId: ctx.principalId, tenantId: ctx.tenantId }, checkedMetadataJson) : null,
-          uploadSessionToken: uploadSessionToken || null,
+          idempotencyKey: scopedIdempotencyKey,
+          idempotencyPayloadHash: scopedIdempotencyKey ? hashPayload(input, { principalId: ctx.principalId, tenantId: ctx.tenantId }, checkedMetadataJson) : null,
+          // Only the hash is kept; the token is returned once, below.
+          uploadSessionToken: null,
           uploadSessionTokenHash,
           expiresAt,
           createdAt: now.toISOString(),

@@ -17,6 +17,7 @@ import {
   normalizeMimeType,
   type ClientArtifactProcessingMetadata,
 } from './client-artifacts.js';
+import { isFileOwner } from '../authz/ownership.js';
 
 export interface Processor {
   name: string;
@@ -652,7 +653,7 @@ export function createProcessingService(config: ProcessingServiceConfig) {
 
   function canReadByVisibility(file: FileRecord, ctx: FileProviderContext): boolean {
     if (file.visibility === 'public') return true;
-    if (file.ownerId === ctx.principalId) return true;
+    if (isFileOwner(file, ctx)) return true;
     if (file.visibility === 'shared' && file.tenantId && file.tenantId === ctx.tenantId) return true;
     return false;
   }
@@ -754,7 +755,7 @@ export function createProcessingService(config: ProcessingServiceConfig) {
     }
     const canWrite = writeChecker
       ? await writeChecker.canWriteFile(fileId, ctx)
-      : Boolean(ctx.principalId) && file.ownerId === ctx.principalId;
+      : isFileOwner(file, ctx);
     if (!canWrite) {
       throw errors.forbidden();
     }

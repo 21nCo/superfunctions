@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 from .. import errors
 from ..models import FilePermissionRecord, FileProviderContext, FileRecord
+from .ownership import is_file_owner
 
 
 class CreateGrantInput(BaseModel):
@@ -40,7 +41,7 @@ class GrantsService:
         return FileRecord(**data) if data else None
 
     async def _can_manage_permissions(self, file: FileRecord, ctx: FileProviderContext) -> bool:
-        return file.ownerId == ctx.principalId
+        return is_file_owner(file, ctx)
 
     async def create_grant(self, input: CreateGrantInput, ctx: FileProviderContext) -> FilePermissionRecord:
         file = await self._get_file(input.fileId)

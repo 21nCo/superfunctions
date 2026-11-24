@@ -1,11 +1,13 @@
 import hashlib
 import json
+import re
 import secrets
 from datetime import datetime, timedelta, timezone
 from tempfile import SpooledTemporaryFile
 from typing import Any, Dict, List, Optional, Protocol, cast
 
 from pydantic import BaseModel
+from superfunctions.db.errors import DuplicateKeyError, NotFoundError
 
 from .. import errors
 from ..events import (
@@ -68,6 +70,16 @@ class CreateSessionInput(BaseModel):
     idempotencyKey: Optional[str] = None
 
 
+def _scope_idempotency_key(idempotency_key: str, ctx: FileProviderContext) -> str:
+    """Hash the client's key with the caller's owner and tenant (same value as the TypeScript server)."""
+    scope = json.dumps(
+        [getattr(ctx, "principalId", None) or "anonymous", getattr(ctx, "tenantId", None) or None, idempotency_key],
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
+    return "idem_" + hashlib.sha256(scope.encode("utf-8")).hexdigest()
+
+
 class UploadSessionService:
     def __init__(self, config: UploadSessionServiceConfig):
         self.db = config.db
@@ -104,19 +116,6 @@ class UploadSessionService:
     def _hash_session_token(self, token: str) -> str:
         return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
-    async def _issue_anonymous_session_token(self, upload_session_id: str) -> str:
-        upload_session_token = secrets.token_urlsafe(32)
-        await self.db.update(
-            model="uploadSessions",
-            where=[{"field": "uploadSessionId", "operator": "eq", "value": upload_session_id}],
-            data={
-                "uploadSessionToken": None,
-                "sessionTokenHash": self._hash_session_token(upload_session_token),
-            },
-            namespace=self.namespace,
-        )
-        return upload_session_token
-
     def _extract_upload_session_token(self, ctx: Any) -> Optional[str]:
         for attr in ("uploadSessionToken", "upload_session_token", "sessionToken", "session_token"):
             value = getattr(ctx, attr, None)
@@ -146,7 +145,11 @@ class UploadSessionService:
         owner_id = session_data.get("ownerId")
         tenant_id = session_data.get("tenantId")
 
-        if owner_id and owner_id != "anonymous":
+        # Every session row records its owner; one without is refused.
+        if not owner_id:
+            raise errors.forbidden({"uploadSessionId": session_data.get("uploadSessionId")})
+
+        if owner_id != "anonymous":
             if getattr(ctx, "principalId", None) != owner_id:
                 raise errors.forbidden({"uploadSessionId": session_data.get("uploadSessionId")})
             if tenant_id != getattr(ctx, "tenantId", None):
@@ -216,19 +219,52 @@ class UploadSessionService:
         if not ctx.principalId and not self.allow_anonymous_uploads:
             raise errors.auth_required()
 
-        if input.idempotencyKey:
+        # The stored key is scoped to the caller, so one caller's key never finds
+        # or blocks another caller's session.
+        # Anonymous callers get no idempotency: they share one scope, and a replay
+        # could only return the session without its token (which only the
+        # creator holds). A retry gets a fresh session and token instead.
+        anonymous = not ctx.principalId or ctx.principalId == "anonymous"
+        scoped_idempotency_key = (
+            _scope_idempotency_key(input.idempotencyKey, ctx) if input.idempotencyKey and not anonymous else None
+        )
+        if scoped_idempotency_key:
             existing_data = await self.db.find_one(
                 model="uploadSessions",
-                where=[{"field": "idempotencyKey", "operator": "eq", "value": input.idempotencyKey}],
+                where=[{"field": "idempotencyKey", "operator": "eq", "value": scoped_idempotency_key}],
                 namespace=self.namespace,
             )
+            # A row found under the scoped value must be this caller's (a legacy raw
+            # key could equal it).
+            if existing_data and (
+                existing_data.get("ownerId") != ctx.principalId
+                or (existing_data.get("tenantId") or None) != (getattr(ctx, "tenantId", None) or None)
+            ):
+                raise errors.idempotency_conflict()
+            if not existing_data and not re.fullmatch(r"idem_[0-9a-f]{64}", input.idempotencyKey or ""):
+                # A session created before keys were scoped stores the raw key; it
+                # is this caller's only if owner and tenant match. A raw key shaped
+                # like a scoped one is never treated as legacy.
+                legacy = await self.db.find_one(
+                    model="uploadSessions",
+                    where=[{"field": "idempotencyKey", "operator": "eq", "value": input.idempotencyKey}],
+                    namespace=self.namespace,
+                )
+                if (
+                    legacy
+                    # Exactly the key sent (a case-insensitive column could match another).
+                    and legacy.get("idempotencyKey") == input.idempotencyKey
+                    and legacy.get("ownerId") == ctx.principalId
+                    and (legacy.get("tenantId") or None) == (getattr(ctx, "tenantId", None) or None)
+                ):
+                    existing_data = legacy
             if existing_data:
                 existing = UploadSessionRecord(**existing_data)
                 expected_hash = self._hash_payload(input, ctx)
                 if existing.idempotencyPayloadHash != expected_hash:
                     raise errors.idempotency_conflict()
 
-                result: Dict[str, Any] = {
+                return {
                     "uploadSessionId": existing.uploadSessionId,
                     "fileId": existing.fileId,
                     "uploadMode": existing.uploadMode,
@@ -237,12 +273,6 @@ class UploadSessionService:
                     "expiresAt": existing.expiresAt,
                     "warnings": [],
                 }
-                if existing.ownerId == "anonymous":
-                    issued_upload_session_token = await self._issue_anonymous_session_token(
-                        existing.uploadSessionId,
-                    )
-                    result["uploadSessionToken"] = issued_upload_session_token
-                return result
 
         policy = self.policies.get(input.policy)
         if not policy:
@@ -295,6 +325,17 @@ class UploadSessionService:
             versionId=version_id,
         )
         storage_key = compute_storage_path(policy, storage_ctx)
+        # The key must contain this session's version ID, so two sessions (for
+        # example two anonymous inits that are no longer replayed) never share
+        # an object; a storagePath that drops it is refused, as in TypeScript.
+        if version_id not in storage_key:
+            # A policy misconfiguration, answered as the TypeScript server does.
+            raise errors.FileFnError(
+                "FILEFN_STORAGE_PATH_NOT_PER_VERSION",
+                "Policy storagePath must return a key that contains the full versionId",
+                500,
+                {"policy": input.policy},
+            )
 
         storage_upload_id: Optional[str] = None
         if upload_mode == "multipart-signed-url":
@@ -333,8 +374,8 @@ class UploadSessionService:
                 "ownerId": owner_id,
                 "tenantId": ctx.tenantId,
                 "metadata": input.metadata or {},
-                "idempotencyKey": input.idempotencyKey,
-                "idempotencyPayloadHash": self._hash_payload(input, ctx) if input.idempotencyKey else None,
+                "idempotencyKey": scoped_idempotency_key,
+                "idempotencyPayloadHash": self._hash_payload(input, ctx) if scoped_idempotency_key else None,
                 "uploadSessionToken": None,
                 "sessionTokenHash": session_token_hash,
                 "expiresAt": expires_at,
@@ -663,21 +704,64 @@ class UploadSessionService:
             namespace=self.namespace,
         )
 
+        def refuse_replace() -> None:
+            # The finalized object is left in place: without a completion fence
+            # another call for this session may still be publishing it, so
+            # deleting it here could remove a published version's bytes.
+            raise errors.forbidden({"fileId": file_id, "operation": "replace"})
+
+        if existing_file and existing_file.get("currentVersionId") != version_id:
+            # Another completion created the file meanwhile: replacing it needs
+            # write access to that row, checked now (FILE-30 F-02).
+            if self.file_write_checker and not await self.file_write_checker.can_write_file(file_id, ctx):
+                refuse_replace()
+
         if existing_file:
-            await self.db.update(
-                model="files",
-                where=[{"field": "fileId", "operator": "eq", "value": file_id}],
-                data={
-                    "currentVersionId": version_id,
-                    "size": session.size,
-                    "mimeType": session.mimeType,
-                    "metadata": metadata,
-                    "updatedAt": now_str,
-                },
-                namespace=self.namespace,
-            )
+            # Conditional on the row that was authorized: a row deleted or
+            # replaced since is not overwritten.
+            # A single conditional UPDATE where the adapter has one (update_many
+            # returns the row count); a zero-row or not-found result is refused.
+            conditional_update = getattr(self.db, "update_many", None) or self.db.update
+            current = existing_file
+            updated = None
+            # A concurrent authorized replacement may advance the row between the
+            # read and the update: reload, re-authorize and try again (bounded).
+            for _ in range(3):
+                try:
+                    updated = await conditional_update(
+                        model="files",
+                        where=[
+                            {"field": "fileId", "operator": "eq", "value": file_id},
+                            {"field": "currentVersionId", "operator": "eq", "value": current.get("currentVersionId")},
+                        ],
+                        data={
+                            "currentVersionId": version_id,
+                            "size": session.size,
+                            "mimeType": session.mimeType,
+                            "metadata": metadata,
+                            "updatedAt": now_str,
+                        },
+                        namespace=self.namespace,
+                    )
+                except NotFoundError:
+                    # Only a missing row counts as losing it; other errors propagate.
+                    updated = None
+                if updated:
+                    break
+                current = await self.db.find_one(
+                    model="files",
+                    where=[{"field": "fileId", "operator": "eq", "value": file_id}],
+                    namespace=self.namespace,
+                )
+                if not current:
+                    break
+                if self.file_write_checker and not await self.file_write_checker.can_write_file(file_id, ctx):
+                    break
+            if not updated:
+                refuse_replace()
         else:
-            await self.db.create(
+            try:
+                await self.db.create(
                 model="files",
                 data={
                     "fileId": file_id,
@@ -694,7 +778,11 @@ class UploadSessionService:
                     "updatedAt": now_str,
                 },
                 namespace=self.namespace,
-            )
+                )
+            except DuplicateKeyError:
+                # Another completion created this file ID first (its unique key):
+                # this one may not publish over it. Other errors propagate.
+                refuse_replace()
 
         await self.db.create(
             model="fileVersions",

@@ -28,6 +28,8 @@ The server:
 
 The window is the upload-session TTL. Re-using a key after the session expires creates a new session.
 
+Unauthenticated (anonymous) callers get no idempotency: they all share one scope, and only the caller that created a session holds its `uploadSessionToken`, so a retry always creates a fresh session with its own token. The abandoned session expires on its own.
+
 ## What's in the payload hash
 
 ```ts
