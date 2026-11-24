@@ -196,4 +196,26 @@ describe('declared upload size is enforced (FILE-30 F-05)', () => {
     });
     expect([...store.objects.keys()]).toEqual([]);
   });
+
+  it('removes an aborted proxy part write when the session is aborted, even without a part row', async () => {
+    const fileFn = createFileFn({
+      database: memoryAdapter(),
+      storage: createLocalStorageAdapter({ rootDir }),
+      policies: [{ name: 'small', maxSizeBytes: 1024 }],
+    });
+    const session = await fileFn.createUploadSession({ policy: 'small', fileName: 'a.bin', size: 10, mimeType: 'application/octet-stream' }, alice);
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(6));
+        controller.enqueue(new Uint8Array(6));
+        controller.close();
+      },
+    });
+    await expect(fileFn.services.uploads.uploadPartBytes(session.uploadSessionId, 1, stream, 0, alice)).rejects.toMatchObject({
+      code: 'FILEFN_PART_TOO_LARGE',
+    });
+    await fileFn.abortUploadSession({ uploadSessionId: session.uploadSessionId }, alice);
+    const files = await readdir(rootDir, { recursive: true, withFileTypes: true });
+    expect(files.filter((entry) => entry.isFile())).toEqual([]);
+  });
 });

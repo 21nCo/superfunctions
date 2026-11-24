@@ -364,19 +364,26 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
     const policy = policies.get(session.policy);
     const storageTarget = policy ? resolveStorageTarget(policy) : undefined;
 
-    const parts = await db.findMany<{ partNumber: number }>({
+    // Every part key of the session, recorded or not: an aborted part write
+    // (an oversized stream, a dropped connection) can leave bytes on adapters
+    // that write in place, without a part row. The keys are this session's
+    // alone, and deletes of missing objects are no-ops.
+    const recorded = await db.findMany<{ partNumber: number }>({
       model: 'uploadParts',
       where: [{ field: 'uploadSessionId', operator: 'eq', value: session.uploadSessionId }],
       select: ['partNumber'],
       namespace,
     });
+    const partNumbers = new Set<number>(recorded.map((part) => part.partNumber));
+    for (let n = 1; n <= (session.totalParts ?? 0); n++) partNumbers.add(n);
 
     let allDeleted = true;
-    for (const part of parts) {
+    for (const partNumber of partNumbers) {
       try {
-        await storage.deleteObject({ key: proxyPartKey(session.storageKey, part.partNumber), target: storageTarget });
-      } catch {
-        allDeleted = false;
+        await storage.deleteObject({ key: proxyPartKey(session.storageKey, partNumber), target: storageTarget });
+      } catch (error) {
+        // A part that was never written is already gone.
+        if ((error as { code?: string } | null)?.code !== 'STORAGE_NOT_FOUND') allDeleted = false;
       }
     }
     return allDeleted;
@@ -2012,7 +2019,8 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
           // uploaded is deleted: an oversized object is never left in storage.
           if (!(await fenceRefusedSession(uploadSessionId, claim))) {
             // Taken over meanwhile: this call's own stitch is never published.
-            if (session.uploadMode === 'proxy' && attemptKey !== session.storageKey) {
+            if (session.uploadMode === 'proxy') {
+              // Reference-checked: never removes what the winner published.
               await deleteAttemptObject(session, attemptKey, policyStorageTarget).catch(() => false);
             }
             return lostClaimResult(uploadSessionId);
