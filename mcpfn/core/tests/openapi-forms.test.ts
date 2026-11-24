@@ -2547,16 +2547,20 @@ describe("fromOpenAPI body fallback, synchronous schemas, per-kind alternatives 
 
   it("refuses a too-long reference chain once per call, whatever the stack left to walk it", () => {
     const depth = 20_000;
-    const build = (operations: number, deepest: { reads: number }) => {
+    // Reads of the chain's first 100 links count how often it is walked.
+    const build = (operations: number, links: { reads: number }) => {
       const schemas: Record<string, unknown> = {};
-      for (let index = 0; index < depth - 1; index += 1) schemas[`D${index}`] = { allOf: [{ $ref: `#/components/schemas/D${index + 1}` }] };
-      schemas[`D${depth - 1}`] = Object.defineProperty({}, "type", {
-        enumerable: true,
-        get: () => {
-          deepest.reads += 1;
-          return "object";
-        },
-      });
+      for (let index = 0; index < depth - 1; index += 1) {
+        const allOf = [{ $ref: `#/components/schemas/D${index + 1}` }];
+        schemas[`D${index}`] = index >= 100 ? { allOf } : Object.defineProperty({}, "allOf", {
+          enumerable: true,
+          get: () => {
+            links.reads += 1;
+            return allOf;
+          },
+        });
+      }
+      schemas[`D${depth - 1}`] = { type: "object" };
       schemas.W = { allOf: [...Array.from({ length: 1000 }, () => ({ type: "object" })), { $ref: "#/components/schemas/D0" }] };
       schemas.Short = { allOf: [{ $ref: `#/components/schemas/D${depth - 10}` }] };
       const paths: Record<string, unknown> = { "/ok": { get: { operationId: "ok", responses: ok } } };
@@ -2573,7 +2577,8 @@ describe("fromOpenAPI body fallback, synchronous schemas, per-kind alternatives 
     const repeated = outcome(fromOpenAPI(build(1000, many), options()));
     expect(single).toEqual([[["ok", false], ["short", true]], ["schema-too-large: a schema or reference chain nests too deeply"]]);
     expect(repeated).toEqual(single);
-    // The deep end of the chain is read as often for 1,000 operations as for one.
+    // The chain is read as often for 1,000 operations as for one.
+    expect(one.reads).toBeGreaterThan(0);
     expect(many.reads).toBe(one.reads);
     // Run with thousands of frames already on the stack: the same result.
     const nested = (frames: number): ReturnType<typeof outcome> =>
