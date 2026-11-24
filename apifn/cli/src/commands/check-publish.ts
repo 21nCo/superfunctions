@@ -54,7 +54,7 @@
  * Residual: POSIX has no compare-and-swap rename, so a replacement made between the last check
  * and the rename (a window of one system call) is not detected. Node has no mkdirat either: a
  * directory swapped in between the run's mkdir and its open of that name (one system call) is held
- * as the run's; rollback removes it only while it is empty (on Windows, which holds no handle, it is named). A run that cannot clean up (killed
+ * as the run's; rollback removes it only while it is empty. A run that cannot clean up (killed
  * by SIGKILL, a crash) can leave an empty reservation at an output's own name or a staged temp
  * file beside it; output bytes never become reachable through a protected name, because every
  * name that holds them was checked while it was still empty.
@@ -358,8 +358,8 @@ interface Staged {
   bytes: Buffer;
   /** The staged file's identity (after the rename, its change time then), read through `fd`. */
   installed?: FileState;
-  /** The directories this run created for the destination, deepest first, with their identities and whether a handle holds them. */
-  created: Array<Anchor & { held: boolean }>;
+  /** The directories this run created for the destination, deepest first, with their identities. */
+  created: Anchor[];
   backup?: string;
   backupState?: FileState;
   /** True when the backup is a hard link to the observed file (not a copy); only a file the run read whole is backed up. */
@@ -420,7 +420,8 @@ function backupVerified(staged: Staged): boolean {
   if (staged.backup === undefined || !made || fd === undefined || !dirsHold(staged)) return false; // never made: not this run's
   const was = stateOf(fstatSync(fd, BIG));
   if (!sameContent(was, made)) return false;
-  const intact = staged.linked ? typeof staged.digest === "string" && digestOf(fd) === staged.digest : holdsBytes(fd, staged.previous as Buffer);
+  // An incomplete copy (its write failed) is this run's own inode, never restored: only its identity is checked.
+  const intact = staged.linked ? typeof staged.digest === "string" && digestOf(fd) === staged.digest : staged.previous === undefined || holdsBytes(fd, staged.previous);
   const read = stateOf(fstatSync(fd, BIG)); // an edit, even one restoring the mtime, changes the change time
   return intact && sameState(read, was) && sameState(currentState(staged.backup), read);
 }
@@ -453,11 +454,10 @@ function removeBackup(staged: Staged): string | null {
 
 /**
  * Removes the directories this run created for a destination, deepest first, while empty and
- * still the directory this run created (another process's replacement is left alone); one without a held handle is named.
+ * still the directory this run created (another process's replacement is left alone).
  */
 function removeCreatedDirs(staged: Staged): string | null {
   for (const created of staged.created) {
-    if (!created.held) return `${created.dir}, a directory apifn check created for ${staged.destination}, was left in place: apifn check held no handle on it, so it cannot tell it from another writer's.`;
     if (!stillAnchored(created)) return null;
     try {
       rmdirSync(created.dir);
@@ -485,15 +485,15 @@ function makeParents(staged: Staged, hook: PublishHook | undefined, verify: Veri
     // run made, so it is never recorded and rollback never removes it.
     const made = holdDir(staged, dir);
     if (!made.isDirectory()) throw changed(staged);
-    staged.created.unshift({ dir, dev: made.dev, ino: made.ino, held: process.platform !== "win32" });
+    staged.created.unshift({ dir, dev: made.dev, ino: made.ino });
     hook?.("mkdir", dir);
     verify(staged);
   }
 }
 
 /** Opens a directory this run created without following a link and keeps it open (POSIX), so its
- * identity cannot pass to another directory while the run may remove it. Windows opens no directory
- * handle here, so rollback never removes such a directory: it names it (removeCreatedDirs). */
+ * identity cannot pass to another directory while the run may remove it. Windows cannot open a directory
+ * here; its file ID carries a sequence number that a reused file record changes. */
 function holdDir(staged: Staged, dir: string): BigIntStats {
   if (process.platform === "win32") return lstatSync(dir, BIG);
   const fd = openSync(dir, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
@@ -686,6 +686,9 @@ function backUp(staged: Staged): void {
     fchmodSync(fd, before.mode & 0o7777);
     writeFileSync(fd, staged.previous);
     fsyncSync(fd);
+  } catch (error) {
+    staged.previous = undefined;
+    throw error;
   } finally {
     staged.backupState = stateOf(fstatSync(fd, BIG));
   }
@@ -726,6 +729,7 @@ function install(staged: Staged, hook: PublishHook | undefined, verify: Verify):
     throw changed(staged);
   }
   if (!sameState(currentState(staged.temp as string), staged.installed as FileState)) throw changed(staged);
+  if (staged.backup !== undefined && !backupVerified(staged)) throw changed(staged); // never replace without a restorable backup
   renameSync(staged.temp as string, staged.destination);
   staged.temp = undefined;
   staged.published = true;
@@ -769,6 +773,8 @@ function rollBack(staged: Staged, hook: PublishHook | undefined): string | null 
     if (!backupVerified(staged)) {
       return `${staged.backup}, apifn check's backup of ${staged.destination}, changed or is gone, so ${staged.destination} was left with the bytes apifn check wrote and the backup was left as it is.`;
     }
+    // The destination again after the backup's read: one replaced meanwhile is left as it is.
+    if (!sameState(currentState(staged.destination), staged.installed as FileState)) return `${staged.destination} changed after apifn check wrote it, so it was left as it is. Its previous bytes are in ${staged.backup}.`;
     renameSync(staged.backup, staged.destination);
   } else {
     unlinkSync(staged.destination);

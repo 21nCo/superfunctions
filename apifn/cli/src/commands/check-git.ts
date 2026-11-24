@@ -33,7 +33,7 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { accessSync, constants, lstatSync, realpathSync, statSync } from "node:fs";
+import { accessSync, constants, lstatSync, readFileSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 import { decodeUtf8 } from "./check-io.js";
 import { MAX_SPEC_BYTES } from "./check-parse.js";
@@ -381,24 +381,36 @@ export interface GitBaseline {
 /** The native realpath of the git work tree holding `dir` and its git directory, or null with git's reason. */
 function workTreeOf(executable: string, dir: string): { root: string; gitDir: string; commonDir: string } | { root: null; reason: string } {
   // All three paths come from one rev-parse, so they name one repository, never a mix of two.
-  const out = new Git(executable, dir).run(["rev-parse", "--show-toplevel", "--absolute-git-dir", "--git-common-dir"]);
+  const flags = ["--show-toplevel", "--absolute-git-dir", "--git-common-dir"];
+  const out = new Git(executable, dir).run(["rev-parse", ...flags]);
   if (out.code !== 0) return { root: null, reason: out.stderr.trim() || `exit status ${out.code}` };
-  const paths = out.stdout.replace(/\n$/, "").split("\n");
-  if (paths.length !== 3) throw new CheckUsageError(`git rev-parse in ${dir} printed a repository path that holds a line break; apifn check cannot bind it.`);
+  const combined = out.stdout.replace(/\n$/, "");
+  let paths = combined.split("\n");
+  // A path holding a line feed is split by each flag's own output, which must join back to that one output exactly.
+  if (paths.length !== 3) paths = flags.map((flag) => new Git(executable, dir).ok(["rev-parse", flag]).replace(/\n$/, ""));
+  if (paths.join("\n") !== combined) throw new CheckUsageError(`The git repository at ${dir} changed while apifn check discovered it.`);
   const [top, gitDir, common] = paths;
   return { root: realpathSync.native(top), gitDir, commonDir: path.resolve(dir, common) };
 }
 
-/** The identity of each `.git` entry git's discovery reads from `dir` up to the filesystem root. */
+/** What git's discovery reads from `dir` up to the root: each `.git` entry's identity, and for a gitfile
+ * its bytes and change time, the git directory it names and that directory's commondir (and its target). */
 function discoveryEntries(dir: string): string {
+  const id = (file: string, depth = 0): string => {
+    try {
+      const stats = lstatSync(file, { bigint: true, throwIfNoEntry: false });
+      if (!stats?.isFile() || depth > 2) return stats ? `${stats.dev}:${stats.ino}` : "-";
+      const text = readFileSync(file, "utf8");
+      const named = path.basename(file) === "commondir" ? text.replace(/\n$/, "") : /^gitdir: (.+)\n?$/.exec(text)?.[1];
+      const target = named === undefined ? null : path.resolve(path.dirname(file), named);
+      return `${stats.dev}:${stats.ino}:${stats.ctimeNs}:${text}` + (target ? `>${id(target)}>${id(path.join(target, "commondir"), depth + 1)}` : "");
+    } catch {
+      return "?";
+    }
+  };
   const ids: string[] = [];
   for (let at = realpathSync.native(dir); ; at = path.dirname(at)) {
-    try {
-      const id = lstatSync(path.join(at, ".git"), { bigint: true, throwIfNoEntry: false });
-      ids.push(id ? `${id.dev}:${id.ino}` : "-");
-    } catch {
-      ids.push("?");
-    }
+    ids.push(id(path.join(at, ".git")));
     if (path.dirname(at) === at) return ids.join("/");
   }
 }

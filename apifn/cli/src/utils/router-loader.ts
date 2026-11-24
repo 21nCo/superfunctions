@@ -19,7 +19,7 @@ function isRouter(value: unknown): value is Router<unknown> {
 function interopDefault(namespace: Record<string, unknown>, enabled: boolean): Record<string, unknown> {
   const inner = namespace.default as Record<string, unknown> | null | undefined;
   if (!enabled || inner === null || (typeof inner !== "object" && typeof inner !== "function")) return namespace;
-  const unwrapped = typeof inner.default === "function" && namespace.__esModule ? inner.default : inner;
+  const unwrapped = !isRouter(inner) && typeof inner.default === "function" && namespace.__esModule ? inner.default : inner;
   return { ...namespace, default: unwrapped, router: "router" in namespace ? namespace.router : inner.router };
 }
 
