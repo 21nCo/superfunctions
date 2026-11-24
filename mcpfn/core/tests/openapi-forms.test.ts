@@ -1,7 +1,8 @@
+import Ajv from "ajv";
 import { describe, expect, it, vi } from "vitest";
 import { McpFnRegistry, McpFnValidationError } from "../src/index.js";
 import { fromOpenAPI } from "../src/openapi/index.js";
-import { SchemaConverter } from "../src/openapi/schema.js";
+import { NodeBudget, SchemaConverter } from "../src/openapi/schema.js";
 import {
   expectArguments,
   fixture,
@@ -2585,7 +2586,7 @@ describe("fromOpenAPI body fallback, synchronous schemas, per-kind alternatives 
     expect(nested(3000)).toEqual(single);
   }, 60_000);
 
-  it("refuses in-place chains past 128 links for every root, after the closure's own failures, and keeps chains validators compile", () => {
+  it("refuses reference chains past 150 definitions for every root, after the closure's own failures, and keeps chains validators compile", () => {
     const chain = (length: number) => {
       const schemas: Record<string, unknown> = {};
       for (let index = 0; index < length - 1; index += 1) schemas[`T${index}`] = { allOf: [{ $ref: `#/components/schemas/T${index + 1}` }] };
@@ -2631,8 +2632,8 @@ describe("fromOpenAPI body fallback, synchronous schemas, per-kind alternatives 
     expect(registered(isolated)).toEqual([["get", true]]);
     expect(isolated.skipped.map(({ code }) => code)).toEqual(["unsupported-schema-keyword"]);
     expect(converted).toBeLessThan(10);
-    // 65 to 128 links register as a response, a HEAD response, a body and a query parameter, under both engines.
-    for (const length of [65, 128]) {
+    // Chains of up to 150 definitions register as a response, a HEAD response, a body and a query parameter, under both engines.
+    for (const length of [65, 129, 150]) {
       const schemas = { ...chain(length), Q: { allOf: [{ $ref: "#/components/schemas/T0" }] } };
       const ref = { $ref: "#/components/schemas/T0" };
       const valid = fromOpenAPI(
@@ -2667,6 +2668,128 @@ describe("fromOpenAPI body fallback, synchronous schemas, per-kind alternatives 
       expectArguments(tool(query.tools, "q").inputSchema, { valid: [{ query: { x: 1 } }], invalid: [{ query: { x: "a" } }] });
     }
   }, 60_000);
+
+  it("counts only applied references toward the depth bound, in place or through properties, never an unused $defs entry", () => {
+    const schemas: Record<string, unknown> = { T199: { type: "object" }, P199: { type: "object" }, U149: { type: "object", properties: { n: { type: "integer" } }, required: ["n"] } };
+    for (let index = 0; index < 199; index += 1) {
+      schemas[`T${index}`] = { allOf: [{ $ref: `#/components/schemas/T${index + 1}` }] };
+      schemas[`P${index}`] = { type: "object", properties: { next: { $ref: `#/components/schemas/P${index + 1}` } } };
+    }
+    for (let index = 0; index < 149; index += 1) schemas[`U${index}`] = { allOf: [{ $ref: `#/components/schemas/U${index + 1}` }] };
+    const unused = { type: "object", properties: { a: { type: "string" } }, $defs: { x: { $ref: "#/components/schemas/T0" }, y: { $ref: "#/components/schemas/P0" } } };
+    const result = fromOpenAPI(
+      {
+        openapi: "3.1.0",
+        paths: {
+          "/unused": { get: { operationId: "unused", responses: json(unused) } },
+          "/inPlace": { get: { operationId: "inPlace", responses: json({ $ref: "#/components/schemas/T0" }) } },
+          "/property": { get: { operationId: "property", responses: json({ $ref: "#/components/schemas/P0" }) } },
+          "/body": {
+            post: {
+              operationId: "body",
+              requestBody: {
+                required: true,
+                content: {
+                  "application/json": { schema: { $ref: "#/components/schemas/U0" } },
+                  "application/merge-patch+json": { schema: { type: "object" } },
+                },
+              },
+              responses: ok,
+            },
+          },
+        },
+        components: { schemas },
+      },
+      options(),
+    );
+    expect(registered(result)).toEqual([["unused", true], ["body", false]]);
+    expect(skips(result)).toEqual([
+      ["inPlace", "schema-too-large", "a schema or reference chain nests too deeply"],
+      ["property", "schema-too-large", "a schema or reference chain nests too deeply"],
+    ]);
+    expectArguments(tool(result.tools, "unused").outputSchema!, { valid: [{ a: "x" }], invalid: [{ a: 1 }] });
+    // The preferred entry's 150-definition chain compiles, so it stays selected.
+    const body = tool(result.tools, "body");
+    expect(body.operation.requestBody?.contentType).toBe("application/json");
+    expectArguments(body.inputSchema, { valid: [{ body: { n: 1 } }], invalid: [{ body: {} }] });
+  });
+
+  it("walks a tail many wrappers share once per call, in place or through properties", () => {
+    const build = (operations: number, link: (next: string) => unknown) => {
+      const length = 1000;
+      const schemas: Record<string, unknown> = { [`T${length - 1}`]: { type: "object" } };
+      for (let index = 0; index < length - 1; index += 1) schemas[`T${index}`] = link(`#/components/schemas/T${index + 1}`);
+      const paths: Record<string, unknown> = { "/ok": { get: { operationId: "ok", responses: ok } } };
+      for (let index = 0; index < operations; index += 1) {
+        schemas[`W${index}`] = { allOf: [{ $ref: "#/components/schemas/T0" }] };
+        paths[`/w${index}`] = { get: { operationId: `w${index}`, responses: json({ $ref: `#/components/schemas/W${index}` }) } };
+      }
+      return { openapi: "3.0.3", paths, components: { schemas } };
+    };
+    const links = [
+      (next: string) => ({ allOf: [{ $ref: next }] }),
+      (next: string) => ({ type: "object", properties: { next: { $ref: next } } }),
+    ];
+    for (const link of links) {
+      const [result, reads] = countCalls("convertedComponent", () => fromOpenAPI(build(500, link), options()));
+      expect(registered(result)).toEqual([["ok", false]]);
+      expect(new Set(skips(result).map(([, code, reason]) => `${code}: ${reason}`))).toEqual(new Set(["schema-too-large: a schema or reference chain nests too deeply"]));
+      expect(result.skipped).toHaveLength(500);
+      // The tail once, plus each wrapper's own component.
+      expect(reads).toBeLessThanOrEqual(1000 + 2 * 500);
+    }
+  }, 60_000);
+
+  it("charges every tool's closure to the call's total, shared closures included", () => {
+    const charged = vi.spyOn(NodeBudget.prototype, "chargeNodes");
+    try {
+      const schemas = { Item: { type: "object", properties: { a: { type: "string" }, b: { type: "integer" } } } };
+      const ref = { $ref: "#/components/schemas/Item" };
+      const paths: Record<string, unknown> = {};
+      for (let index = 0; index < 5; index += 1) paths[`/g${index}`] = { get: { operationId: `g${index}`, responses: json(ref) } };
+      const result = fromOpenAPI({ openapi: "3.0.3", paths, components: { schemas } }, options());
+      expect(result.skipped).toEqual([]);
+      const counts = charged.mock.calls.map(([count]) => count);
+      expect(counts).toHaveLength(5);
+      expect(new Set(counts).size).toBe(1);
+      expect(counts[0]).toBeGreaterThan(0);
+    } finally {
+      charged.mockRestore();
+    }
+  });
+
+  it("reports a validator's stack overflow as schema-too-large, the same for every tool holding the closure", () => {
+    const original = Ajv.prototype.compile;
+    const overflowed = new Set<string>();
+    // The first compile of each shape holding Deep overflows, as on a cold engine; later ones would pass.
+    const compile = vi.spyOn(Ajv.prototype, "compile").mockImplementation(function (this: Ajv, schema: unknown, meta?: boolean) {
+      const text = JSON.stringify(schema);
+      const shape = text.includes('"value"') ? "checked" : "tool";
+      if (text.includes('"Deep"') && !overflowed.has(shape)) {
+        overflowed.add(shape);
+        throw new RangeError("Maximum call stack size exceeded");
+      }
+      return original.call(this, schema as never, meta);
+    } as typeof original);
+    try {
+      const deep = json({ $ref: "#/components/schemas/Deep" });
+      const paths: Record<string, unknown> = { "/plain": { get: { operationId: "plain", responses: json({ type: "object" }) } } };
+      for (let index = 0; index < 3; index += 1) {
+        paths[`/d${index}`] = { get: { operationId: `g${index}`, responses: deep }, head: { operationId: `h${index}`, responses: deep } };
+      }
+      const result = fromOpenAPI(
+        { openapi: "3.0.3", paths, components: { schemas: { Deep: { type: "object", properties: { n: { type: "integer" } } } } } },
+        options(),
+      );
+      expect(overflowed).toEqual(new Set(["checked", "tool"]));
+      expect(registered(result)).toEqual([["plain", true]]);
+      expect(skips(result).sort()).toEqual(
+        ["g0", "g1", "g2", "h0", "h1", "h2"].map((name) => [name, "schema-too-large", "a schema or reference chain nests too deeply"]),
+      );
+    } finally {
+      compile.mockRestore();
+    }
+  });
 
   it("gives a shallow root the same result whether or not a deeper root sharing its chain came first", () => {
     const schemas: Record<string, unknown> = { C199: { type: "object" } };

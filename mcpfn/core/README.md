@@ -183,14 +183,16 @@ for (const { operation, code, reason } of skipped) {
   positions into more than four times the values they hold, is skipped
   (`schema-too-large`), and so is every schema converted after one call's
   conversions have produced 1,000,000 nodes plus 64 per value of the
-  document (each tool's own copy of its schemas does not count; a copy made
+  document (each tool's own copy of its schemas does not count, but the
+  referenced component schemas it holds do, once per tool; a copy made
   to check a schema does). A schema compiled only to be checked (a `HEAD` or
   non-object response, or one with properties to leave out) is compiled once
-  per distinct schema. A schema
-  or reference chain nested too deeply to walk, or a chain of more than 128
-  references applied to the same value (such as `allOf: [{ $ref }]` links),
-  is skipped the same way. A
-  Swagger 2.0 document throws.
+  per distinct schema. A schema nested too deeply to walk or compile (a
+  validator's stack overflow included), or a chain of applied references
+  holding more than 150 component schemas (`allOf: [{ $ref }]` links and
+  property or item schemas alike; schemas that reach each other count as
+  all of them, and a `$defs` entry nothing applies does not count), is
+  skipped the same way. A Swagger 2.0 document throws.
 - **Catalog.** `tools` holds copies of the registered schemas, so changing
   them changes neither what the registry lists nor what it validates. In a
   registry `fromOpenAPI` creates, tools with identical schemas register one

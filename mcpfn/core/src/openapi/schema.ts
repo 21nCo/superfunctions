@@ -214,6 +214,20 @@ export class NodeBudget {
     return new NodeBudget(MAX_SCHEMA_NODES, this);
   }
 
+  /** Nodes produced so far. */
+  get used(): number {
+    return this.produced;
+  }
+
+  /** Charge `count` nodes at once: a converted closure that a tool emits again. */
+  chargeNodes(count: number): void {
+    this.total?.chargeNodes(count);
+    this.produced += count;
+    if (this.produced > this.limit) {
+      throw new OpenApiSkip("schema-too-large", `${this.subject} to more than ${this.limit} nodes`);
+    }
+  }
+
   /** Charge one produced node read from `value`. */
   charge(value?: unknown): void {
     this.total?.charge();
@@ -347,6 +361,10 @@ interface ConvertedComponent {
   refs?: Set<string>;
   /** Definitions this one validates the same instance against (allOf/anyOf/oneOf/not/if/then/else/dependencies). */
   inPlace?: Set<string>;
+  /** Definitions this one applies, in place or to a child value: every reference outside its declaration maps. */
+  applied?: Set<string>;
+  /** Nodes the conversion produced. */
+  nodes?: number;
   error?: OpenApiSkip;
 }
 
@@ -405,6 +423,15 @@ const NAME_SENSITIVE = [
 // Child positions a flag may not be under, by the kind of value they apply to.
 const UNPROJECTED_OBJECT_POSITIONS = ["patternProperties", "propertyNames"] as const;
 const UNPROJECTED_ARRAY_POSITIONS = ["contains", "additionalItems"] as const;
+
+function memoMap<K, V>(memos: Map<K, V>, key: K, create: () => V): V {
+  let memo = memos.get(key);
+  if (memo === undefined) {
+    memo = create();
+    memos.set(key, memo);
+  }
+  return memo;
+}
 
 function memoFor<K, V>(memos: Map<K, WeakMap<object, V>>, key: K): WeakMap<object, V> {
   let memo = memos.get(key);
@@ -1509,8 +1536,13 @@ export class SchemaConverter {
     if (!entry) {
       try {
         const refs = new Set<string>();
-        const schema = this.budgeted(() => this.convertRoot(this.component(name), mode, refs));
-        entry = { schema, refs, inPlace: inPlaceReferences(schema) };
+        let nodes = 0;
+        const schema = this.budgeted(() => {
+          const converted = this.convertRoot(this.component(name), mode, refs);
+          nodes = this.budget.used;
+          return converted;
+        });
+        entry = { schema, refs, inPlace: inPlaceReferences(schema), applied: appliedReferences(schema), nodes };
       } catch (error) {
         if (!(error instanceof OpenApiSkip)) throw error;
         entry = {
@@ -1523,19 +1555,22 @@ export class SchemaConverter {
   }
 
   /**
-   * The transitive closure of referenced component schemas, as `definitions`.
-   * A closure in which a definition reaches itself without descending into a
-   * property, item or other child instance is rejected: validators would
-   * recurse on the same value without end.
+   * The transitive closure of the component schemas `refs` names, as
+   * `definitions`, for a converted `root` referring to them. A closure in
+   * which a definition reaches itself without descending into a property,
+   * item or other child instance is rejected: validators would recurse on
+   * the same value without end. So is a root applying a chain of more than
+   * MAX_REFERENCE_DEPTH definitions, before anything is emitted.
    */
-  definitions(refs: Iterable<string>, mode: SchemaMode): Record<string, McpFnJsonSchema | boolean> {
+  definitions(refs: Iterable<string>, mode: SchemaMode, root: unknown): Record<string, McpFnJsonSchema | boolean> {
     // Kept per call by mode and names: many operations reach the same closure.
     const names = [...refs];
     const key = `${mode}\0${names.join("\0")}`;
     let known = this.closures.get(key);
     if (!known) {
       try {
-        known = { value: this.closureOf(names, mode) };
+        this.checkClosure(names, mode);
+        known = {};
       } catch (error) {
         if (!(error instanceof OpenApiSkip)) throw error;
         known = { error };
@@ -1543,28 +1578,113 @@ export class SchemaConverter {
       this.closures.set(key, known);
     }
     if (known.error) throw known.error;
-    return known.value!;
+    if (names.length > 0) {
+      // Only applied references count: nothing refers to a declaration map's entries.
+      const applied = appliedReferences(root);
+      if (names.some((name) => applied.has(name) && this.referenceDepth(name, mode) > MAX_REFERENCE_DEPTH)) {
+        throw new OpenApiSkip("schema-too-large", TOO_DEEP);
+      }
+    }
+    known.value ??= this.emit(names, mode);
+    return known.value;
+  }
+
+  /** Charge a closure a tool emits to the call's total, each time a tool schema holds it. */
+  chargeEmitted(definitions: object): void {
+    const nodes = this.emittedNodes.get(definitions);
+    if (nodes) this.total.chargeNodes(nodes);
   }
 
   private readonly closures = new Map<string, { value?: Record<string, McpFnJsonSchema | boolean>; error?: OpenApiSkip }>();
-  /** The longest in-place reference chain from each component (-1: it reaches a cycle), by mode, for the whole call. */
+  private readonly emittedNodes = new WeakMap<object, number>();
+  /** By mode, for the whole call: components whose whole closure converted. */
+  private readonly checkedClosures = new Map<SchemaMode, Set<string>>();
+  /** By mode, for the whole call: the longest in-place reference chain from each component (-1: it reaches a cycle). */
   private readonly inPlaceDepths = new Map<SchemaMode, Map<string, number>>();
+  /** By mode, for the whole call: 1 when a component's closure holds an in-place cycle. */
+  private readonly cycles = new Map<SchemaMode, Map<string, number>>();
+  /** By mode, for the whole call: the most definitions a chain of applied references from a component holds. */
+  private readonly referenceDepths = new Map<SchemaMode, Map<string, number>>();
+
+  private converted(name: string, mode: SchemaMode): ConvertedComponent {
+    return this.cache.get(`${mode}:${name}`)!;
+  }
+
+  /**
+   * Convert the closure of `names` breadth-first and throw its first failure
+   * in that order, then refuse an in-place cycle it holds. A component whose
+   * closure already converted is not walked again, so a tail many closures
+   * share is walked once per call.
+   */
+  private checkClosure(names: string[], mode: SchemaMode): void {
+    const checked = memoMap(this.checkedClosures, mode, () => new Set<string>());
+    const seen = new Set<string>();
+    const queue = names.filter((name) => !checked.has(name));
+    for (let index = 0; index < queue.length; index += 1) {
+      const key = queue[index]!;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const entry = this.convertedComponent(key, mode);
+      if (entry.error) throw entry.error;
+      for (const next of entry.refs!) if (!seen.has(next) && !checked.has(next)) queue.push(next);
+    }
+    for (const key of seen) checked.add(key);
+    const cycles = memoMap(this.cycles, mode, () => new Map<string, number>());
+    const edges = (key: string) => this.converted(key, mode).refs!;
+    const holdsCycle = (name: string) =>
+      settleGraph(name, edges, cycles, (component, below) =>
+        below > 0 || component.some((key) => this.inPlaceDepth(key, mode) < 0) ? 1 : 0,
+      ) > 0;
+    // Only a closure holding an in-place cycle is walked again, to name the cycle.
+    if (names.some(holdsCycle)) assertProductiveRecursion(this.closureEntries(names, mode));
+  }
+
+  /**
+   * The most definitions a chain of applied references from `name` holds, a
+   * group of definitions that reach each other counting as all of them: an
+   * upper bound on how deep validators recurse while compiling it.
+   */
+  private referenceDepth(name: string, mode: SchemaMode): number {
+    const depths = memoMap(this.referenceDepths, mode, () => new Map<string, number>());
+    return settleGraph(name, (key) => this.converted(key, mode).applied!, depths, (component, below) => component.length + below);
+  }
+
+  /** The converted closure of `names`, in breadth-first order. */
+  private closureEntries(names: string[], mode: SchemaMode): Map<string, ConvertedComponent> {
+    const entries = new Map<string, ConvertedComponent>();
+    const queue = [...names];
+    for (let index = 0; index < queue.length; index += 1) {
+      const key = queue[index]!;
+      if (entries.has(key)) continue;
+      const entry = this.converted(key, mode);
+      entries.set(key, entry);
+      for (const next of entry.refs!) if (!entries.has(next)) queue.push(next);
+    }
+    return entries;
+  }
+
+  private emit(names: string[], mode: SchemaMode): Record<string, McpFnJsonSchema | boolean> {
+    let nodes = 0;
+    const result: Array<[string, McpFnJsonSchema | boolean]> = [];
+    for (const [key, entry] of this.closureEntries(names, mode)) {
+      result.push([key, entry.schema!]);
+      nodes += entry.nodes!;
+    }
+    const definitions = Object.fromEntries(result);
+    this.emittedNodes.set(definitions, nodes);
+    return definitions;
+  }
 
   /**
    * The longest chain of in-place references from component `name` (1 when
    * it has none), or -1 when it reaches an in-place cycle. Walked with an
-   * explicit stack over a converted closure holding `name`, and kept for the
-   * whole call, so a tail that many closures share is walked once.
+   * explicit stack over converted components, and kept for the whole call.
    */
-  private inPlaceDepth(name: string, mode: SchemaMode, closure: ReadonlyMap<string, ConvertedComponent>): number {
-    let depths = this.inPlaceDepths.get(mode);
-    if (!depths) {
-      depths = new Map();
-      this.inPlaceDepths.set(mode, depths);
-    }
+  private inPlaceDepth(name: string, mode: SchemaMode): number {
+    const depths = memoMap(this.inPlaceDepths, mode, () => new Map<string, number>());
     const known = depths.get(name);
     if (known !== undefined) return known;
-    const linksOf = (key: string) => closure.get(key)?.inPlace ?? new Set<string>();
+    const linksOf = (key: string) => this.converted(key, mode).inPlace!;
     const active = new Set([name]);
     const stack = [{ key: name, next: linksOf(name).values() }];
     while (stack.length > 0) {
@@ -1591,27 +1711,6 @@ export class SchemaConverter {
       depths.set(frame.key, below < 0 ? -1 : below + 1);
     }
     return depths.get(name)!;
-  }
-
-  private closureOf(refs: string[], mode: SchemaMode): Record<string, McpFnJsonSchema | boolean> {
-    const result: Array<[string, McpFnJsonSchema | boolean]> = [];
-    const entries = new Map<string, ConvertedComponent>();
-    const queue = [...refs];
-    while (queue.length > 0) {
-      const key = queue.shift()!;
-      if (entries.has(key)) continue;
-      const entry = this.convertedComponent(key, mode);
-      if (entry.error) throw entry.error;
-      entries.set(key, entry);
-      result.push([key, entry.schema!]);
-      for (const next of entry.refs!) if (!entries.has(next)) queue.push(next);
-    }
-    // Checked once the whole closure is converted, in the order it was
-    // read: only a closure reaching an in-place cycle is walked again, to name the cycle.
-    const depths = [...entries.keys()].map((key) => this.inPlaceDepth(key, mode, entries));
-    if (depths.some((depth) => depth < 0)) assertProductiveRecursion(entries);
-    if (depths.some((depth) => depth > MAX_IN_PLACE_DEPTH)) throw new OpenApiSkip("schema-too-large", TOO_DEEP);
-    return Object.fromEntries(result);
   }
 }
 
@@ -1784,6 +1883,90 @@ const SUBSCHEMA_KEYWORDS = [
 const IN_PLACE_ARRAY_KEYWORDS = ["allOf", "anyOf", "oneOf"] as const;
 const IN_PLACE_KEYWORDS = ["not", "if", "then", "else"] as const;
 
+const APPLIED_MAPS = new Set(["properties", "patternProperties", "dependencies"]);
+
+/**
+ * Definitions a converted schema applies, in place or to a child value:
+ * every reference outside its declaration maps (`definitions`, `$defs`),
+ * whose entries nothing refers to. Walked with an explicit stack.
+ */
+function appliedReferences(schema: unknown): Set<string> {
+  const found = new Set<string>();
+  const seen = new Set<object>();
+  const stack = [schema];
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (!isObject(current) || seen.has(current)) continue;
+    seen.add(current);
+    if (typeof current.$ref === "string" && current.$ref.startsWith(DEFINITION_REF)) {
+      found.add(current.$ref.slice(DEFINITION_REF.length));
+    }
+    for (const keyword of SUBSCHEMA_KEYWORDS) {
+      const value = current[keyword];
+      if (keyword === "definitions" || keyword === "$defs" || typeof value !== "object" || value === null) continue;
+      if (Array.isArray(value) || APPLIED_MAPS.has(keyword)) for (const member of Object.values(value)) stack.push(member);
+      else stack.push(value);
+    }
+  }
+  return found;
+}
+
+/**
+ * A value per node of a graph, settled once per strongly connected component
+ * as `settle(component, below)`, `below` being the largest value of a
+ * successor outside it (0 when none). Tarjan's walk with an explicit stack,
+ * so no chain is too long for it; `memo` keeps the values for the whole call.
+ */
+function settleGraph(
+  start: string,
+  edges: (node: string) => Iterable<string>,
+  memo: Map<string, number>,
+  settle: (component: string[], below: number) => number,
+): number {
+  const known = memo.get(start);
+  if (known !== undefined) return known;
+  const order = new Map<string, number>();
+  const low = new Map<string, number>();
+  const below = new Map<string, number>();
+  const open: string[] = [];
+  const path: Array<{ node: string; next: Iterator<string> }> = [];
+  const enter = (node: string): void => {
+    low.set(node, order.size);
+    order.set(node, order.size);
+    below.set(node, 0);
+    open.push(node);
+    path.push({ node, next: edges(node)[Symbol.iterator]() });
+  };
+  enter(start);
+  while (path.length > 0) {
+    const frame = path.at(-1)!;
+    const step = frame.next.next();
+    if (!step.done) {
+      const child = step.value;
+      const value = memo.get(child);
+      if (value !== undefined) below.set(frame.node, Math.max(below.get(frame.node)!, value));
+      else if (!order.has(child)) enter(child);
+      // Visited but not settled: still open, so in this node's component.
+      else low.set(frame.node, Math.min(low.get(frame.node)!, order.get(child)!));
+      continue;
+    }
+    path.pop();
+    const { node } = frame;
+    const parent = path.at(-1);
+    if (low.get(node) !== order.get(node)) {
+      low.set(parent!.node, Math.min(low.get(parent!.node)!, low.get(node)!));
+      continue;
+    }
+    const component = open.splice(open.lastIndexOf(node));
+    let outside = 0;
+    for (const member of component) outside = Math.max(outside, below.get(member)!);
+    const value = settle(component, outside);
+    for (const member of component) memo.set(member, value);
+    if (parent) below.set(parent.node, Math.max(below.get(parent.node)!, value));
+  }
+  return memo.get(start)!;
+}
+
 /** Definitions a converted schema applies to the same instance it validates. */
 function inPlaceReferences(schema: McpFnJsonSchema | boolean): Set<string> {
   const found = new Set<string>();
@@ -1803,22 +1986,24 @@ function inPlaceReferences(schema: McpFnJsonSchema | boolean): Set<string> {
 }
 
 /**
- * `A: { $ref: B }, B: { $ref: A }` or a 3.1 `X: { $ref: X, type: object }`
- * never descends into a child value; validators recurse on it without end.
+ * The most definitions a chain of applied references (in place, as an
+ * `allOf` member, or to a child value, as a property's schema) from a tool's
+ * schema may hold; definitions reaching each other count as all of them.
+ * Validators recurse once per definition while compiling. Measured cold at
+ * the default Node 20 and 22 stack, Ajv compiles 160 and overflows at 180
+ * (after warm-up between 250 and 300), and @cfworker/json-schema compiles
+ * 200; 150 leaves the margin for the caller's own frames. A declaration map
+ * entry ($defs/definitions) nothing applies adds nothing.
  */
-/**
- * The longest chain of in-place references (a definition applied to the same
- * value as the one referring to it) a closure may hold. Validators recurse
- * once per link while compiling: both engines compile 150 links in a tool's
- * schema and overflow by 180, so a longer chain is refused, the same way for
- * every operation reaching it.
- */
-const MAX_IN_PLACE_DEPTH = 128;
+export const MAX_REFERENCE_DEPTH = 150;
 
 /** A stack overflow, or a chain longer than validators walk, means schemas or references nest too deeply. */
 export const TOO_DEEP = "a schema or reference chain nests too deeply";
 
-/** Names the in-place cycle a closure reaches; walked with an explicit stack, so no chain is too long to check. */
+/**
+ * `A: { $ref: B }, B: { $ref: A }` or a 3.1 `X: { $ref: X, type: object }`
+ * never descends into a child value; validators recurse on it without end.
+ * Names the in-place cycle a closure reaches; walked with an explicit stack, so no chain is too long to check. */
 function assertProductiveRecursion(entries: ReadonlyMap<string, ConvertedComponent>): void {
   const links = (key: string): Iterator<string> => (entries.get(key)?.inPlace ?? new Set<string>()).values();
   const done = new Set<string>();

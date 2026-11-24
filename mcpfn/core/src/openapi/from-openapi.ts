@@ -279,7 +279,11 @@ interface Candidate {
   operation: OpenApiOperation;
   inputSchema: McpFnObjectSchema;
   outputSchema?: McpFnObjectSchema;
+  /** The generated definitions the input and the output schema hold (NO_CLOSURE: none). */
+  closures: [object, object];
 }
+
+const NO_CLOSURE = Object.freeze({});
 
 class OperationConverter {
   private readonly components: JsonObject;
@@ -294,6 +298,8 @@ class OperationConverter {
   /** Why each request body schema chosen among several entries fails to compile (null when it compiles). */
   private readonly bodyVerdicts = new WeakMap<object, string | null>();
   private readonly verdicts = new Map<string, string | null>();
+  /** The generated definitions each tool schema holds. */
+  private readonly toolClosures = new WeakMap<object, object>();
 
   constructor(
     private readonly document: JsonObject,
@@ -319,7 +325,13 @@ class OperationConverter {
     const { inputs, inputSchema } = this.input(path, pathItem, raw);
     const operation = deepFreeze(this.operation(path, pathItem, method, raw, inputs));
     const outputSchema = this.schemas.budgeted(() => this.outputSchema(raw, method));
-    return { operation, inputSchema, ...(outputSchema ? { outputSchema } : {}) };
+    const closureOf = (schema: object | undefined) => (schema && this.toolClosures.get(schema)) ?? NO_CLOSURE;
+    return {
+      operation,
+      inputSchema,
+      ...(outputSchema ? { outputSchema } : {}),
+      closures: [closureOf(inputSchema), closureOf(outputSchema)],
+    };
   }
 
   /** Follow a `$ref` chain to a parameter, request body or response object. */
@@ -454,13 +466,13 @@ class OperationConverter {
       groups.push(["body", bodyGroup]);
       if (body.info.required) required.push("body");
     }
-    const definitions = this.schemas.definitions(refs, "input");
     const root: McpFnObjectSchema = {
       type: "object",
       properties: Object.fromEntries(groups) as Record<string, McpFnJsonSchema>,
       ...(required.length > 0 ? { required } : {}),
       additionalProperties: false,
     };
+    const definitions = this.schemas.definitions(refs, "input", root);
     return this.toolSchema("input", root, definitions, () => root)!;
   }
 
@@ -491,10 +503,15 @@ class OperationConverter {
     definitions: Record<string, McpFnJsonSchema | boolean>,
     finish: () => McpFnObjectSchema | undefined,
   ): McpFnObjectSchema | undefined {
+    // Each tool holding a closure is charged for it, shared or not.
+    this.schemas.chargeEmitted(definitions);
     const produce = () => {
       const schema = finish();
       if (schema === undefined) return undefined;
-      return treeCopy(Object.keys(definitions).length > 0 ? { ...schema, definitions } : schema, this.schemas.copyBudget());
+      if (Object.keys(definitions).length === 0) return treeCopy(schema, this.schemas.copyBudget());
+      const copy = treeCopy({ ...schema, definitions }, this.schemas.copyBudget());
+      this.toolClosures.set(copy, definitions);
+      return copy;
     };
     if (!this.shareSchemas) return produce();
     const values = { json: true, chars: 0 };
@@ -543,7 +560,7 @@ class OperationConverter {
     }
     const refs = new Set<string>();
     const root = this.schemas.convertRoot(schema, "output", refs);
-    const definitions = this.schemas.definitions(refs, "output");
+    const definitions = this.schemas.definitions(refs, "output", root);
     // An output that cannot be projected soundly skips the operation, so no
     // tool returns structured content its schema would not have checked.
     this.assertProjectable(schema, "output", "response");
@@ -586,7 +603,7 @@ class OperationConverter {
       try {
         const refs = new Set<string>();
         const root = this.schemas.convertRoot(schema, "plain", refs);
-        verdict = this.compileVerdict(root, this.schemas.definitions(refs, "plain"), "plain");
+        verdict = this.compileVerdict(root, this.schemas.definitions(refs, "plain", root), "plain");
       } catch (error) {
         if (isObject(schema) && error instanceof OpenApiSkip && CONTEXT_FREE_FAILURES.has(error.code)) this.checkedAsWritten.set(schema, error);
         throw error;
@@ -633,6 +650,7 @@ class OperationConverter {
       this.compiler.compile(schema);
       return null;
     } catch (error) {
+      if (error instanceof RangeError) return TOO_DEEP_VERDICT;
       return error instanceof Error ? error.message : String(error);
     }
   }
@@ -641,7 +659,7 @@ class OperationConverter {
   private assertBodyCompiles(schema: unknown, converted: McpFnJsonSchema | boolean, refs: ReadonlySet<string>): void {
     let verdict = isObject(schema) ? this.bodyVerdicts.get(schema) : undefined;
     if (verdict === undefined) {
-      verdict = this.compileVerdict(converted, this.schemas.definitions(refs, "input"), "input");
+      verdict = this.compileVerdict(converted, this.schemas.definitions(refs, "input", converted), "input");
       if (isObject(schema)) this.bodyVerdicts.set(schema, verdict);
     }
     throwIfInvalid(verdict, "request body");
@@ -715,7 +733,7 @@ class OperationConverter {
     // unresolved or cyclic references) take precedence over the shape check.
     const refs = new Set<string>();
     const converted = this.schemas.convertRoot(raw.schema, "input", refs);
-    this.schemas.definitions(refs, "input");
+    this.schemas.definitions(refs, "input", converted);
     this.assertProjectable(raw.schema, "input", `parameter ${name}`);
     const shape = this.parameterShape(name, location, raw.schema);
     if (location === "query" && shape === "array" && !explode) {
@@ -892,7 +910,11 @@ function candidateFailure(error: unknown): OpenApiSkip {
   throw error;
 }
 
+/** A compile verdict for a stack overflow, kept like any other verdict. */
+const TOO_DEEP_VERDICT = "\0too deep";
+
 function throwIfInvalid(failure: string | null, subject: string): void {
+  if (failure === TOO_DEEP_VERDICT) throw new OpenApiSkip("schema-too-large", TOO_DEEP);
   if (failure !== null) {
     throw new OpenApiSkip("invalid-schema", `the ${subject} schema is not a valid JSON Schema: ${failure}`);
   }
@@ -1111,8 +1133,16 @@ function register<TContext>(
   const failed = new WeakSet<object>();
   const fresh = <T extends object | undefined>(schema: T, last: boolean): T =>
     schema !== undefined && Object.isFrozen(schema) && (last || failed.has(schema)) ? deepFreeze(structuredClone(schema)) : schema;
+  // Input and output closures a validator overflowed its stack on, so every
+  // tool holding the same pair gets the same verdict, however warm the engine is.
+  const overflowed = new WeakMap<object, WeakSet<object>>();
   candidates.forEach((candidate, index) => {
     const { operation } = candidate;
+    const [inputClosure, outputClosure] = candidate.closures;
+    if (overflowed.get(inputClosure)?.has(outputClosure)) {
+      skipped.push(tooDeepSkip(operation));
+      return;
+    }
     const last = index === candidates.length - 1;
     const inputSchema = fresh(candidate.inputSchema, last);
     const outputSchema = fresh(candidate.outputSchema, last);
@@ -1132,7 +1162,13 @@ function register<TContext>(
       if (!isValidationError(error)) throw error;
       failed.add(inputSchema);
       if (outputSchema) failed.add(outputSchema);
-      skipped.push(registrationSkip(operation, error));
+      if (isStackOverflow(error)) {
+        if (!overflowed.has(inputClosure)) overflowed.set(inputClosure, new WeakSet());
+        overflowed.get(inputClosure)!.add(outputClosure);
+        skipped.push(tooDeepSkip(operation));
+      } else {
+        skipped.push(registrationSkip(operation, error));
+      }
       return;
     }
     names.claim(name);
@@ -1150,14 +1186,29 @@ function register<TContext>(
   return { registry, tools, skipped };
 }
 
+function operationRef(operation: OpenApiOperation): OpenApiOperationRef {
+  return {
+    method: operation.method,
+    path: operation.path,
+    ...(operation.operationId ? { operationId: operation.operationId } : {}),
+  };
+}
+
+/** A validator that overflowed its stack compiling a tool schema: a stack overflow, as any other, means the schema nests too deeply. */
+function tooDeepSkip(operation: OpenApiOperation): OpenApiSkippedOperation {
+  return { operation: operationRef(operation), code: "schema-too-large", reason: TOO_DEEP };
+}
+
+/** The registry reports a validator's RangeError by its message, the one V8 gives a stack overflow. */
+function isStackOverflow(error: McpFnValidationError): boolean {
+  const cause = (error.details as { cause?: unknown } | undefined)?.cause;
+  return typeof cause === "string" && cause.startsWith("Maximum call stack size exceeded");
+}
+
 function registrationSkip(operation: OpenApiOperation, error: McpFnValidationError): OpenApiSkippedOperation {
   const cause = (error.details as { cause?: unknown } | undefined)?.cause;
   return {
-    operation: {
-      method: operation.method,
-      path: operation.path,
-      ...(operation.operationId ? { operationId: operation.operationId } : {}),
-    },
+    operation: operationRef(operation),
     code: "invalid-schema",
     reason: typeof cause === "string" ? `${error.message}: ${cause}` : error.message,
   };
