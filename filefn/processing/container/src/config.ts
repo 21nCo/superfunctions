@@ -96,7 +96,8 @@ export function readContainerConfig(env: ContainerEnv): ContainerConfig {
   // Without a token anyone who reaches the port can run (and force) jobs for
   // any file, so one is required unless the deployment opts out explicitly.
   const token = text(env, 'FILEFN_CONTAINER_TOKEN');
-  const allowUnauthenticated = text(env, 'FILEFN_CONTAINER_ALLOW_UNAUTHENTICATED');
+  // Read raw: a blank value is refused too, not treated as unset.
+  const allowUnauthenticated = env.FILEFN_CONTAINER_ALLOW_UNAUTHENTICATED;
   if (allowUnauthenticated !== undefined && allowUnauthenticated !== 'true' && allowUnauthenticated !== 'false') {
     throw new ContainerConfigError('FILEFN_CONTAINER_ALLOW_UNAUTHENTICATED must be true or false');
   }

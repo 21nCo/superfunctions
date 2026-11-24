@@ -82,5 +82,8 @@ describe('readContainerConfig', () => {
     expect(() => readContainerConfig({ ...noToken, FILEFN_CONTAINER_ALLOW_UNAUTHENTICATED: 'false' })).toThrow(/FILEFN_CONTAINER_TOKEN is required/);
     expect(() => readContainerConfig({ ...noToken, FILEFN_CONTAINER_ALLOW_UNAUTHENTICATED: 'yes' })).toThrow(/must be true or false/);
     expect(readContainerConfig({ ...noToken, FILEFN_CONTAINER_ALLOW_UNAUTHENTICATED: 'true' }).token).toBeUndefined();
+    // A blank value is refused like any other non-boolean, even with a token.
+    expect(() => readContainerConfig({ ...base, FILEFN_CONTAINER_ALLOW_UNAUTHENTICATED: '' })).toThrow(/must be true or false/);
+    expect(() => readContainerConfig({ ...base, FILEFN_CONTAINER_ALLOW_UNAUTHENTICATED: '  ' })).toThrow(/must be true or false/);
   });
 });

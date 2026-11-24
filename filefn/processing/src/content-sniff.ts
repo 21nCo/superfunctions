@@ -45,13 +45,19 @@ const isId3 = (b: Uint8Array) => startsWith(b, ascii('ID3'));
 // AAC in LOAS/LATM framing: the 11-bit sync word 0x2B7.
 const isLoasAt = (b: Uint8Array, offset: number) =>
   b.length >= offset + 3 && b[offset] === 0x56 && (b[offset + 1] & 0xe0) === 0xe0;
-// Where the audio starts after a leading ID3v2 tag (10-byte header, syncsafe
-// size, optional 10-byte footer), or 0 without one; -1 for a malformed tag.
+// Where the audio starts after up to MAX_ID3_TAGS consecutive leading ID3v2
+// tags (10-byte header, syncsafe size, optional 10-byte footer), or 0 without
+// one; -1 for a malformed tag.
+const MAX_ID3_TAGS = 8;
 function afterId3(b: Uint8Array): number {
-  if (!isId3(b)) return 0;
-  if (b.length < 10 || [6, 7, 8, 9].some((i) => b[i] >= 0x80)) return -1;
-  const size = (b[6] << 21) | (b[7] << 14) | (b[8] << 7) | b[9];
-  return 10 + size + (b[5] & 0x10 ? 10 : 0);
+  let offset = 0;
+  for (let tag = 0; tag < MAX_ID3_TAGS && isId3(b.subarray(offset)); tag++) {
+    if (offset + 10 > b.length || [6, 7, 8, 9].some((i) => b[offset + i] >= 0x80)) return -1;
+    const size = (b[offset + 6] << 21) | (b[offset + 7] << 14) | (b[offset + 8] << 7) | b[offset + 9];
+    offset += 10 + size + (b[offset + 5] & 0x10 ? 10 : 0);
+    if (offset > b.length) return -1;
+  }
+  return offset;
 }
 
 /**
@@ -75,24 +81,24 @@ const isPdf = (b: Uint8Array) => pdfStart(b) >= 0;
 // the same way). What is refused is a different kind of document behind an
 // image or PDF type: SVG, PDF or HTML as an "image", SVG behind %PDF.
 //
-// Audio and video are not sniffed: ffmpeg and ffprobe are pinned to the
-// declared type's demuxer with only the file protocol (ffmpegInputArgs), so
-// a playlist or other container behind a media type is parsed only as that
-// demuxer's format and fails there. A media type without a pinned demuxer is
-// refused.
+// Audio and video are not sniffed: the bundled command providers pin ffmpeg
+// and ffprobe to the declared type's demuxer with only the file protocol
+// (ffmpegInputArgs), so a playlist or other container behind a media type is
+// parsed only as that demuxer's format and fails there; a type without a
+// pinned demuxer is refused by ffmpegInputArgs. A custom provider decides
+// which formats it accepts (and should pin its demuxer the same way).
 const isRasterImage = (b: Uint8Array) =>
   isPng(b) || isJpeg(b) || isGif(b) || isRiff(b, 'WEBP') || isTiff(b) || isBmp(b) || isHeifImage(b);
 
 const FAMILIES: Array<[RegExp, (bytes: Uint8Array, essence: string) => boolean]> = [
   [/^image\/(png|jpe?g|gif|webp|tiff|bmp|avif|heic|heif)$/, isRasterImage],
   [/^application\/pdf$/, isPdf],
-  [/^(video|audio)\//, (_bytes, essence) => Object.hasOwn(FFMPEG_INPUT_FORMATS, essence)],
 ];
 
 /**
  * Whether the bytes belong to the family of the declared type (raster image
- * or PDF), or, for audio and video, whether the type has a pinned ffmpeg
- * demuxer. A type outside these families is not checked (returns true).
+ * or PDF). Other types, audio and video included, are not checked here
+ * (returns true); see ffmpegInputArgs for media.
  */
 export function contentMatchesDeclaredType(bytes: Uint8Array, mimeType: string): boolean {
   const essence = mimeType.split(';', 1)[0].trim().toLowerCase();

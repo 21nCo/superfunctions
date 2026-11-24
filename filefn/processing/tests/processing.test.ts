@@ -545,10 +545,11 @@ describe('@filefn/processing', () => {
       const playlist = new TextEncoder().encode('#EXTM3U\n#EXTINF:1,\nfile:///etc/passwd\n');
       expect(contentMatchesDeclaredType(playlist, 'video/mp4')).toBe(true);
       expect(ffmpegInputArgs('video/mp4', playlist)).toEqual(['-protocol_whitelist', 'file', '-f', 'mov']);
-      // A media type without a pinned demuxer is refused.
-      expect(contentMatchesDeclaredType(playlist, 'application/x-mpegurl')).toBe(true);
-      expect(contentMatchesDeclaredType(playlist, 'video/x-unknown')).toBe(false);
-      expect(contentMatchesDeclaredType(playlist, 'audio/x-mpegurl')).toBe(false);
+      // A media type without a pinned demuxer is refused by the bundled providers' ffmpegInputArgs;
+      // custom providers decide their own formats.
+      expect(contentMatchesDeclaredType(playlist, 'audio/aiff')).toBe(true);
+      expect(() => ffmpegInputArgs('video/x-unknown')).toThrow(CONTENT_TYPE_MISMATCH_ERROR);
+      expect(() => ffmpegInputArgs('audio/x-mpegurl')).toThrow(CONTENT_TYPE_MISMATCH_ERROR);
       expect(contentMatchesDeclaredType(new TextEncoder().encode('junk%PDF-1.4'), 'application/pdf')).toBe(true);
       expect(contentMatchesDeclaredType(new TextEncoder().encode('<svg/>'), 'application/pdf')).toBe(false);
       expect(contentMatchesDeclaredType(new TextEncoder().encode('anything'), 'text/plain')).toBe(true);
@@ -571,6 +572,7 @@ describe('@filefn/processing', () => {
       expect(ffmpegInputArgs('audio/mpeg', loas)).toEqual(['-protocol_whitelist', 'file', '-f', 'mp3']);
       const id3 = new Uint8Array([...bytes('ID3'), 4, 0, 0, 0, 0, 0, 3, 1, 2, 3]);
       expect(ffmpegInputArgs('audio/aac', new Uint8Array([...id3, ...loas]))).toEqual(['-protocol_whitelist', 'file', '-f', 'loas']);
+      expect(ffmpegInputArgs('audio/aac', new Uint8Array([...id3, ...id3, ...loas]))).toEqual(['-protocol_whitelist', 'file', '-f', 'loas']);
     });
 
     it('thumbnails only raster bytes even for a MIME alias an integrator added', async () => {
