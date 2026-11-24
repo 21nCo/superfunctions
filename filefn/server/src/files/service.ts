@@ -598,95 +598,44 @@ export function createFileService(config: FileServiceConfig) {
         return originalDescriptor();
       }
 
+      const placeholder = (
+        state: 'unsupported' | 'processing',
+        placeholderKind: RenderPlaceholderKind,
+        warnings?: string[],
+      ): RenderDescriptor =>
+        createPlaceholderDescriptor({
+          fileId,
+          versionId,
+          intent: options.intent,
+          state,
+          mimeType: version.mimeType,
+          name: file.name,
+          size: version.size,
+          placeholderKind,
+          ...(warnings ? { warnings } : {}),
+        });
+      // An image: its preview artifact, else the original when it renders
+      // inline; SVG and other images served only as downloads get no preview.
+      const imagePreview = (kinds: string[], unsupportedKind: 'generic-file' | 'unsupported-preview') => {
+        const artifact = selectArtifactByKind(previewArtifacts, kinds);
+        if (artifact) return artifactDescriptor(artifact);
+        if (isInlineSafeContentType(version.mimeType)) return originalDescriptor();
+        return placeholder('unsupported', unsupportedKind);
+      };
+      const pdfPreview = (kinds: string[]) => {
+        const artifact = selectArtifactByKind(previewArtifacts, kinds);
+        if (artifact) return artifactDescriptor(artifact);
+        return placeholder('processing', 'pdf-processing', ['PDF preview artifact is not available yet.']);
+      };
+
       if (options.intent === 'thumbnail') {
-        if (isImageMimeType(version.mimeType)) {
-          const artifact = selectArtifactByKind(previewArtifacts, ['thumbnail-small', 'thumbnail-medium']);
-          if (artifact) {
-            return artifactDescriptor(artifact);
-          }
-          if (isInlineSafeContentType(version.mimeType)) {
-            return originalDescriptor();
-          }
-          // SVG and other images served only as downloads: no image preview.
-          return createPlaceholderDescriptor({
-            fileId,
-            versionId,
-            intent: options.intent,
-            state: 'unsupported',
-            mimeType: version.mimeType,
-            name: file.name,
-            size: version.size,
-            placeholderKind: 'generic-file',
-          });
-        }
-
-        if (isPdfMimeType(version.mimeType)) {
-          const artifact = selectArtifactByKind(previewArtifacts, ['pdf-preview-page-1-small', 'pdf-preview-page-1-medium']);
-          if (artifact) {
-            return artifactDescriptor(artifact);
-          }
-          return createPlaceholderDescriptor({
-            fileId,
-            versionId,
-            intent: options.intent,
-            state: 'processing',
-            mimeType: version.mimeType,
-            name: file.name,
-            size: version.size,
-            placeholderKind: 'pdf-processing',
-            warnings: ['PDF preview artifact is not available yet.'],
-          });
-        }
-
-        return createPlaceholderDescriptor({
-          fileId,
-          versionId,
-          intent: options.intent,
-          state: 'unsupported',
-          mimeType: version.mimeType,
-          name: file.name,
-          size: version.size,
-          placeholderKind: 'generic-file',
-        });
+        if (isImageMimeType(version.mimeType)) return imagePreview(['thumbnail-small', 'thumbnail-medium'], 'generic-file');
+        if (isPdfMimeType(version.mimeType)) return pdfPreview(['pdf-preview-page-1-small', 'pdf-preview-page-1-medium']);
+        return placeholder('unsupported', 'generic-file');
       }
 
-      if (isImageMimeType(version.mimeType)) {
-        const artifact = selectArtifactByKind(previewArtifacts, ['thumbnail-large']);
-        if (artifact) {
-          return artifactDescriptor(artifact);
-        }
-        if (isInlineSafeContentType(version.mimeType)) {
-          return originalDescriptor();
-        }
-        return createPlaceholderDescriptor({
-          fileId,
-          versionId,
-          intent: options.intent,
-          state: 'unsupported',
-          mimeType: version.mimeType,
-          name: file.name,
-          size: version.size,
-          placeholderKind: 'unsupported-preview',
-        });
-      }
-
-      if (isPdfMimeType(version.mimeType)) {
-        const artifact = selectArtifactByKind(previewArtifacts, ['pdf-preview-page-1-large', 'pdf-preview-page-1-medium']);
-        if (artifact) {
-          return artifactDescriptor(artifact);
-        }
-        return createPlaceholderDescriptor({
-          fileId,
-          versionId,
-          intent: options.intent,
-          state: 'processing',
-          mimeType: version.mimeType,
-          name: file.name,
-          size: version.size,
-          placeholderKind: 'pdf-processing',
-          warnings: ['PDF preview artifact is not available yet.'],
-        });
-      }
+      if (isImageMimeType(version.mimeType)) return imagePreview(['thumbnail-large'], 'unsupported-preview');
+      if (isPdfMimeType(version.mimeType)) return pdfPreview(['pdf-preview-page-1-large', 'pdf-preview-page-1-medium']);
 
       // Only media the browser may play from the original (it is otherwise
       // served as a download).
@@ -694,16 +643,7 @@ export function createFileService(config: FileServiceConfig) {
         return originalDescriptor();
       }
 
-      return createPlaceholderDescriptor({
-        fileId,
-        versionId,
-        intent: options.intent,
-        state: 'unsupported',
-        mimeType: version.mimeType,
-        name: file.name,
-        size: version.size,
-        placeholderKind: 'unsupported-preview',
-      });
+      return placeholder('unsupported', 'unsupported-preview');
     },
 
     async deleteFile(fileId: string, ctx: FileProviderContext): Promise<void> {

@@ -11,6 +11,25 @@ type Ctx = { principalId: string; tenantId?: string };
 
 const BASE = 'http://localhost';
 
+/** Uploads a text file through the proxy and waits for its processing to finish. */
+async function uploadAndProcess(
+  fileFn: ReturnType<typeof createFileFn>,
+  owner: { principalId: string },
+  policy: string,
+  fileName: string,
+  text: string,
+) {
+  const body = Buffer.from(text);
+  const session = await fileFn.createUploadSession({ policy, fileName, size: body.length, mimeType: 'text/plain' }, owner);
+  const part = await fileFn.services.uploads.uploadPartBytes(session.uploadSessionId, 1, body, body.length, owner);
+  await fileFn.completeUploadPart({ uploadSessionId: session.uploadSessionId, partNumber: 1, etag: part.etag, size: part.size }, owner);
+  const done = new Promise<void>((resolve) => fileFn.events.once('processing.completed', () => resolve()));
+  const file = await fileFn.completeUploadSession({ uploadSessionId: session.uploadSessionId }, owner);
+  await fileFn.services.processing.triggerProcessingForFile(file.fileId, owner, file.versionId);
+  await done;
+  return file;
+}
+
 describe('read path (FILE-30 F-03, F-04, F-23)', () => {
   let rootDir: string;
 
@@ -275,14 +294,7 @@ describe('read path (FILE-30 F-03, F-04, F-23)', () => {
       },
     });
     const owner = { principalId: 'owner' };
-    const body = Buffer.from('{"a":1}');
-    const session = await fileFn.createUploadSession({ policy: 'any', fileName: 'scan.txt', size: body.length, mimeType: 'text/plain' }, owner);
-    const part = await fileFn.services.uploads.uploadPartBytes(session.uploadSessionId, 1, body, body.length, owner);
-    await fileFn.completeUploadPart({ uploadSessionId: session.uploadSessionId, partNumber: 1, etag: part.etag, size: part.size }, owner);
-    const done = new Promise<void>((resolve) => fileFn.events.once('processing.completed', () => resolve()));
-    const file = await fileFn.completeUploadSession({ uploadSessionId: session.uploadSessionId }, owner);
-    await fileFn.services.processing.triggerProcessingForFile(file.fileId, owner, file.versionId);
-    await done;
+    const file = await uploadAndProcess(fileFn, owner, 'any', 'scan.txt', '{"a":1}');
     seen.length = 0;
 
     const list = await fileFn.router.handle(new Request(`http://localhost/${file.fileId}/artifacts`));
@@ -324,14 +336,7 @@ describe('read path (FILE-30 F-03, F-04, F-23)', () => {
       processing: { enabled: true, processors },
     });
     const owner = { principalId: 'owner' };
-    const body = Buffer.from('private bytes');
-    const session = await fileFn.createUploadSession({ policy: 'private', fileName: 'p.txt', size: body.length, mimeType: 'text/plain' }, owner);
-    const part = await fileFn.services.uploads.uploadPartBytes(session.uploadSessionId, 1, body, body.length, owner);
-    await fileFn.completeUploadPart({ uploadSessionId: session.uploadSessionId, partNumber: 1, etag: part.etag, size: part.size }, owner);
-    const done = new Promise<void>((resolve) => fileFn.events.once('processing.completed', () => resolve()));
-    const file = await fileFn.completeUploadSession({ uploadSessionId: session.uploadSessionId }, owner);
-    await fileFn.services.processing.triggerProcessingForFile(file.fileId, owner, file.versionId);
-    await done;
+    const file = await uploadAndProcess(fileFn, owner, 'private', 'p.txt', 'private bytes');
 
     expect((await fileFn.router.handle(new Request(`http://localhost/${file.fileId}/artifacts`)))!.status).toBe(403);
     // The shared 'anonymous' principal is a guest too.
