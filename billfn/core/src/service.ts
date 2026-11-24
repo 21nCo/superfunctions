@@ -5626,12 +5626,6 @@ async function resolveProviderEventPriceReference(
   return latest ? requirePriceReference(deps.catalog, latest.targetPriceId) : null;
 }
 
-/**
- * The catalog price the references name: an exact catalog price id first, then
- * a provider product id. A product several prices share names the current
- * price if it is one of them, else the first of them when they are all in one
- * plan; across plans it names none, so the caller keeps its stored selection.
- */
 /** The first catalog price of this provider whose id a reference names and whose product was paid for. */
 function selectPaidPriceById(
   catalog: BillFnCatalog,
@@ -5656,6 +5650,13 @@ function selectPaidPriceById(
   return null;
 }
 
+/**
+ * The catalog price the references name: an exact catalog price id first, then
+ * a provider product id. A product several prices share names the current
+ * price if it is one of them, else the first of them when they are all in one
+ * plan; across plans it names none, so the caller keeps its stored selection.
+ * With `productsOnly`, only the product-id pass runs.
+ */
 function findCatalogPriceReference(
   catalog: BillFnCatalog,
   provider: BillingProviderName,
