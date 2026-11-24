@@ -287,6 +287,38 @@ describe('share links, grants and JSON routes (FILE-30 F-07, F-08, F-09, F-15)',
     await expect(fileFn.services.shares.downloadViaShareLink(token, {})).resolves.toMatchObject({ url: 'https://storage.example/object' });
   });
 
+  it('withholds a URL signed while its link was revoked, and gives the download back', async () => {
+    const local = createLocalStorageAdapter({ rootDir });
+    let fileFn: ReturnType<typeof createFileFn>;
+    let token = '';
+    let fileId = '';
+    const storage = new Proxy(local, {
+      get(target, prop, receiver) {
+        if (prop === 'capabilities') return { ...target.capabilities, signedDownloadUrls: true };
+        if (prop === 'signDownloadUrl') {
+          return async () => {
+            await fileFn.services.shares.revokeShareLink(fileId, token, owner);
+            return { url: 'https://storage.example/object' };
+          };
+        }
+        return Reflect.get(target, prop, receiver);
+      },
+    });
+    const database = memoryAdapter();
+    fileFn = createFileFn({
+      database,
+      storage,
+      namespace: 'filefn',
+      policies: [{ name: 'docs', contentTypes: ['text/plain'], visibility: 'private' }],
+    });
+    const file = await upload(fileFn);
+    fileId = file.fileId;
+    token = (await fileFn.services.shares.createShareLink({ fileId, maxDownloads: 1 }, owner)).token;
+    await expect(fileFn.services.shares.downloadViaShareLink(token, {})).rejects.toMatchObject({ code: 'FILEFN_SHARE_REVOKED' });
+    const [row] = await database.findMany<{ downloads: number }>({ model: 'fileShares', where: [], namespace: 'filefn' });
+    expect(row!.downloads).toBe(0);
+  });
+
   it('reads expiry dates strictly as ISO 8601, and an empty expiresAt as none', async () => {
     const { fileFn, database } = makeFileFn();
     const file = await upload(fileFn);
@@ -451,6 +483,8 @@ describe('share links, grants and JSON routes (FILE-30 F-07, F-08, F-09, F-15)',
   it('GET /policies requires auth like the other routes (P9)', async () => {
     const { fileFn } = makeFileFn();
     expect((await call(fileFn, 'GET', '/policies')).status).toBe(401);
-    expect((await call(fileFn, 'GET', '/policies', { headers: { 'x-test-user': 'owner' } })).status).toBe(200);
+    const allowed = await call(fileFn, 'GET', '/policies', { headers: { 'x-test-user': 'owner' } });
+    expect(allowed.status).toBe(200);
+    expect(allowed.headers.get('cache-control')).toBe('private, no-store');
   });
 });

@@ -23,6 +23,20 @@ class CreateShareLinkInput(BaseModel):
 
 
 
+async def _close_stream(stream: Any) -> None:
+    """Closes a download stream that will not be handed out; best effort."""
+    for name in ("aclose", "close"):
+        closer = getattr(stream, name, None)
+        if callable(closer):
+            try:
+                result = closer()
+                if asyncio.iscoroutine(result):
+                    await result
+            except Exception:
+                pass
+            return
+
+
 class SharesServiceConfig(BaseModel):
     db: Any
     storage: Any
@@ -315,6 +329,17 @@ class SharesService:
             else:
                 await asyncio.shield(self._release_download(token_hash, written))
             if result is not None:
+                # Revoked or expired while signing: the URL is withheld.
+                after = await self.db.find_one(
+                    model="fileShares",
+                    where=[{"field": "tokenHash", "operator": "eq", "value": token_hash}],
+                    namespace=self.namespace,
+                )
+                if not after or after.get("revokedAt") or is_grant_expired(after.get("expiresAt")):
+                    await asyncio.shield(self._release_download(token_hash, written))
+                    if not after:
+                        raise errors.share_not_found()
+                    raise errors.share_revoked() if after.get("revokedAt") else errors.share_expired()
                 return {
                     "url": result["url"],
                     "headers": result.get("headers"),
@@ -370,7 +395,12 @@ class SharesService:
 
         storage_target = self._storage_target_for_file(file)
         stream = await self.storage.open_download_stream(key=version.storageKey, target=storage_target)
-        await self._reserve_download(token_hash)
+        try:
+            await self._reserve_download_cancel_safe(token_hash)
+        except BaseException:
+            # Not counted (or given back): the opened stream is never handed out.
+            await asyncio.shield(_close_stream(stream))
+            raise
         return {
             "stream": stream,
             "contentType": version.mimeType,

@@ -27,7 +27,7 @@ curl -X POST https://example.com/filefn/file_xyz/share-links \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "expiresAt": "2025-01-31T23:59:59Z",
+    "expiresAt": "2099-01-31T23:59:59Z",
     "requiresAuth": false,
     "maxDownloads": 10
   }'
@@ -41,7 +41,7 @@ Response:
   "data": {
     "token": "shr_live_<random>",
     "url": "https://example.com/filefn/share-links/shr_live_<random>/download",
-    "expiresAt": "2025-01-31T23:59:59Z",
+    "expiresAt": "2099-01-31T23:59:59.000Z",
     "requiresAuth": false,
     "maxDownloads": 10
   }

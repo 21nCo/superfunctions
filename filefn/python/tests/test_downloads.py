@@ -1032,3 +1032,26 @@ async def test_cancelled_while_counting_gives_the_landed_count_back() -> None:
             break
         await asyncio.sleep(0.05)
     assert all(row["downloads"] == 0 for row in db.tables["fileShares"])
+
+
+@pytest.mark.asyncio
+async def test_url_signed_while_the_link_was_revoked_is_withheld() -> None:
+    from filefn.server import errors
+
+    db = FakeDB()
+    await _seed_file_rows(db)
+    storage = FakeStorage(with_signing=True)
+    storage.capabilities = {"signedDownloadUrls": True}  # type: ignore[attr-defined]
+    shares_service = create_shares_service(SharesServiceConfig(db=db, storage=storage, namespace="filefn"))
+    created = await shares_service.create_share_link(CreateShareLinkInput(fileId="file_0001", maxDownloads=1), _ctx("user_123"))
+
+    async def sign(key: str, expires_in_seconds: int, target: Optional[str] = None) -> Dict[str, Any]:
+        for row in db.tables["fileShares"]:
+            row["revokedAt"] = datetime.now(timezone.utc).isoformat()
+        return {"url": "https://download.local/x"}
+
+    storage.sign_download_url = sign  # type: ignore[method-assign]
+    with pytest.raises(errors.FileFnError) as revoked:
+        await shares_service.download_via_share_link(created["token"], _ctx(None), is_authenticated=False)
+    assert revoked.value.code == "FILEFN_SHARE_REVOKED"
+    assert [row["downloads"] for row in db.tables["fileShares"]] == [0]

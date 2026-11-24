@@ -12,7 +12,8 @@ function getRequestId(request: Request): string | undefined {
 }
 
 function successResponse(data: unknown, requestId?: string): Response {
-  return Response.json({ ok: true, data, requestId }, { status: 200 });
+  // Answered per caller (auth applies): no shared cache may replay it.
+  return Response.json({ ok: true, data, requestId }, { status: 200, headers: { 'Cache-Control': 'private, no-store' } });
 }
 
 export function createPolicyRoutes(ctx: PolicyRoutesContext) {

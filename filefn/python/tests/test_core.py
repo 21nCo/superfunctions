@@ -102,3 +102,11 @@ def test_iso_instant_outside_utc_year_range_is_refused() -> None:
     assert parse_iso_instant("0001-01-01T00:00:00+01:00") is None
     assert is_grant_expired("9999-12-31T23:59:59-01:00")
     assert parse_iso_instant("9999-12-31T22:59:59-01:00") is not None
+
+
+def test_iso_instant_requires_a_full_ascii_match() -> None:
+    from filefn.server.authz.grant_expiry import is_grant_expired, parse_iso_instant
+
+    assert parse_iso_instant("2099-01-01T00:00:00Z\n") is None
+    assert parse_iso_instant("\u0662\u0660\u0669\u0669-01-01") is None
+    assert is_grant_expired("2099-01-01T00:00:00Z\n")

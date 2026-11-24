@@ -5,8 +5,10 @@ from typing import Any, Optional
 # ISO 8601 calendar date, or date-time with optional seconds, fraction and
 # zone; the same forms the TypeScript server accepts. A date-time without a
 # zone is read as UTC.
+# ASCII digits only and a full match: `\d` would accept other scripts' digits
+# and `$` a trailing newline, which the TypeScript parser refuses.
 _ISO_INSTANT = re.compile(
-    r"^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2})(?::(\d{2})(\.\d{1,9})?)?(Z|[+-]\d{2}:\d{2})?)?$"
+    r"([0-9]{4})-([0-9]{2})-([0-9]{2})(?:T([0-9]{2}):([0-9]{2})(?::([0-9]{2})(\.[0-9]{1,9})?)?(Z|[+-][0-9]{2}:[0-9]{2})?)?"
 )
 
 
@@ -14,7 +16,7 @@ def parse_iso_instant(value: Any) -> Optional[datetime]:
     """Parses an ISO 8601 date or date-time to an aware UTC datetime, or None when it is not one."""
     if not isinstance(value, str):
         return None
-    match = _ISO_INSTANT.match(value)
+    match = _ISO_INSTANT.fullmatch(value)
     if not match:
         return None
     year, month, day, hour, minute, second, fraction, zone = match.groups()

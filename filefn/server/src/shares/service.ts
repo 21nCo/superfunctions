@@ -380,6 +380,13 @@ export function createSharesService(config: SharesServiceConfig) {
             await releaseDownload(tokenHash, written);
             throw error;
           }
+          // Revoked or expired while signing: the URL is withheld.
+          const after = await readShare(tokenHash);
+          if (!after || after.revokedAt || isGrantExpired(after.expiresAt)) {
+            await releaseDownload(tokenHash, written);
+            if (!after) throw errors.shareNotFound();
+            throw after.revokedAt ? errors.shareRevoked() : errors.shareExpired();
+          }
           return { url: result.url, headers: result.headers, fileName: file.name, mimeType: file.mimeType };
         }
       }
