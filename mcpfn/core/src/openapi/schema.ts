@@ -377,9 +377,16 @@ function memoFor<K, V>(memos: Map<K, WeakMap<object, V>>, key: K): WeakMap<objec
   return memo;
 }
 
-/** The items of a document array mapped without calling methods the array itself may shadow (such as an own `map`). */
+/**
+ * The items of a document array mapped (holes kept) without reading what the
+ * array itself may shadow, such as an own `map` or `constructor`.
+ */
 function mapItems<T>(items: unknown[], map: (item: unknown) => T): T[] {
-  return Array.prototype.map.call(items, map) as T[];
+  const result = new Array<T>(items.length);
+  for (let index = 0; index < items.length; index += 1) {
+    if (Object.hasOwn(items, index)) result[index] = map(items[index]);
+  }
+  return result;
 }
 
 function arrayOf(value: unknown): unknown[] {

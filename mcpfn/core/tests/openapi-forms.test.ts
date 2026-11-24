@@ -2426,7 +2426,7 @@ describe("fromOpenAPI body fallback, synchronous schemas, per-kind alternatives 
   it("keeps a 3.1 $ref's $defs checked beside an undefined allOf, and maps arrays that shadow their own methods", () => {
     const ref = "#/components/schemas/S";
     const fallback = { "application/example+json": { schema: { type: "string" } } };
-    const shadowed = Object.assign([{ type: "object" }], { map: null });
+    const shadowed = Object.assign([{ type: "object" }], { map: null, constructor: null });
     const document = {
       openapi: "3.1.0",
       paths: {
