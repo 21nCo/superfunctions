@@ -190,6 +190,30 @@ describe("createWebStandardHandler session limits (MCP-SEC-04)", () => {
     expect(answered.text).toContain("hi");
   });
 
+  it("does not evict sessions for requests that never initialize", async () => {
+    const { handler, post, initialize, call } = await setup({ maxSessions: 1 });
+    const kept = await initialize();
+    expect((await handler(new Request("http://127.0.0.1:8080/mcp", { method: "PUT" }))).status).toBe(405);
+    expect((await post({ jsonrpc: "2.0", id: 9, method: "tools/list" })).status).toBe(400);
+    expect((await call(kept.sessionId!)).status).toBe(200);
+  });
+
+  it("keeps a host principal key apart from anonymous sessions", async () => {
+    const { initialize, post } = await setup({
+      maxSessionsPerPrincipal: 1,
+      // A key spelled like an internal anonymous marker.
+      sessionPrincipal: ({ request }) => request.headers.has("x-principal") ? "\u0000anonymous" : undefined,
+    });
+    const headers = { "x-principal": "yes" };
+    const named = await initialize(undefined, headers);
+    expect((await initialize()).status).toBe(200);
+    const response = await post(
+      { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "echo", arguments: { value: "hi" } } },
+      { sessionId: named.sessionId!, headers },
+    );
+    expect(response.status).toBe(200);
+  });
+
   it("lets sessions without a principal share one per-principal allowance", async () => {
     const { initialize, call } = await setup({ maxSessionsPerPrincipal: 2 });
     const first = await initialize();

@@ -19,6 +19,10 @@ import {
   ElicitResultSchema,
   ErrorCode,
   GetPromptRequestSchema,
+  isJSONRPCErrorResponse,
+  isJSONRPCNotification,
+  isJSONRPCRequest,
+  isJSONRPCResultResponse,
   ListPromptsRequestSchema,
   ListRootsResultSchema,
   ListResourcesRequestSchema,
@@ -957,98 +961,109 @@ export class McpFnServer<TContext = undefined> {
     interface Session {
       server: McpFnServer<TContext>;
       transport: WebStandardStreamableHTTPServerTransport;
-      /** Principal bucket: the principal key, or ANONYMOUS. */
-      bucket: string;
+      bucket: string | symbol;
       principal: string | undefined;
       lastActive: number;
       /** Increases on every use; orders sessions when timestamps tie. */
       lastUse: number;
-      /** Requests and open streams in progress, including initialization. */
+      /** HTTP requests and open streams in progress, including initialization. */
       active: number;
+      /** JSON-RPC requests from the client not yet answered. */
+      pending: Set<string | number>;
       /** Close once: run the host's onsessionclosed, then release the server. */
       close: (fromDelete: boolean) => Promise<void>;
     }
     // Sessions without a principal share one bucket for maxSessionsPerPrincipal.
-    const ANONYMOUS = "\u0000anonymous";
+    // A symbol cannot collide with any principal key a host returns.
+    const ANONYMOUS = Symbol("anonymous");
     const sessions = new Map<string, Session>();
-    // Session slots held by requests whose initialization is still running.
-    const reservations = new Map<string, number>();
-    let reservedTotal = 0;
+    // Evicted or expired sessions still closing keep their capacity until closed.
+    const closingSessions = new Set<Session>();
     let useCounter = 0;
     const sessionNotFound = () =>
       jsonRpcErrorResponse(404, -32001, "Session not found");
-    const closeQuietly = (sessions: Session[]) =>
-      Promise.all(sessions.map((session) => session.close(false).catch(() => undefined)));
+    const busy = (session: Session) => session.active !== 0 || session.pending.size !== 0;
+    const closeQuietly = (victims: Session[]) =>
+      Promise.all(victims.map((session) => session.close(false).catch(() => undefined)));
+    // Take a session out of the table; it counts against capacity until closed.
+    const takeSession = (id: string, session: Session) => {
+      sessions.delete(id);
+      closingSessions.add(session);
+      return session;
+    };
     // The idle session used least recently, if any. Busy sessions are never
-    // evicted: closing one would leave its pending requests unanswered.
-    const leastRecentlyUsedIdle = (bucket?: string) => {
+    // evicted: closing one would leave its requests unanswered.
+    const leastRecentlyUsedIdle = (bucket?: string | symbol) => {
       let chosen: [string, Session] | undefined;
       for (const entry of sessions) {
         const session = entry[1];
-        if (session.active !== 0 || (bucket !== undefined && session.bucket !== bucket)) continue;
+        if (busy(session) || (bucket !== undefined && session.bucket !== bucket)) continue;
         if (!chosen || session.lastUse < chosen[1].lastUse) chosen = entry;
       }
       return chosen;
-    };
-    const takeSession = (entry: [string, Session]) => {
-      sessions.delete(entry[0]);
-      return entry[1];
     };
     const sweepIdle = () => {
       if (!Number.isFinite(idleTimeoutMs)) return [];
       const now = Date.now();
       return [...sessions]
-        .filter(([, session]) => session.active === 0 && now - session.lastActive >= idleTimeoutMs)
-        .map(takeSession);
+        .filter(([, session]) => !busy(session) && now - session.lastActive >= idleTimeoutMs)
+        .map(([id, session]) => takeSession(id, session));
     };
-    // Reserve a slot for a new session without any await between counting and
-    // reserving, so concurrent initializations cannot exceed the limits.
-    // Returns the evicted sessions to close, or a refusal when every session
-    // that could make room is busy.
-    const reserve = (bucket: string):
-      | { victims: Session[]; release: () => void }
-      | { refused: Response } => {
+    // Make room for one new session in the same synchronous step that adds
+    // it, so concurrent initializations cannot exceed the limits. Returns the
+    // sessions evicted to make room, or the refusal when every candidate is busy.
+    const admit = (id: string, session: Session): Session[] | Response => {
       const victims: Session[] = [];
-      const owned = () =>
-        [...sessions.values()].filter((session) => session.bucket === bucket).length +
-        (reservations.get(bucket) ?? 0);
-      while (owned() >= maxPerPrincipal) {
-        const entry = leastRecentlyUsedIdle(bucket);
-        if (!entry) {
-          restore(victims);
-          return { refused: jsonRpcErrorResponse(429, -32000, "Too many sessions for this principal") };
+      const count = (match: (candidate: Session) => boolean) => {
+        let total = 0;
+        for (const candidate of sessions.values()) if (match(candidate)) total += 1;
+        for (const candidate of closingSessions) if (match(candidate) && !victims.includes(candidate)) total += 1;
+        return total;
+      };
+      const restore = () => {
+        for (const victim of victims) {
+          closingSessions.delete(victim);
+          sessions.set(victim.transport.sessionId!, victim);
         }
-        victims.push(takeSession(entry));
+      };
+      while (count((candidate) => candidate.bucket === session.bucket) >= maxPerPrincipal) {
+        const entry = leastRecentlyUsedIdle(session.bucket);
+        if (!entry) {
+          restore();
+          return jsonRpcErrorResponse(429, -32000, "Too many sessions for this principal");
+        }
+        victims.push(takeSession(...entry));
       }
-      while (sessions.size + reservedTotal >= maxSessions) {
+      while (count(() => true) >= maxSessions) {
         const entry = leastRecentlyUsedIdle();
         if (!entry) {
-          restore(victims);
-          return { refused: jsonRpcErrorResponse(503, -32000, "Too many sessions") };
+          restore();
+          return jsonRpcErrorResponse(503, -32000, "Too many sessions");
         }
-        victims.push(takeSession(entry));
+        victims.push(takeSession(...entry));
       }
-      reservations.set(bucket, (reservations.get(bucket) ?? 0) + 1);
-      reservedTotal += 1;
-      let held = true;
-      return {
-        victims,
-        release: () => {
-          if (!held) return;
-          held = false;
-          reservedTotal -= 1;
-          const count = (reservations.get(bucket) ?? 1) - 1;
-          if (count === 0) reservations.delete(bucket);
-          else reservations.set(bucket, count);
-        },
-      };
+      sessions.set(id, session);
+      return victims;
     };
-    // A refused reservation puts back the sessions it had taken out.
-    const restore = (victims: Session[]) => {
-      for (const victim of victims) {
-        const id = victim.transport.sessionId;
-        if (id !== undefined && !sessions.has(id)) sessions.set(id, victim);
-      }
+    // Count client requests until the session answers them, so a tool that
+    // outlives its HTTP stream (closeSSEStream) keeps the session busy.
+    const trackPending = (transport: WebStandardStreamableHTTPServerTransport, pending: Set<string | number>) => {
+      const onmessage = transport.onmessage;
+      transport.onmessage = (message, extra) => {
+        if (isJSONRPCRequest(message)) pending.add(message.id);
+        else if (isJSONRPCNotification(message) && message.method === "notifications/cancelled") {
+          const requestId = (message.params as { requestId?: unknown } | undefined)?.requestId;
+          if (typeof requestId === "string" || typeof requestId === "number") pending.delete(requestId);
+        }
+        onmessage?.(message, extra);
+      };
+      const send = transport.send.bind(transport);
+      transport.send = (message, options) => {
+        if (isJSONRPCResultResponse(message) || isJSONRPCErrorResponse(message)) {
+          if (message.id !== undefined) pending.delete(message.id);
+        }
+        return send(message, options);
+      };
     };
 
     return async (request: Request, handleOptions?: HandleRequestOptions) => {
@@ -1082,29 +1097,32 @@ export class McpFnServer<TContext = undefined> {
         }
       }
 
-      const bucket = principal ?? ANONYMOUS;
-      const reservation = reserve(bucket);
-      if ("refused" in reservation) return reservation.refused;
-      await closeQuietly(reservation.victims);
-
       const requestServer = new McpFnServer(this.serverOptions);
       let initialized: Session | undefined;
+      let refusal: Response | undefined;
       let released = false;
       let transport: WebStandardStreamableHTTPServerTransport;
+      const pending = new Set<string | number>();
       const release = async () => {
         if (released) return;
         released = true;
-        reservation.release();
         const id = transport.sessionId;
         if (id !== undefined && sessions.get(id)?.server === requestServer) sessions.delete(id);
         this.requestServers.delete(requestServer);
-        await requestServer.close();
+        try {
+          await requestServer.close();
+        } finally {
+          if (initialized) closingSessions.delete(initialized);
+        }
       };
       let closing: Promise<void> | undefined;
       const close = (fromDelete: boolean) => {
         closing ??= (async () => {
           const id = transport.sessionId;
-          if (id !== undefined && sessions.get(id)?.server === requestServer) sessions.delete(id);
+          if (id !== undefined && sessions.get(id)?.server === requestServer) {
+            sessions.delete(id);
+            if (initialized) closingSessions.add(initialized);
+          }
           try {
             if (id !== undefined) await transportOptions.onsessionclosed?.(id);
           } catch (error) {
@@ -1117,22 +1135,29 @@ export class McpFnServer<TContext = undefined> {
       };
       transport = new WebStandardStreamableHTTPServerTransport({
         ...transportOptions,
+        // Runs only for a valid initialize request, so other requests without
+        // a session ID can never evict a session.
         onsessioninitialized: async (id) => {
-          await transportOptions.onsessioninitialized?.(id);
-          // The reservation becomes the session in the same step.
-          reservation.release();
-          initialized = {
+          const session: Session = {
             server: requestServer,
             transport,
-            bucket,
+            bucket: principal ?? ANONYMOUS,
             principal,
             lastActive: Date.now(),
             lastUse: ++useCounter,
             // The initialize response itself is in progress.
             active: 1,
+            pending,
             close,
           };
-          sessions.set(id, initialized);
+          const admitted = admit(id, session);
+          if (admitted instanceof Response) {
+            refusal = admitted;
+            throw new Error("Session capacity reached");
+          }
+          initialized = session;
+          await closeQuietly(admitted);
+          await transportOptions.onsessioninitialized?.(id);
         },
         // DELETE from the session's own principal.
         onsessionclosed: () => close(true),
@@ -1142,7 +1167,13 @@ export class McpFnServer<TContext = undefined> {
       try {
         await configureRequestServer?.(requestServer);
         await requestServer.connect(transport);
+        trackPending(transport, pending);
         const response = await transport.handleRequest(request, handleOptions);
+        if (refusal) {
+          await response.body?.cancel().catch(() => undefined);
+          await release();
+          return refusal;
+        }
         const session = initialized;
         if (session) {
           let settled = false;
