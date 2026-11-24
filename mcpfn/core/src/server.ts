@@ -507,11 +507,14 @@ export class McpFnServer<TContext = undefined> {
                   })
                 : error;
             // Task-augmented calls answer with a JSON-RPC error. Keep the
-            // McpFn code of an argument-enrichment rejection as InvalidParams
-            // data instead of letting the SDK turn it into InternalError.
+            // McpFn code of an argument-enrichment failure in its data
+            // instead of letting the SDK drop it.
             if (isTaskRequest && currentStage === "argument-enrichment" && lifecycleError instanceof McpFnError) {
               const data = jsonSafe(lifecycleError.details);
-              throw new McpError(ErrorCode.InvalidParams, lifecycleError.message, {
+              // Rejected client input is InvalidParams; a failing enrichment
+              // hook (an unavailable tenant lookup, say) is a server error.
+              const clientInput = ["MCPFN_FORGED_SERVER_ARGUMENT", "MCPFN_INVALID_PROFILE_ARGUMENTS"].includes(lifecycleError.code);
+              throw new McpError(clientInput ? ErrorCode.InvalidParams : ErrorCode.InternalError, lifecycleError.message, {
                 ...(data !== null && typeof data === "object" && !Array.isArray(data) ? data : {}),
                 // Set after serialization so details (including a toJSON
                 // method) cannot replace the McpFn code, stage or profile.

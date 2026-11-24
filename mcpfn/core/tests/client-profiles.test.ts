@@ -415,7 +415,7 @@ describe("McpFn client profiles", () => {
       CreateTaskResultSchema,
     ).then(() => undefined, (failure: unknown) => failure);
     expect(error).toMatchObject({
-      code: ErrorCode.InvalidParams,
+      code: ErrorCode.InternalError,
       data: { code: "TENANT_LOOKUP_FAILED", attempts: "2", lifecycleStage: "argument-enrichment", profile: { id: "consumer/trusted", version: "1" } },
     });
   });
