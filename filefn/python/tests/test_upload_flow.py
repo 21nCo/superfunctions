@@ -1284,7 +1284,7 @@ async def test_proxy_retry_after_the_version_was_written_finishes_without_storag
 
 
 @pytest.mark.asyncio
-async def test_expiry_sweep_finishes_a_published_session_instead_of_deleting_it() -> None:
+async def test_expiry_sweep_keeps_a_published_session_for_its_retry() -> None:
     class FailOnceSessionUpdate(FakeDB):
         failed = False
 
@@ -1304,9 +1304,10 @@ async def test_expiry_sweep_finishes_a_published_session_instead_of_deleting_it(
         await service.complete_session(session["uploadSessionId"], _ctx())
     db.tables["uploadSessions"][0]["expiresAt"] = "2001-01-01T00:00:00+00:00"
     await service.garbage_collect_expired_sessions()
-    # The session survives, finished; the client's retry gets the published version.
-    assert db.tables["uploadSessions"][0]["status"] == "completed"
+    # The session survives untouched; the client's retry finishes it normally.
+    assert db.tables["uploadSessions"][0]["status"] != "completed"
     result = await service.complete_session(session["uploadSessionId"], _ctx())
+    assert db.tables["uploadSessions"][0]["status"] == "completed"
     assert [row["versionId"] for row in db.tables["fileVersions"]] == [result["versionId"]]
 
 

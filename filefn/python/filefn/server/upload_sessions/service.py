@@ -1330,8 +1330,9 @@ class UploadSessionService:
             session = UploadSessionRecord(**session_data)
 
             # A completion that published its version but failed to write
-            # `completed` is finished here instead of swept: the file is live,
-            # and the client's retry must still find the session.
+            # `completed` is left for the client's retry, which finishes it
+            # through the normal path (quota, upload event, processing): the
+            # file is live, so the session must not be swept.
             if session.status in ("pending", "in_progress") and session.completionVersionId:
                 published = await self.db.find_one(
                     model="fileVersions",
@@ -1339,13 +1340,6 @@ class UploadSessionService:
                     namespace=self.namespace,
                 )
                 if published and published.get("fileId") and (not session.fileId or published.get("fileId") == session.fileId):
-                    await self.db.update(
-                        model="uploadSessions",
-                        where=[{"field": "uploadSessionId", "operator": "eq", "value": session.uploadSessionId}],
-                        data={"status": "completed", "fileId": published.get("fileId")},
-                        namespace=self.namespace,
-                    )
-                    preserved_completed_sessions += 1
                     continue
 
             policy = self.policies.get(session.policy)
