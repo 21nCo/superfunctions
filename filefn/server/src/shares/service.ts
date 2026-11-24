@@ -64,13 +64,6 @@ function generateToken(): string {
 }
 
 
-/** Seconds a signed share URL keeps clear of the link's expiry, for the time signing takes. */
-const SIGNING_MARGIN_SECONDS = 5;
-/**
- * Shortest signed share URL handed out. A link closer to its end is served by
- * the checked proxy, so a URL can't be stale by the time it reaches the client.
- */
-const MIN_SIGNED_URL_SECONDS = 30;
 /** Longest `shares.maxTtlSeconds` (100 years), so every expiry stays within years 0001-9999. */
 const MAX_SHARE_TTL_SECONDS = 100 * 365 * 24 * 60 * 60;
 
@@ -182,19 +175,19 @@ export function createSharesService(config: SharesServiceConfig) {
   }
 
   /**
-   * Writes downloads = observed + 1 only while the count is still `observed`,
-   * and reports whether this call's write landed. Adapters with RETURNING
+   * Writes downloads = `to` only while the count is still `from`, and reports
+   * whether this call's write landed. Adapters with RETURNING
    * report it through `update` (a row back means written; not-found means the
    * count moved). The others (Prisma, MySQL) read the row back after `update`
    * with the same filter, which fails after a successful write, so their
    * `updateMany` row count decides. Database errors propagate.
    */
-  async function incrementDownloadsIf(tokenHash: string, observed: number): Promise<boolean> {
+  async function setDownloadsIf(tokenHash: string, from: number, to: number): Promise<boolean> {
     const where = [
       { field: 'tokenHash', operator: 'eq' as const, value: tokenHash },
-      { field: 'downloads', operator: 'eq' as const, value: observed },
+      { field: 'downloads', operator: 'eq' as const, value: from },
     ];
-    const data = { downloads: observed + 1 };
+    const data = { downloads: to };
     if (db.capabilities?.operations?.returning) {
       try {
         return Boolean(await db.update({ model: 'fileShares', where, data, namespace }));
@@ -209,21 +202,19 @@ export function createSharesService(config: SharesServiceConfig) {
   }
 
   /**
-   * Counts one download. The write is conditional on the count read, so
-   * concurrent downloads can never exceed `maxDownloads`; a lost race re-reads
-   * the link and checks it again. Callers prepare the URL or stream first and
-   * hand it out only after this succeeds, so a storage failure never uses up
-   * a download.
+   * Counts one download and returns the count written. The write is
+   * conditional on the count read, so concurrent downloads can never exceed
+   * `maxDownloads`; a lost race re-reads the link and checks it again.
    */
   async function reserveDownload(
     tokenHash: string,
     share: FileShareRecord,
     ctx: { isAuthenticated?: boolean },
-  ): Promise<void> {
+  ): Promise<number> {
     let current = share;
     for (let attempt = 0; attempt < 20; attempt++) {
       assertShareUsable(current, ctx);
-      if (await incrementDownloadsIf(tokenHash, current.downloads)) return;
+      if (await setDownloadsIf(tokenHash, current.downloads, current.downloads + 1)) return current.downloads + 1;
       const reread = await readShare(tokenHash);
       if (!reread) throw errors.shareNotFound();
       current = reread;
@@ -237,15 +228,25 @@ export function createSharesService(config: SharesServiceConfig) {
   }
 
   /**
-   * Signed URL lifetime: the configured TTL, but never past the link's own
-   * expiry, less SIGNING_MARGIN_SECONDS for the time signing itself takes.
-   * Null when that leaves less than MIN_SIGNED_URL_SECONDS.
+   * Gives back a download this request counted but could not hand out (its
+   * storage call failed). Only while the count is still the one written: if
+   * another download counted since, the link keeps the extra count (it fails
+   * closed, never over the limit). Best effort; errors are ignored.
+   */
+  async function releaseDownload(tokenHash: string, written: number): Promise<void> {
+    await setDownloadsIf(tokenHash, written, written - 1).catch(() => false);
+  }
+
+  /**
+   * Signed URL lifetime, taken just before signing: the configured TTL, but
+   * never past the link's own expiry. Null when less than a whole second is
+   * left.
    */
   function signedUrlLifetime(share: FileShareRecord): number | null {
     const expiresAtMs = share.expiresAt ? parseIsoInstant(share.expiresAt) : null;
     if (expiresAtMs === null) return signedUrlTtlSeconds;
-    const remaining = Math.floor((expiresAtMs - Date.now()) / 1000) - SIGNING_MARGIN_SECONDS;
-    return remaining < MIN_SIGNED_URL_SECONDS ? null : Math.min(signedUrlTtlSeconds, remaining);
+    const remaining = Math.floor((expiresAtMs - Date.now()) / 1000);
+    return remaining < 1 ? null : Math.min(signedUrlTtlSeconds, remaining);
   }
 
   async function resolveDownload(
@@ -340,37 +341,38 @@ export function createSharesService(config: SharesServiceConfig) {
       const storageTarget = resolveStorageTarget(policies?.get(file.policy) ?? {});
 
       const capabilities = getStorageCapabilities(storage, storageTarget);
-      const lifetime = signedUrlLifetime(share);
-      if (lifetime !== null && capabilities.signedDownloadUrls && storage.signDownloadUrl) {
-        // Signed first and handed out only once the download is counted.
-        const result = await storage.signDownloadUrl({
-          key: version.storageKey,
-          target: storageTarget,
-          expiresInSeconds: lifetime,
-        });
-        // The signer fixed the URL's expiry no later than now + lifetime. If
-        // signing took long enough for that to pass the link's own expiry, the
-        // URL is dropped and the checked proxy serves the link instead (or,
-        // without proxy streaming, the link counts as expired).
-        const linkExpiresAtMs = share.expiresAt ? parseIsoInstant(share.expiresAt) : null;
-        if (linkExpiresAtMs === null || Date.now() + lifetime * 1000 <= linkExpiresAtMs) {
-          await reserveDownload(tokenHash, share, ctx);
-          return { url: result.url, headers: result.headers, fileName: file.name, mimeType: file.mimeType };
-        }
-      }
-
-      // Only a link that is still valid, on storage that can stream it, gets
-      // the proxy URL.
-      if (isGrantExpired(share.expiresAt)) throw errors.shareExpired();
-      // Signing-only storage can't serve the proxy URL: in its last seconds
-      // (MIN_SIGNED_URL_SECONDS plus the signing margin) such a link counts as
-      // expired.
       // Streaming is judged for the file's own storage target: a routed adapter
       // has openDownloadStream even when that target can only sign.
       const canStream = Boolean(storage.openDownloadStream) && capabilities.proxyStreamingDownload !== false;
-      if (!canStream && capabilities.signedDownloadUrls && storage.signDownloadUrl) {
-        throw errors.shareExpired();
+      const canSign = Boolean(capabilities.signedDownloadUrls && storage.signDownloadUrl);
+      // Under a second left: the checked proxy serves the link if it can.
+      if (canSign && (signedUrlLifetime(share) !== null || !canStream)) {
+        // Counted first, then signed with the lifetime left at that moment, so
+        // the URL starts no earlier than the count and ends no later than the
+        // link (plus the signer's own latency). A failed signing gives the
+        // count back.
+        const written = await reserveDownload(tokenHash, share, ctx);
+        const lifetime = signedUrlLifetime(share);
+        if (lifetime === null) {
+          await releaseDownload(tokenHash, written);
+          throw errors.shareExpired();
+        }
+        let result: Awaited<ReturnType<NonNullable<StorageAdapter['signDownloadUrl']>>>;
+        try {
+          result = await storage.signDownloadUrl!({
+            key: version.storageKey,
+            target: storageTarget,
+            expiresInSeconds: lifetime,
+          });
+        } catch (error) {
+          await releaseDownload(tokenHash, written);
+          throw error;
+        }
+        return { url: result.url, headers: result.headers, fileName: file.name, mimeType: file.mimeType };
       }
+
+      // Only a link that is still valid gets the proxy URL.
+      if (isGrantExpired(share.expiresAt)) throw errors.shareExpired();
       return {
         url: `/proxy/share-links/${encodeURIComponent(token)}/download`,
         fileName: file.name,

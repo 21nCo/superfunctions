@@ -902,9 +902,10 @@ async def test_share_proxy_fallback_only_for_a_link_that_is_still_valid() -> Non
     storage = FakeStorage(with_signing=True)
     storage.capabilities = {"signedDownloadUrls": True}  # type: ignore[attr-defined]
     shares_service = create_shares_service(SharesServiceConfig(db=db, storage=storage, namespace="filefn"))
-    soon = (datetime.now(timezone.utc) + timedelta(seconds=3)).isoformat().replace("+00:00", "Z")
-    created = await shares_service.create_share_link(CreateShareLinkInput(fileId="file_0001", expiresAt=soon), _ctx("user_123"))
-    # Within the signing margin: the checked proxy serves it.
+    created = await shares_service.create_share_link(CreateShareLinkInput(fileId="file_0001"), _ctx("user_123"))
+    for row in db.tables["fileShares"]:
+        row["expiresAt"] = (datetime.now(timezone.utc) + timedelta(milliseconds=500)).isoformat()
+    # Under a second left: the checked proxy serves it.
     descriptor = await shares_service.download_via_share_link(created["token"], _ctx(None), is_authenticated=False)
     assert descriptor["url"].startswith("/proxy/share-links/")
 
@@ -926,3 +927,15 @@ async def test_signing_failure_on_signing_only_storage_is_not_reported_as_expire
     with pytest.raises(RuntimeError, match="signing not supported"):
         await shares_service.download_via_share_link(created["token"], _ctx(None), is_authenticated=False)
     assert all(row["downloads"] == 0 for row in db.tables["fileShares"])
+
+
+def test_routed_storage_reports_streaming_per_target() -> None:
+    class SignOnly:
+        capabilities = {"signedDownloadUrls": True}
+
+        async def sign_download_url(self, key: str, expires_in_seconds: int) -> Dict[str, Any]:
+            return {"url": "https://download.local/x"}
+
+    routed = create_routed_storage_adapter({"sign": SignOnly(), "stream": FakeStorage()}, default_target="sign")
+    assert routed.capabilities_for_target("sign")["proxyStreamingDownload"] is False
+    assert routed.capabilities_for_target("stream")["proxyStreamingDownload"] is True

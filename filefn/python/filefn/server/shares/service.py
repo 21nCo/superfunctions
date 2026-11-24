@@ -1,6 +1,6 @@
 import hashlib
 import secrets
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel
@@ -20,10 +20,6 @@ class CreateShareLinkInput(BaseModel):
     maxDownloads: Optional[int] = None
 
 
-# Seconds a signed share URL keeps clear of the link's expiry, for the time signing takes.
-SIGNING_MARGIN_SECONDS = 5
-# Shortest signed share URL handed out; a link closer to its end is served by the checked proxy.
-MIN_SIGNED_URL_SECONDS = 30
 
 
 class SharesServiceConfig(BaseModel):
@@ -58,19 +54,30 @@ class SharesService:
         return secrets.token_urlsafe(32)
 
     def _signed_url_lifetime(self, share: FileShareRecord) -> Optional[int]:
-        """The signed URL TTL, but never past the link's own expiry; None (use the proxy) under a second."""
+        """The signed URL TTL, taken just before signing, but never past the link's own expiry; None under a second."""
         expires = parse_iso_instant(share.expiresAt) if share.expiresAt else None
         if expires is None:
             return self.signed_url_ttl_seconds
-        remaining = int((expires - datetime.now(timezone.utc)).total_seconds()) - SIGNING_MARGIN_SECONDS
-        if remaining < MIN_SIGNED_URL_SECONDS:
+        remaining = int((expires - datetime.now(timezone.utc)).total_seconds())
+        if remaining < 1:
             return None
         return min(self.signed_url_ttl_seconds, remaining)
 
-    def _signed_url_within_link(self, share: FileShareRecord, lifetime: int) -> bool:
-        """Whether a URL signed with this lifetime, now, still ends before the link does."""
-        expires = parse_iso_instant(share.expiresAt) if share.expiresAt else None
-        return expires is None or datetime.now(timezone.utc) + timedelta(seconds=lifetime) <= expires
+    async def _release_download(self, token_hash: str, written: int) -> None:
+        """Gives back a download that could not be handed out, only while the count is still the one written."""
+        try:
+            await self.db.update(
+                model="fileShares",
+                where=[
+                    {"field": "tokenHash", "operator": "eq", "value": token_hash},
+                    {"field": "downloads", "operator": "eq", "value": written},
+                ],
+                data={"downloads": written - 1},
+                namespace=self.namespace,
+            )
+        except Exception:
+            # Fails closed: the link keeps the extra count.
+            pass
 
     def _as_utc(self, value: str) -> datetime:
         normalized = value.replace("Z", "+00:00")
@@ -227,33 +234,38 @@ class SharesService:
         # Streaming is judged for the file's own storage target.
         can_stream = hasattr(self.storage, "open_download_stream") and capabilities.get("proxyStreamingDownload") is not False
         can_sign = hasattr(self.storage, "sign_download_url") and bool(capabilities.get("signedDownloadUrls"))
-        lifetime = self._signed_url_lifetime(share)
-        if lifetime is not None and can_sign:
+        if can_sign and (self._signed_url_lifetime(share) is not None or not can_stream):
+            # Counted first, then signed with the lifetime left at that moment; a
+            # failed signing gives the count back.
+            written = (await self._reserve_download(token_hash)).downloads
+            lifetime = self._signed_url_lifetime(share)
             result: Optional[Dict[str, Any]] = None
-            try:
-                result = await self.storage.sign_download_url(
-                    key=version.storageKey,
-                    expires_in_seconds=lifetime,
-                    target=storage_target,
-                )
-            except Exception as exc:
-                # Without streaming there is no fallback: the signing error is the answer.
-                if not can_stream:
-                    raise
-                logger_warning = getattr(self.logger, "warning", None)
-                if callable(logger_warning):
-                    logger_warning(
-                        "share signed download url generation failed; falling back to proxy",
-                        {
-                            "fileId": file.fileId,
-                            "versionId": version.versionId,
-                            "storageKey": version.storageKey,
-                            "error": str(exc),
-                        },
+            if lifetime is not None:
+                try:
+                    result = await self.storage.sign_download_url(
+                        key=version.storageKey,
+                        expires_in_seconds=lifetime,
+                        target=storage_target,
                     )
-            # If signing took long enough for the URL to outlive the link, the checked proxy serves it.
-            if result is not None and self._signed_url_within_link(share, lifetime):
-                await self._reserve_download(token_hash)
+                except Exception as exc:
+                    await self._release_download(token_hash, written)
+                    # Without streaming there is no fallback: the signing error is the answer.
+                    if not can_stream:
+                        raise
+                    logger_warning = getattr(self.logger, "warning", None)
+                    if callable(logger_warning):
+                        logger_warning(
+                            "share signed download url generation failed; falling back to proxy",
+                            {
+                                "fileId": file.fileId,
+                                "versionId": version.versionId,
+                                "storageKey": version.storageKey,
+                                "error": str(exc),
+                            },
+                        )
+            else:
+                await self._release_download(token_hash, written)
+            if result is not None:
                 return {
                     "url": result["url"],
                     "headers": result.get("headers"),

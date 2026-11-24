@@ -57,7 +57,11 @@ class RoutedStorageAdapter:
 
     def capabilities_for_target(self, target: str) -> Dict[str, bool]:
         adapter, _ = self._pick(target)
-        return dict(getattr(adapter, "capabilities", {}) or {})
+        capabilities = dict(getattr(adapter, "capabilities", {}) or {})
+        # The router has open_download_stream for every target; say whether this one can.
+        if "proxyStreamingDownload" not in capabilities:
+            capabilities["proxyStreamingDownload"] = callable(getattr(adapter, "open_download_stream", None))
+        return capabilities
 
     async def get_object(self, key: str, target: Optional[str] = None) -> Any:
         adapter, _ = self._pick(target)
