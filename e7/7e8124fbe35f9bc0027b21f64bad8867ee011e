@@ -1,0 +1,45 @@
+flowfn/admin/src/__tests__/admin.test.ts
+  s_51277de6439372::t_f1b12a0a419ce4 558-564,575-630
+flowfn/admin/src/domain-service.ts
+  s_51277de6439372::t_66af79bd0cc4dd 350-362,366-374
+flowfn/typescript/src/adapters/base.ts
+  s_51277de6439372::t_3341d37a96a623 2,38-39
+flowfn/typescript/src/adapters/memory-order.test.ts
+  s_51277de6439372::t_0bf44836dd5f6a 46-60
+flowfn/typescript/src/adapters/memory.ts
+  s_51277de6439372::t_1bc1eadf571f61 4,36-38,42,45
+flowfn/typescript/src/adapters/postgres/index.ts
+  s_51277de6439372::t_3c2b2bbc7ff036 8,222-224,232,234,243,246
+flowfn/typescript/src/adapters/postgres/postgres.test.ts
+  s_51277de6439372::t_4d3decc54af83a 404-417
+flowfn/typescript/src/adapters/redis.test.ts
+  s_51277de6439372::t_5bad2d6581086e 261-274
+flowfn/typescript/src/adapters/redis.ts
+  s_51277de6439372::t_4fa790d574110f 7,144-145,150,158,379-381,383-384
+flowfn/typescript/src/core/durable-scheduler.ts
+  s_51277de6439372::t_5a515078798ede 130-131,166-167
+flowfn/typescript/src/core/flow-fn.ts
+  s_51277de6439372::t_0136d4fce76b38 117
+flowfn/typescript/src/core/scheduler-pause.test.ts
+  s_51277de6439372::t_6f98bbaf71219f 1-67
+flowfn/typescript/src/queue/queue.ts
+  s_51277de6439372::t_deb00a051a93fa 6,203-209,237-238,245-254
+flowfn/typescript/src/queue/types.ts
+  s_51277de6439372::t_1e9d692d046854 7-8,65-70
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e77e8124fbe35f9bc0027b21f64bad8867ee011e",
+  "prompts": {},
+  "sessions": {
+    "s_51277de6439372": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_51277de6439372",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

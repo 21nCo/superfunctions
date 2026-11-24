@@ -1,0 +1,31 @@
+cachefn/typescript/README.md
+  s_d80f65c4cdfeb4::t_86dfe41b479352 352-354,542-543
+cachefn/typescript/__tests__/factory-convenience.test.ts
+  s_d80f65c4cdfeb4::t_813020d27b7291 26-36
+cachefn/typescript/__tests__/memoize.test.ts
+  s_d80f65c4cdfeb4::t_bf65d76cc52bf9 114-149
+cachefn/typescript/__tests__/offline-cache.test.ts
+  s_d80f65c4cdfeb4::t_56b9561666204a 131-152
+cachefn/typescript/src/core/cache.ts
+  s_d80f65c4cdfeb4::t_70df7b6b9492b8 79-80
+cachefn/typescript/src/memoization/compatible.ts
+  s_d80f65c4cdfeb4::t_8299028d9ac7a1 22,24-25,35
+cachefn/typescript/src/memoization/memoize.ts
+  s_d80f65c4cdfeb4::t_4a62d840b90266 84-87,101
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b8fda86285dec62a3e990ce04bb5c1e643129619",
+  "prompts": {},
+  "sessions": {
+    "s_d80f65c4cdfeb4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_d80f65c4cdfeb4",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

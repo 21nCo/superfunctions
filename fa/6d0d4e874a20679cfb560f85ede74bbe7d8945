@@ -1,0 +1,27 @@
+flowfn/typescript/docs/queue-ownership.md
+  s_124319b903d839::t_cd7c56fe019eeb 65-71,82-88
+flowfn/typescript/src/adapters/claim-pairing.ts
+  s_124319b903d839::t_98b4a891dd5969 1-46
+flowfn/typescript/src/core/flow-fn.ts
+  s_124319b903d839::t_d154685ba1adba 4,143,156,160,169
+flowfn/typescript/src/queue/claim-many.test.ts
+  s_124319b903d839::t_00988ac9bcdb36 3,617-673,708-770,931-964
+flowfn/typescript/src/queue/queue.ts
+  s_124319b903d839::t_d9158a669e3ce8 17,145-146,973,997-1003,1005-1006,1107-1112,1115,1322-1324,1399-1410,1472,1993-1995
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fa6d0d4e874a20679cfb560f85ede74bbe7d8945",
+  "prompts": {},
+  "sessions": {
+    "s_124319b903d839": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "459fa815-0e7a-4823-b25b-3c85bd3d320a",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

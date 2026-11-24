@@ -1,0 +1,47 @@
+testfn/typescript/README.md
+  s_7b9cb0c1744f3d::t_7b065d801553f0 154-185
+package-lock.json
+  s_7b9cb0c1744f3d::t_ef6668a120b918 22514-22543,22548,22565,22578,22593,22608,22621,22636,22646,22659-22670,22675,22685,22695,22702,22709,22719,22732,22742,22752,22775,22848,109756,127559,127584,127596,127605,127621,127631-127633,127648-127657,128116-128188,128212-128267
+testfn/admin/package.json
+  s_7b9cb0c1744f3d::t_442e0d212924d6 37
+testfn/contracts/authfn-password-0.4.json
+  s_7b9cb0c1744f3d::t_ffeb08eee8a373 1-217
+testfn/scripts/packed-consumer.mjs
+  s_7b9cb0c1744f3d::t_5e31f33e0df838 39-40,68-82,100,120-123,144-157
+testfn/typescript/package.json
+  s_7b9cb0c1744f3d::t_838b3854b9d0ea 3,32-35,96-97,114-116,136-138
+testfn/typescript/src/fixtures/authfn/guard.ts
+  s_7b9cb0c1744f3d::t_8f3f3a4528352d 1-10
+testfn/typescript/src/fixtures/authfn/in-process.ts
+  s_7b9cb0c1744f3d::t_798ebdf290ac97 1-114
+testfn/typescript/src/fixtures/authfn/index.ts
+  s_7b9cb0c1744f3d::t_f9e45019494187 1-28
+testfn/typescript/src/fixtures/authfn/plugin.ts
+  s_7b9cb0c1744f3d::t_9233087d19c45b 1-72
+testfn/typescript/src/fixtures/authfn/remote.ts
+  s_7b9cb0c1744f3d::t_e5c7e2515a5dc9 1-214
+testfn/typescript/src/fixtures/authfn/session.ts
+  s_7b9cb0c1744f3d::t_21bf39750b7cb1 1-117
+testfn/typescript/tests/authfn-fixture-remote.test.ts
+  s_7b9cb0c1744f3d::t_0081131b19c723 1-210
+testfn/typescript/tests/authfn-fixture.test.ts
+  s_7b9cb0c1744f3d::t_71cfbc58b09e64 1-240
+testfn/typescript/tests/support/authfn.ts
+  s_7b9cb0c1744f3d::t_2542c510127717 1-67
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "df5b7ba23343baf3d9954e67ec1a1dcc941be8a0",
+  "prompts": {},
+  "sessions": {
+    "s_7b9cb0c1744f3d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1176174e-0ec3-4f62-8a16-09ab6a23a889",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,45 @@
+cifn/typescript/runner/src/secrets-steps.test.ts
+  s_012628f773537d::t_156bec5caf5da6 1,19,259-273
+cifn/typescript/runner/src/steps/testfn-run.ts
+  s_012628f773537d::t_19c75c4f074a63 24-28,30,35-44
+testfn/.conduct/python-readiness.md
+  s_012628f773537d::t_a58c6ec63a0f8d 11
+testfn/SPEC.md
+  s_012628f773537d::t_6b8e62b70e0080 212
+testfn/python/README.md
+  s_012628f773537d::t_65be0dcf51a9cf 120-126
+testfn/python/testfn/adapters/pytest.py
+  s_012628f773537d::t_d5c14ae80ea3e8 50-58,338,342,352,358,366,369-372,374,388,461-469
+testfn/python/tests/test_execution_contract.py
+  s_012628f773537d::t_f5eaf3205bc3b5 841-937
+testfn/typescript/README.md
+  s_012628f773537d::t_75f94908190248 146-149,273
+testfn/typescript/src/analytics/analytics-engine.ts
+  s_012628f773537d::t_0e6481054b6a0c 41-42,191
+testfn/typescript/src/storage/backends.ts
+  s_012628f773537d::t_798a2656c09a21 15,32-34,101-107,158-163,165-170,182-200,203-224,240-243,245,275-277,281,345,348,353-354,358-367,369-392
+testfn/typescript/src/storage/indexeddb-manager.ts
+  s_012628f773537d::t_3580fd6b6461db 227-249,254-255,258-259,262-298,301-316
+testfn/typescript/src/storage/test-storage.ts
+  s_012628f773537d::t_3c289598699bff 428-432
+testfn/typescript/tests/storage-concurrency.test.ts
+  s_012628f773537d::t_89704b13675bcc 241-245
+testfn/typescript/tests/storage-history-bounds.test.ts
+  s_012628f773537d::t_2cfd4d5cf22646 1-168
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3ea8806f078faf4096a0bc1dcd4fee33ba2f5f40",
+  "prompts": {},
+  "sessions": {
+    "s_012628f773537d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8d9d02f3-07c2-401f-905f-9eb0fb631a7d",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

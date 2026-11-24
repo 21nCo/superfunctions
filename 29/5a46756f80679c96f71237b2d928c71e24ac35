@@ -1,0 +1,29 @@
+cachefn/python/cachefn/storage/memory_storage.py
+  s_7a70678765826f::t_885a8bdb7b60da 32-34,114-117,177,219-222,226-230
+cachefn/python/tests/test_memory_storage_expiry.py
+  s_7a70678765826f::t_fec9449888161f 1-93
+cachefn/typescript/README.md
+  s_7a70678765826f::t_799a50e5730c8e 661-667,675
+cachefn/typescript/__tests__/fence-rollback.test.ts
+  s_7a70678765826f::t_f49e92927fab81 1-223
+cachefn/typescript/src/core/cache.ts
+  s_7a70678765826f::t_daa2c94b298ed2 27-29,61-63,110,174,205,223-227,232,328,331-332,477-482,490-501,503-531,548-549,553,556-563
+cachefn/typescript/src/memoization/memoize.ts
+  s_7a70678765826f::t_1f2be0dc65c8c3 3,70-73,76-109,113-115,117-118,129,144,155,159
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "295a46756f80679c96f71237b2d928c71e24ac35",
+  "prompts": {},
+  "sessions": {
+    "s_7a70678765826f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_7a70678765826f",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

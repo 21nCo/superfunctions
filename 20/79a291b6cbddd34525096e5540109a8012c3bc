@@ -1,0 +1,43 @@
+flowfn/python/flowfn/workflow/workflow.py
+  s_3ef3eadf249543::t_0d162a1824ee43 418-428,430,433,445-449,574-576
+flowfn/python/tests/test_workflow_owner_fence.py
+  s_3ef3eadf249543::t_6373d0f032ee1d 1-163
+flowfn/typescript/src/adapters/base.ts
+  s_3ef3eadf249543::t_988aeff9582443 20-26,52-57
+flowfn/typescript/src/adapters/memory.ts
+  s_3ef3eadf249543::t_80153f1274c977 3,130-134
+flowfn/typescript/src/adapters/postgres/index.ts
+  s_3ef3eadf249543::t_66395c38d78e9e 7,353-356,358
+flowfn/typescript/src/adapters/postgres/postgres.test.ts
+  s_3ef3eadf249543::t_d21c418629624e 6,37
+flowfn/typescript/src/adapters/redis.test.ts
+  s_3ef3eadf249543::t_0f03c7f33e3e71 6,509
+flowfn/typescript/src/adapters/redis.ts
+  s_3ef3eadf249543::t_d900f91f74ef97 6,488-489,492-499,502-504,914-915
+flowfn/typescript/src/queue/queue.ts
+  s_3ef3eadf249543::t_638831264304d2 499-504,506-507,513
+flowfn/typescript/src/queue/snapshot.test.ts
+  s_3ef3eadf249543::t_d3f813af610bda 3,15-17
+flowfn/typescript/src/storage/queue-snapshot-contract.ts
+  s_3ef3eadf249543::t_6300a4b0623de0 151-195
+flowfn/typescript/src/workflow/recovery.test.ts
+  s_3ef3eadf249543::t_61af7186c436cc 251-282
+flowfn/typescript/src/workflow/workflow.ts
+  s_3ef3eadf249543::t_687da972151456 892-893,1066-1068
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2079a291b6cbddd34525096e5540109a8012c3bc",
+  "prompts": {},
+  "sessions": {
+    "s_3ef3eadf249543": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_3ef3eadf249543",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

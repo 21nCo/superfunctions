@@ -1,0 +1,31 @@
+flowfn/typescript/src/queue/dlq.ts
+  s_ca6bf50977218c::t_304bfb2f511ced 74-78,80,152-156,160-162,185-186,203,218,247,284,288-300,303-305,315-316,327-329,333,349,358-362,388-391
+flowfn/admin/README.md
+  s_ca6bf50977218c::t_f61d05761d1e8c 24,34-37
+flowfn/admin/src/domain-service.ts
+  s_ca6bf50977218c::t_d25e8e0c784bfa 348,454-456,460-461,464-471
+flowfn/typescript/docs/queue-ownership.md
+  s_ca6bf50977218c::t_6591b77ee4a18e 24-35
+flowfn/typescript/src/adapters/redis.test.ts
+  s_ca6bf50977218c::t_0171a73e1b1c1c 307-312
+flowfn/typescript/src/adapters/redis.ts
+  s_ca6bf50977218c::t_e0c30cee93179e 6,343-348,355,373,376-379,384,399,408,466-480
+flowfn/typescript/tests/dlq.test.ts
+  s_ca6bf50977218c::t_661e4302fe3f3b 330,335,338-340,342,345,352-361,363-377,379-395
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a8bb9351ece6fe4f8ba4542949fb3a13c3676f5a",
+  "prompts": {},
+  "sessions": {
+    "s_ca6bf50977218c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e80897ce-943b-4dd9-bcfc-68564973f054",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

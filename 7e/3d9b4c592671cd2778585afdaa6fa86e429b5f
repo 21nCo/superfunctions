@@ -1,0 +1,27 @@
+watchfn/python/tests/test_batching.py
+  s_59718a9b1011e5::t_ccd45724eab854 235-254
+watchfn/python/watchfn/client.py
+  s_59718a9b1011e5::t_49079344a6cc00 74
+watchfn/python/watchfn/integrations/logfn.py
+  s_59718a9b1011e5::t_59cd54f9579d1f 145-154
+watchfn/python/watchfn/models.py
+  s_59718a9b1011e5::t_8515604b77a327 80
+watchfn/python/watchfn/storage/memory_storage.py
+  s_59718a9b1011e5::t_eb49b64e2906bf 16-31,36,38
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7e3d9b4c592671cd2778585afdaa6fa86e429b5f",
+  "prompts": {},
+  "sessions": {
+    "s_59718a9b1011e5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "bb479e62-8864-49f5-a298-31758c4d3d6a",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

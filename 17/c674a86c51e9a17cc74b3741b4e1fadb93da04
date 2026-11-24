@@ -1,0 +1,51 @@
+flowfn/typescript/src/queue/worker-pool.ts
+  s_b996deaa3d01f1::t_8dfc8d9778c400 90-92
+flowfn/admin/README.md
+  s_b996deaa3d01f1::t_b0b66103fbea0f 34-41
+flowfn/admin/src/__tests__/admin.test.ts
+  s_b996deaa3d01f1::t_e8e05b3adf5501 10-11,13,881-883,889-898,900,902-904,907-908,912,916,1062-1063,1065,1070,1073-1085,1087-1100,1104-1133
+flowfn/admin/src/domain-service.ts
+  s_b996deaa3d01f1::t_bfa1db166ce160 1,403-407,409,456-458,460,464-465,468-473,506-516,521,523-526
+flowfn/python/flowfn/adapters/memory.py
+  s_b996deaa3d01f1::t_88198fcb9116b0 112-119,260-262
+flowfn/python/tests/test_durable_retention.py
+  s_b996deaa3d01f1::t_75ee33ad8122f6 5,92-134
+flowfn/typescript/docs/queue-ownership.md
+  s_b996deaa3d01f1::t_64f4900571470f 29-41
+flowfn/typescript/src/adapters/base.ts
+  s_b996deaa3d01f1::t_8200779f184e4e 27-35,39-41,44,52-68,71-85
+flowfn/typescript/src/adapters/memory.ts
+  s_b996deaa3d01f1::t_049f2fac207a23 3-6,55,58-59,61
+flowfn/typescript/src/adapters/postgres/index.ts
+  s_b996deaa3d01f1::t_f04f4a306a6f12 7,81-82,231-232,243,251,261-276,278-286,294,296-297,303,305,309
+flowfn/typescript/src/adapters/postgres/postgres.test.ts
+  s_b996deaa3d01f1::t_e3003c365ccd96 19,28,51,455-501
+flowfn/typescript/src/adapters/redis.test.ts
+  s_b996deaa3d01f1::t_3485f5d4ea5f50 18,20,231,318-362
+flowfn/typescript/src/adapters/redis.ts
+  s_b996deaa3d01f1::t_31cd07013ea314 6,313-333,491-492,497-504,506,512,514,516
+flowfn/typescript/src/queue/dlq.ts
+  s_b996deaa3d01f1::t_40968b5532b5c1 7,152-159,161,163,188-189,206,288,290,295-301,303-316,321,335,337-343,348,350,353-355,358,378,404,406,408-409,414-415
+flowfn/typescript/src/queue/worker-pool.test.ts
+  s_b996deaa3d01f1::t_cd848a868d1bd3 6,9
+flowfn/typescript/src/storage/worker-contract.ts
+  s_b996deaa3d01f1::t_6d8dc89602f5ac 87-112
+flowfn/typescript/tests/dlq.test.ts
+  s_b996deaa3d01f1::t_55b196c920dc4d 8-12,255-257,283,311,331,335,337,340-343,345-346,349-383,386-403,408,411,413-421
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "17c674a86c51e9a17cc74b3741b4e1fadb93da04",
+  "prompts": {},
+  "sessions": {
+    "s_b996deaa3d01f1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c40e7b19-3313-4542-ad8e-39c9c4c912f1",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

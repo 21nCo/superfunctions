@@ -1,0 +1,23 @@
+flowfn/typescript/src/queue/queue.ts
+  s_254760ed11bb3b::t_d6724264fc7c26 1070,1215,1246-1247,1249,1269,1291,1312-1318,1484-1487,1747-1748,1750-1751,1775-1777,1779,1782-1783,2103-2105,2246-2251,2267-2272,2276,2280-2281,2283,2320
+flowfn/typescript/docs/queue-ownership.md
+  s_254760ed11bb3b::t_c7906da18be229 86-91
+flowfn/typescript/src/queue/claim-many.test.ts
+  s_254760ed11bb3b::t_a89ed9c5cb67a1 1208-1262
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2cbc9d4d3d26df007a6952f10daac83d04906c35",
+  "prompts": {},
+  "sessions": {
+    "s_254760ed11bb3b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b2b5f7a8-2527-45ce-aade-8e0d9ba0bdca",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

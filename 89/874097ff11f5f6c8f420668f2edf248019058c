@@ -1,0 +1,25 @@
+flowfn/typescript/README.md
+  s_124319b903d839::t_052879b8408dd2 106-111
+flowfn/typescript/src/adapters/postgres/index.ts
+  s_124319b903d839::t_91c3eb6d2f52e9 238-240
+flowfn/typescript/src/adapters/postgres/notifications.test.ts
+  s_124319b903d839::t_877186068b66ff 318-361
+flowfn/typescript/src/adapters/postgres/notifications.ts
+  s_124319b903d839::t_e2a3b521d03188 40-41,114,214-217,247-248,253
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "89874097ff11f5f6c8f420668f2edf248019058c",
+  "prompts": {},
+  "sessions": {
+    "s_124319b903d839": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "459fa815-0e7a-4823-b25b-3c85bd3d320a",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

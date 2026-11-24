@@ -1,0 +1,83 @@
+flowfn/admin/src/domain-service.ts
+  s_79f2e801c51556::t_0dd46bf9d1ba71 339,342,346-350,355-425,428-430,432
+flowfn/python/tests/dlq_dedup_contract.py
+  s_097c7c529d2142::t_23fb786a5cd589 1-37
+flowfn/python/tests/test_dlq_recovery.py
+  s_097c7c529d2142::t_c8afcd7604d45d 106-113
+flowfn/python/tests/test_durable_adapters.py
+  s_097c7c529d2142::t_6609d4fc63fe9e 77-82
+flowfn/typescript/src/adapters/base.ts
+  s_79f2e801c51556::t_5ac3cc5e30b8b7 18-22
+flowfn/typescript/src/adapters/memory.ts
+  s_79f2e801c51556::t_f8d2540882163b 50
+flowfn/typescript/src/adapters/postgres/index.ts
+  s_79f2e801c51556::t_9bfd09f77a7bf8 263
+flowfn/typescript/src/adapters/redis.ts
+  s_79f2e801c51556::t_2edeca0fb84673 231-236,238,259,294,393,451-452
+flowfn/typescript/src/queue/dlq.ts
+  s_79f2e801c51556::t_b0dc89be8486c2 56-62,101-105,107,109-113,157-158,223,226-227,230-233
+flowfn/typescript/src/queue/job.ts
+  s_79f2e801c51556::t_ac5aa080c596c2 6,85,90-93,102
+flowfn/typescript/src/queue/queue.ts
+  s_79f2e801c51556::t_c743ad96020469 192,194,209-210,212-213,215,249,256-258
+flowfn/typescript/src/queue/types.ts
+  s_79f2e801c51556::t_1dc61b9874d68e 12,123-124
+flowfn/typescript/src/queue/worker-pool.test.ts
+  s_097c7c529d2142::t_2876e15b0e130e 6,9
+flowfn/typescript/src/queue/worker-pool.ts
+  s_79f2e801c51556::t_ac6944f0c4fd4e 86-90,95
+flowfn/typescript/src/storage/worker-contract.ts
+  s_097c7c529d2142::t_87c17ad760aa11 59-86
+flowfn/typescript/tests/dlq.test.ts
+  s_19abec75182420::t_4213613eb603d6 6,222,226,230-233,235-247,249-266
+flowfn/admin/src/__tests__/admin.test.ts
+  s_79f2e801c51556::t_cf06d17c422955 727-728,743,745,747,825-827,832-924
+flowfn/python/flowfn/adapters/memory.py
+  s_79f2e801c51556::t_62f7224da1d272 279-287
+flowfn/python/flowfn/adapters/native_queues.py
+  s_79f2e801c51556::t_1448e1c781f8ea 80-83
+flowfn/python/flowfn/adapters/postgres_queues.py
+  s_79f2e801c51556::t_96007af7a2f89f 58,236-238
+flowfn/typescript/README.md
+  s_79f2e801c51556::t_c7ad5b31d4fc76 58-59
+flowfn/typescript/docs/queue-ownership.md
+  s_79f2e801c51556::t_2184c239cabd0f 15-28
+flowfn/typescript/src/adapters/memory-order.test.ts
+  s_79f2e801c51556::t_6b0e3c104851d0 79-85
+flowfn/typescript/src/adapters/postgres/postgres.test.ts
+  s_79f2e801c51556::t_77113f500978ff 27,49,437-443
+flowfn/typescript/src/adapters/redis.test.ts
+  s_79f2e801c51556::t_03a18ed86b7332 18,229,294-300
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "cc9090ebb90c147d12db075c2b3dc2c2f267fcc4",
+  "prompts": {},
+  "sessions": {
+    "s_097c7c529d2142": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "27a9e127-2d3e-4320-bc37-7e2d950cdcb3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_19abec75182420": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d61a7abd-8c27-4e7c-ba23-13d43e2da322",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_79f2e801c51556": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "31f4281e-ea60-4fb5-99af-b83389fed13f",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

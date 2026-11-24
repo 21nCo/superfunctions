@@ -1,0 +1,33 @@
+cachefn/typescript/README.md
+  s_8be168494f6536::t_9cbc77ed6ba61b 282-289,360-365,388
+cachefn/typescript/__tests__/db-storage-adapters.test.ts
+  s_8be168494f6536::t_e5ec0783d13337 77-84
+cachefn/typescript/__tests__/db-storage-wrap.test.ts
+  s_8be168494f6536::t_1307eede318ae2 1-67
+cachefn/typescript/__tests__/db-storage.test.ts
+  s_8be168494f6536::t_db83020b518c92 254-281,401-412
+cachefn/typescript/__tests__/helpers/db-adapter.ts
+  s_8be168494f6536::t_c2cf3b0967ef1d 22-24
+cachefn/typescript/scripts/packed-consumer.mjs
+  s_8be168494f6536::t_f6e64ad8410c64 5,118-139,150
+cachefn/typescript/src/storage/db/db-storage.ts
+  s_8be168494f6536::t_f2c52b1f24b556 25-31,46-47,61-66,73,250-271,289-291,310,317-325,370,375,435,468,481,505,546,598-602,618-620,624,633,635,644-649,653-661,665,669
+cachefn/typescript/src/storage/db/schema.ts
+  s_8be168494f6536::t_8f2b7f02be8e5a 51-52
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2bf742414fdec33b76ba31e79f25f9cb2629c44a",
+  "prompts": {},
+  "sessions": {
+    "s_8be168494f6536": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "10406c3f-d732-460a-9be9-312d6025c3c6",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
