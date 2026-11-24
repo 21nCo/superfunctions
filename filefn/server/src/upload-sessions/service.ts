@@ -357,6 +357,8 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
 
   // Deletes the session's proxy part objects. Returns false if any delete
   // failed; callers that must not lose track of the parts keep the session.
+  const MAX_SWEPT_PART_NUMBERS = 10_000;
+
   async function deleteProxyTempPartObjects(session: UploadSession): Promise<boolean> {
     if (session.uploadMode !== 'proxy' || !storage.deleteObject) {
       return true;
@@ -375,7 +377,10 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       namespace,
     });
     const partNumbers = new Set<number>(recorded.map((part) => part.partNumber));
-    for (let n = 1; n <= (session.totalParts ?? 0); n++) partNumbers.add(n);
+    // Bounded: a huge declared size must not make cleanup unbounded. 10,000 is
+    // the multipart part limit of S3-compatible stores.
+    const sweepUpTo = Math.min(session.totalParts ?? 0, MAX_SWEPT_PART_NUMBERS);
+    for (let n = 1; n <= sweepUpTo; n++) partNumbers.add(n);
 
     let allDeleted = true;
     for (const partNumber of partNumbers) {
@@ -1685,6 +1690,11 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         // At most the part's bound was written, and the expiry sweep removes
         // part objects of sessions that never complete.
         await writer.abort(err).catch(() => {});
+        // If the session ended meanwhile (an expiry sweep removed it), no later
+        // cleanup will see this key: remove what this write left.
+        if (storage.deleteObject && !(await readSession(uploadSessionId).catch(() => undefined))) {
+          await storage.deleteObject({ key: partKey, target: storageTarget }).catch(() => {});
+        }
         throw err;
       }
       await writer.close();
