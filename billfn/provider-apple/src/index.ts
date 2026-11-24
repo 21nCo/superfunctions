@@ -212,10 +212,11 @@ export function createAppleProvider(providerConfig: AppleProviderConfig): BillFn
       try {
         response = await requestStoreKitForTransaction(fetchImpl, config, `/inApps/v1/subscriptions/${encodeStoreKitPathSegment(transactionId)}`);
       } catch (error) {
-        // A paid production subscription always exists in production. One production definitively does not know,
-        // in a deployment that no longer accepts the sandbox, was accepted from the sandbox before: it has expired
-        // for this deployment, so sync and account scans end its access instead of failing on it.
-        if (!acceptsSandbox(config) && isStoreKitNotFound(error)) {
+        // A subscription BillFn stored from a sandbox read or notification, in a deployment that no longer accepts
+        // the sandbox, is not found in production: it has expired for this deployment, so sync and account scans
+        // end its access instead of failing on it. Any other not-found stays an error, since StoreKit can answer
+        // it for a real production transaction too.
+        if (!acceptsSandbox(config) && isStoreKitNotFound(error) && storedFromNonProduction(input.subscription.metadata)) {
           return {
             subscriptionStatus: 'expired',
             checkoutStatus: 'failed',
@@ -1014,6 +1015,16 @@ function mapAppleNotificationEvent(
     billingState: state,
     raw: notification
   };
+}
+
+/**
+ * Whether a stored subscription came from a non-production StoreKit environment, by the provider record BillFn merged
+ * into its metadata: a StoreKit response's `environment`, or a notification transaction's.
+ */
+function storedFromNonProduction(metadata: Record<string, unknown> | undefined): boolean {
+  const environments = [readString(metadata ?? {}, ['environment']), readString(asRecord(metadata?.transaction) ?? {}, ['environment'])];
+  const stated = environments.filter((environment): environment is string => typeof environment === 'string');
+  return stated.length > 0 && stated.every((environment) => environment !== 'Production');
 }
 
 /** Whether sandbox purchases and notifications count for this adapter. */

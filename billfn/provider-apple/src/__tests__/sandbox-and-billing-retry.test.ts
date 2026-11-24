@@ -86,10 +86,16 @@ describe('sandbox purchases in a production deployment', () => {
       providerSubscriptionId: 'orig_legacy',
       providerChargeId: 'txn_legacy',
       status: 'active',
-      autoRenew: true
+      autoRenew: true,
+      // The StoreKit response BillFn merged into the row when it was verified from the sandbox.
+      metadata: { environment: 'Sandbox' }
     },
     price: { priceId: 'price_apple', providerProductId: 'apple.pro.month' }
   };
+  const withMetadata = (metadata: Record<string, unknown> | undefined) => ({
+    ...storedSubscription,
+    subscription: { ...storedSubscription.subscription, metadata }
+  });
 
   it('syncs a stored subscription production does not know as expired, so an account scan ends it and moves on', async () => {
     const fetchMock = vi.fn(async () => notFound()) as unknown as typeof fetch;
@@ -98,6 +104,25 @@ describe('sandbox purchases in a production deployment', () => {
 
     expect(state).toMatchObject({ subscriptionStatus: 'expired', providerSubscriptionId: 'orig_legacy', autoRenew: false });
     expect(vi.mocked(fetchMock)).toHaveBeenCalledTimes(1);
+  });
+
+  it('expires a stored subscription whose notification transaction came from the sandbox', async () => {
+    const fetchMock = vi.fn(async () => notFound()) as unknown as typeof fetch;
+
+    const state = await provider(fetchMock).fetchSubscription!(withMetadata({ transaction: { environment: 'Sandbox' } }) as never);
+
+    expect(state).toMatchObject({ subscriptionStatus: 'expired' });
+  });
+
+  it.each([
+    ['a production subscription', { environment: 'Production' }],
+    ['a subscription with no recorded environment', undefined]
+  ])('keeps a not-found sync of %s an error, preserving its access', async (_name, metadata) => {
+    const fetchMock = vi.fn(async () => notFound()) as unknown as typeof fetch;
+
+    await expect(provider(fetchMock).fetchSubscription!(withMetadata(metadata) as never)).rejects.toMatchObject({
+      code: 'BILLFN_PROVIDER_ERROR'
+    });
   });
 
   it('keeps a not-found sync an error when the sandbox is allowed', async () => {
