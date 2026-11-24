@@ -389,11 +389,12 @@ export function createFileFn(config: FileFnConfig): FileFn {
     basePath,
   });
   // Expired sessions, their part objects and orphaned artifacts are removed
-  // only by the host's scheduled sweeps. Say so once per process when uploads
-  // start and no sweep has run here yet.
-  let sweepHasRun = false;
+  // only by the host's scheduled sweeps. Say so once per process (not per
+  // FileFn instance: hosts that build one per request share the process) when
+  // uploads start and no sweep has run in the process yet.
   events.once('upload.started', () => {
-    if (!sweepHasRun) {
+    if (logger && !sweepState.ran && !sweepState.warned) {
+      sweepState.warned = true;
       logger?.warn('Uploads started but cleanupExpiredSessions has not run in this process', {
         hint: 'Schedule cleanupExpiredSessions() and cleanupOrphanedArtifacts(); without them expired sessions and their stored objects are never removed.',
       });
@@ -415,7 +416,7 @@ export function createFileFn(config: FileFnConfig): FileFn {
           // shape, never the token.
           const observation = observabilityScope.startRequest({
             request,
-            path: redactObservedPath(new URL(request.url).pathname),
+            path: redactObservedPath(new URL(request.url).pathname, mountPath),
           });
           const response = await observabilityScope.runWithRequest(
             observation,
@@ -490,7 +491,7 @@ export function createFileFn(config: FileFnConfig): FileFn {
     },
 
     cleanupExpiredSessions() {
-      sweepHasRun = true;
+      sweepState.ran = true;
       return uploadService.cleanupExpiredSessions();
     },
 
@@ -662,8 +663,31 @@ function fileFnLoggerFromObservability(logger: ObservationLogger | undefined): L
   };
 }
 
-/** A request path with share-link tokens replaced by `:token`. */
-export function redactObservedPath(pathname: string): string {
-  return pathname.replace(/\/share-links\/[^/]+/g, '/share-links/:token');
+// Process-wide: whether any FileFn instance in this process ran the expiry
+// sweep, and whether the missing-sweep warning was already given.
+const sweepState = { ran: false, warned: false };
+
+// The router's share-link routes, on the path under the mount.
+const SHARE_TOKEN_ROUTES: RegExp[] = [
+  /^(\/share-links\/)[^/]+(\/download)$/,
+  /^(\/proxy\/share-links\/)[^/]+(\/download)$/,
+  /^(\/[^/]+\/share-links\/)[^/]+()$/,
+];
+
+/**
+ * A request path with its share-link token replaced by `:token`. The token is
+ * found on the route path under `mountPath` (FileFn's `basePath`), with the
+ * router's own share-link patterns, so a mount path that itself contains
+ * `share-links` can't shift the match off the token.
+ */
+export function redactObservedPath(pathname: string, mountPath = ''): string {
+  const route = stripBasePath(pathname, mountPath);
+  if (route === null) return pathname;
+  for (const pattern of SHARE_TOKEN_ROUTES) {
+    if (pattern.test(route)) {
+      return `${mountPath}${route.replace(pattern, '$1:token$2')}`;
+    }
+  }
+  return pathname;
 }
 export type { RateLimitClientKey } from './rate-limit-key.js';

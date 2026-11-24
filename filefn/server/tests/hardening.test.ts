@@ -58,6 +58,28 @@ describe('FILE-30 low-severity hardening (F-13, F-14, F-16, F-18, F-24)', () => 
     expect((await get({ 'x-test-user': 'nobody', 'x-test-tenant': 't1' }))!.status).toBe(403);
   });
 
+  it("keeps a tenant's admin away from files without a tenant (F-18)", async () => {
+    const database = memoryAdapter();
+    const { fileFn } = makeFileFn({ database, authorizer: createDefaultAuthorizer({ db: database, namespace: 'filefn' }) });
+    const tenantless = await upload(fileFn, { principalId: 'loner' });
+    const get = (headers: Record<string, string>) =>
+      fileFn.router.handle(new Request(`http://localhost/${tenantless.fileId}`, { headers }));
+    expect((await get({ 'x-test-user': 'admin1', 'x-test-tenant': 't1', 'x-test-roles': 'admin' }))!.status).toBe(403);
+    // An admin without a tenant still covers files without one.
+    const globalAdmin = await fileFn.getFile({ fileId: tenantless.fileId }, { principalId: 'root', roles: ['admin'] } as never);
+    expect(globalAdmin.fileId).toBe(tenantless.fileId);
+  });
+
+  it('keeps anonymous and signed-in rate-limit buckets apart, whatever the IDs (F-14)', async () => {
+    const { rateLimitSubject } = await import('../src/rate-limit-key.js');
+    const request = new Request('http://localhost/');
+    const anon = await rateLimitSubject(null, request, () => 'client-a');
+    const user = await rateLimitSubject({ principalId: 'anonymous:client-a' }, request);
+    const tenantUser = await rateLimitSubject({ principalId: 'b', tenantId: 'a:x' }, request);
+    const otherTenantUser = await rateLimitSubject({ principalId: 'x:b', tenantId: 'a' }, request);
+    expect(new Set([anon, user, tenantUser, otherTenantUser]).size).toBe(4);
+  });
+
   it('gives anonymous callers their own rate-limit bucket when the host names them (F-14)', async () => {
     const { fileFn } = makeFileFn({
       rateLimit: {
@@ -79,7 +101,11 @@ describe('FILE-30 low-severity hardening (F-13, F-14, F-16, F-18, F-24)', () => 
 
   it('records route shapes, not share tokens, in observed paths (F-16)', () => {
     expect(redactObservedPath('/proxy/share-links/test-share-token/download')).toBe('/proxy/share-links/:token/download');
-    expect(redactObservedPath('/files/file_1/share-links/test-share-token')).toBe('/files/file_1/share-links/:token');
+    expect(redactObservedPath('/files/file_1/share-links/test-share-token', '/files')).toBe('/files/file_1/share-links/:token');
+    // A mount path that itself says share-links can't shift the match off the token.
+    expect(redactObservedPath('/share-links/share-links/test-share-token/download', '/share-links')).toBe(
+      '/share-links/share-links/:token/download',
+    );
     expect(redactObservedPath('/file_1/share-links')).toBe('/file_1/share-links');
   });
 
@@ -105,11 +131,40 @@ describe('FILE-30 low-severity hardening (F-13, F-14, F-16, F-18, F-24)', () => 
     expect(usage.filter((entry) => entry.bytes < 0).map((entry) => entry.principalId)).toEqual(['owner']);
   });
 
-  it('warns once when uploads start before any cleanup sweep (F-24)', async () => {
+  it('checks and charges a new file to its session owner, whoever completes it (F-13)', async () => {
+    const checked: Array<string | undefined> = [];
+    const usage: Array<string | undefined> = [];
+    const quota = {
+      async checkQuota(input) {
+        checked.push(input.principalId);
+        return { allowed: true, current: 0, limit: 100 };
+      },
+      async recordUsage(input) {
+        usage.push(input.principalId);
+      },
+    } as QuotaProvider;
+    const { fileFn } = makeFileFn({ quota });
+    const body = Buffer.from('hello');
+    const starter = {};
+    const session = await fileFn.createUploadSession({ policy: 'docs', fileName: 'a.txt', size: body.length, mimeType: 'text/plain' }, starter);
+    const part = await fileFn.services.uploads.uploadPartBytes(session.uploadSessionId, 1, body, body.length, starter, session.uploadSessionToken);
+    await fileFn.services.uploads.completePart(session.uploadSessionId, 1, part.etag, part.size, starter, session.uploadSessionToken);
+    checked.length = 0;
+    // Started anonymously, completed after signing in with the session token.
+    await fileFn.services.uploads.completeSession(session.uploadSessionId, { principalId: 'later', tenantId: 't1' }, session.uploadSessionToken);
+    expect(checked).toEqual(['anonymous']);
+    expect(usage).toEqual(['anonymous']);
+  });
+
+  it('warns once per process when uploads start before any cleanup sweep (F-24)', async () => {
     const warn = vi.fn();
-    const { fileFn } = makeFileFn({ observability: { logger: { info() {}, warn, error() {}, debug() {} } } as never });
+    const logger = { info() {}, warn, error() {}, debug() {} };
+    const { fileFn } = makeFileFn({ observability: { logger } as never });
     await upload(fileFn, { principalId: 'owner', tenantId: 't1' });
     await upload(fileFn, { principalId: 'owner', tenantId: 't1' });
+    // A host that builds a FileFn per request shares the process: no second warning.
+    const perRequest = makeFileFn({ observability: { logger } as never }).fileFn;
+    await upload(perRequest, { principalId: 'owner', tenantId: 't1' });
     const sweepWarnings = warn.mock.calls.filter(([message]) => String(message).includes('cleanupExpiredSessions'));
     expect(sweepWarnings).toHaveLength(1);
   });

@@ -117,9 +117,10 @@ export function createDefaultAuthorizer(config: DefaultAuthorizerConfig): Author
   }
 
   // Roles are tenant-relative: a role (admin or a role grant) applies only to
-  // files of the caller's own tenant, or to files that belong to no tenant.
+  // files of the caller's own tenant. A file without a tenant counts only for
+  // a caller without one, so a tenant's admin never reaches outside it.
   function inFileTenant(file: FileRecord, ctx: FileProviderContext): boolean {
-    return !file.tenantId || file.tenantId === ctx.tenantId;
+    return (file.tenantId || null) === (ctx.tenantId || null);
   }
 
   async function getApplicableGrants(

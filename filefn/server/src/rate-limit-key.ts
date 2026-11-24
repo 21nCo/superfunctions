@@ -7,15 +7,20 @@ import type { FileFnPrincipal } from './auth.js';
  */
 export type RateLimitClientKey = (request: Request) => string | null | undefined | Promise<string | null | undefined>;
 
-/** The part of a rate-limit key after the category: `<tenant|global>:<principal>`, or `global:anonymous[:<client>]`. */
+/**
+ * The part of a rate-limit key after the category. Authenticated callers and
+ * anonymous ones get disjoint keys, and each part is JSON-encoded, so no
+ * principal, tenant or client key can produce another caller's key:
+ * `user:["<tenant|null>","<principal>"]`, or `anon:["<client>"]` / `anon:[]`.
+ */
 export async function rateLimitSubject(
   principal: Pick<FileFnPrincipal, 'principalId' | 'tenantId'> | null | undefined,
   request: Request,
   clientKey?: RateLimitClientKey,
 ): Promise<string> {
   if (principal?.principalId && principal.principalId !== 'anonymous') {
-    return `${principal.tenantId || 'global'}:${principal.principalId}`;
+    return `user:${JSON.stringify([principal.tenantId || null, principal.principalId])}`;
   }
   const client = clientKey ? await clientKey(request) : undefined;
-  return client ? `global:anonymous:${client}` : 'global:anonymous';
+  return client ? `anon:${JSON.stringify([client])}` : 'anon:[]';
 }

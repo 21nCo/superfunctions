@@ -247,20 +247,27 @@ function resolveUrl(url: string, base: string): URL | undefined {
  * `baseUrl` (a configured "" or "/") is the page origin root, so every
  * same-origin path matches it. A URL that cannot be parsed never matches.
  */
+// FileFn's proxy part route, on the path under baseUrl.
+const PART_ROUTE = /^\/upload\/[^/]+\/parts\/\d+$/;
+
 function createPartUrlResolver(
   baseUrl: string,
-): (url: string) => { url: string; toFileFn: boolean } {
+): (url: string) => { url: string; toFileFn: boolean; toPartRoute: boolean } {
   return (url) => {
     const pageBase = pageBaseUrl();
     const base = resolveUrl(baseUrl || "/", pageBase ?? NO_LOCATION_ORIGIN);
     const target = resolveUrl(url, pageBase ?? NO_LOCATION_ORIGIN);
-    if (!base || !target) return { url, toFileFn: false };
+    if (!base || !target) return { url, toFileFn: false, toPartRoute: false };
     const basePath = base.pathname.replace(/\/$/, "");
+    const toFileFn =
+      target.origin === base.origin &&
+      (target.pathname === basePath || target.pathname.startsWith(`${basePath}/`));
     return {
       url: pageBase ? target.href : url,
-      toFileFn:
-        target.origin === base.origin &&
-        (target.pathname === basePath || target.pathname.startsWith(`${basePath}/`)),
+      toFileFn,
+      // Only FileFn's own part endpoint, never another URL served under the
+      // same origin and prefix (a presigned URL behind a reverse proxy).
+      toPartRoute: toFileFn && !target.search && PART_ROUTE.test(target.pathname.slice(basePath.length)),
     };
   };
 }
@@ -546,22 +553,26 @@ export function createHttpClient(config: FileFnClientConfig): HttpClient {
           // headers and credentials mode. Any other URL (a presigned storage
           // URL) gets only its signed headers and never ambient credentials.
           // The URL is classified and dispatched in the same resolved form.
-          const { url: finalUrl, toFileFn } = resolvePartUrl(
+          const { url: finalUrl, toFileFn, toPartRoute } = resolvePartUrl(
             url.startsWith("/") && !isProtocolRelative(url) ? `${baseUrl}${url}` : url,
           );
 
-          // The session token is FileFn's credential: never send it to a
-          // storage provider's presigned URL, whose logs would record it.
+          // The session token is FileFn's credential: it goes only to FileFn's
+          // part endpoint, never to a storage provider's presigned URL, whose
+          // logs would record it. A token-bearing PUT follows no redirect, so a
+          // redirect can't carry the header elsewhere.
+          const sendToken = toPartRoute && Boolean(uploadSessionToken);
           const requestHeaders = mergeHeaders(
             toFileFn ? await readAuthHeaders() : undefined,
             headers,
-            toFileFn && uploadSessionToken ? { "x-upload-session-token": uploadSessionToken } : undefined,
+            sendToken ? { "x-upload-session-token": uploadSessionToken! } : undefined,
           );
           const response = await transport.send(finalUrl, {
             method: "PUT",
             headers: requestHeaders,
             body,
             credentials: toFileFn ? transport.credentials : "omit",
+            ...(sendToken ? { redirect: "error" as const } : {}),
             signal,
           });
 

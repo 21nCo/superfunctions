@@ -158,8 +158,11 @@ class PublicationMoved extends Error {
   }
 }
 
+/** The account a file's storage is charged to (see quotaAccountFor). */
+type QuotaAccount = { principalId?: string; tenantId?: string };
+
 type PublishOutcome =
-  | { kind: 'completed'; storageKey: string }
+  | { kind: 'completed'; storageKey: string; quotaAccount: QuotaAccount }
   | { kind: 'refused' }
   | { kind: 'other'; current: UploadSession | null };
 
@@ -520,7 +523,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
     }
     if (quota) {
       const quotaResult = await quota.checkQuota({
-        ...(await quotaAccountFor(session.fileId, ctx)),
+        ...(await quotaAccountFor(session.fileId, ctx, session)),
         requestedBytes: session.size,
       });
       if (!quotaResult.allowed) {
@@ -912,7 +915,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
   async function rollForward(session: UploadSession, ctx: FileProviderContext): Promise<PublishOutcome> {
     const { uploadSessionId } = session;
     const fileId = session.fileId!;
-    const findFile = () => db.findOne<{ currentVersionId: string; originVersionId?: string | null }>({
+    const findFile = () => db.findOne<{ currentVersionId: string; originVersionId?: string | null; ownerId?: string; tenantId?: string | null }>({
       model: 'files',
       where: [{ field: 'fileId', operator: 'eq', value: fileId }],
       namespace,
@@ -1109,6 +1112,13 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       // read first: nothing may fail between completing the session and its
       // effects.
       const storageKey = (await findOwnVersion())?.storageKey || publication.storageKey;
+      // The account the completion charges, fixed now from the published
+      // file's owner (the session owner when this upload created it), so the
+      // charge never depends on a later lookup the file may be deleted under.
+      const published = await findFile();
+      const quotaAccount: QuotaAccount = published?.ownerId
+        ? { principalId: published.ownerId, tenantId: published.tenantId ?? undefined }
+        : sessionQuotaAccount(session);
       const finishedBy = randomBytes(6).toString('hex');
       const finished = await updateSessionIf(
         uploadSessionId,
@@ -1116,7 +1126,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         { status: 'completed', completionVersionId: versionId, completionPublication: { ...publication, finishedBy } },
         (row) => row.status === 'completed' && row.completionPublication?.finishedBy === finishedBy,
       );
-      if (finished.applied) return { kind: 'completed', storageKey };
+      if (finished.applied) return { kind: 'completed', storageKey, quotaAccount };
       if (finished.current?.status !== 'publishing') return { kind: 'other', current: finished.current };
       session = finished.current;
     }
@@ -1150,17 +1160,23 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       await deleteRefusedUploads(session);
       throw errors.forbidden({ fileId, operation: 'replace' });
     }
-    await finishCompletedSession(session, fileId, publication, outcome.storageKey, ctx);
+    await finishCompletedSession(session, fileId, publication, outcome.storageKey, outcome.quotaAccount, ctx);
     return { fileId, versionId: publication.versionId };
   }
 
   // The account a file's storage is charged to: its owner. Usage is recorded
   // and refunded (when the file is deleted) against the same account, so a
   // writer with a grant adds to the owner's usage, not their own.
+  // A session's own account: the owner and tenant it was created for.
+  function sessionQuotaAccount(session: Pick<UploadSession, 'ownerId' | 'tenantId'>): QuotaAccount {
+    return { principalId: session.ownerId || 'anonymous', tenantId: session.tenantId ?? undefined };
+  }
+
   async function quotaAccountFor(
     fileId: string | null | undefined,
     ctx: FileProviderContext,
-  ): Promise<{ principalId?: string; tenantId?: string }> {
+    session?: Pick<UploadSession, 'ownerId' | 'tenantId'>,
+  ): Promise<QuotaAccount> {
     if (fileId) {
       const file = await db.findOne<{ ownerId: string; tenantId?: string | null }>({
         model: 'files',
@@ -1171,6 +1187,8 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         return { principalId: file.ownerId, tenantId: file.tenantId ?? undefined };
       }
     }
+    // A new file belongs to the session's owner, whoever completes it.
+    if (session) return sessionQuotaAccount(session);
     return { principalId: ctx.principalId || 'anonymous', tenantId: ctx.tenantId };
   }
 
@@ -1183,12 +1201,13 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
     fileId: string,
     publication: CompletionPublication,
     storageKey: string,
+    quotaAccount: QuotaAccount,
     ctx: FileProviderContext,
   ): Promise<void> {
     const { uploadSessionId } = session;
     const { versionId } = publication;
     if (quota) {
-      await quota.recordUsage({ ...(await quotaAccountFor(fileId, ctx)), bytes: session.size });
+      await quota.recordUsage({ ...quotaAccount, bytes: session.size });
     }
 
     events.emit('file:uploaded', createFileUploadedEvent({

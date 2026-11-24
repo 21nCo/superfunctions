@@ -11,6 +11,7 @@ interface RecordedCall {
   method: string;
   headers: Headers;
   credentials: RequestCredentials | undefined;
+  redirect?: RequestRedirect;
 }
 
 function envelope(data: unknown, status = 200): Response {
@@ -29,7 +30,7 @@ function createFakeServer(partUrl: (partNumber: number) => string) {
   const fetchImpl = async (input: RequestInfo | URL, init: RequestInit = {}) => {
     const url = String(input);
     const method = init.method ?? 'GET';
-    calls.push({ url, method, headers: new Headers(init.headers), credentials: init.credentials });
+    calls.push({ url, method, headers: new Headers(init.headers), credentials: init.credentials, redirect: init.redirect });
 
     if (!url.startsWith(`${BASE}/`)) {
       return new Response(null, { status: 200, headers: { ETag: '"storage-etag"' } });
@@ -237,6 +238,19 @@ describe('client transport options', () => {
     const proxyPut = server.calls.find((c) => c.url === `${BASE}/upload/sess_1/parts/1`)!;
     expect(storagePut.headers.get('x-upload-session-token')).toBeNull();
     expect(proxyPut.headers.get('x-upload-session-token')).toBe('upls_1');
+    // A token-bearing PUT follows no redirect.
+    expect(proxyPut.redirect).toBe('error');
+  });
+
+  it('keeps the session token off a presigned URL served under the FileFn origin and prefix', async () => {
+    const server = createFakeServer(() => `${BASE}/bucket/object?X-Amz-Signature=test-signature`);
+    const http = createHttpClient({ baseUrl: BASE, fetch: server.fetch });
+    await http.uploadPartToSignedUrl(`${BASE}/bucket/object?X-Amz-Signature=test-signature`, {}, new Blob(['abc']), 'upls_1').catch(() => undefined);
+    await http.uploadPartToSignedUrl(`${BASE}/upload/sess_1/parts/1?X-Amz-Signature=test-signature`, {}, new Blob(['abc']), 'upls_1').catch(() => undefined);
+    expect(server.calls).toHaveLength(2);
+    for (const call of server.calls) {
+      expect(call.headers.get('x-upload-session-token')).toBeNull();
+    }
   });
 
   it('lets request headers replace auth headers of any case on API requests', async () => {
