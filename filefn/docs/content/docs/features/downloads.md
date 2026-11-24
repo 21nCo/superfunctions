@@ -58,7 +58,7 @@ The bundled clients merge these into the `GET` automatically.
 
 The `/proxy/...` routes (files, versions, share links and artifacts) serve the type the uploader declared, so FileFn adds headers that keep a browser from running uploaded content on your origin:
 
-- `Content-Disposition: inline` only for types that cannot run script: PNG, JPEG, GIF, WebP, AVIF, BMP, PDF, plain text and common audio and video. Every other type, including HTML and SVG, is `attachment`, with the stored file name.
+- `Content-Disposition: inline` only for types that cannot run script: PNG, JPEG, GIF, WebP, AVIF, BMP, PDF, plain text and common audio and video. Every other type, including HTML and SVG, is `attachment`, with the stored file name, and is served as `application/octet-stream`.
 - `X-Content-Type-Options: nosniff` on every response.
 - `Content-Security-Policy: sandbox; default-src 'none'; ...` on every response except PDF, which browsers' PDF viewers refuse to render under `sandbox`.
 

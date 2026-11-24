@@ -56,7 +56,10 @@ function parseMediaType(value: string | null | undefined): ParsedMediaType | nul
   const typeEnd = semicolon === -1 ? input.length : semicolon;
   if (slash <= 0 || slash > typeEnd) return null;
   const type = input.slice(0, slash);
-  const subtype = input.slice(slash + 1, typeEnd).replace(/[ \t]+$/, '');
+  let subtypeEnd = typeEnd;
+  // Trailing spaces or tabs before `;` (a linear scan, not a backtracking regex).
+  while (subtypeEnd > slash + 1 && (input[subtypeEnd - 1] === ' ' || input[subtypeEnd - 1] === '\t')) subtypeEnd -= 1;
+  const subtype = input.slice(slash + 1, subtypeEnd);
   if (!TOKEN.test(type) || !TOKEN.test(subtype)) return null;
   const parameters = new Map<string, string>();
   let i = typeEnd;
@@ -100,12 +103,7 @@ function parseMediaType(value: string | null | undefined): ParsedMediaType | nul
     if (!parameters.has(name)) parameters.set(name, parsedValue);
   }
   const essence = `${type}/${subtype}`.toLowerCase();
-  return { essence: MIME_ALIASES[essence] ?? essence, parameters };
-}
-
-/** Whether the value is one well-formed media type. */
-function isSingleMediaType(contentType: string | null | undefined): contentType is string {
-  return parseMediaType(contentType) !== null;
+  return { essence: Object.hasOwn(MIME_ALIASES, essence) ? MIME_ALIASES[essence]! : essence, parameters };
 }
 
 // Common aliases of inline-safe types, mapped to their registered names.
@@ -211,11 +209,10 @@ export function buildDownloadHeaders(input: DownloadHeadersInput): Record<string
   const inline = isInlineSafeContentType(input.contentType);
   const essence = contentTypeEssence(input.contentType);
   return {
-    // A safe type is sent as its normalised essence; an unsafe but well-formed
-    // type is still labelled as declared (the attachment disposition, nosniff
-    // and the sandbox keep a browser from rendering it); anything ambiguous is
-    // octet-stream.
-    'Content-Type': inline ? safeInlineType(input.contentType) : isSingleMediaType(input.contentType) ? input.contentType.trim() : 'application/octet-stream',
+    // A safe type is sent as its normalised essence; any other as
+    // octet-stream, as signed URLs do, so no response is labelled as script
+    // or markup a browser could load from this origin.
+    'Content-Type': inline ? safeInlineType(input.contentType) : 'application/octet-stream',
     'Content-Length': input.size.toString(),
     'Content-Disposition': contentDisposition(inline ? 'inline' : 'attachment', input.fileName),
     'X-Content-Type-Options': 'nosniff',
