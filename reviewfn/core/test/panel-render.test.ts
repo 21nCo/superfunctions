@@ -106,6 +106,15 @@ describe("renderPanelMarkdownReport", () => {
     expect(markdown).toContain("| checker | verifier | general | codex codex-cli 1\\.0\\.0 | openai/model-v | not run |  |");
   });
 
+  it("marks an unverified model and lists a run's limitations", () => {
+    const report = fixture();
+    const twin = report.slotRuns.find(item => item.slotId === "twin")!;
+    twin.identity = { ...twin.identity, modelVerified: false };
+    twin.limitations = ["model_unverified", "sandbox_tree_verified_only"];
+    const markdown = renderPanelMarkdownReport(report);
+    expect(markdown).toContain("| openai/model-a \\(unverified\\) | collapsed | collapsed: same identity as alpha, which counts toward quorum; limitations: model\\_unverified, sandbox\\_tree\\_verified\\_only |");
+  });
+
   it("escapes harness-supplied categories and every other untrusted string outside code spans", () => {
     const hostile = "@octocat <img src=x> [link](https://e.x) | `tick`\nnext";
     const report = fixture();

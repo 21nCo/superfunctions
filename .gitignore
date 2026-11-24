@@ -55,6 +55,7 @@ __pycache__/
 
 # OCR integration tests download language models into their working directory
 /filefn/server/*.traineddata
+/filefn/processing/*.traineddata
 
 # Editors
 .vscode/

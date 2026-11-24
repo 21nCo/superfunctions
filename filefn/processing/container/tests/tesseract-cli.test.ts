@@ -74,6 +74,15 @@ describe('createTesseractCliOCRProvider', () => {
     expect(withHocr.hocr).toBe('<html>hocr</html>');
   });
 
+  it('refuses bytes that are not a raster image before sharp or tesseract run', async () => {
+    const provider = createTesseractCliOCRProvider({ binary: await fakeTesseract() });
+    const svg = new TextEncoder().encode('<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"/>');
+    await rm(join(directory, 'args'), { force: true });
+
+    await expect(provider.recognize({ ...request(false), imageData: svg })).rejects.toThrow('File content does not match its declared type');
+    await expect(readFile(join(directory, 'args'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
   it('rejects with the command error and removes its working directory', async () => {
     const provider = createTesseractCliOCRProvider({ binary: await fakeTesseract(1) });
 

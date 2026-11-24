@@ -10,7 +10,8 @@ describe('Completion Size Validation', () => {
     findMany: vi.fn(),
     create: vi.fn(),
     update: vi.fn(async ({ data }: { data: Record<string, unknown> }) => Object.assign(row, data)),
-    updateMany: vi.fn(async () => 1),
+    updateMany: vi.fn(async ({ data }: { data: Record<string, unknown> }) => { Object.assign(row, data); return 1; }),
+    deleteMany: vi.fn(async () => 0),
     upsert: vi.fn(),
   };
 
@@ -18,6 +19,7 @@ describe('Completion Size Validation', () => {
     capabilities: { multipart: true },
     completeMultipartUpload: vi.fn(),
     statObject: vi.fn(), // We will use this
+    deleteObject: vi.fn(async () => {}),
   };
 
   const service = createUploadSessionService({
@@ -43,7 +45,8 @@ describe('Completion Size Validation', () => {
       size: 100, // Expected
       expiresAt: new Date(Date.now() + 10000).toISOString(),
       storageKey: 'key',
-      storageUploadId: 'uid'
+      storageUploadId: 'uid',
+      completionVersionId: 'ver_1'
     };
     
     mockDb.findMany.mockResolvedValue([{ partNumber: 1, etag: 'e1' }]);
@@ -60,5 +63,8 @@ describe('Completion Size Validation', () => {
     expect(body.error.details).toEqual({ expected: 100, actual: 99 });
     expect(mockStorage.completeMultipartUpload).toHaveBeenCalled();
     expect(mockStorage.statObject).toHaveBeenCalledWith({ key: 'key', target: 'durable' });
+    // FILE-30 F-05: the session is refused and the oversized object deleted.
+    expect(row.status).toBe('refused');
+    expect(mockStorage.deleteObject).toHaveBeenCalledWith({ key: 'key', target: 'durable' });
   });
 });

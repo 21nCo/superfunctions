@@ -60,7 +60,7 @@ If clients PUT directly to S3, the bucket needs CORS:
 ```json
 [{
   "AllowedOrigins": ["https://app.example.com"],
-  "AllowedMethods": ["PUT", "POST"],
+  "AllowedMethods": ["GET", "PUT", "POST"],
   "AllowedHeaders": ["*"],
   "ExposeHeaders": ["ETag"],
   "MaxAgeSeconds": 3000

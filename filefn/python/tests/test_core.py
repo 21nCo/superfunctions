@@ -75,3 +75,13 @@ def test_policy_registry_define_accepts_policy_dicts() -> None:
     assert policy is not None
     assert policy.storageTarget == "durable"
     assert policy.visibility == "private"
+
+
+def test_image_wildcard_does_not_admit_svg() -> None:
+    # FILE-30 F-04: SVG can run script, so `image/*` must not accept it.
+    from filefn.server.policies import matches_content_type
+
+    assert matches_content_type("image/*", "image/png")
+    assert not matches_content_type("image/*", "image/svg+xml")
+    assert not matches_content_type("image/*", "IMAGE/SVG+XML; charset=utf-8")
+    assert matches_content_type("image/svg+xml", "image/svg+xml")

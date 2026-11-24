@@ -54,6 +54,18 @@ Pass headers through the descriptor when the storage backend requires them:
 
 The bundled clients merge these into the `GET` automatically.
 
+## Response headers on proxied bytes
+
+The `/proxy/...` routes (files, versions, share links and artifacts) serve the type the uploader declared, so FileFn adds headers that keep a browser from running uploaded content on your origin:
+
+- `Content-Disposition: inline` only for types that cannot run script: PNG, JPEG, GIF, WebP, AVIF, BMP, PDF, plain text and common audio and video. Every other type, including HTML and SVG, is `attachment`, with the stored file name, and is served as `application/octet-stream`.
+- `X-Content-Type-Options: nosniff` on every response.
+- `Content-Security-Policy: sandbox; default-src 'none'; ...` on every response except PDF, which browsers' PDF viewers refuse to render under `sandbox`.
+
+Signed URLs always carry an explicit response content type: the type itself for the types above, `application/octet-stream` for any other, so the storage domain downloads those instead of rendering them. A stored type that is not one well-formed media type (for example a comma-separated list) is treated as unsafe. Render descriptors give such files, SVG included, no image preview: the thumbnail and preview intents return a placeholder instead of the original.
+
+Serving downloads from a separate origin (a dedicated download domain or the storage provider's) is still the stronger option when users upload arbitrary files.
+
 ## Authorization
 
 `auth.resolveSession` is required for `private` and `shared` files. The default `Authorizer` checks ownership and grants. See [Visibility](../core-concepts/visibility) for the matrix.
@@ -62,15 +74,28 @@ The bundled clients merge these into the `GET` automatically.
 
 ## Filenames
 
-filefn doesn't rewrite the filename you uploaded. If you want a download UX that suggests a different name (e.g. `Report - Acme Corp.pdf`), do it in your app code:
+filefn doesn't rewrite the filename you uploaded. Proxied downloads send it in `Content-Disposition`, and browsers prefer that header over an `<a download>` attribute, so to save a file under a different name (e.g. `Report - Acme Corp.pdf`), fetch it and save the blob:
 
 ```ts
-const { url, fileName, mimeType } = await client.downloadUrl(fileId);
+const url = await client.downloadUrl(fileId);
 
+// A proxied download URL is relative to where FileFn is mounted (the client's
+// baseUrl, e.g. "/files"); a signed storage URL is absolute.
+// Your client's baseUrl without a trailing slash ("" for a root mount).
+const fileFnBase = "/files".replace(/\/+$/, "");
+const target = new URL(url.startsWith("/") ? `${fileFnBase}${url}` : url, location.href);
+
+// Send cookies only to your own origin (a proxied download); a signed storage
+// URL needs no credentials and its CORS rules may refuse them.
+const sameOrigin = target.origin === location.origin;
+const response = await fetch(target, { credentials: sameOrigin ? "include" : "omit" });
+if (!response.ok) throw new Error(`Download failed: ${response.status}`);
+const objectUrl = URL.createObjectURL(await response.blob());
 const a = document.createElement("a");
-a.href = url;
+a.href = objectUrl;
 a.download = `Report - ${myAppContext.orgName}.pdf`;
 a.click();
+URL.revokeObjectURL(objectUrl);
 ```
 
 ## See also

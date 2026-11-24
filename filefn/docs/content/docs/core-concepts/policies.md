@@ -69,7 +69,7 @@ When a client calls `POST /upload/init` with `policy: "public-image"`:
 - If `size > maxSizeBytes` → `FILEFN_POLICY_MAX_SIZE_EXCEEDED`.
 - If a `quota` is configured and would be exceeded → `FILEFN_QUOTA_EXCEEDED`.
 
-`contentTypes` accepts wildcards: `"image/*"`, `"video/*"`. The matcher is the same `matchesContentType` you can call yourself from `@filefn/server`.
+`contentTypes` accepts wildcards: `"image/*"`, `"video/*"`. The matcher is the same `matchesContentType` you can call yourself from `@filefn/server`. `"image/*"` does not match `image/svg+xml`, because an SVG can run script; list `"image/svg+xml"` explicitly to accept SVG uploads.
 
 ## Storage path layout
 
@@ -103,7 +103,9 @@ storagePath: ({ fileId, versionId }) => {
 }
 ```
 
-Any `..` and slashes in the input are sanitised before reaching `storagePath`.
+In the default layout every segment is sanitised without collisions: `%`, `/`, `\` and control characters are percent-encoded (`team/east` becomes `team%2Feast`), as are the dots of a segment that starts with `..` or is exactly `.`, and the colon of a segment that starts with a drive letter (`a:b` becomes `a%3Ab`); anything else is kept as it is. A tenant ID, principal ID, file ID or file name longer than 120 bytes is shortened in the key (its start, then `%~` and a 128-bit hash, and, for a file name, its extension); the full values are kept on the file.
+
+A custom `storagePath` receives the tenant and principal IDs exactly as your auth resolved them. Whatever it returns is checked: a key that is empty, starts with `/` or a drive letter and colon (`C:/x`, `C:x`), contains `\`, a control character, an empty segment, or a `.` or `..` segment is refused with `FILEFN_INVALID_REQUEST` (400). The examples above assume IDs without `/`, `\` or dot segments; if yours can contain them, pass each one through `sanitizeStorageKeySegment` from `@filefn/server` before putting it in the key.
 
 ## Visibility
 
