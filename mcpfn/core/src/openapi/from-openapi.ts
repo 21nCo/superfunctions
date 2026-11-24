@@ -780,16 +780,24 @@ function treeCopy<T>(value: T, budget: NodeBudget, values: CopiedValues = { json
     if (typeof value === "string") values.chars += value.length;
     return value;
   }
-  if (!Array.isArray(value)) for (const key of Object.keys(value)) values.chars += key.length;
   // YAML parsers can produce Date values (for example a timestamp `default`).
   if (value instanceof Date) return value.toISOString() as T;
   if (ancestors.has(value)) {
     throw new OpenApiSkip("circular-object", "a schema value contains itself");
   }
   ancestors.add(value);
-  const copy = Array.isArray(value)
-    ? Array.from(value, (item) => treeCopy(item, budget, values, ancestors))
-    : Object.fromEntries(Object.entries(value).map(([key, item]) => [key, treeCopy(item, budget, values, ancestors)]));
+  let copy: unknown;
+  if (Array.isArray(value)) {
+    copy = Array.from(value, (item) => treeCopy(item, budget, values, ancestors));
+  } else {
+    // Member by member through the call's key lists, so a failing member ends the work.
+    const entries: Array<[string, unknown]> = [];
+    for (const key of budget.ownKeys(value)) {
+      values.chars += key.length;
+      entries.push([key, treeCopy((value as Record<string, unknown>)[key], budget, values, ancestors)]);
+    }
+    copy = Object.fromEntries(entries);
+  }
   ancestors.delete(value);
   return copy as T;
 }

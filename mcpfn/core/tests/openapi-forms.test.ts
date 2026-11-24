@@ -2313,6 +2313,86 @@ describe("fromOpenAPI body fallback, synchronous schemas, per-kind alternatives 
     }
   });
 
+  it("reads a shared $ref-sibling allOf, circular schema, default or response allOf once per call, not per operation", () => {
+    const width = 2_000;
+    const missing = { $ref: "#/components/schemas/Missing" };
+    const strings = () => Array.from({ length: width - 1 }, () => ({ type: "string" }));
+    // A 3.1 $ref sibling allOf whose first member fails.
+    const siblings = [missing, ...strings()];
+    // A schema with many annotations that contains itself.
+    const cycle: Record<string, unknown> = Object.fromEntries(Array.from({ length: width }, (_, index) => [`x-note${index}`, index]));
+    cycle.allOf = [cycle];
+    // A default whose first property is itself.
+    const loop: Record<string, unknown> = {};
+    loop.self = loop;
+    for (let index = 0; index < width; index += 1) loop[`k${index}`] = index;
+    // A response allOf whose last member fails.
+    const objects = [...Array.from({ length: width - 1 }, () => ({ type: "object" })), missing];
+    const cases: Array<[string, () => unknown, string]> = [
+      ["$ref sibling", () => ({ $ref: "#/components/schemas/Valid", allOf: siblings }), "unresolved-ref"],
+      ["circular", () => ({ allOf: [cycle] }), "circular-object"],
+      ["default", () => ({ type: "object", default: loop }), "circular-object"],
+    ];
+    const merge = { "application/merge-patch+json": { schema: { type: "object", properties: { n: { type: "number" } } } } };
+    const run = (label: string, paths: Record<string, unknown>) => {
+      const document = { openapi: "3.1.0", paths: { ...paths, "/ok": { get: { operationId: "okGet", responses: ok } } }, components: { schemas: { Valid: { type: "object" } } } };
+      // Members read: array iterator steps (for-of, spread, Array.from) and wide key or entry lists.
+      const iterator = Object.getPrototypeOf([][Symbol.iterator]()) as { next: () => unknown };
+      const next = iterator.next;
+      const keys = Object.keys;
+      const entries = Object.entries;
+      let reads = 0;
+      const listed = <T>(list: T[]): T[] => {
+        if (list.length >= 100) reads += list.length;
+        return list;
+      };
+      iterator.next = function (this: unknown) {
+        reads += 1;
+        return next.call(this);
+      };
+      Object.keys = (value: object) => listed(keys(value));
+      Object.entries = ((value: object) => listed(entries(value))) as typeof Object.entries;
+      let result: Result;
+      try {
+        result = fromOpenAPI(document, options());
+      } finally {
+        iterator.next = next;
+        Object.keys = keys;
+        Object.entries = entries;
+      }
+      // Reading each shared member list once per operation would be at least 200 x 2,000.
+      expect([label, reads < 100 * width]).toEqual([label, true]);
+      expect(tool(result.tools, "okGet")).toBeDefined();
+      return result;
+    };
+    for (const [label, schema, code] of cases) {
+      for (const trailing of [{}, merge]) {
+        const result = run(
+          `${label}${trailing === merge ? " with fallback" : ""}`,
+          Object.fromEntries(
+            Array.from({ length: 200 }, (_, index) => [`/p${index}`, { post: { operationId: `p${index}`, requestBody: { content: { "application/json": { schema: schema() }, ...trailing } }, responses: ok } }]),
+          ),
+        );
+        if (trailing === merge) {
+          expect([label, result.skipped]).toEqual([label, []]);
+          expect(tool(result.tools, "p0").operation.requestBody?.contentType).toBe("application/merge-patch+json");
+          expectArguments(tool(result.tools, "p0").inputSchema, { valid: [{ body: { n: 1 } }], invalid: [{ body: { n: "x" } }] });
+        } else {
+          expect([label, new Set(result.skipped.map((entry) => entry.code)), result.skipped.length]).toEqual([label, new Set([code]), 200]);
+        }
+      }
+    }
+    // Responses of GET and HEAD operations alike; a valid HEAD sibling still has no output schema.
+    const responses = run("responses", {
+      ...Object.fromEntries(
+        Array.from({ length: 200 }, (_, index) => [`/r${index}`, { [index % 2 === 0 ? "get" : "head"]: { operationId: `r${index}`, responses: json({ allOf: objects }) } }]),
+      ),
+      "/h": { head: { operationId: "h", responses: json({ type: "object" }) } },
+    });
+    expect([new Set(responses.skipped.map((entry) => entry.code)), responses.skipped.length]).toEqual([new Set(["unresolved-ref"]), 200]);
+    expect(tool(responses.tools, "h").outputSchema).toBeUndefined();
+  });
+
   it("does not remember a budget skip inside a shared schema for operations where it fits", () => {
     const small = { type: "object", properties: Object.fromEntries(Array.from({ length: 20 }, (_, index) => [`s${index}`, { type: "string" }])) };
     const big = { type: "object", properties: Object.fromEntries(Array.from({ length: 99_990 }, (_, index) => [`b${index}`, true])) };

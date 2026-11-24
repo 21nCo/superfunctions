@@ -138,11 +138,14 @@ const REGION = "a schema expands";
 
 /**
  * Skip reasons a schema object's conversion gives whatever region, budget or
- * position it is read in, so one call remembers them per object. Budget,
- * sharing, circular-object and projection skips depend on where the object
- * is read and are never remembered.
+ * position it is read in, so one call remembers them per object. A
+ * `circular-object` skip raised while converting an object is one of them: the
+ * object met again is on the stack below or above it, so either way the cycle
+ * is reachable from the object itself. Budget and sharing skips depend on
+ * where the object is read and are never remembered (their work is charged).
  */
 const CONTEXT_FREE_FAILURES: ReadonlySet<OpenApiSkipCode> = new Set<OpenApiSkipCode>([
+  "circular-object",
   "invalid-schema",
   "unsupported-schema-keyword",
   "unsupported-dialect",
@@ -168,8 +171,14 @@ export class NodeBudget {
     private readonly limit = MAX_SCHEMA_NODES,
     private readonly total?: NodeBudget,
     private readonly subject = REGION,
+    keys?: WeakMap<object, readonly string[]>,
   ) {
-    this.keys = total?.keys ?? new WeakMap();
+    this.keys = keys ?? total?.keys ?? new WeakMap();
+  }
+
+  /** A budget with only its own limits that shares this call's key lists. */
+  uncharged(): NodeBudget {
+    return new NodeBudget(MAX_SCHEMA_NODES, undefined, REGION, this.keys);
   }
 
   /** The own enumerable keys of `value` (an array's indices without its holes), listed once per call. */
@@ -387,6 +396,10 @@ export class SchemaConverter {
   private readonly cache = new Map<string, ConvertedComponent>();
   private readonly ancestors = new Set<object>();
   private readonly admitted = new WeakMap<object, AdmittedKinds>();
+  /** The kinds of an allOf (`both`) or anyOf/oneOf (`either`) member array, or why it failed, once per array. */
+  private readonly memberKinds = new Map<"both" | "either", WeakMap<object, AdmittedKinds | OpenApiSkip>>();
+  /** The kinds of the values an `enum` array or a `const` object lists, once per object. */
+  private readonly literalKinds = new Map<"enum" | "const", WeakMap<object, AdmittedKinds>>();
   private readonly flags = new Map<DirectionalKeyword, WeakMap<object, boolean>>();
   private readonly reaches = new Map<DirectionalKeyword, WeakMap<object, boolean>>();
   private readonly reaching = new Map<DirectionalKeyword, ReadonlySet<string>>();
@@ -415,7 +428,7 @@ export class SchemaConverter {
    * limits; a copy made only to check a schema is charged to the call's total.
    */
   copyBudget(charged = false): NodeBudget {
-    return charged ? this.total.child() : new NodeBudget();
+    return charged ? this.total.child() : this.total.uncharged();
   }
 
   /** Run `task` with a fresh node budget (one per operation input, operation output or component). */
@@ -472,15 +485,46 @@ export class SchemaConverter {
     if (Object.hasOwn(schema, "items") && !Array.isArray(schema.items)) {
       result = { ...result, items: intersect(result.items, this.admits(schema.items, stack).values) };
     }
-    for (const member of arrayOf(schema.allOf)) result = both(result, this.admits(member, stack));
+    if (Array.isArray(schema.allOf)) result = both(result, this.admitsMembers(schema.allOf, "both", stack));
     for (const keyword of ["anyOf", "oneOf"] as const) {
       const members = schema[keyword];
-      if (Array.isArray(members)) {
-        result = both(result, either(members.map((member) => this.admits(member, stack))));
-      }
+      if (Array.isArray(members)) result = both(result, this.admitsMembers(members, "either", stack));
     }
     const excluded = typeOnlyKinds(schema.not);
     return excluded.length === 0 ? result : { ...result, values: without(result.values, excluded) };
+  }
+
+  /**
+   * The kinds all (`both`) or some (`either`) of `members` admit. Kept per
+   * array, failure included, so roots that share one are not walked again.
+   */
+  private admitsMembers(members: unknown[], combine: "both" | "either", stack: Set<unknown>): AdmittedKinds {
+    const memo = memoFor(this.memberKinds, combine);
+    const known = memo.get(members);
+    if (known instanceof OpenApiSkip) throw known;
+    if (known) return known;
+    try {
+      const kinds = members.map((member) => this.admits(member, stack));
+      const result = combine === "both" ? kinds.reduce(both, EVERYTHING) : either(kinds);
+      memo.set(members, result);
+      return result;
+    } catch (error) {
+      if (error instanceof OpenApiSkip) memo.set(members, error);
+      throw error;
+    }
+  }
+
+  /** The kinds of the literals an `enum` array (or a `const` value) lists, kept per object. */
+  private literals(keyword: "enum" | "const", value: unknown): AdmittedKinds {
+    const listed = keyword === "enum" ? (value as unknown[]) : [value];
+    if (typeof value !== "object" || value === null) return kindsOfLiterals(listed);
+    const memo = memoFor(this.literalKinds, keyword);
+    let kinds = memo.get(value);
+    if (kinds === undefined) {
+      kinds = kindsOfLiterals(listed);
+      memo.set(value, kinds);
+    }
+    return kinds;
   }
 
   /** `type` (with 3.0 `nullable`), `enum` and `const`. */
@@ -491,8 +535,8 @@ export class SchemaConverter {
       if (this.version === "3.0" && schema.nullable === true) kinds.push("null");
       narrowed = { ...narrowed, values: intersect(narrowed.values, kinds) };
     }
-    if (Array.isArray(schema.enum)) narrowed = narrowByLiterals(narrowed, schema.enum);
-    if (Object.hasOwn(schema, "const")) narrowed = narrowByLiterals(narrowed, [schema.const]);
+    if (Array.isArray(schema.enum)) narrowed = both(narrowed, this.literals("enum", schema.enum));
+    if (Object.hasOwn(schema, "const")) narrowed = both(narrowed, this.literals("const", schema.const));
     return narrowed;
   }
 
@@ -580,13 +624,15 @@ export class SchemaConverter {
     if (rest.allOf !== undefined && !(Array.isArray(rest.allOf) && rest.allOf.length > 0)) {
       throw new OpenApiSkip("invalid-schema", "allOf is not a non-empty array");
     }
-    // What the rewrite builds is not source: its members are credited through the original.
-    if (Array.isArray(rest.allOf)) this.budget.source(rest.allOf);
-    const reference = { $ref };
-    const allOf = [...arrayOf(rest.allOf), reference];
-    const rewritten = { ...rest, allOf };
-    for (const value of [reference, allOf, rewritten]) this.budget.generated(value);
-    return this.convertObject(rewritten, mode, refs);
+    // The siblings are converted where they are (a shared allOf is read, not
+    // copied) and the reference joins their allOf as its last member.
+    this.budget.generated(rest);
+    const converted = this.convertObject(rest, mode, refs);
+    this.budget.charge();
+    const reference = this.reference(name, refs);
+    if (Array.isArray(converted.allOf)) converted.allOf.push(reference);
+    else converted.allOf = [reference];
+    return converted;
   }
 
   private convertKeywords(schema: JsonObject, mode: SchemaMode, refs: Set<string>): McpFnJsonSchema {
@@ -1530,12 +1576,13 @@ function typeOnlyKinds(not: unknown): ValueKind[] {
 }
 
 /** `enum`/`const`: the value is one of `literals`, and an array value's items are among theirs. */
-function narrowByLiterals(result: AdmittedKinds, literals: unknown[]): AdmittedKinds {
+/** The kinds of `literals` and of the items of those that are arrays, to narrow by with `both`. */
+function kindsOfLiterals(literals: unknown[]): AdmittedKinds {
   const items = new Set<ValueKind>();
   for (const literal of literals) {
     for (const item of arrayOf(literal)) items.add(kindOfValue(item));
   }
-  return { values: intersect(result.values, literals.map(kindOfValue)), items: intersect(result.items, items) };
+  return { values: new Set(literals.map(kindOfValue)), items };
 }
 
 /** The entries that can apply to a value of `kind`, each conditional when it applies to that kind only under a condition. */
