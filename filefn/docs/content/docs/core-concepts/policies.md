@@ -103,9 +103,9 @@ storagePath: ({ fileId, versionId }) => {
 }
 ```
 
-In the default layout every segment is sanitised without collisions: `%`, `/`, `\` and control characters are percent-encoded (`team/east` becomes `team%2Feast`), as are the dots of a segment that starts with `..` or is exactly `.`; anything else is kept as it is. A tenant ID, principal ID, file ID or file name longer than 120 bytes is shortened in the key (its start, a short hash and, for a file name, its extension); the full values are kept on the file.
+In the default layout every segment is sanitised without collisions: `%`, `/`, `\` and control characters are percent-encoded (`team/east` becomes `team%2Feast`), as are the dots of a segment that starts with `..` or is exactly `.`, and the colon of a segment that starts with a drive letter (`a:b` becomes `a%3Ab`); anything else is kept as it is. A tenant ID, principal ID, file ID or file name longer than 120 bytes is shortened in the key (its start, then `%~` and a 128-bit hash, and, for a file name, its extension); the full values are kept on the file.
 
-A custom `storagePath` receives the tenant and principal IDs exactly as your auth resolved them. Whatever it returns is checked: a key that is empty, starts with `/`, contains `\`, a control character, an empty segment, or a `.` or `..` segment is refused with `FILEFN_INVALID_REQUEST` (400). The examples above assume IDs without `/`, `\` or dot segments; if yours can contain them, pass each one through `sanitizeStorageKeySegment` from `@filefn/server` before putting it in the key.
+A custom `storagePath` receives the tenant and principal IDs exactly as your auth resolved them. Whatever it returns is checked: a key that is empty, starts with `/` or a drive letter and colon (`C:/x`, `C:x`), contains `\`, a control character, an empty segment, or a `.` or `..` segment is refused with `FILEFN_INVALID_REQUEST` (400). The examples above assume IDs without `/`, `\` or dot segments; if yours can contain them, pass each one through `sanitizeStorageKeySegment` from `@filefn/server` before putting it in the key.
 
 ## Visibility
 
