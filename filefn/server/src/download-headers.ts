@@ -64,6 +64,8 @@ function parseMediaType(value: string | null | undefined): ParsedMediaType | nul
     if (input[i] !== ';') return null;
     i += 1;
     while (input[i] === ' ' || input[i] === '\t') i += 1;
+    // RFC 9110 allows empty parameter slots (`image/png;`, `a/b;;c=d`).
+    if (i >= input.length || input[i] === ';') continue;
     const nameStart = i;
     while (i < input.length && TOKEN_CHAR.test(input[i])) i += 1;
     const name = input.slice(nameStart, i).toLowerCase();
@@ -145,6 +147,13 @@ function asciiFallbackFileName(fileName: string): string {
 export function contentDisposition(type: 'inline' | 'attachment', fileName?: string | null): string {
   if (!fileName) {
     return type;
+  }
+  // Keep the header small for proxies: at most 100 code points, keeping a
+  // short extension.
+  const codePoints = Array.from(fileName);
+  if (codePoints.length > 100) {
+    const extension = /\.[A-Za-z0-9]{1,10}$/.exec(fileName)?.[0] ?? '';
+    fileName = codePoints.slice(0, 100 - extension.length).join('') + extension;
   }
   // encodeURIComponent throws on a lone surrogate; replace it with U+FFFD.
   fileName = fileName.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '\uFFFD');

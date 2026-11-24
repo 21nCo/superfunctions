@@ -5,7 +5,7 @@ import type { FileFnEventEmitter } from '../events.js';
 import type { Logger } from '../observability/logger.js';
 import { FILE_DELETED_CLAIM, type QuotaProvider } from '../upload-sessions/service.js';
 import { resolveArtifactStorageTarget, resolveStorageTarget, type PolicyRegistry } from '../policies.js';
-import { isInlineSafeContentType, signedDownloadConstraints } from '../download-headers.js';
+import { contentTypeEssence, isInlineSafeContentType, signedDownloadConstraints } from '../download-headers.js';
 import * as errors from '../errors.js';
 import { createFileDeletedEvent } from '../events.js';
 import { artifactSourceOf } from '../processing/client-artifacts.js';
@@ -549,7 +549,7 @@ export function createFileService(config: FileServiceConfig) {
       // Thumbnails and previews must render in the browser: only inline-safe
       // raster artifacts qualify, whatever their kind says.
       const previewArtifacts = artifacts.filter(
-        (artifact) => artifact.mimeType?.startsWith('image/') && isInlineSafeContentType(artifact.mimeType),
+        (artifact) => contentTypeEssence(artifact.mimeType).startsWith('image/') && isInlineSafeContentType(artifact.mimeType),
       );
 
       const originalDescriptor = async (): Promise<RenderDescriptor> => {
@@ -684,7 +684,9 @@ export function createFileService(config: FileServiceConfig) {
         });
       }
 
-      if (isMediaPreviewMimeType(version.mimeType)) {
+      // Only media the browser may play from the original (it is otherwise
+      // served as a download).
+      if (isMediaPreviewMimeType(version.mimeType) && isInlineSafeContentType(version.mimeType)) {
         return originalDescriptor();
       }
 

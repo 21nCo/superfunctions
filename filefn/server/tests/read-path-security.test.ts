@@ -184,6 +184,15 @@ describe('read path (FILE-30 F-03, F-04, F-23)', () => {
     expect(buildDownloadHeaders({ contentType: 'application/pdf; name="\u03A9"', size: 1 })['Content-Disposition']).toBe('attachment');
     expect(buildDownloadHeaders({ contentType: 'application/pdf; name="a\\"b"', size: 1 })['Content-Disposition']).toBe('inline');
 
+    // Empty parameter slots are allowed.
+    expect(buildDownloadHeaders({ contentType: 'image/png;', size: 1 })['Content-Disposition']).toBe('inline');
+    expect(buildDownloadHeaders({ contentType: 'image/png;; q=1', size: 1 })['Content-Type']).toBe('image/png');
+    // Long names are capped, keeping the extension.
+    const longName = `${'\u00e9'.repeat(300)}.pdf`;
+    const disposition = buildDownloadHeaders({ contentType: 'application/pdf', size: 1, fileName: longName })['Content-Disposition'];
+    expect(disposition.length).toBeLessThan(1000);
+    expect(disposition.endsWith('.pdf')).toBe(true);
+
     // A lone surrogate in a stored name does not break the header.
     expect(buildDownloadHeaders({ contentType: 'text/plain', size: 1, fileName: 'a\uD800.txt' })['Content-Disposition'])
       .toBe(`inline; filename="a_.txt"; filename*=UTF-8''a%EF%BF%BD.txt`);
