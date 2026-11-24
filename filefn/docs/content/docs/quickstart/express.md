@@ -105,6 +105,8 @@ app.listen(3001);
 
 The bridge streams downloads with backpressure and preserves their bytes and headers. Unknown routes return 404. Keep JSON/raw body parsers off this mount; FileFn’s upload policy still controls accepted file size. The memory database is disposable and loses metadata on restart. Use your host’s persistent adapter, authentication, and policy configuration for production.
 
+`auth: { required: false }` keeps this quickstart short: anyone can upload, and because every unauthenticated caller is the same `anonymous` principal, nobody owns those uploads afterwards. They are readable only when the policy is `public`, and nobody can delete or share them over HTTP. Configure `auth.resolveSession` before real users upload (see [Security](../core-concepts/security)).
+
 ## When to use Express vs. Hono
 
 If you're starting fresh, use [Hono](./hono): it ships native `Request`/`Response` and removes the bridge above. If you have an existing Express app, the snippet above is the canonical way to mount filefn without rewriting your stack.

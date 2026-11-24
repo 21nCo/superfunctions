@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 from .. import errors
 from ..authz.grant_expiry import is_grant_expired, parse_iso_instant
+from ..authz.ownership import is_file_owner
 from ..models import FileProviderContext, FileRecord, FileShareRecord, FileVersionRecord
 from ..policies import resolve_storage_target
 from ..routed_storage import get_storage_capabilities
@@ -155,7 +156,7 @@ class SharesService:
         return FileVersionRecord(**data) if data else None
 
     async def _can_share_file(self, file: FileRecord, ctx: FileProviderContext) -> bool:
-        return file.ownerId == ctx.principalId
+        return is_file_owner(file, ctx)
 
     async def _set_downloads_if(self, token_hash: str, from_count: int, to_count: int) -> bool:
         """Writes downloads = to_count only while it is still from_count; whether this call's write landed.

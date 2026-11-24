@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from .. import errors
 from ..authz.grant_expiry import is_grant_expired
+from ..authz.ownership import is_file_owner
 from ..events import (
     FileFnEventEmitter,
     ProcessingCompletedEvent,
@@ -335,7 +336,7 @@ class ProcessingService:
         file = FileRecord(**file_data)
         if file.visibility == Visibility.PUBLIC:
             return file
-        if file.ownerId == ctx.principalId:
+        if is_file_owner(file, ctx):
             return file
         if file.visibility == Visibility.SHARED and file.tenantId and file.tenantId == ctx.tenantId:
             return file

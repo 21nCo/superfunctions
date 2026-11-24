@@ -81,6 +81,7 @@ This is what makes accidental double-clicks (and dropped responses on flaky netw
 - is stored only as a hash in `uploadSessions.uploadSessionTokenHash`
 - is required on `status`, `sign`, `complete`, `abort` (and the proxy `PUT` for parts)
 - is short-lived (the session TTL)
+- is returned only by the `init` call that created the session (anonymous `init` calls are never replayed; a retry gets a new session and token)
 
 This lets you do client-side / browser-side multipart uploads where the user has no long-lived auth token, without exposing the rest of the API.
 

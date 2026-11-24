@@ -1061,3 +1061,39 @@ async def test_url_signed_while_the_link_was_revoked_is_withheld() -> None:
         await shares_service.download_via_share_link(created["token"], _ctx(None), is_authenticated=False)
     assert revoked.value.code == "FILEFN_SHARE_REVOKED"
     assert [row["downloads"] for row in db.tables["fileShares"]] == [0]
+
+
+async def test_list_files_never_lists_private_anonymous_uploads_to_an_anonymous_caller() -> None:
+    # FILE-30 F-02: every unauthenticated caller is `anonymous`; nobody owns those uploads.
+    db = FakeDB()
+    now = "2026-03-22T00:00:00+00:00"
+    await db.create(
+        model="files",
+        data={
+            "fileId": "file_anon",
+            "currentVersionId": "ver_anon",
+            "ownerId": "anonymous",
+            "tenantId": None,
+            "visibility": "private",
+            "policy": "user-avatar",
+            "mimeType": "image/png",
+            "size": 4,
+            "name": "a.png",
+            "metadata": {},
+            "createdAt": now,
+            "updatedAt": now,
+        },
+    )
+    file_service = create_file_service(
+        FileServiceConfig(db=db, storage=FakeStorage(with_signing=False), events=create_event_emitter(), namespace="filefn")
+    )
+    page = await file_service.list_files(_ctx("anonymous"), {"limit": 10})
+    assert [file["fileId"] for file in page["files"]] == []
+
+    # An explicit grant to the anonymous principal still lists, as it reads.
+    await db.create(
+        model="filePermissions",
+        data={"permissionId": "perm_1", "fileId": "file_anon", "userId": "anonymous", "canRead": True, "expiresAt": None},
+    )
+    page = await file_service.list_files(_ctx("anonymous"), {"limit": 10})
+    assert [file["fileId"] for file in page["files"]] == ["file_anon"]

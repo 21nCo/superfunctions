@@ -12,7 +12,7 @@ filefn is a kernel; it inherits some risks from the host stack and adds a small 
 - **Bytes at rest** — the storage adapter handles encryption (S3 SSE, GCS CMEK, etc.). filefn doesn't add a second encryption layer.
 - **Bytes in flight** — TLS termination is the host stack's job. filefn assumes incoming requests are TLS-terminated and signed URLs are HTTPS.
 - **Multipart integrity** — every part is etagged; conflicts fail closed. The final SHA-256 (when supported by storage) is recorded in `fileVersions.checksumSha256Base64`.
-- **Idempotent retries** — `x-idempotency-key` prevents duplicate sessions from accidental retries.
+- **Idempotent retries** — `x-idempotency-key` prevents duplicate sessions from accidental retries by signed-in callers. Anonymous `init` calls are never replayed: a retry gets a new session.
 - **Anonymous upload tokens** — `uploadSessionToken` is hashed at rest and short-lived. Stealing the token gives access only for the session TTL and only for that one upload.
 - **Visibility** — `private` files require a session or grant. `shared` enforces the same. Share-link tokens are opaque and hashed.
 - **CSRF** — for routes that mutate, filefn requires either an `Authorization` header (bearer) or a CSRF-protected cookie. The kernel doesn't ship CSRF middleware itself; it expects the host framework to provide one.
@@ -42,6 +42,17 @@ auth: {
   },
 }
 ```
+
+### Anonymous mode (`auth.required: false`)
+
+Every unauthenticated caller is the same principal, `anonymous`, so FileFn treats an anonymous upload as owned by nobody:
+
+- an unauthenticated caller can upload, but owns nothing: it has no owner's access to what was uploaded (a `public` upload stays readable and listable by anyone; under the default authorizer, a private one needs a read grant made to the principal `anonymous`), it cannot replace or delete it (the default authorizer decides writes and deletes by ownership; only a configured `authorizer` can allow more), and it can never create, list or revoke share links or grants, even with a `canShare` grant;
+- the file is readable only through its policy's visibility (`public`), a grant, or a share link that an authenticated user created.
+
+Use anonymous mode for public drop-offs. For uploads people should manage afterwards, configure `auth.resolveSession`.
+
+The principal ID `anonymous` is reserved for this: never return it from `auth.resolveSession` for a real user, who would own nothing. Share links and grants created on anonymous uploads before this rule keep working. Grants can no longer be listed or revoked over HTTP (only an owner manages grants), and share links only by a signed-in user holding a `canShare` grant on the file. Where no such user exists, review them in the database: set `revokedAt` on the `fileShares` rows, and delete the `filePermissions` rows you don't want, whose file is owned by `anonymous`.
 
 ### 2. Per-route rate limits
 
