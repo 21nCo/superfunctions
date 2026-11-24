@@ -1,3 +1,4 @@
+import { assertContentMatchesDeclaredType, ffmpegInputArgs } from '../content-sniff.js';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
@@ -78,6 +79,7 @@ export function createCommandVideoProvider(config: CommandVideoProviderConfig = 
   async function extractMetadata(request: VideoMetadataRequest): Promise<Record<string, unknown>> {
     return await withTempDir('filefn-processing-video-', async (dir) => {
       const inputPath = join(dir, `input.${outputExtensionForInput(request.input.mimeType)}`);
+      assertContentMatchesDeclaredType(request.videoData, request.input.mimeType);
       await writeFile(inputPath, Buffer.from(request.videoData));
 
       const stdout = await runBinaryCapture(ffprobePath, [
@@ -87,8 +89,7 @@ export function createCommandVideoProvider(config: CommandVideoProviderConfig = 
         'json',
         '-show_streams',
         '-show_format',
-        '-protocol_whitelist',
-        'file',
+        ...ffmpegInputArgs(request.input.mimeType),
         inputPath,
       ], ffprobeTimeoutMs);
 
@@ -126,6 +127,8 @@ export function createCommandVideoProvider(config: CommandVideoProviderConfig = 
       const inputPath = join(dir, `input.${outputExtensionForInput(request.input.mimeType)}`);
       const outputPath = join(dir, `poster.${request.format === 'jpeg' ? 'jpg' : request.format}`);
 
+      assertContentMatchesDeclaredType(request.videoData, request.input.mimeType);
+
       await writeFile(inputPath, Buffer.from(request.videoData));
 
       const duration = request.duration ?? coerceDuration(await extractMetadata({
@@ -146,10 +149,8 @@ export function createCommandVideoProvider(config: CommandVideoProviderConfig = 
         '-y',
         '-ss',
         String(safeTimestamp),
-        // Read only the local temp file: no network or other protocols, even
-        // if the input is a playlist that names other resources.
-        '-protocol_whitelist',
-        'file',
+        // Only the local temp file, read with the declared type's demuxer.
+        ...ffmpegInputArgs(request.input.mimeType),
         '-i',
         inputPath,
         '-frames:v',
@@ -178,14 +179,14 @@ export function createCommandVideoProvider(config: CommandVideoProviderConfig = 
       const outputPath = join(dir, `output.${outputInfo.extension}`);
       const targetHeight = RESOLUTION_HEIGHTS[request.resolution] ?? RESOLUTION_HEIGHTS['720p'];
 
+      assertContentMatchesDeclaredType(request.videoData, request.input.mimeType);
+
       await writeFile(inputPath, Buffer.from(request.videoData));
 
       const args = [
         '-y',
-        // Read only the local temp file: no network or other protocols, even
-        // if the input is a playlist that names other resources.
-        '-protocol_whitelist',
-        'file',
+        // Only the local temp file, read with the declared type's demuxer.
+        ...ffmpegInputArgs(request.input.mimeType),
         '-i',
         inputPath,
         '-vf',

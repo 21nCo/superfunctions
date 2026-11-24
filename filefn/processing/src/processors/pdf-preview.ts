@@ -1,6 +1,6 @@
 import sharp from 'sharp';
 import type { PdfPreviewConfig, Processor, ProcessorInput, ProcessorResult, ThumbnailSize } from '../types.js';
-import { SHARP_INPUT_OPTIONS, contentMatchesDeclaredType } from '../content-sniff.js';
+import { SHARP_INPUT_OPTIONS, pdfStart } from '../content-sniff.js';
 
 const DEFAULT_SIZES: ThumbnailSize[] = [
   { name: 'small', width: 150, height: 150 },
@@ -86,8 +86,11 @@ async function renderPdfFirstPage(pdfData: Uint8Array, density: number): Promise
   try {
     // libvips picks its loader from the bytes; anything that is not a PDF gets
     // the placeholder preview instead of reaching another decoder.
-    if (!contentMatchesDeclaredType(pdfData, 'application/pdf')) return null;
-    return await sharp(Buffer.from(pdfData), { ...SHARP_INPUT_OPTIONS, density, page: 0 }).png().toBuffer();
+    // From `%PDF` on, so libvips picks its PDF loader and never another one
+    // from leading bytes.
+    const start = pdfStart(pdfData);
+    if (start < 0) return null;
+    return await sharp(Buffer.from(pdfData.subarray(start)), { ...SHARP_INPUT_OPTIONS, density, page: 0 }).png().toBuffer();
   } catch {
     return null;
   }

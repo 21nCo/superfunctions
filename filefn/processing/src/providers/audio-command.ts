@@ -1,3 +1,4 @@
+import { assertContentMatchesDeclaredType, ffmpegInputArgs } from '../content-sniff.js';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
@@ -119,6 +120,7 @@ export function createCommandAudioProvider(config: CommandAudioProviderConfig = 
   async function extractMetadata(request: AudioMetadataRequest): Promise<Record<string, unknown>> {
     return await withTempDir('filefn-processing-audio-', async (dir) => {
       const inputPath = join(dir, `input.${outputExtensionForInput(request.input.mimeType)}`);
+      assertContentMatchesDeclaredType(request.audioData, request.input.mimeType);
       await writeFile(inputPath, Buffer.from(request.audioData));
 
       const stdout = await runBinaryCapture(ffprobePath, [
@@ -128,6 +130,7 @@ export function createCommandAudioProvider(config: CommandAudioProviderConfig = 
         'json',
         '-show_streams',
         '-show_format',
+        ...ffmpegInputArgs(request.input.mimeType),
         inputPath,
       ]);
       const parsed = JSON.parse(stdout) as {
@@ -165,12 +168,13 @@ export function createCommandAudioProvider(config: CommandAudioProviderConfig = 
       const outputInfo = AUDIO_OUTPUTS[request.codec] ?? AUDIO_OUTPUTS.aac;
       const outputPath = join(dir, `output.${outputInfo.extension}`);
 
+      assertContentMatchesDeclaredType(request.audioData, request.input.mimeType);
+
       await writeFile(inputPath, Buffer.from(request.audioData));
 
       const args = [
         '-y',
-        '-protocol_whitelist',
-        'file',
+        ...ffmpegInputArgs(request.input.mimeType),
         '-i',
         inputPath,
         ...(AUDIO_CODEC_ARGS[request.codec] ?? AUDIO_CODEC_ARGS.aac),
@@ -198,12 +202,13 @@ export function createCommandAudioProvider(config: CommandAudioProviderConfig = 
       const inputPath = join(dir, `input.${outputExtensionForInput(request.input.mimeType)}`);
       const pcmPath = join(dir, 'waveform.pcm');
 
+      assertContentMatchesDeclaredType(request.audioData, request.input.mimeType);
+
       await writeFile(inputPath, Buffer.from(request.audioData));
 
       await runBinary(ffmpegPath, [
         '-y',
-        '-protocol_whitelist',
-        'file',
+        ...ffmpegInputArgs(request.input.mimeType),
         '-i',
         inputPath,
         '-ac',

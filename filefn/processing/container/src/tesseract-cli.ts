@@ -49,7 +49,7 @@ export function createTesseractCliOCRProvider(options: TesseractCliOptions = {})
       try {
         const input = join(directory, 'input.png');
         const output = join(directory, 'output');
-        await writeFile(input, await sharp(Buffer.from(request.imageData)).grayscale().normalize().sharpen().png().toBuffer());
+        await writeFile(input, await sharp(Buffer.from(request.imageData), { limitInputPixels: 100_000_000 }).grayscale().normalize().sharpen().png().toBuffer());
         const formats = request.includeHOCR ? ['txt', 'tsv', 'hocr'] : ['txt', 'tsv'];
         await run(binary, [input, output, '-l', request.language, '--psm', '6', '-c', 'preserve_interword_spaces=1', ...formats], timeoutMs);
         const [text, tsv, hocr] = await Promise.all([

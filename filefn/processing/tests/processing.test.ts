@@ -10,7 +10,7 @@ import {
   PDF_PREVIEW_SUPPORTED_MIME_TYPES,
   COMPRESSION_SUPPORTED_MIME_TYPES,
 } from '../src/index.js';
-import { CONTENT_TYPE_MISMATCH_ERROR, contentMatchesDeclaredType } from '../src/content-sniff.js';
+import { CONTENT_TYPE_MISMATCH_ERROR, contentMatchesDeclaredType, ffmpegInputArgs, pdfStart } from '../src/content-sniff.js';
 
 async function createTestImage(width: number, height: number): Promise<Uint8Array> {
   const buffer = await sharp({
@@ -547,6 +547,43 @@ describe('@filefn/processing', () => {
       expect(contentMatchesDeclaredType(new TextEncoder().encode('junk%PDF-1.4'), 'application/pdf')).toBe(true);
       expect(contentMatchesDeclaredType(new TextEncoder().encode('<svg/>'), 'application/pdf')).toBe(false);
       expect(contentMatchesDeclaredType(new TextEncoder().encode('anything'), 'text/plain')).toBe(true);
+    });
+  });
+
+  describe('content signatures and demuxer pinning (FILE-30 F-12, round 2)', () => {
+    const bytes = (text: string) => new TextEncoder().encode(text);
+    const withHeader = (head: number[], rest = 32) => new Uint8Array([...head, ...new Array(rest).fill(0)]);
+
+    it('accepts BigTIFF, RF64 WAV and classic QuickTime atoms', () => {
+      expect(contentMatchesDeclaredType(withHeader([0x49, 0x49, 0x2b, 0x00]), 'image/tiff')).toBe(true);
+      expect(contentMatchesDeclaredType(withHeader([0x4d, 0x4d, 0x00, 0x2b]), 'image/tiff')).toBe(true);
+      expect(contentMatchesDeclaredType(bytes('RF64\0\0\0\0WAVEds64'), 'audio/wav')).toBe(true);
+      expect(contentMatchesDeclaredType(bytes('\0\0\0\x08wide\0\0\0\x10mdat'), 'video/quicktime')).toBe(true);
+    });
+
+    it('refuses two-letter BMP and non-image ftyp headers as images', () => {
+      expect(contentMatchesDeclaredType(bytes('BM<svg xmlns="http://www.w3.org/2000/svg"/>'), 'image/png')).toBe(false);
+      expect(contentMatchesDeclaredType(bytes('AAAAftypXXXX<svg/>'), 'image/png')).toBe(false);
+      expect(contentMatchesDeclaredType(bytes('\0\0\0\x18ftypavif\0\0\0\0'), 'image/avif')).toBe(true);
+    });
+
+    it('renders a PDF preview only from %PDF on, so an SVG mentioning %PDF- gets the placeholder', async () => {
+      const svg = bytes('<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><!-- %PDF-1.7 --><rect width="10" height="10"/></svg>');
+      expect(pdfStart(svg)).toBeGreaterThan(0);
+      const result = await createPdfPreviewProcessor().process(
+        { fileId: 'f', versionId: 'v', storageKey: 't/f/v-x', mimeType: 'application/pdf', size: svg.length, fileName: 'x.pdf' },
+        async () => svg,
+      );
+      expect(result.success).toBe(true);
+      for (const artifact of result.artifacts) {
+        expect((artifact.metadata as Record<string, unknown> | undefined)?.renderMode).not.toBe('page-rasterized');
+      }
+    });
+
+    it('pins ffmpeg to the declared demuxer with only the file protocol', () => {
+      expect(ffmpegInputArgs('video/mp4')).toEqual(['-protocol_whitelist', 'file', '-f', 'mov']);
+      expect(ffmpegInputArgs('audio/mpeg')).toEqual(['-protocol_whitelist', 'file', '-f', 'mp3']);
+      expect(() => ffmpegInputArgs('application/x-mpegurl')).toThrow(CONTENT_TYPE_MISMATCH_ERROR);
     });
   });
 });

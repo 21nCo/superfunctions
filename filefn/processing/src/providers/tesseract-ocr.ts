@@ -1,5 +1,5 @@
 import sharp from 'sharp';
-import { SHARP_INPUT_OPTIONS } from '../content-sniff.js';
+import { SHARP_INPUT_OPTIONS, assertContentMatchesDeclaredType } from '../content-sniff.js';
 import { createWorker, PSM } from 'tesseract.js';
 
 import type { OCRProcessorProvider, OCRProviderRequest, OCRProviderResult } from '../types.js';
@@ -16,6 +16,7 @@ async function preprocessImage(imageData: Uint8Array): Promise<Buffer> {
 export function createTesseractJsOCRProvider(): OCRProcessorProvider {
   return {
     async recognize(request: OCRProviderRequest): Promise<OCRProviderResult> {
+      assertContentMatchesDeclaredType(request.imageData, request.input.mimeType);
       const worker = await createWorker(request.language, 1, {
         logger: () => {},
       });
