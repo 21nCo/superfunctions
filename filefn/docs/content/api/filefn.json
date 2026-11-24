@@ -1158,6 +1158,105 @@
         }
       }
     },
+    "/{fileId}/versions/{versionId}/artifacts/{kind}": {
+      "put": {
+        "summary": "Attach a client-supplied artifact",
+        "tags": [
+          "artifacts"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/XRequestID"
+          },
+          {
+            "$ref": "#/components/parameters/XFileFnClientVersion"
+          },
+          {
+            "$ref": "#/components/parameters/FileID"
+          },
+          {
+            "$ref": "#/components/parameters/VersionID"
+          },
+          {
+            "$ref": "#/components/parameters/ArtifactKind"
+          },
+          {
+            "name": "durationMs",
+            "in": "query",
+            "required": false,
+            "description": "Time the client spent producing the artifact, in milliseconds",
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 86400000
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Authorization"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "image/webp": {
+              "schema": {
+                "type": "string",
+                "contentMediaType": "image/webp"
+              }
+            },
+            "image/png": {
+              "schema": {
+                "type": "string",
+                "contentMediaType": "image/png"
+              }
+            },
+            "image/jpeg": {
+              "schema": {
+                "type": "string",
+                "contentMediaType": "image/jpeg"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/SuccessEnvelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/ArtifactEnvelope"
+                        }
+                      },
+                      "required": [
+                        "data"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Canonical FileFn error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/policies": {
       "get": {
         "summary": "List policies",
@@ -1805,9 +1904,10 @@
         "name": "x-idempotency-key",
         "in": "header",
         "required": false,
-        "description": "Optional idempotency key used for upload initialization.",
+        "description": "Optional idempotency key used for upload initialization: at most 255 characters, no control characters or lone surrogates.",
         "schema": {
-          "type": "string"
+          "type": "string",
+          "maxLength": 255
         }
       },
       "XUploadSessionToken": {
@@ -1862,6 +1962,21 @@
         "description": "Opaque FileFn artifact identifier.",
         "schema": {
           "type": "string"
+        }
+      },
+      "ArtifactKind": {
+        "name": "kind",
+        "in": "path",
+        "required": true,
+        "description": "Client-supplied artifact kind.",
+        "schema": {
+          "type": "string",
+          "enum": [
+            "thumbnail-small",
+            "thumbnail-medium",
+            "thumbnail-large",
+            "converted"
+          ]
         }
       },
       "Token": {
@@ -2286,16 +2401,24 @@
         "type": "object",
         "properties": {
           "policy": {
-            "type": "string"
+            "type": "string",
+            "minLength": 1
           },
           "fileName": {
-            "type": "string"
+            "type": "string",
+            "minLength": 1,
+            "description": "At most 255 UTF-16 code units; no \"/\", \"\\\", control characters or lone surrogates; not \".\" or \"..\"."
           },
           "size": {
-            "type": "integer"
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
           },
           "mimeType": {
-            "type": "string"
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 1024,
+            "description": "One type/subtype of RFC 9110 tokens with optional parameters."
           },
           "fileId": {
             "type": "string"
@@ -2304,7 +2427,8 @@
             "type": "object",
             "additionalProperties": {
               "$ref": "#/components/schemas/JSONValue"
-            }
+            },
+            "description": "At most 16384 bytes as JSON and 32 levels deep."
           }
         },
         "required": [
@@ -2513,6 +2637,16 @@
           "size": {
             "type": "integer"
           },
+          "source": {
+            "type": "string",
+            "enum": [
+              "client",
+              "server"
+            ]
+          },
+          "processingDurationMs": {
+            "type": "integer"
+          },
           "createdAt": {
             "type": "string"
           }
@@ -2523,6 +2657,17 @@
           "mimeType",
           "size",
           "createdAt"
+        ]
+      },
+      "ArtifactEnvelope": {
+        "type": "object",
+        "properties": {
+          "artifact": {
+            "$ref": "#/components/schemas/ArtifactDescriptor"
+          }
+        },
+        "required": [
+          "artifact"
         ]
       },
       "ArtifactPage": {
@@ -2815,6 +2960,9 @@
             "items": {
               "type": "string"
             }
+          },
+          "force": {
+            "type": "boolean"
           }
         },
         "required": [
