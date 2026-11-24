@@ -5,8 +5,8 @@ from typing import Any, Dict, List, Optional, Protocol, Set, Tuple
 
 from pydantic import BaseModel
 
-from ..authz.grant_expiry import is_grant_expired
 from .. import errors
+from ..authz.grant_expiry import is_grant_expired
 from ..events import FileFnEventEmitter, create_file_deleted_event
 from ..models import FileProviderContext, FileRecord, FileVersionRecord, Visibility
 from ..policies import resolve_artifact_storage_target, resolve_storage_target

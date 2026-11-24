@@ -825,7 +825,11 @@ async def test_delete_file_removes_completed_upload_sessions() -> None:
 async def test_share_and_grant_creation_validate_like_the_typescript_server() -> None:
     # FILE-30 F-07/F-08: strict ISO expiry, positive limits, and no cross-tenant grants by default.
     from filefn.server import errors
-    from filefn.server.authz.grants_service import CreateGrantInput, GrantsServiceConfig, create_grants_service
+    from filefn.server.authz.grants_service import (
+        CreateGrantInput,
+        GrantsServiceConfig,
+        create_grants_service,
+    )
 
     db = FakeDB()
     await _seed_file_rows(db)
