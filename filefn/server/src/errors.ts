@@ -40,6 +40,7 @@ export const ErrorCodes = {
   IDEMPOTENCY_CONFLICT: 'FILEFN_IDEMPOTENCY_CONFLICT',
   PART_CONFLICT: 'FILEFN_PART_CONFLICT',
   UPLOAD_SIZE_MISMATCH: 'FILEFN_UPLOAD_SIZE_MISMATCH',
+  PART_TOO_LARGE: 'FILEFN_PART_TOO_LARGE',
   NO_SUPPORTED_UPLOAD_MODE: 'FILEFN_NO_SUPPORTED_UPLOAD_MODE',
   OFFLINE_UNSUPPORTED: 'FILEFN_OFFLINE_UNSUPPORTED',
   SESSION_NOT_FOUND: 'FILEFN_SESSION_NOT_FOUND',
@@ -223,6 +224,15 @@ export function uploadSizeMismatch(expected: number, actual: number): FileFnErro
     'Uploaded size does not match expected size',
     409,
     { expected, actual }
+  );
+}
+
+export function partTooLarge(partNumber: number, maxBytes: number): FileFnError {
+  return new FileFnError(
+    ErrorCodes.PART_TOO_LARGE,
+    'Upload part is larger than the session allows for it',
+    413,
+    { partNumber, maxBytes }
   );
 }
 
