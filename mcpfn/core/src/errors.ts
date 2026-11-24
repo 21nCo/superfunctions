@@ -59,7 +59,8 @@ export class McpFnClientProfileError extends McpFnError {
 export interface McpFnErrorResultOptions {
   includeStructuredContent?: boolean;
   /**
-   * Return the code, message and details of any thrown value. By default only
+   * true: return the code, message and details of any thrown value; false:
+   * always return the generic error. When omitted, only
    * `McpFnError`, `McpError` and thrown plain `{ code, message }` objects keep
    * them; any other error becomes a generic `MCPFN_TOOL_ERROR` so database,
    * filesystem or upstream error text does not reach the client and the model.
@@ -102,6 +103,10 @@ function ownDetails(error: object): unknown {
 
 function verbatimError(error: unknown): { code: string; message: string; details?: unknown } {
   if (error instanceof McpFnError) return { code: error.code, message: error.message, details: error.details };
+  if (isMcpErrorLike(error)) {
+    const data = (error as { data?: unknown }).data;
+    return { code: "MCPFN_TOOL_ERROR", message: error.message, ...(data === undefined ? {} : { details: data }) };
+  }
   if (
     error && typeof error === "object" &&
     "code" in error && typeof error.code === "string" &&
@@ -119,7 +124,7 @@ export function errorResult(
   error: unknown,
   options: McpFnErrorResultOptions = {},
 ): CallToolResult {
-  const normalized = options.verbatim || isMcpFnClientSafeError(error)
+  const normalized = (options.verbatim ?? isMcpFnClientSafeError(error))
     ? verbatimError(error)
     : {
         code: "MCPFN_TOOL_ERROR",

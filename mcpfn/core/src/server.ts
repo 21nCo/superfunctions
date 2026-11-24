@@ -166,6 +166,10 @@ export function resolveMcpFnServerCapabilities<TContext>(
   return mergeCapabilities(registryCapabilities, additionalCapabilities);
 }
 
+function withheldToolError(errorId: string | undefined): { verbatim: boolean; errorId?: string } {
+  return errorId === undefined ? { verbatim: true } : { verbatim: false, errorId };
+}
+
 function page<T>(
   values: T[],
   cursor: string | undefined,
@@ -553,8 +557,9 @@ export class McpFnServer<TContext = undefined> {
               includeStructuredContent: !this.registry.hasOutputSchema(
                 request.params.name,
               ),
-              verbatim: this.serverOptions.exposeErrors === true,
-              errorId: await this.reportWithheldError(lifecycleError, "tools/call", request.params.name),
+              // Classified once, before the sink sees the error: a sink that
+              // changes it cannot turn a withheld error into a returned one.
+              ...withheldToolError(await this.reportWithheldError(lifecycleError, "tools/call", request.params.name)),
             });
           }
         },

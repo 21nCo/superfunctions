@@ -104,7 +104,7 @@ that must map schema failures into a stable legacy envelope.
 
 When a tool declares a success `outputSchema`, error details remain in its JSON text content and `structuredContent` is omitted so the official SDK does not validate an error envelope against the success schema. Tools without an output schema retain both structured and text error envelopes.
 
-Only `McpFnError` (and its subclasses), the SDK's `McpError` and a thrown plain
+Only `McpFnError` (and its subclasses), the SDK's `McpError` (its `data` becomes `details`) and a thrown plain
 `{ code, message }` object reach the client with their code, message and
 details. Any other thrown value, such as a filesystem, database or upstream
 HTTP error, becomes `{ code: "MCPFN_TOOL_ERROR", message: "The tool failed",
@@ -113,9 +113,11 @@ answer such errors with a JSON-RPC `InternalError` carrying the same `errorId`.
 This covers errors from context factories, visibility hooks and task creation
 as well. The original error goes to the server's `onError({ error, errorId,
 method, tool })` sink, which is not awaited. `exposeErrors: true` restores verbatim error text. Argument validation
-stops at the first failure where the schema allows it (a failing `anyOf` or
-`oneOf` still reports each branch), so a large invalid array no longer yields
-one issue per item, and each client may hold at most `maxResourceSubscriptions` (default 1000) resource
+stops at the first failure where the schema allows it: a large array whose
+`items` fail stops at the first bad item, while a failing `anyOf` or `oneOf`
+still reports each branch and, on `@cfworker/json-schema`, a tuple with
+`additionalItems: false` reports each extra item (responses keep at most 100
+issues). Each client may hold at most `maxResourceSubscriptions` (default 1000) resource
 subscriptions.
 
 One `McpFnServer` instance connects to one transport. Create a new instance per concurrent connection and share the registry.

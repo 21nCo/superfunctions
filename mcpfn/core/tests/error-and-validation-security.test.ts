@@ -98,6 +98,23 @@ describe("tool error text (MCP-SEC-08)", () => {
     expect(JSON.stringify(await protocol.callTool({ name: "read_file" }))).toContain("Bad input");
   });
 
+  it("keeps an McpError's data as details", async () => {
+    const client = await connect(failingRegistry(() => new McpError(ErrorCode.InvalidParams, "Bad input", { field: "input" })));
+    expect((await client.callTool({ name: "read_file" })).structuredContent).toMatchObject({
+      error: { code: "MCPFN_TOOL_ERROR", details: { field: "input" } },
+    });
+  });
+
+  it("classifies an error before the sink can change it", async () => {
+    const thrown = { message: "db.internal refused" } as { message: string; code?: string };
+    const client = await connect(failingRegistry(() => thrown), {
+      onError: ({ error }) => { (error as { code?: string }).code = "LOGGED"; },
+    });
+    const result = await client.callTool({ name: "read_file" });
+    expect(JSON.stringify(result)).not.toContain("db.internal");
+    expect(result.structuredContent).toMatchObject({ error: { details: { errorId: expect.any(String) } } });
+  });
+
   it("returns error text verbatim with exposeErrors", async () => {
     const client = await connect(failingRegistry(systemError), { exposeErrors: true });
     expect((await client.callTool({ name: "read_file" })).structuredContent).toMatchObject({
