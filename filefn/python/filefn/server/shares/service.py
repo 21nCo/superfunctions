@@ -22,6 +22,8 @@ class CreateShareLinkInput(BaseModel):
 
 # Seconds a signed share URL keeps clear of the link's expiry, for the time signing takes.
 SIGNING_MARGIN_SECONDS = 5
+# Shortest signed share URL handed out; a link closer to its end is served by the checked proxy.
+MIN_SIGNED_URL_SECONDS = 30
 
 
 class SharesServiceConfig(BaseModel):
@@ -61,7 +63,7 @@ class SharesService:
         if expires is None:
             return self.signed_url_ttl_seconds
         remaining = int((expires - datetime.now(timezone.utc)).total_seconds()) - SIGNING_MARGIN_SECONDS
-        if remaining < 1:
+        if remaining < MIN_SIGNED_URL_SECONDS:
             return None
         return min(self.signed_url_ttl_seconds, remaining)
 
@@ -221,30 +223,23 @@ class SharesService:
             raise errors.not_found("Version")
         storage_target = self._storage_target_for_file(file)
 
-        descriptor: Dict[str, Any]
+        capabilities = get_storage_capabilities(self.storage, storage_target)
+        # Streaming is judged for the file's own storage target.
+        can_stream = hasattr(self.storage, "open_download_stream") and capabilities.get("proxyStreamingDownload") is not False
+        can_sign = hasattr(self.storage, "sign_download_url") and bool(capabilities.get("signedDownloadUrls"))
         lifetime = self._signed_url_lifetime(share)
-        if (
-            lifetime is not None
-            and hasattr(self.storage, "sign_download_url")
-            and get_storage_capabilities(self.storage, storage_target).get("signedDownloadUrls")
-        ):
+        if lifetime is not None and can_sign:
+            result: Optional[Dict[str, Any]] = None
             try:
                 result = await self.storage.sign_download_url(
                     key=version.storageKey,
                     expires_in_seconds=lifetime,
                     target=storage_target,
                 )
-                # If signing took long enough for the URL to outlive the link, the checked proxy serves it.
-                if not self._signed_url_within_link(share, lifetime):
-                    raise errors.share_expired()
-                await self._reserve_download(token_hash)
-                descriptor = {
-                    "url": result["url"],
-                    "headers": result.get("headers"),
-                    "fileName": file.name,
-                    "mimeType": file.mimeType,
-                }
             except Exception as exc:
+                # Without streaming there is no fallback: the signing error is the answer.
+                if not can_stream:
+                    raise
                 logger_warning = getattr(self.logger, "warning", None)
                 if callable(logger_warning):
                     logger_warning(
@@ -256,25 +251,26 @@ class SharesService:
                             "error": str(exc),
                         },
                     )
-                descriptor = {
-                    "url": f"/proxy/share-links/{token}/download",
+            # If signing took long enough for the URL to outlive the link, the checked proxy serves it.
+            if result is not None and self._signed_url_within_link(share, lifetime):
+                await self._reserve_download(token_hash)
+                return {
+                    "url": result["url"],
+                    "headers": result.get("headers"),
                     "fileName": file.name,
                     "mimeType": file.mimeType,
                 }
-        else:
-            descriptor = {
-                "url": f"/proxy/share-links/{token}/download",
-                "fileName": file.name,
-                "mimeType": file.mimeType,
-            }
 
-        # Only a link that is still valid gets the proxy URL.
-        if descriptor["url"].startswith("/proxy/"):
-            if is_grant_expired(share.expiresAt):
-                raise errors.share_expired()
-            if not hasattr(self.storage, "open_download_stream") and hasattr(self.storage, "sign_download_url"):
-                raise errors.share_expired()
-
+        # Only a link that is still valid, on storage that can stream it, gets the proxy URL.
+        if is_grant_expired(share.expiresAt):
+            raise errors.share_expired()
+        if not can_stream and can_sign:
+            raise errors.share_expired()
+        descriptor: Dict[str, Any] = {
+            "url": f"/proxy/share-links/{token}/download",
+            "fileName": file.name,
+            "mimeType": file.mimeType,
+        }
         return descriptor
 
     async def get_download_stream_via_share_link(

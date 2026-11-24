@@ -913,3 +913,16 @@ async def test_share_proxy_fallback_only_for_a_link_that_is_still_valid() -> Non
     with pytest.raises(errors.FileFnError) as expired:
         await shares_service.download_via_share_link(created["token"], _ctx(None), is_authenticated=False)
     assert expired.value.code == "FILEFN_SHARE_EXPIRED"
+
+
+@pytest.mark.asyncio
+async def test_signing_failure_on_signing_only_storage_is_not_reported_as_expired() -> None:
+    db = FakeDB()
+    await _seed_file_rows(db)
+    storage = FakeStorage(with_signing=False)
+    storage.capabilities = {"signedDownloadUrls": True, "proxyStreamingDownload": False}  # type: ignore[attr-defined]
+    shares_service = create_shares_service(SharesServiceConfig(db=db, storage=storage, namespace="filefn"))
+    created = await shares_service.create_share_link(CreateShareLinkInput(fileId="file_0001"), _ctx("user_123"))
+    with pytest.raises(RuntimeError, match="signing not supported"):
+        await shares_service.download_via_share_link(created["token"], _ctx(None), is_authenticated=False)
+    assert all(row["downloads"] == 0 for row in db.tables["fileShares"])

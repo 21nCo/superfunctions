@@ -282,7 +282,7 @@ describe('share links, grants and JSON routes (FILE-30 F-07, F-08, F-09, F-15)',
     const local = createLocalStorageAdapter({ rootDir });
     const storage = new Proxy(local, {
       get(target, prop, receiver) {
-        if (prop === 'capabilities') return { ...target.capabilities, signedDownloadUrls: true };
+        if (prop === 'capabilities') return { ...target.capabilities, signedDownloadUrls: true, proxyStreamingDownload: streaming };
         if (prop === 'signDownloadUrl') {
           return async () => {
             // Signing "takes" this long: the clock moves on while it runs.
@@ -290,7 +290,6 @@ describe('share links, grants and JSON routes (FILE-30 F-07, F-08, F-09, F-15)',
             return { url: 'https://storage.example/object' };
           };
         }
-        if (prop === 'openDownloadStream' && !streaming) return undefined;
         return Reflect.get(target, prop, receiver);
       },
     });
@@ -314,8 +313,8 @@ describe('share links, grants and JSON routes (FILE-30 F-07, F-08, F-09, F-15)',
 
     vi.useFakeTimers({ toFake: ['Date'] });
     try {
-      // Too little time left to sign with the safety margin: the proxy (which checks expiry) serves it.
-      await setExpiry(3000);
+      // Too little time left for a signed URL of at least 30 s plus the margin: the proxy (which checks expiry) serves it.
+      await setExpiry(34_000);
       expect((await resolve()).url).toMatch(/^\/proxy\/share-links\//);
 
       // Signing slower than the margin: the URL would outlive the link, so it is dropped.
@@ -324,11 +323,11 @@ describe('share links, grants and JSON routes (FILE-30 F-07, F-08, F-09, F-15)',
       expect((await resolve()).url).toMatch(/^\/proxy\/share-links\//);
 
       // The link expired while signing: no proxy URL for a dead link.
-      await setExpiry(7000);
-      signingTakesMs = 8000;
+      await setExpiry(40_000);
+      signingTakesMs = 41_000;
       await expect(resolve()).rejects.toMatchObject({ code: 'FILEFN_SHARE_EXPIRED' });
 
-      // Signing-only storage can't serve the proxy URL.
+      // Signing-only storage (here a target that can't stream, though the adapter has openDownloadStream) can't serve the proxy URL.
       streaming = false;
       signingTakesMs = 0;
       await setExpiry(3000);
@@ -339,6 +338,11 @@ describe('share links, grants and JSON routes (FILE-30 F-07, F-08, F-09, F-15)',
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('refuses a shares.maxTtlSeconds whose expiries would leave years 0001-9999', () => {
+    expect(() => makeFileFn({ shares: { maxTtlSeconds: 1e15 } })).toThrow(/maxTtlSeconds/);
+    expect(() => makeFileFn({ shares: { maxTtlSeconds: 100 * 365 * 24 * 60 * 60 } })).not.toThrow();
   });
 
   it('treats the anonymous principal as a guest for links that require auth', async () => {
