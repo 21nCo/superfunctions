@@ -368,10 +368,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
     const policy = policies.get(session.policy);
     const storageTarget = policy ? resolveStorageTarget(policy) : undefined;
 
-    // The recorded parts. An aborted or failed part write never leaves bytes
-    // at a part key (S3-compatible stores and GCS don't commit an aborted
-    // upload; storage-local writes to a temporary file renamed on close), and
-    // a part committed after its session ended is removed by its own call.
+    // The recorded parts, and every part number of the session (below).
     const recorded = await db.findMany<{ partNumber: number }>({
       model: 'uploadParts',
       where: [{ field: 'uploadSessionId', operator: 'eq', value: session.uploadSessionId }],
@@ -379,6 +376,10 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       namespace,
     });
     const partNumbers = new Set<number>(recorded.map((part) => part.partNumber));
+    // Storage adapters that write in place and keep bytes on abort (for
+    // example an older storage-local) can leave an unrecorded part: every part
+    // number the session can have is covered (at most MAX_UPLOAD_PARTS).
+    for (let n = 1; n <= Math.min(session.totalParts ?? 0, MAX_UPLOAD_PARTS); n++) partNumbers.add(n);
 
     let allDeleted = true;
     for (const partNumber of partNumbers) {
@@ -1718,11 +1719,15 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       await writer.close();
       // A sweep may have ended the session while this write ran; then nothing
       // would ever clean up the part it just committed.
-      if ((await readSession(uploadSessionId).catch(() => 'unknown' as const)) === null) {
+      // The same when it ended as refused, aborted or completed: such a
+      // session's parts are never used again, and its cleanup may already
+      // have run.
+      const afterWrite = await readSession(uploadSessionId).catch(() => 'unknown' as const);
+      if (afterWrite === null || (afterWrite !== 'unknown' && (isAbortedStatus(afterWrite.status) || afterWrite.status === 'completed'))) {
         if (storage.deleteObject) {
           await storage.deleteObject({ key: partKey, target: storageTarget }).catch(() => {});
         }
-        throw errors.sessionNotFound();
+        throw afterWrite === null ? errors.sessionNotFound() : errors.uploadAborted();
       }
 
       const etag = `proxy-sha256-${hasher.digest('hex')}`;
@@ -2000,7 +2005,13 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
             // Continue when the upload was consumed and the object exists, at
             // any size: the size check below then refuses an oversized one and
             // deletes it, instead of leaving it for good.
-            if (!(await storageObjectExists(session, policyStorageTarget))) throw err;
+            // Only a per-session key (a pre-allocated version ID) is known to
+            // hold this upload's object; a legacy shared key may hold another
+            // version's, so it keeps the exact-size check.
+            const finalized = session.completionVersionId
+              ? await storageObjectExists(session, policyStorageTarget)
+              : await isStorageFinalized(session, policyStorageTarget);
+            if (!finalized) throw err;
           }
         } else if (session.uploadMode === 'proxy') {
           // Stitch proxy parts
@@ -2068,7 +2079,14 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
             }
             return lostClaimResult(uploadSessionId);
           }
-          await deleteRefusedUploads(session);
+          // Refused for good; a cleanup failure leaves the row for the sweep
+          // and never replaces the size error.
+          await deleteRefusedUploads(session).catch((error: unknown) => {
+            logger?.warn('Refused upload not fully cleaned up; the expiry sweep retries it', {
+              uploadSessionId,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          });
           throw errors.uploadSizeMismatch(session.size, stat.size);
         }
 
