@@ -79,6 +79,43 @@ describe('sandbox purchases in a production deployment', () => {
     ]);
   });
 
+  const storedSubscription = {
+    subscription: {
+      id: 'bsub_1',
+      billingAccountId: 'ba_user_1',
+      providerSubscriptionId: 'orig_legacy',
+      providerChargeId: 'txn_legacy',
+      status: 'active',
+      autoRenew: true
+    },
+    price: { priceId: 'price_apple', providerProductId: 'apple.pro.month' }
+  };
+
+  it('syncs a stored subscription production does not know as expired, so an account scan ends it and moves on', async () => {
+    const fetchMock = vi.fn(async () => notFound()) as unknown as typeof fetch;
+
+    const state = await provider(fetchMock).fetchSubscription!(storedSubscription as never);
+
+    expect(state).toMatchObject({ subscriptionStatus: 'expired', providerSubscriptionId: 'orig_legacy', autoRenew: false });
+    expect(vi.mocked(fetchMock)).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps a not-found sync an error when the sandbox is allowed', async () => {
+    const fetchMock = vi.fn(async () => notFound()) as unknown as typeof fetch;
+
+    await expect(provider(fetchMock, { allowSandbox: true }).fetchSubscription!(storedSubscription as never)).rejects.toMatchObject({
+      code: 'BILLFN_PROVIDER_ERROR'
+    });
+  });
+
+  it('keeps a retryable StoreKit failure during sync an error', async () => {
+    const fetchMock = vi.fn(async () => new Response('', { status: 500 })) as unknown as typeof fetch;
+
+    await expect(provider(fetchMock).fetchSubscription!(storedSubscription as never)).rejects.toMatchObject({
+      code: 'BILLFN_PROVIDER_ERROR'
+    });
+  });
+
   it('acknowledges a sandbox notification without a billing state or a reference to link', async () => {
     const [event] = (await notification(renewal('Sandbox')))!;
 

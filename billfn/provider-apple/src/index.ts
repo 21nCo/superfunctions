@@ -208,7 +208,25 @@ export function createAppleProvider(providerConfig: AppleProviderConfig): BillFn
       // Sync reads a stored subscription whose reference verification, restore or an operator's import already bound to
       // its app, so it grants no new price. BillFn picks the price it passes by product alone, which with several apps may
       // be another app's price of the same product, so the subscription is read from whichever listed app owns it.
-      const response = await requestStoreKitForTransaction(fetchImpl, config, `/inApps/v1/subscriptions/${encodeStoreKitPathSegment(transactionId)}`);
+      let response: Awaited<ReturnType<typeof requestStoreKitForTransaction>>;
+      try {
+        response = await requestStoreKitForTransaction(fetchImpl, config, `/inApps/v1/subscriptions/${encodeStoreKitPathSegment(transactionId)}`);
+      } catch (error) {
+        // A paid production subscription always exists in production. One production definitively does not know,
+        // in a deployment that no longer accepts the sandbox, was accepted from the sandbox before: it has expired
+        // for this deployment, so sync and account scans end its access instead of failing on it.
+        if (!acceptsSandbox(config) && isStoreKitNotFound(error)) {
+          return {
+            subscriptionStatus: 'expired',
+            checkoutStatus: 'failed',
+            providerSubscriptionId: input.subscription.providerSubscriptionId,
+            providerChargeId: input.subscription.providerChargeId,
+            autoRenew: false,
+            raw: { reason: 'not_found_in_production' }
+          } satisfies BillFnVerifiedBillingState;
+        }
+        throw error;
+      }
       // An imported purchase was made outside BillFn, so its token is not derived from the billing account.
       const imported = typeof input.subscription.metadata?.[BILLFN_IMPORTED_AT_METADATA_KEY] === 'string';
       return mapAppleSubscriptionResponse(response.payload, {
