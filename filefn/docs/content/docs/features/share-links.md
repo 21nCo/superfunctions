@@ -60,7 +60,7 @@ Anonymous downloads (no auth) work when `requiresAuth` is `false`. If `requiresA
 
 ## TTL and download caps
 
-Both fields are server-enforced and checked when the link is created: `expiresAt` must be an ISO 8601 date-time in the future and `maxDownloads` a positive integer, otherwise the request fails with `FILEFN_INVALID_REQUEST`. A stored `expiresAt` that does not parse counts as expired. Each download is counted with a conditional write before any byte or URL is handed out, so concurrent downloads never exceed `maxDownloads`; the extra requests fail with `FILEFN_SHARE_DOWNLOADS_EXCEEDED`.
+Both fields are server-enforced and checked when the link is created: `expiresAt` must be an ISO 8601 date (`2030-01-01`) or date-time (`2030-01-01T00:00:00Z`; without a zone it is read as UTC) in the future, and `maxDownloads` a positive integer, otherwise the request fails with `FILEFN_INVALID_REQUEST`. An empty `expiresAt` means no expiry. A stored `expiresAt` in any other format counts as expired. Each download is counted with a conditional write after the URL is signed or the stream is opened but before either is handed out, so concurrent downloads never exceed `maxDownloads` and a storage failure never uses up a download; the extra requests fail with `FILEFN_SHARE_DOWNLOADS_EXCEEDED`. A signed download URL never outlives the link: its lifetime is the server's signed-URL TTL or the time left before `expiresAt`, whichever is shorter.
 
 ## Anti-enumeration
 

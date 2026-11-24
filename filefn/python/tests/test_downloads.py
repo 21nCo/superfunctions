@@ -819,3 +819,75 @@ async def test_delete_file_removes_completed_upload_sessions() -> None:
 
     await service.delete_file("file_cleanup", _ctx("user_123"))
     assert await db.find_many("uploadSessions", where=[{"field": "fileId", "operator": "eq", "value": "file_cleanup"}]) == []
+
+
+@pytest.mark.asyncio
+async def test_share_and_grant_creation_validate_like_the_typescript_server() -> None:
+    # FILE-30 F-07/F-08: strict ISO expiry, positive limits, and no cross-tenant grants by default.
+    from filefn.server import errors
+    from filefn.server.authz.grants_service import CreateGrantInput, GrantsServiceConfig, create_grants_service
+
+    db = FakeDB()
+    await _seed_file_rows(db)
+    shares_service = create_shares_service(SharesServiceConfig(db=db, storage=FakeStorage(with_signing=True), namespace="filefn"))
+    grants_service = create_grants_service(GrantsServiceConfig(db=db, namespace="filefn"))
+
+    for bad in [
+        {"expiresAt": "12/31/2099"},
+        {"expiresAt": "2001-01-01T00:00:00Z"},
+        {"maxDownloads": 0},
+    ]:
+        with pytest.raises(errors.FileFnError) as share_error:
+            await shares_service.create_share_link(CreateShareLinkInput(fileId="file_0001", **bad), _ctx("user_123"))
+        assert share_error.value.code == "FILEFN_INVALID_REQUEST"
+
+    with pytest.raises(errors.FileFnError) as tenant_error:
+        await grants_service.create_grant(CreateGrantInput(fileId="file_0001", tenantId="org_other"), _ctx("user_123"))
+    assert tenant_error.value.code == "FILEFN_FORBIDDEN"
+    with pytest.raises(errors.FileFnError) as expiry_error:
+        await grants_service.create_grant(
+            CreateGrantInput(fileId="file_0001", userId="reader", expiresAt="Tue, 01 Jan 2099 00:00:00 GMT"), _ctx("user_123")
+        )
+    assert expiry_error.value.code == "FILEFN_INVALID_REQUEST"
+
+    grant = await grants_service.create_grant(
+        CreateGrantInput(fileId="file_0001", userId="reader", expiresAt="2099-12-31T00:00:00+02:00"), _ctx("user_123")
+    )
+    assert grant.expiresAt == "2099-12-30T22:00:00.000Z"
+    same_tenant = await grants_service.create_grant(CreateGrantInput(fileId="file_0001", tenantId="org_123"), _ctx("user_123"))
+    assert same_tenant.tenantId == "org_123"
+
+    permissive = create_grants_service(GrantsServiceConfig(db=db, namespace="filefn", allow_cross_tenant=True))
+    other = await permissive.create_grant(CreateGrantInput(fileId="file_0001", tenantId="org_other"), _ctx("user_123"))
+    assert other.tenantId == "org_other"
+
+
+@pytest.mark.asyncio
+async def test_share_signed_url_never_outlives_the_link_and_bad_stored_expiry_fails_closed() -> None:
+    from filefn.server import errors
+
+    db = FakeDB()
+    await _seed_file_rows(db)
+    storage = FakeStorage(with_signing=True)
+    lifetimes: List[int] = []
+    original = storage.sign_download_url
+
+    async def recording(key: str, expires_in_seconds: int, target: Optional[str] = None) -> Dict[str, Any]:
+        lifetimes.append(expires_in_seconds)
+        return await original(key, expires_in_seconds, target)
+
+    storage.sign_download_url = recording  # type: ignore[method-assign]
+    storage.capabilities = {"signedDownloadUrls": True}  # type: ignore[attr-defined]
+    shares_service = create_shares_service(
+        SharesServiceConfig(db=db, storage=storage, namespace="filefn", signed_url_ttl_seconds=900)
+    )
+    soon = (datetime.now(timezone.utc) + timedelta(seconds=60)).isoformat().replace("+00:00", "Z")
+    created = await shares_service.create_share_link(CreateShareLinkInput(fileId="file_0001", expiresAt=soon), _ctx("user_123"))
+    await shares_service.download_via_share_link(created["token"], _ctx(None), is_authenticated=False)
+    assert len(lifetimes) == 1 and 0 < lifetimes[0] <= 60
+
+    for row in db.tables["fileShares"]:
+        row["expiresAt"] = "12/31/2099"
+    with pytest.raises(errors.FileFnError) as expired:
+        await shares_service.download_via_share_link(created["token"], _ctx(None), is_authenticated=False)
+    assert expired.value.code == "FILEFN_SHARE_EXPIRED"

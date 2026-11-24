@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel
 
 from .. import errors
+from ..authz.grant_expiry import is_grant_expired, parse_iso_instant
 from ..models import FileProviderContext, FileRecord, FileShareRecord, FileVersionRecord
 from ..policies import resolve_storage_target
 from ..routed_storage import get_storage_capabilities
@@ -50,6 +51,16 @@ class SharesService:
     def _generate_token(self) -> str:
         return secrets.token_urlsafe(32)
 
+    def _signed_url_lifetime(self, share: FileShareRecord) -> int:
+        """The signed URL TTL, but never past the link's own expiry."""
+        expires = parse_iso_instant(share.expiresAt) if share.expiresAt else None
+        if expires is None:
+            return self.signed_url_ttl_seconds
+        remaining = int((expires - datetime.now(timezone.utc)).total_seconds())
+        if remaining < 1:
+            raise errors.share_expired()
+        return min(self.signed_url_ttl_seconds, remaining)
+
     def _as_utc(self, value: str) -> datetime:
         normalized = value.replace("Z", "+00:00")
         parsed = datetime.fromisoformat(normalized)
@@ -89,7 +100,7 @@ class SharesService:
             current = FileShareRecord(**current_data)
             if current.revokedAt:
                 raise errors.share_revoked()
-            if current.expiresAt and self._as_utc(current.expiresAt) <= datetime.now(timezone.utc):
+            if is_grant_expired(current.expiresAt):
                 raise errors.share_expired()
             if current.maxDownloads is not None and current.downloads >= current.maxDownloads:
                 raise errors.share_downloads_exceeded()
@@ -121,6 +132,17 @@ class SharesService:
         if not await self._can_share_file(file, ctx):
             raise errors.forbidden()
 
+        expires_at: Optional[str] = None
+        if input.expiresAt is not None and input.expiresAt != "":
+            parsed = parse_iso_instant(input.expiresAt)
+            if parsed is None:
+                raise errors.FileFnError("FILEFN_INVALID_REQUEST", "expiresAt must be an ISO 8601 date-time", 400, {"field": "expiresAt"})
+            if parsed <= datetime.now(timezone.utc):
+                raise errors.FileFnError("FILEFN_INVALID_REQUEST", "expiresAt must be in the future", 400, {"field": "expiresAt"})
+            expires_at = parsed.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+        if input.maxDownloads is not None and input.maxDownloads < 1:
+            raise errors.FileFnError("FILEFN_INVALID_REQUEST", "maxDownloads must be a positive integer", 400, {"field": "maxDownloads"})
+
         if input.versionId:
             version = await self._get_version(input.versionId)
             if not version or version.fileId != file.fileId:
@@ -133,7 +155,7 @@ class SharesService:
             tokenHash=token_hash,
             fileId=input.fileId,
             versionId=input.versionId,
-            expiresAt=input.expiresAt,
+            expiresAt=expires_at,
             requiresAuth=input.requiresAuth if input.requiresAuth is not None else False,
             maxDownloads=input.maxDownloads,
             downloads=0,
@@ -169,7 +191,7 @@ class SharesService:
         if share.revokedAt:
             raise errors.share_revoked()
 
-        if share.expiresAt and self._as_utc(share.expiresAt) <= datetime.now(timezone.utc):
+        if is_grant_expired(share.expiresAt):
             raise errors.share_expired()
 
         if share.maxDownloads is not None and share.downloads >= share.maxDownloads:
@@ -195,7 +217,7 @@ class SharesService:
             try:
                 result = await self.storage.sign_download_url(
                     key=version.storageKey,
-                    expires_in_seconds=self.signed_url_ttl_seconds,
+                    expires_in_seconds=self._signed_url_lifetime(share),
                     target=storage_target,
                 )
                 await self._reserve_download(token_hash)
@@ -249,7 +271,7 @@ class SharesService:
         share = FileShareRecord(**data)
         if share.revokedAt:
             raise errors.share_revoked()
-        if share.expiresAt and self._as_utc(share.expiresAt) <= datetime.now(timezone.utc):
+        if is_grant_expired(share.expiresAt):
             raise errors.share_expired()
         if share.maxDownloads is not None and share.downloads >= share.maxDownloads:
             raise errors.share_downloads_exceeded()

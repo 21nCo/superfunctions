@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional, Protocol, Set, Tuple
 
 from pydantic import BaseModel
 
+from ..authz.grant_expiry import is_grant_expired
 from .. import errors
 from ..events import FileFnEventEmitter, create_file_deleted_event
 from ..models import FileProviderContext, FileRecord, FileVersionRecord, Visibility
@@ -136,13 +137,7 @@ class FileService:
         return file.fileId > cursor["fileId"]
 
     def _is_grant_expired(self, expires_at: Optional[str]) -> bool:
-        if not expires_at:
-            return False
-        try:
-            return self._parse_timestamp(expires_at) <= datetime.now(timezone.utc)
-        except Exception:
-            # An expiry that does not parse counts as expired (fails closed).
-            return True
+        return is_grant_expired(expires_at)
 
     async def _get_readable_grant_file_ids(self, ctx: FileProviderContext) -> Set[str]:
         if not ctx.principalId:

@@ -4,6 +4,7 @@ import type { FileRecord } from '../files/service.js';
 import type { FilePermissionRecord } from './authorizer.js';
 import { randomUUID } from 'crypto';
 import * as errors from '../errors.js';
+import { parseIsoInstant } from './grant-expiry.js';
 
 export interface GrantsServiceConfig {
   db: Adapter;
@@ -83,8 +84,8 @@ export function createGrantsService(config: GrantsServiceConfig) {
       }
       let expiresAt: string | null = null;
       if (input.expiresAt !== undefined && input.expiresAt !== null && input.expiresAt !== '') {
-        const expiresAtMs = typeof input.expiresAt === 'string' ? Date.parse(input.expiresAt) : Number.NaN;
-        if (!Number.isFinite(expiresAtMs)) {
+        const expiresAtMs = parseIsoInstant(input.expiresAt);
+        if (expiresAtMs === null) {
           throw errors.invalidRequest('expiresAt must be an ISO 8601 date-time', { field: 'expiresAt' });
         }
         if (expiresAtMs <= Date.now()) {

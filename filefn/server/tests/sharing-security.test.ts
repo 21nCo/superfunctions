@@ -178,6 +178,118 @@ describe('share links, grants and JSON routes (FILE-30 F-07, F-08, F-09, F-15)',
     expect(huge.status).toBe(413);
   });
 
+  it('counts downloads on adapters that read the row back after update (Prisma, MySQL)', async () => {
+    const database = memoryAdapter();
+    // Like Prisma or MySQL: no RETURNING, and update() re-reads the row with the
+    // same filter after writing it, so a successful conditional write throws.
+    const readBack = new Proxy(database, {
+      get(target, prop, receiver) {
+        if (prop === 'capabilities') {
+          return { ...target.capabilities, operations: { ...target.capabilities.operations, returning: false } };
+        }
+        if (prop === 'update') {
+          return async (params: Parameters<typeof target.update>[0]) => {
+            await target.updateMany(params);
+            throw Object.assign(new Error('Record not found'), { name: 'NotFoundError', code: 'ADAPTER_NOT_FOUND' });
+          };
+        }
+        return Reflect.get(target, prop, receiver);
+      },
+    });
+    const fileFn = createFileFn({
+      database: readBack,
+      storage: createLocalStorageAdapter({ rootDir }),
+      namespace: 'filefn',
+      policies: [{ name: 'docs', contentTypes: ['text/plain'], visibility: 'private' }],
+    });
+    const file = await upload(fileFn);
+    const share = await fileFn.services.shares.createShareLink({ fileId: file.fileId, maxDownloads: 2 }, owner);
+    await fileFn.services.shares.getDownloadStreamViaShareLink(share.token, {});
+    await fileFn.services.shares.getDownloadStreamViaShareLink(share.token, {});
+    await expect(fileFn.services.shares.getDownloadStreamViaShareLink(share.token, {})).rejects.toMatchObject({
+      code: 'FILEFN_SHARE_DOWNLOADS_EXCEEDED',
+    });
+    const [row] = await database.findMany<{ downloads: number }>({ model: 'fileShares', where: [], namespace: 'filefn' });
+    expect(row!.downloads).toBe(2);
+  });
+
+  it('never uses up a download when storage fails, and never signs a URL past the link expiry', async () => {
+    const local = createLocalStorageAdapter({ rootDir });
+    let failSigning = true;
+    const signed: number[] = [];
+    const storage = new Proxy(local, {
+      get(target, prop, receiver) {
+        if (prop === 'capabilities') return { ...target.capabilities, signedDownloadUrls: true };
+        if (prop === 'signDownloadUrl') {
+          return async ({ expiresInSeconds }: { expiresInSeconds?: number }) => {
+            if (failSigning) throw new Error('storage unavailable');
+            signed.push(expiresInSeconds ?? -1);
+            return { url: 'https://storage.example/object' };
+          };
+        }
+        return Reflect.get(target, prop, receiver);
+      },
+    });
+    const fileFn = createFileFn({
+      database: memoryAdapter(),
+      storage,
+      namespace: 'filefn',
+      policies: [{ name: 'docs', contentTypes: ['text/plain'], visibility: 'private' }],
+      signedUrlTtlSeconds: 900,
+    });
+    const file = await upload(fileFn);
+    const share = await fileFn.services.shares.createShareLink(
+      { fileId: file.fileId, maxDownloads: 1, expiresAt: new Date(Date.now() + 60_000).toISOString() },
+      owner,
+    );
+    await expect(fileFn.services.shares.downloadViaShareLink(share.token, {})).rejects.toThrow('storage unavailable');
+    failSigning = false;
+    await expect(fileFn.services.shares.downloadViaShareLink(share.token, {})).resolves.toMatchObject({ url: 'https://storage.example/object' });
+    expect(signed).toHaveLength(1);
+    expect(signed[0]).toBeGreaterThan(0);
+    expect(signed[0]).toBeLessThanOrEqual(60);
+  });
+
+  it('reads expiry dates strictly as ISO 8601, and an empty expiresAt as none', async () => {
+    const { fileFn, database } = makeFileFn();
+    const file = await upload(fileFn);
+    for (const expiresAt of ['12/31/2099', 'Tue, 01 Jan 2099 00:00:00 GMT', '2099-02-31T00:00:00Z']) {
+      await expect(fileFn.services.shares.createShareLink({ fileId: file.fileId, expiresAt }, owner)).rejects.toMatchObject({
+        code: 'FILEFN_INVALID_REQUEST',
+      });
+      await expect(fileFn.services.grants.createGrant({ fileId: file.fileId, userId: 'reader', expiresAt }, owner)).rejects.toMatchObject({
+        code: 'FILEFN_INVALID_REQUEST',
+      });
+    }
+    const dateOnly = await fileFn.services.shares.createShareLink({ fileId: file.fileId, expiresAt: '2099-12-31' }, owner);
+    expect(dateOnly.expiresAt).toBe('2099-12-31T00:00:00.000Z');
+    const noExpiry = await fileFn.services.shares.createShareLink({ fileId: file.fileId, expiresAt: '' }, owner);
+    expect(noExpiry.expiresAt).toBeNull();
+
+    // A legacy row stored in a non-ISO format counts as expired.
+    await database.updateMany({
+      model: 'fileShares',
+      where: [{ field: 'fileId', operator: 'eq', value: file.fileId }],
+      data: { expiresAt: '12/31/2099' },
+      namespace: 'filefn',
+    });
+    await expect(fileFn.services.shares.downloadViaShareLink(noExpiry.token, {})).rejects.toMatchObject({ code: 'FILEFN_SHARE_EXPIRED' });
+  });
+
+  it('accepts any valid +json media type and refuses malformed ones', async () => {
+    const { fileFn } = makeFileFn();
+    const file = await upload(fileFn);
+    const post = (contentType: string) =>
+      call(fileFn, 'POST', `/${file.fileId}/permissions`, {
+        body: JSON.stringify({ userId: 'reader' }),
+        headers: { 'content-type': contentType, 'x-test-user': 'owner' },
+      });
+    expect((await post('application/vnd.example_internal+json')).status).toBe(201);
+    expect((await post('application/+json')).status).toBe(415);
+    expect((await post('application/json/x')).status).toBe(415);
+    expect((await post('text/json')).status).toBe(415);
+  });
+
   it('GET /policies requires auth like the other routes (P9)', async () => {
     const { fileFn } = makeFileFn();
     expect((await call(fileFn, 'GET', '/policies')).status).toBe(401);

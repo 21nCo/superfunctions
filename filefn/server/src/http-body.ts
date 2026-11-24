@@ -3,10 +3,14 @@ import { bodyTooLarge, invalidRequest, unsupportedMediaType } from './errors.js'
 /** Largest JSON request body FileFn reads (upload init metadata is capped lower). */
 export const MAX_JSON_BODY_BYTES = 64 * 1024;
 
+// RFC 9110 media type: type "/" subtype, both tokens.
+const MEDIA_TYPE = /^([!#$%&'*+.^_`|~0-9a-z-]+)\/([!#$%&'*+.^_`|~0-9a-z-]+)$/;
+
 function isJsonContentType(contentType: string | null): boolean {
   if (!contentType) return false;
-  const essence = contentType.split(';', 1)[0].trim().toLowerCase();
-  return essence === 'application/json' || /^application\/[a-z0-9.+-]+\+json$/.test(essence);
+  const match = MEDIA_TYPE.exec(contentType.split(';', 1)[0].trim().toLowerCase());
+  if (!match || match[1] !== 'application') return false;
+  return match[2] === 'json' || (match[2].endsWith('+json') && match[2].length > '+json'.length);
 }
 
 /**
@@ -42,7 +46,8 @@ async function readTextBounded(request: Request, maxBytes: number): Promise<stri
     if (done) break;
     total += value.byteLength;
     if (total > maxBytes) {
-      await reader.cancel().catch(() => {});
+      // Not awaited: a body whose source never settles must not hold back the 413.
+      void reader.cancel().catch(() => {});
       throw bodyTooLarge(maxBytes);
     }
     chunks.push(value);

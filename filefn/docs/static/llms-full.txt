@@ -1406,6 +1406,7 @@ Processing happens after the upload closes. Errors are isolated:
 ```ts
 fetch(`/filefn/${fileId}/process`, {
   method: "POST",
+  headers: { "content-type": "application/json" },
   body: JSON.stringify({
     storageKey: existing.storageKey,
     mimeType: existing.mimeType,
@@ -1776,6 +1777,7 @@ Custom authorizers can implement org-wide read, project-scoped writes, anything 
 // We grant alice read + share for 24h.
 const grant = await fetch(`/filefn/file_xyz/permissions`, {
   method: "POST",
+  headers: { "content-type": "application/json" },
   body: JSON.stringify({
     userId: "alice",
     canRead: true,
@@ -3599,11 +3601,11 @@ The owner has all four implicitly. Grants supplement the owner's capabilities fo
 
 ## TTL
 
-`expiresAt` must be an ISO 8601 date-time in the future when the grant is created, and it is enforced on every authorisation check; a stored value that does not parse counts as expired. Expired grants are kept in the table for audit; you can prune them with a cron.
+`expiresAt` must be an ISO 8601 date or date-time (without a zone it is read as UTC) in the future when the grant is created, and it is enforced on every authorisation check; a stored value in any other format counts as expired. Expired grants are kept in the table for audit; you can prune them with a cron.
 
 ## Tenants
 
-A grant to a `tenantId` other than the file's own is refused with `FILEFN_FORBIDDEN`, so one user cannot hand a file to every member of another tenant. Set `grants: { allowCrossTenant: true }` in `createFileFn` to allow it. A grant extends what the configured authorizer allows: a matching read grant lets its holder read the file even when the authorizer alone would not.
+A grant to a `tenantId` other than the file's own is refused with `FILEFN_FORBIDDEN`, so one user cannot hand a file to every member of another tenant. Set `grants: { allowCrossTenant: true }` in `createFileFn` (in the Python server, `grants={"allowCrossTenant": True}` in `FileFnConfig`) to allow it. A grant extends what the configured authorizer allows: a matching read grant lets its holder read the file even when the authorizer alone would not.
 
 ## Roles vs. users
 
@@ -4355,7 +4357,7 @@ Anonymous downloads (no auth) work when `requiresAuth` is `false`. If `requiresA
 
 ## TTL and download caps
 
-Both fields are server-enforced and checked when the link is created: `expiresAt` must be an ISO 8601 date-time in the future and `maxDownloads` a positive integer, otherwise the request fails with `FILEFN_INVALID_REQUEST`. A stored `expiresAt` that does not parse counts as expired. Each download is counted with a conditional write before any byte or URL is handed out, so concurrent downloads never exceed `maxDownloads`; the extra requests fail with `FILEFN_SHARE_DOWNLOADS_EXCEEDED`.
+Both fields are server-enforced and checked when the link is created: `expiresAt` must be an ISO 8601 date (`2030-01-01`) or date-time (`2030-01-01T00:00:00Z`; without a zone it is read as UTC) in the future, and `maxDownloads` a positive integer, otherwise the request fails with `FILEFN_INVALID_REQUEST`. An empty `expiresAt` means no expiry. A stored `expiresAt` in any other format counts as expired. Each download is counted with a conditional write after the URL is signed or the stream is opened but before either is handed out, so concurrent downloads never exceed `maxDownloads` and a storage failure never uses up a download; the extra requests fail with `FILEFN_SHARE_DOWNLOADS_EXCEEDED`. A signed download URL never outlives the link: its lifetime is the server's signed-URL TTL or the time left before `expiresAt`, whichever is shorter.
 
 ## Anti-enumeration
 
@@ -7235,6 +7237,7 @@ filefn ships share links with TTLs and download caps. This recipe shows how to c
 ```ts
 const share = await fetch(`/filefn/${fileId}/share-links`, {
   method: "POST",
+  headers: { "content-type": "application/json" },
   body: JSON.stringify({ maxDownloads: 1 }),
 }).then((r) => r.json());
 
@@ -7248,6 +7251,7 @@ The first download succeeds; the second returns `FILEFN_SHARE_DOWNLOADS_EXCEEDED
 ```ts
 await fetch(`/filefn/${fileId}/share-links`, {
   method: "POST",
+  headers: { "content-type": "application/json" },
   body: JSON.stringify({
     expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(), // 1 hour
   }),
@@ -7259,6 +7263,7 @@ await fetch(`/filefn/${fileId}/share-links`, {
 ```ts
 await fetch(`/filefn/${fileId}/share-links`, {
   method: "POST",
+  headers: { "content-type": "application/json" },
   body: JSON.stringify({
     requiresAuth: true,
     expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
