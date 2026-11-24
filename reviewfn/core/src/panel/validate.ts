@@ -72,8 +72,11 @@ function array(item: Check, options: { min?: number; max?: number; unique?: bool
     if (!Array.isArray(value)) return add(issues, "REVIEWFN_PANEL_SCHEMA", path, "must be an array.");
     if (options.min !== undefined && value.length < options.min) add(issues, "REVIEWFN_PANEL_SCHEMA", path, `must have at least ${options.min} item(s).`);
     if (options.max !== undefined && value.length > options.max) add(issues, "REVIEWFN_PANEL_SCHEMA", path, `must have at most ${options.max} item(s).`);
-    if (options.unique && new Set(value.map(entry => stableStringify(entry))).size !== value.length) add(issues, "REVIEWFN_PANEL_SCHEMA", path, "must not contain duplicate items.");
-    value.forEach((entry, index) => item(entry, pointer(path, index), issues));
+    // Items are checked first: only valid items are canonicalized, so invalid input yields issues, never a throw.
+    const itemIssues: Issues = [];
+    value.forEach((entry, index) => item(entry, pointer(path, index), itemIssues));
+    if (options.unique && itemIssues.length === 0 && new Set(value.map(entry => stableStringify(entry))).size !== value.length) add(issues, "REVIEWFN_PANEL_SCHEMA", path, "must not contain duplicate items.");
+    issues.push(...itemIssues);
   };
 }
 function object(properties: Record<string, Check>, required: readonly string[], rule?: (value: Record<string, unknown>, path: string, issues: Issues) => void): Check {

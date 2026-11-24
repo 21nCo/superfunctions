@@ -662,7 +662,13 @@ describe("panel policy and slot identity", () => {
     expect(performance.now() - started).toBeLessThan(1000);
     expect(messages({ ...profile, modelReport: "stderr-regex:(?<=at )(?<model>[(\\]]+)(?!\\()(?<!x)" })).toEqual([]);
     for (const modelReport of ["json-path:", "json-path:a..b", "stdout", "none "]) expect(validateHarnessProfile({ ...profile, modelReport }).valid).toBe(false);
-    expect(validateHarnessProfile({ ...profile, envAllowlist: ["PATH", "PATH"] }).valid).toBe(false);
+    expect(messages({ ...profile, envAllowlist: ["PATH", "PATH"] })).toEqual(["/envAllowlist must not contain duplicate items."]);
+    // Unique arrays check items before canonicalizing them: invalid items yield issues, never a TypeError.
+    for (const envAllowlist of [[undefined], JSON.parse("[1e400]")]) {
+      expect(messages({ ...profile, envAllowlist })).toEqual([expect.stringMatching(/^\/envAllowlist\/0 /)]);
+      expect(validatePanelPolicy({ ...withProfile, profiles: { agent: { ...profile, envAllowlist } } }).issues.map(issue => issue.path)).toEqual(["/profiles/agent/envAllowlist/0"]);
+    }
+    expect(validateSlotRun({ ...panelReport().slotRuns[0], limitations: [undefined] }).issues.map(issue => issue.path)).toEqual(["/limitations/0"]);
     expect(validateHarnessProfile({ ...profile, envAllowlist: ["NOT-A-NAME"] }).valid).toBe(false);
     expect(validateHarnessProfile({ ...profile, shell: true }).valid).toBe(false);
     expect(harnessProfileIssues(profile, "/profiles/agent")).toEqual([]);
