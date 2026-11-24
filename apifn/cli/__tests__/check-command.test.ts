@@ -3258,7 +3258,7 @@ describe("apifn check: directory requirements and created directories survive bi
       execFileSync("mkdir", [path.join(root, "new")]);
       throw new Error("injected staging failure");
     });
-    expect(displaced.errors).toContain(`${path.join(displaced.dir, "new")}, a directory apifn check created, and those it created above it were left as they are: it is no longer`);
+    expect(displaced.errors).toContain(`${path.join(displaced.dir, "new", "deep")}, a directory apifn check created, and those it created above it were left as they are: it is gone or no longer`);
     const refused = await stagedFailure((created) => {
       if (path.basename(created) !== "deep") return;
       writeFileSync(path.join(created, "foreign.txt"), "kept\n");
@@ -3268,6 +3268,31 @@ describe("apifn check: directory requirements and created directories survive bi
     expect(refused.errors).toContain(`${path.join(refused.dir, "new", "deep")}, a directory apifn check created, and those it created above it were left as they are: ENOTEMPTY`);
     expect(readFileSync(path.join(refused.dir, "new", "deep", "foreign.txt"), "utf8")).toBe("kept\n");
     for (const { errors } of [displaced, refused]) expect(errors).not.toContain("No output it wrote is kept");
+  });
+
+  it("an abort after a created directory is moved away names it and never claims no output was kept (PR round 4 delta)", async () => {
+    const root = await fixtures();
+    const dir = path.join(root, "base");
+    const controller = new AbortController();
+    const errors: string[] = [];
+    const code = await runCheckCommand({
+      cwd: dir,
+      config: CONFIG,
+      output: { error: (message: string) => errors.push(message) } as unknown as Output,
+      specPath: path.join("new", "deep", "openapi.yml"),
+      write: true,
+      signal: controller.signal,
+      writeStdout: () => {},
+      publishHook: (step, created) => {
+        if (step !== "mkdir" || path.basename(created) !== "deep") return;
+        renameSync(path.join(dir, "new"), path.join(dir, "moved"));
+        controller.abort("SIGTERM");
+      },
+    });
+    expect(code).toBe(2);
+    expect(errors.join("\n")).toContain(`${path.join(dir, "new", "deep")}, a directory apifn check created, and those it created above it were left as they are: it is gone`);
+    expect(errors.join("\n")).not.toContain("No output it wrote is kept");
+    expect(statSync(path.join(dir, "moved", "deep")).isDirectory()).toBe(true);
   });
 });
 

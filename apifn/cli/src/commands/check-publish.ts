@@ -456,12 +456,9 @@ function removeBackup(staged: Staged): string | null {
  */
 function removeCreatedDirs(staged: Staged): string | null {
   for (const created of staged.created) {
-    // One left behind is named, with the created directories above it (gone already leaves nothing).
+    // One left behind is named, with the created directories above it; one moved away may still exist elsewhere.
     const left = `${created.dir}, a directory apifn check created, and those it created above it were left as they are`;
-    if (!stillAnchored(created)) {
-      if (currentState(created.dir) === null) continue;
-      return `${left}: it is no longer the directory apifn check created.`;
-    }
+    if (!stillAnchored(created)) return `${left}: it is gone or no longer the directory apifn check created.`;
     try {
       rmdirSync(created.dir);
     } catch (error) {
