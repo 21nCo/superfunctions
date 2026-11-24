@@ -1,0 +1,31 @@
+billfn/provider-dodo/src/index.ts
+  s_0d7e11293d5a4e::t_7975e26fc2475f 597-602
+billfn/provider-dodo/src/__tests__/contract.test.ts
+  s_0d7e11293d5a4e::t_f2ba8bb786cbde 977-987
+billfn/core/src/service.ts
+  s_0d7e11293d5a4e::t_c32c1c55ecd862 5452-5456
+  s_0d7e11293d5a4e::t_a8a16a3402a224 5528-5531
+  s_0d7e11293d5a4e::t_7975e26fc2475f 272,5379-5386,5406,5409-5415,5423,5446-5451,5457-5464,5466-5475,5521-5527,5532-5534,5645,5659,5680
+billfn/core/src/__tests__/webhook-session-link.test.ts
+  s_0d7e11293d5a4e::t_c32c1c55ecd862 166-205
+billfn/core/src/types.ts
+  s_0d7e11293d5a4e::t_7975e26fc2475f 468-473
+billfn/docs/content/docs/server/reconciliation.mdx
+  s_0d7e11293d5a4e::t_2a30fc3d08816a 29,31,34
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "34af6b4fc2c3efe6f91861528ad65ed7383f02d6",
+  "prompts": {},
+  "sessions": {
+    "s_0d7e11293d5a4e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "97ac12a3-1bf1-4732-a6f3-ece8c28b207e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
