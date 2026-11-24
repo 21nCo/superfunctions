@@ -279,11 +279,7 @@ interface Candidate {
   operation: OpenApiOperation;
   inputSchema: McpFnObjectSchema;
   outputSchema?: McpFnObjectSchema;
-  /** The generated definitions the input and the output schema hold (NO_CLOSURE: none). */
-  closures: [object, object];
 }
-
-const NO_CLOSURE = Object.freeze({});
 
 class OperationConverter {
   private readonly components: JsonObject;
@@ -298,8 +294,6 @@ class OperationConverter {
   /** Why each request body schema chosen among several entries fails to compile (null when it compiles). */
   private readonly bodyVerdicts = new WeakMap<object, string | null>();
   private readonly verdicts = new Map<string, string | null>();
-  /** The generated definitions each tool schema holds. */
-  private readonly toolClosures = new WeakMap<object, object>();
 
   constructor(
     private readonly document: JsonObject,
@@ -325,13 +319,7 @@ class OperationConverter {
     const { inputs, inputSchema } = this.input(path, pathItem, raw);
     const operation = deepFreeze(this.operation(path, pathItem, method, raw, inputs));
     const outputSchema = this.schemas.budgeted(() => this.outputSchema(raw, method));
-    const closureOf = (schema: object | undefined) => (schema && this.toolClosures.get(schema)) ?? NO_CLOSURE;
-    return {
-      operation,
-      inputSchema,
-      ...(outputSchema ? { outputSchema } : {}),
-      closures: [closureOf(inputSchema), closureOf(outputSchema)],
-    };
+    return { operation, inputSchema, ...(outputSchema ? { outputSchema } : {}) };
   }
 
   /** Follow a `$ref` chain to a parameter, request body or response object. */
@@ -508,10 +496,7 @@ class OperationConverter {
     const produce = () => {
       const schema = finish();
       if (schema === undefined) return undefined;
-      if (Object.keys(definitions).length === 0) return treeCopy(schema, this.schemas.copyBudget());
-      const copy = treeCopy({ ...schema, definitions }, this.schemas.copyBudget());
-      this.toolClosures.set(copy, definitions);
-      return copy;
+      return treeCopy(Object.keys(definitions).length > 0 ? { ...schema, definitions } : schema, this.schemas.copyBudget());
     };
     if (!this.shareSchemas) return produce();
     const values = { json: true, chars: 0 };
@@ -733,7 +718,7 @@ class OperationConverter {
     // unresolved or cyclic references) take precedence over the shape check.
     const refs = new Set<string>();
     const converted = this.schemas.convertRoot(raw.schema, "input", refs);
-    this.schemas.definitions(refs, "input", converted);
+    this.schemas.checkDefinitions(refs, "input", converted);
     this.assertProjectable(raw.schema, "input", `parameter ${name}`);
     const shape = this.parameterShape(name, location, raw.schema);
     if (location === "query" && shape === "array" && !explode) {
@@ -1133,13 +1118,13 @@ function register<TContext>(
   const failed = new WeakSet<object>();
   const fresh = <T extends object | undefined>(schema: T, last: boolean): T =>
     schema !== undefined && Object.isFrozen(schema) && (last || failed.has(schema)) ? deepFreeze(structuredClone(schema)) : schema;
-  // Input and output closures a validator overflowed its stack on, so every
-  // tool holding the same pair gets the same verdict, however warm the engine is.
+  // Input and output schemas a validator overflowed its stack on: tools with
+  // the same schemas (shared by content) get the same verdict, however warm the engine is.
   const overflowed = new WeakMap<object, WeakSet<object>>();
   candidates.forEach((candidate, index) => {
     const { operation } = candidate;
-    const [inputClosure, outputClosure] = candidate.closures;
-    if (overflowed.get(inputClosure)?.has(outputClosure)) {
+    const pair: [object, object] = [candidate.inputSchema, candidate.outputSchema ?? NO_OUTPUT];
+    if (overflowed.get(pair[0])?.has(pair[1])) {
       skipped.push(tooDeepSkip(operation));
       return;
     }
@@ -1163,8 +1148,8 @@ function register<TContext>(
       failed.add(inputSchema);
       if (outputSchema) failed.add(outputSchema);
       if (isStackOverflow(error)) {
-        if (!overflowed.has(inputClosure)) overflowed.set(inputClosure, new WeakSet());
-        overflowed.get(inputClosure)!.add(outputClosure);
+        if (!overflowed.has(pair[0])) overflowed.set(pair[0], new WeakSet());
+        overflowed.get(pair[0])!.add(pair[1]);
         skipped.push(tooDeepSkip(operation));
       } else {
         skipped.push(registrationSkip(operation, error));
@@ -1185,6 +1170,8 @@ function register<TContext>(
   });
   return { registry, tools, skipped };
 }
+
+const NO_OUTPUT = Object.freeze({});
 
 function operationRef(operation: OpenApiOperation): OpenApiOperationRef {
   return {

@@ -1542,7 +1542,9 @@ export class SchemaConverter {
           nodes = this.budget.used;
           return converted;
         });
-        entry = { schema, refs, inPlace: inPlaceReferences(schema), applied: appliedReferences(schema), nodes };
+        // Only references the conversion made are edges: a malformed keyword it kept as written makes none.
+        const applied = new Set([...appliedReferences(schema)].filter((name) => refs.has(name)));
+        entry = { schema, refs, inPlace: inPlaceReferences(schema), applied, nodes: Math.max(nodes, expandedSize(schema)) };
       } catch (error) {
         if (!(error instanceof OpenApiSkip)) throw error;
         entry = {
@@ -1563,6 +1565,14 @@ export class SchemaConverter {
    * MAX_REFERENCE_DEPTH definitions, before anything is emitted.
    */
   definitions(refs: Iterable<string>, mode: SchemaMode, root: unknown): Record<string, McpFnJsonSchema | boolean> {
+    const names = [...refs];
+    const known = this.checkDefinitions(names, mode, root);
+    known.value ??= this.emit(names, mode);
+    return known.value;
+  }
+
+  /** Everything `definitions` checks, without emitting the closure. */
+  checkDefinitions(refs: Iterable<string>, mode: SchemaMode, root: unknown): { value?: Record<string, McpFnJsonSchema | boolean> } {
     // Kept per call by mode and names: many operations reach the same closure.
     const names = [...refs];
     const key = `${mode}\0${names.join("\0")}`;
@@ -1580,13 +1590,49 @@ export class SchemaConverter {
     if (known.error) throw known.error;
     if (names.length > 0) {
       // Only applied references count: nothing refers to a declaration map's entries.
-      const applied = appliedReferences(root);
-      if (names.some((name) => applied.has(name) && this.referenceDepth(name, mode) > MAX_REFERENCE_DEPTH)) {
+      const listed = new Set(names);
+      const applied = [...appliedReferences(root)].filter((name) => listed.has(name));
+      // The bound holds for any order validators walk in; only a root it does not clear is walked.
+      if (applied.some((name) => this.referenceDepth(name, mode) > MAX_REFERENCE_DEPTH) && this.nestsTooDeeply(applied, mode)) {
         throw new OpenApiSkip("schema-too-large", TOO_DEEP);
       }
     }
-    known.value ??= this.emit(names, mode);
-    return known.value;
+    return known;
+  }
+
+  private readonly deepRoots = new Map<string, boolean>();
+
+  /**
+   * Whether compiling definitions from `roots` nests more than
+   * MAX_REFERENCE_DEPTH deep: a depth-first walk in document order that,
+   * like a validator compiling them, enters each definition once. It stops
+   * at the bound, and its steps are charged to the call's total.
+   */
+  private nestsTooDeeply(roots: string[], mode: SchemaMode): boolean {
+    const key = `${mode}\0${roots.join("\0")}`;
+    let deep = this.deepRoots.get(key);
+    if (deep === undefined) {
+      const entered = new Set<string>();
+      const stack: Array<Iterator<string>> = [];
+      const enter = (name: string): boolean => {
+        entered.add(name);
+        stack.push(this.converted(name, mode).applied![Symbol.iterator]());
+        return stack.length > MAX_REFERENCE_DEPTH;
+      };
+      deep = false;
+      for (const root of roots) {
+        if (deep || entered.has(root)) continue;
+        deep = enter(root);
+        while (!deep && stack.length > 0) {
+          const step = stack.at(-1)!.next();
+          if (step.done) stack.pop();
+          else if (!entered.has(step.value)) deep = enter(step.value);
+        }
+      }
+      this.total.chargeNodes(entered.size);
+      this.deepRoots.set(key, deep);
+    }
+    return deep;
   }
 
   /** Charge a closure a tool emits to the call's total, each time a tool schema holds it. */
@@ -1625,7 +1671,11 @@ export class SchemaConverter {
       if (seen.has(key)) continue;
       seen.add(key);
       const entry = this.convertedComponent(key, mode);
-      if (entry.error) throw entry.error;
+      if (entry.error) {
+        // A failing closure is walked again by every root reaching it: each walk is charged.
+        this.total.chargeNodes(seen.size);
+        throw entry.error;
+      }
       for (const next of entry.refs!) if (!seen.has(next) && !checked.has(next)) queue.push(next);
     }
     for (const key of seen) checked.add(key);
@@ -1636,13 +1686,17 @@ export class SchemaConverter {
         below > 0 || component.some((key) => this.inPlaceDepth(key, mode) < 0) ? 1 : 0,
       ) > 0;
     // Only a closure holding an in-place cycle is walked again, to name the cycle.
-    if (names.some(holdsCycle)) assertProductiveRecursion(this.closureEntries(names, mode));
+    if (names.some(holdsCycle)) {
+      const entries = this.closureEntries(names, mode);
+      this.total.chargeNodes(entries.size);
+      assertProductiveRecursion(entries);
+    }
   }
 
   /**
    * The most definitions a chain of applied references from `name` holds, a
    * group of definitions that reach each other counting as all of them: an
-   * upper bound on how deep validators recurse while compiling it.
+   * upper bound on how deep validators recurse while compiling it, in any order.
    */
   private referenceDepth(name: string, mode: SchemaMode): number {
     const depths = memoMap(this.referenceDepths, mode, () => new Map<string, number>());
@@ -1884,6 +1938,37 @@ const IN_PLACE_ARRAY_KEYWORDS = ["allOf", "anyOf", "oneOf"] as const;
 const IN_PLACE_KEYWORDS = ["not", "if", "then", "else"] as const;
 
 const APPLIED_MAPS = new Set(["properties", "patternProperties", "dependencies"]);
+const APPLIED_KEYWORDS = new Set<string>(SUBSCHEMA_KEYWORDS.filter((keyword) => keyword !== "definitions" && keyword !== "$defs"));
+
+/**
+ * The values a copy of `schema` holds, literals included (each shared object
+ * as often as it is referred to). Kept per object; walked with an explicit stack.
+ */
+function expandedSize(schema: unknown): number {
+  const sizes = new Map<object, number>();
+  const open = new Set<object>();
+  const stack: Array<{ value: object; read: boolean }> = isObject(schema) || Array.isArray(schema) ? [{ value: schema, read: false }] : [];
+  while (stack.length > 0) {
+    const frame = stack.at(-1)!;
+    if (sizes.has(frame.value) || (!frame.read && open.has(frame.value))) {
+      stack.pop();
+      continue;
+    }
+    const members = Object.values(frame.value).filter((member): member is object => typeof member === "object" && member !== null);
+    if (!frame.read) {
+      frame.read = true;
+      open.add(frame.value);
+      for (const member of members) if (!sizes.has(member) && !open.has(member)) stack.push({ value: member, read: false });
+      continue;
+    }
+    stack.pop();
+    open.delete(frame.value);
+    let size = 1 + Object.keys(frame.value).length - members.length;
+    for (const member of members) size += sizes.get(member) ?? 1;
+    sizes.set(frame.value, Math.min(size, Number.MAX_SAFE_INTEGER));
+  }
+  return isObject(schema) || Array.isArray(schema) ? sizes.get(schema)! : 1;
+}
 
 /**
  * Definitions a converted schema applies, in place or to a child value:
@@ -1901,12 +1986,14 @@ function appliedReferences(schema: unknown): Set<string> {
     if (typeof current.$ref === "string" && current.$ref.startsWith(DEFINITION_REF)) {
       found.add(current.$ref.slice(DEFINITION_REF.length));
     }
-    for (const keyword of SUBSCHEMA_KEYWORDS) {
-      const value = current[keyword];
-      if (keyword === "definitions" || keyword === "$defs" || typeof value !== "object" || value === null) continue;
-      if (Array.isArray(value) || APPLIED_MAPS.has(keyword)) for (const member of Object.values(value)) stack.push(member);
-      else stack.push(value);
+    // Pushed last to first, so they are read in document order.
+    const children: unknown[] = [];
+    for (const [keyword, value] of Object.entries(current)) {
+      if (!APPLIED_KEYWORDS.has(keyword) || typeof value !== "object" || value === null) continue;
+      if (Array.isArray(value) || APPLIED_MAPS.has(keyword)) for (const member of Object.values(value)) children.push(member);
+      else children.push(value);
     }
+    for (let index = children.length - 1; index >= 0; index -= 1) stack.push(children[index]);
   }
   return found;
 }
@@ -1986,10 +2073,10 @@ function inPlaceReferences(schema: McpFnJsonSchema | boolean): Set<string> {
 }
 
 /**
- * The most definitions a chain of applied references (in place, as an
- * `allOf` member, or to a child value, as a property's schema) from a tool's
- * schema may hold; definitions reaching each other count as all of them.
- * Validators recurse once per definition while compiling. Measured cold at
+ * How deep a chain of applied references (in place, as an `allOf` member,
+ * or to a child value, as a property's schema) from a tool's schema may
+ * nest, entering each definition once in document order (see
+ * `nestsTooDeeply`). Validators recurse once per definition while compiling. Measured cold at
  * the default Node 20 and 22 stack, Ajv compiles 160 and overflows at 180
  * (after warm-up between 250 and 300), and @cfworker/json-schema compiles
  * 200; 150 leaves the margin for the caller's own frames. A declaration map

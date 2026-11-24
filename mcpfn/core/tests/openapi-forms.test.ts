@@ -2738,12 +2738,25 @@ describe("fromOpenAPI body fallback, synchronous schemas, per-kind alternatives 
       // The tail once, plus each wrapper's own component.
       expect(reads).toBeLessThanOrEqual(1000 + 2 * 500);
     }
+    // A tail that fails is walked again by each wrapper, and each walk is charged to the call's total.
+    const charged = vi.spyOn(NodeBudget.prototype, "chargeNodes");
+    try {
+      const failing = build(300, (next) => ({ type: "object", properties: { next: { $ref: next } } }));
+      (failing.components.schemas as Record<string, unknown>).T999 = { type: "array", prefixItems: [{ type: "string" }] };
+      const result = fromOpenAPI(failing, options());
+      expect(registered(result)).toEqual([["ok", false]]);
+      expect(new Set(result.skipped.map(({ code }) => code))).toEqual(new Set(["unsupported-schema-keyword"]));
+      expect(charged.mock.calls.reduce((sum, [count]) => sum + count, 0)).toBeGreaterThanOrEqual(300 * 1000);
+    } finally {
+      charged.mockRestore();
+    }
   }, 60_000);
 
   it("charges every tool's closure to the call's total, shared closures included", () => {
     const charged = vi.spyOn(NodeBudget.prototype, "chargeNodes");
     try {
-      const schemas = { Item: { type: "object", properties: { a: { type: "string" }, b: { type: "integer" } } } };
+      const values = Array.from({ length: 50 }, (_, index) => `v${index}`);
+      const schemas = { Item: { type: "object", properties: { a: { type: "string", enum: values }, b: { type: "integer" } } } };
       const ref = { $ref: "#/components/schemas/Item" };
       const paths: Record<string, unknown> = {};
       for (let index = 0; index < 5; index += 1) paths[`/g${index}`] = { get: { operationId: `g${index}`, responses: json(ref) } };
@@ -2752,20 +2765,37 @@ describe("fromOpenAPI body fallback, synchronous schemas, per-kind alternatives 
       const counts = charged.mock.calls.map(([count]) => count);
       expect(counts).toHaveLength(5);
       expect(new Set(counts).size).toBe(1);
-      expect(counts[0]).toBeGreaterThan(0);
+      // Literal payloads count: the enum's values are copied into every tool.
+      expect(counts[0]).toBeGreaterThan(values.length);
     } finally {
       charged.mockRestore();
     }
+    // A parameter that fails its shape check never emits the closure it was checked with.
+    const parameters = Array.from({ length: 20 }, (_, index) => ({ name: `p${index}`, in: "query", schema: { $ref: `#/components/schemas/Q${index}` } }));
+    const wrappers = Object.fromEntries(parameters.map((_, index) => [`Q${index}`, { allOf: [{ $ref: "#/components/schemas/Shape" }] }]));
+    const [rejected, emitted] = countCalls("emit", () =>
+      fromOpenAPI(
+        {
+          openapi: "3.0.3",
+          paths: { "/q": { get: { operationId: "q", parameters, responses: ok } } },
+          components: { schemas: { ...wrappers, Shape: { type: "object", properties: { a: { $ref: "#/components/schemas/A" } } }, A: { type: "string" } } },
+        },
+        options(),
+      ),
+    );
+    expect(rejected.skipped.map(({ code }) => code)).toEqual(["unsupported-parameter-schema"]);
+    expect(emitted).toBe(0);
   });
 
-  it("reports a validator's stack overflow as schema-too-large, the same for every tool holding the closure", () => {
+  it("reports a validator's stack overflow as schema-too-large, the same for every tool with the same schemas", () => {
     const original = Ajv.prototype.compile;
     const overflowed = new Set<string>();
-    // The first compile of each shape holding Deep overflows, as on a cold engine; later ones would pass.
+    // The first compile of each marked shape overflows, as on a cold engine; later ones would pass.
     const compile = vi.spyOn(Ajv.prototype, "compile").mockImplementation(function (this: Ajv, schema: unknown, meta?: boolean) {
       const text = JSON.stringify(schema);
-      const shape = text.includes('"value"') ? "checked" : "tool";
-      if (text.includes('"Deep"') && !overflowed.has(shape)) {
+      const marker = text.includes('"Deep"') ? "Deep" : text.includes('"marker"') ? "marker" : undefined;
+      const shape = `${marker}:${text.includes('"value"') ? "checked" : "tool"}`;
+      if (marker !== undefined && !overflowed.has(shape)) {
         overflowed.add(shape);
         throw new RangeError("Maximum call stack size exceeded");
       }
@@ -2773,22 +2803,85 @@ describe("fromOpenAPI body fallback, synchronous schemas, per-kind alternatives 
     } as typeof original);
     try {
       const deep = json({ $ref: "#/components/schemas/Deep" });
+      const inline = json({ type: "object", properties: { marker: { type: "string" } } });
       const paths: Record<string, unknown> = { "/plain": { get: { operationId: "plain", responses: json({ type: "object" }) } } };
       for (let index = 0; index < 3; index += 1) {
         paths[`/d${index}`] = { get: { operationId: `g${index}`, responses: deep }, head: { operationId: `h${index}`, responses: deep } };
+        paths[`/i${index}`] = { get: { operationId: `i${index}`, responses: inline } };
       }
+      // Other schemas, with or without Deep, still reach the registry.
+      paths["/after"] = { get: { operationId: "after", responses: json({ type: "object", properties: { x: { type: "string" } } }) } };
+      paths["/sibling"] = { get: { operationId: "sibling", responses: json({ type: "object", properties: { d: { $ref: "#/components/schemas/Deep" } } }) } };
       const result = fromOpenAPI(
         { openapi: "3.0.3", paths, components: { schemas: { Deep: { type: "object", properties: { n: { type: "integer" } } } } } },
         options(),
       );
-      expect(overflowed).toEqual(new Set(["checked", "tool"]));
-      expect(registered(result)).toEqual([["plain", true]]);
+      expect(overflowed).toEqual(new Set(["Deep:checked", "Deep:tool", "marker:tool"]));
+      expect(registered(result)).toEqual([["plain", true], ["after", true], ["sibling", true]]);
       expect(skips(result).sort()).toEqual(
-        ["g0", "g1", "g2", "h0", "h1", "h2"].map((name) => [name, "schema-too-large", "a schema or reference chain nests too deeply"]),
+        ["g0", "g1", "g2", "h0", "h1", "h2", "i0", "i1", "i2"].map((name) => [name, "schema-too-large", "a schema or reference chain nests too deeply"]),
       );
     } finally {
       compile.mockRestore();
     }
+  });
+
+  it("bounds how deep compiling nests, not how many definitions reach each other", () => {
+    // A hub whose 150 children each refer back to it nests two deep; a ring of 151 nests 151 deep.
+    const schemas: Record<string, unknown> = { Hub: { type: "object", properties: {} as Record<string, unknown> } };
+    for (let index = 0; index < 150; index += 1) {
+      (schemas.Hub as { properties: Record<string, unknown> }).properties[`c${index}`] = { $ref: `#/components/schemas/C${index}` };
+      schemas[`C${index}`] = { type: "object", properties: { n: { type: "integer" }, parent: { $ref: "#/components/schemas/Hub" } } };
+      schemas[`R${index}`] = { type: "object", properties: { next: { $ref: `#/components/schemas/R${index + 1}` } } };
+    }
+    schemas.R150 = { type: "object", properties: { next: { $ref: "#/components/schemas/R0" } } };
+    const hub = { $ref: "#/components/schemas/Hub" };
+    const result = fromOpenAPI(
+      {
+        openapi: "3.0.3",
+        paths: {
+          "/hub": {
+            get: { operationId: "hub", responses: json(hub) },
+            head: { operationId: "hubHead", responses: json(hub) },
+            post: { operationId: "hubBody", requestBody: { required: true, content: { "application/json": { schema: hub }, "application/merge-patch+json": { schema: { type: "object" } } } }, responses: ok },
+          },
+          "/ring": { get: { operationId: "ring", responses: json({ $ref: "#/components/schemas/R0" }) } },
+        },
+        components: { schemas },
+      },
+      options(),
+    );
+    expect(registered(result)).toEqual([["hub", true], ["hubHead", false], ["hubBody", false]]);
+    expect(skips(result)).toEqual([["ring", "schema-too-large", "a schema or reference chain nests too deeply"]]);
+    expect(tool(result.tools, "hubBody").operation.requestBody?.contentType).toBe("application/json");
+    expectArguments(tool(result.tools, "hub").outputSchema!, { valid: [{ c0: { n: 1, parent: { c1: { n: 2 } } } }], invalid: [{ c0: { n: "x" } }] });
+    expectArguments(tool(result.tools, "hubBody").inputSchema, { valid: [{ body: { c3: { n: 1 } } }], invalid: [{ body: { c3: { parent: { c4: { n: "x" } } } } }] });
+  });
+
+  it("takes reference edges only from what conversion made, so a malformed keyword kept as written skips only its operation", () => {
+    const bad = { type: "object", properties: [{ $ref: "#/definitions/Ghost" }] };
+    const result = fromOpenAPI(
+      {
+        openapi: "3.0.3",
+        paths: {
+          "/bad": {
+            get: { operationId: "bad", responses: json({ $ref: "#/components/schemas/Bad" }) },
+            head: { operationId: "badHead", responses: json({ $ref: "#/components/schemas/Bad" }) },
+            post: {
+              operationId: "badBody",
+              requestBody: { required: true, content: { "application/json": { schema: { $ref: "#/components/schemas/Bad" } }, "application/merge-patch+json": { schema: { type: "object" } } } },
+              responses: ok,
+            },
+          },
+          "/good": { get: { operationId: "good", responses: json({ type: "object" }) } },
+        },
+        components: { schemas: { Bad: bad } },
+      },
+      options(),
+    );
+    expect(registered(result)).toEqual([["badBody", false], ["good", true]]);
+    expect(tool(result.tools, "badBody").operation.requestBody?.contentType).toBe("application/merge-patch+json");
+    expect(skips(result).map(([name, code]) => [name, code]).sort()).toEqual([["bad", "invalid-schema"], ["badHead", "invalid-schema"]]);
   });
 
   it("gives a shallow root the same result whether or not a deeper root sharing its chain came first", () => {

@@ -189,10 +189,10 @@ for (const { operation, code, reason } of skipped) {
   non-object response, or one with properties to leave out) is compiled once
   per distinct schema. A schema nested too deeply to walk or compile (a
   validator's stack overflow included), or a chain of applied references
-  holding more than 150 component schemas (`allOf: [{ $ref }]` links and
-  property or item schemas alike; schemas that reach each other count as
-  all of them, and a `$defs` entry nothing applies does not count), is
-  skipped the same way. A Swagger 2.0 document throws.
+  more than 150 component schemas deep (`allOf: [{ $ref }]` links and
+  property or item schemas alike, entering each schema once as a validator
+  compiling them does, in document order; a `$defs` entry nothing applies
+  does not count), is skipped the same way. A Swagger 2.0 document throws.
 - **Catalog.** `tools` holds copies of the registered schemas, so changing
   them changes neither what the registry lists nor what it validates. In a
   registry `fromOpenAPI` creates, tools with identical schemas register one
