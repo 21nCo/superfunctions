@@ -939,3 +939,26 @@ def test_routed_storage_reports_streaming_per_target() -> None:
     routed = create_routed_storage_adapter({"sign": SignOnly(), "stream": FakeStorage()}, default_target="sign")
     assert routed.capabilities_for_target("sign")["proxyStreamingDownload"] is False
     assert routed.capabilities_for_target("stream")["proxyStreamingDownload"] is True
+
+
+@pytest.mark.asyncio
+async def test_cancelled_signing_gives_the_download_back() -> None:
+    import asyncio
+
+    db = FakeDB()
+    await _seed_file_rows(db)
+    storage = FakeStorage(with_signing=True)
+    storage.capabilities = {"signedDownloadUrls": True}  # type: ignore[attr-defined]
+
+    async def slow_sign(key: str, expires_in_seconds: int, target: Optional[str] = None) -> Dict[str, Any]:
+        await asyncio.sleep(10)
+        return {"url": "https://download.local/x"}
+
+    storage.sign_download_url = slow_sign  # type: ignore[method-assign]
+    shares_service = create_shares_service(SharesServiceConfig(db=db, storage=storage, namespace="filefn"))
+    created = await shares_service.create_share_link(CreateShareLinkInput(fileId="file_0001", maxDownloads=1), _ctx("user_123"))
+    with pytest.raises(asyncio.TimeoutError):
+        await asyncio.wait_for(
+            shares_service.download_via_share_link(created["token"], _ctx(None), is_authenticated=False), timeout=0.05
+        )
+    assert all(row["downloads"] == 0 for row in db.tables["fileShares"])

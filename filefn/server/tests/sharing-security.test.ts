@@ -250,6 +250,43 @@ describe('share links, grants and JSON routes (FILE-30 F-07, F-08, F-09, F-15)',
     expect(signed[0]).toBeLessThanOrEqual(60);
   });
 
+  it('gives a failed download back exactly once, even after another download counted', async () => {
+    const local = createLocalStorageAdapter({ rootDir });
+    let calls = 0;
+    let fileFn: ReturnType<typeof createFileFn>;
+    let token = '';
+    const storage = new Proxy(local, {
+      get(target, prop, receiver) {
+        if (prop === 'capabilities') return { ...target.capabilities, signedDownloadUrls: true };
+        if (prop === 'signDownloadUrl') {
+          return async () => {
+            calls += 1;
+            if (calls === 1) {
+              // While A signs, B counts and succeeds; then A's signing fails.
+              await fileFn.services.shares.downloadViaShareLink(token, {});
+              throw new Error('storage unavailable');
+            }
+            return { url: 'https://storage.example/object' };
+          };
+        }
+        return Reflect.get(target, prop, receiver);
+      },
+    });
+    const database = memoryAdapter();
+    fileFn = createFileFn({
+      database,
+      storage,
+      namespace: 'filefn',
+      policies: [{ name: 'docs', contentTypes: ['text/plain'], visibility: 'private' }],
+    });
+    const file = await upload(fileFn);
+    token = (await fileFn.services.shares.createShareLink({ fileId: file.fileId, maxDownloads: 2 }, owner)).token;
+    await expect(fileFn.services.shares.downloadViaShareLink(token, {})).rejects.toThrow('storage unavailable');
+    const [row] = await database.findMany<{ downloads: number }>({ model: 'fileShares', where: [], namespace: 'filefn' });
+    expect(row!.downloads).toBe(1);
+    await expect(fileFn.services.shares.downloadViaShareLink(token, {})).resolves.toMatchObject({ url: 'https://storage.example/object' });
+  });
+
   it('reads expiry dates strictly as ISO 8601, and an empty expiresAt as none', async () => {
     const { fileFn, database } = makeFileFn();
     const file = await upload(fileFn);

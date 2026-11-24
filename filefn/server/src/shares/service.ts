@@ -228,13 +228,24 @@ export function createSharesService(config: SharesServiceConfig) {
   }
 
   /**
-   * Gives back a download this request counted but could not hand out (its
-   * storage call failed). Only while the count is still the one written: if
-   * another download counted since, the link keeps the extra count (it fails
-   * closed, never over the limit). Best effort; errors are ignored.
+   * Gives back one download this request counted but could not hand out: the
+   * current count goes down by one with a conditional write, re-read and
+   * retried when another download moved it in between, so the release happens
+   * once whatever was counted since. Best effort: after repeated misses or a
+   * database error the link keeps the extra count (fails closed).
    */
   async function releaseDownload(tokenHash: string, written: number): Promise<void> {
-    await setDownloadsIf(tokenHash, written, written - 1).catch(() => false);
+    let current = written;
+    try {
+      for (let attempt = 0; attempt < 20 && current > 0; attempt++) {
+        if (await setDownloadsIf(tokenHash, current, current - 1)) return;
+        const reread = await readShare(tokenHash);
+        if (!reread) return;
+        current = reread.downloads;
+      }
+    } catch {
+      // Fails closed: the link keeps the extra count.
+    }
   }
 
   /**
@@ -355,20 +366,22 @@ export function createSharesService(config: SharesServiceConfig) {
         const lifetime = signedUrlLifetime(share);
         if (lifetime === null) {
           await releaseDownload(tokenHash, written);
-          throw errors.shareExpired();
+          // Under a second left after counting: the proxy serves it if it can.
+          if (!canStream) throw errors.shareExpired();
+        } else {
+          let result: Awaited<ReturnType<NonNullable<StorageAdapter['signDownloadUrl']>>>;
+          try {
+            result = await storage.signDownloadUrl!({
+              key: version.storageKey,
+              target: storageTarget,
+              expiresInSeconds: lifetime,
+            });
+          } catch (error) {
+            await releaseDownload(tokenHash, written);
+            throw error;
+          }
+          return { url: result.url, headers: result.headers, fileName: file.name, mimeType: file.mimeType };
         }
-        let result: Awaited<ReturnType<NonNullable<StorageAdapter['signDownloadUrl']>>>;
-        try {
-          result = await storage.signDownloadUrl!({
-            key: version.storageKey,
-            target: storageTarget,
-            expiresInSeconds: lifetime,
-          });
-        } catch (error) {
-          await releaseDownload(tokenHash, written);
-          throw error;
-        }
-        return { url: result.url, headers: result.headers, fileName: file.name, mimeType: file.mimeType };
       }
 
       // Only a link that is still valid gets the proxy URL.

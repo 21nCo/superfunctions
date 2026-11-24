@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import secrets
 from datetime import datetime, timezone
@@ -64,17 +65,32 @@ class SharesService:
         return min(self.signed_url_ttl_seconds, remaining)
 
     async def _release_download(self, token_hash: str, written: int) -> None:
-        """Gives back a download that could not be handed out, only while the count is still the one written."""
+        """Gives back one download that could not be handed out: the current count goes down by one,
+        re-read and retried when another download moved it, so it happens once. Best effort (fails closed)."""
+        current = written
         try:
-            await self.db.update(
-                model="fileShares",
-                where=[
-                    {"field": "tokenHash", "operator": "eq", "value": token_hash},
-                    {"field": "downloads", "operator": "eq", "value": written},
-                ],
-                data={"downloads": written - 1},
-                namespace=self.namespace,
-            )
+            for _ in range(20):
+                if current <= 0:
+                    return
+                updated = await self.db.update(
+                    model="fileShares",
+                    where=[
+                        {"field": "tokenHash", "operator": "eq", "value": token_hash},
+                        {"field": "downloads", "operator": "eq", "value": current},
+                    ],
+                    data={"downloads": current - 1},
+                    namespace=self.namespace,
+                )
+                if updated:
+                    return
+                reread = await self.db.find_one(
+                    model="fileShares",
+                    where=[{"field": "tokenHash", "operator": "eq", "value": token_hash}],
+                    namespace=self.namespace,
+                )
+                if not reread:
+                    return
+                current = int(reread.get("downloads", 0))
         except Exception:
             # Fails closed: the link keeps the extra count.
             pass
@@ -247,6 +263,10 @@ class SharesService:
                         expires_in_seconds=lifetime,
                         target=storage_target,
                     )
+                except asyncio.CancelledError:
+                    # Cancelled (a timeout) while signing: give the count back, then cancel.
+                    await asyncio.shield(self._release_download(token_hash, written))
+                    raise
                 except Exception as exc:
                     await self._release_download(token_hash, written)
                     # Without streaming there is no fallback: the signing error is the answer.
