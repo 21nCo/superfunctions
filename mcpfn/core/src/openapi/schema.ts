@@ -161,34 +161,45 @@ export class NodeBudget {
   /** Objects whose own values are already counted, each once by identity. */
   private readonly credited = new WeakSet<object>();
   /**
-   * The own keys of each object read, listed once for a whole call and shared
-   * by its budgets: every unit of enumeration work is done once per call or
-   * charged to the call's total, however many regions read the same object.
+   * What a whole call learns about the objects it reads, shared by its
+   * budgets: each object's own keys, listed once (so every unit of
+   * enumeration work is done once per call or charged to the call's total,
+   * however many regions read the same object), and the objects a copy found
+   * to contain themselves.
    */
-  private readonly keys: WeakMap<object, readonly string[]>;
+  private readonly call: { keys: WeakMap<object, readonly string[]>; circular: WeakSet<object> };
 
   constructor(
     private readonly limit = MAX_SCHEMA_NODES,
     private readonly total?: NodeBudget,
     private readonly subject = REGION,
-    keys?: WeakMap<object, readonly string[]>,
+    call?: NodeBudget["call"],
   ) {
-    this.keys = keys ?? total?.keys ?? new WeakMap();
+    this.call = call ?? total?.call ?? { keys: new WeakMap(), circular: new WeakSet() };
   }
 
-  /** A budget with only its own limits that shares this call's key lists. */
+  /** A budget with only its own limits that shares what this call learnt. */
   uncharged(): NodeBudget {
-    return new NodeBudget(MAX_SCHEMA_NODES, undefined, REGION, this.keys);
+    return new NodeBudget(MAX_SCHEMA_NODES, undefined, REGION, this.call);
   }
 
   /** The own enumerable keys of `value` (an array's indices without its holes), listed once per call. */
   ownKeys(value: object): readonly string[] {
-    let keys = this.keys.get(value);
+    let keys = this.call.keys.get(value);
     if (keys === undefined) {
       keys = Object.keys(value);
-      this.keys.set(value, keys);
+      this.call.keys.set(value, keys);
     }
     return keys;
+  }
+
+  /** Whether a copy in this call found that `value` contains itself (a cycle reachable from it). */
+  isCircular(value: object): boolean {
+    return this.call.circular.has(value);
+  }
+
+  markCircular(value: object): void {
+    this.call.circular.add(value);
   }
 
   /** The conversion budget of a whole call for `document`, counted as its values (shared ones once). */
@@ -633,7 +644,9 @@ export class SchemaConverter {
       throw new OpenApiSkip("invalid-schema", "allOf is not a non-empty array");
     }
     // The siblings are converted where they are (a shared allOf is read, not
-    // copied) and the reference joins their allOf as its last member.
+    // copied) and the reference joins their allOf as its last member. The
+    // allOf is credited first, whatever the order of the siblings.
+    if (Array.isArray(rest.allOf)) this.budget.source(rest.allOf);
     this.budget.generated(rest);
     const converted = this.convertObject(rest, mode, refs);
     this.budget.charge();

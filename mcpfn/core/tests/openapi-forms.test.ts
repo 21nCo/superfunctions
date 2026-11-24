@@ -2406,6 +2406,40 @@ describe("fromOpenAPI body fallback, synchronous schemas, per-kind alternatives 
     );
     expect(copies.skipped.map((entry) => entry.code)).toEqual(Array.from({ length: 100 }, () => "circular-object"));
     expect(tool(copies.tools, "c0").operation.requestBody?.contentType).toBe("application/merge-patch+json");
+    // A shared default whose cycle comes after many fields, in sole request bodies and advertised object responses.
+    const tail: Record<string, unknown> = Object.fromEntries(Array.from({ length: width }, (_, index) => [`k${index}`, index]));
+    tail.self = tail;
+    const tails = run(
+      "copied cycle last",
+      Object.fromEntries(
+        Array.from({ length: 200 }, (_, index) => [
+          `/t${index}`,
+          index % 2 === 0
+            ? { post: { operationId: `t${index}`, requestBody: { content: { "application/json": { schema: { type: "object", default: tail } } } }, responses: ok } }
+            : { get: { operationId: `t${index}`, responses: json({ type: "object", default: tail }) } },
+        ]),
+      ),
+    );
+    expect(tails.skipped.map((entry) => entry.code)).toEqual(Array.from({ length: 200 }, () => "circular-object"));
+  });
+
+  it("credits a 3.1 $ref's sibling allOf before its other siblings, whatever their order", () => {
+    const repeated = { allOf: Array.from({ length: 300 }, () => true) };
+    const properties = Object.fromEntries(Array.from({ length: 9 }, (_, index) => [`p${index}`, repeated]));
+    const allOf = Array.from({ length: 400 }, () => true);
+    const ref = "#/components/schemas/S";
+    for (const schema of [{ $ref: ref, properties, allOf }, { $ref: ref, allOf, properties }]) {
+      const result = fromOpenAPI(
+        {
+          openapi: "3.1.0",
+          paths: { "/m": { patch: { operationId: "m", requestBody: { content: { "application/json": { schema }, "application/example+json": { schema: { type: "string" } } } }, responses: ok } } },
+          components: { schemas: { S: { type: "object" } } },
+        },
+        options(),
+      );
+      expect(result.skipped).toEqual([]);
+      expect(tool(result.tools, "m").operation.requestBody?.contentType).toBe("application/json");
+    }
   });
 
   it("gives the same kinds of value to a shared member list whichever operation reaches it first through a reference cycle", () => {

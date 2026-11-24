@@ -796,10 +796,22 @@ function treeCopy<T>(value: T, budget: NodeBudget, values: CopiedValues = { json
   }
   // YAML parsers can produce Date values (for example a timestamp `default`).
   if (value instanceof Date) return value.toISOString() as T;
-  if (ancestors.has(value)) {
+  if (ancestors.has(value) || budget.isCircular(value)) {
     throw new OpenApiSkip("circular-object", "a schema value contains itself");
   }
   ancestors.add(value);
+  try {
+    return copyMembers(value, budget, values, ancestors) as T;
+  } catch (error) {
+    // The value met again is on the stack at or above this one, so the cycle is reachable from it.
+    if (error instanceof OpenApiSkip && error.code === "circular-object") budget.markCircular(value);
+    throw error;
+  } finally {
+    ancestors.delete(value);
+  }
+}
+
+function copyMembers(value: object, budget: NodeBudget, values: CopiedValues, ancestors: Set<object>): unknown {
   let copy: unknown;
   if (Array.isArray(value)) {
     copy = Array.from(value, (item) => treeCopy(item, budget, values, ancestors));
@@ -812,8 +824,7 @@ function treeCopy<T>(value: T, budget: NodeBudget, values: CopiedValues = { json
     }
     copy = Object.fromEntries(entries);
   }
-  ancestors.delete(value);
-  return copy as T;
+  return copy;
 }
 
 /** Run `task` unless it already failed for `key` for a reason of the key's own, remembering such a failure. */
