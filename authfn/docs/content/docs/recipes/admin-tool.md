@@ -7,8 +7,10 @@ description: Mount @authfn/admin behind your corporate IAM and ship a UI for sup
 
 > This recipe describes the legacy low-level AuthFn router. For new operator
 > tooling, use Super Console with `createAuthFnAdminAdapter`; it shares bound
-> confirmation, durable idempotency, attempted/terminal audit, REST/OpenAPI,
-> and McpFn semantics with every enabled Superfunction.
+> confirmation, idempotency, attempted/terminal audit, REST/OpenAPI, and McpFn
+> semantics with every enabled Superfunction. Idempotency is durable and shared
+> across replicas only when the host injects a durable atomic idempotency store;
+> `MemoryAdminIdempotencyStore` is neither.
 
 ## Goal
 

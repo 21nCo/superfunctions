@@ -103,7 +103,7 @@ authorize: async (ctx, input) => {
 
 ## Static-token authorizer
 
-For legacy internal tools or scripts, the bundled `createStaticAdminKeyAuthorizer` accepts a fixed token from a header. Prefer scoped AuthFn service credentials through Super Console for new automation:
+For legacy internal tools or scripts, the bundled `createStaticAdminKeyAuthorizer` accepts a fixed token from a header. Super Console's bundled `createAuthFnOperatorAuth` accepts only interactive operator sessions (API keys and other service credentials are rejected), so unattended automation through Super Console needs a host-supplied operator auth that supports service principals:
 
 ```ts
 import { createStaticAdminKeyAuthorizer } from '@authfn/admin';
@@ -157,7 +157,10 @@ The same package now exports `authFnAdminCapability` and
 permissions, target binding, confirmation, idempotency, audit, REST/OpenAPI,
 and MCP metadata. Its injected service remains responsible for AuthFn domain
 authorization and namespace/region isolation; the shared dispatcher supplies
-the cross-function safety contract.
+the cross-function safety contract. Durable, replica-shared idempotency
+depends on the host injecting a durable atomic idempotency store:
+`MemoryAdminIdempotencyStore` is for tests and embedded development only and is
+neither durable nor shared across processes.
 
 The low-level router remains temporarily available for compatibility. If an
 existing deployment cannot migrate immediately, its surrounding gateway must
