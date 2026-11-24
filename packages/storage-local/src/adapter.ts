@@ -47,6 +47,16 @@ export function createLocalStorageAdapter(config: LocalStorageConfig): StorageAd
       throw new Error('Invalid key: absolute paths are not allowed');
     }
 
+    // Refuse dot segments in the key as given, before normalizing: normalize()
+    // would resolve `a/../b` to `b`, letting one key name another key's file.
+    // Backslash is a separator only on Windows; on POSIX it is part of a name.
+    const separator = process.platform === 'win32' ? /[\\/]/ : /\//;
+    for (const segment of key.split(separator)) {
+      if (segment === '.' || segment === '..') {
+        throw new Error('Invalid key: path traversal detected (dot segment)');
+      }
+    }
+
     const normalizedKey = normalize(key);
 
     if (normalizedKey.startsWith('..') || normalizedKey.includes('/..') || normalizedKey.includes('\\..')) {

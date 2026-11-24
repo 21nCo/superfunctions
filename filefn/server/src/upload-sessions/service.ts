@@ -2,8 +2,10 @@ import type { Adapter, WhereClause } from '@superfunctions/db';
 import { getStorageCapabilities, type StorageAdapter, type StorageTargetName } from '@superfunctions/storage';
 import type { FileProviderContext } from '@superfunctions/files';
 import {
+  computeStoragePath,
   matchesContentType,
   resolveStorageTarget,
+  unsafeStorageKeyReason,
   type Policy,
   type PolicyRegistry,
 } from '../policies.js';
@@ -260,21 +262,6 @@ async function forEachBodyChunk(
   }
 
   throw new Error('Unsupported body type for proxy upload');
-}
-
-function computeStorageKey(
-  policy: Policy,
-  ctx: { fileName: string; principalId?: string; tenantId?: string; fileId: string; versionId: string }
-): string {
-  if (policy.storagePath) {
-    return policy.storagePath(ctx);
-  }
-  const parts: string[] = [];
-  if (ctx.tenantId) parts.push(ctx.tenantId);
-  if (ctx.principalId) parts.push(ctx.principalId);
-  parts.push(ctx.fileId);
-  parts.push(`${ctx.versionId}-${ctx.fileName}`);
-  return parts.join('/');
 }
 
 export function createUploadSessionService(config: UploadSessionServiceConfig) {
@@ -1372,13 +1359,25 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       // The version this session will publish is fixed here, so its storage key is
       // the one object key no other session can write.
       const versionId = generateFileFnId('ver');
-      const storageKey = computeStorageKey(policy, {
+      const storageKey = computeStoragePath(policy, {
         fileName: input.fileName,
         principalId: ctx.principalId,
         tenantId: ctx.tenantId,
         fileId,
         versionId,
       });
+
+      // A key with a `.`/`..` segment, a backslash or a control character could
+      // resolve onto another file's object on adapters that normalize paths.
+      // Default keys are built from sanitized segments; this also covers a
+      // policy's own storagePath.
+      const unsafeReason = unsafeStorageKeyReason(storageKey);
+      if (unsafeReason) {
+        throw errors.invalidRequest('The storage key for this upload is not safe', {
+          policy: input.policy,
+          reason: unsafeReason,
+        });
+      }
 
       // The key must contain this session's whole versionId. Every session gets a
       // fresh random versionId, so two sessions can then never share a key (or the
