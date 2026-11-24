@@ -968,6 +968,11 @@ export interface BillFnRefundAuthorizationInput {
   subject: BillableSubject;
   billingAccountId: string;
   subscriptionId: string;
+  /**
+   * The provider's subscription reference. A provider refunds by it when the
+   * subscription has no charge id (Apple revokes the original transaction).
+   */
+  providerSubscriptionId?: string;
   providerChargeId?: string;
   mode: BillFnRefundMode;
   amount?: number;

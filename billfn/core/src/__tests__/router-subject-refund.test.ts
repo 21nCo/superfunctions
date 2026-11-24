@@ -244,6 +244,7 @@ describe('router refunds', () => {
       subject: CALLER,
       billingAccountId: 'ba_user_caller',
       subscriptionId: subscription?.id,
+      providerSubscriptionId: subscription?.providerSubscriptionId,
       providerChargeId: subscription?.providerChargeId,
       mode: 'full',
       reason: 'requested_by_customer'
@@ -349,6 +350,18 @@ describe('router refunds', () => {
     expect(authorize).toHaveBeenCalledTimes(1);
     expect(env.refundCharge).not.toHaveBeenCalled();
     expect(await env.refunds()).toHaveLength(0);
+  });
+
+  it('dispatches the validated amount even if the caller changes its input while the refund is pending', async () => {
+    const env = await setup();
+    const input: { subject: typeof CALLER; mode: 'custom'; amount?: number } = { subject: CALLER, mode: 'custom', amount: 600 };
+
+    const pending = env.billfn.refundCharge(input);
+    delete input.amount;
+    const refunded = await pending;
+
+    expect(refunded.ok).toBe(true);
+    expect(env.refundCharge.mock.calls[0][0]).toMatchObject({ mode: 'custom', amount: 600 });
   });
 
   it('keeps in-process refundCharge available to host code without the router hook', async () => {

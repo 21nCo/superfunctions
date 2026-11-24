@@ -117,7 +117,10 @@ first parses the body (400 when it is not a JSON object), resolves the subject
 (401 or 400 as above), checks the mode and amount (400, see below) and finds
 the subscription and charge it would refund (404 or 409). Only then does it call `refunds.authorize` with the request, the
 subject, and the exact target: `billingAccountId`, `subscriptionId`,
-`providerChargeId`, `mode` (default `full`), `amount` and `reason`. Anything
+`providerSubscriptionId`, `providerChargeId`, `mode` (default `full`),
+`amount` and `reason`. When the subscription has no charge id, the provider
+refunds by its subscription reference (Apple revokes the original
+transaction). Anything
 but `true` answers `403 BILLFN_UNAUTHORIZED`, and without the hook every
 refund that reaches this step does:
 

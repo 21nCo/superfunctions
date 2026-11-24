@@ -554,7 +554,7 @@ const domainActionInputSchemas: Record<string, AdminObjectSchema> = {
         {
           subscriptionId: { type: "string", minLength: 1 },
           mode: { type: "string", enum: ["full", "prorated_remaining_period", "custom"] },
-          amount: { type: "integer", minimum: 1 },
+          amount: { type: "integer", minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
         },
         [],
         // A full refund (the default mode) takes no amount; a partial one needs a positive integer amount in the

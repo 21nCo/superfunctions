@@ -1130,14 +1130,19 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
       options: RefundChargeOptions = {}
     ): Promise<BillFnRefundChargeResponse> {
       const subject = requireSubject(input.subject);
+      // Read the caller's input once: the validated values are the ones dispatched and recorded, even if the
+      // caller's object changes while the refund awaits.
+      const { amount, reason } = input;
+      const requestedChargeId = input.providerChargeId;
+      const requestedSubscriptionId = input.subscriptionId;
       // Only an absent mode means a full refund; an explicit null or other value is refused below.
       const mode = input.mode === undefined ? 'full' : input.mode;
-      assertRefundModeAndAmount(mode, input.amount);
+      assertRefundModeAndAmount(mode, amount);
       // A refund never creates a billing account: an account without one has nothing to refund.
       const billingAccount = await findBillingAccountForSubject(deps, subject);
       const subscription = billingAccount
-        ? input.subscriptionId
-          ? await getSubscriptionForAccount(deps, billingAccount.id, input.subscriptionId)
+        ? requestedSubscriptionId
+          ? await getSubscriptionForAccount(deps, billingAccount.id, requestedSubscriptionId)
           : await findActiveSubscription(deps, billingAccount.id)
         : null;
       if (!billingAccount || !subscription) {
@@ -1146,14 +1151,14 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
           message: 'Subscription not found for refund'
         });
       }
-      if (input.providerChargeId && input.providerChargeId !== subscription.providerChargeId) {
+      if (requestedChargeId && requestedChargeId !== subscription.providerChargeId) {
         throw createBillFnError({
           code: 'BILLFN_CONFLICT',
           message: 'Refund charge does not belong to the resolved subscription'
         });
       }
       const providerName = subscription.provider;
-      const providerChargeId = input.providerChargeId ?? subscription.providerChargeId;
+      const providerChargeId = requestedChargeId ?? subscription.providerChargeId;
       let liveStateObservedAt = toIsoString(deps.now());
       if (options.authorize) {
         // The router's host check sees the exact account, subscription and charge this call refunds.
@@ -1161,10 +1166,11 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
           subject,
           billingAccountId: billingAccount.id,
           subscriptionId: subscription.id,
+          providerSubscriptionId: subscription.providerSubscriptionId,
           providerChargeId,
           mode,
-          amount: input.amount,
-          reason: input.reason
+          amount,
+          reason
         });
         // The approval covers the subscription as it was read; one that changed meanwhile (a renewal, a
         // cancellation) is refused rather than refunded from a stale snapshot. The provider-state clock restarts
@@ -1189,8 +1195,8 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
         billingAccount,
         providerChargeId,
         mode,
-        amount: input.amount,
-        reason: input.reason
+        amount,
+        reason
       });
 
       const timestamp = toIsoString(deps.now());
@@ -1201,9 +1207,9 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
         providerChargeId,
         providerRefundId: operation.providerRefundId,
         mode,
-        amount: input.amount,
+        amount,
         currency: requirePriceById(requirePlan(deps.catalog, subscription.planKey), subscription.priceId).currency,
-        reason: input.reason,
+        reason,
         status: operation.operationStatus === 'applied' ? 'succeeded' : 'requires_action',
         operationStatus: operation.operationStatus,
         metadata: operation.raw,
