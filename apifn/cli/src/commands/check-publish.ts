@@ -394,11 +394,7 @@ function unlinkReported(file: string): string | null {
   }
 }
 
-/**
- * Removes the staged temp file while it is still this run's: the inode open as `staged.fd`, in
- * the bound directories. A replacement, or a name in a directory swapped in meanwhile, is another
- * writer's: it is left alone and named.
- */
+/** Removes the staged temp file while it is the inode open as `staged.fd`, in the bound directories; another writer's is left and named. */
 function removeTemp(staged: Staged): string | null {
   const temp = staged.temp;
   if (temp === undefined) return null;
@@ -481,8 +477,7 @@ function makeParents(staged: Staged, hook: PublishHook | undefined, verify: Veri
   }
   for (const dir of missing) {
     mkdirSync(dir);
-    // Bound without following a link: a name swapped for a link or file is not a directory this
-    // run made, so it is never recorded and rollback never removes it.
+    // Bound without following a link: a name swapped for a link or file is never recorded or removed.
     const made = holdDir(staged, dir);
     if (!made.isDirectory()) throw changed(staged);
     staged.created.unshift({ dir, dev: made.dev, ino: made.ino });
@@ -643,12 +638,8 @@ function stillOwned(staged: Staged): boolean {
   );
 }
 
-/**
- * Backs the observed file up as a file bound to this run: a hard link must be the observed inode
- * itself; a copy is a new file (O_EXCL) written through its descriptor, whose identity is read
- * from that descriptor. A backup name that holds anything else is another writer's: the run stops,
- * and rollback leaves it and names it.
- */
+/** Backs the observed file up: a hard link to the observed inode itself, or a new O_EXCL copy written and read through its
+ * descriptor. A backup name that holds anything else is another writer's: the run stops, and rollback leaves and names it. */
 function backUp(staged: Staged): void {
   const before = staged.before;
   if (before === null) return;
@@ -656,7 +647,7 @@ function backUp(staged: Staged): void {
   staged.backup = backup;
   // The observed file is opened (never blocking, never through a link) before the link: the link must be that very inode.
   staged.backupFd = openHeld(staged);
-  // The digest is of the observed bytes: read before the link, the descriptor's state unchanged before and after.
+  // The digest of the observed bytes, read before the link with the descriptor's state unchanged across it.
   const held = (fd: number) => sameState(stateOf(fstatSync(fd, BIG)), before);
   if (!held(staged.backupFd)) throw changed(staged);
   staged.digest = digestOf(staged.backupFd);
@@ -813,13 +804,9 @@ function nextTurn(): Promise<void> {
 }
 
 /**
- * Publishes the outputs (in order), then awaits `emit` (stdout). The guarded paths must still be
- * as the run read them before anything is written or printed (with or without outputs), and after
- * every change it makes the guarded paths and the other outputs must be as expected (see the
- * module comment). Any failure, including one stdout reports after its write returned, or an
- * abort of `signal` before the commit, rolls back what was published and throws a
- * CheckUsageError. Returns notices for entries the commit left alone (a backup another writer
- * replaced).
+ * Publishes the outputs (in order), then awaits `emit` (stdout), checking the guarded paths and other outputs after every
+ * change (see the module comment). Any failure before the commit, a stdout failure or an abort of `signal` included, rolls
+ * back what was published and throws a CheckUsageError. Returns notices for entries the commit left alone.
  */
 export async function publish(
   outputs: PlannedOutput[],
