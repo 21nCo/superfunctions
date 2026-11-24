@@ -117,8 +117,9 @@ export function createProcessingRoutes(config: ProcessingRoutesConfig) {
         requireAuth(principal);
         await checkArtifactDownloadRateLimit(principal);
         const ctx = {
-          // A guest is the principal 'anonymous', as on the file routes.
-          principalId: principal?.principalId ?? 'anonymous',
+          // A guest has no principal here, so it can never match an owner or a
+          // grant: anonymous ownership is handled separately (FILE-30 F-02).
+          principalId: principal?.principalId,
           tenantId: principal?.tenantId,
           requestId,
         };
@@ -185,8 +186,9 @@ export function createProcessingRoutes(config: ProcessingRoutesConfig) {
         requireAuth(principal);
         await checkArtifactDownloadRateLimit(principal);
         const ctx = {
-          // A guest is the principal 'anonymous', as on the file routes.
-          principalId: principal?.principalId ?? 'anonymous',
+          // A guest has no principal here, so it can never match an owner or a
+          // grant: anonymous ownership is handled separately (FILE-30 F-02).
+          principalId: principal?.principalId,
           tenantId: principal?.tenantId,
           requestId,
         };
@@ -210,8 +212,9 @@ export function createProcessingRoutes(config: ProcessingRoutesConfig) {
         requireAuth(principal);
         await checkArtifactDownloadRateLimit(principal);
         const ctx = {
-          // A guest is the principal 'anonymous', as on the file routes.
-          principalId: principal?.principalId ?? 'anonymous',
+          // A guest has no principal here, so it can never match an owner or a
+          // grant: anonymous ownership is handled separately (FILE-30 F-02).
+          principalId: principal?.principalId,
           tenantId: principal?.tenantId,
           requestId,
         };
@@ -237,15 +240,14 @@ export function createProcessingRoutes(config: ProcessingRoutesConfig) {
         const principal = await resolvePrincipal(request, auth);
         requireAuth(principal);
 
-        // Reads see a guest as the principal 'anonymous', as the file routes do;
-        // a write (forced processing) keeps no principal, so a guest never
-        // matches an owner.
+        // A guest has no principal here, so it never matches an owner or a
+        // grant, for reads or for forced (write) processing.
         const ctx = {
-          principalId: principal?.principalId ?? 'anonymous',
+          principalId: principal?.principalId,
           tenantId: principal?.tenantId,
           requestId,
         };
-        const writeCtx = { ...ctx, principalId: principal?.principalId };
+        const writeCtx = ctx;
 
         const body = (await request.json()) as {
           versionId?: string;

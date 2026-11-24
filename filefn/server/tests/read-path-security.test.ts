@@ -243,7 +243,7 @@ describe('read path (FILE-30 F-03, F-04, F-23)', () => {
     expect(thumb.source.mode).toBe('placeholder');
   });
 
-  it('artifact downloads are attachments with a kind-based name, and guests use the anonymous principal', async () => {
+  it('artifact downloads are attachments with a kind-based name; a guest never acts as the anonymous owner', async () => {
     const seen: Array<string | undefined> = [];
     const fileFn = createFileFn({
       database: memoryAdapter(),
@@ -252,9 +252,9 @@ describe('read path (FILE-30 F-03, F-04, F-23)', () => {
       policies: [{ name: 'any', visibility: 'public' }],
       auth: { required: false, resolveSession: async () => null },
       authorizer: {
-        async canRead(_file, ctx) {
+        async canRead(file, ctx) {
           seen.push(ctx.principalId);
-          return ctx.principalId === 'anonymous';
+          return file.visibility === 'public';
         },
         // A write check that would wrongly admit the shared guest principal.
         async canWrite(_file, ctx) { return ctx.principalId === 'anonymous' || ctx.principalId === 'owner'; },
@@ -278,8 +278,9 @@ describe('read path (FILE-30 F-03, F-04, F-23)', () => {
     await fileFn.completeUploadPart({ uploadSessionId: session.uploadSessionId, partNumber: 1, etag: part.etag, size: part.size }, owner);
     const done = new Promise<void>((resolve) => fileFn.events.once('processing.completed', () => resolve()));
     const file = await fileFn.completeUploadSession({ uploadSessionId: session.uploadSessionId }, owner);
-    await fileFn.services.processing.triggerProcessingForFile(file.fileId, { principalId: 'anonymous' }, file.versionId);
+    await fileFn.services.processing.triggerProcessingForFile(file.fileId, owner, file.versionId);
     await done;
+    seen.length = 0;
 
     const list = await fileFn.router.handle(new Request(`http://localhost/${file.fileId}/artifacts`));
     expect(list!.status).toBe(200);
@@ -287,9 +288,11 @@ describe('read path (FILE-30 F-03, F-04, F-23)', () => {
     const download = await fileFn.router.handle(new Request(`http://localhost/proxy/files/${file.fileId}/artifacts/${artifact.artifactId}/download`));
     expect(download!.status).toBe(200);
     expect(download!.headers.get('content-disposition')).toMatch(/^attachment; filename="ocr-json\.json"/);
-    expect(seen).not.toContain(undefined);
+    // The guest reached the authorizer without a principal.
+    expect(seen).toContain(undefined);
+    expect(seen).not.toContain('anonymous');
 
-    // Writes never see a guest as 'anonymous': forced processing is refused.
+    // A guest is never 'anonymous' here: forced processing is refused.
     const forced = await fileFn.router.handle(new Request(`http://localhost/${file.fileId}/process`, {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ force: true }),
     }));
