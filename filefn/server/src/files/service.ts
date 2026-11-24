@@ -212,10 +212,8 @@ function proxyPartKey(storageKey: string, partNumber: number): string {
   return `${storageKey}.part${partNumber}`;
 }
 
-// Images a browser renders from the original without running script. SVG and
-// other image types are served as downloads, so they get no image preview.
 function isImageMimeType(mimeType: string): boolean {
-  return mimeType.startsWith('image/') && isInlineSafeContentType(mimeType);
+  return mimeType.startsWith('image/');
 }
 
 function isPdfMimeType(mimeType: string): boolean {
@@ -596,7 +594,20 @@ export function createFileService(config: FileServiceConfig) {
           if (artifact) {
             return artifactDescriptor(artifact);
           }
-          return originalDescriptor();
+          if (isInlineSafeContentType(version.mimeType)) {
+            return originalDescriptor();
+          }
+          // SVG and other images served only as downloads: no image preview.
+          return createPlaceholderDescriptor({
+            fileId,
+            versionId,
+            intent: options.intent,
+            state: 'unsupported',
+            mimeType: version.mimeType,
+            name: file.name,
+            size: version.size,
+            placeholderKind: 'generic-file',
+          });
         }
 
         if (isPdfMimeType(version.mimeType)) {
@@ -634,7 +645,19 @@ export function createFileService(config: FileServiceConfig) {
         if (artifact) {
           return artifactDescriptor(artifact);
         }
-        return originalDescriptor();
+        if (isInlineSafeContentType(version.mimeType)) {
+          return originalDescriptor();
+        }
+        return createPlaceholderDescriptor({
+          fileId,
+          versionId,
+          intent: options.intent,
+          state: 'unsupported',
+          mimeType: version.mimeType,
+          name: file.name,
+          size: version.size,
+          placeholderKind: 'unsupported-preview',
+        });
       }
 
       if (isPdfMimeType(version.mimeType)) {

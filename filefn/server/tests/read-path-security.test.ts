@@ -169,9 +169,36 @@ describe('read path (FILE-30 F-03, F-04, F-23)', () => {
     expect(listed['Content-Security-Policy']).toMatch(/^sandbox/);
     expect(signedDownloadConstraints('application/pdf, text/html')).toEqual({ constraints: { responseContentType: 'application/octet-stream' } });
 
+    // Malformed parameters are not one well-formed type.
+    expect(buildDownloadHeaders({ contentType: 'application/pdf; garbage', size: 1 })['Content-Disposition']).toBe('attachment');
+    expect(buildDownloadHeaders({ contentType: 'application/pdf; garbage', size: 1 })['Content-Security-Policy']).toMatch(/^sandbox/);
+    expect(buildDownloadHeaders({ contentType: 'application/pdf; name="a;b"', size: 1 })['Content-Disposition']).toBe('inline');
+    // text/plain keeps a token charset, on the proxy and on signed URLs.
+    expect(buildDownloadHeaders({ contentType: 'text/plain; charset=UTF-16LE', size: 1 })['Content-Type']).toBe('text/plain; charset=utf-16le');
+    expect(signedDownloadConstraints('text/plain;charset="utf-8"')).toEqual({ constraints: { responseContentType: 'text/plain; charset=utf-8' } });
+
     // A lone surrogate in a stored name does not break the header.
     expect(buildDownloadHeaders({ contentType: 'text/plain', size: 1, fileName: 'a\uD800.txt' })['Content-Disposition'])
       .toBe(`inline; filename="a_.txt"; filename*=UTF-8''a%EF%BF%BD.txt`);
+  });
+
+  it('still previews a non-inline image through its raster thumbnail artifact', async () => {
+    const fileFn = makeFileFn({
+      processors: [{
+        name: 'thumb',
+        supportedMimeTypes: ['image/tiff'],
+        async process(input) {
+          return { success: true, artifacts: [{ kind: 'thumbnail-small', data: new Uint8Array([1]), mimeType: 'image/jpeg', storageKey: `${input.storageKey}-thumb-small.jpg` }] };
+        },
+      }],
+    });
+    const alice = { principalId: 'alice', tenantId: 't1' };
+    const done = new Promise<void>((resolve) => fileFn.events.once('processing.completed', () => resolve()));
+    const tiff = await upload(fileFn, alice, 'any', 'scan.tiff', 'image/tiff', 'II*');
+    await fileFn.services.processing.triggerProcessingForFile(tiff.fileId, alice, tiff.versionId);
+    await done;
+    const thumb = await fileFn.services.files.getRenderDescriptor(tiff.fileId, { intent: 'thumbnail' }, alice);
+    expect(thumb.source.mode).toBe('artifact');
   });
 
   it('gives SVG no image preview, so a render URL never depends on rendering it', async () => {
@@ -195,7 +222,8 @@ describe('read path (FILE-30 F-03, F-04, F-23)', () => {
           seen.push(ctx.principalId);
           return ctx.principalId === 'anonymous';
         },
-        async canWrite() { return true; },
+        // A write check that would wrongly admit the shared guest principal.
+        async canWrite(_file, ctx) { return ctx.principalId === 'anonymous' || ctx.principalId === 'owner'; },
         async canDelete() { return true; },
       },
       processing: {
@@ -226,5 +254,11 @@ describe('read path (FILE-30 F-03, F-04, F-23)', () => {
     expect(download!.status).toBe(200);
     expect(download!.headers.get('content-disposition')).toMatch(/^attachment; filename="ocr-json\.json"/);
     expect(seen).not.toContain(undefined);
+
+    // Writes never see a guest as 'anonymous': forced processing is refused.
+    const forced = await fileFn.router.handle(new Request(`http://localhost/${file.fileId}/process`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ force: true }),
+    }));
+    expect(forced!.status).toBe(403);
   });
 });

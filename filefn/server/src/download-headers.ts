@@ -36,7 +36,9 @@ export const INLINE_SAFE_CONTENT_TYPES: ReadonlySet<string> = new Set([
 // One `type/subtype` of RFC 9110 tokens with optional parameters, and no comma
 // anywhere: a comma-separated list is ambiguous (Fetch MIME sniffing may pick
 // another entry than this code did), so it is never treated as safe.
-const SINGLE_MEDIA_TYPE = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+\/[!#$%&'*+.^_`|~0-9A-Za-z-]+(\s*;[^,]*)?$/;
+const TOKEN = "[!#$%&'*+.^_`|~0-9A-Za-z-]+";
+const QUOTED = '"(?:[^"\\\\\\x00-\\x1f\\x7f]|\\\\.)*"';
+const SINGLE_MEDIA_TYPE = new RegExp(`^${TOKEN}/${TOKEN}(?:[ \\t]*;[ \\t]*${TOKEN}=(?:${TOKEN}|${QUOTED}))*[ \\t]*$`);
 
 /** Whether the value is one well-formed media type (no list, no control characters). */
 function isSingleMediaType(contentType: string | null | undefined): contentType is string {
@@ -47,6 +49,19 @@ function isSingleMediaType(contentType: string | null | undefined): contentType 
 /** The MIME type without parameters, lower-cased: `Text/HTML; charset=x` -> `text/html`. */
 export function contentTypeEssence(contentType: string | null | undefined): string {
   return (contentType ?? '').split(';', 1)[0].trim().toLowerCase();
+}
+
+/**
+ * The header value for an inline-safe type: its essence, plus the charset of a
+ * text/plain type (needed to decode it), when the charset is a plain token.
+ */
+function safeInlineType(contentType: string): string {
+  const essence = contentTypeEssence(contentType);
+  if (essence === 'text/plain') {
+    const charset = /;\s*charset\s*=\s*"?([A-Za-z0-9._-]{1,40})"?/i.exec(contentType)?.[1];
+    if (charset) return `text/plain; charset=${charset.toLowerCase()}`;
+  }
+  return essence;
 }
 
 export function isInlineSafeContentType(contentType: string | null | undefined): boolean {
@@ -91,7 +106,7 @@ export function buildDownloadHeaders(input: DownloadHeadersInput): Record<string
     // type is still labelled as declared (the attachment disposition, nosniff
     // and the sandbox keep a browser from rendering it); anything ambiguous is
     // octet-stream.
-    'Content-Type': inline ? essence : isSingleMediaType(input.contentType) ? input.contentType.trim() : 'application/octet-stream',
+    'Content-Type': inline ? safeInlineType(input.contentType) : isSingleMediaType(input.contentType) ? input.contentType.trim() : 'application/octet-stream',
     'Content-Length': input.size.toString(),
     'Content-Disposition': contentDisposition(inline ? 'inline' : 'attachment', input.fileName),
     'X-Content-Type-Options': 'nosniff',
@@ -111,7 +126,7 @@ export function signedDownloadConstraints(
   // under another (possibly unsafe) type, so the object's own type is never used.
   return {
     constraints: {
-      responseContentType: isInlineSafeContentType(contentType) ? contentTypeEssence(contentType) : 'application/octet-stream',
+      responseContentType: isInlineSafeContentType(contentType) ? safeInlineType(contentType as string) : 'application/octet-stream',
     },
   };
 }

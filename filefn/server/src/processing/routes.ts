@@ -146,8 +146,8 @@ export function createProcessingRoutes(config: ProcessingRoutesConfig) {
         const principal = await resolvePrincipal(request, auth);
         requireAuth(principal);
         const ctx = {
-          // A guest is the principal 'anonymous', as on the file routes.
-          principalId: principal?.principalId ?? 'anonymous',
+          // A write: a guest keeps no principal, so it can never match an owner.
+          principalId: principal?.principalId,
           tenantId: principal?.tenantId,
           requestId,
         };
@@ -237,12 +237,15 @@ export function createProcessingRoutes(config: ProcessingRoutesConfig) {
         const principal = await resolvePrincipal(request, auth);
         requireAuth(principal);
 
+        // Reads see a guest as the principal 'anonymous', as the file routes do;
+        // a write (forced processing) keeps no principal, so a guest never
+        // matches an owner.
         const ctx = {
-          // A guest is the principal 'anonymous', as on the file routes.
           principalId: principal?.principalId ?? 'anonymous',
           tenantId: principal?.tenantId,
           requestId,
         };
+        const writeCtx = { ...ctx, principalId: principal?.principalId };
 
         const body = (await request.json()) as {
           versionId?: string;
@@ -255,7 +258,7 @@ export function createProcessingRoutes(config: ProcessingRoutesConfig) {
         // Forcing replaces client-supplied artifacts, so it needs write access,
         // decided by the configured write check alone.
         const target = force
-          ? await service.getWritableVersionForFile(fileId, ctx, body?.versionId)
+          ? await service.getWritableVersionForFile(fileId, writeCtx, body?.versionId)
           : await service.getReadableVersionForFile(fileId, ctx, body?.versionId);
 
         const result = await service.triggerProcessing(
