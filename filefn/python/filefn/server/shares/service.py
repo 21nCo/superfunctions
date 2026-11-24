@@ -206,7 +206,7 @@ class SharesService:
         # that is the answer, not a retryable conflict.
         await self._read_usable_share(token_hash)
         raise errors.FileFnError(
-            code="FILEFN_SHARE_DOWNLOAD_CONFLICT",
+            code=errors.ErrorCodes.SHARE_DOWNLOAD_CONFLICT,
             message="Could not reserve share download",
             status=409,
             details={"tokenHash": token_hash},
