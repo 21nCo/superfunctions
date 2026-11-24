@@ -1,0 +1,21 @@
+mcpfn/core/src/openapi/from-openapi.ts
+  s_07b3b9587b4db1::t_48785c6007b564 329-331,334-336,352
+mcpfn/core/tests/openapi-forms.test.ts
+  s_07b3b9587b4db1::t_0607f65236e1d5 2139-2171
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "72a0a47be684604598a277e197ab8b7f0b5bd4a3",
+  "prompts": {},
+  "sessions": {
+    "s_07b3b9587b4db1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_07b3b9587b4db1",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
