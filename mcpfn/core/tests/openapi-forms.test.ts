@@ -2210,9 +2210,29 @@ describe("fromOpenAPI body fallback, synchronous schemas, per-kind alternatives 
     // One 400-member array shared by 16 wrappers is still expansion of a shared object; the sibling stays.
     const shared = booleans().slice(0, 400);
     const repeated = { type: "object", allOf: Array.from({ length: 16 }, () => ({ allOf: shared })) };
-    const result = convert({ "application/json": { schema: repeated } }, []);
-    expect(result.skipped.map(({ code }) => code)).toEqual(["schema-too-large"]);
-    expect(result.tools.map(({ name }) => name)).toEqual(["n"]);
+    // The same through the allOf a 3.1 $ref with siblings is rewritten to, and through the holes of a sparse default.
+    const sibling = { $ref: "#/components/schemas/S", allOf: shared };
+    const rewritten = { type: "object", allOf: Array.from({ length: 16 }, () => sibling) };
+    const sparse = { name: "q", in: "query", schema: { type: "string", default: new Array(90_000) } };
+    for (const [content, parameters] of [
+      [{ "application/json": { schema: repeated } }, []],
+      [{ "application/json": { schema: rewritten } }, []],
+      [{ "application/json": { schema: { type: "object" } } }, [sparse]],
+    ] as const) {
+      const result = fromOpenAPI(
+        {
+          openapi: "3.1.0",
+          paths: {
+            "/m": { patch: { operationId: "m", parameters, requestBody: { content }, responses: ok } },
+            "/n": { get: { operationId: "n", responses: ok } },
+          },
+          components: { schemas: { S: { type: "object" } } },
+        },
+        options(),
+      );
+      expect(result.skipped.map(({ code }) => code)).toEqual(["schema-too-large"]);
+      expect(result.tools.map(({ name }) => name)).toEqual(["n"]);
+    }
   });
 
   it("does not count the members of objects the conversion does not read, such as a shared example or $ref sibling", () => {

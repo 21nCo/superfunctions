@@ -184,7 +184,13 @@ export class NodeBudget {
   source(value: object): void {
     if (this.credited.has(value)) return;
     this.credited.add(value);
-    this.sourceValues += 1 + (Array.isArray(value) ? value.length : Object.keys(value).length);
+    // Own keys, not length: the holes of a sparse array are not source values.
+    this.sourceValues += 1 + Object.keys(value).length;
+  }
+
+  /** Mark `value`, built by the conversion from source already counted, as counted. */
+  generated(value: object): void {
+    this.credited.add(value);
   }
 }
 
@@ -532,7 +538,11 @@ export class SchemaConverter {
     if (rest.allOf !== undefined && !(Array.isArray(rest.allOf) && rest.allOf.length > 0)) {
       throw new OpenApiSkip("invalid-schema", "allOf is not a non-empty array");
     }
-    return this.convertObject({ ...rest, allOf: [...arrayOf(rest.allOf), { $ref }] }, mode, refs);
+    // The generated allOf is not source: its members are credited through the original.
+    if (Array.isArray(rest.allOf)) this.budget.source(rest.allOf);
+    const allOf = [...arrayOf(rest.allOf), { $ref }];
+    this.budget.generated(allOf);
+    return this.convertObject({ ...rest, allOf }, mode, refs);
   }
 
   private convertKeywords(schema: JsonObject, mode: SchemaMode, refs: Set<string>): McpFnJsonSchema {
