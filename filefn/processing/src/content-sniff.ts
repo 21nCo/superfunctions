@@ -28,9 +28,6 @@ const isJpeg = (b: Uint8Array) => startsWith(b, [0xff, 0xd8, 0xff]);
 const isGif = (b: Uint8Array) => startsWith(b, ascii('GIF87a')) || startsWith(b, ascii('GIF89a'));
 const isRiff = (b: Uint8Array, form: string) =>
   (startsWith(b, ascii('RIFF')) || startsWith(b, ascii('RF64'))) && startsWith(b, ascii(form), 8);
-// WAVE also comes big-endian (RIFX) and as broadcast BW64; ffmpeg's wav demuxer reads all four.
-const isWave = (b: Uint8Array) =>
-  isRiff(b, 'WAVE') || ((startsWith(b, ascii('RIFX')) || startsWith(b, ascii('BW64'))) && startsWith(b, ascii('WAVE'), 8));
 // Classic TIFF (42) and BigTIFF (43), both byte orders.
 const isTiff = (b: Uint8Array) =>
   startsWith(b, [0x49, 0x49, 0x2a, 0x00]) || startsWith(b, [0x4d, 0x4d, 0x00, 0x2a]) ||
@@ -44,48 +41,10 @@ const ftypBrand = (b: Uint8Array): string | null =>
 // HEIF/AVIF images: an ftyp box with an image brand.
 const IMAGE_BRANDS = new Set(['heic', 'heix', 'hevc', 'hevx', 'heim', 'heis', 'mif1', 'msf1', 'avif', 'avis']);
 const isHeifImage = (b: Uint8Array) => IMAGE_BRANDS.has(ftypBrand(b) ?? '');
-// ISO BMFF / QuickTime: an ftyp box, or a classic QuickTime file that starts
-// with another top-level atom.
-const readUint32 = (b: Uint8Array, offset: number) =>
-  ((b[offset] << 24) >>> 0) + (b[offset + 1] << 16) + (b[offset + 2] << 8) + b[offset + 3];
-
-// Top-level `uuid` boxes and QuickTime `junk` padding atoms may come first;
-// up to a few are skipped by their declared sizes to reach the first
-// recognised box.
-const QUICKTIME_ATOMS = ['moov', 'mdat', 'wide', 'free', 'skip', 'pnot'];
-const MAX_LEADING_UUID_BOXES = 4;
-function isIsoBmff(b: Uint8Array): boolean {
-  let offset = 0;
-  for (let box = 0; box <= MAX_LEADING_UUID_BOXES; box++) {
-    if (offset + 8 > b.length) return false;
-    const type = String.fromCharCode(...b.subarray(offset + 4, offset + 8));
-    if (type === 'ftyp' || QUICKTIME_ATOMS.includes(type)) return true;
-    if (type !== 'uuid' && type !== 'junk') return false;
-    let size = readUint32(b, offset);
-    let header = 8;
-    if (size === 1) {
-      // 64-bit extended size after the type.
-      if (offset + 16 > b.length) return false;
-      size = readUint32(b, offset + 8) * 2 ** 32 + readUint32(b, offset + 12);
-      header = 16;
-    }
-    // A uuid box holds at least its header and 16-byte user type, a junk atom
-    // at least its header; either must end inside the input.
-    if (size < header + (type === 'uuid' ? 16 : 0) || offset + size > b.length) return false;
-    offset += size;
-  }
-  return false;
-}
-const isEbml = (b: Uint8Array) => startsWith(b, [0x1a, 0x45, 0xdf, 0xa3]);
-const isOgg = (b: Uint8Array) => startsWith(b, ascii('OggS'));
-const isFlac = (b: Uint8Array) => startsWith(b, ascii('fLaC'));
 const isId3 = (b: Uint8Array) => startsWith(b, ascii('ID3'));
-// MPEG audio frame or ADTS AAC: 11 (or 12) sync bits.
-const isMpegFrame = (b: Uint8Array) => b.length >= 2 && b[0] === 0xff && (b[1] & 0xe0) === 0xe0;
 // AAC in LOAS/LATM framing: the 11-bit sync word 0x2B7.
 const isLoasAt = (b: Uint8Array, offset: number) =>
   b.length >= offset + 3 && b[offset] === 0x56 && (b[offset + 1] & 0xe0) === 0xe0;
-const isLoas = (b: Uint8Array) => isLoasAt(b, 0);
 // Where the audio starts after a leading ID3v2 tag (10-byte header, syncsafe
 // size, optional 10-byte footer), or 0 without one; -1 for a malformed tag.
 function afterId3(b: Uint8Array): number {
@@ -111,30 +70,34 @@ export function pdfStart(b: Uint8Array): number {
 
 const isPdf = (b: Uint8Array) => pdfStart(b) >= 0;
 
-// Checked by family, not exact type: a PNG declared as image/jpeg is common
-// and harmless (both are raster images libvips decodes the same way). What is
-// refused is a different kind of document behind an image, PDF or media type:
-// SVG, PDF or HTML as an "image", a playlist or script as "video".
+// Images and PDFs are checked by family, not exact type: a PNG declared as
+// image/jpeg is common and harmless (both are raster images libvips decodes
+// the same way). What is refused is a different kind of document behind an
+// image or PDF type: SVG, PDF or HTML as an "image", SVG behind %PDF.
+//
+// Audio and video are not sniffed: ffmpeg and ffprobe are pinned to the
+// declared type's demuxer with only the file protocol (ffmpegInputArgs), so
+// a playlist or other container behind a media type is parsed only as that
+// demuxer's format and fails there. A media type without a pinned demuxer is
+// refused.
 const isRasterImage = (b: Uint8Array) =>
   isPng(b) || isJpeg(b) || isGif(b) || isRiff(b, 'WEBP') || isTiff(b) || isBmp(b) || isHeifImage(b);
-const isMediaContainer = (b: Uint8Array) =>
-  isIsoBmff(b) || isEbml(b) || isOgg(b) || isRiff(b, 'AVI ') || isWave(b) || isFlac(b) || isId3(b) || isMpegFrame(b) || isLoas(b);
 
-const FAMILIES: Array<[RegExp, (bytes: Uint8Array) => boolean]> = [
+const FAMILIES: Array<[RegExp, (bytes: Uint8Array, essence: string) => boolean]> = [
   [/^image\/(png|jpe?g|gif|webp|tiff|bmp|avif|heic|heif)$/, isRasterImage],
   [/^application\/pdf$/, isPdf],
-  [/^(video|audio)\//, isMediaContainer],
+  [/^(video|audio)\//, (_bytes, essence) => Object.hasOwn(FFMPEG_INPUT_FORMATS, essence)],
 ];
 
 /**
- * Whether the bytes belong to the family of the declared type (raster image,
- * PDF, or audio/video container). A type outside these families is not checked
- * (returns true).
+ * Whether the bytes belong to the family of the declared type (raster image
+ * or PDF), or, for audio and video, whether the type has a pinned ffmpeg
+ * demuxer. A type outside these families is not checked (returns true).
  */
 export function contentMatchesDeclaredType(bytes: Uint8Array, mimeType: string): boolean {
   const essence = mimeType.split(';', 1)[0].trim().toLowerCase();
   const family = FAMILIES.find(([pattern]) => pattern.test(essence));
-  return family ? family[1](bytes) : true;
+  return family ? family[1](bytes, essence) : true;
 }
 
 /**

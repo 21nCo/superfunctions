@@ -541,10 +541,14 @@ describe('@filefn/processing', () => {
     });
 
     it('classifies media and documents by family', () => {
+      // Media is not sniffed: a playlist declared as video/mp4 is parsed only by the pinned mov demuxer.
       const playlist = new TextEncoder().encode('#EXTM3U\n#EXTINF:1,\nfile:///etc/passwd\n');
-      expect(contentMatchesDeclaredType(playlist, 'video/mp4')).toBe(false);
-      expect(contentMatchesDeclaredType(new TextEncoder().encode('\0\0\0\x18ftypisom'), 'video/mp4')).toBe(true);
-      expect(contentMatchesDeclaredType(new TextEncoder().encode('OggS'), 'audio/ogg')).toBe(true);
+      expect(contentMatchesDeclaredType(playlist, 'video/mp4')).toBe(true);
+      expect(ffmpegInputArgs('video/mp4', playlist)).toEqual(['-protocol_whitelist', 'file', '-f', 'mov']);
+      // A media type without a pinned demuxer is refused.
+      expect(contentMatchesDeclaredType(playlist, 'application/x-mpegurl')).toBe(true);
+      expect(contentMatchesDeclaredType(playlist, 'video/x-unknown')).toBe(false);
+      expect(contentMatchesDeclaredType(playlist, 'audio/x-mpegurl')).toBe(false);
       expect(contentMatchesDeclaredType(new TextEncoder().encode('junk%PDF-1.4'), 'application/pdf')).toBe(true);
       expect(contentMatchesDeclaredType(new TextEncoder().encode('<svg/>'), 'application/pdf')).toBe(false);
       expect(contentMatchesDeclaredType(new TextEncoder().encode('anything'), 'text/plain')).toBe(true);
@@ -555,31 +559,18 @@ describe('@filefn/processing', () => {
     const bytes = (text: string) => new TextEncoder().encode(text);
     const withHeader = (head: number[], rest = 32) => new Uint8Array([...head, ...new Array(rest).fill(0)]);
 
-    it('accepts BigTIFF, RF64 WAV and classic QuickTime atoms', () => {
+    it('accepts BigTIFF', () => {
       expect(contentMatchesDeclaredType(withHeader([0x49, 0x49, 0x2b, 0x00]), 'image/tiff')).toBe(true);
       expect(contentMatchesDeclaredType(withHeader([0x4d, 0x4d, 0x00, 0x2b]), 'image/tiff')).toBe(true);
-      expect(contentMatchesDeclaredType(bytes('RF64\0\0\0\0WAVEds64'), 'audio/wav')).toBe(true);
-      expect(contentMatchesDeclaredType(bytes('\0\0\0\x08wide\0\0\0\x10mdat'), 'video/quicktime')).toBe(true);
     });
 
-    it('skips leading uuid boxes to find ftyp, and pins LOAS AAC to the loas demuxer', () => {
-      const uuidBox = new Uint8Array([0, 0, 0, 24, ...bytes('uuid'), ...new Array(16).fill(7)]);
-      const mp4 = new Uint8Array([...uuidBox, ...bytes('\0\0\0\x18ftypisom')]);
-      expect(contentMatchesDeclaredType(mp4, 'video/mp4')).toBe(true);
-      expect(contentMatchesDeclaredType(new Uint8Array([...uuidBox, ...bytes('#EXTM3U\n')]), 'video/mp4')).toBe(false);
-      expect(contentMatchesDeclaredType(new Uint8Array([0, 0, 0, 4, ...bytes('uuid')]), 'video/mp4')).toBe(false);
-
+    it('pins LOAS AAC to the loas demuxer and ADTS to aac', () => {
       const loas = new Uint8Array([0x56, 0xe0, 0x20, 0, 0]);
-      expect(contentMatchesDeclaredType(loas, 'audio/aac')).toBe(true);
       expect(ffmpegInputArgs('audio/aac', loas)).toEqual(['-protocol_whitelist', 'file', '-f', 'loas']);
       expect(ffmpegInputArgs('audio/aac', new Uint8Array([0xff, 0xf1, 0x50]))).toEqual(['-protocol_whitelist', 'file', '-f', 'aac']);
       expect(ffmpegInputArgs('audio/mpeg', loas)).toEqual(['-protocol_whitelist', 'file', '-f', 'mp3']);
       const id3 = new Uint8Array([...bytes('ID3'), 4, 0, 0, 0, 0, 0, 3, 1, 2, 3]);
       expect(ffmpegInputArgs('audio/aac', new Uint8Array([...id3, ...loas]))).toEqual(['-protocol_whitelist', 'file', '-f', 'loas']);
-
-      const extendedUuid = new Uint8Array([0, 0, 0, 1, ...bytes('uuid'), 0, 0, 0, 0, 0, 0, 0, 32, ...new Array(16).fill(7)]);
-      expect(contentMatchesDeclaredType(new Uint8Array([...extendedUuid, ...bytes('\0\0\0\x18ftypisom')]), 'video/mp4')).toBe(true);
-      expect(contentMatchesDeclaredType(new Uint8Array([0, 0, 0, 200, ...bytes('uuid'), ...new Array(16).fill(7)]), 'video/mp4')).toBe(false);
     });
 
     it('thumbnails only raster bytes even for a MIME alias an integrator added', async () => {
@@ -596,19 +587,11 @@ describe('@filefn/processing', () => {
       }
     });
 
-    it('skips a leading QuickTime junk atom and maps common media MIME aliases to the pinned demuxer', () => {
-      const junk = new Uint8Array([0, 0, 0, 12, ...bytes('junk'), 0, 0, 0, 0]);
-      expect(contentMatchesDeclaredType(new Uint8Array([...junk, ...bytes('\0\0\0\x08moov')]), 'video/quicktime')).toBe(true);
-      expect(contentMatchesDeclaredType(new Uint8Array([0, 0, 0, 4, ...bytes('junk')]), 'video/quicktime')).toBe(false);
+    it('maps common media MIME aliases to the pinned demuxer', () => {
+      expect(contentMatchesDeclaredType(bytes('anything'), 'audio/x-wav')).toBe(true);
       expect(ffmpegInputArgs('audio/x-wav')).toEqual(['-protocol_whitelist', 'file', '-f', 'wav']);
       expect(ffmpegInputArgs('audio/x-flac')).toEqual(['-protocol_whitelist', 'file', '-f', 'flac']);
       expect(ffmpegInputArgs('audio/x-aac', new Uint8Array([0x56, 0xe0, 0x20]))).toEqual(['-protocol_whitelist', 'file', '-f', 'loas']);
-    });
-
-    it('accepts big-endian RIFX and broadcast BW64 WAVE files', () => {
-      expect(contentMatchesDeclaredType(bytes('RIFX\0\0\0\0WAVEfmt '), 'audio/wav')).toBe(true);
-      expect(contentMatchesDeclaredType(bytes('BW64\0\0\0\0WAVEds64'), 'audio/wav')).toBe(true);
-      expect(contentMatchesDeclaredType(bytes('RIFX\0\0\0\0AVI '), 'audio/wav')).toBe(false);
     });
 
     it('lets only raster images reach sharp in the tesseract.js provider, whatever the declared type', async () => {
