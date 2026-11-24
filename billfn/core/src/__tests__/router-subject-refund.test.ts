@@ -247,6 +247,7 @@ describe('router refunds', () => {
       providerSubscriptionId: subscription?.providerSubscriptionId,
       providerChargeId: subscription?.providerChargeId,
       mode: 'full',
+      currency: 'USD',
       reason: 'requested_by_customer'
     });
     expect(target.request).toBeInstanceOf(Request);

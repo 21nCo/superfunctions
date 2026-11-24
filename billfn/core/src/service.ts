@@ -1159,6 +1159,7 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
       }
       const providerName = subscription.provider;
       const providerChargeId = requestedChargeId ?? subscription.providerChargeId;
+      const currency = requirePriceById(requirePlan(deps.catalog, subscription.planKey), subscription.priceId).currency;
       let liveStateObservedAt = toIsoString(deps.now());
       if (options.authorize) {
         // The router's host check sees the exact account, subscription and charge this call refunds.
@@ -1170,6 +1171,7 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
           providerChargeId,
           mode,
           amount,
+          currency,
           reason
         });
         // The approval covers the subscription as it was read; one that changed meanwhile (a renewal, a
@@ -1208,7 +1210,7 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
         providerRefundId: operation.providerRefundId,
         mode,
         amount,
-        currency: requirePriceById(requirePlan(deps.catalog, subscription.planKey), subscription.priceId).currency,
+        currency,
         reason,
         status: operation.operationStatus === 'applied' ? 'succeeded' : 'requires_action',
         operationStatus: operation.operationStatus,

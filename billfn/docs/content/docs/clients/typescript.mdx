@@ -45,6 +45,24 @@ The server decides who the checkout is for through its `auth.resolveSubject`
 (the client sends the browser's cookies by default). A `subject` field is used
 only by a server that sets `auth.allowClientSubject` for trusted callers.
 
+A server that checks a CSRF header on writes (as in
+[Server setup](/docs/server/setup#recommended-production-wiring)) needs the
+client to send it. Pass a `fetch` that adds the header:
+
+```ts
+const client = createBillFnClient({
+  fetch: (input, init) =>
+    fetch(input, {
+      ...init,
+      headers: { ...(init?.headers as Record<string, string> | undefined), "x-csrf-token": readCsrfToken() },
+    }),
+});
+```
+
+`readCsrfToken` stands for however your app exposes its CSRF token to the
+page (a meta tag or a readable cookie), and the header name must match the
+server's check.
+
 Without `priceId`, checkout uses the plan's first price for the provider and
 interval that has no `eligibility` tag. To sell another catalog price of the
 plan, such as an introductory discount, pass its `priceId`:

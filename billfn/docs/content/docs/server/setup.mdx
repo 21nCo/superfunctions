@@ -126,7 +126,8 @@ first parses the body (400 when it is not a JSON object), resolves the subject
 the subscription and charge it would refund (404 or 409). Only then does it call `refunds.authorize` with the request, the
 subject, and the exact target: `billingAccountId`, `subscriptionId`,
 `providerSubscriptionId`, `providerChargeId`, `mode` (default `full`),
-`amount` and `reason`. When the subscription has no charge id, Apple refunds
+`amount` (minor units of `currency`), `currency` (the subscription's catalog
+price currency, the one BillFn records the refund in) and `reason`. When the subscription has no charge id, Apple refunds
 by its subscription reference (it revokes the original transaction); Dodo
 needs a charge id and answers `400 BILLFN_VALIDATION_ERROR` without one, even
 after the hook approved. Anything

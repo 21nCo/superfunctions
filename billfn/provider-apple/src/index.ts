@@ -296,10 +296,10 @@ export function createAppleProvider(providerConfig: AppleProviderConfig): BillFn
     async refundCharge(input: BillFnRefundChargeInput) {
       // Apple refunds or revokes a whole transaction; it has no partial refund, so a partial request is
       // refused before anything reaches Apple rather than sent as a revoke.
-      if (input.mode !== undefined && input.mode !== 'full') {
+      if ((input.mode !== undefined && input.mode !== 'full') || input.amount !== undefined) {
         throw createBillFnError({
           code: 'BILLFN_VALIDATION_ERROR',
-          message: 'Apple supports only full refunds'
+          message: 'Apple supports only full refunds, without an amount'
         });
       }
       const transactionId = input.providerChargeId ?? input.subscription?.providerChargeId ?? input.subscription?.providerSubscriptionId;

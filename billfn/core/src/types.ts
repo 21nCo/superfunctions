@@ -975,7 +975,10 @@ export interface BillFnRefundAuthorizationInput {
   providerSubscriptionId?: string;
   providerChargeId?: string;
   mode: BillFnRefundMode;
+  /** For a partial refund: the amount in minor units of `currency`. */
   amount?: number;
+  /** The currency BillFn records the refund in: that of the subscription's catalog price. */
+  currency: string;
   reason?: string;
 }
 

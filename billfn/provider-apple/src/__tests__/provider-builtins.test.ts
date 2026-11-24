@@ -281,6 +281,21 @@ describe('createAppleProvider with several bundle IDs', () => {
     }
   );
 
+  it('refuses a full refund that names an amount before any Apple request', async () => {
+    const fetchMock = vi.fn(async () => Response.json({}));
+    const provider = createAppleProvider({
+      bundleIds,
+      appStoreServerApiKey,
+      fetch: fetchMock as typeof fetch,
+      advancedCommerce: { enabled: true, tokenProvider: async () => 'test-advanced-commerce-token' }
+    });
+
+    await expect(
+      provider.refundCharge!({ providerChargeId: 'txn_1', mode: 'full', amount: 600, reason: 'customer_request' } as never)
+    ).rejects.toMatchObject({ code: 'BILLFN_VALIDATION_ERROR' });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('restores a one-time purchase from the transaction history of the app its price is sold in', async () => {
     const price = { kind: 'one_time', providerProductId: 'com.example.product', metadata: { appleBundleId: owner } };
     const checkout = await createAppleProvider({ bundleIds, appStoreServerApiKey }).createCheckout!({
