@@ -994,7 +994,7 @@ function storedDodoSubscriptionState(
 
 /**
  * Whether a refund or dispute event may take a charge's money back: `full` for a full refund or a lost or accepted
- * dispute, `partial` for a partial refund (which revokes only once the payment's refunds add up to its total).
+ * dispute, `partial` for a partial refund (which revokes only once Dodo reports the payment's `refund_status` as `full`).
  */
 function isDodoRevocationEvent(type: string, data: Record<string, unknown>): 'full' | 'partial' | null {
   if (type === 'refund.succeeded') {
