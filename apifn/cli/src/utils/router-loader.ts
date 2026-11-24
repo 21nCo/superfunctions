@@ -29,12 +29,10 @@ export async function loadRouterModule(
   try {
     const url = jiti.esmResolve(resolved);
     file = url.startsWith("file:") ? fileURLToPath(url) : url;
-    // esmResolve applied JITI_ALIAS once: `file` is imported relative to its own directory, without
-    // any alias key that could match "./<name>" again (nested imports keep the other aliases).
-    const entry = `./${path.basename(file)}`;
-    const alias = Object.fromEntries(Object.entries(jiti.options.alias ?? {}).filter(([key]) => !entry.startsWith(key)));
-    const own = createJiti(path.dirname(file), { moduleCache: false, alias });
-    load = () => own.import(entry);
+    // esmResolve applied JITI_ALIAS once: an identity alias (the most specific key wins) keeps `file`
+    // from being aliased again, and its dependencies keep every alias.
+    const own = createJiti(cwd, { moduleCache: false, alias: { ...jiti.options.alias, [file.replaceAll("\\", "/")]: file } });
+    load = () => own.import(file);
   } catch {
     // Not resolvable: the import below reports the missing module as it always has.
   }

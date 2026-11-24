@@ -58,9 +58,10 @@ const FIXTURES = path.join(import.meta.dirname, "fixtures", "check");
  * Injected filesystem faults (API-25 round 4), off unless a test turns one on: hard links fail
  * (the backup takes its copy path), a new .bak file is displaced right after it is created, or
  * the lookup of a .bak whose name contains `failBackupLookup` fails, or another writer takes a .bak
- * name (`occupyBackup` bytes) right before the run creates it.
+ * name (`occupyBackup` bytes) right before the run creates it, or every close reports EIO after
+ * closing (`failClose`).
  */
-const fsFaults = vi.hoisted(() => ({ noLink: false, displaceBackup: "", failBackupLookup: "", occupyBackup: "" }));
+const fsFaults = vi.hoisted(() => ({ noLink: false, displaceBackup: "", failBackupLookup: "", occupyBackup: "", failClose: false }));
 vi.mock("node:fs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs")>();
   const displace = (file: unknown): void => {
@@ -88,6 +89,10 @@ vi.mock("node:fs", async (importOriginal) => {
       displace(args[0]);
       return fd;
     }) as typeof actual.openSync,
+    closeSync: ((fd: number) => {
+      actual.closeSync(fd);
+      if (fsFaults.failClose) throw Object.assign(new Error("EIO: injected close"), { code: "EIO" });
+    }) as typeof actual.closeSync,
     lstatSync: ((...args: Parameters<typeof actual.lstatSync>) => {
       if (fsFaults.failBackupLookup && String(args[0]).endsWith(".bak") && String(args[0]).includes(fsFaults.failBackupLookup)) {
         throw Object.assign(new Error("EACCES: injected"), { code: "EACCES" });
@@ -2830,7 +2835,10 @@ describe("apifn check: the router module is the one file loaded (round 4)", () =
     const route = (id: string) =>
       `export default { getRoutes() { return [{ method: "GET", path: "/${id}", handler: async () => Response.json({}), meta: { operationId: "${id}" } }]; } };\n`;
     await mkdir(path.join(dir, "src"), { recursive: true });
-    await writeFile(path.join(dir, "src", "router.ts"), route("aliasResolved"));
+    // The router's own "./helper.ts" dependency still takes the "." alias, as it did before.
+    await writeFile(path.join(dir, "src", "router.ts"), `import { id } from "./helper.ts";\nexport default { getRoutes() { return [{ method: "GET", path: "/aliasDependency", handler: async () => Response.json({}), meta: { operationId: id } }]; } };\n`);
+    await writeFile(path.join(dir, "src", "helper.ts"), 'export const id = "helperDecoy";\n');
+    await writeFile(path.join(other, "helper.ts"), 'export const id = "aliasResolved";\n');
     await writeFile(path.join(other, "router.ts"), route("aliasElsewhere"));
     vi.stubEnv("JITI_ALIAS", JSON.stringify({ ".": other }));
     try {
@@ -2841,6 +2849,9 @@ describe("apifn check: the router module is the one file loaded (round 4)", () =
       expect(generated.code).toBe(0);
       const out = await readFile(path.join(dir, "out.yml"), "utf8");
       expect({ resolved: out.includes("aliasResolved"), elsewhere: out.includes("aliasElsewhere") }).toEqual({ resolved: true, elsewhere: false });
+      const bound = await run(["check", path.join(dir, "src", "router"), "--report", path.join("src", "router.ts")], dir);
+      expect(bound.code).toBe(2);
+      expect(bound.stderr).toContain("the router module");
     } finally {
       vi.unstubAllEnvs();
     }
@@ -4527,7 +4538,7 @@ describe("apifn check: a backup is bound to the file this run made, and cleanup 
       });
       return { code, errors: errors.join("\n"), stdout };
     } finally {
-      Object.assign(fsFaults, { noLink: false, displaceBackup: "", failBackupLookup: "", occupyBackup: "" });
+      Object.assign(fsFaults, { noLink: false, displaceBackup: "", failBackupLookup: "", occupyBackup: "", failClose: false });
     }
   }
 
@@ -4577,6 +4588,20 @@ describe("apifn check: a backup is bound to the file this run made, and cleanup 
     expect(errors).toContain(`Failed to remove ${path.join(realpathSync(path.join(dir, ".apifn")), left[0])}`);
     expect(errors).toContain("EACCES: injected");
     expect(await readFile(path.join(dir, SPEC), "utf8")).not.toBe("openapi: 3.1.0\n");
+  });
+
+  it("a descriptor close failure after the commit is a stderr notice: the verdict and report stand (PR round 1)", async () => {
+    const control = await check(await staleService(), () => {});
+    const dir = await staleService();
+    const { code, errors, stdout } = await check(dir, (step) => {
+      if (step === "committed") fsFaults.failClose = true;
+    });
+    fsFaults.failClose = false;
+    expect({ code, stdout }).toEqual({ code: control.code, stdout: control.stdout });
+    expect(stdout).toBe(await readFile(path.join(dir, "report.md"), "utf8"));
+    expect(errors).toContain("Failed to close a descriptor apifn check held for");
+    expect(errors).toContain("EIO: injected close");
+    expect(await leftovers(path.join(dir, ".apifn"))).toEqual([]);
   });
 
   it("a backup name another writer already holds is left and named, and the untouched spec is not 'restored'", async () => {

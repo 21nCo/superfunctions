@@ -684,7 +684,8 @@ function install(staged: Staged, hook: PublishHook | undefined, verify: Verify):
   // The rename changes the change time of the installed inode and, by dropping a link, of the
   // backup's link: record both now, the installed one through the descriptor (a copy keeps its own).
   staged.installed = stateOf(fstatSync(staged.fd as number, BIG));
-  if (staged.linked) staged.backupState = stateOf(fstatSync(staged.backupFd as number, BIG));
+  const backupNow = staged.linked ? stateOf(fstatSync(staged.backupFd as number, BIG)) : null; // adopted only unchanged
+  if (sameContent(backupNow, staged.backupState as FileState)) staged.backupState = backupNow;
   hook?.("installed", staged.destination);
   verify(staged);
 }
@@ -778,13 +779,15 @@ export async function publish(
     held: [],
     published: false,
   }));
+  const notices: string[] = [];
   // Only a run that writes files has anything to roll back on an abort.
   if (all.length > 0) onPublishing?.(true);
   try {
-    return await publishAll(all, verifier(all, guarded), guarded, emit, hook, signal);
+    notices.push(...(await publishAll(all, verifier(all, guarded), guarded, emit, hook, signal)));
+    return notices;
   } finally {
-    // A close failure (each temp was fsynced) never changes the verdict.
-    for (const staged of all) for (const fd of [staged.fd, staged.backupFd, ...staged.held]) if (fd !== undefined) try { closeSync(fd); } catch { /* ignored */ }
+    // A close failure (each temp was fsynced) never changes the verdict: after the commit it is a notice.
+    for (const staged of all) for (const fd of [staged.fd, staged.backupFd, ...staged.held]) if (fd !== undefined) try { closeSync(fd); } catch (error) { notices.push(`Failed to close a descriptor apifn check held for ${staged.destination}: ${errorMessage(error)}`); }
     if (all.length > 0) onPublishing?.(false);
   }
 }
