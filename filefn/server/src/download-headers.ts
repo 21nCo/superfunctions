@@ -164,17 +164,24 @@ export function contentDisposition(type: 'inline' | 'attachment', fileName?: str
   }
   // encodeURIComponent throws on a lone surrogate; replace it with U+FFFD.
   const wellFormed = fileName.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '\uFFFD');
-  let value = dispositionValue(type, wellFormed);
+  const value = dispositionValue(type, wellFormed);
   if (value.length <= MAX_CONTENT_DISPOSITION_LENGTH) return value;
   const extension = /\.[A-Za-z0-9]{1,10}$/.exec(wellFormed)?.[0] ?? '';
-  const stem = Array.from(wellFormed.slice(0, wellFormed.length - extension.length));
-  let keep = stem.length;
-  while (keep > 0) {
-    keep -= 1;
-    value = dispositionValue(type, stem.slice(0, keep).join('') + extension);
-    if (value.length <= MAX_CONTENT_DISPOSITION_LENGTH) return value;
+  // Every code point costs at least one byte of the value, so a longer stem
+  // than the budget never fits; then binary-search the longest stem that does.
+  const stem = Array.from(wellFormed.slice(0, wellFormed.length - extension.length)).slice(0, MAX_CONTENT_DISPOSITION_LENGTH);
+  let low = 0;
+  let high = stem.length;
+  while (low < high) {
+    const mid = Math.ceil((low + high) / 2);
+    if (dispositionValue(type, stem.slice(0, mid).join('') + extension).length <= MAX_CONTENT_DISPOSITION_LENGTH) {
+      low = mid;
+    } else {
+      high = mid - 1;
+    }
   }
-  return dispositionValue(type, extension || 'download');
+  if (low === 0) return dispositionValue(type, extension || 'download');
+  return dispositionValue(type, stem.slice(0, low).join('') + extension);
 }
 
 export interface DownloadHeadersInput {

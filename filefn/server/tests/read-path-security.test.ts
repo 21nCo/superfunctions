@@ -193,6 +193,12 @@ describe('read path (FILE-30 F-03, F-04, F-23)', () => {
       expect(disposition.length).toBeLessThanOrEqual(512);
       expect(disposition.endsWith('.pdf')).toBe(true);
     }
+    // A huge name is shortened quickly.
+    const started = Date.now();
+    const huge = buildDownloadHeaders({ contentType: 'text/plain', size: 1, fileName: `${'\u00e9'.repeat(200_000)}.txt` })['Content-Disposition'];
+    expect(Date.now() - started).toBeLessThan(500);
+    expect(huge.length).toBeLessThanOrEqual(512);
+    expect(huge.endsWith('.txt')).toBe(true);
     // A long ASCII name that fits is not shortened.
     const ascii = `${'a'.repeat(120)}.txt`;
     expect(buildDownloadHeaders({ contentType: 'text/plain', size: 1, fileName: ascii })['Content-Disposition']).toContain(ascii);
