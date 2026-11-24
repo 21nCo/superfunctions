@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, rm } from 'node:fs/promises';
+import { mkdtemp, readdir, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { memoryAdapter } from '@superfunctions/db/adapters/memory';
@@ -18,6 +18,7 @@ function createMultipartStore() {
   const objects = new Map<string, number>();
   const pendingParts = new Map<string, Map<number, number>>();
   let nextPartBytes = 0;
+  let failStats = 0;
   const storage: StorageAdapter = {
     name: 'test-multipart',
     capabilities: {
@@ -37,7 +38,8 @@ function createMultipartStore() {
       return { url: `https://storage.example/${encodeURIComponent(key)}/${partNumber}` };
     },
     async completeMultipartUpload({ key, parts }) {
-      const sizes = pendingParts.get(key)!;
+      const sizes = pendingParts.get(key);
+      if (!sizes) throw Object.assign(new Error('NoSuchUpload'), { name: 'NoSuchUpload' });
       objects.set(key, parts.reduce((sum, part) => sum + (sizes.get(part.partNumber) ?? 0), 0));
       pendingParts.delete(key);
     },
@@ -45,6 +47,10 @@ function createMultipartStore() {
       pendingParts.delete(key);
     },
     async statObject({ key }) {
+      if (failStats > 0) {
+        failStats -= 1;
+        throw new Error('transient stat failure');
+      }
       if (!objects.has(key)) throw Object.assign(new Error('not found'), { code: 'STORAGE_NOT_FOUND' });
       return { key, size: objects.get(key)!, lastModifiedAt: new Date().toISOString() };
     },
@@ -60,6 +66,9 @@ function createMultipartStore() {
     objects,
     setNextPartBytes(bytes: number) {
       nextPartBytes = bytes;
+    },
+    failNextStats(count: number) {
+      failStats = count;
     },
   };
 }
@@ -153,12 +162,38 @@ describe('declared upload size is enforced (FILE-30 F-05)', () => {
       fileFn.services.uploads.uploadPartBytes(session.uploadSessionId, 1, big, 10, alice),
     ).rejects.toMatchObject({ code: 'FILEFN_PART_TOO_LARGE', statusCode: 413 });
 
+    // Nothing past the part's bound was written (the aborted part, if the
+    // adapter leaves one, is empty here; the expiry sweep removes it).
     const files = await readdir(rootDir, { recursive: true, withFileTypes: true });
-    expect(files.filter((entry) => entry.isFile())).toEqual([]);
+    for (const entry of files.filter((e) => e.isFile())) {
+      const { size } = await stat(join(entry.parentPath ?? (entry as unknown as { path: string }).path, entry.name));
+      expect(size).toBeLessThanOrEqual(10);
+    }
 
     // The right bytes still go through afterwards.
     const body = Buffer.from('0123456789');
     const part = await fileFn.services.uploads.uploadPartBytes(session.uploadSessionId, 1, body, body.length, alice);
     expect(part.size).toBe(10);
+  });
+
+  it('refuses and deletes an oversized multipart object even when the first completion could not stat it', async () => {
+    const store = createMultipartStore();
+    const fileFn = createFileFn({
+      database: memoryAdapter(),
+      storage: store.storage,
+      policies: [{ name: 'small', maxSizeBytes: 1024 }],
+    });
+    const session = await fileFn.createUploadSession({ policy: 'small', fileName: 'a.bin', size: 10, mimeType: 'application/octet-stream' }, alice);
+    store.setNextPartBytes(50 * 1024 * 1024);
+    await fileFn.services.uploads.signPart(session.uploadSessionId, 1, 10, alice);
+    await fileFn.completeUploadPart({ uploadSessionId: session.uploadSessionId, partNumber: 1, etag: 'etag-1', size: 10 }, alice);
+
+    store.failNextStats(1);
+    await expect(fileFn.completeUploadSession({ uploadSessionId: session.uploadSessionId }, alice)).rejects.toThrow();
+    // The retry finds the upload consumed, the object present at the wrong size: refused and deleted.
+    await expect(fileFn.completeUploadSession({ uploadSessionId: session.uploadSessionId }, alice)).rejects.toMatchObject({
+      code: 'FILEFN_UPLOAD_SIZE_MISMATCH',
+    });
+    expect([...store.objects.keys()]).toEqual([]);
   });
 });

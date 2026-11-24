@@ -239,12 +239,20 @@ async function forEachBodyChunk(
 ): Promise<void> {
   if (body instanceof ReadableStream) {
     const reader = body.getReader();
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      if (!value) continue;
-      const chunk = value instanceof Uint8Array ? value : new Uint8Array(value);
-      await onChunk(chunk);
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (!value) continue;
+        const chunk = value instanceof Uint8Array ? value : new Uint8Array(value);
+        await onChunk(chunk);
+      }
+    } catch (err) {
+      // Stop the producer (an oversized or failed upload), keeping the error.
+      await reader.cancel(err).catch(() => {});
+      throw err;
+    } finally {
+      reader.releaseLock();
     }
     return;
   }
@@ -610,6 +618,17 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
     try {
       const stat = await storage.statObject({ key: session.storageKey, target });
       return stat.size === session.size;
+    } catch {
+      return false;
+    }
+  }
+
+  // Whether the session's final object exists (any size).
+  async function storageObjectExists(session: UploadSession, target: StorageTargetName | undefined): Promise<boolean> {
+    if (!storage.statObject) return false;
+    try {
+      await storage.statObject({ key: session.storageKey, target });
+      return true;
     } catch {
       return false;
     }
@@ -1654,11 +1673,11 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
           await writer.write(chunk);
         });
       } catch (err) {
-        // Nothing of an oversized or failed part is kept.
+        // The write is aborted, never committed. The shared part key is not
+        // deleted: a concurrent upload of the same part may have committed it.
+        // At most the part's bound was written, and the expiry sweep removes
+        // part objects of sessions that never complete.
         await writer.abort(err).catch(() => {});
-        if (storage.deleteObject) {
-          await storage.deleteObject({ key: partKey, target: storageTarget }).catch(() => {});
-        }
         throw err;
       }
       await writer.close();
@@ -1928,7 +1947,10 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
             });
           } catch (err) {
             // S3 and R2 answer NoSuchUpload for an upload already completed.
-            if (!(await isStorageFinalized(session, policyStorageTarget))) throw err;
+            // Continue when the upload was consumed and the object exists, at
+            // any size: the size check below then refuses an oversized one and
+            // deletes it, instead of leaving it for good.
+            if (!(await storageObjectExists(session, policyStorageTarget))) throw err;
           }
         } else if (session.uploadMode === 'proxy') {
           // Stitch proxy parts
@@ -1988,7 +2010,13 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         if (stat.size !== session.size) {
           // Refused while this call still holds the session, then everything it
           // uploaded is deleted: an oversized object is never left in storage.
-          if (!(await fenceRefusedSession(uploadSessionId, claim))) return lostClaimResult(uploadSessionId);
+          if (!(await fenceRefusedSession(uploadSessionId, claim))) {
+            // Taken over meanwhile: this call's own stitch is never published.
+            if (session.uploadMode === 'proxy' && attemptKey !== session.storageKey) {
+              await deleteAttemptObject(session, attemptKey, policyStorageTarget).catch(() => false);
+            }
+            return lostClaimResult(uploadSessionId);
+          }
           await deleteRefusedUploads(session);
           throw errors.uploadSizeMismatch(session.size, stat.size);
         }
