@@ -1,12 +1,14 @@
 import hashlib
 import json
+import math
 import re
 import secrets
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from tempfile import SpooledTemporaryFile
-from typing import Any, Dict, List, Optional, Protocol, cast
+from typing import Any, Dict, List, Optional, Protocol, Union, cast
 
-from pydantic import BaseModel
+from pydantic import BaseModel, StrictFloat, StrictInt
 from superfunctions.db.errors import DuplicateKeyError, NotFoundError
 
 from .. import errors
@@ -22,6 +24,7 @@ from ..policies import (
     compute_storage_path,
     matches_content_type,
     resolve_storage_target,
+    unsafe_storage_key_reason,
 )
 from ..routed_storage import get_storage_capabilities
 
@@ -63,11 +66,206 @@ class UploadSessionServiceConfig(BaseModel):
 class CreateSessionInput(BaseModel):
     policy: str
     fileName: str
-    size: int
+    # Strict: "12" or True is refused instead of being coerced; an integral
+    # float such as 1.0 (JSON allows it, as the TypeScript server does) is
+    # accepted and normalised to int by _validate_upload_init.
+    size: Union[StrictInt, StrictFloat]
     mimeType: str
     fileId: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
     idempotencyKey: Optional[str] = None
+
+
+MAX_FILE_NAME_LENGTH = 255
+MAX_MIME_TYPE_LENGTH = 1024
+MAX_IDEMPOTENCY_KEY_LENGTH = 255
+MAX_METADATA_BYTES = 16 * 1024
+MAX_SAFE_INTEGER = 2**53 - 1
+_CONTROL_CHARACTERS = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+_MIME_CONTROL_CHARACTERS = re.compile(r"[\x00-\x08\x0a-\x1f\x7f]")
+# type "/" subtype, each an HTTP token (RFC 9110), plus optional parameters.
+# RFC 9110 media type, as the TypeScript server checks it: type/subtype tokens,
+# then parameters `token=token` or `token=quoted-string` (quoted text and
+# quoted pairs: tab, visible ASCII and Latin-1 obs-text); empty parameter
+# slots are allowed. Nothing above U+00FF, which no HTTP header can carry.
+_MIME_TOKEN = r"[!#$%&'*+.^_`|~0-9A-Za-z-]+"
+_MIME_QUOTED = r'"(?:[\t \x21\x23-\x5B\x5D-\x7E\x80-\xFF]|\\[\t \x21-\x7E\x80-\xFF])*"'
+_MIME_TYPE = re.compile(
+    rf"{_MIME_TOKEN}/{_MIME_TOKEN}(?:[ \t]*;(?:[ \t]*{_MIME_TOKEN}=(?:{_MIME_TOKEN}|{_MIME_QUOTED}))?)*[ \t]*"
+)
+
+
+_LONE_SURROGATE = re.compile(r"[\ud800-\udfff]")
+
+
+MAX_METADATA_DEPTH = 32
+# The characters JavaScript's String.prototype.trim removes, so both servers
+# agree on what a blank name is.
+JS_WHITESPACE = "\t\n\v\f\r \u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff"
+
+
+def _has_lone_surrogate(value: Any, depth: int = 0) -> bool:
+    """Whether the value holds a surrogate code point, or nests deeper than MAX_METADATA_DEPTH (also refused)."""
+    # Python strings hold code points, so any surrogate code point is unpaired.
+    if isinstance(value, str):
+        return bool(_LONE_SURROGATE.search(value))
+    if not isinstance(value, (dict, list, tuple)):
+        return False
+    if depth >= MAX_METADATA_DEPTH:
+        return True
+    if isinstance(value, dict):
+        return any(_has_lone_surrogate(k, depth + 1) or _has_lone_surrogate(v, depth + 1) for k, v in value.items())
+    if isinstance(value, (list, tuple)):
+        return any(_has_lone_surrogate(item, depth + 1) for item in value)
+    return False
+
+
+def _js_number_text(value: float) -> str:
+    """Format a float exactly as JavaScript's Number.prototype.toString does."""
+    if not math.isfinite(value):
+        return "null"  # JSON.stringify writes non-finite numbers as null
+    if value == 0:
+        return "0"
+    sign = "-" if value < 0 else ""
+    # Decimal(str) is exact and ignores the context (normalize() would not).
+    _, digit_tuple, exponent = Decimal(repr(abs(value))).as_tuple()
+    digits = "".join(str(d) for d in digit_tuple)
+    exponent = int(exponent)
+    stripped = digits.rstrip("0")
+    exponent += len(digits) - len(stripped)
+    digits = stripped.lstrip("0") or "0"
+    k = len(digits)
+    n = int(exponent) + k
+    if k <= n <= 21:
+        text = digits + "0" * (n - k)
+    elif 0 < n <= 21:
+        text = digits[:n] + "." + digits[n:]
+    elif -6 < n <= 0:
+        text = "0." + "0" * (-n) + digits
+    else:
+        e = n - 1
+        mantissa = digits if k == 1 else digits[0] + "." + digits[1:]
+        text = f"{mantissa}e{'+' if e > 0 else '-'}{abs(e)}"
+    return sign + text
+
+
+def _js_json(value: Any) -> str:
+    """Serialise as JavaScript's JSON.stringify does (compact, numbers in JS format)."""
+    if value is None:
+        return "null"
+    if value is True:
+        return "true"
+    if value is False:
+        return "false"
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            # Stored as sent, so a non-finite number (e.g. 1e400) is refused
+            # rather than counted as JSON.stringify's null.
+            raise ValueError("non-finite number")
+        return _js_number_text(value)
+    if isinstance(value, str):
+        return json.dumps(value, ensure_ascii=False)
+    if isinstance(value, dict):
+        return "{" + ",".join(json.dumps(str(k), ensure_ascii=False) + ":" + _js_json(v) for k, v in value.items()) + "}"
+    if isinstance(value, (list, tuple)):
+        return "[" + ",".join(_js_json(v) for v in value) + "]"
+    raise TypeError(f"not JSON-serialisable: {type(value).__name__}")
+
+
+def _integral(value: Any) -> Any:
+    """A finite whole-number float (JSON `1.0`) as an int, as JavaScript reads it; anything else unchanged."""
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    return value
+
+
+def _utf16_length(value: str) -> int:
+    # Lengths are counted in UTF-16 code units, as the TypeScript server does;
+    # surrogatepass counts a lone surrogate (valid in JSON) as one unit.
+    return len(value.encode("utf-16-le", "surrogatepass")) // 2
+
+
+def _validate_upload_init(input: CreateSessionInput) -> None:
+    """Validate the init body as the TypeScript server does; raise a 400 on failure."""
+    # No length cap: the name must match a registered policy anyway.
+    if not isinstance(input.policy, str) or not input.policy or _has_lone_surrogate(input.policy):
+        raise errors.invalid_request("policy must be a non-empty string", {"field": "policy"})
+
+    name = input.fileName
+    if not isinstance(name, str) or not name.strip(JS_WHITESPACE):
+        raise errors.invalid_request("fileName must not be empty", {"field": "fileName"})
+    if _utf16_length(name) > MAX_FILE_NAME_LENGTH:
+        raise errors.invalid_request(
+            f"fileName must be at most {MAX_FILE_NAME_LENGTH} characters",
+            {"field": "fileName", "maxLength": MAX_FILE_NAME_LENGTH},
+        )
+    if "/" in name or "\\" in name:
+        raise errors.invalid_request("fileName must not contain path separators", {"field": "fileName"})
+    if _CONTROL_CHARACTERS.search(name):
+        raise errors.invalid_request("fileName must not contain control characters", {"field": "fileName"})
+    if name in (".", ".."):
+        raise errors.invalid_request("fileName must not be a dot segment", {"field": "fileName"})
+    if _has_lone_surrogate(name):
+        raise errors.invalid_request("fileName must be well-formed Unicode", {"field": "fileName"})
+
+    size = input.size
+    if isinstance(size, float) and size.is_integer():
+        size = int(size)
+    if isinstance(size, bool) or not isinstance(size, int) or size < 0 or size > MAX_SAFE_INTEGER:
+        raise errors.invalid_request("size must be a non-negative integer number of bytes", {"field": "size"})
+    input.size = size
+
+    mime_type = input.mimeType
+    if (
+        not isinstance(mime_type, str)
+        or _utf16_length(mime_type) > MAX_MIME_TYPE_LENGTH
+        or not _MIME_TYPE.fullmatch(mime_type.strip(" \t"))
+        # C0 controls other than tab, and DEL; U+0080-U+00FF is left to the
+        # quoted-string grammar (obs-text), as in TypeScript.
+        or _MIME_CONTROL_CHARACTERS.search(mime_type)
+        or _has_lone_surrogate(mime_type)
+    ):
+        raise errors.invalid_request('mimeType must be a MIME type such as "image/png"', {"field": "mimeType"})
+
+    # An explicit `metadata: null` is refused, as in TypeScript; omitting it is fine.
+    if input.metadata is None and "metadata" in input.model_fields_set:
+        raise errors.invalid_request("metadata must be a JSON object", {"field": "metadata"})
+    if input.metadata is not None:
+        if not isinstance(input.metadata, dict) or _has_lone_surrogate(input.metadata):
+            raise errors.invalid_request(
+                f"metadata must be a JSON object of well-formed text, nested at most {MAX_METADATA_DEPTH} levels",
+                {"field": "metadata"},
+            )
+        try:
+            # Counted as JSON.stringify writes it (floats in JavaScript's format),
+            # so both servers accept the same metadata. Integers are counted with
+            # every digit, since they are stored exactly as sent: one past 2**53
+            # (which JavaScript would round) can only make Python stricter.
+            encoded = _js_json(input.metadata)
+            # surrogatepass: a lone surrogate is counted (3 bytes) rather than raising.
+            encoded_size = len(encoded.encode("utf-8", "surrogatepass"))
+        except (TypeError, ValueError):
+            raise errors.invalid_request("metadata must be a JSON object with finite numbers", {"field": "metadata"}) from None
+        if encoded_size > MAX_METADATA_BYTES:
+            raise errors.invalid_request(
+                f"metadata must be at most {MAX_METADATA_BYTES} bytes as JSON",
+                {"field": "metadata", "maxBytes": MAX_METADATA_BYTES},
+            )
+
+    key = input.idempotencyKey
+    if key is not None and (
+        not isinstance(key, str)
+        or _utf16_length(key) > MAX_IDEMPOTENCY_KEY_LENGTH
+        or _CONTROL_CHARACTERS.search(key)
+        or _has_lone_surrogate(key)
+    ):
+        raise errors.invalid_request(
+            f"idempotency key must be a string of at most {MAX_IDEMPOTENCY_KEY_LENGTH} characters",
+            {"field": "idempotencyKey"},
+        )
+
 
 
 def _scope_idempotency_key(idempotency_key: str, ctx: FileProviderContext) -> str:
@@ -219,6 +417,8 @@ class UploadSessionService:
         if not ctx.principalId and not self.allow_anonymous_uploads:
             raise errors.auth_required()
 
+        _validate_upload_init(input)
+
         # The stored key is scoped to the caller, so one caller's key never finds
         # or blocks another caller's session.
         # Anonymous callers get no idempotency: they share one scope, and a replay
@@ -263,6 +463,14 @@ class UploadSessionService:
                 expected_hash = self._hash_payload(input, ctx)
                 if existing.idempotencyPayloadHash != expected_hash:
                     raise errors.idempotency_conflict()
+                # An ended session can't take parts: a restart needs a new key.
+                if existing.status in ("aborted", "refused"):
+                    raise errors.FileFnError(
+                        errors.ErrorCodes.UPLOAD_ABORTED,
+                        "The upload session for this idempotency key was aborted; start again with a new idempotency key",
+                        410,
+                        {"reason": "aborted", "field": "idempotencyKey"},
+                    )
 
                 return {
                     "uploadSessionId": existing.uploadSessionId,
@@ -281,7 +489,7 @@ class UploadSessionService:
         if policy.contentTypes and not any(matches_content_type(pattern, input.mimeType) for pattern in policy.contentTypes):
             raise errors.policy_content_type_not_allowed(input.policy, input.mimeType)
         if policy.maxSizeBytes is not None and input.size > policy.maxSizeBytes:
-            raise errors.policy_max_size_exceeded(input.policy, policy.maxSizeBytes, input.size)
+            raise errors.policy_max_size_exceeded(input.policy, policy.maxSizeBytes, int(input.size))
 
         if input.fileId and self.file_write_checker:
             if not await self.file_write_checker.can_write_file(input.fileId, ctx):
@@ -299,7 +507,7 @@ class UploadSessionService:
                 raise errors.quota_exceeded(
                     quota_result.get("current", 0),
                     quota_result.get("limit", 0),
-                    input.size,
+                    int(input.size),
                 )
             warning = quota_result.get("warning")
             if warning:
@@ -325,6 +533,14 @@ class UploadSessionService:
             versionId=version_id,
         )
         storage_key = compute_storage_path(policy, storage_ctx)
+        # A `.`/`..` segment, backslash or control character could resolve onto
+        # another file's object on adapters that normalize paths.
+        unsafe_reason = unsafe_storage_key_reason(storage_key)
+        if unsafe_reason:
+            raise errors.invalid_request(
+                "The storage key for this upload is not safe",
+                {"policy": input.policy, "reason": unsafe_reason},
+            )
         # The key must contain this session's version ID, so two sessions (for
         # example two anonymous inits that are no longer replayed) never share
         # an object; a storagePath that drops it is refused, as in TypeScript.
@@ -371,6 +587,8 @@ class UploadSessionService:
                 "totalParts": total_parts,
                 "storageKey": storage_key,
                 "storageUploadId": storage_upload_id,
+                # The version this session publishes; its ID is part of the key.
+                "completionVersionId": version_id,
                 "ownerId": owner_id,
                 "tenantId": ctx.tenantId,
                 "metadata": input.metadata or {},
@@ -431,13 +649,21 @@ class UploadSessionService:
         return {
             "uploadSessionId": upload_session_id,
             "fileId": session.fileId,
-            "status": session.status,
+            # `refused` is internal (cleanup still pending); clients see aborted, as in TypeScript.
+            "status": "aborted" if session.status == "refused" else session.status,
             "totalParts": session.totalParts,
             "recordedParts": recorded_parts,
             "chunkSizeBytes": session.chunkSizeBytes,
             "fileSize": session.size,
             "expiresAt": session.expiresAt,
         }
+
+    @staticmethod
+    def _max_part_bytes(session: "UploadSessionRecord", part_number: int) -> int:
+        # The chunk size, or what is left of the declared size for the last part.
+        if part_number < session.totalParts:
+            return session.chunkSizeBytes
+        return max(0, session.size - (session.totalParts - 1) * session.chunkSizeBytes)
 
     async def sign_part(
         self,
@@ -450,7 +676,7 @@ class UploadSessionService:
         self._assert_session_binding(session_data, ctx)
 
         session = UploadSessionRecord(**session_data)
-        if session.status == "aborted":
+        if session.status in ("aborted", "refused"):
             raise errors.upload_aborted()
         if session.status == "completed":
             raise errors.upload_already_completed()
@@ -459,6 +685,18 @@ class UploadSessionService:
 
         if part_number < 1 or part_number > session.totalParts:
             raise errors.invalid_part_number()
+        part_limit = self._max_part_bytes(session, part_number)
+        content_length = _integral(content_length)
+        # Zero only for the empty part of a zero-byte upload.
+        if (
+            isinstance(content_length, bool)
+            or not isinstance(content_length, int)
+            or content_length < 0
+            or (content_length == 0 and part_limit != 0)
+        ):
+            raise errors.invalid_request("contentLength must be a positive integer", {"field": "contentLength"})
+        if content_length > part_limit:
+            raise errors.part_too_large(part_number, part_limit)
 
         if session.uploadMode == "proxy":
             return {
@@ -500,7 +738,7 @@ class UploadSessionService:
         self._assert_session_binding(session_data, ctx)
 
         session = UploadSessionRecord(**session_data)
-        if session.status == "aborted":
+        if session.status in ("aborted", "refused"):
             raise errors.upload_aborted()
         if session.status == "completed":
             raise errors.upload_already_completed()
@@ -508,6 +746,12 @@ class UploadSessionService:
             raise errors.upload_expired()
         if part_number < 1 or part_number > session.totalParts:
             raise errors.invalid_part_number()
+        size = _integral(size)
+        if isinstance(size, bool) or not isinstance(size, int) or size < 0:
+            raise errors.invalid_request("size must be a non-negative integer", {"field": "size"})
+        part_limit = self._max_part_bytes(session, part_number)
+        if size > part_limit:
+            raise errors.part_too_large(part_number, part_limit)
 
         existing = await self.db.find_one(
             model="uploadParts",
@@ -535,12 +779,7 @@ class UploadSessionService:
         )
 
         if session.status == "pending":
-            await self.db.update(
-                model="uploadSessions",
-                where=[{"field": "uploadSessionId", "operator": "eq", "value": upload_session_id}],
-                data={"status": "in_progress"},
-                namespace=self.namespace,
-            )
+            await self._set_status_if(upload_session_id, "pending", "in_progress")
 
         self.events.emit(
             "part.recorded",
@@ -566,7 +805,7 @@ class UploadSessionService:
             raise errors.no_supported_upload_mode()
 
         etag = hashlib.md5(data).hexdigest()
-        if session.status == "aborted":
+        if session.status in ("aborted", "refused"):
             raise errors.upload_aborted()
         if session.status == "completed":
             raise errors.upload_already_completed()
@@ -574,6 +813,9 @@ class UploadSessionService:
             raise errors.upload_expired()
         if part_number < 1 or part_number > session.totalParts:
             raise errors.invalid_part_number()
+        part_limit = self._max_part_bytes(session, part_number)
+        if len(data) > part_limit:
+            raise errors.part_too_large(part_number, part_limit)
 
         existing = await self.db.find_one(
             model="uploadParts",
@@ -612,6 +854,9 @@ class UploadSessionService:
                 async for chunk in stream:
                     payload.write(chunk)
 
+            stitched_size = payload.tell()
+            if stitched_size != session.size:
+                raise errors.upload_size_mismatch(session.size, stitched_size)
             payload.seek(0)
             await self.storage.put_object(
                 key=session.storageKey,
@@ -626,6 +871,151 @@ class UploadSessionService:
                 await self.storage.delete_object(key=part_key, target=storage_target)
             except Exception:
                 pass
+
+    @staticmethod
+    def _key_is_session_owned(session: "UploadSessionRecord", session_data: Dict[str, Any]) -> bool:
+        """Whether the session's storage key contains its own version ID, so no other session shares it."""
+        version_id = session.completionVersionId
+        return bool(version_id) and version_id is not None and version_id in session.storageKey
+
+    async def _finalize_upload_storage(
+        self,
+        session: "UploadSessionRecord",
+        session_data: Dict[str, Any],
+        upload_session_id: str,
+        storage_target: str,
+    ) -> None:
+        """Checks the recorded parts and finalizes the session's object, verifying its stored size."""
+        parts_data = await self.db.find_many(
+            model="uploadParts",
+            where=[{"field": "uploadSessionId", "operator": "eq", "value": upload_session_id}],
+            namespace=self.namespace,
+        )
+        if len(parts_data) != session.totalParts:
+            raise errors.upload_incomplete()
+        uploaded_size = sum(int(part.get("size") or 0) for part in parts_data)
+        if uploaded_size != session.size:
+            raise errors.upload_size_mismatch(session.size, uploaded_size)
+
+        owned = self._key_is_session_owned(session, session_data)
+        if not owned and session.uploadMode == "multipart-signed-url":
+            # A multipart session from before per-version keys: finalizing
+            # consumes its upload ID, and its key alone can't prove a later retry
+            # that the object there is its own, so it restarts instead.
+            await self._mark_aborted(upload_session_id)
+            raise errors.invalid_request(
+                "This upload must be restarted: it was started before this server version",
+                {"reason": "legacy multipart session"},
+            )
+        if not owned:
+            # A session from before per-version keys may share its key with a
+            # published version; finalizing would overwrite that version's bytes.
+            referencing = await self.db.find_many(
+                model="fileVersions",
+                where=[{"field": "storageKey", "operator": "eq", "value": session.storageKey}],
+                namespace=self.namespace,
+            )
+            if referencing:
+                await self._mark_aborted(upload_session_id)
+                raise errors.invalid_request(
+                    "This upload must be restarted: its storage key is in use by a published version",
+                    {"reason": "shared storage key"},
+                )
+
+        if session.uploadMode == "multipart-signed-url":
+            parts = sorted(parts_data, key=lambda p: p["partNumber"])
+            completion: Any = None
+            try:
+                completion = await self.storage.complete_multipart_upload(
+                    key=session.storageKey,
+                    upload_id=session.storageUploadId,
+                    parts=[{"partNumber": p["partNumber"], "etag": p["etag"]} for p in parts],
+                    target=storage_target,
+                )
+            except Exception:
+                # A retry after an earlier call finalized the upload (and then
+                # failed, for example at the size check below) finds the upload
+                # ID consumed. A session-owned key holding an object is that
+                # finalized upload, and the size check below decides.
+                if not owned or await self._stored_size(session.storageKey, storage_target, None) is None:
+                    raise
+
+            # The client reports part sizes; the stored object is what counts.
+            actual = await self._stored_size(session.storageKey, storage_target, completion)
+            if actual is None:
+                raise errors.FileFnError(
+                    "FILEFN_STORAGE_ERROR",
+                    "The stored upload's size could not be read, so it was not published",
+                    502,
+                    {"uploadSessionId": upload_session_id},
+                )
+            if actual != session.size:
+                # Refused first, so a retry never reaches storage again and the
+                # expiry sweep knows a finalized, unpublished object is left;
+                # once that (session-owned) object is deleted it is aborted.
+                await self._set_status(upload_session_id, "refused")
+                try:
+                    await self.storage.delete_object(key=session.storageKey, target=storage_target)
+                    await self._set_status(upload_session_id, "aborted")
+                except Exception:
+                    # The session stays refused: the sweep finishes the cleanup,
+                    # and the caller still learns why the upload was refused.
+                    pass
+                raise errors.upload_size_mismatch(session.size, actual)
+        elif session.uploadMode == "proxy":
+            await self._finalize_proxy_upload(session, parts_data)
+
+    async def _set_status_if(self, upload_session_id: str, expected: str, status: str) -> None:
+        """Moves the session to `status` only while it is still `expected` (never over a terminal state)."""
+        where = [
+            {"field": "uploadSessionId", "operator": "eq", "value": upload_session_id},
+            {"field": "status", "operator": "eq", "value": expected},
+        ]
+        update_many = getattr(self.db, "update_many", None)
+        if callable(update_many):
+            await update_many(model="uploadSessions", where=where, data={"status": status}, namespace=self.namespace)
+            return
+        try:
+            await self.db.update(model="uploadSessions", where=where, data={"status": status}, namespace=self.namespace)
+        except Exception as error:
+            if type(error).__name__ != "NotFoundError":
+                raise
+
+    async def _mark_aborted(self, upload_session_id: str) -> None:
+        await self._set_status(upload_session_id, "aborted")
+
+    async def _set_status(self, upload_session_id: str, status: str) -> None:
+        await self.db.update(
+            model="uploadSessions",
+            where=[{"field": "uploadSessionId", "operator": "eq", "value": upload_session_id}],
+            data={"status": status},
+            namespace=self.namespace,
+        )
+
+    async def _stored_size(self, key: str, target: str, completion: Any) -> Optional[int]:
+        """The stored object's size: stat_object, else the completion result, else get_object; None if unreadable."""
+
+        def size_of(value: Any) -> Optional[int]:
+            size = value.get("size") if isinstance(value, dict) else getattr(value, "size", None)
+            return size if isinstance(size, int) and not isinstance(size, bool) else None
+
+        stat_object = getattr(self.storage, "stat_object", None)
+        if callable(stat_object):
+            try:
+                return size_of(await stat_object(key=key, target=target))
+            except NotImplementedError:
+                pass
+            except Exception:
+                return None
+        if completion is not None and size_of(completion) is not None:
+            return size_of(completion)
+        get_object = getattr(self.storage, "get_object", None)
+        if callable(get_object):
+            try:
+                return size_of(await get_object(key=key, target=target))
+            except Exception:
+                return None
+        return None
 
     async def complete_session(self, upload_session_id: str, ctx: Any) -> Dict[str, str]:
         session_data = await self._get_session_data(upload_session_id)
@@ -643,161 +1033,171 @@ class UploadSessionService:
                 "versionId": completion_version_id,
             }
 
-        if self._is_expired(session.expiresAt):
-            raise errors.upload_expired()
+        # An aborted session (including one refused for a size mismatch) never
+        # reaches storage again.
+        if session.status in ("aborted", "refused"):
+            raise errors.upload_aborted()
 
-        if session.fileId and self.file_write_checker:
-            if not await self.file_write_checker.can_write_file(session.fileId, ctx):
-                raise errors.forbidden({"fileId": session.fileId, "operation": "replace"})
+        file_id = session.fileId or f"file_{secrets.token_urlsafe(12)}"
+        # The version allocated at init (its ID is in the key); sessions created
+        # before that get a fresh one.
+        version_id = session.completionVersionId or f"ver_{secrets.token_urlsafe(12)}"
 
-        parts_data = await self.db.find_many(
-            model="uploadParts",
-            where=[{"field": "uploadSessionId", "operator": "eq", "value": upload_session_id}],
-            namespace=self.namespace,
-        )
-        if len(parts_data) != session.totalParts:
-            raise errors.upload_incomplete()
-        uploaded_size = sum(int(part.get("size") or 0) for part in parts_data)
-        if uploaded_size != session.size:
-            raise errors.upload_size_mismatch(session.size, uploaded_size)
+        # A retry after an attempt that wrote this version and then failed (for
+        # example on the session update below) finds the version already
+        # published. It touches no storage (the parts may be gone, or the object
+        # deduplicated away) and only finishes the session. Version IDs are unique.
+        published: Optional[Dict[str, Any]] = None
+        if session.completionVersionId:
+            published = await self.db.find_one(
+                model="fileVersions",
+                where=[{"field": "versionId", "operator": "eq", "value": version_id}],
+                namespace=self.namespace,
+            )
+            if published and published.get("fileId") != file_id:
+                published = None
+
+        # A published version only needs its session finished, even after the
+        # session expired (the file is live); anything else is checked first.
+        if not published:
+            if self._is_expired(session.expiresAt):
+                raise errors.upload_expired()
+            if session.fileId and self.file_write_checker:
+                if not await self.file_write_checker.can_write_file(session.fileId, ctx):
+                    raise errors.forbidden({"fileId": session.fileId, "operation": "replace"})
 
         policy = self.policies.get(session.policy)
         storage_target = resolve_storage_target(policy)
 
-        if session.uploadMode == "multipart-signed-url":
-            parts = sorted(parts_data, key=lambda p: p["partNumber"])
-            await self.storage.complete_multipart_upload(
-                key=session.storageKey,
-                upload_id=session.storageUploadId,
-                parts=[{"partNumber": p["partNumber"], "etag": p["etag"]} for p in parts],
-                target=storage_target,
-            )
-        elif session.uploadMode == "proxy":
-            await self._finalize_proxy_upload(session, parts_data)
+        if not published:
+            await self._finalize_upload_storage(session, session_data, upload_session_id, storage_target)
 
         now_str = datetime.now(timezone.utc).isoformat()
-        file_id = session.fileId or f"file_{secrets.token_urlsafe(12)}"
-        version_id = f"ver_{secrets.token_urlsafe(12)}"
         metadata = session_data.get("metadata") or {}
 
-        final_storage_key = session.storageKey
-        checksum_sha256_base64: Optional[str] = None
-        if self.dedup and self.dedup.is_enabled():
-            dedup_res = await self.dedup.compute_and_check_duplicate(
-                session.storageKey,
-                session.tenantId,
-                storage_target,
-                self.storage,
+        if published:
+            final_storage_key = cast(str, published.get("storageKey") or session.storageKey)
+            checksum_sha256_base64: Optional[str] = published.get("checksumSha256Base64")
+        else:
+            final_storage_key = session.storageKey
+            checksum_sha256_base64 = None
+            if self.dedup and self.dedup.is_enabled():
+                dedup_res = await self.dedup.compute_and_check_duplicate(
+                    session.storageKey,
+                    session.tenantId,
+                    storage_target,
+                    self.storage,
+                )
+                checksum_sha256_base64 = dedup_res.checksumSha256Base64
+                if dedup_res.isDuplicate and dedup_res.existingStorageKey:
+                    final_storage_key = dedup_res.existingStorageKey
+                    if final_storage_key != session.storageKey:
+                        try:
+                            await self.storage.delete_object(key=session.storageKey, target=storage_target)
+                        except Exception:
+                            # Best effort: the duplicate's own object is no longer referenced.
+                            pass
+
+            existing_file = await self.db.find_one(
+                model="files",
+                where=[{"field": "fileId", "operator": "eq", "value": file_id}],
+                namespace=self.namespace,
             )
-            checksum_sha256_base64 = dedup_res.checksumSha256Base64
-            if dedup_res.isDuplicate and dedup_res.existingStorageKey:
-                final_storage_key = dedup_res.existingStorageKey
-                if final_storage_key != session.storageKey:
+
+            def refuse_replace() -> None:
+                # The finalized object is left in place: without a completion fence
+                # another call for this session may still be publishing it, so
+                # deleting it here could remove a published version's bytes.
+                raise errors.forbidden({"fileId": file_id, "operation": "replace"})
+
+            if existing_file and existing_file.get("currentVersionId") != version_id:
+                # Another completion created the file meanwhile: replacing it needs
+                # write access to that row, checked now (FILE-30 F-02).
+                if self.file_write_checker and not await self.file_write_checker.can_write_file(file_id, ctx):
+                    refuse_replace()
+
+            if existing_file:
+                # Conditional on the row that was authorized: a row deleted or
+                # replaced since is not overwritten.
+                # A single conditional UPDATE where the adapter has one (update_many
+                # returns the row count); a zero-row or not-found result is refused.
+                conditional_update = getattr(self.db, "update_many", None) or self.db.update
+                current = existing_file
+                updated = None
+                # A concurrent authorized replacement may advance the row between the
+                # read and the update: reload, re-authorize and try again (bounded).
+                for _ in range(3):
                     try:
-                        await self.storage.delete_object(key=session.storageKey, target=storage_target)
-                    except Exception:
-                        pass
-
-        existing_file = await self.db.find_one(
-            model="files",
-            where=[{"field": "fileId", "operator": "eq", "value": file_id}],
-            namespace=self.namespace,
-        )
-
-        def refuse_replace() -> None:
-            # The finalized object is left in place: without a completion fence
-            # another call for this session may still be publishing it, so
-            # deleting it here could remove a published version's bytes.
-            raise errors.forbidden({"fileId": file_id, "operation": "replace"})
-
-        if existing_file and existing_file.get("currentVersionId") != version_id:
-            # Another completion created the file meanwhile: replacing it needs
-            # write access to that row, checked now (FILE-30 F-02).
-            if self.file_write_checker and not await self.file_write_checker.can_write_file(file_id, ctx):
-                refuse_replace()
-
-        if existing_file:
-            # Conditional on the row that was authorized: a row deleted or
-            # replaced since is not overwritten.
-            # A single conditional UPDATE where the adapter has one (update_many
-            # returns the row count); a zero-row or not-found result is refused.
-            conditional_update = getattr(self.db, "update_many", None) or self.db.update
-            current = existing_file
-            updated = None
-            # A concurrent authorized replacement may advance the row between the
-            # read and the update: reload, re-authorize and try again (bounded).
-            for _ in range(3):
-                try:
-                    updated = await conditional_update(
+                        updated = await conditional_update(
+                            model="files",
+                            where=[
+                                {"field": "fileId", "operator": "eq", "value": file_id},
+                                {"field": "currentVersionId", "operator": "eq", "value": current.get("currentVersionId")},
+                            ],
+                            data={
+                                "currentVersionId": version_id,
+                                "size": session.size,
+                                "mimeType": session.mimeType,
+                                "metadata": metadata,
+                                "updatedAt": now_str,
+                            },
+                            namespace=self.namespace,
+                        )
+                    except NotFoundError:
+                        # Only a missing row counts as losing it; other errors propagate.
+                        updated = None
+                    if updated:
+                        break
+                    current = await self.db.find_one(
                         model="files",
-                        where=[
-                            {"field": "fileId", "operator": "eq", "value": file_id},
-                            {"field": "currentVersionId", "operator": "eq", "value": current.get("currentVersionId")},
-                        ],
-                        data={
-                            "currentVersionId": version_id,
-                            "size": session.size,
-                            "mimeType": session.mimeType,
-                            "metadata": metadata,
-                            "updatedAt": now_str,
-                        },
+                        where=[{"field": "fileId", "operator": "eq", "value": file_id}],
                         namespace=self.namespace,
                     )
-                except NotFoundError:
-                    # Only a missing row counts as losing it; other errors propagate.
-                    updated = None
-                if updated:
-                    break
-                current = await self.db.find_one(
+                    if not current:
+                        break
+                    if self.file_write_checker and not await self.file_write_checker.can_write_file(file_id, ctx):
+                        break
+                if not updated:
+                    refuse_replace()
+            else:
+                try:
+                    await self.db.create(
                     model="files",
-                    where=[{"field": "fileId", "operator": "eq", "value": file_id}],
+                    data={
+                        "fileId": file_id,
+                        "currentVersionId": version_id,
+                        "ownerId": session.ownerId,
+                        "tenantId": session.tenantId,
+                        "visibility": getattr(policy, "visibility", "private"),
+                        "policy": session.policy,
+                        "mimeType": session.mimeType,
+                        "size": session.size,
+                        "name": session.fileName,
+                        "metadata": metadata,
+                        "createdAt": now_str,
+                        "updatedAt": now_str,
+                    },
                     namespace=self.namespace,
-                )
-                if not current:
-                    break
-                if self.file_write_checker and not await self.file_write_checker.can_write_file(file_id, ctx):
-                    break
-            if not updated:
-                refuse_replace()
-        else:
-            try:
-                await self.db.create(
-                model="files",
+                    )
+                except DuplicateKeyError:
+                    # Another completion created this file ID first (its unique key):
+                    # this one may not publish over it. Other errors propagate.
+                    refuse_replace()
+
+            await self.db.create(
+                model="fileVersions",
                 data={
+                    "versionId": version_id,
                     "fileId": file_id,
-                    "currentVersionId": version_id,
-                    "ownerId": session.ownerId,
-                    "tenantId": session.tenantId,
-                    "visibility": getattr(policy, "visibility", "private"),
-                    "policy": session.policy,
+                    "storageKey": final_storage_key,
                     "mimeType": session.mimeType,
                     "size": session.size,
-                    "name": session.fileName,
-                    "metadata": metadata,
+                    "checksumSha256Base64": checksum_sha256_base64,
+                    "tenantId": session.tenantId,
                     "createdAt": now_str,
-                    "updatedAt": now_str,
                 },
                 namespace=self.namespace,
-                )
-            except DuplicateKeyError:
-                # Another completion created this file ID first (its unique key):
-                # this one may not publish over it. Other errors propagate.
-                refuse_replace()
-
-        await self.db.create(
-            model="fileVersions",
-            data={
-                "versionId": version_id,
-                "fileId": file_id,
-                "storageKey": final_storage_key,
-                "mimeType": session.mimeType,
-                "size": session.size,
-                "checksumSha256Base64": checksum_sha256_base64,
-                "tenantId": session.tenantId,
-                "createdAt": now_str,
-            },
-            namespace=self.namespace,
-        )
+            )
 
         await self.db.update(
             model="uploadSessions",
@@ -858,6 +1258,10 @@ class UploadSessionService:
 
         if session.status == "completed":
             raise errors.upload_already_completed()
+        # A refused session keeps that status: the expiry sweep still has its
+        # unpublished object to delete.
+        if session.status == "refused":
+            return
 
         policy = self.policies.get(session.policy)
         storage_target = resolve_storage_target(policy)
@@ -884,18 +1288,15 @@ class UploadSessionService:
             except Exception:
                 pass
 
-        await self.db.update(
-            model="uploadSessions",
-            where=[{"field": "uploadSessionId", "operator": "eq", "value": upload_session_id}],
-            data={"status": "aborted"},
-            namespace=self.namespace,
-        )
+        # Only from the state read above: a completion that refused (or
+        # finished) the session meanwhile keeps its state.
+        await self._set_status_if(upload_session_id, session.status, "aborted")
 
     async def garbage_collect_expired_sessions(self) -> Dict[str, int]:
         now = datetime.now(timezone.utc)
         sessions: List[Dict[str, Any]] = []
         seen_session_ids: set[str] = set()
-        for status in ("pending", "in_progress", "aborted", "expired"):
+        for status in ("pending", "in_progress", "aborted", "refused", "expired"):
             status_rows = await self.db.find_many(
                 model="uploadSessions",
                 where=[{"field": "status", "operator": "eq", "value": status}],
@@ -927,6 +1328,20 @@ class UploadSessionService:
                 continue
 
             session = UploadSessionRecord(**session_data)
+
+            # A completion that published its version but failed to write
+            # `completed` is left for the client's retry, which finishes it
+            # through the normal path (quota, upload event, processing): the
+            # file is live, so the session must not be swept.
+            if session.status in ("pending", "in_progress") and session.completionVersionId:
+                published = await self.db.find_one(
+                    model="fileVersions",
+                    where=[{"field": "versionId", "operator": "eq", "value": session.completionVersionId}],
+                    namespace=self.namespace,
+                )
+                if published and published.get("fileId") and (not session.fileId or published.get("fileId") == session.fileId):
+                    continue
+
             policy = self.policies.get(session.policy)
             storage_target = resolve_storage_target(policy)
 
@@ -939,6 +1354,16 @@ class UploadSessionService:
                     )
                 except Exception:
                     pass
+
+            # A refused session finalized an object that was never published (it
+            # failed the size check) and whose delete failed. Its key is its own
+            # (only session-owned keys are finalized), so the object is deleted
+            # here; until that succeeds, the session row stays for the next sweep.
+            if session.status == "refused":
+                try:
+                    await self.storage.delete_object(key=session.storageKey, target=storage_target)
+                except Exception:
+                    continue
 
             parts = await self.db.find_many(
                 model="uploadParts",
@@ -957,12 +1382,19 @@ class UploadSessionService:
                 where=[{"field": "uploadSessionId", "operator": "eq", "value": session.uploadSessionId}],
                 namespace=self.namespace,
             )
-            await self.db.delete(
+            # Only while the row is still in the state this sweep read: a
+            # completion that refused or finished it meanwhile keeps it (a refused
+            # one for the next sweep).
+            removed = await self.db.delete_many(
                 model="uploadSessions",
-                where=[{"field": "uploadSessionId", "operator": "eq", "value": session.uploadSessionId}],
+                where=[
+                    {"field": "uploadSessionId", "operator": "eq", "value": session.uploadSessionId},
+                    {"field": "status", "operator": "eq", "value": session.status},
+                ],
                 namespace=self.namespace,
             )
-            deleted_sessions += 1
+            if removed:
+                deleted_sessions += 1
 
         return {
             "deletedSessions": deleted_sessions,

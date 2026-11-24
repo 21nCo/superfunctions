@@ -49,6 +49,7 @@ class ErrorCodes:
     PERMISSION_NOT_FOUND = 'FILEFN_PERMISSION_NOT_FOUND'
     PROCESSING_ENQUEUE_FAILED = 'FILEFN_PROCESSING_ENQUEUE_FAILED'
     INVALID_REQUEST = 'FILEFN_INVALID_REQUEST'
+    PART_TOO_LARGE = 'FILEFN_PART_TOO_LARGE'
 
 def auth_required() -> FileFnError:
     return FileFnError(ErrorCodes.AUTH_REQUIRED, 'Authentication required', 401)
@@ -167,3 +168,11 @@ def offline_unsupported() -> FileFnError:
 
 def invalid_request(message: str, details: Optional[Dict[str, Any]] = None) -> FileFnError:
     return FileFnError(ErrorCodes.INVALID_REQUEST, message, 400, details)
+
+def part_too_large(part_number: int, max_bytes: int) -> FileFnError:
+    return FileFnError(
+        ErrorCodes.PART_TOO_LARGE,
+        'Upload part is larger than the session allows for it',
+        413,
+        {'partNumber': part_number, 'maxBytes': max_bytes},
+    )
