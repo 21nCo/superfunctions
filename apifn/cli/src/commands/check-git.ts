@@ -403,8 +403,9 @@ function discoveryEntries(dir: string): string {
       const own = stats ? `${stats.dev}:${stats.ino}>${followed?.dev}:${followed?.ino}` : "-";
       if (!followed || depth > 2) return own;
       if (followed.isDirectory()) return `${own}>${id(path.join(file, "commondir"), depth + 1)}`;
+      if (!followed.isFile()) return own; // never read a FIFO or device
       const text = readFileSync(file, "utf8");
-      const named = path.basename(file) === "commondir" ? text.replace(/\r?\n$/, "") : /^gitdir: (.+)\r?\n?$/.exec(text)?.[1];
+      const named = path.basename(file) === "commondir" ? text.replace(/\r?\n$/, "") : /^gitdir: ([^]+?)\r?\n?$/.exec(text)?.[1];
       const target = named === undefined ? null : path.resolve(path.dirname(file), named);
       return `${own}:${followed.ctimeNs}:${text}` + (target ? `>${id(target, depth + 1)}` : "");
     } catch {
@@ -414,7 +415,7 @@ function discoveryEntries(dir: string): string {
   const ids: string[] = [];
   for (let at = realpathSync.native(dir); ; at = path.dirname(at)) {
     ids.push(id(path.join(at, ".git")));
-    if (path.dirname(at) === at) return ids.join("/");
+    if (ids.at(-1) !== "-" || path.dirname(at) === at) return ids.join("/"); // git stops at the first .git
   }
 }
 

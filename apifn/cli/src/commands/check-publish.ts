@@ -410,7 +410,7 @@ function removeTemp(staged: Staged): string | null {
 
 /** Right before a restore or removal: the held inode's content identity (a link's change time moves when
  * the shared destination is renamed over), its bytes, its state unchanged across that read, then its name in that state. */
-function backupVerified(staged: Staged): boolean {
+function backupVerified(staged: Staged): FileState | false {
   const made = staged.backupState;
   const fd = staged.backupFd;
   if (staged.backup === undefined || !made || fd === undefined || !dirsHold(staged)) return false; // never made: not this run's
@@ -420,7 +420,7 @@ function backupVerified(staged: Staged): boolean {
   // An incomplete copy (its write failed) is never restored: its unchanged state is all that is checked.
   const intact = staged.linked ? typeof staged.digest === "string" && digestOf(fd) === staged.digest : staged.previous === undefined || holdsBytes(fd, staged.previous);
   const read = stateOf(fstatSync(fd, BIG)); // an edit, even one restoring the mtime, changes the change time
-  return intact && sameState(read, was) && sameState(currentState(staged.backup), read);
+  return intact && sameState(read, was) && sameState(currentState(staged.backup), read) && read; // the verified state
 }
 
 /** The SHA-256 of the file open as `fd`, read from its start; null when it cannot be read through `fd`
@@ -717,11 +717,13 @@ function install(staged: Staged, hook: PublishHook | undefined, verify: Verify):
   backUp(staged);
   verify(staged);
   hook?.("rename", staged.destination);
-  if (staged.backup !== undefined && !backupVerified(staged)) throw changed(staged); // read first: never replace without a restorable backup
+  const verified = staged.backup !== undefined && backupVerified(staged); // read first: never replace without a restorable backup
+  if (staged.backup !== undefined && !verified) throw changed(staged);
   if (!placeHolds(staged) || !sameState(currentState(staged.destination), expectedBeforeRename(staged))) {
     throw changed(staged);
   }
   if (!sameState(currentState(staged.temp as string), staged.installed as FileState)) throw changed(staged);
+  if (verified && !sameState(currentState(staged.backup as string), verified)) throw changed(staged);
   renameSync(staged.temp as string, staged.destination);
   staged.temp = undefined;
   staged.published = true;
@@ -762,12 +764,13 @@ function rollBack(staged: Staged, hook: PublishHook | undefined): string | null 
   }
   if (staged.backup) {
     // Verified right before the rename: a backup swapped or edited since is never installed.
-    if (!backupVerified(staged)) {
+    const verified = backupVerified(staged);
+    if (!verified) {
       return `${staged.backup}, apifn check's backup of ${staged.destination}, changed or is gone, so ${staged.destination} was left with the bytes apifn check wrote and the backup was left as it is.`;
     }
     // The destination again after the backup's read: one replaced meanwhile is left as it is.
     if (!sameState(currentState(staged.destination), staged.installed as FileState)) return `${staged.destination} changed after apifn check wrote it, so it was left as it is. Its previous bytes are in ${staged.backup}.`;
-    if (!sameState(currentState(staged.backup), stateOf(fstatSync(staged.backupFd as number, BIG)))) return `${staged.backup}, apifn check's backup of ${staged.destination}, changed, so both were left as they are.`;
+    if (!sameState(currentState(staged.backup), verified)) return `${staged.backup}, apifn check's backup of ${staged.destination}, changed, so both were left as they are.`;
     renameSync(staged.backup, staged.destination);
   } else {
     unlinkSync(staged.destination);

@@ -2933,7 +2933,7 @@ describe("apifn check: the router module is the one file loaded (round 4)", () =
     await writeFile(path.join(dir, "router.mjs"), 'export const __esModule = true;\nexport default { default() {}, getRoutes() { return [{ meta: { operationId: "nativeEsm" } }]; } };\n');
     // A default router's unused, throwing `router` getter is never read, and the loaded module is never evaluated again.
     // A named router beside a default object whose `default` getter throws: the default is never unwrapped.
-    await writeFile(path.join(dir, "named.mjs"), 'export const router = { getRoutes() { return [{ meta: { operationId: "nativeNamed" } }]; } };\nexport default { get default() { throw new Error("unused default"); } };\n');
+    await writeFile(path.join(dir, "named.mjs"), 'export const __esModule = true;\nexport const router = { getRoutes() { return [{ meta: { operationId: "nativeNamed" } }]; } };\nexport default { get default() { throw new Error("unused default"); } };\n');
     await writeFile(path.join(dir, "getter.mjs"), 'globalThis.loads = (globalThis.loads ?? 0) + 1;\nexport default { get router() { throw new Error("unused getter"); }, getRoutes() { return [{ meta: { operationId: `nativeGetter${globalThis.loads}` } }]; } };\n');
     const loader = pathToFileURL(path.join(import.meta.dirname, "..", "src", "utils", "router-loader.ts")).href;
     const script = `const { loadRouterModule } = await import(${JSON.stringify(loader)});\nfor (const file of ["./router.cjs", "./router.mjs", "./named.mjs", "./getter.mjs"]) { const { router } = await loadRouterModule(file, ${JSON.stringify(dir)}); console.log(router.getRoutes()[0].meta.operationId); }`;
@@ -4741,6 +4741,19 @@ describe("apifn check: git ignores inherited repository selectors (API-25 round 
       expect(existsSync(path.join(service, "report.md"))).toBe(false);
     });
   }
+
+  it.skipIf(POSIX_ONLY)("an unrelated .git FIFO above the repository is never read: the baseline is compared (PR round 3 delta)", async () => {
+    const parent = await tempDir("apifn-check-fifo-parent-");
+    execFileSync("mkfifo", [path.join(parent, ".git")]);
+    const root = path.join(parent, "repo");
+    await mkdir(root);
+    git(root, "init", "-q");
+    await writeFile(path.join(root, "spec.yml"), "openapi: 3.1.0\n");
+    git(root, "add", "-A");
+    git(root, "commit", "-q", "-m", "spec");
+    const baseline = readSpecAtRef("HEAD", "spec.yml", path.join(realpathSync(root), "spec.yml"), root);
+    expect(baseline.text).toBe("openapi: 3.1.0\n");
+  });
 
   it.skipIf(POSIX_ONLY)("a repository whose path holds a line feed still supplies the baseline (PR round 3 delta)", async () => {
     const root = path.join(await tempDir("apifn-check-newline-"), "repo\nline");
