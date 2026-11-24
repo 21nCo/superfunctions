@@ -1063,11 +1063,6 @@ function mapDodoSubscriptionState(payload: Record<string, unknown>): BillFnVerif
   };
 }
 
-/**
- * Whether a payment is a one-time purchase or charges one or more subscriptions. Any subscription id, a non-empty
- * `subscription_ids` or `is_multi_subscription` means a subscription charge. One-time only when Dodo says so: a
- * `null` `subscription_id`, or (Dodo may omit that optional field) an empty `subscription_ids` list.
- */
 /** Whether a payment names a subscription it charges (as opposed to only flagging `is_multi_subscription`). */
 function hasDodoPaymentSubscriptionId(payment: Record<string, unknown>): boolean {
   return (
@@ -1076,6 +1071,11 @@ function hasDodoPaymentSubscriptionId(payment: Record<string, unknown>): boolean
   );
 }
 
+/**
+ * Whether a payment is a one-time purchase or charges one or more subscriptions. Any subscription id, a non-empty
+ * `subscription_ids` or `is_multi_subscription` means a subscription charge. One-time only when Dodo says so: a
+ * `null` `subscription_id`, or (Dodo may omit that optional field) an empty `subscription_ids` list.
+ */
 function classifyDodoPayment(payment: Record<string, unknown>): 'one_time' | 'subscription' | 'unknown' {
   const subscriptionIds = Array.isArray(payment.subscription_ids) ? payment.subscription_ids : undefined;
   if (
