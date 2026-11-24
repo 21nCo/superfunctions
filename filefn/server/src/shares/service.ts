@@ -243,7 +243,7 @@ export function createSharesService(config: SharesServiceConfig) {
       current = reread;
     }
     throw new errors.FileFnError(
-      errors.ErrorCodes.SHARE_DOWNLOADS_EXCEEDED,
+      errors.ErrorCodes.SHARE_DOWNLOAD_CONFLICT,
       'Too many concurrent downloads of this share link; retry',
       409,
       { retryable: true },
