@@ -217,12 +217,12 @@ jobs:
 
       # Turbo's task cache (SFNS-312). Every run records the current task hashes before any task runs. A pull request
       # replays each task whose Turbo inputs are unchanged, then prunes the restored entries whose hash is not current
-      # and saves its entry, even when a task failed. Every other run (a push, the nightly run, a manual run) replays
-      # nothing, because the release CI gate needs every task run on the release commit: it sets the restored entries
-      # aside, runs every selected task while Turbo writes the cache, then merges back the set-aside entries for current
-      # hashes the run did not rewrite (scripts/turbo-cache-merge.mjs), so the entry it saves, which pull requests
-      # restore, holds every task and not only those the run selected. It saves only when every step passed, so a
-      # failed run leaves the last complete entry in place. `--cache=local:w` is not used for this: each step would
+      # and saves its entry, even when a task failed, unless a task changed a tracked file. Every other run (a push,
+      # the nightly run, a manual run) replays nothing, because the release CI gate needs every task run on the release
+      # commit: it sets the restored entries aside, runs every selected task while Turbo writes the cache, then merges
+      # back the set-aside entries for current hashes the run did not rewrite (scripts/turbo-cache-merge.mjs), so the
+      # entry it saves, which pull requests restore, holds every task and not only those the run selected. It saves
+      # only when every step passed, so a failed run leaves the last complete entry in place. `--cache=local:w` is not used for this: each step would
       # then rebuild every `^build` instead of reading the Build step's results. The Node major and the job are in the
       # key, so another Node version or job never reuses an entry.
       - name: Turbo cache key
@@ -285,15 +285,18 @@ jobs:
 
       # A replayed task restores only its declared outputs. A task that rewrites a tracked file, such as a generated
       # source or doc a later task checks, would pass when it runs and fail when it is replayed, so a run fails when any
-      # task left a tracked file changed, and a push saves no cache entry then: commit the regenerated file (SFNS-312).
+      # task left a tracked file changed, and then no run, a pull request included, merges or saves a cache entry: an
+      # entry hashed from the stale file would let a later run replay the task and pass. Commit the regenerated file
+      # (SFNS-312). When this check passes, a pull request still saves its entry if a task failed.
       - name: Check that no task changed a tracked file
+        id: turbo-cache-check
         if: ${{ !cancelled() && steps.turbo-cache-prepare.outcome == 'success' }}
         run: node scripts/turbo-cache-merge.mjs --check-clean
 
       - name: Merge and prune the Turbo cache
         id: turbo-cache-merge
         if: >-
-          ${{ steps.turbo-cache-prepare.outcome == 'success' &&
+          ${{ steps.turbo-cache-prepare.outcome == 'success' && steps.turbo-cache-check.outcome == 'success' &&
           (success() || (github.event_name == 'pull_request' && !cancelled())) }}
         run: |
           if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
@@ -305,8 +308,8 @@ jobs:
 
       - name: Save Turbo cache
         if: >-
-          ${{ !cancelled() && steps.turbo-cache-merge.outcome == 'success' &&
-          steps.turbo-cache-restore.outputs.cache-hit != 'true' }}
+          ${{ !cancelled() && steps.turbo-cache-check.outcome == 'success' &&
+          steps.turbo-cache-merge.outcome == 'success' && steps.turbo-cache-restore.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .turbo/cache
@@ -382,15 +385,17 @@ jobs:
       - name: Test
         run: ./node_modules/.bin/turbo run test --concurrency=1 ${{ needs.plan.outputs.devfn_test_filters }}
 
-      # As in the JavaScript job: the Test step's `^build` tasks are replayed too.
+      # As in the JavaScript job: the Test step's `^build` tasks are replayed too, so a changed tracked file fails the
+      # run and no run merges or saves a cache entry.
       - name: Check that no task changed a tracked file
+        id: turbo-cache-check
         if: ${{ !cancelled() && steps.turbo-cache-prepare.outcome == 'success' }}
         run: node scripts/turbo-cache-merge.mjs --check-clean
 
       - name: Merge and prune the Turbo cache
         id: turbo-cache-merge
         if: >-
-          ${{ steps.turbo-cache-prepare.outcome == 'success' &&
+          ${{ steps.turbo-cache-prepare.outcome == 'success' && steps.turbo-cache-check.outcome == 'success' &&
           (success() || (github.event_name == 'pull_request' && !cancelled())) }}
         run: |
           if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
@@ -402,8 +407,8 @@ jobs:
 
       - name: Save Turbo cache
         if: >-
-          ${{ !cancelled() && steps.turbo-cache-merge.outcome == 'success' &&
-          steps.turbo-cache-restore.outputs.cache-hit != 'true' }}
+          ${{ !cancelled() && steps.turbo-cache-check.outcome == 'success' &&
+          steps.turbo-cache-merge.outcome == 'success' && steps.turbo-cache-restore.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .turbo/cache
