@@ -42,6 +42,8 @@ import {
   type McpFnClientProfilesOptions,
   type McpFnResolvedClientProfile,
 } from "./client-profiles.js";
+import { randomUUID } from "node:crypto";
+
 import { errorResult, isMcpFnClientSafeError, McpFnError, McpFnClientProfileError, McpFnValidationError, McpFnOutputValidationError } from "./errors.js";
 import { assertMcpAppContracts } from "./apps.js";
 import { createManifest, type CreateManifestOptions } from "./manifest.js";
@@ -87,7 +89,8 @@ export interface McpFnServerOptions<TContext> extends CreateManifestOptions {
    * error other than `McpFnError`, `McpError` or a thrown plain
    * `{ code, message }` object, or such an error from a resource, prompt,
    * completion or subscription handler. The client sees a generic message
-   * with the same `errorId`. Failures of this sink are ignored.
+   * with the same `errorId`. The sink is not awaited and its failures are
+   * ignored.
    */
   onError?: (input: {
     error: unknown;
@@ -320,8 +323,18 @@ export class McpFnServer<TContext = undefined> {
   }
 
   private installHandlers(): void {
+    // Every request handler withholds unexpected error text (context
+    // factories, visibility hooks, task creation and registry handlers alike);
+    // McpFnError and McpError pass through unchanged.
+    const protocol = this.protocol;
+    const register = protocol.setRequestHandler.bind(protocol);
+    const handlers = {
+      setRequestHandler: ((schema: unknown, handler: (request: { method: string }, extra: unknown) => Promise<unknown>) =>
+        register(schema as never, ((request: { method: string }, extra: unknown) =>
+          this.withheldProtocolErrors(request.method, () => handler(request, extra))) as never)) as typeof protocol.setRequestHandler,
+    };
     if (this.capabilities.tools) {
-      this.protocol.setRequestHandler(
+      handlers.setRequestHandler(
         ListToolsRequestSchema,
         async (request, extra) => {
           const tools = this.registry.listTools();
@@ -351,7 +364,7 @@ export class McpFnServer<TContext = undefined> {
           };
         },
       );
-      this.protocol.setRequestHandler(
+      handlers.setRequestHandler(
         CallToolRequestSchema,
         async (request, extra) => {
           const context = await this.contextFactory(extra);
@@ -549,7 +562,7 @@ export class McpFnServer<TContext = undefined> {
     }
 
     if (this.capabilities.resources) {
-      this.protocol.setRequestHandler(
+      handlers.setRequestHandler(
         ListResourcesRequestSchema,
         async (request, extra) => {
           const context = await this.contextFactory(extra);
@@ -565,7 +578,7 @@ export class McpFnServer<TContext = undefined> {
           };
         },
       );
-      this.protocol.setRequestHandler(
+      handlers.setRequestHandler(
         ListResourceTemplatesRequestSchema,
         async (request) => {
           const result = page(
@@ -579,7 +592,7 @@ export class McpFnServer<TContext = undefined> {
           };
         },
       );
-      this.protocol.setRequestHandler(
+      handlers.setRequestHandler(
         ReadResourceRequestSchema,
         async (request, extra) => {
           const context = await this.contextFactory(extra);
@@ -588,7 +601,7 @@ export class McpFnServer<TContext = undefined> {
         },
       );
       if (this.capabilities.resources.subscribe) {
-        this.protocol.setRequestHandler(
+        handlers.setRequestHandler(
           SubscribeRequestSchema,
           async (request, extra) => {
             const uri = request.params.uri;
@@ -600,8 +613,9 @@ export class McpFnServer<TContext = undefined> {
             }
             pending.add(token);
             try {
-              if (!this.resourceSubscriptions.has(uri) &&
-                  this.resourceSubscriptions.size + this.pendingResourceSubscriptions.size > this.maxResourceSubscriptions) {
+              // Count each URI once, whether subscribed, pending or both.
+              const held = new Set([...this.resourceSubscriptions, ...this.pendingResourceSubscriptions.keys()]);
+              if (!this.resourceSubscriptions.has(uri) && held.size > this.maxResourceSubscriptions) {
                 throw new McpError(ErrorCode.InvalidRequest, "Too many resource subscriptions");
               }
               const context = await this.contextFactory(extra);
@@ -619,7 +633,7 @@ export class McpFnServer<TContext = undefined> {
             }
           },
         );
-        this.protocol.setRequestHandler(
+        handlers.setRequestHandler(
           UnsubscribeRequestSchema,
           async (request, extra) => {
             // Stop delivery first: a client that asked to unsubscribe gets no
@@ -642,7 +656,7 @@ export class McpFnServer<TContext = undefined> {
     }
 
     if (this.capabilities.prompts) {
-      this.protocol.setRequestHandler(
+      handlers.setRequestHandler(
         ListPromptsRequestSchema,
         async (request) => {
           const result = page(
@@ -656,7 +670,7 @@ export class McpFnServer<TContext = undefined> {
           };
         },
       );
-      this.protocol.setRequestHandler(
+      handlers.setRequestHandler(
         GetPromptRequestSchema,
         async (request, extra) => {
           const context = await this.contextFactory(extra);
@@ -672,7 +686,7 @@ export class McpFnServer<TContext = undefined> {
     }
 
     if (this.capabilities.completions) {
-      this.protocol.setRequestHandler(
+      handlers.setRequestHandler(
         CompleteRequestSchema,
         async (request, extra) => {
           const context = await this.contextFactory(extra);
@@ -698,23 +712,27 @@ export class McpFnServer<TContext = undefined> {
     error: unknown,
     method: string,
     tool?: string,
+    options: { plainObjects?: boolean } = {},
   ): Promise<string | undefined> {
-    if (this.serverOptions.exposeErrors === true || isMcpFnClientSafeError(error)) return undefined;
-    const errorId = globalThis.crypto.randomUUID();
-    try {
-      await this.serverOptions.onError?.({ error, errorId, method, ...(tool === undefined ? {} : { tool }) });
-    } catch {
-      // Observational sink: its failure must not change the response.
+    if (this.serverOptions.exposeErrors === true || isMcpFnClientSafeError(error, options)) return undefined;
+    const errorId = randomUUID();
+    const sink = this.serverOptions.onError;
+    // Observational: not awaited, so a slow sink cannot hold up the response,
+    // and its failure cannot change it.
+    if (sink) {
+      void Promise.resolve()
+        .then(() => sink({ error, errorId, method, ...(tool === undefined ? {} : { tool }) }))
+        .catch(() => undefined);
     }
     return errorId;
   }
 
-  /** Run a resource/prompt/completion handler, withholding unexpected error text. */
+  /** Run a protocol handler, withholding unexpected error text. */
   private async withheldProtocolErrors<T>(method: string, run: () => Promise<T>): Promise<T> {
     try {
       return await run();
     } catch (error) {
-      const errorId = await this.reportWithheldError(error, method);
+      const errorId = await this.reportWithheldError(error, method, undefined, { plainObjects: false });
       if (errorId === undefined) throw error;
       throw new McpError(ErrorCode.InternalError, "Internal error", { errorId });
     }

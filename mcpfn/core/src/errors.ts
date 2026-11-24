@@ -69,9 +69,23 @@ export interface McpFnErrorResultOptions {
   errorId?: string;
 }
 
-/** Whether errorResult() returns this thrown value's own message to the client. */
-export function isMcpFnClientSafeError(error: unknown): boolean {
-  return error instanceof McpFnError || error instanceof McpError || isCodedPlainObject(error);
+/**
+ * An SDK McpError, including one built from another copy of the SDK (this
+ * package bundles its own, so instanceof alone misses an application's).
+ */
+export function isMcpErrorLike(error: unknown): error is Error & { code: number } {
+  return error instanceof McpError ||
+    (error instanceof Error && error.name === "McpError" && typeof (error as { code?: unknown }).code === "number");
+}
+
+/**
+ * Whether this thrown value's own message reaches the client. Tool results
+ * also keep thrown plain `{ code, message }` objects; protocol handlers keep
+ * only McpFnError and McpError.
+ */
+export function isMcpFnClientSafeError(error: unknown, options: { plainObjects?: boolean } = {}): boolean {
+  return error instanceof McpFnError || isMcpErrorLike(error) ||
+    (options.plainObjects !== false && isCodedPlainObject(error));
 }
 
 function isCodedPlainObject(error: unknown): error is { code: string; message: string } {
@@ -82,42 +96,23 @@ function isCodedPlainObject(error: unknown): error is { code: string; message: s
     "message" in error && typeof error.message === "string";
 }
 
+function ownDetails(error: object): unknown {
+  return "details" in error ? error.details : "metadata" in error ? error.metadata : undefined;
+}
+
 function verbatimError(error: unknown): { code: string; message: string; details?: unknown } {
-  return error instanceof McpFnError
-    ? { code: error.code, message: error.message, details: error.details }
-    : error instanceof Error &&
-        "code" in error &&
-        typeof error.code === "string"
-      ? {
-          code: error.code,
-          message: error.message,
-          details:
-            "details" in error
-              ? error.details
-              : "metadata" in error
-                ? error.metadata
-                : undefined,
-        }
-      : error &&
-          typeof error === "object" &&
-          "code" in error &&
-          typeof error.code === "string" &&
-          "message" in error &&
-          typeof error.message === "string"
-        ? {
-            code: error.code,
-            message: error.message,
-            details:
-              "details" in error
-                ? error.details
-                : "metadata" in error
-                  ? error.metadata
-                  : undefined,
-          }
-        : {
-            code: "MCPFN_TOOL_ERROR",
-            message: error instanceof Error ? error.message : String(error),
-          };
+  if (error instanceof McpFnError) return { code: error.code, message: error.message, details: error.details };
+  if (
+    error && typeof error === "object" &&
+    "code" in error && typeof error.code === "string" &&
+    "message" in error && typeof error.message === "string"
+  ) {
+    return { code: error.code, message: error.message, details: ownDetails(error) };
+  }
+  return {
+    code: "MCPFN_TOOL_ERROR",
+    message: error instanceof Error ? error.message : String(error),
+  };
 }
 
 export function errorResult(

@@ -1138,10 +1138,10 @@ export class McpFnRegistry<TContext = undefined> {
       if (!prompt)
         throw new McpFnValidationError(`Unknown MCP prompt: ${ref.name}`);
       const completers = prompt.definition.complete;
+      if (!completers || !Object.hasOwn(completers, argument.name)) return empty;
+      // Called as a method so a completer keeps its `this`.
       return (
-        (completers && Object.hasOwn(completers, argument.name)
-          ? completers[argument.name]
-          : undefined)?.(
+        completers[argument.name]?.(
           argument.value,
           completionContext,
           context,
@@ -1159,10 +1159,9 @@ export class McpFnRegistry<TContext = undefined> {
       );
     }
     const completers = template.definition.complete;
+    if (!completers || !Object.hasOwn(completers, argument.name)) return empty;
     return (
-      (completers && Object.hasOwn(completers, argument.name)
-        ? completers[argument.name]
-        : undefined)?.(
+      completers[argument.name]?.(
         argument.value,
         completionContext,
         context,
