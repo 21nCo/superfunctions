@@ -101,6 +101,8 @@ The dispatcher answers any request it is handed, so the app's `WKScriptMessageHa
 
 ## Embedded web example
 
+The example assumes the bridge web view never leaves the trusted origin: its `WKNavigationDelegate` refuses main-frame navigations elsewhere. Under that assumption the check below is enough, since the page that receives a delivery is always the trusted one.
+
 ```swift
 import BillFnStoreKit
 import BillFnWebViewBridgeHost
@@ -112,8 +114,8 @@ let dispatcher = BillFnBridgeDispatcher(
     storeKit: storeKit // the BillFnStoreKit above
 )
 
-// Forward each processed transaction to the web view as a transaction.updated event,
-// only while the web view still shows the trusted page.
+// Forward each processed transaction to the web view as a transaction.updated event.
+// The web view stays on the trusted origin (see above), so the trusted page receives it.
 Task {
     for await outcome in storeKit.outcomes {
         guard isTrustedPage(webView.url) else { continue } // your trusted-origin check
@@ -122,7 +124,7 @@ Task {
 }
 ```
 
-Outgoing messages carry transaction identifiers, the app account token and billing state, so they need the same care as incoming ones: post `transaction.updated` events and the replies to bridge requests only to the trusted main-frame document, and drop a reply when the page that asked has navigated away. The simplest way is to keep the bridge web view on the trusted origin (refuse other navigations in `WKNavigationDelegate`); a web view that may navigate elsewhere should stop delivering bridge messages when it does.
+Outgoing messages carry transaction identifiers, the app account token and billing state, so they need the same care as incoming ones: post `transaction.updated` events and the replies to bridge requests only to the trusted main-frame document, and drop a reply when the page that asked has navigated away. The simplest way is to keep the bridge web view on the trusted origin (refuse other navigations in `WKNavigationDelegate`). A web view that may navigate elsewhere cannot rely on a `webView.url` check before sending, because a delivery can land after the page changes: it should stop delivering bridge messages as soon as a navigation starts, and deliver only to a document it has confirmed as trusted.
 
 The full sample lives in [embedded-web.swift](https://github.com/21nCo/super-functions/blob/dev/billfn/swift/examples/embedded-web.swift).
 
