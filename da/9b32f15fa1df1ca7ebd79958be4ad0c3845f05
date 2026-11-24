@@ -1,0 +1,25 @@
+filefn/docs/content/docs/features/share-links.md
+  s_b841cebdcfad95::t_1506893fdc86bf 63
+filefn/docs/static/llms-full.txt
+  s_b841cebdcfad95::t_cd49cfbdb72ef6 4387
+filefn/python/filefn/server/shares/service.py
+  s_b841cebdcfad95::t_f87e874fdf9146 305,307-310,343
+filefn/python/tests/test_downloads.py
+  s_b841cebdcfad95::t_2d71196098c81a 901,912-916
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "da9b32f15fa1df1ca7ebd79958be4ad0c3845f05",
+  "prompts": {},
+  "sessions": {
+    "s_b841cebdcfad95": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "436f4738-d86e-44e1-82bc-c432f9aaabf3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
