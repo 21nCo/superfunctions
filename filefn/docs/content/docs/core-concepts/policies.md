@@ -69,7 +69,7 @@ When a client calls `POST /upload/init` with `policy: "public-image"`:
 - If `size > maxSizeBytes` → `FILEFN_POLICY_MAX_SIZE_EXCEEDED`.
 - If a `quota` is configured and would be exceeded → `FILEFN_QUOTA_EXCEEDED`.
 
-`contentTypes` accepts wildcards: `"image/*"`, `"video/*"`. The matcher is the same `matchesContentType` you can call yourself from `@filefn/server`.
+`contentTypes` accepts wildcards: `"image/*"`, `"video/*"`. The matcher is the same `matchesContentType` you can call yourself from `@filefn/server`. `"image/*"` does not match `image/svg+xml`, because an SVG can run script; list `"image/svg+xml"` explicitly to accept SVG uploads.
 
 ## Storage path layout
 

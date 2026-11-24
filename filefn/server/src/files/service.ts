@@ -5,6 +5,7 @@ import type { FileFnEventEmitter } from '../events.js';
 import type { Logger } from '../observability/logger.js';
 import { FILE_DELETED_CLAIM, type QuotaProvider } from '../upload-sessions/service.js';
 import { resolveArtifactStorageTarget, resolveStorageTarget, type PolicyRegistry } from '../policies.js';
+import { signedDownloadConstraints } from '../download-headers.js';
 import * as errors from '../errors.js';
 import { createFileDeletedEvent } from '../events.js';
 import { artifactSourceOf } from '../processing/client-artifacts.js';
@@ -341,6 +342,7 @@ export function createFileService(config: FileServiceConfig) {
         key: artifact.storageKey,
         target: artifactStorageTarget,
         expiresInSeconds: signedUrlTtlSeconds,
+        ...signedDownloadConstraints(artifact.mimeType),
       });
       return { url: result.url, headers: result.headers };
     }
@@ -491,6 +493,7 @@ export function createFileService(config: FileServiceConfig) {
           key: version.storageKey,
           target: storageTarget,
           expiresInSeconds: signedUrlTtlSeconds,
+          ...signedDownloadConstraints(version.mimeType),
         });
         return { url: result.url, headers: result.headers };
       }
@@ -506,6 +509,7 @@ export function createFileService(config: FileServiceConfig) {
       stream: ReadableStream;
       contentType: string;
       size: number;
+      fileName: string;
     }> {
       const file = await this.getFile(fileId, ctx);
       const targetVersionId = versionId || file.currentVersionId;
@@ -521,6 +525,7 @@ export function createFileService(config: FileServiceConfig) {
         stream: stream as unknown as ReadableStream,
         contentType: version.mimeType,
         size: version.size,
+        fileName: file.name,
       };
     },
 
@@ -984,6 +989,19 @@ export function createFileService(config: FileServiceConfig) {
       });
 
       return { versions };
+    },
+
+    /** Whether the principal may read an existing file: the authorizer or a read grant. Missing files read as false. */
+    async canReadFile(fileId: string, ctx: FileProviderContext): Promise<boolean> {
+      const file = await db.findOne<FileRecord>({
+        model: 'files',
+        where: [{ field: 'fileId', operator: 'eq', value: fileId }],
+        namespace,
+      });
+      if (!file) {
+        return false;
+      }
+      return canReadFile(file, ctx, await getReadableGrantFileIds(ctx));
     },
 
     async canWriteFile(fileId: string, ctx: FileProviderContext): Promise<boolean> {

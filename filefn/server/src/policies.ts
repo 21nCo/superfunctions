@@ -128,6 +128,11 @@ export function matchesContentType(pattern: string, mimeType: string): boolean {
 
   if (normalizedPattern.endsWith('/*')) {
     const prefix = normalizedPattern.slice(0, normalizedPattern.length - 1);
+    // SVG is a document that can run script, not a raster image: `image/*`
+    // does not admit it. A policy that wants SVG names `image/svg+xml`.
+    if (prefix === 'image/' && normalizedMimeType.split(';', 1)[0].trim() === 'image/svg+xml') {
+      return false;
+    }
     return normalizedMimeType.startsWith(prefix);
   }
 

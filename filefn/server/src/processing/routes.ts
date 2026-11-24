@@ -4,6 +4,7 @@ import type { AuthConfig } from '../auth.js';
 import type { RateLimiter } from '@superfunctions/middleware';
 import { resolvePrincipal } from '../auth.js';
 import * as errors from '../errors.js';
+import { buildDownloadHeaders } from '../download-headers.js';
 
 export interface ProcessingRoutesConfig {
   service: ProcessingService;
@@ -215,10 +216,7 @@ export function createProcessingRoutes(config: ProcessingRoutesConfig) {
 
         return new Response(result.stream, {
           status: 200,
-          headers: {
-            'Content-Type': result.contentType,
-            'Content-Length': result.size.toString(),
-          },
+          headers: buildDownloadHeaders(result),
         });
       } catch (error) {
         if (error instanceof errors.FileFnError) {

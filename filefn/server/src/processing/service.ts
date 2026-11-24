@@ -5,6 +5,7 @@ import type { FileProviderContext } from '@superfunctions/files';
 import type { FileFnEventEmitter } from '../events.js';
 import { resolveArtifactStorageTarget, resolveStorageTarget, type PolicyRegistry } from '../policies.js';
 import type { Logger } from '../observability/logger.js';
+import { signedDownloadConstraints } from '../download-headers.js';
 import * as errors from '../errors.js';
 import { createBackgroundScheduler, type BackgroundScheduler } from '../runtime.js';
 import { findReferencedStorageRefs, parseStorageRef, storageRef } from '../storage-references.js';
@@ -201,6 +202,13 @@ export interface ProcessingServiceConfig {
    * Without it only the file's owner may.
    */
   writeChecker?: { canWriteFile(fileId: string, ctx: FileProviderContext): Promise<boolean> };
+  /**
+   * Decides who may read a file (list and download artifacts, trigger
+   * processing). FileFn passes its file service, so the configured authorizer
+   * and grants decide exactly as they do for the file itself. Without it the
+   * service falls back to owner, visibility and read grants.
+   */
+  readChecker?: { canReadFile(fileId: string, ctx: FileProviderContext): Promise<boolean> };
 }
 
 /** A client-supplied artifact for one file version. */
@@ -603,6 +611,7 @@ export function createProcessingService(config: ProcessingServiceConfig) {
     enabled = true,
     maxFileBytes = 50 * 1024 * 1024,
     writeChecker,
+    readChecker,
   } = config;
   const background = config.background ?? createBackgroundScheduler(undefined, logger);
 
@@ -657,6 +666,16 @@ export function createProcessingService(config: ProcessingServiceConfig) {
 
     if (!file) {
       throw errors.notFound('File');
+    }
+
+    // The file service's read check applies the host's authorizer, so an
+    // artifact (often the whole content: OCR text, previews, transcodes) is
+    // never readable by someone the authorizer refuses the file to.
+    if (readChecker) {
+      if (await readChecker.canReadFile(fileId, ctx)) {
+        return file;
+      }
+      throw errors.forbidden();
     }
 
     if (canReadByVisibility(file, ctx)) {
@@ -2155,6 +2174,7 @@ export function createProcessingService(config: ProcessingServiceConfig) {
           key: artifact.storageKey,
           target: artifactStorageTarget,
           expiresInSeconds: 900,
+          ...signedDownloadConstraints(artifact.mimeType),
         });
         return { url: result.url, headers: result.headers };
       }
@@ -2181,6 +2201,7 @@ export function createProcessingService(config: ProcessingServiceConfig) {
           key: artifact.storageKey,
           target: artifactStorageTarget,
           expiresInSeconds: 900,
+          ...signedDownloadConstraints(artifact.mimeType),
         });
         return { url: result.url, headers: result.headers };
       }

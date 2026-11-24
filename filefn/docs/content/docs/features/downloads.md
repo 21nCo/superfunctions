@@ -54,6 +54,18 @@ Pass headers through the descriptor when the storage backend requires them:
 
 The bundled clients merge these into the `GET` automatically.
 
+## Response headers on proxied bytes
+
+The `/proxy/...` routes (files, versions, share links and artifacts) serve the type the uploader declared, so FileFn adds headers that keep a browser from running uploaded content on your origin:
+
+- `Content-Disposition: inline` only for types that cannot run script: PNG, JPEG, GIF, WebP, AVIF, BMP, PDF, plain text and common audio and video. Every other type, including HTML and SVG, is `attachment`, with the stored file name.
+- `X-Content-Type-Options: nosniff` on every response.
+- `Content-Security-Policy: sandbox; default-src 'none'; ...` on every response except PDF, which browsers' PDF viewers refuse to render under `sandbox`.
+
+Signed URLs for any other type are minted with a response content type of `application/octet-stream`, so the storage domain downloads them instead of rendering them.
+
+Serving downloads from a separate origin (a dedicated download domain or the storage provider's) is still the stronger option when users upload arbitrary files.
+
 ## Authorization
 
 `auth.resolveSession` is required for `private` and `shared` files. The default `Authorizer` checks ownership and grants. See [Visibility](../core-concepts/visibility) for the matrix.
