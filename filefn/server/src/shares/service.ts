@@ -68,6 +68,25 @@ function generateToken(): string {
 /** Longest `shares.maxTtlSeconds` (100 years), so every expiry stays within years 0001-9999. */
 const MAX_SHARE_TTL_SECONDS = 100 * 365 * 24 * 60 * 60;
 
+// Share rows written before expiries were normalized hold the caller's text,
+// which older servers compared as a string with the current UTC ISO time, so
+// an offset was in effect ignored. The earlier of that reading and the parsed
+// instant applies: no stored link outlives the deadline it had.
+const TRAILING_ZONE = /(?:Z|[+-]\d{2}:?\d{2})$/;
+function shareDeadline(expiresAt: string): number | null {
+  const parsed = parseIsoInstant(expiresAt, 'utc');
+  if (parsed === null) return null;
+  const legacy = parseIsoInstant(expiresAt.replace(TRAILING_ZONE, ''), 'utc');
+  return legacy === null ? parsed : Math.min(parsed, legacy);
+}
+
+/** Whether a share link's `expiresAt` has passed; a malformed value counts as expired. */
+function isShareExpired(expiresAt: string | null | undefined): boolean {
+  if (expiresAt === null || expiresAt === undefined || expiresAt === '') return false;
+  const deadline = shareDeadline(expiresAt);
+  return deadline === null || deadline <= Date.now();
+}
+
 export function createSharesService(config: SharesServiceConfig) {
   const { db, storage, policies, namespace = 'filefn', signedUrlTtlSeconds = 900, options = {} } = config;
   if (
@@ -164,7 +183,7 @@ export function createSharesService(config: SharesServiceConfig) {
       throw errors.shareRevoked();
     }
     // Compared as instants: a stored value that is not an ISO 8601 date-time counts as expired.
-    if (isGrantExpired(share.expiresAt, 'utc')) {
+    if (isShareExpired(share.expiresAt)) {
       throw errors.shareExpired();
     }
     if (share.maxDownloads !== null && share.maxDownloads !== undefined && share.downloads >= share.maxDownloads) {
@@ -255,7 +274,7 @@ export function createSharesService(config: SharesServiceConfig) {
    * left.
    */
   function signedUrlLifetime(share: FileShareRecord): number | null {
-    const expiresAtMs = share.expiresAt ? parseIsoInstant(share.expiresAt, 'utc') : null;
+    const expiresAtMs = share.expiresAt ? shareDeadline(share.expiresAt) : null;
     if (expiresAtMs === null) return signedUrlTtlSeconds;
     const remaining = Math.floor((expiresAtMs - Date.now()) / 1000);
     return remaining < 1 ? null : Math.min(signedUrlTtlSeconds, remaining);
@@ -391,7 +410,7 @@ export function createSharesService(config: SharesServiceConfig) {
             await releaseDownload(tokenHash, written);
             throw error;
           }
-          if (!after || after.revokedAt || isGrantExpired(after.expiresAt, 'utc')) {
+          if (!after || after.revokedAt || isShareExpired(after.expiresAt)) {
             await releaseDownload(tokenHash, written);
             if (!after) throw errors.shareNotFound();
             throw after.revokedAt ? errors.shareRevoked() : errors.shareExpired();
@@ -401,7 +420,7 @@ export function createSharesService(config: SharesServiceConfig) {
       }
 
       // Only a link that is still valid gets the proxy URL.
-      if (isGrantExpired(share.expiresAt, 'utc')) throw errors.shareExpired();
+      if (isShareExpired(share.expiresAt)) throw errors.shareExpired();
       return {
         url: `/proxy/share-links/${encodeURIComponent(token)}/download`,
         fileName: file.name,
@@ -433,7 +452,7 @@ export function createSharesService(config: SharesServiceConfig) {
           await releaseDownload(tokenHash, written);
           throw error;
         }
-        if (!after || after.revokedAt || isGrantExpired(after.expiresAt, 'utc')) {
+        if (!after || after.revokedAt || isShareExpired(after.expiresAt)) {
           await releaseDownload(tokenHash, written);
           if (!after) throw errors.shareNotFound();
           throw after.revokedAt ? errors.shareRevoked() : errors.shareExpired();

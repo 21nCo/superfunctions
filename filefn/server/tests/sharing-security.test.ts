@@ -390,6 +390,25 @@ describe('share links, grants and JSON routes (FILE-30 F-07, F-08, F-09, F-15)',
     await expect(fileFn.services.shares.downloadViaShareLink(noExpiry.token, {})).rejects.toMatchObject({ code: 'FILEFN_SHARE_EXPIRED' });
   });
 
+  it('keeps the earlier deadline for a legacy share row stored with a zone offset', async () => {
+    const { fileFn, database } = makeFileFn();
+    const file = await upload(fileFn);
+    const link = await fileFn.services.shares.createShareLink({ fileId: file.fileId }, owner);
+    // An hour ago as UTC wall time, written with a -05:00 offset: older servers
+    // compared the text with the UTC ISO time, so this link expired an hour ago,
+    // although the parsed instant is four hours ahead.
+    const wall = new Date(Date.now() - 3_600_000).toISOString().slice(0, 19);
+    for (const expiresAt of [`${wall}-05:00`, `${wall}-0500`]) {
+      await database.updateMany({
+        model: 'fileShares',
+        where: [{ field: 'fileId', operator: 'eq', value: file.fileId }],
+        data: { expiresAt },
+        namespace: 'filefn',
+      });
+      await expect(fileFn.services.shares.downloadViaShareLink(link.token, {})).rejects.toMatchObject({ code: 'FILEFN_SHARE_EXPIRED' });
+    }
+  });
+
   it('signs share URLs after counting, never past the link, and proxies a link in its last second', async () => {
     let signingTakesMs = 0;
     let streaming = true;
