@@ -448,7 +448,7 @@ export class SchemaConverter {
   private readonly listedTypes = new WeakMap<object, readonly ValueKind[]>();
   private readonly literalItems = new WeakMap<object, ReadonlySet<ValueKind>>();
   /** The kinds of the values an `enum` array or a `const` object lists, once per object. */
-  private readonly literalKinds = new Map<"enum" | "const", WeakMap<object, AdmittedKinds>>();
+  private readonly literalKinds = new Map<"enum" | "const", WeakMap<object, AdmittedKinds | OpenApiSkip>>();
   private readonly flags = new Map<DirectionalKeyword, WeakMap<object, boolean>>();
   private readonly reaches = new Map<DirectionalKeyword, WeakMap<object, boolean>>();
   private readonly reaching = new Map<DirectionalKeyword, ReadonlySet<string>>();
@@ -700,12 +700,19 @@ export class SchemaConverter {
   private literals(keyword: "enum" | "const", value: unknown): AdmittedKinds {
     const listed = keyword === "enum" ? documentItems(value as unknown[]) : [value];
     if (typeof value !== "object" || value === null) return this.kindsOfLiterals(listed);
+    // Kept per object, failure included (an irregular array literal), so a shared list is read once.
     const memo = memoFor(this.literalKinds, keyword);
     let kinds = memo.get(value);
     if (kinds === undefined) {
-      kinds = this.kindsOfLiterals(listed);
+      try {
+        kinds = this.kindsOfLiterals(listed);
+      } catch (error) {
+        if (error instanceof OpenApiSkip) memo.set(value, error);
+        throw error;
+      }
       memo.set(value, kinds);
     }
+    if (kinds instanceof OpenApiSkip) throw kinds;
     return kinds;
   }
 

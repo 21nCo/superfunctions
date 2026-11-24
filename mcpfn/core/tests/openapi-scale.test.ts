@@ -124,6 +124,32 @@ describe("fromOpenAPI scale", () => {
     expect(aliased.skipped.map((entry) => [entry.operation.operationId, entry.code])).toEqual([["r", "unresolved-ref"]]);
   });
 
+  it("checks shared security requirements and a shared malformed enum once for 4,000 operations within 2 seconds", () => {
+    // One document-level requirement with 4,000 schemes, inherited by every operation.
+    const requirement = Object.fromEntries(Array.from({ length: 4000 }, (_, index) => [`scheme${index}`, []]));
+    const inherited: Record<string, unknown> = {};
+    for (let index = 0; index < 4000; index += 1) inherited[`/g${index}`] = { get: { operationId: `g${index}`, responses: ok } };
+    let started = performance.now();
+    const secured = fromOpenAPI({ openapi: "3.1.0", security: [requirement], paths: inherited }, { executor: recordingExecutor() });
+    expect(performance.now() - started).toBeLessThan(2000);
+    expect(secured.tools).toHaveLength(4000);
+    expect(secured.tools[0]!.operation.security).toEqual([requirement]);
+    // 4,000 wrappers share one 4,000-entry enum whose last literal is a sparse array: its failure is kept.
+    const sparse: unknown[] = [];
+    sparse[0] = 1;
+    sparse.length = 3;
+    const shared = [...Array.from({ length: 4000 }, (_, index) => index), sparse];
+    const paths: Record<string, unknown> = { "/ok": { get: { operationId: "ok", responses: ok } } };
+    for (let index = 0; index < 4000; index += 1) {
+      paths[`/r${index}`] = { get: { operationId: `r${index}`, responses: { "200": { description: "OK", content: { "application/json": { schema: { $ref: "#/components/schemas/Broken", enum: shared } } } } } } };
+    }
+    started = performance.now();
+    const malformed = fromOpenAPI({ openapi: "3.1.0", paths, components: { schemas: { Broken: { $ref: "#/components/schemas/Missing" } } } }, { executor: recordingExecutor() });
+    expect(performance.now() - started).toBeLessThan(2000);
+    expect(malformed.tools.map((entry) => entry.name)).toEqual(["ok"]);
+    expect(malformed.skipped).toHaveLength(4000);
+  });
+
   it("suffixes 2,000 colliding names within 2 seconds", () => {
     const shared = "o".repeat(128);
     const paths: Record<string, unknown> = {};

@@ -204,9 +204,7 @@ function security(...levels: unknown[]): OpenApiOperation["security"] {
     if (Array.isArray(level)) {
       const requirements = documentItems(level, "invalid-operation").filter(isObject);
       // Scope lists reach the executor and the naming callback as arrays.
-      for (const requirement of requirements) {
-        for (const scopes of Object.values(requirement)) if (Array.isArray(scopes)) documentItems(scopes, "invalid-operation");
-      }
+      for (const requirement of requirements) checkMetadata(requirement, (scopes) => scopes);
       return requirements as Record<string, string[]>[];
     }
   }
@@ -215,10 +213,36 @@ function security(...levels: unknown[]): OpenApiOperation["security"] {
 
 /** Server variables, whose `enum` lists reach the executor and the naming callback as arrays. */
 function checkedVariables(variables: JsonObject): OpenApiServer["variables"] {
-  for (const variable of Object.values(variables)) {
-    if (isObject(variable) && Array.isArray(variable.enum)) documentItems(variable.enum, "invalid-operation");
-  }
+  checkMetadata(variables, (variable) => (isObject(variable) ? variable.enum : undefined));
   return variables as OpenApiServer["variables"];
+}
+
+/** Metadata objects whose member lists were checked, with the failure if one was irregular; shared ones are read once. */
+const checkedMetadataObjects = new WeakMap<object, OpenApiSkip | null>();
+
+/** Check the list `listOf` picks from each member of `metadata` (a security requirement or a variables map), once per object. */
+function checkMetadata(metadata: JsonObject, listOf: (member: unknown) => unknown): void {
+  let failure = checkedMetadataObjects.get(metadata);
+  if (failure === undefined) {
+    failure = null;
+    for (const member of Object.values(metadata)) {
+      const list = listOf(member);
+      if (!Array.isArray(list)) continue;
+      try {
+        documentItems(list, "invalid-operation");
+      } catch (error) {
+        if (!(error instanceof OpenApiSkip)) throw error;
+        failure = error;
+        break;
+      }
+    }
+    checkedMetadataObjects.set(metadata, failure);
+  }
+  if (failure) throw failure;
+}
+
+function optionalSecurity(requirements: OpenApiOperation["security"]): { security?: OpenApiOperation["security"] } {
+  return requirements === undefined ? {} : { security: requirements };
 }
 
 function isJsonMediaType(key: string): boolean {
@@ -332,9 +356,7 @@ class OperationConverter {
       parameters: parameters.map(({ parameter }) => parameter),
       ...(body ? { requestBody: body.info } : {}),
       servers: servers(raw.servers, pathItem.servers, this.document.servers),
-      ...(security(raw.security, this.document.security) !== undefined
-        ? { security: security(raw.security, this.document.security) }
-        : {}),
+      ...optionalSecurity(security(raw.security, this.document.security)),
     };
   }
 
