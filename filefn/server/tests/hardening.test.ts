@@ -46,6 +46,20 @@ describe('FILE-30 low-severity hardening (F-13, F-14, F-16, F-18, F-24)', () => 
     return fileFn.services.uploads.completeSession(session.uploadSessionId, ctx, session.uploadSessionToken);
   }
 
+  // A FileFn from a fresh module (so the process-wide sweep warning has not
+  // been given yet) whose logger warns through `warn`.
+  async function freshFileFnWithWarn(warn: (...args: unknown[]) => unknown) {
+    vi.resetModules();
+    const fresh = await import('../src/index.js');
+    return fresh.createFileFn({
+      database: memoryAdapter(),
+      storage: createLocalStorageAdapter({ rootDir }),
+      namespace: 'filefn',
+      policies: [{ name: 'docs', contentTypes: ['text/plain'], visibility: 'private' }],
+      observability: { logger: { info() {}, warn, error() {}, debug() {} } } as never,
+    });
+  }
+
   it('passes roles from auth to the authorizer, scoped to the file tenant (F-18)', async () => {
     const database = memoryAdapter();
     const { fileFn } = makeFileFn({ database, authorizer: createDefaultAuthorizer({ db: database, namespace: 'filefn' }) });
@@ -239,16 +253,7 @@ describe('FILE-30 low-severity hardening (F-13, F-14, F-16, F-18, F-24)', () => 
     const warn = vi.fn(() => {
       throw new Error('sink down');
     });
-    // A fresh module, so the process-wide warning has not been given yet.
-    vi.resetModules();
-    const fresh = await import('../src/index.js');
-    const fileFn = fresh.createFileFn({
-      database: memoryAdapter(),
-      storage: createLocalStorageAdapter({ rootDir }),
-      namespace: 'filefn',
-      policies: [{ name: 'docs', contentTypes: ['text/plain'], visibility: 'private' }],
-      observability: { logger: { info() {}, warn, error() {}, debug() {} } } as never,
-    });
+    const fileFn = await freshFileFnWithWarn(warn);
     await expect(upload(fileFn as never, { principalId: 'owner', tenantId: 't1' })).resolves.toBeDefined();
     expect(warn).toHaveBeenCalledTimes(1);
   });
@@ -257,15 +262,7 @@ describe('FILE-30 low-severity hardening (F-13, F-14, F-16, F-18, F-24)', () => 
     const warn = vi.fn(async () => {
       throw new Error('sink down');
     });
-    vi.resetModules();
-    const fresh = await import('../src/index.js');
-    const fileFn = fresh.createFileFn({
-      database: memoryAdapter(),
-      storage: createLocalStorageAdapter({ rootDir }),
-      namespace: 'filefn',
-      policies: [{ name: 'docs', contentTypes: ['text/plain'], visibility: 'private' }],
-      observability: { logger: { info() {}, warn, error() {}, debug() {} } } as never,
-    });
+    const fileFn = await freshFileFnWithWarn(warn);
     const unhandled: unknown[] = [];
     const onUnhandled = (reason: unknown) => unhandled.push(reason);
     process.on('unhandledRejection', onUnhandled);

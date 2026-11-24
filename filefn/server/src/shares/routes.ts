@@ -3,21 +3,15 @@ import type { FileFnPrincipal, AuthConfig } from '../auth.js';
 import type { RateLimiter } from '@superfunctions/middleware';
 import { resolvePrincipal } from '../auth.js';
 import { FileFnError, authRequired, rateLimited } from '../errors.js';
-import { rateLimitSubject, type RateLimitClientKey } from '../rate-limit-key.js';
+import { rateLimitSubject, type RateLimitCategory, type RateLimitClientKey } from '../rate-limit-key.js';
 
 export interface SharesRouteContext {
   service: SharesService;
   auth: AuthConfig;
   rateLimiter?: RateLimiter;
   rateLimits?: {
-    shareDownload?: {
-      windowSeconds: number;
-      maxRequests: number;
-    };
-    shareCreate?: {
-      windowSeconds: number;
-      maxRequests: number;
-    };
+    shareDownload?: RateLimitCategory;
+    shareCreate?: RateLimitCategory;
   };
   clientKey?: RateLimitClientKey;
 }

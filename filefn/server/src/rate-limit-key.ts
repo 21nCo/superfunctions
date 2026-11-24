@@ -26,3 +26,9 @@ export async function rateLimitSubject(
   const client = clientKey ? await clientKey(request) : undefined;
   return `anon:${JSON.stringify(client ? [tenant, client] : [tenant])}`;
 }
+
+/** One route category's limit: at most `maxRequests` per `windowSeconds`. */
+export interface RateLimitCategory {
+  windowSeconds: number;
+  maxRequests: number;
+}

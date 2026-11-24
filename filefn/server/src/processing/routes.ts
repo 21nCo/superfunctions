@@ -4,7 +4,7 @@ import type { AuthConfig } from '../auth.js';
 import type { RateLimiter } from '@superfunctions/middleware';
 import { resolvePrincipal } from '../auth.js';
 import * as errors from '../errors.js';
-import { rateLimitSubject, type RateLimitClientKey } from '../rate-limit-key.js';
+import { rateLimitSubject, type RateLimitCategory, type RateLimitClientKey } from '../rate-limit-key.js';
 
 export interface ProcessingRoutesConfig {
   service: ProcessingService;
@@ -15,10 +15,7 @@ export interface ProcessingRoutesConfig {
       windowSeconds: number;
       maxRequests: number;
     };
-    processing?: {
-      windowSeconds: number;
-      maxRequests: number;
-    };
+    processing?: RateLimitCategory;
   };
   clientKey?: RateLimitClientKey;
 }
@@ -99,7 +96,7 @@ export function createProcessingRoutes(config: ProcessingRoutesConfig) {
     request: Request,
     category: string,
     principal: { principalId?: string; tenantId?: string } | null,
-    categoryLimit?: { windowSeconds: number; maxRequests: number },
+    categoryLimit?: RateLimitCategory,
   ): Promise<void> {
     if (!rateLimiter || !categoryLimit) {
       return;

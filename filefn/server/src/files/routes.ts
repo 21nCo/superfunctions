@@ -3,7 +3,7 @@ import type { FileFnPrincipal, AuthConfig } from '../auth.js';
 import type { RateLimiter } from '@superfunctions/middleware';
 import { resolvePrincipal } from '../auth.js';
 import { FileFnError, authRequired, invalidRenderIntent, rateLimited } from '../errors.js';
-import { rateLimitSubject, type RateLimitClientKey } from '../rate-limit-key.js';
+import { rateLimitSubject, type RateLimitCategory, type RateLimitClientKey } from '../rate-limit-key.js';
 
 export interface FileRouteContext {
   service: FileService;
@@ -14,10 +14,7 @@ export interface FileRouteContext {
       windowSeconds: number;
       maxRequests: number;
     };
-    list?: {
-      windowSeconds: number;
-      maxRequests: number;
-    };
+    list?: RateLimitCategory;
   };
   legacyGlobalRateLimit?: boolean;
   clientKey?: RateLimitClientKey;

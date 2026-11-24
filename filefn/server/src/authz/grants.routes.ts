@@ -3,17 +3,14 @@ import type { FileFnPrincipal, AuthConfig } from '../auth.js';
 import { resolvePrincipal } from '../auth.js';
 import { FileFnError, authRequired, rateLimited } from '../errors.js';
 import type { RateLimiter } from '@superfunctions/middleware';
-import { rateLimitSubject, type RateLimitClientKey } from '../rate-limit-key.js';
+import { rateLimitSubject, type RateLimitCategory, type RateLimitClientKey } from '../rate-limit-key.js';
 
 export interface GrantsRouteContext {
   service: GrantsService;
   auth: AuthConfig;
   rateLimiter?: RateLimiter;
   rateLimits?: {
-    grantCreate?: {
-      windowSeconds: number;
-      maxRequests: number;
-    };
+    grantCreate?: RateLimitCategory;
   };
   clientKey?: RateLimitClientKey;
 }
