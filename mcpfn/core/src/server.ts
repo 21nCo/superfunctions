@@ -19,10 +19,6 @@ import {
   ElicitResultSchema,
   ErrorCode,
   GetPromptRequestSchema,
-  isJSONRPCErrorResponse,
-  isJSONRPCNotification,
-  isJSONRPCRequest,
-  isJSONRPCResultResponse,
   ListPromptsRequestSchema,
   ListRootsResultSchema,
   ListResourcesRequestSchema,
@@ -343,6 +339,10 @@ export class McpFnServer<TContext = undefined> {
   // record its subscription: the later unsubscribe wins.
   private readonly pendingResourceSubscriptions = new Map<string, Set<symbol>>();
   private connected = false;
+  // Request handlers of this server still running, and a callback for when
+  // the last one settles (used by createWebStandardHandler's idle tracking).
+  private inFlightRequests = 0;
+  private onRequestsSettled?: () => void;
 
   constructor(options: McpFnServerOptions<TContext>) {
     this.serverOptions = { ...options };
@@ -396,8 +396,23 @@ export class McpFnServer<TContext = undefined> {
   }
 
   private installHandlers(): void {
+    // Count running request handlers, so a session whose tool outlives its
+    // HTTP stream (or is still honouring a cancellation) counts as busy.
+    const register = this.protocol.setRequestHandler.bind(this.protocol);
+    const handlers = {
+      setRequestHandler: ((schema: unknown, handler: (request: unknown, extra: unknown) => Promise<unknown>) =>
+        register(schema as never, (async (request: unknown, extra: unknown) => {
+          this.inFlightRequests += 1;
+          try {
+            return await handler(request, extra);
+          } finally {
+            this.inFlightRequests -= 1;
+            if (this.inFlightRequests === 0) this.onRequestsSettled?.();
+          }
+        }) as never)) as typeof this.protocol.setRequestHandler,
+    };
     if (this.capabilities.tools) {
-      this.protocol.setRequestHandler(
+      handlers.setRequestHandler(
         ListToolsRequestSchema,
         async (request, extra) => {
           const tools = this.registry.listTools();
@@ -427,7 +442,7 @@ export class McpFnServer<TContext = undefined> {
           };
         },
       );
-      this.protocol.setRequestHandler(
+      handlers.setRequestHandler(
         CallToolRequestSchema,
         async (request, extra) => {
           const context = await this.contextFactory(extra);
@@ -623,7 +638,7 @@ export class McpFnServer<TContext = undefined> {
     }
 
     if (this.capabilities.resources) {
-      this.protocol.setRequestHandler(
+      handlers.setRequestHandler(
         ListResourcesRequestSchema,
         async (request, extra) => {
           const context = await this.contextFactory(extra);
@@ -638,7 +653,7 @@ export class McpFnServer<TContext = undefined> {
           };
         },
       );
-      this.protocol.setRequestHandler(
+      handlers.setRequestHandler(
         ListResourceTemplatesRequestSchema,
         async (request) => {
           const result = page(
@@ -652,7 +667,7 @@ export class McpFnServer<TContext = undefined> {
           };
         },
       );
-      this.protocol.setRequestHandler(
+      handlers.setRequestHandler(
         ReadResourceRequestSchema,
         async (request, extra) => {
           const context = await this.contextFactory(extra);
@@ -660,7 +675,7 @@ export class McpFnServer<TContext = undefined> {
         },
       );
       if (this.capabilities.resources.subscribe) {
-        this.protocol.setRequestHandler(
+        handlers.setRequestHandler(
           SubscribeRequestSchema,
           async (request, extra) => {
             const uri = request.params.uri;
@@ -686,7 +701,7 @@ export class McpFnServer<TContext = undefined> {
             }
           },
         );
-        this.protocol.setRequestHandler(
+        handlers.setRequestHandler(
           UnsubscribeRequestSchema,
           async (request, extra) => {
             // Stop delivery first: a client that asked to unsubscribe gets no
@@ -708,7 +723,7 @@ export class McpFnServer<TContext = undefined> {
     }
 
     if (this.capabilities.prompts) {
-      this.protocol.setRequestHandler(
+      handlers.setRequestHandler(
         ListPromptsRequestSchema,
         async (request) => {
           const result = page(
@@ -722,7 +737,7 @@ export class McpFnServer<TContext = undefined> {
           };
         },
       );
-      this.protocol.setRequestHandler(
+      handlers.setRequestHandler(
         GetPromptRequestSchema,
         async (request, extra) => {
           const context = await this.contextFactory(extra);
@@ -737,7 +752,7 @@ export class McpFnServer<TContext = undefined> {
     }
 
     if (this.capabilities.completions) {
-      this.protocol.setRequestHandler(
+      handlers.setRequestHandler(
         CompleteRequestSchema,
         async (request, extra) => {
           const context = await this.contextFactory(extra);
@@ -968,8 +983,6 @@ export class McpFnServer<TContext = undefined> {
       lastUse: number;
       /** HTTP requests and open streams in progress, including initialization. */
       active: number;
-      /** JSON-RPC requests from the client not yet answered. */
-      pending: Set<string | number>;
       /** Close once: run the host's onsessionclosed, then release the server. */
       close: (fromDelete: boolean) => Promise<void>;
     }
@@ -977,12 +990,14 @@ export class McpFnServer<TContext = undefined> {
     // A symbol cannot collide with any principal key a host returns.
     const ANONYMOUS = Symbol("anonymous");
     const sessions = new Map<string, Session>();
-    // Evicted or expired sessions still closing keep their capacity until closed.
+    // Evicted or expired sessions still closing keep their capacity until
+    // closed, and so do admitted sessions whose initialization is finishing.
     const closingSessions = new Set<Session>();
+    const reservedSessions = new Set<Session>();
     let useCounter = 0;
     const sessionNotFound = () =>
       jsonRpcErrorResponse(404, -32001, "Session not found");
-    const busy = (session: Session) => session.active !== 0 || session.pending.size !== 0;
+    const busy = (session: Session) => session.active !== 0 || session.server.inFlightRequests !== 0;
     const closeQuietly = (victims: Session[]) =>
       Promise.all(victims.map((session) => session.close(false).catch(() => undefined)));
     // Take a session out of the table; it counts against capacity until closed.
@@ -1009,15 +1024,19 @@ export class McpFnServer<TContext = undefined> {
         .filter(([, session]) => !busy(session) && now - session.lastActive >= idleTimeoutMs)
         .map(([id, session]) => takeSession(id, session));
     };
-    // Make room for one new session in the same synchronous step that adds
-    // it, so concurrent initializations cannot exceed the limits. Returns the
-    // sessions evicted to make room, or the refusal when every candidate is busy.
-    const admit = (id: string, session: Session): Session[] | Response => {
+    // Reserve room for one new session in a single synchronous step, so
+    // concurrent initializations cannot exceed the limits. Evicted sessions
+    // stay charged (as closing) until their transports are closed, and the
+    // reservation is charged until the session is published or abandoned.
+    // Returns the sessions evicted to make room, or the refusal when every
+    // candidate is busy.
+    const reserve = (session: Session): Session[] | Response => {
       const victims: Session[] = [];
       const count = (match: (candidate: Session) => boolean) => {
         let total = 0;
         for (const candidate of sessions.values()) if (match(candidate)) total += 1;
         for (const candidate of closingSessions) if (match(candidate) && !victims.includes(candidate)) total += 1;
+        for (const candidate of reservedSessions) if (match(candidate)) total += 1;
         return total;
       };
       const restore = () => {
@@ -1042,28 +1061,8 @@ export class McpFnServer<TContext = undefined> {
         }
         victims.push(takeSession(...entry));
       }
-      sessions.set(id, session);
+      reservedSessions.add(session);
       return victims;
-    };
-    // Count client requests until the session answers them, so a tool that
-    // outlives its HTTP stream (closeSSEStream) keeps the session busy.
-    const trackPending = (transport: WebStandardStreamableHTTPServerTransport, pending: Set<string | number>) => {
-      const onmessage = transport.onmessage;
-      transport.onmessage = (message, extra) => {
-        if (isJSONRPCRequest(message)) pending.add(message.id);
-        else if (isJSONRPCNotification(message) && message.method === "notifications/cancelled") {
-          const requestId = (message.params as { requestId?: unknown } | undefined)?.requestId;
-          if (typeof requestId === "string" || typeof requestId === "number") pending.delete(requestId);
-        }
-        onmessage?.(message, extra);
-      };
-      const send = transport.send.bind(transport);
-      transport.send = (message, options) => {
-        if (isJSONRPCResultResponse(message) || isJSONRPCErrorResponse(message)) {
-          if (message.id !== undefined) pending.delete(message.id);
-        }
-        return send(message, options);
-      };
     };
 
     return async (request: Request, handleOptions?: HandleRequestOptions) => {
@@ -1102,7 +1101,6 @@ export class McpFnServer<TContext = undefined> {
       let refusal: Response | undefined;
       let released = false;
       let transport: WebStandardStreamableHTTPServerTransport;
-      const pending = new Set<string | number>();
       const release = async () => {
         if (released) return;
         released = true;
@@ -1147,17 +1145,26 @@ export class McpFnServer<TContext = undefined> {
             lastUse: ++useCounter,
             // The initialize response itself is in progress.
             active: 1,
-            pending,
             close,
           };
-          const admitted = admit(id, session);
-          if (admitted instanceof Response) {
-            refusal = admitted;
+          const victims = reserve(session);
+          if (victims instanceof Response) {
+            refusal = victims;
             throw new Error("Session capacity reached");
           }
+          try {
+            // Victims finish closing before the new session goes live.
+            await closeQuietly(victims);
+            await transportOptions.onsessioninitialized?.(id);
+          } finally {
+            reservedSessions.delete(session);
+          }
+          // Published only once the host accepted it.
           initialized = session;
-          await closeQuietly(admitted);
-          await transportOptions.onsessioninitialized?.(id);
+          sessions.set(id, session);
+          requestServer.onRequestsSettled = () => {
+            if (session.active === 0) session.lastActive = Date.now();
+          };
         },
         // DELETE from the session's own principal.
         onsessionclosed: () => close(true),
@@ -1167,7 +1174,6 @@ export class McpFnServer<TContext = undefined> {
       try {
         await configureRequestServer?.(requestServer);
         await requestServer.connect(transport);
-        trackPending(transport, pending);
         const response = await transport.handleRequest(request, handleOptions);
         if (refusal) {
           await response.body?.cancel().catch(() => undefined);

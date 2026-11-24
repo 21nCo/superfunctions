@@ -214,6 +214,22 @@ describe("createWebStandardHandler session limits (MCP-SEC-04)", () => {
     expect(response.status).toBe(200);
   });
 
+  it("does not keep a session whose onsessioninitialized hook failed", async () => {
+    let fail = true;
+    const { initialize, call } = await setup({
+      maxSessions: 1,
+      onsessioninitialized: () => {
+        if (fail) throw new Error("host refused");
+      },
+    });
+    const refused = await initialize();
+    expect(refused.status).toBeGreaterThanOrEqual(400);
+    fail = false;
+    const accepted = await initialize();
+    expect(accepted.status).toBe(200);
+    expect((await call(accepted.sessionId!)).status).toBe(200);
+  });
+
   it("lets sessions without a principal share one per-principal allowance", async () => {
     const { initialize, call } = await setup({ maxSessionsPerPrincipal: 2 });
     const first = await initialize();
