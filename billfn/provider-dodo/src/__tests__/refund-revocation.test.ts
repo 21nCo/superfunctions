@@ -213,12 +213,17 @@ describe('Dodo refunds and disputes of a one-time purchase', () => {
     expect(await entitlementStatus()).toBe('active');
   });
 
-  it('revokes the purchase when BillFn itself refunds it in full', async () => {
+  it('revokes the purchase BillFn refunds in full once the refund webhook arrives', async () => {
     const { billfn, subject, entitlementStatus } = await purchased();
 
     const refunded = await billfn.refundCharge({ subject, mode: 'full' });
-
     expect(refunded.ok).toBe(true);
+    expect(await entitlementStatus()).toBe('active');
+
+    await billfn.handleWebhook(
+      dodoWebhook('msg_refund_after', event('refund.succeeded', { payload_type: 'Refund', refund_id: 'ref_dodo_lifetime', status: 'succeeded', is_partial: false }))
+    );
+
     expect(await entitlementStatus()).toBe('inactive');
   });
 });

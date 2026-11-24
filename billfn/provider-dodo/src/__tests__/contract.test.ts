@@ -797,23 +797,12 @@ describe('refundCharge -> POST /refunds', () => {
     expect(result).toMatchObject({ operationStatus: 'applied', providerRefundId: recorded.createRefund.response.refund_id });
   });
 
-  it('revokes a one-time purchase when Dodo reports its full refund as succeeded', async () => {
+  it('returns no billing state for a succeeded full refund; its refund.succeeded webhook revokes the purchase', async () => {
     const api = dodoApi({ 'POST /refunds': { ...recorded.createRefund.response, status: 'succeeded', is_partial: false } });
 
     const result = await provider(api.fetchMock).refundCharge?.(
       refundInput({ subscription: subscription({ providerSubscriptionId: undefined, autoRenew: false }) })
     );
-
-    expect(result?.billingState).toMatchObject({ subscriptionStatus: 'canceled', providerChargeId: PAYMENT_ID, autoRenew: false });
-  });
-
-  it.each([
-    ['a pending full refund of a one-time purchase', { status: 'pending' }, { providerSubscriptionId: undefined, autoRenew: false }],
-    ['a succeeded full refund of a subscription charge', { status: 'succeeded' }, {}]
-  ])('returns no billing state for %s', async (_name, answer, patch) => {
-    const api = dodoApi({ 'POST /refunds': { ...recorded.createRefund.response, is_partial: false, ...answer } });
-
-    const result = await provider(api.fetchMock).refundCharge?.(refundInput({ subscription: subscription(patch) }));
 
     expect(result?.billingState).toBeUndefined();
   });
@@ -1088,16 +1077,29 @@ describe('parseWebhook with recorded Dodo payloads', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it('follows the subscription Dodo holds when the refunded charge belongs to one', async () => {
-    const payment = recorded.getSubscriptionPayment.response;
-    const fetchMock = dodoReads({
-      [`/payments/${payment.payment_id}`]: payment,
-      [`/subscriptions/${payment.subscription_id}`]: { ...recorded.getSubscription.response, status: 'cancelled' }
-    });
+  it.each([
+    ['one subscription', recorded.getSubscriptionPayment.response],
+    ['several subscriptions', { ...recorded.getOneTimePayment.response, subscription_ids: ['sub_a', 'sub_b'], is_multi_subscription: true }]
+  ])('leaves a refunded charge of %s to Dodo\'s subscription events', async (_name, payment) => {
+    const fetchMock = dodoReads({ [`/payments/${payment.payment_id}`]: payment });
 
     const event = await parse({ ...refund, data: { ...refund.data, payment_id: payment.payment_id } }, fetchMock);
 
-    expect(event.billingState).toMatchObject({ subscriptionStatus: 'canceled', providerSubscriptionId: payment.subscription_id });
+    expect(event.billingState).toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('links a revocation only through its charge, never through checkout metadata on the refund', async () => {
+    const fetchMock = dodoReads({ [`/payments/${oneTimePayment.payment_id}`]: oneTimePayment });
+
+    const event = await parse(
+      { ...refund, data: { ...refund.data, metadata: { billfn_checkout_session_id: 'chk_someone_else' } } },
+      fetchMock
+    );
+
+    expect(event.checkoutReferenceId).toBeUndefined();
+    expect(event.providerSubscriptionId).toBeUndefined();
+    expect(event.billingState).toMatchObject({ subscriptionStatus: 'canceled', providerChargeId: oneTimePayment.payment_id });
   });
 
   it.each([
@@ -1134,16 +1136,11 @@ describe('parseWebhook with recorded Dodo payloads', () => {
     await expect(parse(refund, fetchMock)).rejects.toMatchObject({ code: 'BILLFN_PROVIDER_ERROR' });
   });
 
-  it('fails the delivery when the subscription read is unusable', async () => {
-    const payment = recorded.getSubscriptionPayment.response;
-    const fetchMock = dodoReads({
-      [`/payments/${payment.payment_id}`]: payment,
-      [`/subscriptions/${payment.subscription_id}`]: { subscription_id: payment.subscription_id }
-    });
+  it('fails the delivery when the payment does not say whether it belongs to a subscription', async () => {
+    const { subscription_id: _omitted, ...unclassified } = oneTimePayment;
+    const fetchMock = dodoReads({ [`/payments/${oneTimePayment.payment_id}`]: unclassified });
 
-    await expect(parse({ ...refund, data: { ...refund.data, payment_id: payment.payment_id } }, fetchMock)).rejects.toMatchObject({
-      code: 'BILLFN_PROVIDER_ERROR'
-    });
+    await expect(parse(refund, fetchMock)).rejects.toMatchObject({ code: 'BILLFN_PROVIDER_ERROR' });
   });
 
   it('dates a revocation when its Dodo read started, not when the refund happened', async () => {
