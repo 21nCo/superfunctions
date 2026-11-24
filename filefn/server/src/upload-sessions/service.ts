@@ -17,6 +17,7 @@ import * as errors from '../errors.js';
 import { createHash, randomBytes } from 'crypto';
 import { generateFileFnId } from '../ids.js';
 import { parseRequestedFileId, SERIALIZED_WAIT_TIMEOUT_MS } from './file-id.js';
+import { assertValidUploadInit, type UploadInitInput } from './input.js';
 import { createFileCommitLock, runFileFnSerialized } from '../files/file-commit-lock.js';
 import { isAnonymousContext } from '../authz/ownership.js';
 import { findReferencedStorageRefs, storageRef } from '../storage-references.js';
@@ -205,18 +206,32 @@ function generateDefaultId(): string {
   return generateFileFnId('upl');
 }
 
-function hashPayload(input: CreateSessionInput, ctx: { principalId?: string; tenantId?: string }): string {
+// Stands in for the metadata in the fingerprint payload, to be replaced by
+// the metadata's JSON text (no field before `md` can hold control characters).
+const METADATA_PLACEHOLDER = '\u0000filefn-metadata\u0000';
+
+function hashPayload(
+  input: CreateSessionInput,
+  ctx: { principalId?: string; tenantId?: string },
+  metadataJson?: string,
+): string {
   const payload = {
     p: input.policy,
     fn: input.fileName,
     s: input.size,
     mt: input.mimeType,
     fid: input.fileId,
-    md: input.metadata,
+    md: metadataJson === undefined ? input.metadata : METADATA_PLACEHOLDER,
     pr: ctx.principalId,
     tn: ctx.tenantId
   };
-  const str = JSON.stringify(payload);
+  let str = JSON.stringify(payload);
+  if (metadataJson !== undefined) {
+    // The metadata as JSON.stringify wrote it from the caller's value (its
+    // property order included), so fingerprints match those made before
+    // metadata was normalized.
+    str = str.replace(`"md":${JSON.stringify(METADATA_PLACEHOLDER)}`, () => `"md":${metadataJson}`);
+  }
   return createHash('sha256').update(str).digest('hex');
 }
 
@@ -1377,6 +1392,54 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       uploadSessionToken?: string;
     }> {
       const warnings: string[] = [];
+      // The route passes the JSON body through unchanged, so check every field
+      // against the contract before it reaches storage keys, quota or the DB.
+      // Read each field once (accessors included, never a spread) before any
+      // caller hook such as metadata.toJSON runs, then validate and use that
+      // same snapshot, with metadata replaced by its checked plain copy.
+      // Metadata is read last and lazily (once), so the scalar fields are
+      // checked before any metadata accessor or hook runs; a metadata accessor
+      // that throws is an invalid request.
+      const source = input;
+      let metadataRead = false;
+      let metadataValue: unknown;
+      const readField = <K extends keyof CreateSessionInput>(field: K): CreateSessionInput[K] => {
+        try {
+          return source[field];
+        } catch {
+          throw errors.invalidRequest(`${String(field)} could not be read`, { field });
+        }
+      };
+      const fields = {
+        policy: readField('policy'),
+        fileName: readField('fileName'),
+        size: readField('size'),
+        mimeType: readField('mimeType'),
+        fileId: readField('fileId'),
+        idempotencyKey: readField('idempotencyKey'),
+        get metadata(): unknown {
+          if (!metadataRead) {
+            metadataRead = true;
+            try {
+              metadataValue = source.metadata;
+            } catch {
+              throw errors.invalidRequest('metadata could not be read', { field: 'metadata' });
+            }
+          }
+          return metadataValue;
+        },
+      };
+      const checked = assertValidUploadInit(fields as unknown as UploadInitInput, { fingerprinted: !isAnonymousContext(ctx) });
+      const checkedMetadataJson = checked.metadataJson;
+      input = {
+        policy: fields.policy,
+        fileName: fields.fileName,
+        size: fields.size,
+        mimeType: fields.mimeType,
+        fileId: fields.fileId,
+        idempotencyKey: fields.idempotencyKey,
+        ...(checked.metadata !== undefined ? { metadata: checked.metadata } : {}),
+      };
       const requestedFileId = parseRequestedFileId(input.fileId as unknown);
 
       // Check idempotency. The stored key is scoped to the caller (owner and
@@ -1390,7 +1453,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         ? scopeIdempotencyKey(input.idempotencyKey, ctx)
         : null;
       if (scopedIdempotencyKey && input.idempotencyKey) {
-        const expectedHash = hashPayload(input, { principalId: ctx.principalId, tenantId: ctx.tenantId });
+        const expectedHash = hashPayload(input, { principalId: ctx.principalId, tenantId: ctx.tenantId }, checkedMetadataJson);
         let existing = await db.findOne<UploadSession>({
           model: 'uploadSessions',
           where: [{ field: 'idempotencyKey', operator: 'eq', value: scopedIdempotencyKey }],
@@ -1592,7 +1655,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
           tenantId: ctx.tenantId || null,
           metadata: input.metadata ?? {},
           idempotencyKey: scopedIdempotencyKey,
-          idempotencyPayloadHash: scopedIdempotencyKey ? hashPayload(input, { principalId: ctx.principalId, tenantId: ctx.tenantId }) : null,
+          idempotencyPayloadHash: scopedIdempotencyKey ? hashPayload(input, { principalId: ctx.principalId, tenantId: ctx.tenantId }, checkedMetadataJson) : null,
           // Only the hash is kept; the token is returned once, below.
           uploadSessionToken: null,
           uploadSessionTokenHash,
