@@ -354,6 +354,8 @@ describe('event prices named outside the provider record', () => {
     await env.openCheckout('enterprise');
 
     await env.deliver({
+      // As the Dodo adapter maps it: a subscription payment names no product from its cart.
+      priceId: undefined,
       providerSubscriptionId: 'sub_mixed',
       providerChargeId: 'pay_mixed',
       billingState: {
@@ -386,5 +388,28 @@ describe('event prices named outside the provider record', () => {
     });
 
     expect((await env.entitlements())?.subscription).toMatchObject({ planKey: 'enterprise' });
+  });
+
+  it('does not let a cart item choose the plan of a payment flagged multi-subscription', async () => {
+    const env = setup();
+    await env.openCheckout('enterprise');
+
+    await env.deliver({
+      providerChargeId: 'pay_multi',
+      billingState: {
+        subscriptionStatus: 'active',
+        checkoutStatus: 'succeeded',
+        providerChargeId: 'pay_multi',
+        autoRenew: false,
+        raw: {
+          is_multi_subscription: true,
+          product_cart: [{ product_id: 'pdt_cheap_not_in_catalog' }, { product_id: 'pdt_starter_month' }],
+          metadata: { billfn_billing_account_id: 'ba_user_attacker' }
+        }
+      },
+      raw: {}
+    });
+
+    expect((await env.entitlements())?.subscription?.planKey).not.toBe('starter');
   });
 });

@@ -1233,8 +1233,11 @@ function readDodoPriceReference(kind: 'subscription' | 'payment', data: Record<s
   if (kind === 'subscription') {
     return readString(data, ['product_id']);
   }
+  // A cart lists a payment's one-time items, so it names the product only for a payment that charges no
+  // subscription; a subscription payment's own product is in product_id, if anywhere.
   const product =
-    readString(data, ['product_id']) ?? readString(asArrayOfRecords(data.product_cart)[0] ?? {}, ['product_id']);
+    readString(data, ['product_id']) ??
+    (isDodoOneTimePayment(data) ? readString(asArrayOfRecords(data.product_cart)[0] ?? {}, ['product_id']) : undefined);
   const priceId = readMetadataString(data, DODO_PRICE_METADATA_KEY);
   if (
     priceId &&
@@ -1247,9 +1250,9 @@ function readDodoPriceReference(kind: 'subscription' | 'payment', data: Record<s
   return product;
 }
 
-/** A payment that charges no subscription: neither `subscription_id` nor any `subscription_ids` entry. */
+/** A payment that charges no subscription: no `subscription_id`, no `subscription_ids` entry, not multi-subscription. */
 function isDodoOneTimePayment(payment: Record<string, unknown>): boolean {
-  if (readString(payment, ['subscription_id'])) {
+  if (readString(payment, ['subscription_id']) || payment.is_multi_subscription === true) {
     return false;
   }
   return !(Array.isArray(payment.subscription_ids) && payment.subscription_ids.length > 0);

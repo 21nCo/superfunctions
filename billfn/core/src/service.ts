@@ -5550,7 +5550,8 @@ function providerReportedProducts(state: VerifiedBillingState | undefined): stri
   const chargesSubscription =
     Boolean(state?.providerSubscriptionId) ||
     Boolean(readString(raw ?? {}, 'subscription_id')) ||
-    (Array.isArray(raw?.subscription_ids) && raw.subscription_ids.length > 0);
+    (Array.isArray(raw?.subscription_ids) && raw.subscription_ids.length > 0) ||
+    raw?.is_multi_subscription === true;
   const cart = !chargesSubscription && Array.isArray(raw?.product_cart) ? raw.product_cart : [];
   return [
     state?.providerProductId,
