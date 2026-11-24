@@ -215,14 +215,16 @@ jobs:
           echo "typecheck filters: ${{ needs.plan.outputs.js_typecheck_filters }}"
           echo "devfn tests (DevFn tests job): ${{ needs.plan.outputs.devfn_test_filters }}"
 
-      # Turbo's task cache (SFNS-312). A pull request replays each task whose Turbo inputs are unchanged. Every other run
-      # (a push, the nightly run, a manual run) replays nothing, because the release CI gate needs every task run on the
-      # release commit: it sets the restored entries aside and records the current task hashes before any task runs,
-      # runs every selected task while Turbo writes the cache, then merges back only the set-aside entries for current
+      # Turbo's task cache (SFNS-312). Every run records the current task hashes before any task runs. A pull request
+      # replays each task whose Turbo inputs are unchanged, then prunes the restored entries whose hash is not current
+      # and saves its entry, even when a task failed. Every other run (a push, the nightly run, a manual run) replays
+      # nothing, because the release CI gate needs every task run on the release commit: it sets the restored entries
+      # aside, runs every selected task while Turbo writes the cache, then merges back the set-aside entries for current
       # hashes the run did not rewrite (scripts/turbo-cache-merge.mjs), so the entry it saves, which pull requests
-      # restore, holds every task and not only those the run selected. `--cache=local:w` is not used for this: each
-      # step would then rebuild every `^build` instead of reading the Build step's results. The Node major and the job
-      # are in the key, so another Node version or job never reuses an entry.
+      # restore, holds every task and not only those the run selected. It saves only when every step passed, so a
+      # failed run leaves the last complete entry in place. `--cache=local:w` is not used for this: each step would
+      # then rebuild every `^build` instead of reading the Build step's results. The Node major and the job are in the
+      # key, so another Node version or job never reuses an entry.
       - name: Turbo cache key
         id: turbo-cache-key
         run: echo "prefix=turbo-${RUNNER_OS}-node$(node -p 'process.versions.node.split(".")[0]')-${GITHUB_JOB}" >> "$GITHUB_OUTPUT"
@@ -238,14 +240,15 @@ jobs:
             ${{ steps.turbo-cache-key.outputs.prefix }}-${{ hashFiles('package-lock.json') }}-
             ${{ steps.turbo-cache-key.outputs.prefix }}-
 
-      - name: Set aside the restored Turbo cache and record the task hashes
-        id: turbo-cache-aside
-        if: github.event_name != 'pull_request'
+      - name: Record the Turbo task hashes and the restored cache
+        id: turbo-cache-prepare
         run: |
-          if [ -d .turbo/cache ]; then
+          ./node_modules/.bin/turbo run build typecheck test lint --dry=json > "$RUNNER_TEMP/turbo-dry-run.json"
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            ls -1 .turbo/cache > "$RUNNER_TEMP/turbo-cache-restored.txt" 2>/dev/null || true
+          elif [ -d .turbo/cache ]; then
             mv .turbo/cache "$RUNNER_TEMP/turbo-cache-aside"
           fi
-          ./node_modules/.bin/turbo run build typecheck test lint --dry=json > "$RUNNER_TEMP/turbo-dry-run.json"
 
       - name: Build
         if: needs.plan.outputs.has_js_build == 'true'
@@ -280,17 +283,23 @@ jobs:
             ./node_modules/.bin/turbo run lint ${{ needs.plan.outputs.js_lint_filters }}
           fi
 
-      - name: Merge the set-aside Turbo cache
+      - name: Merge and prune the Turbo cache
         id: turbo-cache-merge
-        if: ${{ !cancelled() && steps.turbo-cache-aside.outcome == 'success' }}
-        run: >-
-          node scripts/turbo-cache-merge.mjs --cache-dir .turbo/cache --aside-dir "$RUNNER_TEMP/turbo-cache-aside"
-          --dry-run "$RUNNER_TEMP/turbo-dry-run.json"
+        if: >-
+          ${{ steps.turbo-cache-prepare.outcome == 'success' &&
+          (success() || (github.event_name == 'pull_request' && !cancelled())) }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            restored=(--restored-list "$RUNNER_TEMP/turbo-cache-restored.txt")
+          else
+            restored=(--aside-dir "$RUNNER_TEMP/turbo-cache-aside")
+          fi
+          node scripts/turbo-cache-merge.mjs --cache-dir .turbo/cache "${restored[@]}" --dry-run "$RUNNER_TEMP/turbo-dry-run.json"
 
       - name: Save Turbo cache
         if: >-
-          ${{ !cancelled() && steps.turbo-cache-restore.outcome == 'success' &&
-          (github.event_name == 'pull_request' || steps.turbo-cache-merge.outcome == 'success') }}
+          ${{ !cancelled() && steps.turbo-cache-merge.outcome == 'success' &&
+          steps.turbo-cache-restore.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .turbo/cache
@@ -353,29 +362,36 @@ jobs:
             ${{ steps.turbo-cache-key.outputs.prefix }}-${{ hashFiles('package-lock.json') }}-
             ${{ steps.turbo-cache-key.outputs.prefix }}-
 
-      - name: Set aside the restored Turbo cache and record the task hashes
-        id: turbo-cache-aside
-        if: github.event_name != 'pull_request'
+      - name: Record the Turbo task hashes and the restored cache
+        id: turbo-cache-prepare
         run: |
-          if [ -d .turbo/cache ]; then
+          ./node_modules/.bin/turbo run test --dry=json > "$RUNNER_TEMP/turbo-dry-run.json"
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            ls -1 .turbo/cache > "$RUNNER_TEMP/turbo-cache-restored.txt" 2>/dev/null || true
+          elif [ -d .turbo/cache ]; then
             mv .turbo/cache "$RUNNER_TEMP/turbo-cache-aside"
           fi
-          ./node_modules/.bin/turbo run test --dry=json > "$RUNNER_TEMP/turbo-dry-run.json"
 
       - name: Test
         run: ./node_modules/.bin/turbo run test --concurrency=1 ${{ needs.plan.outputs.devfn_test_filters }}
 
-      - name: Merge the set-aside Turbo cache
+      - name: Merge and prune the Turbo cache
         id: turbo-cache-merge
-        if: ${{ !cancelled() && steps.turbo-cache-aside.outcome == 'success' }}
-        run: >-
-          node scripts/turbo-cache-merge.mjs --cache-dir .turbo/cache --aside-dir "$RUNNER_TEMP/turbo-cache-aside"
-          --dry-run "$RUNNER_TEMP/turbo-dry-run.json"
+        if: >-
+          ${{ steps.turbo-cache-prepare.outcome == 'success' &&
+          (success() || (github.event_name == 'pull_request' && !cancelled())) }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            restored=(--restored-list "$RUNNER_TEMP/turbo-cache-restored.txt")
+          else
+            restored=(--aside-dir "$RUNNER_TEMP/turbo-cache-aside")
+          fi
+          node scripts/turbo-cache-merge.mjs --cache-dir .turbo/cache "${restored[@]}" --dry-run "$RUNNER_TEMP/turbo-dry-run.json"
 
       - name: Save Turbo cache
         if: >-
-          ${{ !cancelled() && steps.turbo-cache-restore.outcome == 'success' &&
-          (github.event_name == 'pull_request' || steps.turbo-cache-merge.outcome == 'success') }}
+          ${{ !cancelled() && steps.turbo-cache-merge.outcome == 'success' &&
+          steps.turbo-cache-restore.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .turbo/cache

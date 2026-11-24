@@ -10,8 +10,12 @@
 //   - every other set-aside entry is pruned, so the saved cache never grows past one entry per current task.
 // Turbo names an entry's files after its task hash (`<hash>.tar.zst` and `<hash>-meta.json`); a set-aside file whose
 // name does not start with a hash is pruned too. The set-aside directory is removed afterwards.
+// A pull request replays the restored entries, so it sets none aside: it lists the restored files instead, and the
+// same rules prune the restored entries whose hash is not current, so a pull request's saved cache does not keep every
+// stale entry of its earlier pushes.
 //
-// Usage: node scripts/turbo-cache-merge.mjs --cache-dir <dir> --aside-dir <dir> --dry-run <turbo --dry=json output>
+// Usage: node scripts/turbo-cache-merge.mjs --cache-dir <dir> --dry-run <turbo --dry=json output>
+//          (--aside-dir <dir> | --restored-list <file listing the restored cache files, one name per line>)
 
 import {
   copyFileSync,
@@ -111,33 +115,83 @@ export function mergeTurboCache({ cacheDir, asideDir, currentHashes }) {
   };
 }
 
+// Prunes, in place, the restored entries of cacheDir (restoredFiles names their files) whose hash is not current,
+// keeping every entry this run wrote. Returns the hashes of each outcome, sorted, as mergeTurboCache does.
+export function pruneRestoredTurboCache({ cacheDir, restoredFiles, currentHashes }) {
+  const restoredNames = new Set(restoredFiles);
+  const present = filesIn(cacheDir);
+  const newHashes = new Set();
+  for (const fileName of present) {
+    const hash = entryHash(fileName);
+    if (hash !== null && !restoredNames.has(fileName)) newHashes.add(hash);
+  }
+
+  const restored = new Set();
+  const pruned = new Set();
+  for (const fileName of present.filter((name) => restoredNames.has(name))) {
+    const hash = entryHash(fileName);
+    if (hash !== null && (currentHashes.has(hash) || newHashes.has(hash))) {
+      if (!newHashes.has(hash)) restored.add(hash);
+    } else {
+      rmSync(path.join(cacheDir, fileName));
+      pruned.add(hash ?? fileName);
+    }
+  }
+
+  const sorted = (set) => [...set].sort();
+  return {
+    kept: sorted(newHashes),
+    keptNotInDryRun: sorted([...newHashes].filter((hash) => !currentHashes.has(hash))),
+    restored: sorted(restored),
+    superseded: [],
+    pruned: sorted(pruned),
+  };
+}
+
+const USAGE =
+  "usage: node scripts/turbo-cache-merge.mjs --cache-dir <dir> --dry-run <dry-run JSON file> " +
+  "(--aside-dir <dir> | --restored-list <file>)";
+
 function parseArgs(argv) {
   const options = {};
-  const names = { "--cache-dir": "cacheDir", "--aside-dir": "asideDir", "--dry-run": "dryRun" };
+  const names = {
+    "--cache-dir": "cacheDir",
+    "--aside-dir": "asideDir",
+    "--restored-list": "restoredList",
+    "--dry-run": "dryRun",
+  };
   for (let index = 0; index < argv.length; index += 2) {
     const name = names[argv[index]];
     const value = argv[index + 1];
     if (name === undefined || value === undefined || value === "" || options[name] !== undefined) {
-      throw new Error(
-        "usage: node scripts/turbo-cache-merge.mjs --cache-dir <dir> --aside-dir <dir> --dry-run <dry-run JSON file>"
-      );
+      throw new Error(USAGE);
     }
     options[name] = value;
   }
-  for (const flag of Object.keys(names)) {
-    if (options[names[flag]] === undefined) throw new Error(`${flag} is required`);
+  if (options.cacheDir === undefined) throw new Error("--cache-dir is required");
+  if (options.dryRun === undefined) throw new Error("--dry-run is required");
+  if ((options.asideDir === undefined) === (options.restoredList === undefined)) {
+    throw new Error("give exactly one of --aside-dir and --restored-list");
   }
   return options;
 }
 
 function main() {
-  const { cacheDir, asideDir, dryRun } = parseArgs(process.argv.slice(2));
+  const { cacheDir, asideDir, restoredList, dryRun } = parseArgs(process.argv.slice(2));
   const currentHashes = readDryRunHashes(readFileSync(dryRun, "utf8"));
-  const result = mergeTurboCache({ cacheDir, asideDir, currentHashes });
+  const source = asideDir === undefined ? "restored" : "set-aside";
+  const result =
+    asideDir === undefined
+      ? pruneRestoredTurboCache({
+          cacheDir,
+          restoredFiles: readFileSync(restoredList, "utf8").split("\n").filter(Boolean),
+          currentHashes,
+        })
+      : mergeTurboCache({ cacheDir, asideDir, currentHashes });
   console.log(
     `turbo-cache-merge: ${currentHashes.size} current task hashes; kept ${result.kept.length} new entries, ` +
-      `restored ${result.restored.length} set-aside entries, dropped ${result.superseded.length} set-aside entries ` +
-      `this run rewrote, pruned ${result.pruned.length} set-aside entries not in the current hashes`
+      `kept ${result.restored.length} ${source} entries, dropped ${result.superseded.length} ${source} entries ` +
+      `this run rewrote, pruned ${result.pruned.length} ${source} entries not in the current hashes`
   );
   if (result.keptNotInDryRun.length > 0) {
     const sample = result.keptNotInDryRun.slice(0, 20).join(", ");

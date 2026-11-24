@@ -6,7 +6,7 @@ import path from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { entryHash, mergeTurboCache, readDryRunHashes } from "./turbo-cache-merge.mjs";
+import { entryHash, mergeTurboCache, pruneRestoredTurboCache, readDryRunHashes } from "./turbo-cache-merge.mjs";
 
 const script = fileURLToPath(new URL("./turbo-cache-merge.mjs", import.meta.url));
 const scratch = mkdtempSync(path.join(tmpdir(), "turbo-cache-merge-"));
@@ -106,6 +106,53 @@ test("a run that restored nothing leaves its new entries as they are", () => {
   assert.deepEqual(result, { kept: [NEW], keptNotInDryRun: [], restored: [], superseded: [], pruned: [] });
 });
 
+test("a pull request's restored entries outside the current hashes are pruned, and every new entry is kept", () => {
+  const { cacheDir } = freshDirs();
+  writeEntry(cacheDir, KEPT, "restored");
+  writeEntry(cacheDir, STALE, "restored");
+  writeFileSync(path.join(cacheDir, "notes.txt"), "restored, not an entry");
+  const restoredFiles = readdirSync(cacheDir);
+  writeEntry(cacheDir, NEW, "new");
+  writeEntry(cacheDir, REWRITTEN, "new");
+  writeFileSync(path.join(cacheDir, "turbo-scratch"), "new, not an entry");
+
+  const result = pruneRestoredTurboCache({ cacheDir, restoredFiles, currentHashes: new Set([KEPT, NEW]) });
+
+  assert.deepEqual(Object.keys(cacheContents(cacheDir)), [
+    `${KEPT}-meta.json`,
+    `${KEPT}.tar.zst`,
+    `${REWRITTEN}-meta.json`,
+    `${REWRITTEN}.tar.zst`,
+    `${NEW}-meta.json`,
+    `${NEW}.tar.zst`,
+    "turbo-scratch",
+  ]);
+  assert.equal(cacheContents(cacheDir)[`${KEPT}.tar.zst`], "restored archive");
+  assert.deepEqual(result, {
+    kept: [REWRITTEN, NEW],
+    keptNotInDryRun: [REWRITTEN],
+    restored: [KEPT],
+    superseded: [],
+    pruned: [STALE, "notes.txt"],
+  });
+});
+
+test("a pull request that restored nothing keeps its new entries", () => {
+  const { cacheDir } = freshDirs();
+  writeEntry(cacheDir, NEW, "new");
+
+  const result = pruneRestoredTurboCache({ cacheDir, restoredFiles: [], currentHashes: new Set([NEW]) });
+
+  assert.deepEqual(Object.keys(cacheContents(cacheDir)), [`${NEW}-meta.json`, `${NEW}.tar.zst`]);
+  assert.deepEqual(result, { kept: [NEW], keptNotInDryRun: [], restored: [], superseded: [], pruned: [] });
+  assert.deepEqual(
+    pruneRestoredTurboCache({ cacheDir: path.join(cacheDir, "missing"), restoredFiles: [], currentHashes: new Set() })
+      .kept,
+    [],
+    "a run that wrote no cache directory is not an error"
+  );
+});
+
 test("entry files are recognised by Turbo's names only", () => {
   assert.equal(entryHash(`${KEPT}.tar.zst`), KEPT);
   assert.equal(entryHash(`${KEPT}-meta.json`), KEPT);
@@ -142,9 +189,31 @@ test("the command merges with the dry run's hashes and reports the counts", () =
   assert.equal(run.status, 0, run.stderr);
   assert.match(
     run.stdout,
-    /2 current task hashes; kept 1 new entries, restored 1 set-aside entries, dropped 0 .* pruned 1 /
+    /2 current task hashes; kept 1 new entries, kept 1 set-aside entries, dropped 0 .* pruned 1 set-aside /
   );
   assert.doesNotMatch(run.stdout, /::warning/);
+  assert.deepEqual(Object.keys(cacheContents(cacheDir)), [
+    `${KEPT}-meta.json`,
+    `${KEPT}.tar.zst`,
+    `${NEW}-meta.json`,
+    `${NEW}.tar.zst`,
+  ]);
+});
+
+test("the command prunes a pull request's restored entries from the restored list", () => {
+  const { root, cacheDir } = freshDirs();
+  writeEntry(cacheDir, KEPT, "restored");
+  writeEntry(cacheDir, STALE, "restored");
+  const restoredList = path.join(root, "restored.txt");
+  writeFileSync(restoredList, `${readdirSync(cacheDir).join("\n")}\n`);
+  writeEntry(cacheDir, NEW, "new");
+  const dryRunFile = path.join(root, "dry-run.json");
+  writeFileSync(dryRunFile, dryRun([KEPT, NEW]));
+
+  const run = runCli(["--cache-dir", cacheDir, "--restored-list", restoredList, "--dry-run", dryRunFile]);
+
+  assert.equal(run.status, 0, run.stderr);
+  assert.match(run.stdout, /kept 1 new entries, kept 1 restored entries, .* pruned 1 restored entries /);
   assert.deepEqual(Object.keys(cacheContents(cacheDir)), [
     `${KEPT}-meta.json`,
     `${KEPT}.tar.zst`,
@@ -182,6 +251,8 @@ test("the command fails, leaving the set-aside entries, on a bad dry run or bad 
     ["--cache-dir", cacheDir, "--aside-dir", asideDir, "--dry-run"],
     ["--cache-dir", cacheDir, "--aside-dir", asideDir, "--dry-run", dryRunFile, "--extra", "x"],
     ["--cache-dir", cacheDir, "--cache-dir", cacheDir, "--aside-dir", asideDir, "--dry-run", dryRunFile],
+    ["--cache-dir", cacheDir, "--dry-run", dryRunFile],
+    ["--cache-dir", cacheDir, "--aside-dir", asideDir, "--restored-list", dryRunFile, "--dry-run", dryRunFile],
   ]) {
     const run = runCli(args);
     assert.equal(run.status, 1, `${args.join(" ")} must fail`);
