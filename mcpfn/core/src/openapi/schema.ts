@@ -144,7 +144,7 @@ const REGION = "a schema expands";
  * is reachable from the object itself. Budget and sharing skips depend on
  * where the object is read and are never remembered (their work is charged).
  */
-const CONTEXT_FREE_FAILURES: ReadonlySet<OpenApiSkipCode> = new Set<OpenApiSkipCode>([
+export const CONTEXT_FREE_FAILURES: ReadonlySet<OpenApiSkipCode> = new Set<OpenApiSkipCode>([
   "circular-object",
   "invalid-schema",
   "unsupported-schema-keyword",
@@ -398,6 +398,8 @@ export class SchemaConverter {
   private readonly admitted = new WeakMap<object, AdmittedKinds>();
   /** The kinds of an allOf (`both`) or anyOf/oneOf (`either`) member array, or why it failed, once per array. */
   private readonly memberKinds = new Map<"both" | "either", WeakMap<object, AdmittedKinds | OpenApiSkip>>();
+  /** Reference cycles cut so far: a result that needed a cut depends on the schemas being checked. */
+  private cuts = 0;
   /** The kinds of the values an `enum` array or a `const` object lists, once per object. */
   private readonly literalKinds = new Map<"enum" | "const", WeakMap<object, AdmittedKinds>>();
   private readonly flags = new Map<DirectionalKeyword, WeakMap<object, boolean>>();
@@ -460,7 +462,11 @@ export class SchemaConverter {
    */
   admits(schema: unknown, stack: Set<unknown> = new Set()): AdmittedKinds {
     if (schema === false) return NOTHING;
-    if (!isObject(schema) || stack.has(schema)) return EVERYTHING;
+    if (!isObject(schema)) return EVERYTHING;
+    if (stack.has(schema)) {
+      this.cuts += 1;
+      return EVERYTHING;
+    }
     const known = this.admitted.get(schema);
     if (known) return known;
     stack.add(schema);
@@ -496,17 +502,19 @@ export class SchemaConverter {
 
   /**
    * The kinds all (`both`) or some (`either`) of `members` admit. Kept per
-   * array, failure included, so roots that share one are not walked again.
+   * array, failure included, so roots that share one are not walked again;
+   * a result that needed a cycle cut is not kept, since it is provisional.
    */
   private admitsMembers(members: unknown[], combine: "both" | "either", stack: Set<unknown>): AdmittedKinds {
     const memo = memoFor(this.memberKinds, combine);
     const known = memo.get(members);
     if (known instanceof OpenApiSkip) throw known;
     if (known) return known;
+    const cuts = this.cuts;
     try {
       const kinds = members.map((member) => this.admits(member, stack));
       const result = combine === "both" ? kinds.reduce(both, EVERYTHING) : either(kinds);
-      memo.set(members, result);
+      if (this.cuts === cuts) memo.set(members, result);
       return result;
     } catch (error) {
       if (error instanceof OpenApiSkip) memo.set(members, error);

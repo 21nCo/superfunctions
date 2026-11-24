@@ -11,6 +11,7 @@ import {
   type SchemaCompiler,
 } from "@mcpfn/core";
 import {
+  CONTEXT_FREE_FAILURES,
   isDefaultDialect,
   isObject,
   NodeBudget,
@@ -243,7 +244,9 @@ class OperationConverter {
   /** Tool schemas by content, when tools share them (see `toolSchema`). */
   private readonly shared = new Map<string, McpFnObjectSchema | undefined>();
   /** Why a schema checked as written failed to compile (null: it compiled), by source object and by content. */
-  private readonly checkedAsWritten = new WeakMap<object, string | null>();
+  private readonly checkedAsWritten = new WeakMap<object, string | null | OpenApiSkip>();
+  /** Request body schemas whose checked conversion failed for a reason of their own. */
+  private readonly bodyFailures = new WeakMap<object, OpenApiSkip>();
   /** Why each request body schema chosen among several entries fails to compile (null when it compiles). */
   private readonly bodyVerdicts = new WeakMap<object, string | null>();
   private readonly verdicts = new Map<string, string | null>();
@@ -368,10 +371,15 @@ class OperationConverter {
     let bodyGroup: McpFnJsonSchema | boolean | undefined;
     const bodyRefs = new Set<string>();
     if (body) {
-      // A media type object without `schema` declares no schema: it accepts any JSON value.
-      bodyGroup = body.schema === undefined ? {} : this.schemas.convertRoot(body.schema, "input", bodyRefs);
-      this.assertProjectable(body.schema, "input", "request body");
-      if (checkBody) this.assertBodyCompiles(body.schema, bodyGroup, bodyRefs);
+      const check = () => {
+        // A media type object without `schema` declares no schema: it accepts any JSON value.
+        bodyGroup = body.schema === undefined ? {} : this.schemas.convertRoot(body.schema, "input", bodyRefs);
+        this.assertProjectable(body.schema, "input", "request body");
+        if (checkBody) this.assertBodyCompiles(body.schema, bodyGroup, bodyRefs);
+      };
+      // A checked entry's schema that failed for a reason of its own fails again without any work.
+      if (checkBody && isObject(body.schema)) remembered(this.bodyFailures, body.schema, check);
+      else check();
     }
     for (const location of ["path", "query", "header"] as const) {
       const members = parameters.filter(({ parameter }) => parameter.in === location);
@@ -531,10 +539,16 @@ class OperationConverter {
   /** Checked once per source schema object, and compiled once per distinct converted schema. */
   private assertCompilesAsWritten(schema: unknown, subject: string): void {
     let verdict = isObject(schema) ? this.checkedAsWritten.get(schema) : undefined;
+    if (verdict instanceof OpenApiSkip) throw verdict;
     if (verdict === undefined) {
-      const refs = new Set<string>();
-      const root = this.schemas.convertRoot(schema, "plain", refs);
-      verdict = this.compileVerdict(root, this.schemas.definitions(refs, "plain"), "plain");
+      try {
+        const refs = new Set<string>();
+        const root = this.schemas.convertRoot(schema, "plain", refs);
+        verdict = this.compileVerdict(root, this.schemas.definitions(refs, "plain"), "plain");
+      } catch (error) {
+        if (isObject(schema) && error instanceof OpenApiSkip && CONTEXT_FREE_FAILURES.has(error.code)) this.checkedAsWritten.set(schema, error);
+        throw error;
+      }
       if (isObject(schema)) this.checkedAsWritten.set(schema, verdict);
     }
     throwIfInvalid(verdict, subject);
@@ -800,6 +814,18 @@ function treeCopy<T>(value: T, budget: NodeBudget, values: CopiedValues = { json
   }
   ancestors.delete(value);
   return copy as T;
+}
+
+/** Run `task` unless it already failed for `key` for a reason of the key's own, remembering such a failure. */
+function remembered(failures: WeakMap<object, OpenApiSkip>, key: object, task: () => void): void {
+  const known = failures.get(key);
+  if (known) throw known;
+  try {
+    task();
+  } catch (error) {
+    if (error instanceof OpenApiSkip && CONTEXT_FREE_FAILURES.has(error.code)) failures.set(key, error);
+    throw error;
+  }
 }
 
 /** A stack overflow means schemas or references nest too deeply to walk. */

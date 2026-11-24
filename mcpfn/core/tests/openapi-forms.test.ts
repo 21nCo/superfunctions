@@ -2391,6 +2391,47 @@ describe("fromOpenAPI body fallback, synchronous schemas, per-kind alternatives 
     });
     expect([new Set(responses.skipped.map((entry) => entry.code)), responses.skipped.length]).toEqual([new Set(["unresolved-ref"]), 200]);
     expect(tool(responses.tools, "h").outputSchema).toBeUndefined();
+    // A shared 3.1 schema whose first sibling is a circular default, as a POST body beside a JSON fallback or a HEAD's discarded response.
+    const copied = { default: loop, ...Object.fromEntries(Array.from({ length: width }, (_, index) => [`x-note${index}`, index])), $ref: "#/components/schemas/Valid" };
+    const copies = run(
+      "copied siblings",
+      Object.fromEntries(
+        Array.from({ length: 200 }, (_, index) => [
+          `/c${index}`,
+          index % 2 === 0
+            ? { post: { operationId: `c${index}`, requestBody: { content: { "application/json": { schema: copied }, ...merge } }, responses: ok } }
+            : { head: { operationId: `c${index}`, responses: json(copied) } },
+        ]),
+      ),
+    );
+    expect(copies.skipped.map((entry) => entry.code)).toEqual(Array.from({ length: 100 }, () => "circular-object"));
+    expect(tool(copies.tools, "c0").operation.requestBody?.contentType).toBe("application/merge-patch+json");
+  });
+
+  it("gives the same kinds of value to a shared member list whichever operation reaches it first through a reference cycle", () => {
+    // R refers to A, whose items refer to B = { anyOf: L }, and L = [R]: a HEAD reaching L through R first must not fix L's kinds.
+    const ref = { $ref: "#/components/schemas/A" };
+    const members = [ref];
+    for (const headFirst of [true, false]) {
+      const head = { "/h": { head: { operationId: "h", responses: json(ref) } } };
+      const get = { "/g": { get: { operationId: "g", responses: json({ anyOf: members }) } } };
+      const result = fromOpenAPI(
+        {
+          openapi: "3.1.0",
+          paths: headFirst ? { ...head, ...get } : { ...get, ...head },
+          components: {
+            schemas: {
+              A: { type: "object", required: ["n"], properties: { n: { type: "integer" } }, items: { $ref: "#/components/schemas/B" } },
+              B: { anyOf: members },
+            },
+          },
+        },
+        options(),
+      );
+      expect(result.skipped).toEqual([]);
+      expect(tool(result.tools, "h").outputSchema).toBeUndefined();
+      expectArguments(tool(result.tools, "g").outputSchema!, { valid: [{ n: 1 }], invalid: [{}, { n: "x" }] });
+    }
   });
 
   it("does not remember a budget skip inside a shared schema for operations where it fits", () => {
