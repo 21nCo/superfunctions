@@ -8,6 +8,7 @@ import type {
   TaskMessageQueue,
   TaskStore,
 } from "@modelcontextprotocol/sdk/experimental/tasks/interfaces.js";
+import type { AuthInfo } from "@modelcontextprotocol/sdk/server/auth/types.js";
 import type { RequestOptions } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import {
@@ -103,7 +104,104 @@ export type McpFnWebStandardHandlerOptions<TContext> = ConstructorParameters<
   configureRequestServer?: (
     server: McpFnServer<TContext>,
   ) => void | Promise<void>;
+  /**
+   * Requests carrying an `Origin` header are refused with HTTP 403 unless the
+   * origin is listed in `allowedOrigins`, or it is a loopback origin (such as
+   * `http://localhost:3000`) equal to the request's own `Host`. This blocks
+   * DNS-rebinding pages from reaching a local server; non-browser clients send
+   * no `Origin` and are unaffected. Defaults to `"reject-unlisted"`. `"off"`
+   * disables the check, and setting `enableDnsRebindingProtection` (true or
+   * false) hands Host/Origin checking to the SDK transport instead.
+   */
+  originPolicy?: "reject-unlisted" | "off";
+  /**
+   * Stateful mode: the principal a session belongs to. Computed when the
+   * session is created and on every later request that names it; a request
+   * from a different principal gets the same 404 as an unknown session.
+   * Defaults to the authenticated subject (`authInfo.extra.subject`) and
+   * client ID from `handleOptions.authInfo`, or no principal when the request
+   * carries no `authInfo`. Must not read the request body.
+   */
+  sessionPrincipal?: (input: {
+    authInfo: AuthInfo | undefined;
+    request: Request;
+  }) => string | undefined | Promise<string | undefined>;
+  /**
+   * Stateful mode: most sessions kept at once. Creating one more closes the
+   * least recently used session, idle sessions first. Defaults to 1000.
+   */
+  maxSessions?: number;
+  /**
+   * Stateful mode: most sessions one principal may hold. Creating one more
+   * closes that principal's least recently used session. Sessions without a
+   * principal count only against `maxSessions`. Defaults to 100.
+   */
+  maxSessionsPerPrincipal?: number;
+  /**
+   * Stateful mode: a session with no request or open stream for this long is
+   * closed. Checked whenever the handler runs. Defaults to 30 minutes;
+   * `Infinity` keeps idle sessions until they are deleted or evicted.
+   */
+  sessionIdleTimeoutMs?: number;
 };
+
+const DEFAULT_MAX_SESSIONS = 1_000;
+const DEFAULT_MAX_SESSIONS_PER_PRINCIPAL = 100;
+const DEFAULT_SESSION_IDLE_TIMEOUT_MS = 30 * 60 * 1_000;
+
+function positiveLimit(name: string, value: number | undefined, fallback: number): number {
+  if (value === undefined) return fallback;
+  const valid = typeof value === "number" && value > 0 &&
+    (value === Infinity || (name === "sessionIdleTimeoutMs" ? Number.isFinite(value) : Number.isSafeInteger(value)));
+  if (!valid) {
+    throw new McpFnError("MCPFN_INVALID_OPTIONS", `${name} must be a positive ${name === "sessionIdleTimeoutMs" ? "number" : "integer"} or Infinity`);
+  }
+  return value;
+}
+
+function defaultSessionPrincipal(input: { authInfo: AuthInfo | undefined }): string | undefined {
+  const authInfo = input.authInfo;
+  if (!authInfo) return undefined;
+  const subject = authInfo.extra?.subject;
+  return JSON.stringify([typeof subject === "string" ? subject : null, authInfo.clientId ?? null]);
+}
+
+function isLoopbackHostname(hostname: string): boolean {
+  const name = hostname.toLowerCase();
+  return name === "localhost" || name === "[::1]" || /^127(?:\.\d{1,3}){3}$/.test(name);
+}
+
+function originAllowed(
+  request: Request,
+  allowedOrigins: readonly string[] | undefined,
+): boolean {
+  const origin = request.headers.get("origin");
+  if (origin === null) return true;
+  if (allowedOrigins?.includes(origin)) return true;
+  let parsed: URL;
+  try {
+    parsed = new URL(origin);
+  } catch {
+    return false;
+  }
+  if (parsed.origin !== origin || !isLoopbackHostname(parsed.hostname)) return false;
+  let host = request.headers.get("host");
+  if (host === null) {
+    try {
+      host = new URL(request.url).host;
+    } catch {
+      return false;
+    }
+  }
+  return parsed.host === host.toLowerCase();
+}
+
+function jsonRpcErrorResponse(status: number, code: number, message: string): Response {
+  return new Response(
+    JSON.stringify({ jsonrpc: "2.0", error: { code, message }, id: null }),
+    { status, headers: { "content-type": "application/json" } },
+  );
+}
 
 function mergeCapabilities(
   base: ServerCapabilities,
@@ -795,12 +893,35 @@ export class McpFnServer<TContext = undefined> {
   ): Promise<
     (request: Request, options?: HandleRequestOptions) => Promise<Response>
   > {
-    const { configureRequestServer, ...transportOptions } = options;
+    const {
+      configureRequestServer,
+      originPolicy = "reject-unlisted",
+      sessionPrincipal = defaultSessionPrincipal,
+      maxSessions: maxSessionsOption,
+      maxSessionsPerPrincipal: maxPerPrincipalOption,
+      sessionIdleTimeoutMs: idleTimeoutOption,
+      ...transportOptions
+    } = options;
+    if (originPolicy !== "reject-unlisted" && originPolicy !== "off") {
+      throw new McpFnError("MCPFN_INVALID_OPTIONS", 'originPolicy must be "reject-unlisted" or "off"');
+    }
+    const maxSessions = positiveLimit("maxSessions", maxSessionsOption, DEFAULT_MAX_SESSIONS);
+    const maxPerPrincipal = positiveLimit("maxSessionsPerPrincipal", maxPerPrincipalOption, DEFAULT_MAX_SESSIONS_PER_PRINCIPAL);
+    const idleTimeoutMs = positiveLimit("sessionIdleTimeoutMs", idleTimeoutOption, DEFAULT_SESSION_IDLE_TIMEOUT_MS);
+    const checkOrigin = originPolicy === "reject-unlisted" &&
+      transportOptions.enableDnsRebindingProtection === undefined;
+    const rejectOrigin = (request: Request): Response | undefined =>
+      checkOrigin && !originAllowed(request, transportOptions.allowedOrigins)
+        ? jsonRpcErrorResponse(403, -32000, "Origin not allowed")
+        : undefined;
+
     if (!transportOptions.sessionIdGenerator) {
       if (this.clientProfiles?.profiles.some((profile) => profile.requiresReportedClient !== false)) {
         throw new McpFnClientProfileError("MCPFN_PROFILE_REQUIRES_SESSION", "Client profiles require sessionIdGenerator to retain initialize metadata; stateless-independent profiles must declare requiresReportedClient: false");
       }
       return async (request: Request, handleOptions?: HandleRequestOptions) => {
+        const refused = rejectOrigin(request);
+        if (refused) return refused;
         const requestServer = new McpFnServer(this.serverOptions);
         const transport = new WebStandardStreamableHTTPServerTransport(
           transportOptions,
@@ -829,31 +950,96 @@ export class McpFnServer<TContext = undefined> {
       };
     }
 
-    const sessions = new Map<
-      string,
-      {
-        server: McpFnServer<TContext>;
-        transport: WebStandardStreamableHTTPServerTransport;
+    interface Session {
+      server: McpFnServer<TContext>;
+      transport: WebStandardStreamableHTTPServerTransport;
+      principal: string | undefined;
+      lastActive: number;
+      /** Increases on every use; orders sessions when timestamps tie. */
+      lastUse: number;
+      active: number;
+      release: () => Promise<void>;
+    }
+    const sessions = new Map<string, Session>();
+    let useCounter = 0;
+    const sessionNotFound = () =>
+      jsonRpcErrorResponse(404, -32001, "Session not found");
+    const evict = async (id: string) => {
+      const session = sessions.get(id);
+      if (!session) return;
+      sessions.delete(id);
+      await session.release().catch(() => undefined);
+    };
+    // Idle sessions go first; among equals, the one used least recently.
+    const leastRecentlyUsed = (candidates: Array<[string, Session]>) => {
+      let chosen: [string, Session] | undefined;
+      for (const entry of candidates) {
+        const session = entry[1];
+        if (!chosen) {
+          chosen = entry;
+          continue;
+        }
+        const current = chosen[1];
+        const idle = session.active === 0;
+        if (idle !== (current.active === 0)) {
+          if (idle) chosen = entry;
+        } else if (session.lastUse < current.lastUse) {
+          chosen = entry;
+        }
       }
-    >();
+      return chosen?.[0];
+    };
+    const sweepIdle = async () => {
+      if (!Number.isFinite(idleTimeoutMs)) return;
+      const now = Date.now();
+      const expired = [...sessions]
+        .filter(([, session]) => session.active === 0 && now - session.lastActive >= idleTimeoutMs)
+        .map(([id]) => id);
+      await Promise.all(expired.map(evict));
+    };
+    const makeRoom = async (principal: string | undefined) => {
+      if (principal !== undefined) {
+        const owned = [...sessions].filter(([, session]) => session.principal === principal);
+        while (owned.length >= maxPerPrincipal) {
+          const id = leastRecentlyUsed(owned)!;
+          owned.splice(owned.findIndex(([key]) => key === id), 1);
+          await evict(id);
+        }
+      }
+      while (sessions.size >= maxSessions) {
+        await evict(leastRecentlyUsed([...sessions])!);
+      }
+    };
+
     return async (request: Request, handleOptions?: HandleRequestOptions) => {
+      const refused = rejectOrigin(request);
+      if (refused) return refused;
+      await sweepIdle();
+      const principal = await sessionPrincipal({
+        authInfo: handleOptions?.authInfo,
+        request,
+      });
       const sessionId = request.headers.get("mcp-session-id");
       if (sessionId) {
         const session = sessions.get(sessionId);
-        if (!session) {
-          return new Response(
-            JSON.stringify({
-              jsonrpc: "2.0",
-              error: { code: -32001, message: "Session not found" },
-              id: null,
-            }),
-            {
-              status: 404,
-              headers: { "content-type": "application/json" },
-            },
-          );
+        if (!session || session.principal !== principal) return sessionNotFound();
+        session.active += 1;
+        session.lastActive = Date.now();
+        session.lastUse = ++useCounter;
+        let settled = false;
+        const settle = async () => {
+          if (settled) return;
+          settled = true;
+          session.active -= 1;
+          session.lastActive = Date.now();
+        };
+        try {
+          const response = await session.transport.handleRequest(request, handleOptions);
+          return await releaseAfterResponse(response, settle);
+        } catch (error) {
+          await settle();
+          throw error;
         }
-        return session.transport.handleRequest(request, handleOptions);
       }
 
       const requestServer = new McpFnServer(this.serverOptions);
@@ -863,7 +1049,9 @@ export class McpFnServer<TContext = undefined> {
       const release = async () => {
         if (released) return;
         released = true;
-        if (initializedSessionId) sessions.delete(initializedSessionId);
+        if (initializedSessionId && sessions.get(initializedSessionId)?.server === requestServer) {
+          sessions.delete(initializedSessionId);
+        }
         this.requestServers.delete(requestServer);
         await requestServer.close();
       };
@@ -871,11 +1059,20 @@ export class McpFnServer<TContext = undefined> {
         ...transportOptions,
         onsessioninitialized: async (id) => {
           await transportOptions.onsessioninitialized?.(id);
+          await makeRoom(principal);
           initializedSessionId = id;
-          sessions.set(id, { server: requestServer, transport });
+          sessions.set(id, {
+            server: requestServer,
+            transport,
+            principal,
+            lastActive: Date.now(),
+            lastUse: ++useCounter,
+            active: 0,
+            release,
+          });
         },
         onsessionclosed: async (id) => {
-          sessions.delete(id);
+          if (sessions.get(id)?.server === requestServer) sessions.delete(id);
           try {
             await transportOptions.onsessionclosed?.(id);
           } finally {

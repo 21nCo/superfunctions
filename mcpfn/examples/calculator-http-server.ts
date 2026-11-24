@@ -3,20 +3,39 @@ import type { AddressInfo } from "node:net";
 
 import createCalculatorServer from "./calculator-server.js";
 
+const MAX_BODY_BYTES = 1_048_576;
+
 const mcp = createCalculatorServer();
+// The handler refuses browser requests whose Origin is not listed (DNS
+// rebinding); the Host check below also refuses rebound names that send none.
 const handler = await mcp.createWebStandardHandler({ enableJsonResponse: true });
 
 const httpServer = createServer(async (request, response) => {
   try {
-    const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "127.0.0.1"}`);
+    // A local server answers only to loopback names. A DNS-rebinding page
+    // reaches 127.0.0.1 under its own host name, which this refuses.
+    const host = request.headers.host ?? "";
+    if (!/^(?:127\.0\.0\.1|localhost|\[::1\])(?::\d+)?$/i.test(host)) {
+      response.writeHead(403).end("Forbidden host");
+      return;
+    }
+    const url = new URL(request.url ?? "/", `http://${host}`);
     if (url.pathname !== "/mcp") {
       response.writeHead(404).end("Not found");
       return;
     }
 
     const chunks: Buffer[] = [];
+    let size = 0;
     for await (const chunk of request) {
-      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      size += buffer.length;
+      if (size > MAX_BODY_BYTES) {
+        response.writeHead(413, { connection: "close" }).end("Payload too large");
+        request.destroy();
+        return;
+      }
+      chunks.push(buffer);
     }
     const body = Buffer.concat(chunks);
     const webRequest = new Request(url, {
