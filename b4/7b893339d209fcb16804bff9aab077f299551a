@@ -1,0 +1,25 @@
+billfn/core/src/service.ts
+  s_0d7e11293d5a4e::t_fac607278b454c 280-310,1133-1142,1156-1182
+  s_0d7e11293d5a4e::t_22fd6c1bec8416 73
+billfn/core/src/__tests__/router-subject-refund.test.ts
+  s_0d7e11293d5a4e::t_b7e345d37f5112 112-113,267-351
+  s_0d7e11293d5a4e::t_2cd8244ad13124 352
+billfn/docs/content/docs/server/setup.mdx
+  s_0d7e11293d5a4e::t_b5b885c8ed1e3c 117-118,135-146
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b47b893339d209fcb16804bff9aab077f299551a",
+  "prompts": {},
+  "sessions": {
+    "s_0d7e11293d5a4e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "97ac12a3-1bf1-4732-a6f3-ece8c28b207e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
