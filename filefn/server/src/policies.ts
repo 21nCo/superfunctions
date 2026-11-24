@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 export interface PolicyStoragePathContext {
   fileName: string;
   principalId?: string;
@@ -117,28 +118,20 @@ export function sanitizeStorageKeySegment(value: string): string {
 /** Longest tenant, principal, file ID or file-name part of a default key, in UTF-8 bytes. */
 const MAX_KEY_PART_BYTES = 120;
 
-function fnv1a(value: string): string {
-  let hash = 0x811c9dc5;
-  for (const byte of new TextEncoder().encode(value)) {
-    hash ^= byte;
-    hash = Math.imul(hash, 0x01000193) >>> 0;
-  }
-  return hash.toString(16).padStart(8, '0');
-}
-
 /**
  * A sanitized key part, shortened when it is longer than MAX_KEY_PART_BYTES so
  * each key segment stays within the 255-byte name limit of common
- * filesystems. A shortened part keeps its start, a hash of the whole part and
- * (for file names) its extension. The hash is a marker, not the uniqueness
- * guarantee: default keys stay unique through the version ID.
+ * filesystems. A shortened part keeps its start, then `%~` and 128 bits of
+ * the SHA-256 of the whole part, then (for file names) its extension. `%~`
+ * never appears in a sanitized value (`%` is always encoded), so a shortened
+ * part can never equal another ID's segment.
  */
 function boundedKeyPart(value: string, keepExtension: boolean): string {
   const sanitized = sanitizeStorageKeySegment(value);
   const encoder = new TextEncoder();
   if (encoder.encode(sanitized).length <= MAX_KEY_PART_BYTES) return sanitized;
   const extension = keepExtension ? /\.[A-Za-z0-9]{1,10}$/.exec(sanitized)?.[0] ?? '' : '';
-  const suffix = `~${fnv1a(sanitized)}${extension}`;
+  const suffix = `%~${createHash('sha256').update(sanitized).digest('hex').slice(0, 32)}${extension}`;
   let head = '';
   for (const char of sanitized) {
     if (encoder.encode(head + char).length + suffix.length > MAX_KEY_PART_BYTES) break;

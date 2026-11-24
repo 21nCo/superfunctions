@@ -141,5 +141,9 @@ describe('storage keys (FILE-30 F-01)', () => {
       expect(new TextEncoder().encode(segment).length).toBeLessThanOrEqual(130);
     }
     expect(unsafeStorageKeyReason(key)).toBeNull();
+    // A shortened segment carries `%~`, which no literal ID can produce.
+    const tenantSegment = key.split('/')[0];
+    expect(tenantSegment).toMatch(/%~[0-9a-f]{32}$/);
+    expect(sanitizeStorageKeySegment(tenantSegment)).not.toBe(tenantSegment);
   });
 });
