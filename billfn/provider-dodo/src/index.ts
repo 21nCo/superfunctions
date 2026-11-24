@@ -64,8 +64,9 @@ export function createDodoProvider(config: DodoProviderConfig): BillFnProviderAd
    * The billing state of a one-time purchase whose money went back: a full refund that succeeded, or a dispute the
    * merchant lost or accepted. The charge's payment is read from Dodo to tell a one-time purchase from a
    * subscription charge: a one-time purchase is revoked (`canceled`); a subscription charge is left to Dodo's
-   * subscription events, which carry whatever Dodo did with the subscription. Other refund and dispute events
-   * (partial or pending refunds, opened, challenged or won disputes) read nothing.
+   * subscription events, which carry whatever Dodo did with the subscription. A partial refund also reads the
+   * payment and revokes only once the payment's refunds return all of it. Failed refunds and the disputes that
+   * leave the money with the merchant (opened, challenged, won) read nothing.
    *
    * The state is dated when the read started (or at the signed event time, when that is later), so a verification
    * BillFn applied in between does not make it look stale. A payment answer that is not the payment asked for, or that does not say whether it belongs to a
@@ -981,7 +982,6 @@ function storedDodoSubscriptionState(
   };
 }
 
-/** Whether a refund or dispute event means the merchant lost the charge's money. */
 /**
  * Whether a refund or dispute event may take a charge's money back: `full` for a full refund or a lost or accepted
  * dispute, `partial` for a partial refund (which revokes only once the payment's refunds add up to its total).
@@ -1103,17 +1103,31 @@ function isDodoPaymentRevoked(payment: Record<string, unknown>, latestRefund?: R
   const refunds = (Array.isArray(payment.refunds) ? payment.refunds : [])
     .map((refund) => asPlainRecord(refund))
     .filter((refund): refund is Record<string, unknown> => refund !== null && readString(refund, ['status']) === 'succeeded');
-  // A refund the payment does not list yet (its webhook can arrive before the payment shows it) counts too.
+  // A refund the payment does not list yet (its webhook can arrive before the payment shows it) counts too, and
+  // a listed one missing its amount takes the webhook's; either way it is counted once.
   const latestId = latestRefund ? readString(latestRefund, ['refund_id']) : undefined;
-  if (latestRefund && latestId && !refunds.some((refund) => readString(refund, ['refund_id']) === latestId)) {
-    refunds.push(latestRefund);
+  if (latestRefund && latestId) {
+    const listed = refunds.findIndex((refund) => readString(refund, ['refund_id']) === latestId);
+    if (listed < 0) {
+      refunds.push(latestRefund);
+    } else if (readMinorAmount(refunds[listed]!.amount) === undefined) {
+      refunds[listed] = { ...latestRefund, ...refunds[listed], amount: latestRefund.amount, currency: refunds[listed]!.currency ?? latestRefund.currency };
+    }
   }
   const disputes = Array.isArray(payment.disputes) ? payment.disputes : [];
+  // Refunds in installments: Dodo marks each one, the last included, as partial. Their amounts are added only
+  // in the currency the payment's total is in; a refund in another (settlement) currency is not compared.
+  const currency = readString(payment, ['currency'])?.toUpperCase();
   const total = readMinorAmount(payment.total_amount);
-  const refunded = refunds.reduce((sum, refund) => sum + (readMinorAmount(refund.amount) ?? 0), 0);
+  const refunded = refunds.reduce((sum, refund) => {
+    const amount = readMinorAmount(refund.amount);
+    return amount !== undefined && currency !== undefined && readString(refund, ['currency'])?.toUpperCase() === currency
+      ? sum + amount
+      : sum;
+  }, 0);
   return (
+    readString(payment, ['refund_status']) === 'full' ||
     refunds.some((refund) => refund.is_partial === false) ||
-    // Refunds in installments: Dodo marks each one, the last included, as partial.
     (total !== undefined && total > 0 && refunded >= total) ||
     disputes.some((dispute) => {
       const status = readString(asPlainRecord(dispute) ?? {}, ['dispute_status']);
