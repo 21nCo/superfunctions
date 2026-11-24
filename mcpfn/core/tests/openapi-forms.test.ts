@@ -2092,6 +2092,32 @@ describe("fromOpenAPI body fallback, synchronous schemas, per-kind alternatives 
     expectArguments(tool(over.tools, "m").inputSchema, { valid: [{ body: "x" }], invalid: [{ body: 1 }] });
   });
 
+  it("converts the parameters once however many request body entries it tries", () => {
+    const filter = {
+      name: "filter",
+      in: "query",
+      schema: { type: "string", $defs: Object.fromEntries(Array.from({ length: 10_000 }, (_, index) => [`d${index}`, {}])) },
+    };
+    const content: Record<string, unknown> = {};
+    for (let index = 0; index < 256; index += 1) content[`application/v${index}+json`] = { schema: null };
+    content["application/final+json"] = { schema: { type: "object", properties: { n: { type: "number" } } } };
+    const result = fromOpenAPI(
+      {
+        openapi: "3.1.0",
+        paths: {
+          "/m": { patch: { operationId: "m", parameters: [filter], requestBody: { content }, responses: ok } },
+          "/later": { get: { operationId: "later", parameters: [{ name: "q", in: "query", schema: { type: "string" } }], responses: ok } },
+        },
+      },
+      options(),
+    );
+    // Retrying 256 entries must not charge the parameter to the document total 257 times.
+    expect(result.skipped).toEqual([]);
+    expect(tool(result.tools, "m").operation.requestBody?.contentType).toBe("application/final+json");
+    expectArguments(tool(result.tools, "m").inputSchema, { valid: [{ query: { filter: "f" }, body: { n: 1 } }], invalid: [{ body: { n: "x" } }] });
+    expectArguments(tool(result.tools, "later").inputSchema, { valid: [{ query: { q: "x" } }], invalid: [{ query: { q: 1 } }] });
+  });
+
   it("tries each request body entry in the whole input, checks a shared one once and falls through a too-deep one", () => {
     const fallback = { "application/example+json": { schema: { type: "string" } } };
     const patch = (operationId: string, content: Record<string, unknown>, extra: Record<string, unknown> = {}) =>

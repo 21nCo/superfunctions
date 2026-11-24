@@ -325,14 +325,16 @@ class OperationConverter {
    * The tool input with the first request body entry it can be built with:
    * each entry is tried with the whole input (conversion, projection, a
    * compile check and the assembled copy) within its own node budget. When
-   * none works, the first entry's failure is reported.
+   * none works, the first entry's failure is reported. The parameters are
+   * converted once, in the first attempt, and charged to the document once.
    */
   private input(path: string, pathItem: JsonObject, raw: JsonObject): { inputs: OperationInputs; inputSchema: McpFnObjectSchema } {
     let bodies: ResolvedBody[] = [];
+    let converted: ResolvedParameter[] | undefined;
     const attempt = (index: number) =>
       this.schemas.budgeted(() => {
         // Parameters first, so their skip reasons come before the body's.
-        const parameters = this.parameters(path, pathItem, raw);
+        const parameters = (converted ??= this.parameters(path, pathItem, raw));
         if (index === 0) bodies = this.requestBodies(raw);
         const inputs = { parameters, body: bodies[index] };
         // A sole entry is checked when the tool is registered.
