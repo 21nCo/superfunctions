@@ -292,6 +292,20 @@ describe('renewal preference notifications', () => {
     expect(event!.billingState).toBeUndefined();
   });
 
+  it.each([
+    [undefined, 'paused'],
+    [3, 'paused'],
+    [2, 'expired']
+  ])('maps GRACE_PERIOD_EXPIRED with data.status %s to %s', async (status, expected) => {
+    const [event] = (await notification({
+      ...renewal('Production'),
+      notificationType: 'GRACE_PERIOD_EXPIRED',
+      data: { ...renewal('Production').data, ...(status === undefined ? {} : { status }) }
+    }))!;
+
+    expect(event!.billingState?.subscriptionStatus).toBe(expected);
+  });
+
   it('takes the status of another notification type from data.status', async () => {
     const [event] = (await notification({ ...renewal('Production'), notificationType: 'PRICE_INCREASE', data: { ...renewal('Production').data, status: 3 } }))!;
 
@@ -300,6 +314,19 @@ describe('renewal preference notifications', () => {
 });
 
 describe('StoreKit paths built from references', () => {
+  it.each(['.', '..', '...'])('refuses the dot-only reference %s before any request', async (reference) => {
+    const fetchMock = vi.fn(async () => notFound()) as unknown as typeof fetch;
+
+    await expect(
+      provider(fetchMock).restorePurchases!({
+        billingAccount: { id: 'ba_user_1' },
+        price: { kind: 'subscription', providerProductId: 'apple.pro.month' },
+        purchaseReference: reference
+      } as never)
+    ).rejects.toMatchObject({ code: 'BILLFN_VALIDATION_ERROR' });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('refuses a reference that cannot be encoded as invalid input', async () => {
     const fetchMock = vi.fn(async () => notFound()) as unknown as typeof fetch;
 

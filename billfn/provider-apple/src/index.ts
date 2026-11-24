@@ -647,6 +647,13 @@ function createProviderError(status: number, body: string) {
 
 /** One URL path segment for a transaction or purchase reference; a reference that cannot be encoded is invalid input. */
 function encodeStoreKitPathSegment(reference: string): string {
+  // A dot-only segment stays as it is when encoded, and URL parsing would resolve it out of the path.
+  if (/^\.+$/.test(reference)) {
+    throw createBillFnError({
+      code: 'BILLFN_VALIDATION_ERROR',
+      message: 'Apple transaction reference is not a valid string'
+    });
+  }
   try {
     return encodeURIComponent(reference);
   } catch {
@@ -1070,6 +1077,13 @@ function mapAppleNotificationState(
       return {
         ...transactionState,
         subscriptionStatus: 'active',
+        checkoutStatus: 'succeeded'
+      };
+    case 'GRACE_PERIOD_EXPIRED':
+      // The grace period ended while Apple keeps retrying the renewal: billing retry, which grants no access.
+      return {
+        ...transactionState,
+        subscriptionStatus: notificationStatus === undefined ? 'paused' : transactionState.subscriptionStatus,
         checkoutStatus: 'succeeded'
       };
     case 'DID_FAIL_TO_RENEW':
