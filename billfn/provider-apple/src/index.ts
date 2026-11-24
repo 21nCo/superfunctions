@@ -559,6 +559,11 @@ async function requestStoreKitWithFallback(
         payload
       };
     } catch (error) {
+      if (environment === 'sandbox' && initial === 'production' && config.allowSandbox !== true) {
+        // A sandbox read only for revocation never decides the lookup: whatever it answers, production's
+        // "not found" stands, so the search goes on to the next app as a production-only read would.
+        throw lastError;
+      }
       lastError = error;
       if (!shouldFallbackToSandbox(error, environment)) {
         throw error;

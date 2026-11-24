@@ -134,9 +134,36 @@ describe('sandbox purchases in a production deployment', () => {
 
   it.each([
     ['not found in either', () => notFound(), 'BILLFN_PROVIDER_ERROR'],
-    ['a sandbox failure', () => new Response('', { status: 500 }), 'BILLFN_PROVIDER_ERROR']
+    ['a sandbox failure (production\'s not-found stands)', () => new Response('', { status: 500 }), 'BILLFN_PROVIDER_ERROR']
   ])('keeps the sync an error when the sandbox answers %s', async (_name, sandbox, code) => {
     await expect(provider(sandboxAnswers(sandbox)).fetchSubscription!(storedSubscription as never)).rejects.toMatchObject({ code });
+  });
+
+  it('goes on to the next app\'s production when the first app\'s sandbox read fails', async () => {
+    const requests: string[] = [];
+    const fetchMock = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      const host = new URL(String(url)).hostname;
+      const authorization = String((init?.headers as Record<string, string>).authorization);
+      requests.push(`${host} ${authorization}`);
+      if (host === 'api.storekit-sandbox.itunes.apple.com') {
+        return new Response('', { status: 503 });
+      }
+      return authorization === 'Bearer test-token-com.example.two' ? subscriptionAnswer(1) : notFound();
+    }) as unknown as typeof fetch;
+    const apple = createAppleProvider({
+      fetch: fetchMock,
+      bundleIds: ['com.example.one', 'com.example.two'],
+      tokenProvider: async (context?: { bundleId: string }) => `test-token-${context?.bundleId}`
+    });
+
+    const state = await apple.fetchSubscription!(storedSubscription as never);
+
+    expect(state).toMatchObject({ subscriptionStatus: 'active' });
+    expect(requests).toEqual([
+      'api.storekit.itunes.apple.com Bearer test-token-com.example.one',
+      'api.storekit-sandbox.itunes.apple.com Bearer test-token-com.example.one',
+      'api.storekit.itunes.apple.com Bearer test-token-com.example.two'
+    ]);
   });
 
   it('syncs a production subscription from production without reading the sandbox', async () => {
