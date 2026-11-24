@@ -102,6 +102,13 @@ function normalizeJson(
   }
   if (typeof value === 'bigint') throw new TypeError('BigInt is not JSON');
   if (typeof value !== 'object') return { value: undefined, json: undefined };
+  // JSON.rawJSON values (newer runtimes) serialize as their raw JSON text.
+  const isRawJSON = (JSON as { isRawJSON?: (v: unknown) => boolean }).isRawJSON;
+  if (typeof isRawJSON === 'function' && isRawJSON(value)) {
+    const json = String((value as { rawJSON: unknown }).rawJSON);
+    charge(budget, json.length);
+    return { value: JSON.parse(json), json };
+  }
   // A value that is its own ancestor is circular, which JSON.stringify refuses.
   if (ancestors.has(value)) throw new TypeError('circular metadata');
   ancestors.add(value);
@@ -267,7 +274,7 @@ export function assertValidUploadInit(input: UploadInitInput): { metadata?: Reco
     try {
       // The byte budget has headroom over the limit; the exact size is
       // checked on the final string below.
-      const result = normalizeJson(input.metadata, input.idempotencyKey !== undefined && input.idempotencyKey !== null ? 'md' : '', 0, { left: MAX_METADATA_NODES, bytes: MAX_METADATA_BYTES * 2 });
+      const result = normalizeJson(input.metadata, input.idempotencyKey ? 'md' : '', 0, { left: MAX_METADATA_NODES, bytes: MAX_METADATA_BYTES * 2 });
       normalized = result.value;
       normalizedJson = result.json;
     } catch (error) {

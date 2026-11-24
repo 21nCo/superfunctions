@@ -6,6 +6,7 @@ import { createLocalStorageAdapter } from '@superfunctions/storage-local';
 import { runInNewContext } from 'node:vm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createFileFn, type Policy } from '../src/index.js';
+import { assertValidUploadInit } from '../src/upload-sessions/input.js';
 
 function nested(depth: number, leaf: unknown): unknown {
   let value: unknown = leaf;
@@ -184,6 +185,29 @@ describe('upload init input (FILE-30 F-21, F-05)', () => {
     const first = await fileFn.createUploadSession(input as never, { principalId: 'alice' });
     expect(first.uploadSessionId).toEqual(expect.any(String));
     expect(calls).toBe(1);
+  });
+
+  it('passes the root key to toJSON when there is no (or an empty) idempotency key', async () => {
+    const fileFn = makeFileFn([{ name: 'any' }]);
+    const metadata = { toJSON: (key: string) => (key === '' ? { ok: true } : null) };
+    const input = { policy: 'any', fileName: 'a.txt', size: 1, mimeType: 'text/plain', metadata, idempotencyKey: '' };
+    await expect(fileFn.createUploadSession(input as never, { principalId: 'alice' })).resolves.toMatchObject({
+      uploadSessionId: expect.any(String),
+    });
+  });
+
+  it('serializes JSON.rawJSON values as their raw text', async () => {
+    const rawJSON = (JSON as { rawJSON?: (text: string) => unknown }).rawJSON;
+    if (typeof rawJSON !== 'function') return;
+    const checked = assertValidUploadInit({
+      policy: 'any',
+      fileName: 'a.txt',
+      size: 1,
+      mimeType: 'text/plain',
+      metadata: { count: rawJSON('42') },
+    } as never);
+    expect(checked.metadata).toEqual({ count: 42 });
+    expect(checked.metadataJson).toBe('{"count":42}');
   });
 
   it('applies the budgets to what toJSON returns, too', async () => {
