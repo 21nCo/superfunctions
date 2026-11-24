@@ -28,6 +28,9 @@ const isJpeg = (b: Uint8Array) => startsWith(b, [0xff, 0xd8, 0xff]);
 const isGif = (b: Uint8Array) => startsWith(b, ascii('GIF87a')) || startsWith(b, ascii('GIF89a'));
 const isRiff = (b: Uint8Array, form: string) =>
   (startsWith(b, ascii('RIFF')) || startsWith(b, ascii('RF64'))) && startsWith(b, ascii(form), 8);
+// WAVE also comes big-endian (RIFX) and as broadcast BW64; ffmpeg's wav demuxer reads all four.
+const isWave = (b: Uint8Array) =>
+  isRiff(b, 'WAVE') || ((startsWith(b, ascii('RIFX')) || startsWith(b, ascii('BW64'))) && startsWith(b, ascii('WAVE'), 8));
 // Classic TIFF (42) and BigTIFF (43), both byte orders.
 const isTiff = (b: Uint8Array) =>
   startsWith(b, [0x49, 0x49, 0x2a, 0x00]) || startsWith(b, [0x4d, 0x4d, 0x00, 0x2a]) ||
@@ -75,7 +78,7 @@ const isPdf = (b: Uint8Array) => pdfStart(b) >= 0;
 const isRasterImage = (b: Uint8Array) =>
   isPng(b) || isJpeg(b) || isGif(b) || isRiff(b, 'WEBP') || isTiff(b) || isBmp(b) || isHeifImage(b);
 const isMediaContainer = (b: Uint8Array) =>
-  isIsoBmff(b) || isEbml(b) || isOgg(b) || isRiff(b, 'AVI ') || isRiff(b, 'WAVE') || isFlac(b) || isId3(b) || isMpegFrame(b);
+  isIsoBmff(b) || isEbml(b) || isOgg(b) || isRiff(b, 'AVI ') || isWave(b) || isFlac(b) || isId3(b) || isMpegFrame(b);
 
 const FAMILIES: Array<[RegExp, (bytes: Uint8Array) => boolean]> = [
   [/^image\/(png|jpe?g|gif|webp|tiff|bmp|avif|heic|heif)$/, isRasterImage],
@@ -92,6 +95,16 @@ export function contentMatchesDeclaredType(bytes: Uint8Array, mimeType: string):
   const essence = mimeType.split(';', 1)[0].trim().toLowerCase();
   const family = FAMILIES.find(([pattern]) => pattern.test(essence));
   return family ? family[1](bytes) : true;
+}
+
+/**
+ * Throws CONTENT_TYPE_MISMATCH_ERROR unless the bytes are a raster image
+ * (PNG, JPEG, GIF, WebP, TIFF, BMP, HEIF/AVIF), whatever type was declared.
+ * For providers that hand the bytes to sharp: unlike the declared-type check,
+ * this one fails closed for an unknown or non-image type.
+ */
+export function assertRasterImage(bytes: Uint8Array): void {
+  if (!isRasterImage(bytes)) throw new Error(CONTENT_TYPE_MISMATCH_ERROR);
 }
 
 export const CONTENT_TYPE_MISMATCH_ERROR = 'File content does not match its declared type';

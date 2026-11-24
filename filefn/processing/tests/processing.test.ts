@@ -10,7 +10,8 @@ import {
   PDF_PREVIEW_SUPPORTED_MIME_TYPES,
   COMPRESSION_SUPPORTED_MIME_TYPES,
 } from '../src/index.js';
-import { CONTENT_TYPE_MISMATCH_ERROR, contentMatchesDeclaredType, ffmpegInputArgs, pdfStart } from '../src/content-sniff.js';
+import { CONTENT_TYPE_MISMATCH_ERROR, assertRasterImage, contentMatchesDeclaredType, ffmpegInputArgs, pdfStart } from '../src/content-sniff.js';
+import { createTesseractJsOCRProvider } from '../src/providers/tesseract-ocr.js';
 
 async function createTestImage(width: number, height: number): Promise<Uint8Array> {
   const buffer = await sharp({
@@ -559,6 +560,26 @@ describe('@filefn/processing', () => {
       expect(contentMatchesDeclaredType(withHeader([0x4d, 0x4d, 0x00, 0x2b]), 'image/tiff')).toBe(true);
       expect(contentMatchesDeclaredType(bytes('RF64\0\0\0\0WAVEds64'), 'audio/wav')).toBe(true);
       expect(contentMatchesDeclaredType(bytes('\0\0\0\x08wide\0\0\0\x10mdat'), 'video/quicktime')).toBe(true);
+    });
+
+    it('accepts big-endian RIFX and broadcast BW64 WAVE files', () => {
+      expect(contentMatchesDeclaredType(bytes('RIFX\0\0\0\0WAVEfmt '), 'audio/wav')).toBe(true);
+      expect(contentMatchesDeclaredType(bytes('BW64\0\0\0\0WAVEds64'), 'audio/wav')).toBe(true);
+      expect(contentMatchesDeclaredType(bytes('RIFX\0\0\0\0AVI '), 'audio/wav')).toBe(false);
+    });
+
+    it('lets only raster images reach sharp in the tesseract.js provider, whatever the declared type', async () => {
+      const svg = bytes('<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"/>');
+      expect(() => assertRasterImage(svg)).toThrow(CONTENT_TYPE_MISMATCH_ERROR);
+      expect(() => assertRasterImage(withHeader([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))).not.toThrow();
+      await expect(
+        createTesseractJsOCRProvider().recognize({
+          input: { fileId: 'f', versionId: 'v', storageKey: 'k.svg', mimeType: 'image/svg', size: svg.length, fileName: 'k.svg' },
+          imageData: svg,
+          language: 'eng',
+          includeHOCR: false,
+        }),
+      ).rejects.toThrow(CONTENT_TYPE_MISMATCH_ERROR);
     });
 
     it('refuses two-letter BMP and non-image ftyp headers as images', () => {

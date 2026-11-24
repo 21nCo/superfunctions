@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { OCRProcessorProvider, OCRProviderRequest, OCRProviderResult } from '@filefn/processing';
 import sharp from 'sharp';
+import { isRasterImage } from './raster-image.js';
 
 export interface TesseractCliOptions {
   /** The `tesseract` executable; defaults to `tesseract` on PATH. */
@@ -45,6 +46,8 @@ export function createTesseractCliOCRProvider(options: TesseractCliOptions = {})
 
   return {
     async recognize(request: OCRProviderRequest): Promise<OCRProviderResult> {
+      // Only raster images reach sharp, whatever the declared type.
+      if (!isRasterImage(request.imageData)) throw new Error('File content does not match its declared type');
       const directory = await mkdtemp(join(tmpdir(), 'filefn-ocr-'));
       try {
         const input = join(directory, 'input.png');
