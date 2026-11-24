@@ -283,7 +283,7 @@ describe('event prices named outside the provider record', () => {
         checkoutStatus: 'succeeded' as const,
         providerChargeId: 'pay_cart',
         autoRenew: false,
-        raw: { product_cart: [{ product_id: 'pdt_starter_month', quantity: 1 }], metadata: { billfn_billing_account_id: 'ba_user_attacker' } }
+        raw: { subscription_id: null, product_cart: [{ product_id: 'pdt_starter_month', quantity: 1 }], metadata: { billfn_billing_account_id: 'ba_user_attacker' } }
       },
       raw: {}
     };
@@ -322,7 +322,7 @@ describe('event prices named outside the provider record', () => {
         checkoutStatus: 'succeeded',
         providerChargeId: 'pay_cart_collide',
         autoRenew: false,
-        raw: { product_cart: [{ product_id: 'pdt_starter_month' }], metadata: { billfn_billing_account_id: 'ba_user_attacker' } }
+        raw: { subscription_id: null, product_cart: [{ product_id: 'pdt_starter_month' }], metadata: { billfn_billing_account_id: 'ba_user_attacker' } }
       },
       raw: {}
     });
@@ -438,7 +438,7 @@ describe('event prices named outside the provider record', () => {
     expect((await env.entitlements())?.subscription?.planKey).not.toBe('starter');
   });
 
-  it('keeps the price hint of a subscription event whose record has an empty or null cart', async () => {
+  it.each([null, []])('keeps the price hint of a subscription event whose record has the cart %j', async (productCart) => {
     const env = setup();
     await env.openCheckout('starter');
 
@@ -450,12 +450,31 @@ describe('event prices named outside the provider record', () => {
         checkoutStatus: 'succeeded',
         providerSubscriptionId: 'sub_other_adapter',
         autoRenew: true,
-        raw: { product_cart: null, metadata: { billfn_billing_account_id: 'ba_user_attacker' } }
+        raw: { product_cart: productCart, metadata: { billfn_billing_account_id: 'ba_user_attacker' } }
       },
       raw: {}
     });
 
     expect((await env.entitlements())?.subscription?.planKey).toBe('enterprise');
+  });
+
+  it('does not read the cart of a Dodo payment that does not say whether it charges a subscription', async () => {
+    const env = setup();
+    await env.openCheckout('enterprise');
+
+    await env.deliver({
+      providerChargeId: 'pay_unclassified',
+      billingState: {
+        subscriptionStatus: 'active',
+        checkoutStatus: 'succeeded',
+        providerChargeId: 'pay_unclassified',
+        autoRenew: false,
+        raw: { product_cart: [{ product_id: 'pdt_starter_month' }], metadata: { billfn_billing_account_id: 'ba_user_attacker' } }
+      },
+      raw: {}
+    });
+
+    expect((await env.entitlements())?.subscription?.planKey).not.toBe('starter');
   });
 });
 
@@ -492,7 +511,7 @@ describe('product carts of other providers', () => {
               checkoutStatus: 'succeeded',
               providerChargeId: 'order_polar',
               autoRenew: false,
-              raw: { product_cart: [{ product_id: 'pdt_starter_month' }], metadata: { billfn_billing_account_id: 'ba_user_attacker' } }
+              raw: { subscription_id: null, product_cart: [{ product_id: 'pdt_starter_month' }], metadata: { billfn_billing_account_id: 'ba_user_attacker' } }
             },
             raw: {}
           }

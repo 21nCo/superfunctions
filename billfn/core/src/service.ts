@@ -5547,8 +5547,12 @@ function providerReportedProducts(provider: BillingProviderName, state: Verified
   const records = [raw, asRecord(raw?.transaction)];
   // A Dodo cart lists a payment's one-time items; a payment that also charges a subscription keeps the
   // subscription's product elsewhere, so its cart says nothing about the subscription's plan.
+  // Only a payment Dodo says is one-time (a null subscription_id, or a subscription_ids list) is read by its cart.
+  const saysOneTime = raw !== null && (raw.subscription_id === null || Array.isArray(raw.subscription_ids));
   const cart =
-    provider === 'dodo' && !chargesSubscription(state) && Array.isArray(raw?.product_cart) ? raw.product_cart : [];
+    provider === 'dodo' && saysOneTime && !chargesSubscription(state) && Array.isArray(raw?.product_cart)
+      ? raw.product_cart
+      : [];
   return [
     state?.providerProductId,
     ...records.flatMap((record) => (record ? [readString(record, 'product_id'), readString(record, 'productId')] : [])),

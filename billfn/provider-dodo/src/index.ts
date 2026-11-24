@@ -1250,12 +1250,9 @@ function readDodoPriceReference(kind: 'subscription' | 'payment', data: Record<s
   return product;
 }
 
-/** A payment that charges no subscription: no `subscription_id`, no `subscription_ids` entry, not multi-subscription. */
+/** A payment Dodo says charges no subscription (the one classification `classifyDodoPayment` gives). */
 function isDodoOneTimePayment(payment: Record<string, unknown>): boolean {
-  if (readString(payment, ['subscription_id']) || payment.is_multi_subscription === true) {
-    return false;
-  }
-  return !(Array.isArray(payment.subscription_ids) && payment.subscription_ids.length > 0);
+  return classifyDodoPayment(payment) === 'one_time';
 }
 
 function readMetadataString(record: Record<string, unknown>, key: string): string | undefined {
