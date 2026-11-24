@@ -2136,6 +2136,39 @@ describe("fromOpenAPI body fallback, synchronous schemas, per-kind alternatives 
     expect(reused.tools.map(({ name }) => name)).toEqual(["m", "later"]);
   });
 
+  it("gives every request body entry the same node budget whatever its position", () => {
+    const defs = (count: number) => Object.fromEntries(Array.from({ length: count }, (_, index) => [`d${index}`, {}]));
+    const filter = { name: "filter", in: "query", schema: { type: "string", $defs: defs(25_000) } };
+    // A required readOnly property makes the input check compile the body as written too.
+    const preferred = {
+      schema: {
+        type: "object",
+        properties: { id: { type: "string", readOnly: true }, n: { type: "number" } },
+        required: ["id"],
+        $defs: defs(40_000),
+      },
+    };
+    const fallback = { schema: { type: "string" } };
+    const chosen = (content: Record<string, unknown>) => {
+      const result = fromOpenAPI(
+        { openapi: "3.1.0", paths: { "/m": { patch: { operationId: "m", parameters: [filter], requestBody: { content }, responses: ok } } } },
+        options(),
+      );
+      expect(result.skipped).toEqual([]);
+      return tool(result.tools, "m");
+    };
+    const first = chosen({ "application/preferred+json": preferred, "application/example+json": fallback });
+    const afterRejected = chosen({ "application/json": { schema: null }, "application/preferred+json": preferred, "application/example+json": fallback });
+    expect(first.operation.requestBody?.contentType).toBe("application/preferred+json");
+    expect(afterRejected.operation.requestBody?.contentType).toBe("application/preferred+json");
+    // The chosen entry is the whole input: the parameter group and the body with its readOnly property left out.
+    for (const converted of [first, afterRejected]) {
+      expect(converted.inputSchema.required).toBeUndefined();
+      expect(Object.keys(converted.inputSchema.properties)).toEqual(["query", "body"]);
+      expect((converted.inputSchema.properties.body as { properties: object }).properties).toEqual({ id: false, n: { type: "number" } });
+    }
+  }, 60_000);
+
   it("tries each request body entry in the whole input, checks a shared one once and falls through a too-deep one", () => {
     const fallback = { "application/example+json": { schema: { type: "string" } } };
     const patch = (operationId: string, content: Record<string, unknown>, extra: Record<string, unknown> = {}) =>

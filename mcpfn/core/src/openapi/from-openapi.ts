@@ -326,19 +326,18 @@ class OperationConverter {
    * each entry is tried with the whole input (conversion, projection, a
    * compile check and the assembled copy) within its own node budget. When
    * none works, the first entry's failure is reported. The parameters are
-   * converted once, in the first attempt, and charged to the document once;
-   * an entry whose schema object already failed is not converted again.
+   * converted once beforehand, within their own node budget, so every entry
+   * gets the same budget whatever its position; an entry whose schema object
+   * already failed is not converted again.
    */
   private input(path: string, pathItem: JsonObject, raw: JsonObject): { inputs: OperationInputs; inputSchema: McpFnObjectSchema } {
-    let bodies: ResolvedBody[] = [];
-    let converted: ResolvedParameter[] | undefined;
+    // Parameters first, so their skip reasons come before the body's.
+    const parameters = this.schemas.budgeted(() => this.parameters(path, pathItem, raw));
+    const bodies = this.requestBodies(raw);
     // Within one operation an entry's result depends only on its schema object.
     const failed = new Map<unknown, OpenApiSkip>();
     const attempt = (index: number) =>
       this.schemas.budgeted(() => {
-        // Parameters first, so their skip reasons come before the body's.
-        const parameters = (converted ??= this.parameters(path, pathItem, raw));
-        if (index === 0) bodies = this.requestBodies(raw);
         const inputs = { parameters, body: bodies[index] };
         // A sole entry is checked when the tool is registered.
         return { inputs, inputSchema: this.inputSchema(inputs, bodies.length > 1) };
@@ -350,7 +349,7 @@ class OperationConverter {
         if (known) throw known;
         return attempt(index);
       } catch (error) {
-        // No body or a sole entry, or the failure came before an entry was chosen.
+        // No body or a sole entry: the failure is the operation's.
         if (bodies.length <= 1) throw error;
         const skip = candidateFailure(error);
         failed.set(bodies[index]!.schema, skip);
