@@ -72,6 +72,25 @@ describe('FILE-30 low-severity hardening (F-13, F-14, F-16, F-18, F-24)', () => 
     expect((await get({ 'x-test-user': 'nobody', 'x-test-tenant': 't1' }))!.status).toBe(403);
   });
 
+  it('never lets the reserved anonymous principal write or delete through roles or role grants (F-02, F-18)', async () => {
+    const database = memoryAdapter();
+    const authorizer = createDefaultAuthorizer({ db: database, namespace: 'filefn' });
+    const file = { fileId: 'file_role01', ownerId: 'owner', tenantId: 't1', visibility: 'private' } as never;
+    await database.create({
+      model: 'filePermissions',
+      data: { permissionId: 'perm_1', fileId: 'file_role01', role: 'editor', canRead: true, canWrite: true, canDelete: true, canShare: false, createdAt: new Date().toISOString() },
+      namespace: 'filefn',
+    });
+    for (const principalId of ['anonymous', undefined]) {
+      const guest = { principalId, tenantId: 't1', roles: ['editor', 'admin'] } as never;
+      expect(await authorizer.canWrite(file, guest)).toBe(false);
+      expect(await authorizer.canDelete(file, guest)).toBe(false);
+    }
+    const editor = { principalId: 'ed', tenantId: 't1', roles: ['editor'] } as never;
+    expect(await authorizer.canWrite(file, editor)).toBe(true);
+    expect(await authorizer.canDelete(file, editor)).toBe(true);
+  });
+
   it("keeps a tenant's admin away from files without a tenant (F-18)", async () => {
     const database = memoryAdapter();
     const { fileFn } = makeFileFn({ database, authorizer: createDefaultAuthorizer({ db: database, namespace: 'filefn' }) });

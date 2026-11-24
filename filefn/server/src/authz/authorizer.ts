@@ -2,7 +2,7 @@ import type { Adapter } from '@superfunctions/db';
 import { isGrantExpired } from './grant-expiry.js';
 import type { FileProviderContext } from '@superfunctions/files';
 import type { FileRecord, Authorizer } from '../files/service.js';
-import { isFileOwner } from './ownership.js';
+import { isAnonymousContext, isFileOwner } from './ownership.js';
 
 export type AuthorizerStrategy = 'first-allow' | 'all-must-allow';
 
@@ -155,6 +155,9 @@ export function createDefaultAuthorizer(config: DefaultAuthorizerConfig): Author
     },
 
     async canWrite(file, ctx) {
+      // A guest never writes, whatever roles the host gave the reserved
+      // principal: anonymous uploads are owned by nobody (FILE-30 F-02).
+      if (isAnonymousContext(ctx)) return false;
       if (isOwner(file, ctx)) return true;
       if (isAdmin(file, ctx as DefaultAuthorizerContext)) return true;
 
@@ -163,6 +166,7 @@ export function createDefaultAuthorizer(config: DefaultAuthorizerConfig): Author
     },
 
     async canDelete(file, ctx) {
+      if (isAnonymousContext(ctx)) return false;
       if (isOwner(file, ctx)) return true;
       if (isAdmin(file, ctx as DefaultAuthorizerContext)) return true;
 
