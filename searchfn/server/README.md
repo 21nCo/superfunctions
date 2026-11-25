@@ -94,3 +94,7 @@ type SearchFnServerConfig<TContext> = {
 - Send `Content-Type: application/json` on POSTs. Use `resource` for single-resource routes and `resources` for `search-all`. An authorized `search-all` requires a non-empty resource list.
 - `limits` controls payload size, query length, search fan-out, and indexing batch caps.
 - `close()` delegates to `adapter.dispose()` when the adapter implements it.
+
+### Upgrading to 0.2.0
+
+Update `SearchFnServer<TContext>` annotations to `SearchFnServer`. Supply a `context` factory when an authorization policy needs application fields such as identity or permissions. Factory-free policies can use the standard router context fields, including `query` and `url`.
