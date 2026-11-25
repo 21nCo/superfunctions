@@ -301,7 +301,7 @@ const assignedEntries = new WeakSet<object>();
  * the write's transaction, however many change entries the write recorded
  * for it (an insert and its inherited-inactive update are one write). Only
  * the record's last entry carries the new revision; it marks a delete's
- * tombstone. With `completeRows`, a last entry that writes a whole record
+ * tombstone. Where `completeRow` holds, a last entry that writes a whole record
  * (insert, replace, upsert) records the stored row read on `db` after the
  * write, so a change carrying a revision always carries the exact committed
  * row (defaults and server fields included). A retry of the same entries
@@ -317,7 +317,7 @@ export async function assignWriteRevisions(
     record: Record<string, unknown> | null;
     rev?: number;
   }>,
-  completeRows: boolean,
+  completeRow: (resource: string) => boolean,
 ): Promise<void> {
   if (entries.some((entry) => assignedEntries.has(entry))) return;
   const last = new Map<string, (typeof entries)[number]>();
@@ -328,7 +328,7 @@ export async function assignWriteRevisions(
   for (const entry of last.values()) {
     const deleted = entry.op === "delete";
     entry.rev = await bumpRevision(db, namespace, entry.resource, entry.id, deleted);
-    if (!completeRows || deleted || entry.op === "merge" || isKvResource(entry.resource)) continue;
+    if (deleted || entry.op === "merge" || isKvResource(entry.resource) || !completeRow(entry.resource)) continue;
     const stored = await db.findOne({
       model: entry.resource,
       where: [{ field: "id", operator: "eq", value: entry.id }],

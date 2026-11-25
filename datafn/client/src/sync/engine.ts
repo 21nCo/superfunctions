@@ -1896,34 +1896,42 @@ export class SyncEngine {
    */
   private async applyPushRevisions(pushResults: PushSyncResult[], writtenSince: number | undefined): Promise<void> {
     const installed: Record<string, string[]> = {};
+    // Several mutations of one push may write one record: only its latest
+    // post-write row is installed.
+    const latest = new Map<string, DatafnPushRevision>();
     for (const pushResult of pushResults) {
       for (const revision of Object.values(pushResult.revisions ?? {})) {
-        try {
-          let record: Record<string, unknown> | null = null;
-          let rev = revision.deleted ? revision.rev : readRowRevision(revision.record);
-          if (!revision.deleted && revision.record) {
-            const decrypted = (await decryptPullResultForE2ee(this.schema, this.e2ee, {
-              ok: true,
-              records: { [revision.resource]: [withoutRowRevision(revision.record)] },
-              deleted: {},
-              cursors: {},
-            })) as { records: Record<string, Array<Record<string, unknown>>> };
-            record = decrypted.records[revision.resource]?.[0] ?? null;
-            if (!record) rev = undefined;
-          }
-          if (rev === undefined) continue;
-          const ids = await installServerRevisions(
-            this.storage,
-            revision.resource,
-            [{ id: revision.id, record, rev }],
-            { revisionResources: this.revisionResources, pendingMutations: this.pendingLocalMutations, writtenSince },
-          );
-          if (ids.length > 0) (installed[revision.resource] ??= []).push(...ids);
-        } catch (error) {
-          // The mutation is acknowledged; without its row the revision just
-          // stays unknown.
-          console.warn("[datafn] Could not store a push revision", error);
+        const key = JSON.stringify([revision.resource, revision.id]);
+        const seen = latest.get(key);
+        if (!seen || revision.rev > seen.rev) latest.set(key, revision);
+      }
+    }
+    for (const revision of latest.values()) {
+      try {
+        let record: Record<string, unknown> | null = null;
+        let rev = revision.deleted ? revision.rev : readRowRevision(revision.record);
+        if (!revision.deleted && revision.record) {
+          const decrypted = (await decryptPullResultForE2ee(this.schema, this.e2ee, {
+            ok: true,
+            records: { [revision.resource]: [withoutRowRevision(revision.record)] },
+            deleted: {},
+            cursors: {},
+          })) as { records: Record<string, Array<Record<string, unknown>>> };
+          record = decrypted.records[revision.resource]?.[0] ?? null;
+          if (!record) rev = undefined;
         }
+        if (rev === undefined) continue;
+        const ids = await installServerRevisions(
+          this.storage,
+          revision.resource,
+          [{ id: revision.id, record, rev }],
+          { revisionResources: this.revisionResources, pendingMutations: this.pendingLocalMutations, writtenSince },
+        );
+        if (ids.length > 0) (installed[revision.resource] ??= []).push(...ids);
+      } catch (error) {
+        // The mutation is acknowledged; without its row the revision just
+        // stays unknown.
+        console.warn("[datafn] Could not store a push revision", error);
       }
     }
     await this.afterRevisionInstall(installed);

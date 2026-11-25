@@ -18,7 +18,7 @@ import {
 } from "../idempotency.js";
 import type { SequenceStore } from "./sequence-store.js";
 import { ChangeTrackingService, recordChangeWithRetry } from "./change-tracking.js";
-import { issuesRevisions, recordedRevision, REVISION_FIELD, revisionsEnabled } from "../revisions.js";
+import { issuesRevisions, recordedRevision, REVISION_FIELD } from "../revisions.js";
 import type { ChangeEntryInput } from "./change-tracking.js";
 import { canReadEveryField } from "../../validation/authz.js";
 import {
@@ -310,7 +310,7 @@ export async function executePush(
 
   // Create change tracking service with user/tenant namespace and optional sequence store
   const changeTracking = new ChangeTrackingService(db, namespace, sequenceStore, onChange);
-  changeTracking.issueRevisions = revisionsEnabled(schema);
+  changeTracking.useRevisionsOf(schema);
   // Capture the global sequence counter BEFORE any mutations are processed so the client
   // can determine whether foreign changes exist (cursorBefore == localCursor → no foreign changes)
   const cursorBeforeSeq = await changeTracking.getCurrentServerSeq();

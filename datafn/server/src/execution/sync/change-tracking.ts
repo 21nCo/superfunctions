@@ -16,7 +16,8 @@ import type { Adapter } from "@superfunctions/db";
 import type { InternalWhereClause } from "@superfunctions/db/types";
 import type { SequenceStore } from "./sequence-store.js";
 import { ensureChangesRevColumn, ensureInternalTable } from "../internal-tables.js";
-import { assignWriteRevisions, ensureRevisionsTable } from "../revisions.js";
+import { assignWriteRevisions, ensureRevisionsTable, issuesRevisions, revisionsEnabled } from "../revisions.js";
+import type { DatafnSchema } from "../../core-types.js";
 import type { DatafnLogger } from "../../logger.js";
 import { withAdapterNamespaceLock } from "./namespace-lock.js";
 
@@ -141,6 +142,15 @@ export class ChangeTrackingService {
    * server's `revisions.enabled` option; revisions are bumped either way.
    */
   issueRevisions = false;
+  /** DATA-41: the schema whose resources get revisions issued (see useRevisionsOf). */
+  private revisionSchema?: DatafnSchema;
+
+  /** DATA-41: issues revisions as `schema`'s server option says. */
+  useRevisionsOf(schema: DatafnSchema): this {
+    this.revisionSchema = schema;
+    this.issueRevisions = revisionsEnabled(schema);
+    return this;
+  }
 
   constructor(
     private db: Adapter,
@@ -252,6 +262,7 @@ export class ChangeTrackingService {
       true,
     );
     bound.issueRevisions = this.issueRevisions;
+    bound.revisionSchema = this.revisionSchema;
     bound.transactionBound = true;
     bound.revisionsEnsured = this.revisionsEnsured;
     bound.revColumnReady = this.revColumnReady;
@@ -379,7 +390,12 @@ export class ChangeTrackingService {
     if (this.issueRevisions && !this.revColumnReady) {
       this.revColumnReady = await ensureChangesRevColumn(this.db);
     }
-    await assignWriteRevisions(this.db, this.namespace, entries, this.issueRevisions && this.revColumnReady);
+    const recordRev = this.issueRevisions && this.revColumnReady;
+    const schema = this.revisionSchema;
+    // A change row carrying a revision records the stored row of a resource
+    // the schema issues revisions for.
+    await assignWriteRevisions(this.db, this.namespace, entries, (resource) =>
+      recordRev && schema !== undefined && issuesRevisions(schema, resource));
   }
 
   /**

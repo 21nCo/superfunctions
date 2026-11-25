@@ -326,6 +326,20 @@ describe("DATA-41 client revisions: never installed over newer local state", () 
     expect(pair.rev).toBeUndefined();
   });
 
+  it("installs the latest post-write row when one push writes a record twice", async () => {
+    const server = await startServer();
+    await serverPush(server, "seed", [{ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } }]);
+    const storage = new MemoryStorageAdapter(["task"]);
+    const engine = engineFor(server, storage);
+    await engine.cloneNow();
+    await storage.mergeRecord("task", "task:1", { title: "b", notes: "c" });
+    await appendLocal(storage, { resource: "task", operation: "merge", id: "task:1", record: { title: "b" } });
+    await appendLocal(storage, { resource: "task", operation: "merge", id: "task:1", record: { notes: "c" } });
+    await engine.processPush();
+    const pair = await storage.getRecordWithRevision("task", "task:1");
+    expect(pair).toEqual({ record: expect.objectContaining({ title: "b", notes: "c" }), rev: 3 });
+  });
+
   it("pairs a push row only with the $rev the row itself carries", async () => {
     const server = await startServer();
     await serverPush(server, "seed", [{ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } }]);
