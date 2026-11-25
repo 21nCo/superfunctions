@@ -24,6 +24,16 @@ function requestId(directory: string, requestPath: string): string {
     return REQUEST_ID_PREFIX + JSON.stringify([directory, requestPath]);
 }
 
+function isRequestPathId(id: string): boolean {
+    if (!id.startsWith(REQUEST_ID_PREFIX)) return false;
+    try {
+        const parts: unknown = JSON.parse(id.slice(REQUEST_ID_PREFIX.length));
+        return Array.isArray(parts) && parts.length === 2 && parts.every((part) => typeof part === "string");
+    } catch {
+        return false;
+    }
+}
+
 function visitRequests(
     collection: Collection,
     visit: (item: CollectionItem, suite: string) => void,
@@ -167,7 +177,7 @@ export class ApifnTestAdapter extends BaseAdapter {
                 });
 
                 for (const test of testsInCollection) {
-                    const matches = test.id.startsWith(REQUEST_ID_PREFIX)
+                    const matches = isRequestPathId(test.id)
                         ? []
                         : requestsByName.get(test.name)?.filter((request) => !test.suite || test.suite === request.suite) ?? [];
                     const selectedPath = pathsById.get(test.id) ?? (matches.length === 1 ? matches[0].path : undefined);

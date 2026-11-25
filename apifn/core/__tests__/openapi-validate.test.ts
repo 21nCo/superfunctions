@@ -113,4 +113,22 @@ describe("validateOpenAPI", () => {
       { path: "openapi", message: expect.stringContaining("explicit allowlist"), severity: "error" },
     ]);
   });
+
+  it("resolves encoded pointers in preloaded schemas and preserves literal examples", async () => {
+    const ref = "https://example.invalid/preloaded.json";
+    const encoded = "#%2F$defs%2FShared";
+    const contents = JSON.stringify({
+      $defs: { Shared: { type: "string" } },
+      $ref: encoded,
+      examples: [{ $ref: encoded }],
+    });
+    const result = await validateAndDereferenceOpenAPI(documentWithReference(ref), {
+      externalReferences: new Map([[ref, contents]]),
+    });
+    expect(result.errors).toEqual([]);
+    expect(result.document?.components?.schemas?.Value).toMatchObject({
+      type: "string",
+      examples: [{ $ref: encoded }],
+    });
+  });
 });

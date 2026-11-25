@@ -138,7 +138,7 @@ describe("ApifnTestAdapter", () => {
     });
     mocks.runCollection.mockResolvedValue({ results: [] });
 
-    await adapter.run([{ id: "t1", file: "/tmp/work/orders", name: "List Orders", suite: "Orders API" }], {});
+    await adapter.run([{ id: "apifn:cached-selection", file: "/tmp/work/orders", name: "List Orders", suite: "Orders API" }], {});
 
     expect(mocks.runCollection).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
       allowScripts: true,

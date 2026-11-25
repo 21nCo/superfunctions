@@ -1,4 +1,5 @@
 import SwaggerParser from "@apidevtools/swagger-parser";
+import { parse as parseYaml } from "yaml";
 import type { OpenAPIDocument, ValidationError } from "../types.js";
 import { openAPIReferenceContext, type OpenAPIReferenceMode } from "./reference-context.js";
 
@@ -14,7 +15,7 @@ const EXTERNAL_REF_ERROR = "External OpenAPI $ref requires an explicit allowlist
 
 function assertReferencePolicy(
   document: unknown,
-  { allowExternal, normalizePointers }: { allowExternal: boolean; normalizePointers: boolean }
+  { allowExternal, stage }: { allowExternal: boolean; stage: "input" | "preloaded" | "resolved" }
 ): void {
   const { childMode, entryMode, arrayItemMode, isMap } = openAPIReferenceContext;
   const seen = new WeakMap<object, Set<OpenAPIReferenceMode>>();
@@ -33,11 +34,12 @@ function assertReferencePolicy(
         // The parser scans even literal data for external references.
         if (!allowExternal) throw new Error(EXTERNAL_REF_ERROR);
       } else if (mode !== "literal" && !isMap(mode) && ref !== "#" && !ref.startsWith("#/")) {
-        if (!normalizePointers || !/^#%2f/i.test(ref)) {
+        if (stage !== "resolved" && /^#%2f/i.test(ref)) {
+          const pointer = decodeURIComponent(ref.slice(1));
+          value.$ref = "#" + pointer.split("/").map(encodeURIComponent).join("/");
+        } else if (stage !== "preloaded") {
           throw new Error("OpenAPI $ref fragments must be JSON pointers");
         }
-        const pointer = decodeURIComponent(ref.slice(1));
-        value.$ref = "#" + pointer.split("/").map(encodeURIComponent).join("/");
       }
     }
     if (Array.isArray(value)) {
@@ -94,7 +96,7 @@ export async function validateAndDereferenceOpenAPI(
     const copy = structuredClone(document);
     const externalReferences = options?.externalReferences;
     const allowExternal = Boolean(externalReferences?.size);
-    assertReferencePolicy(copy, { allowExternal, normalizePointers: true });
+    assertReferencePolicy(copy, { allowExternal, stage: "input" });
     const validated = await SwaggerParser.validate(copy as never, {
       resolve: {
         external: allowExternal,
@@ -102,18 +104,22 @@ export async function validateAndDereferenceOpenAPI(
         http: false,
         allowlist: {
           canRead: true,
-          read({ url }: { url: string }): string {
+          read({ url }: { url: string }): unknown {
             const contents = externalReferences?.get(url);
-            if (contents !== undefined) return contents;
-            deniedReference = true;
-            throw new Error(EXTERNAL_REF_ERROR);
+            if (contents === undefined) {
+              deniedReference = true;
+              throw new Error(EXTERNAL_REF_ERROR);
+            }
+            const parsed: unknown = parseYaml(contents);
+            assertReferencePolicy(parsed, { allowExternal: true, stage: "preloaded" });
+            return typeof parsed === "string" ? JSON.stringify(parsed) : parsed;
           },
         },
       },
     });
     // A preloaded document may be a map of schemas. Check the referenced
     // subtrees in the context where they appear after dereferencing.
-    if (allowExternal) assertReferencePolicy(validated, { allowExternal: false, normalizePointers: false });
+    if (allowExternal) assertReferencePolicy(validated, { allowExternal: false, stage: "resolved" });
     return { document: validated as unknown as OpenAPIDocument, errors: [] };
   } catch (error) {
     return { document: null, errors: toValidationErrors(deniedReference ? new Error(EXTERNAL_REF_ERROR) : error) };
