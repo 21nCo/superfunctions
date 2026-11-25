@@ -373,31 +373,33 @@ function sdkOriginError(
 }
 
 async function respondUntilClosed(
-  respond: () => Promise<Response>,
+  respond: (stopBody: AbortSignal) => Promise<Response>,
   stopResponses: Set<() => void>,
   onClosed: () => Response,
   signal?: AbortSignal,
 ): Promise<Response> {
   // The SDK can leave pending JSON responses unresolved when it closes.
-  signal?.throwIfAborted();
+  if (signal?.aborted) return clientClosedResponse();
+  const stopBody = new AbortController();
   let stopped = false;
   let stop!: () => void;
   const closed = new Promise<undefined>((resolve) => {
     stop = () => {
       stopped = true;
+      stopBody.abort();
       resolve(undefined);
     };
     stopResponses.add(stop);
   });
   signal?.addEventListener("abort", stop, { once: true });
   try {
-    const pending = respond().then(async (response) => {
+    const pending = respond(stopBody.signal).then(async (response) => {
       if (!stopped) return response;
       await response.body?.cancel().catch(() => undefined);
     });
     const response = await Promise.race([pending, closed]);
     if (stopped) await response?.body?.cancel().catch(() => undefined);
-    signal?.throwIfAborted();
+    if (signal?.aborted) return clientClosedResponse();
     return !stopped && response ? response : onClosed();
   } finally {
     signal?.removeEventListener("abort", stop);
@@ -405,9 +407,32 @@ async function respondUntilClosed(
   }
 }
 
+function clientClosedResponse(): Response {
+  return jsonRpcErrorResponse(499, -32000, "Client closed the request");
+}
+
+function requestWithInterruptibleBody(
+  request: Request,
+  options: HandleRequestOptions | undefined,
+  signal: AbortSignal,
+): Request {
+  const body = request.body;
+  if (request.method !== "POST" || !body || body.locked || request.bodyUsed || options?.parsedBody !== undefined) {
+    return request;
+  }
+  return new Request(request.url, {
+    method: request.method,
+    headers: request.headers,
+    signal: request.signal,
+    body: interruptibleRequestBody(body, signal, request.signal),
+    duplex: "half",
+  } as RequestInit);
+}
+
 function interruptibleRequestBody(
   body: ReadableStream<Uint8Array>,
   signal: AbortSignal,
+  client: AbortSignal,
 ): ReadableStream<Uint8Array> {
   // Avoid pulling or locking the client body if the SDK rejects its headers.
   return new ReadableStream<Uint8Array>({
@@ -416,7 +441,12 @@ function interruptibleRequestBody(
       const reader = body.getReader();
       const abort = () => {
         controller.error(signal.reason);
-        void reader.cancel(signal.reason).catch(() => undefined);
+        if (client.aborted) {
+          void reader.cancel(signal.reason).catch(() => undefined);
+        } else {
+          // Interrupt the read but leave the socket open for the HTTP response.
+          reader.releaseLock();
+        }
       };
       signal.addEventListener("abort", abort, { once: true });
       try {
@@ -1317,12 +1347,17 @@ export class McpFnServer<TContext = undefined> {
       if (sessionId) {
         const session = sessions.get(sessionId);
         if (!session || session.principal !== principal) return sessionNotFound();
-        if (!session.touch(!sdkOriginError(request, transportOptions))) return sessionNotFound();
-        const respond = () => session.transport.handleRequest(request, handleOptions);
+        const refresh = !request.signal.aborted && !sdkOriginError(request, transportOptions);
+        if (!session.touch(refresh)) return sessionNotFound();
         // DELETE itself initiates closure and must receive its own response.
         return request.method === "DELETE"
-          ? respond()
-          : respondUntilClosed(respond, session.stopResponses, sessionNotFound, request.signal);
+          ? session.transport.handleRequest(request, handleOptions)
+          : respondUntilClosed(
+              (signal) => session.transport.handleRequest(requestWithInterruptibleBody(request, handleOptions, signal), handleOptions),
+              session.stopResponses,
+              sessionNotFound,
+              request.signal,
+            );
       }
 
       let forPrincipal = 0;
@@ -1438,11 +1473,15 @@ export class McpFnServer<TContext = undefined> {
       this.requestServers.add(requestServer);
       this.httpSessionClosers.set(requestServer, close);
 
+      const setupStopped = () => request.signal.aborted ? clientClosedResponse() : serverClosed();
       request.signal.addEventListener("abort", expire, { once: true });
       try {
-        request.signal.throwIfAborted();
+        if (request.signal.aborted) {
+          await close().catch(() => undefined);
+          return clientClosedResponse();
+        }
         await configureRequestServer?.(requestServer);
-        if (closing) return serverClosed();
+        if (closing) return setupStopped();
         await requestServer.connect(transport);
         const onClose = transport.onclose;
         transport.onclose = () => {
@@ -1452,28 +1491,16 @@ export class McpFnServer<TContext = undefined> {
             expire();
           }
         };
-        if (closing) return serverClosed();
-        // Let the SDK enforce its body-size limit while making its stream read
-        // interruptible on shutdown or when the HTTP client disconnects.
-        const body = request.body;
-        const sdkRequest = request.method === "POST" && body && !body.locked && !request.bodyUsed &&
-          handleOptions?.parsedBody === undefined
-          ? new Request(request.url, {
-              method: request.method,
-              headers: request.headers,
-              signal: request.signal,
-              body: interruptibleRequestBody(body, stopBody.signal),
-              duplex: "half",
-            } as RequestInit)
-          : request;
+        if (closing) return setupStopped();
+        const sdkRequest = requestWithInterruptibleBody(request, handleOptions, stopBody.signal);
         const response = await respondUntilClosed(
           () => transport.handleRequest(sdkRequest, handleOptions),
           stopResponses,
-          serverClosed,
+          setupStopped,
         );
         if (closing) {
           await response.body?.cancel().catch(() => undefined);
-          return serverClosed();
+          return setupStopped();
         }
         if (acceptedId !== undefined && response.ok) return response;
         return await releaseAfterResponse(response, close);

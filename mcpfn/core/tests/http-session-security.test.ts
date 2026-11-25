@@ -344,8 +344,9 @@ describe("createWebStandardHandler session binding (MCP-SEC-03)", () => {
     if (reason === "server shutdown") await server.close();
     else abort.abort();
     const response = await pending;
-    expect(cancel).toHaveBeenCalledTimes(1);
-    expect(response.status).toBe(503);
+    expect(cancel).toHaveBeenCalledTimes(reason === "server shutdown" ? 0 : 1);
+    expect(body.locked).toBe(false);
+    expect(response.status).toBe(reason === "server shutdown" ? 503 : 499);
     expect(response.headers.get("mcp-session-id")).toBeNull();
     expect((await initialize()).status).toBe(200);
   });
@@ -496,6 +497,36 @@ describe("createWebStandardHandler session limits and expiry (MCP-SEC-04)", () =
     await vi.advanceTimersByTimeAsync(100);
     expect((await pending).status).toBe(404);
     release();
+  });
+
+  it.each(["idle expiry", "client abort"])("interrupts a named POST upload on %s", async (reason) => {
+    vi.useFakeTimers();
+    const { handler, initialize, call } = await setup({ sessionIdleTimeoutMs: 100 });
+    const { sessionId } = await initialize();
+    const abort = new AbortController();
+    let markRead!: () => void;
+    const reading = new Promise<void>((resolve) => { markRead = resolve; });
+    const cancel = vi.fn();
+    const body = new ReadableStream<Uint8Array>({ pull: () => markRead(), cancel }, { highWaterMark: 0 });
+    const pending = handler(new Request("http://127.0.0.1:8080/mcp", {
+      method: "POST",
+      headers: {
+        accept: "application/json, text/event-stream",
+        "content-type": "application/json",
+        "mcp-session-id": sessionId!,
+        "mcp-protocol-version": "2025-11-25",
+      },
+      body,
+      signal: abort.signal,
+      duplex: "half",
+    } as RequestInit));
+    await reading;
+    if (reason === "idle expiry") await vi.advanceTimersByTimeAsync(100);
+    else abort.abort();
+    expect((await pending).status).toBe(reason === "idle expiry" ? 404 : 499);
+    expect(body.locked).toBe(false);
+    expect(cancel).toHaveBeenCalledTimes(reason === "idle expiry" ? 0 : 1);
+    if (reason === "client abort") expect((await call(sessionId!)).status).toBe(200);
   });
 
   it("rejects an unlisted SDK Origin at capacity", async () => {
