@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.0
+
+- Added `@clifn/core/terminal`, also exported from the root (D9): `resolveTerminal({ env?, stdin?, stdout?, stderr?, json? })` returns `{ color, interactive, ci }`, and `resolveRunnerOptions(flags, { env?, streams? })` turns parsed `json`, `quiet`, `verbose`, `color` (`true`, `false` or `'auto'`), `yes` and `nonInteractive` flags into runner options (`json` selects `mode: 'json'`, which prints JSON lines). Colour is resolved per stream: `stderrColor` (errors and the spinner) follows the terminal rules, and in text mode `color` (stdout) also needs a TTY stdout unless `--color` or `FORCE_COLOR` asks for it. `RunnerOptions` and `OutputOptions` accept an optional `stderrColor`, which defaults to `color`.
+- `createPrompt({ ask?, output?, nonInteractive? })`: `nonInteractive: true` makes every prompt throw `PromptInputError` with code `CLIFN_PROMPT_NON_INTERACTIVE`; an options object that names `output` or `nonInteractive` writes the default asker's question to `output`, else stderr. `PromptInputError` takes an optional code; its code type stays `"CLIFN_PROMPT_INPUT_ERROR"` unless another code is passed.
+- No existing export, default or output changed: text mode, JSON-lines mode, `createPrompt()`, `createPrompt({})`, `createPrompt({ ask })` and the `prompt` singleton print the same bytes to the same streams as before.
+
 ## 0.3.0
 
 - Added `@clifn/core/paths` (CLI-13, D7), also exported from the root: `resolveAppPaths(appName, { platform?, env?, homedir? })` returns the config, state and cache directories (XDG on Linux and macOS, `%APPDATA%` / `%LOCALAPPDATA%` on Windows; relative or empty environment values fall back to the defaults), and `ensureAppDir(dir)` creates a missing directory with mode `0o700`. App names follow `^[a-z0-9][a-z0-9._-]{0,63}$`; anything else throws `InvalidAppNameError` (`CLIFN_INVALID_APP_NAME`). A non-absolute home directory throws `InvalidHomeDirectoryError` when a default directory needs it.

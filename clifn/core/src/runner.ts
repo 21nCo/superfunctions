@@ -16,6 +16,8 @@ export interface RunnerOptions {
   quiet?: boolean;
   verbose?: boolean;
   color?: boolean;
+  /** Colour for text written to stderr (errors and the spinner) when it differs from stdout. Defaults to `color`. */
+  stderrColor?: boolean;
   mode?: "text" | "json";
   stdout?: (text: string) => void;
   stderr?: (text: string) => void;
@@ -81,6 +83,7 @@ export async function runAction<TOptions>(
     quiet: runnerOptions.quiet,
     verbose: runnerOptions.verbose,
     color: runnerOptions.color,
+    stderrColor: runnerOptions.stderrColor,
     mode: runnerOptions.mode,
     stdout: runnerOptions.stdout,
     stderr: runnerOptions.stderr,
