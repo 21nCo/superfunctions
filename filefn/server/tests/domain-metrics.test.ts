@@ -201,6 +201,24 @@ describe('domain metrics (N-04)', () => {
     expect(warnings).toContain('Upload storage adapter does not implement statObject');
   });
 
+  it('preserves a bare logger with its own metrics property', async () => {
+    const warnings: string[] = [];
+    const storage = createLocalStorageAdapter({ rootDir });
+    delete (storage as { statObject?: unknown }).statObject;
+    const logger = {
+      warn: (message: string) => { warnings.push(message); },
+      metrics: () => { throw new Error('test logger internal metric function'); },
+    };
+    const { fileFn } = makeFileFn({ storage, observability: logger });
+    const response = await fileFn.router.handle(new Request('http://localhost/upload/init', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ policy: 'docs', fileName: 'a.txt', size: 1, mimeType: 'text/plain' }),
+    }));
+    expect(response!.status).toBe(500);
+    expect(warnings).toContain('Upload storage adapter does not implement statObject');
+  });
+
   it('requires a guarded sink for new domain metrics when the host supplies a prebuilt scope', async () => {
     const observed: string[] = [];
     const observability = createObservability<FileFnObservationEvent>({

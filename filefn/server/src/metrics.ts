@@ -2,6 +2,7 @@ import {
   normalizeObservability,
   type ObservabilityConfigInput,
   type ObservabilityInput,
+  type ObservationLogger,
   type ObservationMetric,
   type SuperfunctionObservability,
 } from '@superfunctions/observability';
@@ -15,6 +16,10 @@ export type FileFnMetrics = Pick<
 
 function guardMetricSink(input: ObservabilityInput<FileFnObservationEvent>): ObservabilityConfigInput<FileFnObservationEvent> | undefined {
   if (!input || 'startRequest' in input || !('metrics' in input)) return undefined;
+  // Shared observability treats bare logger methods as the logger shorthand.
+  const logger = input as ObservationLogger;
+  const loggerMethods = ['info', 'debug', 'warn', 'error'] as const;
+  if (loggerMethods.some((method) => typeof logger[method] === 'function')) return undefined;
   const sink = input.metrics;
   if (!sink) return undefined;
   return {
