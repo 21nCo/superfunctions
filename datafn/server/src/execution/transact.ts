@@ -11,6 +11,7 @@ import { executeMutation } from "./mutation/execute.js";
 import { executeQuery } from "./query/execute.js";
 import { DbDataStore } from "./db-store.js";
 import { ChangeTrackingService } from "./sync/change-tracking.js";
+import { revisionsEnabled } from "./revisions.js";
 import type { DatafnLogger } from "../logger.js";
 import { getDatafnMultiRegionRuntimeConfig } from "../plugins/multi-region.js";
 import {
@@ -152,6 +153,7 @@ export async function executeTransaction(
 
   const results: Array<any> = [];
   const changeTracking = new ChangeTrackingService(db, namespace, sequenceStore);
+  changeTracking.issueRevisions = revisionsEnabled(schema);
   type DeferredPermissionDirectorySync = (
     committedDb: Adapter,
   ) => Promise<void>;

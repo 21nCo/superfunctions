@@ -27,6 +27,7 @@ import type { SequenceStore, SequenceStorePolicy } from "./execution/sync/sequen
 import { createSequenceStore } from "./execution/sync/sequence-store.js";
 import { createStatusHandler } from "./routes/status.js";
 import { createQueryHandler } from "./routes/query.js";
+import { configureRevisions, revisionsEnabled, type DatafnRevisionsConfig } from "./execution/revisions.js";
 import { createMutationHandler } from "./routes/mutation.js";
 import { createTransactHandler } from "./routes/transact.js";
 import {
@@ -386,6 +387,14 @@ export interface DatafnServerConfig<TContext = any> {
    * When provided, search routes and mutation index updates use this provider.
    */
   searchProvider?: SearchProvider;
+
+  /**
+   * DATA-41: per-record revisions. Every write bumps revisions; with
+   * `enabled: true` the server also issues them (`rev`, `$rev`) and announces
+   * `capabilities: { revisions: true }` on its responses. Enable only once
+   * every worker writing to the database runs this release. Default: off.
+   */
+  revisions?: DatafnRevisionsConfig;
 }
 
 /**
@@ -436,6 +445,36 @@ export interface DatafnServer<TContext = any> {
 /**
  * Create a DataFn server
  */
+/**
+ * DATA-41: with revisions on, every JSON response object announces
+ * `capabilities: { revisions: true }`, so a client can tell a revision-aware
+ * server from an older one.
+ */
+function withRevisionCapability<H extends (...args: any[]) => Promise<Response>>(
+  schema: DatafnSchema,
+  handler: H,
+): H {
+  if (!revisionsEnabled(schema)) return handler;
+  return (async (...args: Parameters<H>) => {
+    const response = await handler(...args);
+    if (!response.headers.get("content-type")?.includes("application/json")) return response;
+    let body: unknown;
+    try {
+      body = await response.clone().json();
+    } catch {
+      return response;
+    }
+    if (!body || typeof body !== "object" || Array.isArray(body)) return response;
+    const headers = new Headers(response.headers);
+    headers.delete("content-length");
+    return new Response(JSON.stringify({ ...body, capabilities: { revisions: true } }), {
+      status: response.status,
+      statusText: response.statusText,
+      headers,
+    });
+  }) as H;
+}
+
 export async function createDatafnServer<TContext = any>(
   config: DatafnServerConfig<TContext>,
 ): Promise<DatafnServer<TContext>> {
@@ -491,6 +530,7 @@ export async function createDatafnServer<TContext = any>(
 
   const schemaWithBuiltins = ensureBuiltinTemporal(ensureBuiltinKv(schemaValidation.result));
   const validatedSchema = excludeInternalResources(schemaWithBuiltins, internalResourceNames);
+  configureRevisions(validatedSchema, config.revisions);
 
   // VAL-009: Debug mode — default to true in non-production
   const debugMode = config.debug ?? (process.env.NODE_ENV !== "production");
@@ -838,7 +878,7 @@ export async function createDatafnServer<TContext = any>(
     db,
   );
 
-  const queryHandler = createQueryHandler(
+  const queryHandler = withRevisionCapability(validatedSchema, createQueryHandler(
     validatedSchema,
     limits.maxLimit,
     extractNamespace,
@@ -859,14 +899,14 @@ export async function createDatafnServer<TContext = any>(
     },
     logger,
     crossNamespaceDb,
-  );
+  ));
 
   // Create mutation handler and idempotency store
   const idempotencyStore = db
     ? new DbIdempotencyStore(db, "datafn", logger)
     : undefined;
 
-  const mutationHandler = createMutationHandler(
+  const mutationHandler = withRevisionCapability(validatedSchema, createMutationHandler(
     validatedSchema,
     extractNamespace,
     extractActorId,
@@ -883,9 +923,9 @@ export async function createDatafnServer<TContext = any>(
     },
     logger,
     config.searchProvider,
-  );
+  ));
 
-  const transactHandler = createTransactHandler(
+  const transactHandler = withRevisionCapability(validatedSchema, createTransactHandler(
     validatedSchema,
     db,
     idempotencyStore,
@@ -899,9 +939,9 @@ export async function createDatafnServer<TContext = any>(
       debug: debugMode,
     },
     logger,
-  );
+  ));
 
-  const cloneHandler = createCloneHandler(
+  const cloneHandler = withRevisionCapability(validatedSchema, createCloneHandler(
     validatedSchema,
     extractNamespace,
     extractActorId,
@@ -909,8 +949,8 @@ export async function createDatafnServer<TContext = any>(
     plugins,
     sequenceStore,
     logger,
-  );
-  const pullHandler = createPullHandler(
+  ));
+  const pullHandler = withRevisionCapability(validatedSchema, createPullHandler(
     validatedSchema,
     extractNamespace,
     extractActorId,
@@ -920,8 +960,8 @@ export async function createDatafnServer<TContext = any>(
     limits.maxPullLimit,
     timingEmitter,
     logger,
-  );
-  const reconcileHandler = createReconcileHandler(
+  ));
+  const reconcileHandler = withRevisionCapability(validatedSchema, createReconcileHandler(
     validatedSchema,
     extractNamespace,
     extractActorId,
@@ -929,12 +969,12 @@ export async function createDatafnServer<TContext = any>(
     plugins,
     sequenceStore,
     logger,
-  );
+  ));
 
   // WebSocket Manager (SCA-005 limits, REL-007 heartbeat)
   const wsManager = new WebSocketManager(config.ws ?? {}, logger);
 
-  const pushHandler = createPushHandler(
+  const pushHandler = withRevisionCapability(validatedSchema, createPushHandler(
     validatedSchema,
     extractNamespace,
     extractActorId,
@@ -951,10 +991,10 @@ export async function createDatafnServer<TContext = any>(
       debug: debugMode,
     },
     logger,
-  );
+  ));
   const seedHandler = createSeedHandler(db, extractNamespace, logger);
 
-  const searchHandler = createSearchHandler(
+  const searchHandler = withRevisionCapability(validatedSchema, createSearchHandler(
     validatedSchema,
     extractNamespace,
     extractActorId,
@@ -962,7 +1002,7 @@ export async function createDatafnServer<TContext = any>(
     plugins,
     config.searchProvider,
     logger,
-  );
+  ));
 
   // Initialize search provider if configured
   if (config.searchProvider?.initialize) {

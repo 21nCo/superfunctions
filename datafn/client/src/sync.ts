@@ -10,7 +10,7 @@ import type { DatafnRemoteAdapter } from "./client.js";
 import type { DatafnStorageAdapter } from "./storage.js";
 import { unwrapRemoteSuccess } from "./remote/unwrap.js";
 import { createClientError } from "./errors.js";
-import { applyCloneResult, applyPullResult } from "./sync/apply.js";
+import { applyCloneResult, applyPullResult, schemaRevisionResources } from "./sync/apply.js";
 import type { CloneResult, PullResult } from "./sync/apply.js";
 import { cloneUp as executeCloneUp } from "./sync/cloneUp.js";
 import type { CloneUpOptions, CloneUpResult, CloneUpDeps } from "./sync/cloneUp.js";
@@ -220,7 +220,9 @@ export function createSyncFacade(
     async clone(payload: unknown) {
       return wrapSyncMethod("clone", "clone", payload, async (result) => {
         if (storage) {
-          await applyCloneResult(storage, result as CloneResult);
+          await applyCloneResult(storage, result as CloneResult, {
+            revisionResources: schema ? schemaRevisionResources(schema) : undefined,
+          });
         }
       });
     },
@@ -228,7 +230,9 @@ export function createSyncFacade(
     async pull(payload: unknown) {
       return wrapSyncMethod("pull", "pull", payload, async (result) => {
         if (storage) {
-          await applyPullResult(storage, result as PullResult);
+          await applyPullResult(storage, result as PullResult, {
+            revisionResources: schema ? schemaRevisionResources(schema) : undefined,
+          });
         }
       });
     },

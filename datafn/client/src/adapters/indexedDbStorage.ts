@@ -22,7 +22,12 @@ import {
   validateTransition,
   validateCursor,
   cloneForStorage,
+  mutationTouchesRecord,
+  revisionKey,
 } from "./shared.js";
+
+/** DATA-41: each record's server revision, keyed by revisionKey(resource, id). */
+const REVISIONS_STORE = "__datafn_revisions";
 
 const DB_NAME = "datafn_client_db";
 const DB_VERSION = 2;
@@ -72,7 +77,9 @@ function deepMergeOneLevel(
 }
 
 export class IndexedDbStorageAdapter implements DatafnStorageAdapter {
-  readonly capabilities = { atomicMergeIfMissing: true, reportsMergeOutcome: true } as const;
+  readonly capabilities = { atomicMergeIfMissing: true, reportsMergeOutcome: true, revisions: true } as const;
+  /** DATA-41: create the revisions store at the next upgrade. */
+  private revisionsStoreRequested = false;
   private dbPromise: Promise<IDBDatabase>;
   private validResources?: Set<string>;
   private schema?: DatafnSchema;
@@ -356,6 +363,13 @@ export class IndexedDbStorageAdapter implements DatafnStorageAdapter {
           store.createIndex("by_timezone", "timezone", { unique: false });
         }
 
+        // DATA-41: record revisions, written with their records. Created
+        // on the first revision install, so a database without revisions
+        // keeps its single-store record transactions.
+        if (this.revisionsStoreRequested && !db.objectStoreNames.contains(REVISIONS_STORE)) {
+          db.createObjectStore(REVISIONS_STORE, { keyPath: "key" });
+        }
+
         // --- Meta Stores (Preserve/Create) ---
         if (!db.objectStoreNames.contains("meta")) {
           db.createObjectStore("meta", { keyPath: ["type", "key"] });
@@ -499,6 +513,7 @@ export class IndexedDbStorageAdapter implements DatafnStorageAdapter {
       storeName === "changelog" ||
       storeName === "kv" ||
       storeName === "__datafn_meta" ||
+      storeName === REVISIONS_STORE ||
       storeName === TIMEZONE_CHANGE_RESOURCE_NAME
     ) {
       return true;
@@ -531,15 +546,40 @@ export class IndexedDbStorageAdapter implements DatafnStorageAdapter {
     });
   }
 
+  /**
+   * DATA-41: a readwrite transaction over a record store and, when it
+   * exists, the revisions store, so a record write clears or sets the
+   * record's revision atomically.
+   */
+  private async recordWriteTransaction(
+    resource: string,
+    extraStores: string[] = [],
+  ): Promise<{ tx: IDBTransaction; store: IDBObjectStore; revisions: IDBObjectStore | null }> {
+    if (!(await this.dbPromise).objectStoreNames.contains(resource)) {
+      // getStore repairs a missing object store.
+      await this.getStore(resource, "readonly");
+    }
+    const db = await this.dbPromise;
+    const withRevisions = db.objectStoreNames.contains(REVISIONS_STORE);
+    const names = [resource, ...(withRevisions ? [REVISIONS_STORE] : []), ...extraStores];
+    const tx = db.transaction(names.length === 1 ? resource : names, "readwrite");
+    return {
+      tx,
+      store: tx.objectStore(resource),
+      revisions: withRevisions ? tx.objectStore(REVISIONS_STORE) : null,
+    };
+  }
+
   async upsertRecord(
     resource: string,
     record: Record<string, unknown>,
   ): Promise<void> {
     this.validateTableName(resource);
-    const store = await this.getStore(resource, "readwrite");
+    const { store, revisions } = await this.recordWriteTransaction(resource);
     const storageRecord = cloneForStorage(record);
     return new Promise((resolve, reject) => {
       const request = store.put(storageRecord);
+      revisions?.delete(revisionKey(resource, String(record.id)));
       request.onsuccess = () => resolve();
       request.onerror = () => reject(request.error);
     });
@@ -556,9 +596,7 @@ export class IndexedDbStorageAdapter implements DatafnStorageAdapter {
     this.validateTableName(resource);
     if (records.length === 0) return;
     const storageRecords = records.map((record) => cloneForStorage(record));
-    // getStore repairs a missing object store, as upsertRecord does.
-    const store = await this.getStore(resource, "readwrite");
-    const tx = store.transaction;
+    const { tx, store, revisions } = await this.recordWriteTransaction(resource);
     return new Promise((resolve, reject) => {
       let settled = false;
       const fail = (error: unknown) => {
@@ -577,6 +615,7 @@ export class IndexedDbStorageAdapter implements DatafnStorageAdapter {
       try {
         for (const record of storageRecords) {
           store.put(record);
+          revisions?.delete(revisionKey(resource, String(record.id)));
         }
       } catch (error) {
         // A put that throws synchronously (e.g. a record without a key) must
@@ -595,11 +634,93 @@ export class IndexedDbStorageAdapter implements DatafnStorageAdapter {
 
   async deleteRecord(resource: string, id: string): Promise<void> {
     this.validateTableName(resource);
-    const store = await this.getStore(resource, "readwrite");
+    const { store, revisions } = await this.recordWriteTransaction(resource);
     return new Promise((resolve, reject) => {
       const request = store.delete(id);
+      revisions?.delete(revisionKey(resource, id));
       request.onsuccess = () => resolve();
       request.onerror = () => reject(request.error);
+    });
+  }
+
+  async getRecordWithRevision(
+    resource: string,
+    id: string,
+  ): Promise<{ record: Record<string, unknown> | null; rev: number | undefined }> {
+    this.validateTableName(resource);
+    if (!(await this.dbPromise).objectStoreNames.contains(resource)) {
+      await this.getStore(resource, "readonly");
+    }
+    const db = await this.dbPromise;
+    const withRevisions = db.objectStoreNames.contains(REVISIONS_STORE);
+    const tx = db.transaction(withRevisions ? [resource, REVISIONS_STORE] : resource, "readonly");
+    return new Promise((resolve, reject) => {
+      let record: Record<string, unknown> | null = null;
+      let rev: number | undefined;
+      const recordRequest = tx.objectStore(resource).get(id);
+      recordRequest.onsuccess = () => {
+        record = recordRequest.result ?? null;
+      };
+      if (withRevisions) {
+        const revRequest = tx.objectStore(REVISIONS_STORE).get(revisionKey(resource, id));
+        revRequest.onsuccess = () => {
+          const value = revRequest.result?.rev;
+          rev = typeof value === "number" ? value : undefined;
+        };
+      }
+      tx.oncomplete = () => resolve({ record, rev });
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+    });
+  }
+
+  async putRecordsWithRevisions(
+    resource: string,
+    entries: ReadonlyArray<{ id: string; record: Record<string, unknown> | null; rev: number }>,
+    options?: { unlessPending?: boolean },
+  ): Promise<string[]> {
+    this.validateTableName(resource);
+    const current = await this.dbPromise;
+    if (!current.objectStoreNames.contains(REVISIONS_STORE)) {
+      // The first revision install adds the store (a version upgrade).
+      this.revisionsStoreRequested = true;
+      await this.repairMissingStore(REVISIONS_STORE, current);
+    }
+    const { tx, store, revisions } = await this.recordWriteTransaction(
+      resource,
+      options?.unlessPending ? ["changelog"] : [],
+    );
+    if (!revisions) {
+      tx.abort();
+      return [];
+    }
+    const prepared = entries.map(({ id, record, rev }) => ({
+      id,
+      rev,
+      record: record ? cloneForStorage({ ...record, id }) : null,
+    }));
+    return new Promise((resolve, reject) => {
+      const installed: string[] = [];
+      const install = (pendingMutations: unknown[]) => {
+        for (const { id, record, rev } of prepared) {
+          if (pendingMutations.some((mutation) => mutationTouchesRecord(mutation, resource, id))) continue;
+          if (record) store.put(record);
+          else store.delete(id);
+          revisions.put({ key: revisionKey(resource, id), rev });
+          installed.push(id);
+        }
+      };
+      if (options?.unlessPending) {
+        const pending = tx.objectStore("changelog").getAll();
+        pending.onsuccess = () => {
+          install(((pending.result ?? []) as Array<{ mutation?: unknown }>).map((entry) => entry.mutation));
+        };
+      } else {
+        install([]);
+      }
+      tx.oncomplete = () => resolve(installed);
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
     });
   }
 
@@ -619,9 +740,11 @@ export class IndexedDbStorageAdapter implements DatafnStorageAdapter {
     this.validateTableName(resource);
     const db = await this.dbPromise;
     
+    const withRevisions = db.objectStoreNames.contains(REVISIONS_STORE);
     return new Promise((resolve, reject) => {
-      const tx = db.transaction(resource, "readwrite");
+      const tx = db.transaction(withRevisions ? [resource, REVISIONS_STORE] : resource, "readwrite");
       const store = tx.objectStore(resource);
+      if (withRevisions) tx.objectStore(REVISIONS_STORE).delete(revisionKey(resource, id));
       
       // Read existing record
       const getRequest = store.get(id);

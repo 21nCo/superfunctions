@@ -13,6 +13,8 @@ import {
   validateHydrationState,
   validateTransition,
   validateCursor,
+  mutationTouchesRecord,
+  revisionKey,
 } from "./shared.js";
 
 function validateMutation(mutation: any): void {
@@ -25,7 +27,9 @@ function isInternalCursorKey(resource: string): boolean {
 }
 
 export class MemoryStorageAdapter implements DatafnStorageAdapter {
-  readonly capabilities = { atomicMergeIfMissing: true, reportsMergeOutcome: true } as const;
+  readonly capabilities = { atomicMergeIfMissing: true, reportsMergeOutcome: true, revisions: true } as const;
+  /** DATA-41: server revision of each record's stored state, by revisionKey. */
+  private revisions = new Map<string, number>();
   private records = new Map<string, Map<string, Record<string, unknown>>>();
   private joinRows = new Map<string, Map<string, Record<string, unknown>>>();
   private cursors = new Map<string, string>();
@@ -89,6 +93,7 @@ export class MemoryStorageAdapter implements DatafnStorageAdapter {
     const id = record.id as string;
     if (!id) throw new Error("Record missing id");
     this.records.get(resource)!.set(id, record);
+    this.revisions.delete(revisionKey(resource, id));
   }
 
   async deleteRecord(resource: string, id: string): Promise<void> {
@@ -97,6 +102,46 @@ export class MemoryStorageAdapter implements DatafnStorageAdapter {
     if (table) {
       table.delete(id);
     }
+    this.revisions.delete(revisionKey(resource, id));
+  }
+
+  async getRecordWithRevision(
+    resource: string,
+    id: string,
+  ): Promise<{ record: Record<string, unknown> | null; rev: number | undefined }> {
+    this.validateTableName(resource);
+    return {
+      record: this.records.get(resource)?.get(id) ?? null,
+      rev: this.revisions.get(revisionKey(resource, id)),
+    };
+  }
+
+  async putRecordsWithRevisions(
+    resource: string,
+    entries: ReadonlyArray<{ id: string; record: Record<string, unknown> | null; rev: number }>,
+    options?: { unlessPending?: boolean },
+  ): Promise<string[]> {
+    this.validateTableName(resource);
+    let table = this.records.get(resource);
+    if (!table) {
+      table = new Map();
+      this.records.set(resource, table);
+    }
+    const installed: string[] = [];
+    for (const { id, record, rev } of entries) {
+      if (!id) throw new Error("Record missing id");
+      if (
+        options?.unlessPending &&
+        this.changelog.some((entry) => mutationTouchesRecord(entry.mutation, resource, id))
+      ) {
+        continue;
+      }
+      if (record) table.set(id, { ...record, id });
+      else table.delete(id);
+      this.revisions.set(revisionKey(resource, id), rev);
+      installed.push(id);
+    }
+    return installed;
   }
 
   /**
@@ -127,6 +172,7 @@ export class MemoryStorageAdapter implements DatafnStorageAdapter {
     
     merged.id = id;
     table.set(id, merged);
+    this.revisions.delete(revisionKey(resource, id));
     try {
       options?.onResolved?.({ created: !existing });
     } catch {
@@ -377,6 +423,7 @@ export class MemoryStorageAdapter implements DatafnStorageAdapter {
 
   async clearAll(): Promise<void> {
     this.records.clear();
+    this.revisions.clear();
     this.joinRows.clear();
     this.cursors.clear();
     this.hydration.clear();

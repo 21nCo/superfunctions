@@ -18,6 +18,9 @@ import {
 } from "../idempotency.js";
 import type { SequenceStore } from "./sequence-store.js";
 import { ChangeTrackingService, recordChangeWithRetry } from "./change-tracking.js";
+import { issuesRevisions, recordedRevision, revisionsEnabled } from "../revisions.js";
+import type { ChangeEntryInput } from "./change-tracking.js";
+import { canReadEveryField } from "../../validation/authz.js";
 import {
   applyInactivePropagation,
   applyRelationDeletePolicies,
@@ -48,6 +51,7 @@ import {
 import type { DatafnLogger } from "../../logger.js";
 import type { DatafnMultiRegionRuntimeConfig } from "../../plugins/multi-region.js";
 import { validateShareableOperationAccess } from "../../validation/authz.js";
+import type { DatafnPushRevision } from "@datafn/core";
 import {
   deferFailedShareCompensation,
   discardPermissionDirectorySync,
@@ -75,6 +79,12 @@ export interface PushResult {
   cursor: string;
   cursorBefore?: string; // global seq before this push started; absent on early-exit error paths
   cursors?: Record<string, string>; // per-resource max serverSeq after this push
+  /**
+   * DATA-41: per applied mutation id, the mutated record's revision after the
+   * write, with its complete post-write row when the caller may read every
+   * field (or `deleted` for a delete). Present only when revisions are on.
+   */
+  revisions?: Record<string, DatafnPushRevision>;
 }
 
 function formatUnknownError(error: unknown): string {
@@ -300,6 +310,7 @@ export async function executePush(
 
   // Create change tracking service with user/tenant namespace and optional sequence store
   const changeTracking = new ChangeTrackingService(db, namespace, sequenceStore, onChange);
+  changeTracking.issueRevisions = revisionsEnabled(schema);
   // Capture the global sequence counter BEFORE any mutations are processed so the client
   // can determine whether foreign changes exist (cursorBefore == localCursor → no foreign changes)
   const cursorBeforeSeq = await changeTracking.getCurrentServerSeq();
@@ -346,6 +357,7 @@ export async function executePush(
   } else {
     await changeTracking.ensureReady();
   }
+  await changeTracking.ensureRevisionsReady();
 
   type SequenceAllocationState = {
     initialBatchAllocated: boolean;
@@ -433,6 +445,31 @@ export async function executePush(
       op: change.op,
       record: change.record,
     }));
+  }
+
+  const revisions: Record<string, DatafnPushRevision> = {};
+
+  /**
+   * DATA-41: the mutated record's revision and complete row after the write,
+   * read on `targetDb` (the write's transaction when there is one).
+   */
+  async function postWriteRevision(
+    mut: any,
+    targetDb: Adapter,
+    recorded: ChangeEntryInput[],
+  ): Promise<DatafnPushRevision | undefined> {
+    if (typeof mut.id !== "string" || !issuesRevisions(schema, mut.resource)) return undefined;
+    const rev = recordedRevision(recorded, mut.resource, mut.id);
+    if (rev === undefined) return undefined;
+    const base = { resource: mut.resource as string, id: mut.id as string, rev };
+    const last = [...recorded].reverse().find((entry) => entry.resource === mut.resource && entry.id === mut.id);
+    if (last?.op === "delete") return { ...base, deleted: true };
+    const row = (await targetDb.findOne({
+      model: mut.resource,
+      where: [{ field: "id", operator: "eq", value: mut.id }],
+      namespace,
+    })) as Record<string, unknown> | null;
+    return row && canReadEveryField(schema, mut.resource, row) ? { ...base, record: row } : base;
   }
 
   // Local dedup: track mutations processed in this batch (clientId:mutationId → ok)
@@ -1045,11 +1082,13 @@ export async function executePush(
   /**
    * Record a mutation as successfully applied.
    */
-  async function recordMutationSuccess(mut: any) {
+  async function recordMutationSuccess(mut: any, revision?: DatafnPushRevision) {
     applied.push(mut.mutationId);
     const result: MutationResult = {
       ok: true, mutationId: mut.mutationId, affectedIds: [mut.id], errors: [], deduped: false,
+      ...(revision ? { rev: revision.rev } : {}),
     };
+    if (revision) revisions[mut.mutationId] = revision;
     await idempotencyStore.set(mut.clientId, mut.mutationId, result);
     batchLocalSeen.set(`${mut.clientId}:${mut.mutationId}`, true);
   }
@@ -1136,6 +1175,11 @@ export async function executePush(
     if (cached) {
       if (cached.ok) {
         applied.push(mut.mutationId);
+        // A deduplicated reply carries the stored revision without a row, so
+        // it discloses nothing the caller cannot read now.
+        if (typeof cached.rev === "number" && typeof mut.id === "string" && issuesRevisions(schema, mut.resource)) {
+          revisions[mut.mutationId] = { resource: mut.resource, id: mut.id, rev: cached.rev };
+        }
         batchLocalSeen.set(batchKey, true);
         continue;
       } else if (
@@ -1209,6 +1253,7 @@ export async function executePush(
         pool: [...sequenceAllocation.pool],
       };
       let mutationLatestSeq = 0;
+      let mutationRevision: DatafnPushRevision | undefined;
       const mutationResourceSeqs: Record<string, number> = {};
       const pendingChangeEvents: number[] = [];
       try {
@@ -1233,6 +1278,7 @@ export async function executePush(
           // Change notifications describe committed state, so suppress the
           // transaction-bound service callback and publish only after commit.
           const txChangeTracking = changeTracking.withDb(txDb, false);
+          const recorded: ChangeEntryInput[] = [];
           for (const change of changes) {
             const { seq, op, record } = await sequenceChange(
               change,
@@ -1246,11 +1292,14 @@ export async function executePush(
               seq,
             );
             // FIX-REL-002: retry within transaction
-            await recordChangeWithRetry(txChangeTracking, {
+            const entry: ChangeEntryInput = {
               serverSeq: seq, resource: change.resource, id: change.id, op, record,
-            }, 2, logger);
+            };
+            await recordChangeWithRetry(txChangeTracking, entry, 2, logger);
+            recorded.push(entry);
             pendingChangeEvents.push(seq);
           }
+          mutationRevision = await postWriteRevision(mut, txDb, recorded);
         });
         sequenceAllocation.initialBatchAllocated = txSequenceAllocation.initialBatchAllocated;
         sequenceAllocation.pool = txSequenceAllocation.pool;
@@ -1289,7 +1338,7 @@ export async function executePush(
 
       if (mutationSucceeded) {
         await reconcilePermissionDirectoryAfterSettlement(true);
-        await recordMutationSuccess(mut);
+        await recordMutationSuccess(mut, mutationRevision);
       }
     } else {
       // Non-transaction path: execute operation, then record changes separately (best-effort)
@@ -1340,15 +1389,20 @@ export async function executePush(
         // Record changes (non-atomic — best-effort with retry)
         const changes = opResult.changes;
         let changeTrackingFailed = false;
+        let mutationRevision: DatafnPushRevision | undefined;
         try {
+          const recorded: ChangeEntryInput[] = [];
           for (const change of changes) {
             const { seq, op, record } = await sequenceChange(change, sequenceAllocation, db);
             latestSeq = Math.max(latestSeq, seq);
             resourceSeqs[change.resource] = Math.max(resourceSeqs[change.resource] || 0, seq);
-            await recordChangeWithRetry(changeTracking, {
+            const entry: ChangeEntryInput = {
               serverSeq: seq, resource: change.resource, id: change.id, op, record,
-            }, 2, logger);
+            };
+            await recordChangeWithRetry(changeTracking, entry, 2, logger);
+            recorded.push(entry);
           }
+          mutationRevision = await postWriteRevision(mut, db, recorded);
         } catch (error) {
           logger?.error("Change tracking failed in push after retries", { error: String(error), operation: "push.changeTracking" });
           changeTrackingFailed = true;
@@ -1358,7 +1412,7 @@ export async function executePush(
         if (changeTrackingFailed) {
           await recordMutationFailure(mut, "INTERNAL", "Change tracking failed", "$");
         } else {
-          await recordMutationSuccess(mut);
+          await recordMutationSuccess(mut, mutationRevision);
         }
       } else {
         if (mut.operation === "share" && !failedShareCompensationDeferred) {
@@ -1416,5 +1470,6 @@ export async function executePush(
     cursor: String(latestSeq),
     cursorBefore: String(cursorBeforeSeq),
     cursors,
+    ...(Object.keys(revisions).length > 0 ? { revisions } : {}),
   };
 }

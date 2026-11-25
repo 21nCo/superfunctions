@@ -12,6 +12,7 @@ import type {
   SearchProvider,
   DatafnTemporalConfig,
   DatafnTemporalClause,
+  DatafnServerCapabilities,
 } from "@datafn/core";
 import {
   validateSchema,
@@ -105,6 +106,37 @@ export type ResourceNames<S extends DatafnSchema> =
           ? Name
           : never
         : never;
+
+const OBSERVED_REMOTE_METHODS = new Set([
+  "query", "mutation", "transact", "seed", "clone", "pull", "push", "reconcile", "search",
+]);
+
+/**
+ * DATA-41: forwards every call to `remote` and reports the `capabilities` of
+ * each response envelope (none means an older server without revisions).
+ */
+function observeServerCapabilities<T extends object>(
+  remote: T,
+  onCapabilities: (capabilities: DatafnServerCapabilities) => void,
+): T {
+  return new Proxy(remote, {
+    get(target, prop, receiver) {
+      const value = Reflect.get(target, prop, receiver);
+      if (typeof value !== "function") return value;
+      if (typeof prop !== "string" || !OBSERVED_REMOTE_METHODS.has(prop)) return value.bind(target);
+      return async (...args: unknown[]) => {
+        const response = await value.apply(target, args);
+        if (response && typeof response === "object" && "ok" in response) {
+          const capabilities = (response as { capabilities?: unknown }).capabilities;
+          onCapabilities(
+            capabilities && typeof capabilities === "object" ? (capabilities as DatafnServerCapabilities) : {},
+          );
+        }
+        return response;
+      };
+    },
+  });
+}
 
 export interface DatafnRemoteAdapter {
   query(q: unknown): Promise<unknown>;
@@ -504,6 +536,20 @@ export type DatafnClient<S extends DatafnSchema> = {
   ): DatafnSignal<Record<string, Record<string, unknown>>>;
   /** Static signal for intentionally empty or disabled reactive queries. */
   emptySignal<TValue>(value: TValue): DatafnSignal<TValue>;
+  /**
+   * DATA-41: a stored record and the server revision of exactly that state,
+   * from one storage read. `rev` is undefined when unknown (a local change,
+   * a partial update, no revision from the server, or a storage adapter
+   * without revisions); read with a `withRevisions: true` query first.
+   */
+  getWithRevision(
+    resource: string,
+    id: string,
+  ): Promise<{ record: Record<string, unknown> | null; rev: number | undefined }>;
+  /** DATA-41: the stored record's revision alone, for display or diagnostics. */
+  getRevision(resource: string, id: string): Promise<number | undefined>;
+  /** DATA-41: capabilities announced by the server's latest response. */
+  serverCapabilities(): DatafnServerCapabilities;
   /**
    * Switch to a different configuration context (auth, sync mode, or storage).
    * Destroys the current underlying client and recreates it with merged config.
@@ -1238,6 +1284,12 @@ function _buildRawClient<S extends DatafnSchema>(
     };
   }
 
+  // DATA-41: remember the capabilities the server announces on its responses.
+  let latestServerCapabilities: DatafnServerCapabilities = {};
+  remote = observeServerCapabilities(remote, (capabilities) => {
+    latestServerCapabilities = capabilities;
+  });
+
   // Create SyncEngine (for offline push)
   let syncEngine: SyncEngine | undefined;
   if (
@@ -1609,6 +1661,22 @@ function _buildRawClient<S extends DatafnSchema>(
   // We cast to any initially because the mapped types are handled by Proxy
   const client: any = {
     table: null as any, // Will be set below
+
+    async getWithRevision(resource: string, id: string) {
+      const storage = resolvedStorage;
+      if (storage?.capabilities?.revisions === true && storage.getRecordWithRevision) {
+        return storage.getRecordWithRevision(resource, id);
+      }
+      return { record: storage ? await storage.getRecord(resource, id) : null, rev: undefined };
+    },
+
+    async getRevision(resource: string, id: string) {
+      return (await client.getWithRevision(resource, id)).rev as number | undefined;
+    },
+
+    serverCapabilities(): DatafnServerCapabilities {
+      return { revisions: latestServerCapabilities.revisions === true };
+    },
 
     /**
      * Execute a query (CLIENT-QUERY-001, CLIENT-OFFLINE-QUERY-001)

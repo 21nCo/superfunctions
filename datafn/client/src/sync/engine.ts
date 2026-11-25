@@ -16,10 +16,17 @@ import type { DatafnStorageAdapter } from "../storage.js";
 import type { DatafnRemoteAdapter, DatafnSyncConfig } from "../client.js";
 import type { EventBus } from "../events/bus.js";
 import type { DatafnFieldSchema, DatafnSchema, DatafnPlugin, SearchProvider } from "@datafn/core";
-import { enumerateJoinStoreKeys, getJoinStoreKey, getRelationKeyName } from "@datafn/core";
+import {
+  enumerateJoinStoreKeys,
+  getJoinStoreKey,
+  getRelationKeyName,
+  type DatafnPushRevision,
+} from "@datafn/core";
 import {
   applyCloneResult,
   applyPullResult,
+  applyPushRevision,
+  schemaRevisionResources,
   setCursorMonotonically,
   GLOBAL_CURSOR_KEY,
   type CloneResult,
@@ -128,6 +135,8 @@ type PushSyncResult = {
   cursor?: string;
   cursorBefore?: string;
   cursors?: Record<string, string>;
+  /** DATA-41: per applied mutation id, the record's revision and post-write row. */
+  revisions?: Record<string, DatafnPushRevision>;
 };
 
 function isRecordMutationOperation(operation: unknown): operation is RecordMutationOperation {
@@ -1026,6 +1035,7 @@ export class SyncEngine {
               )
             : [];
           await applyCloneResult(this.storage, result, {
+            revisionResources: this.revisionResources,
             markReady: continuations.length === 0,
             // A clone may restart a table an earlier pass left incomplete;
             // keep that pass's older cursor so a pull replays its gap.
@@ -1230,6 +1240,7 @@ export class SyncEngine {
         // Pages are read at different server sequences and a pass may resume
         // an interrupted one, so the stored cursor stays at the earliest.
         await applyCloneResult(this.storage, cloneResult, {
+          revisionResources: this.revisionResources,
           markReady: false,
           keepEarliestCursor: true,
         });
@@ -1569,7 +1580,9 @@ export class SyncEngine {
             );
             this.pullAfterClone = true;
           }
-          const applying = applyPullResult(this.storage, lastResult);
+          const applying = applyPullResult(this.storage, lastResult, {
+            revisionResources: this.revisionResources,
+          });
           const applied = applying.then(
             () => undefined,
             () => undefined,
@@ -1856,6 +1869,39 @@ export class SyncEngine {
   /**
    * Process pending changelog entries
    */
+  /**
+   * DATA-41: `$rev` on rows of a resource is revision metadata unless the
+   * resource has its own field named `$rev`.
+   */
+  private readonly revisionResources = (resource: string): boolean =>
+    schemaRevisionResources(this.schema)(resource);
+
+  private async applyPushRevisions(pushResults: PushSyncResult[]): Promise<void> {
+    for (const pushResult of pushResults) {
+      for (const revision of Object.values(pushResult.revisions ?? {})) {
+        try {
+          let record = revision.record;
+          if (record) {
+            const decrypted = (await decryptPullResultForE2ee(this.schema, this.e2ee, {
+              ok: true,
+              records: { [revision.resource]: [record] },
+              deleted: {},
+              cursors: {},
+            })) as { records: Record<string, Array<Record<string, unknown>>> };
+            record = decrypted.records[revision.resource]?.[0];
+          }
+          await applyPushRevision(this.storage, { ...revision, record }, {
+            revisionResources: this.revisionResources,
+          });
+        } catch (error) {
+          // The mutation is acknowledged; without its row the revision just
+          // stays unknown.
+          console.warn("[datafn] Could not store a push revision", error);
+        }
+      }
+    }
+  }
+
   async processPush() {
     if (this.inFlight) {
       this.pushRerunRequested = true;
@@ -2020,6 +2066,10 @@ export class SyncEngine {
 
         // 3. Ack applied entries and terminal non-retryable failures
         await this.storage.changelogAck({ throughSeq });
+
+        // 3b. DATA-41: install each applied mutation's post-write row with its
+        // revision, now that acknowledged entries no longer count as pending.
+        await this.applyPushRevisions(pushResults);
 
         // 3a. Advance per-table cursors from push response (FIX-B)
         // This prevents the client from re-fetching its own changes on the next pull.

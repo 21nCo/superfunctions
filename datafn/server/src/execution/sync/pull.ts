@@ -6,6 +6,7 @@ import type { DatafnErrorCode, DatafnSchema } from "../../core-types.js";
 import type { Adapter } from "@superfunctions/db";
 import type { SequenceStore } from "./sequence-store.js";
 import { ChangeTrackingService, type ChangeEntry } from "./change-tracking.js";
+import { issuesRevisions, REVISION_FIELD } from "../revisions.js";
 import { isPrivateShareableResource, resolveAccessLevel } from "../../validation/authz.js";
 import {
   canonicalizeActorPrincipal,
@@ -53,6 +54,8 @@ export interface PullResultGlobalCursor {
     op: "upsert" | "delete";
     record: Record<string, unknown> | null;
     reason?: "revoked" | "grant_backfill";
+    /** DATA-41: the record's revision after this change, when it recorded one. */
+    rev?: number;
   }>;
   nextCursor: string | null;
   actorFeed?: ActorFeedEntry[];
@@ -77,6 +80,12 @@ export interface PullResultCanonical {
   records: Record<string, Array<Record<string, unknown>>>;
   merged?: Record<string, Array<Record<string, unknown>>>; // partial records applied via mergeRecord (FIX-A)
   deleted: Record<string, string[]>;
+  /**
+   * DATA-41: per resource, the tombstone revision of each deleted id whose
+   * delete change recorded one. `records` and `merged` rows carry theirs as
+   * `$rev`.
+   */
+  deletedRevisions?: Record<string, Record<string, number>>;
   joins?: Record<string, {
     upsert: Array<Record<string, unknown>>;
     delete: Array<{ from: string; to: string }>;
@@ -824,6 +833,7 @@ async function executePullGlobalCursor(
           id: change.id,
           op: "delete",
           record: null,
+          ...(change.rev !== undefined && issuesRevisions(schema, change.resource) ? { rev: change.rev } : {}),
         });
         continue;
       }
@@ -846,6 +856,7 @@ async function executePullGlobalCursor(
       id: change.id,
       op: change.op === "delete" ? "delete" : "upsert",
       record: change.op === "delete" ? null : change.record,
+      ...(change.rev !== undefined && issuesRevisions(schema, change.resource) ? { rev: change.rev } : {}),
     });
   }
 
@@ -965,6 +976,13 @@ async function executePullCanonical(
   const records: Record<string, Array<Record<string, unknown>>> = Object.create(null);
   const merged: Record<string, Array<Record<string, unknown>>> = Object.create(null);
   const deleted: Record<string, string[]> = Object.create(null);
+  const deletedRevisions: Record<string, Record<string, number>> = Object.create(null);
+  // DATA-41: a change's row with its revision as `$rev` metadata. Clients
+  // pair it with the row only when the row is complete (`records`).
+  const withRev = (resource: string, change: ChangeEntry): Record<string, unknown> =>
+    change.rev !== undefined && issuesRevisions(schema, resource)
+      ? { ...change.record, [REVISION_FIELD]: change.rev }
+      : change.record!;
   const joins: Record<string, { upsert: Array<Record<string, unknown>>; delete: Array<{ from: string; to: string }> }> = Object.create(null);
   const cursors: Record<string, string> = Object.create(null);
 
@@ -1043,7 +1061,7 @@ async function executePullCanonical(
       if (!merged[resource]) {
         merged[resource] = [];
       }
-      merged[resource].push(change.record);
+      merged[resource].push(withRev(resource, change));
       continue;
     }
 
@@ -1061,12 +1079,15 @@ async function executePullCanonical(
           continue;
         }
       }
-      records[resource].push(change.record);
+      records[resource].push(withRev(resource, change));
       continue;
     }
 
     if (change.op === "delete") {
       deleted[resource].push(change.id);
+      if (change.rev !== undefined && issuesRevisions(schema, resource)) {
+        (deletedRevisions[resource] ??= Object.create(null) as Record<string, number>)[change.id] = change.rev;
+      }
     }
   }
 
@@ -1181,6 +1202,10 @@ async function executePullCanonical(
 
   if (Object.keys(merged).length > 0) {
     result.merged = merged;
+  }
+
+  if (Object.keys(deletedRevisions).length > 0) {
+    result.deletedRevisions = deletedRevisions;
   }
 
   if (request.includeJoins && Object.keys(joins).length > 0) {

@@ -118,6 +118,7 @@ describe("resolveNamespaceStoragePlan", () => {
       "__datafn_changes",
       "__datafn_idempotency",
       "__datafn_seed",
+      "__datafn_revisions",
       "__datafn_permission_directory_outbox",
     ]);
     expect(plan.entries.every((entry) => entry.ownership === "datafn")).toBe(true);

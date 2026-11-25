@@ -1,0 +1,81 @@
+---
+title: Record revisions
+description: A server-managed revision for every record, returned on clone, pull, push and versioned queries.
+---
+
+# Record revisions
+
+Every record has a **revision**: an integer the server raises by exactly one on every committed write to that record. Use it to tell which server state a client holds. (Write preconditions such as `ifRev` build on it; they are not part of this page.)
+
+## The token
+
+- **Every write bumps it.** Insert, merge, replace, delete, trash, restore, archive, unarchive, KV merges and relation writes that change a record (a forward many-to-one `relate`, `modifyRelation` or `unrelate`) each raise the record's revision by one, on push, `/mutation` and `/transact`. A delete also bumps every record it changes through a relation policy (a `cascade` delete gets a tombstone revision, a `setNull` child a bump), and an inherited-inactive change bumps each affected record.
+- **Serialized per record.** The bump is a compare-and-swap inside the write's transaction, so two writes to one record never commit the same revision, also for overlapping PostgreSQL transactions at `READ COMMITTED`. Two writes in the same millisecond still get different revisions.
+- **Never reused.** A delete keeps the record's revision as a tombstone, so re-inserting the same id continues from it. Revisions live in the `__datafn_revisions` table: change-log pruning and sequence reservation never touch them, and only deleting the whole namespace removes them.
+- **Zero means unknown history.** A record written before this release, or never written, has revision 0.
+
+On an adapter without transactions the bump and the write are best effort, like other writes there.
+
+## Turning it on
+
+Every write bumps revisions. The server **issues** them only with the `revisions` option:
+
+```ts
+const server = await createDatafnServer({
+  schema,
+  database,
+  revisions: { enabled: true },
+});
+```
+
+Turn it on only when every worker writing to the database runs a release that bumps revisions: an older worker writes without bumping. While it is off, responses carry no revisions and change rows record none. With it on, every response carries `capabilities: { revisions: true }`, and the client exposes it as `client.serverCapabilities().revisions`.
+
+Do not restore a namespace in place, or roll back below this release, while revisions are on.
+
+## Wire format
+
+Revisions are row metadata, never part of a record's fields, so E2EE record encryption never touches them.
+
+| Response | Where the revision is |
+| --- | --- |
+| Clone | `$rev` on each returned row, read in the same snapshot as the rows |
+| Pull (per-table cursors) | `$rev` on `records` and `merged` rows; `deletedRevisions[resource][id]` for deletes |
+| Pull (global cursor) | `rev` on each change |
+| Push | `revisions[mutationId] = { resource, id, rev, record?, deleted? }` |
+| Query with `withRevisions: true` | `$rev` on each complete row the caller may read in full |
+| `/mutation`, `/transact` | `rev` on each mutation result |
+
+A push result carries the record's complete row after the write (read in the write's transaction) only when the caller may read every field of it; otherwise it carries `rev` alone. A deduplicated replay carries the stored `rev` without a row. A versioned query returns `$rev` only for rows the caller may read in full and only without a projection (`select`, `omit`), grouping or aggregation.
+
+Change rows written before revisions were enabled carry no revision, so a pull returns none for them.
+
+A resource with its own field named `$rev` keeps that field as application data and gets no revisions.
+
+### Host response filters
+
+If your host filters read responses after DataFn has run, apply the same filter to every row DataFn returns, including the post-write rows in push results: remove `$rev` from a row you trim, or replace the row with an acknowledgement without a row. A row you drop takes its revision with it.
+
+## Client
+
+The client holds a revision only together with the complete server row (or tombstone) at that revision. It gets one from a clone row, a versioned query row, a push result's post-write row, or a pull change that carries the complete row (an insert or replace, or a delete). Any other change to the local copy — an optimistic local write, a partial merge from a pull, a change without a revision — clears the revision to unknown in the same storage write.
+
+```ts
+const { record, rev } = await client.getWithRevision("task", "task:1");
+if (rev === undefined) {
+  // Unknown: read the server's pair first.
+  const result = await client.query({
+    resource: "task",
+    version: 1,
+    withRevisions: true,
+    filters: { id: "task:1" },
+  });
+  const row = result.data[0]; // row.$rev is the revision of exactly this row
+}
+
+const rev = await client.getRevision("task", "task:1"); // display and diagnostics
+```
+
+- `getWithRevision(resource, id)` returns the stored record and its revision (or `undefined`) from one storage read. Build a precondition from it, not from two separate reads.
+- A query with `withRevisions: true` always goes to the server, also on a hydrated client, and returns the server's rows. A storage-backed client stores the pair only when no pending local mutation touches the record.
+- On an E2EE resource a versioned query may select records only by `id` (equality or a list of ids). Any other versioned query on an E2EE resource is rejected before a request is sent. Returned fields stay encrypted on the wire and are decrypted on the client.
+- The memory and IndexedDB storage adapters keep revisions (`capabilities.revisions`). With a custom adapter without that capability, revisions are always unknown.

@@ -15,6 +15,11 @@ export interface MutationResult {
     retryable: boolean;
   }>;
   deduped: boolean;
+  /**
+   * DATA-41: the mutated record's revision after the write, when the server
+   * issues revisions. A deduplicated reply carries the stored value.
+   */
+  rev?: number;
 }
 
 export interface IdempotencyStore {

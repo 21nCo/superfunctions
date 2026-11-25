@@ -82,3 +82,25 @@ export function cloneForStorage<T>(value: T, seen = new WeakMap<object, unknown>
   }
   return output as T;
 }
+
+/** DATA-41: storage key of a record's revision. */
+export function revisionKey(resource: string, id: string): string {
+  return `${resource}\u0000${id}`;
+}
+
+/**
+ * DATA-41: whether a pending local mutation may change the record, so a
+ * server row must not be installed over it. Conservative: a relation write
+ * naming the id, or any delete (relation policies can reach other records),
+ * counts as touching it.
+ */
+export function mutationTouchesRecord(mutation: unknown, resource: string, id: string): boolean {
+  if (!mutation || typeof mutation !== "object") return false;
+  const m = mutation as Record<string, unknown>;
+  if (m.resource === resource && m.id === id) return true;
+  if (m.operation === "delete") return true;
+  if (m.operation === "relate" || m.operation === "modifyRelation" || m.operation === "unrelate") {
+    return JSON.stringify(m.relations ?? null).includes(JSON.stringify(id));
+  }
+  return false;
+}

@@ -15,6 +15,29 @@ const CHANGES_COLUMNS: InternalColumnDef[] = [
   { name: "op", type: "text" },
   { name: "record", type: "text" },
   { name: "created_at", type: "text" },
+  // DATA-41: the record's revision after this change. Added to existing
+  // tables by `ensureChangesRevColumn`; NULL on rows written before it.
+  { name: "rev", type: "integer" },
+];
+
+/**
+ * Columns a table may still lack on a database created before they were
+ * added; they are added on first use, so namespace planning does not require
+ * them.
+ */
+export const LATE_INTERNAL_COLUMNS: Readonly<Record<string, readonly string[]>> = {
+  __datafn_changes: ["rev"],
+};
+
+/** DATA-41: one row per record, kept as a tombstone when the record is deleted. */
+const REVISIONS_COLUMNS: InternalColumnDef[] = [
+  { name: "id", type: "text", primaryKey: true },
+  { name: "namespace", type: "text" },
+  { name: "resource", type: "text" },
+  { name: "record_id", type: "text" },
+  { name: "rev", type: "integer" },
+  { name: "deleted", type: "integer" },
+  { name: "updated_at", type: "text" },
 ];
 
 const IDEMPOTENCY_COLUMNS: InternalColumnDef[] = [
@@ -53,6 +76,8 @@ const PERMISSION_DIRECTORY_OUTBOX_COLUMNS: InternalColumnDef[] = [
  * - __datafn_seed: PK on (id). Index on (namespace, seed_id) for seed status lookups.
  * - __datafn_permission_directory_outbox: PK on (id). Durable retry queue for
  *   post-commit multi-region permission-directory reconciliation.
+ * - __datafn_revisions: PK on (id), a digest of (namespace, resource, record id).
+ *   Per-record revisions; never pruned.
  */
 export const INTERNAL_TABLE_SCHEMAS: Record<string, InternalColumnDef[]> = {
   __datafn_meta: META_COLUMNS,
@@ -60,6 +85,7 @@ export const INTERNAL_TABLE_SCHEMAS: Record<string, InternalColumnDef[]> = {
   __datafn_idempotency: IDEMPOTENCY_COLUMNS,
   __datafn_seed: SEED_COLUMNS,
   __datafn_permission_directory_outbox: PERMISSION_DIRECTORY_OUTBOX_COLUMNS,
+  __datafn_revisions: REVISIONS_COLUMNS,
 };
 
 export function listNamespacedInternalTables(): string[] {
@@ -80,4 +106,48 @@ export async function ensureInternalTable(
     );
   }
   await adapter.internal.ensureTable(tableName, columns);
+}
+
+const changesRevColumnReady = new WeakMap<object, Promise<boolean>>();
+
+/**
+ * Adds the `rev` column to a `__datafn_changes` table created before DATA-41
+ * and resolves whether change rows may carry it. Adapters without SQL store
+ * any column. Runs once per adapter.
+ */
+export function ensureChangesRevColumn(adapter: Adapter): Promise<boolean> {
+  let ready = changesRevColumnReady.get(adapter);
+  if (!ready) {
+    ready = addChangesRevColumn(adapter);
+    changesRevColumnReady.set(adapter, ready);
+    ready.catch(() => changesRevColumnReady.delete(adapter));
+  }
+  return ready;
+}
+
+async function addChangesRevColumn(adapter: Adapter): Promise<boolean> {
+  const rawSql = adapter.rawSql;
+  if (!rawSql) return true;
+  if (rawSql.dialect === "postgres") {
+    await rawSql.execute('ALTER TABLE "__datafn_changes" ADD COLUMN IF NOT EXISTS "rev" integer');
+    return true;
+  }
+  if (rawSql.dialect === "mysql") {
+    const probe =
+      "SELECT 1 AS present FROM information_schema.columns WHERE table_schema = DATABASE() " +
+      "AND table_name = '__datafn_changes' AND column_name = 'rev'";
+    if ((await rawSql.query(probe)).length > 0) return true;
+  }
+  try {
+    await rawSql.execute(
+      rawSql.dialect === "mysql"
+        ? "ALTER TABLE `__datafn_changes` ADD COLUMN `rev` integer"
+        : 'ALTER TABLE "__datafn_changes" ADD COLUMN "rev" integer',
+    );
+  } catch (error) {
+    // The column exists already (created with the table, or added by another
+    // worker). SQLite and MySQL reject only the statement.
+    if (!/duplicate column/i.test(String((error as Error)?.message ?? error))) throw error;
+  }
+  return true;
 }

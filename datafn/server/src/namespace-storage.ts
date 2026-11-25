@@ -27,6 +27,7 @@ import type { DatafnLogger } from "./logger.js";
 import type { DatafnMultiRegionRuntimeConfig } from "./plugins/multi-region.js";
 import {
   INTERNAL_TABLE_SCHEMAS,
+  LATE_INTERNAL_COLUMNS,
   listNamespacedInternalTables,
 } from "./execution/internal-tables.js";
 import { getLegacyPermissionsTable } from "./execution/migration/spv2.js";
@@ -53,6 +54,7 @@ const INTERNAL_ROLE_BY_TABLE = {
   __datafn_idempotency: "idempotency",
   __datafn_seed: "seed",
   __datafn_permission_directory_outbox: "permission_directory_outbox",
+  __datafn_revisions: "revisions",
 } as const satisfies Record<string, NamespaceStorageLogicalRole>;
 
 const SHARING_RESOURCE_TABLES = [
@@ -298,7 +300,9 @@ function toEntry(
     );
   }
   const required = planned.requiredColumns
-    ?? INTERNAL_TABLE_SCHEMAS[planned.relation]?.map((column) => column.name)
+    ?? INTERNAL_TABLE_SCHEMAS[planned.relation]
+      ?.map((column) => column.name)
+      .filter((column) => !LATE_INTERNAL_COLUMNS[planned.relation]?.includes(column))
     ?? SHARING_REQUIRED_COLUMNS[planned.logicalRole] ?? ["id"];
   const missing = required.filter((column) => !hasColumn(relation, column));
   if (missing.length > 0) {

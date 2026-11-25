@@ -10,6 +10,7 @@
     "cross-tab",
     "sharing-sync-lifecycle",
     "conflict-resolution",
+    "revisions",
     "ordering-guarantees",
     "retry-and-backoff",
     "schema-migration",

@@ -15,7 +15,8 @@
 import type { Adapter } from "@superfunctions/db";
 import type { InternalWhereClause } from "@superfunctions/db/types";
 import type { SequenceStore } from "./sequence-store.js";
-import { ensureInternalTable } from "../internal-tables.js";
+import { ensureChangesRevColumn, ensureInternalTable } from "../internal-tables.js";
+import { bumpRevision, ensureRevisionsTable, tracksRevisions } from "../revisions.js";
 import type { DatafnLogger } from "../../logger.js";
 import { withAdapterNamespaceLock } from "./namespace-lock.js";
 
@@ -85,6 +86,14 @@ export interface ChangeEntry {
   id: string;
   op: "insert" | "merge" | "replace" | "upsert" | "delete";
   record: Record<string, unknown> | null;
+  /** DATA-41: the record's revision after this change; absent on rows written without one. */
+  rev?: number;
+}
+
+/** DATA-41: a change row's revision, when it recorded one. */
+function storedRev(row: Record<string, unknown>): { rev?: number } {
+  const rev = row.rev === null || row.rev === undefined ? NaN : Number(row.rev);
+  return Number.isInteger(rev) && rev > 0 ? { rev } : {};
 }
 
 /**
@@ -96,6 +105,11 @@ export interface ChangeEntryInput {
   id: string;
   op: "insert" | "merge" | "replace" | "upsert" | "delete";
   record: Record<string, unknown> | null;
+  /**
+   * DATA-41: set by `recordChanges` to the record's revision after this
+   * change. A retry of the same entry reuses it instead of bumping again.
+   */
+  rev?: number;
 }
 
 /**
@@ -118,6 +132,14 @@ export class ChangeTrackingService {
   private metaEnsured = false;
   private changesEnsured = false;
   private namespaceMetaEnsured = false;
+  private revisionsEnsured = false;
+  private revColumnReady = false;
+  private transactionBound = false;
+  /**
+   * DATA-41: record each change's revision on its change row. Set from the
+   * server's `revisions.enabled` option; revisions are bumped either way.
+   */
+  issueRevisions = false;
 
   constructor(
     private db: Adapter,
@@ -151,6 +173,22 @@ export class ChangeTrackingService {
       this.metaEnsured = true;
     }
     await this.ensureNamespaceMeta();
+    if (this.issueRevisions && !this.revColumnReady) {
+      this.revColumnReady = await ensureChangesRevColumn(this.db);
+    }
+  }
+
+  /**
+   * DATA-41: creates `__datafn_revisions` before an enclosing transaction
+   * begins (some databases implicitly commit DDL). Write paths call this next
+   * to `ensureReady`; a service that is not transaction-bound also creates
+   * the table on its first recorded change.
+   */
+  async ensureRevisionsReady(): Promise<void> {
+    if (!this.revisionsEnsured) {
+      await ensureRevisionsTable(this.db);
+      this.revisionsEnsured = true;
+    }
   }
 
   /**
@@ -202,7 +240,7 @@ export class ChangeTrackingService {
    */
   withDb(txDb: Adapter, emitChanges = true): ChangeTrackingService {
     const sequenceStore = this.sequenceStore?.withDb?.(txDb) ?? this.sequenceStore;
-    return new ChangeTrackingService(
+    const bound = new ChangeTrackingService(
       txDb,
       this.namespace,
       sequenceStore,
@@ -212,6 +250,11 @@ export class ChangeTrackingService {
       this.changesEnsured,
       true,
     );
+    bound.issueRevisions = this.issueRevisions;
+    bound.transactionBound = true;
+    bound.revisionsEnsured = this.revisionsEnsured;
+    bound.revColumnReady = this.revColumnReady;
+    return bound;
   }
 
   /**
@@ -345,6 +388,25 @@ export class ChangeTrackingService {
       this.changesEnsured = true;
     }
 
+    // DATA-41: every change is a committed write to its record (when this
+    // adapter's transaction commits), so it raises the record's revision.
+    if (!this.transactionBound) await this.ensureRevisionsReady();
+    if (this.issueRevisions && !this.revColumnReady) {
+      this.revColumnReady = await ensureChangesRevColumn(this.db);
+    }
+    for (const params of entries) {
+      if (params.rev === undefined && tracksRevisions(params.resource)) {
+        params.rev = await bumpRevision(
+          this.db,
+          this.namespace,
+          params.resource,
+          params.id,
+          params.op === "delete",
+        );
+      }
+    }
+    const recordRev = this.issueRevisions && this.revColumnReady;
+
     const now = new Date().toISOString();
     const rows = entries.map((params) => ({
       id: `change:${this.namespace}:${params.serverSeq}:${params.resource}:${params.id}`,
@@ -355,6 +417,7 @@ export class ChangeTrackingService {
       op: params.op,
       record: params.record ? JSON.stringify(params.record) : null,
       created_at: now,
+      ...(recordRev && params.rev !== undefined ? { rev: params.rev } : {}),
     }));
 
     // EXE-018: Batch capability detection — use createMany when available
@@ -458,6 +521,7 @@ export class ChangeTrackingService {
         id: change.record_id as string,
         op: change.op as "insert" | "merge" | "replace" | "upsert" | "delete",
         record: change.record ? JSON.parse(change.record as string) : null,
+        ...storedRev(change),
       }));
     } catch (error) {
       // Propagate error — returning empty would make client believe it's fully synced
@@ -507,6 +571,7 @@ export class ChangeTrackingService {
         id: change.record_id as string,
         op: change.op as "insert" | "merge" | "replace" | "upsert" | "delete",
         record: change.record ? JSON.parse(change.record as string) : null,
+        ...storedRev(change),
       }));
     } catch (error) {
       // Propagate error instead of returning empty (which would imply "no changes")
@@ -557,6 +622,7 @@ export class ChangeTrackingService {
           id: change.record_id as string,
           op: change.op as "insert" | "merge" | "replace" | "upsert" | "delete",
           record: change.record ? JSON.parse(change.record as string) : null,
+        ...storedRev(change),
         }));
     } catch (error) {
       this.logger?.error("Failed to get resource-filtered changes", {
@@ -609,6 +675,7 @@ export class ChangeTrackingService {
         id: change.record_id as string,
         op: change.op as "insert" | "merge" | "replace" | "upsert" | "delete",
         record: change.record ? JSON.parse(change.record as string) : null,
+        ...storedRev(change),
       };
     } catch (error) {
       this.logger?.error("Failed to get latest change for record", {

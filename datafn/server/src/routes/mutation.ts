@@ -15,6 +15,7 @@ import type { SequenceStore } from "../execution/sync/sequence-store.js";
 import { getBodyFromContext } from "../http/json.js";
 import { okResponse, errorResponse } from "../http/errors.js";
 import { ChangeTrackingService } from "../execution/sync/change-tracking.js";
+import { revisionsEnabled } from "../execution/revisions.js";
 import { runBeforeMutation, runAfterMutation } from "../plugins/run-hooks.js";
 import {
   executeMutation,
@@ -197,6 +198,7 @@ export function createMutationHandler(
 
         // Create change tracking service with user/tenant namespace and optional sequence store
         const changeTracking = new ChangeTrackingService(db, namespace, sequenceStore);
+        changeTracking.issueRevisions = revisionsEnabled(validatedSchema);
 
         // Process each mutation
         timer?.startPhase("guard");

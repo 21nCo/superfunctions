@@ -45,6 +45,27 @@ export interface DatafnStorageAdapterCapabilities {
    * adapters that set this.
    */
   readonly reportsMergeOutcome?: boolean;
+  /**
+   * DATA-41: the adapter stores each record's server revision with it
+   * (`getRecordWithRevision`, `putRecordWithRevision`) and every other record
+   * write (`upsertRecord`, `upsertRecords`, `mergeRecord`, `deleteRecord`)
+   * clears that record's revision in the same write.
+   */
+  readonly revisions?: boolean;
+}
+
+/** DATA-41: a complete server row (null for a delete tombstone) and its revision. */
+export interface DatafnRevisionEntry {
+  id: string;
+  record: Record<string, unknown> | null;
+  rev: number;
+}
+
+/** DATA-41: a record (null when deleted or absent) and its revision, read together. */
+export interface DatafnStoredRevision {
+  record: Record<string, unknown> | null;
+  /** The server revision of exactly `record`, or undefined when unknown. */
+  rev: number | undefined;
 }
 
 export interface DatafnStorageAdapter {
@@ -92,6 +113,25 @@ export interface DatafnStorageAdapter {
       onResolved?: (outcome: { created: boolean }) => void;
     },
   ): Promise<Record<string, unknown>>;
+
+  /**
+   * DATA-41 (adapters with `capabilities.revisions`): reads a record and its
+   * revision in one storage read.
+   */
+  getRecordWithRevision?(resource: string, id: string): Promise<DatafnStoredRevision>;
+  /**
+   * DATA-41 (adapters with `capabilities.revisions`): installs complete
+   * server rows (or, where `record` is null, delete tombstones) together with
+   * their revisions in one storage write, and returns the ids it installed.
+   * With `unlessPending`, it skips each record a pending changelog entry
+   * touches, so a local change is never overwritten or paired with a
+   * revision.
+   */
+  putRecordsWithRevisions?(
+    resource: string,
+    entries: ReadonlyArray<DatafnRevisionEntry>,
+    options?: { unlessPending?: boolean },
+  ): Promise<string[]>;
 
   // Join rows (many-many)
   listJoinRows(relationKey: string): Promise<Array<Record<string, unknown>>>;

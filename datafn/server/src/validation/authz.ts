@@ -181,6 +181,24 @@ function canReadField(
 }
 
 /**
+ * DATA-41: whether a caller may read every field of `row`, so the row (and
+ * its revision) may be returned whole. Resources without a policy are read in
+ * full by anyone the route already let through (`allowUnknownResources`).
+ */
+export function canReadEveryField(
+  schema: DatafnSchema,
+  resourceName: string,
+  row: Record<string, unknown>,
+): boolean {
+  const resource = getResourceSchema(schema, resourceName);
+  if (!resource) return false;
+  if (!resolvePermissions(schema, resource)) return true;
+  return Object.keys(row).every(
+    (field) => field === "__ns" || field === "$rev" || canReadField(schema, resource, field),
+  );
+}
+
+/**
  * A relation of `resource` whose foreign key is stored on `resource` under
  * the relation's own name (e.g. a many-one `parent` with fkField "parent").
  */

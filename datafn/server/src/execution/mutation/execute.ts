@@ -43,6 +43,7 @@ import {
 import { getDatafnMultiRegionRuntimeConfig } from "../../plugins/multi-region.js";
 import type { DatafnMultiRegionRuntimeConfig } from "../../plugins/multi-region.js";
 import { ChangeTrackingService, recordChangeWithRetry, recordChangesWithRetry, type ChangeEntryInput } from "../sync/change-tracking.js";
+import { issuesRevisions, recordedRevision } from "../revisions.js";
 import {
   applyRelationInheritanceForRelate,
   applyRelationInheritanceForShare,
@@ -997,6 +998,9 @@ async function executeMutationCore(
 
   // REL-011: Record change tracking using the provided changeTracking instance
   // (which uses the same db adapter as the operation — ensures atomicity when in a transaction)
+  // DATA-41: the change entries recorded for this mutation, which carry the
+  // revisions they raised.
+  let recordedEntries: ChangeEntryInput[] = [];
   if (opResult.ok && !skipChangeTracking) {
     try {
       const isRelationMutation =
@@ -1022,6 +1026,7 @@ async function executeMutationCore(
             record: delta.record,
           }));
           await recordChangesWithRetry(changeTracking, entries, 2, logger);
+          recordedEntries = entries;
         }
       } else {
         const changeOp: ChangeEntryInput["op"] = changeOverride
@@ -1069,31 +1074,30 @@ async function executeMutationCore(
         if (allChanges.length > 1) {
           const seqs = await changeTracking.getNextServerSeqBatch(allChanges.length);
           await snapshotPrimaryKvChange();
-          await recordChangesWithRetry(
-            changeTracking,
-            allChanges.map((change, i) => ({
-              serverSeq: seqs[i],
-              resource: change.resource,
-              id: change.id,
-              op: change.op,
-              record: change.record,
-            })),
-            2,
-            logger,
-          );
+          recordedEntries = allChanges.map((change, i) => ({
+            serverSeq: seqs[i],
+            resource: change.resource,
+            id: change.id,
+            op: change.op,
+            record: change.record,
+          }));
+          await recordChangesWithRetry(changeTracking, recordedEntries, 2, logger);
         } else {
           const serverSeq = await changeTracking.getNextServerSeq();
           await snapshotPrimaryKvChange();
           // FIX-REL-002: Use shared retry helper for change-tracking parity with push path
-          await recordChangeWithRetry(changeTracking, {
-            serverSeq,
-            ...primaryChange,
-          }, 2, logger);
+          const entry: ChangeEntryInput = { serverSeq, ...primaryChange };
+          await recordChangeWithRetry(changeTracking, entry, 2, logger);
+          recordedEntries = [entry];
         }
       }
     } catch (error) {
       logger?.error("Change tracking failed", { error: String(error), operation: "changeTracking", resource: mutation.resource });
       throw error;
+    }
+    const rev = recordedRevision(recordedEntries, mutation.resource, mutation.id);
+    if (rev !== undefined && issuesRevisions(schema, mutation.resource)) {
+      result.rev = rev;
     }
   }
 
@@ -1376,6 +1380,7 @@ export async function executeMutation(
 
     try {
       await changeTracking.ensureReady();
+      await changeTracking.ensureRevisionsReady();
       await (db as any).transaction(async (txDb: Adapter) => {
         // DI-002: Re-read record inside transaction to prevent TOCTOU
         const guardResult = await evaluateGuard(
@@ -1515,6 +1520,7 @@ export async function executeMutation(
     let txMutationResult: MutationResult | null = null;
     try {
       await changeTracking.ensureReady();
+      await changeTracking.ensureRevisionsReady();
       await (db as any).transaction(async (txDb: Adapter) => {
         txMutationResult = await executeMutationCore(
           mutation,
@@ -1572,6 +1578,12 @@ export async function executeMutation(
     // retry task. Persist the retry first so a committed grant is never left
     // without durable reconciliation if the next write fails.
     await queuePermissionDirectorySync(db, true);
+  }
+
+  // DATA-41: outside a caller's transaction, create the revisions table
+  // before the write (inside /transact the route creates it beforehand).
+  if (!insideTransaction) {
+    await changeTracking.ensureRevisionsReady();
   }
 
   let result: MutationResult;

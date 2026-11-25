@@ -5,6 +5,7 @@ import type { SequenceStore } from "../execution/sync/sequence-store.js";
 import { getBodyFromContext } from "../http/json.js";
 import { okResponse, errorResponse } from "../http/errors.js";
 import { executeTransaction } from "../execution/transact.js";
+import { ensureRevisionsTable } from "../execution/revisions.js";
 import { buildSchemaIndex, validateMutation, validateQuery } from "../validation/index.js";
 import { validateQueryAuthz, validateMutationAuthz, type AuthzOptions } from "../validation/authz.js";
 import { logRequest } from "../logging.js";
@@ -193,6 +194,12 @@ export function createTransactHandler(
           if (typeof step.operation === "string") return { mutation: step };
           return { query: step };
         });
+
+        // DATA-41: mutations bump revisions inside the transaction, so the
+        // revisions table must exist before it opens.
+        if (db && normalizedSteps.some((step: any) => step.mutation)) {
+          await ensureRevisionsTable(db);
+        }
 
         const result = await executeTransaction(
         { ...body, steps: normalizedSteps },
