@@ -1,0 +1,37 @@
+mcpfn/ARCHITECTURE.md
+  s_c8d3e62c4e5cbc::t_8c528e873e5a47 132-135
+mcpfn/REQUIREMENTS.md
+  s_c8d3e62c4e5cbc::t_099cc05bcd5303 55
+mcpfn/TEST_VECTORS.md
+  s_c8d3e62c4e5cbc::t_4dfd20043a9fe1 82-83
+mcpfn/core/README.md
+  s_c8d3e62c4e5cbc::t_518bbccff7e02e 176-185
+mcpfn/core/src/client-profiles.ts
+  s_c8d3e62c4e5cbc::t_6f938fdf370272 89-100,117-123,143-151,197-201,219,370-380,385-397,446-450,531,533-542,551-563,566-588,611
+mcpfn/core/src/server.ts
+  s_c8d3e62c4e5cbc::t_f127721cfaafaa 48,449,563-583,927
+mcpfn/core/tests/client-profiles.test.ts
+  s_c8d3e62c4e5cbc::t_4995ab28366cca 3-4,237,246,351-509,515-517,529-554,833,846,855
+mcpfn/docs/content/docs/reference/architecture.md
+  s_c8d3e62c4e5cbc::t_2c5aca9f599e8e 135-138
+mcpfn/docs/content/docs/reference/core.md
+  s_c8d3e62c4e5cbc::t_bd82ac25e21ad4 181-190
+mcpfn/testing/tests/client-profile-contracts.test.ts
+  s_c8d3e62c4e5cbc::t_909152aa406bf5 86-87
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "828664842582b1462f729a55500fc70ce8e93180",
+  "prompts": {},
+  "sessions": {
+    "s_c8d3e62c4e5cbc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "81c58342-6481-4e86-8c66-8c52736f9b64",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

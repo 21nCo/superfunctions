@@ -1,0 +1,19 @@
+mcpfn/core/src/server.ts
+  s_c8d3e62c4e5cbc::t_05060fb4665bdc 885-888,984,987,994,1007
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fb06b28c95eef742b1a656d4338e00b84e4a83a7",
+  "prompts": {},
+  "sessions": {
+    "s_c8d3e62c4e5cbc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "81c58342-6481-4e86-8c66-8c52736f9b64",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
