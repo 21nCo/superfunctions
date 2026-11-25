@@ -228,13 +228,14 @@ export class McpFnOAuthClientProvider implements OAuthClientProvider {
     // would present it to whichever server an MCP server names first. Drop
     // such a confidential registration so the client registers again; store
     // pre-registered confidential clients with their `issuer`.
-    if (
-      information &&
-      typeof (information as { client_secret?: unknown }).client_secret === "string" &&
-      typeof (information as { issuer?: unknown }).issuer !== "string"
-    ) {
-      return undefined;
+    if (!information || typeof (information as { issuer?: unknown }).issuer === "string") return information;
+    const secret = (information as { client_secret?: unknown }).client_secret;
+    if (secret === "") {
+      // An empty secret is no secret: keep the public registration without it.
+      const { client_secret: _empty, ...rest } = information as { client_secret?: string };
+      return rest as OAuthClientInformationMixed;
     }
+    if (typeof secret === "string") return undefined;
     return information;
   }
 

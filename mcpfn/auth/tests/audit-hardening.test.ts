@@ -223,6 +223,8 @@ describe("stored OAuth tokens without an issuer (MCP-SEC-02)", () => {
     await expect(provider(store).clientInformation()).resolves.toMatchObject({ client_id: "client-1" });
     await store.setClientInformation({ client_id: "public-client" });
     await expect(provider(store).clientInformation()).resolves.toEqual({ client_id: "public-client" });
+    await store.setClientInformation({ client_id: "public-client", client_secret: "", token_endpoint_auth_method: "none" } as never);
+    await expect(provider(store).clientInformation()).resolves.toEqual({ client_id: "public-client", token_endpoint_auth_method: "none" });
   });
 
   it("keeps the refresh token of tokens bound to an issuer", async () => {
