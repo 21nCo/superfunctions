@@ -607,6 +607,32 @@ describe("validateOpenAPI", () => {
     expect(result.document?.components?.schemas?.Value).toHaveProperty("properties.m.properties.n.required", ["m"]);
   });
 
+  it("validates a recursive preloaded Path Item and its callback", async () => {
+    const uri = "https://example.invalid/path-item.json";
+    const expression = "{$request.body#/url}";
+    const contents = {
+      description: "Operation callbacks",
+      post: {
+        responses: { "200": { description: "OK" } },
+        callbacks: {
+          Notify: { [expression]: { $ref: "#", description: "Callback operation" } },
+        },
+      },
+    };
+    const doc = {
+      ...documentWithReference("#/components/schemas/Shared"),
+      components: { pathItems: { Imported: { $ref: uri, description: "Imported operation" } } },
+    };
+    const result = await validateAndDereferenceOpenAPI(doc, {
+      externalReferences: new Map([[uri, JSON.stringify(contents)]]),
+    });
+    expect(result.errors).toEqual([]);
+    expect(result.document?.components).toHaveProperty(
+      ["pathItems", "Imported", "post", "callbacks", "Notify", expression, "description"],
+      "Callback operation",
+    );
+  });
+
   it("resolves an acyclic root alias through sibling definitions in a preloaded schema", async () => {
     const uri = "https://example.invalid/types.json";
     const contents = JSON.stringify({

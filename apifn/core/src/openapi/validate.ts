@@ -249,7 +249,6 @@ function prepareReferences(document: OpenAPIDocument, externalReferences?: Reado
   const literalReferences = new Map<object, string>();
   const seen = new WeakMap<object, Map<OpenAPIReferenceMode, object>>();
   const pending: PreparedReferenceTarget[] = [];
-  const referenceMerges = new Map<object, object>();
   let field = "x-apifn-reference-copies";
   while (Object.hasOwn(document, field)) field += "-";
   const referenceCopies: ReferenceCopies = { field, targets: [], originals: new Map() };
@@ -408,7 +407,7 @@ function prepareReferences(document: OpenAPIDocument, externalReferences?: Reado
   }
 
   function rewriteReference(
-    ref: string, { source, mode, value, copy, copyPath }: PreparedReferenceTarget, site?: ReferenceSite
+    ref: string, { source, mode, value, copyPath }: PreparedReferenceTarget, site?: ReferenceSite
   ): string {
     const destination = location(source, ref);
     const { tokens, target } = lookupPointer(destination.source, destination.fragment, { importSite: site });
@@ -432,22 +431,22 @@ function prepareReferences(document: OpenAPIDocument, externalReferences?: Reado
     // their own context, so Swagger Parser never sees the literal references.
     const pointers = copiedPointers.get(destination.source) ?? new Map<string, string>();
     const key = mode + canonical;
-    let preparedRef = pointers.get(key);
+    // The parser caches dereferences by pointer. An extended reference needs
+    // its own pointer so a cached recursive target cannot discard its siblings.
+    const hasSiblings = target.source !== root && Object.keys(value).length > 1;
+    let preparedRef = hasSiblings ? undefined : pointers.get(key);
     if (!preparedRef) {
       const targetIndex = String(referenceCopies.targets.length);
       preparedRef = "#/" + field + "/" + targetIndex;
-      pointers.set(key, preparedRef);
-      copiedPointers.set(destination.source, pointers);
+      if (!hasSiblings) {
+        pointers.set(key, preparedRef);
+        copiedPointers.set(destination.source, pointers);
+      }
       referenceCopies.originals.set(preparedRef, isLocal ? canonical : ref);
       referenceCopies.targets.push(enqueue(
         { ...target, mode, importSite: target.importSite ?? site },
         { key: targetIndex, parent: { key: field } },
       ));
-    }
-    if (target.source !== root && typeof target.value === "object" && target.value !== null &&
-        !Object.hasOwn(target.value, "$ref") && Object.keys(value).length > 1) {
-      const preparedTarget = seen.get(target.value)?.get(mode);
-      if (preparedTarget) referenceMerges.set(copy, preparedTarget);
     }
     return preparedRef;
   }
@@ -477,14 +476,6 @@ function prepareReferences(document: OpenAPIDocument, externalReferences?: Reado
         { key, parent: copyPath },
       ));
     }
-  }
-  // The parser can reuse a prepared target for a circular reference and drop
-  // the ref's siblings. Apply its normal shallow merge before dereferencing.
-  for (const [reference, target] of referenceMerges) {
-    for (const [key, child] of Object.entries(target)) {
-      if (!Object.hasOwn(reference, key)) Reflect.set(reference, key, child);
-    }
-    Reflect.deleteProperty(reference, "$ref");
   }
   if (referenceCopies.targets.length) Reflect.set(copy, field, referenceCopies.targets);
   return { copy, referenceCopies, literalReferences };
