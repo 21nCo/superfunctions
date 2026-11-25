@@ -1,0 +1,27 @@
+packages/evidence/README.md
+  s_08ba8baed8969a::t_a723532668e350 90,92
+packages/evidence/schema/evidence-record.v1.json
+  s_08ba8baed8969a::t_1ea4a40ba60944 5
+packages/evidence/src/schema.ts
+  s_08ba8baed8969a::t_6f68d98a1892e0 17
+packages/evidence/test/fixtures.ts
+  s_08ba8baed8969a::t_f851de1f358afa 129-139
+packages/evidence/test/fixtures/cases.json
+  s_08ba8baed8969a::t_04934c46fdaba5 13-14,49
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "139065ad673647102ebd1ddb38a133e93e008f3f",
+  "prompts": {},
+  "sessions": {
+    "s_08ba8baed8969a": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a211ab-e567-7052-ae97-961e8a10be50",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
