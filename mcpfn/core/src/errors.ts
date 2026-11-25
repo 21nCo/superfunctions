@@ -76,13 +76,13 @@ export interface McpFnErrorResultOptions {
  */
 export function isMcpErrorLike(error: unknown): error is Error & { code: number } {
   if (error instanceof McpError) return true;
-  if (!(error instanceof Error) || typeof (error as { code?: unknown }).code !== "number") return false;
-  if (error.name === "McpError") return true;
-  // A subclass with its own name: look for the SDK base class by name.
-  for (let prototype = Object.getPrototypeOf(error); prototype && prototype !== Error.prototype; prototype = Object.getPrototypeOf(prototype)) {
-    if (Object.hasOwn(prototype, "constructor") && (prototype as { constructor: { name?: unknown } }).constructor.name === "McpError") return true;
-  }
-  return false;
+  if (!(error instanceof Error)) return false;
+  const code = (error as { code?: unknown }).code;
+  if (typeof code !== "number" || !Number.isSafeInteger(code)) return false;
+  // Every SDK McpError (any copy, subclass or minified build) formats its
+  // message as "MCP error <code>: ...", so this identifies one without
+  // relying on class identity or names.
+  return error.message.startsWith(`MCP error ${code}:`);
 }
 
 /**

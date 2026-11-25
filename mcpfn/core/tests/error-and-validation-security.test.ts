@@ -197,6 +197,31 @@ describe("withheld errors outside tool handlers (MCP-SEC-08)", () => {
     expect(error).toMatchObject({ code: ErrorCode.InvalidParams, data: { field: "uri" } });
   });
 
+  it("recognises a foreign McpError by its message format, not its class name", async () => {
+    // As a minified SDK build would produce: renamed classes, null constructor.
+    class a extends Error {
+      constructor(readonly code: number, message: string, readonly data?: unknown) {
+        super(`MCP error ${code}: ${message}`);
+        this.name = "x";
+      }
+    }
+    Object.defineProperty(a.prototype, "constructor", { value: null });
+    const registry = new McpFnRegistry().registerResource({ uri: "file:///report", name: "report", read: async () => { throw new a(ErrorCode.InvalidParams, "Bad resource", { field: "uri" }); } });
+    const client = await connect(registry);
+    const error = await client.readResource({ uri: "file:///report" }).then(() => undefined, (failure: unknown) => failure);
+    expect(error).toMatchObject({ code: ErrorCode.InvalidParams, data: { field: "uri" } });
+  });
+
+  it("withholds numeric-coded errors that are not McpErrors", async () => {
+    const onError = vi.fn();
+    const registry = new McpFnRegistry().registerResource({ uri: "file:///report", name: "report", read: async () => { throw Object.assign(new Error("open /srv/app/x failed"), { code: -2 }); } });
+    const client = await connect(registry, { onError });
+    const error = await client.readResource({ uri: "file:///report" }).then(() => undefined, (failure: unknown) => failure);
+    expect(String((error as Error).message)).not.toContain("/srv/app");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(onError.mock.calls[0]![0].error.message).toContain("/srv/app");
+  });
+
   it("withholds plain coded objects thrown by protocol handlers", async () => {
     const registry = new McpFnRegistry().registerResource({
       uri: "file:///report",
