@@ -1,0 +1,61 @@
+filefn/client/src/__tests__/offline-queue.test.ts
+  s_545bb079978e5a::t_f0283a8de09366 4,8,11,15,51,62-106,127,209-230,496,507,516-805
+filefn/client/src/client.ts
+  s_3dd1c4bdeb8c83::t_2f3bed1b5cfe4f 73-79,445-453
+filefn/client/src/index.ts
+  s_3dd1c4bdeb8c83::t_b3fee48426fbe8 340-343,347
+filefn/client/src/types.ts
+  s_3dd1c4bdeb8c83::t_4dfa717024739b 1,46-52,61
+filefn/client/src/__tests__/file-ids.test.ts
+  s_545bb079978e5a::t_2f7f67d2689ed8 177
+filefn/client/src/__tests__/offline.test.ts
+  s_545bb079978e5a::t_cb4f06e7cc5e19 44-45,59,177
+filefn/client/src/__tests__/transport-offline.test.ts
+  s_545bb079978e5a::t_aa69fedffa8dfc 68,98
+filefn/client/src/upload-manager.ts
+  s_545bb079978e5a::t_7aae833b3e8f6d 370-373,395,406-407
+filefn/client/tests/public-offline-consumer.test.ts
+  s_545bb079978e5a::t_7154aca0c957ac 14-15
+filefn/server/tests/offline-replay.test.ts
+  s_545bb079978e5a::t_4aff60e3a5d960 65,118-120,126-144
+filefn/client/README.md
+  s_3dd1c4bdeb8c83::t_eecd0d9e44e7f9 78
+filefn/client/src/offline/queue.ts
+  s_3dd1c4bdeb8c83::t_4be29621910be9 25,35,122-132,136-142,155-156,180,220-223,244,252-261,271-275,304-307,335-336,356-357,361-371,555-559,561-566,573-578,611-613,633-634,645-647,662,687-688,733-738,741,749-750,754,777,801,843-844,851-854,879-882,892-894,905,909-910,917-922,1012,1093-1104,1106,1111,1113-1114,1116-1152,1172-1175,1200-1203,1206-1211,1219-1225,1228,1231-1237,1240,1254,1269,1278,1296,1301,1307,1334-1336,1338-1342,1346,1351-1353,1358-1359,1385,1387-1389,1392,1397-1407,1409,1422,1424-1426,1430-1439,1451,1458-1459,1471-1472,1506-1510,1514-1515,1517,1519-1527,1538-1540,1605,1683-1690,1729,1731-1732,1752-1756,1765-1801
+filefn/client/src/offline/sync.ts
+  s_3dd1c4bdeb8c83::t_8934f7362c9d61 58-60,100-102,194-199,274-277,284-285,294-298,318-319,326-327,333
+filefn/docs/content/docs/features/offline.md
+  s_3dd1c4bdeb8c83::t_4d4833e14ea0fd 23-24,30,38-39,42,50-54,57-58,79-81,87,89-90,99,102-103,108,114,131,142
+filefn/docs/content/docs/frameworks/sveltekit.md
+  s_3dd1c4bdeb8c83::t_ab603e09689f39 56-60
+filefn/docs/content/docs/quickstart/sveltekit.md
+  s_3dd1c4bdeb8c83::t_cc589d4ffba300 98-106
+filefn/docs/content/docs/recipes/opfs-offline.md
+  s_3dd1c4bdeb8c83::t_fd284061912a98 15-20
+filefn/docs/content/docs/reference/changelog.md
+  s_3dd1c4bdeb8c83::t_b323b20d20c1fc 12
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a860c354bc2147ddf565b160320f5efd6c931099",
+  "prompts": {},
+  "sessions": {
+    "s_3dd1c4bdeb8c83": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5590331e-b180-45a4-8572-d62112a005f4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_545bb079978e5a": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a2144f-8f2a-7690-8b1a-e7858b67a889",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
