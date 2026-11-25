@@ -5,12 +5,14 @@ import { getHeapStatistics } from "node:v8";
 const CIRCULAR = '"[Circular]"';
 const REDACTED = '"[REDACTED]"';
 /**
- * How many projections of one original member value may be open on the active path at once (see
- * `serializeJsonMember`). A toJSON that keeps returning fresh objects which lead back to the same value (where
- * JSON.stringify recurses until its stack overflows) is marked "[Circular]" in place at the next recurrence; finite
- * chains up to this depth print exactly as JSON.stringify prints them. Once a value has reached the limit, each later
- * projection of it on the same path (a sibling of the capped branch) is still printed, one level deep: projections of
- * that value inside it print "[Circular]", so a toJSON that branches back to itself costs linear, not exponential, work.
+ * How many projections of one original member value under one member key may be open on the active path at once (see
+ * `serializeJsonMember`). toJSON receives only the value and its key, so a projection of the same value for the same
+ * key that is already open on the path is the recurrence that makes JSON.stringify recurse until its stack overflows
+ * (a toJSON returning fresh objects that lead back to that value under that key). The next such projection past the
+ * limit is marked "[Circular]" in place; finite chains up to this depth print exactly as JSON.stringify prints them.
+ * The count depends only on the active path, so a sibling projected for another key (one that terminates) prints in
+ * full at any depth and in any member order. A toJSON that branches back to itself under several keys is bounded by
+ * the work budget and MAX_NESTING_DEPTH instead: its document fails with a RangeError rather than printing.
  */
 export const PROJECTION_REPEAT_LIMIT = 64;
 /**
@@ -189,12 +191,11 @@ const DIGITS_PER_BIT = Math.log10(2);
 interface Walk {
   /** The objects being serialized, as JSON.stringify's stack holds them. */
   readonly nodes: Set<object>;
-  /** How many of those objects were produced from each original member value (before its toJSON ran). */
-  readonly originals: Map<unknown, number>;
-  /** Originals that reached PROJECTION_REPEAT_LIMIT while still open (cleared when they close). */
-  readonly capped: Set<unknown>;
-  /** Capped originals with a projection being printed one level deep: projections of them inside it are marked. */
-  readonly cappedWalks: Set<unknown>;
+  /**
+   * How many of those objects were produced from each original member value (before its toJSON ran), by the member
+   * key it was projected for.
+   */
+  readonly originals: Map<unknown, Map<string, number>>;
   readonly out: TextSink;
   readonly budget: DocumentBudget;
   readonly work: WorkBudget;
@@ -268,10 +269,11 @@ function emitBigInt(walk: Walk, value: bigint): void {
     return;
   }
   const room = Math.min(walk.budget.charsLeft, walk.work.unitsLeft);
-  const magnitude = value < 0n ? -value : value;
-  // A magnitude of at least 2^bits has more than `room` decimal digits, so its text cannot fit.
+  // A magnitude of at least 2^bits has more than `room` decimal digits, so its text cannot fit. The check needs no
+  // copy of the value: asIntN keeps `value` unchanged only when -2^bits <= value < 2^bits, for either sign, and its
+  // result is at most `bits` bits long.
   const bits = Math.max(1, Math.ceil(room / DIGITS_PER_BIT) + 1);
-  if (BigInt.asUintN(bits, magnitude) !== magnitude) {
+  if (BigInt.asIntN(bits + 1, value) !== value) {
     exceeded();
   }
   emitString(walk, value.toString());
@@ -317,7 +319,7 @@ function serializeProperty(walk: Walk, holder: object, key: string, depth: numbe
   const { original, value } = project(holder, key);
   if (typeof value === "object" && value !== null) {
     before?.();
-    serializeNode(walk, value, original, depth);
+    serializeNode(walk, value, original, key, depth);
     return true;
   }
   if (value === undefined || typeof value === "function" || typeof value === "symbol") {
@@ -328,49 +330,28 @@ function serializeProperty(walk: Walk, holder: object, key: string, depth: numbe
 }
 
 /**
- * How `node` is printed: "circular" when it is being serialized, its original already has PROJECTION_REPEAT_LIMIT
- * projections open, or its original is capped and already has a projection printed one level deep on the path;
- * "capped" when its original is capped and this projection is printed one level deep; "walk" otherwise.
- */
-function classifyNode(walk: Walk, node: object, original: unknown, open: number): "circular" | "capped" | "walk" {
-  if (walk.nodes.has(node)) {
-    return "circular";
-  }
-  if (open === 0) {
-    return "walk";
-  }
-  if (open >= PROJECTION_REPEAT_LIMIT) {
-    walk.capped.add(original);
-    return "circular";
-  }
-  if (walk.capped.has(original)) {
-    return walk.cappedWalks.has(original) ? "circular" : "capped";
-  }
-  return "walk";
-}
-
-/**
  * Serializes an object or array with `node` on the active path, in one pass. A node already on the path is
- * "[Circular]" (where JSON.stringify throws a TypeError). A node produced from an original value that already has
- * PROJECTION_REPEAT_LIMIT projections open is "[Circular]" in place, and that original is capped while it stays open:
- * each later projection of it (such as a finite sibling of the capped branch) is printed, but projections of it nested
- * inside that one are "[Circular]", so a toJSON that branches back to itself cannot multiply the work.
+ * "[Circular]" (where JSON.stringify throws a TypeError). A node projected from an original value for a member key
+ * under which that value already has PROJECTION_REPEAT_LIMIT projections open on the path is "[Circular]" in place:
+ * the same value and key recur, so its toJSON would recur without end. Nothing outlives the path, so the output of a
+ * member never depends on its siblings or their order.
  */
-function serializeNode(walk: Walk, node: object, original: unknown, depth: number): void {
-  const open = walk.originals.get(original) ?? 0;
-  const kind = classifyNode(walk, node, original, open);
-  if (kind === "circular") {
+function serializeNode(walk: Walk, node: object, original: unknown, key: string, depth: number): void {
+  let byKey = walk.originals.get(original);
+  const open = byKey?.get(key) ?? 0;
+  if (walk.nodes.has(node) || open >= PROJECTION_REPEAT_LIMIT) {
     emit(walk, CIRCULAR);
     return;
   }
   if (depth >= MAX_NESTING_DEPTH) {
     exceeded();
   }
-  walk.nodes.add(node);
-  walk.originals.set(original, open + 1);
-  if (kind === "capped") {
-    walk.cappedWalks.add(original);
+  if (byKey === undefined) {
+    byKey = new Map();
+    walk.originals.set(original, byKey);
   }
+  walk.nodes.add(node);
+  byKey.set(key, open + 1);
   try {
     if (Array.isArray(node)) {
       serializeArray(walk, node, depth + 1);
@@ -379,14 +360,13 @@ function serializeNode(walk: Walk, node: object, original: unknown, depth: numbe
     }
   } finally {
     walk.nodes.delete(node);
-    if (kind === "capped") {
-      walk.cappedWalks.delete(original);
-    }
-    if (open === 0) {
-      walk.originals.delete(original);
-      walk.capped.delete(original);
+    if (open > 0) {
+      byKey.set(key, open);
     } else {
-      walk.originals.set(original, open);
+      byKey.delete(key);
+      if (byKey.size === 0) {
+        walk.originals.delete(original);
+      }
     }
   }
 }
@@ -439,12 +419,17 @@ function boundTypedArray(walk: Walk, record: object): void {
     return;
   }
   const length = Reflect.apply(typedArrayLength, record, []);
-  spendWork(walk.work, length * TYPED_ARRAY_INDEX_UNITS);
   // A bigint member can be dropped by a toJSON, so only arrays of numbers are known to print every index.
   const numbers = !types.isBigInt64Array(record) && !types.isBigUint64Array(record);
-  if (!walk.discarding && numbers && length > 0 && 6 * length + 1 > walk.budget.charsLeft) {
+  // Rejected before anything is charged: the keys of a rejected array are never listed, so that work is not spent
+  // and cannot crowd out later members, details or diagnostics.
+  if (
+    length * TYPED_ARRAY_INDEX_UNITS > walk.work.unitsLeft ||
+    (!walk.discarding && numbers && length > 0 && 6 * length + 1 > walk.budget.charsLeft)
+  ) {
     exceeded();
   }
+  spendWork(walk.work, length * TYPED_ARRAY_INDEX_UNITS);
 }
 
 /**
@@ -500,10 +485,11 @@ export interface SerializeJsonMemberOptions {
  * RangeError, and these are the only divergences:
  * - bigints become strings;
  * - an object or array that is already being serialized prints "[Circular]" (JSON.stringify throws a TypeError);
- * - a toJSON that keeps returning fresh objects leading back to the same original value prints
- *   PROJECTION_REPEAT_LIMIT (64) nested projections and then "[Circular]" in place; while that value stays open, a
- *   later projection of it (a finite sibling of the capped branch) still prints, but projections of it nested inside
- *   that one print "[Circular]"; a finite chain deeper than 64 projections of one value is cut the same way;
+ * - a toJSON that keeps returning fresh objects leading back to the same original value under the same member key
+ *   prints PROJECTION_REPEAT_LIMIT (64) nested projections for that key and then "[Circular]" in place; a finite
+ *   chain deeper than 64 projections of one value for one key is cut the same way. Projections for other keys, such
+ *   as a sibling that terminates, print as JSON.stringify prints them, at any depth and in any member order; one
+ *   that keeps branching back to the value under new keys fails on the work budget or the nesting limit;
  * - nesting deeper than MAX_NESTING_DEPTH (512) objects and arrays throws a RangeError before the next level is read;
  * - text that cannot fit what is left of `budget`, or a walk that cannot fit what is left of `work`, throws a
  *   RangeError; an array checks 2n + 1 characters (and n units of work) before its index 0 is read, a typed array
@@ -532,8 +518,6 @@ export function serializeJsonMember(
   const walk: Walk = {
     nodes: new Set(),
     originals: new Map(),
-    capped: new Set(),
-    cappedWalks: new Set(),
     out,
     budget,
     work,

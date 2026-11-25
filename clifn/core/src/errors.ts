@@ -2,6 +2,8 @@
 export const RUNNER_FAILED_CODE = "CLIFN_RUNNER_FAILED";
 
 const ERROR_CODE_PATTERN = /^[A-Z][A-Z0-9_]{1,63}$/;
+/** The longest string ERROR_CODE_PATTERN matches: longer codes are rejected from their length, never scanned. */
+const MAX_ERROR_CODE_LENGTH = 64;
 const MESSAGE_CODE_PATTERN = /^CLIFN_[A-Z0-9_]+$/;
 const UNKNOWN_FAILURE_MESSAGE = "Unknown runner failure";
 
@@ -93,13 +95,25 @@ function plainMessage(error: unknown, message: unknown): string {
   return UNKNOWN_FAILURE_MESSAGE;
 }
 
-function classifyFields(error: unknown, fields: ThrownFields): ClassifiedRunnerError {
+/**
+ * `maxMessageCodeLength` bounds which messages are matched as a code: a regular expression flattens the string it
+ * scans, so a longer message (such as a rope far larger than the heap) is never scanned and stays the message.
+ */
+function classifyFields(
+  error: unknown,
+  fields: ThrownFields,
+  maxMessageCodeLength = Number.POSITIVE_INFINITY
+): ClassifiedRunnerError {
   const { code, message } = fields;
   let payload: RunnerErrorPayload;
 
-  if (typeof code === "string" && ERROR_CODE_PATTERN.test(code)) {
+  if (typeof code === "string" && code.length <= MAX_ERROR_CODE_LENGTH && ERROR_CODE_PATTERN.test(code)) {
     payload = { code, message: plainMessage(error, message) };
-  } else if (typeof message === "string" && MESSAGE_CODE_PATTERN.test(message)) {
+  } else if (
+    typeof message === "string" &&
+    message.length <= maxMessageCodeLength &&
+    MESSAGE_CODE_PATTERN.test(message)
+  ) {
     payload = { code: message, message: describeMessageCode(message) };
   } else {
     payload = { code: RUNNER_FAILED_CODE, message: plainMessage(error, message) };
@@ -128,12 +142,17 @@ export function classifyRunnerError(error: unknown): ClassifiedRunnerError {
 /**
  * `classifyRunnerError` for a result document (D8): it also reads the thrown value's `details` (after `message` and
  * before `exitCode`, each once) and returns it unchanged; the document decides whether it is usable. A details
- * getter that throws leaves `details` undefined. Internal: not exported from the package.
+ * getter that throws leaves `details` undefined. A message longer than `maxCodeLength`, which could not be printed as
+ * a code anyway, is not matched against the message-code pattern, so it is never flattened or scanned here; the
+ * document then prints it, or its too-long fallback, as the message. Internal: not exported from the package.
  */
-export function classifyRunnerFailure(error: unknown): ClassifiedRunnerFailure {
+export function classifyRunnerFailure(
+  error: unknown,
+  maxCodeLength = Number.POSITIVE_INFINITY
+): ClassifiedRunnerFailure {
   try {
     const fields = readFields(error, true);
-    return { ...classifyFields(error, fields), details: fields.details };
+    return { ...classifyFields(error, fields, maxCodeLength), details: fields.details };
   } catch {
     return { error: { code: RUNNER_FAILED_CODE, message: UNKNOWN_FAILURE_MESSAGE }, exitCode: 1, details: undefined };
   }

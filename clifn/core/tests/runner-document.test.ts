@@ -731,16 +731,25 @@ describe("document mode follows JSON.stringify for arrays, toJSON calls and boxe
     }
     return parent;
   };
-  /** `wrap` applied PROJECTION_REPEAT_LIMIT times around "[Circular]": a projection loop cut in place at the cap. */
-  const nest = (wrap: (inner: unknown) => unknown) => {
-    let node: unknown = "[Circular]";
-    for (let depth = 0; depth < PROJECTION_REPEAT_LIMIT; depth += 1) {
+  /**
+   * `wrap` applied `times` times around `innermost`. A projection loop is cut in place once one value has
+   * PROJECTION_REPEAT_LIMIT projections open for the same key: the member's own projection (for its own key) and 64
+   * more for the recurring key print, so by default 65 levels wrap "[Circular]".
+   */
+  const nest = (wrap: (inner: unknown) => unknown, times = PROJECTION_REPEAT_LIMIT + 1, innermost: unknown = "[Circular]") => {
+    let node: unknown = innermost;
+    for (let depth = 0; depth < times; depth += 1) {
       node = wrap(node);
     }
     return node;
   };
+  // The member's parent projection, then 64 child and parent projections each; the 65th "child" is cut.
   const printCycle = (password: string) =>
-    nest((inner) => ({ name: "parent", password, child: { name: "child", parent: inner } }));
+    nest(
+      (inner) => ({ name: "parent", password, child: { name: "child", parent: inner } }),
+      PROJECTION_REPEAT_LIMIT,
+      { name: "parent", password, child: "[Circular]" }
+    );
   const printedCycle = printCycle("[REDACTED]");
 
   it("marks a cycle through toJSON projections in data, the json() fallback, diagnostics and error details", async () => {
@@ -910,8 +919,8 @@ describe("document mode follows JSON.stringify for arrays, toJSON calls and boxe
     // Data, the json() fallback, and the diagnostic and error details of the failing run: four values, each read once.
     expect(created).toHaveLength(4);
     for (const counts of created) {
-      // The member's toJSON and one call per recurrence until the cap: never a second walk.
-      expect(counts).toEqual({ getter: 1, toJSON: PROJECTION_REPEAT_LIMIT + 1 });
+      // The member's toJSON ("loop") and one call per "again" recurrence up to the cut one: never a second walk.
+      expect(counts).toEqual({ getter: 1, toJSON: PROJECTION_REPEAT_LIMIT + 2 });
     }
   });
 
@@ -939,22 +948,24 @@ describe("document mode follows JSON.stringify for arrays, toJSON calls and boxe
       chain(PROJECTION_REPEAT_LIMIT, "leaf", "[REDACTED]")
     );
 
-    // Natively 70 levels; here the 65th projection of the same value is "[Circular]", after 65 toJSON calls.
+    // Natively 70 levels; here the projection for the member's own key and 64 for "next" print, and the 65th "next"
+    // projection of the same value is "[Circular]", after 66 toJSON calls.
     const calls = { count: 0 };
     expect(native(() => stateful(70))).toEqual(chain(70, "leaf", "test-password"));
     const beyond = await runDocument(() => ({ data: stateful(70, calls) }));
     expect(parseOnlyDocument(beyond)).toEqual({
       ok: true,
-      data: chain(PROJECTION_REPEAT_LIMIT, "[Circular]", "[REDACTED]"),
+      data: chain(PROJECTION_REPEAT_LIMIT + 1, "[Circular]", "[REDACTED]"),
     });
-    expect(calls.count).toBe(PROJECTION_REPEAT_LIMIT + 1);
+    expect(calls.count).toBe(PROJECTION_REPEAT_LIMIT + 2);
     await expectEveryMember(
       () => stateful(70),
-      chain(PROJECTION_REPEAT_LIMIT, "[Circular]", "test-password"),
-      chain(PROJECTION_REPEAT_LIMIT, "[Circular]", "[REDACTED]")
+      chain(PROJECTION_REPEAT_LIMIT + 1, "[Circular]", "test-password"),
+      chain(PROJECTION_REPEAT_LIMIT + 1, "[Circular]", "[REDACTED]")
     );
 
-    // The key carries the depth: k0 projects { k1: this }, and so on, until the key that names the last level.
+    // The key carries the depth: k0 projects { k1: this }, and so on, until the key that names the last level. No
+    // value recurs under the same key, so even past the cap the chain prints as native JSON prints it.
     const keyed = (last: number) => ({
       toJSON(this: object, key: string): unknown {
         const level = key.startsWith("k") ? Number(key.slice(1)) : 0;
@@ -972,60 +983,59 @@ describe("document mode follows JSON.stringify for arrays, toJSON calls and boxe
     expect(native(() => keyed(PROJECTION_REPEAT_LIMIT))).toEqual(keyedLeaf);
     await expectEveryMember(() => keyed(PROJECTION_REPEAT_LIMIT), keyedLeaf);
     expect(native(() => keyed(100))).toEqual(keyedChain(100, "leaf 100"));
-    await expectEveryMember(() => keyed(100), keyedChain(PROJECTION_REPEAT_LIMIT, "[Circular]"));
+    await expectEveryMember(() => keyed(100), keyedChain(100, "leaf 100"));
 
     // A loop referenced twice is cut at the same depth in both places.
     const loop = { toJSON: (key: string) => ({ again: loop, key }) };
     const twice = await runDocument(() => ({ data: { a: loop, b: [loop] } }));
-    const cut = (key: string) => {
-      let node: unknown = { again: "[Circular]", key: "again" };
-      for (let level = 1; level < PROJECTION_REPEAT_LIMIT; level += 1) {
-        node = { again: node, key: level === PROJECTION_REPEAT_LIMIT - 1 ? key : "again" };
-      }
-      return node;
-    };
+    // The member's own projection, then 64 "again" projections; the 65th is cut.
+    const cut = (key: string) => ({ again: nest((inner) => ({ again: inner, key: "again" }), PROJECTION_REPEAT_LIMIT), key });
     expect(parseOnlyDocument(twice)).toEqual({ ok: true, data: { a: cut("a"), b: [cut("0")] } });
   });
 
-  it("prints each sibling of a capped branching loop one level deep, so the work stays linear", async () => {
-    let calls = 0;
-    const branching = {
-      toJSON(this: object) {
-        calls += 1;
-        return { a: this, b: this };
-      },
+  it("keeps the output of finite siblings of a cut loop at every level, including the cut one, in either order", async () => {
+    // A sibling projected for another key terminates, so it prints in full whatever the member order: only the value
+    // recurring under the same key ("again") is cut.
+    const run = async (order: "again-first" | "leaf-first", leaf: (self: object) => (key: string) => unknown) => {
+      const keys: string[] = [];
+      const looping: { toJSON(key: string): unknown } = {
+        toJSON(key: string) {
+          keys.push(key);
+          const finite = leaf(looping)(key);
+          if (finite !== undefined) {
+            return finite;
+          }
+          return order === "again-first" ? { again: looping, leaf: looping } : { leaf: looping, again: looping };
+        },
+      };
+      expect(() => JSON.stringify(looping)).toThrow(RangeError);
+      keys.length = 0;
+      const result = await runDocument(() => ({ data: looping }));
+      return { document: parseOnlyDocument(result), keys };
     };
-    expect(() => JSON.stringify(branching)).toThrow(RangeError);
-    calls = 0;
-    const result = await runDocument(() => ({ data: branching }));
-    let printed: unknown = { a: "[Circular]", b: "[Circular]" };
-    for (let depth = 1; depth < PROJECTION_REPEAT_LIMIT; depth += 1) {
-      printed = { a: printed, b: { a: "[Circular]", b: "[Circular]" } };
-    }
-    expect(parseOnlyDocument(result)).toEqual({ ok: true, data: printed });
-    // One call per member: 64 projections, the cut "a" and "b" under the deepest one, and under each of the 63 others
-    // a "b" printed one level deep with its two members cut.
-    expect(calls).toBe(1 + PROJECTION_REPEAT_LIMIT + 1 + 3 * (PROJECTION_REPEAT_LIMIT - 1));
-  });
+    const kept = () => (key: string) => (key === "leaf" ? { kept: true } : undefined);
+    // leaf -> { inner: L }, inner -> { deeper: L }, deeper -> "end": a finite chain through the looping value itself.
+    const chained = (self: object) => (key: string) =>
+      key === "leaf" ? { inner: self } : key === "inner" ? { deeper: self } : key === "deeper" ? "end" : undefined;
+    const level = (order: string, leafText: unknown) => (inner: unknown) =>
+      order === "again-first" ? { again: inner, leaf: leafText } : { leaf: leafText, again: inner };
 
-  it("keeps the output of independent finite siblings of a capped branch, with one toJSON call per member", async () => {
-    const keys: string[] = [];
-    const looping: { toJSON(key: string): unknown } = {
-      toJSON(key: string) {
-        keys.push(key);
-        return key === "leaf" ? { kept: true } : { again: looping, leaf: looping };
-      },
-    };
-    const result = await runDocument(() => ({ data: looping }));
-    // The "again" chain is cut after 64 projections; every "leaf" above the deepest one prints its finite projection.
-    let printed: unknown = { again: "[Circular]", leaf: "[Circular]" };
-    for (let depth = 1; depth < PROJECTION_REPEAT_LIMIT; depth += 1) {
-      printed = { again: printed, leaf: { kept: true } };
+    for (const order of ["again-first", "leaf-first"] as const) {
+      for (const [leaf, leafText, leafCalls] of [
+        [kept, { kept: true }, 1],
+        [chained, { inner: { deeper: "end" } }, 3],
+      ] as const) {
+        const { document, keys } = await run(order, leaf);
+        // The member's projection and 64 "again" projections print, each with its leaf, and the 65th "again" is cut.
+        expect(document).toEqual({
+          ok: true,
+          data: nest(level(order, leafText), PROJECTION_REPEAT_LIMIT, level(order, leafText)("[Circular]")),
+        });
+        // One toJSON call per member: "data", 65 "again" (the last one cut), and each of the 65 leaves' chain.
+        expect(keys.filter((key) => key === "again")).toHaveLength(PROJECTION_REPEAT_LIMIT + 1);
+        expect(keys).toHaveLength(1 + (PROJECTION_REPEAT_LIMIT + 1) * (1 + leafCalls));
+      }
     }
-    expect(parseOnlyDocument(result)).toEqual({ ok: true, data: printed });
-    // "data", 63 more "again" projections, the cut "again" and "leaf" under the deepest, and 63 printed leaves.
-    expect(keys.filter((key) => key === "leaf")).toHaveLength(PROJECTION_REPEAT_LIMIT);
-    expect(keys).toHaveLength(1 + PROJECTION_REPEAT_LIMIT + PROJECTION_REPEAT_LIMIT);
 
     // Two independent finite projections of one value side by side print as JSON.stringify prints them.
     const twice = { toJSON: (key: string) => ({ key }) };

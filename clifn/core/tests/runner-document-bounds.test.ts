@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { runInNewContext } from "node:vm";
 import ts from "typescript";
 import { afterAll, afterEach, beforeAll, vi } from "vitest";
@@ -180,6 +180,37 @@ describe("document redaction covers every sensitive key in every structured memb
     });
     expect(result.out).not.toContain("test-password-value");
     expect(result.stderr).toBe('{"level":"info","message":"token=test-log-message-value"}\n');
+  });
+
+  it("never matches a message or code longer than the document could print against the code patterns", () => {
+    const test = vi.spyOn(RegExp.prototype, "test");
+    const long = `CLIFN_${"X".repeat(10_000)}`;
+    const cases: Array<[Record<string, unknown>, string]> = [
+      [{ message: long, exitCode: 7 }, "CLIFN_RUNNER_FAILED"],
+      [{ code: "BIG", message: long, exitCode: 7 }, "BIG"],
+      [{ code: `C${"C".repeat(10_000)}`, message: long, exitCode: 7 }, "CLIFN_RUNNER_FAILED"],
+    ];
+    for (const [thrown, code] of cases) {
+      const result = finishWith(300, { ok: false, error: thrown });
+      expect(result.exitCode).toBe(7);
+      expect(parseOnlyDocument(result)).toEqual({
+        ok: false,
+        error: { code, message: "The error message was too long to print." },
+      });
+    }
+    // A regular expression flattens the string it scans: a rope far larger than the heap would be copied whole.
+    expect(test.mock.calls.filter(([text]) => typeof text === "string" && text.length > 300)).toEqual([]);
+  });
+
+  it("states the stderr boundary: log details print as given while the stdout document stays redacted", async () => {
+    const result = await runDocument((_options, ctx) => {
+      ctx.output.info("logged", { password: "test-log-details-value" });
+      return { data: { password: "test-log-details-value" } };
+    });
+    expect(parseOnlyDocument(result)).toEqual({ ok: true, data: { password: "[REDACTED]" } });
+    expect(result.out).not.toContain("test-log-details-value");
+    // Log lines are messages the caller supplies, details included: they are not key-redacted.
+    expect(result.stderr).toContain("test-log-details-value");
   });
 
   it("keeps redaction when the error message falls back to the fixed too-long message", () => {
@@ -435,6 +466,68 @@ describe("document work spent on redacted and dropped values", () => {
     expect(reads).toBe(0);
   });
 
+  it("fails a toJSON that branches back to itself under several keys on the work budget, one call per member", () => {
+    let calls = 0;
+    const branching = {
+      toJSON(this: object) {
+        calls += 1;
+        return { a: this, b: this };
+      },
+    };
+    expect(() => JSON.stringify(branching)).toThrow(RangeError);
+    calls = 0;
+    // Neither key's chain recurs 64 times on most paths, so the tree is walked until the work budget is spent.
+    const data = finishWith(20_000, { ok: true, data: branching, exitCode: 0 });
+    expect(data.exitCode).toBe(1);
+    expect(data.out).toBe(`${JSON.stringify(FAILURE_DOCUMENT)}\n`);
+    // Each call prints at least one character, so the calls are bounded by the work budget (twice the text).
+    expect(calls).toBeGreaterThan(0);
+    expect(calls).toBeLessThan(2 * 20_000);
+
+    calls = 0;
+    const details = finishWith(20_000, {
+      ok: false,
+      error: Object.assign(new Error("branching"), { code: "BRANCHING", exitCode: 6, details: { loop: branching } }),
+    });
+    expect(details.exitCode).toBe(6);
+    expect(parseOnlyDocument(details)).toEqual({ ok: false, error: { code: "BRANCHING", message: "branching" } });
+    expect(calls).toBeLessThan(2 * 20_000);
+  });
+
+  it("charges kept diagnostic strings to the work budget, so dropped diagnostics cannot re-encode text without end", () => {
+    const limit = 20_000;
+    const encoded = { chars: 0 };
+    const stringify = JSON.stringify;
+    vi.spyOn(JSON, "stringify").mockImplementation((value: unknown, ...rest: unknown[]) => {
+      if (typeof value === "string") {
+        encoded.chars += value.length;
+      }
+      return Reflect.apply(stringify, JSON, [value, ...rest]) as string;
+    });
+    // Each code fits on its own, and each severity is too long, so every diagnostic is dropped after its code.
+    const diagnostic = { code: "c".repeat(limit / 2), severity: "s".repeat(limit), message: "m" };
+    const result = finishWith(limit, { ok: true, data: "kept", exitCode: 5 }, Array.from({ length: 512 }, () => diagnostic));
+    expect(result.exitCode).toBe(5);
+    expect(parseOnlyDocument(result)).toEqual({ ok: true, data: "kept" });
+    // Without the charge, all 512 codes would be encoded: about 512 * 10,000 characters.
+    expect(encoded.chars).toBeLessThan(3 * limit);
+  });
+
+  it("does not charge a typed array rejected before its keys are listed, so later diagnostics are kept", () => {
+    const result = finishWith(2_000, { ok: true, data: 1, exitCode: 0 }, [
+      { code: "A", severity: "info", message: "m", details: { secret: new Uint8Array(100_000) } },
+      { code: "B", severity: "info", message: "m" },
+    ]);
+    expect(parseOnlyDocument(result)).toEqual({
+      ok: true,
+      data: 1,
+      diagnostics: [
+        { code: "A", severity: "info", message: "m" },
+        { code: "B", severity: "info", message: "m" },
+      ],
+    });
+  });
+
   it("walks a redacted subtree in time proportional to its size", async () => {
     const make = (count: number) => ({
       secret: Array.from({ length: count }, (_, index) => ({ index, nested: [index] })),
@@ -492,6 +585,16 @@ describe("document advisory stderr writes", () => {
     }, throwingStderr);
     expect(result.exitCode).toBe(7);
     expect(parseOnlyDocument(result)).toEqual({ ok: false, error: { code: "CLOSED", message: "closed" } });
+  });
+
+  it("keeps the result when stderr throws on streamed child output that has no writer of its own", async () => {
+    const childScript = 'process.stdout.write("child-out"); process.stderr.write("child-err");';
+    const result = await runWithStderr(async (_options, ctx) => {
+      const run = await ctx.exec.command(process.execPath, ["-e", childScript], { streamOutput: true });
+      return { data: { stdout: run.stdout, stderr: run.stderr }, exitCode: 4 };
+    }, throwingStderr);
+    expect(result.exitCode).toBe(4);
+    expect(parseOnlyDocument(result)).toEqual({ ok: true, data: { stdout: "child-out", stderr: "child-err" } });
   });
 
   it("bounds the warnings for unused calls and dropped diagnostics", async () => {
@@ -592,6 +695,40 @@ describe("document result reads", () => {
     expect(listener).toHaveBeenCalledTimes(1);
     expect(failure.exitCode).toBe(3);
     expect(parseOnlyDocument(failure)).toEqual({ ok: false, error: { code: "ACTION", message: "action failed" } });
+  });
+
+  it("drops a returned diagnostic that cannot be read and keeps its siblings, the data and the exit code", async () => {
+    const first = { code: "FIRST", severity: "info", message: "m" } as const;
+    const last = { code: "LAST", severity: "info", message: "m" } as const;
+    const throwingIndex = new Proxy([first, undefined, last] as unknown as Diagnostic[], {
+      get: (target, key) => {
+        if (key === "1") {
+          throw new Error(leak);
+        }
+        return Reflect.get(target, key);
+      },
+    });
+    function* failingIterator(): Generator<Diagnostic> {
+      yield first;
+      throw new Error(leak);
+    }
+    const cases: Array<[unknown, Diagnostic[], number]> = [
+      [throwingIndex, [first, last], 1],
+      [failingIterator(), [first], 1],
+      [5, [], 0],
+    ];
+    for (const [diagnostics, kept, droppedIndex] of cases) {
+      const listener = vi.fn();
+      const result = await runDocument(
+        () => ({ data: "ok", exitCode: 7, diagnostics: diagnostics as Diagnostic[] }),
+        { onDiagnostics: listener }
+      );
+      expect(result.exitCode).toBe(7);
+      expect(parseOnlyDocument(result)).toEqual({ ok: true, data: "ok", ...(kept.length > 0 ? { diagnostics: kept } : {}) });
+      expect(result.stderr).toContain(`diagnostic ${droppedIndex} was dropped from the result document`);
+      expect(result.out + result.stderr).not.toContain(leak);
+      expect(listener).toHaveBeenCalledTimes(1);
+    }
   });
 
   it("reads a returned sparse diagnostics array by index up to its length", async () => {
@@ -763,11 +900,25 @@ describe("document memory in a constrained heap", () => {
       });
       await run("diagnostics-proxy", () => ({ exitCode: 2, data: "done", diagnostics: many }));
       await run("diagnostic-reads", () => ({ data: diagnosticReads < 2e6 }));
+      // 16 MiB, built negative (an odd power of -2) inside the action, so no other large bigint is alive and the
+      // script makes no negated copy: a second, negated copy would not fit this heap.
+      await run("bigint-negative", () => ({ data: (-2n) ** (2n ** 27n + 1n) }));
       const huge = 2n ** (2n ** 27n);
       await run("bigint-redacted", () => ({ exitCode: 4, data: { visible: "kept", secret: huge } }));
       await run("bigint", () => ({ data: huge }));
+      // Thrown messages far larger than this heap, which a code-pattern scan would flatten.
+      await run("message", () => {
+        throw { message: rope, exitCode: 7 };
+      });
+      await run("message-coded", () => {
+        throw { code: "BIG", message: rope, exitCode: 7 };
+      });
+      await run("message-code-like", () => {
+        throw { message: "CLIFN_" + "X".repeat(2 ** 28), exitCode: 7 };
+      });
     `;
-    const child = spawnSync(process.execPath, ["--max-old-space-size=32", "--input-type=module", "-e", script, runnerModule], {
+    const runnerUrl = pathToFileURL(runnerModule).href;
+    const child = spawnSync(process.execPath, ["--max-old-space-size=32", "--input-type=module", "-e", script, runnerUrl], {
       encoding: "utf8",
       maxBuffer: 16 * 2 ** 20,
       timeout: 120_000,
@@ -820,5 +971,14 @@ describe("document memory in a constrained heap", () => {
     expect(cases["diagnostics-proxy"]).toMatchObject({ writes: 1, exitCode: 2 });
     expect(cases["diagnostics-proxy"].out.startsWith('{"ok":true,"data":"done","diagnostics":[{"code":"D"')).toBe(true);
     expect(cases["diagnostic-reads"].out).toBe('{"ok":true,"data":true}\n');
+    expect(cases["bigint-negative"]).toEqual({ name: "bigint-negative", writes: 1, exitCode: 1, out: failure });
+    const tooLong = (code: string) => ({
+      writes: 1,
+      exitCode: 7,
+      out: `{"ok":false,"error":{"code":"${code}","message":"The error message was too long to print."}}\n`,
+    });
+    expect(cases.message).toMatchObject(tooLong("CLIFN_RUNNER_FAILED"));
+    expect(cases["message-coded"]).toMatchObject(tooLong("BIG"));
+    expect(cases["message-code-like"]).toMatchObject(tooLong("CLIFN_RUNNER_FAILED"));
   }, 150_000);
 });

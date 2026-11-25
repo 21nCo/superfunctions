@@ -92,6 +92,15 @@ export async function runAction<TOptions>(
   const baseScaffold = createScaffold();
   const documentMode = runnerOptions.mode === "json" && runnerOptions.jsonStyle === "document";
   const documentStderr = runnerOptions.stderr ?? ((text: string) => process.stderr.write(text));
+  // Streamed child output that has no writer of its own: written to stderr as advice, so a stderr writer that throws
+  // loses those chunks but never throws from the child's stream listener, where nothing could catch it.
+  const forwardToStderr = (text: string) => {
+    try {
+      documentStderr(text);
+    } catch {
+      // The chunk is lost; the run and its result document go on.
+    }
+  };
   const document = documentMode
     ? createDocumentOutput({
         quiet: runnerOptions.quiet,
@@ -143,8 +152,8 @@ export async function runAction<TOptions>(
         };
         if (documentMode && options?.streamOutput) {
           // stdout carries only the result document, so streamed child output without its own writer goes to stderr.
-          execOptions.stdout = options.stdout ?? documentStderr;
-          execOptions.stderr = options.stderr ?? documentStderr;
+          execOptions.stdout = options.stdout ?? forwardToStderr;
+          execOptions.stderr = options.stderr ?? forwardToStderr;
         }
         return baseExec.command(file, args, execOptions);
       },
@@ -208,38 +217,58 @@ function toLength(value: unknown): number {
 /**
  * Adds the diagnostics an action returned, reading at most what the sink can keep: an array's length is read once and
  * only the indices below `room` are read, and an iterable stops at `room` items, so an oversized, sparse or proxied
- * array, or an endless iterable, is cut before its excess is read. Throws what reading them throws.
+ * array, or an endless iterable, is cut before its excess is read. Reading them never fails the run: an entry that
+ * cannot be read (a hole, a throwing index getter) is added as undefined, which the document drops with its fixed
+ * warning, and its siblings are still read; a list whose length, iterator or next step throws, or that is not a
+ * list at all, ends there with one such entry.
  */
 function addReturnedDiagnostics(returned: unknown, sink: RunnerDiagnosticsSink, room: number, onDrop: () => void): void {
   if (returned === undefined || returned === null) {
     return;
   }
-  if (Array.isArray(returned)) {
-    const length = toLength(Reflect.get(returned, "length"));
-    const count = Math.min(length, room);
-    for (let index = 0; index < count; index += 1) {
-      sink.add(Reflect.get(returned, String(index)) as Diagnostic);
+  let added = 0;
+  try {
+    if (Array.isArray(returned)) {
+      const length = toLength(Reflect.get(returned, "length"));
+      const count = Math.min(length, room);
+      for (; added < count; added += 1) {
+        let diagnostic: unknown;
+        try {
+          diagnostic = Reflect.get(returned, String(added));
+        } catch {
+          diagnostic = undefined;
+        }
+        sink.add(diagnostic as Diagnostic);
+      }
+      if (length > count) {
+        onDrop();
+      }
+      return;
     }
-    if (length > count) {
+    for (const diagnostic of returned as Iterable<Diagnostic>) {
+      if (added === room) {
+        onDrop();
+        break;
+      }
+      sink.add(diagnostic);
+      added += 1;
+    }
+  } catch {
+    // The list itself could not be read further: one unusable entry stands for the rest.
+    if (added < room) {
+      sink.add(undefined as unknown as Diagnostic);
+    } else {
       onDrop();
     }
-    return;
-  }
-  let count = 0;
-  for (const diagnostic of returned as Iterable<Diagnostic>) {
-    if (count === room) {
-      onDrop();
-      break;
-    }
-    sink.add(diagnostic);
-    count += 1;
   }
 }
 
 /**
  * The document-mode run (D8). Only the action's own throw (or rejection) is the run's failure. Reading its result
- * (diagnostics, then data, then exit code, each once) happens afterwards: a result that cannot be read, such as one
- * whose getter throws, prints the fixed CLIFN_RUNNER_FAILED document with exit code 1. `onDiagnostics` is called once,
+ * (diagnostics, then data, then exit code, each once) happens afterwards: a result whose members cannot be read, such
+ * as one whose getter throws, prints the fixed CLIFN_RUNNER_FAILED document with exit code 1. The returned
+ * diagnostics themselves are read entry by entry, and one that cannot be read is dropped with a warning (see
+ * `addReturnedDiagnostics`). `onDiagnostics` is called once,
  * after the diagnostics are read; when it throws after a successful action, its error is the run's failure.
  */
 async function runDocumentAction<TOptions>(
@@ -261,13 +290,17 @@ async function runDocumentAction<TOptions>(
   let readable = true;
   let dropped = false;
   if (outcome === undefined) {
+    let returned: unknown;
     try {
-      const room = Math.max(0, document.maxDiagnostics - ctx.diagnostics.list().length);
-      addReturnedDiagnostics(result?.diagnostics, ctx.diagnostics, room, () => {
-        dropped = true;
-      });
+      returned = result?.diagnostics;
     } catch {
       readable = false;
+    }
+    if (readable) {
+      const room = Math.max(0, document.maxDiagnostics - ctx.diagnostics.list().length);
+      addReturnedDiagnostics(returned, ctx.diagnostics, room, () => {
+        dropped = true;
+      });
     }
   }
 

@@ -49,11 +49,6 @@ export interface DocumentOutput {
   failPreparation(): number;
 }
 
-interface CollectedCall {
-  call: "json" | "table";
-  value: unknown;
-}
-
 /** Printed instead of an error message whose text does not fit the result document. */
 export const MESSAGE_TOO_LONG = "The error message was too long to print.";
 /** The message of the document printed when the result document could not be prepared. */
@@ -91,13 +86,15 @@ function segmentOf(budget: DocumentBudget): DocumentBudget {
 
 /**
  * Charges and returns the JSON text of the string `text`, or throws a RangeError when it does not fit what is left of
- * the budgets; no text is built for a string that does not fit (see `encodeString`).
+ * the budgets; no text is built for a string that does not fit (see `encodeString`). A kept string costs its text
+ * and the same work, never given back, so text a dropped diagnostic encoded stays bounded too.
  */
 function chargeString(text: string, budgets: Budgets): string {
-  const encoded = encodeString(text, budgets.text.charsLeft, budgets.work);
+  const encoded = encodeString(text, Math.min(budgets.text.charsLeft, budgets.work.unitsLeft), budgets.work);
   if (encoded === undefined) {
     throw new DocumentBudgetExceeded("Value too large for a result document");
   }
+  spendWork(budgets.work, encoded.length);
   spendText(budgets.text, encoded.length);
   return encoded;
 }
@@ -208,6 +205,7 @@ function toDocumentDiagnostic(diagnostic: Diagnostic, budgets: Budgets): JsonTex
  */
 function chargeErrorText(payload: RunnerErrorPayload, budgets: Budgets): { codeText: string; messageText: string } {
   const budget = budgets.text;
+  // The error is written first, while the work budget (twice the text budget) is still whole.
   let codeText = encodeString(payload.code, budget.charsLeft, budgets.work);
   let messageText =
     codeText === undefined ? undefined : encodeString(payload.message, budget.charsLeft - codeText.length, budgets.work);
@@ -226,7 +224,9 @@ function chargeErrorText(payload: RunnerErrorPayload, budgets: Budgets): { codeT
  * the thrown value's `details` when it is a plain object that serializes to an object within the budgets, redacted.
  */
 function toDocumentError(thrown: unknown, budgets: Budgets): { text: JsonText; exitCode: number } {
-  const classified = classifyRunnerFailure(thrown);
+  // A message longer than the text left could not print as a code either, so it is not matched against the
+  // message-code pattern (which would flatten it); it then falls back to MESSAGE_TOO_LONG from its length alone.
+  const classified = classifyRunnerFailure(thrown, Math.max(0, budgets.text.charsLeft));
   const { codeText, messageText } = chargeErrorText(classified.error, budgets);
   const text = new JsonText();
   text.write(`{"code":${codeText},"message":${messageText}`);
@@ -259,7 +259,18 @@ export function createDocumentOutput(options: DocumentOutputOptions): DocumentOu
     stdout: options.stderr,
     stderr: options.stderr,
   });
-  const collected: CollectedCall[] = [];
+  // Collected output calls: only the value of the last json() call is kept (it may become the data), with the
+  // kinds of the first calls, enough to warn for each unused one up to MAX_WARNINGS_PER_KIND and once for the rest.
+  const calls: Array<"json" | "table"> = [];
+  let callCount = 0;
+  let lastJson = -1;
+  let lastJsonValue: unknown;
+  const collect = (call: "json" | "table") => {
+    if (calls.length < MAX_WARNINGS_PER_KIND + 2) {
+      calls.push(call);
+    }
+    callCount += 1;
+  };
   const limit = options.maxLength ?? documentLimit();
   const maxDiagnostics = Math.max(0, Math.floor((limit - DIAGNOSTICS_MEMBER_LENGTH) / MIN_DIAGNOSTIC_LENGTH));
 
@@ -282,10 +293,12 @@ export function createDocumentOutput(options: DocumentOutputOptions): DocumentOu
     warn: logs.warn,
     error: logs.error,
     json(value) {
-      collected.push({ call: "json", value });
+      lastJson = callCount;
+      lastJsonValue = value;
+      collect("json");
     },
-    table(input) {
-      collected.push({ call: "table", value: input });
+    table() {
+      collect("table");
     },
     spinner,
   };
@@ -313,11 +326,14 @@ export function createDocumentOutput(options: DocumentOutputOptions): DocumentOu
     };
   };
 
-  const warnUnused = (calls: readonly CollectedCall[]) => {
+  // Warns for every collected call except the one at index `used` (-1 for none).
+  const warnUnused = (used: number) => {
     const advice = boundedAdvice("further output.json() and output.table() calls were not printed either");
-    for (const { call } of calls) {
-      advice.add(`output.${call}() was not printed: document mode prints one result document; return the value as data`);
-    }
+    calls.forEach((call, index) => {
+      if (index !== used) {
+        advice.add(`output.${call}() was not printed: document mode prints one result document; return the value as data`);
+      }
+    });
   };
 
   // A diagnostic that cannot be serialized (not an object, a throwing getter or toJSON in its members, or text longer
@@ -379,19 +395,18 @@ export function createDocumentOutput(options: DocumentOutputOptions): DocumentOu
         const document = new JsonText();
         if (outcome.ok) {
           let data = outcome.data;
-          let unused: CollectedCall[] = collected;
-          if (data === undefined) {
-            const lastJson = collected.map((entry) => entry.call).lastIndexOf("json");
-            data = lastJson === -1 ? undefined : collected[lastJson].value;
-            unused = collected.filter((_, index) => index !== lastJson);
+          let used = -1;
+          if (data === undefined && lastJson !== -1) {
+            data = lastJsonValue;
+            used = lastJson;
           }
-          warnUnused(unused);
+          warnUnused(used);
           spendText(budgets.text, SUCCESS_FRAME_LENGTH);
           document.write('{"ok":true,"data":');
           document.append(toDocumentData(data, budgets));
           exitCode = outcome.exitCode;
         } else {
-          warnUnused(collected);
+          warnUnused(-1);
           // Not a throwing charge: a code and message that do not fit fall back to fixed ones and keep the exit code.
           budgets.text.charsLeft -= FAILURE_FRAME_LENGTH;
           const error = toDocumentError(outcome.error, budgets);
