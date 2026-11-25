@@ -56,6 +56,7 @@ set -e
 # Log everything to file
 LOG_FILE="\${HOSTFN_SETUP_LOG:-$(mktemp "\${TMPDIR:-/tmp}/hostfn-setup.XXXXXXXX")}"
 exec > >(umask 077; tee -a "$LOG_FILE") 2>&1
+echo "Setup log: $LOG_FILE"
 echo "[$(date)] Starting hostfn setup..."
 
 echo "=========================================="

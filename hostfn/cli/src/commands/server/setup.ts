@@ -114,9 +114,12 @@ export async function serverSetupCommand(
 
     connectSpinner.succeed('Connected to server');
 
-    const temp = await ssh.exec('mktemp -d /tmp/hostfn-setup.XXXXXXXX', setupExecOptions);
-    const directory = temp.stdout.trim();
-    if (temp.exitCode !== 0 || !/^\/tmp\/hostfn-setup\.[A-Za-z0-9]{8}$/.test(directory)) {
+    const temp = await ssh.exec(
+      'directory=$(mktemp -d /tmp/hostfn-setup.XXXXXXXX) && printf "HOSTFN_SETUP_DIR=%s\\n" "$directory"',
+      setupExecOptions
+    );
+    const directory = temp.stdout.match(/^HOSTFN_SETUP_DIR=(\/tmp\/hostfn-setup\.[A-Za-z0-9]{8})\r?$/m)?.[1];
+    if (temp.exitCode !== 0 || !directory) {
       throw new Error('Could not create a private setup directory on the server');
     }
     remoteDirectory = directory;
@@ -210,9 +213,10 @@ export async function serverSetupCommand(
     process.exitCode = 1;
   } finally {
     if (ssh && remoteDirectory) {
-      const cleanup = completed
-        ? `rm -f ${remoteDirectory}/hostfn-setup.sh ${remoteDirectory}/hostfn-setup.log && rmdir ${remoteDirectory}`
-        : `rm -f ${remoteDirectory}/hostfn-setup.sh`;
+      const files = completed
+        ? `${remoteDirectory}/hostfn-setup.sh ${remoteDirectory}/hostfn-setup.log`
+        : `${remoteDirectory}/hostfn-setup.sh`;
+      const cleanup = `rm -f ${files} && rmdir ${remoteDirectory}`;
       await ssh.exec(cleanup, setupExecOptions).catch(() => {});
     }
     ssh?.disconnect();

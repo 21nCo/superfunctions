@@ -1300,10 +1300,17 @@ async def test_retry_after_the_version_was_written_finishes_the_session() -> Non
 
 
 @pytest.mark.asyncio
-async def test_proxy_retry_after_the_version_was_written_finishes_without_storage() -> None:
+async def test_proxy_retry_after_the_version_was_written_cleans_up_after_completed_status() -> None:
     db, service, session = await _proxy_session_published_without_completed()
-    # The staged parts are gone; the retry finishes from the published version alone.
-    result = await service.complete_session(session["uploadSessionId"], _ctx())
+    session_id = session["uploadSessionId"]
+    part_key, = set(service.storage.objects) - {db.tables["fileVersions"][0]["storageKey"]}
+    legacy_etag = "01234567" * 4
+    db.tables["uploadParts"][0]["etag"] = legacy_etag
+    retry = await service.record_proxy_part(session_id, 1, b"abc", _ctx())
+    assert retry["etag"] == legacy_etag
+
+    result = await service.complete_session(session_id, _ctx())
+    assert part_key not in service.storage.objects
     assert db.tables["uploadSessions"][0]["status"] == "completed"
     assert [row["versionId"] for row in db.tables["fileVersions"]] == [result["versionId"]]
 
