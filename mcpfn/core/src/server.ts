@@ -393,26 +393,41 @@ export class McpFnServer<TContext = undefined> {
       ],
     });
     this.installHandlers();
+    this.countRunningRequests();
   }
 
-  private installHandlers(): void {
-    // Count running request handlers, so a session whose tool outlives its
-    // HTTP stream (or is still honouring a cancellation) counts as busy.
-    const register = this.protocol.setRequestHandler.bind(this.protocol);
-    const handlers = {
-      setRequestHandler: ((schema: unknown, handler: (request: unknown, extra: unknown) => Promise<unknown>) =>
-        register(schema as never, (async (request: unknown, extra: unknown) => {
-          this.inFlightRequests += 1;
+  // Count running request handlers, the SDK's own (such as tasks/result)
+  // included, so a session whose request outlives its HTTP stream counts as
+  // busy until the handler settles.
+  private countRunningRequests(): void {
+    const protocol = this.protocol as unknown as {
+      _requestHandlers: Map<string, (request: unknown, extra: unknown) => Promise<unknown>>;
+    };
+    const handlers = protocol._requestHandlers;
+    if (!(handlers instanceof Map)) return;
+    const server = this;
+    const counted = new Map(handlers);
+    protocol._requestHandlers = Object.assign(counted, {
+      get(method: string) {
+        const handler = Map.prototype.get.call(counted, method) as
+          ((request: unknown, extra: unknown) => Promise<unknown>) | undefined;
+        if (!handler) return undefined;
+        return async (request: unknown, extra: unknown) => {
+          server.inFlightRequests += 1;
           try {
             return await handler(request, extra);
           } finally {
-            this.inFlightRequests -= 1;
-            if (this.inFlightRequests === 0) this.onRequestsSettled?.();
+            server.inFlightRequests -= 1;
+            if (server.inFlightRequests === 0) server.onRequestsSettled?.();
           }
-        }) as never)) as typeof this.protocol.setRequestHandler,
-    };
+        };
+      },
+    });
+  }
+
+  private installHandlers(): void {
     if (this.capabilities.tools) {
-      handlers.setRequestHandler(
+      this.protocol.setRequestHandler(
         ListToolsRequestSchema,
         async (request, extra) => {
           const tools = this.registry.listTools();
@@ -442,7 +457,7 @@ export class McpFnServer<TContext = undefined> {
           };
         },
       );
-      handlers.setRequestHandler(
+      this.protocol.setRequestHandler(
         CallToolRequestSchema,
         async (request, extra) => {
           const context = await this.contextFactory(extra);
@@ -638,7 +653,7 @@ export class McpFnServer<TContext = undefined> {
     }
 
     if (this.capabilities.resources) {
-      handlers.setRequestHandler(
+      this.protocol.setRequestHandler(
         ListResourcesRequestSchema,
         async (request, extra) => {
           const context = await this.contextFactory(extra);
@@ -653,7 +668,7 @@ export class McpFnServer<TContext = undefined> {
           };
         },
       );
-      handlers.setRequestHandler(
+      this.protocol.setRequestHandler(
         ListResourceTemplatesRequestSchema,
         async (request) => {
           const result = page(
@@ -667,7 +682,7 @@ export class McpFnServer<TContext = undefined> {
           };
         },
       );
-      handlers.setRequestHandler(
+      this.protocol.setRequestHandler(
         ReadResourceRequestSchema,
         async (request, extra) => {
           const context = await this.contextFactory(extra);
@@ -675,7 +690,7 @@ export class McpFnServer<TContext = undefined> {
         },
       );
       if (this.capabilities.resources.subscribe) {
-        handlers.setRequestHandler(
+        this.protocol.setRequestHandler(
           SubscribeRequestSchema,
           async (request, extra) => {
             const uri = request.params.uri;
@@ -701,7 +716,7 @@ export class McpFnServer<TContext = undefined> {
             }
           },
         );
-        handlers.setRequestHandler(
+        this.protocol.setRequestHandler(
           UnsubscribeRequestSchema,
           async (request, extra) => {
             // Stop delivery first: a client that asked to unsubscribe gets no
@@ -723,7 +738,7 @@ export class McpFnServer<TContext = undefined> {
     }
 
     if (this.capabilities.prompts) {
-      handlers.setRequestHandler(
+      this.protocol.setRequestHandler(
         ListPromptsRequestSchema,
         async (request) => {
           const result = page(
@@ -737,7 +752,7 @@ export class McpFnServer<TContext = undefined> {
           };
         },
       );
-      handlers.setRequestHandler(
+      this.protocol.setRequestHandler(
         GetPromptRequestSchema,
         async (request, extra) => {
           const context = await this.contextFactory(extra);
@@ -752,7 +767,7 @@ export class McpFnServer<TContext = undefined> {
     }
 
     if (this.capabilities.completions) {
-      handlers.setRequestHandler(
+      this.protocol.setRequestHandler(
         CompleteRequestSchema,
         async (request, extra) => {
           const context = await this.contextFactory(extra);
@@ -994,6 +1009,9 @@ export class McpFnServer<TContext = undefined> {
     // closed, and so do admitted sessions whose initialization is finishing.
     const closingSessions = new Set<Session>();
     const reservedSessions = new Set<Session>();
+    // Sessions chosen to make room for an initialization that is not yet
+    // accepted. They stay live until the new session is accepted.
+    const doomed = new Set<Session>();
     let useCounter = 0;
     const sessionNotFound = () =>
       jsonRpcErrorResponse(404, -32001, "Session not found");
@@ -1012,7 +1030,7 @@ export class McpFnServer<TContext = undefined> {
       let chosen: [string, Session] | undefined;
       for (const entry of sessions) {
         const session = entry[1];
-        if (busy(session) || (bucket !== undefined && session.bucket !== bucket)) continue;
+        if (busy(session) || doomed.has(session) || (bucket !== undefined && session.bucket !== bucket)) continue;
         if (!chosen || session.lastUse < chosen[1].lastUse) chosen = entry;
       }
       return chosen;
@@ -1021,45 +1039,40 @@ export class McpFnServer<TContext = undefined> {
       if (!Number.isFinite(idleTimeoutMs)) return [];
       const now = Date.now();
       return [...sessions]
-        .filter(([, session]) => !busy(session) && now - session.lastActive >= idleTimeoutMs)
+        .filter(([, session]) => !busy(session) && !doomed.has(session) && now - session.lastActive >= idleTimeoutMs)
         .map(([id, session]) => takeSession(id, session));
     };
     // Reserve room for one new session in a single synchronous step, so
-    // concurrent initializations cannot exceed the limits. Evicted sessions
-    // stay charged (as closing) until their transports are closed, and the
-    // reservation is charged until the session is published or abandoned.
-    // Returns the sessions evicted to make room, or the refusal when every
-    // candidate is busy.
+    // concurrent initializations cannot exceed the limits. The sessions that
+    // will make room are only marked: they stay live (and charged) until the
+    // new session is accepted, and evicted sessions stay charged as closing
+    // until their transports close. Returns the marked sessions, or the
+    // refusal when every candidate is busy.
     const reserve = (session: Session): Session[] | Response => {
       const victims: Session[] = [];
       const count = (match: (candidate: Session) => boolean) => {
         let total = 0;
-        for (const candidate of sessions.values()) if (match(candidate)) total += 1;
-        for (const candidate of closingSessions) if (match(candidate) && !victims.includes(candidate)) total += 1;
+        for (const candidate of sessions.values()) if (match(candidate) && !victims.includes(candidate)) total += 1;
+        for (const candidate of closingSessions) if (match(candidate)) total += 1;
         for (const candidate of reservedSessions) if (match(candidate)) total += 1;
         return total;
       };
-      const restore = () => {
-        for (const victim of victims) {
-          closingSessions.delete(victim);
-          sessions.set(victim.transport.sessionId!, victim);
-        }
+      const refuse = (response: Response) => {
+        for (const victim of victims) doomed.delete(victim);
+        return response;
+      };
+      const choose = (bucket?: string | symbol) => {
+        const entry = leastRecentlyUsedIdle(bucket);
+        if (!entry) return false;
+        victims.push(entry[1]);
+        doomed.add(entry[1]);
+        return true;
       };
       while (count((candidate) => candidate.bucket === session.bucket) >= maxPerPrincipal) {
-        const entry = leastRecentlyUsedIdle(session.bucket);
-        if (!entry) {
-          restore();
-          return jsonRpcErrorResponse(429, -32000, "Too many sessions for this principal");
-        }
-        victims.push(takeSession(...entry));
+        if (!choose(session.bucket)) return refuse(jsonRpcErrorResponse(429, -32000, "Too many sessions for this principal"));
       }
       while (count(() => true) >= maxSessions) {
-        const entry = leastRecentlyUsedIdle();
-        if (!entry) {
-          restore();
-          return jsonRpcErrorResponse(503, -32000, "Too many sessions");
-        }
-        victims.push(takeSession(...entry));
+        if (!choose()) return refuse(jsonRpcErrorResponse(503, -32000, "Too many sessions"));
       }
       reservedSessions.add(session);
       return victims;
@@ -1153,15 +1166,33 @@ export class McpFnServer<TContext = undefined> {
             throw new Error("Session capacity reached");
           }
           try {
-            // Victims finish closing before the new session goes live.
-            await closeQuietly(victims);
-            await transportOptions.onsessioninitialized?.(id);
+            try {
+              await transportOptions.onsessioninitialized?.(id);
+            } finally {
+              for (const victim of victims) doomed.delete(victim);
+            }
+            // A marked session that got busy meanwhile can no longer make
+            // room: refuse the new one rather than cut a request off.
+            if (victims.some((victim) => busy(victim))) {
+              try {
+                await transportOptions.onsessionclosed?.(id);
+              } catch {
+                // The new session never went live; its cleanup is best effort.
+              }
+              refusal = jsonRpcErrorResponse(503, -32000, "Too many sessions");
+              throw new Error("Session capacity reached");
+            }
+            // Evict, and let the victims finish closing before going live.
+            await closeQuietly(victims
+              .filter((victim) => sessions.get(victim.transport.sessionId!) === victim)
+              .map((victim) => takeSession(victim.transport.sessionId!, victim)));
           } finally {
             reservedSessions.delete(session);
           }
-          // Published only once the host accepted it.
+          // Published, and reachable by broadcasts, only once accepted.
           initialized = session;
           sessions.set(id, session);
+          this.requestServers.add(requestServer);
           requestServer.onRequestsSettled = () => {
             if (session.active === 0) session.lastActive = Date.now();
           };
@@ -1169,7 +1200,6 @@ export class McpFnServer<TContext = undefined> {
         // DELETE from the session's own principal.
         onsessionclosed: () => close(true),
       });
-      this.requestServers.add(requestServer);
 
       try {
         await configureRequestServer?.(requestServer);

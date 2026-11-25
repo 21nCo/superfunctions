@@ -96,10 +96,17 @@ export class MCPServer {
     }
   }
 
-  async createWebStandardHandler(): Promise<(request: Request) => Promise<Response>> {
+  /**
+   * Options go to McpFn's handler: for a hosted endpoint used from browsers,
+   * list their origins in `allowedOrigins` (requests carrying any other
+   * Origin are refused).
+   */
+  async createWebStandardHandler(
+    options?: Parameters<McpFnServer["createWebStandardHandler"]>[0],
+  ): Promise<(request: Request) => Promise<Response>> {
     const server = this.createServer();
     this.activeServers.add(server);
-    return await server.createWebStandardHandler();
+    return await server.createWebStandardHandler(options);
   }
 
   async close(): Promise<void> {
