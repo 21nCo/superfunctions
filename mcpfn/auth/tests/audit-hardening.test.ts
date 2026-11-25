@@ -142,18 +142,25 @@ describe("AuthFn provider adapter (MCP-SEC-05)", () => {
     }
   });
 
-  it("does not accept the normalized form of a configured resource that normalization changes", async () => {
-    const configured = "https://MCP.example.com/mcp";
-    const handler = createAuthProviderMcpHandler(echoAuthInfo, {
-      resource: configured,
-      provider: { authenticateBearer: async () => session({ resourceIds: ["https://mcp.example.com/mcp"] }) },
-    });
-    expect((await handler(new Request(resource, { headers: { authorization: "Bearer test-access-token" } }))).status).toBe(401);
-    const exact = createAuthProviderMcpHandler(echoAuthInfo, {
-      resource: configured,
-      provider: { authenticateBearer: async () => session({ resourceIds: [configured] }) },
-    });
-    expect((await exact(new Request(resource, { headers: { authorization: "Bearer test-access-token" } }))).status).toBe(200);
+  it("refuses a configured resource that differs from the advertised, normalized form", () => {
+    for (const configured of ["https://MCP.example.com/mcp", "https://mcp.example.com:443/mcp", "https://mcp.example.com/mcp#fragment", "https://mcp.example.com"]) {
+      expect(() => createAuthProviderMcpHandler(echoAuthInfo, {
+        resource: configured,
+        provider: { authenticateBearer: async () => session() },
+      })).toThrow(/normalized form/);
+    }
+  });
+
+  it("refuses a mapping whose resourceIds is not an array", async () => {
+    for (const resourceIds of [`${resource}-other`, "https://mcp.example.com/mcp-other"]) {
+      const handler = createAuthProviderMcpHandler(echoAuthInfo, {
+        resource,
+        allowUnboundCredentials: true,
+        provider: { authenticateBearer: async () => session() },
+        map: () => ({ subject: "user-1", clientId: "client-1", scopes: [], resourceIds: resourceIds as unknown as string[] }),
+      });
+      expect((await call(handler)).status).toBe(401);
+    }
   });
 
   it("refuses a credential that expires while required scopes are resolved", async () => {

@@ -110,6 +110,13 @@ export function createMcpFnAuthProviderAdapter<TSession extends McpFnAuthSession
   // as AuthFn registers and verifies them (no URL normalization either side).
   const audience = normalized.toString();
   const configuredResource = options.resource.toString();
+  if (configuredResource !== audience) {
+    // Protected-resource metadata advertises the normalized form, so tokens are
+    // issued for it; a differently spelled configuration would refuse them.
+    throw new Error(
+      `MCP resource must be given in its normalized form: ${audience}`,
+    );
+  }
   return {
     async authenticate(request) {
       const bearer = readBearerToken(request);
@@ -142,6 +149,8 @@ export function createMcpFnAuthProviderAdapter<TSession extends McpFnAuthSession
       // Fail fast, before authorization hooks run for an expired principal.
       if (expired()) return null;
       let audienceVerified = false;
+      // A scalar here would make includes() a substring match.
+      if (!Array.isArray(principal.resourceIds)) return null;
       if (options.provider.authorize) {
         if (!(await options.provider.authorize(session, audience))) return null;
         audienceVerified = true;
