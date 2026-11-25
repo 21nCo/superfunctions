@@ -595,17 +595,23 @@ jobs:
           apifn check "${args[@]}" --format json --report "$RUNNER_TEMP/apifn-check.json" > /dev/null
           json_code=$?
           if [ -n "$BASE_SPEC" ]; then
-            # The reports name the base the CLI read, the snapshot; show the caller's base_spec instead.
+            # The reports name the base the CLI read, the snapshot; show the caller's base_spec instead. Only the JSON
+            # base.ref is changed, and the Markdown text the CLI rendered from it, escaped as the CLI escapes it (one
+            # line, markup and pipes escaped); the label is literal data.
             node -e '
               const fs = require("node:fs");
-              const [snapshot, label, ...files] = process.argv.slice(1);
-              const inJson = (value) => JSON.stringify(value).slice(1, -1);
-              for (const file of files) {
-                let text;
-                try { text = fs.readFileSync(file, "utf8"); } catch { continue; }
-                const json = file.endsWith(".json");
-                fs.writeFileSync(file, text.replaceAll(json ? inJson(snapshot) : snapshot, json ? inJson(label) : label));
-              }
+              const [snapshot, label, md, json] = process.argv.slice(1);
+              const mdText = (value) => value.replaceAll(/\r\n?|\n/g, " ").replaceAll(/[\\`*_[\]<>|]/g, (char) => "\\" + char);
+              try {
+                const report = JSON.parse(fs.readFileSync(json, "utf8"));
+                if (report?.base?.ref === snapshot) {
+                  report.base.ref = label;
+                  fs.writeFileSync(json, JSON.stringify(report, null, 2) + "\n");
+                }
+              } catch {}
+              try {
+                fs.writeFileSync(md, fs.readFileSync(md, "utf8").replaceAll(mdText(snapshot), () => mdText(label)));
+              } catch {}
             ' "$RUNNER_TEMP/apifn-base-spec" "$BASE_SPEC (snapshot taken before the install)" "$RUNNER_TEMP/apifn-check.md" "$RUNNER_TEMP/apifn-check.json" || true
           fi
           spec="$(node -e 'try { const r = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")); if (typeof r.spec === "string") process.stdout.write(r.spec); } catch {}' "$RUNNER_TEMP/apifn-check.json")"
