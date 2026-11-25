@@ -6,8 +6,9 @@ import { openAPIReferenceContext, type OpenAPIReferenceMode } from "./reference-
 export interface OpenAPIValidationOptions {
   /**
    * Preloaded JSON or YAML for external documents, keyed by the resolved URI or
-   * absolute file path, without a fragment. Within those documents, use
-   * slash-delimited `#/` pointers. Validation never reads files or URLs.
+   * absolute file path, without a fragment. Escape literal `%` and `?` in
+   * path keys as `%25` and `%3F`. Within preloaded documents, use slash-delimited
+   * `#/` pointers. Validation never reads files or URLs.
    */
   externalReferences?: ReadonlyMap<string, string>;
 }
@@ -73,6 +74,14 @@ function workingDirectoryLocation(): DocumentLocation {
   return { url, isPath: true };
 }
 
+function absolutePathKey(pathname: string): string {
+  // Decode filesystem names without letting a segment become a path separator
+  // or a query. Escape percent signs so literal "%3F" and "?" cannot collide.
+  return pathname.split("/").map((segment) =>
+    decodeFragment(segment).replaceAll("%", "%25").replaceAll("?", "%3F").replaceAll("/", "%2F")
+  ).join("/");
+}
+
 function resolveDocumentURI(base: DocumentLocation, ref: string) {
   const normalized = ref.replaceAll("\\", "/");
   const url = new URL(normalized, base.url);
@@ -80,7 +89,7 @@ function resolveDocumentURI(base: DocumentLocation, ref: string) {
   const fragment = url.hash.slice(1);
   url.hash = "";
   const isPath = base.isPath && !absolute && url.origin === base.url.origin;
-  const uri = isPath ? decodeFragment(url.pathname) + url.search : url.href;
+  const uri = isPath ? absolutePathKey(url.pathname) + url.search : url.href;
   return { uri, fragment, location: { url, isPath } };
 }
 
@@ -121,7 +130,6 @@ function prepareReferences(document: OpenAPIDocument, externalReferences?: Reado
   const referenceCopies: ReferenceCopies = { field, targets: [], originals: new Map() };
   const copiedPointers = new Map<ReferenceDocument, Map<string, string>>();
   const aliasTargets = new WeakMap<object, ReferenceTarget>();
-  let cycleEncounters = 0;
 
   function enqueue(value: unknown, mode: OpenAPIReferenceMode, source: ReferenceDocument): unknown {
     if (typeof value !== "object" || value === null) return value;
@@ -159,7 +167,7 @@ function prepareReferences(document: OpenAPIDocument, externalReferences?: Reado
   }
 
   function pointerTarget(
-    source: ReferenceDocument, tokens: string[], aliases: Set<object>
+    source: ReferenceDocument, tokens: string[], aliases: Set<object>, directAlias?: object
   ): PointerLookup {
     let value = source.value;
     let mode: OpenAPIReferenceMode = "node";
@@ -170,22 +178,21 @@ function prepareReferences(document: OpenAPIDocument, externalReferences?: Reado
       const overrides = new Map<string, { value: unknown; source: ReferenceDocument }>();
       while (typeof value === "object" && value !== null && mode !== "literal" &&
           !openAPIReferenceContext.isMap(mode) && "$ref" in value && typeof value.$ref === "string" && value.$ref) {
-        // A root alias can point to one of its own sibling definitions.
+        // A reference can point into its own siblings. Following a cycle
+        // through other aliases cannot provide a concrete object to traverse.
         if (chain.has(value)) {
-          cycleEncounters += 1;
-          break;
+          if (value === directAlias) break;
+          throw new Error("Circular OpenAPI $ref aliases cannot be traversed");
         }
         chain.add(value);
         let target = aliasTargets.get(value);
         if (!target) {
-          const priorCycles = cycleEncounters;
           const alias = location(source, value.$ref);
-          const lookup = lookupPointer(alias.source, alias.fragment, chain);
+          const lookup = lookupPointer(alias.source, alias.fragment, chain, value);
           if (!lookup.target || lookup.target === "reference") return "reference";
           target = lookup.target;
-          // Both pointer spellings can reach this same alias. A result that
-          // skipped a cyclic alias depends on the caller's active chain.
-          if (cycleEncounters === priorCycles) aliasTargets.set(value, target);
+          // Both pointer spellings can reach this same alias.
+          aliasTargets.set(value, target);
         }
         for (const [key, sibling] of Object.entries(value)) {
           if (key !== "$ref" && !overrides.has(key)) {
@@ -225,23 +232,23 @@ function prepareReferences(document: OpenAPIDocument, externalReferences?: Reado
   }
 
   function lookupPointer(
-    source: ReferenceDocument, fragment: string, aliases = new Set<object>()
+    source: ReferenceDocument, fragment: string, aliases = new Set<object>(), directAlias?: object
   ): { tokens: string[]; target: PointerLookup } {
     if (fragment === "") return { tokens: [], target: { value: source.value, mode: "node", source } };
-    if (fragment.startsWith("/")) {
+    if (source === root && fragment.startsWith("/")) {
       const legacy = fragment.split("/").slice(1).map((token) => decodeFragment(unescapePointerToken(token)));
-      const target = pointerTarget(source, legacy, aliases);
-      if (target || source !== root || !/%2f/i.test(fragment)) return { tokens: legacy, target };
+      const target = pointerTarget(source, legacy, aliases, directAlias);
+      if (target || !/%2f/i.test(fragment)) return { tokens: legacy, target };
       const decoded = decodeFragment(fragment).split("/").slice(1).map(unescapePointerToken);
-      const decodedTarget = pointerTarget(source, decoded, aliases);
+      const decodedTarget = pointerTarget(source, decoded, aliases, directAlias);
       return decodedTarget ? { tokens: decoded, target: decodedTarget } : { tokens: legacy, target };
     }
     const decoded = decodeFragment(fragment);
-    if (source !== root || !decoded.startsWith("/")) {
+    if (!decoded.startsWith("/") || (source !== root && !fragment.startsWith("/"))) {
       throw new Error("OpenAPI $ref fragments must be slash-delimited JSON pointers");
     }
     const tokens = decoded.split("/").slice(1).map(unescapePointerToken);
-    return { tokens, target: pointerTarget(source, tokens, aliases) };
+    return { tokens, target: pointerTarget(source, tokens, aliases, directAlias) };
   }
 
   function rewriteReference(ref: string, source: ReferenceDocument, mode: OpenAPIReferenceMode): string {

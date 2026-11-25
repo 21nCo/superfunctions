@@ -130,6 +130,17 @@ describe("validateOpenAPI", () => {
     }
   );
 
+  it("rejects a pointer that traverses an alias cycle", async () => {
+    const doc = documentWithReference("#/components/schemas/First/properties/value");
+    Object.assign(doc.components.schemas, {
+      First: { $ref: "#/components/schemas/Second/properties%2Fvalue" },
+      Second: { $ref: "#/components/schemas/First" },
+    });
+    await expect(validateOpenAPI(doc)).resolves.toEqual([
+      { path: "openapi", message: "Circular OpenAPI $ref aliases cannot be traversed", severity: "error" },
+    ]);
+  });
+
   it("accepts literal fragment-shaped example data with or without an allowlist", async () => {
     const doc = documentWithReference("#/components/schemas/Shared");
     Object.assign(doc.components.schemas.Shared, {
@@ -306,6 +317,31 @@ describe("validateOpenAPI", () => {
     } finally {
       cwd.mockRestore();
     }
+  });
+
+  it("keeps a question mark in a filename distinct from a URI query", async () => {
+    const cwd = vi.spyOn(process, "cwd").mockReturnValue("/virtual/project");
+    try {
+      const doc = documentWithReference("./types.json%3Frevision=1");
+      const externalReferences = new Map([["/virtual/project/types.json?revision=1", '{"type":"string"}']]);
+      await expect(validateOpenAPI(doc, { externalReferences })).resolves.toEqual([
+        { path: "openapi", message: expect.stringContaining("explicit allowlist"), severity: "error" },
+      ]);
+      externalReferences.set("/virtual/project/types.json%3Frevision=1", '{"type":"integer"}');
+      const result = await validateAndDereferenceOpenAPI(doc, { externalReferences });
+      expect(result.errors).toEqual([]);
+      expect(result.document?.components?.schemas?.Value).toEqual({ type: "integer" });
+    } finally {
+      cwd.mockRestore();
+    }
+  });
+
+  it("unescapes JSON pointer tokens after percent-decoding a preloaded fragment", async () => {
+    const uri = "https://example.invalid/schema-map.json";
+    const externalReferences = new Map([[uri, '{"/":{"type":"integer"},"~1":{"type":"string"}}']]);
+    const result = await validateAndDereferenceOpenAPI(documentWithReference(uri + "#/%7E1"), { externalReferences });
+    expect(result.errors).toEqual([]);
+    expect(result.document?.components?.schemas?.Value).toEqual({ type: "integer" });
   });
 
   it("dereferences literal data used as a schema through an intermediate alias", async () => {
