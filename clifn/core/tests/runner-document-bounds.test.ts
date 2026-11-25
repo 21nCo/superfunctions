@@ -2618,12 +2618,24 @@ describe("document memory in a constrained heap", () => {
       const asked = await inWorker({ execArgv: [], env: {}, resourceLimits: { maxOldGenerationSizeMb: 24 } });
       // Inheriting the process flags: under the semi-space case below (a 44 MiB heap limit, 32 old and 12 young) these
       // add up to the heap limit, though both are overridden.
-      const coincident = await inWorker({ resourceLimits: { maxOldGenerationSizeMb: 38, maxYoungGenerationSizeMb: 6 } });
+      const coincidentSizes = { resourceLimits: { maxOldGenerationSizeMb: 38, maxYoungGenerationSizeMb: 6 } };
+      const coincident = await inWorker(coincidentSizes);
+      // The same sizes without the command line (the NODE_OPTIONS case below).
+      const coincidentEnv = await inWorker({ execArgv: [], ...coincidentSizes });
       // The young generation Node gives an isolate on this machine by default.
       const defaultYoung = await inWorker({ execArgv: [], env: {} }, "resourceLimits.maxYoungGenerationSizeMb");
-      process.stdout.write(JSON.stringify({ limit: documentLimit(), heap, hidden, withEnv, asked, coincident, defaultYoung }));
+      process.stdout.write(JSON.stringify({ limit: documentLimit(), heap, hidden, withEnv, asked, coincident, coincidentEnv, defaultYoung }));
     `;
-    type Limits = { limit: number; heap: number; hidden: number; withEnv: number; asked: number; coincident: number; defaultYoung: number };
+    type Limits = {
+      limit: number;
+      heap: number;
+      hidden: number;
+      withEnv: number;
+      asked: number;
+      coincident: number;
+      coincidentEnv: number;
+      defaultYoung: number;
+    };
     const limitWith = (execArgv: string[], nodeOptions?: string, nodeOptionsBefore = "", nodeOptionsAfter = "") => {
       const env: NodeJS.ProcessEnv = { ...process.env };
       delete env.NODE_OPTIONS;
@@ -2669,6 +2681,18 @@ describe("document memory in a constrained heap", () => {
     expect(limitWith([], '"--max-old-space-size=32" --max-semi-space-size=1')).toMatchObject({ limit: of(32), withEnv: of(32) });
     // A semi-space flag the worker cannot see, under a NODE_OPTIONS it can: capped by that NODE_OPTIONS (not 368 MiB).
     expect(limitWith(["--max-semi-space-size=128"], "--max-old-space-size=32")).toMatchObject({ limit: of(32), withEnv: of(32) });
+    // Also when the worker's own sizes add up to that heap limit (44 MiB: 32 old, 12 young): 32 MiB, not 38.
+    expect(limitWith(["--max-semi-space-size=4"], "--max-old-space-size=32")).toMatchObject({ limit: of(32), coincidentEnv: of(32) });
+    // In a worker that inherits both, the command line's old-space size takes precedence over NODE_OPTIONS'.
+    expect(limitWith(["--max-old-space-size=32"], "--max-old-space-size=4")).toMatchObject({ limit: of(32), coincident: of(32) });
+    // A size of 0 is V8's own sizing, not a size: a zero semi-space leaves the default young generation, and a zero
+    // old space leaves the limit of a process without the flag.
+    const zeroSemi = limitWith(["--max-semi-space-size=0"], "--max-old-space-size=32");
+    expectSized(zeroSemi.limit, 32, zeroSemi.defaultYoung);
+    expectSized(zeroSemi.withEnv, 32, zeroSemi.defaultYoung);
+    const zeroHeap = limitWith(["--max-old-space-size=0", "--max-heap-size=48"]);
+    expect(zeroHeap.limit).toBeGreaterThan(0);
+    expect(zeroHeap.limit).toBeLessThan(of(48));
     // A NODE_OPTIONS changed before the module loads (for child processes) cannot raise the limit: 32 MiB, not 56; nor
     // can one changed afterwards change it.
     const changed = limitWith([], "--max-old-space-size=32", "--max-old-space-size=56");
@@ -2683,6 +2707,8 @@ describe("document memory in a constrained heap", () => {
     expectSized(unflagged.limit, unflagged.heap / of(1) - unflagged.defaultYoung, unflagged.defaultYoung);
     expect(unflagged.asked).toBe(of(24));
     expect(limitWith([], undefined, "--max-old-space-size=4").limit).toBe(unflagged.limit);
+    expect(limitWith(["--max-old-space-size=0"]).limit).toBe(unflagged.limit);
+    expect(limitWith([], "--max-old-space-size=0").limit).toBe(unflagged.limit);
   }, 120_000);
 
   it("keeps the diagnostics of an endless returned list compact in a 32 MiB old generation", () => {

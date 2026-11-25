@@ -216,13 +216,13 @@ function nodeOptionsTokens(options: string): string[] {
   return tokens;
 }
 
-/** The last value of the size flag `flag` among `options` (V8 takes the last), in MiB. */
+/** The last value of the size flag `flag` among `options` (V8 takes the last), in MiB; 0 (V8 sizes it) is none. */
 function sizeFlag(options: readonly string[], flag: RegExp): number | undefined {
   let size: number | undefined;
   for (const option of options) {
     const match = flag.exec(option);
     if (match) {
-      size = Number(match[1]);
+      size = Number(match[1]) > 0 ? Number(match[1]) : undefined;
     }
   }
   return size;
@@ -262,10 +262,10 @@ function lessYoungGeneration(heapLimit: number, young: number): number {
  * this V8 version's default) and a NODE_OPTIONS `--max-semi-space-size`'s. Exact sizes come first: on the main thread
  * the command line's `--max-old-space-size` when the rest of the heap limit is a young generation's size, and on
  * either NODE_OPTIONS' when it and the young generation the flags leave add up to the heap limit, so a NODE_OPTIONS
- * changed before load cannot raise it. When a worker's heap limit shows process flags overrode its own sizes, a
- * visible `--max-old-space-size` (command line or NODE_OPTIONS) also caps it, in case a hidden flag changed its young
- * generation. A `--max-semi-space-size` hidden from a worker with no visible `--max-old-space-size` (`execArgv: []`
- * and `env: {}`) is not accounted for. Read once.
+ * changed before load cannot raise it. In a worker, the `--max-old-space-size` it sees (the command line's, else
+ * NODE_OPTIONS') also caps it, since a process flag overrides the worker's own old generation; that covers a hidden
+ * flag changing its young generation. A size of 0 is V8's own sizing and counts as no flag. A `--max-semi-space-size`
+ * hidden from a worker that sees no `--max-old-space-size` (`execArgv: []` and `env: {}`) is not accounted for. Read once.
  */
 function oldGenerationLimit(): number {
   const heapLimit = getHeapStatistics().heap_size_limit;
@@ -292,11 +292,10 @@ function oldGenerationLimit(): number {
     return optionsOld * MIB;
   }
   let old = lessYoungGeneration(heapLimit, commandSemi === undefined ? Math.max(own, optionsYoung) : flagsLeave);
-  const requestedOld = resourceLimits.maxOldGenerationSizeMb;
-  if (!isMainThread && (typeof requestedOld !== "number" || requestedOld * MIB + own !== heapLimit)) {
-    for (const flag of [commandOld, optionsOld]) {
-      old = flag === undefined || flag <= 0 ? old : Math.min(old, flag * MIB);
-    }
+  // A process flag overrides a worker's own old generation, so the one a worker sees caps it.
+  const processOld = commandOld ?? optionsOld;
+  if (!isMainThread && processOld !== undefined) {
+    old = Math.min(old, processOld * MIB);
   }
   return old;
 }
