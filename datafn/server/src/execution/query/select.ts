@@ -19,7 +19,7 @@ import {
   type DatafnRelationMatch,
 } from "@datafn/core";
 import type { DataStore } from "../store.js";
-import { getReadableRelationFields } from "../../validation/authz.js";
+import { getReadableRelationFields, isPrivateShareableResource } from "../../validation/authz.js";
 import { getForeignKeyRelatedRecords, hasPredicateField, isPolymorphicForeignKey, resolvePredicateEndpoint } from "./filters.js";
 
 export type { SelectToken } from "@datafn/core";
@@ -574,18 +574,44 @@ function expandManyManyRecords(
   resource: string,
   metadata?: QueryMetadata,
 ) {
-  const isForward = match.direction === "forward";
-  const endpoint = targetEndpointFor(match);
   const joins = sortJoinRows(getManyManyRows(record, match, resource, schema, store), match.relation);
   return joins.flatMap((join) => {
-    const id = isForward ? join.to : join.from;
-    const discriminator = isForward ? join.toResource : join.fromResource;
-    const relatedResource = resolvePredicateEndpoint(schema, id, endpoint, discriminator);
-    if (typeof id !== "string" || !relatedResource) return [];
-    const related = store.getRecord(relatedResource, id);
+    const target = joinTarget(join, match, schema);
+    if (!target) return [];
+    const related = store.getRecord(target.resource, target.id);
     if (!related || filterAncestorInactiveRecords([related], match, metadata).length === 0) return [];
-    return [{ record: related, resource: relatedResource, join }];
+    return [{ record: related, resource: target.resource, join }];
   });
+}
+
+function joinTarget(join: Record<string, unknown>, match: DatafnRelationMatch, schema: DatafnSchema) {
+  const isForward = match.direction === "forward";
+  const id = isForward ? join.to : join.from;
+  if (typeof id !== "string") return undefined;
+  const discriminator = isForward ? join.toResource : join.fromResource;
+  const resource = resolvePredicateEndpoint(schema, id, targetEndpointFor(match), discriminator);
+  return resource ? { id, resource } : undefined;
+}
+
+function projectableJoinRows(
+  record: Record<string, unknown>,
+  match: DatafnRelationMatch,
+  schema: DatafnSchema,
+  store: DataStore,
+  resource: string,
+  visibleOnly = false,
+) {
+  const requireVisible = visibleOnly || store.requireVisibleRelatedRecords;
+  const privateEndpoints = new Set(endpointList(targetEndpointFor(match)).filter((endpoint) =>
+    isPrivateShareableResource(schema, endpoint),
+  ));
+  const rows = getManyManyRows(record, match, resource, schema, store).filter((row) => {
+    const target = joinTarget(row, match, schema);
+    if (!target) return false;
+    return (!requireVisible && !privateEndpoints.has(target.resource)) ||
+      Boolean(store.getRecord(target.resource, target.id));
+  });
+  return sortJoinRows(rows, match.relation);
 }
 
 function relationReturnsSingleRecord(match: DatafnRelationMatch): boolean {
@@ -654,10 +680,7 @@ function getRelationIds(
   }
 
   if (relation.type === "many-many") {
-    if (store.requireVisibleRelatedRecords) {
-      return expandManyManyRecords(record, match, schema, store, resource, metadata).map(({ record }) => record.id);
-    }
-    const sortedJoins = sortJoinRows(getManyManyRows(record, match, resource, schema, store), relation);
+    const sortedJoins = projectableJoinRows(record, match, schema, store, resource);
     return sortedJoins.map((j) => (isForward ? j.to : j.from));
   }
 
@@ -820,9 +843,7 @@ function getJoinRows(
   visibleOnly: boolean,
 ): unknown[] {
   const relation = match.relation;
-  const sorted = visibleOnly || store.requireVisibleRelatedRecords
-    ? expandManyManyRecords(record, match, schema, store, resource).map(({ join }) => join)
-    : sortJoinRows(getManyManyRows(record, match, resource, schema, store), relation);
+  const sorted = projectableJoinRows(record, match, schema, store, resource, visibleOnly);
 
   // Return join rows with from, to, and metadata
   return sorted.map((join) => {

@@ -1214,12 +1214,19 @@ it("loads the legacy FK used by an inverse one-many ID projection in strict mode
   }
 });
 
-it("checks visibility before projecting inverse join IDs and metadata", async () => {
+it.each([false, true])("checks inverse join visibility with allowUnknownResources=%s", async (allowUnknownResources) => {
   const schema: DatafnSchema = {
     ...SCHEMA,
-    resources: SCHEMA.resources.map((resource) => (resource.name === "collection"
-      ? { ...resource, permissions: { read: { fields: ["label"] } } }
-      : resource)),
+    resources: SCHEMA.resources.map((resource) => {
+      if (resource.name === "collection") return { ...resource, permissions: { read: { fields: ["label"] } } };
+      if (allowUnknownResources && resource.name === "objective") {
+        return {
+          ...resource,
+          capabilities: ["audit", { shareable: { levels: ["viewer", "editor", "owner"], default: "private" } }],
+        };
+      }
+      return resource;
+    }),
     relations: [...(SCHEMA.relations ?? []), {
       type: "many-many",
       from: ["objective", "collection"],
@@ -1230,7 +1237,7 @@ it("checks visibility before projecting inverse join IDs and metadata", async ()
       metadata: [{ name: "linkType", type: "string" }],
     }],
   };
-  const { db, server } = await createServer({ schema, allowUnknownResources: false });
+  const { db, server } = await createServer({ schema, allowUnknownResources });
   const createJoin = (data: Json) => db.create({ model: "test_connections", namespace: "datafn", data });
   await createJoin({
     id: "test-visible-join", from: "collection:work", fromResource: "collection",
@@ -1245,6 +1252,7 @@ it("checks visibility before projecting inverse join IDs and metadata", async ()
     [{ id: "collection:home", origins: ["collection:work"] }]);
   await expectQueryAndTransactData(server, { ...anchor, select: ["id", "origins.#"] },
     [{ id: "collection:home", origins: [{ from: "collection:work", to: "collection:home", linkType: "direct" }] }]);
+  await server.close();
 });
 
 it("preserves both resource discriminators on inverse predicates", async () => {
