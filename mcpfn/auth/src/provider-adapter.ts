@@ -110,9 +110,11 @@ export function createMcpFnAuthProviderAdapter<TSession extends McpFnAuthSession
   // as AuthFn registers and verifies them (no URL normalization either side).
   const audience = normalized.toString();
   const configuredResource = options.resource.toString();
-  if (configuredResource !== audience) {
+  if (!options.provider.authorize && configuredResource !== audience) {
+    // Without an authorize() hook the adapter matches resourceIds exactly.
     // Protected-resource metadata advertises the normalized form, so tokens are
     // issued for it; a differently spelled configuration would refuse them.
+    // A hook receives the normalized form, so any spelling works there.
     // The URL itself stays out of the message: it may carry a secret.
     throw new Error(
       "MCP resource must be given in its normalized form (as new URL(resource).toString() serializes it, without a fragment)",

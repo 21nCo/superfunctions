@@ -5,6 +5,7 @@ import {
   createAuthProviderMcpHandler,
   createMcpFnOAuthClientProvider,
   createOAuthResourceServerHandler,
+  createProtectedResourceMetadata,
 } from "../src/index.js";
 
 // Regression tests for the McpFn security audit (MCP-21): MCP-SEC-05 (provider
@@ -160,6 +161,26 @@ describe("AuthFn provider adapter (MCP-SEC-05)", () => {
     }
     expect(String(thrown)).toMatch(/normalized form/);
     expect(String(thrown)).not.toContain("test-api-token");
+  });
+
+  it("lets a provider with an authorize() hook configure any spelling and passes it the advertised resource", async () => {
+    const audiences: string[] = [];
+    const handler = createAuthProviderMcpHandler(echoAuthInfo, {
+      resource: "https://MCP.example.com",
+      provider: {
+        authenticateBearer: async () => session({ resourceIds: [] }),
+        authorize: async (_session, audience) => {
+          audiences.push(audience);
+          return true;
+        },
+      },
+    });
+    const response = await handler(new Request("https://mcp.example.com/", { headers: { authorization: "Bearer test-access-token" } }));
+    expect(response.status).toBe(200);
+    expect(audiences).toEqual([
+      createProtectedResourceMetadata({ resource: "https://MCP.example.com", authorizationServers: ["https://issuer.example.com"] }).resource,
+    ]);
+    expect(audiences).toEqual(["https://mcp.example.com/"]);
   });
 
   it("refuses a mapping whose resourceIds is not an array", async () => {
