@@ -196,15 +196,22 @@ export function canReadEveryField(
   const resource = getResourceSchema(schema, resourceName);
   if (!resource) return false;
   if (!resolvePermissions(schema, resource)) return true;
-  const fields = new Set([...resourceFieldNames(resource), ...Object.keys(row ?? {})]);
+  const declared = resourceFieldNames(resource);
+  const fields = new Set([...declared, ...Object.keys(row ?? {})]);
   return [...fields].every(
-    (field) => field === "__ns" || field === "$rev" || canReadField(schema, resource, field),
+    (field) => field === "__ns" || isRevisionMetadata(declared, field) || canReadField(schema, resource, field),
   );
+}
+
+/** `$rev` is revision metadata unless the resource declares its own `$rev` field. */
+function isRevisionMetadata(declared: readonly string[], field: string): boolean {
+  return field === "$rev" && !declared.includes("$rev");
 }
 
 /**
  * DATA-41: a copy of `row` without the fields the resource's read policy
- * withholds (and without `$rev`, which only a complete row may carry).
+ * withholds (and without `$rev` revision metadata, which only a complete row
+ * may carry; a resource's own declared `$rev` field is an ordinary field).
  * Resources without a policy are returned unchanged.
  */
 export function withoutUnreadableFields(
@@ -214,9 +221,10 @@ export function withoutUnreadableFields(
 ): Record<string, unknown> {
   const resource = getResourceSchema(schema, resourceName);
   if (!resource || !resolvePermissions(schema, resource)) return row;
+  const declared = resourceFieldNames(resource);
   const readable: Record<string, unknown> = {};
   for (const [field, value] of Object.entries(row)) {
-    if (field === "__ns" || (field !== "$rev" && canReadField(schema, resource, field))) {
+    if (field === "__ns" || (!isRevisionMetadata(declared, field) && canReadField(schema, resource, field))) {
       readable[field] = value;
     }
   }

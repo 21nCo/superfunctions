@@ -200,6 +200,16 @@ export class ChangeTrackingService {
       await ensureRevisionsTable(this.db);
       this.revisionsEnsured = true;
     }
+    // Change rows record revisions only once their column exists, which
+    // needs the changes table first (D1 and SQLite reject an ALTER of a
+    // missing table). Services bound with `withDb` inherit both.
+    if (this.issueRevisions && !this.revColumnReady && !this.transactionBound) {
+      if (!this.changesEnsured) {
+        await ensureInternalTable(this.db, "__datafn_changes");
+        this.changesEnsured = true;
+      }
+      this.revColumnReady = await ensureChangesRevColumn(this.db);
+    }
   }
 
   /**
@@ -386,12 +396,10 @@ export class ChangeTrackingService {
    * first.
    */
   async assignRevisions(entries: ChangeEntryInput[]): Promise<void> {
+    // Inside a transaction the table and column are only used when they were
+    // ensured before the transaction began; change rows then record no
+    // revision.
     if (!this.transactionBound) await this.ensureRevisionsReady();
-    // Inside a transaction the column is only used when it was ensured before
-    // the transaction began; change rows then record no revision.
-    if (this.issueRevisions && !this.revColumnReady && !this.transactionBound) {
-      this.revColumnReady = await ensureChangesRevColumn(this.db);
-    }
     const recordRev = this.issueRevisions && this.revColumnReady;
     const schema = this.revisionSchema;
     // A change row carrying a revision records the stored row of a resource

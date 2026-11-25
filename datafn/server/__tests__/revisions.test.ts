@@ -701,13 +701,15 @@ describe("DATA-41 revisions: complete rows only", () => {
     expect(row).toMatchObject({ id: "task:1", projectId: "project:1", $rev: 1 });
   });
 
-  it("withholds hidden fields and $rev from a versioned query of a populated hidden field", async () => {
+  it("returns a versioned query of a read-restricted resource exactly as without the flag, with no $rev", async () => {
     const { send, push } = await serve();
     await push({ resource: "secretive", operation: "insert", id: "secretive:1", record: { title: "t", hidden: "h" } });
     for (const select of [undefined, ["*"]]) {
-      const query = await send("query", { resource: "secretive", version: 1, withRevisions: true, ...(select ? { select } : {}) });
+      const shape = { resource: "secretive", version: 1, ...(select ? { select } : {}) };
+      const plain = await send("query", shape);
+      const query = await send("query", { ...shape, withRevisions: true });
+      expect(query.body.result.data).toEqual(plain.body.result.data);
       expect(query.body.result.data[0]).toMatchObject({ id: "secretive:1", title: "t" });
-      expect(query.body.result.data[0]).not.toHaveProperty("hidden");
       expect(query.body.result.data[0]).not.toHaveProperty("$rev");
     }
   });
@@ -845,5 +847,127 @@ describe("DATA-41 revisions: SQL without raw SQL access", () => {
       (result) => result,
     );
     expect(rows).toEqual([{ id: "task:1", title: "at-rev-2", $rev: 2 }]);
+  });
+});
+
+describe("DATA-41 revisions: round 3", () => {
+  it("withholds unreadable stored fields from revisioned change rows after revisions are turned off", async () => {
+    const base = memoryAdapter();
+    const withDefault = (adapter: Adapter): Adapter => ({
+      ...adapter,
+      create: (args: any) =>
+        adapter.create(args.model === "secretive" ? { ...args, data: { hidden: "db-secret", ...args.data } } : args),
+      transaction: (callback: any) => adapter.transaction((tx: Adapter) => callback(withDefault(tx))),
+    }) as Adapter;
+    const enabled = await serve({ database: withDefault(base) });
+    await enabled.push({ resource: "secretive", operation: "insert", id: "secretive:1", record: { title: "t" } });
+    // The same database, read by a server with revisions off.
+    const disabled = await serve({ database: base, enabled: false });
+    const canonical = await disabled.send("pull", { clientId: "client:b", cursors: { secretive: "0" } });
+    expect(canonical.body.result.records.secretive).toEqual([{ id: "secretive:1", title: "t" }]);
+    const global = await disabled.send("pull", { clientId: "client:b", cursor: "0" });
+    expect(JSON.stringify(global.body.result)).not.toContain("db-secret");
+    expect(JSON.stringify(global.body.result)).not.toContain("$rev");
+  });
+
+  it("drops an earlier KV $rev when a later merge without one coalesces over it in a per-table pull", async () => {
+    const database = memoryAdapter();
+    const enabled = await serve({ database });
+    const disabled = await serve({ database, enabled: false });
+    await enabled.push({ resource: "kv", operation: "merge", id: "kv:prefs", record: { value: { a: 1 } } });
+    // A worker with revisions off (during rollout) writes without a change-row rev.
+    await disabled.push({ resource: "kv", operation: "merge", id: "kv:prefs", record: { value: { a: 2 } } }, "client:c");
+    const pull = await enabled.send("pull", { clientId: "client:b", cursors: { kv: "0" } });
+    const rows = [...(pull.body.result.records.kv ?? []), ...(pull.body.result.merged?.kv ?? [])]
+      .filter((row: Json) => row.id === "kv:prefs");
+    expect(rows.length).toBeGreaterThan(0);
+    const last = rows[rows.length - 1];
+    expect(last.value).toEqual({ a: 2 });
+    expect(last).not.toHaveProperty("$rev");
+  });
+
+  it("keeps a KV record that a complete KV write recreates after its delete in one per-table pull", async () => {
+    const { push, send } = await serve();
+    await push({ resource: "kv", operation: "merge", id: "kv:prefs", record: { value: { a: 1 } } });
+    await push({ resource: "kv", operation: "delete", id: "kv:prefs" });
+    await push({ resource: "kv", operation: "merge", id: "kv:prefs", record: { value: { b: 2 } } });
+    const pull = await send("pull", { clientId: "client:b", cursors: { kv: "0" } });
+    expect(pull.body.result.deleted.kv ?? []).not.toContain("kv:prefs");
+    expect(pull.body.result.deletedRevisions?.kv?.["kv:prefs"]).toBeUndefined();
+    const rows = [...(pull.body.result.records.kv ?? []), ...(pull.body.result.merged?.kv ?? [])]
+      .filter((row: Json) => row.id === "kv:prefs");
+    expect(rows[rows.length - 1]).toMatchObject({ value: { b: 2 }, $rev: 3 });
+  });
+
+  it("returns a resource's own readable $rev field unchanged from a query sent with withRevisions", async () => {
+    const declared = {
+      ...schema,
+      resources: [
+        ...schema.resources,
+        {
+          name: "legacyRead",
+          version: 1,
+          fields: [
+            { name: "$rev", type: "string" as const, required: false },
+            { name: "title", type: "string" as const, required: false },
+          ],
+          permissions: { read: { fields: ["$rev", "title"] }, write: { fields: ["$rev", "title"] } },
+        },
+      ],
+    } as any;
+    const server = await createDatafnServer({
+      schema: declared, database: memoryAdapter(), allowUnknownResources: true, revisions: { enabled: true },
+    });
+    const send = async (route: string, body: unknown) => {
+      const res = await server.router.handle(new Request(`http://localhost/datafn/${route}`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+      }));
+      return (await res.json()) as Json;
+    };
+    await send("push", {
+      clientId: "client:a",
+      mutations: [{ version: 1, clientId: "client:a", mutationId: "m1", resource: "legacyRead", operation: "insert", id: "legacyRead:1", record: { $rev: "app-value", title: "t" } }],
+    });
+    for (const select of [undefined, ["$rev", "title"]]) {
+      const query = await send("query", { resource: "legacyRead", version: 1, withRevisions: true, ...(select ? { select } : {}) });
+      expect(query.result.data[0]).toMatchObject({ $rev: "app-value", title: "t" });
+    }
+  });
+
+  it("keeps the query's own row, without $rev, when the stored row has a field the caller cannot read", async () => {
+    const base = memoryAdapter();
+    // A retained database column the read policy does not list.
+    const withColumn = (adapter: Adapter): Adapter => ({
+      ...adapter,
+      findMany: async (args: any) => {
+        const rows = await adapter.findMany(args);
+        return args.model === "secretive" ? rows.map((row: any) => ({ ...row, retained: "col-secret" })) : rows;
+      },
+      transaction: (callback: any) => adapter.transaction((tx: Adapter) => callback(withColumn(tx))),
+    }) as Adapter;
+    const readable = {
+      ...schema,
+      resources: schema.resources.map((resource: any) =>
+        resource.name === "secretive"
+          ? { ...resource, permissions: { read: { fields: ["title", "hidden"] }, write: { fields: ["title", "hidden"] } } }
+          : resource),
+    } as any;
+    const server = await createDatafnServer({
+      schema: readable, database: withColumn(base), allowUnknownResources: true, revisions: { enabled: true },
+    });
+    const send = async (route: string, body: unknown) => {
+      const res = await server.router.handle(new Request(`http://localhost/datafn/${route}`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+      }));
+      return (await res.json()) as Json;
+    };
+    await send("push", {
+      clientId: "client:a",
+      mutations: [{ version: 1, clientId: "client:a", mutationId: "m1", resource: "secretive", operation: "insert", id: "secretive:1", record: { title: "t" } }],
+    });
+    const plain = await send("query", { resource: "secretive", version: 1, filters: { id: "secretive:1" } });
+    const query = await send("query", { resource: "secretive", version: 1, withRevisions: true, filters: { id: "secretive:1" } });
+    expect(query.result.data).toEqual(plain.result.data);
+    expect(query.result.data[0]).not.toHaveProperty("$rev");
   });
 });

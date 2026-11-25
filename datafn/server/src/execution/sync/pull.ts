@@ -7,6 +7,7 @@ import type { Adapter } from "@superfunctions/db";
 import type { SequenceStore } from "./sequence-store.js";
 import { ChangeTrackingService, type ChangeEntry } from "./change-tracking.js";
 import { issuesRevisions, wireChange } from "../revisions.js";
+import { DATAFN_REVISION_FIELD, withoutRowRevision } from "@datafn/core";
 import { isPrivateShareableResource, resolveAccessLevel } from "../../validation/authz.js";
 import {
   canonicalizeActorPrincipal,
@@ -996,6 +997,8 @@ async function executePullCanonical(
     const rows = bucket[resource];
     if (rows?.some((row) => row.id === id)) bucket[resource] = rows.filter((row) => row.id !== id);
   };
+  const isRevisionRow = (resource: string, row: Record<string, unknown>) =>
+    DATAFN_REVISION_FIELD in row && issuesRevisions(schema, resource);
   const dropEarlierDelete = (resource: string, id: string) => {
     const ids = deleted[resource];
     if (ids?.includes(id)) deleted[resource] = ids.filter((deletedId) => deletedId !== id);
@@ -1079,7 +1082,11 @@ async function executePullCanonical(
       if (!merged[resource]) {
         merged[resource] = [];
       }
-      merged[resource].push(withRev(resource, change));
+      const row = withRev(resource, change);
+      // DATA-41: a merge carrying `$rev` is the complete row (a KV write),
+      // which supersedes an earlier delete of its id like a whole row does.
+      if (isRevisionRow(resource, row)) dropEarlierDelete(resource, change.id);
+      merged[resource].push(row);
       continue;
     }
 
@@ -1188,7 +1195,12 @@ async function executePullCanonical(
         continue;
       }
       const existing = byId.get(id) ?? { id };
-      byId.set(id, { ...existing, ...record, id });
+      // DATA-41: a complete row (carrying `$rev`) replaces the earlier
+      // entries; a patch merged over them drops an earlier `$rev`, which
+      // belongs to an older state.
+      byId.set(id, isRevisionRow(resource, record)
+        ? { ...record, id }
+        : { ...(isRevisionRow(resource, existing) ? withoutRowRevision(existing) : existing), ...record, id });
     }
     merged[resource] = Array.from(byId.values()).sort((a, b) =>
       String(a.id).localeCompare(String(b.id)),

@@ -145,22 +145,23 @@ async function addChangesRevColumn(adapter: Adapter): Promise<boolean> {
     await rawSql.execute('ALTER TABLE "__datafn_changes" ADD COLUMN IF NOT EXISTS "rev" integer');
     return true;
   }
-  if (rawSql.dialect === "mysql") {
-    const probe =
-      "SELECT 1 AS present FROM information_schema.columns WHERE table_schema = DATABASE() " +
-      "AND table_name = '__datafn_changes' AND column_name = 'rev'";
-    if ((await rawSql.query(probe)).length > 0) return true;
-  }
+  // SQLite and MySQL have no ADD COLUMN IF NOT EXISTS: probe the column
+  // first, and after a failed ALTER (another worker added it meanwhile, or a
+  // driver that wraps the duplicate-column error) probe again.
+  const quote = rawSql.dialect === "mysql" ? "`" : '"';
+  const hasColumn = async () => {
+    try {
+      await rawSql.query(`SELECT ${quote}rev${quote} FROM ${quote}__datafn_changes${quote} LIMIT 0`);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  if (await hasColumn()) return true;
   try {
-    await rawSql.execute(
-      rawSql.dialect === "mysql"
-        ? "ALTER TABLE `__datafn_changes` ADD COLUMN `rev` integer"
-        : 'ALTER TABLE "__datafn_changes" ADD COLUMN "rev" integer',
-    );
+    await rawSql.execute(`ALTER TABLE ${quote}__datafn_changes${quote} ADD COLUMN ${quote}rev${quote} integer`);
   } catch (error) {
-    // The column exists already (created with the table, or added by another
-    // worker). SQLite and MySQL reject only the statement.
-    if (!/duplicate column/i.test(String((error as Error)?.message ?? error))) throw error;
+    if (!(await hasColumn())) throw error;
   }
   return true;
 }

@@ -418,10 +418,15 @@ export function wireChange(
   change: { op: string; record: Record<string, unknown> | null; rev?: number },
 ): { record: Record<string, unknown> | null; rev?: number } {
   const rev = change.rev !== undefined && issuesRevisions(schema, resource) ? change.rev : undefined;
-  if (rev === undefined || !change.record) return { record: change.record, ...(rev !== undefined ? { rev } : {}) };
-  if (!canReadEveryField(schema, resource)) {
-    return { record: withoutUnreadableFields(schema, resource, change.record), rev };
+  const revField = rev !== undefined ? { rev } : {};
+  // A change row that recorded a revision holds the stored row, server
+  // fields included, so its unreadable fields are withheld even after
+  // revisions are turned off (or the resource gains its own `$rev` field).
+  if (change.rev === undefined || !change.record) return { record: change.record, ...revField };
+  if (!canReadEveryField(schema, resource, change.record)) {
+    return { record: withoutUnreadableFields(schema, resource, change.record), ...revField };
   }
+  if (rev === undefined) return { record: change.record };
   const complete = change.op !== "delete" && (change.op !== "merge" || isKvResource(resource));
   return { record: complete ? { ...change.record, [REVISION_FIELD]: rev } : change.record, rev };
 }

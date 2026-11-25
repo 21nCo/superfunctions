@@ -1,0 +1,105 @@
+/**
+ * DATA-41 on an adapter without transactions (Drizzle on SQLite, as on
+ * Cloudflare D1): every write path records the record's revision on its
+ * change row from the first write on a fresh database.
+ */
+import Database from "better-sqlite3";
+import { drizzle } from "drizzle-orm/better-sqlite3";
+import { afterEach, describe, expect, it } from "vitest";
+import { drizzleAdapter } from "@superfunctions/db/adapters/drizzle";
+import { createDatafnServer } from "../src/index.js";
+import { conformanceSchema, createTableStatements, drizzleSchema, resourceTables } from "./drizzle-sqlite/fixture.js";
+
+type Server = Awaited<ReturnType<typeof createDatafnServer>>;
+const open: Array<{ server: Server; sqlite: Database.Database }> = [];
+
+afterEach(async () => {
+  for (const { server, sqlite } of open.splice(0)) {
+    await server.close();
+    sqlite.close();
+  }
+});
+
+async function start() {
+  const sqlite = new Database(":memory:");
+  // A fresh database: only the resource tables exist, no DataFn internal table.
+  for (const statement of createTableStatements(resourceTables)) sqlite.exec(statement);
+  const adapter = drizzleAdapter({ db: drizzle(sqlite, { schema: drizzleSchema }), dialect: "sqlite" });
+  expect(adapter.capabilities?.transactions?.supported).toBe(false);
+  const server = await createDatafnServer({
+    schema: conformanceSchema,
+    db: adapter,
+    authorize: async () => true,
+    allowUnknownResources: true,
+    revisions: { enabled: true },
+  } as any);
+  open.push({ server, sqlite });
+  const call = async (path: string, body: unknown) => {
+    const response = await server.router.handle(new Request(`http://datafn.test/datafn/${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }));
+    return { status: response.status, body: (await response.json()) as any };
+  };
+  return { sqlite, call };
+}
+
+const insert = (id: string, mutationId: string) => ({
+  resource: "task", version: 1, operation: "insert", id, clientId: "c1", mutationId,
+  record: { title: "Alpha", priority: 1, done: false },
+});
+
+describe("DATA-41 revisions on Drizzle SQLite (no transactions)", () => {
+  it("records rev on change rows written by push, /mutation and sequential /transact on a fresh database", async () => {
+    const { sqlite, call } = await start();
+
+    const pushed = await call("push", { clientId: "c1", mutations: [insert("task:a", "m1")] });
+    expect(pushed.status).toBe(200);
+    expect(pushed.body.result.ok).toBe(true);
+    expect(pushed.body.result.revisions.m1).toMatchObject({ resource: "task", id: "task:a", rev: 1 });
+
+    const mutated = await call("mutation", {
+      resource: "task", version: 1, operation: "merge", id: "task:a", clientId: "c1", mutationId: "m2", record: { title: "Bravo" },
+    });
+    expect(mutated.status).toBe(200);
+    expect(mutated.body.result).toMatchObject({ ok: true, rev: 2 });
+
+    const transacted = await call("transact", {
+      atomic: false,
+      steps: [
+        { mutation: { resource: "task", version: 1, operation: "merge", id: "task:a", clientId: "c1", mutationId: "m3", record: { title: "Charlie" } } },
+        { mutation: insert("task:b", "m4") },
+      ],
+    });
+    expect(transacted.status).toBe(200);
+    expect(transacted.body.result.ok).toBe(true);
+
+    const rows = sqlite.prepare(`SELECT record_id, op, rev FROM "__datafn_changes" ORDER BY server_seq`).all();
+    expect(rows).toEqual([
+      { record_id: "task:a", op: "insert", rev: 1 },
+      { record_id: "task:a", op: "merge", rev: 2 },
+      { record_id: "task:a", op: "merge", rev: 3 },
+      { record_id: "task:b", op: "insert", rev: 1 },
+    ]);
+
+    const pulled = await call("pull", { clientId: "c2", cursor: "0" });
+    expect(pulled.status).toBe(200);
+    const changes = pulled.body.result.changes as Array<Record<string, any>>;
+    expect(changes.map((change) => [change.id, change.rev])).toEqual([
+      ["task:a", 1], ["task:a", 2], ["task:a", 3], ["task:b", 1],
+    ]);
+    // Complete rows (the inserts) carry their revision as $rev.
+    expect(changes[0].record).toMatchObject({ id: "task:a", title: "Alpha", $rev: 1 });
+    expect(changes[3].record).toMatchObject({ id: "task:b", $rev: 1 });
+  });
+
+  it("creates no revision storage for an atomic /transact it refuses", async () => {
+    const { sqlite, call } = await start();
+    const refused = await call("transact", { steps: [{ mutation: insert("task:a", "m1") }] });
+    expect(refused.status).toBe(400);
+    expect(refused.body.error).toMatchObject({ code: "DFQL_UNSUPPORTED" });
+    const tables = sqlite.prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = '__datafn_revisions'`).all();
+    expect(tables).toEqual([]);
+  });
+});

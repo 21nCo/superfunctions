@@ -197,7 +197,10 @@ export function createTransactHandler(
 
         // DATA-41: mutations bump revisions inside the transaction, so the
         // revisions table must exist before it opens.
-        if (db && normalizedSteps.some((step: any) => step.mutation)) {
+        // An atomic request the adapter cannot run (no transactions) is
+        // refused before anything is created.
+        const refusedAtomic = body.atomic !== false && db?.capabilities?.transactions?.supported === false;
+        if (db && !refusedAtomic && normalizedSteps.some((step: any) => step.mutation)) {
           await ensureRevisionsTable(db);
         }
 

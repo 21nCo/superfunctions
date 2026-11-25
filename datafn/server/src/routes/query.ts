@@ -25,7 +25,6 @@ import {
   isPrivateShareableResource,
   canReadEveryField,
   resolveAccessLevel,
-  withoutUnreadableFields,
   validateQueryAuthz,
 } from "../validation/authz.js";
 import { ensureRevisionsTable, issuesRevisions, readStoredRows, readWithRevisions } from "../execution/revisions.js";
@@ -40,7 +39,7 @@ import {
   canonicalizePrincipalFromLegacyUserId,
   getSpv2MigrationRuntimeConfig,
 } from "../execution/migration/spv2.js";
-import { hasTemporalGrouping } from "@datafn/core";
+import { hasTemporalGrouping, readRowRevision } from "@datafn/core";
 import {
   getDatafnMultiRegionRuntimeConfig,
   queryDatafnPermissionGrants,
@@ -893,49 +892,40 @@ export function createQueryHandler(
                   return Array.isArray(rows) ? (rows as Array<Record<string, unknown>>) : undefined;
                 };
                 const resourceName = String(query.resource);
-                if (!isVersionedQuery(query, validatedSchema)) {
-                  if (query.withRevisions !== true || query.relation !== undefined) return run(db);
-                  // DATA-41: a versioned read of a resource whose fields the
-                  // caller may not all read returns no revision and no
-                  // unreadable field.
-                  return run(db).then((result) => {
-                    const rows = rowsOf(result);
-                    rows?.forEach((row, index) => {
-                      rows[index] = withoutUnreadableFields(validatedSchema, resourceName, row);
-                    });
-                    return result;
-                  });
-                }
-                // DATA-41: the query selects the rows; each is returned as the
-                // complete stored row (as clone returns it, whatever the query
-                // strategy projected) with its revision, read in one snapshot.
-                const complete = new WeakSet<object>();
-                const read = async (readDb: Adapter) => {
-                  const result = await run(readDb);
+                // DATA-41: a query that does not qualify for revisions
+                // returns exactly what it returns without `withRevisions`.
+                if (!isVersionedQuery(query, validatedSchema)) return run(db);
+                // DATA-41: the query selects the rows (outside any snapshot
+                // transaction, so its own error recovery keeps working on
+                // PostgreSQL). Each selected row is then returned as the
+                // complete stored row (as clone returns it, whatever the
+                // query strategy projected) with its revision, both read in
+                // one snapshot, when the caller may read every field of that
+                // stored row; otherwise the query's own row is returned
+                // without one.
+                return ensureRevisionsTable(db).then(async () => {
+                  const result = await run(db);
                   const rows = rowsOf(result);
-                  if (!rows) return result;
-                  const stored = await readStoredRows(
-                    readDb,
+                  if (!rows || rows.length === 0) return result;
+                  const ids = rows.map((row) => row.id).filter((id): id is string => typeof id === "string");
+                  const readable = (row: Record<string, unknown>) =>
+                    canReadEveryField(validatedSchema, resourceName, row);
+                  const pairs = await readWithRevisions(
+                    db,
                     namespace,
                     resourceName,
-                    rows.map((row) => row.id).filter((id): id is string => typeof id === "string"),
+                    async (readDb) =>
+                      [...(await readStoredRows(readDb, namespace, resourceName, ids)).values()].map((row) => ({ ...row })),
+                    (stored) => stored,
+                    readable,
                   );
+                  const byId = new Map(pairs.map((row) => [row.id, row]));
                   rows.forEach((row, index) => {
-                    const whole = typeof row.id === "string" ? stored.get(row.id) : undefined;
-                    if (!whole) return;
-                    rows[index] = { ...whole };
-                    complete.add(rows[index]);
+                    const whole = typeof row.id === "string" ? byId.get(row.id) : undefined;
+                    if (whole && readRowRevision(whole) !== undefined && readable(whole)) rows[index] = whole;
                   });
                   return result;
-                };
-                return ensureRevisionsTable(db).then(() => readWithRevisions(
-                  db,
-                  namespace,
-                  resourceName,
-                  read,
-                  rowsOf,
-                  (row) => complete.has(row) && canReadEveryField(validatedSchema, resourceName, row),
-                ));
+                });
               }).then((result) => {
                 queryDurations.push(Date.now() - queryStart);
                 return result;
