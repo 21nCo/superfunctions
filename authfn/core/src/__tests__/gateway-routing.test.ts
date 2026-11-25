@@ -29,6 +29,38 @@ const keyring: AuthFnRoutingKeyring = {
 };
 
 describe('AuthFn canonical gateway routing', () => {
+  it('uses one generated request ID for placement events and the response when an inbound ID is rejected', async () => {
+    const requestIds: string[] = [];
+    const directory = createInMemoryAuthFnPlacementDirectory();
+    const gateway = createAuthFnCanonicalGateway<unknown>({
+      publicAuthority: 'https://account.example.com',
+      placementDirectory: {
+        ...directory,
+        async putIfAbsent() {
+          return {
+            inserted: false,
+            existing: { ...placement('person:new', 'us-east-1', 1), state: 'moving' }
+          };
+        }
+      },
+      keyring,
+      resolveIdentity: () => ({ identityKey: 'person:new', allowInitialPlacement: true }),
+      selectInitialRegion: () => 'us-east-1',
+      resolveCell: () => null,
+      dispatch: () => Promise.resolve(new Response()),
+      onEvent: (event) => { requestIds.push(event.requestId); }
+    });
+    const request = identityRequest();
+    request.headers.set('x-request-id', 'invalid request id');
+
+    const response = await gateway.handle(request);
+    expect(response.status).toBe(503);
+    const { requestId } = await response.json();
+    expect(requestId).toMatch(/^req_[0-9a-f]{16}$/);
+    expect(response.headers.get('x-request-id')).toBe(requestId);
+    expect(requestIds).toEqual([requestId, requestId]);
+  });
+
   it('rejects an oversized body before resolving identity or claiming placement', async () => {
     const directory = createInMemoryAuthFnPlacementDirectory();
     let identityLookups = 0;

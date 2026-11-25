@@ -473,6 +473,7 @@ export function createAuthFnCanonicalGateway<TTarget>(
       try {
         await assertAuthRequestBodyLimit(request);
         const sanitizedRequest = stripClientRoutingHeaders(request);
+        sanitizedRequest.headers.set('x-request-id', resolveRequestId(request));
         if (classification.scope === 'global') {
           if (!options.handleGlobal) {
             return jsonError(request, new AuthFnRegionNotFoundError('Global AuthFn route is not configured'));
