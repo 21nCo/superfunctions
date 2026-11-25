@@ -3,6 +3,7 @@
  * A stream with no Content-Length is rejected before the handler runs.
  */
 import { afterEach, describe, expect, it } from "vitest";
+import { ConflictError } from "@superfunctions/http";
 import {
   createMemoryIndexedDirectoryStore,
   memoryAdapter,
@@ -206,9 +207,13 @@ describe("public link resolve limits", () => {
   });
 
   it("preserves the body cache shared by global middleware and a plugin handler", async () => {
-    const route: DatafnComposableRoute<{ actor: string }> = {
+    const route: DatafnComposableRoute<{ actor: string; rateKey: string }> = {
       method: "POST",
       path: "/datafn/example/:id",
+      middleware: [async (_request, context, next) => {
+        context.rateKey = context.actor;
+        return next();
+      }],
       handler: async (_request, context) => Response.json({
         id: context.params.id,
         actor: context.actor,
@@ -217,6 +222,13 @@ describe("public link resolve limits", () => {
     };
     const server = await start({
       context: { actor: "test-actor" },
+      rateLimit: {
+        enabled: true,
+        keyExtractor: (context: { rateKey?: string }) => {
+          if (context.rateKey === undefined) throw new Error("Missing caller key");
+          return context.rateKey;
+        },
+      },
       plugins: [{ name: "test-route", runsOn: ["server"], routes: () => [route] }],
     });
     server.router.use(async (_request, context, next) => {
@@ -229,6 +241,25 @@ describe("public link resolve limits", () => {
     })));
     expect(result.status).toBe(200);
     expect(result.body).toEqual({ id: "test-id", actor: "test-actor", body: { name: "Ada" } });
+  });
+
+  it("runs plugin response middleware on a handler error with rate limiting disabled", async () => {
+    const route: DatafnComposableRoute = {
+      method: "GET",
+      path: "/datafn/example",
+      middleware: [async (_request, _context, next) => {
+        const response = await next();
+        response.headers.set("x-plugin-response", "decorated");
+        return response;
+      }],
+      handler: () => { throw new ConflictError("Example conflict"); },
+    };
+    const server = await start({
+      plugins: [{ name: "test-route", runsOn: ["server"], routes: () => [route] }],
+    });
+    const response = await server.router.handle(new Request("http://localhost/datafn/example"));
+    expect(response.status).toBe(409);
+    expect(response.headers.get("x-plugin-response")).toBe("decorated");
   });
 
   it("resolves a valid token when placement is configured", async () => {

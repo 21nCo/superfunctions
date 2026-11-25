@@ -29,7 +29,7 @@ Plugin routes (for example /datafn/public-links/resolve):
 
 ## Layer 1: Rate Limiting
 
-**When:** Before the body is parsed, and only when `rateLimit.enabled` is true. Omitting `rateLimit`, or setting `enabled: false`, does not limit requests.
+**When:** Core routes run the limiter before parsing the body. Plugin routes run it at handler entry, after route middleware. The limiter runs only when `rateLimit.enabled` is true.
 **Config:** `createDatafnServer({ rateLimit: { ... } })`
 
 On core data routes the limiter runs before JSON parsing and the `authorize` callback. Plugin routes use the same limiter when it is enabled. They stay callable with their own credentials (a public-link token is not an owner session). The default max and window apply to every endpoint string, including a plugin path, unless `endpoints` overrides that string.

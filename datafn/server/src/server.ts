@@ -1542,27 +1542,16 @@ export async function createDatafnServer<TContext = any>(
     search: (payload, context) => executeInProcess("search", searchHandler, payload, context),
   };
 
-  const withPluginRouteGuards = (
+  const withPluginRouteRateLimit = (
     route: DatafnComposableRoute<TContext>,
   ): DatafnComposableRoute<TContext> => {
-    const {
-      handler: originalHandler,
-      middleware: originalMiddleware,
-      ...routeDefinition
-    } = route;
+    const limitRate = rateLimitMiddleware;
+    if (!limitRate) return route;
     return {
-      ...routeDefinition,
+      ...route,
       handler: async (request, context) => {
-        if (rateLimitMiddleware) {
-          const limited = await rateLimitMiddleware(route.path, context);
-          if (limited) return limited;
-        }
-        return executeMiddlewareChain(
-          originalMiddleware ?? [],
-          request,
-          context,
-          async () => originalHandler(request, context),
-        );
+        const limited = await limitRate(route.path, context);
+        return limited ?? route.handler(request, context);
       },
     };
   };
@@ -1579,10 +1568,6 @@ export async function createDatafnServer<TContext = any>(
     return {
       ...routeDefinition,
       handler: async (request, context) => {
-        if (rateLimitMiddleware) {
-          const limited = await rateLimitMiddleware(route.path, context);
-          if (limited) return limited;
-        }
         let prepared: PreparedDatafnRoutingRequest;
         try {
           prepared = await prepareDatafnRoutingRequest(
@@ -1688,12 +1673,12 @@ export async function createDatafnServer<TContext = any>(
         maxPayloadBytes: publicLinkBodyLimit,
       }) as DatafnComposableRoute<TContext>[];
       for (const route of pluginRoutes) {
+        const limitedRoute = withPluginRouteRateLimit(route);
         if (!multiRegionRuntime?.placement || route.meta?.datafnPlacement === "none") {
-          const guarded = withPluginRouteGuards(route);
-          routes.push(guarded);
+          routes.push(limitedRoute);
           if (publicLinkBodyLimit !== undefined && plugin.name === "datafn-public-links" &&
               route.method === "POST" && route.path === PUBLIC_LINK_RESOLVE_PATH) {
-            boundedResolveRoute = guarded;
+            boundedResolveRoute = limitedRoute;
           }
           continue;
         }
@@ -1703,7 +1688,7 @@ export async function createDatafnServer<TContext = any>(
             `DATAFN_PLUGIN_ROUTE_PLACEMENT_REQUIRED: ${plugin.name} ${route.method} ${route.path}`,
           );
         }
-        routes.push(withPluginRoutePlacement(route, declaration));
+        routes.push(withPluginRoutePlacement(limitedRoute, declaration));
       }
     }
   }
