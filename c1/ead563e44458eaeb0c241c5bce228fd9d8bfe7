@@ -1,0 +1,22 @@
+datafn/server/__tests__/query-filter-pushdown.test.ts
+  s_09f19affbc7889::t_ccc00a83170932 1217,1220-1229,1240,1255
+datafn/server/src/execution/query/select.ts
+  s_09f19affbc7889::t_0b45fd3bc07ada 605-607,611
+  s_09f19affbc7889::t_645f4a85dfcf56 22,579-581,583-604,608-610,612,614,683,846
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c1ead563e44458eaeb0c241c5bce228fd9d8bfe7",
+  "prompts": {},
+  "sessions": {
+    "s_09f19affbc7889": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a211b0-71ed-7282-8a24-bcadc7fcc607",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

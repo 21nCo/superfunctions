@@ -1,0 +1,25 @@
+billfn/core/src/service.ts
+  s_ad3a3856a87c81::t_2dae0e31795ef6 623,626,628-629,679,687-690,705,1068
+  s_ad3a3856a87c81::t_896fbcb91a1d33 667-669
+billfn/core/src/__tests__/billfn.test.ts
+  s_ad3a3856a87c81::t_2dae0e31795ef6 466-503,509-510
+  s_ad3a3856a87c81::t_896fbcb91a1d33 504-508
+billfn/docs/content/docs/providers/apple.mdx
+  s_ad3a3856a87c81::t_2dae0e31795ef6 35
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a4e4a19357425a16687deb28acdf26ce12d0b9e2",
+  "prompts": {},
+  "sessions": {
+    "s_ad3a3856a87c81": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a2126c-2a4d-7b03-aaf0-909847a5e9c7",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
