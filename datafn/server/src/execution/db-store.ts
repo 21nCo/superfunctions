@@ -263,7 +263,7 @@ export class DbDataStore implements DataStore {
         const isForward = match.direction === "forward";
         const isInverse = match.direction === "inverse";
 
-        const loadKey = `${endpointList(rel.from).join("|")}.${rel.relation}:${isForward ? "fwd" : "inv"}`;
+        const loadKey = baseName;
         if (loaded.has(loadKey)) break;
         loaded.add(loadKey);
 
@@ -453,132 +453,128 @@ export class DbDataStore implements DataStore {
   }
 
   /**
-   * Second-level relations of nested select tokens (e.g. "tasks.tags.*"):
-   * after the first-level records are in the store, load each nested
-   * relation from those intermediate records with targeted lookups.
+   * Load the successive related records used by a nested selection.
+   * A terminal bare relation still needs its records for visibility checks.
    */
   private static async loadNestedSelectRelations(
     store: DbDataStore,
     db: Adapter,
     primaryResource: string,
     select: readonly unknown[],
-    schema: any,
+    schema: DatafnSchema,
     namespace: string,
     logger?: DatafnLogger,
   ): Promise<void> {
-    const loadedNested = new Set<string>();
+    const loadedIds = new Map<string, Set<string>>();
     for (const token of select) {
       if (typeof token !== "string") continue;
-      const parts = token.split(".");
-      if (parts.length < 3) continue; // only nested tokens
-
-      const firstRelName = parts[0];
-      const secondRelName = parts[1];
-
-      if (isHtreeSelectBase(firstRelName, primaryResource, schema)) continue;
+      const [firstRelName, ...nestedSegments] = token.split(".");
+      if (nestedSegments.length === 0 || isHtreeSelectBase(firstRelName, primaryResource, schema)) continue;
 
       const firstMatch = findRelationMatch(schema, primaryResource, firstRelName);
       if (!firstMatch) continue;
 
-      const intermediateResources = endpointList(
-        relationTargetEndpoint(firstMatch.relation, firstMatch.direction),
-      );
-      for (const intermediateResource of intermediateResources) {
-        const intermediateRecords = store.recordsCache.get(intermediateResource) || [];
-        const intermediateIds = intermediateRecords
-          .map((r) => r.id as string)
-          .filter(Boolean);
+      let intermediateResources = endpointList(relationTargetEndpoint(firstMatch.relation, firstMatch.direction));
+      for (const relationName of nestedSegments) {
+        const nextResources = new Set<string>();
+        for (const intermediateResource of intermediateResources) {
+          const match = findRelationMatch(schema, intermediateResource, relationName);
+          if (!match || !DbDataStore.nestedPassLoads(match)) continue;
+          const relation = match.relation;
+          const isForward = match.direction === "forward";
+          for (const resource of endpointList(relationTargetEndpoint(relation, match.direction))) {
+            nextResources.add(resource);
+          }
 
-        const secondMatch = findRelationMatch(schema, intermediateResource, secondRelName);
-        if (!secondMatch) continue;
-        const rel2 = secondMatch.relation;
-        const isF2 = secondMatch.direction === "forward";
+          const nestedKey = `${intermediateResource}.${relationName}:${match.direction}`;
+          const seenIds = loadedIds.get(nestedKey) ?? new Set<string>();
+          loadedIds.set(nestedKey, seenIds);
+          const intermediateRecords = (store.recordsCache.get(intermediateResource) ?? [])
+            .filter((row) => typeof row.id === "string" && !seenIds.has(row.id));
+          const intermediateIds = intermediateRecords.map((row) => row.id as string);
+          if (intermediateIds.length === 0) continue;
+          for (const id of intermediateIds) seenIds.add(id);
 
-        const nestedKey = `${intermediateResource}.${secondRelName}:${secondMatch.direction}`;
-        if (loadedNested.has(nestedKey)) break;
-        loadedNested.add(nestedKey);
+          const fromCol = relation.joinColumns?.from ?? "from";
+          const toCol = relation.joinColumns?.to ?? "to";
 
-        const fromCol2 = (rel2 as any).joinColumns?.from ?? "from";
-        const toCol2 = (rel2 as any).joinColumns?.to ?? "to";
-
-        if (rel2.type === "many-many") {
-          const fromResources = isF2 ? [intermediateResource] : endpointList(rel2.from);
-          for (const fromResource of fromResources) {
-            const tableName2 = getRelationJoinTableName(rel2, fromResource);
-            const relationKey2 = relationKeyFor(fromResource, rel2);
-            let joinRows2: Record<string, unknown>[] = [];
-            try {
-              joinRows2 = intermediateIds.length > 0
-                ? await DbDataStore.findManyByIds(db, tableName2, isF2 ? fromCol2 : toCol2, intermediateIds, namespace)
-                : [];
-            } catch (error) {
-              logger?.warn("forPushdownResult: nested many-many join load failed", { error: String(error), operation: "db-store-pushdown" });
-              joinRows2 = [];
-            }
-            const normalizedRows2 = DbDataStore.normalizeJoinRows(joinRows2, fromCol2, toCol2);
-            const rowsForRelation2 = DbDataStore.filterJoinRowsForResource(
-              schema,
-              normalizedRows2,
-              rel2.from,
-              fromResource,
-              "from",
-            );
-            store.mergeJoinRows(relationKey2, rowsForRelation2);
-            try {
-              await DbDataStore.loadJoinRecords(
-                store, db, schema, namespace, rowsForRelation2,
-                relationTargetEndpoint(rel2, secondMatch.direction),
-                fromResource, isF2,
+          if (relation.type === "many-many") {
+            const fromResources = isForward ? [intermediateResource] : endpointList(relation.from);
+            for (const fromResource of fromResources) {
+              const tableName = getRelationJoinTableName(relation, fromResource);
+              const relationKey = relationKeyFor(fromResource, relation);
+              let joinRows: Record<string, unknown>[] = [];
+              try {
+                joinRows = await DbDataStore.findManyByIds(
+                  db, tableName, isForward ? fromCol : toCol, intermediateIds, namespace,
+                );
+              } catch (error) {
+                logger?.warn("forPushdownResult: nested many-many join load failed", { error: String(error), operation: "db-store-pushdown" });
+                joinRows = [];
+              }
+              const normalizedRows = DbDataStore.normalizeJoinRows(joinRows, fromCol, toCol);
+              const rowsForRelation = DbDataStore.filterJoinRowsForResource(
+                schema,
+                normalizedRows,
+                relation.from,
+                fromResource,
+                "from",
               );
+              store.mergeJoinRows(relationKey, rowsForRelation);
+              try {
+                await DbDataStore.loadJoinRecords(
+                  store, db, schema, namespace, rowsForRelation,
+                  relationTargetEndpoint(relation, match.direction),
+                  fromResource, isForward,
+                );
+              } catch (error) {
+                logger?.warn("forPushdownResult: nested many-many related load failed", { error: String(error), operation: "db-store-pushdown" });
+                endpointList(relationTargetEndpoint(relation, match.direction)).forEach((resource) => store.mergeRecords(resource, []));
+              }
+            }
+          } else if (relation.type === "one-many" && isForward) {
+            const fkField = relationForeignKey(relation);
+            try {
+              for (const targetResource of endpointList(relation.to)) {
+                const rows = await DbDataStore.findManyByIds(db, targetResource, fkField, intermediateIds, namespace);
+                store.mergeRecords(targetResource, rows);
+              }
             } catch (error) {
-              logger?.warn("forPushdownResult: nested many-many related load failed", { error: String(error), operation: "db-store-pushdown" });
-              endpointList(relationTargetEndpoint(rel2, secondMatch.direction)).forEach((resource) => store.mergeRecords(resource, []));
+              logger?.warn("forPushdownResult: nested one-many load failed", { error: String(error), operation: "db-store-pushdown" });
+              endpointList(relation.to).forEach((resource) => store.mergeRecords(resource, []));
             }
-          }
-        } else if (rel2.type === "one-many" && isF2) {
-          const fkField2 = rel2.fkField || rel2.foreignKey || `${rel2.inverse}Id`;
-          try {
-            for (const targetResource of endpointList(rel2.to)) {
-              const rows2 = intermediateIds.length > 0
-                ? await DbDataStore.findManyByIds(db, targetResource, fkField2, intermediateIds, namespace)
-                : [];
-              store.mergeRecords(targetResource, rows2);
+          } else if (relation.type === "many-one" && !isForward) {
+            // Inverse many-one: records of relation.from whose FK points at an
+            // intermediate record (e.g. `parent.childNodes.*`).
+            const fkField = relationFkFieldForManyOne(relation);
+            try {
+              for (const fromResource of endpointList(relation.from)) {
+                const rows = await DbDataStore.findManyByIds(db, fromResource, fkField, intermediateIds, namespace);
+                store.mergeRecords(fromResource, rows);
+              }
+            } catch (error) {
+              logger?.warn("forPushdownResult: nested many-one inverse load failed", { error: String(error), operation: "db-store-pushdown" });
+              endpointList(relation.from).forEach((resource) => store.mergeRecords(resource, []));
             }
-          } catch (error) {
-            logger?.warn("forPushdownResult: nested one-many load failed", { error: String(error), operation: "db-store-pushdown" });
-            endpointList(rel2.to).forEach((resource) => store.mergeRecords(resource, []));
-          }
-        } else if (rel2.type === "many-one" && !isF2) {
-          // Inverse many-one: records of rel2.from whose FK points at an
-          // intermediate record (e.g. `parent.childNodes.*`).
-          const fkField2 = relationFkFieldForManyOne(rel2);
-          try {
-            for (const fromResource of endpointList(rel2.from)) {
-              const rows2 = intermediateIds.length > 0
-                ? await DbDataStore.findManyByIds(db, fromResource, fkField2, intermediateIds, namespace)
-                : [];
-              store.mergeRecords(fromResource, rows2);
+          } else if (relation.type === "one-many" && !isForward) {
+            // Inverse one-many: the intermediate record holds the FK to relation.from
+            try {
+              await DbDataStore.loadForeignKeyRecords(store, db, schema, namespace, relation, intermediateResource, intermediateRecords);
+            } catch (error) {
+              logger?.warn("forPushdownResult: nested one-many inverse load failed", { error: String(error), operation: "db-store-pushdown" });
+              endpointList(relation.from).forEach((resource) => store.mergeRecords(resource, []));
             }
-          } catch (error) {
-            logger?.warn("forPushdownResult: nested many-one inverse load failed", { error: String(error), operation: "db-store-pushdown" });
-            endpointList(rel2.from).forEach((resource) => store.mergeRecords(resource, []));
-          }
-        } else if (rel2.type === "one-many" && !isF2) {
-          // Inverse one-many: the intermediate record holds the FK to rel2.from
-          try {
-            await DbDataStore.loadForeignKeyRecords(store, db, schema, namespace, rel2, intermediateResource, intermediateRecords);
-          } catch (error) {
-            logger?.warn("forPushdownResult: nested one-many inverse load failed", { error: String(error), operation: "db-store-pushdown" });
-            endpointList(rel2.from).forEach((resource) => store.mergeRecords(resource, []));
-          }
-        } else if (rel2.type === "many-one" && isF2) {
-          try {
-            await DbDataStore.loadForeignKeyRecords(store, db, schema, namespace, rel2, intermediateResource, intermediateRecords);
-          } catch (error) {
-            logger?.warn("forPushdownResult: nested many-one forward load failed", { error: String(error), operation: "db-store-pushdown" });
-            endpointList(rel2.to).forEach((resource) => store.mergeRecords(resource, []));
+          } else if (relation.type === "many-one" && isForward) {
+            try {
+              await DbDataStore.loadForeignKeyRecords(store, db, schema, namespace, relation, intermediateResource, intermediateRecords);
+            } catch (error) {
+              logger?.warn("forPushdownResult: nested many-one forward load failed", { error: String(error), operation: "db-store-pushdown" });
+              endpointList(relation.to).forEach((resource) => store.mergeRecords(resource, []));
+            }
           }
         }
+        if (nextResources.size === 0) break;
+        intermediateResources = [...nextResources];
       }
     }
   }
@@ -766,7 +762,7 @@ export class DbDataStore implements DataStore {
                   // A nested projection the nested pass loads from the
                   // first-level records (see loadNestedSelectRelations below)
                   // is left to it; any other is discovered here.
-                  if (parts.length >= 3 && DbDataStore.nestedPassLoads(nestedMatch)) continue;
+                  if (DbDataStore.nestedPassLoads(nestedMatch)) continue;
                   addRelationLoad(nestedRel, targetResource, nestedRelation);
                 }
               }

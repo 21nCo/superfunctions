@@ -1191,7 +1191,7 @@ it("excludes related projections without a policy unless the server allows unkno
   }
 });
 
-it("loads the legacy FK used by an inverse one-many ID projection in strict mode", async () => {
+it("loads legacy and nested FK ID projections in strict mode", async () => {
   const schema: DatafnSchema = {
     ...SCHEMA,
     resources: SCHEMA.resources.map((resource) => ({ ...resource, permissions: { read: { fields: ["label"] } } })),
@@ -1201,14 +1201,34 @@ it("loads the legacy FK used by an inverse one-many ID projection in strict mode
       to: "task",
       relation: "members",
       inverse: "folder",
+    }, {
+      type: "many-one",
+      from: "collection",
+      to: "node",
+      relation: "shelf",
+      fkField: "shelfId",
+    }, {
+      type: "many-one",
+      from: "node",
+      to: "objective",
+      relation: "plan",
+      fkField: "planId",
     }],
   };
   const { db, server } = await createServer({ schema, allowUnknownResources: false });
   try {
-    await db.create({ model: "task", namespace: "datafn", data: { id: "task:member", folderId: "collection:home" } });
-    await expectQueryAndTransactData(server, {
-      resource: "task", filters: { id: "task:member" }, select: ["id", "folder"],
-    }, [{ id: "task:member", folder: "collection:home" }]);
+    const seed = (model: string, data: Json) => db.create({ model, namespace: "datafn", data });
+    await seed("collection", { id: "collection:folder", shelfId: "node:shelf" });
+    await seed("node", { id: "node:shelf", planId: "objective:goal" });
+    await seed("task", { id: "task:member", folderId: "collection:folder" });
+    const member = { resource: "task", filters: { id: "task:member" } };
+    await expectQueryAndTransactData(server, { ...member, select: ["id", "folder"] },
+      [{ id: "task:member", folder: "collection:folder" }]);
+    await expectQueryAndTransactData(server, { ...member, select: ["id", "folder.shelf"] },
+      [{ id: "task:member", folder: { id: "collection:folder", shelf: "node:shelf" } }]);
+    await expectQueryAndTransactData(server, { ...member, select: ["id", "folder.shelf.plan"] }, [{
+      id: "task:member", folder: { id: "collection:folder", shelf: { id: "node:shelf", plan: "objective:goal" } },
+    }]);
   } finally {
     await server.close();
   }
