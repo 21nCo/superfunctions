@@ -9,7 +9,7 @@ import { DEFAULT_PLUGFN_STORAGE_MODELS, resolvePlugFnStorageModels, type PlugFnS
 // authoritative tenant source rather than caller-controlled workflow metadata.
 // Version 6 added job-scoped claim tokens to sync jobs. Any legacy claim token on a
 // connection represented a different ownership domain, so migration must not copy it.
-export const PLUGFN_SCHEMA_VERSION = 7;
+export const PLUGFN_SCHEMA_VERSION = 8;
 
 export interface PlugFnSchemaOptions {
   namespace?: string;
