@@ -162,6 +162,7 @@ export {
   getRelationName,
   getRelationKeyName,
   enumerateJoinStoreKeys,
+  resolveJoinStoreResources,
 } from "./joins.js";
 
 export {

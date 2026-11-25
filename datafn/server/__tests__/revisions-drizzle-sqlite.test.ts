@@ -120,8 +120,10 @@ describe("DATA-41 revisions on Drizzle SQLite (no transactions)", () => {
 
     const global = await call("pull", { clientId: "c2", cursor: "0" });
     const changes = global.body.result.changes as Array<Record<string, any>>;
-    expect(changes.map((change) => [change.id, change.rev])).toEqual([
-      ["task:a", 1], ["task:a", 2], ["task:b", 1], ["task:b", 2],
+    // A delete change carries no tombstone revision without transactions
+    // (round 13): rev alone stays on the other changes.
+    expect(changes.map((change) => [change.id, change.op, change.rev])).toEqual([
+      ["task:a", "upsert", 1], ["task:a", "upsert", 2], ["task:b", "upsert", 1], ["task:b", "delete", undefined],
     ]);
     for (const change of changes) if (change.record) expect(change.record).not.toHaveProperty("$rev");
 
@@ -130,8 +132,10 @@ describe("DATA-41 revisions on Drizzle SQLite (no transactions)", () => {
     const records = canonical.body.result.records.task as Array<Record<string, any>>;
     expect(records.find((row) => row.id === "task:a")).toMatchObject({ title: "Bravo" });
     for (const row of records) expect(row).not.toHaveProperty("$rev");
-    // Tombstone revisions come from the change's rev, not a certified row.
-    expect(canonical.body.result.deletedRevisions).toEqual({ task: { "task:b": 2 } });
+    // Without transactions a tombstone revision may name another state than
+    // the absence it is sent with, so none is sent (round 13).
+    expect(canonical.body.result.deleted.task).toContain("task:b");
+    expect(canonical.body.result.deletedRevisions).toBeUndefined();
   });
 
   it("creates no revision storage for an atomic /transact it refuses", async () => {

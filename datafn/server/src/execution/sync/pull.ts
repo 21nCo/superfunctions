@@ -844,7 +844,11 @@ async function executePullGlobalCursor(
           id: change.id,
           op: "delete",
           record: null,
-          ...(change.rev !== undefined && issuesRevisions(schema, change.resource) ? { rev: change.rev } : {}),
+          // DATA-41: a tombstone revision only where the delete committed
+          // together with it (see wireChange).
+          ...(pairable && change.rev !== undefined && issuesRevisions(schema, change.resource)
+            ? { rev: change.rev }
+            : {}),
         });
         continue;
       }
@@ -1144,8 +1148,10 @@ async function executePullCanonical(
     if (change.op === "delete") {
       deleted[resource].push(change.id);
       // DATA-41: the tombstone revision, kept only when every delete of the
-      // id in this page recorded one.
-      const rev = revisionOf(resource, change);
+      // id in this page recorded one, and only where a delete commits together
+      // with its revision (pairable): otherwise the revision may name a state
+      // other than the absence it is sent with.
+      const rev = pairable ? revisionOf(resource, change) : undefined;
       if (rev === undefined) {
         unrevisionedDeletes.add(`${resource}\u0000${change.id}`);
       } else {

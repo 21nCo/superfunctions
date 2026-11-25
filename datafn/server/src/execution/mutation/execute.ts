@@ -266,7 +266,7 @@ async function executeMutationCore(
         deduped: false,
       };
     }
-    if (recordIdMismatch(mutation)) {
+    if (recordIdMismatch(schema, mutation)) {
       return {
         ok: false,
         mutationId: effectiveMutationId,

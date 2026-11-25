@@ -61,13 +61,17 @@ describe.skipIf(!url)("DATA-41 revisions on a PostgreSQL server", { timeout: 60_
   });
 
   it("serializes two overlapping transactions writing one record: n + 1 and n + 2, never the same", async () => {
-    const service = new ChangeTrackingService(adapter, namespace);
+    // The merges change a present row (a write that changed no row raises
+    // no revision), stored in this run's task table.
+    const db = kyselyAdapter({ db: kysely, dialect: "postgres", schema: { task: taskTable } }) as Adapter;
+    const service = new ChangeTrackingService(db, namespace);
     service.useRevisionsOf(revisionSchema);
     await service.ensureReady();
     await service.ensureRevisionsReady();
     const id = "task:overlap";
+    await adapter.rawSql!.execute(`INSERT INTO "${taskTable}" (id, title) VALUES ('${id}', 't0')`);
     for (let seq = 1; seq <= 3; seq++) {
-      await adapter.transaction(async (tx) => {
+      await db.transaction(async (tx) => {
         await service.withDb(tx as Adapter, false).recordChanges([
           { serverSeq: seq, resource: "task", id, op: "merge", record: { id, title: `t${seq}` } },
         ]);
@@ -80,7 +84,7 @@ describe.skipIf(!url)("DATA-41 revisions on a PostgreSQL server", { timeout: 60_
     // another connection, reads the committed n and waits on A's row lock.
     const aBumped = deferred();
     const releaseA = deferred();
-    const writerA = adapter.transaction(async (tx) => {
+    const writerA = db.transaction(async (tx) => {
       const entry = { serverSeq: 10, resource: "task", id, op: "merge" as const, record: { id, title: "A" } };
       await service.withDb(tx as Adapter, false).recordChanges([entry]);
       aBumped.resolve();
@@ -88,7 +92,7 @@ describe.skipIf(!url)("DATA-41 revisions on a PostgreSQL server", { timeout: 60_
       return entry.rev;
     });
     await aBumped.promise;
-    const writerB = adapter.transaction(async (tx) => {
+    const writerB = db.transaction(async (tx) => {
       const entry = { serverSeq: 11, resource: "task", id, op: "merge" as const, record: { id, title: "B" } };
       await service.withDb(tx as Adapter, false).recordChanges([entry]);
       return entry.rev;

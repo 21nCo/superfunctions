@@ -27,7 +27,12 @@ import type { SequenceStore, SequenceStorePolicy } from "./execution/sync/sequen
 import { createSequenceStore } from "./execution/sync/sequence-store.js";
 import { createStatusHandler } from "./routes/status.js";
 import { createQueryHandler } from "./routes/query.js";
-import { configureRevisions, revisionsEnabled, type DatafnRevisionsConfig } from "./execution/revisions.js";
+import {
+  configureRevisions,
+  relationWritingPrimaryKey,
+  revisionsEnabled,
+  type DatafnRevisionsConfig,
+} from "./execution/revisions.js";
 import { createMutationHandler } from "./routes/mutation.js";
 import { createTransactHandler } from "./routes/transact.js";
 import {
@@ -602,16 +607,34 @@ export async function createDatafnServer<TContext = any>(
   // namespaces (`rowLevelNamespace: false`, or a namespace provider without
   // row-level isolation), a write from one namespace would change a row whose
   // revision another namespace holds without raising it.
-  if (
-    config.revisions?.enabled === true &&
-    configuredDatabase &&
+  const rowsSharedAcrossNamespaces =
+    !!configuredDatabase &&
     !rowsPartitionedByNamespace &&
     (hasNamespaceProvider || config.rowLevelNamespace === false ||
-      (typeof config.rowLevelNamespace === 'object' && config.rowLevelNamespace && !config.rowLevelNamespace.enabled))
-  ) {
+      (typeof config.rowLevelNamespace === 'object' && !!config.rowLevelNamespace && !config.rowLevelNamespace.enabled));
+  if (rowsSharedAcrossNamespaces && config.revisions?.enabled === true) {
     throw new Error(
       "DataFn revisions.enabled requires row-level namespace isolation: rows shared across namespaces " +
         "(rowLevelNamespace: false, or a namespaceProvider without row-level isolation) cannot carry per-namespace revisions",
+    );
+  }
+  if (rowsSharedAcrossNamespaces) {
+    // Its writes bump revisions under the request's namespace, not the one a
+    // revision-issuing server keys the same row by, so they would leave that
+    // server's revision naming two states. Enforcing this needs coordination
+    // between servers; it is an operator contract (docs: sync/revisions).
+    logger.warn(
+      "DataFn rows are shared across namespaces: this server must not write to tables a server with " +
+        "revisions.enabled also serves (keep it read-only there, or enable row-level namespace isolation)",
+      { operation: "revisions-partition" },
+    );
+  }
+  // DATA-41: a relation write that sets a record's primary key would move the
+  // record to another id while its revision is raised under the old one.
+  const idWritingRelation = config.revisions?.enabled === true ? relationWritingPrimaryKey(validatedSchema) : undefined;
+  if (idWritingRelation) {
+    throw new Error(
+      `DataFn revisions.enabled requires relations that never write a record's id: ${idWritingRelation} is "id"`,
     );
   }
   if (db && observabilityScope) {

@@ -7,10 +7,16 @@ import { getJoinStoreKey, getRelationJoinTableName } from "@datafn/core";
 import type { Adapter, WhereClause } from "@superfunctions/db";
 import type { SequenceStore } from "./sequence-store.js";
 import { ChangeTrackingService } from "./change-tracking.js";
-import { issuesRevisions, readWithRevisionsOrPlain, withoutUncertifiedRevision } from "../revisions.js";
+import {
+  isRevisionCertified,
+  issuesRevisions,
+  readWithRevisionsOrPlain,
+  withoutUncertifiedRevision,
+} from "../revisions.js";
 import type { DatafnLogger } from "../../logger.js";
 import {
   canReadEveryField,
+  withoutUnreadableFields,
   isNamespaceOwnerActor,
   isPrivateShareableResource,
   resolveAccessLevel,
@@ -193,12 +199,17 @@ export async function executeClone(
     read: (readDb: Adapter) => Promise<Array<Record<string, unknown>>>,
   ): Promise<Array<Record<string, unknown>>> => {
     if (!issuesRevisions(schema, table)) return read(db);
-    // A row the caller may not read in full gets no revision (its row
-    // content is returned as before).
+    // A row the caller may not read in full gets no revision, and its
+    // unreadable fields are withheld as pull withholds them (in every clone
+    // mode, the plain fallback included).
     const rows = await readWithRevisionsOrPlain(db, namespace, table, read, () => read(db), (r) => r, (row) =>
       canReadEveryField(schema, table, row),
     );
-    return rows.map(withoutUncertifiedRevision);
+    return rows.map((row) => {
+      const returned = withoutUncertifiedRevision(row);
+      if (isRevisionCertified(returned) || canReadEveryField(schema, table, returned)) return returned;
+      return withoutUnreadableFields(schema, table, returned);
+    });
   };
 
   // Handle paginated clone if page parameter is provided

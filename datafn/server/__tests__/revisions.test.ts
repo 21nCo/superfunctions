@@ -9,6 +9,7 @@ import { createDatafnServer } from "../src/server.js";
 import {
   READ_CHUNK,
   bumpRevision,
+  bumpTombstone,
   configureRevisions,
   ensureRevisionsTable,
   readRevisions,
@@ -2131,8 +2132,10 @@ describe("DATA-41 revisions: round 12", () => {
       principalId: "user:bob", level: "viewer", grantKind: "record", sourceRef: null,
       grantedBy: "alice", grantedAt: 1, revokedAt: null,
     };
+    await database.create({ model: "notebook", data: { id: "notebook:1", title: "a" }, namespace: NS } as any);
     await tracking.recordChanges([{ serverSeq: 1, resource: "notebook", id: "notebook:1", op: "insert", record: { id: "notebook:1", title: "a" } }]);
     // A physical delete that recorded tombstone revision 2 (the row is gone).
+    await database.delete({ model: "notebook", where: [{ field: "id", operator: "eq", value: "notebook:1" }], namespace: NS } as any);
     await tracking.recordChanges([{ serverSeq: 2, resource: "notebook", id: "notebook:1", op: "delete", record: null }]);
     const pull = () =>
       executePull({ clientId: "client:b", cursors: { notebook: "0" }, actorId: "bob" } as any, shared, database, NS) as Promise<Json>;
@@ -2150,5 +2153,248 @@ describe("DATA-41 revisions: round 12", () => {
     expect(after.ok).toBe(true);
     expect(after.deleted.notebook).toContain("notebook:1");
     expect(after.deletedRevisions?.notebook?.["notebook:1"]).toBeUndefined();
+  });
+});
+
+describe("DATA-41 revisions: round 13", () => {
+  /**
+   * A concurrent delete of each id in `ids` commits (row removed, tombstone
+   * raised) just before this write's UPDATE of it, so the UPDATE matches no
+   * row: the write changed nothing. The adapter reports that as a zero-row
+   * update (like updateMany) instead of throwing, as an adapter may.
+   */
+  function deletedBeforeUpdate(database: Adapter, ids: Set<string>): Adapter {
+    const wrap = (db: Adapter): Adapter =>
+      new Proxy(db, {
+        get(target, property, receiver) {
+          if (property === "update" || property === "updateMany") {
+            return async (args: any) => {
+              const value = (args.where ?? []).find((w: any) => w.field === "id")?.value;
+              const raced = (Array.isArray(value) ? value : [value]).filter((id) => ids.has(id));
+              const namespace = args.namespace ?? NS;
+              for (const id of raced) {
+                ids.delete(id);
+                await target.delete({ model: args.model, where: [{ field: "id", operator: "eq", value: id }], namespace } as any);
+                await bumpTombstone(target, namespace, args.model, id);
+              }
+              if (property === "update" && raced.length > 0) return null;
+              return (target as any)[property](args);
+            };
+          }
+          if (property === "transaction") {
+            return (fn: (tx: Adapter) => Promise<unknown>) => target.transaction((tx) => fn(wrap(tx as Adapter)));
+          }
+          return Reflect.get(target, property, receiver);
+        },
+      });
+    return wrap(database);
+  }
+
+  async function seeded() {
+    const raced = new Set<string>();
+    const served = await serve({ database: deletedBeforeUpdate(memoryAdapter(), raced) });
+    for (const id of ["project:1", "project:2"]) {
+      await served.push({ resource: "project", operation: "insert", id, record: { name: id } });
+    }
+    await served.push({ resource: "task", operation: "insert", id: "task:1", record: { title: "a", projectId: "project:1" } });
+    expect(await served.rev("task", "task:1")).toEqual({ rev: 1, deleted: false });
+    raced.add("task:1");
+    return { ...served, raced };
+  }
+
+  async function revisionedChanges(send: (route: string, body: unknown) => Promise<{ body: Json }>, id: string) {
+    const pull = await send("pull", { clientId: "client:p", cursor: "0" });
+    expect(pull.body.ok).toBe(true);
+    return (pull.body.result.changes as Json[]).filter((change) => change.id === id && change.rev !== undefined);
+  }
+
+  const lostWrites: Json[] = [
+    { resource: "task", operation: "merge", id: "task:1", record: { title: "b" } },
+    { resource: "task", operation: "relate", id: "task:1", relations: { project: "project:2" } },
+    { resource: "task", operation: "unrelate", id: "task:1", relations: { project: "project:1" } },
+  ];
+
+  it.each(lostWrites)("raises nothing for a push $operation whose record a concurrent delete removed", async (mutation) => {
+    const served = await seeded();
+    const res = await served.push(mutation);
+    expect(served.raced.size).toBe(0);
+    expect(res.body.result?.revisions?.[res.mutationId]).toBeUndefined();
+    expect(await served.rev("task", "task:1")).toEqual({ rev: 2, deleted: true });
+    expect((await revisionedChanges(served.send, "task:1")).map((change) => change.rev)).toEqual([1]);
+  });
+
+  it.each(lostWrites)("raises nothing for a /mutation $operation whose record a concurrent delete removed", async (mutation) => {
+    const served = await seeded();
+    const res = await served.send("mutation", { ...mutation, version: 1, clientId: "c", mutationId: `direct-${mutation.operation}` });
+    expect(served.raced.size).toBe(0);
+    expect(JSON.stringify(res.body)).not.toContain('"rev"');
+    expect(await served.rev("task", "task:1")).toEqual({ rev: 2, deleted: true });
+    expect((await revisionedChanges(served.send, "task:1")).map((change) => change.rev)).toEqual([1]);
+  });
+
+  it.each(lostWrites)("raises nothing for a /transact $operation whose record a concurrent delete removed", async (mutation) => {
+    const served = await seeded();
+    const res = await served.send("transact", {
+      atomic: true,
+      steps: [{ mutation: { ...mutation, version: 1, clientId: "c", mutationId: `tx-${mutation.operation}` } }],
+    });
+    expect(served.raced.size).toBe(0);
+    expect(JSON.stringify(res.body)).not.toContain('"rev"');
+    expect(await served.rev("task", "task:1")).toEqual({ rev: 2, deleted: true });
+    expect((await revisionedChanges(served.send, "task:1")).map((change) => change.rev)).toEqual([1]);
+  });
+
+  it("raises nothing for a setNull child a concurrent delete removed, and still tombstones the parent", async () => {
+    const served = await seeded();
+    const res = await served.push({ resource: "project", operation: "delete", id: "project:1" });
+    expect(res.body.ok).toBe(true);
+    expect(served.raced.size).toBe(0);
+    expect(res.body.result.revisions[res.mutationId]).toMatchObject({ rev: 2, deleted: true });
+    expect(await served.rev("task", "task:1")).toEqual({ rev: 2, deleted: true });
+    expect((await revisionedChanges(served.send, "task:1")).map((change) => change.rev)).toEqual([1]);
+  });
+
+  it.each(["relate", "unrelate"])("raises nothing for a batched one-many %s target a concurrent delete removed", async (operation) => {
+    const batchSchema = {
+      resources: [
+        { name: "project", version: 1, fields: [{ name: "name", type: "string" as const, required: false }] },
+        { name: "task", version: 1, fields: [{ name: "title", type: "string" as const, required: false }, { name: "projectId", type: "string" as const, required: false }] },
+      ],
+      relations: [{ from: "project", to: "task", type: "one-many", relation: "tasks", fkField: "projectId" }],
+    } as any;
+    const raced = new Set<string>();
+    const served = await serve({ schema: batchSchema, database: deletedBeforeUpdate(memoryAdapter(), raced) });
+    await served.push({ resource: "project", operation: "insert", id: "project:1", record: { name: "p" } });
+    for (const id of ["task:1", "task:2"]) {
+      await served.push({ resource: "task", operation: "insert", id, record: { title: id, projectId: "project:1" } });
+    }
+    // task:2 is deleted (tombstone 2) after the target check and before the
+    // batched updateMany, which then changes task:1 only.
+    raced.add("task:2");
+    const res = await served.push({ resource: "project", operation, id: "project:1", relations: { tasks: ["task:1", "task:2"] } });
+    expect(res.body.result.ok, JSON.stringify(res.body)).toBe(true);
+    expect(raced.size).toBe(0);
+    expect(await served.rev("task", "task:1")).toEqual({ rev: 2, deleted: false });
+    expect(await served.rev("task", "task:2")).toEqual({ rev: 2, deleted: true });
+    expect((await revisionedChanges(served.send, "task:2")).map((change) => change.rev)).toEqual([1]);
+  });
+
+  it("still raises a present record's revision once for each of those writes", async () => {
+    const served = await serve();
+    await served.push({ resource: "project", operation: "insert", id: "project:1", record: { name: "p" } });
+    await served.push({ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } });
+    let expected = 1;
+    for (const mutation of [
+      lostWrites[0],
+      { ...lostWrites[1], relations: { project: "project:1" } },
+      lostWrites[2],
+    ]) {
+      const res = await served.push(mutation);
+      expected += 1;
+      expect(res.body.result.revisions[res.mutationId]).toMatchObject({ rev: expected });
+    }
+    expect(await served.rev("task", "task:1")).toEqual({ rev: 4, deleted: false });
+  });
+
+  const joinSchema = {
+    resources: [
+      { name: "join_notes", version: 1, fields: [{ name: "body", type: "string" as const, required: false }] },
+      { name: "task", version: 1, fields: [{ name: "title", type: "string" as const, required: false }] },
+      { name: "tag", version: 1, fields: [{ name: "label", type: "string" as const, required: false }] },
+    ],
+    relations: [{ from: "task", to: "tag", type: "many-many", relation: "tags" }],
+  } as any;
+
+  it("tracks a declared resource named join_* like any resource, and gives a many-many join store none", async () => {
+    const served = await serve({ schema: joinSchema });
+    const revs: unknown[] = [];
+    for (const mutation of [
+      { operation: "insert", record: { body: "a" } },
+      { operation: "merge", record: { body: "b" } },
+      { operation: "delete" },
+      { operation: "insert", record: { body: "c" } },
+    ]) {
+      const res = await served.push({ resource: "join_notes", id: "join_notes:1", ...mutation });
+      expect(res.body.ok).toBe(true);
+      revs.push(res.body.result.revisions[res.mutationId]);
+    }
+    expect(revs).toEqual([
+      expect.objectContaining({ rev: 1 }),
+      expect.objectContaining({ rev: 2 }),
+      expect.objectContaining({ rev: 3, deleted: true }),
+      expect.objectContaining({ rev: 4 }),
+    ]);
+    const clone = await served.send("clone", { clientId: "client:b", tables: ["join_notes"] });
+    expect(clone.body.result.data.join_notes).toEqual([expect.objectContaining({ id: "join_notes:1", body: "c", $rev: 4 })]);
+
+    await served.push({ resource: "task", operation: "insert", id: "task:1", record: { title: "t" } });
+    await served.push({ resource: "tag", operation: "insert", id: "tag:1", record: { label: "l" } });
+    const related = await served.push({ resource: "task", operation: "relate", id: "task:1", relations: { tags: { $ref: "tag:1" } } });
+    expect(related.body.ok).toBe(true);
+    const pull = await served.send("pull", { clientId: "client:p", cursor: "0" });
+    const joinChanges = (pull.body.result.changes as Json[]).filter((change) => change.resource === "join_task_tags_tag");
+    expect(joinChanges.length).toBeGreaterThan(0);
+    for (const change of joinChanges) expect(change).not.toHaveProperty("rev");
+    const ledger = (await served.database.internal.findMany("__datafn_revisions", [])) as Json[];
+    expect(ledger.map((row) => row.resource).sort()).toEqual(["join_notes", "tag", "task"]);
+  });
+
+  it("warns that a server sharing rows across namespaces must not write next to a revision-issuing server", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    await createDatafnServer({ schema, database: memoryAdapter(), allowUnknownResources: true, rowLevelNamespace: false });
+    expect(warn.mock.calls.some(([message]) => String(message).includes("must not write to tables a server with revisions.enabled"))).toBe(true);
+    warn.mockClear();
+    await createDatafnServer({
+      schema, database: memoryAdapter(), allowUnknownResources: true, namespaceProvider: { getNamespace: () => "tenant:a" },
+    } as any);
+    expect(warn.mock.calls.some(([message]) => String(message).includes("revisions.enabled"))).toBe(false);
+    configureRevisions(schema, { enabled: true });
+  });
+
+  it("withholds unreadable fields from clone rows of a revision-issuing resource on every clone mode", async () => {
+    const database = memoryAdapter();
+    const { push } = await serve({ database });
+    for (const id of ["secretive:1", "secretive:2", "secretive:3"]) {
+      expect((await push({ resource: "secretive", operation: "insert", id, record: { title: id, hidden: "h" } })).body.ok).toBe(true);
+    }
+    configureRevisions(schema, { enabled: true });
+    const clones = async (db: Adapter) => [
+      (await executeClone({ clientId: "client:b", tables: ["secretive"], page: { table: "secretive", limit: 2 } } as any, schema, db, NS)).data.secretive,
+      (await executeClone({ clientId: "client:b", tables: ["secretive"] } as any, schema, db, NS, undefined, 2)).data.secretive,
+      (await executeClone({ clientId: "client:b", tables: ["secretive"] } as any, schema, db, NS)).data.secretive,
+    ];
+    for (const db of [database, failingRevisions(database, "read"), failingRevisions(database, "ddl")]) {
+      for (const rows of await clones(db)) {
+        expect(rows.length).toBeGreaterThan(0);
+        for (const row of rows) {
+          expect(row).toHaveProperty("title");
+          expect(row).not.toHaveProperty("hidden");
+          expect(row).not.toHaveProperty("$rev");
+        }
+      }
+    }
+    // A resource that issues no revisions keeps the base clone rows.
+    configureRevisions(schema, { enabled: false });
+    try {
+      const base = await executeClone({ clientId: "client:b", tables: ["secretive"] } as any, schema, database, NS);
+      expect(base.data.secretive[0]).toHaveProperty("hidden", "h");
+    } finally {
+      configureRevisions(schema, { enabled: true });
+    }
+  });
+
+  it("refuses revisions.enabled for a relation that writes a record's id, and accepts it otherwise", async () => {
+    const idSchema = {
+      resources: [
+        { name: "project", version: 1, fields: [{ name: "name", type: "string" as const, required: false }] },
+        { name: "task", version: 1, fields: [{ name: "title", type: "string" as const, required: false }] },
+      ],
+      relations: [{ from: "task", to: "project", type: "many-one", relation: "project", fkField: "id" }],
+    } as any;
+    await expect(createDatafnServer({ schema: idSchema, database: memoryAdapter(), revisions: { enabled: true } }))
+      .rejects.toThrow(/never write a record's id/);
+    await expect(createDatafnServer({ schema: idSchema, database: memoryAdapter() })).resolves.toBeDefined();
+    const normal = { ...idSchema, relations: [{ ...idSchema.relations[0], fkField: "projectId" }] };
+    await expect(createDatafnServer({ schema: normal, database: memoryAdapter(), revisions: { enabled: true } })).resolves.toBeDefined();
   });
 });

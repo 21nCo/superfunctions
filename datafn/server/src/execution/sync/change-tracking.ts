@@ -404,8 +404,13 @@ export class ChangeTrackingService {
     const schema = this.revisionSchema;
     // A change row carrying a revision records the stored row of a resource
     // the schema issues revisions for.
-    await assignWriteRevisions(this.db, this.namespace, entries, (resource) =>
-      recordRev && schema !== undefined && issuesRevisions(schema, resource));
+    await assignWriteRevisions(
+      this.db,
+      this.namespace,
+      entries,
+      (resource) => recordRev && schema !== undefined && issuesRevisions(schema, resource),
+      schema,
+    );
   }
 
   /**

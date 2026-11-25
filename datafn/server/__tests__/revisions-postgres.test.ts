@@ -83,11 +83,16 @@ describe("DATA-41 revisions on PostgreSQL", { timeout: PG_TIMEOUT_MS }, () => {
     await adapter.rawSql!.execute(
       'CREATE TABLE "__datafn_changes" (id text primary key, namespace text, server_seq integer, resource text, record_id text, op text, record text, created_at text)',
     );
-    const service = new ChangeTrackingService(adapter, "ns");
+    // The recorded merge changed a present row (a write that changed no row
+    // raises no revision).
+    await adapter.rawSql!.execute(`CREATE TABLE "task" (id text primary key, title text)`);
+    await adapter.rawSql!.execute(`INSERT INTO "task" (id, title) VALUES ('task:1', 'a')`);
+    const db = kyselyAdapter({ db: kysely, dialect: "postgres", schema: { task: "task" } }) as Adapter;
+    const service = new ChangeTrackingService(db, "ns");
     service.useRevisionsOf(revisionSchema);
     await service.ensureReady();
     await service.ensureRevisionsReady();
-    await adapter.transaction(async (tx) => {
+    await db.transaction(async (tx) => {
       await service.withDb(tx as any, false).recordChanges([
         { serverSeq: 1, resource: "task", id: "task:1", op: "merge", record: { id: "task:1" } },
       ]);

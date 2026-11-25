@@ -545,7 +545,7 @@ export async function executePush(
           path: `record.${systemField}`,
         };
       }
-      if (recordIdMismatch(mut)) {
+      if (recordIdMismatch(schema, mut)) {
         return {
           ok: false,
           code: "DFQL_INVALID",

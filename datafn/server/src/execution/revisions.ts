@@ -13,6 +13,7 @@
 
 import { createHash } from "node:crypto";
 import type { Adapter } from "@superfunctions/db";
+import { getRelationFkFieldsForResource, resolveJoinStoreResources } from "@datafn/core";
 import type { DatafnSchema } from "../core-types.js";
 import { ensureInternalTable } from "./internal-tables.js";
 import { isKvResource } from "./mutation/kv-merge.js";
@@ -70,9 +71,30 @@ export function revisionsEnabled(schema: DatafnSchema): boolean {
   return configs.get(schema)?.enabled === true;
 }
 
-/** Records of data resources have revisions; join rows and internal tables do not. */
-export function tracksRevisions(resource: string): boolean {
-  return !resource.startsWith("join_") && !resource.startsWith("__datafn_");
+const joinStores = new WeakMap<object, Set<string>>();
+
+/** The change-log names of `schema`'s many-many join stores, from relation metadata. */
+function joinStoreNames(schema: DatafnSchema): Set<string> {
+  let names = joinStores.get(schema);
+  if (!names) {
+    names = new Set(resolveJoinStoreResources(schema.relations ?? []).keys());
+    joinStores.set(schema, names);
+  }
+  return names;
+}
+
+/**
+ * Records of data resources have revisions; join rows and internal tables do
+ * not. With the schema, join stores are recognized from its many-many
+ * relations, never by prefix, so a declared resource named `join_*` is a data
+ * resource (core joins.ts). Without one, only the base prefix rule applies.
+ */
+export function tracksRevisions(resource: string, schema?: DatafnSchema): boolean {
+  if (resource.startsWith("__datafn_")) return false;
+  if (!schema) return !resource.startsWith("join_");
+  if (joinStoreNames(schema).has(resource)) return false;
+  if (schema.resources.some((r) => r.name === resource)) return true;
+  return !resource.startsWith("join_");
 }
 
 /**
@@ -81,7 +103,7 @@ export function tracksRevisions(resource: string): boolean {
  * read as a revision.
  */
 export function issuesRevisions(schema: DatafnSchema, resource: string): boolean {
-  if (!revisionsEnabled(schema) || !tracksRevisions(resource)) return false;
+  if (!revisionsEnabled(schema) || !tracksRevisions(resource, schema)) return false;
   const def = schema.resources.find((r) => r.name === resource);
   if (!def) return false;
   return !(def.fields ?? []).some((field) => field.name === REVISION_FIELD);
@@ -93,12 +115,36 @@ export function issuesRevisions(schema: DatafnSchema, resource: string): boolean
  * the one whose revision the write raises, so such a write is rejected before
  * anything is written.
  */
-export function recordIdMismatch(mutation: { resource: string; id: unknown; record?: unknown }): boolean {
-  if (!tracksRevisions(mutation.resource)) return false;
+export function recordIdMismatch(
+  schema: DatafnSchema,
+  mutation: { resource: string; id: unknown; record?: unknown },
+): boolean {
+  if (!tracksRevisions(mutation.resource, schema)) return false;
   const record = mutation.record;
   if (typeof record !== "object" || record === null || !Object.prototype.hasOwnProperty.call(record, "id")) return false;
   const recordId = (record as Record<string, unknown>).id;
   return recordId !== undefined && recordId !== mutation.id;
+}
+
+/**
+ * DATA-41: names the first relation column of `schema` that is a record's
+ * primary key `id` (a foreign key, its resource discriminator, or a tree path
+ * column), or undefined. A relation write to such a column would move the
+ * record to another id while the revision is raised under the old one.
+ */
+export function relationWritingPrimaryKey(schema: DatafnSchema): string | undefined {
+  for (const resource of schema.resources) {
+    for (const fk of getRelationFkFieldsForResource(schema, resource.name)) {
+      if (fk.field === "id") return `the foreign key of ${resource.name}`;
+      if (fk.resourceField === "id") return `the foreign key resource field of ${resource.name}`;
+    }
+  }
+  for (const relation of schema.relations ?? []) {
+    if (relation.type === "htree" && (relation.pathField || "parentPath") === "id") {
+      return `the tree path field of ${String(relation.relation ?? relation.to)}`;
+    }
+  }
+  return undefined;
 }
 
 /** Fixed-length key of a record's revision row, like the v2 idempotency ids. */
@@ -213,6 +259,31 @@ export async function bumpTombstone(
       where: [{ field: "id", operator: "eq", value: recordId }],
       namespace,
     })) !== null);
+}
+
+/**
+ * DATA-41: raises the revision of a record a non-delete write changed, but
+ * only while the record row is present in the write's own view. Each attempt,
+ * every compare-and-swap retry included, checks before the swap. A write that
+ * matched no row (a relation or `setNull` update of a deleted record, or a
+ * merge, trash or archive that lost to a concurrent delete) raises nothing
+ * and returns undefined: an existing tombstone stays as it is, and the change
+ * row and result carry no revision. A writer that deletes the record after
+ * the revision read raises its tombstone, so the swap fails and the next
+ * attempt sees the record absent.
+ */
+export async function bumpPresent(
+  db: Adapter,
+  namespace: string,
+  resource: string,
+  recordId: string,
+): Promise<number | undefined> {
+  return raiseRevision(db, namespace, resource, recordId, false, async () =>
+    (await db.findOne({
+      model: resource,
+      where: [{ field: "id", operator: "eq", value: recordId }],
+      namespace,
+    })) === null);
 }
 
 function isTombstone(row: Record<string, unknown> | null): boolean {
@@ -552,6 +623,7 @@ export async function assignWriteRevisions(
   namespace: string,
   entries: ReadonlyArray<WriteEntry>,
   completeRow: (resource: string) => boolean,
+  schema?: DatafnSchema,
 ): Promise<void> {
   let write: WriteAssignment | undefined;
   for (const entry of entries) {
@@ -565,18 +637,24 @@ export async function assignWriteRevisions(
   }
   const last = new Map<string, WriteEntry>();
   for (const entry of write.entries) {
-    if (tracksRevisions(entry.resource)) last.set(JSON.stringify([entry.resource, entry.id]), entry);
+    if (tracksRevisions(entry.resource, schema)) last.set(JSON.stringify([entry.resource, entry.id]), entry);
   }
   for (const entry of last.values()) {
     if (write.finished.has(entry)) continue;
     const deleted = entry.op === "delete";
     if (!write.bumped.has(entry)) {
       // A delete whose record row is present again (re-inserted by a
-      // concurrent writer) raises no tombstone: its change row and result
-      // carry no revision.
+      // concurrent writer) raises no tombstone, and any other write whose
+      // record row is absent (it changed nothing) raises nothing: its change
+      // row and result carry no revision. The presence read is made where
+      // the revision can be returned (the resource issues revisions); with
+      // revisions off nothing returns it, and the write keeps the reads it
+      // makes without revisions.
       entry.rev = deleted
         ? await bumpTombstone(db, namespace, entry.resource, entry.id)
-        : await bumpRevision(db, namespace, entry.resource, entry.id, false);
+        : schema !== undefined && issuesRevisions(schema, entry.resource)
+          ? await bumpPresent(db, namespace, entry.resource, entry.id)
+          : await bumpRevision(db, namespace, entry.resource, entry.id, false);
       write.bumped.add(entry);
     }
     if (!deleted && completeRow(entry.resource) && (entry.op !== "merge" || isKvResource(entry.resource))) {
@@ -610,7 +688,10 @@ export function wireChange(
   pairable: boolean,
 ): { record: Record<string, unknown> | null; rev?: number } {
   const issuing = issuesRevisions(schema, resource);
-  const rev = change.rev !== undefined && issuing ? change.rev : undefined;
+  // A delete's revision names the record's absence, which only a delete that
+  // committed together with its revision establishes (pairable); without
+  // that, a delete change carries no revision.
+  const rev = change.rev !== undefined && issuing && (pairable || change.op !== "delete") ? change.rev : undefined;
   const revField = rev !== undefined ? { rev } : {};
   // On a resource that issues revisions, a `$rev` stored in a change's record
   // (an application value from before the resource dropped its own `$rev`
