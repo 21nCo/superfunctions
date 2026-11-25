@@ -1348,8 +1348,8 @@ function validateHostedCapabilities(
  * The token endpoint method a Client ID Metadata Document selects (draft,
  * section 5): RFC 7591's client_secret_basic default does not apply. When
  * token_endpoint_auth_methods_supported is present it must be a nonempty list
- * of strings, a declared method must be in it, and without a declared method
- * none is selected only if the list includes it. Undefined when the
+ * of strings that includes any declared method, and none is selected whenever
+ * the list offers it. Undefined when the
  * declarations are malformed or inconsistent.
  */
 function clientMetadataDocumentAuthMethod(record: Record<string, unknown>): string | undefined {
@@ -1365,10 +1365,12 @@ function clientMetadataDocumentAuthMethod(record: Record<string, unknown>): stri
   const declared = record.token_endpoint_auth_method;
   if (declared !== undefined && declared !== null) {
     if (typeof declared !== "string") return undefined;
-    return methods && !methods.includes(declared) ? undefined : declared;
+    if (methods && !methods.includes(declared)) return undefined;
   }
-  if (!methods || methods.includes("none")) return "none";
-  return methods[0];
+  // With a list, the server selects from it (none when offered); without one,
+  // the declared method, or none when it is omitted.
+  if (methods) return methods.includes("none") ? "none" : (declared as string | undefined) ?? methods[0];
+  return typeof declared === "string" ? declared : "none";
 }
 
 async function resolveClient(

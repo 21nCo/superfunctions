@@ -1364,6 +1364,56 @@ describe("unvetted-client authorization rejections", () => {
         expect(callback).toMatchObject({ status: "failed", error: INDETERMINATE });
       });
 
+      it("decides a metadata document that also offers none per resolution path", async () => {
+        const fixture = rejectionFixture(METADATA_DOCUMENT);
+        redirect(LOOPBACK, RUNTIME_PORT)(fixture);
+        Object.assign(fixture.registration.metadata, {
+          token_endpoint_auth_method: "private_key_jwt",
+          token_endpoint_auth_methods_supported: ["private_key_jwt", "none"],
+        });
+        fixture.expected.errorCode = "invalid_target";
+        // Stored with private_key_jwt and fetched with none: with both
+        // supported, both paths accept it.
+        const [callback] = await runHostedAuthorizationRegression(
+          { ...callbackTarget(), tokenEndpointAuthMethods: ["none", "private_key_jwt"] },
+          [fixture],
+        );
+        expect(callback).toMatchObject({ status: "passed", errorCode: "invalid_target" });
+        // Supporting only none, a stored client would be refused while the
+        // fetched document is accepted. The harness cannot tell which path
+        // answered, so even the real fetching handler's callback is
+        // indeterminate rather than passed.
+        const fetching = createMcpAuthorizationCompatibilityHandler({
+          issuer,
+          clients: { resolve: async () => null },
+          clientMetadataDocuments: {
+            enabled: true,
+            allow: async () => true,
+            fetch: async () => Response.json({
+              ...fixture.registration.metadata,
+              client_id: fixture.registration.clientId,
+            }),
+          },
+          capabilities: { tokenEndpointAuthMethods: ["none"] },
+          allowedResources: [resource],
+          supportedScopes: ["mcp:read"],
+          authorize: async () => new Response("unexpected authorize", { status: 500 }),
+          tokenAuthority: {
+            exchangeAuthorizationCode: async () => {
+              throw new Error("unexpected token exchange");
+            },
+          },
+        });
+        const [real] = await runHostedAuthorizationRegression({
+          issuer,
+          tokenEndpointAuthMethods: ["none"],
+          supportedScopes: ["mcp:read"],
+          prepareRegistration: async () => {},
+          request: (request) => fetching(request),
+        }, [fixture]);
+        expect(real).toMatchObject({ status: "failed", error: INDETERMINATE });
+      });
+
       it.each([
         ["a mismatched URI", "https://other.example.com/cb"],
         ["a matching runtime-port URI", RUNTIME_PORT],

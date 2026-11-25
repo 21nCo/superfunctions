@@ -1249,6 +1249,8 @@ describe("McpFn hosted authorization compatibility", () => {
     ["declares none, which its list includes", { token_endpoint_auth_method: "none", token_endpoint_auth_methods_supported: ["none"] }, 200],
     ["declares none, which its list leaves out", { token_endpoint_auth_method: "none", token_endpoint_auth_methods_supported: ["private_key_jwt"] }, 400],
     ["declares a non-string method", { token_endpoint_auth_method: ["none"] }, 400],
+    ["declares private_key_jwt but also offers none", { token_endpoint_auth_method: "private_key_jwt", token_endpoint_auth_methods_supported: ["private_key_jwt", "none"] }, 200],
+    ["declares private_key_jwt without a list", { token_endpoint_auth_method: "private_key_jwt" }, 400],
     ["lists a nested array", { token_endpoint_auth_methods_supported: [["none"]] }, 400],
     ["lists an object", { token_endpoint_auth_methods_supported: [{ toString: null }] }, 400],
     ["lists nothing", { token_endpoint_auth_methods_supported: [] }, 400],

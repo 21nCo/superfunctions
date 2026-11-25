@@ -809,8 +809,8 @@ function registrationEligibility(
 /**
  * The method a Client ID Metadata Document selects when the server fetches it
  * (draft, section 5): token_endpoint_auth_methods_supported, when present,
- * must be a nonempty list of strings that includes any declared method;
- * without a declared method, none only if the list includes it. Undefined
+ * must be a nonempty list of strings that includes any declared method, and
+ * none is selected whenever the list offers it. Undefined
  * when the declarations are malformed or inconsistent (refused).
  */
 function fetchedAuthMethod(
@@ -830,10 +830,12 @@ function fetchedAuthMethod(
   const declared = metadata.token_endpoint_auth_method;
   if (declared !== undefined && declared !== null) {
     if (typeof declared !== "string") return undefined;
-    return methods && !methods.includes(declared) ? undefined : declared;
+    if (methods && !methods.includes(declared)) return undefined;
   }
-  if (!methods || methods.includes("none")) return "none";
-  return methods[0];
+  // With a list, the server selects from it (none when offered); without one,
+  // the declared method, or none when it is omitted.
+  if (methods) return methods.includes("none") ? "none" : (declared as string | undefined) ?? methods[0];
+  return typeof declared === "string" ? declared : "none";
 }
 
 /**
@@ -860,6 +862,8 @@ function authMethodEligibility(
   registration: McpFnHostedRegistrationFixture,
   supported: readonly string[] | undefined,
 ): RegistrationEligibility {
+  // A stored client keeps its registered method; the harness cannot tell a
+  // stored from a fetched resolution, so the two paths must agree.
   const stored = !supported || supported.includes(client.tokenEndpointAuthMethod);
   if (client.source !== "client-metadata-document") return stored ? "eligible" : "ineligible";
   const fetched = fetchedDocumentAccepted(client, registration, supported);
