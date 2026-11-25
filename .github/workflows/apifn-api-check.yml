@@ -19,7 +19,7 @@ on:
       cli_version:
         description: Must match the @apifn/cli version pinned by this workflow revision; the default matches
         required: false
-        default: "0.0.2"
+        default: "0.1.2"
         type: string
       start_mock_server:
         description: Start apifn mock for workflow self-tests before running the collection
@@ -69,7 +69,7 @@ on:
       cli_version:
         description: Must match the @apifn/cli version pinned by this workflow revision; the default matches
         required: false
-        default: "0.0.2"
+        default: "0.1.2"
         type: string
       start_mock_server:
         description: Start apifn mock for workflow self-tests before running the collection

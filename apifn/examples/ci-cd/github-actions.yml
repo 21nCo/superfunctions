@@ -21,4 +21,4 @@ jobs:
       base_branch: main
       fail_on_breaking: true
       post_pr_comment: true
-      cli_version: "0.0.2"
+      cli_version: "0.1.2"
