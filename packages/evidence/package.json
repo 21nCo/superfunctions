@@ -1,6 +1,6 @@
 {
   "name": "@superfunctions/evidence",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Source-bound evidence records: the record format v1 JSON Schema, its types, a runtime-neutral validator and a Node verifier that re-hashes artifacts",
   "type": "module",
   "main": "./dist/index.js",
