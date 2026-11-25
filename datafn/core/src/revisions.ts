@@ -41,6 +41,7 @@ export function readRowRevision(row: unknown): number | undefined {
 /** A copy of `row` without its revision metadata. */
 export function withoutRowRevision<T extends Record<string, unknown>>(row: T): T {
   if (!(DATAFN_REVISION_FIELD in row)) return row;
-  const { [DATAFN_REVISION_FIELD]: _rev, ...rest } = row;
+  const rest: Record<string, unknown> = { ...row };
+  delete rest[DATAFN_REVISION_FIELD];
   return rest as T;
 }

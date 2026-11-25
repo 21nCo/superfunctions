@@ -8,6 +8,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createDatafnServer } from "../src/server.js";
 import { readRevisions } from "../src/execution/revisions.js";
 import { ChangeTrackingService } from "../src/execution/sync/change-tracking.js";
+import { INTERNAL_TABLE_SCHEMAS } from "../src/execution/internal-tables.js";
+import { resolveNamespaceStoragePlan } from "../src/namespace-storage.js";
 
 type Json = Record<string, any>;
 const NS = "datafn";
@@ -273,5 +275,30 @@ describe("DATA-41 revisions: wire format", () => {
     expect(clone.body.result.data.legacy[0].$rev).toBe("app-value");
     const pull = await send("pull", { clientId: "client:b", cursors: { legacy: "0" } });
     expect(pull.body.result.records.legacy[0].$rev).toBe("app-value");
+  });
+});
+
+describe("DATA-41 revisions: namespace storage", () => {
+  it("plans __datafn_revisions for copy, backup and cleanup, and accepts a change table without rev", () => {
+    const relation = (name: string, columns: string[]) => ({
+      name,
+      columns,
+      indexes: [{ columns: ["id"], unique: true, primary: true }],
+    });
+    const plan = resolveNamespaceStoragePlan({
+      schema: { resources: [] } as any,
+      catalog: {
+        dialect: "postgres",
+        relations: [
+          relation("__datafn_revisions", INTERNAL_TABLE_SCHEMAS.__datafn_revisions.map((c) => c.name)),
+          // Created before DATA-41: no rev column yet.
+          relation("__datafn_changes", ["id", "namespace", "server_seq", "resource", "record_id", "op", "record", "created_at"]),
+        ],
+      },
+    });
+    const entry = plan.entries.find((candidate) => candidate.relation === "__datafn_revisions");
+    expect(entry).toMatchObject({ logicalRole: "revisions", namespaceColumn: "namespace" });
+    expect(entry!.operations).toEqual(expect.arrayContaining(["copy", "backup", "cleanup"]));
+    expect(plan.entries.some((candidate) => candidate.relation === "__datafn_changes")).toBe(true);
   });
 });

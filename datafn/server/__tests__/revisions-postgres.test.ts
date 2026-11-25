@@ -40,6 +40,9 @@ let pg: PGlite;
 let kysely: Kysely<any>;
 let adapter: Adapter;
 
+// PGlite starts a Postgres engine per test; give it time under parallel load.
+const PG_TIMEOUT_MS = 60_000;
+
 beforeEach(() => {
   pg = new PGlite();
   kysely = new Kysely<any>({ dialect: new PostgresDialect({ pool: pgliteAsPool(pg) }) });
@@ -48,9 +51,9 @@ beforeEach(() => {
 
 afterEach(async () => {
   await kysely.destroy();
-});
+}, PG_TIMEOUT_MS);
 
-describe("DATA-41 revisions on PostgreSQL", () => {
+describe("DATA-41 revisions on PostgreSQL", { timeout: PG_TIMEOUT_MS }, () => {
   it("creates, bumps and tombstones a revision inside transactions", async () => {
     await ensureRevisionsTable(adapter);
     const first = await adapter.transaction(async (tx) => bumpRevision(tx as any, "ns", "task", "task:1", false));
