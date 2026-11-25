@@ -9,7 +9,7 @@ Two clients write to the same row before either has pushed. When their mutations
 
 ## Default: last-writer-wins (LWW)
 
-The default policy is **last writer by server timestamp**. When two mutations target the same row, the server applies them in `serverSeq` order — the later one wins, the earlier one is silently overwritten.
+The default policy is last successful write in server execution order (`serverSeq` when the write is sequenced). The server does not compare the client's `updatedAt`. It stamps its own `updatedAt` as it applies each write. When two unguarded updates both succeed, the later one in that order is what is stored, and both are acknowledged. Concurrent requests can finish in a different order from arrival.
 
 This is the right answer for:
 
@@ -34,7 +34,7 @@ await client.table("tasks").mutate({
 });
 ```
 
-The server evaluates the guard atomically with the write. If `updatedAt` has changed since `task` was loaded, the mutation fails with `CONFLICT`. The losing client is informed; the user can retry, merge, or discard.
+On `/datafn/mutation`, and on a mutation step inside `/datafn/transact`, the server evaluates `if` against the stored row. When the adapter supports transactions, the check and the write are one transaction. A mismatch is `CONFLICT` and the write is not applied. Atomic `transact` without transaction support returns `DFQL_UNSUPPORTED` before steps run. `/datafn/push` accepts `if` during validation and does not evaluate it, so a push write is not held back by a guard. The losing mutation client is informed; the user can retry, merge, or discard.
 
 Use guards for:
 

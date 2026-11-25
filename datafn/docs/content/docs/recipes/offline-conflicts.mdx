@@ -9,9 +9,9 @@ When two clients edit the same row offline and reconnect at different times, you
 
 ## Last-writer-wins (default)
 
-Most fields don't need conflict resolution. The default is **last-writer-wins by server timestamp**: when push delivers two competing edits, the one with the later `updatedAt` wins. The earlier edit is silently dropped.
+Most fields don't need conflict resolution. Successful unguarded writes apply in server execution order. The server stamps `updatedAt` when it applies a write. It does not compare the client's `updatedAt` or any other client clock. If two unguarded updates both succeed, the later one in that execution order is the stored value, and both writes are acknowledged. Concurrent requests can finish in an order that differs from the order they arrived.
 
-This is correct for status toggles, single-value fields, and any field where the meaningful state is "the most recent value the user intended".
+This is the right default for status toggles, single-value fields, and any field where the meaningful state is the value from the write the server applied last.
 
 No configuration needed.
 
@@ -30,7 +30,12 @@ await client.table("tasks").mutate({
 });
 ```
 
-The server checks the guard atomically with the write. If `updatedAt` has changed since `task` was loaded, the mutation fails with `CONFLICT`. Catch and prompt the user:
+Guard support depends on the endpoint:
+
+- **Mutation** (`/datafn/mutation` and a mutation step inside `/datafn/transact`): the server evaluates `if` against the stored row. When the adapter supports transactions, that check and the write run in one transaction. A mismatch returns `CONFLICT` and does not apply the write. An atomic `transact` on an adapter that does not support transactions is rejected with `DFQL_UNSUPPORTED` before any step runs.
+- **Push** (`/datafn/push`): validation accepts `if`, but the push executor does not evaluate it. An unguarded or guarded push write is applied in server execution order. Enforcing push guards needs a separate design; this recipe does not promise it.
+
+On the mutation endpoint, if `updatedAt` has changed since `task` was loaded, the mutation fails with `CONFLICT`. Catch and prompt the user:
 
 ```typescript
 const env = await client.table("tasks").mutate({ /* …with guard… */ });
