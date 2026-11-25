@@ -1020,7 +1020,9 @@ export class McpFnServer<TContext = undefined> {
     // Evicted or expired sessions still closing keep their capacity until
     // closed, and so do admitted sessions whose initialization is finishing.
     const closingSessions = new Set<Session>();
-    const reservedSessions = new Set<Session>();
+    // Reservations of initializations not yet accepted, each with the idle
+    // session (if any) that will be evicted to make room for it.
+    const reservations = new Map<Session, Session | undefined>();
     // Sessions chosen to make room for an initialization that is not yet
     // accepted. They stay live until the new session is accepted.
     const doomed = new Set<Session>();
@@ -1055,46 +1057,43 @@ export class McpFnServer<TContext = undefined> {
         .map(([id, session]) => takeSession(id, session));
     };
     // Reserve room for one new session in a single synchronous step, so
-    // concurrent initializations cannot exceed the limits. The sessions that
-    // will make room are only marked: they stay live (and charged) until the
-    // new session is accepted, and evicted sessions stay charged as closing
-    // until their transports close. Returns the marked sessions, or the
-    // refusal when every candidate is busy.
-    const reserve = (session: Session): Session[] | Response => {
-      const victims: Session[] = [];
-      // A session marked to make room for another reservation already has
-      // its slot paired with that reservation, so the global count skips it.
-      // A principal's count keeps it until it is actually evicted.
-      const count = (match: (candidate: Session) => boolean, pairedFree: boolean) => {
+    // concurrent initializations cannot exceed the limits. A reservation may
+    // pair with one idle session that makes room for it: that session is
+    // only marked, stays live until the new session is accepted, and its
+    // slot is counted once (by the reservation). Evicted sessions stay
+    // charged as closing until their transports close. Returns the paired
+    // victim (if any), or the refusal when no idle session can make room.
+    const reserve = (session: Session): { victim?: Session } | Response => {
+      const inBucket = (bucket: string | symbol) => (candidate: Session) => candidate.bucket === bucket;
+      const everyone = () => true;
+      // Live, closing and reserved sessions, less one for each reservation
+      // whose paired victim is counted in the same scope.
+      const count = (match: (candidate: Session) => boolean) => {
         let total = 0;
-        for (const candidate of sessions.values()) {
-          if (!match(candidate) || victims.includes(candidate)) continue;
-          if (pairedFree && doomed.has(candidate)) continue;
-          total += 1;
-        }
+        for (const candidate of sessions.values()) if (match(candidate)) total += 1;
         for (const candidate of closingSessions) if (match(candidate)) total += 1;
-        for (const candidate of reservedSessions) if (match(candidate)) total += 1;
+        for (const [reserved, paired] of reservations) {
+          if (match(reserved)) total += 1;
+          if (paired && match(paired) && match(reserved)) total -= 1;
+        }
         return total;
       };
-      const refuse = (response: Response) => {
-        for (const victim of victims) doomed.delete(victim);
-        return response;
-      };
-      const choose = (bucket?: string | symbol) => {
-        const entry = leastRecentlyUsedIdle(bucket);
-        if (!entry) return false;
-        victims.push(entry[1]);
-        doomed.add(entry[1]);
-        return true;
-      };
-      while (count((candidate) => candidate.bucket === session.bucket, false) >= maxPerPrincipal) {
-        if (!choose(session.bucket)) return refuse(jsonRpcErrorResponse(429, -32000, "Too many sessions for this principal"));
+      let victim: Session | undefined;
+      if (count(inBucket(session.bucket)) >= maxPerPrincipal) {
+        victim = leastRecentlyUsedIdle(session.bucket)?.[1];
+        if (!victim || count(inBucket(session.bucket)) - 1 >= maxPerPrincipal) {
+          return jsonRpcErrorResponse(429, -32000, "Too many sessions for this principal");
+        }
       }
-      while (count(() => true, true) >= maxSessions) {
-        if (!choose()) return refuse(jsonRpcErrorResponse(503, -32000, "Too many sessions"));
+      if (count(everyone) - (victim ? 1 : 0) >= maxSessions) {
+        if (!victim) victim = leastRecentlyUsedIdle()?.[1];
+        if (!victim || count(everyone) - 1 >= maxSessions) {
+          return jsonRpcErrorResponse(503, -32000, "Too many sessions");
+        }
       }
-      reservedSessions.add(session);
-      return victims;
+      if (victim) doomed.add(victim);
+      reservations.set(session, victim);
+      return { victim };
     };
 
     return async (request: Request, handleOptions?: HandleRequestOptions) => {
@@ -1179,37 +1178,41 @@ export class McpFnServer<TContext = undefined> {
             active: 1,
             close,
           };
-          const victims = reserve(session);
-          if (victims instanceof Response) {
-            refusal = victims;
+          const reserved = reserve(session);
+          if (reserved instanceof Response) {
+            refusal = reserved;
             throw new Error("Session capacity reached");
           }
+          const victim = reserved.victim;
           try {
             try {
               await transportOptions.onsessioninitialized?.(id);
             } finally {
-              for (const victim of victims) doomed.delete(victim);
+              if (victim) doomed.delete(victim);
             }
-            // A marked session that got busy meanwhile can no longer make
-            // room: refuse the new one rather than cut a request off.
-            if (victims.some((victim) => busy(victim))) {
+            // The host accepted the session; from here an abandoned
+            // initialization must run its onsessionclosed.
+            const abandon = async (response?: Response) => {
               try {
                 await transportOptions.onsessionclosed?.(id);
               } catch {
-                // The new session never went live; its cleanup is best effort.
+                // The session never went live; its cleanup is best effort.
               }
-              refusal = jsonRpcErrorResponse(503, -32000, "Too many sessions");
-              throw new Error("Session capacity reached");
+              if (response) refusal = response;
+              throw new Error("Session not published");
+            };
+            // A marked session that got busy meanwhile can no longer make
+            // room: refuse the new one rather than cut a request off.
+            if (victim && busy(victim)) await abandon(jsonRpcErrorResponse(503, -32000, "Too many sessions"));
+            // Evict, and let the victim finish closing before going live.
+            if (victim && sessions.get(victim.transport.sessionId!) === victim) {
+              await closeQuietly([takeSession(victim.transport.sessionId!, victim)]);
             }
-            // Evict, and let the victims finish closing before going live.
-            await closeQuietly(victims
-              .filter((victim) => sessions.get(victim.transport.sessionId!) === victim)
-              .map((victim) => takeSession(victim.transport.sessionId!, victim)));
+            // The parent was closed meanwhile: do not publish.
+            if (!this.requestServers.has(requestServer)) await abandon();
           } finally {
-            reservedSessions.delete(session);
+            reservations.delete(session);
           }
-          // The parent was closed meanwhile: do not publish.
-          if (!this.requestServers.has(requestServer)) throw new Error("Server closed");
           // Published, and reachable by broadcasts, only once accepted.
           initialized = session;
           sessions.set(id, session);

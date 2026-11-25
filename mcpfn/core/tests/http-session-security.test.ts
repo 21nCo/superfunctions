@@ -275,6 +275,48 @@ describe("createWebStandardHandler session limits (MCP-SEC-04)", () => {
     if (result.sessionId) expect((await call(result.sessionId)).status).toBe(404);
   });
 
+  it("never lets concurrent replacements exceed maxSessions", async () => {
+    let hold: Promise<void> | undefined;
+    const { initialize, call } = await setup({
+      maxSessions: 3,
+      maxSessionsPerPrincipal: 3,
+      onsessioninitialized: () => hold,
+    });
+    const existing = [await initialize(authInfo("alice")), await initialize(authInfo("alice")), await initialize(authInfo("alice"))];
+    let open!: () => void;
+    hold = new Promise((resolve) => { open = resolve; });
+    const replacements = [initialize(authInfo("alice")), initialize(authInfo("alice"))];
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    hold = undefined;
+    const other = await initialize(authInfo("bob"));
+    open();
+    const results = [...await Promise.all(replacements), other];
+    let alive = 0;
+    for (const { sessionId } of existing) if ((await call(sessionId!, authInfo("alice"))).status === 200) alive += 1;
+    for (const result of results) {
+      if (result.status !== 200) continue;
+      const owner = result === other ? "bob" : "alice";
+      if ((await call(result.sessionId!, authInfo(owner))).status === 200) alive += 1;
+    }
+    expect(alive).toBeLessThanOrEqual(3);
+  });
+
+  it("runs onsessionclosed when shutdown stops an accepted initialization", async () => {
+    let open!: () => void;
+    const hold = new Promise<void>((resolve) => { open = resolve; });
+    const closed: string[] = [];
+    const { initialize, server } = await setup({
+      onsessioninitialized: () => hold,
+      onsessionclosed: (id) => { closed.push(id); },
+    });
+    const pending = initialize();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    await server.close();
+    open();
+    await pending;
+    expect(closed).toEqual(["session-1"]);
+  });
+
   it("lets sessions without a principal share one per-principal allowance", async () => {
     const { initialize, call } = await setup({ maxSessionsPerPrincipal: 2 });
     const first = await initialize();
