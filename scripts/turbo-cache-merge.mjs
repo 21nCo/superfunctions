@@ -306,8 +306,10 @@ function stepTaint(step, previous, archived) {
   } catch (error) {
     return { reason: error.message, drift: [] };
   }
+  // A file now absent from the snapshot (back to HEAD, or an untracked file removed) is never proven restored.
+  const archivedNow = (hash, file) => step.snapshot[file] !== undefined && archived(hash, file) === step.snapshot[file];
   const restored = (file) =>
-    ran(file) || replayed.some(({ hash, declares }) => declares(file) && archived(hash, file) === step.snapshot[file]);
+    ran(file) || replayed.some(({ hash, declares }) => declares(file) && archivedNow(hash, file));
   const files = new Set([...Object.keys(previous), ...Object.keys(step.snapshot)]);
   const drift = [...files].filter((file) => previous[file] !== step.snapshot[file] && !restored(file));
   if (drift.length === 0) return null;

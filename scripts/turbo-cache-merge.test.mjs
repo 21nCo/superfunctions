@@ -14,7 +14,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { zstdCompressSync } from "node:zlib";
+import * as zlib from "node:zlib";
 
 import {
   archivedContents,
@@ -311,6 +311,9 @@ test("only files a task the step ran declares as an output are not drift", () =>
   for (const contents of [rewritten, {}]) {
     assert.deepEqual([...taintedEntries(restoring, files(BUILD, NEW), archive(contents)).tainted], [NEW]);
   }
+  // A declared file that went back to HEAD is not proven restored by an archive that lacks it.
+  const reverted = [baseline(files(BUILD), snapshot), step("build", files(BUILD, NEW), {}, [restoredBuild, fresh])];
+  assert.deepEqual([...taintedEntries(reverted, files(BUILD, NEW), archive({})).tainted], [NEW]);
   // A file the build declares, written while the build ran in this step, is not drift.
   const ranAgain = [baseline(), built, step("typecheck", files(BUILD, TYPECHECK), rewritten, [buildTask, typecheck])];
   assert.deepEqual([...taintedEntries(ranAgain, files(BUILD, TYPECHECK)).tainted], []);
@@ -410,12 +413,14 @@ test("a cache archive's files hash as the drift snapshot hashes the same files, 
 
   const { cacheDir } = freshDirs();
   mkdirSync(cacheDir);
-  writeFileSync(path.join(cacheDir, `${BUILD}.tar.zst`), zstdCompressSync(tar));
+  // zstd is in node:zlib from Node 22.15; without it no archive is readable, so a replay proves nothing (fail closed).
+  const zstd = typeof zlib.zstdCompressSync === "function";
+  writeFileSync(path.join(cacheDir, `${BUILD}.tar.zst`), zstd ? zlib.zstdCompressSync(tar) : tar);
   writeFileSync(path.join(cacheDir, `${NEW}.tar.zst`), "not zstd");
   const archived = archiveReader(cacheDir);
-  assert.equal(archived(BUILD, "pkg/generated.txt"), snapshot["pkg/generated.txt"]);
+  assert.equal(archived(BUILD, "pkg/generated.txt"), zstd ? snapshot["pkg/generated.txt"] : undefined);
   rmSync(path.join(cacheDir, `${BUILD}.tar.zst`));
-  assert.equal(archived(BUILD, long), snapshot[long], "an archive is read once");
+  assert.equal(archived(BUILD, long), zstd ? snapshot[long] : undefined, "an archive is read once");
   assert.equal(archived(NEW, "pkg/generated.txt"), undefined, "an unreadable archive restores nothing");
   assert.equal(archived(KEPT, "pkg/generated.txt"), undefined, "a missing archive restores nothing");
 });
