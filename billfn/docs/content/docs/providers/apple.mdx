@@ -32,7 +32,7 @@ const apple = createAppleProvider({
 
 With `bundleId` and `appStoreServerApiKey`, the adapter signs its own App Store Server API tokens (ES256, reused until shortly before they expire) and verifies App Store Server Notifications itself. Both run on WebCrypto, so they work on Workers. `environment` defaults to `"production"`.
 
-StoreKit reads and Advanced Commerce calls have 30 seconds to receive the response and read its body. A StoreKit read that misses the deadline returns a retryable provider error. BillFn reports an Advanced Commerce rejection even if the response body stalls. HTTP 200 from Apple's cancellation endpoint confirms that auto-renew is off, so BillFn reports the cancellation as applied even when the body stalls. BillFn queues or attempts a StoreKit sync to refresh the stored state. If that fails, the next signed StoreKit notification or sync can still update it. A mutation timeout before the status, or a timeout reading a successful revocation's body, returns a non-retryable provider error because Apple may already have acted.
+StoreKit reads and Advanced Commerce calls have 30 seconds to receive the response and read its body. A StoreKit read that misses the deadline returns a retryable provider error. BillFn reports an Advanced Commerce rejection even if the response body stalls. HTTP 200 from Apple's cancellation endpoint confirms that auto-renew is off, so BillFn reports the cancellation as applied even when the body stalls. The next signed StoreKit notification or sync updates the stored subscription state. A mutation timeout before the status, or a timeout reading a successful revocation's body, returns a non-retryable provider error because Apple may already have acted.
 
 ## Sandbox Purchases
 
