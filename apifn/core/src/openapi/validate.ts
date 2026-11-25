@@ -1,5 +1,494 @@
 import SwaggerParser from "@apidevtools/swagger-parser";
+import { isAlias, isPair, isScalar, parseDocument, visit } from "yaml";
 import type { OpenAPIDocument, ValidationError } from "../types.js";
+import { openAPIReferenceContext, type OpenAPIReferenceMode } from "./reference-context.js";
+
+export interface OpenAPIValidationOptions {
+  /**
+   * Preloaded JSON or YAML for external documents, keyed by the resolved URI or
+   * absolute file path, without a fragment. Escape literal `%`, `?`, and `\\`
+   * within path segments as `%25`, `%3F`, and `%5C`. Within preloaded documents, use slash-delimited
+   * `#/` pointers. Validation never reads files or URLs.
+   */
+  externalReferences?: ReadonlyMap<string, string>;
+}
+
+const EXTERNAL_REF_ERROR = "External OpenAPI $ref requires an explicit allowlist entry";
+
+function referenceChildMode(
+  parent: object, mode: OpenAPIReferenceMode, key: string, child: unknown
+): OpenAPIReferenceMode {
+  const { childMode, entryMode, arrayItemMode } = openAPIReferenceContext;
+  if (Array.isArray(parent)) return arrayItemMode(mode);
+  if (mode === "literal" || mode === "example") return "literal";
+  return entryMode(mode, key, child) ?? childMode(key, child);
+}
+
+interface ReferenceDocument {
+  value: unknown;
+  location: DocumentLocation;
+}
+
+interface DocumentLocation {
+  url: URL;
+  isPath: boolean;
+  isWindowsPath: boolean;
+  shareRoot?: string;
+}
+
+interface ReferenceTarget {
+  value: unknown;
+  mode: OpenAPIReferenceMode;
+  source: ReferenceDocument;
+  path?: ReferencePath;
+  importSite?: ReferenceSite;
+}
+
+interface PreparedReferenceTarget extends ReferenceTarget {
+  value: object;
+  copy: object;
+}
+
+interface PointerLookup {
+  tokens: string[];
+  target: ReferenceTarget | "reference" | undefined;
+  throughLiteralAlias?: boolean;
+}
+
+interface ReferenceCopies {
+  field: string;
+  targets: unknown[];
+  originals: Map<string, string>;
+}
+
+interface ReferencePath {
+  key: string;
+  parent?: ReferencePath;
+}
+
+interface ReferenceSite {
+  path?: ReferencePath;
+}
+
+interface PointerOptions {
+  aliases?: Set<object>;
+  directAlias?: object;
+  importSite?: ReferenceSite;
+}
+
+class ReferencePreparationError extends Error {
+  readonly path: string;
+
+  constructor(site: ReferencePath | undefined, cause: unknown) {
+    super(cause instanceof Error ? cause.message : "OpenAPI ref could not be prepared", { cause });
+    this.path = [...pathKeys(site), "$ref"].join(".");
+  }
+}
+
+function pathKeys(path?: ReferencePath): string[] {
+  const segments: string[] = [];
+  for (let cursor = path; cursor; cursor = cursor.parent) segments.push(cursor.key);
+  return segments.reverse();
+}
+
+function parsePreloadedDocument(contents: string): unknown {
+  const parsed = parseDocument(contents);
+  if (parsed.errors.length) throw new Error(parsed.errors[0].message);
+  const mergeTag = "tag:yaml.org,2002:merge";
+  const implicitMerge = parsed.schema.tags.some((tag) => tag.tag === mergeTag && tag.default);
+  let hasAliases = false;
+  let sourceNodes = 0;
+  visit(parsed, (_key, node) => {
+    sourceNodes += 1;
+    hasAliases ||= isAlias(node);
+    if (isPair(node) && isScalar(node.key)) {
+      const { tag, type, value } = node.key;
+      const mergeKey = value === "<<" || (typeof value === "symbol" && value.description === "<<");
+      if (tag === mergeTag || (implicitMerge && (!type || type === "PLAIN") && mergeKey)) {
+        throw new Error("YAML merge keys are unsupported in preloaded OpenAPI documents");
+      }
+    }
+  });
+  // The parser retains alias identity. Check the expanded graph size below,
+  // since the parser's anchor-count estimate can reject small nested graphs.
+  const value = parsed.toJS({ maxAliasCount: -1 });
+  if (!hasAliases) return value;
+
+  // Bound the expanded size before passing the graph to a tree-walking validator.
+  // Count empty collections as nodes and treat a cycle as larger than the budget.
+  const limit = sourceNodes * 100;
+  const weights = new WeakMap<object, number>();
+  function count(node: unknown): number {
+    if (typeof node !== "object" || node === null) return 1;
+    const cached = weights.get(node);
+    if (cached !== undefined) return cached;
+    weights.set(node, limit + 1);
+    let size = 1;
+    for (const child of Object.values(node)) {
+      size += count(child);
+      if (size > limit) throw new Error("Excessive YAML alias expansion in preloaded OpenAPI document");
+    }
+    weights.set(node, size);
+    return size;
+  }
+  count(value);
+  return value;
+}
+
+function decodeFragment(fragment: string): string {
+  try {
+    return decodeURIComponent(fragment);
+  } catch {
+    return fragment;
+  }
+}
+
+function unescapePointerToken(token: string): string {
+  return token.replaceAll("~1", "/").replaceAll("~0", "~");
+}
+
+function encodePointer(tokens: string[]): string {
+  return "#" + tokens.map((token) =>
+    "/" + encodeURIComponent(token.replaceAll("~", "~0").replaceAll("/", "~1"))
+  ).join("");
+}
+
+function pointerMember(parent: object, tokens: string[], index: number): { key: string; index: number } | undefined {
+  const key = tokens[index];
+  if (!Object.hasOwn(parent, key) || Reflect.get(parent, key) === undefined ||
+      (index === tokens.length - 1 && Reflect.get(parent, key) === null)) {
+    for (let end = tokens.length; end > index + 1; end -= 1) {
+      const joined = tokens.slice(index, end).join("/");
+      if (Object.hasOwn(parent, joined) && Reflect.get(parent, joined) !== undefined) {
+        return { key: joined, index: end - 1 };
+      }
+    }
+  }
+  return Object.hasOwn(parent, key) ? { key, index } : undefined;
+}
+
+const LOCAL_PATH_ORIGIN = "https://apifn-local-path.invalid";
+const WINDOWS_DRIVE_PATH = /^[a-z]:[\\/]/i;
+const WINDOWS_SHARE_PATH = /^\\\\([^\\/]+)[\\/]([^\\/]+)(?:[\\/]|$)/;
+
+function workingDirectoryLocation(): DocumentLocation {
+  const cwd = typeof process !== "undefined" && process.cwd ? process.cwd() : "/";
+  const share = WINDOWS_SHARE_PATH.exec(cwd);
+  // Use the URL's drive root to keep relative paths within the network share.
+  // The real share prefix is restored when forming the allowlist keys.
+  const windowsPath = share ? "C:\\" + cwd.slice(share[0].length) : cwd;
+  const isWindowsPath = WINDOWS_DRIVE_PATH.test(windowsPath);
+  if (isWindowsPath) {
+    const [drive, ...segments] = windowsPath.replaceAll("\\", "/").split("/");
+    const directory = segments.map(encodeURIComponent).join("/").replace(/\/$/, "");
+    const url = new URL("file:///" + drive + "/" + (directory ? directory + "/" : ""));
+    const shareRoot = share
+      ? absolutePathKey("//" + [share[1], share[2]].map(encodeURIComponent).join("/"))
+      : undefined;
+    return { url, isPath: true, isWindowsPath, shareRoot };
+  }
+  const path = (cwd.startsWith("/") ? cwd : "/" + cwd).replace(/\/$/, "") + "/";
+  const url = new URL(LOCAL_PATH_ORIGIN);
+  url.pathname = path.split("/").map(encodeURIComponent).join("/");
+  return { url, isPath: true, isWindowsPath };
+}
+
+function absolutePathKey(pathname: string): string {
+  // Decode filesystem names without letting a segment become a path separator
+  // or a query. Escape percent signs so literal "%3F" and "?" cannot collide.
+  return pathname.split("/").map((segment) =>
+    decodeURIComponent(segment).replaceAll("%", "%25").replaceAll("?", "%3F").replaceAll("/", "%2F").replaceAll("\\", "%5C")
+  ).join("/");
+}
+
+function resolveDocumentURI(base: DocumentLocation, ref: string) {
+  const pathEnd = ref.search(/[?#]/);
+  const refPath = pathEnd < 0 ? ref : ref.slice(0, pathEnd);
+  const normalized = refPath.replaceAll("\\", "/") + ref.slice(refPath.length);
+  const windowsDrive = WINDOWS_DRIVE_PATH.test(normalized);
+  const share = WINDOWS_SHARE_PATH.exec(refPath);
+  const windowsPath = share ? "C:/" + normalized.slice(share[0].length) : normalized;
+  const isAbsoluteWindowsPath = windowsDrive || share !== null;
+  const url = isAbsoluteWindowsPath ? new URL("file:///" + windowsPath) : new URL(normalized, base.url);
+  const absolute = /^(?:[a-z][a-z0-9+.-]*:|\/\/)/i.test(normalized.trimStart());
+  const fragment = url.hash.slice(1);
+  url.hash = "";
+  const isPath = isAbsoluteWindowsPath || (base.isPath && !absolute && url.origin === base.url.origin);
+  const queryStart = url.href.indexOf("?");
+  const query = queryStart < 0 ? "" : url.href.slice(queryStart);
+  const pathname = isPath ? absolutePathKey(url.pathname) : undefined;
+  const uri = pathname === undefined ? url.href : pathname + query;
+  const pathWithoutLeadingSlash = pathname?.slice(1);
+  const drivePath = pathWithoutLeadingSlash !== undefined && (isAbsoluteWindowsPath || base.isWindowsPath) &&
+    WINDOWS_DRIVE_PATH.test(pathWithoutLeadingSlash) ? pathWithoutLeadingSlash : undefined;
+  const shareRoot = share
+    ? absolutePathKey("//" + share[1] + "/" + share[2])
+    : drivePath !== undefined && !windowsDrive ? base.shareRoot : undefined;
+  const resolvedPath = shareRoot && drivePath ? shareRoot + drivePath.slice(2) : drivePath;
+  const keys = resolvedPath === undefined
+    ? [uri]
+    : [resolvedPath + query, resolvedPath.replaceAll("/", "\\") + query];
+  return { uri: keys[0], fragment, keys, location: { url, isPath, isWindowsPath: drivePath !== undefined, shareRoot } };
+}
+
+const EXAMPLE_FIELDS = new Set(["value", "externalValue", "summary", "description"]);
+
+function isStandaloneExample(value: unknown): boolean {
+  return typeof value === "object" && value !== null && !Array.isArray(value) &&
+    (Object.hasOwn(value, "value") || Object.hasOwn(value, "externalValue")) &&
+    Object.keys(value).every((key) => EXAMPLE_FIELDS.has(key) || key.startsWith("x-"));
+}
+
+function restoreReferenceCopies(document: object, { field, targets, originals }: ReferenceCopies): void {
+  if (!originals.size) return;
+  const seen = new WeakSet<object>();
+  const pending: unknown[] = [document];
+  while (pending.length) {
+    const value = pending.pop();
+    if (typeof value !== "object" || value === null || seen.has(value)) continue;
+    seen.add(value);
+    // A reference to the root with sibling fields can copy the temporary slot.
+    if (Reflect.get(value, field) === targets) Reflect.deleteProperty(value, field);
+    if ("$ref" in value && typeof value.$ref === "string") {
+      const original = originals.get(value.$ref);
+      if (original !== undefined) value.$ref = original;
+    }
+    for (const child of Object.values(value)) pending.push(child);
+  }
+}
+
+function prepareReferences(document: OpenAPIDocument, externalReferences?: ReadonlyMap<string, string>) {
+  const root: ReferenceDocument = { value: document, location: workingDirectoryLocation() };
+  const supplied = new Map<string, ReferenceDocument>();
+  const literalReferences = new Map<object, string>();
+  const seen = new WeakMap<object, Map<OpenAPIReferenceMode, object>>();
+  const pending: PreparedReferenceTarget[] = [];
+  let field = "x-apifn-reference-copies";
+  while (Object.hasOwn(document, field)) field += "-";
+  const referenceCopies: ReferenceCopies = { field, targets: [], originals: new Map() };
+  const copiedPointers = new Map<ReferenceDocument, Map<string, string>>();
+  const aliasTargets = new WeakMap<object, ReferenceTarget>();
+
+  function errorAtReference(site: ReferencePath | undefined, error: unknown): ReferencePreparationError {
+    if (error instanceof ReferencePreparationError) return error;
+    return new ReferencePreparationError(site, error);
+  }
+
+  function enqueue(target: ReferenceTarget): unknown {
+    const { value, mode } = target;
+    if (typeof value !== "object" || value === null) return value;
+    const contexts = seen.get(value) ?? new Map<OpenAPIReferenceMode, object>();
+    const existing = contexts.get(mode);
+    if (existing) return existing;
+
+    // YAML aliases can share a value between a schema and literal example data.
+    const prototype = Object.getPrototypeOf(value);
+    const copy = Array.isArray(value) ? [...value]
+      : prototype === Object.prototype || prototype === null ? { ...value } : value;
+    contexts.set(mode, copy);
+    seen.set(value, contexts);
+    pending.push({ ...target, value, copy });
+    return copy;
+  }
+
+  function location(source: ReferenceDocument, ref: string): { source: ReferenceDocument; fragment: string } {
+    if (ref.startsWith("#") || (source !== root && ref === "")) return { source, fragment: ref.slice(1) };
+    if (!externalReferences?.size) throw new Error(EXTERNAL_REF_ERROR);
+
+    const { uri: key, fragment, keys, location: targetLocation } = resolveDocumentURI(source.location, ref);
+    let external = supplied.get(key);
+    if (!external) {
+      const contents = keys.map((candidate) => externalReferences.get(candidate)).find((value) => value !== undefined);
+      if (contents === undefined) throw new Error(EXTERNAL_REF_ERROR);
+      external = { value: parsePreloadedDocument(contents), location: targetLocation };
+      supplied.set(key, external);
+    }
+    return { source: external, fragment };
+  }
+
+  function pointerTarget(
+    source: ReferenceDocument, tokens: string[],
+    { aliases = new Set<object>(), directAlias, importSite: outerSite }: PointerOptions
+  ): PointerLookup {
+    let value = source.value;
+    let mode: OpenAPIReferenceMode = "node";
+    let path: ReferencePath | undefined;
+    let importSite: ReferenceSite | undefined;
+    let throughLiteralAlias = false;
+    const matched: string[] = [];
+    const unresolved = (index: number, target?: "reference"): PointerLookup =>
+      ({ tokens: [...matched, ...tokens.slice(index)], target });
+    for (let index = 0; index < tokens.length; index += 1) {
+      // Follow aliases before looking up remaining tokens, keeping siblings
+      // that Swagger Parser gives precedence over the referenced object.
+      const chain = new Set(aliases);
+      const overrides = new Map<string, ReferenceTarget>();
+      while (typeof value === "object" && value !== null &&
+          "$ref" in value && typeof value.$ref === "string" && (value.$ref || source !== root)) {
+        if (mode === "literal") {
+          // An explicit pointer can traverse a local alias used as a schema.
+          // Prefer real data fields and leave unused literal refs untouched.
+          if (source !== root || !value.$ref.startsWith("#") || pointerMember(value, tokens, index)) break;
+          throughLiteralAlias = true;
+        }
+        // An alias already being resolved can still supply its own fields.
+        // Following that alias again to find an inherited field is a cycle.
+        if (chain.has(value)) {
+          if (value === directAlias || Object.hasOwn(value, tokens[index])) break;
+          throw new Error("Circular OpenAPI $ref aliases cannot be traversed");
+        }
+        chain.add(value);
+        let target = aliasTargets.get(value);
+        if (!target) {
+          const site = source === root ? { path } : importSite ?? outerSite;
+          let lookup: PointerLookup;
+          try {
+            const alias = location(source, value.$ref);
+            lookup = lookupPointer(alias.source, alias.fragment, { aliases: chain, directAlias: value, importSite: site });
+          } catch (error) {
+            throw errorAtReference(site?.path, error);
+          }
+          if (!lookup.target || lookup.target === "reference") return unresolved(index, "reference");
+          target = lookup.target;
+          // Both pointer spellings can reach this same alias.
+          aliasTargets.set(value, target);
+        }
+        if (target.value === value) break;
+        for (const [key, sibling] of Object.entries(value)) {
+          if (key !== "$ref" && !overrides.has(key)) {
+            overrides.set(key, { value: sibling, mode: referenceChildMode(value, mode, key, sibling), source, path, importSite });
+          }
+        }
+        // A generic alias inherits the target's context. Literal values can
+        // also be selected by a schema pointer, so retain that caller context.
+        if ((mode === "node" || mode === "literal") && target.mode !== "literal") mode = target.mode;
+        const aliasSite = source === root ? { path } : importSite;
+        source = target.source;
+        importSite = source === root ? undefined : target.importSite ?? aliasSite;
+        path = target.path;
+        value = target.value;
+      }
+      if (typeof value !== "object" || value === null) return unresolved(index);
+      const parent = overrides.size
+        ? { ...value, ...Object.fromEntries([...overrides].map(([key, entry]) => [key, entry.value])) }
+        : value;
+      // A preloaded value can be a standalone Example Object outside the
+      // OpenAPI examples maps that normally establish its context.
+      if (source !== root && mode === "node" && isStandaloneExample(parent)) mode = "example";
+      const member = pointerMember(parent, tokens, index);
+      if (!member) {
+        if (value === root.value && tokens[index] === field) throw new Error("OpenAPI $ref target does not exist");
+        return unresolved(index);
+      }
+      const { key } = member;
+      index = member.index;
+      matched.push(key);
+      const child: unknown = Reflect.get(parent, key);
+      const sibling = overrides.get(key);
+      if (sibling) {
+        source = sibling.source;
+        importSite = sibling.importSite;
+      }
+      path = { key, parent: sibling ? sibling.path : path };
+      mode = sibling?.mode ?? referenceChildMode(parent, mode, key, child);
+      value = child;
+    }
+    return { tokens: matched, target: { value, mode, source, path, importSite }, throughLiteralAlias };
+  }
+
+  function lookupPointer(
+    source: ReferenceDocument, fragment: string, options: PointerOptions = {}
+  ): PointerLookup {
+    if (fragment === "") return { tokens: [], target: { value: source.value, mode: "node", source } };
+    if (fragment.startsWith("/")) {
+      const legacy = fragment.split("/").slice(1).map((token) => source === root
+        ? decodeFragment(unescapePointerToken(token))
+        : unescapePointerToken(decodeFragment(token)));
+      const legacyLookup = pointerTarget(source, legacy, options);
+      if (legacyLookup.target || !/%2f/i.test(fragment)) return legacyLookup;
+      const decoded = decodeFragment(fragment).split("/").slice(1).map(unescapePointerToken);
+      const decodedLookup = pointerTarget(source, decoded, options);
+      return decodedLookup.target ? decodedLookup : legacyLookup;
+    }
+    const decoded = decodeFragment(fragment);
+    if (!decoded.startsWith("/") || (source !== root && !fragment.startsWith("/"))) {
+      throw new Error("OpenAPI $ref fragments must be slash-delimited JSON pointers");
+    }
+    const tokens = decoded.split("/").slice(1).map(unescapePointerToken);
+    return pointerTarget(source, tokens, options);
+  }
+
+  function rewriteReference(
+    ref: string, { source, mode, value }: PreparedReferenceTarget, site?: ReferenceSite
+  ): string {
+    const destination = location(source, ref);
+    const { tokens, target, throughLiteralAlias } = lookupPointer(destination.source, destination.fragment, { importSite: site });
+    const canonical = encodePointer(tokens);
+    const isLocal = destination.source === root;
+    if (!target || target === "reference") {
+      if (isLocal) return canonical; // Let Swagger Parser report local missing or circular pointers.
+      throw new Error("OpenAPI $ref target does not exist");
+    }
+    if (source !== root && target.source === source && target.value === value) {
+      throw new Error("Preloaded OpenAPI $ref must point to a different location");
+    }
+    if (isLocal && target.source === root &&
+        (target.mode !== "literal" || typeof target.value !== "object" || target.value === null)) {
+      return throughLiteralAlias ? encodePointer(pathKeys(target.path)) : canonical;
+    }
+
+    // Place imported targets and schemas that refer into a literal payload in
+    // their own context, so Swagger Parser never sees the literal references.
+    const pointers = copiedPointers.get(destination.source) ?? new Map<string, string>();
+    const key = mode + canonical;
+    let preparedRef = pointers.get(key);
+    if (!preparedRef) {
+      const targetIndex = String(referenceCopies.targets.length);
+      preparedRef = "#/" + field + "/" + targetIndex;
+      pointers.set(key, preparedRef);
+      copiedPointers.set(destination.source, pointers);
+      referenceCopies.originals.set(preparedRef, isLocal ? canonical : ref);
+      referenceCopies.targets.push(enqueue({ ...target, mode, importSite: target.importSite ?? site }));
+    }
+    // Isolate the parser's cache entry for siblings while keeping exactly one
+    // canonical position for self-references within the target.
+    if (target.source !== root && Object.keys(value).length > 1) {
+      const alias = "#/" + field + "/" + referenceCopies.targets.length;
+      referenceCopies.targets.push({ $ref: preparedRef });
+      referenceCopies.originals.set(alias, isLocal ? canonical : ref);
+      return alias;
+    }
+    return preparedRef;
+  }
+
+  const copy = enqueue({ value: root.value, mode: "node", source: root }) as OpenAPIDocument;
+  while (pending.length) {
+    const current = pending.pop()!;
+    const { value, copy, mode, source, path, importSite } = current;
+    if ("$ref" in value && typeof value.$ref === "string") {
+      if (mode === "literal") {
+        literalReferences.set(copy, value.$ref);
+        Reflect.deleteProperty(copy, "$ref");
+      } else if (value.$ref || source !== root) {
+        // Diagnostics for preloaded targets point to the importing ref in the caller's document.
+        const site = source === root ? { path } : importSite;
+        try {
+          Reflect.set(copy, "$ref", rewriteReference(value.$ref, current, site));
+        } catch (error) {
+          throw errorAtReference(site?.path, error);
+        }
+      }
+    }
+    for (const [key, child] of Object.entries(value)) {
+      if (key === "$ref" && typeof child === "string") continue;
+      Reflect.set(copy, key, enqueue({
+        value: child, mode: referenceChildMode(value, mode, key, child), source, path: { key, parent: path }, importSite,
+      }));
+    }
+  }
+  if (referenceCopies.targets.length) Reflect.set(copy, field, referenceCopies.targets);
+  return { copy, referenceCopies, literalReferences };
+}
 
 function toValidationErrors(error: unknown): ValidationError[] {
   const details = (error as { details?: Array<{ path?: string | string[]; message?: string }> })
@@ -18,7 +507,7 @@ function toValidationErrors(error: unknown): ValidationError[] {
   const message = error instanceof Error ? error.message : "Validation error";
   return [
     {
-      path: "openapi",
+      path: error instanceof ReferencePreparationError ? error.path : "openapi",
       message,
       severity: "error",
     },
@@ -26,12 +515,30 @@ function toValidationErrors(error: unknown): ValidationError[] {
 }
 
 export async function validateOpenAPI(
-  document: OpenAPIDocument
+  document: OpenAPIDocument,
+  options?: OpenAPIValidationOptions
 ): Promise<ValidationError[]> {
+  return (await validateAndDereferenceOpenAPI(document, options)).errors;
+}
+
+/** Validates and returns a dereferenced copy for callers that compare or store it. */
+export async function validateAndDereferenceOpenAPI(
+  document: OpenAPIDocument,
+  options?: OpenAPIValidationOptions
+): Promise<{ document: OpenAPIDocument; errors: [] } | { document: null; errors: ValidationError[] }> {
   try {
-    await SwaggerParser.validate(document as never);
-    return [];
+    const { copy, referenceCopies, literalReferences } = prepareReferences(
+      structuredClone(document), options?.externalReferences,
+    );
+    // Prepared pointers address the copy and need a parser base independent
+    // of filesystem characters in the working directory.
+    const validated = await SwaggerParser.validate("/apifn-validation/openapi.json", copy as never, {
+      resolve: { external: false, file: false, http: false },
+    });
+    restoreReferenceCopies(validated, referenceCopies);
+    for (const [literal, ref] of literalReferences) Reflect.set(literal, "$ref", ref);
+    return { document: validated as unknown as OpenAPIDocument, errors: [] };
   } catch (error) {
-    return toValidationErrors(error);
+    return { document: null, errors: toValidationErrors(error) };
   }
 }

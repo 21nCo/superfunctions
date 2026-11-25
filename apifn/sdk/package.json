@@ -1,6 +1,6 @@
 {
   "name": "@apifn/sdk",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Generate installable SDKs from ApiFn operation catalogs through deterministic target adapters",
   "type": "module",
   "main": "dist/index.cjs",
@@ -29,7 +29,7 @@
     "verify:packed": "node scripts/verify-packed-sdk.mjs"
   },
   "dependencies": {
-    "@apifn/contracts": "0.1.1",
+    "@apifn/contracts": "0.1.2",
     "ajv": "8.20.0"
   },
   "devDependencies": {

@@ -1,6 +1,6 @@
 {
   "name": "@apifn/core",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Core library for ApiFn — route introspection, schema conversion, OpenAPI generation, and diff",
   "type": "module",
   "main": "dist/index.cjs",
@@ -16,6 +16,16 @@
       "types": "./dist/types.d.ts",
       "import": "./dist/types.js",
       "require": "./dist/types.cjs"
+    },
+    "./internal/openapi-reference-context": {
+      "import": {
+        "types": "./dist/openapi-reference-context.d.ts",
+        "default": "./dist/openapi-reference-context.js"
+      },
+      "require": {
+        "types": "./dist/openapi-reference-context.d.cts",
+        "default": "./dist/openapi-reference-context.cjs"
+      }
     },
     "./testfn": {
       "import": {
