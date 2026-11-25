@@ -56,10 +56,9 @@ describe("resolveRunnerOptions", () => {
     });
   });
 
-  it("maps --json to document-style JSON, which is never interactive", () => {
+  it("maps --json to JSON-lines mode, which is never interactive", () => {
     expect(resolveRunnerOptions({ json: true, quiet: true, verbose: true }, { env: {}, streams })).toEqual({
       mode: "json",
-      jsonStyle: "document",
       color: true,
       stderrColor: true,
       quiet: true,
@@ -162,7 +161,7 @@ describe("resolveRunnerOptions", () => {
     expect(ANSI.test(result.stderr)).toBe(expected);
   });
 
-  it("keeps the stderr-following colour for --json, whose stdout carries only the document", () => {
+  it("keeps the stderr-following colour for --json, whose stdout carries only JSON lines", () => {
     expect(resolveRunnerOptions({ json: true }, { env: {}, streams: mixed }).color).toBe(true);
   });
 

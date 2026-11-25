@@ -14,7 +14,6 @@ export {
   type RunnerContext,
   type RunnerDiagnosticsListener,
   type RunnerDiagnosticsSink,
-  type RunnerJsonStyle,
   type RunnerOptions,
 } from "./runner.js";
 export {
