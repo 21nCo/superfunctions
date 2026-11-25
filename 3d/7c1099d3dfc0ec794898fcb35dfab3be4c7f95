@@ -1,0 +1,37 @@
+mcpfn/core/src/openapi/from-openapi.ts
+  s_7c21b9f6433ef9::t_c8fa6a7632c43a 71-75,368-373,376-395,397-400,402-413,911-918
+mcpfn/core/src/openapi/schema.ts
+  s_7c21b9f6433ef9::t_394f316a5662b4 1039-1040,1639-1642,1644,1647,1685-1695,1699,1701,1706,1750-1756,1759,1767-1768,1772-1773,1778-1781,1784,1794-1795,1798,1803,2128-2129,2158-2159,2226
+mcpfn/core/src/openapi/types.ts
+  s_7c21b9f6433ef9::t_9175eed3b130a6 96
+mcpfn/core/src/validation.ts
+  s_7c21b9f6433ef9::t_722dce5279a1f4 77-78,84-85,88,102-111
+mcpfn/core/tests/openapi-cfworker.test.ts
+  s_7c21b9f6433ef9::t_b457731a46ed51 352-397
+mcpfn/core/tests/openapi-forms.test.ts
+  s_7c21b9f6433ef9::t_7e4e9ca6f4e8eb 409-438,1660-1730
+mcpfn/core/README.md
+  s_7c21b9f6433ef9::t_eca4caa83a6b6b 167-168
+mcpfn/core/tests/fixtures/openapi/README.md
+  s_7c21b9f6433ef9::t_31894692fb0ef5 11-12
+mcpfn/core/tests/fixtures/openapi/skip-prototype-parameter-name.json
+  s_7c21b9f6433ef9::t_e5cc4743c68806 1-47
+mcpfn/core/tests/validation.test.ts
+  s_7c21b9f6433ef9::t_e1e853cfb22bbd 1-2,22-43
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3d7c1099d3dfc0ec794898fcb35dfab3be4c7f95",
+  "prompts": {},
+  "sessions": {
+    "s_7c21b9f6433ef9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "37c5af9a-8716-4a9c-bf76-336df5c3b732",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
