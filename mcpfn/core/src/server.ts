@@ -177,7 +177,7 @@ function validateSessionLimit(name: string, value: number): void {
 /**
  * An event store view that refuses to replay events from any other session.
  */
-function sessionScopedEventStore(base: EventStore): EventStore {
+function sessionScopedEventStore(base: EventStore, storeEvent: EventStore["storeEvent"]): EventStore {
   // A header-safe namespace independent of a host-supplied session ID, which
   // may be reused after a session closes while old events still exist.
   const prefix = `${randomUUID().replaceAll("-", "")}.`;
@@ -186,7 +186,7 @@ function sessionScopedEventStore(base: EventStore): EventStore {
   };
   const foreign = () => new Error("Event ID does not belong to this session");
   return {
-    storeEvent: (streamId, message) => base.storeEvent(prefix + streamId, message),
+    storeEvent: (streamId, message) => storeEvent(prefix + streamId, message),
     ...(base.getStreamIdForEventId
       ? { getStreamIdForEventId: async (eventId: string) => unscoped(await base.getStreamIdForEventId!(eventId)) }
       : {}),
@@ -1379,6 +1379,7 @@ export class McpFnServer<TContext = undefined> {
       let acceptedId: string | undefined;
       let setupPending = true;
       let setupTimedOut = false;
+      let setupWrites = 0;
       const setupStopped = () => {
         if (request.signal.aborted) return clientClosedResponse();
         if (setupTimedOut) return jsonRpcErrorResponse(408, -32000, "Session initialization timed out");
@@ -1398,7 +1399,7 @@ export class McpFnServer<TContext = undefined> {
         if (id !== undefined) await onSessionClosed?.call(options, id);
       };
       const releaseSlot = () => {
-        if (!disposed || setupPending) return;
+        if (!disposed || setupPending || setupWrites !== 0) return;
         admitted.delete(session);
         if (claimedId !== undefined) claimedIds.delete(claimedId);
       };
@@ -1447,11 +1448,22 @@ export class McpFnServer<TContext = undefined> {
         timer = setTimeout(scheduleExpiry, Math.min(idleTimeRemaining(), 2 ** 31 - 1));
         timer.unref?.();
       };
+      const eventStore = transportOptions.eventStore;
+      const scopedStore = eventStore && sessionScopedEventStore(eventStore, async (streamId, message) => {
+        if (closing) throw new Error("Session closed");
+        if (!setupPending) return eventStore.storeEvent(streamId, message);
+        // The SDK can leave an event-store write running after setup times out.
+        setupWrites += 1;
+        try {
+          return await eventStore.storeEvent(streamId, message);
+        } finally {
+          setupWrites -= 1;
+          releaseSlot();
+        }
+      });
       const transport = new WebStandardStreamableHTTPServerTransport({
         ...transportOptions,
-        ...(transportOptions.eventStore
-          ? { eventStore: sessionScopedEventStore(transportOptions.eventStore) }
-          : {}),
+        ...(scopedStore ? { eventStore: scopedStore } : {}),
         onsessioninitialized: async (id) => {
           if (expireIfIdle()) throw new Error("Session setup closed");
           if (claimedIds.has(id)) throw new Error("Session ID is already in use");

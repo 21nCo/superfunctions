@@ -197,7 +197,7 @@ Each stateful handler defaults to 1,000 sessions (`maxSessions`) and 100 session
 
 An idle session expires after 30 minutes without a matching HTTP request that passes the configured Host and Origin checks (`sessionIdleTimeoutMs`), even if a response stream is open or a previous request is still pending. Initialization has the same time limit from admission until the HTTP response is ready. A stalled initialization receives HTTP 408. Expiry closes the isolated server and transport and calls `onsessionclosed`, when supplied. Subsequent requests receive HTTP 404 and must initialize a new session. Set any of the three options to a positive safe integer to adjust the defaults.
 
-Use `onsessionclosed` to release host-managed session resources such as subscription registrations. Pending host hooks hold capacity until they finish and cleanup completes, so give hooks that rely on external services their own timeouts.
+Use `onsessionclosed` to release host-managed session resources such as subscription registrations. Pending lifecycle hooks and event-store writes started during setup hold capacity until they finish and cleanup completes. Give hooks and event stores that rely on external services their own timeouts.
 
 HTTP security defaults: a request carrying an `Origin` header is refused with
 HTTP 403 unless `allowedOrigins` lists it or it is a loopback origin equal to the

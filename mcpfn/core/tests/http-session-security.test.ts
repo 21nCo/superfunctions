@@ -508,6 +508,7 @@ describe("createWebStandardHandler session limits and expiry (MCP-SEC-04)", () =
     let events = 0;
     const { initialize, call } = await setup({
       enableJsonResponse: false,
+      maxSessions: 1,
       sessionIdleTimeoutMs: 100,
       onsessioninitialized: () => { markAccepted(); return acceptHook; },
       eventStore: {
@@ -527,8 +528,10 @@ describe("createWebStandardHandler session limits and expiry (MCP-SEC-04)", () =
     expect((await call("session-1")).status).toBe(200);
     await vi.advanceTimersByTimeAsync(10);
     expect((await pending).status).toBe(408);
+    expect((await initialize()).status).toBe(503);
     finishPriming();
     await vi.advanceTimersByTimeAsync(0);
+    expect((await initialize()).status).toBe(200);
   });
 
   it("rejects an oversized declared body without reading or canceling the upload", async () => {
