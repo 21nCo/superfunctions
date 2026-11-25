@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.1
+
+### Changed
+
+- Tests run against `@mcpfn/core` 0.0.8, which carries the MCP-21 security
+  fixes. The published client does not depend on `@mcpfn/core` at runtime.
+
 ## 0.1.0
 
 ### Changed
