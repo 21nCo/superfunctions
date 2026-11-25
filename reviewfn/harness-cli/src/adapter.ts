@@ -32,8 +32,6 @@ const REPAIR_ECHO_BYTES = 16_384;
 const OUTPUT_FILE_POLL_MS = 100;
 /** Levels of JSON string escaping a secret is still recognized under; each level is decoded in linear time. */
 const MAX_ESCAPE_DEPTH = 8;
-/** What replaces a text whose escaping nests deeper than MAX_ESCAPE_DEPTH, which is omitted rather than kept unchecked. */
-const REDACTION_LIMIT = "[OMITTED: JSON escaping nested past the redaction limit]";
 /** How long a `stderr-regex` model reporter may match, in a worker that is terminated when it runs over or the run is canceled. */
 const MODEL_REPORT_TIMEOUT_MS = 2_000;
 /**
@@ -519,7 +517,7 @@ const SHORT_ESCAPES: Record<string, string> = { '"': '"', "\\": "\\", "/": "/", 
  * `text` with every secret redacted as written and under up to MAX_ESCAPE_DEPTH levels of JSON string escaping (short
  * escapes, or `\uXXXX` in either hex case): the escapes are decoded one level at a time, each in linear time, keeping
  * where each decoded unit started in `text`, and every occurrence at any level marks its whole original span, overlapping
- * spans merged, so a shorter secret never leaves part of a longer one. A text still escaped past that depth is omitted.
+ * spans merged, so a shorter secret never leaves part of a longer one. A line still escaped past that depth is redacted whole.
  */
 function redact(text: string, secrets: readonly string[]): string {
   const values = secrets.filter(secret => secret.length > 0);
@@ -532,7 +530,7 @@ function redact(text: string, secrets: readonly string[]): string {
     }
     const next = level.text.includes("\\") ? unescapeLevel(level.text, level.starts) : level;
     if (next.text.length === level.text.length) break;
-    if (depth === MAX_ESCAPE_DEPTH) return REDACTION_LIMIT;
+    if (depth === MAX_ESCAPE_DEPTH) { spans.push(...escapedLines(text, level)); break; }
     level = next;
   }
   let result = "";
@@ -543,6 +541,16 @@ function redact(text: string, secrets: readonly string[]): string {
     end = to;
   }
   return redactText(result + text.slice(Math.max(end, 0)), secrets);
+}
+
+/** The lines of `text` (as spans of it) holding an escape still pending at `level`, each found once, in linear time. */
+function escapedLines(text: string, level: { text: string; starts: Uint32Array<ArrayBuffer> }): Array<[number, number]> {
+  const lines: Array<[number, number]> = [];
+  for (let index = level.text.indexOf("\\"); index !== -1; index = level.text.indexOf("\\", index + 2)) {
+    const at = level.starts[index];
+    if ((Object.hasOwn(SHORT_ESCAPES, level.text[index + 1] ?? "") || level.text[index + 1] === "u") && at >= (lines.at(-1)?.[1] ?? 0)) lines.push([text.lastIndexOf("\n", at) + 1, text.includes("\n", at) ? text.indexOf("\n", at) : text.length]);
+  }
+  return lines;
 }
 
 /** One level of JSON string escapes decoded, with where in the original text each decoded unit started. */
@@ -813,7 +821,7 @@ function watchOutputFile(file: string, maxBytes: number, parent: AbortSignal | u
   const timer = setInterval(() => {
     if (checking || controller.signal.aborted) return;
     checking = true;
-    pending = lstat(file).then(stat => { peak = Math.max(peak, stat.size); check(); }, () => { /* not written yet */ }).finally(() => { checking = false; });
+    pending = lstat(file).then(stat => { peak = Math.max(peak, stat.isFile() ? stat.size : 0); check(); }, () => { /* not written yet */ }).finally(() => { checking = false; });
   }, OUTPUT_FILE_POLL_MS);
   timer.unref();
   return {
@@ -823,7 +831,7 @@ function watchOutputFile(file: string, maxBytes: number, parent: AbortSignal | u
     overrun: () => { check(); return overrun; },
     peak: () => peak,
     // One last measurement after the CLI ended, so a file written after the last poll is charged too.
-    settle: () => pending.then(() => lstat(file)).then(stat => { peak = Math.max(peak, stat.size); }, () => { /* never written */ }),
+    settle: () => pending.then(() => lstat(file)).then(stat => { peak = Math.max(peak, stat.isFile() ? stat.size : 0); }, () => { /* never written */ }),
   };
 }
 

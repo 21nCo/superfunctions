@@ -1145,6 +1145,21 @@ describe("CliHarnessAdapter preflight and configuration", () => {
     expect(output.error).toMatch(/60000 bytes at its largest\) grew past the remaining/);
   });
 
+  it("charges no output bytes for a link a stdout-last-json CLI leaves at its {outputFile}", async () => {
+    const runner: CommandRunner = async (_command, args, options) => {
+      if (args.includes("--version")) return { code: 0, signal: null, stdout: "fake-cli version 1.2.3\n", stderr: "", timedOut: false, canceled: false };
+      // A link whose target text (900 bytes) is larger than the budget left after the answer.
+      await symlink("x/".repeat(450), args[args.indexOf("--out") + 1]);
+      const stdout = `${JSON.stringify({ findings: [], evidence: [], inspectedPaths: ["src/index.ts"], uninspected: [] })}\n`;
+      options.onOutput?.(Buffer.byteLength(stdout));
+      return { code: 0, signal: null, stdout, stderr: "", timedOut: false, canceled: false };
+    };
+    const policy = { ...DEFAULT_POLICY, limits: { ...DEFAULT_POLICY.limits, maxOutputBytes: 900 } };
+    const output = await new CliHarnessAdapter({ environment: environment(), runner }).run(input(configuration(profile({ extra: ["--out", "{outputFile}"] })), { policy }));
+    expect(output.error).toBeUndefined();
+    expect(output.terminal).toBe("completed");
+  });
+
   it("leaves a directory that took the run directory's place, removing nothing from it", async () => {
     const moved = path.join(directory, "moved");
     let runDirectory = "";
@@ -1193,10 +1208,11 @@ describe("CliHarnessAdapter preflight and configuration", () => {
     const output = await new CliHarnessAdapter({ environment: { ...environment(), REVIEW_AUTH: credential }, runner }).run(input(configuration(profile())));
     expect(output.terminal).toBe("completed");
     expect(output.transcript).not.toContain("deep");
+    expect(output.transcript).toContain('"inspectedPaths"');
     expect(Date.now() - started).toBeLessThan(2_000);
   });
 
-  it("omits text whose credential is nested past the redaction depth, so it is never stored recoverable", async () => {
+  it("withholds only the line whose credential is nested past the redaction depth, so it is never stored recoverable", async () => {
     const credential = 'test-"deep"-value';
     const deeper = Array.from({ length: 9 }).reduce<string>(text => JSON.stringify(text), credential);
     const runner: CommandRunner = async (_command, args) => args.includes("--version")
@@ -1205,7 +1221,9 @@ describe("CliHarnessAdapter preflight and configuration", () => {
     const output = await new CliHarnessAdapter({ environment: { ...environment(), REVIEW_AUTH: credential }, runner }).run(input(configuration(profile())));
     expect(output.terminal).toBe("completed");
     expect(output.transcript).not.toContain("deep");
-    expect(output.transcript).toContain("[OMITTED: JSON escaping nested past the redaction limit]");
+    expect(output.transcript).toContain("[REDACTED]");
+    // Only the line still escaped past the limit is withheld; the answer's line is kept.
+    expect(output.transcript).toContain('"inspectedPaths"');
   });
 
   it("keeps its contract version after preflight, for the CLI's harness contract versions", async () => {
