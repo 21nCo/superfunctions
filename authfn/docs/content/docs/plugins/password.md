@@ -60,7 +60,7 @@ authApp.createServer({
 
 All routes return the standard envelope. See [API reference](../api) for full schemas.
 
-Password endpoints accept request bodies up to 64 KiB. A larger body, including one streamed without `Content-Length`, is rejected with HTTP 413 and `AUTHFN_VALIDATION_ERROR` before the route runs. A password longer than 1024 UTF-8 bytes is rejected with HTTP 400 before any password hashing.
+Password endpoints accept request bodies up to 64 KiB. A larger body, including one streamed without `Content-Length`, is rejected with HTTP 413 before the route runs. If the body takes longer than five seconds to arrive, the response is HTTP 408. Both errors use `AUTHFN_VALIDATION_ERROR`. A password longer than 1024 UTF-8 bytes is rejected with HTTP 400 before any password hashing.
 
 ## Schema
 

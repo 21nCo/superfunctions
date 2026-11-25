@@ -214,6 +214,24 @@ describe('authfn contained audit fixes', () => {
     expect(calls).toBe(1);
   });
 
+  it('finishes the body check when a stream stalls', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const auth = createTestServer(passwordConfig(memoryAdapter({ debug: false })));
+      const response = auth.router.handle(new Request('https://account.example.com/auth/sign-in/password', {
+        method: 'POST',
+        body: new ReadableStream({
+          start(controller) { controller.enqueue(new Uint8Array([0x7b])); }
+        }),
+        duplex: 'half'
+      } as RequestInit));
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect((await response).status).toBe(408);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('rejects an over-long password on signup, sign-in, and reset before the database or scrypt', async () => {
     const tracked = createDatabaseCounter(memoryAdapter({ debug: false }));
     const delivery = createDeliveryRecorder();
@@ -300,6 +318,85 @@ describe('authfn contained audit fixes', () => {
     })).resolves.toMatchObject({
       user: { primaryEmail: 'ada@example.com' }
     });
+  });
+
+  it('discards a sign-in session if a reset finishes before session creation', async () => {
+    const email = 'ada@example.com';
+    const delivery = createDeliveryRecorder();
+    const config = passwordConfig(memoryAdapter({ debug: false }));
+    const signedUp = await signUpWithPassword(config, {}, { email, password: PASSWORD });
+    let sessionReady!: () => void;
+    let allowSession!: () => void;
+    const ready = new Promise<void>((resolve) => { sessionReady = resolve; });
+    const waitForReset = new Promise<void>((resolve) => { allowSession = resolve; });
+    const auth = createTestServer({
+      ...config,
+      hooks: {
+        async beforeSessionIssue() {
+          sessionReady();
+          await waitForReset;
+        }
+      },
+      pluginRuntime: { password: { otp: { delivery: delivery.provider } } }
+    });
+
+    const signIn = auth.router.handle(jsonRequest('/auth/sign-in/password', { email, password: PASSWORD }));
+    await ready;
+    try {
+      const start = await auth.router.handle(jsonRequest('/auth/password/reset/start', { email }));
+      expect(start.status).toBe(200);
+      const reset = await auth.router.handle(jsonRequest('/auth/password/reset/complete', {
+        email,
+        code: delivery.codeFor('reset-password', email),
+        newPassword: OTHER_PASSWORD
+      }));
+      expect(reset.status).toBe(200);
+    } finally {
+      allowSession();
+    }
+    const rejected = await signIn;
+    expect(rejected.status).toBe(401);
+    expect(rejected.headers.has('set-cookie')).toBe(false);
+    const sessions = await config.database.findMany<{ revokedAt: Date | null }>({
+      model: 'sessions',
+      where: [{ field: 'userId', operator: 'eq', value: signedUp.user.id }],
+      namespace: config.namespace
+    });
+    expect(sessions).toEqual([expect.objectContaining({ revokedAt: expect.any(Date) })]);
+  });
+
+  it('leaves the reset code unspent when it expires during password preparation', async () => {
+    const email = 'ada@example.com';
+    const delivery = createDeliveryRecorder();
+    const config = passwordConfig(memoryAdapter({ debug: false }));
+    await signUpWithPassword(config, {}, { email, password: PASSWORD });
+    let now = new Date('2026-01-01T00:00:00Z');
+    const auth = createTestServer({
+      ...config,
+      plugins: [authFnPasswordPlugin({
+        compromisedPasswordChecker: async () => {
+          now = new Date(now.getTime() + 1_000);
+          return false;
+        }
+      })],
+      pluginRuntime: {
+        password: { otp: { delivery: delivery.provider, challengeTtlSeconds: 1, now: () => now } }
+      }
+    });
+    const start = await auth.router.handle(jsonRequest('/auth/password/reset/start', { email }));
+    expect(start.status).toBe(200);
+    const reset = await auth.router.handle(jsonRequest('/auth/password/reset/complete', {
+      email,
+      code: delivery.codeFor('reset-password', email),
+      newPassword: OTHER_PASSWORD
+    }));
+    expect((await errorBody(reset)).rest.error.code).toBe('AUTHFN_OTP_EXPIRED');
+    const rows = await config.database.findMany<{ consumedAt: Date | null }>({
+      model: 'otp_challenges',
+      where: [{ field: 'email', operator: 'eq', value: email }],
+      namespace: config.namespace
+    });
+    expect(rows).toEqual([expect.objectContaining({ consumedAt: null })]);
   });
 
   it('does the same scrypt work for missing, existing, and unverified accounts and hides account details until the password matches', async () => {

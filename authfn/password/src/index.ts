@@ -10,9 +10,9 @@ import {
   type AuthFnSchemaDefinition
 } from 'authfn';
 import { createAuthFnRouteMeta, readOptionalJson } from 'authfn/http/router';
-import { authenticateAccountRequest, issueSession } from 'authfn/core/sessions';
+import { authenticateAccountRequest, issueSession, revokeSessionById } from 'authfn/core/sessions';
 import { resolveEnvironment } from 'authfn/core/environment';
-import { signInWithPassword, signUpWithPassword } from 'authfn/core/passwords';
+import { assertCurrentPasswordCredential, signInWithPassword, signUpWithPassword } from 'authfn/core/passwords';
 import { jsonSuccess } from 'authfn/http/envelopes';
 import { assertOtpEmailBudgetConfig, completeResetPassword, sendOtpChallenge } from 'authfn/core/verifications';
 import { emitAuthEvent, eventRequestId } from 'authfn/core/observability';
@@ -244,6 +244,16 @@ function createPasswordRoutes(
             twoFactorConfig
           );
           if (challenge) {
+            try {
+              await assertCurrentPasswordCredential(ctx.config, result.credential);
+            } catch (error) {
+              await ctx.config.database.delete({
+                model: 'two_factor_challenges',
+                where: [{ field: 'id', operator: 'eq', value: challenge.challenge.id }],
+                namespace: ctx.config.namespace ?? 'authfn'
+              });
+              throw error;
+            }
             await emitAuthEvent(ctx.config, {
               type: 'authfn.2fa.challenged',
               requestId: eventRequestId(request),
@@ -264,6 +274,12 @@ function createPasswordRoutes(
           primaryEmail: result.user.primaryEmail,
           methods: ['password']
         });
+        try {
+          await assertCurrentPasswordCredential(ctx.config, result.credential);
+        } catch (error) {
+          await revokeSessionById(ctx.config, issued.session.id);
+          throw error;
+        }
         const response = buildSessionResponse(issued, body.sessionMode);
 
         return jsonSuccess(request, response.data, {

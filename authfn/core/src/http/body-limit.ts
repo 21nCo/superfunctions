@@ -1,7 +1,8 @@
-import { AuthFnPayloadTooLargeError } from '../core/errors.js';
+import { AuthFnError, AuthFnPayloadTooLargeError } from '../core/errors.js';
 
 /** Maximum body size for AuthFn routes that use the router's body limit. */
 export const AUTHFN_MAX_BODY_BYTES = 64 * 1024;
+const AUTHFN_BODY_READ_TIMEOUT_MS = 5_000;
 
 /** Checks a clone so hosts and handlers keep the original Request and its native body readers. */
 export async function assertAuthRequestBodyLimit(request: Request): Promise<void> {
@@ -12,22 +13,45 @@ export async function assertAuthRequestBodyLimit(request: Request): Promise<void
   }
 
   if (!request.body || request.bodyUsed) return;
+  const { signal } = request;
+  signal.throwIfAborted();
   const reader = request.clone().body!.getReader();
-  let size = 0;
-  try {
+  function cancelBothBranches() {
+    // Do not wait for a stream source's cancellation handler.
+    void reader.cancel().catch(() => undefined);
+    cancel(request.body);
+  }
+  async function checkSize() {
+    let size = 0;
     for (;;) {
       const { done, value } = await reader.read();
       if (done) return;
       size += value.byteLength;
       if (size > AUTHFN_MAX_BODY_BYTES) {
-        // At this point both tee branches must be cancelled. Do not await a
-        // stream source's cancellation handler before returning the 413.
-        void reader.cancel().catch(() => undefined);
-        cancel(request.body);
+        cancelBothBranches();
         throw new AuthFnPayloadTooLargeError(AUTHFN_MAX_BODY_BYTES);
       }
     }
+  }
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let abort: (() => void) | undefined;
+  const interrupted = new Promise<never>((_, reject) => {
+    abort = () => {
+      reject(signal.reason);
+      cancelBothBranches();
+    };
+    signal.addEventListener('abort', abort, { once: true });
+    timer = setTimeout(() => {
+      reject(new AuthFnError('AUTHFN_VALIDATION_ERROR', 'Request body did not arrive in time', { status: 408 }));
+      cancelBothBranches();
+    }, AUTHFN_BODY_READ_TIMEOUT_MS);
+  });
+  try {
+    await Promise.race([checkSize(), interrupted]);
   } finally {
+    clearTimeout(timer);
+    if (abort) signal.removeEventListener('abort', abort);
     reader.releaseLock();
   }
 }

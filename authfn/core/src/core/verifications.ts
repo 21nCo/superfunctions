@@ -437,8 +437,14 @@ async function verifyOtpChallengeBeforeConsume(
     }
 
     if (user && beforeConsume) await beforeConsume(user);
+    const consumedAt = resolveNow(runtimeOptions);
+    // An admitted challenge's expiry is immutable. Check it at the write
+    // boundary without binding a Date predicate on SQLite adapters.
+    if (challenge.expiresAt.getTime() <= consumedAt.getTime()) {
+      throw new AuthFnOtpExpiredError('OTP code has expired', { challengeId: challenge.id });
+    }
     consuming = true;
-    consumed = await consumeOtpChallenge(config, challenge, now);
+    consumed = await consumeOtpChallenge(config, challenge, consumedAt);
   } catch (error) {
     if (consuming && !(error instanceof AuthFnOtpReplayedError)) {
       // The consume write's outcome is unknown (it threw, or could not be

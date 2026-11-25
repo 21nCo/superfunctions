@@ -95,7 +95,7 @@ Examples:
 
 ## Status codes
 
-The envelope shape is the same for `2xx` (success) and `4xx`/`5xx` (error). The HTTP status mirrors `error.code`'s mapped status — so `AUTHFN_VALIDATION_ERROR` is `400` (or `413` when the request body exceeds 64 KiB), `AUTHFN_UNAUTHENTICATED` is `401`, `AUTHFN_RATE_LIMITED` is `429`, and so on. See [errors](./errors).
+The envelope shape is the same for `2xx` (success) and `4xx`/`5xx` (error). `AUTHFN_VALIDATION_ERROR` normally uses HTTP 400. Request body checks can return 408 when a body times out or 413 when it exceeds 64 KiB. `AUTHFN_UNAUTHENTICATED` uses 401 and `AUTHFN_RATE_LIMITED` uses 429. See [errors](./errors).
 
 ## Headers
 
