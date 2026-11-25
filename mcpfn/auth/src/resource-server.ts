@@ -172,7 +172,8 @@ export function createOAuthResourceServerHandler(
         description: "The access token is invalid",
       });
     }
-    const now = Math.floor((options.clock?.() ?? Date.now()) / 1_000);
+    // Unfloored epoch seconds: expiresAt may be fractional.
+    const now = (options.clock?.() ?? Date.now()) / 1_000;
     if (authInfo.expiresAt === undefined && options.allowTokensWithoutExpiry !== true) {
       return bearerChallengeResponse(401, metadataUrl, {
         error: "invalid_token",

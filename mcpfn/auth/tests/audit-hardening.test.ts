@@ -203,6 +203,19 @@ describe("OAuth resource server token expiry (MCP-SEC-11)", () => {
     expect((await call(handler)).status).toBe(200);
   });
 
+  it("compares fractional expiry against the exact clock", async () => {
+    const deadline = Date.UTC(2026, 10, 25, 12, 0, 0, 100);
+    const at = (now: number) => createOAuthResourceServerHandler(echoAuthInfo, {
+      resource,
+      authorizationServers: ["https://login.example.com"],
+      verifier: verifier(deadline / 1_000),
+      clock: () => now,
+    });
+    expect((await call(at(deadline - 50))).status).toBe(200);
+    expect((await call(at(deadline))).status).toBe(401);
+    expect((await call(at(deadline + 400))).status).toBe(401);
+  });
+
   it("still accepts unexpired tokens", async () => {
     const handler = createOAuthResourceServerHandler(echoAuthInfo, {
       resource,
