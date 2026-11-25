@@ -368,7 +368,8 @@ export async function buildMcpFnEffectiveCatalog<TContext>(input: {
   schemaResources?: readonly object[];
   resolved: McpFnResolvedClientProfile<TContext>;
   /**
-   * The server's profile options. With them, a client that matches no profile
+   * The server's profile options; they take precedence over
+   * `resolved.clientProfiles`. With either, a client that matches no profile
    * does not see tools that a profile gives server-owned arguments unless
    * `unmatchedServerOwnedArguments` is `"allow"`: such a client could never
    * call them.
@@ -548,9 +549,11 @@ export async function enrichMcpFnClientProfileCall<TContext>(input: {
   tool: McpFnListedTool;
   arguments: unknown;
   /**
-   * The server's profile options. Without them a call that matched no
-   * profile is returned unchanged; with them, the
-   * `unmatchedServerOwnedArguments` policy applies.
+   * The server's profile options. They take precedence over
+   * `resolved.clientProfiles` (set by resolveMcpFnClientProfile). The
+   * `unmatchedServerOwnedArguments` policy of whichever is present applies; a
+   * call that matched no profile passes through unchanged only when neither
+   * supplies a policy or the policy is `"allow"`.
    */
   clientProfiles?: Pick<
     McpFnClientProfilesOptions<TContext>,
