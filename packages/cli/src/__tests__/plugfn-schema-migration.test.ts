@@ -245,10 +245,11 @@ describe('plugfn schema v8 migration', () => {
   async function commandConnection(
     adapterType: (typeof adapterTypes)[number],
     snapshot: DatabaseTable[],
+    prismaProvider: Record<string, unknown> = { _activeProvider: 'mysql' },
   ): Promise<{ connection: AdapterConnection; config: SuperfunctionsConfig }> {
     const rawConnection = mysqlConnection(adapterType, snapshot);
     if (adapterType === 'prisma') {
-      const prisma = { ...rawConnection, _activeProvider: 'mysql', $disconnect: async () => undefined };
+      const prisma = { ...rawConnection, ...prismaProvider, $disconnect: async () => undefined };
       const config = { adapter: { type: 'prisma', prisma: { prisma } } } as unknown as SuperfunctionsConfig;
       return { connection: await createAdapterFromConfig(config), config };
     }
@@ -271,13 +272,23 @@ describe('plugfn schema v8 migration', () => {
 
   it('introspects a dev v7 MySQL database through the generate command path and widens claim_token', async () => {
     // DATABASE_URL names another dialect or database than the PrismaClient's
-    // datasource; the CLI must follow the client.
+    // datasource; the CLI must follow the client, whichever field exposes
+    // its provider.
+    const prismaProviders = [
+      { _activeProvider: 'mysql' },
+      { _engineConfig: { activeProvider: 'mysql' } },
+      { $engineConfig: { activeProvider: 'mysql' } },
+    ];
     for (const databaseUrl of ['postgresql://example.invalid:5432/otherdb', 'mysql://example.invalid:3306/otherdb']) {
       vi.stubEnv('DATABASE_URL', databaseUrl);
-      for (const adapterType of adapterTypes) {
+      for (const [adapterType, prismaProvider] of [
+        ...adapterTypes.map((type) => [type, undefined] as const),
+        ...prismaProviders.map((provider) => ['prisma', provider] as const),
+      ]) {
         const { connection, config } = await commandConnection(
           adapterType,
           mysqlV7Snapshot(schema.schemas, DEV_V7_CLAIM_TOKEN_LENGTH),
+          prismaProvider,
         );
         expect(connection.dialect, adapterType).toBe('mysql');
         const currentTables = await introspectCurrentTables(connection, adapterType, config);

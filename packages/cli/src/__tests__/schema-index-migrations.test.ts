@@ -949,30 +949,31 @@ describe("schema index migrations", () => {
   });
 
   it("refuses a widened full-column key over 767 bytes on COMPACT or REDUNDANT tables", () => {
-    const widenTo = (maxLength: number) => ({
+    const widenTo = (maxLength: number, indexFields = ["claimToken"]) => ({
       ...syncJobs,
-      fields: { ...syncJobs.fields, claimToken: { ...syncJobs.fields.claimToken, maxLength } },
+      fields: {
+        ...syncJobs.fields,
+        claimToken: { ...syncJobs.fields.claimToken, maxLength },
+        owner: { type: "string", required: false, fieldName: "owner", maxLength: 32 },
+      },
+      indexes: [{ name: "plugfn_sync_jobs_claim_token_idx", fields: indexFields, unique: true }],
     } as unknown as TableSchema);
-    const current = (
-      rowFormat: string,
-      characterSet: string | null,
-      prefixLength: number | null = null,
-    ) => [{
+    const varcharColumn = (columnName: string, length: number) => ({
+      dialect: "mysql" as const,
+      tableName: "plugfn_sync_jobs",
+      columnName,
+      dataType: "varchar",
+      columnType: `varchar(${length})`,
+      maxLength: length,
+      isNullable: true,
+      defaultValue: null,
+      isPrimaryKey: false,
+      isUnique: false,
+    });
+    const current = (rowFormat: string, prefixLength: number | null = null) => [{
       name: "plugfn_sync_jobs",
       rowFormat,
-      columns: [{
-        dialect: "mysql" as const,
-        tableName: "plugfn_sync_jobs",
-        columnName: "claim_token",
-        dataType: "varchar",
-        columnType: "varchar(64)",
-        maxLength: 64,
-        characterSet,
-        isNullable: true,
-        defaultValue: null,
-        isPrimaryKey: false,
-        isUnique: false,
-      }],
+      columns: [varcharColumn("claim_token", 64), varcharColumn("owner", 32)],
       indexes: [{
         name: "plugfn_sync_jobs_claim_token_idx",
         tableName: "plugfn_sync_jobs",
@@ -989,19 +990,23 @@ describe("schema index migrations", () => {
       expect(diffs[0].rebuiltIndexes).toEqual([]);
     };
 
-    // 192 utf8mb4 characters can take 768 bytes; 191 fit in 764.
+    // 192 utf8mb4 characters can take 768 bytes; 191 fit in 764. MODIFY
+    // COLUMN takes the table charset, so every column counts 4 bytes.
     for (const rowFormat of ["Compact", "REDUNDANT"]) {
-      expect(() => diffTables([widenTo(192)], current(rowFormat, "utf8mb4"), "plugfn")).toThrow(
+      expect(() => diffTables([widenTo(192)], current(rowFormat), "plugfn")).toThrow(
         new RegExp(`${rowFormat} row format limits index key parts to 767 bytes.*plugfn_sync_jobs_claim_token_idx \\(claim_token VARCHAR\\(192\\)\\).*ROW_FORMAT=DYNAMIC`),
       );
-      inPlace(diffTables([widenTo(191)], current(rowFormat, "utf8mb4"), "plugfn"), 191);
+      inPlace(diffTables([widenTo(191)], current(rowFormat), "plugfn"), 191);
     }
-    // Unknown character sets count as utf8mb4; single-byte sets fit more.
-    expect(() => diffTables([widenTo(192)], current("Compact", null), "plugfn")).toThrow(/767 bytes/);
-    inPlace(diffTables([widenTo(700)], current("Compact", "latin1"), "plugfn"), 700);
-    // A prefixed key part stays within its prefix; DYNAMIC keeps the 3,072-byte budget.
-    expect(() => diffTables([widenTo(768)], current("Compact", "utf8mb4", 191), "plugfn")).not.toThrow();
-    inPlace(diffTables([widenTo(768)], current("Dynamic", "utf8mb4"), "plugfn"), 768);
+    // A prefixed key part would be rebuilt at full width, so it is refused too.
+    expect(() => diffTables([widenTo(768)], current("Compact", 32), "plugfn")).toThrow(
+      /plugfn_sync_jobs_claim_token_idx \(claim_token VARCHAR\(768\)\)/,
+    );
+    // An index replaced to cover another column no longer holds the widened one.
+    const replaced = diffTables([widenTo(768, ["owner"])], current("Compact"), "plugfn");
+    expect(replaced[0].changedIndexes?.map((index) => index.name)).toEqual(["plugfn_sync_jobs_claim_token_idx"]);
+    // DYNAMIC keeps the 3,072-byte budget.
+    inPlace(diffTables([widenTo(768)], current("Dynamic"), "plugfn"), 768);
   });
 
   it("rebuilds widened MySQL indexes with prefixed or over-budget keys", () => {

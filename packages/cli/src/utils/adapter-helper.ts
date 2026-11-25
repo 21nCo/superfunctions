@@ -137,20 +137,14 @@ async function createPrismaAdapter(
     schemaVersionsTable: prismaConfig.schemaVersionsTable,
   });
 
-  // Prefer the provider the generated PrismaClient was built for: its
-  // datasource can be overridden, so DATABASE_URL may name another database.
-  const provider = prismaConfig.prisma._activeProvider;
+  // The client's own provider wins: its datasource can differ from DATABASE_URL.
+  const client = prismaConfig.prisma;
+  const provider = client._engineConfig?.activeProvider ?? client._activeProvider ?? client.$engineConfig?.activeProvider;
   const datasourceUrl = process.env.DATABASE_URL ?? '';
   let dialect: 'postgres' | 'mysql' | 'sqlite' = 'postgres';
-  if (provider === 'mysql') {
+  if (provider ? provider === 'mysql' : datasourceUrl.startsWith('mysql:')) {
     dialect = 'mysql';
-  } else if (provider === 'sqlite') {
-    dialect = 'sqlite';
-  } else if (typeof provider === 'string') {
-    dialect = 'postgres';
-  } else if (datasourceUrl.startsWith('mysql:')) {
-    dialect = 'mysql';
-  } else if (datasourceUrl.startsWith('file:') || datasourceUrl.includes('sqlite')) {
+  } else if (provider ? provider === 'sqlite' : datasourceUrl.startsWith('file:') || datasourceUrl.includes('sqlite')) {
     dialect = 'sqlite';
   }
 

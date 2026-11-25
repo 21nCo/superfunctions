@@ -173,12 +173,7 @@ function extractDatabaseName(connectionString: string): string | null {
 }
 
 
-/**
- * Introspect the tables the configured connection currently holds. For
- * MySQL, the schema to read comes from the adapter's connection string, or
- * for Prisma from the client's own connection (its datasource can differ
- * from DATABASE_URL).
- */
+/** Introspect the connection's tables; Prisma MySQL reads the client's own database. */
 export async function introspectCurrentTables(
   connection: AdapterConnection,
   adapterType: string,

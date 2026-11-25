@@ -182,17 +182,11 @@ function mysqlQuery(db: any): MySqlQuery {
   return (sql, params) => db.query(sql, params);
 }
 
-/**
- * The default database of a MySQL connection (`SELECT DATABASE()`), so
- * introspection reads the schema the connection actually migrates.
- */
+/** The connection's default database (`SELECT DATABASE()`), which introspection reads. */
 export async function mysqlConnectionDatabase(connection: any): Promise<string> {
   const [rows] = await mysqlQuery(connection)('SELECT DATABASE() AS database_name', []);
-  const database = rows?.[0]?.database_name;
-  if (typeof database !== 'string' || database.length === 0) {
-    throw new Error('The MySQL connection has no default database; add the database name to its connection URL.');
-  }
-  return database;
+  if (rows?.[0]?.database_name) return rows[0].database_name;
+  throw new Error('The MySQL connection has no default database; add one to its connection URL.');
 }
 
 /**
