@@ -102,7 +102,7 @@ describe("AuthFn provider adapter (MCP-SEC-05)", () => {
     });
     const response = await call(handler);
     expect(response.status).toBe(200);
-    expect((await response.json()).expiresAt * 1_000).toBeGreaterThanOrEqual(now + 800);
+    expect((await response.json()).expiresAt).toBe((now + 800) / 1_000);
   });
 
   it("does not run authorization hooks for an expired mapped principal", async () => {

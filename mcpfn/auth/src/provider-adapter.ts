@@ -283,9 +283,8 @@ function defaultPrincipal(session: McpFnAuthSessionLike): McpFnPrincipal {
     scopes: [...(session.scopes ?? [])],
     resourceIds: [...(session.resourceIds ?? [])],
     ...(session.expiresAt
-      // Rounded up: authInfo never reports a credential as expired while the
-      // session it came from is still valid.
-      ? { expiresAt: Math.ceil(session.expiresAt.getTime() / 1_000) }
+      // Exact, as fractional epoch seconds: neither early nor late.
+      ? { expiresAt: session.expiresAt.getTime() / 1_000 }
       : {}),
     ...(session.subject.tenantId ? { tenantId: session.subject.tenantId } : {}),
     ...(session.subject.regionId ? { regionId: session.subject.regionId } : {}),
