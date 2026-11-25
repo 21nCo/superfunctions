@@ -142,6 +142,17 @@ describe("createWebStandardHandler session binding (MCP-SEC-03)", () => {
     expect((await call("session-1")).status).not.toBe(200);
   });
 
+  it("calls onsessioninitialized as a method of the options", async () => {
+    const options = {
+      label: "kept",
+      seen: [] as string[],
+      onsessioninitialized(this: { label: string; seen: string[] }) { this.seen.push(this.label); },
+    };
+    const { initialize } = await setup(options as never);
+    expect((await initialize()).status).toBe(200);
+    expect(options.seen).toEqual(["kept"]);
+  });
+
   it("uses a host-supplied principal key", async () => {
     const { initialize, call } = await setup({
       sessionPrincipal: ({ request }) => request.headers.get("x-tenant") ?? undefined,

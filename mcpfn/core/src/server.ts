@@ -995,8 +995,10 @@ export class McpFnServer<TContext = undefined> {
         onsessioninitialized: async (id) => {
           // close() ran while this request was being set up: no session.
           if (generation !== this.closeGeneration) throw new Error("Server closed");
-          const hostHook = transportOptions.onsessioninitialized;
-          if (hostHook) await hostHook(id);
+          const hostHook = Boolean(transportOptions.onsessioninitialized);
+          // Always yields, so a close() queued meanwhile is seen below; the
+          // hook is called as a method to keep its receiver.
+          await transportOptions.onsessioninitialized?.(id);
           if (generation !== this.closeGeneration) {
             // Only a session the host's onsessioninitialized accepted gets
             // its onsessionclosed.
