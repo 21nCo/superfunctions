@@ -359,6 +359,20 @@ describe("validateOpenAPI", () => {
     }
   });
 
+  it.each([
+    ["\\\\server\\share\\project\\parent.yaml", "integer"],
+    ["file://server/share/project/parent.yaml", "string"],
+  ])("resolves %s using its own allowlist key and base", async (ref, type) => {
+    const externalReferences = new Map([
+      ["\\\\server\\share\\project\\parent.yaml", "$ref: ./child.yaml"],
+      ["//server/share/project/child.yaml", "type: integer"],
+      ["file://server/share/project/parent.yaml", "type: string"],
+    ]);
+    const result = await validateAndDereferenceOpenAPI(documentWithReference(ref), { externalReferences });
+    expect(result.errors).toEqual([]);
+    expect(result.document?.components?.schemas?.Value).toEqual({ type });
+  });
+
   it("keeps an encoded backslash distinct from a Windows path separator", async () => {
     const cwd = vi.spyOn(process, "cwd").mockReturnValue("C:\\project");
     try {

@@ -73,10 +73,11 @@ function encodePointer(tokens: string[]): string {
 
 const LOCAL_PATH_ORIGIN = "https://apifn-local-path.invalid";
 const WINDOWS_DRIVE_PATH = /^[a-z]:[\\/]/i;
+const WINDOWS_SHARE_PATH = /^\\\\([^\\/]+)[\\/]([^\\/]+)(?:[\\/]|$)/;
 
 function workingDirectoryLocation(): DocumentLocation {
   const cwd = typeof process !== "undefined" && process.cwd ? process.cwd() : "/";
-  const share = /^\\\\([^\\]+)\\([^\\]+)(?:\\|$)/.exec(cwd);
+  const share = WINDOWS_SHARE_PATH.exec(cwd);
   // Use the URL's drive root to keep relative paths within the network share.
   // The real share prefix is restored when forming the allowlist keys.
   const windowsPath = share ? "C:\\" + cwd.slice(share[0].length) : cwd;
@@ -107,23 +108,28 @@ function absolutePathKey(pathname: string): string {
 function resolveDocumentURI(base: DocumentLocation, ref: string) {
   const normalized = ref.replaceAll("\\", "/");
   const windowsDrive = WINDOWS_DRIVE_PATH.test(normalized);
-  const url = windowsDrive ? new URL("file:///" + normalized) : new URL(normalized, base.url);
+  const share = WINDOWS_SHARE_PATH.exec(ref.split(/[?#]/, 1)[0]);
+  const windowsPath = share ? "C:/" + normalized.slice(share[0].length) : normalized;
+  const isAbsoluteWindowsPath = windowsDrive || share !== null;
+  const url = isAbsoluteWindowsPath ? new URL("file:///" + windowsPath) : new URL(normalized, base.url);
   const absolute = /^(?:[a-z][a-z0-9+.-]*:|\/\/)/i.test(normalized.trimStart());
   const fragment = url.hash.slice(1);
   url.hash = "";
-  const isPath = windowsDrive || (base.isPath && !absolute && url.origin === base.url.origin);
+  const isPath = isAbsoluteWindowsPath || (base.isPath && !absolute && url.origin === base.url.origin);
   const queryStart = url.href.indexOf("?");
   const query = queryStart < 0 ? "" : url.href.slice(queryStart);
   const pathname = isPath ? absolutePathKey(url.pathname) : undefined;
   const uri = pathname === undefined ? url.href : pathname + query;
   const pathWithoutLeadingSlash = pathname?.slice(1);
-  const drivePath = pathWithoutLeadingSlash !== undefined && (windowsDrive || base.isWindowsPath) &&
+  const drivePath = pathWithoutLeadingSlash !== undefined && (isAbsoluteWindowsPath || base.isWindowsPath) &&
     WINDOWS_DRIVE_PATH.test(pathWithoutLeadingSlash) ? pathWithoutLeadingSlash : undefined;
-  const shareRoot = drivePath !== undefined && !windowsDrive ? base.shareRoot : undefined;
-  const windowsPath = shareRoot && drivePath ? shareRoot + drivePath.slice(2) : drivePath;
-  const keys = windowsPath === undefined
+  const shareRoot = share
+    ? absolutePathKey("//" + share[1] + "/" + share[2])
+    : drivePath !== undefined && !windowsDrive ? base.shareRoot : undefined;
+  const resolvedPath = shareRoot && drivePath ? shareRoot + drivePath.slice(2) : drivePath;
+  const keys = resolvedPath === undefined
     ? [uri]
-    : [windowsPath + query, windowsPath.replaceAll("/", "\\") + query];
+    : [resolvedPath + query, resolvedPath.replaceAll("/", "\\") + query];
   return { uri: keys[0], fragment, keys, location: { url, isPath, isWindowsPath: drivePath !== undefined, shareRoot } };
 }
 
