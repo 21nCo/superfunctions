@@ -1,0 +1,41 @@
+watchfn/python/README.md
+  s_a5cfdb8e352269::t_7f77d061b8c2f9 381-384
+watchfn/python/tests/test_alert_callbacks.py
+  s_a5cfdb8e352269::t_67a6a473d1c1af 232-269
+watchfn/python/tests/test_stored_goals.py
+  s_a5cfdb8e352269::t_f3b89351ddfe37 52-53,55-56,89-96,100-101
+watchfn/python/watchfn/__init__.py
+  s_a5cfdb8e352269::t_cf5f209c9deca7 11-12
+watchfn/python/watchfn/alerts/alert_manager.py
+  s_a5cfdb8e352269::t_393bd223397b0f 8,118,129-135,137,141,143-145,152-157,193-194
+watchfn/python/watchfn/alerts/durable.py
+  s_a5cfdb8e352269::t_9cb23822bb96ac 16,274,322-323,395-407,423,443
+watchfn/python/watchfn/alerts/lifecycle.py
+  s_a5cfdb8e352269::t_a4c283dd07e613 13-35,129
+watchfn/python/watchfn/alerts/memory_durable.py
+  s_a5cfdb8e352269::t_d93c5991cfaac5 13,136-141,143-149
+watchfn/typescript/README.md
+  s_a5cfdb8e352269::t_cdafdb383763c7 42
+watchfn/typescript/src/alerts/alert-manager.ts
+  s_a5cfdb8e352269::t_d4f928600dbfdd 207-211,242,259,262-267,270,310-311,313-314
+watchfn/typescript/src/core/watch-fn.ts
+  s_a5cfdb8e352269::t_3e8fc06eafac1b 8,57-58,85,99-104,107,263-264
+watchfn/typescript/tests/alerts/public-manager.test.ts
+  s_a5cfdb8e352269::t_f66cc2d10dec96 412-450
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7c496338690ed4840a696b9ce5d2159278c61f0e",
+  "prompts": {},
+  "sessions": {
+    "s_a5cfdb8e352269": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_a5cfdb8e352269",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,77 @@
+package-lock.json
+  s_124319b903d839::t_d5c68b4da10733 8363,10606,10682,11282,15673,59553
+clifn/core/CHANGELOG.md
+  s_124319b903d839::t_8430f8bd14057f 3-10
+clifn/core/README.md
+  s_124319b903d839::t_6ef0ea13aa891a 26,248,262-263,282-284
+clifn/core/package.json
+  s_124319b903d839::t_6b02b6c2fca667 3,68-71,100
+clifn/core/src/document-output.ts
+  s_124319b903d839::t_e38bf797c6461b 1-128
+clifn/core/src/errors.ts
+  s_124319b903d839::t_ad5fe6e807e217 1-111
+clifn/core/src/index.ts
+  s_124319b903d839::t_c3348332a12107 17,20-30,111-118
+clifn/core/src/json-value.ts
+  s_124319b903d839::t_2e89fb77f4522f 1-43
+clifn/core/src/output.ts
+  s_124319b903d839::t_9b8cc74a903c51 1-2
+clifn/core/src/prompt.ts
+  s_124319b903d839::t_acba0586bb8c48 3,5-8,11,17-29,43,47,71-118
+clifn/core/src/runner.ts
+  s_124319b903d839::t_eb79ed2fdd3ff7 2,14-21,29,90-109,145-148,180-209
+clifn/core/src/terminal.ts
+  s_124319b903d839::t_cd99ec4f33be49 1-131
+clifn/core/tests/fixtures/cac/index.ts
+  s_124319b903d839::t_a52d2c95ec5b80 2,9,31-38
+clifn/core/tests/fixtures/commander/index.ts
+  s_124319b903d839::t_34b26a4c3fcbf9 2,8,23,31-42
+clifn/core/tests/fixtures/parse-args/index.ts
+  s_124319b903d839::t_e996986ee4fa70 2,21-26,30-37
+clifn/core/tests/fixtures/shared.ts
+  s_124319b903d839::t_951c8a53e1747a 2,60-100
+clifn/core/tests/parser-canaries.test.ts
+  s_124319b903d839::t_095b41399a044e 41-67,85-86
+clifn/core/tests/prompt-options.test.ts
+  s_124319b903d839::t_078901578686c8 1-99
+clifn/core/tests/runner-document.test.ts
+  s_124319b903d839::t_94812898ae3eff 1-394
+clifn/core/tests/runner-golden.test.ts
+  s_124319b903d839::t_983bbb0a50a2c8 1-134
+clifn/core/tests/terminal.test.ts
+  s_124319b903d839::t_6223ee8960ea9b 1-109
+clifn/docs/content/docs/reference/core-readme.md
+  s_124319b903d839::t_470e9fd3b5c9b6 29,251,265-266,285-287
+clifn/docs/content/docs/reference/exports.md
+  s_124319b903d839::t_753e1ae85a632d 10,20,24
+clifn/docs/static/llms-full.txt
+  s_124319b903d839::t_2066bf055789d3 337,559,573-574,593-595,741,751,755
+devfn/cli/package.json
+  s_124319b903d839::t_f9addfdcab6bd8 17
+devfn/config/package.json
+  s_124319b903d839::t_a20f857775a466 22
+extfn/cli/__tests__/dev.test.ts
+  s_124319b903d839::t_67eae6068472b9 97
+extfn/cli/package.json
+  s_124319b903d839::t_ab6fcad11f8496 38
+mailfn/cli/package.json
+  s_124319b903d839::t_f9f777e253fd04 17
+plugfn/cli/package.json
+  s_124319b903d839::t_7a603f6b2ca972 36
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "04659e647ef0d021a6e4ef5d8d908ba12bd99194",
+  "prompts": {},
+  "sessions": {
+    "s_124319b903d839": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "459fa815-0e7a-4823-b25b-3c85bd3d320a",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

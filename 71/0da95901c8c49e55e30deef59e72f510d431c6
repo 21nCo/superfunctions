@@ -1,0 +1,25 @@
+cifn/typescript/control-plane/src/api/routes.ts
+  s_ab68c149d83da7::t_502243120b5e15 19,67-69
+cifn/typescript/control-plane/src/dispatch/prepare.ts
+  s_ab68c149d83da7::t_7d4b5e106676e2 4,56-57,62-63
+cifn/typescript/control-plane/src/queue/flowfn-client.ts
+  s_ab68c149d83da7::t_23e12b06eedba0 28-39
+cifn/typescript/control-plane/src/triggers/triggers.test.ts
+  s_ab68c149d83da7::t_64871bd85344c5 6-9,407-485
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "710da95901c8c49e55e30deef59e72f510d431c6",
+  "prompts": {},
+  "sessions": {
+    "s_ab68c149d83da7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_ab68c149d83da7",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,45 @@
+apifn/cli/README.md
+  s_b8388439ed03d5::t_ada285f473a2cd 123,142-145
+apifn/cli/__tests__/check-command.test.ts
+  s_b8388439ed03d5::t_77754f27d307a4 12,28,38,40-41,43,429,662,1349,2293-2715
+apifn/cli/src/commands/check-args.ts
+  s_b8388439ed03d5::t_f5036cac338976 59-67,75,146-161,169-181,183-187,190
+apifn/cli/src/commands/check-compare.ts
+  s_b8388439ed03d5::t_d9812af0ec481b 55-60,63-86,91-92,94-95,100,102-111,114-119,122,127-131,133-134,136,143,145-155,157,170-185,187-193,198-200,256-257,262-263,265,275-278,283-289,292-294,298-333
+apifn/cli/src/commands/check-git.ts
+  s_b8388439ed03d5::t_fb0f7d3e30b1f6 21-26,33,90,92,99-103,185-226,234-236,239,242,245-251,254-272,347-348
+apifn/cli/src/commands/check-io.ts
+  s_b8388439ed03d5::t_9d3fb664bb7ac7 3,14-15,17,19-42,46-47,49-50,56,60-61,67-71,77-85,87-89,97-98,113-115
+apifn/cli/src/commands/check-parse.ts
+  s_b8388439ed03d5::t_588188b7452544 14-19,26,49-50,126,131-134,152-162,165-166,170-176,180,225
+apifn/cli/src/commands/check-paths.ts
+  s_b8388439ed03d5::t_323b1aab159c08 3,40-47,61-65
+apifn/cli/src/commands/check-publish.ts
+  s_b8388439ed03d5::t_e7461e2a81a938 46,51-55,57-58,61-62,65,71,77,87-88,92,99,107-108,121,205-206,228-231,233-234,236,243-266,268-273,282-284,293,318,359,421
+apifn/cli/src/commands/check-report.ts
+  s_b8388439ed03d5::t_326edef56b54c7 112,114
+apifn/cli/src/commands/check.ts
+  s_b8388439ed03d5::t_5686b9eda3c440 35-36,38,236-242,244,246-250,252,276-277,507
+apifn/cli/src/commands/generate.ts
+  s_b8388439ed03d5::t_f6e546406c7eef 7,41,54
+apifn/cli/src/index.ts
+  s_b8388439ed03d5::t_69d834b55b40d4 11,503,507,517
+apifn/cli/src/utils/router-loader.ts
+  s_b8388439ed03d5::t_8b7453f1f2dd81 14-19,22,25-32,43,46-50
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b87cefd6f25871114f9f9ee29a8c0499a61aa13f",
+  "prompts": {},
+  "sessions": {
+    "s_b8388439ed03d5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0c200b9e-a9f5-4573-8032-81904f9da67a",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,23 @@
+flowfn/typescript/README.md
+  s_f0efac02424073::t_d520bf5342c384 89-93
+flowfn/typescript/src/queue/idle-wakeup.test.ts
+  s_f0efac02424073::t_f9ed42e6918a5e 1136-1172,1176-1201
+flowfn/typescript/src/queue/queue.ts
+  s_f0efac02424073::t_089735fdaefdfa 117-118,1155,1160-1165,1573-1577,1579-1582,1584
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1b17c05baa71c4d0441d83e06ab62809f1775616",
+  "prompts": {},
+  "sessions": {
+    "s_f0efac02424073": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "057ca814-a9b2-4a1a-ad7a-4bc8e7779264",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

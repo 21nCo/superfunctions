@@ -1,0 +1,21 @@
+watchfn/typescript/src/storage/json-snapshot.ts
+  s_c97fd0f0874f72::t_d741b8ba283a4e 1-5,8-13,25,36-37,42-51
+watchfn/typescript/tests/storage/database.test.ts
+  s_c97fd0f0874f72::t_c9ac35dc8cf5a8 89-107
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "165a5d8b92d55bd107e967b93d703c162feb81b7",
+  "prompts": {},
+  "sessions": {
+    "s_c97fd0f0874f72": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "32a02454-27d9-4720-9778-ab7513c41bf0",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

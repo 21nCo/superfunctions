@@ -1,0 +1,25 @@
+testfn/python/README.md
+  s_4e2c29bda2eb3c::t_36146512f417f2 136-141
+testfn/python/testfn/__init__.py
+  s_4e2c29bda2eb3c::t_3bb09a6cee4f55 3,33
+testfn/python/testfn/adapters/pytest.py
+  s_4e2c29bda2eb3c::t_a5dbd3c8107f26 46-57,158,176-179,230-235,288-292,295-303,421-422
+testfn/python/tests/test_execution_contract.py
+  s_4e2c29bda2eb3c::t_9be735e95277ff 567-695
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "de566dea41204345aff49bd07e9d18dd2ab40f30",
+  "prompts": {},
+  "sessions": {
+    "s_4e2c29bda2eb3c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_4e2c29bda2eb3c",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

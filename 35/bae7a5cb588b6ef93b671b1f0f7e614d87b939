@@ -1,0 +1,39 @@
+flowfn/python/flowfn/adapters/durable_queues.py
+  s_55d304861754ac::t_3a3f66b976604a 17-27,189-191,194-199,209
+flowfn/python/flowfn/core/lease_expiry.py
+  s_55d304861754ac::t_c80bf5b3e61b5d 35-40
+flowfn/python/flowfn/queue/queue.py
+  s_55d304861754ac::t_02f08002d73cc9 163,166-169
+flowfn/python/tests/test_queue_handler_deadline.py
+  s_55d304861754ac::t_2049c263f3aa8e 1-48
+flowfn/typescript/src/adapters/postgres/index.ts
+  s_55d304861754ac::t_92f8dcc85fd069 217-219,364-366
+flowfn/typescript/src/adapters/postgres/postgres.test.ts
+  s_55d304861754ac::t_7a0f36e22b889b 449-476
+flowfn/typescript/src/queue/lease-deadline.test.ts
+  s_55d304861754ac::t_8badb5ddc9ab69 1-39
+flowfn/typescript/src/queue/queue.ts
+  s_55d304861754ac::t_641faeca46a961 37,92-98,407-409
+flowfn/typescript/src/stream/delivery-lease.ts
+  s_55d304861754ac::t_d36933b92789b2 1-13,23,55-58
+flowfn/typescript/src/stream/filter-ownership.test.ts
+  s_55d304861754ac::t_e791e91b75192d 42-63
+flowfn/typescript/src/stream/stream.ts
+  s_55d304861754ac::t_d79435f2b7dbed 2,107,110-112
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "35bae7a5cb588b6ef93b671b1f0f7e614d87b939",
+  "prompts": {},
+  "sessions": {
+    "s_55d304861754ac": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_55d304861754ac",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

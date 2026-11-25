@@ -1,0 +1,19 @@
+cmsfn/studio/README.md
+  s_d67797af842283::t_bf66e5644c8613 45
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6aed3af5f9df855b2cea271a0a73a8c8fae57453",
+  "prompts": {},
+  "sessions": {
+    "s_d67797af842283": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_d67797af842283",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

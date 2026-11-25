@@ -1,0 +1,27 @@
+apifn/cli/src/commands/check.ts
+  s_50de5efcb2fce4::t_b2fae0aae20adf 317,319,519
+apifn/cli/src/commands/check-compare.ts
+  s_50de5efcb2fce4::t_7accb4cf342248 214-217,264-272
+apifn/cli/src/commands/check-args.ts
+  s_50de5efcb2fce4::t_7c0db0d2730c6b 178-181,192-193
+apifn/cli/__tests__/check-command.test.ts
+  s_50de5efcb2fce4::t_aa2ecc7276f546 43,3782-3914
+apifn/cli/src/commands/check-git.ts
+  s_50de5efcb2fce4::t_b9fc5365909218 27-29,243,250-259,348-359,364-366,368,370-371,377-383
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f98d4250ebb39aea2c0afecc6062984987fea641",
+  "prompts": {},
+  "sessions": {
+    "s_50de5efcb2fce4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "90fcc1e7-1916-4100-92f7-3cb6af188f99",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

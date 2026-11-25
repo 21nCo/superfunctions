@@ -1,0 +1,35 @@
+mcpfn/client/src/client.ts
+  s_fdbbe0cf5a712b::t_20dadd0e5b02eb 161-162,807-815,831-834,836
+mcpfn/client/src/targets.ts
+  s_fdbbe0cf5a712b::t_f1a228ea3fe7de 59-62,69-70
+mcpfn/client/tests/build-stamp.test.ts
+  s_fdbbe0cf5a712b::t_63916a40bf840d 14,89-182
+mcpfn/client/tests/stdio-compat-abort.test.ts
+  s_fdbbe0cf5a712b::t_58459077d09d12 3-5,9-16,19,23-24,26-35,39-40,45-46,48-61,63-75
+mcpfn/client/scripts/build-stamp.mjs
+  s_8655e76b661e4d::t_402f99ac0541c1 28-46,48-78,90-92,107,109,113-116
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3c8df3a9e36c9e676e42b56eedf626c3aed9e376",
+  "prompts": {},
+  "sessions": {
+    "s_8655e76b661e4d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "912873dc-f559-4c5f-88a9-8d87db29f442",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_fdbbe0cf5a712b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ee1ea5c3-d666-4b4e-80a0-085851273889",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

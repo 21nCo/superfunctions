@@ -1,0 +1,21 @@
+billfn/docs/content/docs/server/routes.mdx
+  s_146214bd86c56c::t_efe8f065f1404e 22
+billfn/docs/content/docs/server/setup.mdx
+  s_146214bd86c56c::t_37f0885b40ac3d 46,80-86,100-102,140-145
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e3ad4e95374f921c76cfbec6f5d95d3e310596d8",
+  "prompts": {},
+  "sessions": {
+    "s_146214bd86c56c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a20e96-213f-7f50-9f2a-a77e45d9a937",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

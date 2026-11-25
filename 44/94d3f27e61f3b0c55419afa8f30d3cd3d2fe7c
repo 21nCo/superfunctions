@@ -1,0 +1,27 @@
+billfn/provider-dodo/src/index.ts
+  s_0d7e11293d5a4e::t_04311b6f9051b3 60-67,72,77-81,88-95,102-109,655-656,663,1083-1101,1103-1108,1111
+  s_0d7e11293d5a4e::t_7ff83e14eeb4b7 1372-1379
+billfn/provider-dodo/src/__tests__/contract.test.ts
+  s_0d7e11293d5a4e::t_f8bccc336843ce 1128-1158
+billfn/provider-dodo/src/__tests__/refund-revocation.test.ts
+  s_0d7e11293d5a4e::t_f8bccc336843ce 52-58,74-75,112,160-211,214
+  s_0d7e11293d5a4e::t_a4fb7c898dfa7d 212-213,215
+billfn/docs/content/docs/providers/dodo.mdx
+  s_0d7e11293d5a4e::t_f1141391582c10 84
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4494d3f27e61f3b0c55419afa8f30d3cd3d2fe7c",
+  "prompts": {},
+  "sessions": {
+    "s_0d7e11293d5a4e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "97ac12a3-1bf1-4732-a6f3-ece8c28b207e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

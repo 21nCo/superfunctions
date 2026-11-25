@@ -1,0 +1,23 @@
+langfn/typescript/src/http/validation.ts
+  s_8512980c303bbd::t_0e7583b6d2f197 247,252,257
+langfn/typescript/src/models/responses/model.ts
+  s_8512980c303bbd::t_3743d0d3217a81 328-331
+langfn/typescript/tests/responses-credentials.test.ts
+  s_8512980c303bbd::t_6943f9c1181b9b 30,430-455
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2db90baa876a210bee5bb0a89e5ba005116ed721",
+  "prompts": {},
+  "sessions": {
+    "s_8512980c303bbd": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "aa25381b-a2f1-40aa-b4c6-53e5736a2f24",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

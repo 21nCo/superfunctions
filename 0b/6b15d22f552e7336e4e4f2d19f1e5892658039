@@ -1,0 +1,31 @@
+langfn/typescript/src/models/profiles/chatgpt.ts
+  s_16be63ea3e7b52::t_b597236175118d 9,14-18,39
+langfn/typescript/src/models/profiles/types.ts
+  s_16be63ea3e7b52::t_b7b80bed55d815 43-47,50-51,57-58,60,67,140-142,154
+langfn/typescript/src/models/responses/request.ts
+  s_16be63ea3e7b52::t_1398c9941bd26b 91-95,196
+langfn/typescript/src/models/responses/response.ts
+  s_16be63ea3e7b52::t_e15f5c5705a55a 503-513
+langfn/typescript/tests/fixtures/responses/chatgpt-signin/stream-subscription-usage-limit.sse
+  s_16be63ea3e7b52::t_3a4215fc554274 1-6
+langfn/typescript/tests/fixtures/responses/chatgpt-signin/subscription-usage-limit.json
+  s_16be63ea3e7b52::t_e8e10c3324b159 1-14
+langfn/typescript/tests/responses-credentials.test.ts
+  s_16be63ea3e7b52::t_8a3aec8ac01d20 29,320-349,414-461,463,469-470
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0b6b15d22f552e7336e4e4f2d19f1e5892658039",
+  "prompts": {},
+  "sessions": {
+    "s_16be63ea3e7b52": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e8823089-696a-43c0-9af1-0bbbc7b606b5",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

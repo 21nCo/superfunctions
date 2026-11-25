@@ -1,0 +1,29 @@
+recfn/server/__tests__/capture-artifact-storage.test.ts
+  s_ad4dd70e993f34::t_10249e013cfd3a 13-14,23-24,40-61
+recfn/server/__tests__/recording-capture.test.ts
+  s_ad4dd70e993f34::t_3b836d4f4529e2 3,125-137
+recfn/server/__tests__/transcription-pipeline.test.ts
+  s_ad4dd70e993f34::t_6b7301f02a1c07 296-361
+recfn/server/src/integrations/storage.ts
+  s_ad4dd70e993f34::t_81f6e3ac22da75 78,80,92-96,98
+recfn/server/src/recording/storage.ts
+  s_ad4dd70e993f34::t_95e28279f9572f 180-194
+recfn/server/src/transcription/pipeline.ts
+  s_ad4dd70e993f34::t_a68c09770502e8 40-77,166
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e8e41309d765b38293bb27a7ba46fba8d7baa242",
+  "prompts": {},
+  "sessions": {
+    "s_ad4dd70e993f34": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7169f1e8-af1a-4cba-936d-f9ad7037d5fd",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

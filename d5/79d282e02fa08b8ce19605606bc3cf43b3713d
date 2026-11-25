@@ -1,0 +1,21 @@
+cmsfn/core/eslint.config.mjs
+  s_377663a5a68e12::t_ebb6b44af60427 1-31
+cmsfn/core/src/envelope.ts
+  s_377663a5a68e12::t_e73cf9308c7f25 35
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d579d282e02fa08b8ce19605606bc3cf43b3713d",
+  "prompts": {},
+  "sessions": {
+    "s_377663a5a68e12": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_377663a5a68e12",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

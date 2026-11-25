@@ -1,0 +1,23 @@
+apifn/cli/__tests__/check-command.test.ts
+  s_b3ae0310a87d82::t_c986ef02fe502f 50,858-859,3994-3995,4195-4248
+apifn/cli/src/commands/check-paths.ts
+  s_b3ae0310a87d82::t_0cc65a944a2a1f 102-105
+apifn/cli/src/commands/check.ts
+  s_b3ae0310a87d82::t_4be78bd4e3a286 39,327-330,653-654
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b0f413f727c27a9f6368d45692abe0464d591f0d",
+  "prompts": {},
+  "sessions": {
+    "s_b3ae0310a87d82": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6294f24d-359d-4a1e-90b6-67924eb5c146",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

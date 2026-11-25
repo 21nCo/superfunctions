@@ -1,0 +1,21 @@
+cachefn/python/cachefn/storage/memory_storage.py
+  s_c032374b783684::t_f04f98cba317ea 5-6,34-37,117-123,183,225-229
+cachefn/python/tests/test_memory_storage_expiry.py
+  s_c032374b783684::t_a801218d1af0f0 94-125
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b237c6dddc7693ee44b15ebc2082974f1d5ba07f",
+  "prompts": {},
+  "sessions": {
+    "s_c032374b783684": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "64259309-b7be-4200-8a04-31f816d8b7f3",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

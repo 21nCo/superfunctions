@@ -1,0 +1,25 @@
+watchfn/python/watchfn/query.py
+  s_c1e8f7ab0a40b0::t_b899dd75fb866b 81-101,348-349
+watchfn/python/tests/test_query.py
+  s_c1e8f7ab0a40b0::t_091db2816bc2ed 80-92
+watchfn/typescript/src/query/query-engine.ts
+  s_c1e8f7ab0a40b0::t_61bcf44c976754 15-36,51,63-67,69-73,161-163,269-271
+watchfn/typescript/tests/query/streaming.test.ts
+  s_c1e8f7ab0a40b0::t_76274f73acd315 61-88
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "df30d7141aea38a73bdd3697f779eb6a155874b4",
+  "prompts": {},
+  "sessions": {
+    "s_c1e8f7ab0a40b0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f630f380-29c2-48b7-ab1a-3a9293a23aa1",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

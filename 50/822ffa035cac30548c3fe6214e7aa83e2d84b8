@@ -1,0 +1,23 @@
+watchfn/python/tests/test_bounded_scan.py
+  s_90a97ea5e67567::t_b06d856062638c 227-264
+watchfn/python/watchfn/client.py
+  s_90a97ea5e67567::t_f66ce75317e35d 105-116
+watchfn/python/watchfn/query.py
+  s_90a97ea5e67567::t_4b2fd13baa7904 418-422,425-426,442-444,446-454
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "50822ffa035cac30548c3fe6214e7aa83e2d84b8",
+  "prompts": {},
+  "sessions": {
+    "s_90a97ea5e67567": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_90a97ea5e67567",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

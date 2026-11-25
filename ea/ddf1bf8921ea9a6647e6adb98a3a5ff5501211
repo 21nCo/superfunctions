@@ -1,0 +1,49 @@
+flowfn/typescript/README.md
+  s_b731d9e005b41a::t_cd6b3e151c8a7e 75-104
+flowfn/typescript/docs/API.md
+  s_b731d9e005b41a::t_697daf8eb6275d 100,102-104,406-412
+flowfn/typescript/src/adapters/base.ts
+  s_b731d9e005b41a::t_008fe9d39265bc 120-143,145-157
+flowfn/typescript/src/adapters/postgres/index.ts
+  s_b731d9e005b41a::t_3d77a3896ca49d 9-10,187-203,216-226,240-243,247-248,260-297,707,799,894,1414
+flowfn/typescript/src/adapters/postgres/notifications.test.ts
+  s_b731d9e005b41a::t_1322d556b08417 1-119
+flowfn/typescript/src/adapters/postgres/notifications.ts
+  s_b731d9e005b41a::t_0b5c4a7b2f621f 1-169
+flowfn/typescript/src/queue/queue.ts
+  s_b731d9e005b41a::t_a89dee559871d2 1,16,59-73,93-115,123,236-237,239,242-401,541,674-676,728,731-734,737-741,743,745-752,757,760,810-838,840-858,860-862,864,866-867,872,958,992-994,1066,1069-1071,1079,1081-1089,1162-1164,1171,1176,1224-1226,1232-1233,1239-1252
+flowfn/typescript/scripts/idle-wakeup-measure.mjs
+  s_b731d9e005b41a::t_13bc70bf8b577c 1-95
+flowfn/typescript/src/adapters/postgres/wakeup.test.ts
+  s_b731d9e005b41a::t_20eca8d5020831 1-222
+flowfn/typescript/src/core/flow-fn.ts
+  s_b731d9e005b41a::t_53f25a47dcd0c2 1,115-116,164-165,383-387,390,393
+flowfn/typescript/src/core/shutdown.ts
+  s_b731d9e005b41a::t_ac230ba8f54b2b 1-10,12-20,30
+flowfn/typescript/src/index.ts
+  s_b731d9e005b41a::t_dc13cfd59b1f1e 61
+flowfn/typescript/src/queue/idle-wakeup.test.ts
+  s_b731d9e005b41a::t_8ac9db236e4b56 1-329
+flowfn/typescript/src/queue/types.ts
+  s_b731d9e005b41a::t_a3f181c7888733 74-78,172-181
+flowfn/typescript/src/queue/worker-pool.ts
+  s_b731d9e005b41a::t_5f900a8493ef8f 1,100,108,114
+flowfn/typescript/src/queue/worker.ts
+  s_b731d9e005b41a::t_045ca1ce81ad7e 88,93,97,99
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "eaddf1bf8921ea9a6647e6adb98a3a5ff5501211",
+  "prompts": {},
+  "sessions": {
+    "s_b731d9e005b41a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35f58510-17b5-46b8-a268-6b49b5f9edb4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

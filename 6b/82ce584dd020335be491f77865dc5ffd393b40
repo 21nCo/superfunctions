@@ -1,0 +1,19 @@
+mcpfn/core/src/client-profiles.ts
+  s_f1ec4de2a6ae19::t_648ef4dae86d32 371-372,552-556
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6b82ce584dd020335be491f77865dc5ffd393b40",
+  "prompts": {},
+  "sessions": {
+    "s_f1ec4de2a6ae19": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21018-8037-7b61-a435-e187daf13467",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

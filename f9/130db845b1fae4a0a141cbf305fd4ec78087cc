@@ -1,0 +1,23 @@
+billfn/core/src/__tests__/http-surface.test.ts
+  s_0d7e11293d5a4e::t_36002b7ad21279 105-122,177,287-289,293-304,312
+billfn/core/src/http.ts
+  s_0d7e11293d5a4e::t_24a2b8e1b9c590 28-29
+billfn/core/src/router.ts
+  s_0d7e11293d5a4e::t_bfff7b17f61133 75,86-101
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f9130db845b1fae4a0a141cbf305fd4ec78087cc",
+  "prompts": {},
+  "sessions": {
+    "s_0d7e11293d5a4e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "97ac12a3-1bf1-4732-a6f3-ece8c28b207e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,29 @@
+flowfn/typescript/docs/queue-ownership.md
+  s_19abec75182420::t_374251d9827fdc 38-40
+flowfn/typescript/src/adapters/memory.ts
+  s_19abec75182420::t_db670a6ff50564 3,55-56,58
+flowfn/typescript/src/adapters/postgres/index.ts
+  s_19abec75182420::t_b501ae4f143caa 269-271,281,285,288
+flowfn/typescript/src/adapters/redis.test.ts
+  s_19abec75182420::t_f5b39c9595caf8 391-401
+flowfn/typescript/src/adapters/redis.ts
+  s_19abec75182420::t_6b2a4cea4d6f8b 331,533-534
+flowfn/typescript/tests/dlq.test.ts
+  s_19abec75182420::t_0bd071a9afbfa4 8-9,496-507
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "388aaf88c02d199bf928fbd8a6667919dc7ddef8",
+  "prompts": {},
+  "sessions": {
+    "s_19abec75182420": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d61a7abd-8c27-4e7c-ba23-13d43e2da322",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

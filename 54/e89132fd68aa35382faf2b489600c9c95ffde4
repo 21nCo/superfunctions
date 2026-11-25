@@ -1,0 +1,21 @@
+filefn/server/src/shares/service.ts
+  s_b841cebdcfad95::t_54f7694ca3c01f 100-102
+filefn/server/tests/sharing-security.test.ts
+  s_b841cebdcfad95::t_57bc3972b4db92 382-384
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "54e89132fd68aa35382faf2b489600c9c95ffde4",
+  "prompts": {},
+  "sessions": {
+    "s_b841cebdcfad95": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "436f4738-d86e-44e1-82bc-c432f9aaabf3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

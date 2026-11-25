@@ -1,0 +1,27 @@
+filefn/client/src/__tests__/transport.test.ts
+  s_b841cebdcfad95::t_31080759da1a02 250-252
+filefn/client/src/client.ts
+  s_b841cebdcfad95::t_e47cd224a660e1 564-569
+filefn/docs/content/docs/features/rate-limiting.md
+  s_b841cebdcfad95::t_4eb960cde68a53 28-31,33-35,40-42
+filefn/docs/static/llms-full.txt
+  s_b841cebdcfad95::t_0b293a6aad2246 4240-4243,4245-4247,4252-4254
+filefn/server/src/upload-sessions/service.ts
+  s_b841cebdcfad95::t_0811b5bb4b1d52 161-166,1390-1392,1394-1404,1407-1409
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "905e56138c673f66ac1d8703c14abf2be6a65779",
+  "prompts": {},
+  "sessions": {
+    "s_b841cebdcfad95": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "436f4738-d86e-44e1-82bc-c432f9aaabf3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

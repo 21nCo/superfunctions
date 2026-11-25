@@ -1,0 +1,21 @@
+mcpfn/auth/src/resource-server.ts
+  s_129b53f19cac50::t_61a0d903d6b666 175-176
+mcpfn/auth/tests/audit-hardening.test.ts
+  s_129b53f19cac50::t_a049c9d66cd2b0 206-218
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0521671cc736a231a8ec4fc116c43a8fb6e4888f",
+  "prompts": {},
+  "sessions": {
+    "s_129b53f19cac50": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a7105aee-4f19-4a0b-b0d0-4e150c0cc489",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
