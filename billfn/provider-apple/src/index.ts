@@ -298,18 +298,10 @@ export function createAppleProvider(providerConfig: AppleProviderConfig): BillFn
           method: 'POST'
         }
       );
+      // Cancellation only confirms that renewal is off. A signed notification or sync updates billing state
+      // without overwriting a newer StoreKit event with the subscription snapshot from before this request.
       return {
         operationStatus: 'applied',
-        billingState: {
-          subscriptionStatus: input.subscription.status,
-          checkoutStatus: 'succeeded',
-          providerSubscriptionId: input.subscription.providerSubscriptionId,
-          providerChargeId: input.subscription.providerChargeId,
-          currentPeriodStart: input.subscription.currentPeriodStart,
-          currentPeriodEnd: input.subscription.currentPeriodEnd,
-          autoRenew: false,
-          raw: response
-        },
         raw: response
       } satisfies BillFnProviderOperationResult;
     },
