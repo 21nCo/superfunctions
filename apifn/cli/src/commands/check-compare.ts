@@ -4,8 +4,9 @@
  * behind a shared schema is diffed like the same change written inline.
  */
 
-import { openAPIReferenceContext, parseOpenAPI, validateOpenAPI } from "@apifn/core";
-import type { OpenAPIDocument, OpenAPIReferenceMode as Mode } from "@apifn/core";
+import { parseOpenAPI, validateOpenAPI } from "@apifn/core";
+import type { OpenAPIDocument } from "@apifn/core";
+import { openAPIReferenceContext, type OpenAPIReferenceMode as Mode } from "@apifn/core/internal/openapi-reference-context";
 import { MAX_EXPANDED_SPEC_NODES, canonicalJson } from "./check-parse.js";
 import type { JsonObject, JsonValue } from "./check-parse.js";
 

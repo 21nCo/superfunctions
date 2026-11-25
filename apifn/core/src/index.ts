@@ -88,8 +88,6 @@ export type { FromRouterOptions } from "./openapi/from-router.js";
 export { parseOpenAPI } from "./openapi/parse.js";
 export { validateAndDereferenceOpenAPI, validateOpenAPI } from "./openapi/validate.js";
 export type { OpenAPIValidationOptions } from "./openapi/validate.js";
-export { openAPIReferenceContext } from "./openapi/reference-context.js";
-export type { OpenAPIReferenceMode } from "./openapi/reference-context.js";
 export { upconvertFrom3_0 } from "./openapi/upconvert.js";
 export { diffOpenAPI } from "./diff/diff.js";
 export { formatDiffAsJson, formatDiffAsText } from "./diff/format.js";

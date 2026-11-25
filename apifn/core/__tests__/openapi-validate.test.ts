@@ -98,6 +98,20 @@ describe("validateOpenAPI", () => {
     expect(result.document?.components?.schemas?.Value).toEqual({ type: "integer" });
   });
 
+  it("keeps a legacy slash-containing key when both pointer interpretations exist", async () => {
+    const doc = documentWithReference("#/components/schemas/Shared/properties/a%2Fproperties/b");
+    Object.assign(doc.components.schemas.Shared, {
+      type: "object",
+      properties: {
+        "a/properties/b": { type: "integer" },
+        a: { type: "object", properties: { b: { type: "string" } } },
+      },
+    });
+    const result = await validateAndDereferenceOpenAPI(doc);
+    expect(result.errors).toEqual([]);
+    expect(result.document?.components?.schemas?.Value).toEqual({ type: "integer" });
+  });
+
   it("accepts literal fragment-shaped example data with or without an allowlist", async () => {
     const doc = documentWithReference("#/components/schemas/Shared");
     Object.assign(doc.components.schemas.Shared, {
@@ -231,13 +245,44 @@ describe("validateOpenAPI", () => {
     ]);
   });
 
+  it("treats a document-relative URI as external even when it names the current directory", async () => {
+    const directory = process.cwd().replaceAll("\\", "/").replace(/\/$/, "") + "/";
+    const doc = documentWithReference("./#/components/schemas/Shared");
+    const externalReferences = new Map([["https://example.invalid/unused.json", "{}"]]);
+    await expect(validateOpenAPI(doc, { externalReferences })).resolves.toEqual([
+      { path: "openapi", message: expect.stringContaining("explicit allowlist"), severity: "error" },
+    ]);
+
+    externalReferences.set(directory.startsWith("/") ? directory : "/" + directory, JSON.stringify({
+      components: { schemas: { Shared: { type: "integer" } } },
+    }));
+    const result = await validateAndDereferenceOpenAPI(doc, { externalReferences });
+    expect(result.errors).toEqual([]);
+    expect(result.document?.components?.schemas?.Value).toEqual({ type: "integer" });
+  });
+
+  it("dereferences literal data used as a schema through an intermediate alias", async () => {
+    const doc = documentWithReference("#/components/schemas/Alias/default");
+    const literal = { $ref: "#/components/schemas/Leaf" };
+    Object.assign(doc.components.schemas, {
+      Alias: { $ref: "#/components/schemas/Shared" },
+      Leaf: { type: "integer" },
+      Shared: { type: "object", default: literal },
+    });
+    const result = await validateAndDereferenceOpenAPI(doc);
+    expect(result.errors).toEqual([]);
+    expect(result.document?.components?.schemas?.Value).toEqual({ type: "integer" });
+    expect(result.document?.components?.schemas?.Shared).toMatchObject({ default: literal });
+  });
+
   it("resolves slash-delimited pointers in preloaded schemas and preserves literal examples", async () => {
     const ref = "https://example.invalid/preloaded.json";
-    const encoded = "#%2F$defs%2FShared";
+    const pointer = "#/$defs/Shared";
     const contents = JSON.stringify({
       $defs: { Shared: { type: "string" } },
-      $ref: "#/$defs/Shared",
-      examples: [{ $ref: encoded }],
+      $ref: pointer,
+      examples: [{ $ref: pointer }],
+      default: { $ref: "literal-example.json" },
     });
     const result = await validateAndDereferenceOpenAPI(documentWithReference(ref), {
       externalReferences: new Map([[ref, contents]]),
@@ -245,10 +290,11 @@ describe("validateOpenAPI", () => {
     expect(result.errors).toEqual([]);
     expect(result.document?.components?.schemas?.Value).toMatchObject({
       type: "string",
-      examples: [{ $ref: encoded }],
+      examples: [{ $ref: pointer }],
+      default: { $ref: "literal-example.json" },
     });
 
-    const encodedSchema = contents.replace("#/$defs/Shared", encoded);
+    const encodedSchema = contents.replace(`"$ref":"${pointer}"`, '"$ref":"#%2F$defs%2FShared"');
     await expect(validateOpenAPI(documentWithReference(ref), {
       externalReferences: new Map([[ref, encodedSchema]]),
     })).resolves.toEqual([
@@ -258,7 +304,7 @@ describe("validateOpenAPI", () => {
 
   it("keeps the literal value of an Example Object referenced from a preloaded map", async () => {
     const ref = "https://example.invalid/schema-map.json";
-    const encoded = "#%2F$defs%2FShared";
+    const pointer = "#/$defs/Shared";
     const doc = {
       openapi: "3.1.0" as const,
       info: { title: "Example API", version: "1.0.0" },
@@ -268,11 +314,11 @@ describe("validateOpenAPI", () => {
     const result = await validateAndDereferenceOpenAPI(doc, {
       externalReferences: new Map([[ref, JSON.stringify({
         $defs: { Shared: { type: "string" } },
-        exampleRecords: { Selected: { value: { $ref: encoded } } },
+        exampleRecords: { Selected: { value: { $ref: pointer } } },
       })]]),
     });
     expect(result.errors).toEqual([]);
-    expect(result.document?.components?.examples?.Sample).toEqual({ value: { $ref: encoded } });
+    expect(result.document?.components?.examples?.Sample).toEqual({ value: { $ref: pointer } });
   });
 
   it("preserves parser support for YAML aliases when a local extension reference is present", async () => {

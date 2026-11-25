@@ -1,5 +1,5 @@
 import SwaggerParser from "@apidevtools/swagger-parser";
-import { parseDocument, visit } from "yaml";
+import { parseDocument } from "yaml";
 import type { OpenAPIDocument, ValidationError } from "../types.js";
 import { openAPIReferenceContext, type OpenAPIReferenceMode } from "./reference-context.js";
 
@@ -23,23 +23,21 @@ function referenceChildMode(
   return entryMode(mode, key, child) ?? childMode(key, child);
 }
 
-function pointerTarget(
-  document: unknown, tokens: string[]
-): { value: unknown; mode: OpenAPIReferenceMode } | "reference" | undefined {
-  let value = document;
-  let mode: OpenAPIReferenceMode = "node";
-  for (const key of tokens) {
-    if (typeof value !== "object" || value === null) return undefined;
-    // Swagger Parser follows an intermediate reference before looking up keys.
-    if (mode !== "literal" && "$ref" in value && typeof value.$ref === "string" && value.$ref) {
-      return "reference";
-    }
-    if (!Object.hasOwn(value, key)) return undefined;
-    const child: unknown = Reflect.get(value, key);
-    mode = referenceChildMode(value, mode, key, child);
-    value = child;
-  }
-  return { value, mode };
+interface ReferenceDocument {
+  value: unknown;
+  uri: string;
+}
+
+interface ReferenceTarget {
+  value: unknown;
+  mode: OpenAPIReferenceMode;
+  source: ReferenceDocument;
+}
+
+interface ReferenceCopies {
+  field: string;
+  targets: unknown[];
+  originals: Map<string, string>;
 }
 
 function decodeFragment(fragment: string): string {
@@ -54,61 +52,21 @@ function unescapePointerToken(token: string): string {
   return token.replaceAll("~1", "/").replaceAll("~0", "~");
 }
 
-function localPointerTokens(document: unknown, fragment: string): string[] {
-  if (fragment === "") return [];
-  if (fragment.startsWith("/")) {
-    const legacy = fragment.split("/").slice(1).map((token) => decodeFragment(unescapePointerToken(token)));
-    if (!/%2f/i.test(fragment) || pointerTarget(document, legacy)) return legacy;
-    const decoded = decodeFragment(fragment).split("/").slice(1).map(unescapePointerToken);
-    return pointerTarget(document, decoded) ? decoded : legacy;
-  }
-  const decoded = decodeFragment(fragment);
-  if (!decoded.startsWith("/")) {
-    throw new Error("OpenAPI $ref fragments must be slash-delimited JSON pointers");
-  }
-  return decoded.split("/").slice(1).map(unescapePointerToken);
+function encodePointer(tokens: string[]): string {
+  return "#" + tokens.map((token) =>
+    "/" + encodeURIComponent(token.replaceAll("~", "~0").replaceAll("/", "~1"))
+  ).join("");
 }
 
-interface ReferenceCopies {
-  field: string;
-  targets: unknown[];
-  originals: Map<string, string>;
-}
-
-function reserveReferenceField(ref: string, used: Set<string>): void {
-  const normalized = ref.replaceAll("\\", "/").replace(/[\t\r\n]/g, "");
-  const first = normalized.match(/#(?:\/|%2f)(.*?)(?:\/|%2f|$)/i)?.[1];
-  if (first !== undefined) {
-    try {
-      used.add(decodeURIComponent(first));
-    } catch {
-      // A malformed token cannot name an ASCII extension field.
-    }
-  }
-}
-
-function reserveReferenceFields(document: unknown, used: Set<string>): void {
-  const seen = new WeakSet<object>();
-  const pending: unknown[] = [document];
-  while (pending.length) {
-    const value = pending.pop();
-    if (typeof value !== "object" || value === null || seen.has(value)) continue;
-    seen.add(value);
-    if ("$ref" in value && typeof value.$ref === "string") {
-      reserveReferenceField(value.$ref, used);
-    }
-    for (const child of Object.values(value)) pending.push(child);
-  }
-}
-
-function reservePreloadedReferenceFields(contents: string, used: Set<string>): void {
-  // Inspect scalar tokens without expanding YAML aliases or interpreting a
-  // schema map. An aliased string is present as a scalar at its anchor.
-  visit(parseDocument(contents), {
-    Scalar(_key, scalar) {
-      if (typeof scalar.value === "string") reserveReferenceField(scalar.value, used);
-    },
-  });
+function resolveDocumentURI(base: string, ref: string): string {
+  const normalized = ref.replaceAll("\\", "/");
+  const isPath = base.startsWith("/");
+  const pathOrigin = "https://apifn-local-path.invalid";
+  const url = new URL(normalized, isPath ? pathOrigin + base : base);
+  const absolute = /^(?:[a-z][a-z0-9+.-]*:|\/\/)/i.test(normalized.trimStart());
+  return isPath && !absolute && url.origin === pathOrigin
+    ? url.pathname + url.search + url.hash
+    : url.href;
 }
 
 function restoreReferenceCopies(document: object, { field, targets, originals }: ReferenceCopies): void {
@@ -129,21 +87,20 @@ function restoreReferenceCopies(document: object, { field, targets, originals }:
   }
 }
 
-function applyReferencePolicy<T>(
-  document: T,
-  {
-    allowExternal,
-    literalReferences,
-    referenceCopies,
-  }: { allowExternal: boolean; literalReferences?: Map<object, string>; referenceCopies?: ReferenceCopies }
-): T {
-  const prepare = literalReferences !== undefined;
-  const { isMap } = openAPIReferenceContext;
+function prepareReferences(document: OpenAPIDocument, externalReferences?: ReadonlyMap<string, string>) {
+  const cwd = typeof process !== "undefined" && process.cwd ? process.cwd().replaceAll("\\", "/") : "/";
+  const uri = (cwd.startsWith("/") ? cwd : "/" + cwd).replace(/\/$/, "") + "/";
+  const root: ReferenceDocument = { value: document, uri };
+  const supplied = new Map<string, ReferenceDocument>();
+  const literalReferences = new Map<object, string>();
   const seen = new WeakMap<object, Map<OpenAPIReferenceMode, object>>();
-  const pending: Array<{ value: object; copy: object; mode: OpenAPIReferenceMode }> = [];
-  const copiedPointers = new Map<string, string>();
+  const pending: Array<ReferenceTarget & { value: object; copy: object }> = [];
+  let field = "x-apifn-reference-copies";
+  while (Object.hasOwn(document, field)) field += "-";
+  const referenceCopies: ReferenceCopies = { field, targets: [], originals: new Map() };
+  const copiedPointers = new Map<ReferenceDocument, Map<string, string>>();
 
-  function enqueue(value: unknown, mode: OpenAPIReferenceMode): unknown {
+  function enqueue(value: unknown, mode: OpenAPIReferenceMode, source: ReferenceDocument): unknown {
     if (typeof value !== "object" || value === null) return value;
     const contexts = seen.get(value) ?? new Map<OpenAPIReferenceMode, object>();
     const existing = contexts.get(mode);
@@ -151,71 +108,152 @@ function applyReferencePolicy<T>(
 
     // YAML aliases can share a value between a schema and literal example data.
     const prototype = Object.getPrototypeOf(value);
-    const copy = prepare && (Array.isArray(value) || prototype === Object.prototype || prototype === null)
-      ? (Array.isArray(value) ? [...value] : { ...value })
-      : value;
+    const copy = Array.isArray(value) ? [...value]
+      : prototype === Object.prototype || prototype === null ? { ...value } : value;
     contexts.set(mode, copy);
     seen.set(value, contexts);
-    pending.push({ value, copy, mode });
+    pending.push({ value, copy, mode, source });
     return copy;
   }
 
-  const root = enqueue(document, "node");
-  while (pending.length) {
-    const { value, copy, mode } = pending.pop()!;
+  function location(source: ReferenceDocument, ref: string): { source: ReferenceDocument; fragment: string } {
+    if (ref.startsWith("#")) return { source, fragment: ref.slice(1) };
+    if (!externalReferences?.size) throw new Error(EXTERNAL_REF_ERROR);
 
+    const resolved = resolveDocumentURI(source.uri, ref);
+    const hash = resolved.indexOf("#");
+    const key = hash === -1 ? resolved : resolved.slice(0, hash);
+    let external = supplied.get(key);
+    if (!external) {
+      const contents = externalReferences.get(key);
+      if (contents === undefined) throw new Error(EXTERNAL_REF_ERROR);
+      const parsed = parseDocument(contents);
+      if (parsed.errors.length) throw new Error(parsed.errors[0].message);
+      // Alias instances retain their object identity, so copying named targets
+      // does not expand the alias graph.
+      external = { value: parsed.toJS({ maxAliasCount: -1 }), uri: key };
+      supplied.set(key, external);
+    }
+    return { source: external, fragment: hash === -1 ? "" : resolved.slice(hash + 1) };
+  }
+
+  function pointerTarget(
+    source: ReferenceDocument, tokens: string[], aliases: Set<object>
+  ): ReferenceTarget | "reference" | undefined {
+    let value = source.value;
+    let mode: OpenAPIReferenceMode = "node";
+    for (let index = 0; index < tokens.length; index += 1) {
+      // Follow aliases before looking up remaining tokens, keeping siblings
+      // that Swagger Parser gives precedence over the referenced object.
+      const chain = new Set(aliases);
+      const overrides = new Map<string, { value: unknown; source: ReferenceDocument }>();
+      while (typeof value === "object" && value !== null && mode !== "literal" &&
+          !openAPIReferenceContext.isMap(mode) && "$ref" in value && typeof value.$ref === "string" && value.$ref) {
+        // A root alias can point to one of its own sibling definitions.
+        if (chain.has(value)) break;
+        chain.add(value);
+        const alias = location(source, value.$ref);
+        const target = pointerTarget(alias.source, pointerTokens(alias.source, alias.fragment, chain), chain);
+        if (!target || target === "reference") return "reference";
+        for (const [key, sibling] of Object.entries(value)) {
+          if (key !== "$ref" && !overrides.has(key)) {
+            overrides.set(key, { value: sibling, source });
+          }
+        }
+        source = target.source;
+        value = target.value;
+      }
+      if (typeof value !== "object" || value === null) return undefined;
+      const parent = overrides.size
+        ? { ...value, ...Object.fromEntries([...overrides].map(([key, entry]) => [key, entry.value])) }
+        : value;
+      let key = tokens[index];
+      if (!Object.hasOwn(parent, key) || Reflect.get(parent, key) === undefined ||
+          (index === tokens.length - 1 && Reflect.get(parent, key) === null)) {
+        for (let end = tokens.length; end > index + 1; end -= 1) {
+          const joined = tokens.slice(index, end).join("/");
+          if (Object.hasOwn(parent, joined) && Reflect.get(parent, joined) !== undefined) {
+            key = joined;
+            index = end - 1;
+            break;
+          }
+        }
+      }
+      if (!Object.hasOwn(parent, key)) return undefined;
+      const child: unknown = Reflect.get(parent, key);
+      source = overrides.get(key)?.source ?? source;
+      mode = referenceChildMode(parent, mode, key, child);
+      value = child;
+    }
+    return { value, mode, source };
+  }
+
+  function pointerTokens(source: ReferenceDocument, fragment: string, aliases = new Set<object>()): string[] {
+    if (fragment === "") return [];
+    if (fragment.startsWith("/")) {
+      const legacy = fragment.split("/").slice(1).map((token) => decodeFragment(unescapePointerToken(token)));
+      if (source !== root || !/%2f/i.test(fragment) ||
+          pointerTarget(source, legacy, new Set(aliases))) return legacy;
+      const decoded = decodeFragment(fragment).split("/").slice(1).map(unescapePointerToken);
+      return pointerTarget(source, decoded, new Set(aliases)) ? decoded : legacy;
+    }
+    const decoded = decodeFragment(fragment);
+    if (source !== root || !decoded.startsWith("/")) {
+      throw new Error("OpenAPI $ref fragments must be slash-delimited JSON pointers");
+    }
+    return decoded.split("/").slice(1).map(unescapePointerToken);
+  }
+
+  function rewriteReference(ref: string, source: ReferenceDocument, mode: OpenAPIReferenceMode): string {
+    const destination = location(source, ref);
+    const tokens = pointerTokens(destination.source, destination.fragment);
+    if (destination.source === root && tokens[0] === field) {
+      throw new Error("OpenAPI $ref target does not exist");
+    }
+    const canonical = encodePointer(tokens);
+    const target = pointerTarget(destination.source, tokens, new Set());
+    const isLocal = destination.source === root;
+    if (!target || target === "reference") {
+      if (isLocal) return canonical; // Let Swagger Parser report local missing or circular pointers.
+      throw new Error("OpenAPI $ref target does not exist");
+    }
+    if (isLocal && target.source === root &&
+        (target.mode !== "literal" || typeof target.value !== "object" || target.value === null)) {
+      return canonical;
+    }
+
+    // Place imported targets and schemas that refer into a literal payload in
+    // their own context, so Swagger Parser never sees the literal references.
+    const pointers = copiedPointers.get(destination.source) ?? new Map<string, string>();
+    const key = mode + canonical;
+    const existing = pointers.get(key);
+    if (existing) return existing;
+    const preparedRef = "#/" + field + "/" + referenceCopies.targets.length;
+    pointers.set(key, preparedRef);
+    copiedPointers.set(destination.source, pointers);
+    referenceCopies.originals.set(preparedRef, isLocal ? canonical : ref);
+    referenceCopies.targets.push(enqueue(target.value, mode, target.source));
+    return preparedRef;
+  }
+
+  const copy = enqueue(root.value, "node", root) as OpenAPIDocument;
+  while (pending.length) {
+    const { value, copy, mode, source } = pending.pop()!;
     if ("$ref" in value && typeof value.$ref === "string") {
-      const ref = value.$ref;
       if (mode === "literal") {
-        // The parser treats literal $ref strings as references. Restore these
-        // values on their context-specific copies after validation.
-        if (literalReferences) {
-          literalReferences.set(copy, ref);
-          Reflect.deleteProperty(copy, "$ref");
-        }
-      } else if (ref && !ref.startsWith("#")) {
-        if (!allowExternal) throw new Error(EXTERNAL_REF_ERROR);
-      } else if (ref && !isMap(mode)) {
-        const fragment = ref.slice(1);
-        if (!prepare && fragment !== "" && !fragment.startsWith("/")) {
-          throw new Error("OpenAPI $ref fragments must be slash-delimited JSON pointers");
-        }
-        if (prepare) {
-          const tokens = localPointerTokens(document, fragment);
-          if (referenceCopies && tokens[0] === referenceCopies.field) {
-            throw new Error("OpenAPI $ref target does not exist");
-          }
-          const canonical = "#" + tokens.map((token) =>
-            "/" + encodeURIComponent(token.replaceAll("~", "~0").replaceAll("/", "~1"))
-          ).join("");
-          let resolved = canonical;
-          const target = tokens.length ? pointerTarget(document, tokens) : undefined;
-          if (target && target !== "reference" && target.mode === "literal" &&
-              referenceCopies && typeof target.value === "object" && target.value !== null) {
-            const key = mode + canonical;
-            const existing = copiedPointers.get(key);
-            if (existing) {
-              resolved = existing;
-            } else {
-              // A schema can reference an extension or example as a schema.
-              // Give the parser a copy for that use without changing the data.
-              resolved = "#/" + referenceCopies.field + "/" + referenceCopies.targets.length;
-              copiedPointers.set(key, resolved);
-              referenceCopies.originals.set(resolved, canonical);
-              referenceCopies.targets.push(enqueue(target.value, mode));
-            }
-          }
-          Reflect.set(copy, "$ref", resolved);
-        }
+        literalReferences.set(copy, value.$ref);
+        Reflect.deleteProperty(copy, "$ref");
+      } else if (value.$ref && !openAPIReferenceContext.isMap(mode)) {
+        Reflect.set(copy, "$ref", rewriteReference(value.$ref, source, mode));
       }
     }
     for (const [key, child] of Object.entries(value)) {
-      if (prepare && key === "$ref" && typeof child === "string") continue;
-      const childCopy = enqueue(child, referenceChildMode(value, mode, key, child));
-      if (prepare) Reflect.set(copy, key, childCopy);
+      if (key === "$ref" && typeof child === "string") continue;
+      Reflect.set(copy, key, enqueue(child, referenceChildMode(value, mode, key, child), source));
     }
   }
-  return root as T;
+  if (referenceCopies.targets.length) Reflect.set(copy, field, referenceCopies.targets);
+  return { copy, referenceCopies, literalReferences };
 }
 
 function toValidationErrors(error: unknown): ValidationError[] {
@@ -254,58 +292,17 @@ export async function validateAndDereferenceOpenAPI(
   document: OpenAPIDocument,
   options?: OpenAPIValidationOptions
 ): Promise<{ document: OpenAPIDocument; errors: [] } | { document: null; errors: ValidationError[] }> {
-  let deniedReference = false;
   try {
-    const externalReferences = options?.externalReferences;
-    const allowExternal = Boolean(externalReferences?.size);
-    const literalReferences = new Map<object, string>();
-    const input = structuredClone(document);
-    const usedFields = new Set(Object.keys(input));
-    reserveReferenceFields(input, usedFields);
-    // Same-document URIs can reach the parser's cached root without a resolver
-    // call. Reserve fragment names regardless of how a reference spells its URI.
-    for (const contents of externalReferences?.values() ?? []) {
-      try {
-        reservePreloadedReferenceFields(contents, usedFields);
-      } catch {
-        // Invalid allowlist contents are reported if a reference selects them.
-      }
-    }
-    let field = "x-apifn-reference-copies";
-    while (usedFields.has(field)) field += "-";
-    const referenceCopies: ReferenceCopies = { field, targets: [], originals: new Map() };
-    const copy = applyReferencePolicy(input, { allowExternal, literalReferences, referenceCopies });
-    if (referenceCopies.targets.length) Reflect.set(copy, field, referenceCopies.targets);
+    const { copy, referenceCopies, literalReferences } = prepareReferences(
+      structuredClone(document), options?.externalReferences,
+    );
     const validated = await SwaggerParser.validate(copy as never, {
-      resolve: {
-        external: allowExternal,
-        file: false,
-        http: false,
-        allowlist: {
-          canRead: true,
-          read({ url }: { url: string }): string {
-            const contents = externalReferences?.get(url);
-            if (contents !== undefined) {
-              if (referenceCopies.targets.length) {
-                const fields = new Set<string>();
-                reservePreloadedReferenceFields(contents, fields);
-                if (fields.has(field)) throw new Error("OpenAPI $ref target does not exist");
-              }
-              return contents;
-            }
-            deniedReference = true;
-            throw new Error(EXTERNAL_REF_ERROR);
-          },
-        },
-      },
+      resolve: { external: false, file: false, http: false },
     });
-    // A preloaded document may be a map of schemas. Check the referenced
-    // subtrees in the context where they appear after dereferencing.
     restoreReferenceCopies(validated, referenceCopies);
-    if (allowExternal) applyReferencePolicy(validated, { allowExternal: false });
     for (const [literal, ref] of literalReferences) Reflect.set(literal, "$ref", ref);
     return { document: validated as unknown as OpenAPIDocument, errors: [] };
   } catch (error) {
-    return { document: null, errors: toValidationErrors(deniedReference ? new Error(EXTERNAL_REF_ERROR) : error) };
+    return { document: null, errors: toValidationErrors(error) };
   }
 }
