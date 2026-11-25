@@ -21,8 +21,7 @@ Your router is the source of truth: introspect it into OpenAPI 3.1, then drive v
 
 ### npm release dependency order
 
-The API-22 release keeps exact pins aligned across the npm packages. Publish
-in this order.
+The collection runner security update keeps exact pins aligned across the npm packages. Publish in this order.
 
 1. `@apifn/core` **0.1.1**.
 2. `@apifn/collections` and `@apifn/mock` **0.0.5**, `@apifn/snippets`,
