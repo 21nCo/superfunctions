@@ -41,8 +41,8 @@ dev = [
 
 [project.urls]
 Documentation = "https://docs.superfunctions.dev/filefn"
-Repository = "https://github.com/21nCo/super-functions"
-Issues = "https://github.com/21nCo/super-functions/issues"
+Repository = "https://github.com/21nCo/superfunctions"
+Issues = "https://github.com/21nCo/superfunctions/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["filefn"]

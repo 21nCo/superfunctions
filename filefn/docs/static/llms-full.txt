@@ -1565,7 +1565,7 @@ Every error response from filefn follows the same envelope:
 | `FILEFN_RATE_LIMITED` | 429 | The route's rate limit was exceeded. `details.resetAt` tells you when to retry. |
 | `FILEFN_INVALID_PART_NUMBER` | 400 | `partNumber` is not a positive integer. |
 | `FILEFN_INVALID_ETAG` | 400 | The etag passed to `complete-part` is malformed. |
-| `FILEFN_UPLOAD_INCOMPLETE` | 409 | `complete` was called but parts are missing. |
+| `FILEFN_UPLOAD_INCOMPLETE` | 409 | `complete` was called but parts are missing, including a recorded proxy part object that is no longer in storage. The message is `Upload incomplete`. |
 | `FILEFN_UPLOAD_EXPIRED` | 410 | The session TTL expired. |
 | `FILEFN_UPLOAD_ABORTED` | 410 | The session was aborted. |
 | `FILEFN_UPLOAD_ALREADY_COMPLETED` | 409 | `complete` was called on a session that's already closed. |
@@ -1573,6 +1573,7 @@ Every error response from filefn follows the same envelope:
 | `FILEFN_PART_CONFLICT` | 409 | Same `partNumber` completed twice with different etags. |
 | `FILEFN_UPLOAD_SIZE_MISMATCH` | 409 | The recorded total bytes don't match the declared size. |
 | `FILEFN_NO_SUPPORTED_UPLOAD_MODE` | 500 | The storage adapter doesn't support any negotiable mode. |
+| `FILEFN_STORAGE_STAT_UNAVAILABLE` | 500 | Init or complete cannot verify the upload size because the adapter cannot report an object's size. The message is `Upload size cannot be verified` and names neither the adapter nor the session. |
 | `FILEFN_OFFLINE_UNSUPPORTED` | 400 | OPFS isn't available in this environment. |
 | `FILEFN_SESSION_NOT_FOUND` | 404 | Upload session id doesn't exist. |
 | `FILEFN_SHARE_EXPIRED` | 410 | The share link's `expiresAt` has passed. |
@@ -2114,7 +2115,24 @@ Run it on anything that's about to leave the process — webhooks, log lines, er
 
 ## Metrics
 
-filefn doesn't ship a metrics adapter. The recommended pattern is event-driven:
+Pass a metric sink directly in the `observability` configuration object to receive domain observations. FileFn uses that sink to handle rejected metric writes safely. The labels FileFn supplies exclude file and session IDs, error text, and usage figures.
+
+| Kind | Operation | When |
+| --- | --- | --- |
+| `filefn.upload` | `failure` | An upload fails because storage stat is unavailable (`size_unverified`), parts are missing (`parts_missing`), or the stored size does not match (`size_mismatch`). `labels.reason` is that value. `ok` is false. |
+| `filefn.quota` | `denied` | A quota check refuses the upload. `ok` is false. |
+| `filefn.processing` | `complete` | A processing run reaches `processing.completed`. `durationMs` is the elapsed processing time. `ok` is false if the run reported processing or artifact errors. |
+
+```ts
+const fileFn = createFileFn({
+  database, storage,
+  observability: {
+    metrics: { record(metric) { /* sink */ } },
+  },
+});
+```
+
+For application-specific counters, subscribe to events.
 
 ```ts
 fileFn.events.on("file:uploaded", (e) => metrics.counter("filefn.uploads.complete").inc());
@@ -2403,7 +2421,7 @@ Without policies, every upload would need to embed its own size limit, content-t
 Source: https://filefn.com/docs/core-concepts/rate-limiting
 
 
-Per-route rate limits using @superfunctions/middleware on top of filefn's upload, download, share-download, and artifact-download endpoints.
+Opt-in per-route rate limits. Categories you omit are not limited. Public uploads need a proxy-derived client key.
 
 
 # Rate limiting
@@ -2431,6 +2449,10 @@ const fileFn = createFileFn({
 });
 ```
 
+Every key under `limits` is opt-in. The full set is `uploadInit`, `uploadSign`, `uploadComplete`, `download`, `shareDownload`, `shareCreate`, `artifactDownload`, `list`, `processing`, and `grantCreate`. A category you leave out is not limited.
+
+For `auth.required: false`, set `clientKey` from a header your proxy overwrites (for example `cf-connecting-ip` once the proxy has stripped any client-supplied copy). Otherwise every guest shares one bucket per category. The operator page has the public-upload sample: [Features › Rate limiting](../features/rate-limiting).
+
 Or pass a pre-built `rateLimiter` directly:
 
 ```ts
@@ -2444,7 +2466,7 @@ const fileFn = createFileFn({
 });
 ```
 
-`rateLimiter` (alone) applies the same limit to every route. `rateLimit.limits` (per-category) is the recommended path.
+The standalone `rateLimiter` applies to upload init, signing, part uploads, completion, and file downloads. Use `rateLimit.limits` for per-category caps.
 
 ## Categories
 
@@ -2452,12 +2474,16 @@ const fileFn = createFileFn({
 | --- | --- |
 | `uploadInit` | `POST /upload/init` |
 | `uploadSign` | `POST /upload/:id/parts/:n/sign` |
-| `uploadComplete` | `POST /upload/:id/parts/:n/complete`, `POST /upload/:id/complete`, `POST /upload/:id/abort` |
+| `uploadComplete` | `PUT /upload/:id/parts/:n`, `POST /upload/:id/parts/:n/complete`, `POST /upload/:id/complete` |
 | `download` | `GET /:fileId/download`, `GET /:fileId/versions/:versionId/download`, `GET /proxy/files/:fileId/download` |
 | `shareDownload` | `GET /share-links/:token/download`, `GET /proxy/share-links/:token/download` |
-| `artifactDownload` | `GET /:fileId/artifacts/:artifactId/download` |
+| `shareCreate` | `POST /:fileId/share-links` |
+| `artifactDownload` | List artifacts, get an artifact download URL, and download through the artifact proxy |
+| `list` | `GET /` |
+| `processing` | `POST /:fileId/process` |
+| `grantCreate` | `POST /:fileId/permissions` |
 
-Routes not in any category (read-only file metadata, listing, render-descriptor) aren't rate-limited by filefn. Apply your framework's middleware on top if you want a global cap.
+Apply your framework's middleware to cap routes such as file metadata, render descriptors, and upload aborts.
 
 ## Algorithms
 
@@ -2701,7 +2727,9 @@ The principal ID `anonymous` is reserved for this: never return it from `auth.re
 
 ### 2. Per-route rate limits
 
-Always configure `rateLimit.limits` in production. The unrestricted defaults are intentional (the kernel doesn't pretend to know your traffic), but they're not safe in the wild.
+Always configure `rateLimit.limits` in production. Each category is opt-in: one you omit is not limited. The unrestricted defaults are intentional (the kernel doesn't pretend to know your traffic), but they're not safe in the wild.
+
+A public upload deployment (`auth.required: false`) must also set `rateLimit.clientKey` from an address the edge proxy overwrites, such as `cf-connecting-ip` after the proxy strips any client-supplied value. Without it, every guest shares one bucket per category. See [Rate limiting](../features/rate-limiting).
 
 ### 3. CORS
 
@@ -4275,7 +4303,7 @@ When dedup is on, an upload that hits an existing storage object still counts ag
 Source: https://filefn.com/docs/features/rate-limiting
 
 
-Per-route rate limiting on upload-init, sign, complete, download, share-download, and artifact-download.
+Opt-in per-route rate limits, including a trusted client key for public uploads.
 
 
 # Rate limiting
@@ -4305,16 +4333,63 @@ const fileFn = createFileFn({
       grantCreate:       { windowSeconds: 60, maxRequests: 30 },
       shareCreate:       { windowSeconds: 60, maxRequests: 30 },
     },
-    // Gives each unauthenticated caller its own bucket, for example by the
-    // client IP your proxy reports.
-    clientKey: (request) => request.headers.get("x-client-ip"),
+    // See "Public uploads" below. This header is only safe when the edge proxy
+    // overwrites it and drops any value the client sent.
+    clientKey: (request) => request.headers.get("cf-connecting-ip"),
   },
 });
 ```
 
-`rateLimit.limits` accepts any subset of categories — categories you don't list aren't limited. `list` covers listing files, `processing` covers starting processing (`POST /:fileId/process`), and `grantCreate` and `shareCreate` cover creating grants and share links.
+## Categories are opt-in
 
-Buckets are per tenant and principal for signed-in callers. Unauthenticated callers share one bucket per category unless `rateLimit.clientKey` names them; only use a value your own proxy sets, never one the client can choose. With `mode: "local"`, each distinct client key keeps an in-memory bucket until that key is seen again, so for anonymous traffic from many clients use `"strict"` or `"best-effort"` with a store that expires entries.
+With `rateLimit.limits`, each category is limited only when you configure it. The categories are:
+
+| Category | What it limits |
+| --- | --- |
+| `uploadInit` | `POST /upload/init` |
+| `uploadSign` | `POST /upload/:id/parts/:n/sign` |
+| `uploadComplete` | Uploading or recording a part and `POST /upload/:id/complete` |
+| `download` | file download |
+| `shareDownload` | downloading through a share link |
+| `shareCreate` | creating a share link |
+| `artifactDownload` | Listing artifacts, requesting an artifact URL, or downloading an artifact |
+| `list` | listing files |
+| `processing` | `POST /:fileId/process` |
+| `grantCreate` | creating a grant |
+
+## Public uploads
+
+With `auth.required: false`, unauthenticated callers share one bucket per category and tenant unless `clientKey` names them. Derive that key from an address your proxy sets, and ignore a header the browser can choose. On an edge that overwrites `cf-connecting-ip` (and strips a client-supplied copy), a public drop-off looks like this. Only the categories in `limits` are capped:
+
+```ts
+const fileFn = createFileFn({
+  database: db,
+  storage,
+  auth: { required: false },
+  policies: [{ name: "drop-off", contentTypes: ["text/plain"], visibility: "public" }],
+  stores: { atomicKv: redisAtomicStore },
+  rateLimit: {
+    mode: "strict",
+    algorithm: "fixed-window",
+    limits: {
+      uploadInit: { windowSeconds: 60, maxRequests: 10 },
+      uploadComplete: { windowSeconds: 60, maxRequests: 30 },
+      list: { windowSeconds: 60, maxRequests: 120 },
+    },
+    clientKey: (request) => request.headers.get("cf-connecting-ip"),
+  },
+});
+```
+
+Send a JSON body like this to `POST /upload/init`:
+
+```json
+{ "policy": "drop-off", "fileName": "example.txt", "mimeType": "text/plain", "size": 4 }
+```
+
+Two guests then have independent buckets. After one guest makes 10 `uploadInit` requests in the window, the next is limited without spending that guest's `list` budget. Guests for whom `clientKey` returns no value share the unnamed anonymous bucket.
+
+Buckets for signed-in callers are per tenant and principal. With `mode: "local"`, each distinct client key keeps an in-memory bucket until that key is seen again, so for anonymous traffic from many clients use `"strict"` or `"best-effort"` with a store that expires entries.
 
 `rateLimit.algorithm` is one of `"fixed-window" | "sliding-window" | "token-bucket"`.
 
@@ -8208,26 +8283,75 @@ Notable filefn releases and migration notes.
 
 # Changelog
 
-filefn follows semver. Breaking changes are flagged.
+filefn follows semver. The `@filefn/server` version is the spine of these notes. Breaking changes are flagged.
 
-For per-package changelogs (under `filefn/server`, `filefn/client`, `filefn/processing`, etc.), check the package's `CHANGELOG.md` or the GitHub release notes.
+## Unreleased
 
-## 0.1.x — initial public preview
+- Upload init and complete that cannot verify a stored size return `500 FILEFN_STORAGE_STAT_UNAVAILABLE` with the message `Upload size cannot be verified`. A complete whose proxy parts are missing returns `409 FILEFN_UPLOAD_INCOMPLETE` with the message `Upload incomplete`. Neither response names the storage adapter or the upload session.
+- A metric sink passed directly in the `observability` configuration receives upload failures (`filefn.upload` / `failure`, with `labels.reason` of `size_unverified`, `parts_missing`, or `size_mismatch`), quota denials (`filefn.quota` / `denied`), and processing duration (`filefn.processing` / `complete`, with `durationMs`). Those labels are a closed set: no file id, session id, error text, or usage figure.
 
-- Multipart uploads with signed-URL and proxy modes.
-- Policies, visibility, storage targets, render intents, artifacts.
-- Bundled processors: thumbnails, PDF previews, OCR, image transforms, video, audio, compression.
-- DB adapters: memory, Drizzle, Postgres, SQLite, MySQL.
-- Storage adapters: local FS, S3, GCS, Azure, R2, MinIO.
-- Python kernel parity via `filefn` (PyPI).
-- Native Swift package (`FileFnClient`, `FileFnSwiftUI`, `FileFnWebViewBridgeHost`).
-- WKWebView bridge protocol `filefn-bridge/v1`.
-- OPFS offline pipeline in `@filefn/client`.
-- HEIC preprocessing on browser and native.
+## 0.7.0 — security
+
+An unauthenticated caller is the principal `anonymous` and owns nothing. A public upload stays readable and listable by anyone. A private one needs a grant made to `anonymous`. That caller cannot replace or delete the upload, and cannot create, list, or revoke share links or grants. Existing share links and grants on anonymous uploads keep working. Signed-in owners can manage grants for their own files over HTTP. Creating a share link requires a signed-in user with `canShare` on the file. To clean up legacy access on files owned by `anonymous`, set `revokedAt` on unwanted `fileShares` rows for those files and delete unwanted `filePermissions` rows for those files. Never return the principal id `anonymous` from `resolveSession`.
+
+The same release also sanitizes storage keys, checks the stored upload size, tightens artifact keys and download headers, and scopes idempotency to the caller. Init validation, roles, rate limits, owner quota, and log hygiene land here, including the same key, init, and size checks in the Python client.
+
+Packages in this release: `@filefn/server` 0.7.0, `@filefn/processing` 0.4.0, `@filefn/processing-container` 0.2.0, `@filefn/client` 0.4.0, `@filefn/admin` 0.1.1, `@superfunctions/storage-local` 0.3.0, and Python `filefn` 0.2.0.
+
+## 0.6.1
+
+- A completion fences itself against an abort or a duplicate complete of the same session.
+
+## 0.6.0
+
+- Import an object that already exists in storage.
+- Processing can run in a container.
+
+## 0.5.0
+
+- A client can supply processing artifacts for a version.
+
+## 0.4.2
+
+- A client can choose the file id at init.
+- The client migrates a pending upload onto that id.
+
+## 0.4.1
+
+- Storage keys are per upload session.
+
+## 0.4.0
+
+- Processing runs from a queue, including Cloudflare Queues.
+
+## 0.3.1
+
+- Workers type definitions aligned with the Workers runtime.
+
+## 0.3.0
+
+- Mount FileFn on Workers with a base path, deferred work, and cryptographic ids.
+- Client transport for that runtime.
+
+## 0.2.1
+
+- Patch release on the 0.2 runtime.
+
+## 0.2.0
+
+- Runtime stores and observability.
+
+## 0.1.1
+
+- Patch release on the initial server.
+
+## 0.1.0
+
+- Initial server: multipart upload, policies, storage adapters, and the first clients.
 
 ## See also
 
-- [GitHub releases](https://github.com/21nCo/super-functions/releases) — full release notes.
+- [GitHub releases](https://github.com/21nCo/superfunctions/releases) — full release notes.
 
 
 ---
@@ -8546,7 +8670,7 @@ Wire-format envelope:
 | --- | --- | --- | --- |
 | `FILEFN_INVALID_PART_NUMBER` | 400 | `partNumber < 1` or `> totalParts`. | Use the part numbers returned by init. |
 | `FILEFN_INVALID_ETAG` | 400 | etag empty or malformed. | Read `ETag` from the storage PUT response and pass it through. |
-| `FILEFN_UPLOAD_INCOMPLETE` | 409 | `complete` called before all parts recorded. | Record every part before `complete`. |
+| `FILEFN_UPLOAD_INCOMPLETE` | 409 | `complete` called before all parts are recorded, or a recorded proxy part object is missing. The message is `Upload incomplete` and does not include the session id. | Record every part, and keep the part objects, before `complete`. |
 | `FILEFN_UPLOAD_EXPIRED` | 410 | Session past TTL. | Call `init` again with a new idempotency key. |
 | `FILEFN_UPLOAD_ABORTED` | 410 | Session was aborted. | Same — start a new session. |
 | `FILEFN_UPLOAD_COMPLETION_IN_PROGRESS` | 409 | On `complete`: another completion call of the same upload session (in any FileFn process sharing the database), or the commit step of a completion of the same `fileId` in the same database in this process, is still running and did not finish within 30 seconds. On `abort` or a part call: a completion of the session is running or publishing (a completion call finishes it). On `DELETE /:fileId`: an upload session of the file is completing or publishing. Nothing was changed; `details.retryable` is `true`. | Retry `POST /upload/:id/complete` after a short delay; it returns the completed result. An abort cannot end a session whose completion is running. |
@@ -8555,6 +8679,7 @@ Wire-format envelope:
 | `FILEFN_PART_CONFLICT` | 409 | Same part recorded with a different etag. | Check for concurrent retries; pick a single canonical etag. |
 | `FILEFN_UPLOAD_SIZE_MISMATCH` | 409 | Sum of part sizes ≠ `size` declared at init. | Re-check declared size before init. |
 | `FILEFN_NO_SUPPORTED_UPLOAD_MODE` | 500 | Adapter doesn't support multipart and proxy is disabled. | Use a multipart-capable adapter (S3, GCS, R2, MinIO, Azure). |
+| `FILEFN_STORAGE_STAT_UNAVAILABLE` | 500 | Init requires a storage adapter that implements `statObject`. Completion returns this code if a required stat cannot verify the uploaded object or its parts. The message is `Upload size cannot be verified`. | Check adapter support and availability, then retry. |
 | `FILEFN_STORAGE_PATH_NOT_PER_VERSION` | 500 | The key the policy's `storagePath` returned does not contain the session's full `versionId`, so two upload sessions could write one object. Refused at init before any session row or storage upload is created. | Include the whole `versionId`, unshortened, in the key your `storagePath` returns. |
 | `FILEFN_INVALID_FILE_ID` | 400 | The `fileId` sent to `POST /upload/init` does not match `file_[A-Za-z0-9_-]{8,64}` (or is not a string). Refused before any session row or storage upload is created. | Send an ID in that grammar, such as `generateFileId()` output, or omit `fileId` to let the server generate one. |
 | `FILEFN_OFFLINE_UNSUPPORTED` | 400 | Client requested OPFS but the runtime doesn't support it. | Skip OPFS, upload directly. |
@@ -8685,12 +8810,12 @@ For an interactive explorer, see the [API page](../../api/filefn).
 
 | Method | Path | Description | Errors |
 | --- | --- | --- | --- |
-| POST | `/upload/init` | Create a new upload session. | `FILEFN_INVALID_FILE_ID`, `FILEFN_FORBIDDEN`, `FILEFN_POLICY_NOT_FOUND`, `FILEFN_POLICY_CONTENT_TYPE_NOT_ALLOWED`, `FILEFN_POLICY_MAX_SIZE_EXCEEDED`, `FILEFN_QUOTA_EXCEEDED`, `FILEFN_NO_SUPPORTED_UPLOAD_MODE`, `FILEFN_STORAGE_PATH_NOT_PER_VERSION`, `FILEFN_IDEMPOTENCY_CONFLICT`, `FILEFN_AUTH_REQUIRED`, `FILEFN_RATE_LIMITED`. |
+| POST | `/upload/init` | Create a new upload session. | `FILEFN_INVALID_FILE_ID`, `FILEFN_FORBIDDEN`, `FILEFN_POLICY_NOT_FOUND`, `FILEFN_POLICY_CONTENT_TYPE_NOT_ALLOWED`, `FILEFN_POLICY_MAX_SIZE_EXCEEDED`, `FILEFN_QUOTA_EXCEEDED`, `FILEFN_NO_SUPPORTED_UPLOAD_MODE`, `FILEFN_STORAGE_STAT_UNAVAILABLE`, `FILEFN_STORAGE_PATH_NOT_PER_VERSION`, `FILEFN_IDEMPOTENCY_CONFLICT`, `FILEFN_AUTH_REQUIRED`, `FILEFN_RATE_LIMITED`. |
 | GET | `/upload/:id/status` | Get session status (open, complete, aborted, expired). | `FILEFN_SESSION_NOT_FOUND`, `FILEFN_SESSION_TOKEN_REQUIRED`, `FILEFN_SESSION_TOKEN_INVALID`. |
 | POST | `/upload/:id/parts/:n/sign` | Sign a single part for direct PUT to storage. | `FILEFN_INVALID_PART_NUMBER`, `FILEFN_UPLOAD_EXPIRED`, `FILEFN_UPLOAD_ABORTED`, `FILEFN_UPLOAD_ALREADY_COMPLETED`, `FILEFN_UPLOAD_COMPLETION_IN_PROGRESS`, `FILEFN_RATE_LIMITED`. |
 | PUT | `/upload/:id/parts/:n` | Upload part bytes through filefn (proxy mode). | `FILEFN_INVALID_PART_NUMBER`, `FILEFN_UPLOAD_EXPIRED`, `FILEFN_UPLOAD_ABORTED`, `FILEFN_UPLOAD_ALREADY_COMPLETED`, `FILEFN_UPLOAD_COMPLETION_IN_PROGRESS`. |
 | POST | `/upload/:id/parts/:n/complete` | Record a finished part's etag. | `FILEFN_INVALID_PART_NUMBER`, `FILEFN_INVALID_ETAG`, `FILEFN_PART_CONFLICT`, `FILEFN_UPLOAD_COMPLETION_IN_PROGRESS`. |
-| POST | `/upload/:id/complete` | Finalise the session. | `FILEFN_FORBIDDEN`, `FILEFN_UPLOAD_INCOMPLETE`, `FILEFN_UPLOAD_SIZE_MISMATCH`, `FILEFN_UPLOAD_EXPIRED`, `FILEFN_UPLOAD_ABORTED`, `FILEFN_UPLOAD_ALREADY_COMPLETED`, `FILEFN_UPLOAD_COMPLETION_IN_PROGRESS`, `FILEFN_PROCESSING_ENQUEUE_FAILED`. |
+| POST | `/upload/:id/complete` | Finalise the session. | `FILEFN_FORBIDDEN`, `FILEFN_UPLOAD_INCOMPLETE`, `FILEFN_UPLOAD_SIZE_MISMATCH`, `FILEFN_STORAGE_STAT_UNAVAILABLE`, `FILEFN_UPLOAD_EXPIRED`, `FILEFN_UPLOAD_ABORTED`, `FILEFN_UPLOAD_ALREADY_COMPLETED`, `FILEFN_UPLOAD_COMPLETION_IN_PROGRESS`, `FILEFN_PROCESSING_ENQUEUE_FAILED`. |
 | POST | `/upload/:id/abort` | Abort. Cleans up storage and DB rows. | `FILEFN_UPLOAD_ALREADY_COMPLETED`, `FILEFN_UPLOAD_COMPLETION_IN_PROGRESS` (a completion is running). Otherwise idempotent. |
 
 `POST /upload/init` allocates the `versionId` the session will publish and computes the session's storage key from it, so every session writes its own object key and proxy part keys (`<storageKey>.partN`). `POST /upload/:id/complete` creates the file version with that same `versionId`. A session that loses a race or is refused cannot change the bytes another session published. A policy `storagePath` must return a key that contains the session's full `versionId`; any other key is refused at init with `FILEFN_STORAGE_PATH_NOT_PER_VERSION`.

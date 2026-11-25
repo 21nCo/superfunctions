@@ -65,6 +65,7 @@ export const ErrorCodes = {
   ARTIFACT_TOO_LARGE: 'FILEFN_ARTIFACT_TOO_LARGE',
   ARTIFACT_WRITE_CONFLICT: 'FILEFN_ARTIFACT_WRITE_CONFLICT',
   STORAGE_UPLOAD_UNSUPPORTED: 'FILEFN_STORAGE_UPLOAD_UNSUPPORTED',
+  STORAGE_STAT_UNAVAILABLE: 'FILEFN_STORAGE_STAT_UNAVAILABLE',
   IMPORT_OBJECT_NOT_FOUND: 'FILEFN_IMPORT_OBJECT_NOT_FOUND',
   IMPORT_SIZE_MISMATCH: 'FILEFN_IMPORT_SIZE_MISMATCH',
   IMPORT_CONFLICT: 'FILEFN_IMPORT_CONFLICT',
@@ -157,6 +158,18 @@ export function noSupportedUploadMode(): FileFnError {
     ErrorCodes.NO_SUPPORTED_UPLOAD_MODE,
     'No supported upload mode for configured adapter',
     500
+  );
+}
+
+/**
+ * FileFn could not verify the declared upload size. This covers adapters
+ * without stat support and failures to stat objects during completion.
+ */
+export function storageStatUnavailable(): FileFnError {
+  return new FileFnError(
+    ErrorCodes.STORAGE_STAT_UNAVAILABLE,
+    'Upload size cannot be verified',
+    500,
   );
 }
 

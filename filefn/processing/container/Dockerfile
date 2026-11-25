@@ -18,7 +18,7 @@ ENV NPM_CONFIG_UPDATE_NOTIFIER=false \
   NPM_CONFIG_AUDIT=false
 
 # The container's workspace and the workspaces it builds from source, in build order.
-ENV FILEFN_CONTAINER_WORKSPACES="@superfunctions/observability @superfunctions/files @superfunctions/storage @superfunctions/storage-r2 @filefn/server @filefn/processing @filefn/processing-container"
+ENV FILEFN_CONTAINER_WORKSPACES="@superfunctions/observability @superfunctions/db @superfunctions/middleware @superfunctions/files @superfunctions/storage @superfunctions/storage-r2 @filefn/server @filefn/processing @filefn/processing-container"
 
 # Production dependencies. The prebuilt sharp binaries are removed so only the
 # binding compiled against the system libvips can load.
@@ -60,6 +60,8 @@ ENV NODE_ENV=production \
 COPY --from=deps /app /app
 COPY --from=sharp-native /app/node_modules/sharp/src/build /app/node_modules/sharp/src/build
 COPY --from=build /app/packages/observability/dist /app/packages/observability/dist
+COPY --from=build /app/packages/db/dist /app/packages/db/dist
+COPY --from=build /app/packages/middleware/dist /app/packages/middleware/dist
 COPY --from=build /app/packages/files/dist /app/packages/files/dist
 COPY --from=build /app/packages/storage/dist /app/packages/storage/dist
 COPY --from=build /app/packages/storage-r2/dist /app/packages/storage-r2/dist

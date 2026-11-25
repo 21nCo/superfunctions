@@ -56,7 +56,9 @@ The principal ID `anonymous` is reserved for this: never return it from `auth.re
 
 ### 2. Per-route rate limits
 
-Always configure `rateLimit.limits` in production. The unrestricted defaults are intentional (the kernel doesn't pretend to know your traffic), but they're not safe in the wild.
+Always configure `rateLimit.limits` in production. Each category is opt-in: one you omit is not limited. The unrestricted defaults are intentional (the kernel doesn't pretend to know your traffic), but they're not safe in the wild.
+
+A public upload deployment (`auth.required: false`) must also set `rateLimit.clientKey` from an address the edge proxy overwrites, such as `cf-connecting-ip` after the proxy strips any client-supplied value. Without it, every guest shares one bucket per category. See [Rate limiting](../features/rate-limiting).
 
 ### 3. CORS
 
