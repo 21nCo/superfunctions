@@ -1191,6 +1191,29 @@ it("excludes related projections without a policy unless the server allows unkno
   }
 });
 
+it("loads the legacy FK used by an inverse one-many ID projection in strict mode", async () => {
+  const schema: DatafnSchema = {
+    ...SCHEMA,
+    resources: SCHEMA.resources.map((resource) => ({ ...resource, permissions: { read: { fields: ["label"] } } })),
+    relations: [...(SCHEMA.relations ?? []), {
+      type: "one-many",
+      from: "collection",
+      to: "task",
+      relation: "members",
+      inverse: "folder",
+    }],
+  };
+  const { db, server } = await createServer({ schema, allowUnknownResources: false });
+  try {
+    await db.create({ model: "task", namespace: "datafn", data: { id: "task:member", folderId: "collection:home" } });
+    await expectQueryAndTransactData(server, {
+      resource: "task", filters: { id: "task:member" }, select: ["id", "folder"],
+    }, [{ id: "task:member", folder: "collection:home" }]);
+  } finally {
+    await server.close();
+  }
+});
+
 it("checks visibility before projecting inverse join IDs and metadata", async () => {
   const schema: DatafnSchema = {
     ...SCHEMA,

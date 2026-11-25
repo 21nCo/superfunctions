@@ -394,7 +394,9 @@ export class DbDataStore implements DataStore {
   ): Promise<void> {
     const fk = relationForeignKey(relation);
     const endpoint = relation.type === "many-one" ? relation.to : relation.from;
-    const resolveTarget = isPolymorphicForeignKey(relation) ? foreignKeyTargetResolver(schema, relation, ownerResource) : undefined;
+    const resolveTarget = isPolymorphicForeignKey(relation) || store.requireVisibleRelatedRecords
+      ? foreignKeyTargetResolver(schema, relation, ownerResource)
+      : undefined;
     const targets = records.map(resolveTarget ?? ((record) => {
       const id = record[fk];
       if (typeof id !== "string" || !id) return undefined;
@@ -1034,7 +1036,9 @@ export class DbDataStore implements DataStore {
             }
           } else if ((rel as any).type === "one-many" && !isForward) {
             // Inverse one-many: primary has FK pointing to secondary (one side)
-            const fkField = rel.fkField || rel.foreignKey || rel.relation || `${secondaryResource}Id`;
+            const fkField = store.requireVisibleRelatedRecords
+              ? relationForeignKey(rel)
+              : rel.fkField || rel.foreignKey || rel.relation || `${secondaryResource}Id`;
             const fkValues = [
               ...new Set(
                 primaryRecords
