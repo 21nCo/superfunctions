@@ -774,7 +774,9 @@ export class McpFnServer<TContext = undefined> {
     const schemas = new Map<string, { safeParse(value: unknown): { success: boolean; error?: unknown } }>();
     for (const option of (ClientRequestSchema as unknown as { options: Array<{ shape: { method: { value?: unknown } } }> }).options) {
       const method = option.shape?.method?.value;
-      if (typeof method === "string") schemas.set(method, option as never);
+      // tools/call is left to the SDK's own parse: its arguments can be large,
+      // and the registry bounds their size before validating them.
+      if (typeof method === "string" && method !== "tools/call") schemas.set(method, option as never);
     }
     // The handlers installed at construction (McpFn's and the SDK's), which
     // parse with exactly these MCP schemas.
