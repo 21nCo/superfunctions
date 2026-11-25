@@ -47,7 +47,7 @@ import { DbIdempotencyStore } from "./execution/idempotency-db.js";
 import { ChangeTrackingService } from "./execution/sync/change-tracking.js";
 import { errorResponse, errorToEnvelope } from "./http/errors.js";
 import { createRestRoutes, sanitizePathSegment } from "./routes/rest.js";
-import { checkPayloadLimit, readBodyWithLimit } from "./http/middleware.js";
+import { checkPayloadLimit, readBodyWithLimit, readLimitedBody } from "./http/middleware.js";
 import { parseJsonBody } from "./http/json.js";
 import { WebSocketManager, type WebSocketClient, type WsAuthContext } from "./ws.js";
 import type { WsManagerConfig } from "./ws.js";
@@ -1532,6 +1532,55 @@ export async function createDatafnServer<TContext = any>(
     search: (payload, context) => executeInProcess("search", searchHandler, payload, context),
   };
 
+  const requestWithBoundedBody = async (request: Request): Promise<Request | Response> => {
+    if (
+      !limits.maxPayloadBytes ||
+      request.method === "GET" ||
+      request.method === "HEAD" ||
+      request.body == null
+    ) {
+      return request;
+    }
+    const read = await readLimitedBody(request, limits.maxPayloadBytes, logger);
+    if (!read.ok) return read.response;
+    const headers = new Headers(request.headers);
+    headers.delete("content-length");
+    headers.set("content-length", String(read.bytes.byteLength));
+    return new Request(request.url, {
+      method: request.method,
+      headers,
+      body: read.bytes,
+      signal: request.signal,
+    });
+  };
+
+  const withPluginRouteGuards = (
+    route: DatafnComposableRoute<TContext>,
+  ): DatafnComposableRoute<TContext> => {
+    const {
+      handler: originalHandler,
+      middleware: originalMiddleware,
+      ...routeDefinition
+    } = route;
+    return {
+      ...routeDefinition,
+      handler: async (request, context) => {
+        if (rateLimitMiddleware) {
+          const limited = await rateLimitMiddleware(route.path, context);
+          if (limited) return limited;
+        }
+        const bounded = await requestWithBoundedBody(request);
+        if (bounded instanceof Response) return bounded;
+        return executeMiddlewareChain(
+          originalMiddleware ?? [],
+          bounded,
+          context,
+          async () => originalHandler(bounded, context),
+        );
+      },
+    };
+  };
+
   const withPluginRoutePlacement = (
     route: DatafnComposableRoute<TContext>,
     placement: DatafnPluginRoutePlacement<TContext>,
@@ -1544,6 +1593,10 @@ export async function createDatafnServer<TContext = any>(
     return {
       ...routeDefinition,
       handler: async (request, context) => {
+        if (rateLimitMiddleware) {
+          const limited = await rateLimitMiddleware(route.path, context);
+          if (limited) return limited;
+        }
         let prepared: PreparedDatafnRoutingRequest;
         try {
           prepared = await prepareDatafnRoutingRequest(
@@ -1647,7 +1700,7 @@ export async function createDatafnServer<TContext = any>(
       }) as DatafnComposableRoute<TContext>[];
       for (const route of pluginRoutes) {
         if (!multiRegionRuntime?.placement || route.meta?.datafnPlacement === "none") {
-          routes.push(route);
+          routes.push(withPluginRouteGuards(route));
           continue;
         }
         const declaration = route.meta?.datafnPlacement;
