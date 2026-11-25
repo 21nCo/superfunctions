@@ -515,7 +515,11 @@ export class McpFnServer<TContext = undefined> {
               // hook (an unavailable tenant lookup, say) is a server error.
               const clientInput = ["MCPFN_FORGED_SERVER_ARGUMENT", "MCPFN_INVALID_PROFILE_ARGUMENTS"].includes(lifecycleError.code);
               throw new McpError(clientInput ? ErrorCode.InvalidParams : ErrorCode.InternalError, lifecycleError.message, {
-                ...(data !== null && typeof data === "object" && !Array.isArray(data) ? data : {}),
+                // Object details are spread; arrays and scalars keep their place
+                // under `details`.
+                ...(data !== null && typeof data === "object" && !Array.isArray(data)
+                  ? data
+                  : data === undefined ? {} : { details: data }),
                 // Set after serialization so details (including a toJSON
                 // method) cannot replace the McpFn code, stage or profile.
                 lifecycleStage: currentStage,

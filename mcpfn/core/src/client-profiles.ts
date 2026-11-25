@@ -114,6 +114,13 @@ export interface McpFnResolvedClientProfile<TContext> {
   verifiedIdentity?: McpFnVerifiedClientIdentity;
   reportedClient: McpFnReportedClient;
   profile?: McpFnClientProfile<TContext>;
+  /**
+   * The profiles and unmatched-client policy this result was resolved with.
+   * Set by resolveMcpFnClientProfile so buildMcpFnEffectiveCatalog and
+   * enrichMcpFnClientProfileCall apply the same policy without being passed
+   * the options again.
+   */
+  clientProfiles?: Pick<McpFnClientProfilesOptions<TContext>, "profiles" | "unmatchedServerOwnedArguments">;
 }
 
 function assertProfileMetadata(profile: McpFnClientProfile<unknown>): void {
@@ -187,7 +194,11 @@ export async function resolveMcpFnClientProfile<TContext>(
     context: input.context,
     extra: input.extra,
   });
-  if (!verifiedIdentity) return { ...input, verifiedIdentity };
+  const policy = {
+    profiles: options.profiles,
+    unmatchedServerOwnedArguments: options.unmatchedServerOwnedArguments,
+  };
+  if (!verifiedIdentity) return { ...input, verifiedIdentity, clientProfiles: policy };
   if (typeof verifiedIdentity.subject !== "string" || !verifiedIdentity.subject || verifiedIdentity.subject.length > 256) {
     throw new McpFnClientProfileError(
       "MCPFN_INVALID_VERIFIED_IDENTITY",
@@ -205,7 +216,7 @@ export async function resolveMcpFnClientProfile<TContext>(
       { profiles: matches.map(({ id, version }) => ({ id, version })) },
     );
   }
-  return { ...input, verifiedIdentity, profile: matches[0] };
+  return { ...input, verifiedIdentity, profile: matches[0], clientProfiles: policy };
 }
 
 function isJsonMetadata(value: unknown, ancestors = new Set<object>()): boolean {
@@ -371,7 +382,7 @@ export async function buildMcpFnEffectiveCatalog<TContext>(input: {
   const knownTools = structuredClone(input.knownTools ?? input.canonicalTools);
   const profile = input.resolved.profile;
   if (!profile) {
-    const options = input.clientProfiles;
+    const options = input.clientProfiles ?? input.resolved.clientProfiles;
     if (!options || options.unmatchedServerOwnedArguments === "allow") {
       return { tools: canonicalTools, changes: [] };
     }
@@ -551,12 +562,13 @@ export async function enrichMcpFnClientProfileCall<TContext>(input: {
     const value = input.arguments ?? {};
     // Defence in depth: the effective catalog already hides these tools from
     // unmatched clients, so a direct caller of this function is the only way here.
+    const options = input.clientProfiles ?? input.resolved.clientProfiles;
     if (
-      input.clientProfiles &&
-      input.clientProfiles.unmatchedServerOwnedArguments !== "allow" &&
+      options &&
+      options.unmatchedServerOwnedArguments !== "allow" &&
       value && typeof value === "object" && !Array.isArray(value)
     ) {
-      for (const name of unmatchedServerOwned(input.clientProfiles.profiles, input.tool.name)) {
+      for (const name of unmatchedServerOwned(options.profiles, input.tool.name)) {
         if (Object.hasOwn(value, name)) {
           throw new McpFnClientProfileError(
             "MCPFN_FORGED_SERVER_ARGUMENT",

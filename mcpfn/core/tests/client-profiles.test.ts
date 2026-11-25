@@ -428,6 +428,47 @@ describe("McpFn client profiles", () => {
     })).rejects.toMatchObject({ code: "MCPFN_PROFILE_ARGUMENT_MUTATION" });
   });
 
+  it("carries the unmatched-client policy through the public helper pipeline", async () => {
+    const { buildMcpFnEffectiveCatalog, resolveMcpFnClientProfile } = await import("../src/client-profiles.js");
+    const resolved = await resolveMcpFnClientProfile(
+      { profiles: [tenantProfile() as McpFnClientProfile<undefined>], resolveVerifiedIdentity: () => ({ subject: "generic-client" }) },
+      { context: undefined, extra: {} as McpFnRequestExtra, reportedClient: {} },
+    );
+    const lookup = { name: "lookup", description: "Lookup", inputSchema: { type: "object" as const, properties: { tenantId: { type: "string" } }, required: ["tenantId"] } };
+    expect((await buildMcpFnEffectiveCatalog({ canonicalTools: [lookup], resolved })).tools).toEqual([]);
+    await expect(enrichMcpFnClientProfileCall({ resolved, tool: lookup, arguments: { tenantId: "model-value" } }))
+      .rejects.toMatchObject({ code: "MCPFN_FORGED_SERVER_ARGUMENT" });
+  });
+
+  it.each([[["first", "second"]], ["scalar detail"], [42]])("keeps non-object enrichment details %j under data.details", async (details) => {
+    const registry = new McpFnRegistry<RequestContext>().register({
+      name: "lookup",
+      description: "Look up a value in the authenticated tenant.",
+      inputSchema: { type: "object", properties: { query: { type: "string" }, tenantId: { type: "string" } }, required: ["query", "tenantId"], additionalProperties: false },
+      execution: { taskSupport: "optional" },
+      handler: async (args) => structuredResult(args),
+      taskHandler: { createTask: vi.fn(), getTask: vi.fn(), getTaskResult: vi.fn() } as never,
+    });
+    const profile = { ...tenantProfile(), enrichArguments: () => { throw new McpFnError("TENANT_LOOKUP_FAILED", "Tenant lookup failed", details); } };
+    const server = createMcpFnServer({
+      info: { name: "profile-server", version: "1.0.0" },
+      registry,
+      context: () => ({ subject: "authenticated-client", tenantId: "trusted-tenant" }),
+      taskStore: new InMemoryTaskStore(),
+      clientProfiles: { profiles: [profile], resolveVerifiedIdentity: ({ context: trusted }) => trusted.subject ? { subject: trusted.subject } : undefined },
+    });
+    const client = new Client({ name: "reported-client", version: "9.9.9" }, { capabilities: {} });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    closeables.push(client, server);
+    const error = await client.request(
+      { method: "tools/call", params: { name: "lookup", arguments: { query: "safe" }, task: { ttl: 60_000 } } },
+      CreateTaskResultSchema,
+    ).then(() => undefined, (failure: unknown) => failure);
+    expect(error).toMatchObject({ data: { code: "TENANT_LOOKUP_FAILED", details } });
+  });
+
   it("answers a forged server-owned argument in a task-augmented call with InvalidParams", async () => {
     const createTask = vi.fn();
     const registry = new McpFnRegistry<RequestContext>().register({
