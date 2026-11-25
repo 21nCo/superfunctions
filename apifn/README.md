@@ -126,7 +126,7 @@ permissions:
   pull-requests: write
 jobs:
   api-check:
-    uses: 21nCo/super-functions/.github/workflows/apifn-api-check.yml@dev
+    uses: 21nCo/superfunctions/.github/workflows/apifn-api-check.yml@dev
     with:
       spec_path: openapi.yml
       collection_dir: .apifn/collection
