@@ -1,0 +1,43 @@
+clifn/core/tests/runner-document-bounds.test.ts
+  s_fc285eff3f94eb::t_a3a47c115ec815 1056-1246,1492,1506,1509-1510,1526-1549,1581-1582,1584,1587,1590,1596,1599,1613-1641,1836-1842,1910-1917
+clifn/core/tests/runner-document.test.ts
+  s_fc285eff3f94eb::t_3363a5b05d93cb 768,772
+clifn/core/CHANGELOG.md
+  s_c6b5218bd4b2b7::t_f4681ecbcd9fcc 5,9
+clifn/core/README.md
+  s_c6b5218bd4b2b7::t_60e6b4b395fd01 263,265
+clifn/core/src/document-output.ts
+  s_c6b5218bd4b2b7::t_3a0d018807a77f 1,84-89,155-184,189-190,268-269,279,352-353,357,407-408,410-412,414
+clifn/core/src/json-value.ts
+  s_c6b5218bd4b2b7::t_dc8082c801d820 28-34,37-41,58-65,210,235-238,446-447,467,536-538,570-576,584-596,599-600,604-607,625,669-682,688,711
+clifn/core/src/runner.ts
+  s_c6b5218bd4b2b7::t_d7d08fa9701f88 100-107,109,122-125,132-137,245-247,255-258
+clifn/docs/content/docs/reference/core-readme.md
+  s_c6b5218bd4b2b7::t_bef2ab1bf6ed0a 266,268
+clifn/docs/static/llms-full.txt
+  s_c6b5218bd4b2b7::t_9b82aef7ca2ade 574,576
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "af6e0646b2533c2b2e3599d37cde51da99dba7cc",
+  "prompts": {},
+  "sessions": {
+    "s_c6b5218bd4b2b7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "634480c9-70be-40a6-a5a6-3d4c38540fef",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_fc285eff3f94eb": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21387-8c2b-7361-b97d-3400ba684e34",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
