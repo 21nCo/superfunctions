@@ -1851,6 +1851,27 @@ describe("document memory in a constrained heap", () => {
       await run("open-keys-details", () => {
         throw Object.assign(new Error("closed"), { code: "CLOSED", exitCode: 7, details: { visible: "kept", nested: sharedLevel() } });
       });
+      // Numeric ropes of 256 MiB that ToNumber would flatten: an array length, the same as an object's valueOf result,
+      // and a Number box's valueOf result, in data, under a redacted key, in details and as a returned list's length.
+      const numeric = () => " ".repeat(2 ** 28) + "1";
+      const ropeLength = (length) => new Proxy([], { get: (target, key) => (key === "length" ? length() : Reflect.get(target, key)) });
+      const numberBox = () => Object.assign(new Number(0), { valueOf: numeric });
+      await run("coerce-length", () => ({ exitCode: 3, data: { visible: "kept", a: ropeLength(numeric) } }));
+      await run("coerce-length-redacted", () => ({ exitCode: 3, data: { visible: "kept", token: ropeLength(numeric) } }));
+      await run("coerce-length-object", () => ({ exitCode: 3, data: { visible: "kept", a: ropeLength(() => ({ valueOf: numeric })) } }));
+      await run("coerce-number", () => ({ exitCode: 3, data: { visible: "kept", n: numberBox() } }));
+      await run("coerce-details", () => {
+        throw Object.assign(new Error("closed"), { code: "CLOSED", exitCode: 7, details: { visible: "kept", n: numberBox() } });
+      });
+      await run("coerce-diagnostics-length", () => ({ data: "done", exitCode: 2, diagnostics: ropeLength(numeric) }));
+      // A String box whose toString returns an 8 MiB bigint, whose decimal text would not fit this heap; and a boxed
+      // 256 MiB rope returned as diagnostics, which iterating would flatten.
+      {
+        const bigText = () => Object.assign(new String(""), { toString: () => 1n << (2n ** 26n) });
+        await run("string-box-bigint", () => ({ exitCode: 3, data: { visible: "kept", s: bigText() } }));
+        await run("string-box-bigint-redacted", () => ({ exitCode: 3, data: { visible: "kept", token: bigText() } }));
+      }
+      await run("diagnostics-string-box", () => ({ data: "done", exitCode: 2, diagnostics: new String("x".repeat(2 ** 28)) }));
     `;
     const runnerUrl = pathToFileURL(runnerModule).href;
     const child = spawnSync(process.execPath, ["--max-old-space-size=32", "--expose-gc", "--input-type=module", "-e", script, runnerUrl], {
@@ -1921,6 +1942,22 @@ describe("document memory in a constrained heap", () => {
       exitCode: 7,
       out: '{"ok":false,"error":{"code":"CLOSED","message":"closed"}}\n',
     });
+    for (const name of ["coerce-length", "coerce-length-redacted", "coerce-length-object", "coerce-number", "string-box-bigint"]) {
+      expect(cases[name]).toEqual({ name, writes: 1, exitCode: 1, out: failure });
+    }
+    expect(cases["coerce-details"]).toMatchObject({
+      writes: 1,
+      exitCode: 7,
+      out: '{"ok":false,"error":{"code":"CLOSED","message":"closed"}}\n',
+    });
+    expect(cases["string-box-bigint-redacted"]).toMatchObject({
+      writes: 1,
+      exitCode: 3,
+      out: '{"ok":true,"data":{"visible":"kept","token":"[REDACTED]"}}\n',
+    });
+    for (const name of ["coerce-diagnostics-length", "diagnostics-string-box"]) {
+      expect(cases[name]).toEqual({ name, writes: 1, exitCode: 2, out: '{"ok":true,"data":"done"}\n' });
+    }
     for (const name of ["typed", "bigint"]) {
       expect(cases[name]).toEqual({ name, writes: 1, exitCode: 1, out: failure });
     }
@@ -1961,4 +1998,99 @@ describe("document memory in a constrained heap", () => {
     expect(cases["message-coded"]).toMatchObject(tooLong("BIG"));
     expect(cases["message-code-like"]).toMatchObject(tooLong("CLIFN_RUNNER_FAILED"));
   }, 150_000);
+});
+
+describe("document coercion of lengths and boxed primitives", () => {
+  const failure = `${JSON.stringify(FAILURE_DOCUMENT)}\n`;
+  /** A proxied empty array whose length is `length`, recording each trap. */
+  const withLength = (length: unknown, log: string[] = []) =>
+    new Proxy([] as unknown[], {
+      get: (target, key) => (log.push(`get ${String(key)}`), key === "length" ? length : Reflect.get(target, key)),
+    });
+
+  it("runs Symbol.toPrimitive, valueOf and toString once each in native order, with native results", () => {
+    const traced = (log: string[]) => ({
+      number: Object.assign(new Number(1), {
+        valueOf: () => (log.push("number valueOf"), {}),
+        toString: () => (log.push("number toString"), " 42 "),
+      }),
+      string: Object.assign(new String("s"), {
+        toString: () => (log.push("string toString"), {}),
+        valueOf: () => (log.push("string valueOf"), 7),
+      }),
+      exotic: Object.assign(new Number(1), {
+        [Symbol.toPrimitive]: (hint: string) => (log.push(`toPrimitive ${hint}`), "8"),
+        valueOf: () => (log.push("exotic valueOf"), 9),
+      }),
+      bigText: Object.assign(new String("s"), { toString: () => (log.push("bigText toString"), 12n) }),
+      array: withLength({ valueOf: () => (log.push("length valueOf"), "2") }, log),
+      spaced: withLength(`${" ".repeat(1000)}1`),
+      none: Object.assign(new Number(1), { valueOf: () => (log.push("none valueOf"), undefined) }),
+    });
+    const nativeLog: string[] = [];
+    const native = JSON.stringify(traced(nativeLog), (_key, value: unknown) =>
+      typeof value === "bigint" ? value.toString() : value
+    );
+    const ownLog: string[] = [];
+    const result = finishWith(10_000, { ok: true, data: traced(ownLog), exitCode: 0 });
+    expect(parseOnlyDocument(result)).toEqual({ ok: true, data: JSON.parse(native) });
+    expect(ownLog).toEqual(nativeLog);
+    expect(ownLog.filter((entry) => !entry.startsWith("get "))).toEqual([
+      "number valueOf",
+      "number toString",
+      "string toString",
+      "string valueOf",
+      "toPrimitive number",
+      "bigText toString",
+      "length valueOf",
+      "none valueOf",
+    ]);
+  });
+
+  it("fails a length or Number box whose numeric string is too long before it is read, redacted or not", () => {
+    const long = `${" ".repeat(5000)}1`;
+    const numberBox = () => Object.assign(new Number(0), { valueOf: () => long });
+    for (const value of [withLength(long), withLength({ valueOf: () => long }), numberBox()]) {
+      expect(finishWith(100_000, { ok: true, data: { visible: "kept", value }, exitCode: 3 }).out).toBe(failure);
+      expect(finishWith(100_000, { ok: true, data: { visible: "kept", token: value }, exitCode: 3 }).out).toBe(failure);
+    }
+    const details = finishWith(100_000, {
+      ok: false,
+      error: Object.assign(new Error("closed"), { code: "CLOSED", exitCode: 7, details: { visible: "kept", n: numberBox() } }),
+    });
+    expect(details.exitCode).toBe(7);
+    expect(parseOnlyDocument(details)).toEqual({ ok: false, error: { code: "CLOSED", message: "closed" } });
+    // A bigint length or Number box fails, as ToNumber throws for it in JSON.stringify.
+    expect(finishWith(1_000, { ok: true, data: withLength(1n), exitCode: 0 }).out).toBe(failure);
+  });
+
+  it("never converts a String box's bigint under a redacted key, and bounds a visible one by bit length", () => {
+    const toString = vi.spyOn(BigInt.prototype, "toString");
+    const box = (value: bigint) => Object.assign(new String(""), { toString: () => value });
+    const huge = 2n ** 200_000n;
+    const masked = finishWith(200, { ok: true, data: { visible: 1, secret: box(huge) }, exitCode: 2 });
+    expect(masked.exitCode).toBe(2);
+    expect(parseOnlyDocument(masked)).toEqual({ ok: true, data: { visible: 1, secret: "[REDACTED]" } });
+    expect(finishWith(200, { ok: true, data: { visible: 1, text: box(huge) }, exitCode: 2 }).out).toBe(failure);
+    expect(toString).not.toHaveBeenCalled();
+    expect(parseOnlyDocument(finishWith(200, { ok: true, data: box(-5n), exitCode: 0 }))).toEqual({ ok: true, data: "-5" });
+  });
+
+  it("counts returned diagnostics with an unbounded length or a String object as one unreadable list", async () => {
+    const iterated = vi.spyOn(String.prototype, Symbol.iterator);
+    const returned = [
+      withLength(`${" ".repeat(5000)}1`),
+      new String("abc"),
+      runInNewContext('new String("abc")') as object,
+    ];
+    for (const diagnostics of returned) {
+      const result = await runDocument(() => ({ data: "done", exitCode: 2, diagnostics: diagnostics as Diagnostic[] }));
+      expect(result.exitCode).toBe(2);
+      expect(parseOnlyDocument(result)).toEqual({ ok: true, data: "done" });
+      expect(result.stderr).toBe(
+        '{"level":"warn","message":"a returned diagnostic was dropped from the result document: it could not be read"}\n'
+      );
+    }
+    expect(iterated).not.toHaveBeenCalled();
+  });
 });

@@ -267,9 +267,79 @@ function isTracked(value: unknown): value is object {
   return (typeof value === "object" && value !== null) || typeof value === "function";
 }
 
-/** ToLength, as JSON.stringify applies it to an array's length; unary plus is ToNumber, so a bigint throws. */
-function toLength(value: unknown): number {
-  const number = +(value as number);
+/**
+ * The longest string ToNumber is applied to (see `toNumber`). StringToNumber reads the whole string, and the engine
+ * flattens a rope first, so a numeric string from user code (an array length, or a Number box's valueOf) is bounded
+ * before it is converted. Any finite or infinite Number prints in far fewer characters, padding included.
+ */
+export const MAX_NUMERIC_STRING_LENGTH = 1024;
+
+/** GetMethod(value, Symbol.toPrimitive): undefined when absent, a TypeError when present but not callable. */
+function toPrimitiveMethod(value: object): ((hint: string) => unknown) | undefined {
+  const method: unknown = (value as { [Symbol.toPrimitive]?: unknown })[Symbol.toPrimitive];
+  if (method === undefined || method === null) {
+    return undefined;
+  }
+  if (typeof method !== "function") {
+    throw new TypeError("Cannot convert object to primitive value");
+  }
+  return method as (hint: string) => unknown;
+}
+
+/**
+ * ToPrimitive(value, hint), as the engine runs it, in the same order and with the same calls: Symbol.toPrimitive with
+ * the hint, otherwise OrdinaryToPrimitive (valueOf then toString for "number", toString then valueOf for "string"). The
+ * result is returned unconverted, so the caller bounds a string or bigint before converting it.
+ */
+function toPrimitive(value: object, hint: "number" | "string"): unknown {
+  const exotic = toPrimitiveMethod(value);
+  if (exotic !== undefined) {
+    const result: unknown = Reflect.apply(exotic, value, [hint]);
+    if (isTracked(result)) {
+      throw new TypeError("Cannot convert object to primitive value");
+    }
+    return result;
+  }
+  for (const name of hint === "number" ? ["valueOf", "toString"] : ["toString", "valueOf"]) {
+    const method: unknown = (value as Record<string, unknown>)[name];
+    if (typeof method === "function") {
+      const result: unknown = Reflect.apply(method, value, []);
+      if (!isTracked(result)) {
+        return result;
+      }
+    }
+  }
+  throw new TypeError("Cannot convert object to primitive value");
+}
+
+/**
+ * ToNumber with its string operand bounded: an object goes through `toPrimitive` once; a string longer than
+ * MAX_NUMERIC_STRING_LENGTH throws a DocumentBudgetExceeded before it is read (a shorter one is charged its length to
+ * `work`, when given); a bigint or symbol throws a TypeError, as ToNumber does. The result equals the engine's.
+ */
+function toNumber(value: unknown, work: WorkBudget | undefined): number {
+  const primitive = isTracked(value) ? toPrimitive(value, "number") : value;
+  if (typeof primitive === "string") {
+    if (primitive.length > MAX_NUMERIC_STRING_LENGTH) {
+      exceeded();
+    }
+    if (work) {
+      spendWork(work, primitive.length);
+    }
+  } else if (typeof primitive === "bigint" || typeof primitive === "symbol") {
+    throw new TypeError("Cannot convert a BigInt or Symbol value to a number");
+  }
+  return Number(primitive);
+}
+
+/**
+ * ToLength of a value read once as an array's length, as JSON.stringify and iteration apply it (see `toNumber`). An
+ * object length runs its Symbol.toPrimitive, or valueOf then toString, once and in that order; a string longer than
+ * MAX_NUMERIC_STRING_LENGTH fails with a DocumentBudgetExceeded before it is read; a bigint or symbol throws a
+ * TypeError. Internal: not exported from the package.
+ */
+export function toLength(value: unknown, work?: WorkBudget): number {
+  const number = toNumber(value, work);
   if (Number.isNaN(number) || number <= 0) {
     return 0;
   }
@@ -277,16 +347,26 @@ function toLength(value: unknown): number {
 }
 
 /**
- * Unwraps a boxed primitive by internal slot, in any realm, as JSON.stringify does: a Number box through ToNumber
- * (unary plus, which throws when its valueOf returns a bigint), a String box through ToString, a Boolean box and a
- * BigInt box from their slot. Any other object is returned unchanged.
+ * Unwraps a boxed primitive by internal slot, in any realm, as JSON.stringify does, running the same user code in the
+ * same order but bounding the result before converting it:
+ * - a Number box through ToNumber (`toNumber`: a long numeric string fails before it is read, a bigint throws);
+ * - a String box through ToString: ToPrimitive with the string hint, then a string is returned as it is (it is bounded
+ *   when written), a bigint is returned as a bigint, whose decimal text JSON would print as this string's text, so it
+ *   is bounded by bit length when written and never converted under a redacted key (see `emitBigInt`), a symbol
+ *   throws, and any other primitive is converted;
+ * - a Boolean box and a BigInt box from their slot.
+ * Any other object is returned unchanged.
  */
-function unbox(value: object): unknown {
+function unbox(walk: Walk, value: object): unknown {
   if (types.isNumberObject(value)) {
-    return +value;
+    return toNumber(value, walk.work);
   }
   if (types.isStringObject(value)) {
-    return String(value);
+    const primitive = toPrimitive(value, "string");
+    if (typeof primitive === "symbol") {
+      throw new TypeError("Cannot convert a Symbol value to a string");
+    }
+    return typeof primitive === "string" || typeof primitive === "bigint" ? primitive : String(primitive);
   }
   if (types.isBooleanObject(value)) {
     return Reflect.apply(booleanValueOf, value, []);
@@ -422,7 +502,7 @@ function project(walk: Walk, holder: object, key: string): { original: unknown; 
       value = standIn ?? Reflect.apply(toJSON, value, [key]);
     }
   }
-  return { original, value: typeof value === "object" && value !== null ? unbox(value) : value };
+  return { original, value: typeof value === "object" && value !== null ? unbox(walk, value) : value };
 }
 
 /** True when JSON drops a projected value: undefined, a function or a symbol. */
@@ -524,7 +604,7 @@ function serializeNode(walk: Walk, node: object, original: unknown, key: string,
  * read once; a dropped item prints null. A Buffer's stand-in passes its `length`, which is then not read.
  */
 function serializeArray(walk: Walk, array: object, depth: number, knownLength?: number): void {
-  const length = knownLength ?? toLength(Reflect.get(array, "length"));
+  const length = knownLength ?? toLength(Reflect.get(array, "length"), walk.work);
   if (walk.discarding ? length > walk.work.unitsLeft : (length === 0 ? 2 : 2 * length + 1) > walk.budget.charsLeft) {
     exceeded();
   }

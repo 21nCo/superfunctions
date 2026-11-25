@@ -1,3 +1,4 @@
+import { types } from "node:util";
 import type { Diagnostic } from "./diagnostics.js";
 import {
   createDocumentOutput,
@@ -6,6 +7,7 @@ import {
   type DocumentOutput,
 } from "./document-output.js";
 import { createExec, type ExecService } from "./exec.js";
+import { toLength } from "./json-value.js";
 import { createOutput, type OutputService } from "./output.js";
 import { createScaffold, type ScaffoldService } from "./scaffold.js";
 
@@ -227,15 +229,6 @@ export async function runAction<TOptions>(
   }
 }
 
-/** ToLength of an array's length, read once: unary plus is ToNumber, so a bigint or symbol throws. */
-function toLength(value: unknown): number {
-  const number = +(value as number);
-  if (Number.isNaN(number) || number <= 0) {
-    return 0;
-  }
-  return Math.min(Math.trunc(number), Number.MAX_SAFE_INTEGER);
-}
-
 /**
  * Adds the diagnostics an action returned, reading no more than the document can keep: an array's length is read
  * once and each index is read only while `collector.full()` is false, and an iterable stops at the first item read
@@ -243,16 +236,18 @@ function toLength(value: unknown): number {
  * once the document's bounds are reached (see `DocumentDiagnostics`). Reading them never fails the run: an entry that
  * cannot be read (a throwing index getter) is counted as unreadable and its siblings are still read; a list whose
  * length, iterator or next step throws, or that is not a list at all, ends there with one unreadable entry; a value
- * that is not an object (such as a string, which would iterate as its characters) is one unreadable entry, and no
- * iterator is created for it. Holes
- * and other values that are not diagnostics are dropped by the collector with its fixed warning. Internal: not
- * exported from the package.
+ * that is not an object, or is a String object of any realm (either would iterate as its characters), is one
+ * unreadable entry, and no iterator is created for it. An array's length is converted by the bounded ToLength of
+ * `json-value.ts`, so a length whose primitive is a numeric string longer than MAX_NUMERIC_STRING_LENGTH makes the
+ * list one unreadable entry before the string is read. Holes and other values that are not diagnostics are dropped by
+ * the collector with its fixed warning. Internal: not exported from the package.
  */
 export function addReturnedDiagnostics(returned: unknown, collector: DocumentDiagnostics): void {
   if (returned === undefined || returned === null) {
     return;
   }
-  if (typeof returned !== "object" && typeof returned !== "function") {
+  // A String object iterates as its characters too (its iterator flattens the whole string first), in any realm.
+  if ((typeof returned !== "object" && typeof returned !== "function") || types.isStringObject(returned)) {
     collector.unreadable();
     return;
   }
