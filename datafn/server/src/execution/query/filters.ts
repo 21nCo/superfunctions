@@ -179,9 +179,9 @@ function getRelatedRecords(
   const direction = rel.direction;
   const isForward = direction === "forward";
   const targetEndpoint = relationTargetEndpoint(relation, direction);
-  const findById = (id: unknown, endpoint = targetEndpoint): RelatedRecord[] => {
+  const findById = (id: unknown, endpoint = targetEndpoint, discriminator?: unknown): RelatedRecord[] => {
     if (typeof id !== "string" || !id) return [];
-    const resource = resolvePredicateEndpoint(schema, id, endpoint);
+    const resource = resolvePredicateEndpoint(schema, id, endpoint, discriminator);
     const found = resource ? store.getRecord(resource, id) : null;
     return found ? [{ resource, record: found }] : [];
   };
@@ -201,7 +201,9 @@ function getRelatedRecords(
   if (relation.type === "many-many") {
     if (isForward) {
       const joinRows = store.getJoinRows(relationKeyFor(resourceName, relation));
-      return joinRows.filter((row) => row.from === record.id).flatMap((row) => findById(row.to));
+      return joinRows
+        .filter((row) => row.from === record.id)
+        .flatMap((row) => findById(row.to, targetEndpoint, row.toResource));
     }
     return endpointList(relation.from).flatMap((resource) => {
       const joinRows = store.getJoinRows(relationKeyFor(resource, relation));

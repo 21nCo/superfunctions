@@ -920,7 +920,7 @@ export class DbDataStore implements DataStore {
             joinCache.set(key, row);
             const secondaryId = isForward ? row.to : row.from;
             const secondaryResource = isForward
-              ? resolvePredicateEndpoint(schema, secondaryId, rel.to)
+              ? resolvePredicateEndpoint(schema, secondaryId, rel.to, row.toResource)
               : fromResource;
             if (!secondaryId || !secondaryResource) continue;
             const ids = idsByResource.get(secondaryResource) ?? new Set();

@@ -19,6 +19,7 @@ import {
   type DatafnRelationMatch,
 } from "@datafn/core";
 import type { DataStore } from "../store.js";
+import { resolvePredicateEndpoint } from "./filters.js";
 
 export type { SelectToken } from "@datafn/core";
 
@@ -449,7 +450,7 @@ export function materializeSelect(
       const relation = findRelation(schema, resource, parsed.baseName);
       if (relation) {
         // ids-only relation token
-        result[parsed.baseName] = getRelationIds(record, relation, store, resource, metadata);
+        result[parsed.baseName] = getRelationIds(record, relation, schema, store, resource, metadata);
         includedFields.add(parsed.baseName);
       } else {
         // Regular field
@@ -532,6 +533,7 @@ function getManyManyRows(
   record: Record<string, unknown>,
   match: DatafnRelationMatch,
   resource: string,
+  schema: DatafnSchema,
   store: DataStore,
 ): Array<Record<string, unknown>> {
   const relation = match.relation;
@@ -543,7 +545,8 @@ function getManyManyRows(
 
   return endpointList(relation.from).flatMap((fromResource) => {
     const joinRows = store.getJoinRows(relationKeyFor(fromResource, relation));
-    return joinRows.filter((j) => j.to === recordId);
+    return joinRows.filter((j) => j.to === recordId &&
+      resolvePredicateEndpoint(schema, j.to, relation.to, j.toResource) === resource);
   });
 }
 
@@ -553,6 +556,7 @@ function getManyManyRows(
 function getRelationIds(
   record: Record<string, unknown>,
   match: DatafnRelationMatch,
+  schema: DatafnSchema,
   store: DataStore,
   resource: string,
   metadata?: QueryMetadata,
@@ -574,7 +578,7 @@ function getRelationIds(
   }
 
   if (relation.type === "many-many") {
-    const sortedJoins = sortJoinRows(getManyManyRows(record, match, resource, store), relation);
+    const sortedJoins = sortJoinRows(getManyManyRows(record, match, resource, schema, store), relation);
     return sortedJoins.map((j) => (isForward ? j.to : j.from));
   }
 
@@ -641,7 +645,7 @@ function expandRelationToRecords(
   }
 
   if (relation.type === "many-many") {
-    const sortedJoins = sortJoinRows(getManyManyRows(record, match, resource, store), relation);
+    const sortedJoins = sortJoinRows(getManyManyRows(record, match, resource, schema, store), relation);
 
     return sortedJoins
       .map((join) => {
@@ -703,7 +707,7 @@ function expandRelation(
   }
 
   if (relation.type === "many-many") {
-    const sortedJoins = sortJoinRows(getManyManyRows(record, match, currentResource, store), relation);
+    const sortedJoins = sortJoinRows(getManyManyRows(record, match, currentResource, schema, store), relation);
 
     if (!includeMetadata) {
       return sortedJoins
@@ -769,7 +773,7 @@ function getJoinRows(
     record.id,
     match.direction === "forward" ? relation.from : relation.to,
   );
-  const sorted = sortJoinRows(getManyManyRows(record, match, resource, store), relation);
+  const sorted = sortJoinRows(getManyManyRows(record, match, resource, schema, store), relation);
 
   // Return join rows with from, to, and metadata
   return sorted.map((join) => {

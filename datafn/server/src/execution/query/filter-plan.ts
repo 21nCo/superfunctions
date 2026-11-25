@@ -670,12 +670,8 @@ async function resolveRelationConjunct(
   if (!matching) return "unavailable";
   const isForward = match.direction === "forward";
   const relatedIds = new Set<unknown>();
-  for (const [resource, rows] of matching) {
-    for (const row of rows) {
-      if (!isForward || resolvePredicateEndpoint(schema, row.id, targetEndpoint) === resource) {
-        relatedIds.add(row.id);
-      }
-    }
+  for (const rows of matching.values()) {
+    for (const row of rows) relatedIds.add(row.id);
   }
   const links: Array<{ resource: string; relatedId: unknown; primaryId: unknown }> = [];
   if (relatedIds.size > 0) {
@@ -697,7 +693,7 @@ async function resolveRelationConjunct(
         const primaryId = isForward ? row.from : row.to;
         if (relatedIds.has(relatedId) && primaryId !== null && primaryId !== undefined) {
           const resource = isForward
-            ? resolvePredicateEndpoint(schema, relatedId, targetEndpoint)
+            ? resolvePredicateEndpoint(schema, relatedId, targetEndpoint, row.toResource)
             : fromResource;
           links.push({ resource, relatedId, primaryId });
         }

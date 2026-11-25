@@ -1058,7 +1058,7 @@ it("preserves both resource discriminators on inverse predicates", async () => {
     relations: [...(SCHEMA.relations ?? []), {
       type: "many-many",
       from: ["node", "objective", "collection"],
-      to: ["collection", "task"],
+      to: ["task", "collection"],
       relation: "entryGroups",
       inverse: "entries",
       joinTable: "test_entries",
@@ -1097,6 +1097,31 @@ it("preserves both resource discriminators on inverse predicates", async () => {
     expect(pushed.body.result.data).toEqual(expected);
     expect(transaction.result.results[0].data).toEqual(expected);
   }
+
+  const forward = {
+    resource: "objective",
+    version: 1,
+    select: ["id"],
+    filters: { entryGroups: { $any: { label: "Linked collection" } } },
+  };
+  const pushed = await query(server, forward);
+  expect(pushed.status).toBe(200);
+  expect(pushed.body.result.data).toEqual([{ id: "legacy-entry" }]);
+
+  const response = await server.router.handle(new Request("http://localhost/datafn/transact", {
+    method: "POST",
+    body: JSON.stringify({
+      atomic: false,
+      steps: [
+        { query: forward },
+        { query: { resource: "task", version: 1, select: ["id", "entries.#"], filters: { id: "legacy-target" } } },
+      ],
+    }),
+  }));
+  const transaction = await response.json();
+  expect(response.status).toBe(200);
+  expect(transaction.result.results[0].data).toEqual(pushed.body.result.data);
+  expect(transaction.result.results[1].data).toEqual([{ id: "legacy-target", entries: [] }]);
 });
 
 describe("relation expansion by name for in-memory queries", () => {
