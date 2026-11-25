@@ -2628,9 +2628,13 @@ describe("document memory in a constrained heap", () => {
       return JSON.parse(child.stdout) as { limit: number; heap: number; worker: number };
     };
     const MiB = 2 ** 20;
-    // The command line's flag; a worker's old generation is its heap limit less the young generation it reports, so
-    // the process flag that overrode its 24 MiB request sizes it.
-    expect(limitWith(["--max-old-space-size=32"])).toMatchObject({ limit: (32 * MiB) / 16, worker: (32 * MiB) / 16 });
+    // The command line's flag, also signed; a worker's reported generations size it only when they add up to its heap
+    // limit, so one whose 24 MiB request a process flag overrode (with its young generation too) is not sized from them.
+    expect(limitWith(["--max-old-space-size=32"])).toMatchObject({ limit: (32 * MiB) / 16 });
+    expect(limitWith(["--max-old-space-size=+32"]).limit).toBe((32 * MiB) / 16);
+    const overridden = limitWith(["--max-old-space-size=32", "--max-semi-space-size=4"]);
+    expect(overridden.limit).toBe((32 * MiB) / 16);
+    expect(overridden.worker).toBe(overridden.heap);
     expect(limitWith([], "--max-old-space-size=48").limit).toBe((48 * MiB) / 16);
     // V8 rounds a custom semi-space up to a power of two, so the rest is still a young generation's size.
     expect(limitWith(["--max-old-space-size=32", "--max-semi-space-size=5"]).limit).toBe((32 * MiB) / 16);

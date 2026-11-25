@@ -212,7 +212,7 @@ function nodeOptionsTokens(options: string): string[] {
 function oldSpaceFlag(options: readonly string[]): number | undefined {
   let size: number | undefined;
   for (const option of options) {
-    const match = /^--max[-_]old[-_]space[-_]size=(\d+)$/.exec(option);
+    const match = /^--max[-_]old[-_]space[-_]size=\+?(\d+)$/.exec(option);
     if (match) {
       size = Number(match[1]) * MIB;
     }
@@ -237,8 +237,8 @@ function isYoungGenerationSize(bytes: number): boolean {
  * copy and the diagnostics a run keeps live. V8's `heap_size_limit` adds the young generation, whose size depends on
  * the Node version and the machine, not on the old generation (with `--max-old-space-size=32`, 80 MiB on Node 20 and
  * 22, 128 MiB on Node 26, 224 MiB on Node 24), and V8 does not report the old generation's limit on its own. A worker
- * reports its young generation in `resourceLimits`, so its old generation is the rest of its heap limit, whatever
- * flags overrode the size it asked for. The main thread reports neither, so the `--max-old-space-size` it started with
+ * reports the generations it asked for in `resourceLimits`, which are its own only when they add up to its heap limit
+ * (process flags can override either); otherwise, like the main thread, which reports neither, the `--max-old-space-size` it started with
  * (the command line's, which takes precedence, then NODE_OPTIONS' as this module read it when it loaded) is used only when the rest of
  * the heap limit is a young generation's size, which a flag that did not set this heap (a NODE_OPTIONS changed for
  * child processes, one the command line overrode) does not leave. Otherwise the heap limit is used: V8's default old
@@ -246,9 +246,9 @@ function isYoungGenerationSize(bytes: number): boolean {
  */
 function oldGenerationLimit(): number {
   const heapLimit = getHeapStatistics().heap_size_limit;
-  const young = resourceLimits.maxYoungGenerationSizeMb;
-  if (typeof young === "number" && young > 0 && young * MIB < heapLimit) {
-    return heapLimit - young * MIB;
+  const { maxOldGenerationSizeMb: old, maxYoungGenerationSizeMb: young } = resourceLimits;
+  if (typeof old === "number" && typeof young === "number" && old > 0 && (old + young) * MIB === heapLimit) {
+    return old * MIB;
   }
   for (const size of [oldSpaceFlag(process.execArgv), oldSpaceFlag(nodeOptionsTokens(startupNodeOptions ?? ""))]) {
     if (size !== undefined && size > 0 && size < heapLimit && isYoungGenerationSize(heapLimit - size)) {
