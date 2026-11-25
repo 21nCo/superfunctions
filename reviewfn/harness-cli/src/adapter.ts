@@ -470,9 +470,10 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
 
   private secrets(config: ReviewFnConfig, environment: NodeJS.ProcessEnv): string[] {
     const credential = config.inference.credentialEnv ? this.environment[config.inference.credentialEnv] : undefined;
-    // The credential, whatever its length (core drops values under 4 characters), and every allowlisted value whose name
-    // marks it as a secret.
-    return [...new Set([...(credential ? [credential] : []), ...collectSecrets(environment)])];
+    // The credential, and every allowlisted value whose name core marks as a secret, whatever their length (core drops
+    // values under 4 characters, so the name is tested with a placeholder value).
+    const named = Object.entries(environment).filter(([name, value]) => value && collectSecrets({ [name]: "name" }).length > 0).map(([, value]) => String(value));
+    return [...new Set([...(credential ? [credential] : []), ...named])];
   }
 }
 
@@ -542,8 +543,9 @@ const fail = () => { throw Object.assign(new Error("replaced"), { code: "EREPLAC
 const wipe = (self, only) => {
   for (const name of fs.readdirSync(".")) {
     const entry = fs.lstatSync(name, { bigint: true, throwIfNoEntry: false }), own = entry && entry.dev + ":" + entry.ino;
+    if (only && Object.hasOwn(only, name) && only[name] !== own) continue;
     if (entry && !entry.isDirectory()) try { fs.unlinkSync(name); } catch (error) { if (error.code !== "ENOENT") throw error; }
-    if (!entry?.isDirectory() || only && Object.hasOwn(only, name) && only[name] !== own) continue;
+    if (!entry?.isDirectory()) continue;
     process.chdir(name);
     if (id(".") !== own) fail();
     wipe(own);
@@ -635,15 +637,17 @@ interface EscapeLevel { text: string; at: Uint32Array; to: Uint32Array }
  * escapes, or `\uXXXX` in either hex case): the escapes are decoded one level at a time, each in linear time and memory,
  * keeping only where each escape sat, and every occurrence at any level, overlapping ones included, marks its whole
  * original span, overlapping spans merged, so a shorter secret never leaves part of a longer one. A line still escaped
- * past that depth is redacted whole.
+ * past that depth is redacted whole. Each `withheld` span of `text` is redacted too.
  */
-function redact(text: string, secrets: readonly string[]): string {
+function redact(text: string, secrets: readonly string[], withheld: ReadonlyArray<readonly [number, number]> = []): string {
   const values = secrets.filter(secret => secret.length > 0);
   const periods = values.map(value => [value, smallestPeriod(value)] as const);
   // reach[i] is the furthest end of a redacted span that starts at i (0: none), allocated at the first one.
   let reach: Uint32Array | undefined;
   const cover = (from: number, to: number) => { reach ??= new Uint32Array(text.length); reach[from] = Math.max(reach[from], to); };
   const original = (levels: readonly EscapeLevel[], index: number) => levels.reduceRight((at, level) => below(level, at), index);
+  // Withheld spans are covered like any secret, so one that a secret reaches into is withheld from that secret's start.
+  for (const [from, to] of withheld) if (from < to) cover(from, to);
   const levels: EscapeLevel[] = [];
   for (let current = text; values.length > 0;) {
     for (const [value, period] of periods) {
@@ -1227,26 +1231,30 @@ class RunState {
   public constructor(private readonly model: string, private readonly profile: HarnessProfile, private readonly secrets: readonly string[], private readonly maxOutputBytes: number) {}
 
   /**
-   * A stream the runner cut (at its time or byte bound, or on cancellation) may end inside a secret whose rest it dropped,
-   * so once its whole secrets are redacted, its unterminated last line and its last characters that could still begin
-   * one (any but the longest secret's length) are withheld from the transcript.
+   * The runner cut the current attempt (at its time or byte bound, or on cancellation), so a stream or output file may end
+   * inside a secret whose rest was dropped: its unterminated last line and its last characters that could still begin one
+   * (any but the longest secret's length) are withheld, with any secret that reaches into them.
    */
+  private cut = false;
+
   public record(result: CommandResult): void {
     this.reported = undefined;
     this.fileBytes = 0;
+    this.cut = result.timedOut || result.canceled;
     this.rawBytes += Buffer.byteLength(result.stdout) + Buffer.byteLength(result.stderr);
-    const longest = Math.max(1, ...this.secrets.map(secret => secret.length));
-    const kept = (text: string) => {
-      const from = result.timedOut || result.canceled ? Math.max(0, Math.min(text.lastIndexOf("\n") + 1, text.length - longest + 1)) : text.length;
-      return from < text.length ? `${text.slice(0, from)}[WITHHELD: the stream was cut]` : text;
-    };
-    this.transcript.push(`${kept(redact(result.stdout, this.secrets))}\n${kept(redact(result.stderr, this.secrets))}`);
+    this.transcript.push(redact(`${result.stdout}\n${result.stderr}`, this.secrets, [this.tail(result.stdout), this.tail(result.stderr, result.stdout.length + 1)]));
   }
 
   public recordOutputFile(text: string): void {
     this.fileBytes = Buffer.byteLength(text);
     this.rawBytes += this.fileBytes;
-    this.transcript.push(redact(text, this.secrets));
+    this.transcript.push(redact(text, this.secrets, [this.tail(text)]));
+  }
+
+  private tail(text: string, offset = 0): [number, number] {
+    const longest = Math.max(1, ...this.secrets.map(secret => secret.length));
+    const from = this.cut ? Math.max(0, Math.min(text.lastIndexOf("\n") + 1, text.length - longest + 1)) : text.length;
+    return [offset + from, offset + text.length];
   }
 
   /** The largest output file size measured while the attempt ran: bytes beyond the file then read still count. */

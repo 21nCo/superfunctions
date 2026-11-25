@@ -1283,6 +1283,19 @@ describe("CliHarnessAdapter preflight and configuration", () => {
     await expect(readdir(await readFile(report, "utf8"))).rejects.toThrow(/ENOENT/);
   });
 
+  it("leaves a link that took a recorded attempt's name, never unlinking it, when it removes the run directory", async () => {
+    let replaced = "";
+    identity.beforeRemove = async found => {
+      replaced = path.join(found, (await readdir(found))[0]);
+      await rename(replaced, path.join(found, "displaced"));
+      await symlink(directory, replaced);
+    };
+    const output = await run(profile({ outputVia: "file" }));
+    expect(output.terminal).toBe("completed");
+    expect(await realpath(replaced)).toBe(await realpath(directory));
+    await rm(path.dirname(replaced), { recursive: true, force: true });
+  });
+
   it("leaves a directory moved in at a recorded attempt's name, with its contents, when it removes the run directory", async () => {
     let replacement = "";
     identity.beforeRemove = async found => {
@@ -1303,13 +1316,28 @@ describe("CliHarnessAdapter preflight and configuration", () => {
     ["a credential cut at the output bound", CREDENTIAL, { stdout: `progress\n${CREDENTIAL.slice(0, 20)}`, stderr: CREDENTIAL.slice(0, 12), timedOut: true }],
     ["a whole multi-line credential ending a cut stream", "test-line-one\ntest-line-two", { stdout: "progress\ntest-line-one\ntest-line-two", timedOut: true }],
     ["a multi-line credential cut after its first line", "test-line-one\ntest-line-two", { stdout: "progress\ntest-line-one\ntest-li", timedOut: true }],
-  ])("leaves no part of %s in the transcript", async (_case, credential, result) => {
+    ["a multi-line credential split across stdout and stderr", "test-line-one\ntest-line-two", { stdout: "test-line-one", stderr: "test-line-two" }],
+    ["an allowlisted secret shorter than four characters", CREDENTIAL, { stdout: `echo ${JSON.stringify(JSON.stringify("k9w"))}\n` }, "k9w"],
+    ["a cut credential holding short secrets that redaction lengthens", "test-lead beep beep beep beep\ntest-line-two", { stdout: "progress\ntest-lead beep beep beep beep\ntest-li", timedOut: true }, "beep"],
+  ])("leaves no part of %s in the transcript", async (_case, credential, result, allowlisted?: string) => {
     const runner: CommandRunner = async (_command, args) => args.includes("--version")
       ? { code: 0, signal: null, stdout: "fake-cli version 1.2.3\n", stderr: "", timedOut: false, canceled: false }
       : { code: 0, signal: null, stdout: "", stderr: "", timedOut: false, canceled: false, ...result };
-    const output = await new CliHarnessAdapter({ environment: { ...environment(), REVIEW_AUTH: credential }, runner }).run(input(configuration(profile())));
+    const extra = allowlisted === undefined ? {} : { FIXTURE_API_KEY: allowlisted };
+    const output = await new CliHarnessAdapter({ environment: { ...environment(), REVIEW_AUTH: credential, ...extra }, runner }).run(input(configuration(profile({ envAllowlist: ["ALLOWED_ONE", "FIXTURE_API_KEY"] }))));
     expect(output.transcript).toContain("[");
-    for (const part of [credential.slice(-4), credential.slice(0, 4), CREDENTIAL.slice(0, 12), "line-one"]) expect(output.transcript).not.toContain(part);
+    for (const part of [credential.slice(-4), credential.slice(0, 4), CREDENTIAL.slice(0, 12), "line-one", "lead", ...(allowlisted ? [allowlisted] : [])]) expect(output.transcript).not.toContain(part);
+  });
+
+  it("withholds a credential cut short in the output file of a stopped CLI", async () => {
+    const runner: CommandRunner = async (_command, args) => {
+      if (args.includes("--version")) return { code: 0, signal: null, stdout: "fake-cli version 1.2.3\n", stderr: "", timedOut: false, canceled: false };
+      await writeFile(args[args.indexOf("--out") + 1], `{"token":"${CREDENTIAL.slice(0, 20)}`);
+      return { code: null, signal: "SIGTERM", stdout: "", stderr: "", timedOut: true, canceled: false };
+    };
+    const output = await new CliHarnessAdapter({ environment: environment(), runner }).run(input(configuration(profile({ outputVia: "file" }))));
+    expect(output.terminal).toBe("timed_out");
+    expect(output.transcript).not.toContain(CREDENTIAL.slice(0, 12));
   });
 
   it("redacts a credential that overlaps itself throughout a long log in linear time", async () => {
