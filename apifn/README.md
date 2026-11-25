@@ -145,8 +145,10 @@ run the CLI commands in [Non-GitHub CI](#non-github-ci).
 
 With `router_path`:
 
+- Checks out the caller without keeping the token in `.git/config`, because the install scripts, router and config of the caller run in this job
 - Runs `npm ci` in `working_directory` (when it has a `package.json`), because the router imports the caller's packages. The job fails when the install changes checked-out files or adds untracked ones outside `node_modules` (for example a `prepare` script regenerating the spec), because `apifn check` must read the committed router and spec
-- Runs `apifn check <router_path> --base origin/<base_branch> --format markdown --report …` and the same check with `--format json --report …` (`--base-spec` instead when `base_spec` is set); both reports are written to `$RUNNER_TEMP`, not the checkout, so output the router or config prints while loading does not affect them
+- Runs `apifn check <router_path> --base origin/<base_branch> --format markdown --report …` and the same check with `--format json --report …` (`--base-spec` instead when `base_spec` is set; an HTTP(S) `base_spec` is downloaded once for both runs); both reports are written to `$RUNNER_TEMP`, not the checkout, so output the router or config prints while loading does not affect them
+- After both runs, requires the spec the report names to be the file committed at `HEAD` (a spec missing from both is reported as drift). A spec that the install, the router or the config created or changed, including a gitignored one, makes the check report an error and the verdict `fail`
 - Uses the Markdown report as the job summary and PR comment when both runs agree (exit code, verdict, drift and breaking changes); otherwise the summary reports an error and the verdict is `fail`
 
 Without `router_path`:
@@ -177,11 +179,11 @@ with the [direct CLI commands](#non-github-ci). Pass `--allow-scripts` or repeat
 - `config_path` (optional): apifn config file for `apifn check`, relative to `working_directory`; empty finds `apifn.config.ts`, `.js` or `.mjs` there
 - `working_directory` (optional, default `.`): Repo-relative directory of the caller's package; with `router_path`, `npm ci` and `apifn check` run there
 - `base_spec` (optional, `router_path` only): Base spec file (relative to `working_directory`) or HTTP(S) URL, instead of the spec committed at `origin/<base_branch>`
-- `allow_breaking` (optional, default `false`, `router_path` only): Report breaking changes the contract version does not cover without failing (`--allow-breaking`)
+- `allow_breaking` (optional, default `false`, `router_path` only): Report breaking changes the contract version does not cover without failing (`--allow-breaking`). `diff.failOnBreaking: false` in the caller's apifn config has the same effect (verdict `warn`) whatever this input says, so a required check also depends on that config
 - `cli_source` (optional, default `npm`): `npm` installs the CLI from the workflow revision's lockfile; `workspace` builds `@apifn/cli` from the checked-out repository and is allowed only in `21nCo/superfunctions` (the job fails in any other repository)
 - `enforce_gates` (optional, default `true`): Fail the job when a gate fails. `false` only reports, through the summary, comment and outputs; keep the default for a required check
 - `collection_dir` (optional): Repo-relative OpenCollection directory (e.g. `.apifn/collection`); empty skips the collection tests
-- `start_mock_server` (optional, default `false`): Serve `spec_path` with `apifn mock` on `mock_port` while the collection runs, for workflow self-tests; needs `spec_path` (relative to `working_directory` with `router_path`)
+- `start_mock_server` (optional, default `false`): Serve `spec_path` with `apifn mock` on `mock_port` while the collection runs, for workflow self-tests; needs `spec_path` (relative to `working_directory` with `router_path`). A mock that does not start fails the tests
 - `environment` (optional, default `development`): Collection environment
 - `cli_version` (optional, default `0.1.2`): Assertion against the `@apifn/cli` version pinned by the selected workflow revision (`cli_source: npm`). The default in the workflow file must match that revision's [CLI lockfile](../.github/apifn-cli-install/package-lock.json). The workflow uses the local lockfile when the caller checkout matches the workflow repository and commit. For other callers it fetches the lockfile from the workflow revision.
 - `base_branch` (optional, default `main`): Branch whose committed spec is the base

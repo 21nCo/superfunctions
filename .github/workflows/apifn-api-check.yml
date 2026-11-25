@@ -24,7 +24,7 @@ on:
         default: ""
         type: string
       allow_breaking:
-        description: With router_path, report breaking changes the contract version does not cover without failing (apifn check --allow-breaking)
+        description: With router_path, report breaking changes the contract version does not cover without failing (apifn check --allow-breaking). diff.failOnBreaking false in the caller's apifn config has the same effect
         required: false
         default: false
         type: boolean
@@ -121,7 +121,7 @@ on:
         default: ""
         type: string
       allow_breaking:
-        description: With router_path, report breaking changes the contract version does not cover without failing (apifn check --allow-breaking)
+        description: With router_path, report breaking changes the contract version does not cover without failing (apifn check --allow-breaking). diff.failOnBreaking false in the caller's apifn config has the same effect
         required: false
         default: false
         type: boolean
@@ -257,11 +257,14 @@ jobs:
             exit 1
           fi
 
+      # Router mode runs the caller's install scripts and imports its router and config, so the token is not left in
+      # .git/config for them; fetch-depth 0 already fetched origin/<base_branch>. The legacy path keeps the default.
       - name: Checkout
         id: caller_checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
+          persist-credentials: ${{ inputs.router_path == '' }}
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -325,6 +328,25 @@ jobs:
           echo "Built @apifn/cli@$(node -p "require('./apifn/cli/package.json').version") from the workspace"
           "$BIN_DIR/apifn" --version
 
+      # Runs before any caller code. The checkout fetched every branch, so the token is used only when the base ref is
+      # missing, and then only through this command's environment.
+      - name: Fetch base branch
+        if: inputs.router_path != '' && inputs.base_spec == ''
+        shell: bash
+        env:
+          BASE_BRANCH: ${{ inputs.base_branch }}
+          FETCH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if git rev-parse --verify --quiet "refs/remotes/origin/${BASE_BRANCH}^{commit}" > /dev/null; then
+            echo "origin/${BASE_BRANCH} was fetched by the checkout."
+            exit 0
+          fi
+          auth="$(printf 'x-access-token:%s' "$FETCH_TOKEN" | base64 -w0)"
+          echo "::add-mask::$auth"
+          GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="http.${GITHUB_SERVER_URL}/.extraheader" GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth" \
+            git fetch --no-tags origin "+refs/heads/${BASE_BRANCH}:refs/remotes/origin/${BASE_BRANCH}"
+
       # The router module imports the caller's packages, so they are installed first. npm ci runs the caller's
       # lifecycle scripts; apifn check reads the spec and router from the working tree, so an install that changes
       # tracked files or adds untracked ones (a prepare script regenerating the spec) fails closed instead of
@@ -345,31 +367,27 @@ jobs:
             echo "No package.json in $PWD; nothing to install."
             exit 0
           fi
-          # node_modules is the install's own output, even where the caller's .gitignore does not list it.
+          # node_modules (at the root or nested) is the install's own output, even where the caller's .gitignore does
+          # not list it, so it is excluded by pathspec.
+          outside_node_modules=(-- . ':(exclude,glob)**/node_modules/**')
           tree_state() {
-            git -C "$GITHUB_WORKSPACE" status --porcelain=v1 --untracked-files=all | { grep -v -E '(^|/)node_modules(/|$)' || true; }
-            git -C "$GITHUB_WORKSPACE" diff --binary HEAD
+            git -C "$GITHUB_WORKSPACE" status --porcelain=v1 --untracked-files=all "${outside_node_modules[@]}"
+            git -C "$GITHUB_WORKSPACE" diff --binary HEAD "${outside_node_modules[@]}"
           }
           before="$(tree_state | sha256sum)"
           npm ci
           if [ "$(tree_state | sha256sum)" != "$before" ]; then
-            git -C "$GITHUB_WORKSPACE" status --porcelain=v1 --untracked-files=all | { grep -v -E '(^|/)node_modules(/|$)' || true; }
+            git -C "$GITHUB_WORKSPACE" status --porcelain=v1 --untracked-files=all "${outside_node_modules[@]}"
             echo "::error::npm ci in $PWD changed the checked-out files (listed above); apifn check must read the committed router and spec. Keep generated files out of install scripts or ignore them."
             exit 1
           fi
 
-      - name: Fetch base branch
-        if: inputs.router_path != '' && inputs.base_spec == ''
-        shell: bash
-        env:
-          BASE_BRANCH: ${{ inputs.base_branch }}
-        run: |
-          set -euo pipefail
-          git fetch --no-tags origin "+refs/heads/${BASE_BRANCH}:refs/remotes/origin/${BASE_BRANCH}"
-
       # Markdown for the summary and PR comment, JSON for the outputs. Both reports are written outside the checkout by
       # --report, so output the caller's router or config prints while loading cannot corrupt them; the summary step
-      # cross-checks the two runs (exit codes, verdict, drift, breaking) and reports an error when they disagree.
+      # cross-checks the two runs (exit codes, verdict, drift, breaking) and reports an error when they disagree. An
+      # HTTP(S) base_spec is downloaded once, so both runs diff against the same document. After both runs the spec
+      # the report names must still be the file committed at HEAD (spec_state committed, or missing at both), so a
+      # spec generated or rewritten by the install, the router or the config cannot hide drift.
       - name: Run apifn check
         id: check
         if: inputs.router_path != ''
@@ -385,22 +403,52 @@ jobs:
           ALLOW_BREAKING: ${{ inputs.allow_breaking }}
         run: |
           set +e
+          rm -f "$RUNNER_TEMP/apifn-check.md" "$RUNNER_TEMP/apifn-check.json" "$RUNNER_TEMP/apifn-base-spec"
           args=("$ROUTER_PATH")
           if [ -n "$CONFIG_PATH" ]; then args+=(--config "$CONFIG_PATH"); fi
           if [ -n "$SPEC_PATH" ]; then args+=(--spec "$SPEC_PATH"); fi
-          if [ -n "$BASE_SPEC" ]; then
+          if [[ "$BASE_SPEC" =~ ^[Hh][Tt][Tt][Pp][Ss]?:// ]]; then
+            if ! curl --fail --silent --show-error --location --max-time 30 --output "$RUNNER_TEMP/apifn-base-spec" -- "$BASE_SPEC"; then
+              echo "::error::Could not download base_spec $BASE_SPEC"
+              printf 'exit_code=2\njson_exit_code=2\nspec_state=\n' >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            args+=(--base-spec "$RUNNER_TEMP/apifn-base-spec")
+          elif [ -n "$BASE_SPEC" ]; then
             args+=(--base-spec "$BASE_SPEC")
           else
             args+=(--base "origin/${BASE_BRANCH}")
           fi
           if [ "$ALLOW_BREAKING" == "true" ]; then args+=(--allow-breaking); fi
-          rm -f "$RUNNER_TEMP/apifn-check.md" "$RUNNER_TEMP/apifn-check.json"
           apifn check "${args[@]}" --format markdown --report "$RUNNER_TEMP/apifn-check.md"
           code=$?
           apifn check "${args[@]}" --format json --report "$RUNNER_TEMP/apifn-check.json" > /dev/null
           json_code=$?
-          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
-          echo "json_exit_code=$json_code" >> "$GITHUB_OUTPUT"
+          spec="$(node -e 'try { const r = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")); if (typeof r.spec === "string") process.stdout.write(r.spec); } catch {}' "$RUNNER_TEMP/apifn-check.json")"
+          spec_state=""
+          if [ -n "$spec" ]; then
+            spec_state=changed
+            top="$(git rev-parse --show-toplevel)"
+            if [ ! -e "$spec" ] && [ ! -L "$spec" ]; then
+              # Missing in the checkout: the report must call it drift, and only a spec HEAD lacks too is missing.
+              rel="$(realpath -m --relative-to="$top" -- "$spec")"
+              if [[ "$rel" != ".." && "$rel" != ../* ]] && ! git cat-file -e "HEAD:$rel" 2> /dev/null; then spec_state=missing; fi
+            elif real="$(realpath -e -- "$spec")" && [ -f "$real" ]; then
+              # Symlinks are resolved: the bytes apifn check read must be the HEAD blob at the real path.
+              rel="$(realpath --relative-to="$top" -- "$real")"
+              if [[ "$rel" != ".." && "$rel" != ../* ]] &&
+                head_blob="$(git rev-parse --verify --quiet "HEAD:$rel")" &&
+                [ "$(git cat-file -t "$head_blob")" == "blob" ] &&
+                [ "$(git hash-object --path="$rel" -- "$real")" == "$head_blob" ]; then
+                spec_state=committed
+              fi
+            fi
+            if [ "$spec_state" == "changed" ]; then
+              echo "::error::The spec apifn check read ($spec) is not the file committed at HEAD: the install, the router or the config created or changed it, or it is outside the repository. The check must read the committed spec."
+              git status --porcelain=v1 --untracked-files=all --ignored -- "$spec"
+            fi
+          fi
+          printf 'exit_code=%s\njson_exit_code=%s\nspec_state=%s\n' "$code" "$json_code" "$spec_state" >> "$GITHUB_OUTPUT"
           exit 0
 
       - name: Resolve base spec from base branch
@@ -454,8 +502,11 @@ jobs:
           exit 0
 
       # spec_path is relative to working_directory with router_path, as apifn check reads it.
+      # A mock that does not start fails the tests (and the job) through the summary and gates, which still run.
       - name: Start smoke mock server
+        id: mock
         if: inputs.collection_dir != '' && (inputs.start_mock_server == true || inputs.start_mock_server == 'true')
+        continue-on-error: true
         shell: bash
         working-directory: ${{ inputs.router_path != '' && inputs.working_directory || '.' }}
         env:
@@ -479,7 +530,7 @@ jobs:
       # D3: collections are optional; without collection_dir the tests are reported as not run.
       - name: Run collection tests
         id: test
-        if: inputs.collection_dir != ''
+        if: inputs.collection_dir != '' && steps.mock.outcome != 'failure'
         continue-on-error: true
         shell: bash
         env:
@@ -508,9 +559,11 @@ jobs:
           COLLECTION_DIR: ${{ inputs.collection_dir }}
           CHECK_EXIT_CODE: ${{ steps.check.outputs.exit_code }}
           CHECK_JSON_EXIT_CODE: ${{ steps.check.outputs.json_exit_code }}
+          CHECK_SPEC_STATE: ${{ steps.check.outputs.spec_state }}
+          MOCK_OUTCOME: ${{ steps.mock.outcome }}
           VALIDATE_EXIT_CODE: ${{ steps.validate.outputs.exit_code }}
           DIFF_EXIT_CODE: ${{ steps.diff.outputs.exit_code }}
-          TEST_EXIT_CODE: ${{ steps.test.outputs.exit_code }}
+          TEST_EXIT_CODE: ${{ steps.mock.outcome == 'failure' && '1' || steps.test.outputs.exit_code }}
         run: |
           node <<'JS'
           const fs = require('node:fs');
@@ -531,9 +584,9 @@ jobs:
           let testStatus = 'PASS';
           if (!collectionRun) testStatus = 'NOT RUN';
           else if (testFailed) testStatus = 'FAIL';
-          const testLine = collectionRun
-            ? `- Tests: **${testStatus}** (passed=${test.summary.passed ?? 0}, failed=${test.summary.failed ?? 0}, errors=${test.summary.errors ?? 0})`
-            : '- Tests: **NOT RUN** (no collection_dir)';
+          let testLine = '- Tests: **NOT RUN** (no collection_dir)';
+          if (env.MOCK_OUTCOME === 'failure') testLine = '- Tests: **FAIL** (the smoke mock server did not start; see the job log)';
+          else if (collectionRun) testLine = `- Tests: **${testStatus}** (passed=${test.summary.passed ?? 0}, failed=${test.summary.failed ?? 0}, errors=${test.summary.errors ?? 0})`;
           const testTable = collectionRun
             ? [
                 '',
@@ -575,7 +628,13 @@ jobs:
                 markdownLines.includes(`| Breaking | ${diffBreaking} |`)
               );
             };
+            // The spec the report names must be the file committed at HEAD; a spec missing from both the checkout
+            // and HEAD is a drift report, which must say so.
+            const specState = env.CHECK_SPEC_STATE;
+            const specCommitted =
+              hasReport && (specState === 'committed' || (specState === 'missing' && report.drift === true && report.verdict === 'fail'));
             const consistent =
+              specCommitted &&
               hasReport &&
               typeof report.drift === 'boolean' &&
               Array.isArray(report.breaking) &&
@@ -588,14 +647,11 @@ jobs:
               breaking = String(report.breaking.length > 0);
             }
             const checkVerdict = consistent ? report.verdict : 'fail';
-            const lines = consistent
-              ? [markdown.trimEnd()]
-              : [
-                  marker,
-                  '## ApiFn check: **ERROR**',
-                  '',
-                  `apifn check did not produce consistent reports (Markdown run exit ${code || '-'}, JSON run exit ${env.CHECK_JSON_EXIT_CODE || '-'}; exit 2 is a usage or load error, and the two runs must agree on the verdict, drift and breaking changes). See the job log.`,
-                ];
+            let error = `apifn check did not produce consistent reports (Markdown run exit ${code || '-'}, JSON run exit ${env.CHECK_JSON_EXIT_CODE || '-'}; exit 2 is a usage or load error, and the two runs must agree on the verdict, drift and breaking changes). See the job log.`;
+            if (hasReport && !specCommitted) {
+              error = `The spec apifn check read (\`${String(report.spec)}\`) is not the file committed at HEAD: the install, the router or the config created or changed it. The check must read the committed spec. See the job log.`;
+            }
+            const lines = consistent ? [markdown.trimEnd()] : [marker, '## ApiFn check: **ERROR**', '', error];
             lines.push('', '### Collection tests', '', testLine, ...testTable);
             body = lines;
             if (checkVerdict === 'fail' || testFailed) verdict = 'fail';
@@ -702,7 +758,7 @@ jobs:
           CHECK_EXIT_CODE: ${{ steps.check.outputs.exit_code }}
           VALIDATE_EXIT_CODE: ${{ steps.validate.outputs.exit_code }}
           DIFF_EXIT_CODE: ${{ steps.diff.outputs.exit_code }}
-          TEST_EXIT_CODE: ${{ steps.test.outputs.exit_code }}
+          TEST_EXIT_CODE: ${{ steps.mock.outcome == 'failure' && '1' || steps.test.outputs.exit_code }}
         run: |
           set -euo pipefail
 
