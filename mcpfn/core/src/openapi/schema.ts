@@ -1762,10 +1762,17 @@ export class SchemaConverter {
    */
   private positions(schema: unknown, mode: SchemaMode, required = true): Positions {
     const result: Positions = { frames: 0, forcedFrames: 0, refs: new Set(), forced: new Map(), carried: new Map() };
+    // Charged as the walk goes, so it stops before work the budget cannot cover.
     let visited = 0;
+    const flush = () => {
+      const count = visited;
+      visited = 0;
+      this.total.chargeNodes(count);
+    };
     const visit = (node: unknown, frame: number, own: boolean, must: boolean, whole?: Conjunction): void => {
       if (node === undefined) return;
       visited += 1;
+      if (visited >= POSITION_CHARGE_BATCH) flush();
       let reached = frame;
       if (isObject(node) && typeof node.$ref === "string" && node.$ref.startsWith(DEFINITION_REF)) {
         const name = node.$ref.slice(DEFINITION_REF.length);
@@ -1786,6 +1793,7 @@ export class SchemaConverter {
         // A schema only checked (`plain`) forces no child: it is measured in place.
         whole = mode === "plain" ? UNFORCED : conjunction(node);
         visited += whole.nodes;
+        if (visited >= POSITION_CHARGE_BATCH) flush();
       }
       for (const member of arrayOf(node.allOf)) visit(member, frame + 1, own, must, whole);
       forEachInPlace(node, (member) => visit(member, frame + 1, own, false), false);
@@ -1797,7 +1805,7 @@ export class SchemaConverter {
       );
     };
     visit(schema, 1, required, true);
-    this.total.chargeNodes(visited);
+    flush();
     return result;
   }
 
@@ -2126,6 +2134,9 @@ interface Conjunction {
   nodes: number;
 }
 
+/** How many walked nodes `positions` charges at once. */
+const POSITION_CHARGE_BATCH = 1024;
+
 /** A conjunction that demands nothing: every child value starts its own chain. */
 const UNFORCED: Conjunction = { required: [], names: new Set(), types: undefined, minItems: 0, nodes: 0 };
 
@@ -2137,6 +2148,8 @@ function conjunction(schema: JsonObject): Conjunction {
     const node = pending.pop();
     result.nodes += 1;
     if (!isObject(node)) continue;
+    // The entries of `required` and `type` read here are walked too.
+    result.nodes += arrayOf(node.required).length + arrayOf(node.type).length;
     for (const name of arrayOf(node.required)) {
       if (typeof name === "string" && !names.has(name)) {
         names.add(name);
