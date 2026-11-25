@@ -530,15 +530,15 @@ export function diffTables(
     const budget = mysqlIndexKeyBudget(curTable.rowFormat, curTable.innodbPageSize);
     const keyPartBytes = (column: string): number => {
       const field = Object.entries(reqFieldMap).find(([name, f]) => (f.fieldName ?? name) === column)?.[1];
-      const type = field && mapFieldTypeToSQLType(field, 'mysql');
+      const type = field && (/^date(?:time)?$/.test(field.type)
+        ? ({ timestamp: 'datetime', timestamptz: 'timestamp', 'iso-text': 'text' } as Record<string, string>)[resolveDateStorageType(field)] ?? 'bigint'
+        : mapFieldTypeToSQLType(field, 'mysql'));
       const current = curColMap.get(column);
       const charBytes = current?.characterSet || current?.characterSetMaxBytes
         ? current.characterSetMaxBytes
         : curTable.characterSetMaxBytes;
-      if (type === 'text') return (field?.maxLength ?? 191) * (charBytes ?? 4);
-      const bytes = mysqlFixedKeyBytes(current && !changedMySqlColumns.has(column)
-        ? current.columnType ?? current.dataType
-        : field && type === 'timestamp' && resolveDateStorageType(field) === 'timestamp' ? 'datetime' : type ?? '');
+      if (type === 'text') return (field?.type === 'string' ? field.maxLength ?? 191 : 191) * (charBytes ?? 4);
+      const bytes = mysqlFixedKeyBytes(current && !changedMySqlColumns.has(column) ? current.columnType ?? current.dataType : type ?? '');
       if (bytes) return bytes;
       throw new Error(`Cannot generate MySQL column change for ${dbName}: the index key size of ${column} cannot be proven safe`);
     };

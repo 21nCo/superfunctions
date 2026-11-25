@@ -1078,6 +1078,22 @@ describe("schema index migrations", () => {
       expect(diff.columnChanges?.map((change) => change.change)).toEqual([`maxLength changed from 64 to ${maxLength}`]);
       expect(diff.rebuiltIndexes?.map((index) => index.name)).toEqual(["plugfn_sync_jobs_claim_token_idx"]);
     }
+    // Changed parts take the type the generator emits: an epoch-ms-integer
+    // date is a BIGINT (8 bytes), so 764 + 8 exceeds 4 KiB pages' 768 bytes.
+    const toEpoch = current("Dynamic", { innodbPageSize: 4096 });
+    toEpoch[0].columns[1] = { ...varcharColumn("owner", 0, null), dataType: "timestamp", columnType: "timestamp", maxLength: null };
+    toEpoch[0].indexes[0] = { ...toEpoch[0].indexes[0], columns: ["claim_token", "owner"], prefixLengths: [null, null] };
+    const epochSchema = widenTo(191, ["claimToken", "owner"]);
+    epochSchema.fields.owner = { type: "date", dateStorageType: "epoch-ms-integer", required: false, fieldName: "owner" } as TableSchema["fields"][string];
+    expect(() => diffTables([epochSchema], toEpoch, "plugfn")).toThrow(/owner 8 bytes\) would take 772 bytes, over the 768-byte/);
+    // An iso-text date is emitted as TEXT and indexed with the 191-character
+    // prefix whatever its maxLength: 764 utf8mb4 bytes fit 4 KiB pages.
+    const toIsoText = current("Dynamic", { innodbPageSize: 4096 });
+    toIsoText[0].columns[0] = { ...varcharColumn("claim_token", 0, null), dataType: "int", columnType: "int", maxLength: null };
+    const isoTextSchema = widenTo(64);
+    isoTextSchema.fields.claimToken = { type: "date", dateStorageType: "iso-text", maxLength: 255, required: false, fieldName: "claim_token" } as TableSchema["fields"][string];
+    expect(diffTables([isoTextSchema], toIsoText, "plugfn")[0].rebuiltIndexes?.map((index) => index.name))
+      .toEqual(["plugfn_sync_jobs_claim_token_idx"]);
     // An index replaced to cover another column no longer holds the widened one.
     const replaced = diffTables([widenTo(768, ["owner"])], current("Compact"), "plugfn");
     expect(replaced[0].changedIndexes?.map((index) => index.name)).toEqual(["plugfn_sync_jobs_claim_token_idx"]);
