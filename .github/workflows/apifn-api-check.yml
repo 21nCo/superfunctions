@@ -59,7 +59,7 @@ on:
         default: "0.1.2"
         type: string
       start_mock_server:
-        description: Start apifn mock for workflow self-tests before running the collection
+        description: Start apifn mock on spec_path (relative to working_directory with router_path) for workflow self-tests before running the collection
         required: false
         default: false
         type: boolean
@@ -93,10 +93,10 @@ on:
         description: "pass, warn or fail: the result of every gate (warn only with router_path)"
         value: ${{ jobs.api-check.outputs.verdict }}
       drift:
-        description: "true when the committed spec differs from the router (router_path only; empty otherwise or when apifn check produced no report)"
+        description: "true when the committed spec differs from the router (router_path only; empty otherwise or when apifn check produced no consistent report)"
         value: ${{ jobs.api-check.outputs.drift }}
       breaking:
-        description: "true when the diff against the base found breaking changes, allowed or not (empty when no report was produced)"
+        description: "true when the diff against the base found breaking changes, allowed or not (empty when no consistent report was produced)"
         value: ${{ jobs.api-check.outputs.breaking }}
   workflow_dispatch:
     inputs:
@@ -156,7 +156,7 @@ on:
         default: "0.1.2"
         type: string
       start_mock_server:
-        description: Start apifn mock for workflow self-tests before running the collection
+        description: Start apifn mock on spec_path (relative to working_directory with router_path) for workflow self-tests before running the collection
         required: false
         default: false
         type: boolean
@@ -210,8 +210,25 @@ jobs:
           ROUTER_PATH: ${{ inputs.router_path }}
           SPEC_PATH: ${{ inputs.spec_path }}
           BASE_SPEC: ${{ inputs.base_spec }}
+          CONFIG_PATH: ${{ inputs.config_path }}
+          COLLECTION_DIR: ${{ inputs.collection_dir }}
+          START_MOCK_SERVER: ${{ inputs.start_mock_server }}
         run: |
           set -euo pipefail
+          # Path inputs are passed to apifn as operands; a leading '-' would be read as an option.
+          for name in router_path config_path spec_path base_spec collection_dir; do
+            case "$name" in
+              router_path) value="$ROUTER_PATH" ;;
+              config_path) value="$CONFIG_PATH" ;;
+              spec_path) value="$SPEC_PATH" ;;
+              base_spec) value="$BASE_SPEC" ;;
+              collection_dir) value="$COLLECTION_DIR" ;;
+            esac
+            if [[ "$value" == -* ]]; then
+              echo "::error::$name must not start with '-', got '$value'"
+              exit 1
+            fi
+          done
           case "$CLI_SOURCE" in
             npm) ;;
             workspace)
@@ -232,6 +249,11 @@ jobs:
           fi
           if [ -z "$ROUTER_PATH" ] && [ -n "$BASE_SPEC" ]; then
             echo "::error::base_spec applies only with router_path"
+            exit 1
+          fi
+          # The mock server serves spec_path (relative to working_directory with router_path); it is never inferred from a config.
+          if [ "$START_MOCK_SERVER" == "true" ] && [ -n "$COLLECTION_DIR" ] && [ -z "$SPEC_PATH" ]; then
+            echo "::error::start_mock_server needs spec_path"
             exit 1
           fi
 
@@ -303,7 +325,10 @@ jobs:
           echo "Built @apifn/cli@$(node -p "require('./apifn/cli/package.json').version") from the workspace"
           "$BIN_DIR/apifn" --version
 
-      # The router module imports the caller's packages, so they are installed first.
+      # The router module imports the caller's packages, so they are installed first. npm ci runs the caller's
+      # lifecycle scripts; apifn check reads the spec and router from the working tree, so an install that changes
+      # tracked files or adds untracked ones (a prepare script regenerating the spec) fails closed instead of
+      # hiding drift.
       - name: Install caller dependencies
         if: inputs.router_path != ''
         shell: bash
@@ -320,7 +345,18 @@ jobs:
             echo "No package.json in $PWD; nothing to install."
             exit 0
           fi
+          # node_modules is the install's own output, even where the caller's .gitignore does not list it.
+          tree_state() {
+            git -C "$GITHUB_WORKSPACE" status --porcelain=v1 --untracked-files=all | { grep -v -E '(^|/)node_modules(/|$)' || true; }
+            git -C "$GITHUB_WORKSPACE" diff --binary HEAD
+          }
+          before="$(tree_state | sha256sum)"
           npm ci
+          if [ "$(tree_state | sha256sum)" != "$before" ]; then
+            git -C "$GITHUB_WORKSPACE" status --porcelain=v1 --untracked-files=all | { grep -v -E '(^|/)node_modules(/|$)' || true; }
+            echo "::error::npm ci in $PWD changed the checked-out files (listed above); apifn check must read the committed router and spec. Keep generated files out of install scripts or ignore them."
+            exit 1
+          fi
 
       - name: Fetch base branch
         if: inputs.router_path != '' && inputs.base_spec == ''
@@ -331,7 +367,9 @@ jobs:
           set -euo pipefail
           git fetch --no-tags origin "+refs/heads/${BASE_BRANCH}:refs/remotes/origin/${BASE_BRANCH}"
 
-      # Markdown for the summary and PR comment, JSON for the outputs. Both reports are written outside the checkout.
+      # Markdown for the summary and PR comment, JSON for the outputs. Both reports are written outside the checkout by
+      # --report, so output the caller's router or config prints while loading cannot corrupt them; the summary step
+      # cross-checks the two runs (exit codes, verdict, drift, breaking) and reports an error when they disagree.
       - name: Run apifn check
         id: check
         if: inputs.router_path != ''
@@ -359,7 +397,7 @@ jobs:
           rm -f "$RUNNER_TEMP/apifn-check.md" "$RUNNER_TEMP/apifn-check.json"
           apifn check "${args[@]}" --format markdown --report "$RUNNER_TEMP/apifn-check.md"
           code=$?
-          apifn check "${args[@]}" --format json > "$RUNNER_TEMP/apifn-check.json"
+          apifn check "${args[@]}" --format json --report "$RUNNER_TEMP/apifn-check.json" > /dev/null
           json_code=$?
           echo "exit_code=$code" >> "$GITHUB_OUTPUT"
           echo "json_exit_code=$json_code" >> "$GITHUB_OUTPUT"
@@ -415,16 +453,18 @@ jobs:
           echo "exit_code=$code" >> "$GITHUB_OUTPUT"
           exit 0
 
+      # spec_path is relative to working_directory with router_path, as apifn check reads it.
       - name: Start smoke mock server
         if: inputs.collection_dir != '' && (inputs.start_mock_server == true || inputs.start_mock_server == 'true')
         shell: bash
+        working-directory: ${{ inputs.router_path != '' && inputs.working_directory || '.' }}
         env:
           SPEC_PATH: ${{ inputs.spec_path }}
           MOCK_PORT: ${{ inputs.mock_port }}
         run: |
           set -euo pipefail
-          apifn mock "$SPEC_PATH" --port "$MOCK_PORT" > apifn-mock.log 2>&1 &
-          echo "$!" > apifn-mock.pid
+          apifn mock "$SPEC_PATH" --port "$MOCK_PORT" > "$RUNNER_TEMP/apifn-mock.log" 2>&1 &
+          echo "$!" > "$RUNNER_TEMP/apifn-mock.pid"
           for _ in {1..30}; do
             # Any HTTP response means the mock accepted a connection. Do not
             # require GET /users — caller specs may not define that route.
@@ -433,7 +473,7 @@ jobs:
             fi
             sleep 1
           done
-          cat apifn-mock.log
+          cat "$RUNNER_TEMP/apifn-mock.log"
           exit 1
 
       # D3: collections are optional; without collection_dir the tests are reported as not run.
@@ -456,8 +496,8 @@ jobs:
         if: always() && inputs.collection_dir != '' && (inputs.start_mock_server == true || inputs.start_mock_server == 'true')
         shell: bash
         run: |
-          if [ -f apifn-mock.pid ]; then
-            kill "$(cat apifn-mock.pid)" || true
+          if [ -f "$RUNNER_TEMP/apifn-mock.pid" ]; then
+            kill "$(cat "$RUNNER_TEMP/apifn-mock.pid")" || true
           fi
 
       - name: Build markdown summary
@@ -520,18 +560,33 @@ jobs:
             const code = env.CHECK_EXIT_CODE;
             const verdicts = ['pass', 'warn', 'fail'];
             const hasReport = report !== null && typeof report === 'object' && verdicts.includes(report.verdict);
-            if (hasReport) {
-              drift = report.drift === true ? 'true' : 'false';
-              breaking = Array.isArray(report.breaking) && report.breaking.length > 0 ? 'true' : 'false';
-            }
-            // Exit 0 is pass or warn and exit 1 is fail; both runs must agree with each other and with the JSON report.
+            // The Markdown and JSON reports come from two runs: the Markdown one is shown only when its verdict,
+            // drift and breaking-change rows say what the JSON report says, and exit 0 (pass or warn) or 1 (fail)
+            // matches the verdict in both runs.
+            const markdownLines = markdown === null ? [] : markdown.split('\n');
+            const markdownAgrees = () => {
+              const diffBreaking = report.diff && Array.isArray(report.diff.breaking) ? String(report.diff.breaking.length) : '-';
+              const driftRow = markdownLines.find((line) => line.startsWith('| Drift | '));
+              return (
+                markdownLines[0] === marker &&
+                markdownLines[1] === `## ApiFn check: **${report.verdict.toUpperCase()}**` &&
+                driftRow !== undefined &&
+                (driftRow === '| Drift | none |') === (report.drift === false) &&
+                markdownLines.includes(`| Breaking | ${diffBreaking} |`)
+              );
+            };
             const consistent =
               hasReport &&
-              markdown !== null &&
-              markdown.startsWith(marker) &&
+              typeof report.drift === 'boolean' &&
+              Array.isArray(report.breaking) &&
               (code === '0' || code === '1') &&
               env.CHECK_JSON_EXIT_CODE === code &&
-              (report.verdict === 'fail') === (code === '1');
+              (report.verdict === 'fail') === (code === '1') &&
+              markdownAgrees();
+            if (consistent) {
+              drift = String(report.drift);
+              breaking = String(report.breaking.length > 0);
+            }
             const checkVerdict = consistent ? report.verdict : 'fail';
             const lines = consistent
               ? [markdown.trimEnd()]
@@ -539,7 +594,7 @@ jobs:
                   marker,
                   '## ApiFn check: **ERROR**',
                   '',
-                  `apifn check did not produce a consistent report (Markdown run exit ${code || '-'}, JSON run exit ${env.CHECK_JSON_EXIT_CODE || '-'}; exit 2 is a usage or load error). See the job log.`,
+                  `apifn check did not produce consistent reports (Markdown run exit ${code || '-'}, JSON run exit ${env.CHECK_JSON_EXIT_CODE || '-'}; exit 2 is a usage or load error, and the two runs must agree on the verdict, drift and breaking changes). See the job log.`,
                 ];
             lines.push('', '### Collection tests', '', testLine, ...testTable);
             body = lines;
@@ -547,10 +602,14 @@ jobs:
             else verdict = checkVerdict;
           } else {
             const validate = readJson('validate-report.json', { ok: false, errors: [{ path: '', message: 'missing validate report' }] });
-            const diff = readJson('diff-report.json', { hasBreakingChanges: false, summary: { breaking: 0, nonBreaking: 0, added: 0, removed: 0, modified: 0 } });
+            const diffReport = readJson('diff-report.json', null);
+            const diff = diffReport ?? { hasBreakingChanges: false, summary: { breaking: 0, nonBreaking: 0, added: 0, removed: 0, modified: 0 } };
             const validateStatus = validate.ok ? 'PASS' : 'FAIL';
             const diffStatus = diff.hasBreakingChanges ? 'BREAKING' : 'OK';
-            breaking = diff.hasBreakingChanges ? 'true' : 'false';
+            // Empty when apifn diff produced no report, as the breaking output documents.
+            if (diffReport !== null && typeof diffReport.hasBreakingChanges === 'boolean') {
+              breaking = String(diffReport.hasBreakingChanges);
+            }
             const diffCode = env.DIFF_EXIT_CODE || '0';
             verdict = env.VALIDATE_EXIT_CODE !== '0' || diffCode !== '0' || testFailed ? 'fail' : 'pass';
             body = [
@@ -575,8 +634,16 @@ jobs:
           }
 
           const text = `${body.join('\n')}\n`;
-          fs.writeFileSync('ci-summary.md', text);
-          fs.appendFileSync(env.GITHUB_STEP_SUMMARY, text);
+          fs.writeFileSync(path.join(env.RUNNER_TEMP, 'apifn-ci-summary.md'), text);
+          // A step summary holds at most 1 MiB; the full report always goes to the job log.
+          console.log(text);
+          const summaryLimit = 1000 * 1000;
+          fs.appendFileSync(
+            env.GITHUB_STEP_SUMMARY,
+            Buffer.byteLength(text) <= summaryLimit
+              ? text
+              : `${Buffer.from(text).subarray(0, summaryLimit).toString('utf8').replace(/\uFFFD*$/, '')}\n\n_Report truncated; the full report is in the job log._\n`
+          );
           fs.appendFileSync(env.GITHUB_OUTPUT, `verdict=${verdict}\ndrift=${drift}\nbreaking=${breaking}\n`);
           JS
 
@@ -591,7 +658,7 @@ jobs:
         with:
           script: |
             const fs = require('node:fs');
-            const body = fs.readFileSync('ci-summary.md', 'utf8');
+            const path = require('node:path');
             const { owner, repo } = context.repo;
             const issue_number = context.payload.pull_request?.number;
             if (!issue_number) {
@@ -599,19 +666,31 @@ jobs:
               return;
             }
             const marker = '<!-- apifn-ci-report -->';
+            // A comment holds at most 65536 characters: a longer report keeps its head and points at the job summary.
+            const limit = 60000;
+            const full = fs.readFileSync(path.join(process.env.RUNNER_TEMP, 'apifn-ci-summary.md'), 'utf8');
+            const runUrl = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
+            const cut = full.lastIndexOf('\n', limit);
+            const body = full.length <= limit
+              ? full
+              : `${full.slice(0, cut > 0 ? cut : limit)}\n\n_Report truncated; the full report is in the [job summary](${runUrl})._\n`;
 
-            const comments = await github.paginate(github.rest.issues.listComments, {
-              owner,
-              repo,
-              issue_number,
-              per_page: 100,
-            });
-            const existing = comments.find((c) => c.user?.type === 'Bot' && c.body?.includes(marker));
-
-            if (existing) {
-              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
-            } else {
-              await github.rest.issues.createComment({ owner, repo, issue_number, body });
+            // The comment only mirrors the job summary and the gates below decide the job, so a failed post is a warning.
+            try {
+              const comments = await github.paginate(github.rest.issues.listComments, {
+                owner,
+                repo,
+                issue_number,
+                per_page: 100,
+              });
+              const existing = comments.find((c) => c.user?.type === 'Bot' && c.body?.includes(marker));
+              if (existing) {
+                await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+              } else {
+                await github.rest.issues.createComment({ owner, repo, issue_number, body });
+              }
+            } catch (error) {
+              core.warning(`Could not post the API check comment: ${error.message}`);
             }
 
       - name: Enforce CI gates

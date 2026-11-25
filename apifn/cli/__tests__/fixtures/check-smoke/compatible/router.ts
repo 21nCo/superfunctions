@@ -1,4 +1,7 @@
 // Compatible contract: its committed openapi.yml matches this router and is the base of the breaking fixture.
+// It prints while loading, as caller routers may: the API check workflow's JSON report must not include this line.
+console.log("check-smoke: compatible router loaded");
+
 export default {
   getRoutes() {
     return [

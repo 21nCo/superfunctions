@@ -145,9 +145,9 @@ run the CLI commands in [Non-GitHub CI](#non-github-ci).
 
 With `router_path`:
 
-- Runs `npm ci` in `working_directory` (when it has a `package.json`), because the router imports the caller's packages
-- Runs `apifn check <router_path> --base origin/<base_branch> --format markdown --report …` and the same check with `--format json` (`--base-spec` instead when `base_spec` is set); both reports are written to `$RUNNER_TEMP`, not the checkout
-- Uses the Markdown report as the job summary and PR comment
+- Runs `npm ci` in `working_directory` (when it has a `package.json`), because the router imports the caller's packages. The job fails when the install changes checked-out files or adds untracked ones outside `node_modules` (for example a `prepare` script regenerating the spec), because `apifn check` must read the committed router and spec
+- Runs `apifn check <router_path> --base origin/<base_branch> --format markdown --report …` and the same check with `--format json --report …` (`--base-spec` instead when `base_spec` is set); both reports are written to `$RUNNER_TEMP`, not the checkout, so output the router or config prints while loading does not affect them
+- Uses the Markdown report as the job summary and PR comment when both runs agree (exit code, verdict, drift and breaking changes); otherwise the summary reports an error and the verdict is `fail`
 
 Without `router_path`:
 
@@ -159,7 +159,7 @@ Without `router_path`:
 Either way:
 
 - Runs collection tests via `apifn test --reporter json` into `test-report.json` when `collection_dir` is set; without it the summary reports the tests as **not run**
-- Posts or updates one PR comment holding `<!-- apifn-ci-report -->` (optional). A fork PR gets a read-only token, so it gets no comment, but its gates still apply
+- Posts or updates one PR comment holding `<!-- apifn-ci-report -->` (optional). A fork PR gets a read-only token, so it gets no comment, but its gates still apply. A report longer than a comment allows is cut and links the job summary; a failed post is a warning and does not decide the job
 - Sets the outputs `verdict`, `drift` and `breaking`
 - Fails the job on drift, validation failures, uncovered breaking changes and test failures (unless `enforce_gates` is false)
 
@@ -181,6 +181,7 @@ with the [direct CLI commands](#non-github-ci). Pass `--allow-scripts` or repeat
 - `cli_source` (optional, default `npm`): `npm` installs the CLI from the workflow revision's lockfile; `workspace` builds `@apifn/cli` from the checked-out repository and is allowed only in `21nCo/superfunctions` (the job fails in any other repository)
 - `enforce_gates` (optional, default `true`): Fail the job when a gate fails. `false` only reports, through the summary, comment and outputs; keep the default for a required check
 - `collection_dir` (optional): Repo-relative OpenCollection directory (e.g. `.apifn/collection`); empty skips the collection tests
+- `start_mock_server` (optional, default `false`): Serve `spec_path` with `apifn mock` on `mock_port` while the collection runs, for workflow self-tests; needs `spec_path` (relative to `working_directory` with `router_path`)
 - `environment` (optional, default `development`): Collection environment
 - `cli_version` (optional, default `0.1.2`): Assertion against the `@apifn/cli` version pinned by the selected workflow revision (`cli_source: npm`). The default in the workflow file must match that revision's [CLI lockfile](../.github/apifn-cli-install/package-lock.json). The workflow uses the local lockfile when the caller checkout matches the workflow repository and commit. For other callers it fetches the lockfile from the workflow revision.
 - `base_branch` (optional, default `main`): Branch whose committed spec is the base
@@ -191,8 +192,8 @@ with the [direct CLI commands](#non-github-ci). Pass `--allow-scripts` or repeat
 ### Outputs
 
 - `verdict`: `pass`, `warn` or `fail` for the whole job (`warn` only with `router_path`: warnings such as an allowed breaking change). A usage or load error of `apifn check` (exit 2) is `fail`
-- `drift`: `true` or `false` with `router_path` (whether the committed spec differs from the router); empty without it or when `apifn check` produced no report
-- `breaking`: `true` when the diff against the base found breaking changes, allowed or not; `false` otherwise; empty when `apifn check` produced no report
+- `drift`: `true` or `false` with `router_path` (whether the committed spec differs from the router); empty without it or when `apifn check` produced no consistent report
+- `breaking`: `true` when the diff against the base found breaking changes, allowed or not; `false` otherwise; empty when `apifn check` or `apifn diff` produced no consistent report
 
 ### Example
 
