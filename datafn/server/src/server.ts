@@ -1673,11 +1673,12 @@ export async function createDatafnServer<TContext = any>(
         maxPayloadBytes: publicLinkBodyLimit,
       }) as DatafnComposableRoute<TContext>[];
       for (const route of pluginRoutes) {
+        const isPublicLinkResolve = plugin.name === "datafn-public-links" &&
+          route.method === "POST" && route.path === PUBLIC_LINK_RESOLVE_PATH;
         const limitedRoute = withPluginRouteRateLimit(route);
         if (!multiRegionRuntime?.placement || route.meta?.datafnPlacement === "none") {
           routes.push(limitedRoute);
-          if (publicLinkBodyLimit !== undefined && plugin.name === "datafn-public-links" &&
-              route.method === "POST" && route.path === PUBLIC_LINK_RESOLVE_PATH) {
+          if (publicLinkBodyLimit !== undefined && isPublicLinkResolve) {
             boundedResolveRoute = limitedRoute;
           }
           continue;
@@ -1688,7 +1689,12 @@ export async function createDatafnServer<TContext = any>(
             `DATAFN_PLUGIN_ROUTE_PLACEMENT_REQUIRED: ${plugin.name} ${route.method} ${route.path}`,
           );
         }
-        routes.push(withPluginRoutePlacement(limitedRoute, declaration));
+        if (isPublicLinkResolve) {
+          // Count all token resolutions, including those rejected by placement.
+          routes.push(withPluginRouteRateLimit(withPluginRoutePlacement(route, declaration)));
+        } else {
+          routes.push(withPluginRoutePlacement(limitedRoute, declaration));
+        }
       }
     }
   }

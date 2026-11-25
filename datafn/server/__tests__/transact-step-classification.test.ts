@@ -82,12 +82,14 @@ describe("transact step classification", () => {
     expect(create).not.toHaveBeenCalled();
   });
 
-  it("preserves the evaluator's validation error for a non-atomic query step", async () => {
-    const { body } = await post([
+  it.each([true, false])("preserves query validation errors with atomic: %s", async (atomic) => {
+    const { response, body } = await post([
       { resource: "txn", operation: "insert", id: "txn-1", record: { amount: 1 } },
       { resource: "txn", filters: { amount: { between: [1] } } },
-    ], false);
+    ], atomic);
 
-    expect(body.result.results[1].error).toMatchObject({ code: "DFQL_INVALID" });
+    expect(response.status).toBe(atomic ? 400 : 200);
+    const error = atomic ? body.error : body.result.results[1].error;
+    expect(error).toMatchObject({ code: "DFQL_INVALID" });
   });
 });

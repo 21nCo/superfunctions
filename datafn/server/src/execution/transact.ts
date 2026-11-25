@@ -43,6 +43,8 @@ export interface TransactResult {
   };
 }
 
+class TransactQueryValidationError extends DatafnExecutionError {}
+
 /**
  * Execute a transaction (sequence of mutations/queries) as an atomic unit
  */
@@ -205,7 +207,7 @@ export async function executeTransaction(
         if (error && typeof error === "object" && "code" in error &&
             (error.code === "DFQL_INVALID" || error.code === "DFQL_UNSUPPORTED") &&
             "message" in error && typeof error.message === "string") {
-          throw new DatafnExecutionError(error.code, error.message);
+          throw new TransactQueryValidationError(error.code, error.message);
         }
         throw error;
       }
@@ -313,6 +315,10 @@ export async function executeTransaction(
       // If we got here, commit happened — TV-REL-006: no rolledBack field
       return { ok: true, result: { ok: true, results } };
     } catch (error: any) {
+      if (error instanceof TransactQueryValidationError) {
+        await reconcilePermissionDirectoryAfterSettlement();
+        return { ok: false, error: error.toDatafnError() };
+      }
       if (error && error.__transactionFailed) {
         // Unshare invalidates the external directory before deleting the
         // database grant. A rollback restores the database row, so reconcile

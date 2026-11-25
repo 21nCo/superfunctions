@@ -262,7 +262,7 @@ describe("public link resolve limits", () => {
     expect(response.headers.get("x-plugin-response")).toBe("decorated");
   });
 
-  it("resolves a valid token when placement is configured", async () => {
+  it("resolves a valid token with placement and rate limits without a namespace lookup", async () => {
     const db = memoryAdapter();
     await db.initialize?.();
     const directory = createMemoryIndexedDirectoryStore();
@@ -280,6 +280,7 @@ describe("public link resolve limits", () => {
       allowUnknownResources: true,
       publicLinks: publicLinks(directory),
       limits: { maxPayloadBytes: 1_048_576 },
+      rateLimit: { enabled: true, maxRequests: 1, windowSeconds: 60 },
       plugins: [
         datafnMultiRegionPlugin({
           regionId: "region:public-links",
@@ -294,6 +295,8 @@ describe("public link resolve limits", () => {
     expect(result.status).toBe(200);
     expect(result.body.ok).toBe(true);
     expect(result.body.result.resource).toBe("linkTag");
+    const exhausted = await resolve(server, "test-invalid-link");
+    expect(exhausted.status).toBe(429);
   });
 
   it("rate limits resolve without blocking the first token use", async () => {
