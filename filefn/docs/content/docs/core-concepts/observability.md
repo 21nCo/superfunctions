@@ -60,6 +60,25 @@ const logger = createLogger({
 });
 ```
 
+## Metrics
+
+When `observability.metrics` is set, filefn records three observations. The label set is closed: a file id, a session id, error text, and usage numbers are not labels.
+
+| Kind | Operation | When |
+| --- | --- | --- |
+| `filefn.upload` | `failure` | An upload fails because the size cannot be verified (`size_unverified`), parts are missing (`parts_missing`), or the stored size does not match (`size_mismatch`). `labels.reason` is that value. `ok` is false. |
+| `filefn.quota` | `denied` | A quota check refuses the upload. `ok` is false. The metric has no current or limit. |
+| `filefn.processing` | `complete` | A processing run reaches `processing.completed`. `durationMs` is the wall time of that run. `ok` is true. |
+
+```ts
+const fileFn = createFileFn({
+  database, storage,
+  observability: {
+    metrics: { record(metric) { /* sink */ } },
+  },
+});
+```
+
 ## Request IDs
 
 Every request flows through filefn with an `x-request-id` header. If the caller doesn't set one, the kernel mints one (`req_<random>`). The id is:

@@ -1,0 +1,98 @@
+import { mkdtemp, readdir, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { memoryAdapter } from '@superfunctions/db/adapters/memory';
+import { createLocalStorageAdapter } from '@superfunctions/storage-local';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { createFileFn, type FileFnConfig } from '../src/index.js';
+
+describe('stable upload errors (N-06)', () => {
+  let rootDir: string;
+
+  beforeEach(async () => {
+    rootDir = await mkdtemp(join(tmpdir(), 'filefn-stable-errors-'));
+  });
+
+  afterEach(async () => {
+    await rm(rootDir, { recursive: true, force: true });
+  });
+
+  function makeFileFn(extra: Partial<FileFnConfig> = {}) {
+    return createFileFn({
+      database: memoryAdapter(),
+      storage: createLocalStorageAdapter({ rootDir }),
+      namespace: 'filefn',
+      policies: [{ name: 'docs', contentTypes: ['text/plain'], visibility: 'private' }],
+      auth: { required: false, resolveSession: async () => null },
+      ...extra,
+    });
+  }
+
+  function assertNoAdapterLeak(text: string, sessionId?: string) {
+    expect(text).not.toMatch(/Storage adapter|cannot stat|Proxy part|are missing/);
+    if (sessionId) expect(text).not.toContain(sessionId);
+  }
+
+  it('returns a stable error when init cannot verify the upload size', async () => {
+    const storage = createLocalStorageAdapter({ rootDir });
+    delete (storage as { statObject?: unknown }).statObject;
+    const fileFn = makeFileFn({ storage });
+
+    const response = await fileFn.router.handle(new Request('http://localhost/upload/init', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-request-id': 'req_test_stat' },
+      body: JSON.stringify({ policy: 'docs', fileName: 'a.txt', size: 1, mimeType: 'text/plain' }),
+    }));
+
+    expect(response!.status).toBe(500);
+    const body = await response!.json() as { ok: boolean; requestId?: string; error: { code: string; message: string; details?: unknown } };
+    expect(body.ok).toBe(false);
+    expect(body.requestId).toBe('req_test_stat');
+    expect(body.error).toEqual({
+      code: 'FILEFN_STORAGE_STAT_UNAVAILABLE',
+      message: 'Upload size cannot be verified',
+    });
+    assertNoAdapterLeak(JSON.stringify(body));
+  });
+
+  it('returns upload incomplete when a recorded proxy part object is gone', async () => {
+    const fileFn = makeFileFn();
+    const init = await fileFn.router.handle(new Request('http://localhost/upload/init', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-request-id': 'req_test_parts' },
+      body: JSON.stringify({ policy: 'docs', fileName: 'a.txt', size: 1, mimeType: 'text/plain' }),
+    }));
+    expect(init!.status).toBe(200);
+    const created = await init!.json() as { data: { uploadSessionId: string; uploadSessionToken: string } };
+    const { uploadSessionId, uploadSessionToken } = created.data;
+    const headers = { 'x-upload-session-token': uploadSessionToken, 'x-request-id': 'req_test_parts' };
+
+    const part = await fileFn.router.handle(new Request(`http://localhost/upload/${uploadSessionId}/parts/1`, {
+      method: 'PUT',
+      headers,
+      body: 'x',
+    }));
+    expect(part!.status).toBe(200);
+
+    const entries = await readdir(rootDir, { recursive: true, withFileTypes: true });
+    const partFiles = entries.filter((entry) => entry.isFile() && entry.name.includes('.part'));
+    expect(partFiles.length).toBeGreaterThan(0);
+    for (const entry of partFiles) {
+      await rm(join(entry.parentPath, entry.name));
+    }
+
+    const complete = await fileFn.router.handle(new Request(`http://localhost/upload/${uploadSessionId}/complete`, {
+      method: 'POST',
+      headers,
+    }));
+    expect(complete!.status).toBe(409);
+    const body = await complete!.json() as { ok: boolean; requestId?: string; error: { code: string; message: string; details?: unknown } };
+    expect(body.ok).toBe(false);
+    expect(body.requestId).toBe('req_test_parts');
+    expect(body.error).toEqual({
+      code: 'FILEFN_UPLOAD_INCOMPLETE',
+      message: 'Upload incomplete',
+    });
+    assertNoAdapterLeak(JSON.stringify(body), uploadSessionId);
+  });
+});

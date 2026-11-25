@@ -26,6 +26,7 @@ import {
   createPartRecordedEvent,
   createFileUploadedEvent,
 } from '../events.js';
+import { recordQuotaDenial, recordUploadFailure, type FileFnMetrics } from '../metrics.js';
 
 export interface QuotaProvider {
   checkQuota(input: { principalId?: string; tenantId?: string; requestedBytes: number }): Promise<{
@@ -48,6 +49,8 @@ export interface UploadSessionServiceConfig {
   policies: PolicyRegistry;
   events: FileFnEventEmitter;
   logger?: Logger;
+  /** Counts upload failures and quota denials. Omitted, those observations are skipped. */
+  metrics?: FileFnMetrics;
   quota?: QuotaProvider;
   dedup?: DeduplicationService;
   fileWriteChecker?: FileWriteAuthChecker;
@@ -311,6 +314,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
     policies,
     events,
     logger,
+    metrics,
     quota,
     dedup,
     fileWriteChecker,
@@ -591,6 +595,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       // usage: plain 403 (the session is left for the expiry sweep). One who
       // can't write it but passes is refused (403), fenced and cleaned by the
       // completion's own write check.
+      recordQuotaDenial(metrics);
       if (file && !(await canWriteFileNow(session.fileId!, ctx))) {
         return { error: errors.forbidden({ fileId: session.fileId!, operation: 'replace' }) };
       }
@@ -1549,6 +1554,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         const quotaResult = await quota.checkQuota({ ...account, requestedBytes: input.size });
 
         if (!quotaResult.allowed) {
+          recordQuotaDenial(metrics);
           // Another account's usage and limit (a file owner's) are not the caller's to see.
           throw isCallersAccount(account, ctx)
             ? errors.quotaExceeded(quotaResult.current, quotaResult.limit, input.size)
@@ -1575,7 +1581,8 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       // Completion verifies the stored size with statObject; refuse before any
       // upload starts rather than after storage was finalized.
       if (typeof storage.statObject !== 'function') {
-        throw new Error('Storage adapter cannot stat objects; upload size cannot be verified');
+        recordUploadFailure(metrics, 'size_unverified');
+        throw errors.storageStatUnavailable();
       }
       const uploadSessionId = generateId();
       const now = new Date();
@@ -2052,6 +2059,12 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
               }
               await releaseClaim(uploadSessionId, ended.claim, 'in_progress', session.completionClaim ?? null);
             }
+            if (
+              admission.error instanceof errors.FileFnError &&
+              admission.error.code === errors.ErrorCodes.UPLOAD_INCOMPLETE
+            ) {
+              recordUploadFailure(metrics, 'parts_missing');
+            }
             throw admission.error;
           }
           parts = admission.parts;
@@ -2168,7 +2181,8 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
           // Checked before storage is finalized (sessions created before init
           // checked it): the size is verified with statObject below.
           if (typeof storage.statObject !== 'function') {
-            throw new Error('Storage adapter cannot stat objects; upload size cannot be verified');
+            recordUploadFailure(metrics, 'size_unverified');
+            throw errors.storageStatUnavailable();
           }
           try {
             await storage.completeMultipartUpload({
@@ -2201,7 +2215,9 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
           const sortedParts = parts.sort((a, b) => a.partNumber - b.partNumber);
           if (!(await proxyPartsPresent(session, sortedParts, policyStorageTarget))) {
             // Never open (and so truncate) an object without every part.
-            throw new Error(`Proxy part objects of upload session ${uploadSessionId} are missing`);
+            // The public error names neither the session nor the part keys.
+            recordUploadFailure(metrics, 'parts_missing');
+            throw errors.uploadIncomplete();
           } else {
             if (!(await holdsClaim(uploadSessionId, claim))) return lostClaimResult(uploadSessionId);
             stitchedKey = attemptKey;
@@ -2242,7 +2258,8 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         // cannot stat) fails the completion, which can be retried; it never
         // publishes an object of unknown size.
         if (typeof storage.statObject !== 'function') {
-          throw new Error('Storage adapter cannot stat objects; upload size cannot be verified');
+          recordUploadFailure(metrics, 'size_unverified');
+          throw errors.storageStatUnavailable();
         }
         const stat = await storage.statObject({ key: attemptKey, target: policyStorageTarget });
         if (stat.size !== session.size) {
@@ -2264,6 +2281,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
               error: error instanceof Error ? error.message : String(error),
             });
           });
+          recordUploadFailure(metrics, 'size_mismatch');
           throw errors.uploadSizeMismatch(session.size, stat.size);
         }
 
