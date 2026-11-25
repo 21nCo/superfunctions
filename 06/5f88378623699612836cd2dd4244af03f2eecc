@@ -1,0 +1,25 @@
+authfn/docs/content/docs/reference/changelog.md
+  s_c280b963c188e0::t_632c46155f977e 18
+authfn/docs/content/docs/plugins/password.md
+  s_c280b963c188e0::t_632c46155f977e 65-66
+authfn/core/src/core/gateway-routing.ts
+  s_c280b963c188e0::t_632c46155f977e 476
+authfn/core/src/__tests__/gateway-routing.test.ts
+  s_c280b963c188e0::t_632c46155f977e 32-63
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "065f88378623699612836cd2dd4244af03f2eecc",
+  "prompts": {},
+  "sessions": {
+    "s_c280b963c188e0": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a212a2-8eeb-7a81-bbb7-27bfab9b3126",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
