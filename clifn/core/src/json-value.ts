@@ -24,6 +24,15 @@ export const MAX_NESTING_DEPTH = 512;
 /** The share of V8's heap limit one result document may use as text (see `documentLimit`). */
 const HEAP_SHARE = 16;
 /**
+ * The share of the text budget, in keys, that the key lists of the objects open on the active path may hold together
+ * once a nested object is listed. Each list is a snapshot the walk keeps until it leaves that object (about 8 bytes a
+ * key, besides the keys themselves), and a Proxy can return the same list at every level for constant memory of its
+ * own, so the lists are bounded together, not one at a time. Every key of an object whose members all print costs at
+ * least 5 characters (`"":0` and a separator), so a document that fits never reaches a quarter of its text budget in
+ * open keys; only objects with more members that print nothing (dropped or under a redacted key) can.
+ */
+const OPEN_KEYS_SHARE = 4;
+/**
  * The work units an index of a typed array costs before its keys are listed, printed or not: `Object.keys` creates each
  * index key as a new string (about 32 bytes with its slot) although the array stores its elements outside the heap, so
  * the units bound that allocation. Reading and printing each member is charged as for any other object.
@@ -215,6 +224,10 @@ interface Walk {
   readonly isSensitive: ((key: string) => boolean) | undefined;
   /** True while a redacted value is walked: no text is written or charged, and each value costs one unit of work. */
   discarding: boolean;
+  /** How many keys the key lists of the objects open on the active path hold together (see OPEN_KEYS_SHARE). */
+  openKeys: number;
+  /** The most keys those lists may hold together when another object on the path is listed. */
+  readonly maxOpenKeys: number;
 }
 
 function emit(walk: Walk, text: string): void {
@@ -544,9 +557,14 @@ function boundTypedArray(walk: Walk, record: object): void {
  * runs them. A list longer than both budgets could pay for throws before any descriptor is read, and each key that
  * prints nothing at this step (a symbol, a non-enumerable or vanished key) costs one unit of work, so sweeping keys
  * JSON skips is bounded by the work allowance. An ordinary object runs no code to list its keys, so its enumerable
- * keys are taken from `Object.keys`, which sweeps the same list.
+ * keys are taken from `Object.keys`, which sweeps the same list. When the lists the objects open on the path hold
+ * together already pass the bound of OPEN_KEYS_SHARE, it throws before [[OwnPropertyKeys]] runs.
  */
 function enumerableKeys(walk: Walk, record: object): string[] {
+  if (walk.openKeys > walk.maxOpenKeys) {
+    // The lists its ancestors hold already pass the bound: no further list is taken, not even by a Proxy's trap.
+    exceeded();
+  }
   const keys = Reflect.ownKeys(record);
   if (keys.length > walk.work.unitsLeft + (walk.discarding ? 0 : walk.budget.charsLeft)) {
     exceeded();
@@ -577,6 +595,15 @@ function enumerableKeys(walk: Walk, record: object): string[] {
 function serializeObject(walk: Walk, record: object, depth: number): void {
   boundTypedArray(walk, record);
   const names = enumerableKeys(walk, record);
+  walk.openKeys += names.length;
+  try {
+    serializeMembers(walk, record, names, depth);
+  } finally {
+    walk.openKeys -= names.length;
+  }
+}
+
+function serializeMembers(walk: Walk, record: object, names: readonly string[], depth: number): void {
   emit(walk, "{");
   let members = 0;
   for (const name of names) {
@@ -635,7 +662,9 @@ export interface SerializeJsonMemberOptions {
  *   internal length before its keys are listed, a Buffer projected by Node's built-in toJSON is read in place
  *   and bounded like an array by its internal length once its key's redaction is known (a receiver whose length
  *   cannot be bounded that way fails, see `projectBuffer`), an object with more own keys than both budgets could pay
- *   for fails before any descriptor or value is read, and each key JSON skips costs a unit of work, so oversized
+ *   for fails before any descriptor or value is read, each key JSON skips costs a unit of work, and the key lists
+ *   of the objects open on the path may hold a quarter of the text budget (in keys) together, so a nested object
+ *   below lists that hold more fails before its own keys are listed (see OPEN_KEYS_SHARE); so oversized
  *   sparse, proxy, typed, Buffer, hidden-key or generated values fail at once; a bigint is checked by bit length
  *   before its decimal text is built, and not converted under a redacted key. A Proxy's own keys are listed by its
  *   ownKeys trap, so the list it returns exists before it can be charged.
@@ -666,6 +695,8 @@ export function serializeJsonMember(
     work,
     isSensitive,
     discarding: false,
+    openKeys: 0,
+    maxOpenKeys: Math.floor(Math.max(0, budget.charsLeft) / OPEN_KEYS_SHARE),
   };
   return serializeProperty(walk, holder, key, 0) ? out : undefined;
 }

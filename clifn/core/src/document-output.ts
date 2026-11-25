@@ -419,6 +419,9 @@ export function createDocumentOutput(options: DocumentOutputOptions): DocumentOu
   const copies: Diagnostic[] = [];
   let copied = 0;
   let unreadableCount = 0;
+  // Diagnostics added while another was being written (from its getter or toJSON), each dropped with a warning.
+  let reentrantCount = 0;
+  let preparing = false;
   let droppedRest = false;
   const consumed = () => entries.length + unreadableCount;
   const full = () =>
@@ -428,6 +431,9 @@ export function createDocumentOutput(options: DocumentOutputOptions): DocumentOu
 
   const prepare = (input: unknown): PreparedDiagnostic | undefined => {
     const item = segmentOf(kept.text);
+    // While a diagnostic is written its text is charged to `item`, a copy of the budget kept only when it succeeds,
+    // so an add from its getter or toJSON could not be charged to the same budget: it is dropped (see `add`).
+    preparing = true;
     try {
       spendWork(kept.work, 1);
       // Its separator, then its text.
@@ -438,12 +444,20 @@ export function createDocumentOutput(options: DocumentOutputOptions): DocumentOu
     } catch {
       chargeDropped(kept.work, kept.text.charsLeft - item.charsLeft);
       return undefined;
+    } finally {
+      preparing = false;
     }
   };
 
   const diagnostics: DocumentDiagnostics = {
     full,
     add(input) {
+      if (preparing) {
+        // Never read: dropped with a fixed warning; one unit of work, so a getter that keeps adding stops the reading.
+        kept.work.unitsLeft -= 1;
+        reentrantCount += 1;
+        return;
+      }
       if (full()) {
         droppedRest = true;
         return;
@@ -489,6 +503,9 @@ export function createDocumentOutput(options: DocumentOutputOptions): DocumentOu
     // At most `maxDiagnostics` were counted, so these loops are bounded.
     for (let index = 0; index < unreadableCount; index += 1) {
       advice.add("a returned diagnostic was dropped from the result document: it could not be read");
+    }
+    if (reentrantCount > 0) {
+      advise(`${reentrantCount} diagnostics added while another diagnostic was being read were dropped`);
     }
     let printed = 0;
     entries.forEach((entry, index) => {

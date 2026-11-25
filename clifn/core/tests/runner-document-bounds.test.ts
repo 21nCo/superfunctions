@@ -718,6 +718,63 @@ describe("document diagnostics retained by size", () => {
     expect(result().stderr).toContain(`diagnostics past the first ${counter.reads - 1} were dropped`);
   });
 
+  it("drops a diagnostic added while another is being read, so it cannot spend a budget the reader gives back", async () => {
+    const limit = 10_000;
+    const inner = "i".repeat(limit / 2);
+    // Each outer diagnostic adds one large diagnostic from its message getter, or from its details' toJSON.
+    const reentrant = (add: (diagnostic: Diagnostic) => void, index: number): Diagnostic => {
+      let added = false;
+      const addOnce = () => {
+        if (!added) {
+          added = true;
+          add({ code: `I${index}`, severity: "info", message: inner });
+        }
+      };
+      return {
+        code: `O${index}`,
+        severity: "info",
+        get message() {
+          addOnce();
+          return "o";
+        },
+        details: { toJSON: () => (addOnce(), { index }) },
+      } as Diagnostic;
+    };
+    const listedChars = (list: readonly Diagnostic[]) => list.reduce((sum, item) => sum + JSON.stringify(item).length, 0);
+
+    const { output, result } = documentWith(limit);
+    for (let index = 0; index < 200; index += 1) {
+      output.diagnostics.add(reentrant((diagnostic) => output.diagnostics.add(diagnostic), index));
+    }
+    const listed = output.diagnostics.list();
+    expect(listed.length).toBeGreaterThan(0);
+    expect(listed.every((diagnostic) => diagnostic.code.startsWith("O"))).toBe(true);
+    expect(listedChars(listed)).toBeLessThan(limit);
+    expect(output.finish({ ok: true, data: "done", exitCode: 3 })).toBe(3);
+    expect(result().out.length).toBeLessThanOrEqual(limit);
+    expect((parseOnlyDocument(result()) as { data: string }).data).toBe("done");
+    expect(result().stderr).toContain("diagnostics added while another diagnostic was being read were dropped");
+
+    // Through the runner, from the action's sink, with a listener that lists them.
+    let listenerChars = -1;
+    const run = await runDocument(
+      (_options, ctx) => {
+        for (let index = 0; index < 200; index += 1) {
+          ctx.diagnostics.add(reentrant((diagnostic) => ctx.diagnostics.add(diagnostic), index));
+        }
+        return { data: "done", exitCode: 3 };
+      },
+      { onDiagnostics: (list) => (listenerChars = listedChars(list)) }
+    );
+    expect(run.exitCode).toBe(3);
+    expect(listenerChars).toBeGreaterThan(0);
+    // Only the 200 outer diagnostics (about 60 characters each); the inner ones would add 200 times 5,000.
+    expect(listenerChars).toBeLessThan(20_000);
+    const document = parseOnlyDocument(run) as { data: string; diagnostics: Diagnostic[] };
+    expect(document.data).toBe("done");
+    expect(document.diagnostics.every((diagnostic) => diagnostic.code.startsWith("O"))).toBe(true);
+  });
+
   it("reads no diagnostic added once the document is full, from the action's sink or a returned list", async () => {
     const { generate } = freshDiagnostics(1_000);
     const late = vi.fn(() => "late");
@@ -1277,6 +1334,71 @@ describe("document keys JSON skips", () => {
   });
 });
 
+describe("document key lists open on the path", () => {
+  /**
+   * Nested proxies that return one shared list of `count` keys at every level, as constant memory of their own; only
+   * k0 holds a value (the next level, or "end" at `depth`), so every other member is dropped and prints nothing.
+   */
+  function sharedKeyLevels(count: number, depth: number) {
+    const keys = Array.from({ length: count }, (_, index) => `k${index}`);
+    const counter = { ownKeys: 0 };
+    const level = (index: number): object =>
+      new Proxy({}, {
+        ownKeys: () => (counter.ownKeys += 1, keys),
+        getOwnPropertyDescriptor: () => ({ value: undefined, enumerable: true, configurable: true, writable: true }),
+        get: (_target, key) => (key === "k0" ? (index === depth ? "end" : level(index + 1)) : undefined),
+      });
+    return { counter, level };
+  }
+
+  it("prints nested objects whose open key lists fit together, as JSON.stringify does", () => {
+    // Three levels of 1,000 keys: 3,002 open keys at the deepest, within a quarter of the 20,000-character text.
+    const { counter, level } = sharedKeyLevels(1_000, 2);
+    const native = JSON.stringify({ ok: true, data: { visible: "kept", nested: level(0) } });
+    counter.ownKeys = 0;
+    const result = finishWith(20_000, { ok: true, data: { visible: "kept", nested: level(0) }, exitCode: 3 });
+    expect(result.exitCode).toBe(3);
+    expect(result.out).toBe(`${native}\n`);
+    expect(counter.ownKeys).toBe(3);
+  });
+
+  it("fails before listing a nested object once the lists open above it pass the bound, in data, details and diagnostics", () => {
+    // 10,000 characters: the lists open on the path may hold about 2,500 keys, so the fourth level is never listed.
+    // Each level drops 999 members (999 units of a 20,000-unit allowance), so only the open lists stop it this early.
+    const { counter, level } = sharedKeyLevels(1_000, 1_000);
+    const data = finishWith(10_000, { ok: true, data: { visible: "kept", nested: level(0) }, exitCode: 3 });
+    expect(data.exitCode).toBe(1);
+    expect(data.out).toBe(`${JSON.stringify(FAILURE_DOCUMENT)}\n`);
+    expect(counter.ownKeys).toBe(3);
+
+    counter.ownKeys = 0;
+    const details = finishWith(10_000, {
+      ok: false,
+      error: Object.assign(new Error("closed"), { code: "CLOSED", exitCode: 7, details: { visible: "kept", nested: level(0) } }),
+    });
+    expect(details.exitCode).toBe(7);
+    expect(parseOnlyDocument(details)).toEqual({ ok: false, error: { code: "CLOSED", message: "closed" } });
+    expect(counter.ownKeys).toBeLessThanOrEqual(3);
+
+    counter.ownKeys = 0;
+    const diagnostics = finishWith(10_000, { ok: true, data: "done", exitCode: 3 }, [
+      { code: "DEEP", severity: "info", message: "m", details: { nested: level(0) } },
+      { code: "KEPT", severity: "info", message: "m" },
+    ]);
+    expect(diagnostics.exitCode).toBe(3);
+    expect(parseOnlyDocument(diagnostics)).toEqual({
+      ok: true,
+      data: "done",
+      // Details that do not fit are left out; the diagnostic itself is kept.
+      diagnostics: [
+        { code: "DEEP", severity: "info", message: "m" },
+        { code: "KEPT", severity: "info", message: "m" },
+      ],
+    });
+    expect(counter.ownKeys).toBeLessThanOrEqual(3);
+  });
+});
+
 describe("document work allowance next to printed text", () => {
   const keyed = (count: number) => Object.fromEntries(Array.from({ length: count }, (_, index) => [`k${index}`, index]));
 
@@ -1456,6 +1578,29 @@ describe("document memory in a constrained heap", () => {
       // Details whose text is mostly nodes: each "{}" parses to a whole object in a listed copy.
       const nodes = Array.from({ length: 4096 }, () => ({}));
       await run("densify-nodes", () => ({ data: "done", exitCode: 2, diagnostics: endless(() => ({ code: "N", severity: "info", message: "m", details: { nodes } })) }), listener);
+      // A diagnostic whose getter adds a large one while it is being read, 2,000 times, with a listener.
+      await run("reentrant", (_options, ctx) => {
+        const inner = "i".repeat(65536);
+        for (let index = 0; index < 2000; index += 1) {
+          let added = false;
+          ctx.diagnostics.add({ code: "O", severity: "info", get message() {
+            if (!added) { added = true; ctx.diagnostics.add({ code: "I", severity: "info", message: index + inner }); }
+            return "o";
+          } });
+        }
+        return { data: "done", exitCode: 2 };
+      }, listener);
+      // Proxies returning one shared list of 100,000 keys at every level: no level holds the list itself.
+      const sharedKeys = Array.from({ length: 100_000 }, (_, index) => "k" + index);
+      const sharedLevel = () => new Proxy({}, {
+        ownKeys: () => sharedKeys,
+        getOwnPropertyDescriptor: () => ({ value: 1, enumerable: true, configurable: true, writable: true }),
+        get: (_target, key) => (key === "k0" ? sharedLevel() : 1),
+      });
+      await run("open-keys", () => ({ exitCode: 3, data: { visible: "kept", nested: sharedLevel() } }));
+      await run("open-keys-details", () => {
+        throw Object.assign(new Error("closed"), { code: "CLOSED", exitCode: 7, details: { visible: "kept", nested: sharedLevel() } });
+      });
     `;
     const runnerUrl = pathToFileURL(runnerModule).href;
     const child = spawnSync(process.execPath, ["--max-old-space-size=32", "--expose-gc", "--input-type=module", "-e", script, runnerUrl], {
@@ -1510,6 +1655,14 @@ describe("document memory in a constrained heap", () => {
     expect(cases["densify-nodes"].out.startsWith(
       '{"ok":true,"data":"done","diagnostics":[{"code":"N","severity":"info","message":"m","details":{"nodes":[{},'
     )).toBe(true);
+    expect(cases.reentrant).toMatchObject({ writes: 1, exitCode: 2 });
+    expect(cases.reentrant.out.startsWith('{"ok":true,"data":"done","diagnostics":[{"code":"O","severity":"info","message":"o"}')).toBe(true);
+    expect(cases["open-keys"]).toEqual({ name: "open-keys", writes: 1, exitCode: 1, out: failure });
+    expect(cases["open-keys-details"]).toMatchObject({
+      writes: 1,
+      exitCode: 7,
+      out: '{"ok":false,"error":{"code":"CLOSED","message":"closed"}}\n',
+    });
     for (const name of ["typed", "bigint"]) {
       expect(cases[name]).toEqual({ name, writes: 1, exitCode: 1, out: failure });
     }
