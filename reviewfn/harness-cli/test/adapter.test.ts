@@ -1228,11 +1228,13 @@ describe("CliHarnessAdapter preflight and configuration", () => {
       return { code: 0, signal: null, stdout: "", stderr: "", timedOut: false, canceled: false };
     };
     const output = await new CliHarnessAdapter({ environment: environment(), runner }).run(input(configuration(profile({ outputVia: "file" }))));
-    expect(identity.swap?.state).toBe("restored");
+    expect(identity.swap?.state).toBe("swapped");
     expect(reviews).toBe(1);
     expect(output.terminal).toBe("failed");
     expect(await readdir(outside)).toEqual([]);
-    await rm(identity.swap!.path!, { recursive: true, force: true });
+    // The link and the run directory it displaced are left where they are, and removed here.
+    await rm(identity.swap!.path!, { force: true });
+    await rm(`${identity.swap!.path!}.real`, { recursive: true, force: true });
   });
 
   it("removes nothing from a directory swapped into the run directory's place just before its removal", async () => {
@@ -1248,6 +1250,23 @@ describe("CliHarnessAdapter preflight and configuration", () => {
     expect(await readFile(path.join(runDirectory, "kept.txt"), "utf8")).toBe("kept");
     await rm(runDirectory, { recursive: true, force: true });
     await rm(`${runDirectory}.real`, { recursive: true, force: true });
+  });
+
+  it("empties a run directory moved behind a link, removing no unrelated directory of its name beside it", async () => {
+    const elsewhere = path.join(directory, "elsewhere");
+    let runDirectory = "";
+    identity.beforeRemove = async found => {
+      runDirectory = found;
+      await mkdir(elsewhere);
+      await rename(found, path.join(elsewhere, "moved"));
+      await mkdir(path.join(elsewhere, path.basename(found)));
+      await symlink(path.join(elsewhere, "moved"), found);
+    };
+    const output = await run(profile({ outputVia: "file" }));
+    expect(output.terminal).toBe("completed");
+    expect((await readdir(elsewhere)).sort()).toEqual([path.basename(runDirectory), "moved"].sort());
+    expect(await readdir(path.join(elsewhere, "moved"))).toEqual([]);
+    await rm(runDirectory, { force: true });
   });
 
   it("removes only the link a CLI left in its attempt directory, never its target, and the whole run directory", async () => {

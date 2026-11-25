@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
-import { access, lstat, mkdtemp, realpath, stat, unlink } from "node:fs/promises";
+import { access, lstat, mkdtemp, realpath, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Worker } from "node:worker_threads";
@@ -257,11 +257,8 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
       created = await identity(directory);
       return await this.attempts({ ...prepared, executable, key, directory, identities: new Map([[directory, created]]) });
     } finally {
-      // Removed from inside itself (DIRECTORY_HELPER); a link left at its path is unlinked, a directory there left alone.
-      if (directory !== undefined && created !== undefined) {
-        await inDirectory(undefined, directory, { op: "remove", expect: created, name: path.basename(directory) }).catch(() => undefined);
-        if ((await lstat(directory).catch(() => undefined))?.isSymbolicLink()) await unlink(directory).catch(() => undefined);
-      }
+      // Removed from inside itself (DIRECTORY_HELPER); anything that took its place, a link or not, is left alone.
+      if (directory !== undefined && created !== undefined) await inDirectory(undefined, directory, { op: "remove", expect: created, name: path.basename(directory) }).catch(() => undefined);
     }
   }
 
@@ -508,7 +505,7 @@ async function attemptFiles(run: AttemptContext, attempt: number, prompt: string
   if (!await intact(run)) throw new Error("the run directory was replaced");
   const files = [["schema.json", run.schemaText], ...(run.profile.promptVia === "file" || run.profile.argv.includes("{promptFile}") ? [["prompt.md", prompt]] : [])];
   const made = await inDirectory(run, run.directory, { op: "attempt", expect: run.identities.get(run.directory), prefix: `attempt-${attempt}-`, files });
-  if (typeof made.error === "string") throw new Error(made.error === "EREPLACED" ? "the run directory was replaced" : made.error);
+  if (typeof made.error === "string") throw new Error(made.error === "EREPLACED" ? "the run or attempt directory was replaced" : made.error);
   const directory = path.join(run.directory, String(made.name));
   run.identities.set(directory, String(made.identity));
   return { promptFile: path.join(directory, "prompt.md"), schemaFile: path.join(directory, "schema.json"), outputFile: path.join(directory, "output.json") };
@@ -517,21 +514,23 @@ async function attemptFiles(run: AttemptContext, attempt: number, prompt: string
 /**
  * The adapter's operations on its own directories, in a Node process whose working directory, bound to the directory
  * itself (Node has no openat), must have the recorded dev/ino; every name resolves from it, so a path swapped for a link
- * after a check is never followed. `remove` enters a child only when it is the directory just read and stops at a mismatch.
+ * after a check is never followed. An attempt directory found holding entries once entered is refused; `remove` enters a
+ * child, and removes a name, only while it is the directory just read, and stops at the first mismatch.
  */
 const DIRECTORY_HELPER = String.raw`
 const fs = require("node:fs");
-const id = name => { const found = fs.statSync(name, { bigint: true }); return found.dev + ":" + found.ino; };
+const id = name => { const found = fs.lstatSync(name, { bigint: true }); return found.dev + ":" + found.ino; };
 const fail = () => { throw Object.assign(new Error("replaced"), { code: "EREPLACED" }); };
 const wipe = self => {
   for (const name of fs.readdirSync(".")) {
-    const entry = fs.lstatSync(name, { bigint: true });
+    const entry = fs.lstatSync(name, { bigint: true }), own = entry.dev + ":" + entry.ino;
     if (!entry.isDirectory()) { fs.unlinkSync(name); continue; }
     process.chdir(name);
-    if (id(".") !== entry.dev + ":" + entry.ino) fail();
-    wipe(id("."));
+    if (id(".") !== own) fail();
+    wipe(own);
     process.chdir("..");
-    if (id(".") === self) fs.rmdirSync(name); else fail();
+    if (id(".") !== self || id(name) !== own) fail();
+    fs.rmdirSync(name);
   }
 };
 let reply = {};
@@ -540,7 +539,7 @@ try {
   if (id(".") !== request.expect) fail();
   if (request.op === "attempt") {
     const name = fs.mkdtempSync(request.prefix); process.chdir(name);
-    if (id("..") !== request.expect) fail();
+    if (id("..") !== request.expect || fs.readdirSync(".").length > 0) fail();
     for (const [file, text] of request.files) fs.writeFileSync(file, text, { mode: 0o600, flag: "wx" });
     reply = { name, identity: id(".") };
   } else if (request.op === "read") {
@@ -550,7 +549,8 @@ try {
     let length = 0; for (let count = -1; count !== 0 && length < buffer.length; length += count) count = fs.readSync(fd, buffer, length, buffer.length - length, null);
     reply = { file: found.isFile(), size: found.size, data: buffer.subarray(0, length).toString("base64") };
   } else {
-    wipe(request.expect); process.chdir(".."); fs.rmdirSync(request.name);
+    wipe(request.expect); process.chdir("..");
+    if (id(request.name) === request.expect) fs.rmdirSync(request.name); else fail();
   }
 } catch (error) { reply = { error: error.code ?? String(error.message) }; }
 process.stdout.write(JSON.stringify(reply));
