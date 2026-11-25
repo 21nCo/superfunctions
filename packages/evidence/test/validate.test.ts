@@ -75,7 +75,9 @@ describe("invalid records", () => {
   });
 
   it("rejects an own __proto__ member at the top level as unknown", () => {
-    const record = JSON.parse(JSON.stringify(records.minimal).replace("{", '{"__proto__":{"dirty":true},'));
+    // An own __proto__ member, injected right after the opening brace.
+    const json = JSON.stringify(records.minimal);
+    const record = JSON.parse(`{"__proto__":{"dirty":true},${json.slice(1)}`);
     expect(summary(validateEvidenceRecord(record, options))).toEqual([{ code: "EVIDENCE_MALFORMED", path: "/__proto__" }]);
   });
 

@@ -91,7 +91,7 @@ The package's test suite compares these results with the pinned IANA file and re
 
 ## JSON Schema
 
-The JSON Schema (draft 2020-12, `$id` `urn:superfunctions:evidence-record:v1`) is exported as `evidenceRecordSchemaV1` (frozen) and as the file `@superfunctions/evidence/schema/evidence-record.v1.json`. The schema checks date-times with a pattern rather than `format`, so validators reject malformed dates and days a month does not have (such as 30 February, or 29 February 2100) without a format plugin.
+The JSON Schema (draft 2020-12, `$id` `urn:superfunctions:evidence-record:v1`) is exported as `evidenceRecordSchemaV1` (frozen) and as the file `@superfunctions/evidence/schema/evidence-record.v1.json`. The schema checks date-times with a pattern rather than `format`, so validators reject malformed dates and days a month does not have (such as 30 February, or 29 February 2100) without a format plugin. Its patterns avoid lookaround, `\u` escapes and `\d`/`\s`/`\w`, and every `$`-anchored pattern sits next to a length or character rule, so a trailing newline is rejected even where `$` also matches before one (Python): the schema compiles and gives the same results in ECMA-262 (Ajv), RE2 (Go) and Python validators (apart from the Ajv `uniqueItems` gap for a repeated `"__proto__"` noted below).
 
 Four rules are beyond the schema. `validateEvidenceRecord` enforces them, and `checkEvidenceCrossValues(record)` checks them on their own, so a consumer that validates with a JSON Schema validator runs it next to the schema:
 

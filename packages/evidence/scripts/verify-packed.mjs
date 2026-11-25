@@ -175,8 +175,10 @@ try {
   const bundle = result.outputFiles[0].text;
   if (/\brequire\(|\bprocess\.|\bBuffer\b/.test(bundle)) throw new Error("browser bundle references require(), process or Buffer");
   // A fresh context has only the ECMAScript built-ins: no process, Buffer, require or DOM.
+  // The code run is the bundle esbuild just built in this script from the
+  // packed tarball and a fixed consumer file; no outside input reaches it.
   const sandbox = {};
-  runInNewContext(bundle, sandbox);
+  runInNewContext(bundle, sandbox); // NOSONAR javascript:S1523 runs the locally built package bundle in a bare context to prove browser portability
   const evidence = sandbox.__evidence;
   const crossValuesOk = evidence?.crossValues?.length === 0 && JSON.stringify(evidence?.crossValuePaths) === JSON.stringify(evidence?.expectedPaths);
   if (evidence?.schemaId !== "urn:superfunctions:evidence-record:v1" || evidence?.result?.ok !== true || !crossValuesOk) {

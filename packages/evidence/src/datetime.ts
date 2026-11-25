@@ -11,9 +11,8 @@
 
 import { LEAP_SECOND_DAYS } from "./leap-seconds.js";
 
-const DATE_TIME =
-  /^([0-9]{4})-([0-9]{2})-([0-9]{2})[Tt]([0-9]{2}):([0-9]{2}):([0-9]{2})(?:\.([0-9]+))?(?:[Zz]|([+-])([0-9]{2}):([0-9]{2}))$/;
-const DECIMAL = /^(-?)([0-9]+)(?:\.([0-9]+))?(?:e([+-]?[0-9]+))?$/;
+const DATE_TIME = /^(\d{4})-(\d\d)-(\d\d)[Tt](\d\d):(\d\d):(\d\d)(?:\.(\d+))?([Zz]|[+-]\d\d:\d\d)$/;
+const DECIMAL = /^(-?)(\d+)(?:\.(\d+))?(?:e([+-]?\d+))?$/;
 
 const MINUTES_PER_DAY = 1440n;
 const FIRST_DAY = daysFromCivil(0, 1, 1);
@@ -118,7 +117,7 @@ function exactDecimalOf(value: number): Decimal {
 /** Drops trailing zeros by scanning from the end, so a long fraction costs linear time. */
 function trimFraction(digits: string): string {
   let end = digits.length;
-  while (end > 0 && digits.charCodeAt(end - 1) === 48) end -= 1;
+  while (end > 0 && digits.codePointAt(end - 1) === 48) end -= 1;
   return digits.slice(0, end);
 }
 
@@ -164,12 +163,13 @@ function parseParts(value: unknown): Instant | undefined {
   const match = DATE_TIME.exec(value);
   if (!match) return undefined;
   const [year, month, day, hour, minute, second] = match.slice(1, 7).map(Number) as [number, number, number, number, number, number];
-  const sign = match[8];
-  const offsetHour = Number(match[9] ?? 0);
-  const offsetMinute = Number(match[10] ?? 0);
+  const zone = match[8] as string;
+  const zulu = zone === "Z" || zone === "z";
+  const offsetHour = zulu ? 0 : Number(zone.slice(1, 3));
+  const offsetMinute = zulu ? 0 : Number(zone.slice(4, 6));
   if (month < 1 || month > 12 || day < 1 || day > daysInMonth(year, month)) return undefined;
   if (hour > 23 || minute > 59 || second > 60 || offsetHour > 23 || offsetMinute > 59) return undefined;
-  const offset = (sign === "-" ? -1 : 1) * (offsetHour * 60 + offsetMinute);
+  const offset = (zone.startsWith("-") ? -1 : 1) * (offsetHour * 60 + offsetMinute);
   const minutes = daysFromCivil(year, month, day) * 1440 + hour * 60 + minute - offset;
   return { minute: BigInt(minutes), second, fraction: trimFraction(match[7] ?? "") };
 }
@@ -183,7 +183,7 @@ export function parseRfc3339(value: unknown): Instant | undefined {
 /** True when a value is an RFC 3339 date-time with an offset in every respect except that its second 60 is not a leap second UTC inserted. */
 export function isUninsertedLeapSecond(value: unknown): boolean {
   const parts = parseParts(value);
-  return parts !== undefined && parts.second === 60 && !LEAP_MINUTE_SET.has(parts.minute);
+  return parts?.second === 60 && !LEAP_MINUTE_SET.has(parts.minute);
 }
 
 /**
@@ -203,7 +203,8 @@ export function compareInstants(a: Instant, b: Instant): number {
   const length = Math.max(a.fraction.length, b.fraction.length);
   const left = a.fraction.padEnd(length, "0");
   const right = b.fraction.padEnd(length, "0");
-  return left === right ? 0 : left < right ? -1 : 1;
+  if (left === right) return 0;
+  return left < right ? -1 : 1;
 }
 
 /**

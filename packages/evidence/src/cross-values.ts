@@ -1,5 +1,6 @@
 import { compareInstants, isUninsertedLeapSecond, parseRfc3339 } from "./datetime.js";
 import { EXPECTED, has, isObject, isRelativePosixPath, isSubjectId, pointer } from "./json.js";
+import type { JsonObject } from "./json.js";
 import type { EvidenceFailure } from "./types.js";
 
 function malformed(path: string, expected: string): EvidenceFailure {
@@ -24,30 +25,38 @@ function malformed(path: string, expected: string): EvidenceFailure {
  * reports those. Never throws for plain JSON values.
  */
 export function checkEvidenceCrossValues(record: unknown): EvidenceFailure[] {
+  if (!isObject(record)) return [];
+  return [...subjectIdRepeats(record), ...artifactPathRepeats(record), ...timingFailures(record)];
+}
+
+function subjectIdRepeats(record: JsonObject): EvidenceFailure[] {
   const failures: EvidenceFailure[] = [];
-  if (!isObject(record)) return failures;
+  if (!has(record, "subjectIds") || !Array.isArray(record.subjectIds)) return failures;
+  const seen = new Set<string>();
+  record.subjectIds.forEach((subjectId: unknown, index) => {
+    if (!isSubjectId(subjectId)) return;
+    if (seen.has(subjectId)) failures.push(malformed(pointer("/subjectIds", index), EXPECTED.uniqueSubjectId));
+    else seen.add(subjectId);
+  });
+  return failures;
+}
 
-  if (has(record, "subjectIds") && Array.isArray(record.subjectIds)) {
-    const seen = new Set<string>();
-    record.subjectIds.forEach((subjectId: unknown, index) => {
-      if (!isSubjectId(subjectId)) return;
-      if (seen.has(subjectId)) failures.push(malformed(pointer("/subjectIds", index), EXPECTED.uniqueSubjectId));
-      else seen.add(subjectId);
-    });
-  }
-
+function artifactPathRepeats(record: JsonObject): EvidenceFailure[] {
+  const failures: EvidenceFailure[] = [];
   const source = has(record, "source") ? record.source : undefined;
-  if (isObject(source) && has(source, "artifactHashes") && Array.isArray(source.artifactHashes)) {
-    const seen = new Set<string>();
-    source.artifactHashes.forEach((entry: unknown, index) => {
-      if (!isObject(entry) || !has(entry, "path")) return;
-      const path = entry.path;
-      if (typeof path !== "string" || !isRelativePosixPath(path)) return;
-      if (seen.has(path)) failures.push(malformed(pointer(pointer("/source/artifactHashes", index), "path"), EXPECTED.uniqueArtifactPath));
-      else seen.add(path);
-    });
-  }
+  if (!isObject(source) || !has(source, "artifactHashes") || !Array.isArray(source.artifactHashes)) return failures;
+  const seen = new Set<string>();
+  source.artifactHashes.forEach((entry: unknown, index) => {
+    const path = isObject(entry) && has(entry, "path") ? entry.path : undefined;
+    if (typeof path !== "string" || !isRelativePosixPath(path)) return;
+    if (seen.has(path)) failures.push(malformed(pointer(pointer("/source/artifactHashes", index), "path"), EXPECTED.uniqueArtifactPath));
+    else seen.add(path);
+  });
+  return failures;
+}
 
+function timingFailures(record: JsonObject): EvidenceFailure[] {
+  const failures: EvidenceFailure[] = [];
   const timing = has(record, "timing") && isObject(record.timing) ? record.timing : undefined;
   const dates: Array<[string, unknown]> = [];
   if (timing) {

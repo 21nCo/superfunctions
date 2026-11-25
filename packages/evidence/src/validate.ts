@@ -279,20 +279,8 @@ function result(failures: EvidenceFailure[]): EvidenceValidationResult {
   return { ok: failures.length === 0, failures };
 }
 
-/**
- * Validates an evidence record (format v1) against the commit it must come
- * from, the evaluation time and an expiry policy. Runs in any JavaScript
- * runtime and never throws for plain JSON values. Invalid options or a
- * missing record return that one failure; otherwise every failure is reported.
- */
-export function validateEvidenceRecord(record: unknown, options: ValidateEvidenceRecordOptions): EvidenceValidationResult {
-  const settings = readOptions(options);
-  if ("invalid" in settings) return result([{ code: "EVIDENCE_OPTIONS_INVALID", detail: { invalid: settings.invalid } }]);
-  if (!isObject(record)) return result([{ code: "EVIDENCE_MISSING" }]);
-
-  const failures = new Failures();
-  const facts = checkRecord(failures, record);
-  const { now, expiryPolicy, expectedCommit } = settings;
+/** The policy, expiry and completion checks against the evaluation time. */
+function checkTimes(failures: Failures, facts: Facts, now: Instant, expiryPolicy: ReadonlyMap<string, number>): void {
   const policyHours = facts.evidenceClass === undefined ? undefined : expiryPolicy.get(facts.evidenceClass);
   if (facts.evidenceClass !== undefined && policyHours === undefined) {
     failures.add("EVIDENCE_CLASS_NOT_IN_POLICY", "/evidenceClass", { evidenceClass: facts.evidenceClass });
@@ -308,6 +296,23 @@ export function validateEvidenceRecord(record: unknown, options: ValidateEvidenc
   if (facts.completedAt !== undefined && compareInstants(facts.completedAt, now) > 0) {
     failures.add("EVIDENCE_COMPLETED_IN_FUTURE", "/timing/completedAt", nowDetail(now));
   }
+}
+
+/**
+ * Validates an evidence record (format v1) against the commit it must come
+ * from, the evaluation time and an expiry policy. Runs in any JavaScript
+ * runtime and never throws for plain JSON values. Invalid options or a
+ * missing record return that one failure; otherwise every failure is reported.
+ */
+export function validateEvidenceRecord(record: unknown, options: ValidateEvidenceRecordOptions): EvidenceValidationResult {
+  const settings = readOptions(options);
+  if ("invalid" in settings) return result([{ code: "EVIDENCE_OPTIONS_INVALID", detail: { invalid: settings.invalid } }]);
+  if (!isObject(record)) return result([{ code: "EVIDENCE_MISSING" }]);
+
+  const failures = new Failures();
+  const facts = checkRecord(failures, record);
+  const { now, expiryPolicy, expectedCommit } = settings;
+  checkTimes(failures, facts, now, expiryPolicy);
   if (facts.commit !== undefined && facts.commit !== expectedCommit) {
     failures.add("EVIDENCE_COMMIT_MISMATCH", "/source/commit", { expectedCommit });
   }

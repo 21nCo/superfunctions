@@ -15,6 +15,24 @@ describe("exported JSON Schema", () => {
     expect(evidenceRecordSchemaV1).toEqual(schemaFile);
   });
 
+  it("uses only regex features ECMA-262, RE2 (Go) and Python share", () => {
+    const patterns: string[] = [];
+    const collect = (value: unknown): void => {
+      if (typeof value !== "object" || value === null) return;
+      for (const [key, member] of Object.entries(value)) {
+        if (key === "pattern" && typeof member === "string") patterns.push(member);
+        else collect(member);
+      }
+    };
+    collect(schemaFile);
+    expect(patterns.length).toBeGreaterThan(5);
+    for (const pattern of patterns) {
+      // No lookaround or backreference (RE2), no \u escape (RE2), and no \d \s \w
+      // shorthands, which match non-ASCII characters in Python.
+      expect(pattern, pattern).not.toMatch(/\(\?<?[=!]|\\[1-9ukdDsSwW]/);
+    }
+  });
+
   it("is frozen, so a consumer cannot change it for others", () => {
     expect(Object.isFrozen(evidenceRecordSchemaV1)).toBe(true);
     expect(Object.isFrozen(evidenceRecordSchemaV1.properties.source.properties.artifactHashes)).toBe(true);

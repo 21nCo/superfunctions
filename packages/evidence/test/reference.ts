@@ -43,16 +43,19 @@ export function readLeapList(): LeapList {
   for (const line of text.split("\n")) {
     if (line.startsWith("#$")) updated = line.slice(2).trim();
     else if (line.startsWith("#@")) expires = line.slice(2).trim();
-    else if (line.startsWith("#h")) hash = line.slice(2).trim().split(/\s+/).join("");
-    else if (/^[0-9]/.test(line)) {
+    else if (line.startsWith("#h")) hash = line.slice(2).trim().replaceAll(/\s+/g, "");
+    else if (/^\d/.test(line)) {
       const [ntp, dtai] = line.split(/\s+/) as [string, string];
       data += ntp + dtai;
       entries.push({ unix: Number(ntp) - NTP_TO_UNIX, dtai: Number(dtai) });
     }
   }
   // The list's own integrity hash: SHA-1 of the update time, the expiry time
-  // and each data line's NTP time and offset, as digits.
-  const computedHash = createHash("sha1").update(updated + expires + data).digest("hex");
+  // and each data line's NTP time and offset, as digits. The leap-seconds.list
+  // format defines this `#h` line as SHA-1, so the test must recompute SHA-1
+  // to compare with it; it only checks the pinned test file against IANA's
+  // published value and protects nothing. The file itself is pinned by SHA-256.
+  const computedHash = createHash("sha1").update(updated + expires + data).digest("hex"); // NOSONAR typescript:S4790 format-defined integrity hash of a test reference file, not a security use
   return { updatedNtp: Number(updated), expiresNtp: Number(expires), hash, computedHash, fileSha256: createHash("sha256").update(bytes).digest("hex"), entries };
 }
 
@@ -75,7 +78,20 @@ function dtaiAt(list: LeapList, unix: number): number {
   return dtai;
 }
 
-const DATE_TIME = /^([0-9]{4})-([0-9]{2})-([0-9]{2})T([0-9]{2}):([0-9]{2}):([0-9]{2})(?:\.([0-9]{1,9}))?(?:Z|([+-])([0-9]{2}):([0-9]{2}))$/;
+const DATE_TIME = /^(\d{4})-(\d\d)-(\d\d)T(\d\d):(\d\d):(\d\d)(?:\.(\d{1,9}))?(Z|[+-]\d\d:\d\d)$/;
+
+/** Minutes east of UTC in Z or a ±hh:mm offset. */
+function offsetMinutes(zone: string): number {
+  if (zone === "Z") return 0;
+  return (zone.startsWith("-") ? -1 : 1) * (Number(zone.slice(1, 3)) * 60 + Number(zone.slice(4, 6)));
+}
+
+/** Drops trailing zero digits with a scan from the end. */
+function trimZeros(digits: string): string {
+  let end = digits.length;
+  while (end > 0 && digits[end - 1] === "0") end -= 1;
+  return digits.slice(0, end);
+}
 
 /**
  * TAI nanoseconds since 1970-01-01T00:00:10 TAI-ish (Unix seconds plus
@@ -86,7 +102,7 @@ export function referenceTai(list: LeapList, value: string): bigint | undefined 
   const match = DATE_TIME.exec(value);
   if (!match) throw new Error(`reference cannot read ${value}`);
   const [year, month, day, hour, minute, second] = match.slice(1, 7).map(Number) as [number, number, number, number, number, number];
-  const offset = (match[8] === "-" ? -1 : 1) * (Number(match[9] ?? 0) * 60 + Number(match[10] ?? 0));
+  const offset = offsetMinutes(match[8] as string);
   const minuteUnix = Date.UTC(year, month - 1, day, hour, minute) / 1000 - offset * 60;
   const fraction = BigInt((match[7] ?? "").padEnd(9, "0"));
   if (second === 60) {
@@ -106,7 +122,7 @@ export function referenceTaiOfPosixNs(list: LeapList, posixNs: bigint): bigint {
 }
 
 function fractionText(nanoseconds: bigint): string {
-  return nanoseconds.toString().padStart(9, "0").replace(/0+$/, "").padEnd(3, "0");
+  return trimZeros(nanoseconds.toString().padStart(9, "0")).padEnd(3, "0");
 }
 
 /** The RFC 3339 UTC form (at least three fraction digits) of a TAI nanosecond count from referenceTai. */
@@ -144,7 +160,7 @@ export function referenceExactMilliseconds(value: number): string {
   const scaled = BigInt(whole + fraction) * (negative ? -1n : 1n);
   const unit = 10n ** 100n;
   const floor = scaled >= 0n ? scaled / unit : -((-scaled + unit - 1n) / unit);
-  const rest = (scaled - floor * unit).toString().padStart(100, "0").replace(/0+$/, "");
+  const rest = trimZeros((scaled - floor * unit).toString().padStart(100, "0"));
   const iso = new Date(Number(floor)).toISOString();
   return `${iso.slice(0, 23)}${rest}Z`;
 }

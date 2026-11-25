@@ -12,7 +12,7 @@ export function has(value: JsonObject, key: string): boolean {
 }
 
 export function pointer(base: string, key: string | number): string {
-  return `${base}/${String(key).replace(/~/g, "~0").replace(/\//g, "~1")}`;
+  return `${base}/${String(key).replaceAll("~", "~0").replaceAll("/", "~1")}`;
 }
 
 /** Length in Unicode code points, as JSON Schema's minLength and maxLength count. */
