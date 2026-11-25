@@ -22,6 +22,7 @@ import { OPFSStore } from './opfs-store.js';
 
 const JOURNAL_VERSION = 1;
 const JOURNAL_FILE = 'journal.json';
+const PARTITION_META_FILE = 'partition.json';
 const LAYOUT_DIR = 'v1';
 const ID_MAX_LENGTH = 512;
 
@@ -31,6 +32,7 @@ export const DEFAULT_OFFLINE_QUEUE_LIMITS = {
 } as const;
 export const DEFAULT_TERMINAL_RETENTION_MS = 24 * 60 * 60 * 1000;
 export const DEFAULT_MAX_UPLOAD_ATTEMPTS = 5;
+export const DEFAULT_OBSERVE_INTERVAL_MS = 1000;
 
 export type OfflineQueuePrincipal =
   | { kind: 'user'; principalId: string; tenantId?: string }
@@ -117,9 +119,27 @@ export interface OfflineQueueHooks {
   };
 }
 
+/**
+ * Reports the principal the uploader's and hooks' credentials act for right
+ * now (null when signed out). The queue calls it before every upload and hook
+ * and runs the step only when it matches the partition's principal, so staged
+ * work never runs under another account's credentials (for example after an
+ * account switch in another tab that shares cookies).
+ */
+export type OfflineQueueCurrentPrincipal = (
+  signal: AbortSignal,
+) => OfflineQueuePrincipal | null | undefined | Promise<OfflineQueuePrincipal | null | undefined>;
+
 export interface OfflineQueueOptions {
   partition: OfflineQueuePartition;
   uploader: OfflineQueueUploader;
+  /** Required: see `OfflineQueueCurrentPrincipal`. */
+  currentPrincipal: OfflineQueueCurrentPrincipal;
+  /**
+   * Verification and publication hooks. Which of them a generation needs is
+   * recorded when it is staged; an instance without a recorded hook leaves the
+   * generation provisional (`hook-unavailable`) instead of skipping the step.
+   */
   hooks?: OfflineQueueHooks;
   /** Lock manager to use when `navigator.locks` is absent; it must exclude every cooperating tab. */
   coordinator?: OfflineQueueLockCoordinator;
@@ -132,6 +152,8 @@ export interface OfflineQueueOptions {
   limits?: OfflineQueueLimits;
   terminalRetentionMs?: number;
   maxUploadAttempts?: number;
+  /** How often entries with `whenSettled` waiters are re-read, to see other tabs' progress. */
+  observeIntervalMs?: number;
 }
 
 export interface OfflineQueueCapabilities {
@@ -155,7 +177,7 @@ export type OfflineQueuePhase =
 
 export interface OfflineQueuePending {
   stage: 'upload' | 'verification' | 'publication';
-  reason: 'ambiguous' | 'needs-reconcile';
+  reason: 'ambiguous' | 'needs-reconcile' | 'retry-limit';
   message?: string;
 }
 
@@ -195,7 +217,10 @@ export interface OfflineQueueStageInput {
   fileId?: string;
   metadata?: Record<string, unknown>;
   localSource?: PendingLocalSourceMetadata;
-  /** Replay key of the new generation. Defaults to a fresh random key. */
+  /**
+   * Replay key of the new generation. Defaults to a fresh random key. A key an
+   * earlier generation of the entry used is refused (`idempotency-key-reused`).
+   */
   idempotencyKey?: string;
   /** Hold the new generation in the same journal write. */
   hold?: boolean;
@@ -216,7 +241,7 @@ export type OfflineQueueStageResult =
       limits: Required<OfflineQueueLimits>;
     }
   | { status: 'refused'; reason: 'generation-conflict'; currentGeneration: number }
-  | { status: 'refused'; reason: 'publication-pending'; currentGeneration: number }
+  | { status: 'refused'; reason: 'publication-pending' | 'idempotency-key-reused'; currentGeneration: number }
   | { status: 'refused'; reason: 'locks-unavailable' | 'storage-unavailable' };
 
 export type OfflineQueueProcessResult =
@@ -224,7 +249,16 @@ export type OfflineQueueProcessResult =
   | {
       status: 'provisional';
       entry: OfflineQueueEntry;
-      reason: 'held' | 'ambiguous' | 'needs-reconcile' | 'rejected' | 'failed' | 'retry-limit' | 'aborted';
+      reason:
+        | 'held'
+        | 'ambiguous'
+        | 'needs-reconcile'
+        | 'rejected'
+        | 'failed'
+        | 'retry-limit'
+        | 'aborted'
+        | 'principal-mismatch'
+        | 'hook-unavailable';
     }
   | { status: 'superseded' }
   | { status: 'busy' }
@@ -233,6 +267,11 @@ export type OfflineQueueProcessResult =
 export type OfflineQueueEvent =
   | { type: 'published'; entry: OfflineQueueEntry }
   | { type: 'provisional'; entry: OfflineQueueEntry };
+
+/** A hold is refused once publication of the generation has started or it is final. */
+export type OfflineQueueHoldResult =
+  | { status: 'held'; holdId: string }
+  | { status: 'refused'; reason: 'publication-started' | 'final'; phase: OfflineQueuePhase };
 
 export interface OfflineQueueReclaimResult {
   removedEntries: number;
@@ -262,6 +301,10 @@ export type OfflineQueueErrorCode =
   | 'FILEFN_QUEUE_FAILED'
   | 'FILEFN_QUEUE_CANCELLED'
   | 'FILEFN_QUEUE_MIGRATION_UNVERIFIED'
+  /** Another tab or call is processing the entry; try again once it finishes. */
+  | 'FILEFN_QUEUE_BUSY'
+  /** Uploads of the generation reached the attempt limit; `reconcile` retries it. */
+  | 'FILEFN_QUEUE_RETRY_LIMIT'
   /** `uploadFile` could not stage offline; `details` is the refused stage result. */
   | 'FILEFN_QUEUE_REFUSED';
 
@@ -289,6 +332,8 @@ interface GenerationState {
   metadata?: Record<string, unknown>;
   localSource: PendingLocalSourceMetadata;
   replay: { idempotencyKey: string; retiredKeys: string[] };
+  /** Hooks this generation needs, recorded when it was staged. */
+  requires: { verify: boolean; publish: boolean };
   attempts: number;
   phase: OfflineQueuePhase;
   claim?: { instanceId: string; at: string };
@@ -308,8 +353,21 @@ interface JournalRecord {
   updatedAt: string;
   current: GenerationState;
   holds: Array<{ holdId: string; generation: number; operationId: string }>;
+  /** Replay keys of every generation of this entry, so no later one reuses them. */
+  usedKeys: string[];
   migratedFrom?: string;
 }
+
+/** Partition-wide state: the last generation handed out, so a removed entry's numbers are never reused. */
+interface PartitionMeta {
+  journalVersion: typeof JOURNAL_VERSION;
+  partitionId: string;
+  lastGeneration: number;
+}
+
+type JournalRead =
+  | { state: 'ok'; record: JournalRecord }
+  | { state: 'missing' | 'corrupt' | 'foreign' };
 
 type Plan =
   | { kind: 'done'; result: OfflineQueueProcessResult }
@@ -494,16 +552,29 @@ function errorInfo(error: unknown): { code?: string; message: string } {
   return code ? { code, message } : { message };
 }
 
-/** A failure that no replay with the same input can fix. */
+/**
+ * A failure that no replay with the same input can fix. A conflict the server
+ * marks retryable (a completion of the same session still running in another
+ * tab, a concurrent write) is not: the outcome is unknown until replayed.
+ */
 function isPermanentUploadError(error: unknown): boolean {
-  const code = (error as { code?: unknown })?.code;
-  if (code === 'FILEFN_CLIENT_FILE_ID_MISMATCH' || code === 'FILEFN_INVALID_FILE_ID') return true;
-  const status = (error as { status?: unknown })?.status;
+  const failure = error as { code?: unknown; status?: unknown; retryable?: unknown; details?: { retryable?: unknown } } | undefined;
+  if (failure?.code === 'FILEFN_CLIENT_FILE_ID_MISMATCH' || failure?.code === 'FILEFN_INVALID_FILE_ID') return true;
+  if (failure?.retryable === true || failure?.details?.retryable === true) return false;
+  // Another tab completed, or is completing, the same session: a replay reconciles it.
+  if (typeof failure?.code === 'string' && REPLAYABLE_CONFLICTS.has(failure.code)) return false;
+  const status = failure?.status;
   if (typeof status === 'number') {
     return status >= 400 && status < 500 && status !== 401 && status !== 408 && status !== 429;
   }
   return false;
 }
+
+const REPLAYABLE_CONFLICTS = new Set([
+  'FILEFN_UPLOAD_COMPLETION_IN_PROGRESS',
+  'FILEFN_UPLOAD_ALREADY_COMPLETED',
+  'FILEFN_UPLOAD_INCOMPLETE',
+]);
 
 function isTerminalPhase(phase: OfflineQueuePhase): boolean {
   return phase === 'published' || phase === 'rejected' || phase === 'failed';
@@ -537,6 +608,9 @@ function snapshot(record: JournalRecord): OfflineQueueEntry {
   };
 }
 
+/** Returned by `withEntryLock` when another tab or call holds the entry. */
+const BUSY: unique symbol = Symbol('busy');
+
 interface Waiter {
   generation: number;
   resolve: (entry: OfflineQueueEntry) => void;
@@ -556,6 +630,8 @@ export class OfflineQueue {
   private readonly limits: Required<OfflineQueueLimits>;
   private readonly terminalRetentionMs: number;
   private readonly maxUploadAttempts: number;
+  private readonly observeIntervalMs: number;
+  private observeTimer: ReturnType<typeof setInterval> | undefined;
   private readonly lifetime = new AbortController();
   private readonly entryControllers = new Map<string, AbortController>();
   private readonly waiters = new Map<string, Waiter[]>();
@@ -566,6 +642,9 @@ export class OfflineQueue {
 
   constructor(private readonly options: OfflineQueueOptions) {
     this.partition = normalizeOfflineQueuePartition(options.partition);
+    if (typeof options.currentPrincipal !== 'function') {
+      throw new OfflineQueueError('FILEFN_QUEUE_INVALID_INPUT', 'currentPrincipal is required', { field: 'currentPrincipal' });
+    }
     this.identity = partitionIdentity(this.partition);
     this.rootDirName = options.rootDir ?? 'filefn-offline-queue';
     this.legacyRootDirName = options.legacyRootDir ?? 'filefn-pending-uploads';
@@ -580,6 +659,7 @@ export class OfflineQueue {
     };
     this.terminalRetentionMs = options.terminalRetentionMs ?? DEFAULT_TERMINAL_RETENTION_MS;
     this.maxUploadAttempts = options.maxUploadAttempts ?? DEFAULT_MAX_UPLOAD_ATTEMPTS;
+    this.observeIntervalMs = options.observeIntervalMs ?? DEFAULT_OBSERVE_INTERVAL_MS;
   }
 
   /** What this environment supports. Durable operations fail closed when `durable` is false. */
@@ -604,6 +684,8 @@ export class OfflineQueue {
     if (this.disposed) return;
     this.disposed = true;
     this.lifetime.abort();
+    if (this.observeTimer !== undefined) clearInterval(this.observeTimer);
+    this.observeTimer = undefined;
     for (const controller of this.entryControllers.values()) controller.abort();
     this.entryControllers.clear();
     const error = new OfflineQueueError('FILEFN_QUEUE_DISPOSED', 'Offline queue was disposed');
@@ -648,10 +730,15 @@ export class OfflineQueue {
     return this.stageBytes({ ...input, entryId, fileId, fileName, mimeType }, bytes);
   }
 
-  /** Holds the given generation: it is not uploaded further, verified or published until released. */
-  async hold(entryId: string, generation: number): Promise<{ holdId: string }> {
+  /**
+   * Holds the given generation: it is not uploaded further, verified or
+   * published until released. Refused once its publication has started or it
+   * is final: a hold can no longer stop it then.
+   */
+  async hold(entryId: string, generation: number): Promise<OfflineQueueHoldResult> {
     return this.transact(async (root) => {
       const { dir, record } = await this.requireRecord(root, entryId);
+      const phase = record.current.phase;
       if (record.current.generation !== generation) {
         throw new OfflineQueueError('FILEFN_QUEUE_STALE_GENERATION', 'Generation is not current', {
           entryId,
@@ -659,10 +746,12 @@ export class OfflineQueue {
           currentGeneration: record.current.generation,
         });
       }
+      if (phase === 'publishing') return { status: 'refused', reason: 'publication-started', phase } as const;
+      if (isTerminalPhase(phase)) return { status: 'refused', reason: 'final', phase } as const;
       const holdId = randomId('hold');
       record.holds.push({ holdId, generation, operationId: record.current.operationId });
       await this.writeRecord(dir, record);
-      return { holdId };
+      return { status: 'held', holdId } as const;
     });
   }
 
@@ -685,9 +774,7 @@ export class OfflineQueue {
     const records = await this.transact(async (root) => this.readAll(root));
     const present = new Set(records.map((record) => record.entryId));
     for (const record of records) this.observe(record);
-    for (const entryId of [...this.waiters.keys()]) {
-      if (!present.has(entryId)) this.rejectWaiters(entryId, 'FILEFN_QUEUE_CANCELLED', 'Entry was removed');
-    }
+    this.forgetAbsent(present);
     return records
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.entryId.localeCompare(b.entryId))
       .map(snapshot);
@@ -711,6 +798,7 @@ export class OfflineQueue {
       list.push({ generation, resolve, reject });
       this.waiters.set(entryId, list);
     });
+    this.startObserving();
     void this.get(entryId).then(
       (entry) => {
         if (!entry) this.rejectWaiters(entryId, 'FILEFN_QUEUE_CANCELLED', 'Entry was removed');
@@ -752,13 +840,18 @@ export class OfflineQueue {
    * outcome of an unconfirmed publication (`published: false` makes it safe to
    * publish again). Without it, clears the retry limit and ambiguity so the
    * next `process` retries the current step with the recorded identity.
+   * Throws FILEFN_QUEUE_BUSY while any tab is processing the entry, so it never
+   * races a running publication hook.
    */
   async reconcile(
     entryId: string,
     generation: number,
     publication?: OfflineQueuePublicationCheck,
   ): Promise<OfflineQueueEntry> {
-    const record = await this.transact(async (root) => {
+    if (publication !== undefined && (publication === null || typeof publication !== 'object' || typeof publication.published !== 'boolean')) {
+      throw new OfflineQueueError('FILEFN_QUEUE_INVALID_INPUT', 'publication.published must be true or false', { field: 'publication' });
+    }
+    const record = await this.withEntryLock(entryId, () => this.transact(async (root) => {
       const { dir, record } = await this.requireRecord(root, entryId);
       const cur = record.current;
       if (cur.generation !== generation) {
@@ -783,7 +876,10 @@ export class OfflineQueue {
       if (!isTerminalPhase(cur.phase)) cur.attempts = 0;
       await this.writeRecord(dir, record);
       return record;
-    });
+    }));
+    if (record === BUSY) {
+      throw new OfflineQueueError('FILEFN_QUEUE_BUSY', 'The entry is being processed; reconcile it once that finishes', { entryId, generation });
+    }
     this.emitFor(record);
     this.observe(record);
     return snapshot(record);
@@ -793,14 +889,9 @@ export class OfflineQueue {
    * Advances one entry as far as it can go: upload, verification, publication
    * and cleanup. Returns `busy` when another tab or instance is processing it.
    */
-  async process(entryId: string): Promise<OfflineQueueProcessResult> {
-    this.assertUsable();
-    const key = await this.entryKey(entryId);
-    const lockName = `${await this.partitionLockName()}:entry:${key}`;
-    return this.coordinator!.request(lockName, { ifAvailable: true }, async (lock) => {
-      if (!lock) return { status: 'busy' } as const;
-      return this.runPipeline(entryId);
-    });
+  async process(entryId: string, options: { signal?: AbortSignal } = {}): Promise<OfflineQueueProcessResult> {
+    const result = await this.withEntryLock(entryId, () => this.runPipeline(entryId, options.signal));
+    return result === BUSY ? { status: 'busy' } : result;
   }
 
   /** Processes every entry of the partition that is not held or final. */
@@ -811,19 +902,24 @@ export class OfflineQueue {
       if (this.disposed || options.signal?.aborted) break;
       if (entry.phase === 'published') {
         // Finishes an interrupted cleanup of its data; already reported when it was published.
-        await this.process(entry.entryId);
+        await this.process(entry.entryId, options);
         continue;
       }
       if (isTerminalPhase(entry.phase) || entry.holds.length > 0) continue;
-      if (entry.attempts >= this.maxUploadAttempts && (entry.phase === 'staged' || entry.phase === 'uploading')) continue;
-      results.push({ entryId: entry.entryId, result: await this.process(entry.entryId) });
+      // An entry at its retry limit is reported (`retry-limit`) without another upload.
+      results.push({ entryId: entry.entryId, result: await this.process(entry.entryId, options) });
     }
     return results;
   }
 
   /** Removes orphaned data and final entries past their retention. */
   async reclaim(): Promise<OfflineQueueReclaimResult> {
-    return this.transact(async (root) => this.reclaimIn(await this.partitionDir(root), false));
+    const { result, present } = await this.transact(async (root) => {
+      const reclaimed = await this.reclaimIn(await this.partitionDir(root), false);
+      return { result: reclaimed, present: new Set((await this.readAll(root)).map((record) => record.entryId)) };
+    });
+    this.forgetAbsent(present);
+    return result;
   }
 
   async usage(): Promise<OfflineQueueUsage> {
@@ -913,6 +1009,7 @@ export class OfflineQueue {
       await store.deletePendingUpload(uploadSessionId);
       return { status: 'staged', entry: snapshot(already) };
     }
+    assertValidExplicitFileId(legacy.fileId);
     const fileId = legacy.fileId ?? generateFileId();
     const result = await this.stageBytes(
       {
@@ -993,18 +1090,66 @@ export class OfflineQueue {
 
   /** Reads a journal, returning null for a missing, unreadable, newer-version or foreign one. */
   private async readJournal(dir: OfflineQueueDirectoryHandle): Promise<JournalRecord | null> {
+    const read = await this.inspectJournal(dir);
+    return read.state === 'ok' ? read.record : null;
+  }
+
+  /**
+   * Classifies a journal. OPFS commits a write only when it closes, so a
+   * journal that does not parse (empty, or cut short) never held a committed
+   * state: it is the remains of a first staging that crashed (`corrupt`), and
+   * safe to remove. A newer layout or another binding is `foreign` and never
+   * touched.
+   */
+  private async inspectJournal(dir: OfflineQueueDirectoryHandle): Promise<JournalRead> {
     const blob = await getFile(dir, JOURNAL_FILE);
-    if (!blob) return null;
+    if (!blob) return { state: 'missing' };
     let parsed: JournalRecord;
     try {
       parsed = JSON.parse(await blob.text()) as JournalRecord;
     } catch {
-      return null;
+      return { state: 'corrupt' };
     }
-    if (!parsed || parsed.journalVersion !== JOURNAL_VERSION || !parsed.binding || !parsed.current) return null;
+    if (!parsed || typeof parsed !== 'object' || typeof parsed.journalVersion !== 'number') return { state: 'corrupt' };
+    if (parsed.journalVersion !== JOURNAL_VERSION || !parsed.binding) return { state: 'foreign' };
     // The binding is checked on every read, not only by directory.
-    if (parsed.binding.partitionId !== (await this.partitionId()) || partitionIdentity(parsed.binding) !== this.identity) return null;
-    return parsed;
+    if (parsed.binding.partitionId !== (await this.partitionId()) || partitionIdentity(parsed.binding) !== this.identity) {
+      return { state: 'foreign' };
+    }
+    if (!parsed.current || typeof parsed.current.generation !== 'number' || typeof parsed.entryId !== 'string') return { state: 'corrupt' };
+    parsed.usedKeys ??= [];
+    return { state: 'ok', record: parsed };
+  }
+
+  /** Runs `fn` while holding the entry's own lock, or returns BUSY when another tab or call holds it. */
+  private async withEntryLock<T>(entryId: string, fn: () => Promise<T>): Promise<T | typeof BUSY> {
+    this.assertUsable();
+    const lockName = `${await this.partitionLockName()}:entry:${await this.entryKey(entryId)}`;
+    return this.coordinator!.request(lockName, { ifAvailable: true }, async (lock) => (lock ? fn() : BUSY));
+  }
+
+  /** The last generation handed out in this partition, from its meta file and its journals. */
+  private async nextGeneration(partitionDir: OfflineQueueDirectoryHandle, previous: number): Promise<number> {
+    let last = previous;
+    const blob = await getFile(partitionDir, PARTITION_META_FILE);
+    if (blob) {
+      try {
+        const meta = JSON.parse(await blob.text()) as PartitionMeta;
+        if (meta.partitionId === (await this.partitionId()) && Number.isSafeInteger(meta.lastGeneration)) {
+          last = Math.max(last, meta.lastGeneration);
+        }
+      } catch {
+        // A meta file cut short by a crash: fall back to the journals.
+      }
+    }
+    if (last === previous) {
+      for (const record of await this.readAllIn(partitionDir)) last = Math.max(last, record.current.generation);
+    }
+    const next = last + 1;
+    const meta: PartitionMeta = { journalVersion: JOURNAL_VERSION, partitionId: await this.partitionId(), lastGeneration: next };
+    // Written before the journal that uses it, so a number is never handed out twice.
+    await writeFile(partitionDir, PARTITION_META_FILE, JSON.stringify(meta));
+    return next;
   }
 
   private async readEntry(
@@ -1024,7 +1169,10 @@ export class OfflineQueue {
   }
 
   private async readAll(root: OfflineQueueDirectoryHandle): Promise<JournalRecord[]> {
-    const partitionDir = await this.partitionDir(root);
+    return this.readAllIn(await this.partitionDir(root));
+  }
+
+  private async readAllIn(partitionDir: OfflineQueueDirectoryHandle): Promise<JournalRecord[]> {
     const records: JournalRecord[] = [];
     for (const name of await listNames(partitionDir, 'directory')) {
       const dir = await getDir(partitionDir, name);
@@ -1049,12 +1197,18 @@ export class OfflineQueue {
     const outcome = await this.transact(async (root) => {
       const partitionDir = await this.partitionDir(root);
       const key = await this.entryKey(input.entryId);
-      const existingDir = await getDir(partitionDir, key);
-      const previous = existingDir ? await this.readJournal(existingDir) : null;
-      if (existingDir && !previous && (await getFile(existingDir, JOURNAL_FILE))) {
-        // A journal this instance cannot read (newer layout or another binding) is never overwritten.
+      let existingDir = await getDir(partitionDir, key);
+      const read = existingDir ? await this.inspectJournal(existingDir) : ({ state: 'missing' } as const);
+      if (read.state === 'foreign' || (read.state === 'ok' && read.record.entryId !== input.entryId)) {
+        // A journal this instance cannot own (newer layout or another binding) is never overwritten.
         throw new OfflineQueueError('FILEFN_QUEUE_INVALID_INPUT', 'Entry is owned by another journal', { entryId: input.entryId });
       }
+      if (existingDir && read.state === 'corrupt') {
+        // The remains of a first staging that crashed before its journal committed.
+        await removeEntry(partitionDir, key, true);
+        existingDir = null;
+      }
+      const previous = read.state === 'ok' ? read.record : null;
       const currentGeneration = previous?.current.generation ?? 0;
       if (input.expectedGeneration !== undefined && input.expectedGeneration !== currentGeneration) {
         return { status: 'refused', reason: 'generation-conflict', currentGeneration } as const;
@@ -1062,14 +1216,28 @@ export class OfflineQueue {
       if (previous?.current.phase === 'publishing') {
         return { status: 'refused', reason: 'publication-pending', currentGeneration } as const;
       }
+      const usedKeys = previous
+        ? [...new Set([...previous.usedKeys, previous.current.replay.idempotencyKey, ...previous.current.replay.retiredKeys])]
+        : [];
+      if (input.idempotencyKey !== undefined && usedKeys.includes(input.idempotencyKey)) {
+        // The server would replay the earlier generation's session and never receive these bytes.
+        return { status: 'refused', reason: 'idempotency-key-reused', currentGeneration } as const;
+      }
       // A new generation replaces the previous one's data.
       const replacedBytes = previous && !previous.current.dataRemoved ? previous.current.size : 0;
-      const refusal = await this.ensureCapacity(partitionDir, previous ? 0 : 1, bytes.byteLength - replacedBytes);
+      const refusal = await this.ensureCapacity(partitionDir, existingDir ? 0 : 1, bytes.byteLength - replacedBytes, key);
       if (refusal) return refusal;
 
-      const generation = currentGeneration + 1;
+      let generation: number;
+      try {
+        generation = await this.nextGeneration(partitionDir, currentGeneration);
+      } catch (error) {
+        if (!isQuotaError(error)) throw error;
+        return { status: 'refused', reason: 'capacity', limit: 'quota', usage: await this.measure(partitionDir), limits: this.limits } as const;
+      }
       const dataFile = `g${generation}.bin`;
       const dir = existingDir ?? (await partitionDir.getDirectoryHandle(key, { create: true }));
+      const hooks = this.options.hooks;
       const now = new Date().toISOString();
       const current: GenerationState = {
         generation,
@@ -1083,6 +1251,7 @@ export class OfflineQueue {
         ...(input.metadata !== undefined ? { metadata: toJson(input.metadata) as Record<string, unknown> } : {}),
         localSource: { ...localSource, opfsDataFile: dataFile },
         replay: { idempotencyKey: input.idempotencyKey ?? randomId('idem'), retiredKeys: [] },
+        requires: { verify: Boolean(hooks?.verify), publish: Boolean(hooks?.publish) },
         attempts: 0,
         phase: 'staged',
       };
@@ -1097,6 +1266,7 @@ export class OfflineQueue {
         current,
         // Holds of earlier generations no longer apply.
         holds: holdId ? [{ holdId, generation, operationId: current.operationId }] : [],
+        usedKeys,
         ...(migratedFrom ?? previous?.migratedFrom ? { migratedFrom: migratedFrom ?? previous?.migratedFrom } : {}),
       };
       try {
@@ -1105,7 +1275,7 @@ export class OfflineQueue {
         await this.writeRecord(dir, record);
       } catch (error) {
         await removeEntry(dir, dataFile).catch(() => {});
-        if (!previous) await removeEntry(partitionDir, key, true).catch(() => {});
+        if (!existingDir) await removeEntry(partitionDir, key, true).catch(() => {});
         if (isQuotaError(error)) {
           return { status: 'refused', reason: 'capacity', limit: 'quota', usage: await this.measure(partitionDir), limits: this.limits } as const;
         }
@@ -1123,16 +1293,18 @@ export class OfflineQueue {
     return { status: 'staged', entry: snapshot(outcome.record), ...(outcome.holdId ? { holdId: outcome.holdId } : {}) };
   }
 
+  /** `target` is the entry being staged: reclamation never removes it, so the new generation keeps its directory. */
   private async ensureCapacity(
     partitionDir: OfflineQueueDirectoryHandle,
     addEntries: number,
     addBytes: number,
+    target: string,
   ): Promise<Extract<OfflineQueueStageResult, { reason: 'capacity' }> | null> {
     const fits = (usage: OfflineQueueUsage) =>
       usage.entries + addEntries <= this.limits.maxEntries && usage.bytes + addBytes <= this.limits.maxBytes;
     let usage = await this.measure(partitionDir);
     if (fits(usage)) return null;
-    await this.reclaimIn(partitionDir, true);
+    await this.reclaimIn(partitionDir, true, target);
     usage = await this.measure(partitionDir);
     if (fits(usage)) return null;
     const limit = usage.entries + addEntries > this.limits.maxEntries ? 'entries' : 'bytes';
@@ -1159,25 +1331,32 @@ export class OfflineQueue {
    * Removes, under the partition lock: entry directories without a journal
    * (a staging that never committed), data files the journal does not name,
    * the data of a published generation, and published entries past their
-   * retention (any age under `pressure`). Provisional entries and journals
-   * this instance cannot read are never removed.
+   * retention (any age under `pressure`). A journal that never committed
+   * (`corrupt`) counts as no journal. Provisional entries, journals of another
+   * binding or layout, and `protect` are never removed.
    */
-  private async reclaimIn(partitionDir: OfflineQueueDirectoryHandle, pressure: boolean): Promise<OfflineQueueReclaimResult> {
+  private async reclaimIn(
+    partitionDir: OfflineQueueDirectoryHandle,
+    pressure: boolean,
+    protect?: string,
+  ): Promise<OfflineQueueReclaimResult> {
     const result: OfflineQueueReclaimResult = { removedEntries: 0, removedFiles: 0, freedBytes: 0 };
     const now = Date.now();
     for (const name of await listNames(partitionDir, 'directory')) {
+      if (name === protect) continue;
       const dir = await getDir(partitionDir, name);
       if (!dir) continue;
       const files = await listNames(dir, 'file');
       const dataBytes = async (file: string) => (await getFile(dir, file))?.size ?? 0;
-      if (!files.includes(JOURNAL_FILE)) {
-        for (const file of files) result.freedBytes += await dataBytes(file);
+      const read = await this.inspectJournal(dir);
+      if (read.state === 'missing' || read.state === 'corrupt') {
+        for (const file of files) if (file !== JOURNAL_FILE) result.freedBytes += await dataBytes(file);
         await removeEntry(partitionDir, name, true);
         result.removedEntries += 1;
         continue;
       }
-      const record = await this.readJournal(dir);
-      if (!record) continue;
+      if (read.state !== 'ok') continue;
+      const record = read.record;
       const cur = record.current;
       if (cur.phase === 'published' && (pressure || now - Date.parse(record.updatedAt) >= this.terminalRetentionMs)) {
         for (const file of files) if (file !== JOURNAL_FILE) result.freedBytes += await dataBytes(file);
@@ -1203,18 +1382,31 @@ export class OfflineQueue {
     return result;
   }
 
-  private async runPipeline(entryId: string): Promise<OfflineQueueProcessResult> {
+  private async runPipeline(entryId: string, signal: AbortSignal | undefined): Promise<OfflineQueueProcessResult> {
     for (;;) {
-      const plan = await this.transact(async (root) => this.planStep(root, entryId));
+      // Checked before planning too, so a signed-out or switched account never uses up an attempt.
+      const principalOk = await this.principalMatches(signal ?? this.lifetime.signal);
+      const plan = await this.transact(async (root) => this.planStep(root, entryId, principalOk));
       if (plan.kind === 'done') return plan.result;
       if (plan.kind === 'continue') continue;
-      const outcome = await this.execute(entryId, plan);
+      const outcome = await this.execute(entryId, plan, signal);
       if (outcome) return outcome;
     }
   }
 
+  /** Whether the credentials in use act for this partition's principal right now. */
+  private async principalMatches(signal: AbortSignal): Promise<boolean> {
+    try {
+      const principal = await this.options.currentPrincipal(signal);
+      if (!principal) return false;
+      return partitionIdentity(normalizeOfflineQueuePartition({ serviceId: this.partition.serviceId, principal })) === this.identity;
+    } catch {
+      return false;
+    }
+  }
+
   /** Decides and journals the next step. Every claim is written before the step's request is sent. */
-  private async planStep(root: OfflineQueueDirectoryHandle, entryId: string): Promise<Plan> {
+  private async planStep(root: OfflineQueueDirectoryHandle, entryId: string, principalOk: boolean): Promise<Plan> {
     const found = await this.readEntry(root, entryId);
     if (!found) return { kind: 'done', result: { status: 'not-found' } };
     const { dir, record } = found;
@@ -1227,11 +1419,24 @@ export class OfflineQueue {
     if (record.holds.some((hold) => hold.operationId === cur.operationId) && cur.phase !== 'published') {
       return provisional('held');
     }
+    if (!principalOk && !isTerminalPhase(cur.phase)) return provisional('principal-mismatch');
     const hooks = this.options.hooks;
+    // A hook recorded at staging, or present on this instance, is required.
+    const needsVerify = (cur.requires?.verify ?? true) || Boolean(hooks?.verify);
+    const needsPublish = (cur.requires?.publish ?? true) || Boolean(hooks?.publish);
     switch (cur.phase) {
       case 'staged':
       case 'uploading': {
-        if (cur.attempts >= this.maxUploadAttempts) return provisional('retry-limit');
+        if (cur.attempts >= this.maxUploadAttempts) {
+          if (cur.pending?.reason !== 'retry-limit') {
+            // Durable and reported once, so listeners, waiters and other tabs see it.
+            cur.pending = { stage: 'upload', reason: 'retry-limit', ...(cur.error ? { message: cur.error.message } : {}) };
+            await this.writeRecord(dir, record);
+            this.emitFor(record);
+            this.observe(record);
+          }
+          return provisional('retry-limit');
+        }
         const blob = await getFile(dir, cur.dataFile);
         if (!blob) {
           cur.phase = 'failed';
@@ -1243,13 +1448,15 @@ export class OfflineQueue {
         const file = new File([await blob.arrayBuffer()], cur.fileName, { type: cur.mimeType });
         cur.phase = 'uploading';
         cur.attempts += 1;
+        if (cur.pending?.reason === 'retry-limit') cur.pending = undefined;
         cur.claim = { instanceId: this.instanceId, at: new Date().toISOString() };
         await this.writeRecord(dir, record);
         return { kind: 'upload', record: structuredClone(record), file };
       }
       case 'uploaded':
       case 'verifying':
-        if (!hooks?.verify) {
+        if (needsVerify && !hooks?.verify) return provisional('hook-unavailable');
+        if (!needsVerify) {
           cur.phase = 'verified';
           cur.verification = { verified: true };
           await this.writeRecord(dir, record);
@@ -1261,7 +1468,8 @@ export class OfflineQueue {
         }
         return { kind: 'verify', record: structuredClone(record) };
       case 'verified':
-        if (!hooks?.publish) {
+        if (needsPublish && !hooks?.publish) return provisional('hook-unavailable');
+        if (!needsPublish) {
           cur.phase = 'published';
           cur.publication = {};
           await this.writeRecord(dir, record);
@@ -1295,12 +1503,28 @@ export class OfflineQueue {
     }
   }
 
-  private async execute(entryId: string, plan: Extract<Plan, { record: JournalRecord }>): Promise<OfflineQueueProcessResult | null> {
+  private async execute(
+    entryId: string,
+    plan: Extract<Plan, { record: JournalRecord }>,
+    signal: AbortSignal | undefined,
+  ): Promise<OfflineQueueProcessResult | null> {
     const cur = plan.record.current;
     const controller = new AbortController();
     const onAbort = () => controller.abort();
+    // Already aborted when disposal or the caller's abort came first: no event would fire.
+    if (this.lifetime.signal.aborted || signal?.aborted) controller.abort();
     this.lifetime.signal.addEventListener('abort', onAbort, { once: true });
+    signal?.addEventListener('abort', onAbort, { once: true });
     this.entryControllers.set(entryId, controller);
+    const stopped = async (): Promise<OfflineQueueProcessResult | null> => {
+      this.assertUsable();
+      if (controller.signal.aborted) return { status: 'provisional', entry: snapshot(plan.record), reason: 'aborted' };
+      if (!(await this.principalMatches(controller.signal))) {
+        return { status: 'provisional', entry: snapshot(plan.record), reason: 'principal-mismatch' };
+      }
+      this.assertUsable();
+      return controller.signal.aborted ? { status: 'provisional', entry: snapshot(plan.record), reason: 'aborted' } : null;
+    };
     const context = (): OfflineQueueOperationContext => ({
       partition: this.partition,
       entryId,
@@ -1311,6 +1535,9 @@ export class OfflineQueue {
       signal: controller.signal,
     });
     try {
+      // Re-checked right before every upload and hook: disposal, abort and the current principal.
+      const stop = await stopped();
+      if (stop) return stop;
       switch (plan.kind) {
         case 'upload':
           return await this.executeUpload(entryId, plan.record, plan.file, controller.signal);
@@ -1375,6 +1602,7 @@ export class OfflineQueue {
       return null;
     } finally {
       this.lifetime.signal.removeEventListener('abort', onAbort);
+      signal?.removeEventListener('abort', onAbort);
       if (this.entryControllers.get(entryId) === controller) this.entryControllers.delete(entryId);
     }
   }
@@ -1452,7 +1680,14 @@ export class OfflineQueue {
       const found = await this.readEntry(root, entryId);
       if (!found) return null;
       const cur = found.record.current;
-      if (cur.generation !== planned.current.generation || cur.operationId !== planned.current.operationId) return null;
+      if (
+        cur.generation !== planned.current.generation ||
+        cur.operationId !== planned.current.operationId ||
+        // The step's claim: an outcome recorded meanwhile (an explicit reconcile) is never overwritten.
+        cur.phase !== planned.current.phase
+      ) {
+        return null;
+      }
       mutate(cur);
       await this.writeRecord(found.dir, found.record);
       return found.record;
@@ -1491,11 +1726,12 @@ export class OfflineQueue {
     }
   }
 
-  /** Settles waiters from an observed journal state. */
+  /** Settles waiters from an observed journal state, and drops a preview the entry no longer needs. */
   private observe(record: JournalRecord): void {
+    const cur = record.current;
+    if (cur.phase === 'published' || cur.dataRemoved) this.revokeObjectUrl(record.entryId);
     const list = this.waiters.get(record.entryId);
     if (!list || this.disposed) return;
-    const cur = record.current;
     const remaining: Waiter[] = [];
     for (const waiter of list) {
       if (waiter.generation !== cur.generation) {
@@ -1513,12 +1749,54 @@ export class OfflineQueue {
           { entryId: record.entryId, generation: cur.generation, ...(cur.error?.code ? { cause: cur.error.code } : {}) },
         );
         waiter.reject(error);
+      } else if (cur.pending?.reason === 'retry-limit') {
+        waiter.reject(new OfflineQueueError('FILEFN_QUEUE_RETRY_LIMIT', cur.pending.message ?? 'Upload attempts reached the limit', {
+          entryId: record.entryId,
+          generation: cur.generation,
+        }));
       } else {
         remaining.push(waiter);
       }
     }
     if (remaining.length > 0) this.waiters.set(record.entryId, remaining);
     else this.waiters.delete(record.entryId);
+  }
+
+  /** Settles waiters and drops previews of entries that are gone (cancelled or reclaimed, here or in another tab). */
+  private forgetAbsent(present: Set<string>): void {
+    for (const entryId of [...this.waiters.keys()]) {
+      if (!present.has(entryId)) this.rejectWaiters(entryId, 'FILEFN_QUEUE_CANCELLED', 'Entry was removed');
+    }
+    for (const entryId of [...this.objectUrls.keys()]) {
+      if (!present.has(entryId)) this.revokeObjectUrl(entryId);
+    }
+  }
+
+  /**
+   * Re-reads entries with waiters on an interval while any exist, so a
+   * generation another tab publishes, rejects or removes settles them too.
+   */
+  private startObserving(): void {
+    if (this.observeTimer !== undefined || this.disposed || !(this.observeIntervalMs > 0)) return;
+    let running = false;
+    this.observeTimer = setInterval(() => {
+      if (this.disposed || this.waiters.size === 0) {
+        clearInterval(this.observeTimer);
+        this.observeTimer = undefined;
+        return;
+      }
+      if (running) return;
+      running = true;
+      const entryIds = [...this.waiters.keys()];
+      void Promise.all(entryIds.map(async (entryId) => {
+        if (!(await this.get(entryId))) this.rejectWaiters(entryId, 'FILEFN_QUEUE_CANCELLED', 'Entry was removed');
+      }))
+        .catch(() => {})
+        .finally(() => {
+          running = false;
+        });
+    }, this.observeIntervalMs);
+    (this.observeTimer as { unref?: () => void }).unref?.();
   }
 
   private rejectWaiters(entryId: string, code: OfflineQueueErrorCode, message: string): void {

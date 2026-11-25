@@ -55,6 +55,9 @@ export class OfflineSync {
   private static readonly SETTLED_RESULT_TTL_MS = 5 * 60 * 1000;
   private config: ResolvedSyncConfig;
   private isSyncing = false;
+  /** Work arrived during a pass that had already listed its entries: run one more pass after it. */
+  private rerunRequested = false;
+  private queueRetries = 0;
   private disposed = false;
   private readonly lifetime = new AbortController();
   private connectivityChecker: ConnectivityChecker;
@@ -94,8 +97,9 @@ export class OfflineSync {
 
   /**
    * Stops driving the work for good: no further sync, retry or online
-   * listener; in-flight replays of the legacy store are aborted. A queue is
-   * left as it is (dispose it separately); its staged work stays for later.
+   * listener; the upload or hook this sync is running is aborted, as are
+   * in-flight replays of the legacy store. A queue is otherwise left as it is
+   * (dispose it separately); its staged work stays for later.
    */
   dispose(): void {
     if (this.disposed) return;
@@ -187,9 +191,12 @@ export class OfflineSync {
    * Sync all pending uploads.
    */
   async syncAll(): Promise<SyncResult> {
-    if (this.disposed || this.isSyncing) {
-      // Return a promise that resolves when current sync finishes? 
-      // For simplicity, throw or ignore.
+    if (this.disposed) {
+      return { succeeded: [], failed: [], totalProcessed: 0 };
+    }
+    if (this.isSyncing) {
+      // The running pass may have listed its work before this call's: a follow-up pass picks it up.
+      this.rerunRequested = true;
       return { succeeded: [], failed: [], totalProcessed: 0 };
     }
 
@@ -264,13 +271,18 @@ export class OfflineSync {
       return result;
     } finally {
       this.isSyncing = false;
+      if (this.rerunRequested && !this.disposed) {
+        this.rerunRequested = false;
+        if (this.isOnline()) void this.syncAll().catch(() => {});
+      }
     }
   }
 
   /**
    * One pass over the queue's entries. Published entries succeed; a failed,
    * rejected or unconfirmed one is reported as failed and stays provisional.
-   * An unconfirmed (ambiguous) one is tried again after `retryDelayMs`.
+   * An unconfirmed (ambiguous) one, or one another tab was processing (busy),
+   * is tried again after `retryDelayMs`, doubling up to a minute per retry.
    */
   private async syncQueue(queue: OfflineQueue): Promise<SyncResult> {
     const result: SyncResult = { succeeded: [], failed: [], totalProcessed: 0 };
@@ -279,6 +291,11 @@ export class OfflineSync {
     progress.totalPending = outcomes.length;
     let retry = false;
     for (const { entryId, result: outcome } of outcomes) {
+      if (outcome.status === 'busy') {
+        // Another tab holds it; if that tab closes, a later pass takes over.
+        retry = true;
+        continue;
+      }
       if (outcome.status === 'published') {
         result.succeeded.push(entryId);
         progress.completed += 1;
@@ -298,19 +315,22 @@ export class OfflineSync {
     progress.current = null;
     if (this.disposed) return result;
     this.config.onSyncComplete(result);
-    if (retry && this.isOnline()) this.scheduleQueueRetry();
+    if (!retry) this.queueRetries = 0;
+    else if (this.isOnline()) this.scheduleQueueRetry();
     return result;
   }
 
   private scheduleQueueRetry(): void {
     const key = '*queue*';
     if (this.retryTimers.has(key) || this.disposed) return;
+    const delay = Math.min(this.config.retryDelayMs * 2 ** this.queueRetries, 60_000);
+    this.queueRetries += 1;
     const timer = setTimeout(() => {
       this.retryTimers.delete(key);
       void this.syncAll().catch((error) => {
         this.config.onSyncError(error instanceof Error ? error : new Error('Unknown error'), key);
       });
-    }, this.config.retryDelayMs);
+    }, delay);
     this.retryTimers.set(key, timer);
   }
 

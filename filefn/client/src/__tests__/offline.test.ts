@@ -41,7 +41,8 @@ function createServer() {
     const complete = /^\/upload\/sess_(\d+)\/complete$/.exec(path);
     if (complete) return envelope({ fileId: inits[Number(complete[1]) - 1].fileId, versionId: `ver_${complete[1]}` });
     if (path.startsWith('/') && init.method === 'GET') {
-      return envelope({ fileId: path.slice(1).split('/')[0], versionId: 'ver_remote_1', state: 'ready', source: { mode: 'original', url: '/remote' } });
+      const [fileId, , versionId] = path.slice(1).split('/');
+      return envelope({ fileId, versionId: versionId ?? 'ver_remote_1', state: 'ready', source: { mode: 'original', url: '/remote' } });
     }
     return new Response('not found', { status: 404 });
   });
@@ -55,6 +56,7 @@ function offlineClient(offline: Partial<NonNullable<FileFnClientConfig['offline'
     offline: {
       enabled: true,
       partition: ALICE,
+      currentPrincipal: () => (offline.partition ?? ALICE).principal,
       ...offline,
       queue: { coordinator: locks.forTab(tab), ...offline.queue },
     },
@@ -172,7 +174,7 @@ describe('offline uploads through the client', () => {
     expect(() => createFileFnClient({ baseUrl: BASE, offline: { enabled: true } }).uploadFile({ policy: 'p', file })).toThrow(
       expect.objectContaining({ code: 'FILEFN_OFFLINE_PARTITION_REQUIRED' }),
     );
-    expect(() => createFileFnClient({ baseUrl: BASE, offline: { enabled: true, partition: ALICE } }).uploadFile({ policy: 'p', file })).toThrow(
+    expect(() => createFileFnClient({ baseUrl: BASE, offline: { enabled: true, partition: ALICE, currentPrincipal: () => ALICE.principal } }).uploadFile({ policy: 'p', file })).toThrow(
       expect.objectContaining({ code: 'FILEFN_QUEUE_LOCKS_UNAVAILABLE' }),
     );
     vi.stubGlobal('navigator', { onLine: false });

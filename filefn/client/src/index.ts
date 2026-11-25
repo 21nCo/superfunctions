@@ -337,9 +337,14 @@ export function createFileFnClient(config: FileFnClientConfig): FileFnClient {
     if (!config.offline.partition) {
       throw offlineError('FILEFN_OFFLINE_PARTITION_REQUIRED', 'Offline uploads need offline.partition (service and principal)');
     }
+    const currentPrincipal = config.offline.currentPrincipal;
+    if (typeof currentPrincipal !== 'function') {
+      throw offlineError('FILEFN_OFFLINE_PRINCIPAL_CHECK_REQUIRED', 'Offline uploads need offline.currentPrincipal with offline.partition');
+    }
     offlineQueue ??= new OfflineQueue({
       ...config.offline.queue,
       partition: config.offline.partition,
+      currentPrincipal,
       legacyRootDir: config.offline.opfsDir,
       uploader: {
         upload: (input) => {

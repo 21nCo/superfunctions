@@ -11,6 +11,8 @@ it('runs a guest consumer end to end through the public API with deterministic u
   const linked = new Map<string, string>();
   const queue = new OfflineQueue({
     partition: { serviceId: 'svc-notes', principal: { kind: 'guest', namespace: 'guest-test-1' } },
+    // The app's own session check: this queue's guest is the one signed in.
+    currentPrincipal: () => ({ kind: 'guest', namespace: 'guest-test-1' }),
     getRoot: async () => root,
     coordinator: new SharedLockManager().forTab('page'),
     uploader: { upload: async ({ fileId }) => ({ fileId, versionId: 'ver_test_1' }) },

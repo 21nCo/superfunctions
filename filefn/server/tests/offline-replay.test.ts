@@ -62,6 +62,7 @@ async function createApp() {
     offline: {
       enabled: true,
       partition: { serviceId: 'svc-notes', principal: { kind: 'user', principalId: 'user-owner' } },
+      currentPrincipal: () => ({ kind: 'user', principalId: 'user-owner' }),
       implicitReplay: false,
       queue: { coordinator: locks.forTab('tab-1'), getRoot: async () => storage.root },
     },
@@ -114,11 +115,31 @@ describe('offline replay against the FileFn server', () => {
     const inits = app.requests.filter((r) => r.path === '/upload/init');
     expect(inits.map((r) => r.key)).toEqual(['test-replay-key-0001', 'test-replay-key-0001']);
     expect(app.requests.filter((r) => r.path.endsWith('/sign'))).toHaveLength(1);
-    // The reconciliation reads the stored file back.
-    expect(app.requests.at(-1)).toMatchObject({ method: 'GET', path: '/file_00000000replay01' });
+    // The reconciliation reads the recorded version back.
+    const [version] = await app.rows('fileVersions');
+    expect(app.requests.at(-1)).toMatchObject({ method: 'GET', path: `/file_00000000replay01/versions/${version.versionId}` });
     expect(await app.rows('files')).toHaveLength(1);
     expect(await app.rows('fileVersions')).toHaveLength(1);
     expect(await app.rows('uploadSessions')).toHaveLength(1);
+  });
+
+  it('never confirms a completed session whose file was deleted and recreated under the same ID since', async () => {
+    const app = await createApp();
+    await app.stage('file_00000000replay02', 'test-replay-key-0005');
+    app.loseResponse((path) => path.endsWith('/complete'));
+    expect(await app.queue.process('file_00000000replay02')).toMatchObject({ status: 'provisional', reason: 'ambiguous' });
+    expect((await app.fetch(`${BASE}/file_00000000replay02`, { method: 'DELETE' })).status).toBe(200);
+    await app.client
+      .uploadFile({ policy: 'doc', file: new File(['other'], 'b.txt', { type: 'text/plain' }), fileId: 'file_00000000replay02' })
+      .done();
+
+    expect(await app.queue.process('file_00000000replay02')).toMatchObject({
+      status: 'provisional',
+      reason: 'ambiguous',
+      entry: { state: 'provisional', pending: { stage: 'upload' } },
+    });
+    // One part signed for the lost upload, one for the recreated file; none for the replay.
+    expect(app.requests.filter((r) => r.path.endsWith('/sign'))).toHaveLength(2);
   });
 
   it('accepts the key from the header and, for one more minor version, from the body', async () => {

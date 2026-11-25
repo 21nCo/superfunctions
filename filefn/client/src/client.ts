@@ -70,6 +70,13 @@ export interface HttpClient {
     signal?: AbortSignal,
   ): Promise<Record<string, unknown>>;
 
+  /** Metadata of one stored version (`GET /{fileId}/versions/{versionId}`). */
+  getFileVersion(
+    fileId: string,
+    versionId: string,
+    signal?: AbortSignal,
+  ): Promise<Record<string, unknown>>;
+
   listArtifacts(
     fileId: string,
     signal?: AbortSignal,
@@ -430,6 +437,15 @@ export function createHttpClient(config: FileFnClientConfig): HttpClient {
       return request<Record<string, unknown>>(
         "GET",
         `/${fileId}`,
+        undefined,
+        signal,
+      );
+    },
+
+    async getFileVersion(fileId, versionId, signal) {
+      return request<Record<string, unknown>>(
+        "GET",
+        `/${encodeURIComponent(fileId)}/versions/${encodeURIComponent(versionId)}`,
         undefined,
         signal,
       );

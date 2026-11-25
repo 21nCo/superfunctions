@@ -367,8 +367,10 @@ export class UploadManager {
   }
 
   /**
-   * A replayed session already completed: read the stored file back and return
-   * the recorded result, without signing or sending any part again.
+   * A replayed session already completed: read the recorded version back and
+   * return it, without signing or sending any part again. A version that no
+   * longer exists (its file was deleted, even if the ID was reused since) is
+   * never confirmed.
    */
   private async reconcileCompletedSession(
     initResponse: Partial<InitUploadResponse>,
@@ -390,7 +392,7 @@ export class UploadManager {
     }
     let stored: Record<string, unknown>;
     try {
-      stored = await this.httpClient.getFile(fileId, signal);
+      stored = await this.httpClient.getFileVersion(fileId, versionId, signal);
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') throw error;
       throw Object.assign(
@@ -401,8 +403,8 @@ export class UploadManager {
         { cause: error },
       );
     }
-    if (stored?.fileId !== fileId) {
-      throw createClientError(UPLOAD_RECONCILE_FAILED_ERROR, 'Stored file read back does not match the completed session', {
+    if (stored?.fileId !== fileId || stored?.versionId !== versionId) {
+      throw createClientError(UPLOAD_RECONCILE_FAILED_ERROR, 'Stored version read back does not match the completed session', {
         uploadSessionId: initResponse.uploadSessionId,
         fileId,
       });

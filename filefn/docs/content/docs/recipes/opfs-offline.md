@@ -12,7 +12,12 @@ Goal: a flaky-network-friendly upload that persists across tab reloads and resum
 ```ts
 const client = createFileFnClient({
   baseUrl: "/filefn",
-  offline: { enabled: true, partition: { serviceId: "app", principal: { kind: "user", principalId: session.userId } } },
+  offline: {
+    enabled: true,
+    partition: { serviceId: "app", principal: { kind: "user", principalId: session.userId } },
+    // Who the live credentials act for now (another tab may have switched accounts).
+    currentPrincipal: async () => readSessionPrincipal(),
+  },
 });
 ```
 

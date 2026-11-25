@@ -1,4 +1,4 @@
-import type { OfflineQueueOptions, OfflineQueuePartition } from './offline/queue.js';
+import type { OfflineQueueCurrentPrincipal, OfflineQueueOptions, OfflineQueuePartition } from './offline/queue.js';
 import type {
   HeicPreprocessorOptions,
   PendingLocalSourceMetadata,
@@ -44,6 +44,13 @@ export interface FileFnClientConfig {
      */
     partition?: OfflineQueuePartition;
     /**
+     * Required with `partition`: the principal this client's credentials act
+     * for right now (null when signed out). Queued work uploads and runs hooks
+     * only while it matches `partition`, so an account switch in another tab
+     * that shares cookies cannot upload one principal's files as another.
+     */
+    currentPrincipal?: OfflineQueueCurrentPrincipal;
+    /**
      * Whether offline `uploadFile`, `getPendingLocalDescriptor` and
      * `resolveRenderable` start a sync of the queue on their own. Defaults to
      * true. With false, only an `OfflineSync` from `createOfflineSync()` that
@@ -51,7 +58,7 @@ export interface FileFnClientConfig {
      */
     implicitReplay?: boolean;
     /** Queue options: hooks, limits, coordinator, storage root and retention. */
-    queue?: Omit<OfflineQueueOptions, 'partition' | 'uploader' | 'legacyRootDir'>;
+    queue?: Omit<OfflineQueueOptions, 'partition' | 'uploader' | 'legacyRootDir' | 'currentPrincipal'>;
     /**
      * Directory of unscoped uploads staged by 0.4 and earlier. They are never
      * replayed automatically; see `OfflineQueue.migrateLegacyUpload`.

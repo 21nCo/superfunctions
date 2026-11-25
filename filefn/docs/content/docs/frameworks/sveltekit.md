@@ -53,7 +53,11 @@ import { browser } from "$app/environment";
 export const filefnClient = browser
   ? createFileFnClient({
       baseUrl: "/filefn",
-      offline: { enabled: true, partition: { serviceId: "app", principal: { kind: "user", principalId: getSignedInUserId() } } },
+      offline: {
+        enabled: true,
+        partition: { serviceId: "app", principal: { kind: "user", principalId: getSignedInUserId() } },
+        currentPrincipal: () => ({ kind: "user", principalId: getSignedInUserId() }),
+      },
     })
   : null;
 ```

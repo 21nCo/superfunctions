@@ -95,7 +95,15 @@ export function createFilefnClient(userId: string) {
   return createFileFnClient({
     baseUrl: "/filefn",
     getAuthHeaders: async () => ({}),
-    offline: { enabled: true, partition: { serviceId: "app", principal: { kind: "user", principalId: userId } } },
+    offline: {
+      enabled: true,
+      partition: { serviceId: "app", principal: { kind: "user", principalId: userId } },
+      // Read the live session (another tab may have switched it), not the captured userId.
+      currentPrincipal: async () => {
+        const session = await fetch("/api/session").then((r) => (r.ok ? r.json() : null));
+        return session ? { kind: "user", principalId: session.userId } : null;
+      },
+    },
   });
 }
 ```

@@ -174,6 +174,7 @@ function offlineClient(fetch: typeof globalThis.fetch) {
     offline: {
       enabled: true,
       partition: { serviceId: 'svc-notes', principal: { kind: 'user', principalId: 'user-alice' } },
+      currentPrincipal: () => ({ kind: 'user', principalId: 'user-alice' }),
       queue: { coordinator: locks.forTab('tab') },
     },
   });

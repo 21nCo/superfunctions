@@ -1,14 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   OfflineQueue,
+  type OfflineQueueHoldResult,
   type OfflineQueueHooks,
   type OfflineQueueOptions,
   type OfflineQueuePartition,
+  type OfflineQueuePrincipal,
   type OfflineQueueUploader,
 } from '../offline/queue.js';
+import { OfflineSync } from '../offline/sync.js';
 import { UPLOAD_SESSION_ENDED_ERROR } from '../upload-manager.js';
 import {
   MemoryDirectory,
+  MemoryFile,
   SharedLockManager,
   createStorage,
   deferred,
@@ -44,6 +48,7 @@ function tab(
     uploader: recordingUploader(),
     coordinator: locks.forTab(name),
     getRoot: async () => storage.root,
+    currentPrincipal: () => (overrides.partition ?? ALICE).principal,
     ...overrides,
   });
 }
@@ -52,6 +57,51 @@ async function stage(queue: OfflineQueue, body = 'v1', extra: Record<string, unk
   const result = await queue.stage({ policy: 'p', file: new Blob([body], { type: 'text/plain' }), fileName: 'a.txt', fileId: FILE_ID, ...extra });
   if (result.status !== 'staged') throw new Error(`stage refused: ${JSON.stringify(result)}`);
   return result;
+}
+
+function heldId(result: OfflineQueueHoldResult): string {
+  if (result.status !== 'held') throw new Error(`hold refused: ${JSON.stringify(result)}`);
+  return result.holdId;
+}
+
+/** The journal file of an entry, found by the entryId it records. */
+function journalOf(entryId: string): MemoryFile {
+  const walk = (dir: MemoryDirectory): MemoryFile | undefined => {
+    for (const [name, entry] of dir.entries) {
+      if (entry instanceof MemoryDirectory) {
+        const found = walk(entry);
+        if (found) return found;
+      } else if (name === 'journal.json') {
+        try {
+          if (JSON.parse(new TextDecoder().decode(entry.content)).entryId === entryId) return entry;
+        } catch {
+          // An unreadable journal names no entry.
+        }
+      }
+    }
+    return undefined;
+  };
+  const found = walk(storage.root);
+  if (!found) throw new Error(`no journal for ${entryId}`);
+  return found;
+}
+
+/** An always-online sync of `queue`. */
+function onlineSync(queue: OfflineQueue, config: Omit<ConstructorParameters<typeof OfflineSync>[0], 'queue'> = {}): OfflineSync {
+  const sync = new OfflineSync({ ...config, queue });
+  sync.setConnectivityChecker({ isOnline: () => true, onOnline: () => () => {}, onOffline: () => () => {} });
+  return sync;
+}
+
+async function writeCommitted(dir: MemoryDirectory, name: string, text: string): Promise<void> {
+  const writable = await (await dir.getFileHandle(name, { create: true })).createWritable();
+  await writable.write(text);
+  await writable.close();
+}
+
+async function partitionDir(): Promise<MemoryDirectory> {
+  const layout = await (await storage.root.getDirectoryHandle('filefn-offline-queue')).getDirectoryHandle('v1');
+  return layout.entries.values().next().value as MemoryDirectory;
 }
 
 function dataFiles(): string[] {
@@ -74,7 +124,7 @@ describe('two tabs sharing one storage and lock manager', () => {
     const a = tab('a');
     const b = tab('b');
     const first = await stage(a);
-    const { holdId: staleHold } = await a.hold(FILE_ID, first.entry.generation);
+    const staleHold = heldId(await a.hold(FILE_ID, first.entry.generation));
 
     const results = await Promise.all([
       a.stage({ policy: 'p', file: new Blob(['from-a']), fileId: FILE_ID, expectedGeneration: 1, hold: true }),
@@ -156,7 +206,28 @@ describe('crash and reload', () => {
     const reloaded = tab('a2');
     expect(await reloaded.list()).toEqual([]);
     await reloaded.reclaim();
-    expect(storage.root.files()).toEqual([]);
+    // Only the partition's generation counter remains.
+    expect(storage.root.files()).toEqual([expect.stringMatching(/\/partition\.json$/)]);
+  });
+
+  it('recovers an entry whose first journal was left empty by a killed tab, and reclaims its bytes', async () => {
+    const a = tab('a', { limits: { maxEntries: 2, maxBytes: 100 } });
+    await stage(a, 'first-bytes');
+    await stage(a, 'other', { entryId: 'other' });
+    // A tab killed between creating journal.json and closing its writable leaves it empty.
+    journalOf(FILE_ID).content = new Uint8Array();
+    const reloaded = tab('a2', { limits: { maxEntries: 2, maxBytes: 100 } });
+    expect((await reloaded.list()).map((e) => e.entryId)).toEqual(['other']);
+
+    const restaged = await stage(reloaded, 'second');
+    expect(restaged.entry).toMatchObject({ entryId: FILE_ID, phase: 'staged' });
+    expect(await reloaded.process(FILE_ID)).toMatchObject({ status: 'published' });
+
+    journalOf('other').content = new TextEncoder().encode('{"journalVer');
+    expect(await reloaded.usage()).toMatchObject({ entries: 2 });
+    expect(await reloaded.reclaim()).toMatchObject({ freedBytes: 5 });
+    // The published entry stays for its retention; the never-committed one is gone.
+    expect(await reloaded.usage()).toEqual({ entries: 1, bytes: 0 });
   });
 
   it('retries an ambiguous upload after reload with the same recorded key', async () => {
@@ -422,7 +493,7 @@ describe('capacity and reclamation', () => {
 describe('Web Locks', () => {
   it('fails closed without Web Locks or a coordinator and leaves staged work for later', async () => {
     await stage(tab('a'));
-    const unlocked = new OfflineQueue({ partition: ALICE, uploader: recordingUploader(), getRoot: async () => storage.root });
+    const unlocked = new OfflineQueue({ partition: ALICE, currentPrincipal: () => ALICE.principal, uploader: recordingUploader(), getRoot: async () => storage.root });
     expect(unlocked.capabilities()).toEqual({ durable: false, storage: 'custom', locks: 'unavailable', reason: 'locks-unavailable' });
     expect(await unlocked.stage({ policy: 'p', file: new Blob(['x']) })).toEqual({ status: 'refused', reason: 'locks-unavailable' });
     await expect(unlocked.list()).rejects.toMatchObject({ code: 'FILEFN_QUEUE_LOCKS_UNAVAILABLE' });
@@ -433,12 +504,302 @@ describe('Web Locks', () => {
   it('uses navigator.locks for every journal write and replay claim when present', async () => {
     const webLocks = new SharedLockManager();
     vi.stubGlobal('navigator', { locks: webLocks.forTab('page') });
-    const queue = new OfflineQueue({ partition: ALICE, uploader: recordingUploader(), coordinator: locks.forTab('unused'), getRoot: async () => storage.root });
+    const queue = new OfflineQueue({ partition: ALICE, currentPrincipal: () => ALICE.principal, uploader: recordingUploader(), coordinator: locks.forTab('unused'), getRoot: async () => storage.root });
     expect(queue.capabilities()).toMatchObject({ durable: true, locks: 'web-locks' });
     await stage(queue);
     await queue.process(FILE_ID);
     expect(locks.requests).toEqual([]);
     expect(webLocks.requests.some((name) => name.includes(':entry:'))).toBe(true);
     expect(new Set(webLocks.requests.filter((name) => !name.includes(':entry:'))).size).toBe(1);
+  });
+});
+
+describe('replay outcomes and identities', () => {
+  it.each([
+    ['a completion still running in another tab', { status: 409, code: 'FILEFN_UPLOAD_COMPLETION_IN_PROGRESS', details: { retryable: true } }, 'ambiguous'],
+    ['a session another tab already completed', { status: 409, code: 'FILEFN_UPLOAD_ALREADY_COMPLETED' }, 'ambiguous'],
+    ['a key reused with a different payload', { status: 409, code: 'FILEFN_IDEMPOTENCY_CONFLICT' }, 'failed'],
+  ] as const)('keeps %s under the same key only when a replay can settle it', async (_label, failure, reason) => {
+    const keys: string[] = [];
+    let fail = true;
+    const uploader: OfflineQueueUploader = {
+      async upload(input) {
+        keys.push(input.idempotencyKey);
+        if (fail) throw Object.assign(new Error('conflict'), failure);
+        return { fileId: input.fileId, versionId: 'ver_1' };
+      },
+    };
+    const queue = tab('a', { uploader });
+    await stage(queue, 'v1', { idempotencyKey: 'test-replay-key-0101' });
+    expect(await queue.process(FILE_ID)).toMatchObject({ status: 'provisional', reason });
+    fail = false;
+    if (reason === 'ambiguous') {
+      expect(await queue.process(FILE_ID)).toMatchObject({ status: 'published' });
+      expect(keys).toEqual(['test-replay-key-0101', 'test-replay-key-0101']);
+    } else {
+      expect(await queue.process(FILE_ID)).toMatchObject({ status: 'provisional', reason: 'failed' });
+      expect(keys).toHaveLength(1);
+    }
+  });
+
+  it('refuses a replay key that an earlier generation of the entry used', async () => {
+    const queue = tab('a');
+    await stage(queue, 'v1', { idempotencyKey: 'test-replay-key-0102' });
+    const reuse = () => queue.stage({ policy: 'p', file: new Blob(['v2']), fileId: FILE_ID, idempotencyKey: 'test-replay-key-0102' });
+    expect(await reuse()).toMatchObject({ status: 'refused', reason: 'idempotency-key-reused' });
+    await stage(queue, 'v2', { idempotencyKey: 'test-replay-key-0103' });
+    expect(await reuse()).toMatchObject({ status: 'refused', reason: 'idempotency-key-reused' });
+    expect(await queue.get(FILE_ID)).toMatchObject({ size: 2 });
+  });
+
+  it('never lets a reference to a removed incarnation act on the entry that replaces it', async () => {
+    const a = tab('a', { terminalRetentionMs: 0 });
+    const first = await stage(a, 'old');
+    const firstWaiter = a.whenSettled(FILE_ID, first.entry.generation);
+    expect(await a.cancel(FILE_ID, first.entry.generation)).toBe(true);
+    await expect(firstWaiter).rejects.toMatchObject({ code: 'FILEFN_QUEUE_CANCELLED' });
+
+    const second = await stage(tab('b'), 'new', { expectedGeneration: 0 });
+    expect(second.entry.generation).not.toBe(first.entry.generation);
+    expect(await a.cancel(FILE_ID, first.entry.generation)).toBe(false);
+    await expect(a.hold(FILE_ID, first.entry.generation)).rejects.toMatchObject({ code: 'FILEFN_QUEUE_STALE_GENERATION' });
+    await expect(a.whenSettled(FILE_ID, first.entry.generation)).rejects.toMatchObject({ code: 'FILEFN_QUEUE_SUPERSEDED' });
+    expect(await a.get(FILE_ID)).toMatchObject({ generation: second.entry.generation, size: 3 });
+
+    // The same holds after a published entry is reclaimed.
+    expect(await a.process(FILE_ID)).toMatchObject({ status: 'published' });
+    await a.reclaim();
+    const third = await stage(a, 'newer', { expectedGeneration: 0 });
+    expect([first.entry.generation, second.entry.generation]).not.toContain(third.entry.generation);
+  });
+});
+
+describe('verification and publication boundaries', () => {
+  it('leaves a generation provisional in an instance that lacks the hooks it was staged with', async () => {
+    const verify = vi.fn(async () => ({ verified: true as const }));
+    const run = vi.fn(async () => ({}));
+    const withHooks = tab('a', { hooks: { verify, publish: { run } } });
+    await stage(withHooks);
+    const bare = tab('b');
+    expect(await bare.process(FILE_ID)).toMatchObject({
+      status: 'provisional',
+      reason: 'hook-unavailable',
+      entry: { phase: 'uploaded', state: 'provisional' },
+    });
+    expect(await tab('c', { hooks: { verify } }).process(FILE_ID)).toMatchObject({ reason: 'hook-unavailable', entry: { phase: 'verified' } });
+    expect(run).not.toHaveBeenCalled();
+    expect(await withHooks.process(FILE_ID)).toMatchObject({ status: 'published' });
+    expect(verify).toHaveBeenCalledTimes(1);
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+
+  it('fences reconcile and hold against a publication another tab is running, and publishes once', async () => {
+    const hanging = deferred<{ result?: unknown }>();
+    const run = vi.fn(() => hanging.promise);
+    const a = tab('a', { hooks: { publish: { run } } });
+    const b = tab('b', { hooks: { publish: { run } } });
+    const { entry } = await stage(a);
+    const published: string[] = [];
+    for (const queue of [a, b]) queue.subscribe((event) => event.type === 'published' && published.push(event.entry.operationId));
+    const running = a.process(FILE_ID);
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+
+    await expect(b.reconcile(FILE_ID, entry.generation, { published: true })).rejects.toMatchObject({ code: 'FILEFN_QUEUE_BUSY' });
+    expect(await b.hold(FILE_ID, entry.generation)).toEqual({ status: 'refused', reason: 'publication-started', phase: 'publishing' });
+    await expect(b.reconcile(FILE_ID, entry.generation, {} as never)).rejects.toMatchObject({ code: 'FILEFN_QUEUE_INVALID_INPUT' });
+
+    hanging.resolve({ result: 'linked' });
+    expect(await running).toMatchObject({ status: 'published', entry: { publication: { result: 'linked' } } });
+    expect(published).toEqual([entry.operationId]);
+    expect(await b.hold(FILE_ID, entry.generation)).toMatchObject({ status: 'refused', reason: 'final' });
+  });
+});
+
+describe('lifecycle and principal binding', () => {
+  it('starts no upload once disposed between journaling the claim and sending the request', async () => {
+    const upload = vi.fn(async (input: { fileId: string }) => ({ fileId: input.fileId, versionId: 'ver_1' }));
+    const a = tab('a', { uploader: { upload } });
+    await stage(a);
+    storage.storage.fault = (path, step) => {
+      if (path.endsWith('journal.json') && step === 'close') {
+        storage.storage.fault = undefined;
+        a.dispose();
+      }
+    };
+    await expect(a.process(FILE_ID)).rejects.toMatchObject({ code: 'FILEFN_QUEUE_DISPOSED' });
+    expect(upload).not.toHaveBeenCalled();
+  });
+
+  it('aborts the upload a disposed OfflineSync was driving and leaves the entry for later', async () => {
+    const signals: AbortSignal[] = [];
+    const hanging = deferred<{ fileId: string; versionId: string }>();
+    const a = tab('a', { uploader: { upload: (input) => (signals.push(input.signal), hanging.promise) } });
+    await stage(a);
+    const sync = onlineSync(a);
+    const pass = sync.syncAll();
+    await vi.waitFor(() => expect(signals).toHaveLength(1));
+    sync.dispose();
+    expect(signals[0].aborted).toBe(true);
+    await pass;
+    expect(a.isDisposed).toBe(false);
+    expect(await a.get(FILE_ID)).toMatchObject({ phase: 'uploading', state: 'provisional' });
+  });
+
+  it('runs no upload or hook while the credentials act for another principal', async () => {
+    let signedIn: OfflineQueuePrincipal | null = ALICE.principal;
+    const keys: string[] = [];
+    const run = vi.fn(async () => ({}));
+    const uploader: OfflineQueueUploader = {
+      async upload(input) {
+        keys.push(input.idempotencyKey);
+        // Another tab sharing cookies switches the account while this upload runs.
+        signedIn = BOB.principal;
+        return { fileId: input.fileId, versionId: 'ver_1' };
+      },
+    };
+    const a = tab('a', { uploader, hooks: { publish: { run } }, currentPrincipal: () => signedIn });
+    await stage(a);
+
+    signedIn = null;
+    expect(await a.process(FILE_ID)).toMatchObject({ status: 'provisional', reason: 'principal-mismatch', entry: { attempts: 0 } });
+    expect(keys).toEqual([]);
+    signedIn = ALICE.principal;
+    expect(await a.process(FILE_ID)).toMatchObject({ reason: 'principal-mismatch', entry: { phase: 'uploaded' } });
+    expect(run).not.toHaveBeenCalled();
+
+    signedIn = ALICE.principal;
+    expect(await a.process(FILE_ID)).toMatchObject({ status: 'published' });
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('sync and cross-tab observation', () => {
+  it('runs a follow-up pass for work staged while a pass is running', async () => {
+    const slow = deferred<{ fileId: string; versionId: string }>();
+    const uploaded: string[] = [];
+    const a = tab('a', {
+      uploader: {
+        async upload(input) {
+          uploaded.push(input.fileId);
+          return input.fileId === 'file_00000000slow0001' ? slow.promise : { fileId: input.fileId, versionId: 'ver_2' };
+        },
+      },
+    });
+    await a.stage({ policy: 'p', file: new Blob(['slow']), fileId: 'file_00000000slow0001' });
+    const sync = onlineSync(a);
+    const pass = sync.syncAll();
+    await vi.waitFor(() => expect(uploaded).toEqual(['file_00000000slow0001']));
+
+    const late = await a.stage({ policy: 'p', file: new Blob(['late']), fileId: 'file_00000000late0001' });
+    if (late.status !== 'staged') throw new Error('refused');
+    const settled = a.whenSettled('file_00000000late0001', late.entry.generation);
+    await sync.syncAll();
+    slow.resolve({ fileId: 'file_00000000slow0001', versionId: 'ver_1' });
+    await pass;
+    await expect(settled).resolves.toMatchObject({ state: 'published' });
+    sync.dispose();
+  });
+
+  it('settles a waiter in one tab when another tab publishes the generation', async () => {
+    const a = tab('a', { observeIntervalMs: 5 });
+    const { entry } = await stage(a);
+    const settled = a.whenSettled(FILE_ID, entry.generation);
+    expect(await tab('b').process(FILE_ID)).toMatchObject({ status: 'published' });
+    await expect(settled).resolves.toMatchObject({ state: 'published' });
+  });
+
+  it('retries an entry another tab was processing and takes it over once that tab closes', async () => {
+    const uploadA = vi.fn(() => new Promise<never>(() => {}));
+    const a = tab('a', { uploader: { upload: uploadA } });
+    const { entry } = await stage(a);
+    void a.process(FILE_ID).catch(() => {});
+    await vi.waitFor(() => expect(uploadA).toHaveBeenCalled());
+
+    const b = tab('b');
+    const settled = b.whenSettled(FILE_ID, entry.generation);
+    const sync = onlineSync(b, { retryDelayMs: 5 });
+    expect(await sync.syncAll()).toMatchObject({ totalProcessed: 0 });
+    locks.closeTab('a');
+    a.dispose();
+    await expect(settled).resolves.toMatchObject({ state: 'published', attempts: 2 });
+    sync.dispose();
+  });
+
+  it('reports the retry limit durably to waiters, listeners and the sync, and retries after reconcile with the same key', async () => {
+    let fail = true;
+    const keys: string[] = [];
+    const uploader: OfflineQueueUploader = {
+      async upload(input) {
+        keys.push(input.idempotencyKey);
+        if (fail) throw new TypeError('fetch failed');
+        return { fileId: input.fileId, versionId: 'ver_1' };
+      },
+    };
+    const a = tab('a', { uploader, maxUploadAttempts: 2 });
+    const { entry } = await stage(a);
+    const settled = a.whenSettled(FILE_ID, entry.generation);
+    void settled.catch(() => {});
+    const events: string[] = [];
+    a.subscribe((event) => events.push(`${event.type}:${event.entry.pending?.reason}`));
+    await a.process(FILE_ID);
+    await a.process(FILE_ID);
+
+    const codes: string[] = [];
+    const sync = onlineSync(a, { onSyncError: (error) => codes.push((error as Error & { code?: string }).code ?? '') });
+    await sync.syncAll();
+    expect(codes).toEqual(['retry-limit']);
+    await expect(settled).rejects.toMatchObject({ code: 'FILEFN_QUEUE_RETRY_LIMIT' });
+    expect(events).toContain('provisional:retry-limit');
+    expect(await tab('a2').get(FILE_ID)).toMatchObject({ state: 'provisional', pending: { reason: 'retry-limit' } });
+
+    fail = false;
+    await a.reconcile(FILE_ID, entry.generation);
+    expect(await a.process(FILE_ID)).toMatchObject({ status: 'published' });
+    expect(keys).toHaveLength(3);
+    expect(new Set(keys).size).toBe(1);
+    sync.dispose();
+  });
+});
+
+describe('storage reclamation boundaries', () => {
+  it('keeps the entry being restaged when reclaiming under pressure', async () => {
+    const queue = tab('a', { limits: { maxEntries: 5, maxBytes: 10 } });
+    await stage(queue, 'one', { entryId: 'one' });
+    expect(await queue.process('one')).toMatchObject({ status: 'published' });
+    await writeCommitted(await (await partitionDir()).getDirectoryHandle('e_orphan', { create: true }), 'g1.bin', 'orphan');
+
+    const restaged = await queue.stage({ policy: 'p', file: new Blob(['eightbyt']), entryId: 'one' });
+    expect(restaged).toMatchObject({ status: 'staged', entry: { entryId: 'one', phase: 'staged' } });
+    expect(await queue.list()).toMatchObject([{ entryId: 'one', phase: 'staged', size: 8 }]);
+    expect(await queue.process('one')).toMatchObject({ status: 'published' });
+  });
+
+  it('revokes a preview URL once its generation is published or the entry is removed in another tab', async () => {
+    const revoked: string[] = [];
+    let created = 0;
+    vi.stubGlobal('URL', { createObjectURL: () => `blob:preview-${++created}`, revokeObjectURL: (url: string) => revoked.push(url) });
+    const a = tab('a');
+    await stage(a);
+    await stage(a, 'two', { entryId: 'two', fileId: 'file_00000000entry02' });
+    expect(await a.getPendingLocalDescriptor(FILE_ID)).toMatchObject({ source: { url: 'blob:preview-1' } });
+    expect(await a.getPendingLocalDescriptor('file_00000000entry02')).toMatchObject({ source: { url: 'blob:preview-2' } });
+
+    await a.process(FILE_ID);
+    expect(revoked).toEqual(['blob:preview-1']);
+    await tab('b').cancel('two');
+    await a.list();
+    expect(revoked).toEqual(['blob:preview-1', 'blob:preview-2']);
+  });
+
+  it('refuses to migrate a legacy upload whose file ID is invalid', async () => {
+    const legacy = await (await storage.root.getDirectoryHandle('filefn-pending-uploads', { create: true }))
+      .getDirectoryHandle('offline_1731000000000_legacy002', { create: true });
+    await writeCommitted(legacy, 'data.bin', 'old bytes');
+    await writeCommitted(legacy, 'metadata.json', JSON.stringify({ uploadSessionId: 'offline_1731000000000_legacy002', fileId: 'not a file id', policy: 'p', fileName: 'old.txt', size: 9, mimeType: 'text/plain', createdAt: '2026-11-01T00:00:00.000Z', retryCount: 0, metadataVersion: 2 }));
+    const queue = tab('a');
+    await expect(queue.migrateLegacyUpload('offline_1731000000000_legacy002', { ownershipVerified: true })).rejects.toMatchObject({
+      code: expect.stringContaining('INVALID_FILE_ID'),
+    });
+    expect(await queue.list()).toEqual([]);
   });
 });
