@@ -1300,6 +1300,26 @@ describe("McpFn hosted authorization compatibility", () => {
     expect(register).not.toHaveBeenCalled();
   });
 
+  it("accepts a dynamic registration whose optional link fields are null", async () => {
+    const register = vi.fn(async (metadata: unknown) => normalizeMcpClientRegistration({ clientId: "client-null-links", source: "dynamic", metadata: metadata as never }));
+    const compatibility = createMcpAuthorizationCompatibilityHandler({
+      issuer,
+      clients: { resolve: async () => null, register },
+      authorize: async () => Response.json({ ok: true }),
+      tokenAuthority: { exchangeAuthorizationCode: async () => ({ access_token: "opaque", token_type: "Bearer" }) },
+    });
+    const response = await compatibility(new Request(`${issuer}/register`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        redirect_uris: ["https://client.example.com/callback"],
+        token_endpoint_auth_method: "none",
+        client_uri: null, logo_uri: null, tos_uri: null, policy_uri: null,
+      }),
+    }));
+    expect(response.status).toBe(201);
+  });
+
   it.each([
     ["without client_id", { redirect_uris: ["https://client.example.com/callback"], token_endpoint_auth_method: "none" }, "application/json"],
     ["with a secret auth method", { client_id: "https://clients.example.com/client.json", redirect_uris: ["https://client.example.com/callback"], token_endpoint_auth_method: "client_secret_post" }, "application/json"],

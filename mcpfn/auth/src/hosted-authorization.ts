@@ -1435,7 +1435,8 @@ function normalizeClientMetadata(
   // Consent pages may render these links; accept only absolute https URLs.
   for (const field of ["client_uri", "logo_uri", "tos_uri", "policy_uri"] as const) {
     const uri = (value as Record<string, unknown>)[field];
-    if (uri === undefined) continue;
+    // Some clients write unset optional fields as null: nothing to render.
+    if (uri === undefined || uri === null) continue;
     let parsed: URL | undefined;
     try {
       parsed = typeof uri === "string" ? new URL(uri) : undefined;
