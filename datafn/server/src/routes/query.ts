@@ -31,7 +31,7 @@ import { executeSingleQuery } from "./query/execute.js";
 import { validateQueryBody } from "./query/validate.js";
 import { injectCapabilityAutoFilters, type QueryMetadata } from "../execution/query/pushdown.js";
 import { mergeSharedWithMeRows } from "../execution/query/execute.js";
-import { createAuthResolverCache } from "../execution/auth/cache.js";
+import { createAuthResolverCache, type AuthResolverCache } from "../execution/auth/cache.js";
 import { resolveEffectivePrincipals } from "../execution/auth/principal-resolver.js";
 import {
   canonicalizePrincipalFromLegacyUserId,
@@ -90,12 +90,12 @@ export function createQueryHandler(
   const globalPermissionsTable = "__datafn_permissions_global";
   const principalMembershipsTable = "__datafn_principal_memberships";
   const principalHierarchyTable = "__datafn_principal_hierarchy";
-  const principalResolverCache = createAuthResolverCache();
 
   const resolveShareableAccessIds = async (
     resource: string,
     namespace: string,
     actorId: string | undefined,
+    cache: AuthResolverCache,
   ): Promise<{ shareableAccessIds: string[]; hasShareableScopeAccess?: boolean } | undefined> => {
     if (!db || !isPrivateShareableResource(validatedSchema, resource)) {
       return undefined;
@@ -147,7 +147,7 @@ export function createQueryHandler(
     }
 
     if (readMode !== "v1") {
-      const principals = await resolveActorPrincipals(namespace, actorId);
+      const principals = await resolveActorPrincipals(namespace, actorId, cache);
       let hasScopeGrant = false;
       for (const principalId of principals) {
         const permissionRows = await db.findMany({
@@ -229,6 +229,7 @@ export function createQueryHandler(
   const resolveActorPrincipals = async (
     namespace: string,
     actorId: string,
+    cache: AuthResolverCache,
   ): Promise<string[]> => {
     if (!db) {
       return [];
@@ -236,7 +237,7 @@ export function createQueryHandler(
     const result = await resolveEffectivePrincipals({
       namespace,
       actorId,
-      cache: principalResolverCache,
+      cache,
       store: {
         getDirectMemberships: async ({ namespace: actorNamespace, actorId: actor }) => {
           const rows = await db.findMany({
@@ -284,7 +285,8 @@ export function createQueryHandler(
     resource: string,
     namespace: string,
     actorId: string | undefined,
-    metadata?: QueryEnvelopeMetadata,
+    metadata: QueryEnvelopeMetadata | undefined,
+    cache: AuthResolverCache,
   ): Promise<Map<string, { scope: boolean; recordIds: Set<string> }>> => {
     const access = new Map<string, { scope: boolean; recordIds: Set<string> }>();
     if (!db || !actorId) {
@@ -296,7 +298,7 @@ export function createQueryHandler(
         ? new Set(metadata.namespaceFilter.filter((value) => typeof value === "string"))
         : undefined;
 
-    const principals = await resolveActorPrincipals(namespace, actorId);
+    const principals = await resolveActorPrincipals(namespace, actorId, cache);
     const readPermissionRows = async (
       principalId: string,
     ): Promise<Record<string, unknown>[]> => {
@@ -426,7 +428,8 @@ export function createQueryHandler(
     metadata: QueryEnvelopeMetadata | undefined,
     namespace: string,
     actorId: string | undefined,
-    timer?: ExecutionTimer | null,
+    timer: ExecutionTimer | null | undefined,
+    cache: AuthResolverCache,
   ): Promise<unknown> => {
     if (query.groupBy) {
       return { groups: [], nextCursor: null };
@@ -436,6 +439,7 @@ export function createQueryHandler(
       namespace,
       actorId,
       metadata,
+      cache,
     );
 
     if (namespaceAccess.size === 0) {
@@ -777,6 +781,10 @@ export function createQueryHandler(
         if (db) {
           const namespace = await extractNamespace(ctx);
           const actorId = extractActorId ? await extractActorId(ctx) : undefined;
+          // Membership and hierarchy are written by the host, outside this
+          // handler, so a cache kept on the handler would survive revocation.
+          // One cache per request still dedupes lookups inside a batch.
+          const principalResolverCache = createAuthResolverCache();
 
           timer?.startPhase("plan");
           // FIX-SRV-003: Bounded concurrency — queue excess queries instead of rejecting
@@ -826,6 +834,7 @@ export function createQueryHandler(
                   namespace,
                   actorId,
                   timer,
+                  principalResolverCache,
                 ).then((result) => {
                   queryDurations.push(Date.now() - queryStart);
                   return result;
@@ -836,6 +845,7 @@ export function createQueryHandler(
                 String(query.resource),
                 namespace,
                 actorId,
+                principalResolverCache,
               ).then((shareableAccess) => {
                 // Access fields are the server's to set: a client-supplied
                 // hasShareableScopeAccess or shareableAccessIds must never
