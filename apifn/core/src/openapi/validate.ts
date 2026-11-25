@@ -431,22 +431,25 @@ function prepareReferences(document: OpenAPIDocument, externalReferences?: Reado
     // their own context, so Swagger Parser never sees the literal references.
     const pointers = copiedPointers.get(destination.source) ?? new Map<string, string>();
     const key = mode + canonical;
-    // The parser caches dereferences by pointer. An extended reference needs
-    // its own pointer so a cached recursive target cannot discard its siblings.
-    const hasSiblings = target.source !== root && Object.keys(value).length > 1;
-    let preparedRef = hasSiblings ? undefined : pointers.get(key);
+    let preparedRef = pointers.get(key);
     if (!preparedRef) {
       const targetIndex = String(referenceCopies.targets.length);
       preparedRef = "#/" + field + "/" + targetIndex;
-      if (!hasSiblings) {
-        pointers.set(key, preparedRef);
-        copiedPointers.set(destination.source, pointers);
-      }
+      pointers.set(key, preparedRef);
+      copiedPointers.set(destination.source, pointers);
       referenceCopies.originals.set(preparedRef, isLocal ? canonical : ref);
       referenceCopies.targets.push(enqueue(
         { ...target, mode, importSite: target.importSite ?? site },
         { key: targetIndex, parent: { key: field } },
       ));
+    }
+    // Isolate the parser's cache entry for siblings while keeping exactly one
+    // canonical position for self-references within the target.
+    if (target.source !== root && Object.keys(value).length > 1) {
+      const alias = "#/" + field + "/" + referenceCopies.targets.length;
+      referenceCopies.targets.push({ $ref: preparedRef });
+      referenceCopies.originals.set(alias, isLocal ? canonical : ref);
+      return alias;
     }
     return preparedRef;
   }

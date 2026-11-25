@@ -559,15 +559,22 @@ describe("validateOpenAPI", () => {
     expect(result.document?.components?.schemas?.Value).toEqual({ type: "integer" });
   });
 
-  it("keeps a direct self-reference at its own position in a preloaded schema", async () => {
+  it.each(["plain", "plain-first", "decorated-first"])("keeps the original self-reference with %s imports", async (order) => {
     const uri = "https://example.invalid/types.json";
     const ref = "#/properties/self";
     const contents = { type: "object", properties: { self: { $ref: ref } } };
-    const result = await validateAndDereferenceOpenAPI(documentWithReference(uri), {
+    const imports = Object.entries({ Value: { $ref: uri }, Decorated: { $ref: uri, description: "Imported schema" } });
+    if (order === "plain") imports.pop();
+    if (order === "decorated-first") imports.reverse();
+    const doc = { ...documentWithReference(uri), components: { schemas: Object.fromEntries(imports) } };
+    const result = await validateAndDereferenceOpenAPI(doc, {
       externalReferences: new Map([[uri, JSON.stringify(contents)]]),
     });
     expect(result.errors).toEqual([]);
     expect(result.document?.components?.schemas?.Value).toEqual(contents);
+    if (order !== "plain") {
+      expect(result.document?.components?.schemas?.Decorated).toEqual({ ...contents, description: "Imported schema" });
+    }
   });
 
   it.each(["parent-only", "parent-first", "child-first"])("preserves recursive siblings with %s imports", async (order) => {
