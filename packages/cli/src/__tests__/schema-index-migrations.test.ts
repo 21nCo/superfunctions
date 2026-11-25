@@ -200,11 +200,16 @@ describe("schema index migrations", () => {
   it("reads MySQL visibility from EXTRA and preserves index prefixes", async () => {
     const db = {
       query: async (query: string, params?: unknown[]) => {
+        if (query.includes("@@innodb_page_size")) {
+          return [[{ page_size: 8192 }]];
+        }
         if (query.includes("information_schema.TABLES")) {
-          return [[{ table_name: "plugfn_jobs" }]];
+          expect(query).toContain("information_schema.CHARACTER_SETS");
+          return [[{ table_name: "plugfn_jobs", row_format: "Compact", character_set_max_bytes: 4 }]];
         }
         if (query.includes("information_schema.COLUMNS")) {
           expect(query).not.toContain("IS_VISIBLE");
+          expect(query).toContain("cs.MAXLEN");
           return [[{
             column_name: "legacy_note",
             data_type: "text",
@@ -212,8 +217,9 @@ describe("schema index migrations", () => {
             character_maximum_length: 65_535,
             extra: "INVISIBLE",
             generation_expression: "",
-            character_set_name: "utf8mb4",
-            collation_name: "utf8mb4_0900_ai_ci",
+            character_set_name: "latin1",
+            character_set_max_bytes: 1,
+            collation_name: "latin1_swedish_ci",
             column_comment: "",
             is_nullable: "YES",
             column_default: null,
@@ -263,6 +269,8 @@ describe("schema index migrations", () => {
     const [table] = await introspectMySQL(db, "app", "plugfn_");
 
     expect(table.columns[0].isVisible).toBe(false);
+    expect(table.columns[0].characterSetMaxBytes).toBe(1);
+    expect(table).toMatchObject({ rowFormat: "Compact", innodbPageSize: 8192, characterSetMaxBytes: 4 });
     expect(table.indexes[0].prefixLengths).toEqual([50]);
     expect(table.indexes[0].indexType).toBe("FULLTEXT");
     expect(table.schema).toBe("app");
@@ -948,7 +956,7 @@ describe("schema index migrations", () => {
     }
   });
 
-  it("refuses a widened full-column key over 767 bytes on COMPACT or REDUNDANT tables", () => {
+  it("sizes every key on a changed MySQL column against the row format and page-size budget before any DDL", () => {
     const widenTo = (maxLength: number, indexFields = ["claimToken"], required = false, ownerLength = 32) => ({
       ...syncJobs,
       fields: {
@@ -958,23 +966,28 @@ describe("schema index migrations", () => {
       },
       indexes: [{ name: "plugfn_sync_jobs_claim_token_idx", fields: indexFields, unique: true }],
     } as unknown as TableSchema);
-    const varcharColumn = (columnName: string, length: number, characterSet = "utf8mb4") => ({
+    const varcharColumn = (columnName: string, length: number, characterSetMaxBytes: number | null = 4) => ({
       dialect: "mysql" as const,
       tableName: "plugfn_sync_jobs",
       columnName,
       dataType: "varchar",
       columnType: `varchar(${length})`,
-      maxLength: length,
-      characterSet,
+      maxLength: length as number | null,
+      characterSetMaxBytes,
       isNullable: true,
       defaultValue: null,
       isPrimaryKey: false,
       isUnique: false,
     });
-    const current = (rowFormat: string, prefixLength: number | null = null, characterSet?: string) => [{
+    const current = (
+      rowFormat: string,
+      { prefixLength = null as number | null, columnBytes = 4 as number | null, innodbPageSize = 16384, tableBytes = 4 } = {},
+    ) => [{
       name: "plugfn_sync_jobs",
       rowFormat,
-      columns: [varcharColumn("claim_token", 64, characterSet), varcharColumn("owner", 32)],
+      innodbPageSize,
+      characterSetMaxBytes: tableBytes,
+      columns: [varcharColumn("claim_token", 64, columnBytes), varcharColumn("owner", 32)],
       indexes: [{
         name: "plugfn_sync_jobs_claim_token_idx",
         tableName: "plugfn_sync_jobs",
@@ -990,48 +1003,71 @@ describe("schema index migrations", () => {
         .toEqual([`maxLength changed from 64 to ${maxLength}`]);
       expect(diffs[0].rebuiltIndexes).toEqual([]);
     };
+    const pageSizeRefusal = (limit: number) =>
+      new RegExp(`over the ${limit}-byte InnoDB key limit for innodb_page_size(?!.*ROW_FORMAT)`);
 
-    // 192 utf8mb4 characters can take 768 bytes; 191 fit in 764.
+    // COMPACT/REDUNDANT: 192 utf8mb4 characters take 768 bytes, over the
+    // 767-byte key part limit that ROW_FORMAT=DYNAMIC lifts; 191 fit in 764.
     for (const rowFormat of ["Compact", "REDUNDANT"]) {
       expect(() => diffTables([widenTo(192)], current(rowFormat), "plugfn")).toThrow(
-        new RegExp(`${rowFormat} row format limits index key parts to 767 bytes.*plugfn_sync_jobs_claim_token_idx \\(claim_token VARCHAR\\(192\\)\\).*ROW_FORMAT=DYNAMIC`),
+        new RegExp(`${rowFormat} row format limits index key parts to 767 bytes.*plugfn_sync_jobs_claim_token_idx \\(claim_token 768 bytes\\).*ROW_FORMAT=DYNAMIC`),
       );
       inPlace(diffTables([widenTo(191)], current(rowFormat), "plugfn"), 191);
     }
-    // MODIFY COLUMN keeps the column's character set: 700 latin1 characters
-    // fit, an unknown character set counts as utf8mb4.
-    for (const characterSet of ["latin1", "latin2", "cp1251"]) {
-      inPlace(diffTables([widenTo(700)], current("Compact", null, characterSet), "plugfn"), 700);
-    }
-    expect(() => diffTables([widenTo(192)], current("Compact", null, ""), "plugfn")).toThrow(/767 bytes/);
+    // MODIFY COLUMN keeps a string column's own character set (700 latin1
+    // bytes fit); an unknown one counts as utf8mb4.
+    inPlace(diffTables([widenTo(700)], current("Compact", { columnBytes: 1 }), "plugfn"), 700);
+    expect(() => diffTables([widenTo(192)], current("Compact", { columnBytes: null }), "plugfn")).toThrow(/767 bytes/);
     // A widening combined with another change rebuilds the key; still refused.
     expect(() => diffTables([widenTo(192, ["claimToken"], true)], current("Compact"), "plugfn")).toThrow(
-      /plugfn_sync_jobs_claim_token_idx \(claim_token VARCHAR\(192\)\)/,
+      /plugfn_sync_jobs_claim_token_idx \(claim_token 768 bytes\)/,
+    );
+    // A prefixed key part would be rebuilt at full width, so it is refused too.
+    expect(() => diffTables([widenTo(768)], current("Compact", { prefixLength: 32 }), "plugfn")).toThrow(
+      /plugfn_sync_jobs_claim_token_idx \(claim_token 3072 bytes\)/,
     );
     // Rebuilding a composite key drops the prefix of an unchanged key part:
     // owner(100) would become a full 250-character utf8mb4 key part.
     const composite = current("Compact");
     composite[0].columns[1] = varcharColumn("owner", 250);
-    composite[0].indexes[0] = {
-      ...composite[0].indexes[0],
-      columns: ["claim_token", "owner"],
-      prefixLengths: [null, 100],
-    };
+    composite[0].indexes[0] = { ...composite[0].indexes[0], columns: ["claim_token", "owner"], prefixLengths: [null, 100] };
     expect(() => diffTables([widenTo(191, ["claimToken", "owner"], false, 250)], composite, "plugfn")).toThrow(
-      /plugfn_sync_jobs_claim_token_idx \(owner VARCHAR\(250\)\)/,
+      /\(claim_token 764 bytes, owner 1000 bytes\).*ROW_FORMAT=DYNAMIC/,
     );
-    // A prefixed key part would be rebuilt at full width, so it is refused too.
-    expect(() => diffTables([widenTo(768)], current("Compact", 32), "plugfn")).toThrow(
-      /plugfn_sync_jobs_claim_token_idx \(claim_token VARCHAR\(768\)\)/,
-    );
+    // Every part fits 767 bytes but the whole key does not fit the page-size
+    // total: 16 KiB pages allow 3,072 bytes, 8 KiB 1,536, 4 KiB 768. A row
+    // format change cannot help, so none is offered.
+    const partNames = ["claim_token", "p1", "p2", "p3", "p4"];
+    const fiveParts = current("Compact");
+    fiveParts[0].columns = partNames.map((name) => varcharColumn(name, name === "claim_token" ? 64 : 160));
+    fiveParts[0].indexes[0] = { ...fiveParts[0].indexes[0], columns: partNames, prefixLengths: partNames.map(() => null) };
+    const fivePartSchema = {
+      ...widenTo(190),
+      fields: {
+        ...widenTo(190).fields,
+        ...Object.fromEntries(partNames.slice(1).map((name) => [name, { type: "string", fieldName: name, maxLength: 160 }])),
+      },
+      indexes: [{ name: "plugfn_sync_jobs_claim_token_idx", fields: ["claimToken", "p1", "p2", "p3", "p4"], unique: true }],
+    } as unknown as TableSchema;
+    expect(() => diffTables([fivePartSchema], fiveParts, "plugfn")).toThrow(pageSizeRefusal(3072));
+    expect(() => diffTables([widenTo(768)], current("Dynamic", { innodbPageSize: 8192 }), "plugfn")).toThrow(pageSizeRefusal(1536));
+    expect(() => diffTables([widenTo(192)], current("Dynamic", { innodbPageSize: 4096 }), "plugfn")).not.toThrow();
+    expect(() => diffTables([widenTo(193)], current("Dynamic", { innodbPageSize: 4096 }), "plugfn")).toThrow(pageSizeRefusal(768));
+    inPlace(diffTables([widenTo(384)], current("Dynamic", { innodbPageSize: 8192 }), "plugfn"), 384);
+    // A non-string column becomes a string in the table's default character
+    // set: INT -> VARCHAR(192) in a latin1 COMPACT table is a 192-byte key.
+    const intToString = current("Compact", { tableBytes: 1 });
+    intToString[0].columns[0] = { ...varcharColumn("claim_token", 0, null), dataType: "int", columnType: "int", maxLength: null };
+    expect(diffTables([widenTo(192)], intToString, "plugfn")[0].rebuiltIndexes?.map((index) => index.name))
+      .toEqual(["plugfn_sync_jobs_claim_token_idx"]);
     // An index replaced to cover another column no longer holds the widened one.
     const replaced = diffTables([widenTo(768, ["owner"])], current("Compact"), "plugfn");
     expect(replaced[0].changedIndexes?.map((index) => index.name)).toEqual(["plugfn_sync_jobs_claim_token_idx"]);
-    // DYNAMIC keeps the 3,072-byte budget.
+    // DYNAMIC on 16 KiB pages keeps the 3,072-byte budget.
     inPlace(diffTables([widenTo(768)], current("Dynamic"), "plugfn"), 768);
   });
 
-  it("rebuilds widened MySQL indexes with prefixed or over-budget keys", () => {
+  it("rebuilds widened MySQL indexes with prefixed keys and refuses over-budget keys", () => {
     const varcharColumn = (columnName: string, length: number) => ({
       dialect: "mysql" as const,
       tableName: "plugfn_sync_jobs",
@@ -1061,16 +1097,21 @@ describe("schema index migrations", () => {
       isUnique: false,
     };
 
-    // 400 + 400 characters exceeds the 768-character utf8mb4 key budget.
-    const overBudget = diffTables([widened], [{
+    // 400 + 400 utf8mb4 characters take 3,200 bytes, over the 3,072-byte key
+    // limit, so the change is refused before the index is dropped.
+    expect(() => diffTables([widened], [{
       name: "plugfn_sync_jobs",
       columns: [varcharColumn("claim_token", 64), varcharColumn("owner", 400)],
       indexes: [{ ...currentIndex, prefixLengths: [null, null] }],
       constraints: [],
-    }], "plugfn");
-    expect(overBudget[0].rebuiltIndexes?.map((index) => index.name)).toEqual(["claim_owner_idx"]);
+    }], "plugfn")).toThrow(/claim_owner_idx \(claim_token 1600 bytes, owner 1600 bytes\) would take 3200 bytes, over the 3072-byte/);
 
-    const prefixed = diffTables([widened], [{
+    // claim_token(32) is rebuilt as a full 400-character part: 2,000 bytes fit.
+    const prefixedSchema = {
+      ...widened,
+      fields: { ...widened.fields, owner: { ...widened.fields.owner, maxLength: 100 } },
+    } as TableSchema;
+    const prefixed = diffTables([prefixedSchema], [{
       name: "plugfn_sync_jobs",
       columns: [varcharColumn("claim_token", 64), varcharColumn("owner", 100)],
       indexes: [{ ...currentIndex, prefixLengths: [32, null] }],

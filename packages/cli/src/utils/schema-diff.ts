@@ -3,7 +3,7 @@ import type { DatabaseTable } from './introspection.js';
 import {
   databaseStringLength,
   isUnboundedMySqlTextType,
-  MYSQL_MAX_SAFE_INDEXED_VARCHAR_LENGTH,
+  mysqlIndexKeyBudget,
   mysqlVarcharLength,
   satisfiesUnboundedMySqlString,
 } from './mysql-types.js';
@@ -464,8 +464,9 @@ export function diffTables(
     const changedIndexNames = new Set(changedIndexes.map((index) => index.name));
     // A width-only VARCHAR widening keeps every full-column index on the
     // column: one MODIFY COLUMN statement rebuilds it in place, so a unique
-    // index never stops enforcing uniqueness during the upgrade.
-    const widenedVarcharLengths = new Map<string, number>();
+    // index never stops enforcing uniqueness during the upgrade. The key
+    // budget check below refuses any such key that would not fit.
+    const widenedVarcharColumns = new Set<string>();
     for (const change of columnChanges) {
       const widening = /^maxLength changed from (\d+) to (\d+)$/.exec(change.change);
       if (
@@ -473,27 +474,18 @@ export function diffTables(
         /^varchar$/i.test(change.current?.dataType.trim() ?? '') &&
         Number(widening[2]) >= Number(widening[1])
       ) {
-        widenedVarcharLengths.set(change.column, Number(widening[2]));
+        widenedVarcharColumns.add(change.column);
       }
     }
     const keepsIndexThroughWidening = (index: DatabaseTable['indexes'][number]) => {
       const indexType = index.indexType?.toUpperCase();
       if (indexType && indexType !== 'BTREE') return false;
-      let keyChars = 0;
-      for (const [position, column] of index.columns.entries()) {
-        if (index.prefixLengths?.[position] != null) return false;
+      return index.columns.every((column, position) => {
         const currentColumn = curColMap.get(column);
-        if (!currentColumn || !/^(?:var)?char$/i.test(currentColumn.dataType.trim())) {
-          return false;
-        }
-        if (changedMySqlColumns.has(column) && !widenedVarcharLengths.has(column)) {
-          return false;
-        }
-        const length = widenedVarcharLengths.get(column) ?? databaseStringLength(currentColumn);
-        if (length === null) return false;
-        keyChars += length;
-      }
-      return keyChars <= MYSQL_MAX_SAFE_INDEXED_VARCHAR_LENGTH;
+        return index.prefixLengths?.[position] == null &&
+          /^(?:var)?char$/i.test(currentColumn?.dataType.trim() ?? '') &&
+          (!changedMySqlColumns.has(column) || widenedVarcharColumns.has(column));
+      });
     };
     const unpreservedIndexDependencies = curTable.indexes.filter((index) =>
       index.columns.some((column) => changedMySqlColumns.has(column)) &&
@@ -530,31 +522,36 @@ export function diffTables(
           .join(', ')}`,
       );
     }
-    // COMPACT and REDUNDANT tables limit an index key part to 767 bytes. A
-    // changed column rebuilds or alters its indexes at their declared widths
-    // (prefixes included), in the character set MODIFY COLUMN keeps (unknown:
-    // utf8mb4), so check those indexes' key parts and refuse before any DDL.
-    if (/^(compact|redundant)$/i.test(curTable.rowFormat ?? '')) {
-      const finalLength = (column: string) => {
-        const field = Object.entries(reqFieldMap).find(([name, f]) => (f.fieldName ?? name) === column)?.[1];
-        return field?.type === 'string' ? field.maxLength ?? 0 : 0;
-      };
-      const bytesPerChar = (column: string) => {
-        const name = curColMap.get(column)?.characterSet ?? '';
-        if (/^(ascii|binary|latin[1-7]|cp12(50|51|56|57)|cp8(50|52|66)|dec8|greek|hebrew|hp8|keybcs2|koi8[ru]|mac(ce|roman)|swe7|tis620|armscii8|geostd8)$/i.test(name)) return 1;
-        if (/^(big5|cp932|euckr|gb2312|gbk|sjis|ucs2)$/i.test(name)) return 2;
-        return /^(utf8|utf8mb3|eucjpms|ujis)$/i.test(name) ? 3 : 4;
-      };
-      const oversized = requiredIndexes
-        .filter((index) => index.columns.some((column) => changedMySqlColumns.has(column)))
-        .flatMap((index) => index.columns
-          .filter((column) => finalLength(column) * bytesPerChar(column) > 767)
-          .map((column) => `${index.name} (${column} VARCHAR(${finalLength(column)}))`));
-      if (oversized.length > 0) {
-        throw new Error(
-          `Cannot generate MySQL column change for ${dbName}: its ${curTable.rowFormat} row format limits index key parts to 767 bytes, which the migrated key would exceed: ${oversized.join(', ')}. Convert the table first with ALTER TABLE ${dbName} ROW_FORMAT=DYNAMIC, then generate the migration again.`,
-        );
-      }
+    // Every index on a changed column is kept through MODIFY COLUMN or
+    // recreated from the schema, so size its final key against the table's
+    // InnoDB budget and refuse before any DDL. String parts take their
+    // declared width (TEXT: the generators' 191-character prefix) in the
+    // character set the emitted column has: its own for string columns, else
+    // the table default (unknown: utf8mb4). Other parts take their fixed width.
+    const budget = mysqlIndexKeyBudget(curTable.rowFormat, curTable.innodbPageSize);
+    const keyPartBytes = (column: string): number => {
+      const field = Object.entries(reqFieldMap).find(([name, f]) => (f.fieldName ?? name) === column)?.[1];
+      const type = field && mapFieldTypeToSQLType(field, 'mysql');
+      const current = curColMap.get(column);
+      const charBytes = /char|text/i.test(current?.dataType ?? '')
+        ? current?.characterSetMaxBytes
+        : curTable.characterSetMaxBytes;
+      if (type === 'text') return (field?.maxLength ?? 191) * (charBytes ?? 4);
+      const bytes = ({ integer: 4, bigint: 8, boolean: 1, timestamp: 5 } as Record<string, number>)[type ?? ''];
+      if (bytes) return bytes;
+      throw new Error(`Cannot generate MySQL column change for ${dbName}: the index key size of ${column} cannot be proven safe`);
+    };
+    for (const index of requiredIndexes) {
+      if (!index.columns.some((column) => changedMySqlColumns.has(column))) continue;
+      const parts = index.columns.map((column) => ({ column, bytes: keyPartBytes(column) }));
+      const total = parts.reduce((sum, part) => sum + part.bytes, 0);
+      if (total <= budget.total && parts.every((part) => part.bytes <= budget.part)) continue;
+      const key = `${index.name} (${parts.map((part) => `${part.column} ${part.bytes} bytes`).join(', ')})`;
+      throw new Error(
+        total > budget.total
+          ? `Cannot generate MySQL column change for ${dbName}: the migrated key ${key} would take ${total} bytes, over the ${budget.total}-byte InnoDB key limit for innodb_page_size ${budget.innodbPageSize}. innodb_page_size cannot change on an existing instance; shorten the key's columns in the schema, then generate the migration again.`
+          : `Cannot generate MySQL column change for ${dbName}: its ${curTable.rowFormat} row format limits index key parts to 767 bytes, which the migrated key ${key} would exceed. Convert the table first with ALTER TABLE ${dbName} ROW_FORMAT=DYNAMIC, then generate the migration again.`,
+      );
     }
     const rebuiltIndexes: NonNullable<TableDiff['rebuiltIndexes']> =
       changedMySqlColumns.size === 0

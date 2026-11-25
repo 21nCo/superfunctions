@@ -34,6 +34,19 @@ export function satisfiesUnboundedMySqlString(dataType: string): boolean {
   return /^(text|mediumtext|longtext)$/i.test(dataType.trim());
 }
 
+/**
+ * InnoDB index-key byte limits for an existing table. A key part may take 767
+ * bytes on COMPACT/REDUNDANT rows and 3,072 otherwise; the whole key is capped
+ * by innodb_page_size (3,072 bytes on 16 KiB pages or more, 1,536 on 8 KiB,
+ * 768 on 4 KiB). Missing metadata means MySQL 8's defaults (DYNAMIC, 16 KiB).
+ */
+export function mysqlIndexKeyBudget(rowFormat?: string | null, pageSize?: number | null) {
+  const innodbPageSize = pageSize || 16_384;
+  const total = innodbPageSize >= 16_384 ? 3_072 : innodbPageSize > 4_096 ? 1_536 : 768;
+  const rowFormatLimited = /^(compact|redundant)$/i.test(rowFormat ?? '');
+  return { innodbPageSize, total, part: Math.min(rowFormatLimited ? 767 : 3_072, total) };
+}
+
 export function databaseStringLength(input: {
   dataType: string;
   maxLength?: number | null;

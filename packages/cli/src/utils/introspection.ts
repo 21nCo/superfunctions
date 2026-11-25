@@ -17,6 +17,8 @@ export interface DatabaseColumn {
   generationExpression?: string | null;
   isVisible?: boolean;
   characterSet?: string | null;
+  /** MySQL bytes per character of `characterSet` (CHARACTER_SETS.MAXLEN). */
+  characterSetMaxBytes?: number | null;
   collation?: string | null;
   comment?: string | null;
   isNullable: boolean;
@@ -30,6 +32,10 @@ export interface DatabaseTable {
   schema?: string;
   /** MySQL InnoDB row format (information_schema.TABLES.ROW_FORMAT). */
   rowFormat?: string | null;
+  /** MySQL @@innodb_page_size, which caps the total index key size. */
+  innodbPageSize?: number | null;
+  /** MySQL bytes per character of the table's default character set. */
+  characterSetMaxBytes?: number | null;
   columns: DatabaseColumn[];
   indexes: DatabaseIndex[];
   constraints: DatabaseConstraint[];
@@ -198,10 +204,16 @@ export async function introspectMySQL(
   tablePrefix?: string
 ): Promise<DatabaseTable[]> {
   const db = { query: mysqlQuery(connection) };
+  // Prisma can return integer metadata as bigint.
+  const toNumber = (value: unknown) => (value == null ? null : Number(value));
+  const [[pageSizeRow] = []] = await db.query('SELECT @@innodb_page_size AS page_size', []);
   // Query tables
   const tablesQuery = `
-    SELECT TABLE_NAME as table_name, ROW_FORMAT as row_format
-    FROM information_schema.TABLES 
+    SELECT TABLE_NAME as table_name, ROW_FORMAT as row_format,
+      (SELECT cs.MAXLEN FROM information_schema.COLLATIONS co
+        JOIN information_schema.CHARACTER_SETS cs ON cs.CHARACTER_SET_NAME = co.CHARACTER_SET_NAME
+        WHERE co.COLLATION_NAME = t.TABLE_COLLATION) as character_set_max_bytes
+    FROM information_schema.TABLES t
     WHERE TABLE_SCHEMA = ?
       AND TABLE_TYPE = 'BASE TABLE'
       ${tablePrefix ? `AND TABLE_NAME LIKE ?` : ''}
@@ -214,7 +226,7 @@ export async function introspectMySQL(
 
   const result: DatabaseTable[] = [];
 
-  for (const { table_name, row_format } of tables) {
+  for (const { table_name, row_format, character_set_max_bytes } of tables) {
     // Query columns
     const columnsQuery = `
       SELECT 
@@ -225,12 +237,14 @@ export async function introspectMySQL(
         EXTRA as extra,
         GENERATION_EXPRESSION as generation_expression,
         CHARACTER_SET_NAME as character_set_name,
+        (SELECT cs.MAXLEN FROM information_schema.CHARACTER_SETS cs
+          WHERE cs.CHARACTER_SET_NAME = c.CHARACTER_SET_NAME) as character_set_max_bytes,
         COLLATION_NAME as collation_name,
         COLUMN_COMMENT as column_comment,
         IS_NULLABLE as is_nullable,
         COLUMN_DEFAULT as column_default,
         COLUMN_KEY as column_key
-      FROM information_schema.COLUMNS
+      FROM information_schema.COLUMNS c
       WHERE TABLE_SCHEMA = ?
         AND TABLE_NAME = ?
       ORDER BY ORDINAL_POSITION
@@ -290,7 +304,6 @@ export async function introspectMySQL(
           columns: [],
           prefixLengths: [],
           indexType: row.index_type,
-          // Prisma can return integer metadata as bigint.
           isUnique: Number(row.non_unique) === 0,
         });
       }
@@ -324,6 +337,8 @@ export async function introspectMySQL(
       name: table_name,
       schema: database,
       rowFormat: row_format ?? null,
+      innodbPageSize: toNumber(pageSizeRow?.page_size),
+      characterSetMaxBytes: toNumber(character_set_max_bytes),
       columns: (columns as any[]).map((c) => ({
         dialect: 'mysql' as const,
         tableName: table_name,
@@ -337,6 +352,7 @@ export async function introspectMySQL(
         generationExpression: c.generation_expression,
         isVisible: !/\bINVISIBLE\b/i.test(String(c.extra ?? '')),
         characterSet: c.character_set_name,
+        characterSetMaxBytes: toNumber(c.character_set_max_bytes),
         collation: c.collation_name,
         comment: c.column_comment,
         isNullable: c.is_nullable === 'YES',

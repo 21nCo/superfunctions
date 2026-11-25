@@ -36,6 +36,7 @@ function mysqlColumn(tableName: string, columnName: string, field: FieldSchema):
             dataType: 'varchar',
             columnType: `varchar(${field.maxLength})`,
             maxLength: field.maxLength,
+            characterSetMaxBytes: 4,
           };
     case 'number':
       return { ...base, dataType: 'int', columnType: 'int', maxLength: null };
@@ -59,6 +60,7 @@ function mysqlV7Snapshot(
   tables: TableSchema[],
   claimTokenLength: number,
   rowFormat = 'Dynamic',
+  innodbPageSize = 16_384,
 ): DatabaseTable[] {
   return tables.map((table) => {
     const columns = Object.entries(table.fields).map(([name, field]) => {
@@ -86,7 +88,16 @@ function mysqlV7Snapshot(
       indexType: 'BTREE',
       prefixLengths: index.columns.map(prefixFor),
     }));
-    return { name: table.modelName, schema: 'app', rowFormat, columns, indexes, constraints: [] };
+    return {
+      name: table.modelName,
+      schema: 'app',
+      rowFormat,
+      innodbPageSize,
+      characterSetMaxBytes: 4,
+      columns,
+      indexes,
+      constraints: [],
+    };
   });
 }
 
@@ -98,10 +109,15 @@ function mysqlV7Snapshot(
 function informationSchemaRows(snapshot: DatabaseTable[], int: (value: number) => number | bigint) {
   return (sql: string, params: unknown[]): Record<string, unknown>[] => {
     if (sql.includes('SELECT DATABASE()')) return [{ database_name: 'app' }];
+    if (sql.includes('@@innodb_page_size')) return [{ page_size: int(snapshot[0].innodbPageSize!) }];
     // Only the connection's own database holds the plugfn tables.
     if (params[0] !== 'app') return [];
     if (sql.includes('information_schema.TABLES')) {
-      return snapshot.map((table) => ({ table_name: table.name, row_format: table.rowFormat }));
+      return snapshot.map((table) => ({
+        table_name: table.name,
+        row_format: table.rowFormat,
+        character_set_max_bytes: int(table.characterSetMaxBytes!),
+      }));
     }
     const table = snapshot.find((candidate) => candidate.name === params[1]);
     if (!table) throw new Error(`unexpected introspection query: ${sql}`);
@@ -114,6 +130,7 @@ function informationSchemaRows(snapshot: DatabaseTable[], int: (value: number) =
         extra: '',
         generation_expression: '',
         character_set_name: null,
+        character_set_max_bytes: column.characterSetMaxBytes == null ? null : int(column.characterSetMaxBytes),
         collation_name: null,
         column_comment: '',
         is_nullable: column.isNullable ? 'YES' : 'NO',
@@ -286,6 +303,10 @@ describe('plugfn schema v8 migration', () => {
         expect(currentTables.map((table) => table.name).sort(), adapterType).toEqual(
           schema.schemas.map((table) => table.modelName).sort(),
         );
+        // The key budget inputs arrive as numbers, also from Prisma's bigint.
+        const syncJobs = currentTables.find((table) => table.name === 'plugfn_sync_jobs')!;
+        expect(syncJobs, adapterType).toMatchObject({ rowFormat: 'Dynamic', innodbPageSize: 16_384, characterSetMaxBytes: 4 });
+        expect(syncJobs.columns.find((column) => column.columnName === 'claim_token')?.characterSetMaxBytes).toBe(4);
         expectDevV7Widening(
           adapterType,
           createPendingMigration({
@@ -300,27 +321,33 @@ describe('plugfn schema v8 migration', () => {
     }
   });
 
-  it('refuses the widening before any DDL on a COMPACT table whose key part would exceed 767 bytes', async () => {
-    for (const adapterType of adapterTypes) {
-      const connection = await commandConnection(
-        adapterType,
-        mysqlV7Snapshot(schema.schemas, DEV_V7_CLAIM_TOKEN_LENGTH, 'Compact'),
-      );
-      const currentTables = await introspectCurrentTables(connection);
+  it('refuses the widening before any DDL when the 768-character key exceeds the row format or page-size budget', async () => {
+    const refusals = [
+      // COMPACT: one key part may take 767 bytes; ROW_FORMAT=DYNAMIC lifts it.
+      ['Compact', 16_384, /plugfn_sync_jobs: its Compact row format limits index key parts to 767 bytes.*idx_plugfn_sync_jobs_claim_token \(claim_token 3072 bytes\).*ROW_FORMAT=DYNAMIC/],
+      // 8 KiB pages cap the whole key at 1,536 bytes in every row format.
+      ['Dynamic', 8_192, /idx_plugfn_sync_jobs_claim_token \(claim_token 3072 bytes\) would take 3072 bytes, over the 1536-byte InnoDB key limit for innodb_page_size 8192(?!.*ROW_FORMAT)/],
+    ] as const;
+    for (const [rowFormat, innodbPageSize, refusal] of refusals) {
+      for (const adapterType of adapterTypes) {
+        const connection = await commandConnection(
+          adapterType,
+          mysqlV7Snapshot(schema.schemas, DEV_V7_CLAIM_TOKEN_LENGTH, rowFormat, innodbPageSize),
+        );
+        const currentTables = await introspectCurrentTables(connection);
 
-      expect(
-        () =>
-          createPendingMigration({
-            adapterType,
-            dialect: 'mysql',
-            library,
-            currentVersion: V7_SCHEMA_VERSION,
-            currentTables,
-          }),
-        adapterType,
-      ).toThrow(
-        /plugfn_sync_jobs: its Compact row format limits index key parts to 767 bytes.*idx_plugfn_sync_jobs_claim_token \(claim_token VARCHAR\(768\)\).*ROW_FORMAT=DYNAMIC/,
-      );
+        expect(
+          () =>
+            createPendingMigration({
+              adapterType,
+              dialect: 'mysql',
+              library,
+              currentVersion: V7_SCHEMA_VERSION,
+              currentTables,
+            }),
+          adapterType,
+        ).toThrow(refusal);
+      }
     }
   });
 
