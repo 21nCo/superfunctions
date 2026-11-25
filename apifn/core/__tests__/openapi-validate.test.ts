@@ -229,6 +229,12 @@ describe("validateOpenAPI", () => {
     await expect(validateOpenAPI(doc)).resolves.toEqual([
       expect.objectContaining({ severity: "error" }),
     ]);
+    Object.assign(doc.components.schemas, {
+      Missing: { $ref: "#/components/schemas/Root/x-apifn-reference-copies-/0" },
+    });
+    await expect(validateOpenAPI(doc)).resolves.toEqual([
+      expect.objectContaining({ severity: "error", message: "OpenAPI $ref target does not exist" }),
+    ]);
     for (const ref of ["./#/x-apifn-reference-copies-/0", "./#\\x-apifn-reference-copies-\\0"]) {
       Object.assign(doc.components.schemas, { Missing: { $ref: ref } });
       await expect(validateOpenAPI(doc, {
@@ -328,6 +334,23 @@ describe("validateOpenAPI", () => {
         { path: "openapi", message: expect.stringContaining("explicit allowlist"), severity: "error" },
       ]);
       externalReferences.set("/virtual/project/types.json%3Frevision=1", '{"type":"integer"}');
+      const result = await validateAndDereferenceOpenAPI(doc, { externalReferences });
+      expect(result.errors).toEqual([]);
+      expect(result.document?.components?.schemas?.Value).toEqual({ type: "integer" });
+    } finally {
+      cwd.mockRestore();
+    }
+  });
+
+  it("keeps a bare query delimiter in the exact local allowlist key", async () => {
+    const cwd = vi.spyOn(process, "cwd").mockReturnValue("/virtual/project");
+    try {
+      const doc = documentWithReference("./types.json?");
+      const externalReferences = new Map([["/virtual/project/types.json", '{"type":"string"}']]);
+      await expect(validateOpenAPI(doc, { externalReferences })).resolves.toEqual([
+        { path: "openapi", message: expect.stringContaining("explicit allowlist"), severity: "error" },
+      ]);
+      externalReferences.set("/virtual/project/types.json?", '{"type":"integer"}');
       const result = await validateAndDereferenceOpenAPI(doc, { externalReferences });
       expect(result.errors).toEqual([]);
       expect(result.document?.components?.schemas?.Value).toEqual({ type: "integer" });

@@ -89,7 +89,9 @@ function resolveDocumentURI(base: DocumentLocation, ref: string) {
   const fragment = url.hash.slice(1);
   url.hash = "";
   const isPath = base.isPath && !absolute && url.origin === base.url.origin;
-  const uri = isPath ? absolutePathKey(url.pathname) + url.search : url.href;
+  const queryStart = url.href.indexOf("?");
+  const query = queryStart < 0 ? "" : url.href.slice(queryStart);
+  const uri = isPath ? absolutePathKey(url.pathname) + query : url.href;
   return { uri, fragment, location: { url, isPath } };
 }
 
@@ -223,7 +225,10 @@ function prepareReferences(document: OpenAPIDocument, externalReferences?: Reado
           }
         }
       }
-      if (!Object.hasOwn(parent, key)) return undefined;
+      if (!Object.hasOwn(parent, key)) {
+        if (value === root.value && key === field) throw new Error("OpenAPI $ref target does not exist");
+        return undefined;
+      }
       const child: unknown = Reflect.get(parent, key);
       source = overrides.get(key)?.source ?? source;
       mode = referenceChildMode(parent, mode, key, child);
@@ -255,9 +260,6 @@ function prepareReferences(document: OpenAPIDocument, externalReferences?: Reado
   function rewriteReference(ref: string, source: ReferenceDocument, mode: OpenAPIReferenceMode): string {
     const destination = location(source, ref);
     const { tokens, target } = lookupPointer(destination.source, destination.fragment);
-    if (destination.source === root && tokens[0] === field) {
-      throw new Error("OpenAPI $ref target does not exist");
-    }
     const canonical = encodePointer(tokens);
     const isLocal = destination.source === root;
     if (!target || target === "reference") {
