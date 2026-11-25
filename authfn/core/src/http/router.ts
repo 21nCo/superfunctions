@@ -28,7 +28,14 @@ export function createAuthFnRouter(
 ): Router {
   function hasRouteBodyLimit(request: Request): boolean {
     const route = router.match(request.method, new URL(request.url).pathname)?.route;
-    return route?.meta?.authfnOwnBodyLimit === true;
+    if (route?.method !== 'POST') return false;
+    // These OAuth routes already bound their reads and return protocol errors.
+    // Use their existing operation IDs so released plugins keep that behavior.
+    const operation = route.meta?.openapi?.operationId;
+    return (
+      (operation === 'oauthRegister' && route.path === '/oauth/register')
+      || (operation === 'oauthDeviceAuthorization' && route.path === '/oauth/device_authorization')
+    );
   }
   const rateLimitMiddleware = createAuthFnRateLimitMiddleware(config, hasRouteBodyLimit);
   const multiRegionConfig = getMultiRegionPluginConfig(config);

@@ -287,10 +287,7 @@ export function createRegistrationRoutes(runtime: OAuthProviderRuntime): Route[]
   return [{
     method: 'POST',
     path: OAUTH_REGISTRATION_PATH,
-    meta: {
-      ...createAuthFnRouteMeta('oauthRegister', 'OAuth 2.0 dynamic client registration', { mode: 'none' }),
-      authfnOwnBodyLimit: true
-    },
+    meta: createAuthFnRouteMeta('oauthRegister', 'OAuth 2.0 dynamic client registration', { mode: 'none' }),
     handler: (request) => handleOAuth(async () => {
       const metadata = readPublicClientMetadata(await readRegistrationRequest(request));
       await admit(runtime, request, 'register');
