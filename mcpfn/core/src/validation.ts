@@ -57,7 +57,10 @@ function isCloudflareWorker(): boolean {
 function createAjv(): Ajv {
   const ajv = new Ajv({
     uriResolver: schemaUriResolver,
-    allErrors: true,
+    // Stop at the first failure. With allErrors, one request holding a large
+    // array of invalid items makes Ajv build an error object per item before
+    // McpFn trims the list (Ajv's security guidance for untrusted data).
+    allErrors: false,
     strict: false,
     allowUnionTypes: true,
     // Draft-07 requires sibling keywords next to $ref to be ignored. Ajv's
@@ -647,7 +650,8 @@ export function createSchemaCompiler(
       for (const uri of newUris) state.occupiedUris.add(uri);
       registeredSchemas.push(structuredClone(schema));
       const compiled = ((data: unknown): boolean => {
-        const result = validateCfWorkerSchema(data, state.resources[index] as never, "7", state.lookup, false) as {
+        // shortCircuit: stop at the first failure, like Ajv without allErrors.
+        const result = validateCfWorkerSchema(data, state.resources[index] as never, "7", state.lookup, true) as {
           valid: boolean;
           errors?: CfWorkerOutputUnit[];
         };
