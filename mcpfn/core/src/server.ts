@@ -345,6 +345,11 @@ export class McpFnServer<TContext = undefined> {
   // the server is closed with its parent but receives no broadcasts.
   private broadcastReady = true;
   private onRequestsSettled?: () => void;
+  // Called when this server's initialize handler fails (the client gets a
+  // JSON-RPC error, often with HTTP 200), so its session can be dropped.
+  private onInitializeFailed?: () => void;
+  // Session cleanups started by child transports closing; close() awaits them.
+  private readonly sessionFinalizers = new Set<Promise<void>>();
 
   constructor(options: McpFnServerOptions<TContext>) {
     this.serverOptions = { ...options };
@@ -413,6 +418,9 @@ export class McpFnServer<TContext = undefined> {
         server.inFlightRequests += 1;
         try {
           return await handler(request, extra);
+        } catch (error) {
+          if ((request as { method?: unknown } | null)?.method === "initialize") server.onInitializeFailed?.();
+          throw error;
         } finally {
           server.inFlightRequests -= 1;
           if (server.inFlightRequests === 0) server.onRequestsSettled?.();
@@ -1014,8 +1022,10 @@ export class McpFnServer<TContext = undefined> {
     // A symbol cannot collide with any principal key a host returns.
     const ANONYMOUS = Symbol("anonymous");
     const sessions = new Map<string, Session>();
-    // Initializations admitted but not yet published, which hold their slot.
+    // Initializations admitted but not yet published, and sessions still
+    // closing, both hold their slot.
     const reserved = new Set<Session>();
+    const closingSessions = new Set<Session>();
     const sessionNotFound = () =>
       jsonRpcErrorResponse(404, -32001, "Session not found");
     const busy = (session: Session) => session.active !== 0 || session.server.inFlightRequests !== 0;
@@ -1030,11 +1040,11 @@ export class McpFnServer<TContext = undefined> {
     // expire after sessionIdleTimeoutMs instead).
     const admit = (session: Session): Response | undefined => {
       let inBucket = 0;
-      for (const candidate of [...sessions.values(), ...reserved]) {
+      for (const candidate of [...sessions.values(), ...reserved, ...closingSessions]) {
         if (candidate.bucket === session.bucket) inBucket += 1;
       }
       if (inBucket >= maxPerPrincipal) return jsonRpcErrorResponse(429, -32000, "Too many sessions for this principal");
-      if (sessions.size + reserved.size >= maxSessions) return jsonRpcErrorResponse(503, -32000, "Too many sessions");
+      if (sessions.size + reserved.size + closingSessions.size >= maxSessions) return jsonRpcErrorResponse(503, -32000, "Too many sessions");
       reserved.add(session);
       return undefined;
     };
@@ -1088,17 +1098,27 @@ export class McpFnServer<TContext = undefined> {
       // host's onsessionclosed once, for a session the host accepted.
       let closing: Promise<void> | undefined;
       const close = (fromDelete: boolean) => {
-        closing ??= (async () => {
-          const id = transport.sessionId;
-          if (id !== undefined && sessions.get(id)?.server === requestServer) sessions.delete(id);
+        if (closing) return closing;
+        const id = transport.sessionId;
+        const session = initialized;
+        // Charged against the limits until the transport has closed.
+        if (session) closingSessions.add(session);
+        if (id !== undefined && sessions.get(id)?.server === requestServer) sessions.delete(id);
+        // Assigned before any host code runs, so a reentrant close (the host
+        // callback closing this transport, say) reuses this finalizer.
+        closing = Promise.resolve().then(async () => {
           try {
             if (id !== undefined && hostAccepted) await transportOptions.onsessionclosed?.(id);
           } catch (error) {
             if (fromDelete) throw error;
           } finally {
-            await release();
+            try {
+              await release();
+            } finally {
+              if (session) closingSessions.delete(session);
+            }
           }
-        })();
+        });
         return closing;
       };
       transport = new WebStandardStreamableHTTPServerTransport({
@@ -1160,6 +1180,13 @@ export class McpFnServer<TContext = undefined> {
         const onclose = transport.onclose;
         transport.onclose = () => {
           onclose?.();
+          const finalizer = close(false).catch(() => undefined);
+          this.sessionFinalizers.add(finalizer);
+          void finalizer.finally(() => this.sessionFinalizers.delete(finalizer));
+        };
+        // A failed initialize handler answers with a JSON-RPC error (often
+        // with HTTP 200): drop the session so it does not keep its slot.
+        requestServer.onInitializeFailed = () => {
           void close(false).catch(() => undefined);
         };
         const response = await transport.handleRequest(request, handleOptions);
@@ -1360,6 +1387,8 @@ export class McpFnServer<TContext = undefined> {
     const requestServers = [...this.requestServers];
     this.requestServers.clear();
     await Promise.all(requestServers.map((server) => server.close()));
+    // Host onsessionclosed callbacks started by those closes finish first.
+    await Promise.allSettled([...this.sessionFinalizers]);
     this.pendingResourceSubscriptions.clear();
     this.resourceSubscriptions.clear();
     await this.protocol.close();

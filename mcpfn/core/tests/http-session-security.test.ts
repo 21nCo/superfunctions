@@ -1,4 +1,5 @@
 import type { AuthInfo } from "@modelcontextprotocol/sdk/server/auth/types.js";
+import { InitializeRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -271,6 +272,74 @@ describe("createWebStandardHandler session limits (MCP-SEC-04)", () => {
     await server.close();
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(closed.sort()).toEqual(["session-1", "session-2"]);
+  });
+
+  it("keeps a closing session's slot until its transport has closed", async () => {
+    let open!: () => void;
+    const hold = new Promise<void>((resolve) => { open = resolve; });
+    const { handler, initialize } = await setup({ maxSessions: 1, onsessionclosed: () => hold });
+    const first = await initialize();
+    const deleting = handler(new Request("http://127.0.0.1:8080/mcp", {
+      method: "DELETE",
+      headers: { "mcp-session-id": first.sessionId!, "mcp-protocol-version": "2025-11-25" },
+    }));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect((await initialize()).status).toBe(503);
+    open();
+    await deleting;
+    expect((await initialize()).status).toBe(200);
+  });
+
+  it("waits for session cleanup in server.close()", async () => {
+    let finished = false;
+    const { initialize, server } = await setup({
+      onsessionclosed: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        finished = true;
+      },
+    });
+    await initialize();
+    await server.close();
+    expect(finished).toBe(true);
+  });
+
+  it("runs onsessionclosed once when the host callback closes the transport", async () => {
+    const children: Array<{ close(): Promise<void> }> = [];
+    let calls = 0;
+    const { handler, initialize } = await setup({
+      configureRequestServer: (child) => { children.push(child); },
+      onsessionclosed: async () => {
+        calls += 1;
+        await Promise.all(children.map((child) => child.close()));
+      },
+    });
+    const session = await initialize();
+    await handler(new Request("http://127.0.0.1:8080/mcp", {
+      method: "DELETE",
+      headers: { "mcp-session-id": session.sessionId!, "mcp-protocol-version": "2025-11-25" },
+    }));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(calls).toBe(1);
+  });
+
+  it("frees the slot when the initialize handler fails", async () => {
+    let failing = true;
+    const closed: string[] = [];
+    const { initialize } = await setup({
+      maxSessions: 1,
+      sessionIdleTimeoutMs: Infinity,
+      onsessionclosed: (id) => { closed.push(id); },
+      configureRequestServer: (child) => {
+        if (!failing) return;
+        (child as unknown as { protocol: { setRequestHandler(schema: unknown, handler: () => never): void } })
+          .protocol.setRequestHandler(InitializeRequestSchema, () => { throw new Error("initializer refused"); });
+      },
+    });
+    await initialize();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(closed).toHaveLength(1);
+    failing = false;
+    expect((await initialize()).status).toBe(200);
   });
 
   it("lets sessions without a principal share one per-principal allowance", async () => {
