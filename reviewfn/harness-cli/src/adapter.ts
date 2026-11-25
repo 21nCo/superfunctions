@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
-import { access, lstat, mkdtemp, open, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { access, lstat, mkdtemp, realpath, stat, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Worker } from "node:worker_threads";
@@ -28,6 +28,7 @@ const MAX_DETAIL_CHARS = 4_000;
 const MAX_MODEL_CHARS = 256;
 /** Bytes of the rejected answer echoed back in the repair prompt. */
 const REPAIR_ECHO_BYTES = 16_384;
+const DIRECTORY_REPLACED = "The CLI's attempt directory was replaced.";
 /** How often a running CLI's output file is measured against the remaining output budget. */
 const OUTPUT_FILE_POLL_MS = 100;
 /** Levels of JSON string escaping a secret is still recognized under; each level is decoded in linear time. */
@@ -256,10 +257,11 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
       created = await identity(directory);
       return await this.attempts({ ...prepared, executable, key, directory, identities: new Map([[directory, created]]) });
     } finally {
-      // rm removes the adapter's own directory, or a link that replaced it, never what a link points to; a directory that
-      // took its place is left alone.
-      const found = directory === undefined ? undefined : await identity(directory).catch(() => undefined);
-      if (directory && (found === undefined || created === undefined || found === created)) await rm(directory, { recursive: true, force: true });
+      // Removed from inside itself (DIRECTORY_HELPER); a link left at its path is unlinked, a directory there left alone.
+      if (directory !== undefined && created !== undefined) {
+        await inDirectory(undefined, directory, { op: "remove", expect: created, name: path.basename(directory) }).catch(() => undefined);
+        if ((await lstat(directory).catch(() => undefined))?.isSymbolicLink()) await unlink(directory).catch(() => undefined);
+      }
     }
   }
 
@@ -364,8 +366,9 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
   /** The attempt's outcome once its process ended: its answer read, then its terminal outcome or the answer judged. */
   private async judge(run: AttemptContext, attempt: number, outputFile: string, result: CommandResult, fileOverrun: string | undefined): Promise<SlotHarnessOutput | Rejection> {
     // An answer is read only from the directories the adapter created, never through a link that replaced one.
-    const replaced = !await intact(run, path.dirname(outputFile));
-    const output = replaced ? { error: "The CLI's attempt directory was replaced." } : await readAnswer(run, outputFile, result.stdout);
+    let replaced = !await intact(run, path.dirname(outputFile));
+    const output = replaced ? { error: DIRECTORY_REPLACED } : await readAnswer(run, outputFile, result.stdout);
+    replaced ||= "error" in output && output.error === DIRECTORY_REPLACED;
     const terminal = lapsed(run, "before its answer was judged") ?? terminalOutcome(run, attempt, result, output, fileOverrun);
     if (terminal) return terminal;
     // After cancellation and every overrun, before an answer is accepted or repaired: the deadline must not have passed,
@@ -500,74 +503,147 @@ async function intact(run: AttemptContext, attemptDirectory?: string): Promise<b
   return true;
 }
 
-/** A new directory for one attempt, created exclusively inside the run directory, with its schema and prompt files. */
+/** A new directory for one attempt, created exclusively inside the run directory itself, with its schema and prompt files. */
 async function attemptFiles(run: AttemptContext, attempt: number, prompt: string): Promise<{ promptFile: string; schemaFile: string; outputFile: string }> {
   if (!await intact(run)) throw new Error("the run directory was replaced");
-  const directory = await mkdtemp(path.join(run.directory, `attempt-${attempt}-`));
-  run.identities.set(directory, await identity(directory));
-  const files = { promptFile: path.join(directory, "prompt.md"), schemaFile: path.join(directory, "schema.json"), outputFile: path.join(directory, "output.json") };
-  await writeFile(files.schemaFile, run.schemaText, { mode: 0o600, flag: "wx" });
-  if (run.profile.promptVia === "file" || run.profile.argv.includes("{promptFile}")) await writeFile(files.promptFile, prompt, { mode: 0o600, flag: "wx" });
-  return files;
+  const files = [["schema.json", run.schemaText], ...(run.profile.promptVia === "file" || run.profile.argv.includes("{promptFile}") ? [["prompt.md", prompt]] : [])];
+  const made = await inDirectory(run, run.directory, { op: "attempt", expect: run.identities.get(run.directory), prefix: `attempt-${attempt}-`, files });
+  if (typeof made.error === "string") throw new Error(made.error === "EREPLACED" ? "the run directory was replaced" : made.error);
+  const directory = path.join(run.directory, String(made.name));
+  run.identities.set(directory, String(made.identity));
+  return { promptFile: path.join(directory, "prompt.md"), schemaFile: path.join(directory, "schema.json"), outputFile: path.join(directory, "output.json") };
+}
+
+/**
+ * The adapter's operations on its own directories, in a Node process whose working directory, bound to the directory
+ * itself (Node has no openat), must have the recorded dev/ino; every name resolves from it, so a path swapped for a link
+ * after a check is never followed. `remove` enters a child only when it is the directory just read and stops at a mismatch.
+ */
+const DIRECTORY_HELPER = String.raw`
+const fs = require("node:fs");
+const id = name => { const found = fs.statSync(name, { bigint: true }); return found.dev + ":" + found.ino; };
+const fail = () => { throw Object.assign(new Error("replaced"), { code: "EREPLACED" }); };
+const wipe = self => {
+  for (const name of fs.readdirSync(".")) {
+    const entry = fs.lstatSync(name, { bigint: true });
+    if (!entry.isDirectory()) { fs.unlinkSync(name); continue; }
+    process.chdir(name);
+    if (id(".") !== entry.dev + ":" + entry.ino) fail();
+    wipe(id("."));
+    process.chdir("..");
+    if (id(".") === self) fs.rmdirSync(name); else fail();
+  }
+};
+let reply = {};
+try {
+  const request = JSON.parse(fs.readFileSync(0, "utf8"));
+  if (id(".") !== request.expect) fail();
+  if (request.op === "attempt") {
+    const name = fs.mkdtempSync(request.prefix); process.chdir(name);
+    if (id("..") !== request.expect) fail();
+    for (const [file, text] of request.files) fs.writeFileSync(file, text, { mode: 0o600, flag: "wx" });
+    reply = { name, identity: id(".") };
+  } else if (request.op === "read") {
+    const fd = fs.openSync("output.json", fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0) | (fs.constants.O_NONBLOCK ?? 0));
+    const found = fs.fstatSync(fd);
+    const buffer = Buffer.alloc(found.isFile() && found.size <= request.max ? request.max + 1 : 0);
+    let length = 0; for (let count = -1; count !== 0 && length < buffer.length; length += count) count = fs.readSync(fd, buffer, length, buffer.length - length, null);
+    reply = { file: found.isFile(), size: found.size, data: buffer.subarray(0, length).toString("base64") };
+  } else {
+    wipe(request.expect); process.chdir(".."); fs.rmdirSync(request.name);
+  }
+} catch (error) { reply = { error: error.code ?? String(error.message) }; }
+process.stdout.write(JSON.stringify(reply));
+`;
+
+/** One DIRECTORY_HELPER request run in `directory`, bounded by the run's deadline and signal (cleanup by its own bound). */
+async function inDirectory(run: Prepared | undefined, directory: string, request: Record<string, unknown>, maxOutputBytes = 4_096): Promise<Record<string, unknown>> {
+  const timeoutMs = run ? Math.max(1, run.deadline - Date.now()) : VERSION_TIMEOUT_MS;
+  const result = await runProcessGroup(process.execPath, ["-e", DIRECTORY_HELPER], { cwd: directory, env: {}, timeoutMs, maxOutputBytes, signal: run?.input.signal, stdin: JSON.stringify(request) });
+  try { return JSON.parse(result.stdout) as Record<string, unknown>; }
+  catch { return { error: result.timedOut || result.canceled ? "the directory operation was stopped" : `the directory operation failed: ${result.stderr.slice(0, 200)}` }; }
 }
 
 const SHORT_ESCAPES: Record<string, string> = { '"': '"', "\\": "\\", "/": "/", b: "\b", f: "\f", n: "\n", r: "\r", t: "\t" };
+const HEX4 = /^[\da-f]{4}$/i;
+
+/** One level of JSON string escapes decoded, with, for each escape, where its unit sits here (`at`) and where it ended in the level below (`to`). */
+interface EscapeLevel { text: string; at: Uint32Array; to: Uint32Array }
 
 /**
  * `text` with every secret redacted as written and under up to MAX_ESCAPE_DEPTH levels of JSON string escaping (short
- * escapes, or `\uXXXX` in either hex case): the escapes are decoded one level at a time, each in linear time, keeping
- * where each decoded unit started in `text`, and every occurrence at any level marks its whole original span, overlapping
+ * escapes, or `\uXXXX` in either hex case): the escapes are decoded one level at a time, each in linear time and memory,
+ * keeping only where each escape sat, and every occurrence at any level marks its whole original span, overlapping
  * spans merged, so a shorter secret never leaves part of a longer one. A line still escaped past that depth is redacted whole.
  */
 function redact(text: string, secrets: readonly string[]): string {
   const values = secrets.filter(secret => secret.length > 0);
-  if (values.length === 0) return redactText(text, secrets);
-  const spans: Array<[number, number]> = [];
-  let level = { text, starts: Uint32Array.from({ length: text.length + 1 }, (_, index) => index) };
-  for (let depth = 0; ; depth += 1) {
+  // reach[i] is the furthest end of a redacted span that starts at i (0: none), allocated at the first one.
+  let reach: Uint32Array | undefined;
+  const cover = (from: number, to: number) => { reach ??= new Uint32Array(text.length); reach[from] = Math.max(reach[from], to); };
+  const original = (levels: readonly EscapeLevel[], index: number) => levels.reduceRight((at, level) => below(level, at), index);
+  const levels: EscapeLevel[] = [];
+  for (let current = text; values.length > 0;) {
     for (const value of values) {
-      for (let at = level.text.indexOf(value); at !== -1; at = level.text.indexOf(value, at + value.length)) spans.push([level.starts[at], level.starts[at + value.length]]);
+      for (let at = current.indexOf(value); at !== -1; at = current.indexOf(value, at + value.length)) cover(original(levels, at), original(levels, at + value.length));
     }
-    const next = level.text.includes("\\") ? unescapeLevel(level.text, level.starts) : level;
-    if (next.text.length === level.text.length) break;
-    if (depth === MAX_ESCAPE_DEPTH) { escapedLines(text, level, spans); break; }
-    level = next;
+    const next = current.includes("\\") ? unescapeLevel(current) : undefined;
+    if (next === undefined) break;
+    if (levels.length === MAX_ESCAPE_DEPTH) {
+      // Each line of `text` holding an escape still pending at the last level is withheld whole, each found once.
+      let covered = 0;
+      for (let index = current.indexOf("\\"); index !== -1; index = current.indexOf("\\", index + 2)) {
+        if (!(Object.hasOwn(SHORT_ESCAPES, current[index + 1] ?? "") || current[index + 1] === "u")) continue;
+        const at = original(levels, index);
+        if (at < covered) continue;
+        covered = text.includes("\n", at) ? text.indexOf("\n", at) : text.length;
+        cover(text.lastIndexOf("\n", at) + 1, covered);
+      }
+      break;
+    }
+    levels.push(next);
+    current = next.text;
   }
-  let result = "";
-  let end = -1;
-  for (const [from, to] of spans.sort((left, right) => left[0] - right[0])) {
-    if (from <= end) { end = Math.max(end, to); continue; }
-    result += `${text.slice(Math.max(end, 0), from)}[REDACTED]`;
-    end = to;
+  if (reach === undefined) return redactText(text, secrets);
+  const parts: string[] = [];
+  let kept = 0;
+  for (let index = 0, start = -1, end = 0; index <= text.length; index += 1) {
+    const to = index < text.length ? reach[index] : 0;
+    if (to !== 0 && start !== -1 && index <= end) { end = Math.max(end, to); continue; }
+    if (start !== -1 && (to !== 0 || index === text.length)) { parts.push(text.slice(kept, start), "[REDACTED]"); kept = end; start = -1; }
+    if (to !== 0) { start = index; end = to; }
   }
-  return redactText(result + text.slice(Math.max(end, 0)), secrets);
+  parts.push(text.slice(kept));
+  return redactText(parts.join(""), secrets);
 }
 
-/** Adds to `spans` each line of `text` holding an escape still pending at `level`, each found once, in linear time. */
-function escapedLines(text: string, level: { text: string; starts: Uint32Array<ArrayBuffer> }, spans: Array<[number, number]>): void {
-  let covered = 0;
-  for (let index = level.text.indexOf("\\"); index !== -1; index = level.text.indexOf("\\", index + 2)) {
-    const at = level.starts[index];
-    if (!(Object.hasOwn(SHORT_ESCAPES, level.text[index + 1] ?? "") || level.text[index + 1] === "u") || at < covered) continue;
-    covered = text.includes("\n", at) ? text.indexOf("\n", at) : text.length;
-    spans.push([text.lastIndexOf("\n", at) + 1, covered]);
-  }
+/** Where unit `index` of `level` (or its end, at its length) started in the level below, found by binary search. */
+function below(level: EscapeLevel, index: number): number {
+  let low = 0;
+  for (let high = level.at.length, middle = high >>> 1; low < high; middle = (low + high) >>> 1) if (level.at[middle] < index) low = middle + 1; else high = middle;
+  return low === 0 ? index : level.to[low - 1] + index - level.at[low - 1] - 1;
 }
 
-/** One level of JSON string escapes decoded, with where in the original text each decoded unit started. */
-function unescapeLevel(text: string, origins: Uint32Array<ArrayBuffer>): { text: string; starts: Uint32Array<ArrayBuffer> } {
-  let decoded = "";
-  const starts = new Uint32Array(text.length + 1);
-  let size = 0;
-  for (let index = 0; index < text.length;) {
-    starts[size++] = origins[index];
-    const next = text[index] === "\\" ? text[index + 1] ?? "" : "";
-    if (Object.hasOwn(SHORT_ESCAPES, next)) { decoded += SHORT_ESCAPES[next]; index += 2; }
-    else if (next === "u" && /^[\da-f]{4}$/i.test(text.slice(index + 2, index + 6))) { decoded += String.fromCharCode(Number.parseInt(text.slice(index + 2, index + 6), 16)); index += 6; }
-    else { decoded += text[index]; index += 1; }
+/** One level of JSON string escapes decoded into a buffer, or undefined when `text` holds none. */
+function unescapeLevel(text: string): EscapeLevel | undefined {
+  const units = new Uint16Array(text.length);
+  const at = new Uint32Array(text.length >>> 1);
+  const to = new Uint32Array(at.length);
+  let [size, length, done] = [0, 0, 0];
+  for (let index = text.indexOf("\\"); index !== -1; index = text.indexOf("\\", index)) {
+    const next = text[index + 1] ?? "";
+    const hex = next === "u" && HEX4.test(text.slice(index + 2, index + 6));
+    if (!Object.hasOwn(SHORT_ESCAPES, next) && !hex) { index += 1; continue; }
+    for (; done < index; done += 1) units[length++] = text.charCodeAt(done);
+    at[size] = length;
+    units[length++] = hex ? Number.parseInt(text.slice(index + 2, index + 6), 16) : SHORT_ESCAPES[next].charCodeAt(0);
+    done = index + (hex ? 6 : 2);
+    to[size++] = done;
+    index = done;
   }
-  starts[size] = origins[text.length];
-  return { text: decoded, starts };
+  if (size === 0) return undefined;
+  for (; done < text.length; done += 1) units[length++] = text.charCodeAt(done);
+  return { text: Buffer.from(units.buffer, 0, length * 2).toString("utf16le"), at: at.slice(0, size), to: to.slice(0, size) };
 }
 
 /** A JSON value with `redact` applied to every string and key, and core `redactJson` to every other value. */
@@ -685,7 +761,7 @@ parentPort.once("message", text => {
 
 /** The attempt's answer as the CLI wrote it, with its `json-path` model report read. */
 async function readAnswer(run: AttemptContext, outputFile: string, stdout: string): Promise<OutputRead> {
-  const output = run.profile.outputVia === "file" ? await readOutputFile(outputFile, run.state.remainingOutputBytes()) : stdoutObject(stdout);
+  const output = run.profile.outputVia === "file" ? await readOutputFile(run, outputFile, run.state.remainingOutputBytes()) : stdoutObject(stdout);
   if ("text" in output && output.text !== undefined) run.state.recordOutputFile(output.text);
   if ("value" in output && run.profile.modelReport.startsWith("json-path:")) run.state.note(valueAtPath(output.value, run.profile.modelReport.slice("json-path:".length)));
   return output;
@@ -777,26 +853,24 @@ function stdoutObject(stdout: string): OutputRead {
 function serialized(value: unknown): string | undefined {
   try { return JSON.stringify(value); } catch { return undefined; }
 }
-/** The output file, read without following a link, within the remaining output budget, as exactly one JSON object. */
-async function readOutputFile(file: string, maxBytes: number): Promise<OutputRead> {
-  let handle;
-  try { handle = await open(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK); }
-  catch (error) { return { error: (error as NodeJS.ErrnoException).code === "ENOENT" ? "The CLI wrote no output file." : `The output file could not be opened: ${message(error)}` }; }
+/**
+ * The output file, read in the attempt directory the adapter created (never through a link that replaced it), without
+ * following a link, within the remaining output budget, as exactly one JSON object.
+ */
+async function readOutputFile(run: AttemptContext, file: string, maxBytes: number): Promise<OutputRead> {
+  const max = Math.max(0, maxBytes);
+  const read: Record<string, unknown> = await inDirectory(run, path.dirname(file), { op: "read", expect: run.identities.get(path.dirname(file)), max }, 2 * max + 4_096).catch((error: unknown) => ({ error: message(error) }));
+  if (typeof read.error === "string") return { error: read.error === "ENOENT" ? "The CLI wrote no output file." : read.error === "EREPLACED" ? DIRECTORY_REPLACED : `The output file could not be opened: ${read.error}` };
+  if (read.file !== true) return { error: "The output file is not a regular file." };
+  if (Number(read.size) > max) return { overrun: `The CLI output file (${Number(read.size)} bytes) exceeded the remaining ${max}-byte output budget.` };
+  const buffer = Buffer.from(String(read.data), "base64");
+  if (buffer.length > max) return { overrun: `The CLI output file exceeded the remaining ${max}-byte output budget.` };
+  const text = buffer.toString("utf8");
   try {
-    const stat = await handle.stat();
-    if (!stat.isFile()) return { error: "The output file is not a regular file." };
-    if (stat.size > maxBytes) return { overrun: `The CLI output file (${stat.size} bytes) exceeded the remaining ${Math.max(0, maxBytes)}-byte output budget.` };
-    const buffer = Buffer.alloc(Math.max(0, maxBytes) + 1);
-    let length = 0;
-    for (let count = -1; count !== 0 && length < buffer.length;) { count = (await handle.read(buffer, length, buffer.length - length, null)).bytesRead; length += count; }
-    if (length > maxBytes) return { overrun: `The CLI output file exceeded the remaining ${maxBytes}-byte output budget.` };
-    const text = buffer.subarray(0, length).toString("utf8");
-    try {
-      const value: unknown = JSON.parse(text);
-      if (isRecord(value)) return { value, text };
-    } catch { /* reported below */ }
-    return { error: "The output file is not exactly one JSON object.", text };
-  } finally { await handle.close(); }
+    const value: unknown = JSON.parse(text);
+    if (isRecord(value)) return { value, text };
+  } catch { /* reported below */ }
+  return { error: "The output file is not exactly one JSON object.", text };
 }
 
 /**

@@ -9,7 +9,11 @@ import { AGENT, LAUNCH } from "./launcher.js";
 import { CliHarnessAdapter, cliArguments, cliEnvironment, lastJsonObjectLine, matchReporter, parseCliVersion, valueAtPath, withModelReportField } from "../src/index.js";
 
 // Lets a test replace the executable's file identity (its inode), as a reinstall at the same path would.
-const identity = vi.hoisted(() => ({ shift: 0n, delayMs: 0, shiftOnAttemptDirectory: false, shiftOnAttemptCheck: false, attemptChecks: 0, lstatDelayMs: 0 }));
+// `swap` stands for a same-user process that, once armed, swaps a directory for a link just after the adapter's `after`-th
+// check of it, and puts it back just before the next check, so only a use bound to the checked directory can tell.
+// `beforeRemove` runs just before the adapter removes its run directory.
+interface Swap { pattern: RegExp; outside: string; after: number; seen: number; state: "idle" | "armed" | "swapped" | "restored"; path?: string }
+const identity = vi.hoisted(() => ({ shift: 0n, delayMs: 0, shiftOnAttemptDirectory: false, shiftOnAttemptCheck: false, attemptChecks: 0, runChecks: 0, lstatDelayMs: 0, swap: undefined as Swap | undefined, beforeRemove: undefined as ((directory: string) => Promise<void>) | undefined }));
 vi.mock("node:fs/promises", async importOriginal => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
   const stat = (async (...args: Parameters<typeof actual.stat>) => {
@@ -17,19 +21,33 @@ vi.mock("node:fs/promises", async importOriginal => {
     const info = await actual.stat(...args);
     return typeof info.ino === "bigint" && identity.shift ? Object.assign(info, { ino: info.ino + identity.shift }) : info;
   }) as typeof actual.stat;
-  // A reinstall while the first attempt's files are written, after any identity read before them.
-  const mkdtemp = (async (prefix: string, ...rest: unknown[]) => {
-    if (identity.shiftOnAttemptDirectory && prefix.includes("attempt-1-")) identity.shift = 1n;
-    return (actual.mkdtemp as (...args: unknown[]) => Promise<string>)(prefix, ...rest);
-  }) as typeof actual.mkdtemp;
-  // Directory checks may be slow, and a reinstall may finish during the check of the first attempt's directory that
-  // follows its creation.
+  // Directory checks may be slow. A reinstall may finish while the first attempt's files are written (at the run
+  // directory's check that starts them, after its check at creation), or during the first check of that attempt's directory.
   const lstat = (async (...args: Parameters<typeof actual.lstat>) => {
+    const { swap } = identity;
+    const target = String(args[0]);
+    if (swap?.state === "swapped" && target === swap.path) { await actual.unlink(target); await actual.rename(`${target}.real`, target); swap.state = "restored"; }
     if (identity.lstatDelayMs) await new Promise(resolve => setTimeout(resolve, identity.lstatDelayMs));
-    if (identity.shiftOnAttemptCheck && /attempt-1-[^/]+$/.test(String(args[0])) && ++identity.attemptChecks === 2) identity.shift = 1n;
-    return actual.lstat(...args);
+    if (identity.shiftOnAttemptDirectory && /reviewfn-cli-(?!test-)[^/]+$/.test(target) && ++identity.runChecks === 2) identity.shift = 1n;
+    if (identity.shiftOnAttemptCheck && /attempt-1-[^/]+$/.test(target) && ++identity.attemptChecks === 1) identity.shift = 1n;
+    const found = await actual.lstat(...args);
+    if (swap?.state === "armed" && swap.pattern.test(target) && ++swap.seen === swap.after) {
+      swap.path = target;
+      await actual.rename(target, `${target}.real`);
+      await actual.symlink(swap.outside, target);
+      swap.state = "swapped";
+    }
+    return found;
   }) as typeof actual.lstat;
-  return { ...actual, stat, mkdtemp, lstat, default: { ...actual, stat, mkdtemp, lstat } };
+  return { ...actual, stat, lstat, default: { ...actual, stat, lstat } };
+});
+vi.mock("@superfunctions/reviewfn-core", async importOriginal => {
+  const actual = await importOriginal<typeof import("@superfunctions/reviewfn-core")>();
+  const runProcessGroup: typeof actual.runProcessGroup = async (command, args, options) => {
+    if (identity.beforeRemove && args[0] === "-e" && (JSON.parse(options.stdin ?? "{}") as { op?: string }).op === "remove") await identity.beforeRemove(options.cwd);
+    return actual.runProcessGroup(command, args, options);
+  };
+  return { ...actual, runProcessGroup };
 });
 
 const CREDENTIAL = "reviewfn-cli-fixture-credential-5521";
@@ -47,7 +65,7 @@ beforeEach(async () => {
   await mkdir(state);
   await mkdir(workspace);
 });
-afterEach(async () => { Object.assign(identity, { shift: 0n, delayMs: 0, shiftOnAttemptDirectory: false, shiftOnAttemptCheck: false, attemptChecks: 0, lstatDelayMs: 0 }); await rm(directory, { recursive: true, force: true }); });
+afterEach(async () => { Object.assign(identity, { shift: 0n, delayMs: 0, shiftOnAttemptDirectory: false, shiftOnAttemptCheck: false, attemptChecks: 0, runChecks: 0, lstatDelayMs: 0, swap: undefined, beforeRemove: undefined }); await rm(directory, { recursive: true, force: true }); });
 
 const environment = () => ({ PATH: process.env.PATH, HOME: "/home/operator", ALLOWED_ONE: "one", FIXTURE_API_KEY: ALLOWED_SECRET, OTHER_VAR: "other", GITHUB_TOKEN: "publication-private-token", REVIEW_AUTH: CREDENTIAL });
 
@@ -1176,6 +1194,93 @@ describe("CliHarnessAdapter preflight and configuration", () => {
     expect(output.terminal).toBe("failed");
     expect(await readFile(path.join(runDirectory, "kept.txt"), "utf8")).toBe("kept");
     await rm(runDirectory, { recursive: true, force: true });
+  });
+
+  it("never reads an answer through an attempt directory swapped for a link between its check and the read", async () => {
+    const outside = path.join(directory, "outside");
+    await mkdir(outside);
+    await writeFile(path.join(outside, "output.json"), JSON.stringify({ findings: [], evidence: [], inspectedPaths: ["planted"], uninspected: [] }));
+    let reviews = 0;
+    const runner: CommandRunner = async (_command, args) => {
+      if (args.includes("--version")) return { code: 0, signal: null, stdout: "fake-cli version 1.2.3\n", stderr: "", timedOut: false, canceled: false };
+      reviews += 1;
+      await writeFile(args[args.indexOf("--out") + 1], JSON.stringify({ findings: [], evidence: [], inspectedPaths: ["src/index.ts"], uninspected: [] }));
+      identity.swap = { pattern: /attempt-1-[^/]+$/, outside, after: 1, seen: 0, state: "armed" };
+      return { code: 0, signal: null, stdout: "", stderr: "", timedOut: false, canceled: false };
+    };
+    const output = await new CliHarnessAdapter({ environment: environment(), runner }).run(input(configuration(profile({ outputVia: "file" }))));
+    expect(identity.swap?.state).not.toBe("armed");
+    expect(reviews).toBe(1);
+    expect(output.terminal).toBe("failed");
+    expect(output.error).toBe("The CLI's run or attempt directory was replaced, so the attempt was refused before its answer was accepted.");
+  });
+
+  it("creates nothing through a run directory swapped for a link between its check and the repair attempt's creation", async () => {
+    const outside = path.join(directory, "outside");
+    await mkdir(outside);
+    let reviews = 0;
+    const runner: CommandRunner = async (_command, args) => {
+      if (args.includes("--version")) return { code: 0, signal: null, stdout: "fake-cli version 1.2.3\n", stderr: "", timedOut: false, canceled: false };
+      reviews += 1;
+      // A malformed answer earns the repair; the swap follows the run directory's third check after the CLI, which starts it.
+      await writeFile(args[args.indexOf("--out") + 1], JSON.stringify({ findings: "none" }));
+      identity.swap = { pattern: /reviewfn-cli-(?!test-)[^/]+$/, outside, after: 3, seen: 0, state: "armed" };
+      return { code: 0, signal: null, stdout: "", stderr: "", timedOut: false, canceled: false };
+    };
+    const output = await new CliHarnessAdapter({ environment: environment(), runner }).run(input(configuration(profile({ outputVia: "file" }))));
+    expect(identity.swap?.state).toBe("restored");
+    expect(reviews).toBe(1);
+    expect(output.terminal).toBe("failed");
+    expect(await readdir(outside)).toEqual([]);
+    await rm(identity.swap!.path!, { recursive: true, force: true });
+  });
+
+  it("removes nothing from a directory swapped into the run directory's place just before its removal", async () => {
+    let runDirectory = "";
+    identity.beforeRemove = async found => {
+      runDirectory = found;
+      await rename(found, `${found}.real`);
+      await mkdir(found);
+      await writeFile(path.join(found, "kept.txt"), "kept");
+    };
+    const output = await run(profile({ outputVia: "file" }));
+    expect(output.terminal).toBe("completed");
+    expect(await readFile(path.join(runDirectory, "kept.txt"), "utf8")).toBe("kept");
+    await rm(runDirectory, { recursive: true, force: true });
+    await rm(`${runDirectory}.real`, { recursive: true, force: true });
+  });
+
+  it("removes only the link a CLI left in its attempt directory, never its target, and the whole run directory", async () => {
+    const outside = path.join(directory, "outside");
+    await mkdir(outside);
+    await writeFile(path.join(outside, "kept.txt"), "kept");
+    let runDirectory = "";
+    const runner: CommandRunner = async (_command, args) => {
+      if (args.includes("--version")) return { code: 0, signal: null, stdout: "fake-cli version 1.2.3\n", stderr: "", timedOut: false, canceled: false };
+      const out = args[args.indexOf("--out") + 1];
+      runDirectory = path.dirname(path.dirname(out));
+      await mkdir(path.join(path.dirname(out), "nested", "deeper"), { recursive: true });
+      await writeFile(path.join(path.dirname(out), "nested", "deeper", "note.txt"), "note");
+      await symlink(outside, path.join(path.dirname(out), "nested", "link"));
+      await writeFile(out, JSON.stringify({ findings: [], evidence: [], inspectedPaths: ["src/index.ts"], uninspected: [] }));
+      return { code: 0, signal: null, stdout: "", stderr: "", timedOut: false, canceled: false };
+    };
+    const output = await new CliHarnessAdapter({ environment: environment(), runner }).run(input(configuration(profile({ outputVia: "file" }))));
+    expect(output.terminal).toBe("completed");
+    expect(await readFile(path.join(outside, "kept.txt"), "utf8")).toBe("kept");
+    await expect(readdir(runDirectory)).rejects.toThrow(/ENOENT/);
+  });
+
+  it.skipIf(process.platform === "win32" || process.getuid?.() === 0)("still settles a run whose run directory cannot be removed", async () => {
+    let attemptDirectory = "";
+    identity.beforeRemove = async found => {
+      attemptDirectory = (await readdir(found)).map(name => path.join(found, name))[0];
+      await chmod(attemptDirectory, 0o500);
+    };
+    const output = await run(profile({ outputVia: "file" }));
+    expect(output.terminal).toBe("completed");
+    await chmod(attemptDirectory, 0o700);
+    await rm(path.dirname(attemptDirectory), { recursive: true, force: true });
   });
 
   it("redacts a credential echoed under nested JSON escaping from the transcript, the repair prompt, the payload and the events", async () => {
