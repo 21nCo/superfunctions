@@ -182,5 +182,30 @@ describe("ApifnTestAdapter", () => {
       expect.objectContaining({ id: "legacy-id", status: "failed" }),
     ]);
     expect(mocks.runCollection).toHaveBeenCalledTimes(1);
+
+    mocks.readCollection.mockResolvedValue({
+      info: { name: "Orders API" },
+      environments: { default: {} },
+      items: [
+        { kind: "request", name: "Renamed", path: "plain.yml" },
+        { kind: "request", name: "List Orders", path: "scripted.yml" },
+      ],
+    });
+    await expect(adapter.run([tests[0]!], {})).resolves.toEqual([
+      expect.objectContaining({ id: tests[0]!.id, status: "passed" }),
+    ]);
+    expect(mocks.runCollection).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({
+      includePaths: ["plain.yml"],
+    }));
+
+    mocks.readCollection.mockResolvedValue({
+      info: { name: "Orders API" },
+      environments: { default: {} },
+      items: [{ kind: "request", name: "List Orders", path: "scripted.yml" }],
+    });
+    await expect(adapter.run([tests[0]!], {})).resolves.toEqual([
+      expect.objectContaining({ id: tests[0]!.id, status: "skipped" }),
+    ]);
+    expect(mocks.runCollection).toHaveBeenCalledTimes(2);
   });
 });

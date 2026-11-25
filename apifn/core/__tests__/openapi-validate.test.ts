@@ -55,14 +55,17 @@ describe("validateOpenAPI", () => {
     }
   );
 
-  it("resolves a local JSON pointer without changing the caller's document", async () => {
-    const doc = documentWithReference("#/components/schemas/Shared");
-    const snapshot = structuredClone(doc);
-    const result = await validateAndDereferenceOpenAPI(doc);
-    expect(result.errors).toEqual([]);
-    expect(result.document?.components?.schemas?.Value).toEqual({ type: "string" });
-    expect(doc).toEqual(snapshot);
-  });
+  it.each(["#/components/schemas/Shared", "#%2Fcomponents%2Fschemas%2FShared"])(
+    "resolves the local pointer %s without changing the caller's document",
+    async (ref) => {
+      const doc = documentWithReference(ref);
+      const snapshot = structuredClone(doc);
+      const result = await validateAndDereferenceOpenAPI(doc);
+      expect(result.errors).toEqual([]);
+      expect(result.document?.components?.schemas?.Value).toEqual({ type: "string" });
+      expect(doc).toEqual(snapshot);
+    }
+  );
 
   it("accepts literal fragment-shaped example data with or without an allowlist", async () => {
     const doc = documentWithReference("#/components/schemas/Shared");
@@ -97,6 +100,11 @@ describe("validateOpenAPI", () => {
 
     externalReferences.set(ref, '{"$ref":"#missing"}');
     await expect(validateOpenAPI(doc, { externalReferences })).resolves.toEqual([
+      { path: "openapi", message: expect.stringContaining("JSON pointers"), severity: "error" },
+    ]);
+
+    externalReferences.set(ref, '{"example":{"$ref":"#missing"}}');
+    await expect(validateOpenAPI(documentWithReference(ref + "#/example"), { externalReferences })).resolves.toEqual([
       { path: "openapi", message: expect.stringContaining("JSON pointers"), severity: "error" },
     ]);
 

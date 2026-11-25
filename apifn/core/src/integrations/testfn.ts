@@ -18,6 +18,12 @@ interface AssertionResult { passed: boolean; name: string;[key: string]: any; }
 interface RequestResult { path: string; status: "passed" | "failed" | "error" | "skipped"; duration: number; assertions: AssertionResult[]; error?: string; statusCode?: number;[key: string]: any; }
 interface RunReport { results: RequestResult[];[key: string]: any; }
 
+const REQUEST_ID_PREFIX = "apifn:";
+
+function requestId(directory: string, requestPath: string): string {
+    return REQUEST_ID_PREFIX + JSON.stringify([directory, requestPath]);
+}
+
 function visitRequests(
     collection: Collection,
     visit: (item: CollectionItem, suite: string) => void,
@@ -105,7 +111,7 @@ export class ApifnTestAdapter extends BaseAdapter {
 
                 visitRequests(collection, (item, suite) => {
                     testCases.push({
-                        id: this.generateTestId(dir, item.path),
+                        id: requestId(dir, item.path),
                         file: dir,
                         name: item.name,
                         suite,
@@ -150,22 +156,25 @@ export class ApifnTestAdapter extends BaseAdapter {
             const completedCases = new Set<TestCase>();
             try {
                 const collection = await readCollection(dir);
-                const requestsByName = new Map<string, Array<{ path: string; suite: string; id: string }>>();
+                const requestsByName = new Map<string, Array<{ path: string; suite: string }>>();
+                const pathsById = new Map<string, string>();
                 const casesByPath = new Map<string, TestCase[]>();
                 visitRequests(collection, (item, suite) => {
                     const matches = requestsByName.get(item.name) ?? [];
-                    matches.push({ path: item.path, suite, id: this.generateTestId(dir, item.path) });
+                    matches.push({ path: item.path, suite });
                     requestsByName.set(item.name, matches);
+                    pathsById.set(requestId(dir, item.path), item.path);
                 });
 
                 for (const test of testsInCollection) {
-                    const matches = requestsByName.get(test.name)?.filter((request) => !test.suite || test.suite === request.suite) ?? [];
-                    const chosen = matches.find((request) => request.id === test.id) ??
-                        (matches.length === 1 ? matches[0] : undefined);
-                    if (chosen) {
-                        const known = casesByPath.get(chosen.path) ?? [];
+                    const matches = test.id.startsWith(REQUEST_ID_PREFIX)
+                        ? []
+                        : requestsByName.get(test.name)?.filter((request) => !test.suite || test.suite === request.suite) ?? [];
+                    const selectedPath = pathsById.get(test.id) ?? (matches.length === 1 ? matches[0].path : undefined);
+                    if (selectedPath !== undefined) {
+                        const known = casesByPath.get(selectedPath) ?? [];
                         known.push(test);
-                        casesByPath.set(chosen.path, known);
+                        casesByPath.set(selectedPath, known);
                     } else if (matches.length > 1) {
                         completedCases.add(test);
                         results.push({
