@@ -20,8 +20,8 @@ import { fileURLToPath } from "node:url";
 // SFNS-307: Turbo replays a CI task from cache only when nothing it reads changed. Workspace packages read root scripts
 // Turbo cannot see, so turbo.json makes every scripts/ path a global input except the standalone scripts the CI planner
 // lists. These tests ask Turbo for real task hashes and check the standalone list against every tracked file. CI's plan
-// job runs only the "standalone list: " tests, which need no Turbo, on every pull request; CI restores no Turbo cache
-// yet (SFNS-312), so the task-hash tests guard the local cache and the cache CI will restore.
+// job runs only the "standalone list: " tests, which need no Turbo, on every pull request; the task-hash tests guard
+// the local cache and the cache the JavaScript and DevFn tests jobs restore (SFNS-312).
 
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 // Turbo's npm bin is a Node script, so it runs under this Node on every platform. Windows cannot spawn the turbo.cmd
