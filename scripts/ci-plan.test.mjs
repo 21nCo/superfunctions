@@ -211,6 +211,7 @@ test("only ci.yml and non-standalone scripts force a full JavaScript run", () =>
   const { root, plan } = devfnFixture({
     "scripts/promote.mjs": "export {};\n",
     "scripts/public-boundary.allow.json": "{}\n",
+    "scripts/workflow-pins.test.mjs": "export {};\n",
     "scripts/promote-helper.mjs": "export {};\n",
     "scripts/docs-site/llms.mjs": "export {};\n",
     ".github/workflows/ci.yml": "jobs: {}\n",
@@ -220,6 +221,7 @@ test("only ci.yml and non-standalone scripts force a full JavaScript run", () =>
     for (const [file, fullJs] of [
       ["scripts/promote.mjs", false],
       ["scripts/public-boundary.allow.json", false],
+      ["scripts/workflow-pins.test.mjs", false],
       ["scripts/promote-helper.mjs", true],
       ["scripts/docs-site/llms.mjs", true],
       [".github/workflows/uifn-browser.yml", false],
