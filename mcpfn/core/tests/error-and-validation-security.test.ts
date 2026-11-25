@@ -348,6 +348,25 @@ describe("withheld errors outside tool handlers (MCP-SEC-08)", () => {
     expect(onError).not.toHaveBeenCalled();
   });
 
+  it("withholds schema errors that handlers throw", async () => {
+    const onError = vi.fn();
+    const { z } = await import("zod");
+    const registry = new McpFnRegistry().registerResource({
+      uri: "file:///report",
+      name: "report",
+      read: async () => {
+        z.object({ internalSecretField: z.string() }).parse({ internalSecretField: 1 });
+        return { contents: [] };
+      },
+    });
+    const client = await connect(registry, { onError });
+    const error = await client.readResource({ uri: "file:///report" }).then(() => undefined, (failure: unknown) => failure);
+    expect(error).toMatchObject({ code: ErrorCode.InternalError, data: { errorId: expect.any(String) } });
+    expect(JSON.stringify(error)).not.toContain("internalSecretField");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(onError).toHaveBeenCalledOnce();
+  });
+
   it("answers without waiting for a slow onError sink", async () => {
     const client = await connect(
       new McpFnRegistry().register({ name: "fail", description: "Fails.", inputSchema: { type: "object" }, handler: async () => { throw systemError(); } }),

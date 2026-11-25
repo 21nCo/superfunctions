@@ -166,6 +166,11 @@ export function resolveMcpFnServerCapabilities<TContext>(
   return mergeCapabilities(registryCapabilities, additionalCapabilities);
 }
 
+/** Carries an error thrown by one of McpFn's request handlers. */
+class HandlerFailure {
+  constructor(readonly error: unknown) {}
+}
+
 function requestSchemaIssues(error: unknown): Array<{ path: string; message: string }> | undefined {
   try {
     // Zod 3 names it "ZodError", Zod 4 (used by the SDK) "$ZodError".
@@ -343,8 +348,17 @@ export class McpFnServer<TContext = undefined> {
   }
 
   private installHandlers(): void {
+    // Tag errors thrown by McpFn's handlers (see withheldProtocolErrors).
+    const register = ((schema: unknown, handler: (request: unknown, extra: unknown) => Promise<unknown>) =>
+      this.protocol.setRequestHandler(schema as never, (async (request: unknown, extra: unknown) => {
+        try {
+          return await handler(request, extra);
+        } catch (error) {
+          throw new HandlerFailure(error);
+        }
+      }) as never)) as typeof this.protocol.setRequestHandler;
     if (this.capabilities.tools) {
-      this.protocol.setRequestHandler(
+      register(
         ListToolsRequestSchema,
         async (request, extra) => {
           const tools = this.registry.listTools();
@@ -374,7 +388,7 @@ export class McpFnServer<TContext = undefined> {
           };
         },
       );
-      this.protocol.setRequestHandler(
+      register(
         CallToolRequestSchema,
         async (request, extra) => {
           const context = await this.contextFactory(extra);
@@ -573,7 +587,7 @@ export class McpFnServer<TContext = undefined> {
     }
 
     if (this.capabilities.resources) {
-      this.protocol.setRequestHandler(
+      register(
         ListResourcesRequestSchema,
         async (request, extra) => {
           const context = await this.contextFactory(extra);
@@ -589,7 +603,7 @@ export class McpFnServer<TContext = undefined> {
           };
         },
       );
-      this.protocol.setRequestHandler(
+      register(
         ListResourceTemplatesRequestSchema,
         async (request) => {
           const result = page(
@@ -603,7 +617,7 @@ export class McpFnServer<TContext = undefined> {
           };
         },
       );
-      this.protocol.setRequestHandler(
+      register(
         ReadResourceRequestSchema,
         async (request, extra) => {
           const context = await this.contextFactory(extra);
@@ -612,7 +626,7 @@ export class McpFnServer<TContext = undefined> {
         },
       );
       if (this.capabilities.resources.subscribe) {
-        this.protocol.setRequestHandler(
+        register(
           SubscribeRequestSchema,
           async (request, extra) => {
             const uri = request.params.uri;
@@ -651,7 +665,7 @@ export class McpFnServer<TContext = undefined> {
             }
           },
         );
-        this.protocol.setRequestHandler(
+        register(
           UnsubscribeRequestSchema,
           async (request, extra) => {
             // Stop delivery first: a client that asked to unsubscribe gets no
@@ -674,7 +688,7 @@ export class McpFnServer<TContext = undefined> {
     }
 
     if (this.capabilities.prompts) {
-      this.protocol.setRequestHandler(
+      register(
         ListPromptsRequestSchema,
         async (request) => {
           const result = page(
@@ -688,7 +702,7 @@ export class McpFnServer<TContext = undefined> {
           };
         },
       );
-      this.protocol.setRequestHandler(
+      register(
         GetPromptRequestSchema,
         async (request, extra) => {
           const context = await this.contextFactory(extra);
@@ -704,7 +718,7 @@ export class McpFnServer<TContext = undefined> {
     }
 
     if (this.capabilities.completions) {
-      this.protocol.setRequestHandler(
+      register(
         CompleteRequestSchema,
         async (request, extra) => {
           const context = await this.contextFactory(extra);
@@ -741,7 +755,7 @@ export class McpFnServer<TContext = undefined> {
     const original = protocol._requestHandlers;
     if (!(original instanceof Map)) return;
     const wrap = (handler: Handler): Handler => (request, extra) =>
-      this.withheldProtocolErrors(request.method, () => handler(request, extra));
+      this.withheldProtocolErrors(request.method, () => handler(request, extra), true);
     const handlers = new Map(original);
     protocol._requestHandlers = Object.assign(handlers, {
       get(method: string) {
@@ -783,14 +797,24 @@ export class McpFnServer<TContext = undefined> {
   }
 
   /** Run a protocol handler, withholding unexpected error text. */
-  private async withheldProtocolErrors<T>(method: string, run: () => Promise<T>): Promise<T> {
+  private async withheldProtocolErrors<T>(
+    method: string,
+    run: () => Promise<T>,
+    // Only the outermost wrapper, around the SDK's request parsing, may
+    // treat a schema error as invalid client params.
+    requestParsing = false,
+  ): Promise<T> {
     try {
       return await run();
-    } catch (error) {
-      // The SDK validates request params before a handler runs and throws the
-      // schema library's error: that is the client's mistake, not a server
-      // fault, so answer InvalidParams with bounded paths and messages only.
-      const invalidParams = requestSchemaIssues(error);
+    } catch (caught) {
+      // Errors from McpFn's own handlers arrive wrapped, so a schema error
+      // the application throws there stays on the withheld path.
+      const fromHandler = caught instanceof HandlerFailure;
+      const error = fromHandler ? caught.error : caught;
+      // An unwrapped schema error comes from the SDK validating the request
+      // params before any handler ran: the client's mistake, so answer
+      // InvalidParams with bounded paths and messages only.
+      const invalidParams = fromHandler || !requestParsing ? undefined : requestSchemaIssues(error);
       if (invalidParams) throw new McpError(ErrorCode.InvalidParams, "Invalid request parameters", { issues: invalidParams });
       const errorId = await this.reportWithheldError(error, method, undefined, { plainObjects: false });
       if (errorId === undefined) throw error;
