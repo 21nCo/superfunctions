@@ -1563,3 +1563,163 @@ describe("DATA-41 revisions: legacy $rev values are never revisions (round 8)", 
     expect(clone.body.result.data.evolving[0].$rev).toBe(2);
   });
 });
+
+describe("DATA-41 revisions: a write names one record (round 9)", () => {
+  async function tombstoned() {
+    const served = await serve();
+    await served.push({ resource: "task", operation: "insert", id: "task:B", record: { title: "b" } });
+    await served.push({ resource: "task", operation: "delete", id: "task:B" });
+    await served.push({ resource: "task", operation: "insert", id: "task:A", record: { title: "a" } });
+    expect(await served.rev("task", "task:B")).toEqual({ rev: 2, deleted: true });
+    return served;
+  }
+
+  async function unchanged(served: Awaited<ReturnType<typeof tombstoned>>) {
+    const rows = await served.database.findMany({ model: "task", namespace: NS } as any);
+    expect((rows as Json[]).map((row) => [row.id, row.title])).toEqual([["task:A", "a"]]);
+    expect(await served.rev("task", "task:A")).toEqual({ rev: 1, deleted: false });
+    expect(await served.rev("task", "task:B")).toEqual({ rev: 2, deleted: true });
+  }
+
+  const writes: Json[] = [
+    { resource: "task", operation: "insert", id: "task:C", record: { id: "task:B", title: "x" } },
+    { resource: "task", operation: "merge", id: "task:A", record: { id: "task:B", title: "x" } },
+    { resource: "task", operation: "replace", id: "task:A", record: { id: "task:B", title: "x" } },
+  ];
+
+  it.each(writes)("rejects a push $operation whose record.id differs from its id, writing nothing", async (mutation) => {
+    const served = await tombstoned();
+    const res = await served.push(mutation);
+    expect(res.body.ok).toBe(false);
+    expect(JSON.stringify(res.body)).toContain("record.id");
+    expect(JSON.stringify(res.body)).toContain("DFQL_INVALID");
+    await unchanged(served);
+  });
+
+  it.each(writes)("rejects a /mutation $operation whose record.id differs from its id, writing nothing", async (mutation) => {
+    const served = await tombstoned();
+    const res = await served.send("mutation", { ...mutation, version: 1, clientId: "c", mutationId: `direct-${mutation.operation}` });
+    expect(res.body.ok).toBe(false);
+    expect(JSON.stringify(res.body)).toContain("record.id");
+    await unchanged(served);
+  });
+
+  it.each(writes)("rejects a /transact $operation whose record.id differs from its id, writing nothing", async (mutation) => {
+    const served = await tombstoned();
+    const res = await served.send("transact", {
+      atomic: true,
+      steps: [{ mutation: { ...mutation, version: 1, clientId: "c", mutationId: `tx-${mutation.operation}` } }],
+    });
+    expect(res.body.result.ok).toBe(false);
+    expect(JSON.stringify(res.body)).toContain("record.id");
+    await unchanged(served);
+  });
+
+  it("accepts a record.id equal to the mutation id on every path", async () => {
+    const served = await serve();
+    const pushed = await served.push({ resource: "task", operation: "insert", id: "task:1", record: { id: "task:1", title: "a" } });
+    expect(pushed.body.ok).toBe(true);
+    const direct = await served.send("mutation", {
+      resource: "task", version: 1, operation: "merge", id: "task:1", record: { id: "task:1", title: "b" },
+      clientId: "c", mutationId: "direct-same",
+    });
+    expect(direct.body.ok).toBe(true);
+    const transact = await served.send("transact", {
+      atomic: true,
+      steps: [{ mutation: { resource: "task", version: 1, operation: "replace", id: "task:1", record: { id: "task:1", title: "c" }, clientId: "c", mutationId: "tx-same" } }],
+    });
+    expect(transact.status).toBe(200);
+    expect(await served.rev("task", "task:1")).toEqual({ rev: 3, deleted: false });
+  });
+});
+
+describe("DATA-41 revisions: change rows record rev only for certified records (round 9)", () => {
+  const declared = {
+    resources: [
+      {
+        name: "drifting",
+        version: 1,
+        fields: [
+          { name: "title", type: "string" as const, required: false },
+          { name: "$rev", type: "number" as const, required: false },
+          { name: "status", type: "string" as const, required: false, default: "open" },
+        ],
+      },
+    ],
+    relations: [],
+  };
+  const dropped = {
+    resources: [
+      {
+        name: "drifting",
+        version: 1,
+        fields: [
+          { name: "title", type: "string" as const, required: false },
+          { name: "status", type: "string" as const, required: false, default: "open" },
+        ],
+      },
+    ],
+    relations: [],
+  };
+
+  it("sends no rev or $rev for changes written while the resource declared $rev, and does after the drop", async () => {
+    const database = memoryAdapter();
+    const before = await serve({ database, schema: declared });
+    expect((await before.push({ resource: "drifting", operation: "insert", id: "drifting:1", record: { title: "a", $rev: 5 } })).body.ok).toBe(true);
+    expect((await before.push({ resource: "drifting", operation: "replace", id: "drifting:1", record: { title: "b", $rev: 6 } })).body.ok).toBe(true);
+    expect((await before.push({ resource: "drifting", operation: "insert", id: "drifting:2", record: { title: "c" } })).body.ok).toBe(true);
+
+    const after = await serve({ database, schema: dropped });
+    expect((await after.push({ resource: "drifting", operation: "insert", id: "drifting:3", record: { title: "d" }, mutationId: "after-drop-insert" })).body.ok).toBe(true);
+
+    const canonical = await after.send("pull", { clientId: "client:b", cursors: { drifting: "0" } });
+    expect(canonical.body.ok).toBe(true);
+    const rows = new Map<string, Json>();
+    for (const bucket of ["records", "merged"] as const) {
+      for (const row of canonical.body.result[bucket]?.drifting ?? []) rows.set(row.id, row);
+    }
+    expect(rows.get("drifting:1")).toBeDefined();
+    expect(rows.get("drifting:1")).not.toHaveProperty("$rev");
+    expect(rows.get("drifting:2")).toBeDefined();
+    expect(rows.get("drifting:2")).not.toHaveProperty("$rev");
+    expect(rows.get("drifting:3")?.$rev).toBe(1);
+
+    const global = await after.send("pull", { clientId: "client:b", cursor: "0" });
+    expect(global.body.ok).toBe(true);
+    const changes = (global.body.result.changes as Json[]).filter((change) => change.resource === "drifting");
+    for (const change of changes.filter((c) => c.id !== "drifting:3" && c.record?.id !== "drifting:3")) {
+      expect(change).not.toHaveProperty("rev");
+      expect(change.record ?? {}).not.toHaveProperty("$rev");
+    }
+    const later = changes.find((c) => c.id === "drifting:3" || c.record?.id === "drifting:3");
+    expect(later?.rev).toBe(1);
+    expect(later?.record?.$rev).toBe(1);
+  });
+});
+
+describe("DATA-41 revisions: revisions follow the row storage partition (round 9)", () => {
+  const provider = { namespaceProvider: { getNamespace: () => "tenant:a" } };
+
+  it.each([
+    ["rowLevelNamespace: false with a namespace provider", { ...provider, rowLevelNamespace: false }],
+    ["rowLevelNamespace: false without a namespace provider", { rowLevelNamespace: false }],
+    ["row-level isolation disabled with a namespace provider", { ...provider, rowLevelNamespace: { enabled: false, columnName: "__ns", mandatory: true } }],
+  ])("refuses revisions.enabled when rows are shared across namespaces: %s", async (_label, extra) => {
+    await expect(createDatafnServer({
+      schema,
+      database: memoryAdapter(),
+      allowUnknownResources: true,
+      revisions: { enabled: true },
+      ...(extra as any),
+    })).rejects.toThrow(/row-level namespace isolation/);
+  });
+
+  it("accepts revisions with row-level isolation, and shared rows with revisions off", async () => {
+    await expect(createDatafnServer({
+      schema, database: memoryAdapter(), allowUnknownResources: true, revisions: { enabled: true }, ...provider,
+    })).resolves.toBeDefined();
+    await expect(createDatafnServer({
+      schema, database: memoryAdapter(), allowUnknownResources: true, ...provider, rowLevelNamespace: false,
+    })).resolves.toBeDefined();
+  });
+});

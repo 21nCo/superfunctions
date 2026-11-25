@@ -43,7 +43,7 @@ import {
 import { getDatafnMultiRegionRuntimeConfig } from "../../plugins/multi-region.js";
 import type { DatafnMultiRegionRuntimeConfig } from "../../plugins/multi-region.js";
 import { ChangeTrackingService, recordChangeWithRetry, recordChangesWithRetry, type ChangeEntryInput } from "../sync/change-tracking.js";
-import { issuesRevisions, recordedRevision } from "../revisions.js";
+import { issuesRevisions, recordedRevision, recordIdMismatch } from "../revisions.js";
 import {
   applyRelationInheritanceForRelate,
   applyRelationInheritanceForShare,
@@ -261,6 +261,20 @@ async function executeMutationCore(
           code: "DFQL_INVALID",
           message: `Field is read-only: ${systemField} on ${mutation.resource}`,
           path: `record.${systemField}`,
+          retryable: false,
+        }],
+        deduped: false,
+      };
+    }
+    if (recordIdMismatch(mutation)) {
+      return {
+        ok: false,
+        mutationId: effectiveMutationId,
+        affectedIds: [],
+        errors: [{
+          code: "DFQL_INVALID",
+          message: `Invalid DFQL: record.id must equal the mutation id on ${mutation.resource}`,
+          path: "record.id",
           retryable: false,
         }],
         deduped: false,

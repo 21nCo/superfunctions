@@ -435,6 +435,14 @@ export class ChangeTrackingService {
     // commits), which raises each changed record's revision once.
     await this.assignRevisions(entries);
     const recordRev = this.issueRevisions && this.revColumnReady;
+    const schema = this.revisionSchema;
+    // A change row records a revision only when the write certified its
+    // record: the resource issued revisions when it was written, so the
+    // record is the stored row read in the write (or a patch or delete whose
+    // revision alone is sent). A resource with its own `$rev` field records
+    // none, so its payloads are never read as certified rows later.
+    const certifiesRecord = (resource: string): boolean =>
+      recordRev && schema !== undefined && issuesRevisions(schema, resource);
 
     const now = new Date().toISOString();
     const rows = entries.map((params) => ({
@@ -446,7 +454,7 @@ export class ChangeTrackingService {
       op: params.op,
       record: params.record ? JSON.stringify(params.record) : null,
       created_at: now,
-      ...(recordRev && params.rev !== undefined ? { rev: params.rev } : {}),
+      ...(params.rev !== undefined && certifiesRecord(params.resource) ? { rev: params.rev } : {}),
     }));
 
     // EXE-018: Batch capability detection — use createMany when available

@@ -581,6 +581,7 @@ export async function createDatafnServer<TContext = any>(
   const hasNamespaceProvider = !!config.namespaceProvider;
   const shouldWrapNamespace = db && schemaIsNamespaced && config.rowLevelNamespace !== false
     && (adapterHasSchemaConstraints || hasNamespaceProvider || (typeof config.rowLevelNamespace === 'object' && config.rowLevelNamespace));
+  let rowsPartitionedByNamespace = false;
   if (shouldWrapNamespace) {
     const rlnConfig: RowLevelNamespaceConfig =
       typeof config.rowLevelNamespace === 'object' && config.rowLevelNamespace
@@ -588,11 +589,30 @@ export async function createDatafnServer<TContext = any>(
         : { enabled: true, columnName: '__ns', mandatory: true };
 
     if (rlnConfig.enabled && db) {
+      rowsPartitionedByNamespace = true;
       const internal = db.internal; // preserve original internal (already bypassed by wrapper, but be explicit)
       db = wrapWithRowLevelNamespace(db, rlnConfig);
       // Ensure internal is the original unwrapped internal
       (db as any).internal = internal;
     }
+  }
+  // DATA-41: revisions are keyed by namespace, so they are issued only where
+  // each namespace's rows are its own: row-level namespace isolation is on, or
+  // every request uses the one default namespace. With rows shared across
+  // namespaces (`rowLevelNamespace: false`, or a namespace provider without
+  // row-level isolation), a write from one namespace would change a row whose
+  // revision another namespace holds without raising it.
+  if (
+    config.revisions?.enabled === true &&
+    configuredDatabase &&
+    !rowsPartitionedByNamespace &&
+    (hasNamespaceProvider || config.rowLevelNamespace === false ||
+      (typeof config.rowLevelNamespace === 'object' && config.rowLevelNamespace && !config.rowLevelNamespace.enabled))
+  ) {
+    throw new Error(
+      "DataFn revisions.enabled requires row-level namespace isolation: rows shared across namespaces " +
+        "(rowLevelNamespace: false, or a namespaceProvider without row-level isolation) cannot carry per-namespace revisions",
+    );
   }
   if (db && observabilityScope) {
     db = instrumentAdapter(db, {

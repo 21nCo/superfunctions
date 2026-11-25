@@ -10,7 +10,7 @@ import { Kysely, PostgresDialect, type PostgresPool, type PostgresPoolClient, ty
 import { kyselyAdapter } from "@superfunctions/db/adapters";
 import type { Adapter } from "@superfunctions/db";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { bumpRevision, ensureRevisionsTable, readRevisions, readWithRevisions } from "../src/execution/revisions.js";
+import { bumpRevision, configureRevisions, ensureRevisionsTable, readRevisions, readWithRevisions } from "../src/execution/revisions.js";
 import { ChangeTrackingService } from "../src/execution/sync/change-tracking.js";
 import {
   inspectPostgresNamespaceStorage,
@@ -18,6 +18,10 @@ import {
   resolveNamespaceStoragePlan,
   selectNamespaceStorageEntries,
 } from "../src/namespace-storage.js";
+
+// A schema whose `task` resource issues revisions (change rows record rev only then).
+const revisionSchema = { resources: [{ name: "task", version: 1, fields: [{ name: "title", type: "string" }] }], relations: [] } as any;
+configureRevisions(revisionSchema, { enabled: true });
 
 function pgliteAsPool(pg: PGlite): PostgresPool {
   const client = {
@@ -79,7 +83,7 @@ describe("DATA-41 revisions on PostgreSQL", { timeout: PG_TIMEOUT_MS }, () => {
       'CREATE TABLE "__datafn_changes" (id text primary key, namespace text, server_seq integer, resource text, record_id text, op text, record text, created_at text)',
     );
     const service = new ChangeTrackingService(adapter, "ns");
-    service.issueRevisions = true;
+    service.useRevisionsOf(revisionSchema);
     await service.ensureReady();
     await service.ensureRevisionsReady();
     await adapter.transaction(async (tx) => {

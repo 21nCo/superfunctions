@@ -9,9 +9,13 @@ import { Kysely, PostgresDialect } from "kysely";
 import { kyselyAdapter } from "@superfunctions/db/adapters";
 import type { Adapter } from "@superfunctions/db";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { bumpRevision, ensureRevisionsTable, readRevisions, readWithRevisions } from "../src/execution/revisions.js";
+import { bumpRevision, configureRevisions, ensureRevisionsTable, readRevisions, readWithRevisions } from "../src/execution/revisions.js";
 import { ChangeTrackingService } from "../src/execution/sync/change-tracking.js";
 import { createDatafnServer } from "../src/server.js";
+
+// A schema whose `task` resource issues revisions (change rows record rev only then).
+const revisionSchema = { resources: [{ name: "task", version: 1, fields: [{ name: "title", type: "string" }] }], relations: [] } as any;
+configureRevisions(revisionSchema, { enabled: true });
 
 const url = process.env.DATAFN_TEST_POSTGRES_URL;
 // CI (.github/workflows/datafn-postgres.yml) sets this, so a missing server
@@ -51,7 +55,7 @@ describe.skipIf(!url)("DATA-41 revisions on a PostgreSQL server", { timeout: 60_
 
   it("serializes two overlapping transactions writing one record: n + 1 and n + 2, never the same", async () => {
     const service = new ChangeTrackingService(adapter, namespace);
-    service.issueRevisions = true;
+    service.useRevisionsOf(revisionSchema);
     await service.ensureReady();
     await service.ensureRevisionsReady();
     const id = "task:overlap";

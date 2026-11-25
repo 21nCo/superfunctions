@@ -18,7 +18,7 @@ import {
 } from "../idempotency.js";
 import type { SequenceStore } from "./sequence-store.js";
 import { ChangeTrackingService, recordChangeWithRetry } from "./change-tracking.js";
-import { issuesRevisions, recordedRevision, REVISION_FIELD } from "../revisions.js";
+import { issuesRevisions, recordedRevision, recordIdMismatch, REVISION_FIELD } from "../revisions.js";
 import type { ChangeEntryInput } from "./change-tracking.js";
 import { canReadEveryField, isPrivateShareableResource, resolveAccessLevel } from "../../validation/authz.js";
 import {
@@ -538,6 +538,14 @@ export async function executePush(
           code: "DFQL_INVALID",
           message: `Field is read-only: ${systemField} on ${mut.resource}`,
           path: `record.${systemField}`,
+        };
+      }
+      if (recordIdMismatch(mut)) {
+        return {
+          ok: false,
+          code: "DFQL_INVALID",
+          message: `Invalid DFQL: record.id must equal the mutation id on ${mut.resource}`,
+          path: "record.id",
         };
       }
     }

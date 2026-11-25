@@ -87,6 +87,20 @@ export function issuesRevisions(schema: DatafnSchema, resource: string): boolean
   return !(def.fields ?? []).some((field) => field.name === REVISION_FIELD);
 }
 
+/**
+ * DATA-41: a record write names one record. A `record.id` that differs from
+ * the mutation's `id` would store (or rename the row to) a record other than
+ * the one whose revision the write raises, so such a write is rejected before
+ * anything is written.
+ */
+export function recordIdMismatch(mutation: { resource: string; id: unknown; record?: unknown }): boolean {
+  if (!tracksRevisions(mutation.resource)) return false;
+  const record = mutation.record;
+  if (typeof record !== "object" || record === null || !Object.prototype.hasOwnProperty.call(record, "id")) return false;
+  const recordId = (record as Record<string, unknown>).id;
+  return recordId !== undefined && recordId !== mutation.id;
+}
+
 /** Fixed-length key of a record's revision row, like the v2 idempotency ids. */
 export function revisionRowId(namespace: string, resource: string, recordId: string): string {
   const digest = createHash("sha256")
