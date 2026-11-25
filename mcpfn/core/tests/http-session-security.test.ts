@@ -184,6 +184,21 @@ describe("createWebStandardHandler session binding (MCP-SEC-03)", () => {
     expect((await call(sessionId!, from("https://issuer-one.example"))).status).toBe(200);
   });
 
+  it("keeps one actor's sessions in different tenants apart", async () => {
+    const { initialize, call } = await setup();
+    // The AuthFn provider adapter's shape: the same actor and default client
+    // ID in both tenants, told apart only by extra.tenantId.
+    const from = (tenantId: string): AuthInfo => ({
+      token: "test-access-token",
+      clientId: "user:alice",
+      scopes: [],
+      extra: { subject: "alice", tenantId },
+    });
+    const { sessionId } = await initialize(from("tenant-a"));
+    expect((await call(sessionId!, from("tenant-b"))).status).toBe(404);
+    expect((await call(sessionId!, from("tenant-a"))).status).toBe(200);
+  });
+
   it("does not replay another session's events from a shared event store", async () => {
     const events = new Map<string, { streamId: string; message: unknown }>();
     let next = 0;
