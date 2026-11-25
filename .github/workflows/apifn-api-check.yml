@@ -347,7 +347,8 @@ jobs:
             echo "Copied base_spec $BASE_SPEC"
           else
             ref="refs/remotes/origin/${BASE_BRANCH}"
-            if git rev-parse --verify --quiet "${ref}^{commit}" > /dev/null; then
+            # show-ref --verify reads exactly this ref; rev-parse would fall back to a tag or branch of the same name.
+            if git show-ref --verify --quiet "$ref"; then
               echo "origin/${BASE_BRANCH} was fetched by the checkout."
             else
               auth="$(printf 'x-access-token:%s' "$FETCH_TOKEN" | base64 -w0)"
@@ -355,7 +356,8 @@ jobs:
               GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="http.${GITHUB_SERVER_URL}/.extraheader" GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth" \
                 git fetch --no-tags origin "+refs/heads/${BASE_BRANCH}:${ref}"
             fi
-            sha="$(git rev-parse --verify "${ref}^{commit}")"
+            oid="$(git show-ref --verify --hash "$ref")"
+            sha="$(git rev-parse --verify "${oid}^{commit}")"
             echo "Base origin/${BASE_BRANCH} is $sha"
             echo "sha=$sha" >> "$GITHUB_OUTPUT"
           fi
