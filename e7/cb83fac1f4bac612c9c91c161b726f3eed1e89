@@ -1,0 +1,45 @@
+packages/evidence/README.md
+  s_12235e5930aa22::t_eeed7b15dbc578 84
+packages/evidence/src/datetime.ts
+  s_12235e5930aa22::t_3f61a7484a1c16 142-148,151-159
+packages/evidence/src/validate.ts
+  s_12235e5930aa22::t_7be674b7db228a 1,330-332
+packages/evidence/test/fixtures/cases.json
+  s_08ba8baed8969a::t_4fe14caf558b23 21-23,97-98
+packages/evidence/test/validate.test.ts
+  s_12235e5930aa22::t_c99e1896408d98 144-148,152-180
+packages/evidence/scripts/verify-packed.mjs
+  s_4c194b18f54fbf::t_2399fcacb3a5d9 65,67,143
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e7cb83fac1f4bac612c9c91c161b726f3eed1e89",
+  "prompts": {},
+  "sessions": {
+    "s_08ba8baed8969a": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a211ab-e567-7052-ae97-961e8a10be50",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_12235e5930aa22": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a211ab-2f55-7b20-a3cd-c79e6e4b95cb",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_4c194b18f54fbf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a211b5-92e0-7a02-b15b-0e212fa70da6",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
