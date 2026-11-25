@@ -804,6 +804,7 @@ class UploadSessionService:
         if session.uploadMode != "proxy":
             raise errors.no_supported_upload_mode()
 
+        etag = hashlib.md5(data).hexdigest()
         if session.status in ("aborted", "refused"):
             raise errors.upload_aborted()
         if session.status == "completed":
@@ -816,7 +817,6 @@ class UploadSessionService:
         if len(data) > part_limit:
             raise errors.part_too_large(part_number, part_limit)
 
-        etag = f"proxy-sha256-{hashlib.sha256(data).hexdigest()}"
         existing = await self.db.find_one(
             model="uploadParts",
             where=[
@@ -826,26 +826,8 @@ class UploadSessionService:
             namespace=self.namespace,
         )
         if existing:
-            stored_etag = existing.get("etag")
-            if existing.get("size") == len(data):
-                if stored_etag == etag:
-                    return {"etag": etag, "size": len(data), "recorded": True}
-                if isinstance(stored_etag, str) and re.fullmatch(r"[a-f0-9]{32}", stored_etag):
-                    # Older proxy parts used MD5. Compare bytes to preserve exact
-                    # retries without treating a weak digest as proof of equality.
-                    try:
-                        matches = await self._proxy_part_matches(session, part_number, data)
-                    except Exception:
-                        # A concurrent completion may have committed and removed
-                        # this part after our session snapshot was read.
-                        current = await self._get_session_data(upload_session_id)
-                        if current.get("status") == "completed":
-                            raise errors.upload_already_completed() from None
-                        if current.get("status") in ("aborted", "refused"):
-                            raise errors.upload_aborted() from None
-                        raise
-                    if matches:
-                        return {"etag": stored_etag, "size": len(data), "recorded": True}
+            if existing.get("etag") == etag and existing.get("size") == len(data):
+                return {"etag": etag, "size": len(data), "recorded": True}
             raise errors.part_conflict(upload_session_id, part_number)
 
         part_key = self._proxy_part_key(session, part_number)
@@ -860,20 +842,6 @@ class UploadSessionService:
         await self.complete_part(upload_session_id, part_number, etag, len(data), ctx)
 
         return {"etag": etag, "size": len(data), "recorded": True}
-
-    async def _proxy_part_matches(self, session: UploadSessionRecord, part_number: int, data: bytes) -> bool:
-        policy = self.policies.get(session.policy)
-        stream = await self.storage.open_download_stream(
-            key=self._proxy_part_key(session, part_number), target=resolve_storage_target(policy)
-        )
-        incoming = memoryview(data)
-        offset = 0
-        matches = True
-        async for chunk in stream:
-            end = offset + len(chunk)
-            matches = matches and incoming[offset:end] == chunk
-            offset = end
-        return matches and offset == len(incoming)
 
     async def _finalize_proxy_upload(self, session: UploadSessionRecord, parts: List[Dict[str, Any]]) -> None:
         policy = self.policies.get(session.policy)
@@ -897,12 +865,12 @@ class UploadSessionService:
                 target=storage_target,
             )
 
-    async def _list_upload_parts(self, upload_session_id: str) -> List[Dict[str, Any]]:
-        return await self.db.find_many(
-            model="uploadParts",
-            where=[{"field": "uploadSessionId", "operator": "eq", "value": upload_session_id}],
-            namespace=self.namespace,
-        )
+        for part in sorted_parts:
+            part_key = self._proxy_part_key(session, part["partNumber"])
+            try:
+                await self.storage.delete_object(key=part_key, target=storage_target)
+            except Exception:
+                pass
 
     @staticmethod
     def _key_is_session_owned(session: "UploadSessionRecord", session_data: Dict[str, Any]) -> bool:
@@ -916,9 +884,13 @@ class UploadSessionService:
         session_data: Dict[str, Any],
         upload_session_id: str,
         storage_target: str,
-    ) -> List[Dict[str, Any]]:
-        """Finalizes and verifies the object, returning any proxy parts to clean up after commit."""
-        parts_data = await self._list_upload_parts(upload_session_id)
+    ) -> None:
+        """Checks the recorded parts and finalizes the session's object, verifying its stored size."""
+        parts_data = await self.db.find_many(
+            model="uploadParts",
+            where=[{"field": "uploadSessionId", "operator": "eq", "value": upload_session_id}],
+            namespace=self.namespace,
+        )
         if len(parts_data) != session.totalParts:
             raise errors.upload_incomplete()
         uploaded_size = sum(int(part.get("size") or 0) for part in parts_data)
@@ -992,8 +964,6 @@ class UploadSessionService:
                 raise errors.upload_size_mismatch(session.size, actual)
         elif session.uploadMode == "proxy":
             await self._finalize_proxy_upload(session, parts_data)
-            return parts_data
-        return []
 
     async def _set_status_if(self, upload_session_id: str, expected: str, status: str) -> None:
         """Moves the session to `status` only while it is still `expected` (never over a terminal state)."""
@@ -1075,8 +1045,8 @@ class UploadSessionService:
 
         # A retry after an attempt that wrote this version and then failed (for
         # example on the session update below) finds the version already
-        # published. It skips storage finalization (the object may have been
-        # deduplicated away) and finishes the session. Version IDs are unique.
+        # published. It touches no storage (the parts may be gone, or the object
+        # deduplicated away) and only finishes the session. Version IDs are unique.
         published: Optional[Dict[str, Any]] = None
         if session.completionVersionId:
             published = await self.db.find_one(
@@ -1099,11 +1069,8 @@ class UploadSessionService:
         policy = self.policies.get(session.policy)
         storage_target = resolve_storage_target(policy)
 
-        proxy_parts = []
         if not published:
-            proxy_parts = await self._finalize_upload_storage(session, session_data, upload_session_id, storage_target)
-        elif session.uploadMode == "proxy":
-            proxy_parts = await self._list_upload_parts(upload_session_id)
+            await self._finalize_upload_storage(session, session_data, upload_session_id, storage_target)
 
         now_str = datetime.now(timezone.utc).isoformat()
         metadata = session_data.get("metadata") or {}
@@ -1242,14 +1209,6 @@ class UploadSessionService:
             },
             namespace=self.namespace,
         )
-
-        # Keep staged bytes available for retries until the completed status is committed.
-        for part in proxy_parts:
-            part_key = self._proxy_part_key(session, part["partNumber"])
-            try:
-                await self.storage.delete_object(key=part_key, target=storage_target)
-            except Exception:
-                pass
 
         if self.quota:
             await self.quota.record_usage(

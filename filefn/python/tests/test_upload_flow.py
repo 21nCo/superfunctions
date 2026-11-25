@@ -543,31 +543,6 @@ async def test_proxy_part_recording_idempotency_conflict_and_complete_idempotenc
 
 
 @pytest.mark.asyncio
-async def test_proxy_part_retry_checks_stored_bytes_for_legacy_etags() -> None:
-    db = FakeDB()
-    service = _make_service(db=db)
-    session = await service.create_session(
-        CreateSessionInput(policy="user-avatar", fileName="proxy.png", size=3, mimeType="image/png"),
-        _ctx(),
-    )
-    session_id = session["uploadSessionId"]
-    await service.record_proxy_part(session_id, 1, b"abc", _ctx())
-    legacy_etag = "01234567" * 4
-    await db.update(
-        model="uploadParts",
-        where=[{"field": "uploadSessionId", "operator": "eq", "value": session_id}],
-        data={"etag": legacy_etag},
-        namespace="filefn",
-    )
-
-    retry = await service.record_proxy_part(session_id, 1, b"abc", _ctx())
-    assert retry == {"etag": legacy_etag, "size": 3, "recorded": True}
-    with pytest.raises(Exception) as conflict:
-        await service.record_proxy_part(session_id, 1, b"xyz", _ctx())
-    assert getattr(conflict.value, "code", "") == "FILEFN_PART_CONFLICT"
-
-
-@pytest.mark.asyncio
 async def test_complete_session_validates_uploaded_size_matches_declared_size() -> None:
     service = _make_service()
     session = await service.create_session(
@@ -1300,17 +1275,10 @@ async def test_retry_after_the_version_was_written_finishes_the_session() -> Non
 
 
 @pytest.mark.asyncio
-async def test_proxy_retry_after_the_version_was_written_cleans_up_after_completed_status() -> None:
+async def test_proxy_retry_after_the_version_was_written_finishes_without_storage() -> None:
     db, service, session = await _proxy_session_published_without_completed()
-    session_id = session["uploadSessionId"]
-    part_key, = set(service.storage.objects) - {db.tables["fileVersions"][0]["storageKey"]}
-    legacy_etag = "01234567" * 4
-    db.tables["uploadParts"][0]["etag"] = legacy_etag
-    retry = await service.record_proxy_part(session_id, 1, b"abc", _ctx())
-    assert retry["etag"] == legacy_etag
-
-    result = await service.complete_session(session_id, _ctx())
-    assert part_key not in service.storage.objects
+    # The staged parts are gone; the retry finishes from the published version alone.
+    result = await service.complete_session(session["uploadSessionId"], _ctx())
     assert db.tables["uploadSessions"][0]["status"] == "completed"
     assert [row["versionId"] for row in db.tables["fileVersions"]] == [result["versionId"]]
 

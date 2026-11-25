@@ -115,7 +115,7 @@ export async function serverSetupCommand(
     connectSpinner.succeed('Connected to server');
 
     const temp = await ssh.exec(
-      'directory=$(mktemp -d /tmp/hostfn-setup.XXXXXXXX) && printf "HOSTFN_SETUP_DIR=%s\\n" "$directory"',
+      'directory=$(mktemp -d /tmp/hostfn-setup.XXXXXXXX) && printf "\\nHOSTFN_SETUP_DIR=%s\\n" "$directory"',
       setupExecOptions
     );
     const directory = temp.stdout.match(/^HOSTFN_SETUP_DIR=(\/tmp\/hostfn-setup\.[A-Za-z0-9]{8})\r?$/m)?.[1];
