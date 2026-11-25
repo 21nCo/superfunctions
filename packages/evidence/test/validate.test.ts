@@ -64,9 +64,12 @@ describe("invalid records", () => {
     }
   });
 
-  it("has a case returning exactly each failure code alone", () => {
+  it("has a case returning exactly each record failure code alone", () => {
     const alone = new Set(cases.invalid.filter((entry) => entry.expected.length === 1).map((entry) => entry.expected[0]?.code));
-    expect([...alone].sort()).toEqual([...EVIDENCE_FAILURE_CODES].sort());
+    // The artifact codes come only from verifyEvidence; node.test.ts covers each of them alone.
+    const recordCodes = EVIDENCE_FAILURE_CODES.filter((code) => !code.startsWith("EVIDENCE_ARTIFACT_"));
+    expect(recordCodes).toHaveLength(11);
+    expect([...alone].sort()).toEqual([...recordCodes].sort());
   });
 
   it("reports an unknown member at an escaped JSON Pointer", () => {

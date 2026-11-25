@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Packs @superfunctions/evidence, installs the tarball offline into a clean
 // consumer outside the repository, imports it and its JSON Schema subpath in
-// Node, type-checks a typed consumer, and bundles the `.` entry for the
+// Node, runs verifyEvidence from the `./node` entry on an artifact it writes,
+// type-checks a typed consumer, and bundles the `.` entry for the
 // browser with esbuild (platform=browser, Node built-ins refused), then runs
 // that bundle in a bare VM context with no Node globals. The Node and browser
 // consumers also run checkEvidenceCrossValues, and the Node consumer runs Ajv
@@ -76,20 +77,44 @@ assert.equal("uniqueItems" in schemaFile.properties.source.properties.artifactHa
 const blocked = validateEvidenceRecord({ ...record, status: "blocked" }, options);
 assert.deepEqual(blocked.failures.map((failure) => failure.code), ["EVIDENCE_NOT_PASSED"]);
 assert.deepEqual(validateEvidenceRecord(undefined, options).failures, [{ code: "EVIDENCE_MISSING" }]);
-assert.equal(EVIDENCE_FAILURE_CODES.length, 11);
+assert.equal(EVIDENCE_FAILURE_CODES.length, 17);
 assert.deepEqual(evidenceRecordSchemaV1, schemaFile);
 assert.equal(schemaFile.$id, "urn:superfunctions:evidence-record:v1");
 console.log(JSON.stringify({ consumer: "esm", ok: true, crossValueCases: crossValueCases.length }));
 `;
 
+// The Node entry re-hashes an artifact in a directory next to the consumer.
+const nodeConsumer = `
+import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { verifyEvidence } from "${name}/node";
+const record = ${JSON.stringify(record)};
+const options = ${JSON.stringify(options)};
+const artifactRoot = fileURLToPath(new URL("./checkout/", import.meta.url));
+const [artifact] = record.source.artifactHashes;
+mkdirSync(new URL("./checkout/reports/", import.meta.url), { recursive: true });
+writeFileSync(new URL("./checkout/" + artifact.path, import.meta.url), "packed artifact\\n");
+const sha256 = createHash("sha256").update("packed artifact\\n").digest("hex");
+const listed = { ...record, source: { ...record.source, artifactHashes: [{ ...artifact, sha256 }] } };
+assert.deepEqual(await verifyEvidence(listed, { ...options, artifactRoot }), { ok: true, failures: [] });
+const changed = await verifyEvidence(record, { ...options, artifactRoot });
+assert.deepEqual(changed.failures.map((failure) => failure.code), ["EVIDENCE_ARTIFACT_HASH_MISMATCH"]);
+assert.deepEqual((await verifyEvidence(listed, { ...options, artifactRoot: "checkout" })).failures, [{ code: "EVIDENCE_OPTIONS_INVALID", detail: { invalid: ["artifactRoot"] } }]);
+console.log(JSON.stringify({ consumer: "node", ok: true }));
+`;
+
 const typedConsumer = `
-import { checkEvidenceCrossValues, validateEvidenceRecord, type EvidenceFailure, type EvidenceFailureCode, type EvidenceRecordV1, type ValidateEvidenceRecordOptions } from "${name}";
+import { checkEvidenceCrossValues, validateEvidenceRecord, type EvidenceFailure, type EvidenceFailureCode, type EvidenceRecordV1, type EvidenceValidationResult, type ValidateEvidenceRecordOptions } from "${name}";
+import { verifyEvidence, type VerifyEvidenceOptions } from "${name}/node";
 declare const record: EvidenceRecordV1;
 const options: ValidateEvidenceRecordOptions = { expectedCommit: "${options.expectedCommit}", now: new Date(), expiryPolicy: { "unit-test": 24 } };
 const result = validateEvidenceRecord(record, options);
 export const codes: EvidenceFailureCode[] = result.failures.map((failure) => failure.code);
 export const ok: boolean = result.ok;
 export const crossValues: EvidenceFailure[] = checkEvidenceCrossValues(record);
+export const verified: Promise<EvidenceValidationResult> = verifyEvidence(record, { ...options, artifactRoot: "/checkout" } satisfies VerifyEvidenceOptions);
 `;
 
 const browserConsumer = `
@@ -114,7 +139,7 @@ try {
   const tarball = path.join(workdir, packed[0].filename);
   const files = packed[0].files.map((file) => file.path).sort();
   console.log(`packed ${packed[0].filename}: ${files.join(", ")}`);
-  for (const required of ["dist/index.js", "dist/index.d.ts", "schema/evidence-record.v1.json", "package.json", "README.md"]) {
+  for (const required of ["dist/index.js", "dist/index.d.ts", "dist/node.js", "dist/node.d.ts", "schema/evidence-record.v1.json", "package.json", "README.md"]) {
     if (!files.includes(required)) throw new Error(`tarball is missing ${required}`);
   }
   const unexpected = files.filter((file) => /^(src|test|scripts)\//.test(file));
@@ -136,6 +161,8 @@ try {
 
   writeFileSync(path.join(consumer, "main.mjs"), esmConsumer);
   console.log(`node ${process.version}: ${run(process.execPath, ["main.mjs"], consumer).trim()}`);
+  writeFileSync(path.join(consumer, "node.mjs"), nodeConsumer);
+  console.log(`node ${process.version}: ${run(process.execPath, ["node.mjs"], consumer).trim()}`);
 
   writeFileSync(path.join(consumer, "src/typed.ts"), typedConsumer);
   writeFileSync(
@@ -172,6 +199,7 @@ try {
   });
   const inputs = Object.keys(result.metafile.inputs);
   if (!inputs.some((input) => input.includes(`node_modules/${name}/dist/index.js`))) throw new Error(`browser bundle did not use dist/index.js: ${inputs.join(", ")}`);
+  if (inputs.some((input) => input.includes(`node_modules/${name}/dist/node.js`))) throw new Error(`browser bundle pulled in the Node entry: ${inputs.join(", ")}`);
   const bundle = result.outputFiles[0].text;
   if (/\brequire\(|\bprocess\.|\bBuffer\b/.test(bundle)) throw new Error("browser bundle references require(), process or Buffer");
   // A fresh context has only the ECMAScript built-ins: no process, Buffer, require or DOM.
