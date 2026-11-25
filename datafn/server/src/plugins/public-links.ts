@@ -48,16 +48,16 @@ export function preparePublicLinkResolveRequest(
 ): Request {
   const source = request.body;
   const state = { complete: !source, rejection: checkPayloadLimit(request, maxPayloadBytes) };
+  if (!source) {
+    boundedResolveBodies.set(request, state);
+    return request;
+  }
   let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
   let total = 0;
   const body = new ReadableStream<Uint8Array>({
     async pull(controller) {
       try {
         if (state.rejection) throw new ResolveBodyError(state.rejection);
-        if (!source) {
-          controller.close();
-          return;
-        }
         if (!reader) {
           if (request.bodyUsed) throw new TypeError("Request body already consumed");
           reader = source.getReader();
@@ -93,6 +93,10 @@ export function preparePublicLinkResolveRequest(
   const bounded = new Request(request, init);
   boundedResolveBodies.set(bounded, state);
   return bounded;
+}
+
+export function getPublicLinkResolveBodyRejection(request: Request): Response | null {
+  return boundedResolveBodies.get(request)?.rejection ?? null;
 }
 
 function unreadableResolveBody(): Response {

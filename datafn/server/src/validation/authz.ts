@@ -600,11 +600,9 @@ function extractFieldsFromFilter(
     // Scalar filters on id and capability-managed fields are always allowed.
     if (baseField === "id" || capabilityFields.has(baseField)) continue;
 
-    // A scalar filter on a relation that stores its id under its own name
-    // (e.g. node.parent) filters that field, declared or not.
-    const isField = resource.fields.some((f) => f.name === baseField) ||
-                    (!!schema && parts.length === 1 &&
-                      isForeignKeyNamedManyOne(schema, resource.name, baseField));
+    const isField = schema
+      ? hasPredicateField(schema, resource, baseField)
+      : resource.fields.some((field) => field.name === baseField);
 
     if (policy && isField && !readFields.includes(baseField)) {
       return {

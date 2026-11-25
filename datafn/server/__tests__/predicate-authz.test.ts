@@ -184,6 +184,23 @@ describe("predicate field authorization", () => {
     expect(result.body.result.data).toEqual([{ id: "per_1" }]);
   });
 
+  it("matches a readable implicit foreign key on a related resource", async () => {
+    const [people, employers] = schema.resources;
+    const harness = await createHarness({
+      ...schema,
+      resources: [{ ...people, fields: people.fields.filter((field) => field.name !== "employerId") }, employers],
+    });
+    server = harness.server;
+    const result = await harness.post("query", {
+      resource: "people",
+      version: 1,
+      select: ["id"],
+      filters: { "employer.staff.employerId": "emp_1" },
+    });
+    expect(result.status).toBe(200);
+    expect(result.body.result.data).toEqual([{ id: "per_1" }]);
+  });
+
   it("keeps explicit target permissions when the root resource has no policy", async () => {
     const [people, employers] = schema.resources;
     const harness = await createHarness({

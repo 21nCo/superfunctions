@@ -9,6 +9,7 @@ import {
   evaluateFilter as coreEvaluateFilter,
   findRelationMatch,
   getCapabilityFields,
+  getRelationFkFieldsForResource,
   OP_REMAP,
   relationKeyFor,
   relationTargetEndpoint,
@@ -43,11 +44,8 @@ export function isNestedFilterField(resource: FilterResource | undefined, name: 
 
 export function hasPredicateField(schema: FilterSchema, resource: FilterResource, name: string): boolean {
   if (name === "id" || resource.fields.some((field) => field.name === name)) return true;
-  const relation = findRelation(schema, resource.name, name);
-  if (relation?.relation.type === "many-one" && relation.direction === "forward" &&
-      relationFkFieldForManyOne(relation.relation) === name) return true;
-  if (relation?.relation.type === "one-many" && relation.direction === "inverse" &&
-      (relation.relation.fkField || relation.relation.foreignKey || `${relation.relation.inverse}Id`) === name) return true;
+  if (getRelationFkFieldsForResource(schema as DatafnSchema, resource.name)
+    .some(({ field, resourceField }) => field === name || resourceField === name)) return true;
   return getCapabilityFields(resolveCapabilities(schema.capabilities, resource.capabilities))
     .some((field) => field.name === name);
 }

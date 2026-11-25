@@ -138,19 +138,28 @@ describe("public link resolve limits", () => {
     ));
   }
 
-  it("rejects an over-limit stream that has no Content-Length", async () => {
-    const server = await start({ limits: { maxPayloadBytes: 32 } });
-    let middlewareParsedBody = false;
+  it.each(["context factory", "middleware"])("bounds a stream first read by the %s", async (firstReader) => {
+    let parsedBody = false;
+    const server = await start({
+      limits: { maxPayloadBytes: 32 },
+      context: firstReader === "context factory" ? async (request: Request) => {
+        await request.json();
+        parsedBody = true;
+        return {};
+      } : undefined,
+    });
     server.router.use(async (_request, _context, next) => {
       const response = await next();
       response.headers.set("access-control-allow-origin", "https://example.test");
       return response;
     });
-    server.router.use(async (_request, context, next) => {
-      await context.json();
-      middlewareParsedBody = true;
-      return next();
-    });
+    if (firstReader === "middleware") {
+      server.router.use(async (_request, context, next) => {
+        await context.json();
+        parsedBody = true;
+        return next();
+      });
+    }
     const request = streamRequest(128);
     expect(request.headers.get("content-length")).toBeNull();
     const result = await read(await server.router.handle(request, {}));
@@ -158,20 +167,26 @@ describe("public link resolve limits", () => {
     expect(result.allowOrigin).toBe("https://example.test");
     expect(result.body.error.code).toBe("LIMIT_EXCEEDED");
     expect(result.raw).not.toContain("Public link is invalid or revoked");
-    expect(middlewareParsedBody).toBe(false);
+    expect(parsedBody).toBe(false);
   });
 
   it("resolves a valid token after middleware parses the bounded body", async () => {
     const server = await start();
     const token = await createToken(server);
-    server.router.use(async (_request, context, next) => {
-      expect(await context.json()).toEqual({ token });
+    server.router.use(async (request, context, next) => {
+      if (request.body) expect(await context.json()).toEqual({ token });
       return next();
     });
     const result = await resolve(server, token);
     expect(result.status).toBe(200);
     expect(result.body.ok).toBe(true);
     expect(result.body.result.resource).toBe("linkTag");
+    const headerOnly = await read(await server.router.handle(new Request("http://localhost/datafn/public-links/resolve", {
+      method: "POST",
+      headers: { "x-datafn-public-link-token": token },
+    })));
+    expect(headerOnly.status).toBe(200);
+    expect(headerOnly.body.result.resource).toBe("linkTag");
   });
 
   it("preserves the body cache shared by global middleware and a plugin handler", async () => {
