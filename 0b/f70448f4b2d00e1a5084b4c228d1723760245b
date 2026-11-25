@@ -1,0 +1,19 @@
+filefn/admin/turbo.json
+  s_fc285eff3f94eb::t_a360b666ceb316 1-15
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0bf70448f4b2d00e1a5084b4c228d1723760245b",
+  "prompts": {},
+  "sessions": {
+    "s_fc285eff3f94eb": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21387-8c2b-7361-b97d-3400ba684e34",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
