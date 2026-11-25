@@ -199,19 +199,22 @@ for (const { operation, code, reason } of skipped) {
   frames one value stacks are read from the schema itself and compared with
   how deep the engine validates on the call's stack, measured once per call
   with the engine. At every position (parameters, bodies, properties and
-  items) the subschemas and references applied in place count. A child
-  value every valid value must have stacks on its parent's frames: a
-  property a `required` list names, through `properties`, a matching
+  items) the subschemas and references applied in place count, each child
+  value from its own first frame. Only the chain every valid tool input
+  takes stacks on its parent's frames: from the input (or a registered
+  output), a property a `required` list names, through `properties`, a matching
   `patternProperties` entry or else `additionalProperties`, when only
-  objects are accepted, and the items up to `minItems` when only arrays are,
+  objects are accepted (`number` also admits integers), and the items up to
+  `minItems` when only arrays are,
   read together from one schema object and its inline `allOf` members (for
   example `required` in one member and `properties` in another). A pattern
   is matched against required names only when it has no groups,
   alternation, backreferences or lookaround and at most one quantifier,
-  with the matching charged; any other pattern forces nothing. Any other
-  child value starts again, since its depth is the instance's own, and a
-  chain of required children that never ends, which no finite value
-  satisfies, is too deep. This reading is charged to the same budget. Near
+  with the matching charged; any other pattern forces nothing. A child a
+  call can leave out or avoid (an optional body or property, an
+  `anyOf`/`oneOf` branch) never stacks, since a shallow valid input exists,
+  and a chain of required children from the input that never ends, which
+  no finite value satisfies, is too deep. This reading is charged to the same budget. Near
   the validator's own limit, that verdict is the validator's. A forced child
   whose `type`, `required` or `minItems` sits only behind a `$ref` is not
   read as forced, so such a tool can register; a call whose value then nests
