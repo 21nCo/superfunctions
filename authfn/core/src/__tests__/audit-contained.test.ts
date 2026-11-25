@@ -345,6 +345,7 @@ describe('authfn contained audit fixes', () => {
     const ready = new Promise<void>((resolve) => { sessionReady = resolve; });
     const waitForReset = new Promise<void>((resolve) => { allowSession = resolve; });
     const afterSessionIssue = vi.fn();
+    const events: string[] = [];
     const pauseForReset = async () => {
       sessionReady();
       await waitForReset;
@@ -358,6 +359,9 @@ describe('authfn contained audit fixes', () => {
           if (hook === 'afterSessionIssue') await pauseForReset();
         }
       },
+      observability: {
+        events: { async emit(event) { events.push(event.type); } }
+      } as AuthFnRuntimeConfig['observability'],
       pluginRuntime: { password: { otp: { delivery: delivery.provider } } }
     });
 
@@ -379,12 +383,45 @@ describe('authfn contained audit fixes', () => {
     expect(rejected.status).toBe(401);
     expect(rejected.headers.has('set-cookie')).toBe(false);
     expect(afterSessionIssue).toHaveBeenCalledTimes(hook === 'afterSessionIssue' ? 1 : 0);
+    expect(events).not.toContain('authfn.session.issued');
     const sessions = await config.database.findMany<{ revokedAt: Date | null }>({
       model: 'sessions',
       where: [{ field: 'userId', operator: 'eq', value: signedUp.user.id }],
       namespace: config.namespace
     });
     expect(sessions).toEqual([expect.objectContaining({ revokedAt: expect.any(Date) })]);
+  });
+
+  it('returns invalid credentials when account cleanup already removed the stale session', async () => {
+    const email = 'ada@example.com';
+    const config = passwordConfig(memoryAdapter({ debug: false }));
+    const { user, credential } = await signUpWithPassword(config, {}, { email, password: PASSWORD });
+    const auth = createTestServer({
+      ...config,
+      hooks: {
+        async afterSessionIssue(_context, session) {
+          for (const [model, id] of [
+            ['password_credentials', credential.id],
+            ['sessions', session.id],
+            ['users', user.id]
+          ]) {
+            await config.database.delete({
+              model,
+              where: [{ field: 'id', operator: 'eq', value: id }],
+              namespace: config.namespace
+            });
+          }
+        }
+      }
+    });
+    const response = await auth.router.handle(jsonRequest('/auth/sign-in/password', { email, password: PASSWORD }));
+    expect(response.status).toBe(401);
+    expect(response.headers.has('set-cookie')).toBe(false);
+    expect((await errorBody(response)).rest.error).toEqual({
+      code: 'AUTHFN_INVALID_CREDENTIALS',
+      message: 'Invalid email or password',
+      retryable: false
+    });
   });
 
   it('leaves the reset code unspent when it expires during password preparation', async () => {

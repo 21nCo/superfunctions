@@ -13,7 +13,7 @@ import { createAuthFnRouteMeta, readOptionalJson } from 'authfn/http/router';
 import { authenticateAccountRequest, issueSession, revokeSessionById } from 'authfn/core/sessions';
 import { resolveEnvironment } from 'authfn/core/environment';
 import { getPasswordCredentialByUserId, signInWithPassword, signUpWithPassword } from 'authfn/core/passwords';
-import { AuthFnInvalidCredentialsError } from 'authfn/core/errors';
+import { AuthFnInvalidCredentialsError, AuthFnNotFoundError } from 'authfn/core/errors';
 import { jsonSuccess } from 'authfn/http/envelopes';
 import { assertOtpEmailBudgetConfig, completeResetPassword, sendOtpChallenge } from 'authfn/core/verifications';
 import { emitAuthEvent, eventRequestId } from 'authfn/core/observability';
@@ -278,12 +278,27 @@ function createPasswordRoutes(
             throw createPendingTwoFactorResponse(challenge.challenge);
           }
         }
+        const discardSession = async (sessionId: string) => {
+          try {
+            await revokeSessionById(ctx.config, sessionId);
+          } catch (error) {
+            if (error instanceof AuthFnNotFoundError) return;
+            // The account may also disappear between the revoke read and write.
+            const remaining = await ctx.config.database.findOne({
+              model: 'sessions',
+              where: [{ field: 'id', operator: 'eq', value: sessionId }],
+              namespace: ctx.namespace
+            });
+            if (remaining) throw error;
+          }
+        };
         const issued = await issueSession(ctx.config, {
           ...ctx.hooks,
           async afterSessionIssue(hookContext, session) {
-            // Run before the host's success hook or issueSession's event.
-            await checkCredentialAfterWrite(() => revokeSessionById(ctx.config, session.id));
+            const discard = () => discardSession(session.id);
+            await checkCredentialAfterWrite(discard);
             await ctx.hooks.afterSessionIssue?.(hookContext, session);
+            await checkCredentialAfterWrite(discard);
           }
         }, {
           request,
@@ -291,7 +306,7 @@ function createPasswordRoutes(
           primaryEmail: result.user.primaryEmail,
           methods: ['password']
         });
-        await checkCredentialAfterWrite(() => revokeSessionById(ctx.config, issued.session.id));
+        await checkCredentialAfterWrite(() => discardSession(issued.session.id));
         const response = buildSessionResponse(issued, body.sessionMode);
 
         return jsonSuccess(request, response.data, {
