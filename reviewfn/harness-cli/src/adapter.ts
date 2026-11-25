@@ -260,11 +260,11 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
       identities.set(directory, created);
       return await this.attempts({ ...prepared, executable, key, directory, identities });
     } finally {
-      // Removed from inside itself (DIRECTORY_HELPER), entering only the attempt directories the adapter created; anything
-      // that took the place of one, a link or not, is left alone. The removal is awaited only while the run has time
+      // Removed from inside itself (DIRECTORY_HELPER), never entering a directory found at a recorded attempt's name that is
+      // not that attempt's; anything that took the place of one, a link or not, is left alone. The removal is awaited only while the run has time
       // left, so a result already decided is never held past the deadline or a cancellation by it.
       if (directory !== undefined && created !== undefined) {
-        const removal = inDirectory(directory, { op: "remove", expect: created, name: path.basename(directory), attempts: [...identities.values()] }).catch(() => undefined);
+        const removal = inDirectory(directory, { op: "remove", expect: created, name: path.basename(directory), attempts: Object.fromEntries([...identities].map(([made, id]) => [path.basename(made), id])) }).catch(() => undefined);
         const ended = AbortSignal.any([AbortSignal.timeout(Math.max(0, prepared.deadline - Date.now())), ...(input.signal ? [input.signal] : [])]);
         if (!ended.aborted) await Promise.race([removal, new Promise(resolve => ended.addEventListener("abort", resolve, { once: true }))]);
       }
@@ -532,18 +532,18 @@ async function attemptFiles(run: AttemptContext, attempt: number, prompt: string
  * after a check is never followed. It serves one JSON request per stdin line, in order. A new attempt directory is
  * refused, before anything is written to it, unless the name just created is the directory entered, a child of the run
  * directory, and empty; it is then the helper's working directory, from which `read` takes the answer only while the
- * attempt's name is still that directory. `remove` enters only the run directory's recorded attempt directories (and
- * everything inside them), removes a name only while it is the directory just read, and stops at the first mismatch.
+ * attempt's name is still that directory. `remove` never enters a directory found at a recorded attempt's name that is
+ * not that attempt's, removes a name only while it is the directory just read, and stops at the first mismatch.
  */
 const DIRECTORY_HELPER = String.raw`
 const fs = require("node:fs");
-const id = name => { const found = fs.lstatSync(name, { bigint: true }); return found.dev + ":" + found.ino; };
+const id = name => { const found = fs.lstatSync(name, { bigint: true, throwIfNoEntry: false }); return found && found.dev + ":" + found.ino; };
 const fail = () => { throw Object.assign(new Error("replaced"), { code: "EREPLACED" }); };
 const wipe = (self, only) => {
   for (const name of fs.readdirSync(".")) {
     const entry = fs.lstatSync(name, { bigint: true, throwIfNoEntry: false }), own = entry && entry.dev + ":" + entry.ino;
     if (entry && !entry.isDirectory()) try { fs.unlinkSync(name); } catch (error) { if (error.code !== "ENOENT") throw error; }
-    if (!entry?.isDirectory() || only && !only.includes(own)) continue;
+    if (!entry?.isDirectory() || only && Object.hasOwn(only, name) && only[name] !== own) continue;
     process.chdir(name);
     if (id(".") !== own) fail();
     wipe(own);
@@ -595,7 +595,8 @@ interface DirectoryHelper { request: (request: Record<string, unknown>, timeoutM
  * passes or `signal` aborts, by stopping the helper. A helper that cannot be started there counts as a replaced directory.
  */
 function directoryHelper(directory: string): DirectoryHelper {
-  const child = spawn(process.execPath, ["-e", DIRECTORY_HELPER], { cwd: directory, env: {}, stdio: ["pipe", "pipe", "ignore"] });
+  // In its own process group, so a terminal's interrupt meant for the CLI cannot stop the read of its answer.
+  const child = spawn(process.execPath, ["-e", DIRECTORY_HELPER], { cwd: directory, env: {}, stdio: ["pipe", "pipe", "ignore"], detached: process.platform !== "win32" });
   let pending: ((reply: Record<string, unknown>) => void) | undefined;
   let gone: Record<string, unknown> | undefined;
   let buffered = "";
@@ -638,14 +639,19 @@ interface EscapeLevel { text: string; at: Uint32Array; to: Uint32Array }
  */
 function redact(text: string, secrets: readonly string[]): string {
   const values = secrets.filter(secret => secret.length > 0);
+  const periods = values.map(value => [value, smallestPeriod(value)] as const);
   // reach[i] is the furthest end of a redacted span that starts at i (0: none), allocated at the first one.
   let reach: Uint32Array | undefined;
   const cover = (from: number, to: number) => { reach ??= new Uint32Array(text.length); reach[from] = Math.max(reach[from], to); };
   const original = (levels: readonly EscapeLevel[], index: number) => levels.reduceRight((at, level) => below(level, at), index);
   const levels: EscapeLevel[] = [];
   for (let current = text; values.length > 0;) {
-    for (const value of values) {
-      for (let at = current.indexOf(value); at !== -1; at = current.indexOf(value, at + 1)) cover(original(levels, at), original(levels, at + value.length));
+    for (const [value, period] of periods) {
+      // An occurrence covers on through the text that keeps the secret's period, which holds every occurrence overlapping it.
+      for (let at = current.indexOf(value), end = 0; at !== -1; at = current.indexOf(value, end - value.length + 1)) {
+        for (end = at + value.length; end < current.length && current[end] === current[end - period];) end += 1;
+        cover(original(levels, at), original(levels, end));
+      }
     }
     const next = current.includes("\\") ? unescapeLevel(current) : undefined;
     if (next === undefined) break;
@@ -675,6 +681,17 @@ function redact(text: string, secrets: readonly string[]): string {
   }
   parts.push(text.slice(kept));
   return redactText(parts.join(""), secrets);
+}
+
+/** The smallest shift at which `value` overlaps itself (its length when it never does), by the KMP failure function. */
+function smallestPeriod(value: string): number {
+  const border = new Uint32Array(value.length);
+  for (let index = 1, length = 0; index < value.length; index += 1) {
+    while (length > 0 && value[index] !== value[length]) length = border[length - 1];
+    if (value[index] === value[length]) length += 1;
+    border[index] = length;
+  }
+  return value.length - border[value.length - 1];
 }
 
 /** Where unit `index` of `level` (or its end, at its length) started in the level below, found by binary search. */
@@ -1211,14 +1228,19 @@ class RunState {
 
   /**
    * A stream the runner cut (at its time or byte bound, or on cancellation) may end inside a secret whose rest it dropped,
-   * so its unterminated last line is withheld from the transcript.
+   * so once its whole secrets are redacted, its unterminated last line and its last characters that could still begin
+   * one (any but the longest secret's length) are withheld from the transcript.
    */
   public record(result: CommandResult): void {
     this.reported = undefined;
     this.fileBytes = 0;
     this.rawBytes += Buffer.byteLength(result.stdout) + Buffer.byteLength(result.stderr);
-    const kept = (text: string) => !(result.timedOut || result.canceled) || text === "" || text.endsWith("\n") ? text : `${text.slice(0, text.lastIndexOf("\n") + 1)}[WITHHELD: the stream was cut]`;
-    this.transcript.push(redact(`${kept(result.stdout)}\n${kept(result.stderr)}`, this.secrets));
+    const longest = Math.max(1, ...this.secrets.map(secret => secret.length));
+    const kept = (text: string) => {
+      const from = result.timedOut || result.canceled ? Math.max(0, Math.min(text.lastIndexOf("\n") + 1, text.length - longest + 1)) : text.length;
+      return from < text.length ? `${text.slice(0, from)}[WITHHELD: the stream was cut]` : text;
+    };
+    this.transcript.push(`${kept(redact(result.stdout, this.secrets))}\n${kept(redact(result.stderr, this.secrets))}`);
   }
 
   public recordOutputFile(text: string): void {
