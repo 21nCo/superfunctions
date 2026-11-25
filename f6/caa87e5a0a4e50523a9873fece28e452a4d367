@@ -1,0 +1,74 @@
+apifn/core/src/openapi/validate.ts
+  s_83fa589146e8c6::t_b889bb70478a62 21-22
+apifn/collections/src/index.ts
+  s_83fa589146e8c6::t_112f3b6d00a1c3 43-44
+apifn/cli/__tests__/test-command.test.ts
+  s_83fa589146e8c6::t_b889bb70478a62 219
+  s_83fa589146e8c6::t_b42e29e0bc2faf 220
+apifn/cli/package.json
+  s_83fa589146e8c6::t_9d422e0d4cd16a 27,29-31
+apifn/snippets/package.json
+  s_83fa589146e8c6::t_9d422e0d4cd16a 3
+apifn/core/src/integrations/testfn.ts
+  s_83fa589146e8c6::t_7448deb7f33b36 164,175-176
+  s_83fa589146e8c6::t_112f3b6d00a1c3 14,18,21-36,106-114,125-128,152-162,174,179,181-182,217
+apifn/core/README.md
+  s_83fa589146e8c6::t_62015cf8fe69e7 234
+  s_83fa589146e8c6::t_b889bb70478a62 89
+apifn/cli/src/index.ts
+  s_83fa589146e8c6::t_b42e29e0bc2faf 554-560
+  s_83fa589146e8c6::t_b889bb70478a62 278
+apifn/mock/package.json
+  s_83fa589146e8c6::t_9d422e0d4cd16a 3
+apifn/svelte/package.json
+  s_83fa589146e8c6::t_9d422e0d4cd16a 3
+apifn/core/__tests__/testfn-adapter.test.ts
+  s_83fa589146e8c6::t_62015cf8fe69e7 11,18,28,83-88,92,94,99-100,126,129-138,146,149-153
+  s_638a994b69d08e::t_75034890d2ddbb 154
+apifn/admin/src/__tests__/admin.test.ts
+  s_83fa589146e8c6::t_62015cf8fe69e7 127-158
+apifn/collections/src/runner/runner.ts
+  s_83fa589146e8c6::t_112f3b6d00a1c3 516,518
+apifn/collections/README.md
+  s_83fa589146e8c6::t_62015cf8fe69e7 121
+apifn/collections/src/types.ts
+  s_83fa589146e8c6::t_112f3b6d00a1c3 145-146
+apifn/sdk/package.json
+  s_83fa589146e8c6::t_9d422e0d4cd16a 3,32
+apifn/contracts/package.json
+  s_83fa589146e8c6::t_9d422e0d4cd16a 3
+apifn/react/package.json
+  s_83fa589146e8c6::t_9d422e0d4cd16a 3
+apifn/docsfn/package.json
+  s_83fa589146e8c6::t_9d422e0d4cd16a 3,33-34
+apifn/core/__tests__/openapi-validate.test.ts
+  s_83fa589146e8c6::t_b889bb70478a62 67-78
+apifn/README.md
+  s_83fa589146e8c6::t_489cffad22118a 24-37
+package-lock.json
+  s_83fa589146e8c6::t_66d1ab3fd23125 114,116-118,263,392,396-397,429,443,809,812,846,860
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f6caa87e5a0a4e50523a9873fece28e452a4d367",
+  "prompts": {},
+  "sessions": {
+    "s_638a994b69d08e": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21264-fb13-7703-86f8-4ea0ca3fe7f4",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_83fa589146e8c6": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21253-9943-7ef0-8aad-8a89b106fa79",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
