@@ -1052,6 +1052,53 @@ it("uses the same declared endpoint for legacy IDs in query and transact", async
   expect(transaction.result.results[0].data).toEqual(pushed.body.result.data);
 });
 
+it("preserves both resource discriminators on inverse predicates", async () => {
+  const schema: DatafnSchema = {
+    ...SCHEMA,
+    relations: [...(SCHEMA.relations ?? []), {
+      type: "many-many",
+      from: ["node", "objective", "collection"],
+      to: ["collection", "task"],
+      relation: "entryGroups",
+      inverse: "entries",
+      joinTable: "test_entries",
+    }],
+  };
+  const { db, server } = await createServer({ schema });
+  const seed = (model: string, data: Record<string, unknown>) =>
+    db.create({ model, namespace: "datafn", data });
+  await seed("objective", { id: "legacy-entry", label: "Legacy entry" });
+  await seed("collection", { id: "legacy-target", label: "Linked collection" });
+  await seed("task", { id: "legacy-target", label: "Unlinked task" });
+  await seed("test_entries", {
+    id: "test-join",
+    from: "legacy-entry",
+    fromResource: "objective",
+    to: "legacy-target",
+    toResource: "collection",
+  });
+
+  for (const resource of ["collection", "task"]) {
+    const body = {
+      resource,
+      version: 1,
+      select: ["id"],
+      filters: { entries: { $any: { label: "Legacy entry" } } },
+    };
+    const expected = resource === "collection" ? [{ id: "legacy-target" }] : [];
+    const pushed = await query(server, body);
+    const response = await server.router.handle(new Request("http://localhost/datafn/transact", {
+      method: "POST",
+      body: JSON.stringify({ atomic: false, steps: [{ query: body }] }),
+    }));
+    const transaction = await response.json();
+    expect(pushed.status).toBe(200);
+    expect(response.status).toBe(200);
+    expect(pushed.body.result.data).toEqual(expected);
+    expect(transaction.result.results[0].data).toEqual(expected);
+  }
+});
+
 describe("relation expansion by name for in-memory queries", () => {
   it("expands task.objective (many-one) although a many-many relation to objective is declared first", async () => {
     const { server } = await createServer();

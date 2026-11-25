@@ -27,6 +27,7 @@ import {
   resolveAccessLevel,
 } from "../validation/authz.js";
 import { isHtreeSelectBase } from "./query/planner.js";
+import { resolvePredicateEndpoint } from "./query/filters.js";
 
 function relationNameFor(relation: { relation?: string; inverse?: string; to: string | readonly string[] }): string {
   if (relation.relation) return relation.relation;
@@ -686,6 +687,7 @@ export class DbDataStore implements DataStore {
   ): Promise<DbDataStore> {
     const resourcesToLoad = new Set<string>([query.resource]);
     const relationsToLoad = new Set<string>();
+    const primaryJoinDirections = new Map<string, Set<"forward" | "inverse">>();
     // Relations (by name) from the primary resource to each secondary
     // resource. Two resources can share several relations (e.g. a many-one
     // `objective` and a many-many `links`); each is loaded by its own match.
@@ -710,7 +712,13 @@ export class DbDataStore implements DataStore {
           ? [contextResource]
           : endpointList(match.relation.from);
         fromResources.forEach((fromResource) => {
-          relationsToLoad.add(relationKeyFor(fromResource, match.relation));
+          const relationKey = relationKeyFor(fromResource, match.relation);
+          relationsToLoad.add(relationKey);
+          if (contextResource === query.resource) {
+            const directions = primaryJoinDirections.get(relationKey) ?? new Set();
+            directions.add(match.direction);
+            primaryJoinDirections.set(relationKey, directions);
+          }
         });
       }
       return targetResources[0] ?? contextResource;
@@ -893,53 +901,41 @@ export class DbDataStore implements DataStore {
       const fromCol = (rel as any)?.joinColumns?.from || "from";
       const toCol = (rel as any)?.joinColumns?.to || "to";
 
-      const primaryIsFrom = endpointIncludes((rel as any).from, query.resource);
-      const filterField = primaryIsFrom ? fromCol : toCol;
-      const secondaryIdField = primaryIsFrom ? toCol : fromCol;
-      const secondaryEndpoint = primaryIsFrom ? (rel as any).to : (rel as any).from;
+      const directions = primaryJoinDirections.get(relationKey) ??
+        new Set([endpointIncludes(rel.from, query.resource) ? "forward" : "inverse"]);
 
       try {
-        const joinRows = await DbDataStore.findManyByIds(
-          db,
-          tableName,
-          filterField,
-          primaryIds,
-          namespace,
-        );
-
-        const normalizedRows = DbDataStore.normalizeJoinRows(joinRows, fromCol, toCol);
-        const rowsForRelation = DbDataStore.filterJoinRowsForResource(
-          schema,
-          normalizedRows,
-          (rel as any).from,
-          fromResource,
-          "from",
-        );
-
-        store.joinCache.set(relationKey, rowsForRelation);
-
-        const secondaryIds = [
-          ...new Set(
-            rowsForRelation
-              .map((r) => (primaryIsFrom ? r.to : r.from))
-              .filter(Boolean),
-          ),
-        ];
-        const idsByResource = new Map<string, string[]>();
-        for (const secondaryId of secondaryIds) {
-          const secondaryResource = DbDataStore.resolveEndpointResourceForId(schema, secondaryEndpoint, secondaryId);
-          if (!secondaryResource) continue;
-          const ids = idsByResource.get(secondaryResource) ?? [];
-          ids.push(secondaryId);
-          idsByResource.set(secondaryResource, ids);
+        const joinCache = new Map<unknown, JoinRow>();
+        const idsByResource = new Map<string, Set<string>>();
+        for (const direction of directions) {
+          const isForward = direction === "forward";
+          const joinRows = await DbDataStore.findManyByIds(
+            db, tableName, isForward ? fromCol : toCol, primaryIds, namespace,
+          );
+          const rowsForRelation = DbDataStore.filterJoinRowsForResource(
+            schema, DbDataStore.normalizeJoinRows(joinRows, fromCol, toCol), rel.from, fromResource, "from",
+          );
+          for (const row of rowsForRelation) {
+            const key = row.id ?? JSON.stringify([row.from, row.to, row.fromResource, row.toResource]);
+            joinCache.set(key, row);
+            const secondaryId = isForward ? row.to : row.from;
+            const secondaryResource = isForward
+              ? resolvePredicateEndpoint(schema, secondaryId, rel.to)
+              : fromResource;
+            if (!secondaryId || !secondaryResource) continue;
+            const ids = idsByResource.get(secondaryResource) ?? new Set();
+            ids.add(secondaryId);
+            idsByResource.set(secondaryResource, ids);
+          }
         }
+        store.joinCache.set(relationKey, [...joinCache.values()]);
 
         for (const [secondaryModel, ids] of idsByResource.entries()) {
           const records = await DbDataStore.findManyByIds(
             db,
             secondaryModel,
             "id",
-            ids,
+            [...ids],
             namespace,
           );
           store.mergeRecords(secondaryModel, records);
@@ -948,7 +944,10 @@ export class DbDataStore implements DataStore {
       } catch (error) {
         logger?.warn("forQuery: join table load failed", { error: String(error), operation: "db-store-forQuery" });
         store.joinCache.set(relationKey, []);
-        for (const secondaryModel of endpointList(secondaryEndpoint)) {
+        const affected = [...directions].flatMap((direction) =>
+          endpointList(direction === "forward" ? rel.to : rel.from),
+        );
+        for (const secondaryModel of affected) {
           store.recordsCache.set(secondaryModel, []);
           manyManySecondaries.add(secondaryModel);
         }

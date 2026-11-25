@@ -598,17 +598,17 @@ function joinRowsForFromResource(
   relation: any,
   fromResource: string,
   schema: DatafnSchema,
-): Array<{ from: unknown; to: unknown }> {
+): Array<{ from: unknown; to: unknown; toResource: unknown }> {
   const fromCol = relation.joinColumns?.from ?? "from";
   const toCol = relation.joinColumns?.to ?? "to";
-  const out: Array<{ from: unknown; to: unknown }> = [];
+  const out: Array<{ from: unknown; to: unknown; toResource: unknown }> = [];
   for (const row of rows) {
     const from = row[fromCol];
     const discriminator = row.fromResource;
     const rowResource = typeof discriminator === "string"
       ? discriminator
       : resolveEndpointResource(relation.from, from, schema as any);
-    if (rowResource === fromResource) out.push({ from, to: row[toCol] });
+    if (rowResource === fromResource) out.push({ from, to: row[toCol], toResource: row.toResource });
   }
   return out;
 }
@@ -690,6 +690,9 @@ async function resolveRelationConjunct(
         namespace: ctx.namespace,
       });
       for (const row of joinRowsForFromResource(rows, relation, fromResource, schema)) {
+        if (!isForward && resolvePredicateEndpoint(schema, row.to, relation.to, row.toResource) !== primaryResource) {
+          continue;
+        }
         const relatedId = isForward ? row.to : row.from;
         const primaryId = isForward ? row.from : row.to;
         if (relatedIds.has(relatedId) && primaryId !== null && primaryId !== undefined) {

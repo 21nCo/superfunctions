@@ -6,6 +6,7 @@
 
 import {
   endpointList,
+  endpointIncludes,
   evaluateFilter as coreEvaluateFilter,
   findRelationMatch,
   firstEndpoint,
@@ -159,7 +160,11 @@ export function resolvePredicateEndpoint(
   schema: FilterSchema,
   id: unknown,
   endpoint: string | readonly string[],
+  discriminator?: unknown,
 ): string {
+  if (typeof discriminator === "string") {
+    return endpointIncludes(endpoint, discriminator) ? discriminator : "";
+  }
   return resolveEndpointResource(endpoint, id, schema) ?? firstEndpoint(endpoint);
 }
 
@@ -200,7 +205,10 @@ function getRelatedRecords(
     }
     return endpointList(relation.from).flatMap((resource) => {
       const joinRows = store.getJoinRows(relationKeyFor(resource, relation));
-      return joinRows.filter((row) => row.to === record.id).flatMap((row) => findById(row.from, resource));
+      return joinRows
+        .filter((row) => row.to === record.id &&
+          resolvePredicateEndpoint(schema, row.to, relation.to, row.toResource) === resourceName)
+        .flatMap((row) => findById(row.from, resource));
     });
   }
   return [];
