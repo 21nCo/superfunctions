@@ -588,6 +588,8 @@ describe("document advisory stderr writes", () => {
   });
 
   it("keeps the result when stderr throws on streamed child output that has no writer of its own", async () => {
+    // The forwarder runs in the child's stream listener: a throw escaping it is an uncaught exception, which Vitest
+    // reports as an unhandled error that fails the run, and leaves the result document unwritten.
     const childScript = 'process.stdout.write("child-out"); process.stderr.write("child-err");';
     const result = await runWithStderr(async (_options, ctx) => {
       const run = await ctx.exec.command(process.execPath, ["-e", childScript], { streamOutput: true });
