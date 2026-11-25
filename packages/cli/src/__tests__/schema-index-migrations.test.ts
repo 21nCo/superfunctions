@@ -1042,7 +1042,7 @@ describe("schema index migrations", () => {
     );
     // A server whose innodb_large_prefix may be off (or whose version is
     // unknown or malformed) keeps the 767-byte key part limit on DYNAMIC rows.
-    for (const serverVersion of ["5.7.44-log", "10.2.44-MariaDB", undefined, "8.0garbage", "8.0"]) {
+    for (const serverVersion of ["5.7.44-log", "10.2.44-MariaDB", undefined, "8.0garbage", "8.0", "8.0.36-", "7.100.0", "9.10.0-MariaDB"]) {
       inPlace(diffTables([widenTo(191)], unproven({ serverVersion }), "plugfn"), 191);
       expect(() => diffTables([widenTo(192)], unproven({ serverVersion }), "plugfn")).toThrow(new RegExp(
         `server version ${serverVersion ?? "unknown"}, whose innodb_large_prefix may be off, limits index key parts to 767 bytes.*\\(claim_token 768 bytes\\).*Upgrade to MySQL 8\\.0`,
@@ -1050,6 +1050,8 @@ describe("schema index migrations", () => {
     }
     inPlace(diffTables([widenTo(768)], unproven({ serverVersion: "10.6.16-MariaDB-1:10.6.16+maria~ubu2204" }), "plugfn"), 768);
     inPlace(diffTables([widenTo(768)], unproven({ serverVersion: "8.0.36-0ubuntu0.22.04.1" }), "plugfn"), 768);
+    inPlace(diffTables([widenTo(768)], unproven({ serverVersion: "9.1.0" }), "plugfn"), 768);
+    inPlace(diffTables([widenTo(768)], unproven({ serverVersion: "11.4.2-MariaDB" }), "plugfn"), 768);
     inPlace(diffTables([widenTo(768)], unproven({ serverVersion: "8.0.36", innodbPageSize: 65_536 }), "plugfn"), 768);
     // MODIFY COLUMN keeps a string column's own character set (700 latin1
     // bytes fit); an unknown one counts as utf8mb4.

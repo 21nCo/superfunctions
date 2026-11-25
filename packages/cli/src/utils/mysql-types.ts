@@ -35,13 +35,13 @@ export function satisfiesUnboundedMySqlString(dataType: string): boolean {
 }
 
 // InnoDB key limits: 767 bytes per part, or 3,072 on DYNAMIC rows where large
-// index prefixes are always on (MySQL 8.0+, MariaDB 10.3+; an older, unknown
-// or malformed version keeps 767), and per key 3,072, 1,536 or 768 bytes on
-// 16+, 8 or 4 KiB pages. Another engine or row format (COMPRESSED:
-// KEY_BLOCK_SIZE) or an unknown page size is not modelled: return why.
+// index prefixes are always on (MySQL 8.0+, MariaDB 10.3+; else 767), and per
+// key 3,072, 1,536 or 768 bytes on 16+, 8 or 4 KiB pages. Other engines, row
+// formats (COMPRESSED: KEY_BLOCK_SIZE) or page sizes are not modelled: return why.
 export function mysqlIndexKeyBudget(t: { name: string; engine?: string | null; rowFormat?: string | null; innodbPageSize?: number | null; serverVersion?: string | null }) {
-  const version = /^(\d+)\.(\d+)\.\d+(?:-|$)/.exec(t.serverVersion ?? '');
-  const largePrefix = !!version && Number(version[1]) * 100 + Number(version[2]) >= (/-mariadb/i.test(t.serverVersion!) ? 1_003 : 800);
+  const version = /^(\d+)\.(\d+)\.\d+(?:-\S+)?$/.exec(t.serverVersion ?? '')?.map(Number);
+  const [floorMajor, floorMinor] = /-mariadb/i.test(t.serverVersion ?? '') ? [10, 3] : [8, 0];
+  const largePrefix = !!version && (version[1] > floorMajor || (version[1] === floorMajor && version[2] >= floorMinor));
   if (!/^innodb$/i.test(t.engine ?? '') || !/^(dynamic|compact|redundant)$/i.test(t.rowFormat ?? '')) {
     return `its ${t.engine ?? 'unknown'} engine and ${t.rowFormat ?? 'unknown'} row format have key limits this check does not model (COMPRESSED: KEY_BLOCK_SIZE); convert it first with ALTER TABLE ${t.name} ENGINE=InnoDB ROW_FORMAT=DYNAMIC`;
   }
