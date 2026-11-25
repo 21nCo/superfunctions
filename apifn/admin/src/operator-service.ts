@@ -1,7 +1,7 @@
 import {
   diffOpenAPI,
   parseOpenAPI,
-  validateOpenAPI,
+  validateAndDereferenceOpenAPI,
   type OpenAPIDocument,
 } from "@apifn/core";
 import {
@@ -225,9 +225,8 @@ export function createApiFnOperatorService(options: ApiFnOperatorServiceOptions)
 
     async registerSpec(input: ApiFnRegisterSpecInput, context: AdminOperationContext) {
       const scope = requireScope(context);
-      const document = parseOpenAPI(input.document);
-      const errors = await validateOpenAPI(document);
-      if (errors.length > 0) {
+      const { document, errors } = await validateAndDereferenceOpenAPI(parseOpenAPI(input.document));
+      if (!document) {
         throw new AdminError("invalid_argument", "OpenAPI validation failed.", { details: { errors } });
       }
       const existing = await options.store.getSpec(scope, input.id);
@@ -251,9 +250,8 @@ export function createApiFnOperatorService(options: ApiFnOperatorServiceOptions)
     ): Promise<{ item: ApiFnDiffView }> {
       const value = await options.store.getSpec(requireScope(context), input.id);
       if (!value) throw new AdminError("not_found", "ApiFn baseline spec was not found.");
-      const candidate = parseOpenAPI(input.candidate);
-      const errors = await validateOpenAPI(candidate);
-      if (errors.length > 0) {
+      const { document: candidate, errors } = await validateAndDereferenceOpenAPI(parseOpenAPI(input.candidate));
+      if (!candidate) {
         throw new AdminError("invalid_argument", "Candidate OpenAPI validation failed.", { details: { errors } });
       }
       const result = diffOpenAPI(value.document, candidate);

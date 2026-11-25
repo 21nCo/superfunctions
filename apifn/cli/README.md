@@ -231,6 +231,8 @@ Exit codes: `0` no breaking changes · `1` breaking detected · `2` load/parse e
 apifn validate .apifn/openapi.yml --format json
 ```
 
+Validation accepts references within the supplied document. Bundle split specifications into one document before running this command.
+
 - `--format <type>` — `text` (default) or `json`
 
 Exit codes: `0` valid · `1` validation errors · `2` load/parse error.
