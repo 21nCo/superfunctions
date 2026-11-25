@@ -186,6 +186,21 @@ describe('FileFn on workerd under Hono at /files', () => {
     expect(await artifact.text()).toBe(text.toUpperCase());
   });
 
+  it('keeps an asynchronous upload failure metric alive after its response', async () => {
+    const registrationsBefore = await waitUntilRegistrations();
+    const failed = await call(`${ORIGIN}/stat-unavailable/upload/init`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ policy: 'note', fileName: 'test.txt', size: 4, mimeType: 'text/plain' }),
+    });
+    expect(failed.status).toBe(500);
+    expect(await waitUntilRegistrations()).toBeGreaterThan(registrationsBefore);
+    await expect.poll(async () => {
+      const response = await mf.dispatchFetch(`${ORIGIN}/__smoke/upload-failure-writes`);
+      return response.json();
+    }, { timeout: 2500 }).toBe(1);
+  });
+
   it('runs expired-session cleanup from a cron trigger', async () => {
     const expiring = await call(`${ORIGIN}/expiring/upload/init`, {
       method: 'POST',

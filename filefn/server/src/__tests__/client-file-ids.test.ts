@@ -4,6 +4,7 @@ import { instrumentAdapter, type Adapter } from '@superfunctions/db';
 import { normalizeObservability } from '@superfunctions/observability';
 import { memoryAdapter } from '@superfunctions/db/adapters/memory';
 import type { StorageAdapter } from '@superfunctions/storage';
+import { createNotFoundError } from '@superfunctions/storage/internal/errors';
 import type { Authorizer } from '@superfunctions/files';
 import { createDefaultAuthorizer, createFileFn, type FileFnConfig, type QuotaProvider } from '../index.js';
 import { generateFileFnId } from '../ids.js';
@@ -78,7 +79,7 @@ function createStorage(mode: Mode) {
     async statObject(input) {
       await statHolds.get(input.key);
       const bytes = objects.get(input.key);
-      if (!bytes) throw new Error(`object not found: ${input.key}`);
+      if (!bytes) throw createNotFoundError(`object not found: ${input.key}`);
       return { key: input.key, size: bytes.byteLength };
     },
     async deleteObject(input) {
@@ -622,6 +623,27 @@ describe('client-chosen file IDs: first completion wins', () => {
     expect(res.json.error.code).toBe('FILEFN_QUOTA_EXCEEDED');
     expect(await database.findMany({ model: 'uploadSessions', namespace: 'filefn' })).toEqual([]);
     expect(app.fixture.uploads.size).toBe(0);
+  });
+
+  it('keeps a multipart completion retryable while final-object stat is unavailable', async () => {
+    const fixture = createStorage('multipart');
+    const stat = fixture.storage.statObject!;
+    let statAvailable = false;
+    fixture.storage.statObject = async (input) => {
+      if (!statAvailable) throw new Error('test storage stat timed out');
+      return stat.call(fixture.storage, input);
+    };
+    const app = createApp({ mode: 'multipart', storageFixture: fixture });
+    const staged = await app.stage('user_a', CLIENT_ID, 'test retry');
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const failed = await staged.complete();
+      expect(failed.status).toBe(500);
+      expect(failed.json.error).toEqual({
+        code: 'FILEFN_STORAGE_STAT_UNAVAILABLE', message: 'Upload size cannot be verified',
+      });
+    }
+    statAvailable = true;
+    expect((await staged.complete()).status).toBe(200);
   });
 
   it.each([true, false])('hides the owner quota outcome (allowed=%s) when upload completion is forbidden', async (allowed) => {

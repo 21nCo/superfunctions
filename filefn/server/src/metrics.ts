@@ -7,6 +7,7 @@ import {
   type SuperfunctionObservability,
 } from '@superfunctions/observability';
 import type { FileFnObservationEvent } from './events.js';
+import type { BackgroundScheduler } from './runtime.js';
 
 /** The metric channel `createFileFn` already builds from `observability`. */
 export type FileFnMetrics = Pick<
@@ -14,7 +15,10 @@ export type FileFnMetrics = Pick<
   'metrics' | 'getCurrentRequest' | 'startRequest' | 'runWithRequest'
 >;
 
-function guardMetricSink(input: ObservabilityInput<FileFnObservationEvent>): ObservabilityConfigInput<FileFnObservationEvent> | undefined {
+function guardMetricSink(
+  input: ObservabilityInput<FileFnObservationEvent>,
+  track: BackgroundScheduler['track'],
+): ObservabilityConfigInput<FileFnObservationEvent> | undefined {
   if (!input || 'startRequest' in input || !('metrics' in input)) return undefined;
   // Shared observability treats bare logger methods as the logger shorthand.
   const logger = input as ObservationLogger;
@@ -29,9 +33,13 @@ function guardMetricSink(input: ObservabilityInput<FileFnObservationEvent>): Obs
     logger: input.logger,
     events: input.events,
     requestContext: input.requestContext,
-    metrics: async (metric) => {
+    metrics: (metric) => {
       try {
-        await (typeof sink === 'function' ? sink(metric) : sink.record(metric));
+        const pending = typeof sink === 'function' ? sink(metric) : sink.record(metric);
+        if (pending === undefined) return;
+        const settled = Promise.resolve(pending).catch(() => {});
+        if (metric.kind.startsWith('filefn.')) track(settled);
+        return settled;
       } catch {
         // A telemetry failure must not change the result of a FileFn operation.
       }
@@ -39,8 +47,11 @@ function guardMetricSink(input: ObservabilityInput<FileFnObservationEvent>): Obs
   };
 }
 
-export function createFileFnObservability(input: ObservabilityInput<FileFnObservationEvent>) {
-  const guarded = guardMetricSink(input);
+export function createFileFnObservability(
+  input: ObservabilityInput<FileFnObservationEvent>,
+  track: BackgroundScheduler['track'],
+) {
+  const guarded = guardMetricSink(input, track);
   const scope = normalizeObservability(guarded ?? input)?.child({ component: 'filefn' });
   // An existing scope may discard the sink's promise. Enable the new domain
   // metrics only when FileFn can guard the underlying sink itself.

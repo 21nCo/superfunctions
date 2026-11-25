@@ -688,15 +688,12 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
     }
   }
 
-  // Whether the session's final object exists (any size).
-  async function storageObjectExists(session: UploadSession, target: StorageTargetName | undefined): Promise<boolean> {
-    if (!storage.statObject) return false;
-    try {
-      await storage.statObject({ key: session.storageKey, target });
-      return true;
-    } catch {
-      return false;
-    }
+  function isMissingStorageObject(error: unknown): boolean {
+    return isNotFoundError(error, {
+      names: ['NotFound', 'NoSuchKey'],
+      statusCode: 404,
+      stringCodes: ['STORAGE_NOT_FOUND', 'ENOENT'],
+    });
   }
 
   function warnUploadFailure(message: string, requestId?: string, uploadSessionId?: string): void {
@@ -725,11 +722,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       try {
         await storage.statObject({ key: proxyPartKey(session.storageKey, part.partNumber), target });
       } catch (error) {
-        if (isNotFoundError(error, {
-          names: ['NotFound', 'NoSuchKey'],
-          statusCode: 404,
-          stringCodes: ['STORAGE_NOT_FOUND', 'ENOENT'],
-        })) return false;
+        if (isMissingStorageObject(error)) return false;
         throw sizeUnverified('Upload part storage stat failed', requestId, session.uploadSessionId);
       }
     }
@@ -2230,10 +2223,14 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
             // Only a per-session key (a pre-allocated version ID) is known to
             // hold this upload's object; a legacy shared key may hold another
             // version's, so it keeps the exact-size check.
-            const finalized = session.completionVersionId
-              ? await storageObjectExists(session, policyStorageTarget)
-              : await isStorageFinalized(session, policyStorageTarget);
-            if (!finalized) throw err;
+            let recoveredSize: number;
+            try {
+              recoveredSize = (await storage.statObject({ key: session.storageKey, target: policyStorageTarget })).size;
+            } catch (error) {
+              if (isMissingStorageObject(error)) throw err;
+              throw sizeUnverified('Recovered upload storage stat failed', ctx.requestId, uploadSessionId);
+            }
+            if (!session.completionVersionId && recoveredSize !== session.size) throw err;
           }
         } else if (session.uploadMode === 'proxy') {
           // Stitch proxy parts

@@ -210,8 +210,12 @@ export function createFileFn(config: FileFnConfig): FileFn {
   if (!inputDatabase) {
     throw new Error('FILEFN_DATABASE_REQUIRED: database is required');
   }
-  const { scope: observabilityScope, domainMetrics } = createFileFnObservability(observability);
+  const { scope: observabilityScope, domainMetrics } = createFileFnObservability(
+    observability,
+    (work) => background.track(work),
+  );
   const logger = fileFnLoggerFromObservability(observabilityScope?.logger);
+  const background = createBackgroundScheduler(runtime, logger);
   const db = wrapWithSchema(inputDatabase, getSchema({ namespace }));
   const observedDb = instrumentAdapter(db, {
     observability: observabilityScope?.child({ component: 'filefn.db' }),
@@ -223,7 +227,6 @@ export function createFileFn(config: FileFnConfig): FileFn {
   });
 
   const policyRegistry = createPolicyRegistry(initialPolicies);
-  const background = createBackgroundScheduler(runtime, logger);
   const events = createEventEmitter(observabilityScope, background);
   const deduplication = createDeduplicationService({
     db: observedDb,
