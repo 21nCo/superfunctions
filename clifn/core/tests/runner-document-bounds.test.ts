@@ -2593,46 +2593,55 @@ describe("document memory in a constrained heap", () => {
     // heap_size_limit adds a young generation that depends on the Node version (with --max-old-space-size=32: 80 MiB
     // on Node 20 and 22, 128 MiB on Node 26, 224 MiB on Node 24), so it cannot size what lives in the old generation.
     const jsonValueUrl = pathToFileURL(join(dirname(runnerModule), "json-value.js")).href;
+    // argv: the module, then a NODE_OPTIONS to set before importing it (for child processes only: it sets no limit).
     const probe = String.raw`
+      if (process.argv[2]) process.env.NODE_OPTIONS = process.argv[2];
       const { documentLimit } = await import(process.argv[1]);
       const { constants } = await import("node:buffer");
       const { getHeapStatistics } = await import("node:v8");
       const { Worker } = await import("node:worker_threads");
       const heap = Math.min(constants.MAX_STRING_LENGTH, Math.floor(getHeapStatistics().heap_size_limit / 16));
+      // A worker that asks for a 24 MiB old generation, without the parent's flags; a process flag can override it.
       const worker = await new Promise((resolve, reject) => {
-        // A CommonJS worker without the parent's flags: only its resourceLimits set its old generation.
         const thread = new Worker(
           "import(" + JSON.stringify(process.argv[1]) + ").then(({ documentLimit }) => " +
             "require('node:worker_threads').parentPort.postMessage(documentLimit()))",
-          { eval: true, execArgv: [], resourceLimits: { maxOldGenerationSizeMb: 24 } }
+          { eval: true, execArgv: [], env: {}, resourceLimits: { maxOldGenerationSizeMb: 24 } }
         );
         thread.once("message", resolve);
         thread.once("error", reject);
       });
       process.stdout.write(JSON.stringify({ limit: documentLimit(), heap, worker }));
     `;
-    const limitWith = (execArgv: string[], nodeOptions?: string) => {
+    const limitWith = (execArgv: string[], nodeOptions?: string, laterNodeOptions = "") => {
       const env: NodeJS.ProcessEnv = { ...process.env };
       delete env.NODE_OPTIONS;
       if (nodeOptions !== undefined) {
         env.NODE_OPTIONS = nodeOptions;
       }
-      const child = spawnSync(process.execPath, [...execArgv, "--input-type=module", "-e", probe, jsonValueUrl], {
-        encoding: "utf8",
-        env,
-        timeout: 60_000,
-      });
+      const child = spawnSync(
+        process.execPath,
+        [...execArgv, "--input-type=module", "-e", probe, jsonValueUrl, laterNodeOptions],
+        { encoding: "utf8", env, timeout: 60_000 }
+      );
       expect(child.stderr).toBe("");
       return JSON.parse(child.stdout) as { limit: number; heap: number; worker: number };
     };
     const MiB = 2 ** 20;
-    expect(limitWith(["--max-old-space-size=32"])).toMatchObject({ limit: (32 * MiB) / 16, worker: (24 * MiB) / 16 });
+    // The command line's flag; a worker's old generation is its heap limit less the young generation it reports, so
+    // the process flag that overrode its 24 MiB request sizes it.
+    expect(limitWith(["--max-old-space-size=32"])).toMatchObject({ limit: (32 * MiB) / 16, worker: (32 * MiB) / 16 });
     expect(limitWith([], "--max-old-space-size=48").limit).toBe((48 * MiB) / 16);
+    // Quoted as Node accepts it in NODE_OPTIONS.
+    expect(limitWith([], '"--max-old-space-size=48"').limit).toBe((48 * MiB) / 16);
     // The command line takes precedence over NODE_OPTIONS, in either spelling.
     expect(limitWith(["--max_old_space_size=40"], "--max-old-space-size=48").limit).toBe((40 * MiB) / 16);
-    // Without one, V8's default old generation is most of its heap limit, which is used as before.
+    // Without one, V8's default old generation is most of its heap limit, which is used as before; a worker's own
+    // request sizes it.
     const unflagged = limitWith([]);
-    expect(unflagged.limit).toBe(unflagged.heap);
+    expect(unflagged).toMatchObject({ limit: unflagged.heap, worker: (24 * MiB) / 16 });
+    // A NODE_OPTIONS set while the process runs (for its child processes) did not size this heap.
+    expect(limitWith([], undefined, "--max-old-space-size=4").limit).toBe(unflagged.heap);
   }, 60_000);
 
   it("keeps the diagnostics of an endless returned list compact in a 32 MiB old generation", () => {
@@ -2645,29 +2654,42 @@ describe("document memory in a constrained heap", () => {
         get: (target, key) =>
           key === "length" ? 2e8 : typeof key === "string" && /^\d+$/.test(key) ? { code: "D", severity: "info", message: "m" } : Reflect.get(target, key),
       });
+      let listed = 0;
       const exitCode = await runAction(() => ({ exitCode: 2, data: "done", diagnostics: many }), {}, {
         mode: "json", jsonStyle: "document", color: false,
         stdout: (text) => chunks.push(text),
         stderr: (text) => { droppedRest ||= text.includes("diagnostics past the first"); },
+        onDiagnostics: (list) => { listed = list.length; },
       });
       const out = chunks.join("");
-      JSON.parse(out);
-      process.stdout.write(JSON.stringify({ writes: chunks.length, exitCode, droppedRest, start: out.slice(0, 60), end: out.slice(-4) }));
+      const printed = JSON.parse(out).diagnostics.length;
+      process.stdout.write(JSON.stringify({
+        writes: chunks.length, exitCode, droppedRest, listedAll: listed === printed, start: out.slice(0, 60), end: out.slice(-4),
+      }));
     `;
-    const child = spawnSync(
-      process.execPath,
-      ["--max-old-space-size=32", "--input-type=module", "-e", script, pathToFileURL(runnerModule).href],
-      { encoding: "utf8", timeout: 120_000 }
-    );
-    expect(child.stderr).toBe("");
-    expect(child.status).toBe(0);
-    expect(JSON.parse(child.stdout)).toEqual({
-      writes: 1,
-      exitCode: 2,
-      droppedRest: true,
-      start: '{"ok":true,"data":"done","diagnostics":[{"code":"D","severit',
-      end: "}]}\n",
-    });
+    // The flag on the command line, and quoted in NODE_OPTIONS.
+    for (const [execArgv, nodeOptions] of [[["--max-old-space-size=32"], undefined], [[], '"--max-old-space-size=32"']] as const) {
+      const env: NodeJS.ProcessEnv = { ...process.env };
+      delete env.NODE_OPTIONS;
+      if (nodeOptions !== undefined) {
+        env.NODE_OPTIONS = nodeOptions;
+      }
+      const child = spawnSync(
+        process.execPath,
+        [...execArgv, "--input-type=module", "-e", script, pathToFileURL(runnerModule).href],
+        { encoding: "utf8", env, timeout: 120_000 }
+      );
+      expect(child.stderr).toBe("");
+      expect(child.status).toBe(0);
+      expect(JSON.parse(child.stdout)).toEqual({
+        writes: 1,
+        exitCode: 2,
+        droppedRest: true,
+        listedAll: true,
+        start: '{"ok":true,"data":"done","diagnostics":[{"code":"D","severit',
+        end: "}]}\n",
+      });
+    }
   }, 150_000);
 });
 

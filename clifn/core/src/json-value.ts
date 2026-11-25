@@ -177,30 +177,78 @@ export function workLeft(work: WorkBudget, kind: WorkKind, redacted = false): nu
   return account === undefined ? Number.POSITIVE_INFINITY : work[account];
 }
 
+const MIB = 2 ** 20;
+/** NODE_OPTIONS as the process started with it: Node reads it once at startup, so a later change sets no limit. */
+const startupNodeOptions = process.env.NODE_OPTIONS;
+
+/** Splits NODE_OPTIONS as Node does: on spaces, with double quotes grouping and a backslash escaping inside them. */
+function nodeOptionsTokens(options: string): string[] {
+  const tokens: string[] = [];
+  let token = "";
+  let quoted = false;
+  for (let index = 0; index < options.length; index += 1) {
+    const char = options[index];
+    if (quoted && char === "\\" && index + 1 < options.length) {
+      index += 1;
+      token += options[index];
+    } else if (char === '"') {
+      quoted = !quoted;
+    } else if (char === " " && !quoted) {
+      tokens.push(token);
+      token = "";
+    } else {
+      token += char;
+    }
+  }
+  tokens.push(token);
+  return tokens;
+}
+
+/** The last `--max-old-space-size` among `options`, in bytes. */
+function oldSpaceFlag(options: readonly string[]): number | undefined {
+  let size: number | undefined;
+  for (const option of options) {
+    const match = /^--max[-_]old[-_]space[-_]size=(\d+)$/.exec(option);
+    if (match) {
+      size = Number(match[1]) * MIB;
+    }
+  }
+  return size;
+}
+
+/** Whether `bytes` is a size V8 gives a young generation: a power of two, or three times one (two semi-spaces and its large-object space). */
+function isYoungGenerationSize(bytes: number): boolean {
+  let size = bytes % 3 === 0 ? bytes / 3 : bytes;
+  while (size > 1 && size % 2 === 0) {
+    size /= 2;
+  }
+  return size === 1;
+}
+
 /**
  * The bytes of V8's heap a document may be sized from: its old generation, where the document text, its one joined
  * copy and the diagnostics a run keeps live. V8's `heap_size_limit` adds the young generation, whose size depends on
  * the Node version and the machine, not on the old generation (with `--max-old-space-size=32`, 80 MiB on Node 20 and
- * 22, 128 MiB on Node 26, 224 MiB on Node 24), and V8 does not report the old generation's limit on its own. So the
- * old-generation size a process was given (a worker's `resourceLimits.maxOldGenerationSizeMb`, or the last
- * `--max-old-space-size` on the command line, which takes precedence over `NODE_OPTIONS`) is used when it is smaller,
- * and the heap limit otherwise (V8's default old generation, sized from the machine's memory, is most of it).
- * Read once: neither changes while the process runs.
+ * 22, 128 MiB on Node 26, 224 MiB on Node 24), and V8 does not report the old generation's limit on its own. A worker
+ * reports its young generation in `resourceLimits`, so its old generation is the rest of its heap limit, whatever
+ * flags overrode the size it asked for. The main thread reports neither, so the `--max-old-space-size` it started with
+ * (the command line's, which takes precedence, then NODE_OPTIONS' as read at startup) is used only when the rest of
+ * the heap limit is a young generation's size, which a flag that did not set this heap (a NODE_OPTIONS changed for
+ * child processes, one the command line overrode) does not leave. Otherwise the heap limit is used: V8's default old
+ * generation, sized from the machine's memory, is most of it. Read once: none of these change while the process runs.
  */
 function oldGenerationLimit(): number {
   const heapLimit = getHeapStatistics().heap_size_limit;
-  const workerLimit = resourceLimits.maxOldGenerationSizeMb;
-  if (typeof workerLimit === "number" && workerLimit > 0) {
-    return Math.min(heapLimit, workerLimit * 2 ** 20);
+  const young = resourceLimits.maxYoungGenerationSizeMb;
+  if (typeof young === "number" && young > 0 && young * MIB < heapLimit) {
+    return heapLimit - young * MIB;
   }
-  let flagged: number | undefined;
-  for (const option of [...(process.env.NODE_OPTIONS ?? "").split(/\s+/), ...process.execArgv]) {
-    const match = /^--max[-_]old[-_]space[-_]size=(\d+)$/.exec(option);
-    if (match) {
-      flagged = Number(match[1]) * 2 ** 20;
+  for (const size of [oldSpaceFlag(process.execArgv), oldSpaceFlag(nodeOptionsTokens(startupNodeOptions ?? ""))]) {
+    if (size !== undefined && size > 0 && size < heapLimit && isYoungGenerationSize(heapLimit - size)) {
+      return size;
     }
   }
-  return flagged !== undefined && flagged > 0 ? Math.min(heapLimit, flagged) : heapLimit;
+  return heapLimit;
 }
 
 let oldGenerationBytes: number | undefined;
