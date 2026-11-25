@@ -15,7 +15,8 @@ export type RunnerDiagnosticsListener = (diagnostics: readonly Diagnostic[]) => 
  * How `mode: 'json'` writes output. `'lines'` (the default) prints each message and value as its own JSON line.
  * `'document'` prints exactly one result document on stdout (D8), `{"ok":true,"data":...}` or
  * `{"ok":false,"error":{"code","message","details"?}}` with `diagnostics` when there are any, and writes every
- * message as a JSON line to stderr. It has no effect in text mode.
+ * message as a JSON line to stderr. Sensitive keys in `data`, error `details` and diagnostic `details` print
+ * `"[REDACTED]"`; messages print as given. It has no effect in text mode.
  */
 export type RunnerJsonStyle = "lines" | "document";
 
