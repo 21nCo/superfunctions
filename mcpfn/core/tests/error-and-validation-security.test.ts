@@ -172,6 +172,31 @@ describe("withheld errors outside tool handlers (MCP-SEC-08)", () => {
     expect(error).toMatchObject({ code: ErrorCode.InvalidParams, data: { field: "uri" } });
   });
 
+  it("keeps a named subclass of an McpError from another copy of the SDK", async () => {
+    // Stand-in for the application's own SDK copy, which this bundle cannot instanceof.
+    // Built through a property so the class keeps the name "McpError" (a
+    // local class declaration would be renamed to avoid the imported one).
+    const ForeignMcpError = {
+      McpError: class extends Error {
+        constructor(readonly code: number, message: string, readonly data?: unknown) {
+          super(`MCP error ${code}: ${message}`);
+          this.name = "McpError";
+        }
+      },
+    }.McpError;
+    expect(ForeignMcpError.name).toBe("McpError");
+    class ResourceInputError extends ForeignMcpError {
+      constructor() {
+        super(ErrorCode.InvalidParams, "Bad resource", { field: "uri" });
+        this.name = "ResourceInputError";
+      }
+    }
+    const registry = new McpFnRegistry().registerResource({ uri: "file:///report", name: "report", read: async () => { throw new ResourceInputError(); } });
+    const client = await connect(registry);
+    const error = await client.readResource({ uri: "file:///report" }).then(() => undefined, (failure: unknown) => failure);
+    expect(error).toMatchObject({ code: ErrorCode.InvalidParams, data: { field: "uri" } });
+  });
+
   it("withholds plain coded objects thrown by protocol handlers", async () => {
     const registry = new McpFnRegistry().registerResource({
       uri: "file:///report",

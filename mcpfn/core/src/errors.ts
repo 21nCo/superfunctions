@@ -75,8 +75,14 @@ export interface McpFnErrorResultOptions {
  * package bundles its own, so instanceof alone misses an application's).
  */
 export function isMcpErrorLike(error: unknown): error is Error & { code: number } {
-  return error instanceof McpError ||
-    (error instanceof Error && error.name === "McpError" && typeof (error as { code?: unknown }).code === "number");
+  if (error instanceof McpError) return true;
+  if (!(error instanceof Error) || typeof (error as { code?: unknown }).code !== "number") return false;
+  if (error.name === "McpError") return true;
+  // A subclass with its own name: look for the SDK base class by name.
+  for (let prototype = Object.getPrototypeOf(error); prototype && prototype !== Error.prototype; prototype = Object.getPrototypeOf(prototype)) {
+    if (Object.hasOwn(prototype, "constructor") && (prototype as { constructor: { name?: unknown } }).constructor.name === "McpError") return true;
+  }
+  return false;
 }
 
 /**
