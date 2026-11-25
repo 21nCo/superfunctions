@@ -275,6 +275,7 @@ export async function runCli(
           ? (reporterValue as R)
           : "console";
 
+        if (cli.args.length > 1) throw new Error("apifn test takes at most one collection directory");
         const result = await runTestCommand({
           ...readCollectionTrustOptions(argv),
           collectionDir,
@@ -550,7 +551,13 @@ export async function runCli(
 
   // `apifn check` reads its own arguments first: cac would print help (exit 0) for a malformed
   // check invocation that also names --help, instead of the usage error (exit 2).
-  let cacArgv = argv;
+  const separator = argv.indexOf("--");
+  // Give cac an explicit boolean value so it leaves the following path untouched.
+  let cacArgv = argv.map((arg, index) =>
+    (separator < 0 || index < separator) && (arg === "--allow-scripts" || arg === "--allowScripts")
+      ? "--allowScripts=true"
+      : arg
+  );
   if (isCheckInvocation(argv)) {
     try {
       parseCheckArgv(argv);

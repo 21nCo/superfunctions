@@ -11,12 +11,28 @@ import type {
 import { BaseAdapter } from "@testfn/core";
 
 // Duck-typing collection types to avoid circular dependency
-interface CollectionItem { kind: string; name: string; children?: CollectionItem[];[key: string]: any; }
+interface CollectionItem { kind: string; name: string; path: string; children?: CollectionItem[];[key: string]: any; }
 interface CollectionInfo { name: string;[key: string]: any; }
 interface Collection { info: CollectionInfo; items: CollectionItem[]; environments: Record<string, any>;[key: string]: any; }
 interface AssertionResult { passed: boolean; name: string;[key: string]: any; }
-interface RequestResult { name: string; status: "passed" | "failed" | "error" | "skipped"; duration: number; assertions: AssertionResult[]; error?: string; statusCode?: number;[key: string]: any; }
+interface RequestResult { path: string; status: "passed" | "failed" | "error" | "skipped"; duration: number; assertions: AssertionResult[]; error?: string; statusCode?: number;[key: string]: any; }
 interface RunReport { results: RequestResult[];[key: string]: any; }
+
+function visitRequests(
+    collection: Collection,
+    visit: (item: CollectionItem, suite: string) => void,
+): void {
+    function walk(items: CollectionItem[], suitePath: string[]): void {
+        for (const item of items) {
+            if (item.kind === "request") {
+                visit(item, suitePath.length ? suitePath.join(" > ") : collection.info.name);
+            } else if (item.kind === "folder" && item.children) {
+                walk(item.children, [...suitePath, item.name]);
+            }
+        }
+    }
+    walk(collection.items, []);
+}
 
 export interface ApifnTestAdapterOptions {
     /** Execute scripts from trusted collections. Defaults to false. */
@@ -87,25 +103,15 @@ export class ApifnTestAdapter extends BaseAdapter {
             try {
                 const collection: Collection = await readCollection(dir);
 
-                // Walk collection to emit test cases
-                const walk = (items: CollectionItem[], suitePath: string[]) => {
-                    for (const item of items) {
-                        if (item.kind === "request") {
-                            const suiteName = suitePath.length > 0 ? suitePath.join(" > ") : collection.info.name;
-                            testCases.push({
-                                id: this.generateTestId(dir, item.name, suiteName),
-                                file: dir,
-                                name: item.name,
-                                suite: suiteName,
-                                tags: ["api"],
-                            });
-                        } else if (item.kind === "folder" && item.children) {
-                            walk(item.children, [...suitePath, item.name]);
-                        }
-                    }
-                };
-
-                walk(collection.items, []);
+                visitRequests(collection, (item, suite) => {
+                    testCases.push({
+                        id: this.generateTestId(dir, item.name, suite),
+                        file: dir,
+                        name: item.name,
+                        suite,
+                        tags: ["api"],
+                    });
+                });
             } catch (err) {
                 console.warn(`[apifn/testfn] Failed to read collection at ${dir}:`, err);
             }
@@ -116,7 +122,10 @@ export class ApifnTestAdapter extends BaseAdapter {
 
     async run(tests: TestCase[], options: RunOptions): Promise<TestResult[]> {
         // @ts-ignore
-        const { runCollection, readCollection } = await import("@apifn/collections");
+        const { runCollection, readCollection, COLLECTION_RUNNER_TRUST_OPTIONS } = await import("@apifn/collections");
+        if (COLLECTION_RUNNER_TRUST_OPTIONS !== true) {
+            throw new Error("The ApiFn TestFn adapter requires @apifn/collections 0.0.5 or later.");
+        }
         const results: TestResult[] = [];
 
         // Group tests by collection file/directory
@@ -140,13 +149,19 @@ export class ApifnTestAdapter extends BaseAdapter {
         for (const [dir, testsInCollection] of collectionsToRun.entries()) {
             try {
                 const collection = await readCollection(dir);
+                const casesByName = new Map<string, TestCase[]>();
+                for (const test of testsInCollection) {
+                    const sameName = casesByName.get(test.name) ?? [];
+                    sameName.push(test);
+                    casesByName.set(test.name, sameName);
+                }
+                const casesByPath = new Map<string, TestCase[]>();
+                visitRequests(collection, (item, suite) => {
+                    const matched = casesByName.get(item.name)?.filter((test) => !test.suite || test.suite === suite);
+                    if (matched?.length) casesByPath.set(item.path, matched);
+                });
 
-                // We need to run the collection, but ideally only the mapped tests.
-                // For simplicity, we run the collection with 'include' filter based on matched paths.
-                // Since testfn focuses on names, we map names back to items.
-                // Or we just run the whole collection and filter the output (if it's fast enough).
-                // Best approach: Use `include` with the paths of the requests.
-                const report: RunReport = await runCollection(collection, {
+                const runOptions = {
                     // Default to the first environment or a dummy one if none exists
                     environment: Object.keys(collection.environments)[0] ?? "default",
                     parallel: options.parallel !== undefined && options.parallel > 1,
@@ -156,13 +171,15 @@ export class ApifnTestAdapter extends BaseAdapter {
                     overrides: options.env,
                     allowScripts: this.collectionOptions.allowScripts === true,
                     processEnv: this.collectionOptions.processEnv,
-                });
+                    includePaths: [...casesByPath.keys()],
+                };
+                const report: RunReport = await runCollection(collection, runOptions);
 
                 // Map collection results to testfn TestResults
+                const completedCases = new Set<TestCase>();
                 for (const reqRes of report.results) {
-                    // Match by request name (testfn test case granularity is per request name).
-                    const matchedTests = testsInCollection.filter((t) => t.name === reqRes.name);
-                    for (const tc of matchedTests) {
+                    for (const tc of casesByPath.get(reqRes.path) ?? []) {
+                        completedCases.add(tc);
                         let status: TestStatus = "passed";
                         let testError: TestError | undefined;
 
@@ -196,9 +213,8 @@ export class ApifnTestAdapter extends BaseAdapter {
                 }
 
                 // Handle skipped/omitted tests from collection that were requested
-                const runTestNames = new Set(report.results.map((r: RequestResult) => r.name));
                 for (const tc of testsInCollection) {
-                    if (!runTestNames.has(tc.name)) {
+                    if (!completedCases.has(tc)) {
                         results.push({
                             id: tc.id,
                             status: "skipped",

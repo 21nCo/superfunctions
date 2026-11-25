@@ -513,7 +513,9 @@ export async function runCollection(
 
   const entries = flattenRequestItems(collection.items);
   const selected = new Map<RequestEntry, RequestScripts>();
+  const includePaths = options.includePaths && new Set(options.includePaths);
   for (const entry of entries) {
+    if (includePaths && !includePaths.has(entry.item.path)) continue;
     if (!shouldRunEntry(entry, options)) continue;
     const scripts = entry.request.runtime?.scripts ?? [];
     if (!Array.isArray(scripts)) {

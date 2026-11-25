@@ -1,6 +1,6 @@
 {
   "name": "@apifn/react",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "description": "React UI components for ApiFn",
   "type": "module",
   "main": "dist/index.cjs",

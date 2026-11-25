@@ -64,6 +64,18 @@ describe("validateOpenAPI", () => {
     expect(doc).toEqual(snapshot);
   });
 
+  it("accepts literal fragment-shaped example data with or without an allowlist", async () => {
+    const doc = documentWithReference("#/components/schemas/Shared");
+    Object.assign(doc.components.schemas.Shared, {
+      type: "object",
+      examples: [{ $ref: "#example-tag" }],
+    });
+    await expect(validateOpenAPI(doc)).resolves.toEqual([]);
+    await expect(validateOpenAPI(doc, {
+      externalReferences: new Map([["https://example.invalid/unused.json", "{}"]]),
+    })).resolves.toEqual([]);
+  });
+
   it("uses preloaded allowlist entries and rejects unlisted transitive references", async () => {
     const ref = "https://example.invalid/preloaded.json";
     const doc = documentWithReference(ref);

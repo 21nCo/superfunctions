@@ -8,12 +8,14 @@ import { ApifnTestAdapter } from "@apifn/core/testfn";
 
 const mocks = vi.hoisted(() => {
   return {
+    trustOptions: true,
     readCollection: vi.fn(),
     runCollection: vi.fn(),
   };
 });
 
 vi.mock("@apifn/collections", () => ({
+  get COLLECTION_RUNNER_TRUST_OPTIONS() { return mocks.trustOptions; },
   readCollection: mocks.readCollection,
   runCollection: mocks.runCollection,
 }));
@@ -23,6 +25,7 @@ describe("ApifnTestAdapter", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.trustOptions = true;
   });
 
   afterEach(() => {
@@ -77,19 +80,24 @@ describe("ApifnTestAdapter", () => {
     mocks.readCollection.mockResolvedValue({
       info: { name: "Orders API" },
       environments: { default: {} },
-      items: [],
+      items: [
+        { kind: "request", name: "List Orders", path: "list.yml" },
+        { kind: "request", name: "Create Order", path: "create.yml" },
+        { kind: "request", name: "Sync Orders", path: "sync.yml" },
+        { kind: "request", name: "Archive Order", path: "archive.yml" },
+      ],
     });
     mocks.runCollection.mockResolvedValue({
       results: [
-        { name: "List Orders", status: "passed", duration: 11, assertions: [] },
+        { path: "list.yml", status: "passed", duration: 11, assertions: [] },
         {
-          name: "Create Order",
+          path: "create.yml",
           status: "failed",
           duration: 22,
           assertions: [{ name: "status is 201", passed: false }],
         },
-        { name: "Sync Orders", status: "error", duration: 33, assertions: [], error: "socket hang up", statusCode: 500 },
-        { name: "Archive Order", status: "skipped", duration: 0, assertions: [] },
+        { path: "sync.yml", status: "error", duration: 33, assertions: [], error: "socket hang up", statusCode: 500 },
+        { path: "archive.yml", status: "skipped", duration: 0, assertions: [] },
       ],
     });
 
@@ -115,10 +123,19 @@ describe("ApifnTestAdapter", () => {
     }));
   });
 
-  it("forwards explicit collection trust and environment values", async () => {
+  it("forwards explicit trust and only includes selected paths", async () => {
     const processEnv = { API_TEST_VALUE: "allowed-value" };
     const adapter = new ApifnTestAdapter({ allowScripts: true, processEnv });
-    mocks.readCollection.mockResolvedValue({ environments: { default: {} } });
+    mocks.readCollection.mockResolvedValue({
+      info: { name: "Orders API" },
+      environments: { default: {} },
+      items: [
+        { kind: "request", name: "List Orders", path: "list.yml" },
+        { kind: "folder", name: "Scripted", children: [
+          { kind: "request", name: "List Orders", path: "scripted/list.yml" },
+        ] },
+      ],
+    });
     mocks.runCollection.mockResolvedValue({ results: [] });
 
     await adapter.run([{ id: "t1", file: "/tmp/work/orders", name: "List Orders", suite: "Orders API" }], {});
@@ -126,6 +143,13 @@ describe("ApifnTestAdapter", () => {
     expect(mocks.runCollection).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
       allowScripts: true,
       processEnv,
+      includePaths: ["list.yml"],
     }));
+  });
+
+  it("refuses a collection runner that does not enforce explicit trust", async () => {
+    mocks.trustOptions = false;
+    await expect(new ApifnTestAdapter().run([], {})).rejects.toThrow("@apifn/collections 0.0.5 or later");
+    expect(mocks.runCollection).not.toHaveBeenCalled();
   });
 });

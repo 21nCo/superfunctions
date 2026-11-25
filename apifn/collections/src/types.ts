@@ -142,6 +142,8 @@ export interface RunOptions {
   environment: string | Environment;
   /** Only run requests matching these paths/patterns */
   include?: string[];
+  /** Only run these exact collection-relative request paths */
+  includePaths?: string[];
   /** Skip requests matching these paths/patterns */
   exclude?: string[];
   /** Run requests in parallel (default: sequential) */

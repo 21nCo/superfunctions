@@ -118,6 +118,7 @@ console.log(report.summary);
 |--------|------|-------------|
 | `environment` | `string \| Environment` | Environment name or object (required) |
 | `include` / `exclude` | `string[]` | Glob-ish patterns matched against path/name/`"METHOD url"` |
+| `includePaths` | `string[]` | Exact collection-relative request paths to run |
 | `parallel` | `boolean` | Run requests concurrently (default: sequential) |
 | `concurrency` | `number` | Max concurrent requests in parallel mode (default: 4) |
 | `timeout` | `number` | Per-request timeout in ms (default: 30000) |

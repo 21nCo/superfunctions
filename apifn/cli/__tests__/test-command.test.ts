@@ -216,7 +216,8 @@ describe("apifn test command — CLI-004, CLI-011, RUN-009", () => {
 
         let stdout = "";
         expect(await runCli([...args, "--allow-scripts=0"], { stderr: () => {} })).toBe(2);
-        expect(await runCli([...args, "--allow-scripts", "--allow-scripts"], {
+        expect(await runCli([...args, "--allow-scripts", "disabled"], { stderr: () => {} })).toBe(2);
+        expect(await runCli(["test", "--allow-scripts", ...args.slice(1), "--allow-scripts"], {
             stdout: (line) => { stdout += line; },
         })).toBe(0);
         expect(JSON.parse(stdout).results[0].assertions).toEqual([

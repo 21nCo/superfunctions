@@ -18,10 +18,8 @@ function assertLocalReferences(document: OpenAPIDocument): void {
     const value = pending.pop();
     if (typeof value !== "object" || value === null || seen.has(value)) continue;
     seen.add(value);
-    if ("$ref" in value && typeof value.$ref === "string" && value.$ref) {
-      if (value.$ref !== "#" && !value.$ref.startsWith("#/")) {
-        throw new Error(EXTERNAL_REF_ERROR);
-      }
+    if ("$ref" in value && typeof value.$ref === "string" && value.$ref && !value.$ref.startsWith("#")) {
+      throw new Error(EXTERNAL_REF_ERROR);
     }
     for (const child of Object.values(value)) pending.push(child);
   }
@@ -83,7 +81,6 @@ export async function validateAndDereferenceOpenAPI(
           },
         },
       },
-      dereference: { circular: "ignore" },
     });
     return { document: validated as unknown as OpenAPIDocument, errors: [] };
   } catch (error) {

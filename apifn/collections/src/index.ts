@@ -40,6 +40,8 @@ export {
 export type { InterpolationResult, VariableResolutionInput } from "./variables.js";
 export { createCookieJar, createFetchHttpClient } from "./runner/http-client.js";
 export { runCollection } from "./runner/runner.js";
+/** Indicates that runCollection enforces explicit script and environment trust options. */
+export const COLLECTION_RUNNER_TRUST_OPTIONS = true;
 export { createAssertionRuntime } from "./runner/assertions.js";
 export {
   executePreRequestScript,

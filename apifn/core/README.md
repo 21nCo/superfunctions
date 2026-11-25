@@ -86,7 +86,7 @@ const doc = parseOpenAPI(await readFile("./openapi.yml", "utf8"));
 
 Validate a document without changing it. Returns validation errors (`ValidationError[]`) for a report or gate.
 Validation accepts local JSON pointers by default and refuses external references. If you validate a split document, pass trusted, preloaded JSON or YAML in `externalReferences`, keyed by resolved document URI or absolute path without a fragment. Validation does not read files or make network requests.
-Use `validateAndDereferenceOpenAPI` when you also need the validated copy with non-circular references resolved.
+Use `validateAndDereferenceOpenAPI` when you also need the validated copy with references resolved. Recursive schemas can produce circular objects in that copy.
 
 ```typescript
 import { validateOpenAPI } from "@apifn/core";
@@ -231,7 +231,7 @@ npm install @testfn/core @apifn/collections
 import { ApifnTestAdapter } from "@apifn/core/testfn";
 ```
 
-The adapter uses the collection runner's secure defaults. Pass `allowScripts: true` to the adapter constructor only for trusted collections. Pass a `processEnv` object with the specific values needed by collection templates.
+The adapter requires `@apifn/collections` 0.0.5 or later. Pass `allowScripts: true` to the adapter constructor only for trusted collections. Pass a `processEnv` object with the specific values needed by collection templates.
 
 ---
 
