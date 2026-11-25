@@ -152,8 +152,9 @@ run the CLI commands in [Non-GitHub CI](#non-github-ci).
 Bundle split OpenAPI specs before passing them to `spec_path`. Validation resolves
 internal `#/` references and rejects file and remote references by default.
 The workflow runs collection tests with scripts and host environment interpolation
-disabled. For trusted collections that need either, run `apifn test` in a separate
-step with `--allow-scripts` or repeatable `--allow-env <name>` flags as needed.
+disabled. For trusted collections that need either, configure your own workflow
+with the [direct CLI commands](#non-github-ci). Pass `--allow-scripts` or repeatable
+`--allow-env <name>` flags to `apifn test` as needed.
 
 ### Inputs
 
