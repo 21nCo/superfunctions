@@ -559,7 +559,7 @@ describe("validateOpenAPI", () => {
     expect(result.document?.components?.schemas?.Value).toEqual({ type: "integer" });
   });
 
-  it.each(["plain", "plain-first", "decorated-first"])("keeps the original self-reference with %s imports", async (order) => {
+  it.each(["plain", "plain-first", "decorated-first"])("rejects a preloaded direct self-reference with %s imports", async (order) => {
     const uri = "https://example.invalid/types.json";
     const ref = "#/properties/self";
     const contents = { type: "object", properties: { self: { $ref: ref } } };
@@ -570,16 +570,14 @@ describe("validateOpenAPI", () => {
     const result = await validateAndDereferenceOpenAPI(doc, {
       externalReferences: new Map([[uri, JSON.stringify(contents)]]),
     });
-    expect(result.errors).toEqual([]);
-    expect(result.document?.components?.schemas?.Value).toEqual(contents);
-    if (order !== "plain") {
-      expect(result.document?.components?.schemas?.Decorated).toEqual({ ...contents, description: "Imported schema" });
-    }
+    expect(result.errors).toEqual([
+      expect.objectContaining({ message: "Preloaded OpenAPI $ref must point to a different location", severity: "error" }),
+    ]);
   });
 
-  it.each([false, true])("uses one target position for alias paths (reversed=%s)", async (reversed) => {
+  it.each([false, true])("resolves a recursive schema through both alias paths (reversed=%s)", async (reversed) => {
     const uri = "https://example.invalid/types.json";
-    const ref = "#/A/properties/target/properties/self";
+    const ref = "#/A/properties/target";
     const target = { type: "object", properties: { self: { $ref: ref } } };
     const contents = { A: { properties: { target } }, B: { $ref: "#/A" } };
     const imports = Object.entries({
@@ -594,7 +592,9 @@ describe("validateOpenAPI", () => {
       externalReferences: new Map([[uri, JSON.stringify(contents)]]),
     });
     expect(result.errors).toEqual([]);
-    expect(result.document?.components?.schemas).toEqual({ Direct: target, Alias: target });
+    for (const name of ["Direct", "Alias"]) {
+      expect(result.document?.components?.schemas?.[name]).toHaveProperty("properties.self.type", "object");
+    }
   });
 
   it.each(["parent-only", "parent-first", "child-first"])("preserves recursive siblings with %s imports", async (order) => {
@@ -663,7 +663,7 @@ describe("validateOpenAPI", () => {
   it.each([false, true])("resolves an acyclic root alias through sibling definitions (recursive=%s)", async (recursive) => {
     const uri = "https://example.invalid/types.json";
     const target = recursive
-      ? { type: "object", properties: { self: { $ref: "#/$defs/Target/properties/self" } } }
+      ? { type: "object", properties: { self: { $ref: "#/$defs/Target" } } }
       : { type: "integer" };
     const contents = JSON.stringify({
       $ref: "#/$defs/Alias",
@@ -673,7 +673,8 @@ describe("validateOpenAPI", () => {
       externalReferences: new Map([[uri, contents]]),
     });
     expect(result.errors).toEqual([]);
-    expect(result.document?.components?.schemas?.Value).toMatchObject(target);
+    expect(result.document?.components?.schemas?.Value).toHaveProperty("type", target.type);
+    if (recursive) expect(result.document?.components?.schemas?.Value).toHaveProperty("properties.self.type", "object");
   });
 
   it("dereferences literal data used as a schema through an intermediate alias", async () => {

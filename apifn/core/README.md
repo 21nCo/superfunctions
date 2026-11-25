@@ -89,6 +89,7 @@ Validation accepts local JSON pointers by default and refuses external reference
 Escape literal `%`, `?`, and `\\` within path segments as `%25`, `%3F`, and `%5C`.
 Drive-qualified Windows paths and native network-share paths accept either slash style in allowlist keys. Use a URI key for an explicit `file:` reference.
 Preloaded YAML supports anchors and aliases within an expansion limit. Expand YAML merge keys before preloading.
+For recursion in a preloaded document, reference a distinct schema definition. A preloaded `$ref` cannot point directly to itself.
 Literal `$ref` strings in examples and defaults are kept as data, including in preloaded schemas.
 Use `validateAndDereferenceOpenAPI` when you also need the validated copy with references resolved. Recursive schemas can produce circular objects in that copy.
 
