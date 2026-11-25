@@ -7,8 +7,13 @@ import { okResponse, errorResponse } from "../http/errors.js";
 import { executeTransaction } from "../execution/transact.js";
 import { buildSchemaIndex, validateMutation, validateQuery } from "../validation/index.js";
 import { validateQueryAuthz, validateMutationAuthz, type AuthzOptions } from "../validation/authz.js";
+import { classifyTransactStep } from "@datafn/core";
 import { logRequest } from "../logging.js";
 import type { DatafnLogger } from "../logger.js";
+
+function isStepRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
 
 /**
  * Options for transact handler
@@ -67,66 +72,72 @@ export function createTransactHandler(
         });
         }
 
-        // Validate each step against schema
+        // Classify once. Schema validation, authorization, and execution share it.
+        // A bare step with string resource and operation is a mutation even when id is not a string.
+        const prepared: Array<{
+          kind: "mutation" | "query";
+          body: Record<string, unknown>;
+          pathSuffix: "" | ".mutation" | ".query";
+        }> = [];
         for (let i = 0; i < body.steps.length; i++) {
-        const step = body.steps[i];
-        
-        if (typeof step !== "object" || step === null) {
+          const step = body.steps[i];
+          if (!isStepRecord(step)) {
             return errorResponse({
-            code: "DFQL_INVALID",
-            message: "Invalid DFQL: step must be object",
-            details: { path: `steps[${i}]` },
+              code: "DFQL_INVALID",
+              message: "Invalid DFQL: step must be object",
+              details: { path: `steps[${i}]` },
             });
+          }
+          const classified = classifyTransactStep(step);
+          if (!classified.ok) {
+            return errorResponse({
+              code: "DFQL_INVALID",
+              message: classified.message,
+              details: { path: `steps[${i}]` },
+            });
+          }
+          if (!isStepRecord(classified.body)) {
+            return errorResponse({
+              code: "DFQL_INVALID",
+              message: classified.kind === "mutation"
+                ? "Invalid DFQL: mutation must be object"
+                : "Invalid DFQL: expected object",
+              details: { path: `steps[${i}]${classified.pathSuffix}` },
+            });
+          }
+          prepared.push({
+            kind: classified.kind,
+            body: classified.body,
+            pathSuffix: classified.pathSuffix,
+          });
         }
 
-        // Determine step type (query or mutation)
-        // Support both wrapped format ({ mutation: {...} }) and bare format ({ resource, operation, ... })
-        // For transact, only perform structural validation (not operation-name check) so that
-        // invalid operations surface as per-step errors rather than route-level rejections.
-        let validationResult;
-        if (step.mutation) {
-            // Wrapped mutation
-            validationResult = validateMutation(step.mutation, schemaIndex, `steps[${i}].mutation`);
-        } else if (step.query) {
-            // Wrapped query
-            validationResult = validateQuery(step.query, schemaIndex, `steps[${i}].query`);
-        } else if (typeof step.resource === "string" && typeof step.id === "string") {
-            // Bare mutation (has id) — validate fully so unknown fields/resources are caught
-            // at the route level. Invalid operation *names* are allowed through so they
-            // surface as per-step DFQL_UNSUPPORTED rather than a whole-transact rejection.
-            if (typeof step.operation === "string") {
-              validationResult = validateMutation(step, schemaIndex, `steps[${i}]`);
-              // If the only problem is an unsupported operation name, let it through to
-              // execution where it returns a per-step error (TV-TRX-002).
-              if (
-                !validationResult.ok &&
-                validationResult.error.code === "DFQL_UNSUPPORTED" &&
-                validationResult.error.path.endsWith(".operation")
-              ) {
-                validationResult = { ok: true, result: undefined as any };
-              }
-            } else {
-              validationResult = validateQuery(step, schemaIndex, `steps[${i}]`);
-            }
-        } else if (step.resource) {
-            // Bare query (has resource but no id)
-            validationResult = validateQuery(step, schemaIndex, `steps[${i}]`);
-        } else {
-            return errorResponse({
-            code: "DFQL_INVALID",
-            message: "Invalid DFQL: step must be a query or mutation",
-            details: { path: `steps[${i}]` },
-            });
-        }
+        for (let i = 0; i < prepared.length; i++) {
+          const step = prepared[i]!;
+          const path = `steps[${i}]${step.pathSuffix}`;
+          // Bare unsupported operation names stay per-step errors (TV-TRX-002).
+          // Wrapped steps do not get that pass.
+          let validationResult = step.kind === "mutation"
+            ? validateMutation(step.body, schemaIndex, path)
+            : validateQuery(step.body, schemaIndex, path);
+          if (
+            step.kind === "mutation" &&
+            step.pathSuffix === "" &&
+            !validationResult.ok &&
+            validationResult.error.code === "DFQL_UNSUPPORTED" &&
+            validationResult.error.path.endsWith(".operation")
+          ) {
+            validationResult = { ok: true, result: undefined as any };
+          }
 
-        if (!validationResult.ok) {
-            const { code, message, path } = validationResult.error as { code: string; message: string; path: string };
+          if (!validationResult.ok) {
+            const { code, message, path: errorPath } = validationResult.error as { code: string; message: string; path: string };
             return errorResponse({
-            code: code as any,
-            message,
-            details: { path },
+              code: code as any,
+              message,
+              details: { path: errorPath },
             });
-        }
+          }
         }
 
         // SEC-004: Per-step authz validation (VAL-001: deny-by-default)
@@ -134,35 +145,11 @@ export function createTransactHandler(
           allowUnknownResources: handlerOpts?.allowUnknownResources,
           debug: handlerOpts?.debug,
         };
-        for (let i = 0; i < body.steps.length; i++) {
-          const step = body.steps[i];
-
-          let authzResult;
-          if (step.mutation) {
-            authzResult = validateMutationAuthz(
-              step.mutation as Record<string, unknown>,
-              validatedSchema,
-              authzOpts,
-            );
-          } else if (step.query) {
-            authzResult = validateQueryAuthz(
-              step.query as Record<string, unknown>,
-              validatedSchema,
-              authzOpts,
-            );
-          } else if (typeof step.operation === "string") {
-            authzResult = validateMutationAuthz(
-              step as Record<string, unknown>,
-              validatedSchema,
-              authzOpts,
-            );
-          } else {
-            authzResult = validateQueryAuthz(
-              step as Record<string, unknown>,
-              validatedSchema,
-              authzOpts,
-            );
-          }
+        for (let i = 0; i < prepared.length; i++) {
+          const step = prepared[i]!;
+          const authzResult = step.kind === "mutation"
+            ? validateMutationAuthz(step.body, validatedSchema, authzOpts)
+            : validateQueryAuthz(step.body, validatedSchema, authzOpts);
 
           if (!authzResult.ok) {
             return errorResponse({
@@ -186,13 +173,9 @@ export function createTransactHandler(
         const namespace = await extractNamespace(ctx);
         const actorId = extractActorId ? await extractActorId(ctx) : undefined;
 
-        // Normalize bare steps to wrapped format before passing to executeTransaction.
-        // Bare mutations have `operation` field; bare queries have `resource` but no `operation`.
-        const normalizedSteps = body.steps.map((step: any) => {
-          if (step.mutation || step.query) return step; // already wrapped
-          if (typeof step.operation === "string") return { mutation: step };
-          return { query: step };
-        });
+        const normalizedSteps = prepared.map((step) =>
+          step.kind === "mutation" ? { mutation: step.body } : { query: step.body },
+        );
 
         const result = await executeTransaction(
         { ...body, steps: normalizedSteps },

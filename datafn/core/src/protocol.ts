@@ -326,6 +326,41 @@ function parseMutationPayload(
   });
 }
 
+export type ClassifiedTransactStep =
+  | {
+      ok: true;
+      kind: "mutation" | "query";
+      body: unknown;
+      pathSuffix: "" | ".mutation" | ".query";
+    }
+  | { ok: false; message: string };
+
+/**
+ * One classification for a transact step. Bare `{ resource, operation }` is a
+ * mutation even when `id` is not a string. Callers that validate, authorize,
+ * and execute must share this result.
+ */
+export function classifyTransactStep(step: Record<string, unknown>): ClassifiedTransactStep {
+  const hasQuery = step.query !== undefined;
+  const hasMutation = step.mutation !== undefined;
+  if (hasQuery && hasMutation) {
+    return { ok: false, message: "Invalid DFQL: step must be a query or mutation" };
+  }
+  if (hasMutation) {
+    return { ok: true, kind: "mutation", body: step.mutation, pathSuffix: ".mutation" };
+  }
+  if (hasQuery) {
+    return { ok: true, kind: "query", body: step.query, pathSuffix: ".query" };
+  }
+  if (typeof step.resource === "string" && typeof step.operation === "string") {
+    return { ok: true, kind: "mutation", body: step, pathSuffix: "" };
+  }
+  if (typeof step.resource === "string") {
+    return { ok: true, kind: "query", body: step, pathSuffix: "" };
+  }
+  return { ok: false, message: "Invalid DFQL: step must be a query or mutation" };
+}
+
 function parseTransactStep(
   step: unknown,
   path: string,
@@ -340,32 +375,19 @@ function parseTransactStep(
       return invalid(`Disallowed key: ${key}`, path);
     }
   }
-  const hasQuery = step.query !== undefined;
-  const hasMutation = step.mutation !== undefined;
-  if (hasQuery && hasMutation) {
-    return invalid("Invalid DFQL: step must be a query or mutation", path);
+  const classified = classifyTransactStep(step);
+  if (!classified.ok) {
+    return invalid(classified.message, path);
   }
-  if (hasQuery) {
-    const query = parseQueryEnvelope(step.query, `${path}.query`);
+  const envelopePath = classified.pathSuffix ? `${path}${classified.pathSuffix}` : path;
+  if (classified.kind === "query") {
+    const query = parseQueryEnvelope(classified.body, envelopePath);
     if (!query.ok) return query;
     return ok({ type: "query", query: query.result });
   }
-  if (hasMutation) {
-    const mutation = parseMutationEnvelope(step.mutation, `${path}.mutation`);
-    if (!mutation.ok) return mutation;
-    return ok({ type: "mutation", mutation: mutation.result });
-  }
-  if (typeof step.resource === "string" && typeof step.operation === "string") {
-    const mutation = parseMutationEnvelope(step, path);
-    if (!mutation.ok) return mutation;
-    return ok({ type: "mutation", mutation: mutation.result });
-  }
-  if (typeof step.resource === "string") {
-    const query = parseQueryEnvelope(step, path);
-    if (!query.ok) return query;
-    return ok({ type: "query", query: query.result });
-  }
-  return invalid("Invalid DFQL: step must be a query or mutation", path);
+  const mutation = parseMutationEnvelope(classified.body, envelopePath);
+  if (!mutation.ok) return mutation;
+  return ok({ type: "mutation", mutation: mutation.result });
 }
 
 function parseTransactPayload(

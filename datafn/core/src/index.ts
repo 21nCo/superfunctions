@@ -114,12 +114,14 @@ export {
   DATAFN_REQUEST_PROTOCOL_VERSION,
   DATAFN_REQUEST_PROTOCOL_VERSIONS,
   DATAFN_STRUCTURAL_SELECTOR_POSITIONS,
+  classifyTransactStep,
   collectStructuralResourceSelectors,
   extractStructuralResourceSelectors,
   isDatafnRequestAction,
   parseDatafnRequest,
 } from "./protocol.js";
 export type {
+  ClassifiedTransactStep,
   DatafnRequestAction,
   DatafnRequestProtocolVersion,
   DatafnResourceSelector,
