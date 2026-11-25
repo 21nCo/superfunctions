@@ -52,6 +52,7 @@ interface PreparedReferenceTarget extends ReferenceTarget {
 interface PointerLookup {
   tokens: string[];
   target: ReferenceTarget | "reference" | undefined;
+  throughLiteralAlias?: boolean;
 }
 
 interface ReferenceCopies {
@@ -80,10 +81,14 @@ class ReferencePreparationError extends Error {
 
   constructor(site: ReferencePath | undefined, cause: unknown) {
     super(cause instanceof Error ? cause.message : "OpenAPI ref could not be prepared", { cause });
-    const segments = ["$ref"];
-    for (let cursor = site; cursor; cursor = cursor.parent) segments.push(cursor.key);
-    this.path = segments.reverse().join(".");
+    this.path = [...pathKeys(site), "$ref"].join(".");
   }
+}
+
+function pathKeys(path?: ReferencePath): string[] {
+  const segments: string[] = [];
+  for (let cursor = path; cursor; cursor = cursor.parent) segments.push(cursor.key);
+  return segments.reverse();
 }
 
 function parsePreloadedDocument(contents: string): unknown {
@@ -146,6 +151,20 @@ function encodePointer(tokens: string[]): string {
   return "#" + tokens.map((token) =>
     "/" + encodeURIComponent(token.replaceAll("~", "~0").replaceAll("/", "~1"))
   ).join("");
+}
+
+function pointerMember(parent: object, tokens: string[], index: number): { key: string; index: number } | undefined {
+  const key = tokens[index];
+  if (!Object.hasOwn(parent, key) || Reflect.get(parent, key) === undefined ||
+      (index === tokens.length - 1 && Reflect.get(parent, key) === null)) {
+    for (let end = tokens.length; end > index + 1; end -= 1) {
+      const joined = tokens.slice(index, end).join("/");
+      if (Object.hasOwn(parent, joined) && Reflect.get(parent, joined) !== undefined) {
+        return { key: joined, index: end - 1 };
+      }
+    }
+  }
+  return Object.hasOwn(parent, key) ? { key, index } : undefined;
 }
 
 const LOCAL_PATH_ORIGIN = "https://apifn-local-path.invalid";
@@ -273,7 +292,7 @@ function prepareReferences(document: OpenAPIDocument, externalReferences?: Reado
   }
 
   function location(source: ReferenceDocument, ref: string): { source: ReferenceDocument; fragment: string } {
-    if (ref.startsWith("#")) return { source, fragment: ref.slice(1) };
+    if (ref.startsWith("#") || (source !== root && ref === "")) return { source, fragment: ref.slice(1) };
     if (!externalReferences?.size) throw new Error(EXTERNAL_REF_ERROR);
 
     const { uri: key, fragment, keys, location: targetLocation } = resolveDocumentURI(source.location, ref);
@@ -295,6 +314,7 @@ function prepareReferences(document: OpenAPIDocument, externalReferences?: Reado
     let mode: OpenAPIReferenceMode = "node";
     let path: ReferencePath | undefined;
     let importSite: ReferenceSite | undefined;
+    let throughLiteralAlias = false;
     const matched: string[] = [];
     const unresolved = (index: number, target?: "reference"): PointerLookup =>
       ({ tokens: [...matched, ...tokens.slice(index)], target });
@@ -303,8 +323,14 @@ function prepareReferences(document: OpenAPIDocument, externalReferences?: Reado
       // that Swagger Parser gives precedence over the referenced object.
       const chain = new Set(aliases);
       const overrides = new Map<string, ReferenceTarget>();
-      while (typeof value === "object" && value !== null && mode !== "literal" &&
-          "$ref" in value && typeof value.$ref === "string" && value.$ref) {
+      while (typeof value === "object" && value !== null &&
+          "$ref" in value && typeof value.$ref === "string" && (value.$ref || source !== root)) {
+        if (mode === "literal") {
+          // An explicit pointer can traverse a local alias used as a schema.
+          // Prefer real data fields and leave unused literal refs untouched.
+          if (source !== root || !value.$ref.startsWith("#") || pointerMember(value, tokens, index)) break;
+          throughLiteralAlias = true;
+        }
         // An alias already being resolved can still supply its own fields.
         // Following that alias again to find an inherited field is a cycle.
         if (chain.has(value)) {
@@ -335,7 +361,7 @@ function prepareReferences(document: OpenAPIDocument, externalReferences?: Reado
         }
         // A generic alias inherits the target's context. Literal values can
         // also be selected by a schema pointer, so retain that caller context.
-        if (mode === "node" && target.mode !== "literal") mode = target.mode;
+        if ((mode === "node" || mode === "literal") && target.mode !== "literal") mode = target.mode;
         const aliasSite = source === root ? { path } : importSite;
         source = target.source;
         importSite = source === root ? undefined : target.importSite ?? aliasSite;
@@ -349,22 +375,13 @@ function prepareReferences(document: OpenAPIDocument, externalReferences?: Reado
       // A preloaded value can be a standalone Example Object outside the
       // OpenAPI examples maps that normally establish its context.
       if (source !== root && mode === "node" && isStandaloneExample(parent)) mode = "example";
-      let key = tokens[index];
-      if (!Object.hasOwn(parent, key) || Reflect.get(parent, key) === undefined ||
-          (index === tokens.length - 1 && Reflect.get(parent, key) === null)) {
-        for (let end = tokens.length; end > index + 1; end -= 1) {
-          const joined = tokens.slice(index, end).join("/");
-          if (Object.hasOwn(parent, joined) && Reflect.get(parent, joined) !== undefined) {
-            key = joined;
-            index = end - 1;
-            break;
-          }
-        }
-      }
-      if (!Object.hasOwn(parent, key)) {
-        if (value === root.value && key === field) throw new Error("OpenAPI $ref target does not exist");
+      const member = pointerMember(parent, tokens, index);
+      if (!member) {
+        if (value === root.value && tokens[index] === field) throw new Error("OpenAPI $ref target does not exist");
         return unresolved(index);
       }
+      const { key } = member;
+      index = member.index;
       matched.push(key);
       const child: unknown = Reflect.get(parent, key);
       const sibling = overrides.get(key);
@@ -376,7 +393,7 @@ function prepareReferences(document: OpenAPIDocument, externalReferences?: Reado
       mode = sibling?.mode ?? referenceChildMode(parent, mode, key, child);
       value = child;
     }
-    return { tokens: matched, target: { value, mode, source, path, importSite } };
+    return { tokens: matched, target: { value, mode, source, path, importSite }, throughLiteralAlias };
   }
 
   function lookupPointer(
@@ -405,7 +422,7 @@ function prepareReferences(document: OpenAPIDocument, externalReferences?: Reado
     ref: string, { source, mode, value }: PreparedReferenceTarget, site?: ReferenceSite
   ): string {
     const destination = location(source, ref);
-    const { tokens, target } = lookupPointer(destination.source, destination.fragment, { importSite: site });
+    const { tokens, target, throughLiteralAlias } = lookupPointer(destination.source, destination.fragment, { importSite: site });
     const canonical = encodePointer(tokens);
     const isLocal = destination.source === root;
     if (!target || target === "reference") {
@@ -417,7 +434,7 @@ function prepareReferences(document: OpenAPIDocument, externalReferences?: Reado
     }
     if (isLocal && target.source === root &&
         (target.mode !== "literal" || typeof target.value !== "object" || target.value === null)) {
-      return canonical;
+      return throughLiteralAlias ? encodePointer(pathKeys(target.path)) : canonical;
     }
 
     // Place imported targets and schemas that refer into a literal payload in
@@ -452,7 +469,7 @@ function prepareReferences(document: OpenAPIDocument, externalReferences?: Reado
       if (mode === "literal") {
         literalReferences.set(copy, value.$ref);
         Reflect.deleteProperty(copy, "$ref");
-      } else if (value.$ref) {
+      } else if (value.$ref || source !== root) {
         // Diagnostics for preloaded targets point to the importing ref in the caller's document.
         const site = source === root ? { path } : importSite;
         try {

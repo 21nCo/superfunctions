@@ -262,6 +262,22 @@ describe("validateOpenAPI", () => {
     expect(result.document?.components?.schemas?.Copied).toEqual({ type: "integer" });
   });
 
+  it("traverses a local alias in an extension without modifying the extension payload", async () => {
+    const templates = { Proxy: { $ref: "#/components/schemas/Shared" } };
+    const doc = {
+      ...documentWithReference("#/x-templates/Proxy/properties/id"),
+      "x-templates": templates,
+    };
+    Object.assign(doc.components.schemas.Shared, {
+      type: "object",
+      properties: { id: { type: "integer" } },
+    });
+    const result = await validateAndDereferenceOpenAPI(doc);
+    expect(result.errors).toEqual([]);
+    expect(result.document?.components?.schemas?.Value).toEqual({ type: "integer" });
+    expect(result.document).toHaveProperty("x-templates", templates);
+  });
+
   it("checks string references in name maps before attaching temporary copies", async () => {
     const doc = {
       ...documentWithReference("#/x-schemas/Chosen"),
@@ -572,6 +588,19 @@ describe("validateOpenAPI", () => {
     });
     expect(result.errors).toEqual([
       expect.objectContaining({ message: "Preloaded OpenAPI $ref must point to a different location", severity: "error" }),
+    ]);
+  });
+
+  it("recognizes an empty preloaded root reference as a direct self-reference", async () => {
+    const uri = "https://example.invalid/types.json";
+    await expect(validateOpenAPI(documentWithReference(uri), {
+      externalReferences: new Map([[uri, '{"$ref":""}']]),
+    })).resolves.toEqual([
+      {
+        path: "components.schemas.Value.$ref",
+        message: "Preloaded OpenAPI $ref must point to a different location",
+        severity: "error",
+      },
     ]);
   });
 
