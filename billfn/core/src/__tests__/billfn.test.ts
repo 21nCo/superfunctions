@@ -463,6 +463,51 @@ describe('@billfn/core', () => {
     expect(verified.data.subscription.provider).toBe('apple');
   });
 
+  it.each(['inline', 'queued'] as const)('reconciles a confirmed Apple cancellation without billing state through %s sync', async (mode) => {
+    const subject = { principalId: 'user_apple_cancel' };
+    const queue = mode === 'queued' ? new MemoryQueueAdapter<BillFnQueuedJob>() : undefined;
+    const apple = createMockProvider('apple');
+    const cancelSubscription = vi.fn(async () => ({ operationStatus: 'applied' as const }));
+    const fetchSubscription = vi.fn<NonNullable<BillFnProviderAdapter['fetchSubscription']>>(async ({ subscription }) => ({
+      subscriptionStatus: 'active',
+      checkoutStatus: 'succeeded',
+      providerSubscriptionId: subscription.providerSubscriptionId,
+      currentPeriodEnd: subscription.currentPeriodEnd,
+      autoRenew: false
+    }));
+    const config = {
+      db: memoryAdapter({ debug: false }),
+      catalog,
+      queue,
+      providers: { apple: { ...apple, cancelSubscription, fetchSubscription } }
+    };
+    const billfn = createBillFn(config);
+    const created = await billfn.createCheckout({ subject, planKey: 'pro', provider: 'apple', interval: 'month' });
+    if (!created.ok) {
+      throw new Error('expected checkout creation to succeed');
+    }
+    await billfn.verifyCheckout({ subject, checkoutSessionId: created.data.checkoutSession.checkoutSessionId });
+
+    const canceled = await billfn.cancelSubscription({ subject });
+    expect(canceled.ok && canceled.data).toMatchObject({ operationStatus: 'applied', entitlements: { status: 'active' } });
+    if (queue) {
+      expect(fetchSubscription).not.toHaveBeenCalled();
+      expect(await createBillFnReconciliationWorker(config).runNext()).toMatchObject({
+        kind: 'subscription-sync',
+        status: 'succeeded'
+      });
+    } else {
+      expect(canceled.ok && canceled.data.subscription.autoRenew).toBe(false);
+    }
+    expect(fetchSubscription).toHaveBeenCalledTimes(1);
+    expect(cancelSubscription).toHaveBeenCalledTimes(1);
+    const [stored] = await config.db.findMany<{ status: string; autoRenew: boolean }>({
+      model: 'subscriptions',
+      namespace: 'billfn'
+    });
+    expect(stored).toMatchObject({ status: 'active', autoRenew: false });
+  });
+
   it('supports subscription change, resume, and refund lifecycle operations', async () => {
     const billfn = createBillFn({
       db: memoryAdapter({ debug: false }),

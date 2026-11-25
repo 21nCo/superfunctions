@@ -620,13 +620,13 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
   }
 
   /**
-   * Reads the subscription from the provider after a mutation an event raced:
+   * Reads the subscription from the provider when a committed mutation needs reconciliation:
    * a queued sync job when a queue is configured, otherwise an inline sync. It
    * never repeats the mutation and never fails it. Returns the inline result.
-   * The price the raced event wrote is the read's candidate (`fetchLiveSubscription`).
+   * The supplied price is the read's candidate (`fetchLiveSubscription`).
    */
-  async function reconcileCommittedMutation(subscription: BillFnSubscription, racedPriceId: string): Promise<ProjectionResult | null> {
-    const candidate = findCatalogPriceReference(deps.catalog, subscription.provider, [racedPriceId]) ?? undefined;
+  async function reconcileCommittedMutation(subscription: BillFnSubscription, candidatePriceId: string): Promise<ProjectionResult | null> {
+    const candidate = findCatalogPriceReference(deps.catalog, subscription.provider, [candidatePriceId]) ?? undefined;
     try {
       if (deps.queue) {
         await scheduleSubscriptionSync(subscription, candidate);
@@ -664,9 +664,9 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
   }
 
   /**
-   * Completes a committed cancel, change or resume: applies the state the
-   * provider returned (or keeps the stored subscription and entitlements when it
-   * returned none) and records the requested billing event.
+   * Completes a committed cancel, change or resume using the returned provider
+   * state, an optional live sync or the stored projection, then records the
+   * requested billing event.
    */
   async function finishSubscriptionMutation(input: {
     billingAccount: BillFnBillingAccount;
@@ -676,6 +676,7 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
     entitlementPlan: ReturnType<typeof requirePlan>;
     operation: Pick<BillFnProviderOperationResult, 'operationStatus' | 'billingState'> &
       Partial<Pick<BillFnProviderOperationResult, 'clientAction'>>;
+    reconcileWithoutState?: boolean;
     liveStateObservedAt: string;
     /** When the provider call returned, taken before any other write; the mutation's commit time. */
     timestamp: string;
@@ -683,7 +684,10 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
     eventPayload: Record<string, unknown>;
   }) {
     const { billingAccount, subscription, operation } = input;
-    const projection = operation.billingState
+    const reconciled = input.reconcileWithoutState && operation.operationStatus === 'applied' && !operation.billingState
+      ? await reconcileCommittedMutation(subscription, subscription.priceId)
+      : null;
+    const projection = reconciled ?? (operation.billingState
       ? await applyMutationProviderState({
           billingAccount,
           plan: input.plan,
@@ -698,7 +702,7 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
           entitlements:
             (await findEntitlementSnapshot(deps, billingAccount.id)) ??
             (await upsertEntitlements(deps, billingAccount.id, input.entitlementPlan, subscription, input.timestamp))
-        };
+        });
     await recordBillingEvent(deps, {
       id: deps.generateId('evt'),
       billingAccountId: billingAccount.id,
@@ -1061,6 +1065,7 @@ function createBillFnServiceWithInternals(config: BillFnConfig) {
           liveStateObservedAt,
           timestamp: committedAt,
           eventType: 'billfn.subscription.cancel.requested',
+          reconcileWithoutState: subscription.provider === 'apple',
           eventPayload: { reason: input.reason }
         })
       );
