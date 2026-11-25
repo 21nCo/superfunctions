@@ -1,3 +1,3 @@
 // Generator identity recorded in every artifact manifest and release ID. Kept equal to package.json (tested).
 export const GENERATOR_NAME = "@apifn/sdk";
-export const GENERATOR_VERSION = "0.1.1";
+export const GENERATOR_VERSION = "0.1.2";
