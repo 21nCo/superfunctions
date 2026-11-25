@@ -82,13 +82,15 @@ export interface McpFnHostedAuthorizationTargetAdapter {
    * Token endpoint authentication methods the target supports (its
    * `capabilities.tokenEndpointAuthMethods`). When declared, a registration
    * with another method is ineligible: it may receive neither an error nor a
-   * code callback. An omitted method is `none`, except for a
-   * client-metadata-document fixture, whose server default depends on how the
-   * target resolves it (`none` when stored, `client_secret_basic` when
-   * fetched): it is eligible when both defaults are declared, ineligible when
-   * neither is, and indeterminate when only one is, in which case a callback
-   * fails until the fixture sets `token_endpoint_auth_method`. When omitted,
-   * the harness adds no authentication-method constraint.
+   * code callback. An omitted method is `none`. A client-metadata-document
+   * fixture may be stored by the target (its method must be supported) or
+   * fetched by the server, which accepts only public documents: method `none`
+   * (an omitted method counts as `client_secret_basic`) with `none`
+   * supported. The harness assumes the target refuses fetched documents with
+   * any other method, as @mcpfn/auth does. The fixture is eligible when both
+   * paths accept it, ineligible when neither does, and indeterminate when only
+   * one does, in which case a post-match response fails. When omitted, the
+   * harness adds no authentication-method constraint.
    */
   tokenEndpointAuthMethods?: string[];
   /**
@@ -662,9 +664,10 @@ function clientStageCodes(
 const STORED_CLIENT_REJECTION_CODES: ReadonlySet<string> = new Set(["invalid_client"]);
 
 const INDETERMINATE_ELIGIBILITY =
-  "Registration eligibility is indeterminate: the target declares only one server default " +
-  "token endpoint authentication method for a client-metadata-document fixture without " +
-  "one; set token_endpoint_auth_method on the fixture";
+  "Registration eligibility is indeterminate: a client-metadata-document fixture is accepted " +
+  "when the target stores it but not when the server fetches it (or the reverse), and the " +
+  "harness cannot tell which path the target takes; a fetched document must use " +
+  "token_endpoint_auth_method none, and the stored registration must use a declared method";
 
 /**
  * An error page, error callback or code callback answers a request whose

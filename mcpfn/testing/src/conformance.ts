@@ -271,9 +271,12 @@ async function runConformance(
   }
   const args = buildOfficialConformanceArgs(options);
   const invocation = npxInvocation(args);
-  const childEnvironment = buildOfficialConformanceEnvironment(
-    options.sensitiveEnvironmentVariables,
-  );
+  const childEnvironment = {
+    ...buildOfficialConformanceEnvironment(options.sensitiveEnvironmentVariables),
+    // npx would otherwise write its arguments (the target URL, which for an
+    // authenticated run carries the proxy's path token) to a debug log file.
+    npm_config_logs_max: "0",
+  };
 
   return await new Promise<OfficialConformanceResult>((resolve) => {
     const child = spawn(invocation.command, invocation.args, {
@@ -414,10 +417,12 @@ export async function runAuthenticatedOfficialConformance(
     // captured output. (It is visible in the runner's arguments while the
     // proxy runs, to processes allowed to inspect them.)
     const pathToken = new URL(proxy.url).pathname.split("/")[1] ?? "";
-    const redact = (value: string) => {
-      const text = String(redactRemoteCredential(lease.credential, value));
-      return pathToken ? text.split(pathToken).join("[redacted-proxy-path]") : text;
-    };
+    // The path token goes first, so a credential value that overlaps it
+    // cannot break it up before it is matched.
+    const redact = (value: string) => String(redactRemoteCredential(
+      lease.credential,
+      pathToken ? value.split(pathToken).join("[REDACTED]") : value,
+    ));
     result = redactRemoteCredential(lease.credential, await runConformance({ ...conformance, stdio: "pipe", url: proxy.url }, redact), { preserveKeys: true });
   } catch (error) {
     operationFailure = safeFailure(error);

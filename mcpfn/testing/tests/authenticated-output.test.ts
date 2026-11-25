@@ -145,3 +145,21 @@ it("attributes disposal failures after OAuth revocation to transport cleanup", a
   expect(error).toBeInstanceOf(McpFnConformanceCleanupError);
   expect(error.result.cleanupFailure).toMatchObject({ phase: "transport-close", layer: "mcpfn-preflight" });
 });
+
+// MCP-21 audit, MCP-SEC-15: the proxy URL's path token is redacted from runner
+// output, even when a credential value overlaps it, and npx writes no log.
+it("redacts the proxy path token and disables npm log files", async () => {
+  spawn.mockImplementation((_command, args: string[], spawnOptions: { env: Record<string, string> }) => {
+    const child = Object.assign(new EventEmitter(), { stdout: new PassThrough(), stderr: new PassThrough(), kill: vi.fn() });
+    const url = args[args.indexOf("--url") + 1]!;
+    queueMicrotask(() => { child.stdout.write(`connecting to ${url} (logs ${spawnOptions.env.npm_config_logs_max})`); child.emit("close", 0); });
+    return child;
+  });
+  const result = await runAuthenticatedOfficialConformance({ url: "http://127.0.0.1:1/mcp", headers: { "x-api-key": "proxy" } });
+  const args = spawn.mock.calls[0][1] as string[];
+  const token = new URL(args[args.indexOf("--url") + 1]!).pathname.split("/")[1]!;
+  expect(token).toMatch(/^mcpfn-proxy-[0-9a-f]{32}$/);
+  expect(result.stdout).not.toContain(token.slice("mcpfn-proxy-".length));
+  expect(result.stdout).toContain("[REDACTED]");
+  expect(result.stdout).toContain("(logs 0)");
+});

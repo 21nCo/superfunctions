@@ -1325,7 +1325,7 @@ describe("McpFn hosted authorization compatibility", () => {
     expect(authorize).not.toHaveBeenCalled();
   });
 
-  it("accepts a public Client ID Metadata Document served as application/json with parameters", async () => {
+  it.each(["application/json; charset=utf-8", 'application/json; profile="alpha,beta"'])("accepts a public Client ID Metadata Document served as %s", async (contentType) => {
     const clientId = "https://clients.example.com/client.json";
     const authorize = vi.fn(async () => Response.json({ ok: true }));
     const compatibility = createMcpAuthorizationCompatibilityHandler({
@@ -1336,7 +1336,7 @@ describe("McpFn hosted authorization compatibility", () => {
       clientMetadataDocuments: {
         enabled: true,
         allow: async () => true,
-        fetch: async () => new Response(JSON.stringify({ client_id: clientId, redirect_uris: ["https://client.example.com/callback"], token_endpoint_auth_method: "none" }), { headers: { "content-type": "application/json; charset=utf-8" } }),
+        fetch: async () => new Response(JSON.stringify({ client_id: clientId, redirect_uris: ["https://client.example.com/callback"], token_endpoint_auth_method: "none" }), { headers: { "content-type": contentType } }),
       },
     });
     const response = await compatibility(new Request(authorizationUrl(clientId, "https://client.example.com/callback")));

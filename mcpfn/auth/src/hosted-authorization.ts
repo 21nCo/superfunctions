@@ -1593,7 +1593,9 @@ async function assertClientMetadataResponse(response: Response): Promise<void> {
   const contentType = response.headers.get("content-type") ?? "";
   // Exactly one media type (combined duplicate headers contain a comma),
   // whose essence is application/json; parameters are allowed.
-  const mediaType = contentType.includes(",") ? undefined : contentType.split(";", 1)[0]?.trim().toLowerCase();
+  // Quoted parameter values may contain commas; ignore them for that check.
+  const unquoted = contentType.replace(/"(?:[^"\\]|\\.)*"/g, '""');
+  const mediaType = unquoted.includes(",") ? undefined : unquoted.split(";", 1)[0]?.trim().toLowerCase();
   if (mediaType !== "application/json") {
     await response.body?.cancel().catch(() => undefined);
     throw new McpFnHostedAuthorizationError(
