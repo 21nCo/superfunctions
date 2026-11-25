@@ -495,6 +495,42 @@ describe("createWebStandardHandler session limits and expiry (MCP-SEC-04)", () =
     expect((await initialize()).status).toBe(200);
   });
 
+  it("keeps the original setup deadline through host acceptance and SSE priming", async () => {
+    vi.useFakeTimers();
+    let markAccepted!: () => void;
+    let accept!: () => void;
+    let startPriming!: () => void;
+    let finishPriming!: () => void;
+    const accepting = new Promise<void>((resolve) => { markAccepted = resolve; });
+    const acceptHook = new Promise<void>((resolve) => { accept = resolve; });
+    const priming = new Promise<void>((resolve) => { startPriming = resolve; });
+    const primingWrite = new Promise<void>((resolve) => { finishPriming = resolve; });
+    let events = 0;
+    const { initialize, call } = await setup({
+      enableJsonResponse: false,
+      sessionIdleTimeoutMs: 100,
+      onsessioninitialized: () => { markAccepted(); return acceptHook; },
+      eventStore: {
+        async storeEvent() {
+          const id = `event-${++events}`;
+          if (events === 1) { startPriming(); await primingWrite; }
+          return id;
+        },
+        async replayEventsAfter() { return ""; },
+      },
+    });
+    const pending = initialize();
+    await accepting;
+    await vi.advanceTimersByTimeAsync(90);
+    accept();
+    await priming;
+    expect((await call("session-1")).status).toBe(200);
+    await vi.advanceTimersByTimeAsync(10);
+    expect((await pending).status).toBe(408);
+    finishPriming();
+    await vi.advanceTimersByTimeAsync(0);
+  });
+
   it("rejects an oversized declared body without reading or canceling the upload", async () => {
     const { handler } = await setup({ maxRequestBodySize: 512 });
     const pull = vi.fn();

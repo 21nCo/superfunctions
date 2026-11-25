@@ -1464,10 +1464,7 @@ export class McpFnServer<TContext = undefined> {
             await notifyClosed().catch(() => undefined);
             throw new Error("Session setup closed");
           }
-          lastActivity = performance.now();
           sessions.set(id, session);
-          clearTimeout(timer);
-          scheduleExpiry();
         },
         onsessionclosed: stopSession,
       });
@@ -1477,7 +1474,7 @@ export class McpFnServer<TContext = undefined> {
         stopResponses,
         touch: (refresh) => {
           if (expireIfIdle()) return false;
-          if (refresh) {
+          if (refresh && !setupPending) {
             lastActivity = performance.now();
             clearTimeout(timer);
             scheduleExpiry();
@@ -1518,7 +1515,7 @@ export class McpFnServer<TContext = undefined> {
             stopResponses,
             setupStopped,
           );
-          if (closing) {
+          if (expireIfIdle()) {
             await response.body?.cancel().catch(() => undefined);
             return setupStopped();
           }
@@ -1526,7 +1523,12 @@ export class McpFnServer<TContext = undefined> {
             void close().catch(() => undefined);
             return response;
           }
-          if (acceptedId !== undefined) return response;
+          if (acceptedId !== undefined) {
+            lastActivity = performance.now();
+            clearTimeout(timer);
+            scheduleExpiry();
+            return response;
+          }
           return await releaseAfterResponse(response, close);
         } catch (error) {
           void close().catch(() => undefined);
