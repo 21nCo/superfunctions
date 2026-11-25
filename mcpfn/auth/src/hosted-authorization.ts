@@ -1593,9 +1593,7 @@ async function assertClientMetadataResponse(response: Response): Promise<void> {
   const contentType = response.headers.get("content-type") ?? "";
   // Exactly one media type (combined duplicate headers contain a comma),
   // whose essence is application/json; parameters are allowed.
-  // Quoted parameter values may contain commas; ignore them for that check.
-  const unquoted = contentType.replace(/"(?:[^"\\]|\\.)*"/g, '""');
-  const mediaType = unquoted.includes(",") ? undefined : unquoted.split(";", 1)[0]?.trim().toLowerCase();
+  const mediaType = singleMediaType(contentType);
   if (mediaType !== "application/json") {
     await response.body?.cancel().catch(() => undefined);
     throw new McpFnHostedAuthorizationError(
@@ -1603,6 +1601,28 @@ async function assertClientMetadataResponse(response: Response): Promise<void> {
       "Client ID Metadata Document must use application/json",
     );
   }
+}
+
+/**
+ * The lower-cased media type of a Content-Type holding exactly one value, or
+ * undefined. Combined duplicate headers are joined with commas; a comma counts
+ * only outside a quoted parameter value, and an unterminated quote is refused.
+ */
+function singleMediaType(contentType: string): string | undefined {
+  let quoted = false;
+  for (let index = 0; index < contentType.length; index += 1) {
+    const character = contentType[index];
+    if (quoted) {
+      if (character === "\\") index += 1;
+      else if (character === '"') quoted = false;
+    } else if (character === '"') {
+      quoted = true;
+    } else if (character === ",") {
+      return undefined;
+    }
+  }
+  if (quoted) return undefined;
+  return contentType.split(";", 1)[0]?.trim().toLowerCase();
 }
 
 function clientMetadataTimeoutError(): McpFnHostedAuthorizationError {

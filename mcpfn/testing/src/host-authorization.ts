@@ -90,7 +90,9 @@ export interface McpFnHostedAuthorizationTargetAdapter {
    * any other method, as @mcpfn/auth does. The fixture is eligible when both
    * paths accept it, ineligible when neither does, and indeterminate when only
    * one does, in which case a post-match response fails. When omitted, the
-   * harness adds no authentication-method constraint.
+   * stored path has no method constraint, but a fetched client-metadata-
+   * document fixture must still use `none`: set
+   * `token_endpoint_auth_method: "none"` on such fixtures.
    */
   tokenEndpointAuthMethods?: string[];
   /**
@@ -667,7 +669,8 @@ const INDETERMINATE_ELIGIBILITY =
   "Registration eligibility is indeterminate: a client-metadata-document fixture is accepted " +
   "when the target stores it but not when the server fetches it (or the reverse), and the " +
   "harness cannot tell which path the target takes; a fetched document must use " +
-  "token_endpoint_auth_method none, and the stored registration must use a declared method";
+  "token_endpoint_auth_method none, and when the target declares tokenEndpointAuthMethods " +
+  "the stored registration's method must be one of them";
 
 /**
  * An error page, error callback or code callback answers a request whose

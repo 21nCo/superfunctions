@@ -271,12 +271,16 @@ async function runConformance(
   }
   const args = buildOfficialConformanceArgs(options);
   const invocation = npxInvocation(args);
-  const childEnvironment = {
-    ...buildOfficialConformanceEnvironment(options.sensitiveEnvironmentVariables),
-    // npx would otherwise write its arguments (the target URL, which for an
-    // authenticated run carries the proxy's path token) to a debug log file.
-    npm_config_logs_max: "0",
-  };
+  // npm must not write its arguments (the target URL, which for an
+  // authenticated run carries the proxy's path token) to a debug log or
+  // timing file. npm reads these settings case-insensitively, so drop every
+  // inherited spelling before setting them.
+  const childEnvironment: Record<string, string | undefined> = Object.fromEntries(
+    Object.entries(buildOfficialConformanceEnvironment(options.sensitiveEnvironmentVariables))
+      .filter(([name]) => !["npm_config_logs_max", "npm_config_timing"].includes(name.toLowerCase())),
+  );
+  childEnvironment.npm_config_logs_max = "0";
+  childEnvironment.npm_config_timing = "false";
 
   return await new Promise<OfficialConformanceResult>((resolve) => {
     const child = spawn(invocation.command, invocation.args, {

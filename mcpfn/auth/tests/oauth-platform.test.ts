@@ -1305,6 +1305,7 @@ describe("McpFn hosted authorization compatibility", () => {
     ["with a secret auth method", { client_id: "https://clients.example.com/client.json", redirect_uris: ["https://client.example.com/callback"], token_endpoint_auth_method: "client_secret_post" }, "application/json"],
     ["served as another media type", { client_id: "https://clients.example.com/client.json", redirect_uris: ["https://client.example.com/callback"], token_endpoint_auth_method: "none" }, "text/plain; note=application/json"],
     ["served with conflicting media types", { client_id: "https://clients.example.com/client.json", redirect_uris: ["https://client.example.com/callback"], token_endpoint_auth_method: "none" }, "application/json; charset=utf-8, text/plain"],
+    ["served with an unterminated quote hiding a second media type", { client_id: "https://clients.example.com/client.json", redirect_uris: ["https://client.example.com/callback"], token_endpoint_auth_method: "none" }, 'application/json; profile="unfinished, text/plain; profile="value"'],
     ["using private_key_jwt", { client_id: "https://clients.example.com/client.json", redirect_uris: ["https://client.example.com/callback"], token_endpoint_auth_method: "private_key_jwt" }, "application/json"],
   ])("rejects a Client ID Metadata Document %s", async (_label, document, contentType) => {
     const clientId = "https://clients.example.com/client.json";
