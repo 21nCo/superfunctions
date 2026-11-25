@@ -1879,9 +1879,11 @@ export class SyncEngine {
    * DATA-41: `$rev` on rows of a resource is revision metadata unless the
    * resource has its own field named `$rev`.
    */
-  private get revisionResources(): RevisionResources {
-    return schemaRevisionResources(this.schema);
-  }
+  private readonly revisionResources: RevisionResources = Object.defineProperty(
+    (resource: string): boolean => schemaRevisionResources(this.schema)(resource),
+    "propagatingResources",
+    { get: () => schemaRevisionResources(this.schema).propagatingResources },
+  );
 
   /**
    * DATA-41: local mutations applied to storage but not yet in the
