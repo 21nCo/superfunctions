@@ -181,11 +181,47 @@ export async function bumpRevision(
   recordId: string,
   deleted: boolean,
 ): Promise<number> {
+  return (await raiseRevision(db, namespace, resource, recordId, deleted)) as number;
+}
+
+/**
+ * DATA-41: raises a deleted record's revision to a tombstone, but only while
+ * the record row is absent in the write's own view. A delete that matched no
+ * row because a concurrent writer re-inserted the record (and raised its
+ * revision) first must not mark that live record deleted, so each attempt,
+ * every compare-and-swap retry included, checks the record row after reading
+ * the revision row and before the swap. A writer that commits after that read
+ * changes the revision, so the swap fails and the next attempt sees its row.
+ * Returns undefined, raising nothing, when the record row is present.
+ */
+export async function bumpTombstone(
+  db: Adapter,
+  namespace: string,
+  resource: string,
+  recordId: string,
+): Promise<number | undefined> {
+  return raiseRevision(db, namespace, resource, recordId, true, async () =>
+    (await db.findOne({
+      model: resource,
+      where: [{ field: "id", operator: "eq", value: recordId }],
+      namespace,
+    })) !== null);
+}
+
+async function raiseRevision(
+  db: Adapter,
+  namespace: string,
+  resource: string,
+  recordId: string,
+  deleted: boolean,
+  recordPresent?: () => Promise<boolean>,
+): Promise<number | undefined> {
   const id = revisionRowId(namespace, resource, recordId);
   const where = [{ field: "id", op: "eq" as const, value: id }];
   for (let attempt = 0; attempt < MAX_BUMP_ATTEMPTS; attempt++) {
     const updatedAt = new Date().toISOString();
     const row = await db.internal.findOne(REVISIONS_TABLE, where);
+    if (recordPresent && (await recordPresent())) return undefined;
     if (!row) {
       const created = await createIfAbsent(db, {
         id,
@@ -494,7 +530,12 @@ export async function assignWriteRevisions(
     if (write.finished.has(entry)) continue;
     const deleted = entry.op === "delete";
     if (!write.bumped.has(entry)) {
-      entry.rev = await bumpRevision(db, namespace, entry.resource, entry.id, deleted);
+      // A delete whose record row is present again (re-inserted by a
+      // concurrent writer) raises no tombstone: its change row and result
+      // carry no revision.
+      entry.rev = deleted
+        ? await bumpTombstone(db, namespace, entry.resource, entry.id)
+        : await bumpRevision(db, namespace, entry.resource, entry.id, false);
       write.bumped.add(entry);
     }
     if (!deleted && completeRow(entry.resource) && (entry.op !== "merge" || isKvResource(entry.resource))) {

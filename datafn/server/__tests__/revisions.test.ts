@@ -1723,3 +1723,128 @@ describe("DATA-41 revisions: revisions follow the row storage partition (round 9
     })).resolves.toBeDefined();
   });
 });
+
+describe("DATA-41 revisions: a tombstone needs an actual delete (round 10)", () => {
+  /**
+   * The record's DELETE matches nothing for `ids` (a concurrent writer
+   * re-inserted the record after this write saw it), so the row stays.
+   */
+  function noOpDeletes(database: Adapter, ids: Set<string>): Adapter {
+    const wrap = (db: Adapter): Adapter =>
+      new Proxy(db, {
+        get(target, property, receiver) {
+          if (property === "delete") {
+            return async (args: any) => {
+              const id = (args.where ?? []).find((w: any) => w.field === "id")?.value;
+              if (ids.has(id)) return undefined;
+              return target.delete(args);
+            };
+          }
+          if (property === "transaction") {
+            return (fn: (tx: Adapter) => Promise<unknown>) => target.transaction((tx) => fn(wrap(tx as Adapter)));
+          }
+          return Reflect.get(target, property, receiver);
+        },
+      });
+    return wrap(database);
+  }
+
+  async function deleteChanges(send: (route: string, body: unknown) => Promise<{ body: Json }>, id: string) {
+    const pull = await send("pull", { clientId: "client:p", cursor: "0" });
+    expect(pull.body.ok).toBe(true);
+    return (pull.body.result.changes as Json[]).filter((change) => change.id === id && change.op === "delete");
+  }
+
+  async function seeded(ids: string[]) {
+    const database = memoryAdapter();
+    const blocked = new Set<string>();
+    const served = await serve({ database: noOpDeletes(database, blocked) });
+    await served.push({ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } });
+    for (const id of ids) blocked.add(id);
+    return { ...served, database };
+  }
+
+  it("raises no tombstone for a push delete that left the record row present", async () => {
+    const served = await seeded(["task:1"]);
+    const res = await served.push({ resource: "task", operation: "delete", id: "task:1" });
+    expect(res.body.ok).toBe(true);
+    expect(res.body.result.revisions?.[res.mutationId]).toBeUndefined();
+    expect(await served.rev("task", "task:1")).toEqual({ rev: 1, deleted: false });
+    const deletes = await deleteChanges(served.send, "task:1");
+    expect(deletes.length).toBeGreaterThan(0);
+    for (const change of deletes) expect(change).not.toHaveProperty("rev");
+  });
+
+  it("raises no tombstone for a /mutation delete that left the record row present", async () => {
+    const served = await seeded(["task:1"]);
+    const res = await served.send("mutation", { resource: "task", version: 1, operation: "delete", id: "task:1", clientId: "c", mutationId: "direct-del" });
+    expect(res.body.result.ok).toBe(true);
+    expect(res.body.result).not.toHaveProperty("rev");
+    expect(await served.rev("task", "task:1")).toEqual({ rev: 1, deleted: false });
+    for (const change of await deleteChanges(served.send, "task:1")) expect(change).not.toHaveProperty("rev");
+  });
+
+  it("raises no tombstone for a /transact delete that left the record row present", async () => {
+    const served = await seeded(["task:1"]);
+    const res = await served.send("transact", {
+      atomic: true,
+      steps: [{ mutation: { resource: "task", version: 1, operation: "delete", id: "task:1", clientId: "c", mutationId: "tx-del" } }],
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.result.results[0].ok).toBe(true);
+    expect(JSON.stringify(res.body)).not.toContain('"rev"');
+    expect(await served.rev("task", "task:1")).toEqual({ rev: 1, deleted: false });
+    for (const change of await deleteChanges(served.send, "task:1")) expect(change).not.toHaveProperty("rev");
+  });
+
+  it("raises no tombstone for a cascade child that is present again, and still tombstones the parent", async () => {
+    // comment:1 was deleted and re-inserted by another writer before the
+    // cascade reached it, so the cascade's DELETE leaves its row in place.
+    const blocked = await seeded(["comment:1"]);
+    await blocked.push({ resource: "comment", operation: "insert", id: "comment:1", record: { body: "x", taskId: "task:1" } });
+    await blocked.push({ resource: "comment", operation: "insert", id: "comment:2", record: { body: "y", taskId: "task:1" } });
+    const res = await blocked.push({ resource: "task", operation: "delete", id: "task:1" });
+    expect(res.body.ok).toBe(true);
+    expect(res.body.result.revisions[res.mutationId]).toMatchObject({ rev: 2, deleted: true });
+    expect(await blocked.rev("task", "task:1")).toEqual({ rev: 2, deleted: true });
+    expect(await blocked.rev("comment", "comment:2")).toEqual({ rev: 2, deleted: true });
+    expect(await blocked.rev("comment", "comment:1")).toEqual({ rev: 1, deleted: false });
+    for (const change of await deleteChanges(blocked.send, "comment:1")) expect(change).not.toHaveProperty("rev");
+  });
+
+  it("skips the tombstone when a compare-and-swap retry finds the record re-inserted", async () => {
+    const database = memoryAdapter();
+    let reinsert: (() => Promise<void>) | undefined;
+    const racing = {
+      ...database,
+      capabilities: { ...database.capabilities, transactions: { supported: false, nested: false } },
+      internal: new Proxy(database.internal, {
+        get: (target, property, receiver) =>
+          property === "update"
+            ? async (table: string, where: unknown, data: unknown) => {
+                if (table === "__datafn_revisions" && reinsert) {
+                  // Another writer re-inserts the record and commits its
+                  // revision between this delete's read and its swap.
+                  const write = reinsert;
+                  reinsert = undefined;
+                  await write();
+                }
+                return (target as any).update(table, where, data);
+              }
+            : Reflect.get(target, property, receiver),
+      }),
+    } as Adapter;
+    const served = await serve({ database: racing });
+    await served.push({ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } });
+    reinsert = async () => {
+      await database.create({ model: "task", data: { id: "task:1", title: "again" }, namespace: NS } as any);
+      await bumpRevision(database, NS, "task", "task:1", false);
+    };
+    const res = await served.push({ resource: "task", operation: "delete", id: "task:1" });
+    expect(res.body.ok).toBe(true);
+    expect(reinsert).toBeUndefined();
+    expect(res.body.result.revisions?.[res.mutationId]).toBeUndefined();
+    expect(await served.rev("task", "task:1")).toEqual({ rev: 2, deleted: false });
+    for (const change of await deleteChanges(served.send, "task:1")) expect(change).not.toHaveProperty("rev");
+  });
+});

@@ -9,7 +9,14 @@ import { Kysely, PostgresDialect } from "kysely";
 import { kyselyAdapter } from "@superfunctions/db/adapters";
 import type { Adapter } from "@superfunctions/db";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { bumpRevision, configureRevisions, ensureRevisionsTable, readRevisions, readWithRevisions } from "../src/execution/revisions.js";
+import {
+  bumpRevision,
+  bumpTombstone,
+  configureRevisions,
+  ensureRevisionsTable,
+  readRevisions,
+  readWithRevisions,
+} from "../src/execution/revisions.js";
 import { ChangeTrackingService } from "../src/execution/sync/change-tracking.js";
 import { createDatafnServer } from "../src/server.js";
 
@@ -202,6 +209,44 @@ describe.skipIf(!url)("DATA-41 versioned query on a PostgreSQL server", { timeou
     for (const instance of instances) await instance.destroy();
     await admin?.query(`DROP DATABASE IF EXISTS "${database}"`);
     await admin?.end();
+  });
+
+  it("never marks a live record deleted when a delete overlaps a re-insert from another connection", async () => {
+    const first = connect();
+    const second = connect();
+    await ensureRevisionsTable(first);
+    const id = "task:raced";
+    await first.rawSql!.execute(`INSERT INTO "task" (id, "__ns", title) VALUES ('${id}', 'datafn', 'first')`);
+    await first.transaction(async (tx) => bumpRevision(tx as Adapter, "datafn", "task", id, false));
+    // P1 deletes the record and commits its tombstone.
+    await first.transaction(async (tx) => {
+      await (tx as Adapter).rawSql!.execute(`DELETE FROM "task" WHERE id = '${id}'`);
+      expect(await bumpTombstone(tx as Adapter, "datafn", "task", id)).toBe(2);
+    });
+    // P3 re-inserts it and raises its revision, holding its transaction open.
+    const bumped = deferred();
+    const commit = deferred();
+    const reinsert = second.transaction(async (tx) => {
+      await (tx as Adapter).rawSql!.execute(`INSERT INTO "task" (id, "__ns", title) VALUES ('${id}', 'datafn', 'again')`);
+      const rev = await bumpRevision(tx as Adapter, "datafn", "task", id, false);
+      bumped.resolve();
+      await commit.promise;
+      return rev;
+    });
+    await bumped.promise;
+    // P2's DELETE matches nothing (P1's delete committed, P3's insert has
+    // not); its tombstone swap waits for P3 and then finds the row back.
+    const overlapping = first.transaction(async (tx) => {
+      await (tx as Adapter).rawSql!.execute(`DELETE FROM "task" WHERE id = '${id}'`);
+      return bumpTombstone(tx as Adapter, "datafn", "task", id);
+    });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    commit.resolve();
+    expect(await reinsert).toBe(3);
+    expect(await overlapping).toBeUndefined();
+    expect((await readRevisions(first, "datafn", "task", [id])).get(id)).toEqual({ rev: 3, deleted: false });
+    const rows = await first.rawSql!.query(`SELECT id, title FROM "task" WHERE id = '${id}'`);
+    expect(rows).toEqual([{ id, title: "again" }]);
   });
 
   it("returns each row with the revision of exactly that row while another connection writes", async () => {
