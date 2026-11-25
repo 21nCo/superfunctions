@@ -1029,8 +1029,7 @@ export class DbDataStore implements DataStore {
 
           if ((rel as any).type === "many-one" && isForward) {
             // FK on primary records → load secondary by FK values
-            const fkField =
-              (rel as any).fkField || (rel as any).foreignKey || `${(rel as any).relation}Id`;
+            const fkField = relationFkFieldForManyOne(rel);
             const fkValues = [
               ...new Set(
                 primaryRecords
@@ -1043,8 +1042,7 @@ export class DbDataStore implements DataStore {
             }
           } else if ((rel as any).type === "many-one" && !isForward) {
             // Inverse many-one: secondary records have FK pointing to primary
-            const fkField =
-              (rel as any).fkField || (rel as any).foreignKey || `${(rel as any).relation}Id`;
+            const fkField = relationFkFieldForManyOne(rel);
             if (primaryIds.length > 0) {
               records = await DbDataStore.findManyByIds(db, secondaryResource, fkField, primaryIds, namespace);
             }

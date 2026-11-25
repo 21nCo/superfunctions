@@ -201,6 +201,30 @@ describe("predicate field authorization", () => {
     expect(result.body.result.data).toEqual([{ id: "per_1" }]);
   });
 
+  it("checks read access to a generated foreign key named like an inverse relation", async () => {
+    const [, employers] = schema.resources;
+    const harness = await createHarness({
+      ...schema,
+      resources: [...schema.resources, { ...employers, name: "cooperatives" }],
+      relations: [{
+        type: "one-many",
+        from: ["employers", "cooperatives"],
+        to: "people",
+        relation: "workers",
+        inverse: "workplace",
+      }],
+    }, { workplace: "emp_1", workplaceResource: "employers" });
+    server = harness.server;
+    const result = await harness.post("query", {
+      resource: "people",
+      version: 1,
+      select: ["id"],
+      filters: { workplace: { $any: { name: "Acme" } } },
+    });
+    expect(result.status).toBe(403);
+    expect(result.body.error.code).toBe("FORBIDDEN");
+  });
+
   it("authorizes a HAVING alias by its computed source instead of the same-named column", async () => {
     const [people, employers] = schema.resources;
     const harness = await createHarness({

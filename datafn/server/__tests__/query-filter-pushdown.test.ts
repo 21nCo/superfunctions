@@ -1029,6 +1029,11 @@ it("uses the same declared endpoint for legacy IDs in query and transact", async
       fkField: "itemId",
       fkResourceField: "itemResource",
     }, {
+      type: "many-one",
+      from: "task",
+      to: ["node", "objective"],
+      inverse: "linkedTasks",
+    }, {
       type: "one-many",
       from: ["node", "objective"],
       to: "task",
@@ -1045,6 +1050,8 @@ it("uses the same declared endpoint for legacy IDs in query and transact", async
     label: "Linked",
     itemId: "legacy-item",
     itemResource: "objective",
+    nodeId: "legacy-item",
+    targetResource: "objective",
     container: "legacy-item",
     containerResource: "objective",
   } });
@@ -1065,6 +1072,8 @@ it("uses the same declared endpoint for legacy IDs in query and transact", async
     [body, [{ id: "task:explicit" }, { id: "task:qualified" }]],
     [{ ...inverse, resource: "objective" }, [{ id: "legacy-item" }]],
     [{ ...inverse, resource: "node" }, []],
+    [{ ...inverse, resource: "objective", filters: { linkedTasks: { $any: { label: "Linked" } } } }, [{ id: "legacy-item" }]],
+    [{ ...inverse, resource: "node", filters: { linkedTasks: { $any: { label: "Linked" } } } }, []],
     [{ ...body, filters: { container: { $any: { label: "Goal" } } } }, [{ id: "task:explicit" }]],
     [{ ...inverse, resource: "objective", filters: { containedTasks: { $any: { label: "Linked" } } } }, [{ id: "legacy-item" }]],
     [{ ...inverse, resource: "node", filters: { containedTasks: { $any: { label: "Linked" } } } }, []],
