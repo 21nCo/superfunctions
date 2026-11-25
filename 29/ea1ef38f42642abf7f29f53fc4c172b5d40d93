@@ -1,0 +1,99 @@
+filefn/client/README.md
+  s_545bb079978e5a::t_169b358d72a0b8 74-80
+filefn/docs/content/docs/core-concepts/idempotency.md
+  s_545bb079978e5a::t_58922fd2ff0f1b 29-31
+filefn/docs/content/docs/core-concepts/offline.md
+  s_545bb079978e5a::t_29d1a2320b98af 23,43,71,74-78,81
+filefn/docs/content/docs/recipes/opfs-offline.md
+  s_545bb079978e5a::t_d377ea9688f21c 15
+filefn/docs/content/docs/sdk/client.md
+  s_545bb079978e5a::t_f7bedbd62a5c9a 23
+filefn/client/src/__tests__/offline-queue.test.ts
+  s_545bb079978e5a::t_e8cfe284882699 1-444
+filefn/client/src/index.ts
+  s_545bb079978e5a::t_e7e09ac2109831 24,26,92-127,153,155-168,322-324,326-333,335,337-338,340-357,359-378,391-392,395-427,438-440,449-458,522-525,542-543,546-562
+filefn/client/src/offline/opfs-store.ts
+  s_545bb079978e5a::t_6d17b8ded7ef89 113-114,120,128,148,153
+filefn/client/src/upload-manager.ts
+  s_545bb079978e5a::t_fff87505ebcab7 3,37-44,75,306-307,329-346,369-412
+filefn/server/src/client-contract.ts
+  s_545bb079978e5a::t_1ed1810130bc3d 763-767,780-786
+filefn/server/tests/offline-replay.test.ts
+  s_545bb079978e5a::t_f9f4e32987b1da 1-178
+filefn/client/package.json
+  s_bd8caca8b9ac65::t_c251e08160be06 3
+filefn/client/src/__tests__/file-ids.test.ts
+  s_bd8caca8b9ac65::t_2ba1b4fc22507f 7,168-169,171-179,231-232,234,236-238,240,245,299,302-313
+filefn/client/src/__tests__/helpers/offline-fixtures.ts
+  s_bd8caca8b9ac65::t_e38e278f82a1a3 1-208
+filefn/client/src/__tests__/offline.test.ts
+  s_bd8caca8b9ac65::t_637896941db780 1,3-36,38-44,46,48-60,62-78,80-85,87-89,91-104,107-111,114-118,120,122,124,128-129,132,134,139,141-142,145-150,152-153,155,159-163,165-167,170-181,183-209,211-230
+filefn/client/src/__tests__/transport-offline.test.ts
+  s_bd8caca8b9ac65::t_4ae46178eaab73 3,5-9,11-20,22-25,46-47,51,68,71,74-75,98,103-104,118-122
+filefn/client/src/client.ts
+  s_bd8caca8b9ac65::t_3fd7c551fd387e 416-418,422,424-425
+filefn/client/src/offline/queue.ts
+  s_bd8caca8b9ac65::t_0073aa5c70d9cb 1-1537
+filefn/client/src/offline/sync.ts
+  s_bd8caca8b9ac65::t_21c4349e1f17df 1-2,16-19,21-23,52-53,56,58-59,71-73,87-112,117-119,190,203-207,223,225,247,271-318,321-324,331,348,357,363,384,400,425-432,436
+filefn/client/src/types.ts
+  s_bd8caca8b9ac65::t_1a15c213677d27 1,39-58,198-205
+filefn/client/tests/public-offline-consumer.test.ts
+  s_bd8caca8b9ac65::t_11231ff254f3f3 1-41
+filefn/docs/content/api/filefn.json
+  s_bd8caca8b9ac65::t_ef704549fed0a3 2432-2436,2470-2488
+filefn/docs/content/docs/features/offline.md
+  s_bd8caca8b9ac65::t_775c2046b1c324 3,8,18-24,28,30,32,34,36,38,40-42,45-49,52-54,56,58,60-69,72-75,77,79,81-83,85,87,90-93,95,97,99-101,103-109,111,113-115,118-119,122,124,126-138
+filefn/docs/content/docs/frameworks/nextjs.md
+  s_bd8caca8b9ac65::t_75e0a64be0a17a 83
+filefn/docs/content/docs/frameworks/sveltekit.md
+  s_bd8caca8b9ac65::t_c230d4a6c6c950 51-52,56
+filefn/docs/content/docs/quickstart/sveltekit.md
+  s_bd8caca8b9ac65::t_7b7310e02dc50b 93-100,103
+filefn/docs/content/docs/reference/changelog.md
+  s_bd8caca8b9ac65::t_316c937a397dd9 12-14
+filefn/docs/package.json
+  s_bd8caca8b9ac65::t_7aa8d2aaa4d09f 3,45-47
+filefn/docs/static/llms-full.txt
+  s_bd8caca8b9ac65::t_a65bcf30cecfd4 1850-1852,2195,2215,2243,2246-2250,2253,3817,3822,3832-3838,3842,3844,3846,3848,3850,3852-3854,3856,3859-3863,3866-3868,3870,3872,3874-3883,3886-3889,3891,3893,3895-3897,3899,3901,3904-3907,3909,3911,3913,3915-3923,3925,3927-3929,3932-3933,3936,3938,3940-3952,5265,5376-5377,5381,6414-6421,6424,7233,8299-8301,9165
+filefn/docs/static/llms.txt
+  s_bd8caca8b9ac65::t_2845dd869c772e 58
+filefn/processing/container/package.json
+  s_bd8caca8b9ac65::t_2640fa44ed404a 3,17-18
+filefn/processing/package.json
+  s_bd8caca8b9ac65::t_aa5e55a5c67a6d 3
+filefn/server/contracts/filefn-client-v1.openapi.json
+  s_bd8caca8b9ac65::t_5ddc9327a31606 2432-2436,2470-2488
+filefn/server/package.json
+  s_bd8caca8b9ac65::t_3ba4a1c39ba03d 3,51
+filefn/server/src/upload-sessions/routes.ts
+  s_bd8caca8b9ac65::t_394d23fd4bac70 5,39-65,136,138,141-142,145,147
+filefn/server/src/upload-sessions/service.ts
+  s_bd8caca8b9ac65::t_8cd8b6951a485f 738-762,1444-1447,1553
+package-lock.json
+  s_bd8caca8b9ac65::t_fcee9259414f91 11788,11808,11825-11827,12433,12448,12451-12452,12510,12522
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "29ea1ef38f42642abf7f29f53fc4c172b5d40d93",
+  "prompts": {},
+  "sessions": {
+    "s_545bb079978e5a": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a2144f-8f2a-7690-8b1a-e7858b67a889",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_bd8caca8b9ac65": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a4d2df9a-a640-491e-97cf-5c3bd3762daa",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
