@@ -52,6 +52,7 @@ const STANDALONE_SCRIPTS = [
   "scripts/release-gate-workflows.*",
   "scripts/notify-next-sync-workflow.*",
   "scripts/turbo-cache-merge.*",
+  "scripts/workflow-pins.test.mjs",
 ];
 
 const STANDALONE_SCRIPT_PATTERNS = STANDALONE_SCRIPTS.map(

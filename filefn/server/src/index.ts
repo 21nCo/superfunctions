@@ -3,11 +3,7 @@ import { instrumentStorageAdapter, type StorageAdapter } from '@superfunctions/s
 import type { FileProvider, FileProviderContext } from '@superfunctions/files';
 import { type RateLimiter, createRateLimiter } from '@superfunctions/middleware';
 import { applyObservationHeaders } from '@superfunctions/http';
-import {
-  normalizeObservability,
-  type ObservabilityInput,
-  type ObservationLogger
-} from '@superfunctions/observability';
+import type { ObservabilityInput, ObservationLogger } from '@superfunctions/observability';
 import { getSchema } from './schema.js';
 import { createPolicyRegistry, type Policy, type PolicyRegistryWithDefine } from './policies.js';
 import { createEventEmitter, type FileFnEventEmitter, type FileFnObservationEvent } from './events.js';
@@ -30,6 +26,7 @@ import { createBackgroundScheduler, type FileFnRuntime } from './runtime.js';
 import type { AuthConfig } from './auth.js';
 import type { RateLimitClientKey } from './rate-limit-key.js';
 import { redactSecrets as redactLogContext, type Logger } from './observability/logger.js';
+import { createFileFnObservability } from './metrics.js';
 
 export interface RateLimitCategory {
   windowSeconds: number;
@@ -213,8 +210,12 @@ export function createFileFn(config: FileFnConfig): FileFn {
   if (!inputDatabase) {
     throw new Error('FILEFN_DATABASE_REQUIRED: database is required');
   }
-  const observabilityScope = normalizeObservability<FileFnObservationEvent>(observability)?.child({ component: 'filefn' });
+  const { scope: observabilityScope, domainMetrics } = createFileFnObservability(
+    observability,
+    (work) => background.track(work),
+  );
   const logger = fileFnLoggerFromObservability(observabilityScope?.logger);
+  const background = createBackgroundScheduler(runtime, logger);
   const db = wrapWithSchema(inputDatabase, getSchema({ namespace }));
   const observedDb = instrumentAdapter(db, {
     observability: observabilityScope?.child({ component: 'filefn.db' }),
@@ -226,7 +227,6 @@ export function createFileFn(config: FileFnConfig): FileFn {
   });
 
   const policyRegistry = createPolicyRegistry(initialPolicies);
-  const background = createBackgroundScheduler(runtime, logger);
   const events = createEventEmitter(observabilityScope, background);
   const deduplication = createDeduplicationService({
     db: observedDb,
@@ -293,6 +293,7 @@ export function createFileFn(config: FileFnConfig): FileFn {
     processors: processingConfig?.processors,
     flowFn: processingConfig?.flowFn,
     logger,
+    metrics: domainMetrics,
     namespace,
     enabled: processingConfig?.enabled ?? false,
     background,
@@ -306,6 +307,7 @@ export function createFileFn(config: FileFnConfig): FileFn {
     policies: policyRegistry,
     events,
     logger,
+    metrics: domainMetrics,
     quota,
     dedup: deduplication,
     fileWriteChecker: fileService,
