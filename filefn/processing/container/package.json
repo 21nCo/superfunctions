@@ -14,7 +14,7 @@
   },
   "license": "MIT",
   "dependencies": {
-    "@filefn/processing": "0.4.0",
+    "@filefn/processing": "0.4.1",
     "@filefn/server": "0.7.2",
     "@superfunctions/db": "0.2.0",
     "@superfunctions/storage-r2": "0.3.0",
