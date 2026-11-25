@@ -43,7 +43,7 @@ import {
   readSignUpProfile
 } from './users.js';
 import { readPluginRuntimeConfig } from './plugin-runtime.js';
-import { type PasswordPolicyOptions, updatePasswordCredential } from './passwords.js';
+import { assertPasswordWithinLimits, type PasswordPolicyOptions, updatePasswordCredential } from './passwords.js';
 import { resolveEnvironment } from './environment.js';
 import {
   allowsOtpSignUpExistingUser,
@@ -633,6 +633,8 @@ export async function completeResetPassword(
   runtimeOptions: OtpRuntimeOptions,
   input: CompleteResetPasswordInput
 ): Promise<{ passwordUpdated: true }> {
+  // Refuse an unacceptable password before the OTP is read or spent.
+  assertPasswordWithinLimits(input.newPassword);
   const email = normalizeEmail(input.email);
   const runtime = input.request ? await resolveEnvironment(config, input.request) : undefined;
   const challenge = await verifyOtpChallenge(config, {}, runtimeOptions, {

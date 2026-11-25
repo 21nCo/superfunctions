@@ -18,6 +18,7 @@ import { createAuthFnRateLimitMiddleware } from '../core/rate-limit.js';
 import { createAuthFnCellPlacementMiddleware } from '../core/gateway-routing.js';
 import { getMultiRegionPluginConfig } from '../core/regions.js';
 import { findUserById } from '../core/users.js';
+import { boundAuthRequest } from './body-limit.js';
 import { jsonError, jsonSuccess } from './envelopes.js';
 
 export function createAuthFnRouter(
@@ -44,7 +45,7 @@ export function createAuthFnRouter(
     ...(rateLimitMiddleware ? [rateLimitMiddleware] : [])
   ];
 
-  return createRouter({
+  const router = createRouter({
     basePath: config.basePath ?? '/auth',
     middleware: middleware.length > 0 ? middleware : undefined,
     routes: [...createBaseRoutes(config, _hooks), ...pluginRoutes],
@@ -74,6 +75,11 @@ export function createAuthFnRouter(
       return response;
     }
   });
+  const innerHandle = router.handle.bind(router);
+  const handle = (request: Request): Promise<Response> => innerHandle(boundAuthRequest(request));
+  router.handle = handle;
+  router.handler = handle;
+  return router;
 }
 
 

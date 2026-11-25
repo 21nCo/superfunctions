@@ -1,6 +1,6 @@
 import type { AtomicKVStoreAdapter, KVStoreAdapter } from '@superfunctions/db';
 import type { Middleware } from '@superfunctions/http';
-import { AuthFnConfigError, AuthFnRateLimitedError } from './errors.js';
+import { AuthFnConfigError, AuthFnPayloadTooLargeError, AuthFnRateLimitedError } from './errors.js';
 import { readCookieValues, resolveCookiePolicy } from './cookies.js';
 import { resolveEnvironment } from './environment.js';
 import type {
@@ -325,7 +325,10 @@ async function readIdentifier(request: Request): Promise<string | null> {
         ? body.identifier
         : undefined;
     return value?.trim().toLowerCase() ?? null;
-  } catch {
+  } catch (error) {
+    if (error instanceof AuthFnPayloadTooLargeError) {
+      throw error;
+    }
     return null;
   }
 }
@@ -353,7 +356,10 @@ async function readTwoFactorIdentifier(
       return CANONICAL_CHALLENGE_ID.test(challengeId)
         ? `two-factor-challenge:${challengeId}`
         : 'two-factor-challenge:non-canonical';
-    } catch {
+    } catch (error) {
+      if (error instanceof AuthFnPayloadTooLargeError) {
+        throw error;
+      }
       return null;
     }
   }

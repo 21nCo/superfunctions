@@ -16,6 +16,7 @@ import {
   AuthFnPlacementMovingError,
   AuthFnRegionMismatchError,
   AuthFnRegionNotFoundError,
+  AuthFnPayloadTooLargeError,
   AuthFnRoutingAssertionInvalidError,
   AuthFnRoutingCellUnavailableError,
   AuthFnValidationError
@@ -596,6 +597,9 @@ export function createAuthFnCellPlacementMiddleware(
       verifiedRoutingIdentityKeys.set(request, assertion.identityKey);
       return next().finally(() => verifiedRoutingIdentityKeys.delete(request));
     } catch (error) {
+      if (error instanceof AuthFnPayloadTooLargeError) {
+        throw error;
+      }
       verifiedRoutingIdentityKeys.delete(request);
       const code = readErrorCode(error);
       await emitAuthEvent(config, {

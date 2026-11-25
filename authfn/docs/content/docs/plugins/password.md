@@ -43,7 +43,7 @@ authApp.createServer({
 | Option | Stage | Default | Notes |
 | --- | --- | --- | --- |
 | `compromisedPasswordChecker` | factory | `undefined` | A function that checks the password against breach data (e.g. HIBP). Called on sign-up and reset. Throws `AuthFnValidationError` if compromised. |
-| `requireEmailVerifiedForSignIn` | factory | `false` | If `true`, sign-in fails with `AUTHFN_EMAIL_NOT_VERIFIED` until the user verifies their email. |
+| `requireEmailVerifiedForSignIn` | factory | `false` | If `true`, sign-in returns `AUTHFN_EMAIL_NOT_VERIFIED` only after the password matches. A wrong password or a missing account returns `AUTHFN_INVALID_CREDENTIALS` with no account id. |
 | `pluginRuntime.password.otp.delivery` | runtime | required for reset | Per-flow OTP delivery for password resets. |
 | `pluginRuntime.password.otp.challengeTtlSeconds` | runtime | `600` (10 min) | TTL for password-reset OTPs. |
 | `pluginRuntime.password.otp.maxAttempts` | runtime | `5` | Maximum verification attempts per challenge. |
@@ -54,11 +54,13 @@ authApp.createServer({
 | Method | Path | Operation ID | Notes |
 | --- | --- | --- | --- |
 | `POST` | `/auth/sign-up/password` | `signUpWithPassword` | Create a user and issue a session. Body: `{ email, password, profile?, sessionMode? }`. `profile` must be a JSON object of at most 4 KB; it becomes the user's `metadata` (see [Sign-up profile](#sign-up-profile)). |
-| `POST` | `/auth/sign-in/password` | `signInWithPassword` | Sign in. May respond with `AUTHFN_2FA_REQUIRED` if 2FA is enrolled. |
+| `POST` | `/auth/sign-in/password` | `signInWithPassword` | Sign in. May respond with `AUTHFN_2FA_REQUIRED` if 2FA is enrolled. A missing account, a missing password, and a wrong password all return the same `AUTHFN_INVALID_CREDENTIALS` error. |
 | `POST` | `/auth/password/reset/start` | `startPasswordReset` | Send a password-reset OTP. Always returns `200 OK` regardless of email existence (anti-enumeration). |
 | `POST` | `/auth/password/reset/complete` | `completePasswordReset` | Verify the OTP, set a new password and revoke every existing session of the user. |
 
 All routes return the standard envelope. See [API reference](../api) for full schemas.
+
+The auth router reads at most 64 KiB of a request body. A larger body, including one streamed without `Content-Length`, is rejected with HTTP 413 and `AUTHFN_VALIDATION_ERROR` before the route runs. A password longer than 1024 UTF-8 bytes is rejected with HTTP 400 before any password hashing.
 
 ## Schema
 
@@ -68,7 +70,7 @@ All routes return the standard envelope. See [API reference](../api) for full sc
 
 ## Hashing
 
-Passwords are hashed with **argon2id** with vetted parameters (the kernel uses a default cost suitable for modern hardware; you can override via the plugin's `passwordHashing` config if needed).
+Passwords are hashed with async **scrypt** at N=16384, r=8, p=1, and a 64-byte output. A password must be at least 12 characters and at most 1024 UTF-8 bytes. Stored hashes are accepted only when the cost parameters, salt size, and digest size match those values; anything else is rejected before scrypt runs. At most four scrypt operations run at once.
 
 ## Sign-up flow
 
@@ -152,8 +154,8 @@ The `profile` sent to `/sign-up/password` (and to `/otp/verify` with purpose `si
 | --- | --- |
 | `AUTHFN_VALIDATION_ERROR` | Missing email/password, password fails policy, or `compromisedPasswordChecker` returned `compromised: true`. |
 | `AUTHFN_CONFLICT` | Email already in use (and account linking didn't apply). |
-| `AUTHFN_INVALID_CREDENTIALS` | Sign-in: wrong email or password. |
-| `AUTHFN_EMAIL_NOT_VERIFIED` | Sign-in blocked because `requireEmailVerifiedForSignIn` is on. |
+| `AUTHFN_INVALID_CREDENTIALS` | Sign-in: missing account, missing password, or wrong password. |
+| `AUTHFN_EMAIL_NOT_VERIFIED` | Sign-in blocked because `requireEmailVerifiedForSignIn` is on and the password matched. |
 | `AUTHFN_2FA_REQUIRED` | Sign-in succeeded for primary; 2FA challenge needs to complete. |
 | `AUTHFN_REGION_MISMATCH` | Multi-region: this email lives in another region. |
 | `AUTHFN_OTP_INVALID` / `AUTHFN_OTP_EXPIRED` / `AUTHFN_OTP_REPLAYED` | Password reset OTP failures. |
