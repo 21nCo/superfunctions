@@ -1,0 +1,21 @@
+mcpfn/core/README.md
+  s_1249bd91e0e351::t_22cdce3b22c9ed 222-224
+mcpfn/core/src/openapi/schema.ts
+  s_1249bd91e0e351::t_426f746d3c9be3 512-513,1034-1040
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "519c6215ea43be3a316263ae659cb0c9eae57221",
+  "prompts": {},
+  "sessions": {
+    "s_1249bd91e0e351": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a2131a-2ee1-7040-aaeb-f4b9e01820a7",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
