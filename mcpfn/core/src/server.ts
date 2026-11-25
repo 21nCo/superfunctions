@@ -166,6 +166,21 @@ export function resolveMcpFnServerCapabilities<TContext>(
   return mergeCapabilities(registryCapabilities, additionalCapabilities);
 }
 
+function requestSchemaIssues(error: unknown): Array<{ path: string; message: string }> | undefined {
+  try {
+    // Zod 3 names it "ZodError", Zod 4 (used by the SDK) "$ZodError".
+    if (!(error instanceof Error) || (error.name !== "ZodError" && error.name !== "$ZodError")) return undefined;
+    const issues = (error as { issues?: unknown }).issues;
+    if (!Array.isArray(issues)) return undefined;
+    return issues.slice(0, 100).map((issue: { path?: unknown; message?: unknown }) => ({
+      path: Array.isArray(issue?.path) ? issue.path.map(String).join("/").slice(0, 256) : "",
+      message: typeof issue?.message === "string" ? issue.message.slice(0, 256) : "Invalid value",
+    }));
+  } catch {
+    return undefined;
+  }
+}
+
 function withheldToolError(errorId: string | undefined): { verbatim: boolean; errorId?: string } {
   return errorId === undefined ? { verbatim: true } : { verbatim: false, errorId };
 }
@@ -772,6 +787,11 @@ export class McpFnServer<TContext = undefined> {
     try {
       return await run();
     } catch (error) {
+      // The SDK validates request params before a handler runs and throws the
+      // schema library's error: that is the client's mistake, not a server
+      // fault, so answer InvalidParams with bounded paths and messages only.
+      const invalidParams = requestSchemaIssues(error);
+      if (invalidParams) throw new McpError(ErrorCode.InvalidParams, "Invalid request parameters", { issues: invalidParams });
       const errorId = await this.reportWithheldError(error, method, undefined, { plainObjects: false });
       if (errorId === undefined) throw error;
       throw new McpError(ErrorCode.InternalError, "Internal error", { errorId });

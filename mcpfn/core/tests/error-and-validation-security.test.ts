@@ -73,6 +73,23 @@ describe("argument size bound (MCP-SEC-06)", () => {
     expect(handler).not.toHaveBeenCalled();
     expect((await client.callTool({ name: "closed", arguments: { a: "fine" } })).isError).not.toBe(true);
   });
+
+  it("does not let handleInvalidArguments turn an oversized call into a success", async () => {
+    const recover = vi.fn(async () => structuredResult({ recovered: true }));
+    const registry = new McpFnRegistry().register({
+      name: "recovering",
+      description: "Recovers.",
+      inputSchema: { type: "object", properties: { a: { type: "string" } }, additionalProperties: false },
+      handler: async () => structuredResult({ ok: true }),
+      handleInvalidArguments: recover,
+    });
+    const client = await connect(registry);
+    const huge = Object.fromEntries(Array.from({ length: 100_001 }, (_, index) => [`k${index}`, 1]));
+    const result = await client.callTool({ name: "recovering", arguments: huge });
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result)).toContain("maxNodes");
+    expect(recover).not.toHaveBeenCalled();
+  });
 });
 
 describe("tool error text (MCP-SEC-08)", () => {
@@ -317,6 +334,18 @@ describe("withheld errors outside tool handlers (MCP-SEC-08)", () => {
     expect(error).toBeDefined();
     expect(JSON.stringify(error)).not.toContain("/srv/app");
     expect(String((error as Error).message)).not.toContain("/srv/app");
+  });
+
+  it("answers malformed request params with InvalidParams, not a withheld error", async () => {
+    const onError = vi.fn();
+    const registry = new McpFnRegistry().registerResource({ uri: "file:///report", name: "report", read: async () => ({ contents: [] }) });
+    const client = await connect(registry, { onError });
+    const { ReadResourceResultSchema } = await import("@modelcontextprotocol/sdk/types.js");
+    const error = await client.request({ method: "resources/read", params: { uri: 42 } } as never, ReadResourceResultSchema)
+      .then(() => undefined, (failure: unknown) => failure);
+    expect(error).toMatchObject({ code: ErrorCode.InvalidParams, data: { issues: [expect.objectContaining({ path: expect.stringContaining("uri") })] } });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(onError).not.toHaveBeenCalled();
   });
 
   it("answers without waiting for a slow onError sink", async () => {

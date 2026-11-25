@@ -957,14 +957,15 @@ export class McpFnRegistry<TContext = undefined> {
     // Bound validation work before any schema engine runs: @cfworker/json-schema
     // keeps reporting every extra property or tuple item even when it stops at
     // the first failure elsewhere.
+    // Thrown, not returned: an oversized call never reaches
+    // handleInvalidArguments, so it can't be turned into a success.
     if (exceedsJsonNodes(normalizedArgs, MAX_ARGUMENT_NODES)) {
-      return {
-        args: {},
+      throw new McpFnValidationError(`Invalid arguments for ${registered.definition.name}`, {
         issues: [{
           path: "/", instancePath: "/", schemaPath: "#", keyword: "maxNodes",
           message: `Tool arguments may contain at most ${MAX_ARGUMENT_NODES} values`,
         }],
-      };
+      });
     }
     if (!registered.validateInput(normalizedArgs)) {
       return {
