@@ -50,8 +50,9 @@ authorize: async (_ctx, action, _payload, request, resources) => {
   const session = await auth.provider.authenticate(request);
   if (!session || action === "status") return false;
   const tenantId = await lookupTenantForSession(session);
-  return !!tenantId && canUseSearchAction(session, action)
-    && resources.every((resource) => resource === `articles:${tenantId}`);
+  if (!tenantId || !(await canUseSearchAction(session, action))) return false;
+  const allowed = new Set(await getProvisionedSearchResources(tenantId));
+  return resources.every((resource) => allowed.has(resource));
 },
 ```
 

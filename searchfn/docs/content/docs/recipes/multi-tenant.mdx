@@ -68,15 +68,16 @@ On the server, the `authorize` callback enforces which resources a caller can to
 const sf = await createSearchFnServer({
   adapter,
   context: async (request) => ({ session: await getSession(request) }),
-  authorize: (ctx, action, _payload, _request, resources) => {
+  authorize: async (ctx, action, _payload, _request, resources) => {
     const tenantId = ctx.session?.user.tenantId;
     if (!tenantId || action === "status") return false;
-    return resources.every((resource) => resource === `articles:${tenantId}`);
+    const allowed = new Set(await getProvisionedSearchResources(tenantId));
+    return resources.every((resource) => allowed.has(resource));
   },
 });
 ```
 
-This pairs with the per-tenant resource name pattern: the resource itself encodes the tenant, and `authorize` cross-references it against the session.
+Load the exact resource names registered for the tenant from a trusted provisioning registry. Provision distinct physical indexes or tables for each resource. See [multi-tenant isolation](/docs/documentation/security/multi-tenant-isolation).
 
 ## DataFn integration
 

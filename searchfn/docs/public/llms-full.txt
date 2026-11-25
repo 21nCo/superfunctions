@@ -5115,20 +5115,16 @@ The query touched documents from other tenants. The scoring, IDF, and term frequ
 
 ## Authorize as the enforcement layer
 
-Even with resource-name isolation, the `authorize` callback must cross-check the resource against the caller's tenant:
+Check each target against the tenant's exact resource names in a trusted provisioning registry. Ensure the provisioned names map to distinct physical tables or indexes, or put tenants in separate backend namespaces.
 
 ```typescript
 async function authorize(_ctx, action, _payload, request, resources) {
   const session = await getSession(request);
-  if (!session) return false;
+  if (!session?.user.tenantId) return false;
   if (action === "status") return false;
 
-  return resources.every((r) => resourceBelongsToTenant(r, session.user.tenantId));
-}
-
-function resourceBelongsToTenant(resource: string, tenantId: string): boolean {
-  const parts = resource.split(":");
-  return parts.length === 2 && parts[1] === tenantId;
+  const allowed = new Set(await getProvisionedSearchResources(session.user.tenantId));
+  return resources.every((resource) => allowed.has(resource));
 }
 ```
 
@@ -5510,7 +5506,7 @@ const sf = await createSearchFnServer({
 });
 ```
 
-The optional `context` factory runs before the policy and can load verified identity from request headers or cookies. Its result is passed directly as `ctx`. Without a factory, `ctx` includes the router's route parameters, parsed URL, and query parameters. Read POST body fields from `payload` because the server has already read the request body. `status` receives `null` and an empty resource list.
+The optional `context` factory runs before the policy and can load verified identity from request headers or cookies. Its result is passed directly to the policy as `ctx`. The router's middleware and custom routes receive the route parameters, parsed URL and query parameters from the HTTP router. Without a factory, the policy also receives this router context. Read POST body fields from `payload` because the server has already read the request body. `status` receives `null` and an empty resource list.
 
 ## Failure modes
 
@@ -7381,8 +7377,9 @@ authorize: async (_ctx, action, _payload, request, resources) => {
   const session = await auth.provider.authenticate(request);
   if (!session || action === "status") return false;
   const tenantId = await lookupTenantForSession(session);
-  return !!tenantId && canUseSearchAction(session, action)
-    && resources.every((resource) => resource === `articles:${tenantId}`);
+  if (!tenantId || !(await canUseSearchAction(session, action))) return false;
+  const allowed = new Set(await getProvisionedSearchResources(tenantId));
+  return resources.every((resource) => allowed.has(resource));
 },
 ```
 
@@ -8535,15 +8532,16 @@ On the server, the `authorize` callback enforces which resources a caller can to
 const sf = await createSearchFnServer({
   adapter,
   context: async (request) => ({ session: await getSession(request) }),
-  authorize: (ctx, action, _payload, _request, resources) => {
+  authorize: async (ctx, action, _payload, _request, resources) => {
     const tenantId = ctx.session?.user.tenantId;
     if (!tenantId || action === "status") return false;
-    return resources.every((resource) => resource === `articles:${tenantId}`);
+    const allowed = new Set(await getProvisionedSearchResources(tenantId));
+    return resources.every((resource) => allowed.has(resource));
   },
 });
 ```
 
-This pairs with the per-tenant resource name pattern: the resource itself encodes the tenant, and `authorize` cross-references it against the session.
+Load the exact resource names registered for the tenant from a trusted provisioning registry. Provision distinct physical indexes or tables for each resource. See [multi-tenant isolation](/docs/documentation/security/multi-tenant-isolation).
 
 ## DataFn integration
 

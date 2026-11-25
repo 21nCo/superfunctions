@@ -90,6 +90,7 @@ type SearchFnServerConfig<TContext> = {
 
 - Server creation requires an `authorize` callback or `allowUnauthenticated: true`. Use the explicit opt-in for in-process callers, local demos, or deployments with an upstream authorization policy covering every operation.
 - `authorize(...)` receives the context, action, parsed payload snapshot, original request, and validated list of resource names. Read headers from `request` and body fields from `payload`. Only a return value of `true` permits the operation.
+- The application `context` is passed to `authorize`. Router middleware and custom routes receive the standard HTTP router context.
 - Send `Content-Type: application/json` on POSTs. Use `resource` for single-resource routes and `resources` for `search-all`. An authorized `search-all` requires a non-empty resource list.
 - `limits` controls payload size, query length, search fan-out, and indexing batch caps.
 - `close()` delegates to `adapter.dispose()` when the adapter implements it.

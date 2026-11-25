@@ -32,27 +32,37 @@ interface SearchFnLogger {
   debug(message: string, context?: Record<string, unknown>): void;
 }
 
-export interface SearchFnServerConfig<TContext = unknown> {
+interface SearchFnServerOptions {
   adapter: SearchAdapter;
   basePath?: string;
   limits?: Partial<ServerLimits>;
   /** Explicitly allow requests without a SearchFn authorization policy. */
   allowUnauthenticated?: boolean;
-  /** Load per-request identity and other context from request metadata. */
-  context?: (request: Request) => Promise<TContext> | TContext;
-  /** Authorize the action and every validated resource in scope. Read POST fields from payload. */
-  authorize?: (
-    ctx: TContext,
-    action: SearchFnAction,
-    payload: unknown,
-    request: Request,
-    resources: readonly string[],
-  ) => Promise<boolean> | boolean;
   observability?: ObservabilityInput<SearchFnEvent>;
 }
 
-export interface SearchFnServer<TContext = unknown> {
-  router: Router<TContext>;
+/** Authorize the action and every validated resource in scope. Read POST fields from payload. */
+type Authorize<TContext> = (
+  ctx: TContext,
+  action: SearchFnAction,
+  payload: unknown,
+  request: Request,
+  resources: readonly string[],
+) => Promise<boolean> | boolean;
+
+interface PolicyContextConfig<TContext> {
+  /** Load the authorization policy's per-request identity and other context. */
+  context: (request: Request) => Promise<TContext> | TContext;
+  authorize?: Authorize<TContext>;
+}
+
+export type SearchFnServerConfig<TContext extends ServerContext = ServerContext> = SearchFnServerOptions & (
+  | { context?: undefined; authorize?: Authorize<ServerContext> }
+  | PolicyContextConfig<TContext>
+);
+
+export interface SearchFnServer {
+  router: Router<ServerContext>;
   close(): Promise<void>;
 }
 
@@ -110,9 +120,15 @@ function snapshotPayload(body: Record<string, unknown>): Record<string, unknown>
   return snapshot;
 }
 
-export async function createSearchFnServer<TContext extends ServerContext = ServerContext>(
+export function createSearchFnServer<TContext extends ServerContext>(
+  config: SearchFnServerOptions & PolicyContextConfig<TContext>,
+): Promise<SearchFnServer>;
+export function createSearchFnServer<TContext extends ServerContext = ServerContext>(
   config: SearchFnServerConfig<TContext>,
-): Promise<SearchFnServer<TContext>> {
+): Promise<SearchFnServer>;
+export async function createSearchFnServer<TContext extends ServerContext>(
+  config: SearchFnServerConfig<TContext>,
+): Promise<SearchFnServer> {
   const {
     adapter,
     basePath = "/searchfn",
@@ -146,8 +162,8 @@ export async function createSearchFnServer<TContext extends ServerContext = Serv
   function wrap(
     action: SearchFnAction,
     handler: (req: Request, body: Record<string, unknown>) => Promise<Response>,
-  ): (req: Request, ctx: TContext) => Promise<Response> {
-    return async (req: Request, ctx: TContext): Promise<Response> => {
+  ): (req: Request, ctx: ServerContext) => Promise<Response> {
+    return async (req: Request, ctx: ServerContext): Promise<Response> => {
       const start = Date.now();
       const logCtx: Record<string, unknown> = {
         operation: action,
@@ -201,10 +217,12 @@ export async function createSearchFnServer<TContext extends ServerContext = Serv
 
       if (authorize) {
         try {
-          const policyContext = context ? await context(req) : ctx;
           // Give the policy its own snapshot so it cannot change what the adapter executes.
           const payload = action === "status" ? null : snapshotPayload(body);
-          const allowed = await authorize(policyContext, action, payload, req, [...resources]);
+          const targets = [...resources];
+          const allowed = context
+            ? await authorize(await context(req), action, payload, req, targets)
+            : await authorize(ctx, action, payload, req, targets);
           if (allowed !== true) {
             logger?.warn("authorization.denied", redactContext(logCtx));
             await emitSearchFnEvent(observability, {
@@ -263,7 +281,7 @@ export async function createSearchFnServer<TContext extends ServerContext = Serv
     };
   }
 
-  const routes: Route<TContext>[] = [
+  const routes: Route<ServerContext>[] = [
     {
       method: "GET",
       path: `${basePath}/status`,
@@ -296,7 +314,7 @@ export async function createSearchFnServer<TContext extends ServerContext = Serv
     },
   ];
 
-  const router = createRouter<TContext>({
+  const router = createRouter<ServerContext>({
     routes,
     basePath: "/",
     middleware: observability

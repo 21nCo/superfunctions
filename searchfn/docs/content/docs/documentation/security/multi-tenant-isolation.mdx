@@ -60,20 +60,16 @@ The query touched documents from other tenants. The scoring, IDF, and term frequ
 
 ## Authorize as the enforcement layer
 
-Even with resource-name isolation, the `authorize` callback must cross-check the resource against the caller's tenant:
+Check each target against the tenant's exact resource names in a trusted provisioning registry. Ensure the provisioned names map to distinct physical tables or indexes, or put tenants in separate backend namespaces.
 
 ```typescript
 async function authorize(_ctx, action, _payload, request, resources) {
   const session = await getSession(request);
-  if (!session) return false;
+  if (!session?.user.tenantId) return false;
   if (action === "status") return false;
 
-  return resources.every((r) => resourceBelongsToTenant(r, session.user.tenantId));
-}
-
-function resourceBelongsToTenant(resource: string, tenantId: string): boolean {
-  const parts = resource.split(":");
-  return parts.length === 2 && parts[1] === tenantId;
+  const allowed = new Set(await getProvisionedSearchResources(session.user.tenantId));
+  return resources.every((resource) => allowed.has(resource));
 }
 ```
 

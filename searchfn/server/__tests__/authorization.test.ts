@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
-import { createSearchFnServer, type SearchFnAction } from "../src";
+import { describe, expect, expectTypeOf, it, vi } from "vitest";
+import { createSearchFnServer, type SearchFnAction, type ServerContext } from "../src";
 
 function testAdapter() {
   return {
@@ -121,8 +121,17 @@ describe("SearchFn authorization", () => {
       context: () => identity,
       authorize: (ctx) => ctx === identity && ctx.canClearDocs(),
     });
+    const middlewareContext = vi.fn();
+    server.router.use(async (_request, ctx, next) => {
+      expectTypeOf(ctx).toMatchTypeOf<ServerContext>();
+      expectTypeOf(ctx.canClearDocs).toEqualTypeOf<unknown>();
+      middlewareContext(ctx);
+      return next();
+    });
 
     expect((await server.router.handle(post("clear", { resource: "docs" }))).status).toBe(200);
+    expect(middlewareContext).toHaveBeenCalledWith(expect.objectContaining({ params: {} }));
+    expect(middlewareContext.mock.calls[0][0].canClearDocs).toBeUndefined();
   });
 
   it.each([{ resources: undefined }, { resources: null }, { resources: [] }])(
