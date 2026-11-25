@@ -317,6 +317,51 @@ describe("createWebStandardHandler session limits (MCP-SEC-04)", () => {
     expect(closed).toEqual(["session-1"]);
   });
 
+  it("does not count a deleted victim as already making room", async () => {
+    let hold: Promise<void> | undefined;
+    const { handler, initialize, call } = await setup({ maxSessions: 1, onsessioninitialized: () => hold });
+    const victim = await initialize();
+    let open!: () => void;
+    hold = new Promise((resolve) => { open = resolve; });
+    const replacement = initialize();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    hold = undefined;
+    await handler(new Request("http://127.0.0.1:8080/mcp", {
+      method: "DELETE",
+      headers: { "mcp-session-id": victim.sessionId!, "mcp-protocol-version": "2025-11-25" },
+    }));
+    const other = await initialize();
+    open();
+    const results = [await replacement, other].filter(({ status }) => status === 200);
+    let alive = 0;
+    for (const { sessionId } of results) if ((await call(sessionId!)).status === 200) alive += 1;
+    expect(alive).toBeLessThanOrEqual(1);
+  });
+
+  it("does not evict a session when the SDK fails the replacement's initialization", async () => {
+    let down = false;
+    let stored = 0;
+    const { initialize, post } = await setup({
+      maxSessions: 1,
+      enableJsonResponse: false,
+      eventStore: {
+        storeEvent: async () => {
+          if (down) throw new Error("event store down");
+          return `event-${++stored}`;
+        },
+        replayEventsAfter: async () => "stream",
+      } as never,
+    });
+    const kept = await initialize();
+    expect(kept.status).toBe(200);
+    down = true;
+    expect((await initialize()).status).not.toBe(200);
+    down = false;
+    const response = await post({ jsonrpc: "2.0", id: 7, method: "ping" }, { sessionId: kept.sessionId! });
+    await response.text();
+    expect(response.status).toBe(200);
+  });
+
   it("lets sessions without a principal share one per-principal allowance", async () => {
     const { initialize, call } = await setup({ maxSessionsPerPrincipal: 2 });
     const first = await initialize();

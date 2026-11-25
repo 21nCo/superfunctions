@@ -1074,7 +1074,9 @@ export class McpFnServer<TContext = undefined> {
         for (const candidate of closingSessions) if (match(candidate)) total += 1;
         for (const [reserved, paired] of reservations) {
           if (match(reserved)) total += 1;
-          if (paired && match(paired) && match(reserved)) total -= 1;
+          // Only while the victim is still counted as live or closing.
+          if (paired && match(paired) && match(reserved) &&
+              (sessions.get(paired.transport.sessionId!) === paired || closingSessions.has(paired))) total -= 1;
         }
         return total;
       };
@@ -1129,6 +1131,7 @@ export class McpFnServer<TContext = undefined> {
 
       const requestServer = new McpFnServer(this.serverOptions);
       let initialized: Session | undefined;
+      let accepted: { id: string; session: Session; victim?: Session } | undefined;
       let refusal: Response | undefined;
       let released = false;
       let transport: WebStandardStreamableHTTPServerTransport;
@@ -1183,43 +1186,16 @@ export class McpFnServer<TContext = undefined> {
             refusal = reserved;
             throw new Error("Session capacity reached");
           }
-          const victim = reserved.victim;
           try {
-            try {
-              await transportOptions.onsessioninitialized?.(id);
-            } finally {
-              if (victim) doomed.delete(victim);
-            }
-            // The host accepted the session; from here an abandoned
-            // initialization must run its onsessionclosed.
-            const abandon = async (response?: Response) => {
-              try {
-                await transportOptions.onsessionclosed?.(id);
-              } catch {
-                // The session never went live; its cleanup is best effort.
-              }
-              if (response) refusal = response;
-              throw new Error("Session not published");
-            };
-            // A marked session that got busy meanwhile can no longer make
-            // room: refuse the new one rather than cut a request off.
-            if (victim && busy(victim)) await abandon(jsonRpcErrorResponse(503, -32000, "Too many sessions"));
-            // Evict, and let the victim finish closing before going live.
-            if (victim && sessions.get(victim.transport.sessionId!) === victim) {
-              await closeQuietly([takeSession(victim.transport.sessionId!, victim)]);
-            }
-            // The parent was closed meanwhile: do not publish.
-            if (!this.requestServers.has(requestServer)) await abandon();
-          } finally {
+            await transportOptions.onsessioninitialized?.(id);
+          } catch (error) {
+            if (reserved.victim) doomed.delete(reserved.victim);
             reservations.delete(session);
+            throw error;
           }
-          // Published, and reachable by broadcasts, only once accepted.
-          initialized = session;
-          sessions.set(id, session);
-          requestServer.broadcastReady = true;
-          requestServer.onRequestsSettled = () => {
-            if (session.active === 0) session.lastActive = Date.now();
-          };
+          // Accepted by the host. Eviction and publication wait until the
+          // SDK has produced a successful initialize response.
+          accepted = { id, session, victim: reserved.victim };
         },
         // DELETE from the session's own principal.
         onsessionclosed: () => close(true),
@@ -1237,6 +1213,48 @@ export class McpFnServer<TContext = undefined> {
           await release();
           return refusal;
         }
+        if (accepted) {
+          const { id, session, victim } = accepted;
+          // The host accepted a session that will not go live: run its
+          // onsessionclosed (best effort) and answer with `answer`.
+          const abandon = async (answer: Response) => {
+            try {
+              await transportOptions.onsessionclosed?.(id);
+            } catch {
+              // The session never went live; its cleanup is best effort.
+            }
+            if (answer !== response) await response.body?.cancel().catch(() => undefined);
+            await release();
+            return answer;
+          };
+          try {
+            // The SDK failed the initialization (for example its SSE priming
+            // write): nothing is evicted.
+            if (!response.ok) return await abandon(response);
+            // A marked session that got busy meanwhile can no longer make
+            // room: refuse the new one rather than cut a request off.
+            if (victim && busy(victim)) return await abandon(jsonRpcErrorResponse(503, -32000, "Too many sessions"));
+            if (victim) doomed.delete(victim);
+            // Evict, and let the victim finish closing before going live.
+            if (victim && sessions.get(victim.transport.sessionId!) === victim) {
+              await closeQuietly([takeSession(victim.transport.sessionId!, victim)]);
+            }
+            // The parent was closed meanwhile: do not publish.
+            if (!this.requestServers.has(requestServer)) {
+              return await abandon(jsonRpcErrorResponse(503, -32000, "Server closed"));
+            }
+          } finally {
+            if (victim) doomed.delete(victim);
+            reservations.delete(session);
+          }
+          // Published, and reachable by broadcasts, only once accepted.
+          initialized = session;
+          sessions.set(id, session);
+          requestServer.broadcastReady = true;
+          requestServer.onRequestsSettled = () => {
+            if (session.active === 0) session.lastActive = Date.now();
+          };
+        }
         const session = initialized;
         if (session) {
           let settled = false;
@@ -1249,6 +1267,15 @@ export class McpFnServer<TContext = undefined> {
         }
         return releaseAfterResponse(response, release);
       } catch (error) {
+        if (accepted && !initialized) {
+          if (accepted.victim) doomed.delete(accepted.victim);
+          reservations.delete(accepted.session);
+          try {
+            await transportOptions.onsessionclosed?.(accepted.id);
+          } catch {
+            // Best effort, as for any session that never went live.
+          }
+        }
         await release();
         throw error;
       }
