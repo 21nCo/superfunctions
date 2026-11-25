@@ -392,6 +392,21 @@ describe("withheld errors outside tool handlers (MCP-SEC-08)", () => {
     expect(onError).toHaveBeenCalledOnce();
   });
 
+  it("leaves custom request methods to the SDK's own validation", async () => {
+    const { z } = await import("zod");
+    const server = createMcpFnServer({ info: { name: "security", version: "1.0.0" }, registry: new McpFnRegistry() });
+    const EchoRequest = z.object({ method: z.literal("review/echo"), params: z.object({ value: z.string() }) });
+    (server as unknown as { protocol: { setRequestHandler(schema: unknown, handler: (request: { params: { value: string } }) => unknown): void } })
+      .protocol.setRequestHandler(EchoRequest, (request) => ({ value: request.params.value }));
+    const client = new Client({ name: "client", version: "1.0.0" }, { capabilities: {} });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    closeables.push(client, server);
+    await expect(client.request({ method: "review/echo", params: { value: "hi" } } as never, z.object({ value: z.string() }) as never))
+      .resolves.toEqual({ value: "hi" });
+  });
+
   it("answers without waiting for a slow onError sink", async () => {
     const client = await connect(
       new McpFnRegistry().register({ name: "fail", description: "Fails.", inputSchema: { type: "object" }, handler: async () => { throw systemError(); } }),

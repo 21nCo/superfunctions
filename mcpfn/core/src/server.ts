@@ -753,7 +753,11 @@ export class McpFnServer<TContext = undefined> {
       if (typeof method === "string") schemas.set(method, option as never);
     }
     const validated = (handler: Handler): Handler => async (request, extra) => {
-      const parsed = (schemas.get(request.method) ?? ClientRequestSchema).safeParse(request);
+      // Methods outside the MCP client request schema (custom methods a host
+      // registers) are left to the SDK's own validation for them.
+      const schema = schemas.get(request.method);
+      if (!schema) return handler(request, extra);
+      const parsed = schema.safeParse(request);
       if (!parsed.success) {
         throw new McpError(ErrorCode.InvalidParams, "Invalid request parameters", {
           issues: requestSchemaIssues(parsed.error) ?? [],
