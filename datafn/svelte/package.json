@@ -19,7 +19,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@datafn/core": "0.1.0"
+    "@datafn/core": "0.1.3"
   },
   "devDependencies": {
     "svelte": "^4.0.0",
