@@ -16,7 +16,7 @@ final class HostTopologyTests: XCTestCase {
 
     func testWebOriginCanonicalizesIPv4Aliases() throws {
         let origin = try XCTUnwrap(EmbeddedWebView.Coordinator.webOrigin(of: URL(string: "http://127.0.0.1:4173")!))
-        for alias in ["127.1", "0177.0.0.1", "0x7f.1", "127.0.0.1."] {
+        for alias in ["127.1", "0177.0.0.1", "0x7f.1", "127.0x.0.1", "127.0.0.1."] {
             let url = try XCTUnwrap(URL(string: "http://\(alias):4173/detail"))
             let candidate = try XCTUnwrap(EmbeddedWebView.Coordinator.webOrigin(of: url))
             XCTAssertTrue(origin == candidate, alias)

@@ -57,22 +57,42 @@ struct EmbeddedWebView: UIViewRepresentable {
 
         private static func normalizedHost(_ host: String) -> String {
             let literal = host.hasPrefix("[") && host.hasSuffix("]") ? String(host.dropFirst().dropLast()) : host
+            var address = in6_addr()
+            guard inet_pton(AF_INET6, literal, &address) == 1 else {
+                return normalizedIPv4(host) ?? host
+            }
             let bufferSize = socklen_t(INET6_ADDRSTRLEN)
             var buffer = [CChar](repeating: 0, count: Int(bufferSize))
-            var ipv6 = in6_addr()
-            let formatted: Bool
-            if inet_pton(AF_INET6, literal, &ipv6) == 1 {
-                formatted = inet_ntop(AF_INET6, &ipv6, &buffer, bufferSize) != nil
-            } else {
-                let candidate = host.hasSuffix(".") ? String(host.dropLast()) : host
-                let addressCharacters = CharacterSet(charactersIn: "0123456789abcdefx.")
-                guard candidate.unicodeScalars.allSatisfy(addressCharacters.contains) else { return host }
-                var ipv4 = in_addr()
-                guard inet_aton(candidate, &ipv4) == 1 else { return host }
-                formatted = inet_ntop(AF_INET, &ipv4, &buffer, bufferSize) != nil
-            }
-            guard formatted else { return host }
+            guard inet_ntop(AF_INET6, &address, &buffer, bufferSize) != nil else { return host }
             return String(decoding: buffer.prefix { $0 != 0 }.map(UInt8.init(bitPattern:)), as: UTF8.self)
+        }
+
+        // HTTP(S) URL hosts use the browser's IPv4 number syntax, including abbreviated addresses.
+        private static func normalizedIPv4(_ host: String) -> String? {
+            let addressCharacters = CharacterSet(charactersIn: "0123456789abcdefx.")
+            guard host.unicodeScalars.allSatisfy(addressCharacters.contains) else { return nil }
+            var parts = host.split(separator: ".", omittingEmptySubsequences: false)
+            if parts.count > 1 && parts.last?.isEmpty == true { parts.removeLast() }
+            guard (1...4).contains(parts.count) else { return nil }
+
+            var values: [UInt64] = []
+            for part in parts {
+                guard !part.isEmpty else { return nil }
+                let hexadecimal = part.hasPrefix("0x")
+                let octal = !hexadecimal && part.count > 1 && part.hasPrefix("0")
+                let digits = part.dropFirst(hexadecimal ? 2 : octal ? 1 : 0)
+                let radix = hexadecimal ? 16 : octal ? 8 : 10
+                guard let value = digits.isEmpty ? 0 : UInt64(digits, radix: radix) else { return nil }
+                values.append(value)
+            }
+
+            let finalOctets = 5 - values.count
+            guard var address = values.popLast(), address < (UInt64(1) << (finalOctets * 8)),
+                  values.allSatisfy({ $0 < 256 }) else { return nil }
+            for (index, value) in values.enumerated() {
+                address += value << ((3 - index) * 8)
+            }
+            return [24, 16, 8, 0].map { String((address >> $0) & 0xff) }.joined(separator: ".")
         }
 
         private func allows(_ url: URL?) -> Bool {
