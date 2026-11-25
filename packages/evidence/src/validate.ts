@@ -1,4 +1,5 @@
-import { parseRfc3339 } from "./datetime.js";
+import { addHours, compareInstants, exceedsHours, formatInstant, fromEpochMilliseconds, parseRfc3339 } from "./datetime.js";
+import type { Instant } from "./datetime.js";
 import type {
   EvidenceFailure,
   EvidenceFailureCode,
@@ -13,13 +14,12 @@ const RECORD_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]*$/;
 const STATUSES: ReadonlySet<string> = new Set<EvidenceStatus>(["passed", "failed", "blocked", "skipped", "not-applicable"]);
 /** The largest absolute epoch-milliseconds value a Date can hold. */
 const MAX_TIME = 8.64e15;
-const MS_PER_HOUR = 3_600_000;
 
 type JsonObject = Record<string, unknown>;
 
 interface Settings {
   expectedCommit: string;
-  now: number;
+  now: Instant;
   expiryPolicy: ReadonlyMap<string, number>;
 }
 
@@ -29,8 +29,8 @@ interface Facts {
   status?: string;
   commit?: string;
   dirty?: boolean;
-  completedAt?: number;
-  expiresAt?: number;
+  completedAt?: Instant;
+  expiresAt?: Instant;
 }
 
 function isObject(value: unknown): value is JsonObject {
@@ -51,10 +51,6 @@ function codePoints(value: string): number {
   let count = 0;
   for (const _ of value) count += 1;
   return count;
-}
-
-function toIso(time: number): string | undefined {
-  return Number.isFinite(time) && Math.abs(time) <= MAX_TIME ? new Date(time).toISOString() : undefined;
 }
 
 class Failures {
@@ -116,7 +112,7 @@ function readNullableString(failures: Failures, value: JsonObject, base: string,
   if (has(value, key) && value[key] !== null) readString(failures, value, base, key, rule);
 }
 
-function readDateTime(failures: Failures, value: JsonObject, base: string, key: string): number | undefined {
+function readDateTime(failures: Failures, value: JsonObject, base: string, key: string): Instant | undefined {
   if (!has(value, key)) return undefined;
   const time = parseRfc3339(value[key]);
   if (time === undefined) failures.malformed(pointer(base, key), "an RFC 3339 date-time with an offset");
@@ -226,7 +222,7 @@ function checkTiming(failures: Failures, record: JsonObject, facts: Facts): void
   checkMembers(failures, timing, "/timing", ["startedAt", "completedAt", "durationMs"], []);
   const startedAt = readDateTime(failures, timing, "/timing", "startedAt");
   facts.completedAt = readDateTime(failures, timing, "/timing", "completedAt");
-  if (startedAt !== undefined && facts.completedAt !== undefined && startedAt > facts.completedAt) {
+  if (startedAt !== undefined && facts.completedAt !== undefined && compareInstants(startedAt, facts.completedAt) > 0) {
     failures.malformed("/timing/startedAt", "not later than completedAt");
   }
   if (has(timing, "durationMs")) {
@@ -261,14 +257,17 @@ function checkRecord(failures: Failures, record: JsonObject): Facts {
   return facts;
 }
 
-function readNow(value: unknown): number | undefined {
-  if (typeof value === "number") return Number.isFinite(value) && Math.abs(value) <= MAX_TIME ? value : undefined;
+function fromMilliseconds(value: number): Instant | undefined {
+  return Number.isFinite(value) && Math.abs(value) <= MAX_TIME ? fromEpochMilliseconds(value) : undefined;
+}
+
+function readNow(value: unknown): Instant | undefined {
+  if (typeof value === "number") return fromMilliseconds(value);
   if (typeof value === "string") return parseRfc3339(value);
   if (typeof value !== "object" || value === null) return undefined;
   try {
     // Works for Dates from any realm; throws for every other object.
-    const time = Date.prototype.getTime.call(value);
-    return Number.isFinite(time) ? time : undefined;
+    return fromMilliseconds(Date.prototype.getTime.call(value));
   } catch {
     return undefined;
   }
@@ -298,6 +297,11 @@ function readOptions(options: unknown): Settings | { invalid: string[] } {
   return { expectedCommit: expectedCommit as string, now, expiryPolicy };
 }
 
+function nowDetail(now: Instant): Readonly<Record<string, unknown>> | undefined {
+  const formatted = formatInstant(now);
+  return formatted === undefined ? undefined : { now: formatted };
+}
+
 function result(failures: EvidenceFailure[]): EvidenceValidationResult {
   return { ok: failures.length === 0, failures };
 }
@@ -320,15 +324,15 @@ export function validateEvidenceRecord(record: unknown, options: ValidateEvidenc
   if (facts.evidenceClass !== undefined && policyHours === undefined) {
     failures.add("EVIDENCE_CLASS_NOT_IN_POLICY", "/evidenceClass", { evidenceClass: facts.evidenceClass });
   }
-  if (facts.expiresAt !== undefined && facts.expiresAt <= now) {
-    failures.add("EVIDENCE_EXPIRED", "/expiresAt", { now: toIso(now) });
+  if (facts.expiresAt !== undefined && compareInstants(facts.expiresAt, now) <= 0) {
+    failures.add("EVIDENCE_EXPIRED", "/expiresAt", nowDetail(now));
   }
-  if (facts.expiresAt !== undefined && facts.completedAt !== undefined && policyHours !== undefined) {
-    const maximum = facts.completedAt + policyHours * MS_PER_HOUR;
-    if (facts.expiresAt > maximum) failures.add("EVIDENCE_EXPIRY_EXCEEDS_POLICY", "/expiresAt", { maximumExpiresAt: toIso(maximum), policyHours });
+  if (facts.expiresAt !== undefined && facts.completedAt !== undefined && policyHours !== undefined && exceedsHours(facts.completedAt, facts.expiresAt, policyHours)) {
+    const maximumExpiresAt = formatInstant(addHours(facts.completedAt, policyHours));
+    failures.add("EVIDENCE_EXPIRY_EXCEEDS_POLICY", "/expiresAt", maximumExpiresAt === undefined ? { policyHours } : { maximumExpiresAt, policyHours });
   }
-  if (facts.completedAt !== undefined && facts.completedAt > now) {
-    failures.add("EVIDENCE_COMPLETED_IN_FUTURE", "/timing/completedAt", { now: toIso(now) });
+  if (facts.completedAt !== undefined && compareInstants(facts.completedAt, now) > 0) {
+    failures.add("EVIDENCE_COMPLETED_IN_FUTURE", "/timing/completedAt", nowDetail(now));
   }
   if (facts.commit !== undefined && facts.commit !== expectedCommit) {
     failures.add("EVIDENCE_COMMIT_MISMATCH", "/source/commit", { expectedCommit });

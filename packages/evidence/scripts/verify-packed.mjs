@@ -82,7 +82,8 @@ try {
   const installed = realpathSync(path.join(consumer, "node_modules", name));
   if (!installed.startsWith(consumer)) throw new Error(`${name} resolved outside the consumer: ${installed}`);
   const manifest = JSON.parse(readFileSync(path.join(installed, "package.json"), "utf8"));
-  if (manifest.version !== "0.1.0") throw new Error(`expected ${name} 0.1.0, found ${manifest.version}`);
+  const { version } = JSON.parse(readFileSync(path.join(packageDir, "package.json"), "utf8"));
+  if (manifest.version !== version) throw new Error(`expected ${name} ${version}, found ${manifest.version}`);
   for (const field of ["dependencies", "peerDependencies", "optionalDependencies"]) {
     if (manifest[field] && Object.keys(manifest[field]).length > 0) throw new Error(`${name} declares ${field}`);
   }

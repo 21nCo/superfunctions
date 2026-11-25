@@ -79,11 +79,11 @@ Every member is required unless marked optional. Unknown members are rejected at
 - `expiresAt`: an RFC 3339 date-time with an offset.
 - `supersedes` (optional): a record ID, or null.
 
-Date-times take a `Z` or numeric offset and an optional fraction of a second; `T` and `Z` may be lowercase, as RFC 3339 allows. Times compare to the millisecond (further digits are ignored), and leap seconds (second 60) are not accepted.
+Date-times take a `Z` or numeric offset and an optional fraction of a second, on a real proleptic Gregorian calendar day; `T` and `Z` may be lowercase, as RFC 3339 allows. Times compare exactly, with every fraction digit, including a `now` given as an RFC 3339 string; a `Date` or epoch-milliseconds `now` is exact to the value given. A leap second (second 60) is accepted in any minute, since the package keeps no leap-second table: it sorts after second 59 of its minute and before the next minute's second 0. The policy limit (`completedAt` plus the class's hours) is computed on the POSIX time scale, where second 60 counts as the next minute's second 0, and takes the hours as the decimal JavaScript prints for them (so `0.1` is exactly 6 minutes).
 
 ## JSON Schema
 
-The JSON Schema (draft 2020-12, `$id` `urn:superfunctions:evidence-record:v1`) is exported as `evidenceRecordSchemaV1` (frozen) and as the file `@superfunctions/evidence/schema/evidence-record.v1.json`. It describes the same format, except for three rules JSON Schema cannot express, which only `validateEvidenceRecord` enforces: unique `artifactHashes[].path` values, real calendar dates (no 30 February) and `startedAt` not later than `completedAt`. The schema checks date-times with a pattern rather than `format`, so validators reject malformed dates without a format plugin.
+The JSON Schema (draft 2020-12, `$id` `urn:superfunctions:evidence-record:v1`) is exported as `evidenceRecordSchemaV1` (frozen) and as the file `@superfunctions/evidence/schema/evidence-record.v1.json`. It describes the same format, except for two rules JSON Schema cannot express, which only `validateEvidenceRecord` enforces: unique `artifactHashes[].path` values and `startedAt` not later than `completedAt`. The schema checks date-times with a pattern rather than `format`, so validators reject malformed dates and days a month does not have (such as 30 February, or 29 February 2100) without a format plugin.
 
 ## Not in this version
 

@@ -14,7 +14,7 @@ export const evidenceRecordSchemaV1 = deepFreeze({
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:superfunctions:evidence-record:v1",
   "title": "Superfunctions evidence record v1",
-  "description": "A source-bound evidence record. Dates are RFC 3339 date-times with an offset. validateEvidenceRecord also enforces what JSON Schema cannot express: unique artifactHashes[].path values, real calendar dates and startedAt <= completedAt.",
+  "description": "A source-bound evidence record. Dates are RFC 3339 date-times with an offset. validateEvidenceRecord also enforces what JSON Schema cannot express: unique artifactHashes[].path values and startedAt <= completedAt.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -206,9 +206,9 @@ export const evidenceRecordSchemaV1 = deepFreeze({
       "pattern": "^[0-9a-f]{64}$"
     },
     "dateTime": {
-      "description": "An RFC 3339 date-time with a Z or numeric offset. Leap seconds (second 60) are not accepted.",
+      "description": "An RFC 3339 date-time with a Z or numeric offset on a real proleptic Gregorian calendar day. A leap second (second 60) is accepted in any minute.",
       "type": "string",
-      "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])[Tt]([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](\\.[0-9]+)?([Zz]|[+-]([01][0-9]|2[0-3]):[0-5][0-9])$"
+      "pattern": "^(?:[0-9]{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12][0-9]|3[01])|(?:0[469]|11)-(?:0[1-9]|[12][0-9]|30)|02-(?:0[1-9]|1[0-9]|2[0-8]))|(?:[0-9]{2}(?:0[48]|[2468][048]|[13579][26])|(?:0[048]|[2468][048]|[13579][26])00)-02-29)[Tt](?:[01][0-9]|2[0-3]):[0-5][0-9]:(?:[0-5][0-9]|60)(?:\\.[0-9]+)?(?:[Zz]|[+-](?:[01][0-9]|2[0-3]):[0-5][0-9])$"
     }
   }
 } as const);

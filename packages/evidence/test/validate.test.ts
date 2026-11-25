@@ -134,6 +134,20 @@ describe("options", () => {
     }
   });
 
+  it("accepts a leap second as now", () => {
+    expect(summary(validateEvidenceRecord(records.minimal, { ...options, now: "2016-12-31T23:59:60Z" }))).toEqual([
+      { code: "EVIDENCE_COMPLETED_IN_FUTURE", path: "/timing/completedAt" },
+    ]);
+  });
+
+  it("compares epoch milliseconds with a fraction exactly against a sub-millisecond completedAt", () => {
+    const record = structuredClone(records.minimal) as object;
+    setAt(record, "/timing/completedAt", "2026-11-01T12:00:00.0005Z");
+    const noon = Date.parse("2026-11-01T12:00:00Z");
+    const inFuture = (now: number) => validateEvidenceRecord(record, { ...options, now }).failures.some((failure) => failure.code === "EVIDENCE_COMPLETED_IN_FUTURE");
+    expect([noon + 0.4, noon + 0.5, noon + 0.6].map(inFuture)).toEqual([true, false, false]);
+  });
+
   it("accepts an empty expiry policy, so every class is outside it", () => {
     expect(summary(validateEvidenceRecord(records.minimal, { ...options, expiryPolicy: {} }))).toEqual([
       { code: "EVIDENCE_CLASS_NOT_IN_POLICY", path: "/evidenceClass" },
