@@ -1,6 +1,6 @@
 {
   "name": "@authfn/lookup-dynamodb",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "DynamoDB global lookup store adapter for AuthFn multi-region routing",
   "type": "module",
   "main": "./dist/index.js",

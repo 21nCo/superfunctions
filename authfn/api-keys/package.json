@@ -1,6 +1,6 @@
 {
   "name": "@authfn/api-keys",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "API key plugin for AuthFn",
   "repository": {
     "type": "git",

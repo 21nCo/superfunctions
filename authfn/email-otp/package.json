@@ -1,6 +1,6 @@
 {
   "name": "@authfn/email-otp",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Email OTP authentication plugin for AuthFn",
   "repository": {
     "type": "git",

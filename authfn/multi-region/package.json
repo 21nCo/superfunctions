@@ -1,6 +1,6 @@
 {
   "name": "@authfn/multi-region",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "description": "Multi-region routing plugin for AuthFn",
   "repository": {
     "type": "git",

@@ -1,6 +1,6 @@
 {
   "name": "@authfn/schema-plugin",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Schema-only plugin helper for AuthFn",
   "repository": {
     "type": "git",

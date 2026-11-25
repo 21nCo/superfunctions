@@ -43,7 +43,7 @@
     "authfn": "0.10.0"
   },
   "devDependencies": {
-    "@authfn/multi-region": "0.2.5",
+    "@authfn/multi-region": "0.2.6",
     "@authfn/password": "0.3.0",
     "@types/node": "^22.0.0",
     "typescript": "^5.6.0",
