@@ -537,7 +537,7 @@ export function diffTables(
       const key = `${index.name} (${parts.map((part) => `${part.column} ${part.bytes} bytes`).join(', ')})`;
       throw new Error(total > budget.total
           ? `Cannot generate MySQL column change for ${dbName}: the migrated key ${key} would take ${total} bytes, over the ${budget.total}-byte InnoDB key limit for innodb_page_size ${budget.innodbPageSize}. innodb_page_size cannot change on an existing instance; shorten the key's columns in the schema, then generate the migration again.`
-          : `Cannot generate MySQL column change for ${dbName}: its ${curTable.rowFormat} row format limits index key parts to 767 bytes, which the migrated key ${key} would exceed. Convert the table first with ALTER TABLE ${dbName} ROW_FORMAT=DYNAMIC, then generate the migration again.`);
+          : `Cannot generate MySQL column change for ${dbName}: ${budget.partLimit} limits index key parts to 767 bytes, which the migrated key ${key} would exceed. ${budget.remedy}, then generate the migration again.`);
     }
     const rebuiltIndexes: NonNullable<TableDiff['rebuiltIndexes']> =
       changedMySqlColumns.size === 0

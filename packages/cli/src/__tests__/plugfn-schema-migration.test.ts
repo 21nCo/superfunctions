@@ -330,10 +330,10 @@ describe('plugfn schema v8 migration', () => {
       [{ rowFormat: 'Compact' }, /plugfn_sync_jobs: its Compact row format limits index key parts to 767 bytes.*idx_plugfn_sync_jobs_claim_token \(claim_token 3072 bytes\).*ROW_FORMAT=DYNAMIC/],
       // 8 KiB pages cap the whole key at 1,536 bytes in every row format.
       [{ innodbPageSize: 8_192 }, /idx_plugfn_sync_jobs_claim_token \(claim_token 3072 bytes\) would take 3072 bytes, over the 1536-byte InnoDB key limit for innodb_page_size 8192(?!.*ROW_FORMAT)/],
-      // COMPRESSED pages (KEY_BLOCK_SIZE) and pre-8.0 servers, whose
-      // innodb_large_prefix may cap key parts at 767 bytes, are not modelled.
+      // COMPRESSED pages (KEY_BLOCK_SIZE) are not modelled; a pre-8.0 server's
+      // innodb_large_prefix may cap key parts at 767 bytes.
       [{ rowFormat: 'Compressed' }, /key size of idx_plugfn_sync_jobs_claim_token cannot be proven to fit, because its InnoDB engine and Compressed row format.*KEY_BLOCK_SIZE.*ALTER TABLE plugfn_sync_jobs ENGINE=InnoDB ROW_FORMAT=DYNAMIC/],
-      [{ serverVersion: '5.7.44-log' }, /key size of idx_plugfn_sync_jobs_claim_token cannot be proven to fit, because server version 5\.7\.44-log may limit key parts to 767 bytes/],
+      [{ serverVersion: '5.7.44-log' }, /server version 5\.7\.44-log, whose innodb_large_prefix may be off, limits index key parts to 767 bytes.*Upgrade to MySQL 8\.0/],
     ] as const;
     for (const [layout, refusal] of refusals) {
       for (const adapterType of adapterTypes) {

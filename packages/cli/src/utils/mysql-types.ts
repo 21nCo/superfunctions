@@ -34,22 +34,25 @@ export function satisfiesUnboundedMySqlString(dataType: string): boolean {
   return /^(text|mediumtext|longtext)$/i.test(dataType.trim());
 }
 
-// InnoDB key limits where large index prefixes are always on (MySQL 8.0+,
-// MariaDB 10.3+): 767 bytes per part on COMPACT/REDUNDANT rows, else 3,072,
-// and per key 3,072, 1,536 or 768 bytes on 16+, 8 or 4 KiB pages. Any other
-// layout or missing metadata is not modelled: return why, so callers refuse.
+// InnoDB key limits: 767 bytes per part, or 3,072 on DYNAMIC rows where large
+// index prefixes are always on (MySQL 8.0+, MariaDB 10.3+; an older, unknown
+// or malformed version keeps 767), and per key 3,072, 1,536 or 768 bytes on
+// 16+, 8 or 4 KiB pages. Another engine or row format (COMPRESSED:
+// KEY_BLOCK_SIZE) or an unknown page size is not modelled: return why.
 export function mysqlIndexKeyBudget(t: { name: string; engine?: string | null; rowFormat?: string | null; innodbPageSize?: number | null; serverVersion?: string | null }) {
-  const [, major = 0, minor = 0] = /^(\d+)\.(\d+)/.exec(t.serverVersion ?? '')?.map(Number) ?? [];
-  if (major * 100 + minor < (/mariadb/i.test(t.serverVersion ?? '') ? 1_003 : 800)) {
-    return `server version ${t.serverVersion ?? 'unknown'} may limit key parts to 767 bytes (innodb_large_prefix); upgrade to MySQL 8.0 or MariaDB 10.3 or later`;
-  }
+  const version = /^(\d+)\.(\d+)\.\d+(?:-|$)/.exec(t.serverVersion ?? '');
+  const largePrefix = !!version && Number(version[1]) * 100 + Number(version[2]) >= (/-mariadb/i.test(t.serverVersion!) ? 1_003 : 800);
   if (!/^innodb$/i.test(t.engine ?? '') || !/^(dynamic|compact|redundant)$/i.test(t.rowFormat ?? '')) {
     return `its ${t.engine ?? 'unknown'} engine and ${t.rowFormat ?? 'unknown'} row format have key limits this check does not model (COMPRESSED: KEY_BLOCK_SIZE); convert it first with ALTER TABLE ${t.name} ENGINE=InnoDB ROW_FORMAT=DYNAMIC`;
   }
   const page = t.innodbPageSize ?? 0;
   if (![4_096, 8_192, 16_384, 32_768, 65_536].includes(page)) return `innodb_page_size ${t.innodbPageSize ?? 'unknown'} is not a known InnoDB page size`;
   const total = page >= 16_384 ? 3_072 : page > 4_096 ? 1_536 : 768;
-  return { innodbPageSize: page, total, part: Math.min(/^dynamic$/i.test(t.rowFormat ?? '') ? 3_072 : 767, total) };
+  return {
+    innodbPageSize: page, total, part: Math.min(largePrefix && /^dynamic$/i.test(t.rowFormat!) ? 3_072 : 767, total),
+    partLimit: largePrefix ? `its ${t.rowFormat} row format` : `server version ${t.serverVersion ?? 'unknown'}, whose innodb_large_prefix may be off,`,
+    remedy: largePrefix ? `Convert the table first with ALTER TABLE ${t.name} ROW_FORMAT=DYNAMIC` : 'Upgrade to MySQL 8.0 or MariaDB 10.3 (or later) first',
+  };
 }
 
 // Key bytes of a fixed-width type such as `tinyint(1)` or `datetime(3)`.
