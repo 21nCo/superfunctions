@@ -8,6 +8,7 @@ import type {
   TaskMessageQueue,
   TaskStore,
 } from "@modelcontextprotocol/sdk/experimental/tasks/interfaces.js";
+import type { AuthInfo } from "@modelcontextprotocol/sdk/server/auth/types.js";
 import type { RequestOptions } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import {
@@ -103,7 +104,73 @@ export type McpFnWebStandardHandlerOptions<TContext> = ConstructorParameters<
   configureRequestServer?: (
     server: McpFnServer<TContext>,
   ) => void | Promise<void>;
+  /**
+   * Requests carrying an `Origin` header are refused with HTTP 403 unless the
+   * origin is listed in `allowedOrigins`, or it is a loopback origin (such as
+   * `http://localhost:3000`) equal to the request's own `Host`. This blocks
+   * DNS-rebinding pages from reaching a local server; non-browser clients send
+   * no `Origin` and are unaffected. Defaults to `"reject-unlisted"`. `"off"`
+   * disables the check, and setting `enableDnsRebindingProtection` (true or
+   * false) hands Host/Origin checking to the SDK transport instead.
+   */
+  originPolicy?: "reject-unlisted" | "off";
+  /**
+   * Stateful mode: the principal a session belongs to. Computed when the
+   * session is created and on every later request that names it; a request
+   * from a different principal gets the same 404 as an unknown session.
+   * Defaults to the authenticated subject (`authInfo.extra.subject`) and
+   * client ID from `handleOptions.authInfo`, or no principal when the request
+   * carries no `authInfo`. Must not read the request body.
+   */
+  sessionPrincipal?: (input: {
+    authInfo: AuthInfo | undefined;
+    request: Request;
+  }) => string | undefined | Promise<string | undefined>;
 };
+
+function defaultSessionPrincipal(input: { authInfo: AuthInfo | undefined }): string | undefined {
+  const authInfo = input.authInfo;
+  if (!authInfo) return undefined;
+  const subject = authInfo.extra?.subject;
+  return JSON.stringify([typeof subject === "string" ? subject : null, authInfo.clientId ?? null]);
+}
+
+function isLoopbackHostname(hostname: string): boolean {
+  const name = hostname.toLowerCase();
+  return name === "localhost" || name === "[::1]" || /^127(?:\.\d{1,3}){3}$/.test(name);
+}
+
+function originAllowed(
+  request: Request,
+  allowedOrigins: readonly string[] | undefined,
+): boolean {
+  const origin = request.headers.get("origin");
+  if (origin === null) return true;
+  if (allowedOrigins?.includes(origin)) return true;
+  let parsed: URL;
+  try {
+    parsed = new URL(origin);
+  } catch {
+    return false;
+  }
+  if (parsed.origin !== origin || !isLoopbackHostname(parsed.hostname)) return false;
+  let host = request.headers.get("host");
+  if (host === null) {
+    try {
+      host = new URL(request.url).host;
+    } catch {
+      return false;
+    }
+  }
+  return parsed.host === host.toLowerCase();
+}
+
+function jsonRpcErrorResponse(status: number, code: number, message: string): Response {
+  return new Response(
+    JSON.stringify({ jsonrpc: "2.0", error: { code, message }, id: null }),
+    { status, headers: { "content-type": "application/json" } },
+  );
+}
 
 function mergeCapabilities(
   base: ServerCapabilities,
@@ -818,12 +885,28 @@ export class McpFnServer<TContext = undefined> {
   ): Promise<
     (request: Request, options?: HandleRequestOptions) => Promise<Response>
   > {
-    const { configureRequestServer, ...transportOptions } = options;
+    const {
+      configureRequestServer,
+      originPolicy = "reject-unlisted",
+      sessionPrincipal = defaultSessionPrincipal,
+      ...transportOptions
+    } = options;
+    if (originPolicy !== "reject-unlisted" && originPolicy !== "off") {
+      throw new McpFnError("MCPFN_INVALID_OPTIONS", 'originPolicy must be "reject-unlisted" or "off"');
+    }
+    const checkOrigin = originPolicy === "reject-unlisted" &&
+      transportOptions.enableDnsRebindingProtection === undefined;
+    const rejectOrigin = (request: Request): Response | undefined =>
+      checkOrigin && !originAllowed(request, transportOptions.allowedOrigins)
+        ? jsonRpcErrorResponse(403, -32000, "Origin not allowed")
+        : undefined;
     if (!transportOptions.sessionIdGenerator) {
       if (this.clientProfiles?.profiles.some((profile) => profile.requiresReportedClient !== false)) {
         throw new McpFnClientProfileError("MCPFN_PROFILE_REQUIRES_SESSION", "Client profiles require sessionIdGenerator to retain initialize metadata; stateless-independent profiles must declare requiresReportedClient: false");
       }
       return async (request: Request, handleOptions?: HandleRequestOptions) => {
+        const refused = rejectOrigin(request);
+        if (refused) return refused;
         const requestServer = new McpFnServer(this.serverOptions);
         const transport = new WebStandardStreamableHTTPServerTransport(
           transportOptions,
@@ -857,24 +940,23 @@ export class McpFnServer<TContext = undefined> {
       {
         server: McpFnServer<TContext>;
         transport: WebStandardStreamableHTTPServerTransport;
+        /** The principal that created the session. */
+        principal: string | undefined;
       }
     >();
     return async (request: Request, handleOptions?: HandleRequestOptions) => {
+      const refused = rejectOrigin(request);
+      if (refused) return refused;
+      const principal = await sessionPrincipal({
+        authInfo: handleOptions?.authInfo,
+        request,
+      });
       const sessionId = request.headers.get("mcp-session-id");
       if (sessionId) {
         const session = sessions.get(sessionId);
-        if (!session) {
-          return new Response(
-            JSON.stringify({
-              jsonrpc: "2.0",
-              error: { code: -32001, message: "Session not found" },
-              id: null,
-            }),
-            {
-              status: 404,
-              headers: { "content-type": "application/json" },
-            },
-          );
+        // Another principal's session answers exactly like an unknown one.
+        if (!session || session.principal !== principal) {
+          return jsonRpcErrorResponse(404, -32001, "Session not found");
         }
         return session.transport.handleRequest(request, handleOptions);
       }
@@ -895,7 +977,7 @@ export class McpFnServer<TContext = undefined> {
         onsessioninitialized: async (id) => {
           await transportOptions.onsessioninitialized?.(id);
           initializedSessionId = id;
-          sessions.set(id, { server: requestServer, transport });
+          sessions.set(id, { server: requestServer, transport, principal });
         },
         onsessionclosed: async (id) => {
           sessions.delete(id);
