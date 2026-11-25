@@ -331,11 +331,12 @@ jobs:
             exit 0
           }
           if [[ "$BASE_SPEC" =~ ^[Hh][Tt][Tt][Pp][Ss]?:// ]]; then
-            if ! curl --fail --silent --show-error --location --max-time 30 --max-filesize "$max_bytes" --proto =http,https --proto-redir =http,https \
-              --output "$snapshot" -- "$BASE_SPEC"; then
-              load_error "Could not download base_spec $BASE_SPEC"
+            # The URL is never printed: a signed URL carries its credential. --globoff makes it one transfer.
+            if ! curl --fail --silent --show-error --globoff --location --max-time 30 --max-filesize "$max_bytes" --proto =http,https --proto-redir =http,https \
+              --output "$snapshot" -- "$BASE_SPEC" 2> /dev/null; then
+              load_error "Could not download the HTTP(S) base_spec"
             fi
-            echo "Downloaded base_spec $BASE_SPEC"
+            echo "Downloaded the HTTP(S) base_spec"
           elif [ -n "$BASE_SPEC" ]; then
             if [ ! -f "$BASE_SPEC" ]; then load_error "base_spec $BASE_SPEC is not a file in $PWD"; fi
             # Reads at most one byte past the limit, so an oversized or unreadable file is a load error, not a copy.
@@ -473,7 +474,7 @@ jobs:
           before="$(tree_state | sha256sum)"
           # Lifecycle scripts stay on: the caller's router imports packages that may need them (API-4 runs the caller's
           # npm ci). They run in this read-only job, and the tree and HEAD checks around them fail closed.
-          npm ci # NOSONAR githubactions:S6505 reviewed: the caller's install scripts are required here
+          npm ci
           if [ "$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)" != "$CHECKOUT_COMMIT" ]; then
             echo "::error::npm ci in $PWD moved HEAD away from the checked-out commit $CHECKOUT_COMMIT; apifn check must read the committed router and spec."
             exit 1
