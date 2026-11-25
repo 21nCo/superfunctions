@@ -722,11 +722,6 @@ export class McpFnServer<TContext = undefined> {
     }
   }
 
-  /**
-   * Report an error whose text the client will not see, and return the
-   * correlation ID shown instead. Returns undefined for errors that are
-   * returned as they are.
-   */
   // Every request handler withholds unexpected error text: McpFn's own
   // (context factories, visibility hooks, task creation, registry handlers)
   // and the SDK's (such as tasks/get and tasks/result reading the task
@@ -740,7 +735,14 @@ export class McpFnServer<TContext = undefined> {
       fallbackRequestHandler?: Handler;
     };
     const original = protocol._requestHandlers;
-    if (!(original instanceof Map)) return;
+    // Fail loudly rather than serve unwithheld error text if an SDK upgrade
+    // changes how handlers are stored.
+    if (!(original instanceof Map)) {
+      throw new McpFnError(
+        "MCPFN_UNSUPPORTED_SDK",
+        "McpFn cannot install error withholding on this MCP SDK version (no request-handler map)",
+      );
+    }
     const wrap = (handler: Handler): Handler => (request, extra) =>
       this.withheldProtocolErrors(request.method, () => handler(request, extra));
     // Malformed client params are the client's mistake: answer InvalidParams
@@ -757,7 +759,9 @@ export class McpFnServer<TContext = undefined> {
     const installed = new Map(original);
     const validated = (handler: Handler, stored: Handler): Handler => async (request, extra) => {
       // Custom methods, and built-in methods whose handler the host replaced
-      // through `protocol`, are left to the schema registered with them.
+      // through `protocol`, are validated by the SDK with the schema
+      // registered with them. Their parse failures can't be told apart from
+      // handler errors here, so they are withheld too (fail closed).
       const schema = installed.get(request.method) === stored ? schemas.get(request.method) : undefined;
       if (!schema) return handler(request, extra);
       const parsed = schema.safeParse(request);
@@ -783,6 +787,11 @@ export class McpFnServer<TContext = undefined> {
     });
   }
 
+  /**
+   * Report an error whose text the client will not see, and return the
+   * correlation ID shown instead. Returns undefined for errors that are
+   * returned as they are.
+   */
   private async reportWithheldError(
     error: unknown,
     method: string,
