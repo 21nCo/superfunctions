@@ -10013,7 +10013,7 @@ The Python kernel keeps a package changelog at `authfn/python/CHANGELOG.md`.
 
 ## Unreleased
 
-- AuthFn's TypeScript router and canonical gateway reject bodies over 64 KiB with HTTP 413, including streams without `Content-Length`. Bodies that take more than five seconds to arrive return HTTP 408. OAuth client registration and device authorization keep their endpoint-specific body limits and OAuth error responses.
+- AuthFn's TypeScript router and canonical gateway reject bodies over 64 KiB with HTTP 413, including streams without `Content-Length`. Bodies that take more than five seconds to arrive return HTTP 408. The gateway preserves OAuth errors when it rejects client registration or device authorization bodies. The configured OAuth endpoints apply their own body limits.
 - Passwords longer than 1024 UTF-8 bytes are rejected before scrypt. Node.js runs scrypt off the event loop at the existing cost. Password hashing and verification share a limit of four active and sixteen queued operations. Requests above that limit receive a retryable HTTP 429.
 - Existing passwords above the byte limit need to be reset before the user can sign in again.
 - Password sign-in returns `AUTHFN_EMAIL_NOT_VERIFIED` only after the password matches. An unknown account, an account with no password set, and a wrong password all perform one scrypt derivation and return `AUTHFN_INVALID_CREDENTIALS` with no account id.

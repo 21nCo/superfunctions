@@ -520,12 +520,14 @@ export function createAuthFnCanonicalGateway<TTarget>(
 }
 
 async function checkGatewayBody(request: Request, pathname: string, basePath: string): Promise<Response | undefined> {
-  const path = stripBasePath(pathname, basePath).replace(/\/$/, '');
-  const insideBase = basePath === '/' || pathname.startsWith(`${basePath}/`);
-  const oauth = insideBase && request.method === 'POST' ? getOAuthBodyPolicy(path) : undefined;
   try {
-    await assertAuthRequestBodyLimit(request, oauth?.maxBytes);
+    // The gateway has no route table. Admit bodies against the global limit
+    // and let the matched regional endpoint enforce its own smaller limit.
+    await assertAuthRequestBodyLimit(request);
   } catch (error) {
+    const path = stripBasePath(pathname, basePath).replace(/\/$/, '');
+    const insideBase = basePath === '/' || pathname.startsWith(`${basePath}/`);
+    const oauth = insideBase && request.method === 'POST' ? getOAuthBodyPolicy(path) : undefined;
     if (!oauth || !(error instanceof AuthFnError) || (error.status !== 408 && error.status !== 413)) {
       throw error;
     }

@@ -87,9 +87,9 @@ describe('AuthFn canonical gateway routing', () => {
   });
 
   it.each([
-    ['register', 'application/json', AUTHFN_MAX_BODY_BYTES, 'invalid_client_metadata'],
-    ['device_authorization', 'application/x-www-form-urlencoded', 8 * 1024, 'invalid_request']
-  ] as const)('preserves the OAuth error for an oversized %s body at gateway ingress', async (path, contentType, limit, code) => {
+    ['register', 'application/json', 'invalid_client_metadata'],
+    ['device_authorization', 'application/x-www-form-urlencoded', 'invalid_request']
+  ] as const)('preserves the OAuth error for an oversized %s body at gateway ingress', async (path, contentType, code) => {
     const gateway = createAuthFnCanonicalGateway<unknown>({
       publicAuthority: 'https://account.example.com',
       basePath: '/custom-auth',
@@ -103,13 +103,33 @@ describe('AuthFn canonical gateway routing', () => {
     const request = new Request(`https://account.example.com/custom-auth/oauth/${path}/`, {
       method: 'POST',
       headers: { 'content-type': contentType },
-      body: 'a'.repeat(limit + 1)
+      body: 'a'.repeat(AUTHFN_MAX_BODY_BYTES + 1)
     });
 
     const response = await gateway.handle(request);
     expect(response.status).toBe(400);
     expect(response.headers.get('cache-control')).toBe('no-store');
     await expect(response.json()).resolves.toMatchObject({ error: code });
+  });
+
+  it('lets a custom regional route on an OAuth path accept a body within the gateway limit', async () => {
+    const gateway = createAuthFnCanonicalGateway<null>({
+      publicAuthority: 'https://account.example.com',
+      placementDirectory: createInMemoryAuthFnPlacementDirectory([placement('person:ada', 'us-east-1', 1)]),
+      keyring,
+      resolveIdentity: () => ({ identityKey: 'person:ada' }),
+      selectInitialRegion: () => 'us-east-1',
+      resolveCell: () => ({ regionId: 'us-east-1', audience: 'cell:us-east-1', target: null }),
+      async dispatch(_target, request) {
+        return Response.json({ bytes: (await request.arrayBuffer()).byteLength });
+      }
+    });
+    const response = await gateway.handle(new Request('https://account.example.com/auth/oauth/device_authorization', {
+      method: 'POST',
+      body: 'a'.repeat(8 * 1024 + 1)
+    }));
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ bytes: 8 * 1024 + 1 });
   });
 
   it('claims placement only for explicitly approved first-use routes', async () => {
