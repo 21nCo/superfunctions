@@ -1,0 +1,33 @@
+mcpfn/core/tests/openapi-cfworker.test.ts
+  s_7c21b9f6433ef9::t_49679d224bdf1a 172-173,360-364,380-385,391-393,400
+mcpfn/core/tests/openapi-forms.test.ts
+  s_7c21b9f6433ef9::t_af24fec5961c58 421,437-443,1703-1720
+mcpfn/core/src/openapi/from-openapi.ts
+  s_83fa589146e8c6::t_d1dfb8fa334dc9 71-76,379-384,388-389,391-392,428-430,930
+mcpfn/core/src/openapi/schema.ts
+  s_83fa589146e8c6::t_20bc24927e95bb 525-529,1799-1804,2166,2170-2171,2234-2265
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "12a40e216375f2b3dc1a341faebc061ddd77dd28",
+  "prompts": {},
+  "sessions": {
+    "s_7c21b9f6433ef9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "37c5af9a-8716-4a9c-bf76-336df5c3b732",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_83fa589146e8c6": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21253-9943-7ef0-8aad-8a89b106fa79",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
