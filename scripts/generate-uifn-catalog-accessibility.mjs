@@ -13,9 +13,14 @@ const outputPath = path.join(
   "catalog-accessibility.generated.ts"
 );
 const catalog = JSON.parse(fs.readFileSync(catalogPath, "utf8"));
+const isStringArray = (value) => Array.isArray(value) && value.every((entry) => typeof entry === "string");
 const rulesByProfile = new Map();
 const accessibilityEntries = catalog.primitives.map(({ id, accessibility }) => {
   const { profile, primitiveNotes, rules } = accessibility;
+  if (typeof profile !== "string" || typeof rules?.nativeSemantics !== "string" ||
+      !isStringArray(rules.keyboard?.keys) || !isStringArray(rules.focus) || !isStringArray(rules.wcag)) {
+    throw new Error(`Accessibility summary fields are invalid for ${id}`);
+  }
   const existing = rulesByProfile.get(profile);
   if (existing && JSON.stringify(existing) !== JSON.stringify(rules)) {
     throw new Error(`Accessibility profile ${profile} has conflicting rules for ${id}`);
