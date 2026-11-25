@@ -169,6 +169,29 @@ test('publish-tag.yml: every run but a channel-only dispatch first proves its ow
   assert.equal(steps[belongs].if, '!inputs.channel_only');
 });
 
+// The build job is parsed the same way the release gates read it, so a YAML shape those gates cannot read fails
+// this test. verify-registry has no permissions block, which that parser requires, so its setup-node step is read
+// from the job's own text. Both steps the audit found on a floating tag use the v4.4.0 commit already pinned by
+// the other jobs (actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020).
+test('publish-tag.yml: Node setup actions are full commit SHAs, including the build and verify-registry steps', () => {
+  const text = readFileSync(path.join(workflowsDir, 'publish-tag.yml'), 'utf8');
+  const pin = 'actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020';
+  const uses = [...text.matchAll(/^ {8}uses: (actions\/setup-node@\S+)(?: # (\S+))?$/gm)];
+  assert.equal(uses.length, 4, 'publish-tag.yml has four setup-node steps');
+  for (const match of uses) {
+    assert.match(match[1], /^actions\/setup-node@[0-9a-f]{40}$/, match[1]);
+    assert.equal(match[2], 'v4.4.0');
+  }
+  assert.doesNotMatch(text, /actions\/setup-node@v\d/);
+  const { steps } = readJob('publish-tag.yml', 'build');
+  const setup = steps.find(step => step.name === 'Setup Node.js');
+  assert.equal(setup.uses, `${pin} # v4.4.0`);
+  const verifyStart = text.indexOf('\n  verify-registry:\n');
+  const verifyEnd = text.indexOf('\n  reconcile-channel:\n');
+  assert.ok(verifyStart !== -1 && verifyEnd > verifyStart);
+  assert.match(text.slice(verifyStart, verifyEnd), new RegExp(`uses: ${pin} # v4\\.4\\.0`));
+});
+
 const ownersManifest = (kind, release, owner) => {
   const entry = { [kind === 'npm' ? 'releases' : 'python']: { [release]: 'public' } };
   if (owner === 'public') return { version: 1, paths: { scripts: 'public' }, rootFiles: { public: ['README.md'] }, ...entry };
