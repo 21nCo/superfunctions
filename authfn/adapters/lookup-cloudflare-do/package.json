@@ -31,7 +31,7 @@
   },
   "dependencies": {
     "@superfunctions/db": "0.3.4",
-    "authfn": "0.9.0"
+    "authfn": "0.10.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

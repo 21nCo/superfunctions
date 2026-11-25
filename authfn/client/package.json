@@ -30,14 +30,14 @@
     "access": "public"
   },
   "dependencies": {
-    "authfn": "0.9.0",
+    "authfn": "0.10.0",
     "@superfunctions/http": "0.2.0"
   },
   "devDependencies": {
     "@authfn/api-keys": "0.3.1",
     "@authfn/email-otp": "0.2.0",
     "@authfn/multi-region": "0.2.5",
-    "@authfn/password": "0.2.0",
+    "@authfn/password": "0.3.0",
     "@authfn/social-oauth": "0.2.3",
     "@authfn/two-factor": "0.2.0",
     "@types/node": "^22.0.0",

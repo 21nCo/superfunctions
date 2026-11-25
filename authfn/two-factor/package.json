@@ -26,7 +26,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "authfn": "0.9.0",
+    "authfn": "0.10.0",
     "@superfunctions/http": "0.2.0"
   },
   "devDependencies": {
