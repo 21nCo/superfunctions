@@ -123,6 +123,16 @@ describe("generic CLI slots in the panel", () => {
     expect(result.report.slotRuns[0]).toMatchObject({ terminal: "void", voidReasons: ["model_mismatch"], identity: { model: "model-x" } });
   }, 60_000);
 
+  it("voids a timed-out slot whose stdout was cut mid-character, when its file model report fits the raw bytes kept", async () => {
+    // 1,003 raw stdout bytes (the last 3 an incomplete character and an invalid byte, decoded to 6) and a 19-byte report
+    // fill the 1,022 bytes a 1,025-byte budget leaves; measured on the decoded text, the file allowance was 16.
+    const cut: HarnessProfile = { ...await profile("cut-utf8", "json-path:model", ["--out", "{outputFile}", "--model-json", "model-x", "--cut-utf8", "1000"]), outputVia: "file" };
+    const panelPolicy: PanelPolicy = { version: 1, slots: [{ ...slot("cut-utf8", "cut-utf8", "model-r"), budget: { timeoutMs: 60_000, maxOutputBytes: 1_025 } }], quorum: { stage1: 1, stage2: 0 }, requirementsSlot: null, incremental: "full", profiles: { "cut-utf8": cut } };
+    const policy = { ...DEFAULT_POLICY, limits: { ...DEFAULT_POLICY.limits, harnessTimeoutMs: 2_000 } };
+    const result = await coordinator().run({ root: repo, base, head, config, policy, panelPolicy });
+    expect(result.report.slotRuns[0]).toMatchObject({ terminal: "void", voidReasons: ["model_mismatch"], identity: { model: "model-x" } });
+  }, 60_000);
+
   it.each(["completed", "failed", "timed_out", "canceled"] as const)("voids a %s slot whose harness reported a mismatch that its recorded model hides", async terminal => {
     const panelPolicy: PanelPolicy = { version: 1, slots: [slot("flagged", "flagged", "model-r")], quorum: { stage1: 1, stage2: 0 }, requirementsSlot: null, incremental: "full", profiles: { flagged: await profile("flagged", "json-path:model") } };
     const result = await coordinator(new FlaggingHarness(terminal)).run({ root: repo, base, head, config, policy: DEFAULT_POLICY, panelPolicy });

@@ -1039,13 +1039,13 @@ describe("CliHarnessAdapter preflight and configuration", () => {
    * A CLI that writes `file` to its output file and `stdout`, reported as the shared runner reports it (or as `reported`
    * bytes, such as a chunk the runner then dropped at its cap), then ends as `ending`.
    */
-  const writing = (file: string, stdout: string, ending: { timedOut?: boolean; canceled?: boolean; stderr?: string; reported?: number } = {}): CommandRunner => async (_command, args, options) => {
+  const writing = (file: string, stdout: string, ending: { timedOut?: boolean; canceled?: boolean; stderr?: string; reported?: number; kept?: number } = {}): CommandRunner => async (_command, args, options) => {
     if (args.includes("--version")) return { code: 0, signal: null, stdout: "fake-cli version 1.2.3\n", stderr: "", timedOut: false, canceled: false };
     if (file) await writeFile(args[args.indexOf("--out") + 1], file);
     const stderr = ending.stderr ?? "";
     const reported = ending.reported ?? Buffer.byteLength(stdout) + Buffer.byteLength(stderr);
     if (reported) options.onOutput?.(reported);
-    return { code: ending.timedOut || ending.canceled ? null : 0, signal: null, stdout, stderr, timedOut: ending.timedOut ?? false, canceled: ending.canceled ?? false };
+    return { code: ending.timedOut || ending.canceled ? null : 0, signal: null, stdout, stderr, timedOut: ending.timedOut ?? false, canceled: ending.canceled ?? false, ...(ending.kept === undefined ? {} : { stdoutBytes: ending.kept, stderrBytes: 0 }) };
   };
   const limited = (maxOutputBytes: number) => ({ policy: { ...DEFAULT_POLICY, limits: { ...DEFAULT_POLICY.limits, maxOutputBytes } } });
   // With only a 4-character credential, a cut stream withholds its last 3 characters behind the longer "[REDACTED]".
@@ -1059,6 +1059,31 @@ describe("CliHarnessAdapter preflight and configuration", () => {
     expect(output.terminal).toBe("timed_out");
     expect(output.observed).toMatchObject({ model: "model-x", modelMismatch: true });
     expect(Buffer.byteLength(output.transcript ?? "")).toBeLessThanOrEqual(1_024);
+  });
+
+  it("reads a file model report against the raw stream bytes the runner kept, not their decoded length", async () => {
+    // 1,003 raw stdout bytes, whose cut last character and invalid byte decode to two 3-byte U+FFFD, and a 19-byte report
+    // fill the 1,022 bytes a 1,025-byte budget leaves; measured on the decoded text, the file allowance was 16.
+    const runner = writing(JSON.stringify({ model: "model-x" }), `${"z".repeat(1_000)}\uFFFD\uFFFD`, { timedOut: true, kept: 1_003 });
+    const output = await new CliHarnessAdapter({ environment: environment(), runner }).run(input(configuration(profile({ outputVia: "file", modelReport: "json-path:model" })), limited(1_025)));
+    expect(output.terminal).toBe("timed_out");
+    expect(output.observed).toMatchObject({ model: "model-x", modelMismatch: true });
+  });
+
+  it.each([
+    ["characters its decoder replaced", "\uFFFD".repeat(10), 10, environment],
+    ["a transcript redaction lengthened", "test\n".repeat(20), undefined, shortSecret],
+  ] as const)("gives a repair attempt the raw budget the first left, whatever %s", async (_label, noise, raw, env) => {
+    const budgets: number[] = [];
+    const invalid = `${JSON.stringify({ findings: "none" })}\n`;
+    const runner: CommandRunner = async (_command, args, options) => {
+      if (args.includes("--version")) return { code: 0, signal: null, stdout: "fake-cli version 1.2.3\n", stderr: "", timedOut: false, canceled: false };
+      budgets.push(options.maxOutputBytes);
+      return { code: 0, signal: null, stdout: `${noise}\n${invalid}`, stderr: "", timedOut: false, canceled: false, ...(raw === undefined ? {} : { stdoutBytes: raw + 1 + invalid.length, stderrBytes: 0 }) };
+    };
+    await new CliHarnessAdapter({ environment: env(), runner }).run(input(configuration(profile()), limited(1_024)));
+    // The limit less the first attempt's raw stream bytes, its stdout/stderr and transcript separators, and the next's.
+    expect(budgets).toEqual([1_021, 1_024 - ((raw ?? Buffer.byteLength(noise)) + 1 + invalid.length) - 2 - 3]);
   });
 
   it("accepts an output file one byte under the allowance the live check gives it next to the streams", async () => {

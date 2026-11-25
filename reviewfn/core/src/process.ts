@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 
 /** The outcome of one bounded child process run. */
-export interface CommandResult { code: number | null; signal: NodeJS.Signals | null; stdout: string; stderr: string; timedOut: boolean; canceled: boolean }
+export interface CommandResult { code: number | null; signal: NodeJS.Signals | null; stdout: string; stderr: string; timedOut: boolean; canceled: boolean; /** Raw bytes kept from each stream, before decoding. */ stdoutBytes?: number; stderrBytes?: number }
 
 export interface CommandRunnerOptions {
   cwd: string;
@@ -14,7 +14,7 @@ export interface CommandRunnerOptions {
   /** Aborting terminates the process group; the result reports `canceled`. */
   signal?: AbortSignal;
   stdin?: string;
-  /** Called with the byte length of each stdout or stderr chunk as it arrives, so a caller can enforce a live budget. */
+  /** Called with the byte length of each stdout or stderr chunk the runner keeps, so a caller can enforce a live budget. */
   onOutput?: (bytes: number) => void;
 }
 
@@ -36,6 +36,7 @@ export const runProcessGroup: CommandRunner = async (command, args, options) => 
   let stdout = "";
   let stderr = "";
   let total = 0;
+  const kept = { stdout: 0, stderr: 0 };
   let timedOut = false;
   let canceled = false;
   const terminate = (reason: "timeout" | "cancel") => {
@@ -49,8 +50,8 @@ export const runProcessGroup: CommandRunner = async (command, args, options) => 
   options.signal?.addEventListener("abort", onAbort, { once: true });
   const append = (target: "stdout" | "stderr", chunk: Buffer) => {
     total += chunk.length;
-    options.onOutput?.(chunk.length);
     if (total > options.maxOutputBytes) { terminate("timeout"); return; }
+    kept[target] += chunk.length; options.onOutput?.(chunk.length);
     if (target === "stdout") stdout += decoders.stdout.write(chunk); else stderr += decoders.stderr.write(chunk);
   };
   child.stdout.on("data", (chunk: Buffer) => append("stdout", chunk));
@@ -68,6 +69,6 @@ export const runProcessGroup: CommandRunner = async (command, args, options) => 
     options.signal?.removeEventListener("abort", onAbort);
     stdout += decoders.stdout.end();
     stderr += decoders.stderr.end();
-    resolve({ code, signal, stdout, stderr, timedOut, canceled });
+    resolve({ code, signal, stdout, stderr, timedOut, canceled, stdoutBytes: kept.stdout, stderrBytes: kept.stderr });
   });
 });

@@ -361,9 +361,9 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
       // a run that served another model is void whether it then completed, failed, hung or overran its bounds.
       const unreported = reporter ? await reportStderrModel(run, reporter, result.stderr) : undefined;
       if (unreported) return unreported;
-      // The output file may have what the budget leaves after the stream bytes the runner kept, whether or not it reported
-      // them, so a chunk it dropped at its cap neither hides an in-budget file's model report nor widens the allowance.
-      const fileAllowance = outputBytes - Buffer.byteLength(result.stdout) - Buffer.byteLength(result.stderr);
+      // The output file may have what the budget leaves after the raw stream bytes the runner kept, so neither a chunk it
+      // dropped at its cap nor a character its decoder replaced hides an in-budget file's model report.
+      const fileAllowance = outputBytes - keptBytes(result);
       const outcome = await this.judge(run, attempt, outputFile, result, watch.overrun(), fileAllowance, helper);
       state.chargeMeasured(watch.peak());
       return outcome;
@@ -747,7 +747,7 @@ function redactValue<T>(value: T, secrets: readonly string[]): T {
 interface Rejection { errors: string[]; rejected: string | undefined }
 
 /** A read answer: `text` is an output file's content, `line` the stdout line the answer was parsed from. */
-type OutputRead = { value: Record<string, unknown>; text?: string; line?: string } | { error: string; text?: string } | { overrun: string };
+type OutputRead = { value: Record<string, unknown>; text?: string; bytes?: number; line?: string } | { error: string; text?: string; bytes?: number } | { overrun: string };
 
 /** The profile's own configuration errors: an invalid profile, and a model the CLI could read as an option. */
 function profileDiagnostics(config: ReviewFnConfig, error: (code: string, text: string) => void): void {
@@ -853,7 +853,7 @@ async function readAnswer(run: AttemptContext, outputFile: string, stdout: strin
   // The file is read against a raw allowance, never one narrowed by the redacted transcript, so a model report the CLI
   // was allowed to write is always read.
   const output = run.profile.outputVia === "file" ? await readOutputFile(run, helper, outputFile, fileAllowance) : stdoutObject(stdout);
-  if ("text" in output && output.text !== undefined) run.state.recordOutputFile(output.text);
+  if ("text" in output && output.text !== undefined) run.state.recordOutputFile(output.text, output.bytes ?? Buffer.byteLength(output.text));
   if ("value" in output && run.profile.modelReport.startsWith("json-path:")) run.state.note(valueAtPath(output.value, run.profile.modelReport.slice("json-path:".length)));
   return output;
 }
@@ -963,9 +963,9 @@ async function readOutputFile(run: AttemptContext, helper: DirectoryHelper, file
   const text = buffer.toString("utf8");
   try {
     const value: unknown = JSON.parse(text);
-    if (isRecord(value)) return { value, text };
+    if (isRecord(value)) return { value, text, bytes: buffer.length };
   } catch { /* reported below */ }
-  return { error: "The output file is not exactly one JSON object.", text };
+  return { error: "The output file is not exactly one JSON object.", text, bytes: buffer.length };
 }
 
 /**
@@ -1219,6 +1219,9 @@ const message = (error: unknown): string => error instanceof Error ? error.messa
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
 
+/** The raw stdout and stderr bytes the runner kept, measured on the decoded text only for a runner that reports none. */
+function keptBytes(result: CommandResult): number { return (result.stdoutBytes ?? Buffer.byteLength(result.stdout)) + (result.stderrBytes ?? Buffer.byteLength(result.stderr)); }
+
 /** Everything observed across a run's attempts: events, the redacted transcript, the reported models and the byte budget. */
 class RunState {
   public harnessVersion: string | undefined;
@@ -1251,12 +1254,12 @@ class RunState {
     this.reported = undefined;
     this.fileBytes = 0;
     this.cut = result.timedOut || result.canceled;
-    this.rawBytes += Buffer.byteLength(result.stdout) + Buffer.byteLength(result.stderr);
+    this.rawBytes += keptBytes(result);
     this.transcript.push(redact(`${result.stdout}\n${result.stderr}`, this.secrets, [this.tail(result.stdout), this.tail(result.stderr, result.stdout.length + 1)]));
   }
 
-  public recordOutputFile(text: string): void {
-    this.fileBytes = Buffer.byteLength(text);
+  public recordOutputFile(text: string, bytes: number): void {
+    this.fileBytes = bytes;
     this.rawBytes += this.fileBytes;
     this.transcript.push(redact(text, this.secrets, [this.tail(text)]));
   }
@@ -1293,13 +1296,9 @@ class RunState {
     return `The CLI reported no model through ${this.profile.modelReport.split(":")[0]}, so the configured ${this.model} was not confirmed.`;
   }
 
-  /**
-   * The bytes the next attempt may produce: the limit less what is stored so far (the larger of the raw bytes and the
-   * redacted transcript, so redaction can widen neither budget) and the separators the next attempt adds.
-   */
+  /** The raw bytes the next attempt may produce; the redacted telemetry's limit is enforced only by bounded(). */
   public remainingOutputBytes(): number {
-    const stored = Math.max(this.rawBytes + this.transcript.length * 2, Buffer.byteLength(this.transcript.join("\n")));
-    return this.maxOutputBytes - stored - 3;
+    return this.maxOutputBytes - this.rawBytes - this.transcript.length * 2 - 3;
   }
 
   public retain(value: string, max: number): string {

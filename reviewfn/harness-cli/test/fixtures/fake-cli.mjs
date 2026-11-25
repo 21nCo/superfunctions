@@ -6,6 +6,7 @@
 // --flood keeps appending to the output file, printing nothing on stdout. --extra-json merges an object into a valid answer.
 // --mixed writes <bytes> to stdout and <bytes> to the output file, then hangs.
 // --linger keeps running after the answer is written.
+// --cut-utf8 writes a file model report of --model-json and <bytes> of stdout ending mid-character plus an invalid byte, then hangs.
 import { spawn } from "node:child_process";
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -25,7 +26,11 @@ appendFileSync(calls, `${JSON.stringify({ argv, env: process.env, cwd: process.c
 if (options["model-stderr"]) process.stderr.write(`starting\nserved model: ${options["model-stderr"]}\n`);
 if (options.stderr) process.stderr.write(`${options.stderr}\n`);
 
-if (options.mixed !== undefined) {
+if (options["cut-utf8"] !== undefined) {
+  writeFileSync(options.out, JSON.stringify({ model: options["model-json"] }));
+  process.stdout.write(Buffer.concat([Buffer.from("z".repeat(Number(options["cut-utf8"]))), Buffer.from([0xe2, 0x80, 0xff])]));
+  setInterval(() => {}, 1_000);
+} else if (options.mixed !== undefined) {
   writeFileSync(options.out, "y".repeat(Number(options.mixed)));
   process.stdout.write("z".repeat(Number(options.mixed)));
   setInterval(() => {}, 1_000);

@@ -41,4 +41,17 @@ describe("runProcessGroup", () => {
     expect(result.code).toBe(0);
     expect(seen.reduce((sum, bytes) => sum + bytes, 0)).toBe(Buffer.byteLength("a\u2014\u{1F600}b"));
   }, 15_000);
+
+  it("counts the raw bytes it kept before decoding, so a replaced character does not grow them", async () => {
+    const result = await runProcessGroup(process.execPath, ["-e", "process.stdout.write(Buffer.from([0x61, 0xe2, 0x80, 0xff])); process.stderr.write('e');"], options);
+    expect(result).toMatchObject({ code: 0, stdout: "a\uFFFD\uFFFD", stdoutBytes: 4, stderrBytes: 1 });
+  }, 15_000);
+
+  it("neither reports nor counts the chunk that crossed its cap", async () => {
+    const seen: number[] = [];
+    const child = "const fs = require('node:fs'); fs.writeSync(1, 'a'.repeat(100)); setTimeout(() => { fs.writeSync(1, 'b'.repeat(100)); setInterval(() => {}, 1000); }, 200);";
+    const result = await runProcessGroup(process.execPath, ["-e", child], { ...options, maxOutputBytes: 150, onOutput: bytes => seen.push(bytes) });
+    expect(result).toMatchObject({ timedOut: true, stdout: "a".repeat(100), stdoutBytes: 100, stderrBytes: 0 });
+    expect(seen).toEqual([100]);
+  }, 15_000);
 });
