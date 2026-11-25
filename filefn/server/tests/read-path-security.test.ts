@@ -370,6 +370,26 @@ describe('read path (FILE-30 F-03, F-04, F-23)', () => {
     await expect(service.listArtifactsForFile('file_anon', {})).rejects.toMatchObject({ code: 'FILEFN_FORBIDDEN' });
   });
 
+  it('a standalone service without a readChecker never serves an artifact whose file row is missing', async () => {
+    const database = memoryAdapter();
+    const service = createProcessingService({ db: database, storage: createLocalStorageAdapter({ rootDir }), namespace: 'bare_orphan', processors: [] });
+    const now = new Date().toISOString();
+    const owner = { principalId: 'o' };
+    await database.create({ model: 'files', data: { fileId: 'file_kept', ownerId: 'o', visibility: 'private', policy: 'p', name: 'a', currentVersionId: 'ver_a', createdAt: now, updatedAt: now }, namespace: 'bare_orphan' });
+    await database.create({ model: 'fileArtifacts', data: { artifactId: 'art_kept', fileId: 'file_kept', versionId: 'ver_a', kind: 'copy', storageKey: 'k', mimeType: 'text/plain', size: 1, createdAt: now }, namespace: 'bare_orphan' });
+    await database.create({ model: 'fileArtifacts', data: { artifactId: 'art_never', fileId: 'file_never', versionId: 'ver_x', kind: 'copy', storageKey: 'k2', mimeType: 'text/plain', size: 1, createdAt: now }, namespace: 'bare_orphan' });
+
+    // With its file row the artifact still gets a URL (no read check to apply beyond ownership).
+    expect((await service.getArtifactDownloadUrl('art_kept', owner)).url).toBe('/proxy/files/file_kept/artifacts/art_kept/download');
+    // An artifact whose file row never existed is not served, to anyone.
+    await expect(service.getArtifactDownloadUrl('art_never', owner)).rejects.toMatchObject({ code: 'FILEFN_NOT_FOUND' });
+    await expect(service.getArtifactDownloadUrl('art_never', {})).rejects.toMatchObject({ code: 'FILEFN_NOT_FOUND' });
+
+    // Deleting the file row orphans its artifact, which is then not served either.
+    await database.delete({ model: 'files', where: [{ field: 'fileId', operator: 'eq', value: 'file_kept' }], namespace: 'bare_orphan' });
+    await expect(service.getArtifactDownloadUrl('art_kept', owner)).rejects.toMatchObject({ code: 'FILEFN_NOT_FOUND', message: expect.stringContaining('Artifact') });
+  });
+
   it('handles malformed MIME types and quoted charset labels safely', () => {
     expect(() => buildDownloadHeaders({ contentType: 'constructor', size: 1 })).not.toThrow();
     expect(buildDownloadHeaders({ contentType: 'constructor', size: 1 })['Content-Disposition']).toBe('attachment');

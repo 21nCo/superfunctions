@@ -513,6 +513,12 @@ describe('OCR Processing Integration', () => {
         enabled: true,
       });
 
+      // The parent file row must exist: an orphaned artifact is never served.
+      await db.create({
+        model: 'files',
+        data: { fileId: 'file_009', ownerId: 'user_123', visibility: 'private', policy: '', name: 'doc.png', currentVersionId: 'ver_001' },
+        namespace: 'filefn',
+      });
       const testImage = await createTestImage(800, 600);
       storage.setData('tenant/file_009/ver_001.png', testImage);
 
@@ -531,7 +537,7 @@ describe('OCR Processing Integration', () => {
       const artifacts = await service.listArtifacts('file_009', {});
       const artifactId = artifacts[0].artifactId;
 
-      const { url } = await service.getArtifactDownloadUrl(artifactId, {});
+      const { url } = await service.getArtifactDownloadUrl(artifactId, { principalId: 'user_123' });
 
       expect(url).toContain('tenant/file_009/ver_001-ocr.txt');
       expect(url).toMatch(/^https:\/\/storage\.test\/download\//);
