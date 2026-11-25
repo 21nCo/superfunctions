@@ -40,7 +40,10 @@ interface ReferenceTarget {
   source: ReferenceDocument;
 }
 
-type PointerLookup = ReferenceTarget | "reference" | undefined;
+interface PointerLookup {
+  tokens: string[];
+  target: ReferenceTarget | "reference" | undefined;
+}
 
 interface ReferenceCopies {
   field: string;
@@ -173,6 +176,9 @@ function prepareReferences(document: OpenAPIDocument, externalReferences?: Reado
   ): PointerLookup {
     let value = source.value;
     let mode: OpenAPIReferenceMode = "node";
+    const matched: string[] = [];
+    const unresolved = (index: number, target?: "reference"): PointerLookup =>
+      ({ tokens: [...matched, ...tokens.slice(index)], target });
     for (let index = 0; index < tokens.length; index += 1) {
       // Follow aliases before looking up remaining tokens, keeping siblings
       // that Swagger Parser gives precedence over the referenced object.
@@ -191,7 +197,7 @@ function prepareReferences(document: OpenAPIDocument, externalReferences?: Reado
         if (!target) {
           const alias = location(source, value.$ref);
           const lookup = lookupPointer(alias.source, alias.fragment, chain, value);
-          if (!lookup.target || lookup.target === "reference") return "reference";
+          if (!lookup.target || lookup.target === "reference") return unresolved(index, "reference");
           target = lookup.target;
           // Both pointer spellings can reach this same alias.
           aliasTargets.set(value, target);
@@ -206,7 +212,7 @@ function prepareReferences(document: OpenAPIDocument, externalReferences?: Reado
         source = target.source;
         value = target.value;
       }
-      if (typeof value !== "object" || value === null) return undefined;
+      if (typeof value !== "object" || value === null) return unresolved(index);
       const parent = overrides.size
         ? { ...value, ...Object.fromEntries([...overrides].map(([key, entry]) => [key, entry.value])) }
         : value;
@@ -227,34 +233,35 @@ function prepareReferences(document: OpenAPIDocument, externalReferences?: Reado
       }
       if (!Object.hasOwn(parent, key)) {
         if (value === root.value && key === field) throw new Error("OpenAPI $ref target does not exist");
-        return undefined;
+        return unresolved(index);
       }
+      matched.push(key);
       const child: unknown = Reflect.get(parent, key);
       source = overrides.get(key)?.source ?? source;
       mode = referenceChildMode(parent, mode, key, child);
       value = child;
     }
-    return { value, mode, source };
+    return { tokens: matched, target: { value, mode, source } };
   }
 
   function lookupPointer(
     source: ReferenceDocument, fragment: string, aliases = new Set<object>(), directAlias?: object
-  ): { tokens: string[]; target: PointerLookup } {
+  ): PointerLookup {
     if (fragment === "") return { tokens: [], target: { value: source.value, mode: "node", source } };
     if (source === root && fragment.startsWith("/")) {
       const legacy = fragment.split("/").slice(1).map((token) => decodeFragment(unescapePointerToken(token)));
-      const target = pointerTarget(source, legacy, aliases, directAlias);
-      if (target || !/%2f/i.test(fragment)) return { tokens: legacy, target };
+      const legacyLookup = pointerTarget(source, legacy, aliases, directAlias);
+      if (legacyLookup.target || !/%2f/i.test(fragment)) return legacyLookup;
       const decoded = decodeFragment(fragment).split("/").slice(1).map(unescapePointerToken);
-      const decodedTarget = pointerTarget(source, decoded, aliases, directAlias);
-      return decodedTarget ? { tokens: decoded, target: decodedTarget } : { tokens: legacy, target };
+      const decodedLookup = pointerTarget(source, decoded, aliases, directAlias);
+      return decodedLookup.target ? decodedLookup : legacyLookup;
     }
     const decoded = decodeFragment(fragment);
     if (!decoded.startsWith("/") || (source !== root && !fragment.startsWith("/"))) {
       throw new Error("OpenAPI $ref fragments must be slash-delimited JSON pointers");
     }
     const tokens = decoded.split("/").slice(1).map(unescapePointerToken);
-    return { tokens, target: pointerTarget(source, tokens, aliases, directAlias) };
+    return pointerTarget(source, tokens, aliases, directAlias);
   }
 
   function rewriteReference(ref: string, source: ReferenceDocument, mode: OpenAPIReferenceMode): string {

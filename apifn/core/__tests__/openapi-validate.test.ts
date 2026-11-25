@@ -245,6 +245,19 @@ describe("validateOpenAPI", () => {
     }
   });
 
+  it("does not shadow a slash-containing extension key with a temporary copy", async () => {
+    const doc = {
+      ...documentWithReference("#/x-apifn-reference-copies/0"),
+      "x-apifn-reference-copies/0": false,
+      "x-schemas": { Chosen: { type: "integer" } },
+    };
+    Object.assign(doc.components.schemas, { Copied: { $ref: "#/x-schemas/Chosen" } });
+    const result = await validateAndDereferenceOpenAPI(doc);
+    expect(result.errors).toEqual([]);
+    expect(result.document?.components?.schemas?.Value).toBe(false);
+    expect(result.document?.components?.schemas?.Copied).toEqual({ type: "integer" });
+  });
+
   it("refuses a named reference fragment regardless of unrelated allowlist entries", async () => {
     const doc = documentWithReference("#missing");
     const options = { externalReferences: new Map([["https://example.invalid/unused.json", "{}"]]) };
