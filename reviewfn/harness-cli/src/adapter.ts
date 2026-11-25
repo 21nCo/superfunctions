@@ -556,9 +556,9 @@ try {
 process.stdout.write(JSON.stringify(reply));
 `;
 
-/** One DIRECTORY_HELPER request run in `directory`, bounded by the run's deadline and signal (cleanup by its own bound). */
+/** One DIRECTORY_HELPER request run in `directory`, bounded by the run's deadline and signal (cleanup by a minute). */
 async function inDirectory(run: Prepared | undefined, directory: string, request: Record<string, unknown>, maxOutputBytes = 4_096): Promise<Record<string, unknown>> {
-  const timeoutMs = run ? Math.max(1, run.deadline - Date.now()) : VERSION_TIMEOUT_MS;
+  const timeoutMs = run ? Math.max(1, run.deadline - Date.now()) : 60_000;
   const result = await runProcessGroup(process.execPath, ["-e", DIRECTORY_HELPER], { cwd: directory, env: {}, timeoutMs, maxOutputBytes, signal: run?.input.signal, stdin: JSON.stringify(request) });
   try { return JSON.parse(result.stdout) as Record<string, unknown>; }
   catch { return { error: result.timedOut || result.canceled ? "the directory operation was stopped" : `the directory operation failed: ${result.stderr.slice(0, 200)}` }; }
