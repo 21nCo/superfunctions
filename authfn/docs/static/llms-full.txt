@@ -3124,6 +3124,32 @@ delivery providers, or impossible parameter combinations. Throw
 
 # Rate limiting
 
+**Rate limiting is off by default.** Until you enable it, AuthFn does not throttle sign-in, OTP, password-reset or 2FA requests per client, and it logs this once when the server starts:
+
+```text
+[authfn] WARNING: rate limiting is OFF. ...
+```
+
+Enable it with a `resolveClientIp` that reads the client's IP from your platform or a proxy you trust. Without `resolveClientIp`, every request is counted as the one IP `unknown`: the per-IP limits then apply to all your traffic together, so a handful of clients can lock everyone out. AuthFn warns about that too. A limiter at the edge (below) also helps, but the startup warning stays until `rateLimit` is enabled.
+
+Pick the source that matches where AuthFn runs:
+
+```ts
+// Cloudflare Workers reached directly from the internet: Cloudflare sets
+// cf-connecting-ip and replaces any copy the client sends.
+resolveClientIp: (request) => request.headers.get('cf-connecting-ip') ?? undefined,
+
+// Behind one reverse proxy you control that appends the client IP to x-forwarded-for:
+resolveClientIp: (request) => request.headers.get('x-forwarded-for')?.split(',').at(-1)?.trim(),
+```
+
+Each example holds only under its condition:
+
+- **Cloudflare:** this holds for requests that reach the Worker from the internet. When another Worker calls AuthFn (a subrequest), the calling Worker can set `cf-connecting-ip` in the same zone, and across zones Cloudflare supplies a shared address. Have that caller pass a client IP it verified, and read it only from that caller.
+- **Reverse proxy:** AuthFn's origin must accept traffic only from that proxy (a private network, firewall rules or mutual TLS). If the origin is also reachable directly, a client can send its own `x-forwarded-for`.
+
+Never read a header a client can set directly (such as the first `x-forwarded-for` entry, or `x-real-ip` without a proxy that overwrites it): a client could then choose its own key and escape the limits.
+
 authfn can enforce per-route limits through `createServer({ rateLimit })`. You should still put a limiter at the edge of your platform — a CDN, a WAF, a gateway — where it can deny traffic before any application code runs.
 
 ```ts
@@ -3191,7 +3217,10 @@ import { rateLimiter } from 'hono-rate-limiter';
 app.use('/auth/sign-in/*', rateLimiter({
   windowMs: 60 * 1000,
   limit: 10,
-  keyGenerator: (c) => `${c.req.header('x-forwarded-for')}:${c.req.path}`,
+  // Use the same trusted source as your resolveClientIp (see above). This
+  // example assumes direct Cloudflare ingress; behind your own proxy, read
+  // the last x-forwarded-for entry instead. Never a raw client header.
+  keyGenerator: (c) => `${c.req.header('cf-connecting-ip') ?? 'unknown'}:${c.req.path}`,
 }));
 
 app.route('/auth', toHono(auth.router));
@@ -10060,7 +10089,7 @@ const authApp = authfn({
 const auth = authApp.createServer({
   database,                     // @superfunctions/db Adapter
   stores: { kv, atomicKv },     // optional shared stores
-  rateLimit: { enabled: true },
+  rateLimit: { enabled: true, resolveClientIp }, // off by default; see below
   environment: { resolve(request) { /* ... */ } },
   hooks: { /* ... */ },
   pluginRuntime: {
@@ -10161,7 +10190,7 @@ Optional KV / atomic KV stores used for caching, coordination, and rate limiting
 
 ### `rateLimit`
 
-Optional request rate limiting for AuthFn HTTP routes. See [concepts → rate limiting](../core-concepts/rate-limiting).
+Optional request rate limiting for AuthFn HTTP routes. **Off by default**: AuthFn logs a warning at startup until it is enabled (an edge limiter does not silence it), and another one when it is enabled without `resolveClientIp` (every client then counts as the one IP `unknown`). See [concepts → rate limiting](../core-concepts/rate-limiting).
 
 ```ts
 rateLimit: {

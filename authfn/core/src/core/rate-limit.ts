@@ -36,7 +36,67 @@ const defaultPolicies: Record<AuthFnRateLimitScope, AuthFnRateLimitCategory> = {
   account: { ipLimit: 120, windowSeconds: 60 },
 };
 
+const RATE_LIMIT_WARNINGS_KEY = Symbol.for('authfn.rateLimitWarnings');
+const moduleRateLimitWarnings = new Set<string>();
+
+/**
+ * The warnings already issued, shared through globalThis so separate copies
+ * of AuthFn loaded in one JavaScript realm warn once between them. Each
+ * realm (a worker thread, a Node vm context) has its own globals and warns on
+ * its own. Created on first use, when a server is set up, so importing AuthFn
+ * has no side effects; if globalThis cannot be extended, this copy keeps its
+ * own set.
+ */
+function issuedRateLimitWarnings(): Set<string> {
+  const shared = globalThis as Record<symbol, unknown>;
+  try {
+    const existing = shared[RATE_LIMIT_WARNINGS_KEY];
+    if (existing instanceof Set) {
+      return existing as Set<string>;
+    }
+    const created = new Set<string>();
+    shared[RATE_LIMIT_WARNINGS_KEY] = created;
+    return shared[RATE_LIMIT_WARNINGS_KEY] === created ? created : moduleRateLimitWarnings;
+  } catch {
+    return moduleRateLimitWarnings;
+  }
+}
+
+/**
+ * Warns, once per JavaScript realm, when the HTTP rate limiter is off (the default),
+ * or on without `resolveClientIp`, in which case every client is counted as
+ * the one IP 'unknown'. Returns the warnings issued now (for tests).
+ */
+export function warnAboutRateLimitConfig(
+  config: Pick<AuthFnRuntimeConfig, 'rateLimit'>,
+  warn: (message: string) => void = (message) => console.warn(message),
+  issuedBefore: Set<string> = issuedRateLimitWarnings()
+): string[] {
+  const messages: string[] = [];
+  if (!config.rateLimit?.enabled) {
+    messages.push(
+      '[authfn] WARNING: rate limiting is OFF. Sign-in, OTP, password reset and 2FA routes are not throttled '
+        + 'per client. Enable it with createServer({ rateLimit: { enabled: true, resolveClientIp } }). A limiter '
+        + 'in front of AuthFn also helps, but this warning stays until rateLimit is enabled. See the AuthFn docs, '
+        + 'Core concepts > Rate limiting.'
+    );
+  } else if (!config.rateLimit.resolveClientIp) {
+    messages.push(
+      "[authfn] WARNING: rate limiting is on without resolveClientIp, so every client is counted as the one IP "
+        + "'unknown' and the per-IP limits apply to all traffic together. Pass resolveClientIp, reading the client "
+        + 'IP from your platform or a trusted proxy.'
+    );
+  }
+  const issued = messages.filter((message) => !issuedBefore.has(message));
+  for (const message of issued) {
+    issuedBefore.add(message);
+    warn(message);
+  }
+  return issued;
+}
+
 export function createAuthFnRateLimitMiddleware(config: AuthFnRuntimeConfig): Middleware | undefined {
+  warnAboutRateLimitConfig(config);
   const rateLimit = config.rateLimit;
   if (!rateLimit?.enabled) {
     return undefined;

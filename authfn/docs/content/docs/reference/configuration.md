@@ -28,7 +28,7 @@ const authApp = authfn({
 const auth = authApp.createServer({
   database,                     // @superfunctions/db Adapter
   stores: { kv, atomicKv },     // optional shared stores
-  rateLimit: { enabled: true },
+  rateLimit: { enabled: true, resolveClientIp }, // off by default; see below
   environment: { resolve(request) { /* ... */ } },
   hooks: { /* ... */ },
   pluginRuntime: {
@@ -129,7 +129,7 @@ Optional KV / atomic KV stores used for caching, coordination, and rate limiting
 
 ### `rateLimit`
 
-Optional request rate limiting for AuthFn HTTP routes. See [concepts → rate limiting](../core-concepts/rate-limiting).
+Optional request rate limiting for AuthFn HTTP routes. **Off by default**: AuthFn logs a warning at startup until it is enabled (an edge limiter does not silence it), and another one when it is enabled without `resolveClientIp` (every client then counts as the one IP `unknown`). See [concepts → rate limiting](../core-concepts/rate-limiting).
 
 ```ts
 rateLimit: {
