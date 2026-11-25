@@ -1,0 +1,32 @@
+apifn/cli/src/commands/check-compare.ts
+  s_83fa589146e8c6::t_1d1e937cdea345 7-8,93-111,119-165,184,191,193,217,239,247-249
+  s_83fa589146e8c6::t_cf2fcc47b399c6 250
+apifn/core/src/openapi/validate.ts
+  s_83fa589146e8c6::t_1d1e937cdea345 29,32-33,35
+apifn/core/__tests__/openapi-validate.test.ts
+  s_83fa589146e8c6::t_1d1e937cdea345 1
+apifn/admin/src/operator-service.ts
+  s_83fa589146e8c6::t_1d1e937cdea345 4,228-230,254-256
+apifn/core/src/index.ts
+  s_83fa589146e8c6::t_1d1e937cdea345 89
+apifn/README.md
+  s_83fa589146e8c6::t_1d1e937cdea345 24
+apifn/core/README.md
+  s_83fa589146e8c6::t_1d1e937cdea345 87
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "beeec3042f66029664c6e203d5385fb15572ef27",
+  "prompts": {},
+  "sessions": {
+    "s_83fa589146e8c6": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21253-9943-7ef0-8aad-8a89b106fa79",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
