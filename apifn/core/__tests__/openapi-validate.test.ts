@@ -112,21 +112,23 @@ describe("validateOpenAPI", () => {
     expect(result.document?.components?.schemas?.Value).toEqual({ type: "integer" });
   });
 
-  it("resolves a chain of aliases that use encoded-slash tokens", async () => {
-    const depth = 24;
-    let end: object = { type: "integer" };
-    const schemas: Record<string, object> = {};
-    for (let index = 0; index < depth; index += 1) {
-      end = { type: "object", properties: { "a/b": end } };
-      const next = index + 1 === depth ? "End" : `Alias${index + 1}`;
-      schemas[`Alias${index}`] = { $ref: `#/components/schemas/${next}/properties/a%2Fb` };
+  it.each(["properties/a%2Fb", "properties%2Fa~1b"])(
+    "resolves a chain of aliases using the pointer suffix %s", async (suffix) => {
+      const depth = 16;
+      let end: object = { type: "integer" };
+      const schemas: Record<string, object> = {};
+      for (let index = 0; index < depth; index += 1) {
+        end = { type: "object", properties: { "a/b": end } };
+        const next = index + 1 === depth ? "End" : `Alias${index + 1}`;
+        schemas[`Alias${index}`] = { $ref: `#/components/schemas/${next}/${suffix}` };
+      }
+      const doc = documentWithReference("#/components/schemas/Alias0");
+      Object.assign(doc.components.schemas, schemas, { End: end });
+      const result = await validateAndDereferenceOpenAPI(doc);
+      expect(result.errors).toEqual([]);
+      expect(result.document?.components?.schemas?.Value).toEqual({ type: "integer" });
     }
-    const doc = documentWithReference("#/components/schemas/Alias0");
-    Object.assign(doc.components.schemas, schemas, { End: end });
-    const result = await validateAndDereferenceOpenAPI(doc);
-    expect(result.errors).toEqual([]);
-    expect(result.document?.components?.schemas?.Value).toEqual({ type: "integer" });
-  });
+  );
 
   it("accepts literal fragment-shaped example data with or without an allowlist", async () => {
     const doc = documentWithReference("#/components/schemas/Shared");
@@ -290,6 +292,22 @@ describe("validateOpenAPI", () => {
     }
   });
 
+  it("resolves a query-relative reference from a preloaded local document", async () => {
+    const cwd = vi.spyOn(process, "cwd").mockReturnValue("/virtual/project");
+    try {
+      const externalReferences = new Map([
+        ["/virtual/project/types.json?revision=1", '{"$ref":"?revision=2"}'],
+        ["/virtual/project/types.json?revision=2", '{"type":"integer"}'],
+      ]);
+      const doc = documentWithReference("./types.json?revision=1");
+      const result = await validateAndDereferenceOpenAPI(doc, { externalReferences });
+      expect(result.errors).toEqual([]);
+      expect(result.document?.components?.schemas?.Value).toEqual({ type: "integer" });
+    } finally {
+      cwd.mockRestore();
+    }
+  });
+
   it("dereferences literal data used as a schema through an intermediate alias", async () => {
     const doc = documentWithReference("#/components/schemas/Alias/default");
     const literal = { $ref: "#/components/schemas/Leaf" };
@@ -350,19 +368,23 @@ describe("validateOpenAPI", () => {
     expect(result.document?.components?.examples?.Sample).toEqual({ value: { $ref: pointer } });
   });
 
-  it("looks through a preloaded Example Object without following literal payload refs", async () => {
+  it.each([false, true])("keeps preloaded Example Object payload refs literal (alias=%s)", async (useAlias) => {
     const ref = "https://example.invalid/example.json";
     const literal = { $ref: "literal-data.json", schema: { type: "integer" } };
-    const spec = documentWithReference(ref + "#/value/schema");
+    const example = useAlias ? ref + "#/Alias" : ref + "#";
+    const contents = useAlias
+      ? { Alias: { $ref: "#/Example" }, Example: { value: literal } }
+      : { value: literal };
+    const spec = documentWithReference(example + "/value/schema");
     const doc = {
       ...spec,
       components: {
         ...spec.components,
-        examples: { Sample: { $ref: ref } },
+        examples: { Sample: { $ref: example } },
       },
     };
     const result = await validateAndDereferenceOpenAPI(doc, {
-      externalReferences: new Map([[ref, JSON.stringify({ value: literal })]]),
+      externalReferences: new Map([[ref, JSON.stringify(contents)]]),
     });
     expect(result.errors).toEqual([]);
     expect(result.document?.components?.schemas?.Value).toEqual({ type: "integer" });

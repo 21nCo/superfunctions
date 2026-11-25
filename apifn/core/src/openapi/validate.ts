@@ -25,7 +25,12 @@ function referenceChildMode(
 
 interface ReferenceDocument {
   value: unknown;
-  uri: string;
+  location: DocumentLocation;
+}
+
+interface DocumentLocation {
+  url: URL;
+  isPath: boolean;
 }
 
 interface ReferenceTarget {
@@ -60,18 +65,23 @@ function encodePointer(tokens: string[]): string {
   ).join("");
 }
 
-function resolveDocumentURI(base: string, ref: string): { uri: string; fragment: string } {
+function workingDirectoryLocation(): DocumentLocation {
+  const cwd = typeof process !== "undefined" && process.cwd ? process.cwd().replaceAll("\\", "/") : "/";
+  const path = (cwd.startsWith("/") ? cwd : "/" + cwd).replace(/\/$/, "") + "/";
+  const url = new URL("https://apifn-local-path.invalid");
+  url.pathname = path.split("/").map(encodeURIComponent).join("/");
+  return { url, isPath: true };
+}
+
+function resolveDocumentURI(base: DocumentLocation, ref: string) {
   const normalized = ref.replaceAll("\\", "/");
-  const isPath = base.startsWith("/");
-  const pathBase = new URL("https://apifn-local-path.invalid");
-  if (isPath) pathBase.pathname = base.split("/").map(encodeURIComponent).join("/");
-  const url = new URL(normalized, isPath ? pathBase : base);
+  const url = new URL(normalized, base.url);
   const absolute = /^(?:[a-z][a-z0-9+.-]*:|\/\/)/i.test(normalized.trimStart());
   const fragment = url.hash.slice(1);
-  const uri = isPath && !absolute && url.origin === pathBase.origin
-    ? decodeFragment(url.pathname) + url.search
-    : url.href.split("#", 1)[0];
-  return { uri, fragment };
+  url.hash = "";
+  const isPath = base.isPath && !absolute && url.origin === base.url.origin;
+  const uri = isPath ? decodeFragment(url.pathname) + url.search : url.href;
+  return { uri, fragment, location: { url, isPath } };
 }
 
 const EXAMPLE_FIELDS = new Set(["value", "externalValue", "summary", "description"]);
@@ -101,9 +111,7 @@ function restoreReferenceCopies(document: object, { field, targets, originals }:
 }
 
 function prepareReferences(document: OpenAPIDocument, externalReferences?: ReadonlyMap<string, string>) {
-  const cwd = typeof process !== "undefined" && process.cwd ? process.cwd().replaceAll("\\", "/") : "/";
-  const uri = (cwd.startsWith("/") ? cwd : "/" + cwd).replace(/\/$/, "") + "/";
-  const root: ReferenceDocument = { value: document, uri };
+  const root: ReferenceDocument = { value: document, location: workingDirectoryLocation() };
   const supplied = new Map<string, ReferenceDocument>();
   const literalReferences = new Map<object, string>();
   const seen = new WeakMap<object, Map<OpenAPIReferenceMode, object>>();
@@ -112,6 +120,8 @@ function prepareReferences(document: OpenAPIDocument, externalReferences?: Reado
   while (Object.hasOwn(document, field)) field += "-";
   const referenceCopies: ReferenceCopies = { field, targets: [], originals: new Map() };
   const copiedPointers = new Map<ReferenceDocument, Map<string, string>>();
+  const aliasTargets = new WeakMap<object, ReferenceTarget>();
+  let cycleEncounters = 0;
 
   function enqueue(value: unknown, mode: OpenAPIReferenceMode, source: ReferenceDocument): unknown {
     if (typeof value !== "object" || value === null) return value;
@@ -133,7 +143,7 @@ function prepareReferences(document: OpenAPIDocument, externalReferences?: Reado
     if (ref.startsWith("#")) return { source, fragment: ref.slice(1) };
     if (!externalReferences?.size) throw new Error(EXTERNAL_REF_ERROR);
 
-    const { uri: key, fragment } = resolveDocumentURI(source.uri, ref);
+    const { uri: key, fragment, location: targetLocation } = resolveDocumentURI(source.location, ref);
     let external = supplied.get(key);
     if (!external) {
       const contents = externalReferences.get(key);
@@ -142,7 +152,7 @@ function prepareReferences(document: OpenAPIDocument, externalReferences?: Reado
       if (parsed.errors.length) throw new Error(parsed.errors[0].message);
       // Alias instances retain their object identity, so copying named targets
       // does not expand the alias graph.
-      external = { value: parsed.toJS({ maxAliasCount: -1 }), uri: key };
+      external = { value: parsed.toJS({ maxAliasCount: -1 }), location: targetLocation };
       supplied.set(key, external);
     }
     return { source: external, fragment };
@@ -154,9 +164,6 @@ function prepareReferences(document: OpenAPIDocument, externalReferences?: Reado
     let value = source.value;
     let mode: OpenAPIReferenceMode = "node";
     for (let index = 0; index < tokens.length; index += 1) {
-      // A preloaded value can be a standalone Example Object outside the
-      // OpenAPI examples maps that normally establish its context.
-      if (source !== root && mode === "node" && isStandaloneExample(value)) mode = "example";
       // Follow aliases before looking up remaining tokens, keeping siblings
       // that Swagger Parser gives precedence over the referenced object.
       const chain = new Set(aliases);
@@ -164,16 +171,28 @@ function prepareReferences(document: OpenAPIDocument, externalReferences?: Reado
       while (typeof value === "object" && value !== null && mode !== "literal" &&
           !openAPIReferenceContext.isMap(mode) && "$ref" in value && typeof value.$ref === "string" && value.$ref) {
         // A root alias can point to one of its own sibling definitions.
-        if (chain.has(value)) break;
+        if (chain.has(value)) {
+          cycleEncounters += 1;
+          break;
+        }
         chain.add(value);
-        const alias = location(source, value.$ref);
-        const { target } = lookupPointer(alias.source, alias.fragment, chain);
-        if (!target || target === "reference") return "reference";
+        let target = aliasTargets.get(value);
+        if (!target) {
+          const priorCycles = cycleEncounters;
+          const alias = location(source, value.$ref);
+          const lookup = lookupPointer(alias.source, alias.fragment, chain);
+          if (!lookup.target || lookup.target === "reference") return "reference";
+          target = lookup.target;
+          // Both pointer spellings can reach this same alias. A result that
+          // skipped a cyclic alias depends on the caller's active chain.
+          if (cycleEncounters === priorCycles) aliasTargets.set(value, target);
+        }
         for (const [key, sibling] of Object.entries(value)) {
           if (key !== "$ref" && !overrides.has(key)) {
             overrides.set(key, { value: sibling, source });
           }
         }
+        if (mode === "node" && target.mode === "example") mode = "example";
         source = target.source;
         value = target.value;
       }
@@ -181,6 +200,9 @@ function prepareReferences(document: OpenAPIDocument, externalReferences?: Reado
       const parent = overrides.size
         ? { ...value, ...Object.fromEntries([...overrides].map(([key, entry]) => [key, entry.value])) }
         : value;
+      // A preloaded value can be a standalone Example Object outside the
+      // OpenAPI examples maps that normally establish its context.
+      if (source !== root && mode === "node" && isStandaloneExample(parent)) mode = "example";
       let key = tokens[index];
       if (!Object.hasOwn(parent, key) || Reflect.get(parent, key) === undefined ||
           (index === tokens.length - 1 && Reflect.get(parent, key) === null)) {
