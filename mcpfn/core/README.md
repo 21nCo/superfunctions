@@ -195,7 +195,7 @@ Task support is declared with `execution.taskSupport` and a `taskHandler`; a tas
 
 Each stateful handler defaults to 1,000 sessions (`maxSessions`) and 100 sessions per principal (`maxSessionsPerPrincipal`). Anonymous clients share one principal allowance. A request without a session ID reserves a slot during initialization, and closing sessions count until cleanup finishes. At capacity, requests for new sessions receive HTTP 429 for the principal limit or HTTP 503 for the handler limit. Clients can retry after a slot is freed.
 
-An idle session expires after 30 minutes without a matching HTTP request that passes the configured Host and Origin checks (`sessionIdleTimeoutMs`), even if a response stream is open or a previous request is still pending. Expiry closes the isolated server and transport and calls `onsessionclosed`, when supplied. Subsequent requests receive HTTP 404 and must initialize a new session. Set any of the three options to a positive safe integer to adjust the defaults.
+An idle session expires after 30 minutes without a matching HTTP request that passes the configured Host and Origin checks (`sessionIdleTimeoutMs`), even if a response stream is open or a previous request is still pending. The same timeout applies to initialization, including stalled uploads, which receive HTTP 408. Expiry closes the isolated server and transport and calls `onsessionclosed`, when supplied. Subsequent requests receive HTTP 404 and must initialize a new session. Set any of the three options to a positive safe integer to adjust the defaults.
 
 HTTP security defaults: a request carrying an `Origin` header is refused with
 HTTP 403 unless `allowedOrigins` lists it or it is a loopback origin equal to the

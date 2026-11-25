@@ -164,7 +164,7 @@ export type McpFnWebStandardHandlerOptions<TContext> = ConstructorParameters<
   maxSessions?: number;
   /** Maximum sessions per principal per handler. Defaults to 100. Anonymous sessions share one allowance. At capacity, new sessions receive HTTP 429. */
   maxSessionsPerPrincipal?: number;
-  /** Milliseconds without a matching HTTP request before a session closes. Defaults to 30 minutes. */
+  /** Milliseconds before setup or inactivity times out. Defaults to 30 minutes. */
   sessionIdleTimeoutMs?: number;
 };
 
@@ -1380,9 +1380,10 @@ export class McpFnServer<TContext = undefined> {
       let claimedId: string | undefined;
       let acceptedId: string | undefined;
       let setupPending = true;
+      let setupTimedOut = false;
       let disposed = false;
       let closing: Promise<void> | undefined;
-      let lastActivity = 0;
+      let lastActivity = performance.now();
       let timer: ReturnType<typeof setTimeout> | undefined;
       const notifyClosed = async () => {
         const id = acceptedId;
@@ -1420,14 +1421,17 @@ export class McpFnServer<TContext = undefined> {
       };
       const idleTimeRemaining = () => sessionIdleTimeoutMs - (performance.now() - lastActivity);
       const expire = () => { void close().catch(() => undefined); };
-      const scheduleExpiry = () => {
-        const remaining = idleTimeRemaining();
-        if (remaining <= 0) {
+      const expireIfIdle = () => {
+        if (!closing && idleTimeRemaining() <= 0) {
+          setupTimedOut = setupPending;
           expire();
-          return;
         }
+        return Boolean(closing);
+      };
+      const scheduleExpiry = () => {
+        if (expireIfIdle()) return;
         // Node clamps larger delays to a millisecond.
-        timer = setTimeout(scheduleExpiry, Math.min(remaining, 2 ** 31 - 1));
+        timer = setTimeout(scheduleExpiry, Math.min(idleTimeRemaining(), 2 ** 31 - 1));
         timer.unref?.();
       };
       const transport: WebStandardStreamableHTTPServerTransport = new WebStandardStreamableHTTPServerTransport({
@@ -1436,18 +1440,20 @@ export class McpFnServer<TContext = undefined> {
           ? { eventStore: sessionScopedEventStore(transportOptions.eventStore, () => transport.sessionId) }
           : {}),
         onsessioninitialized: async (id) => {
-          if (closing) throw new Error("Server closed");
+          if (expireIfIdle()) throw new Error("Session setup closed");
           if (claimedIds.has(id)) throw new Error("Session ID is already in use");
           claimedIds.add(id);
           claimedId = id;
           await onSessionInitialized?.call(options, id);
+          const stopped = expireIfIdle();
           acceptedId = id;
-          if (closing) {
+          if (stopped) {
             await notifyClosed().catch(() => undefined);
-            throw new Error("Server closed");
+            throw new Error("Session setup closed");
           }
           lastActivity = performance.now();
           sessions.set(id, session);
+          clearTimeout(timer);
           scheduleExpiry();
         },
         onsessionclosed: close,
@@ -1457,10 +1463,7 @@ export class McpFnServer<TContext = undefined> {
         transport,
         stopResponses,
         touch: (refresh) => {
-          if (idleTimeRemaining() <= 0) {
-            expire();
-            return false;
-          }
+          if (expireIfIdle()) return false;
           if (refresh) {
             lastActivity = performance.now();
             clearTimeout(timer);
@@ -1473,13 +1476,19 @@ export class McpFnServer<TContext = undefined> {
       this.requestServers.add(requestServer);
       this.httpSessionClosers.set(requestServer, close);
 
-      const setupStopped = () => request.signal.aborted ? clientClosedResponse() : serverClosed();
+      const setupStopped = () => {
+        if (request.signal.aborted) return clientClosedResponse();
+        if (setupTimedOut) return jsonRpcErrorResponse(408, -32000, "Session initialization timed out");
+        return serverClosed();
+      };
       request.signal.addEventListener("abort", expire, { once: true });
       try {
         if (request.signal.aborted) {
           await close().catch(() => undefined);
           return clientClosedResponse();
         }
+        scheduleExpiry();
+        if (closing) return setupStopped();
         await configureRequestServer?.(requestServer);
         if (closing) return setupStopped();
         await requestServer.connect(transport);

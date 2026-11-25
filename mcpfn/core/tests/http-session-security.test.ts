@@ -326,8 +326,9 @@ describe("createWebStandardHandler session binding (MCP-SEC-03)", () => {
     expect((await call(sessionId!, from("https://issuer-one.example"))).status).toBe(200);
   });
 
-  it.each(["server shutdown", "client abort"])("cancels a pending initialize body on %s", async (reason) => {
-    const { handler, initialize, server } = await setup({ maxSessions: 1 });
+  it.each([["server shutdown", 503], ["client abort", 499], ["setup timeout", 408]])("interrupts a pending initialize body on %s", async (reason, status) => {
+    vi.useFakeTimers();
+    const { handler, initialize, server } = await setup({ maxSessions: 1, sessionIdleTimeoutMs: 100 });
     const abort = new AbortController();
     let markRead!: () => void;
     const reading = new Promise<void>((resolve) => { markRead = resolve; });
@@ -342,11 +343,13 @@ describe("createWebStandardHandler session binding (MCP-SEC-03)", () => {
     } as RequestInit));
     await reading;
     if (reason === "server shutdown") await server.close();
-    else abort.abort();
+    else if (reason === "client abort") abort.abort();
+    else await vi.advanceTimersByTimeAsync(100);
     const response = await pending;
-    expect(cancel).toHaveBeenCalledTimes(reason === "server shutdown" ? 0 : 1);
+    expect(cancel).toHaveBeenCalledTimes(reason === "client abort" ? 1 : 0);
     expect(body.locked).toBe(false);
-    expect(response.status).toBe(reason === "server shutdown" ? 503 : 499);
+    expect(response.status).toBe(status);
+    if (status === 408) expect(await response.text()).toContain("Session initialization timed out");
     expect(response.headers.get("mcp-session-id")).toBeNull();
     expect((await initialize()).status).toBe(200);
   });
