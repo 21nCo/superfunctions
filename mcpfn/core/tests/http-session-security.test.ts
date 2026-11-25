@@ -124,6 +124,24 @@ describe("createWebStandardHandler session binding (MCP-SEC-03)", () => {
     expect((await pending).status).toBe(503);
   });
 
+  it("does not create a session when close() runs while the host accepts it", async () => {
+    let open!: () => void;
+    const hold = new Promise<void>((resolve) => { open = resolve; });
+    const closed: string[] = [];
+    const { initialize, call, server } = await setup({
+      onsessioninitialized: () => hold,
+      onsessionclosed: (id) => { closed.push(id); },
+    });
+    const pending = initialize();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    await server.close();
+    open();
+    const result = await pending;
+    expect(result.status).not.toBe(200);
+    expect(closed).toEqual(["session-1"]);
+    expect((await call("session-1")).status).not.toBe(200);
+  });
+
   it("uses a host-supplied principal key", async () => {
     const { initialize, call } = await setup({
       sessionPrincipal: ({ request }) => request.headers.get("x-tenant") ?? undefined,
