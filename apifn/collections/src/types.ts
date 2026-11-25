@@ -142,6 +142,8 @@ export interface RunOptions {
   environment: string | Environment;
   /** Only run requests matching these paths/patterns */
   include?: string[];
+  /** Only run these exact collection-relative request paths */
+  includePaths?: string[];
   /** Skip requests matching these paths/patterns */
   exclude?: string[];
   /** Run requests in parallel (default: sequential) */
@@ -164,6 +166,10 @@ export interface RunOptions {
   reporter?: RunReporter;
   /** Variables that override environment variables */
   overrides?: Record<string, string>;
+  /** Explicit values available to `{{process.env.NAME}}` interpolation */
+  processEnv?: NodeJS.ProcessEnv;
+  /** Execute collection scripts as trusted code. Defaults to false. */
+  allowScripts?: boolean;
   /** Headers to redact in captured request/response details */
   redactHeaders?: string[];
 }

@@ -118,6 +118,7 @@ console.log(report.summary);
 |--------|------|-------------|
 | `environment` | `string \| Environment` | Environment name or object (required) |
 | `include` / `exclude` | `string[]` | Glob-ish patterns matched against path/name/`"METHOD url"` |
+| `includePaths` | `string[]` | Exact collection-relative request paths to run |
 | `parallel` | `boolean` | Run requests concurrently (default: sequential) |
 | `concurrency` | `number` | Max concurrent requests in parallel mode (default: 4) |
 | `timeout` | `number` | Per-request timeout in ms (default: 30000) |
@@ -128,6 +129,8 @@ console.log(report.summary);
 | `cookieJar` | `CookieJar` | Shared cookie jar |
 | `reporter` | `RunReporter` | Progress/result reporter |
 | `overrides` | `Record<string, string>` | Variable overrides (highest precedence) |
+| `processEnv` | `NodeJS.ProcessEnv` | Explicit values for `{{process.env.NAME}}` (default: empty) |
+| `allowScripts` | `boolean` | Execute scripts from a trusted collection (default: false) |
 | `redactHeaders` | `string[]` | Extra headers to redact in captured data |
 
 A request passes when its status matches the expected status (default `< 400`, or `settings.expectedStatus`) and no assertion fails.
@@ -187,11 +190,13 @@ Supported matchers: `.equal`, `.include`, `.matchSchema`, `.have.property`, `.ha
 
 ## Scripting
 
-Pre-request and test scripts run in a locked-down Node `vm` sandbox (`SCRIPT_TIMEOUT_MS` = `10000` ms). Available globals: `console`, `URL`, `URLSearchParams`, `crypto.randomUUID`, `btoa`, `atob`. Disabled: `process`, `require`, `module`, `fetch`, `eval`, `Function`, timers.
+The runner rejects selected requests that contain scripts before sending any HTTP requests. Set `allowScripts: true` only when you trust the scripts as fully as local code. The Node `vm` context exposes host objects, and its 10-second synchronous execution limit cannot bound asynchronous work.
 
 ```typescript
 import { executePreRequestScript, executeTestScript } from "@apifn/collections";
 ```
+
+Use these helpers directly only with trusted script code.
 
 - `executePreRequestScript({ code, env, req, cookies?, timeoutMs? })` — mutate `req`, set `env` variables before sending
 - `executeTestScript({ code, env, req, res, cookies?, assertionResults, timeoutMs? })` — assert against `res` with `expect`/`test`
@@ -221,11 +226,11 @@ const context = resolveVariableContext({
 const { value, warnings } = interpolateVariables(
   "{{baseUrl}}/users?token={{process.env.API_TOKEN}}",
   context,
-  { processEnv: process.env },
+  { processEnv: { API_TOKEN: process.env.API_TOKEN } },
 );
 ```
 
-`{{var}}` tokens are replaced from the context; unknown context tokens are left intact and reported in `warnings`. `{{process.env.X}}` reads from the `processEnv` interpolation option (or the current process by default) and throws if the requested environment variable is not set.
+`{{var}}` tokens are replaced from the context. Unknown context tokens are left intact and reported in `warnings`. `{{process.env.X}}` requires an explicit value for `X` in the `processEnv` option and throws if the value is missing.
 
 ---
 

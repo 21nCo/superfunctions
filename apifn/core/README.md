@@ -229,6 +229,9 @@ npm install @testfn/core @apifn/collections
 import { ApifnTestAdapter } from "@apifn/core/testfn";
 ```
 
+The adapter requires `@apifn/collections` 0.0.5 or later. Pass `allowScripts: true` to the adapter constructor only for trusted collections. Pass a `processEnv` object with the specific values needed by collection templates.
+Discovered test IDs use the collection-relative request path. Rediscover saved test selections if multiple requests in a suite share a display name.
+
 ---
 
 ## Exports
