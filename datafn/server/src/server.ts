@@ -48,7 +48,7 @@ import { DbIdempotencyStore } from "./execution/idempotency-db.js";
 import { ChangeTrackingService } from "./execution/sync/change-tracking.js";
 import { errorResponse, errorToEnvelope } from "./http/errors.js";
 import { createRestRoutes, sanitizePathSegment } from "./routes/rest.js";
-import { checkPayloadLimit, readBodyWithLimit } from "./http/middleware.js";
+import { checkPayloadLimit, readLimitedBody } from "./http/middleware.js";
 import { parseJsonBody } from "./http/json.js";
 import { WebSocketManager, type WebSocketClient, type WsAuthContext } from "./ws.js";
 import type { WsManagerConfig } from "./ws.js";
@@ -66,7 +66,11 @@ import {
   setSpv2MigrationRuntimeConfig,
   type Spv2MigrationRuntimeConfig,
 } from "./execution/migration/spv2.js";
-import type { DatafnPublicLinksPlugin } from "./plugins/public-links.js";
+import {
+  PUBLIC_LINK_RESOLVE_PATH,
+  preparePublicLinkResolveRequest,
+  type DatafnPublicLinksPlugin,
+} from "./plugins/public-links.js";
 import { getDatafnMultiRegionRuntimeConfig } from "./plugins/multi-region.js";
 import {
   DatafnRoutingError,
@@ -169,6 +173,7 @@ type DatafnServerComposablePlugin = DatafnPlugin & {
     database: Adapter;
     crossNamespaceDatabase?: Adapter;
     schema: DatafnSchema;
+    maxPayloadBytes?: number;
   }) => DatafnComposableRoute[];
   authorize?: (
     input: DatafnPluginAuthorizationInput,
@@ -530,8 +535,8 @@ export async function createDatafnServer<TContext = any>(
   const validatedSchema = excludeInternalResources(schemaWithBuiltins, internalResourceNames);
   configureRevisions(validatedSchema, config.revisions);
 
-  // VAL-009: Debug mode — default to true in non-production
-  const debugMode = config.debug ?? (process.env.NODE_ENV !== "production");
+  // Detailed errors are opt-in. Unset stays off in every environment, including an unset NODE_ENV.
+  const debugMode = config.debug === true;
 
   const observabilityScope = normalizeObservability<DataFnEvent>(
     config.observability as ObservabilityInput<DataFnEvent>,
@@ -1192,9 +1197,9 @@ export async function createDatafnServer<TContext = any>(
   ): ((req: Request, ctx: TContext) => Promise<Response>) => {
     return async (req: Request, ctx: TContext): Promise<Response> => {
       const enrichedCtx = createEnrichedContext(ctx);
-      // Body parsing consumes the original Request. Preserve one clone so a
-      // signed routing assertion can bind the exact forwarded body.
-      const placementRequest = multiRegionRuntime?.placement && origin === "http" ? req.clone() : undefined;
+      const parseBody = req.method === "POST" || req.method === "PUT" || req.method === "PATCH";
+      const verifyHttpPlacement = multiRegionRuntime?.placement && origin === "http" && action !== "status";
+      let placementRequest: Request | undefined;
       let payload: unknown = null;
       // REL-009: Reject new requests immediately when shutting down
       if (shuttingDown) {
@@ -1264,10 +1269,12 @@ export async function createDatafnServer<TContext = any>(
 
         // For POST/PUT/PATCH endpoints, parse JSON body FIRST before authorization
         // AUTH-001: Invalid JSON must return DFQL_INVALID, never FORBIDDEN
-        if (req.method === "POST" || req.method === "PUT" || req.method === "PATCH") {
-          // If maxPayloadBytes is set but Content-Length was missing, enforce on actual body
+        if (verifyHttpPlacement && (!parseBody || !limits.maxPayloadBytes)) {
+          placementRequest = req.clone();
+        }
+        if (parseBody) {
           if (limits.maxPayloadBytes) {
-            const bodyResult = await readBodyWithLimit(req, limits.maxPayloadBytes, logger);
+            const bodyResult = await readLimitedBody(req, limits.maxPayloadBytes, logger);
             if (!bodyResult.ok) {
               return completeDatafnResponse({
                 action,
@@ -1277,9 +1284,12 @@ export async function createDatafnServer<TContext = any>(
                 response: bodyResult.response,
               });
             }
-            // Parse JSON from the already-read body text
+            // Preserve the exact bounded bytes for a signed routing assertion.
+            if (verifyHttpPlacement) {
+              placementRequest = req.body ? new Request(req, { body: bodyResult.bytes }) : req;
+            }
             try {
-              payload = JSON.parse(bodyResult.body);
+              payload = JSON.parse(new TextDecoder().decode(bodyResult.bytes));
             } catch {
               await emitDataFnEvent({
                 domain: "datafn",
@@ -1573,6 +1583,20 @@ export async function createDatafnServer<TContext = any>(
     search: (payload, context) => executeInProcess("search", searchHandler, payload, context),
   };
 
+  const withPluginRouteRateLimit = (
+    route: DatafnComposableRoute<TContext>,
+  ): DatafnComposableRoute<TContext> => {
+    const limitRate = rateLimitMiddleware;
+    if (!limitRate) return route;
+    return {
+      ...route,
+      handler: async (request, context) => {
+        const limited = await limitRate(route.path, context);
+        return limited ?? route.handler(request, context);
+      },
+    };
+  };
+
   const withPluginRoutePlacement = (
     route: DatafnComposableRoute<TContext>,
     placement: DatafnPluginRoutePlacement<TContext>,
@@ -1676,6 +1700,8 @@ export async function createDatafnServer<TContext = any>(
     },
   ];
 
+  const publicLinkBodyLimit = multiRegionRuntime?.placement ? undefined : limits.maxPayloadBytes || undefined;
+  let boundedResolveRoute: Route<TContext> | undefined;
   if (configuredDatabase) {
     for (const plugin of plugins) {
       if (!plugin.routes) {
@@ -1685,10 +1711,17 @@ export async function createDatafnServer<TContext = any>(
         database: db ?? configuredDatabase,
         crossNamespaceDatabase: crossNamespaceDb,
         schema: validatedSchema,
+        maxPayloadBytes: publicLinkBodyLimit,
       }) as DatafnComposableRoute<TContext>[];
       for (const route of pluginRoutes) {
+        const isPublicLinkResolve = plugin.name === "datafn-public-links" &&
+          route.method === "POST" && route.path === PUBLIC_LINK_RESOLVE_PATH;
+        const limitedRoute = withPluginRouteRateLimit(route);
         if (!multiRegionRuntime?.placement || route.meta?.datafnPlacement === "none") {
-          routes.push(route);
+          routes.push(limitedRoute);
+          if (publicLinkBodyLimit !== undefined && isPublicLinkResolve) {
+            boundedResolveRoute = limitedRoute;
+          }
           continue;
         }
         const declaration = route.meta?.datafnPlacement;
@@ -1697,7 +1730,12 @@ export async function createDatafnServer<TContext = any>(
             `DATAFN_PLUGIN_ROUTE_PLACEMENT_REQUIRED: ${plugin.name} ${route.method} ${route.path}`,
           );
         }
-        routes.push(withPluginRoutePlacement(route, declaration));
+        if (isPublicLinkResolve) {
+          // Count all token resolutions, including those rejected by placement.
+          routes.push(withPluginRouteRateLimit(withPluginRoutePlacement(route, declaration)));
+        } else {
+          routes.push(withPluginRoutePlacement(limitedRoute, declaration));
+        }
       }
     }
   }
@@ -1770,6 +1808,21 @@ export async function createDatafnServer<TContext = any>(
         ]
       : undefined,
   });
+  if (publicLinkBodyLimit !== undefined && boundedResolveRoute) {
+    const handle = router.handle;
+    const resolveRoute = boundedResolveRoute;
+    const handleBoundedResolve = async (request: Request): Promise<Response> => {
+      const path = new URL(request.url).pathname;
+      if (request.method !== "POST" ||
+          (path !== PUBLIC_LINK_RESOLVE_PATH && path !== `${PUBLIC_LINK_RESOLVE_PATH}/`) ||
+          router.match(request.method, path)?.route !== resolveRoute) {
+        return handle(request);
+      }
+      return handle(preparePublicLinkResolveRequest(request, publicLinkBodyLimit));
+    };
+    router.handle = handleBoundedResolve;
+    router.handler = handleBoundedResolve;
+  }
 
   // REL-009: Graceful shutdown implementation
   const serverClose = async (): Promise<void> => {

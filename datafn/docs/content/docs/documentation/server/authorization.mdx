@@ -186,13 +186,13 @@ const server = await createDatafnServer({
 
 ## Debug Mode
 
-In debug mode (the default in non-production environments), authorization errors include the resource name and a hint:
+Detailed authorization errors are returned only when the server is created with `debug: true`. The default is off in every environment. `NODE_ENV` does not turn them on. With `debug: true`, authorization errors include the resource name and a hint:
 
 ```
 No authorization policy found for resource 'tasks'. Define a policy or use allowUnknownResources: true to allow.
 ```
 
-In production (`debug: false`), the same error produces a generic message:
+With `debug` unset or `false`, the same error produces a generic message:
 
 ```
 Authorization denied

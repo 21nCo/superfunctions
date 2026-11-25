@@ -62,7 +62,7 @@
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.10.4",
     "@datafn/cli": "0.1.4",
-    "@datafn/client": "0.1.4",
+    "@datafn/client": "0.1.11",
     "@electric-sql/pglite": "^0.3.0",
     "@superfunctions/http-hono": "0.2.3",
     "@types/better-sqlite3": "^7.6.13",

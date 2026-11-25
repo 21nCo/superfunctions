@@ -30,12 +30,14 @@ import {
  * `temporal` resolves the query's temporal clauses (e.g. the timezone-change
  * history behind timezone "user"); without it, the history is read from the
  * store.
+ * Internal relation anchors can defer projection to keep stored foreign keys.
  */
 export function executeQuery(
   query: DFQLQuery,
   schema: DatafnSchema,
   store: DataStore,
   temporal?: DatafnTemporalConfig,
+  projectRecords = true,
 ): QueryResult | AggregateResult {
   const temporalConfig = temporal ?? {
     timezoneResolver: createTimezoneResolver(
@@ -259,17 +261,17 @@ export function executeQuery(
   }
 
   // Materialize select tokens
-  const data = records.map((record) =>
-    materializeSelect(
-      record,
-      query.resource,
-      query.select,
-      schema,
-      store,
-      query.omit,
-      (query as unknown as { metadata?: Record<string, unknown> }).metadata,
-    ),
-  );
+  const data = projectRecords
+    ? records.map((record) => materializeSelect(
+        record,
+        query.resource,
+        query.select,
+        schema,
+        store,
+        query.omit,
+        (query as unknown as { metadata?: Record<string, unknown> }).metadata,
+      ))
+    : records;
 
   return {
     data,

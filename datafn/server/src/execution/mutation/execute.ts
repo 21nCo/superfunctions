@@ -307,7 +307,7 @@ async function executeMutationCore(
           ) {
             opResult = { ok: false, code: "CONFLICT", message: "Record already exists", path: "id" };
           } else {
-            opResult = { ok: false, code: "INTERNAL", message: error?.message || "Internal error", path: "$" };
+            opResult = { ok: false, code: "INTERNAL", message: "Internal error", path: "$" };
           }
         }
         break;
@@ -461,7 +461,7 @@ async function executeMutationCore(
         } catch (e: any) {
           // EXE-010: Log original error for observability
           logger?.error("Mutation replace failed", { error: String(e), operation: "replace", resource: mutation.resource });
-          opResult = { ok: false, code: "INTERNAL", message: e?.message || "Internal error", path: "$" };
+          opResult = { ok: false, code: "INTERNAL", message: "Internal error", path: "$" };
         }
         break;
 
@@ -898,7 +898,7 @@ async function executeMutationCore(
         } catch (e: any) {
           // EXE-010: Log original error for observability
           logger?.error("Mutation relate failed", { error: String(e), operation: "relate", resource: mutation.resource });
-          opResult = { ok: false, code: "INTERNAL", message: e?.message || "Internal error", path: "$" };
+          opResult = { ok: false, code: "INTERNAL", message: "Internal error", path: "$" };
         }
         break;
 
@@ -916,7 +916,7 @@ async function executeMutationCore(
         } catch (e: any) {
           // EXE-010: Log original error for observability
           logger?.error("Mutation modifyRelation failed", { error: String(e), operation: "modifyRelation", resource: mutation.resource });
-          opResult = { ok: false, code: "INTERNAL", message: e?.message || "Internal error", path: "$" };
+          opResult = { ok: false, code: "INTERNAL", message: "Internal error", path: "$" };
         }
         break;
 
@@ -952,7 +952,7 @@ async function executeMutationCore(
         } catch (e: any) {
           // EXE-010: Log original error for observability
           logger?.error("Mutation unrelate failed", { error: String(e), operation: "unrelate", resource: mutation.resource });
-          opResult = { ok: false, code: "INTERNAL", message: e?.message || "Internal error", path: "$" };
+          opResult = { ok: false, code: "INTERNAL", message: "Internal error", path: "$" };
         }
         break;
 
@@ -973,7 +973,7 @@ async function executeMutationCore(
       operation: (mutation as any).operation,
       resource: mutation.resource,
     });
-    opResult = { ok: false, code: "INTERNAL", message: error?.message || "Internal error", path: "$" };
+    opResult = { ok: false, code: "INTERNAL", message: "Internal error", path: "$" };
   }
 
   const result: MutationResult = opResult.ok
@@ -1432,12 +1432,16 @@ export async function executeMutation(
       if (err?.__datafnGuardFailed) {
         guardFailed = true;
       } else if (!err?.__datafnMutationFailed) {
-        // Transaction aborted for another reason
+        logger?.error("Mutation transaction failed", {
+          error: String(err),
+          operation: mutation.operation,
+          resource: mutation.resource,
+        });
         txMutationResult = {
           ok: false,
           mutationId: effectiveMutationId,
           affectedIds: [],
-          errors: [{ code: "INTERNAL", message: err?.message || "Transaction failed", path: "$", retryable: false }],
+          errors: [{ code: "INTERNAL", message: "Transaction failed", path: "$", retryable: false }],
           deduped: false,
         };
       }
@@ -1550,11 +1554,16 @@ export async function executeMutation(
       });
     } catch (err: any) {
       if (!err?.__datafnMutationFailed) {
+        logger?.error("Mutation transaction failed", {
+          error: String(err),
+          operation: mutation.operation,
+          resource: mutation.resource,
+        });
         txMutationResult = {
           ok: false,
           mutationId: effectiveMutationId,
           affectedIds: [],
-          errors: [{ code: "INTERNAL", message: err?.message || "Transaction failed", path: "$", retryable: false }],
+          errors: [{ code: "INTERNAL", message: "Transaction failed", path: "$", retryable: false }],
           deduped: false,
         };
       }

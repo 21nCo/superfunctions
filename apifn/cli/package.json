@@ -1,6 +1,6 @@
 {
   "name": "@apifn/cli",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "CLI tools for ApiFn",
   "type": "module",
   "main": "dist/index.cjs",
@@ -23,12 +23,12 @@
     "lint": "tsc --noEmit"
   },
   "dependencies": {
-    "@apifn/collections": "0.0.4",
-    "@apifn/contracts": "0.1.0",
-    "@apifn/core": "0.1.0",
-    "@apifn/mock": "0.0.4",
-    "@apifn/sdk": "0.1.0",
-    "@apifn/snippets": "0.0.5",
+    "@apifn/collections": "0.0.5",
+    "@apifn/contracts": "0.1.1",
+    "@apifn/core": "0.1.1",
+    "@apifn/mock": "0.0.5",
+    "@apifn/sdk": "0.1.1",
+    "@apifn/snippets": "0.0.6",
     "cac": "^6.7.14",
     "jiti": "^2.4.2",
     "picocolors": "^1.1.1",

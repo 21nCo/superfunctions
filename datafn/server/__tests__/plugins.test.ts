@@ -105,6 +105,7 @@ async function makeRequest(
 ): Promise<any> {
   const db = memoryAdapter({ namespace: "datafn" });
   const server = await createDatafnServer({ allowUnknownResources: true,
+    debug: true,
     schema,
     database: db,
     plugins,

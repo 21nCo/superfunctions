@@ -48,7 +48,12 @@ let server: Server;
 let devices: Device[] = [];
 
 beforeEach(async () => {
-  server = await createDatafnServer({ schema, database: memoryAdapter(), allowUnknownResources: true });
+  server = await createDatafnServer({
+    schema,
+    database: memoryAdapter(),
+    allowUnknownResources: true,
+    debug: true,
+  });
 });
 
 afterEach(async () => {

@@ -57,6 +57,7 @@ beforeEach(async () => {
     schema: serverSchema,
     database: memoryAdapter(),
     allowUnknownResources: true,
+    debug: true,
   });
 });
 

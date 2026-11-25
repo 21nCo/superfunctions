@@ -60,6 +60,7 @@ describe("Phase 09: Validation MEDIUM", () => {
   describe("VAL-001: Authz deny-by-default", () => {
     it("TV-VAL-001: query on resource with no policy is FORBIDDEN by default", async () => {
       const server = await createDatafnServer({
+        debug: true,
         schema: schemaNoPerm,
         database: memoryAdapter(),
         // allowUnknownResources omitted → defaults to false (deny-by-default)
@@ -101,6 +102,7 @@ describe("Phase 09: Validation MEDIUM", () => {
   describe("VAL-002: Select token limit (50)", () => {
     it("TV-VAL-003: select with 51 tokens is rejected (max 50)", async () => {
       const server = await createDatafnServer({
+        debug: true,
         schema: schemaNoPerm,
         database: memoryAdapter(),
         allowUnknownResources: true,
@@ -128,6 +130,7 @@ describe("Phase 09: Validation MEDIUM", () => {
   describe("VAL-003: Filter key limit (20)", () => {
     it("TV-VAL-004: filter with 21 keys is rejected (max 20)", async () => {
       const server = await createDatafnServer({
+        debug: true,
         schema: schemaNoPerm,
         database: memoryAdapter(),
         allowUnknownResources: true,
@@ -156,6 +159,7 @@ describe("Phase 09: Validation MEDIUM", () => {
   describe("VAL-004: Sort field limit (10)", () => {
     it("TV-VAL-005: sort with 11 fields is rejected (max 10)", async () => {
       const server = await createDatafnServer({
+        debug: true,
         schema: schemaNoPerm,
         database: memoryAdapter(),
         allowUnknownResources: true,
@@ -185,6 +189,7 @@ describe("Phase 09: Validation MEDIUM", () => {
   describe("VAL-005: Aggregation count limit (20)", () => {
     it("TV-VAL-006: 21 aggregations are rejected (max 20)", async () => {
       const server = await createDatafnServer({
+        debug: true,
         schema: schemaNoPerm,
         database: memoryAdapter(),
         allowUnknownResources: true,
@@ -221,6 +226,7 @@ describe("Phase 09: Validation MEDIUM", () => {
   describe("VAL-006: ID length limit (255)", () => {
     it("TV-VAL-007: mutation with 300-char ID is rejected", async () => {
       const server = await createDatafnServer({
+        debug: true,
         schema: schemaNoPerm,
         database: memoryAdapter(),
         allowUnknownResources: true,
@@ -251,6 +257,7 @@ describe("Phase 09: Validation MEDIUM", () => {
   describe("VAL-007: clientId/mutationId validation", () => {
     it("TV-VAL-008: mutation with empty clientId is rejected", async () => {
       const server = await createDatafnServer({
+        debug: true,
         schema: schemaNoPerm,
         database: memoryAdapter(),
         allowUnknownResources: true,
@@ -281,6 +288,7 @@ describe("Phase 09: Validation MEDIUM", () => {
   describe("VAL-008: Version field validation", () => {
     it("TV-VAL-009: mutation with version -1 is rejected", async () => {
       const server = await createDatafnServer({
+        debug: true,
         schema: schemaNoPerm,
         database: memoryAdapter(),
         allowUnknownResources: true,

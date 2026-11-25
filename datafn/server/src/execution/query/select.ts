@@ -19,6 +19,9 @@ import {
   type DatafnRelationMatch,
 } from "@datafn/core";
 import type { DataStore } from "../store.js";
+import { getReadableRelationFields, isPrivateShareableResource } from "../../validation/authz.js";
+import { fkResourceFieldForRelation } from "../relations/foreign-key.js";
+import { foreignKeyTargetResolver, getForeignKeyRelatedRecords, hasPredicateField, isPolymorphicForeignKey, resolvePredicateEndpoint } from "./filters.js";
 
 export type { SelectToken } from "@datafn/core";
 
@@ -166,9 +169,10 @@ function materializeRelatedRecord(
   store: DataStore,
   omit?: string[],
   metadata?: QueryMetadata,
+  knownResource?: string,
 ): Record<string, unknown> {
-  const resource = recordResourceName(schema, record.id, targetEndpointFor(match));
-  return materializeSelect(record, resource, select, schema, store, omit, metadata);
+  const resource = knownResource ?? recordResourceName(schema, record.id, targetEndpointFor(match));
+  return materializeSelect(record, resource, select, schema, store, omit, metadata, { enforceRelationFields: true });
 }
 
 function htreeAncestors(
@@ -242,9 +246,8 @@ export function getFkFieldsToOmit(schema: DatafnSchema, targetResource: string):
       if (endpointIncludes(rel.from, targetResource) && rel.type === "many-one") {
         const fkField = relationFkFieldForManyOne(rel);
         cached.add(fkField);
-        if (Array.isArray(rel.to) && rel.to.length > 1) {
-          cached.add(rel.fkResourceField || `${(rel.relation || "target").replace(/Id$/, "")}Resource`);
-        }
+        const discriminatorField = fkResourceFieldForRelation(rel);
+        if (discriminatorField) cached.add(discriminatorField);
       }
     }
   }
@@ -263,9 +266,24 @@ export function materializeSelect(
   store: DataStore,
   omit?: string[],
   metadata?: QueryMetadata,
+  options?: { visibleJoinRowsOnly?: boolean; enforceRelationFields?: boolean },
 ): Record<string, unknown> {
   const resourceSchema = schema.resources.find((r) => r.name === resource);
   if (!resourceSchema) return { id: record.id };
+  const readableRelationFields = options?.enforceRelationFields
+    ? getReadableRelationFields(schema, resourceSchema)
+    : undefined;
+  const canProjectField = (field: string) => !readableRelationFields || readableRelationFields.has(field);
+  const hidesRelationField = (field: string) => !canProjectField(field) &&
+    hasPredicateField(schema, resourceSchema, field);
+  const projectHtreeRecord = (child: Record<string, unknown>) => {
+    const normalized = stripNullsForNonNullableFields(child, resourceSchema);
+    if (!readableRelationFields) return applyOmit(normalized, omit);
+    const readable = Object.fromEntries(Object.entries(normalized).filter(([field]) =>
+      canProjectField(field),
+    ));
+    return applyOmit(readable, omit);
+  };
 
   // Persisted stores can hold null for non-nullable fields (nullable SQL
   // columns, replace clears). Expose them as undefined in query results.
@@ -283,7 +301,7 @@ export function materializeSelect(
   if (!select || select.length === 0) {
     const result: Record<string, unknown> = { id: record.id };
     for (const field of resourceSchema.fields) {
-      if (record[field.name] !== undefined) {
+      if (record[field.name] !== undefined && canProjectField(field.name)) {
         result[field.name] = record[field.name];
       }
     }
@@ -300,7 +318,7 @@ export function materializeSelect(
       result.id = record.id;
       includedFields.add("id");
       for (const field of resourceSchema.fields) {
-        if (record[field.name] !== undefined) {
+        if (record[field.name] !== undefined && canProjectField(field.name)) {
           result[field.name] = record[field.name];
           includedFields.add(field.name);
         }
@@ -315,21 +333,19 @@ export function materializeSelect(
       const restToken = parts.slice(1).join(".");
 
       const relation = findRelation(schema, resource, firstRelation);
-      if (!relation) continue;
+      if (!relation || hidesRelationField(firstRelation)) continue;
 
       // Check if we already have records for this relation
       const existingRecords = result[firstRelation];
 
       // Always expand from source records so successive nested tokens (e.g. items.id + items.title)
       // do not lose fields when earlier tokens projected only partial child objects.
-      const intermediateRecords = expandRelationToRecords(
-        record,
-        relation,
-        schema,
-        store,
-        resource,
-        metadata,
-      );
+      const qualifiedRecords = expandQualifiedRecords(record, relation, schema, store, resource, metadata);
+      const intermediateRecords = qualifiedRecords
+        ? relationReturnsSingleRecord(relation)
+          ? qualifiedRecords[0]?.record
+          : qualifiedRecords.map((entry) => entry.record)
+        : expandRelationToRecords(record, relation, schema, store, resource, metadata);
 
       if (!intermediateRecords) continue;
 
@@ -337,7 +353,7 @@ export function materializeSelect(
       if (Array.isArray(intermediateRecords)) {
         const targetEffectiveOmit = omit ? [...omit] : [];
 
-        const newRecords = intermediateRecords.map((intermediateRecord) => {
+        const newRecords = intermediateRecords.map((intermediateRecord, index) => {
           const nestedResult = materializeRelatedRecord(
             intermediateRecord,
             relation,
@@ -346,15 +362,18 @@ export function materializeSelect(
             store,
             omit,
             metadata,
+            qualifiedRecords?.[index]?.resource,
           );
 
           // Merge with existing record if present
           let mergedRecord;
           if (existingRecords && Array.isArray(existingRecords)) {
-            const existingRecord = existingRecords.find(
-              (r: any) => r.id === intermediateRecord.id,
-            );
-            if (existingRecord && typeof existingRecord === "object") {
+            // The same sorted records are projected for each token. Use their
+            // position so duplicate IDs from distinct resources stay separate.
+            const existingRecord = qualifiedRecords
+              ? existingRecords[index]
+              : existingRecords.find((r: any) => r.id === intermediateRecord.id);
+            if (existingRecord && typeof existingRecord === "object" && existingRecord.id === intermediateRecord.id) {
               mergedRecord = { ...existingRecord, ...nestedResult };
             } else {
               mergedRecord = nestedResult;
@@ -377,6 +396,7 @@ export function materializeSelect(
           store,
           omit,
           metadata,
+          qualifiedRecords?.[0]?.resource,
         );
 
         // Merge with existing if present
@@ -394,6 +414,7 @@ export function materializeSelect(
     }
 
     const parsed = parseSelectToken(token);
+    if (hidesRelationField(parsed.baseName)) continue;
 
     const htreeRelation = findRelation(schema, resource, parsed.baseName);
     if (htreeRelation?.relation.type === "htree") {
@@ -410,9 +431,7 @@ export function materializeSelect(
             ),
             htreeRelation,
             metadata,
-          ).map((c) =>
-            applyOmit(stripNullsForNonNullableFields(c, resourceSchema), omit),
-          );
+          ).map(projectHtreeRecord);
         } else if (parsed.directive === "**") {
           result[parsed.baseName] = filterAncestorInactiveRecords(
             htreeChildren(
@@ -424,9 +443,7 @@ export function materializeSelect(
             ),
             htreeRelation,
             metadata,
-          ).map((d) =>
-            applyOmit(stripNullsForNonNullableFields(d, resourceSchema), omit),
-          );
+          ).map(projectHtreeRecord);
         }
         includedFields.add(parsed.baseName);
       } else if (parsed.baseName === "parent") {
@@ -435,9 +452,7 @@ export function materializeSelect(
           resource,
           htreeRelation.relation,
           store,
-        ).map((a) =>
-          applyOmit(stripNullsForNonNullableFields(a, resourceSchema), omit),
-        );
+        ).map(projectHtreeRecord);
         includedFields.add(parsed.baseName);
       }
       continue;
@@ -449,9 +464,9 @@ export function materializeSelect(
       const relation = findRelation(schema, resource, parsed.baseName);
       if (relation) {
         // ids-only relation token
-        result[parsed.baseName] = getRelationIds(record, relation, store, resource, metadata);
+        result[parsed.baseName] = getRelationIds(record, relation, schema, store, resource, metadata);
         includedFields.add(parsed.baseName);
-      } else {
+      } else if (canProjectField(parsed.baseName)) {
         // Regular field
         result[parsed.baseName] = record[parsed.baseName];
         includedFields.add(parsed.baseName);
@@ -478,7 +493,7 @@ export function materializeSelect(
     } else if (parsed.directive === "#") {
       // Emit join rows for many-many
       if (relation.relation.type === "many-many") {
-        result[parsed.baseName] = getJoinRows(record, relation, schema, store);
+        result[parsed.baseName] = getJoinRows(record, relation, resource, schema, store, options?.visibleJoinRowsOnly === true);
       }
     } else if (parsed.directive === "*#") {
       // Expand relation with metadata for many-many
@@ -532,6 +547,7 @@ function getManyManyRows(
   record: Record<string, unknown>,
   match: DatafnRelationMatch,
   resource: string,
+  schema: DatafnSchema,
   store: DataStore,
 ): Array<Record<string, unknown>> {
   const relation = match.relation;
@@ -543,8 +559,89 @@ function getManyManyRows(
 
   return endpointList(relation.from).flatMap((fromResource) => {
     const joinRows = store.getJoinRows(relationKeyFor(fromResource, relation));
-    return joinRows.filter((j) => j.to === recordId);
+    return joinRows
+      .filter((j) => j.to === recordId &&
+        resolvePredicateEndpoint(schema, j.to, relation.to, j.toResource) === resource)
+      .map((j) => ({ ...j, fromResource }));
   });
+}
+
+function expandManyManyRecords(
+  record: Record<string, unknown>,
+  match: DatafnRelationMatch,
+  schema: DatafnSchema,
+  store: DataStore,
+  resource: string,
+  metadata?: QueryMetadata,
+) {
+  const joins = sortJoinRows(getManyManyRows(record, match, resource, schema, store), match.relation);
+  return joins.flatMap((join) => {
+    const target = joinTarget(join, match, schema);
+    if (!target) return [];
+    const related = store.getRecord(target.resource, target.id);
+    if (!related || filterAncestorInactiveRecords([related], match, metadata).length === 0) return [];
+    return [{ record: related, resource: target.resource, join }];
+  });
+}
+
+function joinTarget(join: Record<string, unknown>, match: DatafnRelationMatch, schema: DatafnSchema) {
+  const isForward = match.direction === "forward";
+  const id = isForward ? join.to : join.from;
+  if (typeof id !== "string") return undefined;
+  const discriminator = isForward ? join.toResource : join.fromResource;
+  const resource = resolvePredicateEndpoint(schema, id, targetEndpointFor(match), discriminator);
+  return resource ? { id, resource } : undefined;
+}
+
+function projectableJoinRows(
+  record: Record<string, unknown>,
+  match: DatafnRelationMatch,
+  schema: DatafnSchema,
+  store: DataStore,
+  resource: string,
+  visibleOnly = false,
+) {
+  const requireVisible = visibleOnly || store.requireVisibleRelatedRecords;
+  const privateEndpoints = new Set(endpointList(targetEndpointFor(match)).filter((endpoint) =>
+    isPrivateShareableResource(schema, endpoint),
+  ));
+  const rows = getManyManyRows(record, match, resource, schema, store).filter((row) => {
+    const target = joinTarget(row, match, schema);
+    if (!target) return false;
+    return (!requireVisible && !privateEndpoints.has(target.resource)) ||
+      Boolean(store.getRecord(target.resource, target.id));
+  });
+  return sortJoinRows(rows, match.relation);
+}
+
+function relationReturnsSingleRecord(match: DatafnRelationMatch): boolean {
+  return (match.relation.type === "many-one" && match.direction === "forward") ||
+    (match.relation.type === "one-many" && match.direction === "inverse");
+}
+
+function needsQualifiedForeignKeyProjection(match: DatafnRelationMatch): boolean {
+  const { relation } = match;
+  return isPolymorphicForeignKey(relation) || (
+    (relation.type === "many-one" || relation.type === "one-many") &&
+    !relationReturnsSingleRecord(match) && endpointList(targetEndpointFor(match)).length > 1
+  );
+}
+
+function expandQualifiedRecords(
+  record: Record<string, unknown>,
+  match: DatafnRelationMatch,
+  schema: DatafnSchema,
+  store: DataStore,
+  resource: string,
+  metadata?: QueryMetadata,
+) {
+  if (match.relation.type === "many-many") {
+    return expandManyManyRecords(record, match, schema, store, resource, metadata);
+  }
+  if (!needsQualifiedForeignKeyProjection(match)) return undefined;
+  return getForeignKeyRelatedRecords(record, match, store, resource, schema)
+    .filter(({ record }) => filterAncestorInactiveRecords([record], match, metadata).length > 0)
+    .sort((a, b) => String(a.record.id || "").localeCompare(String(b.record.id || "")));
 }
 
 /**
@@ -553,6 +650,7 @@ function getManyManyRows(
 function getRelationIds(
   record: Record<string, unknown>,
   match: DatafnRelationMatch,
+  schema: DatafnSchema,
   store: DataStore,
   resource: string,
   metadata?: QueryMetadata,
@@ -560,12 +658,20 @@ function getRelationIds(
   const relation = match.relation;
   const isForward = match.direction === "forward";
 
-  if (relation.type === "many-one") {
-    if (isForward) {
-      const fkField = relationFkFieldForManyOne(relation);
-      const relatedId = record[fkField] as string | undefined;
-      return relatedId || null;
+  if (relationReturnsSingleRecord(match)) {
+    const target = foreignKeyTargetResolver(schema, relation)(record);
+    if (!target) return null;
+    if (store.requireVisibleRelatedRecords || isPrivateShareableResource(schema, target.resource)) {
+      return store.getRecord(target.resource, target.id) ? target.id : null;
     }
+    return target.id;
+  }
+
+  if (isPolymorphicForeignKey(relation) && !relationReturnsSingleRecord(match)) {
+    return expandQualifiedRecords(record, match, schema, store, resource, metadata)?.map(({ record }) => record.id);
+  }
+
+  if (relation.type === "many-one") {
     const fkField = relationFkFieldForManyOne(relation);
     const records = endpointList(relation.from).flatMap((targetResource) =>
       store.findRecords(targetResource, fkField, record.id),
@@ -574,15 +680,11 @@ function getRelationIds(
   }
 
   if (relation.type === "many-many") {
-    const sortedJoins = sortJoinRows(getManyManyRows(record, match, resource, store), relation);
+    const sortedJoins = projectableJoinRows(record, match, schema, store, resource);
     return sortedJoins.map((j) => (isForward ? j.to : j.from));
   }
 
   if (relation.type === "one-many") {
-    if (!isForward) {
-      const fkField = relation.fkField || relation.foreignKey || `${relation.inverse}Id`;
-      return (record[fkField] as string | undefined) || null;
-    }
     const fkField = relation.fkField || relation.foreignKey || `${relation.inverse}Id`;
     const relatedRecords = endpointList(relation.to).flatMap((targetResource) =>
       store.findRecords(targetResource, fkField, record.id),
@@ -640,17 +742,6 @@ function expandRelationToRecords(
     return filterAncestorInactiveRecords(records, match, metadata);
   }
 
-  if (relation.type === "many-many") {
-    const sortedJoins = sortJoinRows(getManyManyRows(record, match, resource, store), relation);
-
-    return sortedJoins
-      .map((join) => {
-        const targetId = isForward ? join.to : join.from;
-        return store.getRecord(recordResourceName(schema, targetId, targetEndpoint), targetId as string);
-      })
-      .filter(isMaterializedRecord);
-  }
-
   if (relation.type === "one-many") {
     if (!isForward) {
       const fkField = relation.fkField || relation.foreignKey || `${relation.inverse}Id`;
@@ -689,8 +780,13 @@ function expandRelation(
   const relation = match.relation;
   const isForward = match.direction === "forward";
   const currentResource = resource ?? firstEndpoint(match.direction === "forward" ? relation.from : relation.to);
-  const targetEndpoint = targetEndpointFor(match);
-
+  if (needsQualifiedForeignKeyProjection(match)) {
+    const records = expandQualifiedRecords(record, match, schema, store, currentResource, metadata) ?? [];
+    const materialized = records.map(({ record, resource }) =>
+      materializeRelatedRecord(record, match, ["*"], schema, store, omit, metadata, resource),
+    );
+    return relationReturnsSingleRecord(match) ? materialized[0] ?? null : materialized;
+  }
   if (relation.type === "many-one") {
     const records = expandRelationToRecords(record, match, schema, store, currentResource, metadata);
     if (!records) return isForward ? null : [];
@@ -703,41 +799,18 @@ function expandRelation(
   }
 
   if (relation.type === "many-many") {
-    const sortedJoins = sortJoinRows(getManyManyRows(record, match, currentResource, store), relation);
-
-    if (!includeMetadata) {
-      return sortedJoins
-        .map((join) => {
-          const targetId = isForward ? join.to : join.from;
-          const relatedRecord = store.getRecord(recordResourceName(schema, targetId, targetEndpoint), targetId as string);
-          if (!relatedRecord) return null;
-          if (filterAncestorInactiveRecords([relatedRecord], match, metadata).length === 0) return null;
-          return materializeRelatedRecord(relatedRecord, match, ["*"], schema, store, omit, metadata);
-        })
-        .filter(isMaterializedRecord);
-    } else {
-      return sortedJoins
-        .map((join) => {
-          const targetId = isForward ? join.to : join.from;
-          const relatedRecord = store.getRecord(recordResourceName(schema, targetId, targetEndpoint), targetId as string);
-          if (!relatedRecord) return null;
-          if (filterAncestorInactiveRecords([relatedRecord], match, metadata).length === 0) return null;
-          const result = materializeRelatedRecord(relatedRecord, match, ["*"], schema, store, omit, metadata);
-
-          const relationMetadata: Record<string, unknown> = {};
-          if (relation.metadata) {
-            for (const metaField of relation.metadata) {
-              if (join[metaField.name] !== undefined) {
-                relationMetadata[metaField.name] = join[metaField.name];
-              }
-            }
-          }
-          result.$relation_metadata = relationMetadata;
-
-          return applyOmit(result, omit);
-        })
-        .filter(isMaterializedRecord);
-    }
+    return expandManyManyRecords(record, match, schema, store, currentResource, metadata).map((related) => {
+      const result = materializeRelatedRecord(related.record, match, ["*"], schema, store, omit, metadata, related.resource);
+      if (!includeMetadata) return result;
+      const relationMetadata: Record<string, unknown> = {};
+      for (const field of relation.metadata ?? []) {
+        if (related.join[field.name] !== undefined) {
+          relationMetadata[field.name] = related.join[field.name];
+        }
+      }
+      result.$relation_metadata = relationMetadata;
+      return applyOmit(result, omit);
+    });
   }
 
   // one-many: inverse of many-one
@@ -760,16 +833,13 @@ function expandRelation(
 function getJoinRows(
   record: Record<string, unknown>,
   match: DatafnRelationMatch,
+  resource: string,
   schema: DatafnSchema,
   store: DataStore,
+  visibleOnly: boolean,
 ): unknown[] {
   const relation = match.relation;
-  const resource = recordResourceName(
-    schema,
-    record.id,
-    match.direction === "forward" ? relation.from : relation.to,
-  );
-  const sorted = sortJoinRows(getManyManyRows(record, match, resource, store), relation);
+  const sorted = projectableJoinRows(record, match, schema, store, resource, visibleOnly);
 
   // Return join rows with from, to, and metadata
   return sorted.map((join) => {

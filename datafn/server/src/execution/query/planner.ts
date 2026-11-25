@@ -523,11 +523,10 @@ export function classifyQuery(
       // Rule 4: HTREE tokens → IN_MEMORY
       if (isHtreeSelectBase(baseName, query.resource, schema)) return "IN_MEMORY";
 
-      // The partial push-down loader follows two relation levels
-      // (`tasks.tags.*`). A deeper path that leads back to the primary
+      // A path beyond two relation levels that leads back to the primary
       // resource (e.g. `parent.parent.childNodes.*`,
       // `parent.objective.nodes.*`) is expanded in memory, where the whole
-      // primary resource is loaded; other deep paths keep the loader.
+      // primary resource is loaded.
       const path = relationPath(parts, query.resource, schema);
       if (path.depth > 2 && path.reachesPrimary) return "IN_MEMORY";
 

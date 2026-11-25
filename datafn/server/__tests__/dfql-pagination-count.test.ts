@@ -24,7 +24,7 @@ describe("DFQL Pagination, Count & Ops (Phase 14)", () => {
 
   beforeEach(async () => {
     adapter = memoryAdapter();
-    server = await createDatafnServer({ allowUnknownResources: true,
+    server = await createDatafnServer({ allowUnknownResources: true, debug: true,
       database: adapter,
       schema,
     });

@@ -23,12 +23,7 @@ import { materializeSelect } from "../../execution/query/select.js";
 import { parseSortTerms, sortRecords } from "../../execution/query/sort.js";
 import { executeSearchQuery } from "../../execution/query/search.js";
 import { DatafnExecutionError } from "../../execution/errors.js";
-import {
-  findRelationMatch,
-  relationTargetEndpoint,
-  resolveEndpointResource,
-  resourceNameFromId,
-} from "@datafn/core";
+import { findRelationMatch } from "@datafn/core";
 import {
   executeDbNativeResourceSearch,
   hasDbNativeSearchSupport,
@@ -51,7 +46,7 @@ function mergeAnchorFilter(
   return { $and: [filters, idFilter] };
 }
 
-function relationQuerySelectTokens(relationName: string, select: unknown): string[] {
+export function relationQuerySelectTokens(relationName: string, select: unknown): string[] {
   const tokens = Array.isArray(select) && select.length > 0 ? select : ["*"];
   return tokens
     .filter((token): token is string => typeof token === "string")
@@ -75,35 +70,6 @@ function isMetadataOnlyRelationSelect(select: unknown): boolean {
   return Array.isArray(select) && select.length === 1 && select[0] === "#";
 }
 
-function relatedResourceForRow(
-  row: Record<string, unknown>,
-  match: NonNullable<ReturnType<typeof findRelationMatch>>,
-  schema: DatafnSchema,
-): string | undefined {
-  const targetEndpoint = relationTargetEndpoint(match.relation, match.direction);
-  const relatedId = match.direction === "forward" ? row.to : row.from;
-  return resolveEndpointResource(targetEndpoint, relatedId, schema) ?? resourceNameFromId(relatedId);
-}
-
-function filterVisibleRelationRows(
-  rows: Record<string, unknown>[],
-  match: NonNullable<ReturnType<typeof findRelationMatch>>,
-  schema: DatafnSchema,
-  store: DbDataStore,
-): Record<string, unknown>[] {
-  return rows.filter((row) => {
-    const relatedId = match.direction === "forward" ? row.to : row.from;
-    if (typeof relatedId !== "string") {
-      return false;
-    }
-    const relatedResource = relatedResourceForRow(row, match, schema);
-    if (!relatedResource) {
-      return false;
-    }
-    return Boolean(store.getRecord(relatedResource, relatedId));
-  });
-}
-
 async function executeRelationQuery(
   query: Record<string, unknown>,
   schema: DatafnSchema,
@@ -114,6 +80,7 @@ async function executeRelationQuery(
   logger?: DatafnLogger,
   timer?: ExecutionTimer | null,
   multiRegionRuntime?: DatafnMultiRegionRuntimeConfig | null,
+  allowUnknownResources = true,
 ): Promise<unknown> {
   const resource = query.resource as string;
   const relationName = query.relation as string;
@@ -166,6 +133,8 @@ async function executeRelationQuery(
     logger,
     timer,
     multiRegionRuntime,
+    // Keep the anchor's stored keys through hydration of the related records.
+    { allowUnknownResources, projectRecords: false },
   );
   const anchorData =
     anchorResult &&
@@ -190,6 +159,7 @@ async function executeRelationQuery(
     namespace,
     logger,
     actorId,
+    allowUnknownResources,
   );
   const materialized = materializeSelect(
     anchorData[0],
@@ -199,12 +169,9 @@ async function executeRelationQuery(
     store,
     Array.isArray(query.omit) ? (query.omit as string[]) : undefined,
     query.metadata as Record<string, unknown> | undefined,
+    { visibleJoinRowsOnly: isMetadataOnlyRelationSelect(query.select) },
   );
-  const relationValue = materialized[relationName];
-  let data = normalizeRelationQueryValue(relationValue);
-  if (match.relation.type === "many-many" && isMetadataOnlyRelationSelect(query.select)) {
-    data = filterVisibleRelationRows(data, match, schema, store);
-  }
+  let data = normalizeRelationQueryValue(materialized[relationName]);
   if (Array.isArray(query.sort)) {
     data = sortRecords(data, parseSortTerms(query.sort as import("@datafn/core").SortInputTerm[]));
   }
@@ -235,8 +202,9 @@ export async function executeSingleQuery(
   logger?: DatafnLogger,
   timer?: ExecutionTimer | null,
   multiRegionRuntime?: DatafnMultiRegionRuntimeConfig | null,
-  timezoneNamespace: string = namespace,
+  options: { timezoneNamespace?: string; allowUnknownResources?: boolean; projectRecords?: boolean } = {},
 ): Promise<unknown> {
+  const { timezoneNamespace = namespace, allowUnknownResources = true, projectRecords = true } = options;
   if (typeof query.relation === "string" && typeof query.id === "string") {
     return executeRelationQuery(
       query,
@@ -248,6 +216,7 @@ export async function executeSingleQuery(
       logger,
       timer,
       multiRegionRuntime,
+      allowUnknownResources,
     );
   }
 
@@ -266,8 +235,8 @@ export async function executeSingleQuery(
   if (strategy === "FULL_PUSHDOWN" || strategy === "PARTIAL_PUSHDOWN") {
     try {
       return strategy === "FULL_PUSHDOWN"
-        ? await executePushdownQuery(query as any, schema, db, namespace, actorId)
-        : await executePartialPushdownQuery(query as any, schema, db, namespace, actorId);
+        ? await executePushdownQuery(query as any, schema, db, namespace, actorId, allowUnknownResources, projectRecords)
+        : await executePartialPushdownQuery(query as any, schema, db, namespace, actorId, allowUnknownResources);
     } catch (error) {
       // A relation filter matched too many records to push down; evaluate
       // the query in memory below.
@@ -326,6 +295,7 @@ export async function executeSingleQuery(
     preFilterWhere,
     logger,
     actorId,
+    allowUnknownResources,
   );
 
   // Execute search query or regular query
@@ -383,7 +353,7 @@ export async function executeSingleQuery(
     );
   }
 
-  return executeQuery(query as any, schema, store, temporalPlan.config);
+  return executeQuery(query as any, schema, store, temporalPlan.config, projectRecords);
 }
 
 /**

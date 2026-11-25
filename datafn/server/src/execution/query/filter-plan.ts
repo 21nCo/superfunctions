@@ -27,7 +27,6 @@ import {
   endpointList,
   evaluateFilter as coreEvaluateFilter,
   findRelationMatch,
-  firstEndpoint,
   getCapabilityFields,
   getRelationJoinTableName,
   relationFkFieldForManyOne,
@@ -35,14 +34,15 @@ import {
   resolveCapabilities,
   normalizeFilterOps,
   resolveEndpointResource,
-  resourceNameFromId,
 } from "@datafn/core";
 import type { DatafnSchema } from "../../core-types.js";
 import {
+  hasResourceReadPolicy,
   isNamespaceOwnerActor,
   isPrivateShareableResource,
   resolveAccessLevel,
 } from "../../validation/authz.js";
+import { isPolymorphicForeignKey, relationForeignKey, resolvePredicateEndpoint } from "./filters.js";
 import { MAX_PUSHDOWN_IN_VALUES } from "./planner.js";
 
 /** Most disjoint WHERE lists one filter may expand to (one per OR-group combination). */
@@ -93,6 +93,7 @@ export interface FilterPlanContext {
   db: Adapter;
   namespace: string;
   actorId?: string;
+  allowUnknownResources?: boolean;
 }
 
 /**
@@ -344,6 +345,8 @@ function compileRelationFilter(
   // `$none` with the foreign key on the primary side needs `fk IS NULL OR
   // fk NOT IN (…)`; it stays in memory.
   if (quantifier === "$none" && foreignKeyOnPrimary(match)) return null;
+  // FK membership alone cannot distinguish polymorphic records that share an ID.
+  if (isPolymorphicForeignKey(relation)) return null;
 
   const targets = new Map<string, Conjunct[]>();
   for (const target of endpointList(relationTargetEndpoint(match.relation, match.direction))) {
@@ -497,27 +500,6 @@ function foreignKeyOnPrimary(match: RelationMatch): boolean {
     (type === "one-many" && match.direction === "inverse");
 }
 
-/** The foreign key field of a many-one or one-many relation, as the in-memory evaluator reads it. */
-function relationForeignKey(match: RelationMatch): string {
-  const relation = match.relation as any;
-  return relation.type === "many-one"
-    ? relationFkFieldForManyOne(relation)
-    : relation.fkField || relation.foreignKey || `${relation.inverse}Id`;
-}
-
-/** Resource of a related record id, resolved like the in-memory evaluator does. */
-function relatedResourceFor(
-  schema: DatafnSchema,
-  id: unknown,
-  endpoint: string | readonly string[],
-): string {
-  return (
-    resolveEndpointResource(endpoint as any, id, schema as any) ??
-    resourceNameFromId(id) ??
-    firstEndpoint(endpoint as any)
-  );
-}
-
 async function filterVisibleRows(
   rows: Record<string, unknown>[],
   resource: string,
@@ -583,6 +565,7 @@ async function findMatchingRelated(
   const matching = new Map<string, Record<string, unknown>[]>();
   let total = 0;
   for (const [resource, conjuncts] of targets) {
+    if (ctx.allowUnknownResources === false && !hasResourceReadPolicy(schema, resource)) continue;
     const branches = expandBranches(conjuncts, extra);
     if (!branches) return null;
     const rows: Record<string, unknown>[] = [];
@@ -612,17 +595,17 @@ function joinRowsForFromResource(
   relation: any,
   fromResource: string,
   schema: DatafnSchema,
-): Array<{ from: unknown; to: unknown }> {
+): Array<{ from: unknown; to: unknown; toResource: unknown }> {
   const fromCol = relation.joinColumns?.from ?? "from";
   const toCol = relation.joinColumns?.to ?? "to";
-  const out: Array<{ from: unknown; to: unknown }> = [];
+  const out: Array<{ from: unknown; to: unknown; toResource: unknown }> = [];
   for (const row of rows) {
     const from = row[fromCol];
     const discriminator = row.fromResource;
     const rowResource = typeof discriminator === "string"
       ? discriminator
       : resolveEndpointResource(relation.from, from, schema as any);
-    if (rowResource === fromResource) out.push({ from, to: row[toCol] });
+    if (rowResource === fromResource) out.push({ from, to: row[toCol], toResource: row.toResource });
   }
   return out;
 }
@@ -650,7 +633,7 @@ async function resolveRelationConjunct(
   };
 
   if (relation.type === "many-one" || relation.type === "one-many") {
-    const fk = relationForeignKey(match);
+    const fk = relationForeignKey(relation);
     if (foreignKeyOnPrimary(match)) {
       // `$any` only (compile rejects `$none` here): fk IN matching related ids.
       const matching = await findMatchingRelated(targets, subFilter, schema, ctx);
@@ -658,7 +641,7 @@ async function resolveRelationConjunct(
       const ids = new Set<unknown>();
       for (const [resource, rows] of matching) {
         for (const row of rows) {
-          if (relatedResourceFor(schema, row.id, targetEndpoint) === resource) ids.add(row.id);
+          if (resolvePredicateEndpoint(schema, row.id, targetEndpoint) === resource) ids.add(row.id);
         }
       }
       if (ids.size === 0) return "empty";
@@ -684,12 +667,10 @@ async function resolveRelationConjunct(
   if (!matching) return "unavailable";
   const isForward = match.direction === "forward";
   const relatedIds = new Set<unknown>();
-  for (const [resource, rows] of matching) {
-    for (const row of rows) {
-      if (relatedResourceFor(schema, row.id, targetEndpoint) === resource) relatedIds.add(row.id);
-    }
+  for (const rows of matching.values()) {
+    for (const row of rows) relatedIds.add(row.id);
   }
-  const links: Array<{ relatedId: unknown; primaryId: unknown }> = [];
+  const links: Array<{ resource: string; relatedId: unknown; primaryId: unknown }> = [];
   if (relatedIds.size > 0) {
     const fromResources = isForward ? [primaryResource] : endpointList(relation.from);
     const matchColumn = isForward
@@ -702,27 +683,37 @@ async function resolveRelationConjunct(
         namespace: ctx.namespace,
       });
       for (const row of joinRowsForFromResource(rows, relation, fromResource, schema)) {
+        if (!isForward && resolvePredicateEndpoint(schema, row.to, relation.to, row.toResource) !== primaryResource) {
+          continue;
+        }
         const relatedId = isForward ? row.to : row.from;
         const primaryId = isForward ? row.from : row.to;
         if (relatedIds.has(relatedId) && primaryId !== null && primaryId !== undefined) {
-          links.push({ relatedId, primaryId });
+          const resource = isForward
+            ? resolvePredicateEndpoint(schema, relatedId, targetEndpoint, row.toResource)
+            : fromResource;
+          links.push({ resource, relatedId, primaryId });
         }
       }
     }
   }
-  const linkedIds = new Set(links.map((link) => link.relatedId));
-  const visibleIds = new Set<unknown>();
+  const linkedIds = new Map<string, Set<unknown>>();
+  for (const { resource, relatedId } of links) {
+    const ids = linkedIds.get(resource) ?? new Set();
+    ids.add(relatedId);
+    linkedIds.set(resource, ids);
+  }
+  const visibleIds = new Map<string, Set<unknown>>();
   for (const [resource, rows] of matching) {
-    // Only rows of the resource the id resolves to: another target resource
-    // can hold a record with the same id whose visibility must not count.
-    const linked = rows.filter(
-      (row) => linkedIds.has(row.id) && relatedResourceFor(schema, row.id, targetEndpoint) === resource,
-    );
-    for (const row of await filterVisibleRows(linked, resource, schema, ctx)) visibleIds.add(row.id);
+    const ids = linkedIds.get(resource);
+    if (!ids) continue;
+    const linked = rows.filter((row) => ids.has(row.id));
+    const visible = await filterVisibleRows(linked, resource, schema, ctx);
+    visibleIds.set(resource, new Set(visible.map((row) => row.id)));
   }
   const primaryIds = new Set<unknown>();
   for (const link of links) {
-    if (visibleIds.has(link.relatedId)) primaryIds.add(link.primaryId);
+    if (visibleIds.get(link.resource)?.has(link.relatedId)) primaryIds.add(link.primaryId);
   }
   return idClause(primaryIds);
 }

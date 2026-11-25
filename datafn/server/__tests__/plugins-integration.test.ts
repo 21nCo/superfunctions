@@ -252,7 +252,7 @@ describe("Phase 10: Plugin Integration Tests", () => {
         ],
         relations: [],
       };
-      const server = await createDatafnServer({ allowUnknownResources: true,
+      const server = await createDatafnServer({ allowUnknownResources: true, debug: true,
         schema,
         database: db,
       });

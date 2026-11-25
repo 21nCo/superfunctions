@@ -6,16 +6,53 @@
 
 import {
   endpointList,
+  endpointIncludes,
   evaluateFilter as coreEvaluateFilter,
   findRelationMatch,
   firstEndpoint,
+  getCapabilityFields,
+  getRelationFkFieldsForResource,
   OP_REMAP,
   relationKeyFor,
   relationTargetEndpoint,
   relationFkFieldForManyOne,
+  resolveCapabilities,
   resolveEndpointResource,
-  resourceNameFromId,
+  type DatafnRelationMatch,
 } from "@datafn/core";
+import type { DatafnFieldSchema, DatafnRelationSchema, DatafnResourceSchema, DatafnSchema } from "../../core-types.js";
+import { DatafnExecutionError } from "../errors.js";
+import { fkResourceFieldForRelation } from "../relations/foreign-key.js";
+import type { DataStore } from "../store.js";
+
+// Keep the same traversal bound as Core's dot-path evaluator.
+const MAX_RELATION_FILTER_DEPTH = 10;
+
+type FilterResource = {
+  name: string;
+  fields: readonly { name: string; type?: DatafnFieldSchema["type"] }[];
+  capabilities?: DatafnResourceSchema["capabilities"];
+};
+
+type FilterSchema = {
+  resources: readonly FilterResource[];
+  relations?: readonly unknown[];
+  capabilities?: DatafnSchema["capabilities"];
+};
+
+/** A dot-path rooted in a declared structured field stays inside that field. */
+export function isNestedFilterField(resource: FilterResource | undefined, name: string): boolean {
+  const field = resource?.fields.find((candidate) => candidate.name === name);
+  return field?.type === "object" || field?.type === "json" || field?.type === "array" || field?.type === "file";
+}
+
+export function hasPredicateField(schema: FilterSchema, resource: FilterResource, name: string): boolean {
+  if (name === "id" || resource.fields.some((field) => field.name === name)) return true;
+  if (getRelationFkFieldsForResource(schema as DatafnSchema, resource.name)
+    .some(({ field, resourceField }) => field === name || resourceField === name)) return true;
+  return getCapabilityFields(resolveCapabilities(schema.capabilities, resource.capabilities))
+    .some((field) => field.name === name);
+}
 
 function normalizeOps(value: unknown): unknown {
   if (typeof value !== "object" || value === null) return value;
@@ -29,14 +66,43 @@ function normalizeOps(value: unknown): unknown {
   return out;
 }
 
-function buildResolver(schema: any, store: any) {
-  return (resource: string, recordId: string, relName: string): Record<string, unknown>[] => {
-    const rel = findRelation(schema, resource, relName);
-    if (!rel) return [];
-    const rec = store.getRecord(resource, recordId);
-    if (!rec) return [];
-    return getRelatedRecords(rec, rel, store, resource, schema);
-  };
+function evaluateFieldFilter(
+  record: Record<string, unknown>,
+  key: string,
+  value: unknown,
+  resourceName: string,
+  schema: FilterSchema,
+  store: DataStore,
+  related: boolean,
+  depth = 0,
+): boolean {
+  if (depth > MAX_RELATION_FILTER_DEPTH) {
+    throw new DatafnExecutionError(
+      "DFQL_INVALID",
+      `Filter nesting depth exceeds maximum of ${MAX_RELATION_FILTER_DEPTH}`,
+      "filters",
+    );
+  }
+  const dot = key.indexOf(".");
+  const head = dot === -1 ? key : key.slice(0, dot);
+  const source = related || dot !== -1
+    ? schema.resources.find((candidate) => candidate.name === resourceName)
+    : undefined;
+  const knownField = !related || (!!source && hasPredicateField(schema, source, head));
+  if (dot === -1 || (knownField && record[head] != null)) {
+    return coreEvaluateFilter(knownField ? record : Object.create(null), { [key]: value });
+  }
+
+  if (isNestedFilterField(source, head)) return false;
+  const relation = findRelation(schema, resourceName, head);
+  if (!relation) return false;
+  const tail = key.slice(dot + 1);
+  if (tail === "__proto__" || tail === "constructor" || tail === "prototype") {
+    throw new DatafnExecutionError("DFQL_INVALID", "Unsafe relation filter path", "filters");
+  }
+  return getRelatedRecords(record, relation, store, resourceName, schema).some(({ resource, record: related }) =>
+    evaluateFieldFilter(related, tail, value, resource, schema, store, true, depth + 1),
+  );
 }
 
 /**
@@ -47,24 +113,23 @@ export function evaluateFilter(
   record: Record<string, unknown>,
   filters: Record<string, unknown>,
   resourceName: string,
-  schema: any,
+  schema: FilterSchema,
   store: any,
+  related = false,
 ): boolean {
-  const resolveRelation = buildResolver(schema, store);
-
   for (const [key, value] of Object.entries(filters)) {
     // Recurse $and/$or through server's evaluateFilter (handles nested quantifiers)
     if (key === "$and") {
       if (!Array.isArray(value)) return false;
       if (!(value as Record<string, unknown>[]).every((sub) =>
-        evaluateFilter(record, sub, resourceName, schema, store)
+        evaluateFilter(record, sub, resourceName, schema, store, related)
       )) return false;
       continue;
     }
     if (key === "$or") {
       if (!Array.isArray(value)) return false;
       if (!(value as Record<string, unknown>[]).some((sub) =>
-        evaluateFilter(record, sub, resourceName, schema, store)
+        evaluateFilter(record, sub, resourceName, schema, store, related)
       )) return false;
       continue;
     }
@@ -78,10 +143,7 @@ export function evaluateFilter(
       }
     }
 
-    // Delegate field filters to core (with operator normalization + relation resolver)
-    const normalizedValue = normalizeOps(value);
-    const fieldFilter = { [key]: normalizedValue };
-    if (!coreEvaluateFilter(record, fieldFilter, { resolveRelation, resource: resourceName })) {
+    if (!evaluateFieldFilter(record, key, normalizeOps(value), resourceName, schema, store, related)) {
       return false;
     }
   }
@@ -93,115 +155,144 @@ function findRelation(schema: any, resourceName: string, relationName: string) {
   return findRelationMatch(schema, resourceName, relationName) ?? null;
 }
 
-function recordResourceName(
-  schema: any,
+type RelatedRecord = { resource: string; record: Record<string, unknown> };
+
+/** A stored resource takes precedence. Unqualified legacy IDs use the first endpoint. */
+export function resolvePredicateEndpoint(
+  schema: FilterSchema,
   id: unknown,
-  fallback: string | readonly string[],
+  endpoint: string | readonly string[],
+  discriminator?: unknown,
 ): string {
-  return (
-    resolveEndpointResource(fallback, id, schema) ??
-    resourceNameFromId(id) ??
-    firstEndpoint(fallback)
-  );
+  if (typeof discriminator === "string") {
+    return endpointIncludes(endpoint, discriminator) ? discriminator : "";
+  }
+  return resolveEndpointResource(endpoint, id, schema) ?? firstEndpoint(endpoint);
+}
+
+export function relationForeignKey(relation: DatafnRelationSchema): string {
+  return relation.type === "many-one"
+    ? relationFkFieldForManyOne(relation)
+    : relation.fkField || relation.foreignKey || `${relation.inverse}Id`;
+}
+
+export function isPolymorphicForeignKey(relation: DatafnRelationSchema): boolean {
+  if (relation.type === "many-one") return endpointList(relation.to).length > 1;
+  return relation.type === "one-many" && Boolean(relation.fkField || relation.foreignKey) &&
+    endpointList(relation.from).length > 1;
+}
+
+export function foreignKeyTargetResolver(
+  schema: FilterSchema,
+  relation: DatafnRelationSchema,
+) {
+  const fk = relationForeignKey(relation);
+  const endpoint = relation.type === "many-one" ? relation.to : relation.from;
+  const discriminator = isPolymorphicForeignKey(relation)
+    ? fkResourceFieldForRelation(relation)
+    : undefined;
+  return (record: Record<string, unknown>) => {
+    const id = record[fk];
+    if (typeof id !== "string" || !id) return undefined;
+    const resource = resolvePredicateEndpoint(schema, id, endpoint, discriminator ? record[discriminator] : undefined);
+    return resource ? { id, resource } : undefined;
+  };
+}
+
+export function getForeignKeyRelatedRecords(
+  record: Record<string, unknown>,
+  match: DatafnRelationMatch,
+  store: DataStore,
+  resourceName: string,
+  schema: FilterSchema,
+): RelatedRecord[] {
+  const { relation, direction } = match;
+  if ((direction === "forward") === (relation.type === "many-one")) {
+    const target = foreignKeyTargetResolver(schema, relation)(record);
+    if (!target) return [];
+    const found = store.getRecord(target.resource, target.id);
+    return found ? [{ resource: target.resource, record: found }] : [];
+  }
+  const fk = relationForeignKey(relation);
+  const resolveTarget = isPolymorphicForeignKey(relation) ? foreignKeyTargetResolver(schema, relation) : undefined;
+  return endpointList(relationTargetEndpoint(relation, direction)).flatMap((resource) => {
+    return store.findRecords(resource, fk, record.id)
+      .filter((found) => !resolveTarget || resolveTarget(found)?.resource === resourceName)
+      .map((found) => ({ resource, record: found }));
+  });
 }
 
 function getRelatedRecords(
-  record: any,
-  rel: any,
-  store: any,
+  record: Record<string, unknown>,
+  rel: NonNullable<ReturnType<typeof findRelationMatch>>,
+  store: DataStore,
   resourceName: string,
-  schema: any,
-): Record<string, unknown>[] {
+  schema: FilterSchema,
+): RelatedRecord[] {
   const relation = rel.relation;
   const direction = rel.direction;
   const isForward = direction === "forward";
   const targetEndpoint = relationTargetEndpoint(relation, direction);
-
-  if (relation.type === "many-one") {
-    if (isForward) {
-      const fk = relationFkFieldForManyOne(relation);
-      const targetId = record[fk];
-      if (!targetId) return [];
-      const target = store.getRecord(recordResourceName(schema, targetId, targetEndpoint), targetId as string);
-      return target ? [target] : [];
-    } else {
-      const fk = relationFkFieldForManyOne(relation);
-      return endpointList(targetEndpoint).flatMap((targetResource) =>
-        store.findRecords(targetResource, fk, record.id),
-      );
-    }
-  } else if (relation.type === "one-many") {
-    if (isForward) {
-      const fk = relation.fkField || relation.foreignKey || `${relation.inverse}Id`;
-      return endpointList(targetEndpoint).flatMap((targetResource) =>
-        store.findRecords(targetResource, fk, record.id),
-      );
-    } else {
-      const fk = relation.fkField || relation.foreignKey || `${relation.inverse}Id`;
-      const targetId = record[fk];
-      if (!targetId) return [];
-      const target = store.getRecord(recordResourceName(schema, targetId, targetEndpoint), targetId as string);
-      return target ? [target] : [];
-    }
-  } else if (relation.type === "many-many") {
+  const findById = (id: unknown, endpoint = targetEndpoint, discriminator?: unknown): RelatedRecord[] => {
+    if (typeof id !== "string" || !id) return [];
+    const resource = resolvePredicateEndpoint(schema, id, endpoint, discriminator);
+    const found = resource ? store.getRecord(resource, id) : null;
+    return found ? [{ resource, record: found }] : [];
+  };
+  if (relation.type === "many-one" || relation.type === "one-many") {
+    return getForeignKeyRelatedRecords(record, rel, store, resourceName, schema);
+  }
+  if (relation.type === "many-many") {
     if (isForward) {
       const joinRows = store.getJoinRows(relationKeyFor(resourceName, relation));
-      const relatedIds = joinRows
-        .filter((row: any) => row.from === record.id)
-        .map((row: any) => row.to);
-      return relatedIds
-        .map((id: unknown) => store.getRecord(recordResourceName(schema, id, targetEndpoint), id as string))
-        .filter((target: unknown): target is Record<string, unknown> => Boolean(target));
-    } else {
-      return endpointList(relation.from).flatMap((fromResource) => {
-        const joinRows = store.getJoinRows(relationKeyFor(fromResource, relation));
-        return joinRows
-          .filter((row: any) => row.to === record.id)
-          .map((row: any) => row.from)
-          .map((id: unknown) => store.getRecord(recordResourceName(schema, id, targetEndpoint), id as string))
-          .filter((target: unknown): target is Record<string, unknown> => Boolean(target));
-      });
+      return joinRows
+        .filter((row) => row.from === record.id)
+        .flatMap((row) => findById(row.to, targetEndpoint, row.toResource));
     }
+    return endpointList(relation.from).flatMap((resource) => {
+      const joinRows = store.getJoinRows(relationKeyFor(resource, relation));
+      return joinRows
+        .filter((row) => row.to === record.id &&
+          resolvePredicateEndpoint(schema, row.to, relation.to, row.toResource) === resourceName)
+        .flatMap((row) => findById(row.from, resource));
+    });
   }
   return [];
 }
 
 function evaluateRelationFilter(
-  record: any,
+  record: Record<string, unknown>,
   relationName: string,
   ops: any,
   resourceName: string,
-  schema: any,
-  store: any,
+  schema: FilterSchema,
+  store: DataStore,
 ): boolean {
   const rel = findRelation(schema, resourceName, relationName);
   if (!rel) return false;
 
   const relatedRecords = getRelatedRecords(record, rel, store, resourceName, schema);
-  const targetEndpoint = relationTargetEndpoint(rel.relation, rel.direction);
-  const relatedResource = (relatedRecord: Record<string, unknown>) =>
-    recordResourceName(schema, relatedRecord.id, targetEndpoint);
 
   if (ops.$any) {
     const subFilter = ops.$any as Record<string, unknown>;
-    return relatedRecords.some((r) =>
-      evaluateFilter(r, subFilter, relatedResource(r), schema, store),
+    return relatedRecords.some(({ record, resource }) =>
+      evaluateFilter(record, subFilter, resource, schema, store, true),
     );
   }
 
   if (ops.$all) {
     const subFilter = ops.$all as Record<string, unknown>;
     if (relatedRecords.length === 0) return false;
-    return relatedRecords.every((r) =>
-      evaluateFilter(r, subFilter, relatedResource(r), schema, store),
+    return relatedRecords.every(({ record, resource }) =>
+      evaluateFilter(record, subFilter, resource, schema, store, true),
     );
   }
 
   if (ops.$none) {
     const subFilter = ops.$none as Record<string, unknown>;
     if (relatedRecords.length === 0) return true;
-    return !relatedRecords.some((r) =>
-      evaluateFilter(r, subFilter, relatedResource(r), schema, store),
+    return !relatedRecords.some(({ record, resource }) =>
+      evaluateFilter(record, subFilter, resource, schema, store, true),
     );
   }
 

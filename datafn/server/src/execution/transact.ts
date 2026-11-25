@@ -4,11 +4,12 @@
 
 import type { DatafnErrorCode, DatafnSchema, DatafnPlugin } from "../core-types.js";
 import type { Adapter } from "@superfunctions/db";
-import type { IdempotencyStore, MutationResult } from "./idempotency.js";
+import type { IdempotencyStore } from "./idempotency.js";
 import type { DFQLMutation } from "./mutation/dfql.js";
 import type { SequenceStore } from "./sync/sequence-store.js";
 import { executeMutation } from "./mutation/execute.js";
 import { executeQuery } from "./query/execute.js";
+import { DatafnExecutionError } from "./errors.js";
 import { DbDataStore } from "./db-store.js";
 import { ChangeTrackingService } from "./sync/change-tracking.js";
 import type { DatafnLogger } from "../logger.js";
@@ -56,6 +57,7 @@ export async function executeTransaction(
   sequenceStore: SequenceStore | undefined,
   plugins: DatafnPlugin[] = [],
   logger?: DatafnLogger,
+  allowUnknownResources = true,
 ): Promise<TransactResult> {
   const steps = request.steps;
   const isAtomic = request.atomic !== false; // Default true
@@ -137,11 +139,12 @@ export async function executeTransaction(
         }
       });
     }
+    logger?.error("Transaction setup failed", { error: String(error), operation: "transact" });
     return {
       ok: false,
       error: {
         code: "INTERNAL",
-        message: `Transaction setup failed: ${error?.message || String(error)}`,
+        message: "Transaction failed",
         details: { path: "$" },
       },
     };
@@ -194,10 +197,21 @@ export async function executeTransaction(
         undefined,
         logger,
         actorId,
+        allowUnknownResources,
       );
       // Execute query
-      const queryResult = executeQuery(step.query, schema, store);
-      return queryResult;
+      try {
+        return executeQuery(step.query, schema, store);
+      } catch (error) {
+        // The in-memory evaluator can throw a plain DFQL validation error.
+        // Translate it here, after the adapter reads, to keep driver errors out.
+        if (error && typeof error === "object" && "code" in error &&
+            (error.code === "DFQL_INVALID" || error.code === "DFQL_UNSUPPORTED") &&
+            "message" in error && typeof error.message === "string") {
+          return { ok: false, error: { code: error.code, message: error.message } };
+        }
+        throw error;
+      }
     } else if (step.mutation) {
       const stepIdempotencyStore =
         idempotencyStore.withDb?.(stepDb) ?? idempotencyStore;
@@ -277,27 +291,22 @@ export async function executeTransaction(
           );
           results.push(result);
 
-          if (step.mutation) {
-            const mutRes = result as MutationResult;
-            if (!mutRes.ok) {
-              // REL-003: Annotate all prior ok results as rolled back
-              const failedStepIndex = i;
-              for (let j = 0; j < failedStepIndex; j++) {
-                const priorResult = results[j];
-                if (priorResult && typeof priorResult === "object" && priorResult.ok) {
-                  // DATA-41: a rolled-back step committed no revision.
-                  const { rev: _uncommitted, ...rolledBackResult } = priorResult as MutationResult;
-                  results[j] = {
-                    ok: false,
-                    rolledBack: true,
-                    result: rolledBackResult,
-                  };
-                }
-              }
-              // Rollback by throwing — the transaction callback will abort
-              throw { __transactionFailed: true, stepIndex: failedStepIndex };
+          if (!(result && "ok" in result && result.ok === false)) continue;
+          // REL-003: Annotate all prior ok results as rolled back
+          for (let j = 0; j < i; j++) {
+            const priorResult = results[j];
+            if (priorResult && typeof priorResult === "object" && priorResult.ok) {
+              // DATA-41: a rolled-back step committed no revision.
+              const { rev: _uncommitted, ...rolledBackResult } = priorResult as { rev?: number } & Record<string, unknown>;
+              results[j] = {
+                ok: false,
+                rolledBack: true,
+                result: rolledBackResult,
+              };
             }
           }
+          // Rollback by throwing — the transaction callback will abort
+          throw { __transactionFailed: true, stepIndex: i };
         }
       });
       await reconcilePermissionDirectoryAfterSettlement();
@@ -331,13 +340,14 @@ export async function executeTransaction(
         // Fall through to sequential execution below
       } else {
         await reconcilePermissionDirectoryAfterSettlement();
+        logger?.error("Transaction failed", { error: String(error), operation: "transact" });
         // DB-level error (serialization, timeout, constraint) → INTERNAL error
         // NEVER fall through to sequential execution when adapter HAS transaction support
         return {
           ok: false,
           error: {
             code: "INTERNAL",
-            message: `Transaction failed: ${msg || "unknown error"}`,
+            message: "Transaction failed",
             details: { path: "$" },
           },
         };
@@ -375,13 +385,9 @@ export async function executeTransaction(
       }
       results.push(result);
 
-      if (isAtomic && step.mutation) {
-        const mutRes = result as any;
-        if (mutRes?.ok === false) {
-          // Stop on first failure if atomic (even without rollback support we stop)
-          await drainPrequeuedUnshareTasks();
-          return { ok: true, result: { ok: false, results } };
-        }
+      if (isAtomic && result?.ok === false) {
+        await drainPrequeuedUnshareTasks();
+        return { ok: true, result: { ok: false, results } };
       }
     } catch (e: any) {
       // EXE-003: Include step context in error log
@@ -392,11 +398,12 @@ export async function executeTransaction(
         error: String(e?.message || e),
       });
       // Map to an error result
-      const errorCode =
-        typeof e?.code === "string" && e.code.length > 0 ? e.code : "INTERNAL";
+      const clientError = e instanceof DatafnExecutionError && e.code !== "INTERNAL"
+        ? { code: e.code, message: e.message }
+        : { code: "INTERNAL", message: "Internal error" };
       results.push({
         ok: false,
-        error: { code: errorCode, message: e?.message || String(e) }
+        error: clientError,
       });
       if (isAtomic) {
         await drainPrequeuedUnshareTasks();

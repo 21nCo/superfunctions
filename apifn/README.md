@@ -21,28 +21,19 @@ Your router is the source of truth: introspect it into OpenAPI 3.1, then drive v
 
 ### npm release dependency order
 
-The prepared release versions are `@apifn/core` **0.1.0** (the optional
-`@testfn/core` peer and the new `@apifn/core/testfn` subpath) and the next patch of
-every published package that pins it exactly: `@apifn/collections`,
-`@apifn/mock`, `@apifn/snippets`, `@apifn/react`, and `@apifn/svelte` (collections
-and mock **0.0.4**, the others **0.0.5**), `@apifn/admin` **0.1.2**, and
-`@apifn/docsfn` **0.1.2**. Publish core first, then collections, mock, snippets,
-React, Svelte, and admin, which all require that exact core version. Publish
-DocsFn after both renderers: it pins core 0.1.0 and React and Svelte 0.0.5. The
-admin wrapper also requires the published `@superfunctions/admin` **^0.1.4** peer
-so consumers share the same `AdminClient` type.
+The collection runner security update keeps exact pins aligned across the npm packages. Publish in this order.
 
-`@apifn/contracts` **0.1.0** also pins core to exactly 0.1.0 and publishes after
-core; it is not in the current publication batch. `@apifn/sdk` **0.1.0** depends on
-contracts and is not published yet either. `@apifn/cli` is still version **0.0.2**, which
-has no `check` command yet; `apifn check` lands with API-5 slice 2/2, and `@apifn/cli` **0.1.0** will add it
-(an interrupted `check` rolls back what it wrote; only SIGKILL or a crash can leave an empty file
-at a missing output's name, the accepted residue described in the CLI README);
-its workspace manifest uses the new pins, but it also pins contracts and sdk 0.1.0,
-which npm does not serve. The `apifn-cli-v0.1.0` tag is therefore not pushed when
-`apifn check` merges: the release issue (API-7) publishes contracts, then sdk,
-then the CLI (owner decision 2026-11-21). Do not republish the already-used
-CLI 0.0.2.
+1. `@apifn/core` **0.1.1**.
+2. `@apifn/collections` and `@apifn/mock` **0.0.5**, `@apifn/snippets`,
+   `@apifn/react` and `@apifn/svelte` **0.0.6**, `@apifn/contracts` **0.1.1**,
+   and `@apifn/admin` **0.1.3**. These packages pin Core. Admin also requires
+   the published `@superfunctions/admin` **^0.1.4** peer.
+3. `@apifn/sdk` **0.1.1** after Contracts, and `@apifn/docsfn` **0.1.3**
+   after both renderers.
+4. `@apifn/cli` **0.1.1** after its dependencies are available.
+
+The reusable workflow can move to the fixed CLI after it is published. API-6
+tracks the lockfile pin, workflow default, and external caller example.
 
 ## Python SDK
 
