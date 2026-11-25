@@ -236,22 +236,58 @@ describe("createWebStandardHandler session binding (MCP-SEC-03)", () => {
     }
   });
 
-  it("keeps event IDs header-safe so a session can resume with the SDK's event store", async () => {
-    const { InMemoryEventStore } = await import("@modelcontextprotocol/sdk/examples/shared/inMemoryEventStore.js");
-    const { post, handler, initialize } = await setup({ enableJsonResponse: false, eventStore: new InMemoryEventStore() } as never);
+  it("keeps event IDs header-safe and replays the owner's missed events on resume", async () => {
+    // Deterministic ordering, with event IDs shaped like the SDK example
+    // store's (the stream ID, an underscore, then a sequence).
+    const events: Array<{ id: string; streamId: string; message: unknown }> = [];
+    const eventStore = {
+      async storeEvent(streamId: string, message: unknown) {
+        const id = `${streamId}_${String(events.length + 1).padStart(6, "0")}`;
+        events.push({ id, streamId, message });
+        return id;
+      },
+      async getStreamIdForEventId(eventId: string) {
+        return events.find((event) => event.id === eventId)?.streamId;
+      },
+      async replayEventsAfter(lastEventId: string, { send }: { send: (id: string, message: unknown) => Promise<void> }) {
+        const index = events.findIndex((event) => event.id === lastEventId);
+        if (index < 0) return "";
+        const { streamId } = events[index]!;
+        for (const event of events.slice(index + 1)) {
+          if (event.streamId === streamId) await send(event.id, event.message);
+        }
+        return streamId;
+      },
+    };
+    const { post, handler, initialize } = await setup({ enableJsonResponse: false, eventStore } as never);
     const alice = await initialize(authInfo("alice"));
     const call = await post(
-      { jsonrpc: "2.0", id: 9, method: "tools/call", params: { name: "echo", arguments: { value: "hi" } } },
+      { jsonrpc: "2.0", id: 9, method: "tools/call", params: { name: "echo", arguments: { value: "resumed-result" } } },
       { sessionId: alice.sessionId!, auth: authInfo("alice") },
     );
     const ids = [...(await call.text()).matchAll(/^id: (.+)$/gm)].map((match) => match[1]!);
-    expect(ids.length).toBeGreaterThan(0);
+    // A priming event precedes the result, so resuming after it replays the result.
+    expect(ids.length).toBeGreaterThan(1);
     const resumed = await handler(new Request("http://127.0.0.1:8080/mcp", {
       method: "GET",
       headers: { accept: "text/event-stream", "mcp-session-id": alice.sessionId!, "mcp-protocol-version": "2025-11-25", "last-event-id": ids[0]! },
     }), { authInfo: authInfo("alice") });
     expect(resumed.status).toBe(200);
-    await resumed.body?.cancel();
+    let text = "";
+    const reader = resumed.body!.getReader();
+    const decoder = new TextDecoder();
+    const deadline = Date.now() + 1_000;
+    while (!text.includes("resumed-result") && Date.now() < deadline) {
+      const chunk = await Promise.race([
+        reader.read(),
+        new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), deadline - Date.now())),
+      ]);
+      if (!chunk || chunk.done) break;
+      text += decoder.decode(chunk.value, { stream: true });
+    }
+    await reader.cancel().catch(() => undefined);
+    expect(text).toContain("resumed-result");
+    expect(text).toContain(`id: ${ids[1]}`);
   });
 
   it("answers an unknown Last-Event-ID with an empty resumed stream", async () => {
