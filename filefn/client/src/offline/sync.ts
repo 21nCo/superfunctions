@@ -245,6 +245,8 @@ export class OfflineSync {
             this.cancelledUploads.delete(uploadSessionId);
             continue;
           }
+          // A disposed sync reports nothing and leaves the upload for a live one.
+          if (this.disposed) break;
           const err = error instanceof Error ? error : new Error('Unknown error');
           result.failed.push(uploadSessionId);
           progress.failed += 1;
@@ -281,13 +283,24 @@ export class OfflineSync {
   /**
    * One pass over the queue's entries. Published entries succeed; a failed,
    * rejected or unconfirmed one is reported as failed and stays provisional.
-   * An unconfirmed (ambiguous) one, or one another tab was processing (busy),
-   * is tried again after `retryDelayMs`, doubling up to a minute per retry.
+   * An unconfirmed (ambiguous) one, one another tab was processing (busy) and
+   * one waiting for its principal to come back are tried again after
+   * `retryDelayMs`, doubling up to a minute per retry. A generation replaced
+   * during the pass (superseded) gets a follow-up pass at once, so the newer
+   * one is driven even when the tab that staged it has closed.
    */
   private async syncQueue(queue: OfflineQueue): Promise<SyncResult> {
     const result: SyncResult = { succeeded: [], failed: [], totalProcessed: 0 };
     const progress: SyncProgress = { totalPending: 0, completed: 0, failed: 0, current: null };
-    const outcomes = await queue.processAll({ signal: this.lifetime.signal });
+    let outcomes: Awaited<ReturnType<OfflineQueue['processAll']>>;
+    try {
+      outcomes = await queue.processAll({ signal: this.lifetime.signal });
+    } catch (error) {
+      if ((error as { code?: unknown })?.code !== 'FILEFN_QUEUE_PRINCIPAL_MISMATCH' || this.disposed) throw error;
+      // Another account is active for now: look again later.
+      if (this.isOnline()) this.scheduleQueueRetry();
+      return result;
+    }
     progress.totalPending = outcomes.length;
     let retry = false;
     for (const { entryId, result: outcome } of outcomes) {
@@ -296,13 +309,17 @@ export class OfflineSync {
         retry = true;
         continue;
       }
+      if (outcome.status === 'superseded') {
+        this.rerunRequested = true;
+        continue;
+      }
       if (outcome.status === 'published') {
         result.succeeded.push(entryId);
         progress.completed += 1;
       } else if (outcome.status === 'provisional' && outcome.reason !== 'held' && outcome.reason !== 'aborted') {
         result.failed.push(entryId);
         progress.failed += 1;
-        retry ||= outcome.reason === 'ambiguous';
+        retry ||= outcome.reason === 'ambiguous' || outcome.reason === 'principal-mismatch';
         const message = outcome.entry.error?.message ?? outcome.entry.pending?.message ?? outcome.reason;
         this.config.onSyncError(Object.assign(new Error(message), { code: outcome.reason }), entryId);
       } else {
@@ -353,6 +370,10 @@ export class OfflineSync {
       if (!pendingUpload) {
         throw new Error(`Pending upload ${uploadSessionId} not found`);
       }
+      // Disposed while reading: nothing is sent, the upload stays for a live sync.
+      if (this.disposed) {
+        throw new DOMException('Aborted', 'AbortError');
+      }
 
       if (pendingUpload.retryCount >= this.config.maxRetries) {
         throw new Error(`Max retries exceeded for ${uploadSessionId}`);
@@ -374,6 +395,10 @@ export class OfflineSync {
           signal: controller.signal,
         });
 
+        if (this.disposed) {
+          // A disposed sync records nothing: the next one replays under the same key.
+          throw new DOMException('Aborted', 'AbortError');
+        }
         await store.deletePendingUpload(uploadSessionId);
         return result;
       } catch (error) {

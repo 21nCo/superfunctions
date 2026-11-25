@@ -292,7 +292,16 @@ class RawBody {
   }
 }
 
-export function createHttpClient(config: FileFnClientConfig): HttpClient {
+export interface HttpClientOptions {
+  /**
+   * Runs right before every request is sent, retries included, after its auth
+   * headers are resolved. A rejection stops the request: the offline queue
+   * uses it to send nothing once the credentials act for another principal.
+   */
+  beforeSend?: () => Promise<void>;
+}
+
+export function createHttpClient(config: FileFnClientConfig, httpOptions: HttpClientOptions = {}): HttpClient {
   const retryOptions = resolveRetryOptions(config.retryOptions);
   const baseUrl = config.baseUrl.replace(/\/$/, "");
   const transport = resolveTransport(config);
@@ -357,6 +366,7 @@ export function createHttpClient(config: FileFnClientConfig): HttpClient {
           hasJsonBody ? { "Content-Type": "application/json" } : undefined,
           extraHeaders,
         );
+        await httpOptions.beforeSend?.();
         const response = await transport.send(`${baseUrl}${path}`, {
           method,
           headers,
@@ -613,6 +623,7 @@ export function createHttpClient(config: FileFnClientConfig): HttpClient {
           const token = uploadSessionToken || headerToken;
           const sendToken = partRequest && Boolean(token);
           if (sendToken) requestHeaders["x-upload-session-token"] = token!;
+          await httpOptions.beforeSend?.();
           const response = await transport.send(finalUrl, {
             method: "PUT",
             headers: requestHeaders,
@@ -623,9 +634,17 @@ export function createHttpClient(config: FileFnClientConfig): HttpClient {
           });
 
           if (!response.ok) {
+            // FileFn's proxy route answers with its error envelope: keep its
+            // code and details (a retryable conflict, an ended session).
+            const { rawBody, parsedBody, isJson } = await readResponseBody(response).catch(() => ({
+              rawBody: "",
+              parsedBody: undefined,
+              isJson: false,
+            }));
             throw new FileFnHttpError(
               `Upload failed: HTTP ${response.status}`,
               response.status,
+              toFileFn ? (rawBody ? (isJson ? parsedBody : rawBody) : parsedBody) : undefined,
             );
           }
 

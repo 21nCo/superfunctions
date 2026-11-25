@@ -20,7 +20,11 @@ const client = createFileFnClient({
     "Authorization": `Bearer ${getToken()}`,
   }),
   retryOptions: { maxRetries: 5, baseDelayMs: 500, maxDelayMs: 30_000 },
-  offline: { enabled: true, partition: { serviceId: "app", principal: { kind: "user", principalId: session.userId } } },
+  offline: {
+    enabled: true,
+    partition: { serviceId: "app", principal: { kind: "user", principalId: session.userId } },
+    currentPrincipal: () => (session.userId ? { kind: "user", principalId: session.userId } : null),
+  },
   preprocessing: {
     heic: { enabled: true },
   },
@@ -129,7 +133,7 @@ See [Render intents](../core-concepts/render-intents).
 
 ## OPFS offline
 
-`offline: { enabled: true }` activates the OPFS pipeline. See [Features › Offline](../features/offline) for the details.
+`offline: { enabled: true, partition, currentPrincipal }` activates the OPFS pipeline (both are required for offline staging; a guest partition also needs `offline.uploader`). See [Features › Offline](../features/offline) for the details.
 
 ## HEIC preprocessing
 

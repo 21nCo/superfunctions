@@ -1,5 +1,11 @@
 import { createHttpClient, FileFnHttpError } from './client.js';
-import { UploadManager, assertValidExplicitFileId, generateFileId, prepareUploadInput } from './upload-manager.js';
+import {
+  UploadManager,
+  assertValidExplicitFileId,
+  assertValidIdempotencyKey,
+  generateFileId,
+  prepareUploadInput,
+} from './upload-manager.js';
 import type {
   ArtifactDescriptor,
   ClientArtifactKind,
@@ -23,7 +29,7 @@ import {
   generateOfflineSessionId,
   type SyncConfig,
 } from './offline/sync.js';
-import { OfflineQueue, OfflineQueueError } from './offline/queue.js';
+import { OfflineQueue, OfflineQueueError, type OfflineQueueUploader } from './offline/queue.js';
 
 export type {
   ArtifactDescriptor,
@@ -108,6 +114,7 @@ export type {
   OfflineQueuePrincipal,
   OfflineQueueProcessResult,
   OfflineQueuePublicationCheck,
+  OfflineQueuePublicationOutcome,
   OfflineQueueReclaimResult,
   OfflineQueueStageInput,
   OfflineQueueStageResult,
@@ -155,7 +162,10 @@ export interface FileFnClient {
   /**
    * The durable offline queue bound to `offline.partition`. Throws
    * `FILEFN_OFFLINE_DISABLED`, `FILEFN_OFFLINE_PARTITION_REQUIRED`,
-   * `FILEFN_OFFLINE_UNSUPPORTED` or `FILEFN_QUEUE_LOCKS_UNAVAILABLE`.
+   * `FILEFN_OFFLINE_PRINCIPAL_CHECK_REQUIRED` or
+   * `FILEFN_OFFLINE_GUEST_TRANSPORT_REQUIRED`. Where OPFS or Web Locks are
+   * missing it still returns the queue: check `capabilities()`, since its
+   * durable operations fail closed there.
    */
   getOfflineQueue(): OfflineQueue;
   /** A new, unstarted sync of this client's queue. Call `start()` to drive it and `dispose()` to stop. */
@@ -341,41 +351,60 @@ export function createFileFnClient(config: FileFnClientConfig): FileFnClient {
     if (typeof currentPrincipal !== 'function') {
       throw offlineError('FILEFN_OFFLINE_PRINCIPAL_CHECK_REQUIRED', 'Offline uploads need offline.currentPrincipal with offline.partition');
     }
+    if (config.offline.partition.principal?.kind === 'guest' && !config.offline.uploader) {
+      // The server gives anonymous callers no idempotent replay, so a lost
+      // completion could never be reconciled with the built-in transport.
+      throw offlineError(
+        'FILEFN_OFFLINE_GUEST_TRANSPORT_REQUIRED',
+        'A guest partition needs offline.uploader, a transport whose replays are idempotent',
+      );
+    }
     offlineQueue ??= new OfflineQueue({
       ...config.offline.queue,
       partition: config.offline.partition,
       currentPrincipal,
       legacyRootDir: config.offline.opfsDir,
-      uploader: {
-        upload: (input) => {
-          // Already prepared when staged: no preprocessors run again.
-          const manager = new UploadManager(httpClient);
-          manager.bindAbortSignal(input.signal);
-          return manager.startUpload(input);
-        },
-      },
+      uploader: config.offline.uploader ?? builtInUploader,
     });
-    const capability = offlineQueue.capabilities();
-    if (!capability.durable) {
-      throw capability.reason === 'locks-unavailable'
-        ? offlineError('FILEFN_QUEUE_LOCKS_UNAVAILABLE', 'Web Locks unavailable and no coordinator supplied')
-        : offlineError('FILEFN_OFFLINE_UNSUPPORTED', 'OPFS unavailable');
-    }
     return offlineQueue;
   }
+
+  /**
+   * Replays with this client's transport. Every request and retry first
+   * checks that the credentials still act for the partition's principal.
+   */
+  const builtInUploader: OfflineQueueUploader = {
+    upload: (input) => {
+      // Already prepared when staged: no preprocessors run again.
+      const manager = new UploadManager(createHttpClient(config, { beforeSend: input.assertPrincipal }));
+      manager.bindAbortSignal(input.signal);
+      return manager.startUpload(input);
+    },
+  };
 
   /** The queue for read paths: null when offline is off, unbound or unsupported here. */
   function readableOfflineQueue(): OfflineQueue | null {
     if (disposed || !config.offline?.enabled || !config.offline.partition) return null;
     try {
-      return getOfflineQueue();
+      const queue = getOfflineQueue();
+      return queue.capabilities().durable ? queue : null;
     } catch {
       return null;
     }
   }
 
+  /** A local read that the current principal may not make yields nothing. */
+  async function readPendingLocal(queue: OfflineQueue, fileId: string): Promise<PendingLocalDescriptor | null> {
+    try {
+      return await queue.getPendingLocalDescriptor(fileId);
+    } catch (error) {
+      if (error instanceof OfflineQueueError && error.code === 'FILEFN_QUEUE_PRINCIPAL_MISMATCH') return null;
+      throw error;
+    }
+  }
+
   function startImplicitReplay(queue: OfflineQueue): OfflineSync | undefined {
-    if (config.offline?.implicitReplay === false || disposed) return undefined;
+    if (config.offline?.implicitReplay === false || disposed || !queue.capabilities().durable) return undefined;
     if (!implicitSync) {
       implicitSync = new OfflineSync({ queue });
       implicitSync.start();
@@ -387,6 +416,7 @@ export function createFileFnClient(config: FileFnClientConfig): FileFnClient {
     uploadFile(input: UploadInput): UploadHandleWithFileId {
       // Fail before any staging or network work, online or offline.
       assertValidExplicitFileId(input.fileId);
+      assertValidIdempotencyKey(input.idempotencyKey);
       const normalizedInput: UploadInput = {
         ...input,
         fileId: input.fileId ?? generateFileId(),
@@ -398,6 +428,12 @@ export function createFileFnClient(config: FileFnClientConfig): FileFnClient {
         const uploadSessionId = generateOfflineSessionId();
         let aborted = false;
         let staged: { entryId: string; generation: number } | undefined;
+        // Rejects every outstanding done() as soon as the handle is aborted.
+        let rejectAborted!: (error: unknown) => void;
+        const abortedPromise = new Promise<never>((_, reject) => {
+          rejectAborted = reject;
+        });
+        void abortedPromise.catch(() => {});
         const stagePromise = (async () => {
           const prepared = await prepareUploadInput(normalizedInput, [
             ...preprocessors,
@@ -440,7 +476,9 @@ export function createFileFnClient(config: FileFnClientConfig): FileFnClient {
               return;
             }
             aborted = true;
+            rejectAborted(createAbortError());
             if (staged) {
+              // An unconfirmed publication refuses the cancel and stays journaled for reconciliation.
               void queue.cancel(staged.entryId, staged.generation).catch(() => {});
             }
           },
@@ -451,10 +489,12 @@ export function createFileFnClient(config: FileFnClientConfig): FileFnClient {
             if (aborted) {
               throw createAbortError();
             }
-            const { entryId, generation } = await stagePromise;
             try {
+              const { entryId, generation } = await Promise.race([stagePromise, abortedPromise]);
               // Settles once this generation is published, not while it is provisional.
-              const entry = await queue.whenSettled(entryId, generation);
+              const settled = queue.whenSettled(entryId, generation);
+              void settled.catch(() => {});
+              const entry = await Promise.race([settled, abortedPromise]);
               return entry.upload ?? { fileId: entry.fileId, versionId: '' };
             } catch (error) {
               if (aborted) {
@@ -527,7 +567,7 @@ export function createFileFnClient(config: FileFnClientConfig): FileFnClient {
       const queue = input.preferLocal && !input.versionId ? readableOfflineQueue() : null;
       if (queue) {
         startImplicitReplay(queue);
-        const pending = await queue.getPendingLocalDescriptor(input.fileId);
+        const pending = await readPendingLocal(queue, input.fileId);
         if (pending) {
           return resolvePendingLocalRenderable({ intent: input.intent }, pending);
         }
@@ -549,7 +589,7 @@ export function createFileFnClient(config: FileFnClientConfig): FileFnClient {
         return null;
       }
       startImplicitReplay(queue);
-      return queue.getPendingLocalDescriptor(fileId);
+      return readPendingLocal(queue, fileId);
     },
 
     getOfflineQueue,

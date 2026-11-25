@@ -138,6 +138,22 @@ export function assertValidExplicitFileId(fileId: unknown): void {
   }
 }
 
+/**
+ * An idempotency key travels in the `x-idempotency-key` header, which trims
+ * whitespace and allows only Latin-1: visible ASCII is the only form the
+ * server receives exactly as given, so two keys never alias on the wire.
+ */
+export function isValidIdempotencyKey(key: unknown, maxLength = 255): key is string {
+  return typeof key === 'string' && key.length > 0 && key.length <= maxLength && /^[\x21-\x7e]+$/.test(key);
+}
+
+/** Throws `FILEFN_INVALID_IDEMPOTENCY_KEY` unless an explicit key is 1-255 visible ASCII characters. */
+export function assertValidIdempotencyKey(key: unknown): void {
+  if (key !== undefined && !isValidIdempotencyKey(key)) {
+    throw createClientError('FILEFN_INVALID_IDEMPOTENCY_KEY', 'idempotencyKey must be 1-255 visible ASCII characters');
+  }
+}
+
 export function generateFileId(): string {
   const cryptoApi = globalThis.crypto;
   if (cryptoApi && typeof cryptoApi.randomUUID === 'function') {

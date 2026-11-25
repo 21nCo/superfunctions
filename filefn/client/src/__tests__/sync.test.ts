@@ -310,4 +310,41 @@ describe('OfflineSync', () => {
     await vi.advanceTimersByTimeAsync(25);
     expect(pending.retryCount).toBe(1);
   });
+  it('sends and deletes nothing when disposed while reading a legacy upload, and leaves it for a live sync', async () => {
+    let release!: () => void;
+    const read = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const deletePendingUpload = vi.fn(async () => {});
+    const pending = {
+      uploadSessionId: 'offline_dispose_1',
+      fileId: 'file_dispose_1',
+      policy: 'p',
+      fileName: 'a.txt',
+      size: 1,
+      mimeType: 'text/plain',
+      fileData: new TextEncoder().encode('x').buffer,
+      createdAt: new Date().toISOString(),
+      retryCount: 0,
+    };
+    const store = {
+      listPendingUploads: async () => ['offline_dispose_1'],
+      getPendingUpload: async () => {
+        await read;
+        return pending;
+      },
+      deletePendingUpload,
+      incrementRetryCount: async () => {},
+    };
+    const client = { uploadFile: vi.fn(async () => ({ fileId: 'file_dispose_1', versionId: 'ver_1' })) };
+    const sync = new OfflineSync({ store: store as any, client });
+    sync.setConnectivityChecker({ isOnline: () => true, onOnline: () => () => {}, onOffline: () => () => {} });
+    const pass = sync.syncAll();
+    await vi.advanceTimersByTimeAsync(0);
+    sync.dispose();
+    release();
+    await pass;
+    expect(client.uploadFile).not.toHaveBeenCalled();
+    expect(deletePendingUpload).not.toHaveBeenCalled();
+  });
 });

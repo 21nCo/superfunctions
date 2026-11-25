@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createFileFnClient } from '../index.js';
 import type { FileFnClientConfig } from '../types.js';
-import type { OfflineQueuePartition } from '../offline/queue.js';
+import type { OfflineQueuePartition, OfflineQueuePrincipal } from '../offline/queue.js';
 import { SharedLockManager, createStorage } from './helpers/offline-fixtures.js';
 
 const BASE = 'https://files.example.com/api/files';
@@ -25,11 +25,26 @@ function envelope(data: unknown): Response {
   return new Response(JSON.stringify({ ok: true, data }), { status: 200, headers: { 'content-type': 'application/json' } });
 }
 
-/** Accepts every upload; records each upload/init's file ID and idempotency header. */
+function failure(status: number, code: string, details?: Record<string, unknown>): Response {
+  return new Response(JSON.stringify({ ok: false, error: { code, message: code, details } }), {
+    status,
+    headers: { 'content-type': 'application/json' },
+  });
+}
+
+/**
+ * Accepts every upload; records each upload/init's file ID and idempotency
+ * header, and each request path. `override` may answer a request instead.
+ */
 function createServer() {
   const inits: Array<{ fileId: string; key: string | null; bodyKey: unknown }> = [];
+  const paths: string[] = [];
+  const state: { override?: (path: string) => Response | undefined } = {};
   const fetch = vi.fn(async (input: RequestInfo | URL, init: RequestInit = {}) => {
     const path = String(input).slice(BASE.length);
+    paths.push(path);
+    const overridden = state.override?.(path);
+    if (overridden) return overridden;
     if (path === '/upload/init') {
       const body = JSON.parse(String(init.body));
       inits.push({ fileId: body.fileId, key: new Headers(init.headers).get('x-idempotency-key'), bodyKey: body.idempotencyKey });
@@ -46,7 +61,7 @@ function createServer() {
     }
     return new Response('not found', { status: 404 });
   });
-  return { fetch: fetch as unknown as typeof globalThis.fetch, calls: fetch, inits };
+  return { fetch: fetch as unknown as typeof globalThis.fetch, calls: fetch, inits, paths, state };
 }
 
 function offlineClient(offline: Partial<NonNullable<FileFnClientConfig['offline']>> = {}, tab = 'tab-1') {
@@ -79,7 +94,8 @@ beforeEach(() => {
       if (event === 'online') onlineListeners = onlineListeners.filter((l) => l !== cb);
     },
   });
-  vi.stubGlobal('URL', Object.assign(Object.create(URL), {
+  // Still a URL constructor, so the client can classify part URLs.
+  vi.stubGlobal('URL', Object.assign(class extends URL {}, {
     createObjectURL: vi.fn((blob: Blob) => `blob:local-${blob.size}`),
     revokeObjectURL: vi.fn(),
   }));
@@ -101,7 +117,8 @@ describe('offline uploads through the client', () => {
 
     await goOnline();
     expect(await done).toEqual({ fileId: handle.fileId, versionId: 'ver_1' });
-    expect(server.inits).toEqual([{ fileId: handle.fileId, key: 'test-idem-key-0001', bodyKey: undefined }]);
+    // The caller's key prefixes the generation's own key, sent only as the header.
+    expect(server.inits).toEqual([{ fileId: handle.fileId, key: expect.stringMatching(/^test-idem-key-0001:op_/), bodyKey: undefined }]);
     expect((await client.getOfflineQueue().list())[0]).toMatchObject({ state: 'published' });
     expect(dataFiles()).toEqual([]);
   });
@@ -169,16 +186,30 @@ describe('offline uploads through the client', () => {
     expect(dataFiles()).toEqual([]);
   });
 
-  it('TV-CLIENT-OFFLINE-NEG-001: throws typed errors when offline staging cannot be durable or bound', () => {
+  it('TV-CLIENT-OFFLINE-NEG-001: throws typed errors when offline staging cannot be bound, and refuses it where it cannot be durable', async () => {
     const file = new File(['content'], 'test.txt');
     expect(() => createFileFnClient({ baseUrl: BASE, offline: { enabled: true } }).uploadFile({ policy: 'p', file })).toThrow(
       expect.objectContaining({ code: 'FILEFN_OFFLINE_PARTITION_REQUIRED' }),
     );
-    expect(() => createFileFnClient({ baseUrl: BASE, offline: { enabled: true, partition: ALICE, currentPrincipal: () => ALICE.principal } }).uploadFile({ policy: 'p', file })).toThrow(
-      expect.objectContaining({ code: 'FILEFN_QUEUE_LOCKS_UNAVAILABLE' }),
-    );
+    const guest = { serviceId: 'svc-notes', principal: { kind: 'guest', namespace: 'guest-ns-1' } } as const;
+    expect(() =>
+      createFileFnClient({ baseUrl: BASE, offline: { enabled: true, partition: guest, currentPrincipal: () => guest.principal } }).uploadFile({ policy: 'p', file }),
+    ).toThrow(expect.objectContaining({ code: 'FILEFN_OFFLINE_GUEST_TRANSPORT_REQUIRED' }));
+
+    // Without Web Locks the queue is still reachable for its capability result, and staging fails closed.
+    const unlocked = createFileFnClient({ baseUrl: BASE, offline: { enabled: true, partition: ALICE, currentPrincipal: () => ALICE.principal } });
+    expect(unlocked.getOfflineQueue().capabilities()).toMatchObject({ durable: false, reason: 'locks-unavailable' });
+    await expect(unlocked.uploadFile({ policy: 'p', file }).done()).rejects.toMatchObject({
+      code: 'FILEFN_QUEUE_REFUSED',
+      details: { reason: 'locks-unavailable' },
+    });
     vi.stubGlobal('navigator', { onLine: false });
-    expect(() => offlineClient().uploadFile({ policy: 'p', file })).toThrow(expect.objectContaining({ code: 'FILEFN_OFFLINE_UNSUPPORTED' }));
+    const noOpfs = offlineClient();
+    expect(noOpfs.getOfflineQueue().capabilities()).toMatchObject({ durable: false, reason: 'storage-unavailable' });
+    await expect(noOpfs.uploadFile({ policy: 'p', file }).done()).rejects.toMatchObject({ details: { reason: 'storage-unavailable' } });
+    expect(() => noOpfs.uploadFile({ policy: 'p', file, idempotencyKey: ' padded ' })).toThrow(
+      expect.objectContaining({ code: 'FILEFN_INVALID_IDEMPOTENCY_KEY' }),
+    );
   });
 });
 
@@ -230,5 +261,97 @@ describe('offline replay lifecycle', () => {
     await returning.createOfflineSync().syncAll();
     expect((await returning.getOfflineQueue().get(handle.fileId))?.state).toBe('published');
     expect(server.inits).toHaveLength(1);
+  });
+});
+
+describe('replay transport', () => {
+  const BOB_PRINCIPAL: OfflineQueuePrincipal = { kind: 'user', principalId: 'user-bob' };
+
+  async function stagedOffline(client: ReturnType<typeof offlineClient>) {
+    const handle = client.uploadFile({ policy: 'p', file: new File(['content'], 'test.txt') });
+    await vi.waitFor(async () => expect(await client.getOfflineQueue().list()).toHaveLength(1));
+    setOnline(true);
+    return handle;
+  }
+
+  it('sends no further request once the shared session switches accounts mid-upload, and resumes under the same key', async () => {
+    let signedIn: OfflineQueuePrincipal = ALICE.principal;
+    const client = offlineClient({ implicitReplay: false, currentPrincipal: () => signedIn });
+    const handle = await stagedOffline(client);
+    // Another tab sharing the cookies signs in as Bob while init is in flight.
+    server.state.override = (path) => {
+      if (path === '/upload/init') signedIn = BOB_PRINCIPAL;
+      return undefined;
+    };
+    expect(await client.getOfflineQueue().process(handle.fileId)).toMatchObject({ status: 'provisional', reason: 'principal-mismatch' });
+    expect(server.paths).toEqual(['/upload/init']);
+    // Local reads and writes are refused while Bob is signed in.
+    await expect(client.getOfflineQueue().list()).rejects.toMatchObject({ code: 'FILEFN_QUEUE_PRINCIPAL_MISMATCH' });
+    expect(await client.getPendingLocalDescriptor(handle.fileId)).toBeNull();
+
+    server.state.override = undefined;
+    signedIn = ALICE.principal;
+    expect(await client.getOfflineQueue().process(handle.fileId)).toMatchObject({ status: 'published' });
+    expect(server.inits.map((i) => i.key)).toEqual([server.inits[0].key, server.inits[0].key]);
+  });
+
+  it('checks the principal before an automatic retry of a request', async () => {
+    let signedIn: OfflineQueuePrincipal = ALICE.principal;
+    const client = createFileFnClient({
+      baseUrl: BASE,
+      fetch: server.fetch,
+      retryOptions: { maxRetries: 2, baseDelayMs: 1, maxDelayMs: 1 },
+      offline: { enabled: true, partition: ALICE, implicitReplay: false, currentPrincipal: () => signedIn, queue: { coordinator: locks.forTab('tab-1') } },
+    });
+    const handle = await stagedOffline(client as ReturnType<typeof offlineClient>);
+    server.state.override = (path) => {
+      if (path !== '/upload/init') return undefined;
+      signedIn = BOB_PRINCIPAL;
+      return failure(503, 'FILEFN_UNAVAILABLE');
+    };
+    expect(await client.getOfflineQueue().process(handle.fileId)).toMatchObject({ reason: 'principal-mismatch' });
+    expect(server.paths).toEqual(['/upload/init']);
+  });
+
+  it.each([
+    ['a retryable 409 from the proxy part route', '/parts/1', failure(409, 'FILEFN_UPLOAD_COMPLETION_IN_PROGRESS', { retryable: true }), 'same'],
+    ['a 410 expiry from part signing', '/parts/1/sign', failure(410, 'FILEFN_UPLOAD_EXPIRED'), 'fresh'],
+    ['a 410 abort from the proxy part route', '/parts/1', failure(410, 'FILEFN_UPLOAD_ABORTED'), 'fresh'],
+    ['a 410 expiry from completion', '/complete', failure(410, 'FILEFN_UPLOAD_EXPIRED'), 'fresh'],
+    ['a 403 from completion', '/complete', failure(403, 'FILEFN_FORBIDDEN'), 'same'],
+    ['a status-only 423', '/complete', new Response('locked', { status: 423 }), 'same'],
+  ] as const)('keeps the generation recoverable after %s', async (_label, suffix, response, key) => {
+    const client = offlineClient({ implicitReplay: false });
+    const handle = await stagedOffline(client);
+    let failed = false;
+    server.state.override = (path) => {
+      if (failed || !path.endsWith(suffix) || (suffix === '/parts/1' && path.endsWith('/sign'))) return undefined;
+      failed = true;
+      return response.clone();
+    };
+    const queue = client.getOfflineQueue();
+    const first = await queue.process(handle.fileId);
+    if (key === 'same') {
+      expect(first).toMatchObject({ status: 'provisional', reason: 'ambiguous', entry: { phase: 'uploading' } });
+      expect(await queue.process(handle.fileId)).toMatchObject({ status: 'published' });
+      expect(server.inits[1].key).toBe(server.inits[0].key);
+    } else {
+      // The session ended for good: a fresh key was journaled and used at once.
+      expect(first).toMatchObject({ status: 'published' });
+      expect(server.inits).toHaveLength(2);
+      expect(server.inits[1].key).not.toBe(server.inits[0].key);
+    }
+  });
+
+  it('rejects an outstanding done() at once when aborted during publication, and keeps the publication journaled', async () => {
+    const publication = new Promise<never>(() => {});
+    const client = offlineClient({ queue: { hooks: { publish: { run: () => publication } } } });
+    const handle = await stagedOffline(client);
+    const done = handle.done();
+    void client.getOfflineQueue().processAll();
+    await vi.waitFor(async () => expect((await client.getOfflineQueue().list())[0]).toMatchObject({ phase: 'publishing' }));
+    handle.abort();
+    await expect(done).rejects.toThrow('Aborted');
+    expect((await client.getOfflineQueue().list())[0]).toMatchObject({ phase: 'publishing', state: 'provisional' });
   });
 });

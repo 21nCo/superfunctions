@@ -20,8 +20,18 @@ import { createFileFnClient } from "@filefn/client";
 const client = createFileFnClient({
   baseUrl: "/filefn",
   getAuthHeaders: async () => ({}),
-  offline: { enabled: true, partition: { serviceId: "app", principal: { kind: "user", principalId: session.userId } } },
+  offline: {
+    enabled: true,
+    // Trusted: from your own session, never from the URL or user input.
+    partition: { serviceId: "app", principal: { kind: "user", principalId: session.userId } },
+    // Who the credentials act for right now; queued work runs only while it matches.
+    currentPrincipal: () => (session.userId ? { kind: "user", principalId: session.userId } : null),
+  },
 });
+
+if (!client.getOfflineQueue().capabilities().durable) {
+  // No OPFS or Web Locks here: offline staging is refused, so upload directly instead.
+}
 ```
 
 ## What happens on `uploadFile(...)`
@@ -40,7 +50,7 @@ flowchart TD
 
 The check `shouldUseOfflineMode(true)` defaults to `true` — meaning the client *always* stages to OPFS first, even when online. The replay starts immediately, but the OPFS staging is the source of truth until the upload finishes.
 
-Turn it off with `offline: { enabled: false }`, or check `client.getOfflineQueue().capabilities()` and fall back to the direct path when it is not `durable`.
+Turn it off with `offline: { enabled: false }`, or check `client.getOfflineQueue().capabilities()` (available even where the queue cannot be durable) and fall back to the direct path when it is not `durable`.
 
 ## The pending-local descriptor
 

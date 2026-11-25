@@ -61,14 +61,15 @@ If you legitimately want two distinct uploads of the same content (e.g. backing 
 `@filefn/client`, the Python client, and the Swift client all generate stable idempotency keys per `uploadFile(...)` call automatically. You can override:
 
 ```ts
-client.uploadFile({
-  policy: "public-image",
-  file,
-  idempotencyKey: "deterministic-key-from-your-app",
-});
+// Persist both before the first attempt, and pass the same pair on every retry.
+const fileId = saved.fileId ?? generateFileId();
+const idempotencyKey = saved.idempotencyKey ?? `upload-${fileId}`;
+client.uploadFile({ policy: "public-image", file, fileId, idempotencyKey });
 ```
 
-Useful when your app has its own retry logic and wants to stitch retries to a particular logical upload.
+Useful when your app has its own retry logic and wants to stitch retries to a particular logical upload. The server matches a replay on the key *and* the request, file ID included: a retry without `fileId` gets a newly generated one and is refused with `FILEFN_IDEMPOTENCY_CONFLICT`. A key is 1-255 visible ASCII characters (it travels in the `x-idempotency-key` header); anything else throws `FILEFN_INVALID_IDEMPOTENCY_KEY` before a request is sent.
+
+Offline, your key becomes the prefix of each staged generation's own key (`<key>:<operation id>`), so a later generation, or a re-staging after a cancel, never replays an earlier generation's session.
 
 ## Idempotency vs. dedup
 

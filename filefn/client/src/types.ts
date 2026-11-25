@@ -1,4 +1,9 @@
-import type { OfflineQueueCurrentPrincipal, OfflineQueueOptions, OfflineQueuePartition } from './offline/queue.js';
+import type {
+  OfflineQueueCurrentPrincipal,
+  OfflineQueueOptions,
+  OfflineQueuePartition,
+  OfflineQueueUploader,
+} from './offline/queue.js';
 import type {
   HeicPreprocessorOptions,
   PendingLocalSourceMetadata,
@@ -57,6 +62,13 @@ export interface FileFnClientConfig {
      * you `start()` advances queued work.
      */
     implicitReplay?: boolean;
+    /**
+     * Transport that replays queued uploads instead of this client's. Required
+     * for a guest partition (the server gives anonymous callers no idempotent
+     * replay): its replays must be idempotent per `idempotencyKey`, and it
+     * must call `assertPrincipal()` before every request.
+     */
+    uploader?: OfflineQueueUploader;
     /** Queue options: hooks, limits, coordinator, storage root and retention. */
     queue?: Omit<OfflineQueueOptions, 'partition' | 'uploader' | 'legacyRootDir' | 'currentPrincipal'>;
     /**
@@ -92,6 +104,14 @@ export interface UploadInput {
    * file the caller may not write to is refused with 403 at `upload/init`.
    */
   fileId?: string;
+  /**
+   * Sent as `x-idempotency-key`: 1-255 visible ASCII characters, else
+   * `uploadFile` throws `FILEFN_INVALID_IDEMPOTENCY_KEY`. The server matches a
+   * replay on the key and the request, `fileId` included, so an application
+   * retry must pass the same `fileId` as the first call (persist it with the
+   * key); a generated one differs and is refused as `FILEFN_IDEMPOTENCY_CONFLICT`.
+   * Offline, the key is the prefix of each staged generation's own key.
+   */
   idempotencyKey?: string;
   preprocessors?: UploadPreprocessor[];
 }

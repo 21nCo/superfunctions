@@ -41,7 +41,7 @@ async function createApp() {
   });
   const requests: Array<{ method: string; path: string; key: string | null }> = [];
   /** Called after the server handled a request; throw to lose its response. */
-  let afterResponse: ((path: string) => void) | undefined;
+  let afterResponse: ((path: string) => void | Promise<void>) | undefined;
   const fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const request = new Request(input instanceof Request ? input : new URL(String(input), BASE), init);
     request.headers.set('x-test-user', 'user-owner');
@@ -50,7 +50,7 @@ async function createApp() {
     const path = new URL(request.url).pathname;
     requests.push({ method: request.method, path, key: request.headers.get('x-idempotency-key') });
     const response = (await fileFn.router.handle(request)) ?? new Response('no route', { status: 404 });
-    afterResponse?.(path);
+    await afterResponse?.(path);
     return response;
   }) as typeof globalThis.fetch;
   const storage = createStorage();
@@ -97,6 +97,14 @@ async function createApp() {
         throw new TypeError('fetch failed');
       };
     },
+    /** Runs `fn` once, after the first response whose path matches. */
+    afterFirst(match: (path: string) => boolean, fn: () => Promise<void>) {
+      afterResponse = async (path) => {
+        if (!match(path)) return;
+        afterResponse = undefined;
+        await fn();
+      };
+    },
   };
 }
 
@@ -113,7 +121,9 @@ describe('offline replay against the FileFn server', () => {
     });
 
     const inits = app.requests.filter((r) => r.path === '/upload/init');
-    expect(inits.map((r) => r.key)).toEqual(['test-replay-key-0001', 'test-replay-key-0001']);
+    // The caller's key prefixes the generation's own key, replayed unchanged.
+    expect(inits[0].key).toMatch(/^test-replay-key-0001:op_/);
+    expect(inits.map((r) => r.key)).toEqual([inits[0].key, inits[0].key]);
     expect(app.requests.filter((r) => r.path.endsWith('/sign'))).toHaveLength(1);
     // The reconciliation reads the recorded version back.
     const [version] = await app.rows('fileVersions');
@@ -165,9 +175,10 @@ describe('offline replay against the FileFn server', () => {
   it.each(['expired', 'aborted'] as const)('starts a %s session again under a fresh key journaled before the request', async (ending) => {
     const app = await createApp();
     await app.stage('file_00000000ending01', 'test-replay-key-0004');
+    const firstKey = app.journalKey().idempotencyKey;
     // A first attempt created the session under the key, then the page went away.
     const session = await app.fileFn.createUploadSession(
-      { policy: 'doc', fileName: 'a.txt', size: 5, mimeType: 'text/plain', fileId: 'file_00000000ending01', idempotencyKey: 'test-replay-key-0004' },
+      { policy: 'doc', fileName: 'a.txt', size: 5, mimeType: 'text/plain', fileId: 'file_00000000ending01', idempotencyKey: firstKey },
       { principalId: 'user-owner' },
     );
     if (ending === 'aborted') {
@@ -188,12 +199,65 @@ describe('offline replay against the FileFn server', () => {
 
     expect(await app.queue.process('file_00000000ending01')).toMatchObject({ status: 'published' });
     const keys = app.requests.filter((r) => r.path === '/upload/init').map((r) => r.key);
-    expect(keys[0]).toBe('test-replay-key-0004');
+    expect(keys[0]).toBe(firstKey);
     expect(keys).toHaveLength(2);
     expect(keys[1]).not.toBe(keys[0]);
     // Each request sent the key the journal held when it went out.
     expect(journaledAtInit).toEqual(keys);
-    expect(app.journalKey()).toMatchObject({ retiredKeys: ['test-replay-key-0004'] });
+    expect(app.journalKey()).toMatchObject({ retiredKeys: [firstKey] });
     expect(await app.rows('files')).toHaveLength(1);
+  });
+
+  it.each([
+    ['expires', '/sign', 'expire'],
+    ['is aborted', '/sign', 'abort'],
+    ['expires', '/parts/1', 'expire'],
+  ] as const)('starts again under a fresh key when the session %s after the response to %s', async (_label, after, ending) => {
+    const app = await createApp();
+    await app.stage('file_00000000ending02', 'test-replay-key-0006');
+    app.afterFirst((path) => path.endsWith(after), async () => {
+      const [session] = await app.rows('uploadSessions');
+      if (ending === 'abort') {
+        await app.fileFn.services.uploads.abortSession(session.uploadSessionId, { principalId: 'user-owner' });
+        return;
+      }
+      await app.database.update({
+        model: 'uploadSessions',
+        where: [{ field: 'uploadSessionId', operator: 'eq', value: session.uploadSessionId }],
+        data: { expiresAt: new Date(Date.now() - 1000).toISOString() },
+      });
+    });
+
+    expect(await app.queue.process('file_00000000ending02')).toMatchObject({ status: 'published' });
+    const keys = app.requests.filter((r) => r.path === '/upload/init').map((r) => r.key);
+    expect(keys).toHaveLength(2);
+    expect(keys[1]).not.toBe(keys[0]);
+    expect(app.journalKey()).toMatchObject({ retiredKeys: [keys[0]] });
+    expect(await app.rows('files')).toHaveLength(1);
+  });
+
+  it('keeps a replay provisional when the completed session never recorded its own version', async () => {
+    const app = await createApp();
+    await app.stage('file_00000000legacy02', 'test-replay-key-0007');
+    app.loseResponse((path) => path.endsWith('/complete'));
+    expect(await app.queue.process('file_00000000legacy02')).toMatchObject({ status: 'provisional', reason: 'ambiguous' });
+    // A session completed before completion versions were recorded; the file has a newer version since.
+    const [session] = await app.rows('uploadSessions');
+    await app.database.update({
+      model: 'uploadSessions',
+      where: [{ field: 'uploadSessionId', operator: 'eq', value: session.uploadSessionId }],
+      data: { completionVersionId: null },
+    });
+    await app.client
+      .uploadFile({ policy: 'doc', file: new File(['newer'], 'a.txt', { type: 'text/plain' }), fileId: 'file_00000000legacy02' })
+      .done();
+
+    expect(await app.queue.process('file_00000000legacy02')).toMatchObject({
+      status: 'provisional',
+      reason: 'ambiguous',
+      entry: { state: 'provisional', pending: { stage: 'upload' } },
+    });
+    expect(app.requests.filter((r) => r.path.endsWith('/sign'))).toHaveLength(2);
+    expect(app.requests.some((r) => r.method === 'GET')).toBe(false);
   });
 });

@@ -739,17 +739,22 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
    * What an idempotent `upload/init` replay reports about the session it found,
    * so a client reconciles instead of uploading again: `status` as
    * getSessionStatus reports it (a pending or in-progress session past its
-   * expiry reads 'expired'), plus the recorded `fileId` and `versionId` of a
-   * completed session. A client treats 'expired' and 'aborted' as final and
-   * starts again under a new key.
+   * expiry reads 'expired'), plus the `fileId` and `versionId` a completed
+   * session recorded itself. A session completed before completion versions
+   * were recorded reports neither: the file's current version may belong to a
+   * later upload, so the client cannot confirm the replay and keeps it
+   * provisional. A client treats 'expired' and 'aborted' as final and starts
+   * again under a new key.
    */
-  async function replayedSessionState(session: UploadSession): Promise<{
+  function replayedSessionState(session: UploadSession): {
     status: 'pending' | 'in_progress' | 'completed' | 'aborted' | 'expired';
     fileId?: string;
     versionId?: string;
-  }> {
+  } {
     if (session.status === 'completed') {
-      return { status: 'completed', ...(await recordedResult(session)) };
+      return session.fileId && session.completionVersionId
+        ? { status: 'completed', fileId: session.fileId, versionId: session.completionVersionId }
+        : { status: 'completed' };
     }
     if (isAbortedStatus(session.status)) return { status: 'aborted' };
     if (session.status === 'expired') return { status: 'expired' };
@@ -1550,7 +1555,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
             totalParts: existing.totalParts,
             expiresAt: existing.expiresAt,
             warnings: [],
-            ...(await replayedSessionState(existing)),
+            ...replayedSessionState(existing),
           };
         }
       }
