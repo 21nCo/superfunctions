@@ -1035,12 +1035,16 @@ describe("CliHarnessAdapter preflight and configuration", () => {
     expect(output.error).toMatch(/at its largest\) grew past the remaining/);
   });
 
-  /** A CLI that writes `file` to its output file and `stdout` (reported as the shared runner reports it), then ends as `ending`. */
-  const writing = (file: string, stdout: string, ending: { timedOut?: boolean; canceled?: boolean; stderr?: string } = {}): CommandRunner => async (_command, args, options) => {
+  /**
+   * A CLI that writes `file` to its output file and `stdout`, reported as the shared runner reports it (or as `reported`
+   * bytes, such as a chunk the runner then dropped at its cap), then ends as `ending`.
+   */
+  const writing = (file: string, stdout: string, ending: { timedOut?: boolean; canceled?: boolean; stderr?: string; reported?: number } = {}): CommandRunner => async (_command, args, options) => {
     if (args.includes("--version")) return { code: 0, signal: null, stdout: "fake-cli version 1.2.3\n", stderr: "", timedOut: false, canceled: false };
     if (file) await writeFile(args[args.indexOf("--out") + 1], file);
     const stderr = ending.stderr ?? "";
-    options.onOutput?.(Buffer.byteLength(stdout) + Buffer.byteLength(stderr));
+    const reported = ending.reported ?? Buffer.byteLength(stdout) + Buffer.byteLength(stderr);
+    if (reported) options.onOutput?.(reported);
     return { code: ending.timedOut || ending.canceled ? null : 0, signal: null, stdout, stderr, timedOut: ending.timedOut ?? false, canceled: ending.canceled ?? false };
   };
   const limited = (maxOutputBytes: number) => ({ policy: { ...DEFAULT_POLICY, limits: { ...DEFAULT_POLICY.limits, maxOutputBytes } } });
@@ -1064,6 +1068,32 @@ describe("CliHarnessAdapter preflight and configuration", () => {
     const output = await new CliHarnessAdapter({ environment: environment(), runner }).run(input(configuration(profile({ outputVia: "file" })), limited(1_024)));
     expect(output.error).toBeUndefined();
     expect(output.terminal).toBe("completed");
+  });
+
+  it("reads a file model report within the budget when the runner dropped the stream chunk that crossed its cap", async () => {
+    const runner = writing(JSON.stringify({ model: "model-x" }), "", { timedOut: true, reported: 2_048 });
+    const output = await new CliHarnessAdapter({ environment: environment(), runner }).run(input(configuration(profile({ outputVia: "file", modelReport: "json-path:model" })), limited(1_024)));
+    expect(output.terminal).toBe("timed_out");
+    expect(output.observed).toMatchObject({ model: "model-x", modelMismatch: true });
+  });
+
+  it("refuses an output file over what the kept stream bytes leave of the budget when the runner did not report them", async () => {
+    const answer = JSON.stringify({ findings: [], evidence: [], inspectedPaths: ["src/index.ts"], uninspected: [] });
+    const runner = writing(answer.padEnd(500, " "), "z".repeat(700), { reported: 0 });
+    const output = await new CliHarnessAdapter({ environment: environment(), runner }).run(input(configuration(profile({ outputVia: "file" })), limited(1_024)));
+    expect(output.terminal).toBe("timed_out");
+    expect(output.error).toMatch(/output file .*exceeded the remaining 321-byte output budget/);
+  });
+
+  it("ends timed_out, within the limit, a completed run whose stored transcript is over it only through redaction", async () => {
+    const answer = JSON.stringify({ findings: [], evidence: [], inspectedPaths: ["src/index.ts"], uninspected: [] });
+    // 832 raw stdout bytes; each of the 150 "test" credentials becomes a "[REDACTED]" 6 bytes longer.
+    const runner = writing("", `${"test\n".repeat(150)}${answer}\n`);
+    const output = await new CliHarnessAdapter({ environment: shortSecret(), runner }).run(input(configuration(profile()), limited(1_024)));
+    expect(output.terminal).toBe("timed_out");
+    expect(output.error).toMatch(/^The CLI output exceeded its 1024-byte budget once stored \(transcript \d+ bytes/);
+    expect(Buffer.byteLength(output.transcript ?? "")).toBeLessThanOrEqual(1_024);
+    expect(output.transcript).not.toContain("\uFFFD");
   });
 
   it.each([["timed_out", { timedOut: true }], ["canceled", { canceled: true }]] as const)("returns a %s run's redaction-expanded transcript within the output limit", async (terminal, ending) => {
