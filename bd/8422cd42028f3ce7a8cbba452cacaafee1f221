@@ -1,0 +1,129 @@
+searchfn/docs/content/docs/operations/setup.mdx
+  s_08ba8baed8969a::t_ac9d61fa7ff11d 25,48
+searchfn/docs/content/docs/quickstart/fastify.mdx
+  s_08ba8baed8969a::t_ac9d61fa7ff11d 22
+  s_08ba8baed8969a::t_c27548105b9850 35
+searchfn/docs/content/docs/documentation/core-wasm/setup.mdx
+  s_08ba8baed8969a::t_ac9d61fa7ff11d 21
+searchfn/server/README.md
+  s_08ba8baed8969a::t_6fb228c6a5a372 27,76-77,82-83,85,91-93
+searchfn/docs/content/docs/quickstart/bun.mdx
+  s_08ba8baed8969a::t_c27548105b9850 33,63
+  s_08ba8baed8969a::t_ac9d61fa7ff11d 22
+searchfn/server/src/routes/status.ts
+  s_08ba8baed8969a::t_53b8c50e7ee8eb 15
+searchfn/docs/content/docs/quickstart/sveltekit.mdx
+  s_08ba8baed8969a::t_ac9d61fa7ff11d 26
+searchfn/server/package.json
+  s_08ba8baed8969a::t_cc956dbb21dec4 3
+searchfn/docs/content/docs/quickstart/express.mdx
+  s_08ba8baed8969a::t_ac9d61fa7ff11d 22
+  s_08ba8baed8969a::t_c27548105b9850 35
+searchfn/server/src/server.ts
+  s_08ba8baed8969a::t_cc956dbb21dec4 39,41,43,179
+  s_08ba8baed8969a::t_53b8c50e7ee8eb 152,164
+  s_08ba8baed8969a::t_8a8f3d14b9e9df 10-16,26,40,42,46,48-49,106-109,129-130,141-151,153-163,165-172,175-178,212,276,281,288
+searchfn/docs/content/docs/recipes/authfn-integration.mdx
+  s_08ba8baed8969a::t_cc956dbb21dec4 97-102
+  s_08ba8baed8969a::t_c27548105b9850 20,25,50,65,69
+  s_08ba8baed8969a::t_cf4a82a01eb0cc 12,17-19,32-35,39,46-49,51,62-64,73,79-83,96
+searchfn/docs/content/docs/documentation/security/request-authz.mdx
+  s_08ba8baed8969a::t_6fb228c6a5a372 6,11,31-32,53-54,56,65,77-78,90,93-97,100,105-106,122,124-126,135-141,143
+searchfn/docs/content/docs/quickstart/nextjs.mdx
+  s_08ba8baed8969a::t_ac9d61fa7ff11d 22
+searchfn/docs/content/docs/operations/security.mdx
+  s_08ba8baed8969a::t_cc956dbb21dec4 8,13-14
+searchfn/docs/content/docs/ai-resources/codex.mdx
+  s_08ba8baed8969a::t_cc956dbb21dec4 28
+searchfn/docs/content/docs/architecture.mdx
+  s_08ba8baed8969a::t_cc956dbb21dec4 189
+searchfn/docs/content/docs/documentation/deploy/fly.mdx
+  s_08ba8baed8969a::t_ac9d61fa7ff11d 91
+searchfn/docs/content/docs/operations/troubleshooting.mdx
+  s_08ba8baed8969a::t_cc956dbb21dec4 125-127
+searchfn/server/src/http/errors.ts
+  s_08ba8baed8969a::t_644dd5fc83d67d 11,47,92-99
+searchfn/docs/content/docs/quickstart/hono.mdx
+  s_08ba8baed8969a::t_c27548105b9850 44,47
+  s_08ba8baed8969a::t_ac9d61fa7ff11d 30,96
+searchfn/docs/content/docs/getting-started.mdx
+  s_08ba8baed8969a::t_ac9d61fa7ff11d 117
+searchfn/docs/content/docs/reference/server.mdx
+  s_08ba8baed8969a::t_e2227cca346f46 19,32-35,50,110,164,169-170,191,196-198
+searchfn/server/src/routes/search-all.ts
+  s_08ba8baed8969a::t_53b8c50e7ee8eb 2,14,18,47,90
+searchfn/docs/content/docs/documentation/advanced/adapter-migration.mdx
+  s_08ba8baed8969a::t_ac9d61fa7ff11d 52,119
+searchfn/docs/content/docs/recipes/multi-tenant.mdx
+  s_08ba8baed8969a::t_e2227cca346f46 70-73
+searchfn/docs/content/docs/operations/observability.mdx
+  s_08ba8baed8969a::t_ac9d61fa7ff11d 12
+searchfn/server/src/routes/clear.ts
+  s_08ba8baed8969a::t_53b8c50e7ee8eb 2,4-5
+searchfn/server/src/routes/index.ts
+  s_08ba8baed8969a::t_53b8c50e7ee8eb 2-3,7
+searchfn/docs/content/docs/reference/configuration.mdx
+  s_08ba8baed8969a::t_e2227cca346f46 17-20
+searchfn/server/src/routes/remove.ts
+  s_08ba8baed8969a::t_53b8c50e7ee8eb 2-3,5-6
+searchfn/docs/content/docs/reference/errors.mdx
+  s_08ba8baed8969a::t_e2227cca346f46 27-28
+searchfn/docs/content/docs/documentation/core-wasm/when-to-use.mdx
+  s_08ba8baed8969a::t_ac9d61fa7ff11d 57
+searchfn/server/__tests__/authorization.test.ts
+  s_08ba8baed8969a::t_b872b878e5e1e2 1-40,42-81,88,95-130
+  s_08ba8baed8969a::t_a72fa0abc3f616 41,82,93-94
+  s_08ba8baed8969a::t_cc956dbb21dec4 83-87,89-92
+searchfn/docs/content/docs/documentation/security/payload-limits.mdx
+  s_08ba8baed8969a::t_ac9d61fa7ff11d 23
+  s_08ba8baed8969a::t_cc956dbb21dec4 53
+searchfn/docs/content/docs/documentation/security/secret-redaction.mdx
+  s_08ba8baed8969a::t_ac9d61fa7ff11d 51
+searchfn/docs/content/docs/documentation/deploy/cloudflare-workers.mdx
+  s_08ba8baed8969a::t_ac9d61fa7ff11d 42,226
+searchfn/docs/public/llms-full.txt
+  s_08ba8baed8969a::t_bffb0112142d4c 95,580,953,1149,1298,1365,2494,2636,3364,3548,3778,4091,4298,4372,5099-5100,5102,5137,5145,5153,5189,5219,5392,5397,5417-5418,5439-5440,5442,5451,5463-5464,5476,5479-5483,5486,5491-5492,5508,5510-5512,5521-5527,5529,5594,6073,6164,6169-6170,6242,6265,6434-6436,6537,6610,6725,6842,6908,6946,7109,7302,7307-7309,7322-7325,7329,7336-7339,7341,7352-7354,7363,7369-7373,7386-7392,8493-8496,10160-10163,10438-10439,10529,10613,10683,10696-10699,10714,10774,10828,10833-10834,10855,10860-10862
+  s_08ba8baed8969a::t_ea061c13df0326 6548,6578,6623,6738,6856,6859,7310,7315,7340,7355,7359
+searchfn/docs/content/docs/documentation/deploy/vercel.mdx
+  s_08ba8baed8969a::t_ac9d61fa7ff11d 31,105
+searchfn/docs/content/docs/quickstart/index.mdx
+  s_08ba8baed8969a::t_cc956dbb21dec4 27
+searchfn/server/__tests__/server-routes.test.ts
+  s_08ba8baed8969a::t_e13b21f7c524d4 40,53,70,83,92,116,135,143,159,177,199,216,241,260,274,283,305,327,350,372,398,421
+searchfn/server/src/index.ts
+  s_08ba8baed8969a::t_644dd5fc83d67d 3
+searchfn/docs/content/docs/documentation/deploy/railway.mdx
+  s_08ba8baed8969a::t_ac9d61fa7ff11d 25
+searchfn/server/src/routes/search.ts
+  s_08ba8baed8969a::t_53b8c50e7ee8eb 2,14
+searchfn/docs/content/docs/reference/events.mdx
+  s_08ba8baed8969a::t_ac9d61fa7ff11d 14,98
+searchfn/docs/content/docs/documentation/security/multi-tenant-isolation.mdx
+  s_08ba8baed8969a::t_e2227cca346f46 66-67,69,104,112,120
+package-lock.json
+  s_12235e5930aa22::t_fc2f9852c81432 62933
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "bd8422cd42028f3ce7a8cbba452cacaafee1f221",
+  "prompts": {},
+  "sessions": {
+    "s_08ba8baed8969a": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a211ab-e567-7052-ae97-961e8a10be50",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_12235e5930aa22": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a211ab-2f55-7b20-a3cd-c79e6e4b95cb",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
