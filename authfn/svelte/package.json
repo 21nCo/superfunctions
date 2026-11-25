@@ -1,6 +1,6 @@
 {
   "name": "@authfn/svelte",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "Svelte wrappers for authfn client",
   "type": "module",
   "main": "./dist/index.js",
