@@ -408,6 +408,7 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
     const credential = config.inference.credentialEnv;
     if (credential !== undefined && !ENV_NAME.test(credential)) error("REVIEWFN_CREDENTIAL_INVALID", "credentialEnv must name an environment variable.");
     else if (credential && !this.environment[credential]) error("REVIEWFN_CREDENTIAL_MISSING", `credentialEnv ${credential} is not populated.`);
+    else if (credential && this.environment[credential]!.length < 4) error("REVIEWFN_CREDENTIAL_INVALID", `credentialEnv ${credential} holds fewer than 4 characters, too few to redact.`);
     return diagnostics;
   }
 
@@ -470,10 +471,9 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
 
   private secrets(config: ReviewFnConfig, environment: NodeJS.ProcessEnv): string[] {
     const credential = config.inference.credentialEnv ? this.environment[config.inference.credentialEnv] : undefined;
-    // The credential, and every allowlisted value whose name core marks as a secret, whatever their length (core drops
-    // values under 4 characters, so the name is tested with a placeholder value).
-    const named = Object.entries(environment).filter(([name, value]) => value && collectSecrets({ [name]: "name" }).length > 0).map(([, value]) => String(value));
-    return [...new Set([...(credential ? [credential] : []), ...named])];
+    // The credential (configurationDiagnostics refuses one too short to redact), and every allowlisted value whose name
+    // marks it as a secret.
+    return collectSecrets(environment, credential ? [credential] : []);
   }
 }
 
@@ -576,7 +576,9 @@ const serve = request => {
 };
 let input = "";
 process.stdin.setEncoding("utf8").on("data", chunk => {
-  for (input += chunk; input.includes("\n"); input = input.slice(input.indexOf("\n") + 1)) {
+  input += chunk;
+  if (!chunk.includes("\n")) return;
+  for (; input.includes("\n"); input = input.slice(input.indexOf("\n") + 1)) {
     let reply; try { reply = serve(JSON.parse(input.slice(0, input.indexOf("\n")))); } catch (error) { reply = { error: error.code ?? String(error.message) }; }
     process.stdout.write(JSON.stringify(reply) + "\n");
   }
@@ -608,7 +610,7 @@ function directoryHelper(directory: string): DirectoryHelper {
   child.stdin.on("error", () => { /* the helper is gone; its close answers */ });
   child.stdout.setEncoding("utf8").on("data", (chunk: string) => {
     buffered += chunk;
-    if (!buffered.includes("\n")) return;
+    if (!chunk.includes("\n")) return;
     try { answer(JSON.parse(buffered.slice(0, buffered.indexOf("\n"))) as Record<string, unknown>); } catch { answer({ error: "the directory operation failed" }); }
     buffered = "";
   });
@@ -651,10 +653,13 @@ function redact(text: string, secrets: readonly string[], withheld: ReadonlyArra
   const levels: EscapeLevel[] = [];
   for (let current = text; values.length > 0;) {
     for (const [value, period] of periods) {
-      // An occurrence covers on through the text that keeps the secret's period, which holds every occurrence overlapping it.
-      for (let at = current.indexOf(value), end = 0; at !== -1; at = current.indexOf(value, end - value.length + 1)) {
-        for (end = at + value.length; end < current.length && current[end] === current[end - period];) end += 1;
-        cover(original(levels, at), original(levels, end));
+      // An occurrence covers every whole occurrence that follows it at its period, in one pass over the text that keeps it.
+      for (let at = current.indexOf(value); at !== -1;) {
+        let end = at + value.length;
+        while (end < current.length && current[end] === current[end - period]) end += 1;
+        const last = at + Math.floor((end - at - value.length) / period) * period;
+        cover(original(levels, at), original(levels, last + value.length));
+        at = current.indexOf(value, last + 1);
       }
     }
     const next = current.includes("\\") ? unescapeLevel(current) : undefined;

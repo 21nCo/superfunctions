@@ -1312,12 +1312,10 @@ describe("CliHarnessAdapter preflight and configuration", () => {
 
   it.each([
     ["an overlapping occurrence", "test-test", { stdout: "echo test-test-test\n" }],
-    ["a credential shorter than four characters", "q9z", { stdout: "echo q9z\n" }],
     ["a credential cut at the output bound", CREDENTIAL, { stdout: `progress\n${CREDENTIAL.slice(0, 20)}`, stderr: CREDENTIAL.slice(0, 12), timedOut: true }],
     ["a whole multi-line credential ending a cut stream", "test-line-one\ntest-line-two", { stdout: "progress\ntest-line-one\ntest-line-two", timedOut: true }],
     ["a multi-line credential cut after its first line", "test-line-one\ntest-line-two", { stdout: "progress\ntest-line-one\ntest-li", timedOut: true }],
     ["a multi-line credential split across stdout and stderr", "test-line-one\ntest-line-two", { stdout: "test-line-one", stderr: "test-line-two" }],
-    ["an allowlisted secret shorter than four characters", CREDENTIAL, { stdout: `echo ${JSON.stringify(JSON.stringify("k9w"))}\n` }, "k9w"],
     ["a cut credential holding short secrets that redaction lengthens", "test-lead beep beep beep beep\ntest-line-two", { stdout: "progress\ntest-lead beep beep beep beep\ntest-li", timedOut: true }, "beep"],
   ])("leaves no part of %s in the transcript", async (_case, credential, result, allowlisted?: string) => {
     const runner: CommandRunner = async (_command, args) => args.includes("--version")
@@ -1327,6 +1325,23 @@ describe("CliHarnessAdapter preflight and configuration", () => {
     const output = await new CliHarnessAdapter({ environment: { ...environment(), REVIEW_AUTH: credential, ...extra }, runner }).run(input(configuration(profile({ envAllowlist: ["ALLOWED_ONE", "FIXTURE_API_KEY"] }))));
     expect(output.transcript).toContain("[");
     for (const part of [credential.slice(-4), credential.slice(0, 4), CREDENTIAL.slice(0, 12), "line-one", "lead", ...(allowlisted ? [allowlisted] : [])]) expect(output.transcript).not.toContain(part);
+  });
+
+  it("refuses a credential too short to redact before any process starts", async () => {
+    const runner = vi.fn<CommandRunner>();
+    const output = await new CliHarnessAdapter({ environment: { ...environment(), REVIEW_AUTH: "q9z" }, runner }).run(input(configuration(profile())));
+    expect(output).toMatchObject({ terminal: "failed", error: "credentialEnv REVIEW_AUTH holds fewer than 4 characters, too few to redact." });
+    expect(runner).not.toHaveBeenCalled();
+  });
+
+  it("redacts only whole occurrences, keeping the JSON around a credential that its own first character follows", async () => {
+    const credential = '"test-quoted';
+    const runner: CommandRunner = async (_command, args) => args.includes("--version")
+      ? { code: 0, signal: null, stdout: "fake-cli version 1.2.3\n", stderr: "", timedOut: false, canceled: false }
+      : { code: 0, signal: null, stdout: `${JSON.stringify({ echo: credential })}\n${JSON.stringify({ findings: [], evidence: [], inspectedPaths: ["src/index.ts"], uninspected: [] })}\n`, stderr: "", timedOut: false, canceled: false };
+    const output = await new CliHarnessAdapter({ environment: { ...environment(), REVIEW_AUTH: credential }, runner }).run(input(configuration(profile())));
+    expect(output.terminal).toBe("completed");
+    expect(output.transcript).toContain('{"echo":"[REDACTED]"}');
   });
 
   it("withholds a credential cut short in the output file of a stopped CLI", async () => {
