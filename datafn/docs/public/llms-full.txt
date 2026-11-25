@@ -7303,17 +7303,24 @@ const store = new DbIdempotencyStore(adapter, "my-namespace");
 **Characteristics:**
 
 - Stores results in the `__datafn_idempotency` internal table.
-- Keyed by `namespace:clientId:mutationId`.
+- Keyed by the request's namespace and actor plus `clientId` and `mutationId`. The server binds the store to each request (`store.scoped({ namespace, actorId })`), so the same `clientId` and `mutationId` from another tenant or another user is a new mutation, never a duplicate. Per-user isolation needs `namespaceProvider.getActorId` to return a stable, distinct ID for each authenticated user: requests without a resolved actor (no `getActorId`, or one that returns `undefined`) share their namespace's anonymous scope, so two such callers with the same `clientId` and `mutationId` get the first one's result. The namespace passed to the constructor is not used for the server's records.
 - Results are JSON-serialized.
 - Survives server restarts.
 - Supports pruning by age.
+
+### Upgrading from `@datafn/server` 0.2.x
+
+0.3.0 changed the record key from a fixed namespace to the request's namespace and actor. Records written by 0.2.x are never matched again (matching them could return another tenant's result), so a mutation applied before the upgrade and retried after it runs again: a retried `insert` returns `CONFLICT` on `id` (through `/push` it is reported as applied, with no new write, when the existing row still matches the fields sent), and other operations are re-applied. Deploy when client outboxes are drained, or accept that for retries in flight during the switch. Old records are removed by the usual retention pruning. A custom persistent store without `scoped()` is wrapped instead: its keys become a JSON array of namespace, actor and `clientId`. Give such a store separate backing storage for 0.3.0 workers, or stop every 0.2.x worker and clear the records they wrote before 0.3.0 uses it: a 0.2.x worker reads wrapped keys as raw `clientId` values, and a pre-0.3.0 record whose raw `clientId` equals a wrapped key would be matched, returning another actor's or tenant's result. Starting the store empty is not enough while 0.2.x workers still write to it.
 
 ### Pruning
 
 The database store supports pruning old entries:
 
 ```typescript
-// Delete entries older than 7 days
+// Delete entries older than 7 days in every namespace (what `retention.idempotencyDays` does)
+const deletedAll = await store.pruneIdempotencyAllNamespaces(7);
+
+// Delete only the entries of the namespace the store was constructed with
 const deletedCount = await store.pruneIdempotency(7);
 ```
 
@@ -13295,7 +13302,7 @@ Those tables still store a `namespace` column. Use the [namespace storage contra
 The `namespaceProvider` on the server configuration maps incoming requests to a namespace string. It has two functions:
 
 - **`getNamespace(ctx)`** -- Required. Returns the namespace string for the current request. Must return a non-empty string.
-- **`getActorId(ctx)`** -- Optional. Returns an identifier for audit attribution (who performed the action). Errors are non-fatal.
+- **`getActorId(ctx)`** -- Optional. Returns the caller's identifier, used for audit attribution and for access to private shareable records. Return `undefined` for an anonymous caller; if it throws, the request fails.
 
 ```typescript
 import { createDatafnServer } from "@datafn/server";
@@ -13322,8 +13329,10 @@ The server resolves the namespace using this priority:
 
 Actor ID is resolved separately from namespace:
 
-1. **`namespaceProvider.getActorId(ctx)`** -- If configured. Errors are logged but don't fail the request.
+1. **`namespaceProvider.getActorId(ctx)`** -- If configured. An error fails the request, so a broken identity lookup never runs a request as anonymous. An `actorId` in a request body is ignored.
 2. **`undefined`** -- No actor attribution.
+
+An in-process `server.search(params)` call without a context argument resolves an actor only from a static `context` object, and only when `params.namespace` is unset or names that context's own namespace. Otherwise (a function `context`, no `context`, or a static one aimed at another namespace) the search runs anonymous and `getActorId` is not called, so a resolver that reads ambient request state never lends its actor to such a search. Without a static context and without `params.namespace`, `getNamespace` is called with an empty object and must succeed. To search as a user, pass that request's context as the second argument: `server.search({ query }, ctx)`.
 
 ### Example: Common Namespace Patterns
 

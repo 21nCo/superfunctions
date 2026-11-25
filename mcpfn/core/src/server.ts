@@ -2,12 +2,16 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
   WebStandardStreamableHTTPServerTransport,
+  type EventStore,
   type HandleRequestOptions,
 } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import type {
   TaskMessageQueue,
   TaskStore,
 } from "@modelcontextprotocol/sdk/experimental/tasks/interfaces.js";
+import { createHash } from "node:crypto";
+
+import type { AuthInfo } from "@modelcontextprotocol/sdk/server/auth/types.js";
 import type { RequestOptions } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import {
@@ -132,7 +136,124 @@ export type McpFnWebStandardHandlerOptions<TContext> = ConstructorParameters<
   configureRequestServer?: (
     server: McpFnServer<TContext>,
   ) => void | Promise<void>;
+  /**
+   * Requests carrying an `Origin` header are refused with HTTP 403 unless the
+   * origin is listed in `allowedOrigins`, or it is a loopback origin (such as
+   * `http://localhost:3000`) equal to the request's own `Host`. This stops
+   * DNS-rebinding pages' requests that carry `Origin` (browsers may omit it
+   * on same-origin GET), so a local server should also accept only its own
+   * `Host` names; non-browser clients send no `Origin` and are unaffected. Defaults to `"reject-unlisted"`. `"off"`
+   * disables the check, and setting `enableDnsRebindingProtection` (true or
+   * false) hands Host/Origin checking to the SDK transport instead.
+   */
+  originPolicy?: "reject-unlisted" | "off";
+  /**
+   * Stateful mode: the principal a session belongs to. Computed when the
+   * session is created and on every later request that names it; a request
+   * from a different principal gets the same 404 as an unknown session.
+   * Defaults to the authenticated subject (`authInfo.extra.subject`) and
+   * client ID from `handleOptions.authInfo`; without a subject, the access
+   * token itself (so a refreshed token needs a new session); no principal
+   * when the request carries no `authInfo`. Must not read the request body.
+   */
+  sessionPrincipal?: (input: {
+    authInfo: AuthInfo | undefined;
+    request: Request;
+  }) => string | undefined | Promise<string | undefined>;
 };
+
+/**
+ * An event store view whose stream IDs are prefixed with one session's ID, and
+ * which refuses to replay events stored for any other session.
+ */
+function sessionScopedEventStore(base: EventStore, sessionId: () => string | undefined): EventStore {
+  // Header-safe (event IDs often embed the stream ID and travel back in
+  // Last-Event-ID): a hex digest of the session ID and a dot.
+  const prefix = () => `${createHash("sha256").update(sessionId() ?? "").digest("hex").slice(0, 32)}.`;
+  const unscoped = (streamId: string | undefined) => {
+    const own = prefix();
+    return streamId !== undefined && streamId.startsWith(own) ? streamId.slice(own.length) : undefined;
+  };
+  const foreign = () => new Error("Event ID does not belong to this session");
+  return {
+    storeEvent: (streamId, message) => base.storeEvent(prefix() + streamId, message),
+    ...(base.getStreamIdForEventId
+      ? { getStreamIdForEventId: async (eventId: string) => unscoped(await base.getStreamIdForEventId!(eventId)) }
+      : {}),
+    async replayEventsAfter(lastEventId, { send }) {
+      if (base.getStreamIdForEventId) {
+        const known = await base.getStreamIdForEventId(lastEventId);
+        if (known && unscoped(known) === undefined) throw foreign();
+      }
+      // Hold the replay until the store says whose stream it was.
+      const replayed: Array<[string, Parameters<typeof send>[1]]> = [];
+      const streamId = await base.replayEventsAfter(lastEventId, {
+        send: async (eventId, message) => { replayed.push([eventId, message]); },
+      });
+      // Stores answer an unknown or expired event with "" and send nothing:
+      // pass that through, so the client gets an empty resumed stream.
+      if (streamId === "" && replayed.length === 0) return "";
+      const own = unscoped(streamId);
+      if (own === undefined) throw foreign();
+      for (const [eventId, message] of replayed) await send(eventId, message);
+      return own;
+    },
+  };
+}
+
+function defaultSessionPrincipal(input: { authInfo: AuthInfo | undefined }): string | undefined {
+  const authInfo = input.authInfo;
+  if (!authInfo) return undefined;
+  const subject = authInfo.extra?.subject;
+  // Subjects and client IDs are unique per issuer: include the verifier's
+  // issuer when it reports one (extra.issuer), for servers trusting several.
+  const issuer = typeof authInfo.extra?.issuer === "string" ? authInfo.extra.issuer : null;
+  if (typeof subject === "string" && subject) return JSON.stringify(["subject", issuer, subject, authInfo.clientId ?? null]);
+  // Without a verified subject, users of one OAuth client are told apart only
+  // by their token: bind the session to it (a refreshed token then needs a new
+  // session). Verifiers should set extra.subject.
+  return JSON.stringify(["token", issuer, createHash("sha256").update(authInfo.token).digest("hex")]);
+}
+
+function isLoopbackHostname(hostname: string): boolean {
+  const name = hostname.toLowerCase();
+  return name === "localhost" || name === "[::1]" || /^127(?:\.\d{1,3}){3}$/.test(name);
+}
+
+function originAllowed(
+  request: Request,
+  allowedOrigins: readonly string[] | undefined,
+): boolean {
+  const origin = request.headers.get("origin");
+  if (origin === null) return true;
+  if (allowedOrigins?.includes(origin)) return true;
+  let parsed: URL;
+  try {
+    parsed = new URL(origin);
+  } catch {
+    return false;
+  }
+  if (parsed.origin !== origin || !isLoopbackHostname(parsed.hostname)) return false;
+  // The request's own origin: its scheme with the Host it was sent to,
+  // normalised the same way (default ports dropped, case folded).
+  try {
+    const url = new URL(request.url);
+    const host = request.headers.get("host") ?? url.host;
+    // Only a bare host name (or bracketed IPv6) with an optional port.
+    // The URL parser then checks the port's range (and drops default ports).
+    if (!/^(?:\[[0-9a-f:.]+\]|[a-z0-9.-]+)(?::\d+)?$/i.test(host)) return false;
+    return new URL(`${url.protocol}//${host}`).origin === parsed.origin;
+  } catch {
+    return false;
+  }
+}
+
+function jsonRpcErrorResponse(status: number, code: number, message: string): Response {
+  return new Response(
+    JSON.stringify({ jsonrpc: "2.0", error: { code, message }, id: null }),
+    { status, headers: { "content-type": "application/json" } },
+  );
+}
 
 function mergeCapabilities(
   base: ServerCapabilities,
@@ -286,6 +407,9 @@ export class McpFnServer<TContext = undefined> {
   // record its subscription: the later unsubscribe wins.
   private readonly pendingResourceSubscriptions = new Map<string, Set<symbol>>();
   private connected = false;
+  // Increases on every close(), so a request that started before a close
+  // cannot create a session after it.
+  private closeGeneration = 0;
 
   constructor(options: McpFnServerOptions<TContext>) {
     this.serverOptions = { ...options };
@@ -1001,15 +1125,47 @@ export class McpFnServer<TContext = undefined> {
   ): Promise<
     (request: Request, options?: HandleRequestOptions) => Promise<Response>
   > {
-    const { configureRequestServer, ...transportOptions } = options;
+    // The host's session hooks are read once, here, and later called on the
+    // host's own options object (keeping its receiver even if the object
+    // changes afterwards).
+    const {
+      configureRequestServer,
+      originPolicy = "reject-unlisted",
+      sessionPrincipal = defaultSessionPrincipal,
+      onsessioninitialized: onSessionInitialized,
+      onsessionclosed: onSessionClosed,
+      ...transportOptions
+    } = options;
+    if (originPolicy !== "reject-unlisted" && originPolicy !== "off") {
+      throw new McpFnError("MCPFN_INVALID_OPTIONS", 'originPolicy must be "reject-unlisted" or "off"');
+    }
+    const checkOrigin = originPolicy === "reject-unlisted" &&
+      transportOptions.enableDnsRebindingProtection === undefined;
+    const rejectOrigin = (request: Request): Response | undefined =>
+      checkOrigin && !originAllowed(request, transportOptions.allowedOrigins)
+        ? jsonRpcErrorResponse(403, -32000, "Origin not allowed")
+        : undefined;
+    // The SDK transport still runs the host's hooks in stateless mode (for
+    // example onsessionclosed on DELETE), with the captured callbacks.
+    const statelessTransportOptions = {
+      ...transportOptions,
+      ...(onSessionInitialized
+        ? { onsessioninitialized: (id: string) => onSessionInitialized.call(options, id) }
+        : {}),
+      ...(onSessionClosed
+        ? { onsessionclosed: (id: string) => onSessionClosed.call(options, id) }
+        : {}),
+    };
     if (!transportOptions.sessionIdGenerator) {
       if (this.clientProfiles?.profiles.some((profile) => profile.requiresReportedClient !== false)) {
         throw new McpFnClientProfileError("MCPFN_PROFILE_REQUIRES_SESSION", "Client profiles require sessionIdGenerator to retain initialize metadata; stateless-independent profiles must declare requiresReportedClient: false");
       }
       return async (request: Request, handleOptions?: HandleRequestOptions) => {
+        const refused = rejectOrigin(request);
+        if (refused) return refused;
         const requestServer = new McpFnServer(this.serverOptions);
         const transport = new WebStandardStreamableHTTPServerTransport(
-          transportOptions,
+          statelessTransportOptions,
         );
         this.requestServers.add(requestServer);
         let released = false;
@@ -1040,30 +1196,34 @@ export class McpFnServer<TContext = undefined> {
       {
         server: McpFnServer<TContext>;
         transport: WebStandardStreamableHTTPServerTransport;
+        /** The principal that created the session. */
+        principal: string | undefined;
       }
     >();
     return async (request: Request, handleOptions?: HandleRequestOptions) => {
+      const refused = rejectOrigin(request);
+      if (refused) return refused;
+      const generation = this.closeGeneration;
+      const principal = await sessionPrincipal({
+        authInfo: handleOptions?.authInfo,
+        request,
+      });
+      if (generation !== this.closeGeneration) {
+        return jsonRpcErrorResponse(503, -32000, "Server closed");
+      }
       const sessionId = request.headers.get("mcp-session-id");
       if (sessionId) {
         const session = sessions.get(sessionId);
-        if (!session) {
-          return new Response(
-            JSON.stringify({
-              jsonrpc: "2.0",
-              error: { code: -32001, message: "Session not found" },
-              id: null,
-            }),
-            {
-              status: 404,
-              headers: { "content-type": "application/json" },
-            },
-          );
+        // Another principal's session answers exactly like an unknown one.
+        if (!session || session.principal !== principal) {
+          return jsonRpcErrorResponse(404, -32001, "Session not found");
         }
         return session.transport.handleRequest(request, handleOptions);
       }
 
       const requestServer = new McpFnServer(this.serverOptions);
       let initializedSessionId: string | undefined;
+      let closedDuringInitialization = false;
       let released = false;
       let transport: WebStandardStreamableHTTPServerTransport;
       const release = async () => {
@@ -1075,15 +1235,42 @@ export class McpFnServer<TContext = undefined> {
       };
       transport = new WebStandardStreamableHTTPServerTransport({
         ...transportOptions,
+        // One event store serves every session: scope its streams to this
+        // session so Last-Event-ID resumption cannot replay another's events.
+        ...(transportOptions.eventStore
+          ? { eventStore: sessionScopedEventStore(transportOptions.eventStore, () => transport.sessionId) }
+          : {}),
         onsessioninitialized: async (id) => {
-          await transportOptions.onsessioninitialized?.(id);
+          // close() ran while this request was being set up: no session, and
+          // the client gets a retryable 503 (see below), not the SDK's 400.
+          if (generation !== this.closeGeneration) {
+            closedDuringInitialization = true;
+            throw new Error("Server closed");
+          }
+          const hostHook = Boolean(onSessionInitialized);
+          // Always yields, so a close() queued meanwhile is seen below. The
+          // host's hooks are called on the host's own options object.
+          await onSessionInitialized?.call(options, id);
+          if (generation !== this.closeGeneration) {
+            closedDuringInitialization = true;
+            // Only a session the host's onsessioninitialized accepted gets
+            // its onsessionclosed.
+            if (hostHook) {
+              try {
+                await onSessionClosed?.call(options, id);
+              } catch {
+                // Best effort for a session that never went live.
+              }
+            }
+            throw new Error("Server closed");
+          }
           initializedSessionId = id;
-          sessions.set(id, { server: requestServer, transport });
+          sessions.set(id, { server: requestServer, transport, principal });
         },
         onsessionclosed: async (id) => {
           sessions.delete(id);
           try {
-            await transportOptions.onsessionclosed?.(id);
+            await onSessionClosed?.call(options, id);
           } finally {
             await release();
           }
@@ -1095,6 +1282,13 @@ export class McpFnServer<TContext = undefined> {
         await configureRequestServer?.(requestServer);
         await requestServer.connect(transport);
         const response = await transport.handleRequest(request, handleOptions);
+        // close() can also land while the SDK reads the body, before it calls
+        // onsessioninitialized (it then answers 404): answer 503 either way.
+        if (closedDuringInitialization || (!initializedSessionId && generation !== this.closeGeneration)) {
+          await response.body?.cancel().catch(() => undefined);
+          await release();
+          return jsonRpcErrorResponse(503, -32000, "Server closed");
+        }
         if (initializedSessionId) return response;
         return releaseAfterResponse(response, release);
       } catch (error) {
@@ -1265,6 +1459,7 @@ export class McpFnServer<TContext = undefined> {
   }
 
   async close(): Promise<void> {
+    this.closeGeneration += 1;
     const requestServers = [...this.requestServers];
     this.requestServers.clear();
     await Promise.all(requestServers.map((server) => server.close()));
