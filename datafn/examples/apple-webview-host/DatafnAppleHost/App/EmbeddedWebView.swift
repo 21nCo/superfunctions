@@ -72,7 +72,7 @@ struct EmbeddedWebView: UIViewRepresentable {
             decidePolicyFor navigationAction: WKNavigationAction,
             decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
         ) {
-            decisionHandler(navigationAction.targetFrame?.isMainFrame == true && allows(navigationAction.request.url)
+            decisionHandler(navigationAction.targetFrame != nil && allows(navigationAction.request.url)
                 ? .allow : .cancel)
         }
 
@@ -81,8 +81,7 @@ struct EmbeddedWebView: UIViewRepresentable {
             decidePolicyFor navigationResponse: WKNavigationResponse,
             decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void
         ) {
-            decisionHandler(navigationResponse.isForMainFrame && allows(navigationResponse.response.url)
-                ? .allow : .cancel)
+            decisionHandler(allows(navigationResponse.response.url) ? .allow : .cancel)
         }
     }
 }
