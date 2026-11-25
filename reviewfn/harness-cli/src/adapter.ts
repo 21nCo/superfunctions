@@ -556,7 +556,7 @@ try {
 process.stdout.write(JSON.stringify(reply));
 `;
 
-/** One DIRECTORY_HELPER request run in `directory`, bounded by the run's deadline and signal (cleanup by a minute). */
+/** A DIRECTORY_HELPER request run in `directory`, bounded by the run's deadline and signal, or (reads after exit, cleanup) a minute. */
 async function inDirectory(run: Prepared | undefined, directory: string, request: Record<string, unknown>, maxOutputBytes = 4_096): Promise<Record<string, unknown>> {
   const timeoutMs = run ? Math.max(1, run.deadline - Date.now()) : 60_000;
   const result = await runProcessGroup(process.execPath, ["-e", DIRECTORY_HELPER], { cwd: directory, env: {}, timeoutMs, maxOutputBytes, signal: run?.input.signal, stdin: JSON.stringify(request) });
@@ -859,7 +859,7 @@ function serialized(value: unknown): string | undefined {
  */
 async function readOutputFile(run: AttemptContext, file: string, maxBytes: number): Promise<OutputRead> {
   const max = Math.max(0, maxBytes);
-  const read: Record<string, unknown> = await inDirectory(run, path.dirname(file), { op: "read", expect: run.identities.get(path.dirname(file)), max }, 2 * max + 4_096).catch((error: unknown) => ({ error: message(error) }));
+  const read: Record<string, unknown> = await inDirectory(undefined, path.dirname(file), { op: "read", expect: run.identities.get(path.dirname(file)), max }, 2 * max + 4_096).catch((error: unknown) => ({ error: message(error) }));
   if (typeof read.error === "string") return { error: read.error === "ENOENT" ? "The CLI wrote no output file." : read.error === "EREPLACED" ? DIRECTORY_REPLACED : `The output file could not be opened: ${read.error}` };
   if (read.file !== true) return { error: "The output file is not a regular file." };
   if (Number(read.size) > max) return { overrun: `The CLI output file (${Number(read.size)} bytes) exceeded the remaining ${max}-byte output budget.` };
