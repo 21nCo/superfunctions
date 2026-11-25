@@ -405,6 +405,33 @@ async function respondUntilClosed(
   }
 }
 
+function interruptibleRequestBody(
+  body: ReadableStream<Uint8Array>,
+  signal: AbortSignal,
+): ReadableStream<Uint8Array> {
+  // Avoid pulling or locking the client body if the SDK rejects its headers.
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      signal.throwIfAborted();
+      const reader = body.getReader();
+      const abort = () => {
+        controller.error(signal.reason);
+        void reader.cancel(signal.reason).catch(() => undefined);
+      };
+      signal.addEventListener("abort", abort, { once: true });
+      try {
+        const chunk = await reader.read();
+        if (signal.aborted) return;
+        if (chunk.done) controller.close();
+        else controller.enqueue(chunk.value);
+      } finally {
+        signal.removeEventListener("abort", abort);
+        reader.releaseLock();
+      }
+    },
+  }, { highWaterMark: 0 });
+}
+
 async function releaseAfterResponse(
   response: Response,
   release: () => Promise<void>,
@@ -1435,7 +1462,7 @@ export class McpFnServer<TContext = undefined> {
               method: request.method,
               headers: request.headers,
               signal: request.signal,
-              body: body.pipeThrough(new TransformStream(), { signal: stopBody.signal }),
+              body: interruptibleRequestBody(body, stopBody.signal),
               duplex: "half",
             } as RequestInit)
           : request;
@@ -1455,7 +1482,6 @@ export class McpFnServer<TContext = undefined> {
         throw error;
       } finally {
         request.signal.removeEventListener("abort", expire);
-        stopBody.abort();
         setupPending = false;
         releaseSlot();
       }

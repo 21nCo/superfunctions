@@ -406,6 +406,23 @@ describe("createWebStandardHandler session limits and expiry (MCP-SEC-04)", () =
     expect((await initialize()).status).toBe(200);
   });
 
+  it("rejects an oversized declared body without reading or canceling the upload", async () => {
+    const { handler } = await setup({ maxRequestBodySize: 512 });
+    const pull = vi.fn();
+    const cancel = vi.fn();
+    const body = new ReadableStream<Uint8Array>({ pull, cancel }, { highWaterMark: 0 });
+    const response = await handler(new Request("http://127.0.0.1:8080/mcp", {
+      method: "POST",
+      headers: { accept: "application/json, text/event-stream", "content-type": "application/json", "content-length": "513" },
+      body,
+      duplex: "half",
+    } as RequestInit));
+    expect(response.status).toBe(413);
+    expect(pull).not.toHaveBeenCalled();
+    expect(cancel).not.toHaveBeenCalled();
+    expect(body.locked).toBe(false);
+  });
+
   it("delivers a protocol initialization error and expires its accepted session", async () => {
     vi.useFakeTimers();
     let attempts = 0;
