@@ -1,4 +1,5 @@
-import { createHash, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+import * as nodeCrypto from 'node:crypto';
 import type {
   AuthFnRuntimeConfig,
   AuthFnHooks,
@@ -41,7 +42,28 @@ const PASSWORD_HASH_N = 16384;
 const PASSWORD_HASH_R = 8;
 const PASSWORD_HASH_P = 1;
 const PASSWORD_HASH_KEY_LENGTH = 64;
+const PASSWORD_HASH_SALT_BYTES = 16;
+/** Node's default scrypt memory ceiling. Parameters above the stored cost never reach it. */
+const PASSWORD_HASH_MAXMEM_BYTES = 32 * 1024 * 1024;
 const MIN_PASSWORD_LENGTH = 12;
+/** UTF-8 byte cap enforced before any scrypt work. */
+export const AUTHFN_PASSWORD_MAX_BYTES = 1024;
+/** How many scrypt operations may run at once. Further calls wait. */
+export const AUTHFN_PASSWORD_KDF_CONCURRENCY = 4;
+const MAX_PENDING_PASSWORD_OPERATIONS = 16;
+
+/**
+ * Same cost and size as a real hash, with a fixed fake digest. Sign-in of a
+ * missing account or a missing password runs scrypt against this value so the
+ * work matches a real verification.
+ */
+const DUMMY_PASSWORD_HASH = {
+  salt: Buffer.from('test-password!!!').toString('base64url'),
+  digest: Buffer.alloc(PASSWORD_HASH_KEY_LENGTH, 0x2e)
+};
+
+let scryptActive = 0;
+const scryptWaiters: Array<() => void> = [];
 
 export interface PasswordSignUpInput {
   email: string;
@@ -92,7 +114,7 @@ export async function signUpWithPassword(
   } = {}
 ): Promise<PasswordSignUpResult> {
   const email = normalizeEmail(input.email);
-  assertPasswordLength(input.password);
+  assertPasswordWithinLimits(input.password);
 
   const profile = readSignUpProfile(input.profile);
   const beforeUserInput = await runBeforeUserCreateHook(hooks, {
@@ -124,7 +146,7 @@ export async function signUpWithPassword(
     });
   }
 
-  const passwordHash = await hashPassword(input.password);
+  const passwordHash = await hashPassword(input.password, context.request?.signal);
 
   return runUserCredentialTransaction(async () => {
     const user = await createUser(config, {
@@ -236,7 +258,7 @@ async function linkPasswordCredentialForExistingUser(
 
   const credential = await createPasswordCredential(config, {
     userId: context.existingUser.id,
-    passwordHash: await hashPassword(password)
+    passwordHash: await hashPassword(password, context.request?.signal)
   });
 
   return {
@@ -253,14 +275,24 @@ export async function signInWithPassword(
 ): Promise<PasswordSignInResult> {
   const email = normalizeEmail(input.email);
   assertPasswordInput(email, input.password);
+  assertPasswordByteLimit(input.password);
 
   const user = await findUserByPrimaryEmail(config, email);
-  if (!user) {
+  const credential = user ? await getPasswordCredentialByUserId(config, user.id) : null;
+  // A missing account and a missing password do the same scrypt work as a real
+  // check, then return the same error. Verification status is reported only
+  // after the password matches.
+  if (!user || !credential) {
+    await deriveScryptKey(input.password, DUMMY_PASSWORD_HASH.salt, options.request?.signal);
     throw new AuthFnInvalidCredentialsError('Invalid email or password');
   }
 
-  const credential = await getPasswordCredentialByUserId(config, user.id);
-  if (!credential) {
+  const valid = await verifyPassword(input.password, credential.passwordHash, options.request?.signal);
+  if (!valid) {
+    throw new AuthFnInvalidCredentialsError('Invalid email or password');
+  }
+  const current = await getPasswordCredentialByUserId(config, user.id);
+  if (current?.id !== credential.id || current.passwordHash !== credential.passwordHash) {
     throw new AuthFnInvalidCredentialsError('Invalid email or password');
   }
 
@@ -269,11 +301,6 @@ export async function signInWithPassword(
       userId: user.id,
       primaryEmail: user.primaryEmail
     });
-  }
-
-  const valid = await verifyPassword(input.password, credential.passwordHash);
-  if (!valid) {
-    throw new AuthFnInvalidCredentialsError('Invalid email or password');
   }
 
   return { user, credential };
@@ -331,30 +358,45 @@ export async function updatePasswordCredential(
   input: { userId: string; password: string },
   options: PasswordPolicyOptions = {}
 ): Promise<AuthFnPasswordCredentialRecord> {
-  const userIdLength = Array.from(input.userId).length;
-  assertAuthFnDatabaseKeyLength(
-    input.userId,
-    'userId',
-    AUTHFN_LEGACY_USER_REFERENCE_MAX_LENGTH
-  );
-  const existing = await getPasswordCredentialByUserId(config, input.userId);
-  const legacyUser = !existing && userIdLength > AUTHFN_DATABASE_KEY_MAX_LENGTH
-    ? await findUserById(config, input.userId)
-    : null;
-  const userId = existing?.userId === input.userId
-    ? input.userId
-    : legacyUser
-      ? assertAuthFnDatabaseKeyLength(
-          input.userId,
-          'userId',
-          AUTHFN_LEGACY_USER_REFERENCE_MAX_LENGTH
-        )
-      : assertAuthFnDatabaseKeyLength(input.userId, 'userId');
-  await assertValidPassword(input.password, {
+  const update = await preparePasswordCredentialUpdate(config, input, options);
+  return update();
+}
+
+/** Prepare the update without mutating the credential or consuming a reset code. */
+export async function preparePasswordCredentialUpdate(
+  config: Pick<AuthFnRuntimeConfig, 'database' | 'namespace'>,
+  input: { userId: string; password: string },
+  options: PasswordPolicyOptions
+): Promise<() => Promise<AuthFnPasswordCredentialRecord>> {
+  const { userId, password } = input;
+  assertAuthFnDatabaseKeyLength(userId, 'userId', AUTHFN_LEGACY_USER_REFERENCE_MAX_LENGTH);
+  await assertValidPassword(password, {
     ...options,
     purpose: options.purpose ?? 'update-password'
   });
-  const passwordHash = await hashPassword(input.password);
+  const passwordHash = await hashPassword(password, options.request?.signal);
+  return () => storeUpdatedPasswordCredential(config, userId, passwordHash);
+}
+
+async function storeUpdatedPasswordCredential(
+  config: Pick<AuthFnRuntimeConfig, 'database' | 'namespace'>,
+  requestedUserId: string,
+  passwordHash: string
+): Promise<AuthFnPasswordCredentialRecord> {
+  const userIdLength = Array.from(requestedUserId).length;
+  const existing = await getPasswordCredentialByUserId(config, requestedUserId);
+  const legacyUser = !existing && userIdLength > AUTHFN_DATABASE_KEY_MAX_LENGTH
+    ? await findUserById(config, requestedUserId)
+    : null;
+  const userId = existing?.userId === requestedUserId
+    ? requestedUserId
+    : legacyUser
+      ? assertAuthFnDatabaseKeyLength(
+          requestedUserId,
+          'userId',
+          AUTHFN_LEGACY_USER_REFERENCE_MAX_LENGTH
+        )
+      : assertAuthFnDatabaseKeyLength(requestedUserId, 'userId');
 
   if (!existing) {
     return createPasswordCredential(config, {
@@ -363,26 +405,21 @@ export async function updatePasswordCredential(
     });
   }
 
-  const updatedAt = new Date();
   return config.database.update<AuthFnPasswordCredentialRecord>({
     model: 'password_credentials',
     where: [{ field: 'userId', operator: 'eq', value: userId }],
     data: {
       passwordHash,
-      updatedAt
+      updatedAt: new Date()
     },
     namespace: namespace(config)
   });
 }
 
-export async function hashPassword(password: string): Promise<string> {
-  assertPasswordLength(password);
-  const salt = randomBytes(16).toString('base64url');
-  const derived = scryptSync(password, salt, PASSWORD_HASH_KEY_LENGTH, {
-    N: PASSWORD_HASH_N,
-    r: PASSWORD_HASH_R,
-    p: PASSWORD_HASH_P
-  });
+export async function hashPassword(password: string, signal?: AbortSignal): Promise<string> {
+  assertPasswordWithinLimits(password);
+  const salt = randomBytes(PASSWORD_HASH_SALT_BYTES).toString('base64url');
+  const derived = await deriveScryptKey(password, salt, signal);
 
   return [
     PASSWORD_HASH_ALGO,
@@ -394,25 +431,40 @@ export async function hashPassword(password: string): Promise<string> {
   ].join('$');
 }
 
-export async function verifyPassword(password: string, storedHash: string): Promise<boolean> {
-  const parts = storedHash.split('$');
-  if (parts.length !== 6 || parts[0] !== PASSWORD_HASH_ALGO) {
-    throw new AuthFnInternalError('Stored password hash format is invalid');
+export async function verifyPassword(password: string, storedHash: string, signal?: AbortSignal): Promise<boolean> {
+  assertPasswordByteLimit(password);
+  const parsed = parseStoredPasswordHash(storedHash);
+  // Python's hex-encoded hashes have always failed verification here.
+  // Preserve that result without deriving a longer key for those hashes.
+  const supported = parsed ?? DUMMY_PASSWORD_HASH;
+  const derived = await deriveScryptKey(password, supported.salt, signal);
+  return timingSafeEqual(derived, supported.digest) && parsed !== null;
+}
+
+/**
+ * Rejects a password before any scrypt work. The minimum is characters; the
+ * maximum is UTF-8 bytes, so a long multibyte password cannot reach the KDF.
+ */
+export function assertPasswordWithinLimits(password: string): void {
+  if (typeof password !== 'string' || password.length < MIN_PASSWORD_LENGTH) {
+    throw new AuthFnValidationError(`Password must be at least ${MIN_PASSWORD_LENGTH} characters`, {
+      field: 'password',
+      minLength: MIN_PASSWORD_LENGTH
+    });
   }
+  assertPasswordByteLimit(password);
+}
 
-  const [, nRaw, rRaw, pRaw, salt, digest] = parts;
-  const expected = Buffer.from(digest, 'base64url');
-  const derived = scryptSync(password, salt, expected.length, {
-    N: Number(nRaw),
-    r: Number(rRaw),
-    p: Number(pRaw)
-  });
-
-  if (derived.length !== expected.length) {
-    return false;
+function assertPasswordByteLimit(password: string): void {
+  if (typeof password !== 'string') {
+    throw new AuthFnValidationError('Password must be a string', { field: 'password' });
   }
-
-  return timingSafeEqual(derived, expected);
+  if (password.length > AUTHFN_PASSWORD_MAX_BYTES || Buffer.byteLength(password, 'utf8') > AUTHFN_PASSWORD_MAX_BYTES) {
+    throw new AuthFnValidationError(`Password must be at most ${AUTHFN_PASSWORD_MAX_BYTES} bytes`, {
+      field: 'password',
+      maxBytes: AUTHFN_PASSWORD_MAX_BYTES
+    });
+  }
 }
 
 function assertPasswordInput(email: string, password: string): void {
@@ -491,7 +543,7 @@ async function assertValidPassword(
   password: string,
   options: PasswordPolicyOptions = {}
 ): Promise<void> {
-  assertPasswordLength(password);
+  assertPasswordWithinLimits(password);
   const checker = options.compromisedPasswordChecker;
   if (!checker) {
     return;
@@ -513,13 +565,88 @@ async function assertValidPassword(
   }
 }
 
-function assertPasswordLength(password: string): void {
-  if (typeof password !== 'string' || password.length < MIN_PASSWORD_LENGTH) {
-    throw new AuthFnValidationError(`Password must be at least ${MIN_PASSWORD_LENGTH} characters`, {
-      field: 'password',
-      minLength: MIN_PASSWORD_LENGTH
+function deriveScryptKey(password: string, salt: string, signal?: AbortSignal): Promise<Buffer> {
+  return withScryptSlot(() => new Promise((resolve, reject) => {
+    nodeCrypto.scrypt(password, salt, PASSWORD_HASH_KEY_LENGTH, {
+      N: PASSWORD_HASH_N,
+      r: PASSWORD_HASH_R,
+      p: PASSWORD_HASH_P,
+      maxmem: PASSWORD_HASH_MAXMEM_BYTES
+    }, (error, derived) => {
+      if (error || !Buffer.isBuffer(derived)) {
+        reject(error ?? new AuthFnInternalError('Password hashing failed'));
+        return;
+      }
+      resolve(derived);
+    });
+  }), signal);
+}
+
+function withScryptSlot<T>(work: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+  signal?.throwIfAborted();
+  const run = async (): Promise<T> => {
+    scryptActive += 1;
+    try {
+      return await work();
+    } finally {
+      scryptActive -= 1;
+      scryptWaiters.shift()?.();
+    }
+  };
+
+  if (scryptActive >= AUTHFN_PASSWORD_KDF_CONCURRENCY) {
+    if (scryptWaiters.length >= MAX_PENDING_PASSWORD_OPERATIONS) {
+      throw new AuthFnRateLimitedError('Password processing is temporarily busy');
+    }
+    return new Promise((resolve, reject) => {
+      function start() {
+        signal?.removeEventListener('abort', abort);
+        run().then(resolve, reject);
+      }
+      function abort() {
+        const index = scryptWaiters.indexOf(start);
+        if (index >= 0) scryptWaiters.splice(index, 1);
+        reject(signal?.reason);
+      }
+      scryptWaiters.push(start);
+      signal?.addEventListener('abort', abort, { once: true });
     });
   }
+  return run();
+}
+
+function parseStoredPasswordHash(storedHash: string): { salt: string; digest: Buffer } | null {
+  const parts = storedHash.split('$');
+  if (
+    parts.length !== 6
+    || parts[0] !== PASSWORD_HASH_ALGO
+    || parts[1] !== String(PASSWORD_HASH_N)
+    || parts[2] !== String(PASSWORD_HASH_R)
+    || parts[3] !== String(PASSWORD_HASH_P)
+  ) {
+    throw new AuthFnInternalError('Stored password hash format is invalid');
+  }
+
+  const salt = parts[4] ?? '';
+  const digestText = parts[5] ?? '';
+  if (/^[0-9a-f]{32}$/.test(salt) && /^[0-9a-f]{128}$/.test(digestText)) {
+    return null;
+  }
+  const digest = decodeExactBase64Url(digestText, PASSWORD_HASH_KEY_LENGTH);
+  if (!decodeExactBase64Url(salt, PASSWORD_HASH_SALT_BYTES) || !digest) {
+    throw new AuthFnInternalError('Stored password hash format is invalid');
+  }
+  return { salt, digest };
+}
+
+function decodeExactBase64Url(value: string, expectedBytes: number): Buffer | null {
+  const remainder = expectedBytes % 3;
+  const expectedLength = Math.floor(expectedBytes / 3) * 4 + (remainder === 0 ? 0 : remainder + 1);
+  if (value.length !== expectedLength || !/^[A-Za-z0-9_-]+$/.test(value)) {
+    return null;
+  }
+  const decoded = Buffer.from(value, 'base64url');
+  return decoded.length === expectedBytes ? decoded : null;
 }
 
 function normalizeEmail(email: string): string {
