@@ -318,6 +318,12 @@ test("only files a task the step ran declares as an output are not drift", () =>
   const deleted = { ...snapshot, "ui/src/catalog.generated.ts": "deleted" };
   const deleting = [baseline(files(BUILD), snapshot), step("build", files(BUILD, NEW), deleted, [buildTask, fresh])];
   assert.deepEqual([...taintedEntries(deleting, files(BUILD, NEW)).tainted], [NEW]);
+  // Nor is removing an untracked file a task the step ran declares (it leaves the snapshot): replaying the step's
+  // entries would leave the file in place, so they are tainted.
+  const removed = [baseline(), built, step("typecheck", files(BUILD, TYPECHECK), {}, [buildTask, typecheck])];
+  const removedResult = taintedEntries(removed, files(BUILD, TYPECHECK));
+  assert.deepEqual([...removedResult.tainted], [TYPECHECK]);
+  assert.deepEqual(removedResult.reports[0].drift, ["ui/dist/index.js", "ui/src/catalog.generated.ts"]);
   // A file the build declares, written while the build ran in this step, is not drift.
   const ranAgain = [baseline(), built, step("typecheck", files(BUILD, TYPECHECK), rewritten, [buildTask, typecheck])];
   assert.deepEqual([...taintedEntries(ranAgain, files(BUILD, TYPECHECK)).tainted], []);

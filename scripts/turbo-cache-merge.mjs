@@ -309,12 +309,14 @@ function stepTaint(step, previous, archived) {
   } catch (error) {
     return { reason: error.message, drift: [] };
   }
-  // A replay only writes files, so a deletion is never restored. A file now absent from the snapshot (back to HEAD, or
-  // an untracked file removed) is never proven restored by an archive.
-  const archivedNow = (hash, file) => step.snapshot[file] !== undefined && archived(hash, file) === step.snapshot[file];
-  const restored = (file) =>
-    step.snapshot[file] !== "deleted" &&
-    (ran(file) || replayed.some(({ hash, declares }) => declares(file) && archivedNow(hash, file)));
+  // A replay only writes files, so it never restores a removal: a file now absent from the snapshot (a deleted tracked
+  // file, a tracked file back at HEAD or a removed untracked file) is drift even when a task the step ran or replayed
+  // declares it. A tracked file back at HEAD is over-tainted, which costs cache hits only.
+  const restored = (file) => {
+    const now = step.snapshot[file];
+    if (now === undefined || now === "deleted") return false;
+    return ran(file) || replayed.some(({ hash, declares }) => declares(file) && archived(hash, file) === now);
+  };
   const files = new Set([...Object.keys(previous), ...Object.keys(step.snapshot)]);
   const drift = [...files].filter((file) => previous[file] !== step.snapshot[file] && !restored(file));
   if (drift.length === 0) return null;
