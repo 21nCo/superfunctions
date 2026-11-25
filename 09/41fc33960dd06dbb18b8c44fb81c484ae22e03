@@ -1,0 +1,31 @@
+mcpfn/core/README.md
+  s_83fa589146e8c6::t_a3b9547c6785b9 168-169
+mcpfn/core/tests/openapi-cfworker.test.ts
+  s_83fa589146e8c6::t_cc40852e8f78af 429-436
+mcpfn/core/src/openapi/from-openapi.ts
+  s_d6394e74b0b34c::t_7c014d11b89236 937-938,940,943-945
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0941fc33960dd06dbb18b8c44fb81c484ae22e03",
+  "prompts": {},
+  "sessions": {
+    "s_83fa589146e8c6": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21253-9943-7ef0-8aad-8a89b106fa79",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_d6394e74b0b34c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ab0fe3bb-c703-4fbe-acdc-5df48c051e34",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
