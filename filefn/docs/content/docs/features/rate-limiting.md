@@ -1,6 +1,6 @@
 ---
 title: Rate limiting
-description: Per-route rate limiting on upload-init, sign, complete, download, share-download, and artifact-download.
+description: Opt-in per-route rate limits, including a trusted client key for public uploads.
 ---
 
 # Rate limiting
@@ -30,16 +30,56 @@ const fileFn = createFileFn({
       grantCreate:       { windowSeconds: 60, maxRequests: 30 },
       shareCreate:       { windowSeconds: 60, maxRequests: 30 },
     },
-    // Gives each unauthenticated caller its own bucket, for example by the
-    // client IP your proxy reports.
-    clientKey: (request) => request.headers.get("x-client-ip"),
+    // See "Public uploads" below. This header is only safe when the edge proxy
+    // overwrites it and drops any value the client sent.
+    clientKey: (request) => request.headers.get("cf-connecting-ip"),
   },
 });
 ```
 
-`rateLimit.limits` accepts any subset of categories — categories you don't list aren't limited. `list` covers listing files, `processing` covers starting processing (`POST /:fileId/process`), and `grantCreate` and `shareCreate` cover creating grants and share links.
+## Categories are opt-in
 
-Buckets are per tenant and principal for signed-in callers. Unauthenticated callers share one bucket per category unless `rateLimit.clientKey` names them; only use a value your own proxy sets, never one the client can choose. With `mode: "local"`, each distinct client key keeps an in-memory bucket until that key is seen again, so for anonymous traffic from many clients use `"strict"` or `"best-effort"` with a store that expires entries.
+Every category is off until you set it. A category you omit is not limited, including on a deployment that sets the others. The categories are:
+
+| Category | What it limits |
+| --- | --- |
+| `uploadInit` | `POST /upload/init` |
+| `uploadSign` | `POST /upload/:id/parts/:n/sign` |
+| `uploadComplete` | recording a part and `POST /upload/:id/complete` |
+| `download` | file download |
+| `shareDownload` | downloading through a share link |
+| `shareCreate` | creating a share link |
+| `artifactDownload` | artifact download |
+| `list` | listing files |
+| `processing` | `POST /:fileId/process` |
+| `grantCreate` | creating a grant |
+
+## Public uploads
+
+With `auth.required: false`, callers have no principal, so they share one bucket per category and tenant unless `clientKey` names them. Derive that key from an address your proxy sets, and ignore a header the browser can choose. On an edge that overwrites `cf-connecting-ip` (and strips a client-supplied copy), a public drop-off looks like this. Only the categories in `limits` are capped:
+
+```ts
+const fileFn = createFileFn({
+  database: db,
+  storage,
+  auth: { required: false },
+  stores: { atomicKv: redisAtomicStore },
+  rateLimit: {
+    mode: "strict",
+    algorithm: "fixed-window",
+    limits: {
+      uploadInit: { windowSeconds: 60, maxRequests: 10 },
+      uploadComplete: { windowSeconds: 60, maxRequests: 30 },
+      list: { windowSeconds: 60, maxRequests: 120 },
+    },
+    clientKey: (request) => request.headers.get("cf-connecting-ip"),
+  },
+});
+```
+
+Two guests then have independent buckets. The second `uploadInit` from one guest is limited without spending that guest's `list` budget, and a guest who never appears in `clientKey` still shares the unnamed anonymous bucket with every other unnamed guest.
+
+Buckets for signed-in callers are per tenant and principal. With `mode: "local"`, each distinct client key keeps an in-memory bucket until that key is seen again, so for anonymous traffic from many clients use `"strict"` or `"best-effort"` with a store that expires entries.
 
 `rateLimit.algorithm` is one of `"fixed-window" | "sliding-window" | "token-bucket"`.
 

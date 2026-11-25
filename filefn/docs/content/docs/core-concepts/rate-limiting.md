@@ -1,6 +1,6 @@
 ---
 title: Rate limiting
-description: Per-route rate limits using @superfunctions/middleware on top of filefn's upload, download, share-download, and artifact-download endpoints.
+description: Opt-in per-route rate limits. Categories you omit are not limited. Public uploads need a proxy-derived client key.
 ---
 
 # Rate limiting
@@ -27,6 +27,10 @@ const fileFn = createFileFn({
   },
 });
 ```
+
+Every key under `limits` is opt-in. The full set is `uploadInit`, `uploadSign`, `uploadComplete`, `download`, `shareDownload`, `shareCreate`, `artifactDownload`, `list`, `processing`, and `grantCreate`. A category you leave out is not limited.
+
+For `auth.required: false`, set `clientKey` from a header your proxy overwrites (for example `cf-connecting-ip` once the proxy has stripped any client-supplied copy). Otherwise every guest shares one bucket per category. The operator page has the public-upload sample: [Features › Rate limiting](../features/rate-limiting).
 
 Or pass a pre-built `rateLimiter` directly:
 

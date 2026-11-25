@@ -157,6 +157,38 @@ describe('FILE-30 low-severity hardening (F-13, F-14, F-16, F-18, F-24)', () => 
     expect((await init('client-b'))!.status).toBe(200);
   });
 
+  it('caps one category for a public upload and keeps guest buckets apart (F-14)', async () => {
+    // Sample-style config for auth.required false: each omitted category is
+    // unlimited, and clientKey is a header the edge proxy overwrites.
+    const { fileFn } = makeFileFn({
+      auth: { required: false, resolveSession: async () => null },
+      rateLimit: {
+        mode: 'local',
+        algorithm: 'fixed-window',
+        limits: {
+          uploadInit: { windowSeconds: 60, maxRequests: 1 },
+          list: { windowSeconds: 60, maxRequests: 5 },
+        },
+        clientKey: (request) => request.headers.get('cf-connecting-ip'),
+      },
+    });
+    const init = (ip: string) =>
+      fileFn.router.handle(new Request('http://localhost/upload/init', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'cf-connecting-ip': ip },
+        body: JSON.stringify({ policy: 'docs', fileName: 'a.txt', size: 1, mimeType: 'text/plain' }),
+      }));
+    const list = (ip: string) =>
+      fileFn.router.handle(new Request('http://localhost/', { headers: { 'cf-connecting-ip': ip } }));
+
+    expect((await init('203.0.113.10'))!.status).toBe(200);
+    expect((await init('203.0.113.10'))!.status).toBe(429);
+    // The upload cap does not spend the list category for that guest.
+    expect((await list('203.0.113.10'))!.status).toBe(200);
+    // A second guest has its own upload bucket.
+    expect((await init('203.0.113.11'))!.status).toBe(200);
+  });
+
   it('records route shapes, not share tokens, in observed paths (F-16)', () => {
     expect(redactObservedPath('/proxy/share-links/test-share-token/download')).toBe('/proxy/share-links/:token/download');
     expect(redactObservedPath('/files/file_1/share-links/test-share-token', '/files')).toBe('/files/file_1/share-links/:token');
