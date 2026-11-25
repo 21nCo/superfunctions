@@ -1,0 +1,113 @@
+datafn/client/package.json
+  s_860c02426d1f87::t_1a3a07f29e68c7 3,23
+datafn/client/src/e2ee.ts
+  s_326c90f370b5d2::t_c55db2514f7fbc 369-413,423-424
+datafn/client/src/sync.ts
+  s_326c90f370b5d2::t_bf2e1066e5738d 13,223-225,233-235
+datafn/core/package.json
+  s_860c02426d1f87::t_8e923999daa808 3
+datafn/core/src/index.ts
+  s_326c90f370b5d2::t_2d7325897db697 112-119
+datafn/core/src/revisions.ts
+  s_326c90f370b5d2::t_7af030a7e5b138 1-46
+datafn/server/__tests__/revisions-postgres.test.ts
+  s_326c90f370b5d2::t_ea565dae96b051 1-95
+datafn/server/package.json
+  s_326c90f370b5d2::t_e4b17b5496e1d7 3,57,66,74
+datafn/server/src/execution/internal-tables.ts
+  s_326c90f370b5d2::t_ec6bde41abdba2 18-40,79-80,88,110-153
+datafn/server/src/execution/sync/change-tracking.ts
+  s_860c02426d1f87::t_9f172cf01231d8 18-19,89-96,108-112,135-142,176-191,243,253-257,391-409,420,524,574,625,678
+datafn/server/src/execution/sync/clone.ts
+  s_326c90f370b5d2::t_ddd14ed969bc24 10,182-198,232-243,313-321,355-362
+datafn/server/src/execution/sync/pull.ts
+  s_326c90f370b5d2::t_108d82273b675e 9,57-58,83-88,836,859,979-985,1064,1082,1088-1090,1207-1210
+datafn/server/src/execution/sync/push.ts
+  s_860c02426d1f87::t_4b3254abdc954d 21-23,54,82-87,313,360,450-474,1085,1089,1091,1178-1182,1256,1281,1295,1297-1299,1302,1341,1392,1394,1399,1401-1403,1405,1415,1473
+datafn/server/src/index.ts
+  s_860c02426d1f87::t_0a64e7e2c7b3bd 44
+datafn/server/src/namespace-storage.test.ts
+  s_326c90f370b5d2::t_4f578998683a9b 121
+datafn/server/src/routes/transact.ts
+  s_326c90f370b5d2::t_4251c788089f8d 8,198-203
+datafn/server/src/server.ts
+  s_860c02426d1f87::t_1c764ec49e3156 30,390-397,448-477,533,881,902,909,926,928,942,944,952-953,963-964,972,977,994,997,1005
+package-lock.json
+  s_326c90f370b5d2::t_7f6b613bdc7305 9150,9153,9189,10232,10235,10244,10252,11953-11972,12049-12063
+datafn/client/src/adapters/shared.ts
+  s_326c90f370b5d2::t_e3cc81ee4fe1a2 85-106
+datafn/client/src/client.ts
+  s_326c90f370b5d2::t_da5709118efb0a 15,110-140,539-552,1287-1292,1665-1680
+datafn/client/src/sync/engine.ts
+  s_326c90f370b5d2::t_43a5e1172b429d 19-24,28-29,138-139,1038,1243,1583-1585,1872-1904,2070-2073
+datafn/core/src/namespace-storage.ts
+  s_326c90f370b5d2::t_d6c862a1bb5b5b 35,172-179
+datafn/server/__tests__/revisions.test.ts
+  s_326c90f370b5d2::t_f5278ea23f3380 1-277
+datafn/server/src/execution/mutation/execute.ts
+  s_326c90f370b5d2::t_fe40dcd0d67bfd 46,1001-1003,1029,1077-1084,1089-1091,1098-1101,1383,1523,1583-1588
+datafn/server/src/execution/revisions.ts
+  s_326c90f370b5d2::t_b930a7d8a7c240 1-265
+datafn/server/src/execution/transact.ts
+  s_326c90f370b5d2::t_a6b8e273c5cff4 14,156
+datafn/server/src/namespace-storage.ts
+  s_326c90f370b5d2::t_ef5274404b1472 30,57,303-305
+datafn/server/src/routes/mutation.ts
+  s_326c90f370b5d2::t_0969b89bb841ef 18,201
+datafn/server/src/routes/query.ts
+  s_326c90f370b5d2::t_d2102ffa597696 26,30,73-86,875,878,886-897
+datafn/server/src/validation/authz.ts
+  s_326c90f370b5d2::t_31c34b57639620 183-200
+datafn/client/__tests__/revisions.test.ts
+  s_229818f584ea3c::t_2457145c25b7ed 1-280
+datafn/client/src/adapters/indexedDbStorage.ts
+  s_229818f584ea3c::t_7d3455554f04b8 25-26,29-31,80-82,366-372,516,549-572,578,582,599,618,637,640,646-726,743,745,747
+datafn/client/src/adapters/memoryStorage.ts
+  s_229818f584ea3c::t_b24996d24ee3ac 16-17,30-32,96,105-144,175,426
+datafn/client/src/query.ts
+  s_229818f584ea3c::t_ac12efa47a726e 47,50-93,1555-1576
+datafn/client/src/storage.ts
+  s_229818f584ea3c::t_b3cfb3ea0406a4 48-68,117-135
+datafn/client/src/sync/apply.ts
+  s_229818f584ea3c::t_46a9a72e8d1e1f 8-76,91-96,109-110,124-125,160,175-178,181,183,250,257,259,269,281-282,284-289,291-294,310,313,320-323,325,335-340,348-351,470-493
+datafn/docs/content/docs/documentation/sync/meta.json
+  s_229818f584ea3c::t_3e84d84725f441 13
+datafn/docs/content/docs/documentation/sync/revisions.mdx
+  s_229818f584ea3c::t_2590c543a0ac6c 1-81
+datafn/docs/content/docs/reference/core/namespace-storage.mdx
+  s_229818f584ea3c::t_6ae02b324d43d2 23
+datafn/server/src/execution/idempotency.ts
+  s_229818f584ea3c::t_b1f4d608f1d08b 18-22
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7b11a4882f40bc26506e47ce3b8d7f880360bbb2",
+  "prompts": {},
+  "sessions": {
+    "s_229818f584ea3c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "57e1f8e8-bc7f-498e-9bdf-7b5930031bf9",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_326c90f370b5d2": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21124-a83e-7641-a8a7-9795baa64e3b",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_860c02426d1f87": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a2112b-fc6f-7f82-8c95-d446bf503f7f",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
