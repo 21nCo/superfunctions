@@ -5,7 +5,7 @@ import { normalizeObservability } from '@superfunctions/observability';
 import { memoryAdapter } from '@superfunctions/db/adapters/memory';
 import type { StorageAdapter } from '@superfunctions/storage';
 import type { Authorizer } from '@superfunctions/files';
-import { createDefaultAuthorizer, createFileFn, type QuotaProvider } from '../index.js';
+import { createDefaultAuthorizer, createFileFn, type FileFnConfig, type QuotaProvider } from '../index.js';
 import { generateFileFnId } from '../ids.js';
 import {
   createKeyedSerializer,
@@ -212,6 +212,7 @@ function createApp(options: {
   database?: Adapter;
   storageFixture?: ReturnType<typeof createStorage>;
   quota?: QuotaProvider;
+  observability?: FileFnConfig['observability'];
   /** Use the grant-aware authorizer instead of the owner-only default. */
   grants?: boolean;
   authorizer?: Authorizer;
@@ -228,6 +229,7 @@ function createApp(options: {
     storage: fixture.storage,
     policies: [{ name: 'doc', contentTypes: ['text/plain'], visibility: 'private' }],
     quota: options.quota,
+    observability: options.observability,
     dedup: options.dedup ? { enabled: true } : undefined,
     completionTimeoutSeconds: options.completionTimeoutSeconds,
     auth: {
@@ -620,6 +622,32 @@ describe('client-chosen file IDs: first completion wins', () => {
     expect(res.json.error.code).toBe('FILEFN_QUOTA_EXCEEDED');
     expect(await database.findMany({ model: 'uploadSessions', namespace: 'filefn' })).toEqual([]);
     expect(app.fixture.uploads.size).toBe(0);
+  });
+
+  it.each([true, false])('hides the owner quota outcome (allowed=%s) when upload completion is forbidden', async (allowed) => {
+    let withinQuota = true;
+    const observed: string[] = [];
+    const app = createApp({
+      mode: 'proxy',
+      quota: {
+        async checkQuota() { return { allowed: withinQuota, current: 10, limit: 10 }; },
+        async recordUsage() {},
+      },
+      observability: { metrics: (metric) => { observed.push(metric.kind); } },
+    });
+    const pending = await app.stage('user_b', CLIENT_ID, 'pending upload');
+    const owner = await app.stage('user_a', CLIENT_ID, 'owner upload');
+    expect((await owner.complete()).status).toBe(200);
+
+    withinQuota = allowed;
+    const response = await app.fileFn.router.handle(new Request(`https://filefn.test/upload/${pending.uploadSessionId}/complete`, {
+      method: 'POST',
+      headers: { 'x-test-user': 'user_b' },
+    }));
+    expect(response?.status).toBe(403);
+    expect(response?.headers.get('server-timing')).toBeTruthy();
+    expect(response?.headers.get('server-timing')).not.toContain('filefn.quota');
+    expect(observed).not.toContain('filefn.quota');
   });
 });
 

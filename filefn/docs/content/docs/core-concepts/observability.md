@@ -96,7 +96,7 @@ Run it on anything that's about to leave the process — webhooks, log lines, er
 
 ## Metrics
 
-When you configure `observability.metrics`, FileFn sends domain observations to your metric sink. The labels FileFn supplies exclude file and session IDs, error text, and usage figures.
+Pass a metric sink directly in the `observability` configuration object to receive domain observations. FileFn uses that sink to handle rejected metric writes safely. The labels FileFn supplies exclude file and session IDs, error text, and usage figures.
 
 | Kind | Operation | When |
 | --- | --- | --- |

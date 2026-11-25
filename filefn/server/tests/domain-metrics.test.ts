@@ -1,8 +1,9 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { memoryAdapter } from '@superfunctions/db/adapters/memory';
-import { createObservability, type ObservationMetric } from '@superfunctions/observability';
+import { createObservability, type ObservationMetric, type RequestObservation } from '@superfunctions/observability';
 import { createLocalStorageAdapter } from '@superfunctions/storage-local';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createFileFn, type FileFnConfig, type FileFnObservationEvent, type QuotaProvider } from '../src/index.js';
@@ -166,34 +167,58 @@ describe('domain metrics (N-04)', () => {
     expect(observed.filter((kind) => kind === 'filefn.upload')).toHaveLength(1);
   });
 
-  it('records request metrics in the active host scope after a lazy import', async () => {
-    const observed: ObservationMetric[] = [];
-    const host = createObservability<FileFnObservationEvent>({ metrics: (metric) => { observed.push(metric); } });
+  it('preserves getter-backed request context and logging when guarding a configured sink', async () => {
+    const context = new AsyncLocalStorage<RequestObservation<FileFnObservationEvent>>();
+    const observations: Array<{ kind: string; requestId?: string }> = [];
+    const warnings: string[] = [];
+    class HostConfiguration {
+      get metrics() {
+        return (metric: ObservationMetric) => {
+          observations.push({ kind: metric.kind, requestId: context.getStore()?.requestId });
+        };
+      }
+      get logger() {
+        return { warn: (message: string) => { warnings.push(message); } };
+      }
+      get requestContext() {
+        return {
+          get: () => context.getStore(),
+          run: async <T>(observation: RequestObservation<FileFnObservationEvent>, work: () => T | Promise<T>) =>
+            context.run(observation, work),
+        };
+      }
+    }
     const storage = createLocalStorageAdapter({ rootDir });
     delete (storage as { statObject?: unknown }).statObject;
-    const initial = host.startRequest({ requestId: 'test-host-initial' });
-    vi.resetModules();
-    const fileFn = await host.runWithRequest(initial, async () => {
-      const lazy = await import('../src/index.js');
-      return lazy.createFileFn({
-        database: memoryAdapter(),
-        storage,
-        policies: [{ name: 'docs', contentTypes: ['text/plain'], visibility: 'private' }],
-        auth: { required: false },
-        observability: host,
-      });
-    });
-    initial.finish();
+    const { fileFn } = makeFileFn({ storage, observability: new HostConfiguration() });
+    const response = await fileFn.router.handle(new Request('http://localhost/upload/init', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-request-id': 'test-host-upload' },
+      body: JSON.stringify({ policy: 'docs', fileName: 'a.txt', size: 1, mimeType: 'text/plain' }),
+    }));
+    expect(response!.status).toBe(500);
+    expect(observations).toContainEqual({ kind: 'filefn.upload', requestId: 'test-host-upload' });
+    expect(warnings).toContain('Upload storage adapter does not implement statObject');
+  });
 
-    const request = host.startRequest({ requestId: 'test-host-upload' });
-    const response = await host.runWithRequest(request, () => fileFn.router.handle(new Request('http://localhost/upload/init', {
+  it('requires a guarded sink for new domain metrics when the host supplies a prebuilt scope', async () => {
+    const observed: string[] = [];
+    const observability = createObservability<FileFnObservationEvent>({
+      async metrics(metric) {
+        observed.push(metric.kind);
+        if (metric.kind === 'filefn.upload') throw new Error('test metric sink offline');
+      },
+    });
+    const storage = createLocalStorageAdapter({ rootDir });
+    delete (storage as { statObject?: unknown }).statObject;
+    const { fileFn } = makeFileFn({ storage, observability });
+    const response = await fileFn.router.handle(new Request('http://localhost/upload/init', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ policy: 'docs', fileName: 'a.txt', size: 1, mimeType: 'text/plain' }),
-    })));
+    }));
     expect(response!.status).toBe(500);
-    expect(ofKind(observed, 'filefn.upload', 'failure')).toHaveLength(1);
-    expect(ofKind(request.finish().metrics, 'filefn.upload', 'failure')).toHaveLength(1);
+    expect(observed).not.toContain('filefn.upload');
   });
 
   it('records processing duration when a run completes', async () => {

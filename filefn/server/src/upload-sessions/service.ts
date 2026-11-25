@@ -575,7 +575,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
     ctx: FileProviderContext,
   ): Promise<
     { parts: Array<{ partNumber: number; etag: string }> }
-    | { error: Error; failure: 'parts_missing' | 'quota' }
+    | { error: Error; failure?: 'parts_missing' | 'quota' }
   > {
     const parts = await db.findMany<{ partNumber: number; etag: string }>({
       model: 'uploadParts',
@@ -600,7 +600,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       // can't write it but passes is refused (403), fenced and cleaned by the
       // completion's own write check.
       if (file && !(await canWriteFileNow(session.fileId!, ctx))) {
-        return { error: errors.forbidden({ fileId: session.fileId!, operation: 'replace' }), failure: 'quota' };
+        return { error: errors.forbidden({ fileId: session.fileId!, operation: 'replace' }) };
       }
       return {
         error: isCallersAccount(account, ctx)
@@ -2083,7 +2083,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
               await releaseClaim(uploadSessionId, ended.claim, 'in_progress', session.completionClaim ?? null);
             }
             if (admission.failure === 'quota') recordQuotaDenial(metrics);
-            else recordUploadFailure(metrics, 'parts_missing');
+            if (admission.failure === 'parts_missing') recordUploadFailure(metrics, 'parts_missing');
             throw admission.error;
           }
           parts = admission.parts;

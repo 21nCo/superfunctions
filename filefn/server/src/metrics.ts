@@ -1,4 +1,10 @@
-import type { ObservabilityInput, ObservationMetric, SuperfunctionObservability } from '@superfunctions/observability';
+import {
+  normalizeObservability,
+  type ObservabilityConfigInput,
+  type ObservabilityInput,
+  type ObservationMetric,
+  type SuperfunctionObservability,
+} from '@superfunctions/observability';
 import type { FileFnObservationEvent } from './events.js';
 
 /** The metric channel `createFileFn` already builds from `observability`. */
@@ -7,11 +13,17 @@ export type FileFnMetrics = Pick<
   'metrics' | 'getCurrentRequest' | 'startRequest' | 'runWithRequest'
 >;
 
-export function withSafeMetricSink(input: ObservabilityInput<FileFnObservationEvent>): typeof input {
-  if (!input || 'startRequest' in input || !('metrics' in input) || !input.metrics) return input;
+function guardMetricSink(input: ObservabilityInput<FileFnObservationEvent>): ObservabilityConfigInput<FileFnObservationEvent> | undefined {
+  if (!input || 'startRequest' in input || !('metrics' in input)) return undefined;
   const sink = input.metrics;
+  if (!sink) return undefined;
   return {
-    ...input,
+    service: input.service,
+    component: input.component,
+    labels: input.labels,
+    logger: input.logger,
+    events: input.events,
+    requestContext: input.requestContext,
     metrics: async (metric) => {
       try {
         await (typeof sink === 'function' ? sink(metric) : sink.record(metric));
@@ -20,6 +32,14 @@ export function withSafeMetricSink(input: ObservabilityInput<FileFnObservationEv
       }
     },
   };
+}
+
+export function createFileFnObservability(input: ObservabilityInput<FileFnObservationEvent>) {
+  const guarded = guardMetricSink(input);
+  const scope = normalizeObservability(guarded ?? input)?.child({ component: 'filefn' });
+  // An existing scope may discard the sink's promise. Enable the new domain
+  // metrics only when FileFn can guard the underlying sink itself.
+  return { scope, domainMetrics: guarded ? scope : undefined };
 }
 
 /**
