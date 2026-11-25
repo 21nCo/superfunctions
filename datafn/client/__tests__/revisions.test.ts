@@ -151,6 +151,21 @@ describe("DATA-41 client revisions", () => {
     expect(await storage.getRecordWithRevision("task", "task:1")).toEqual({ record: null, rev: 2 });
   });
 
+  it("keeps a record a merge re-created after its delete, with the merge's fields and no older tombstone", async () => {
+    const server = await startServer();
+    await serverPush(server, "seed", [{ resource: "task", operation: "insert", id: "task:1", record: { title: "a", notes: "old" } }]);
+    const storage = new MemoryStorageAdapter(["task"]);
+    const engine = engineFor(server, storage);
+    await engine.cloneNow();
+    await serverPush(server, "deleter", [{ resource: "task", operation: "delete", id: "task:1" }]);
+    await serverPush(server, "recreator", [{ resource: "task", operation: "merge", id: "task:1", record: { title: "again" } }]);
+    await engine.pullNow();
+    const pair = await storage.getRecordWithRevision("task", "task:1");
+    expect(pair.record).toMatchObject({ id: "task:1", title: "again" });
+    expect(pair.record).not.toHaveProperty("notes");
+    expect(pair.rev).toBeUndefined();
+  });
+
   it("leaves revisions unknown for changes pulled from before enablement", async () => {
     const server = await startServer(false);
     await serverPush(server, "seed", [{ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } }]);
@@ -645,11 +660,11 @@ describe("DATA-41 client revisions: round 2", () => {
     expect(events).toHaveLength(1);
   });
 
-  it("installs the first IndexedDB revisions after an upgrade from a database without them", async () => {
+  it("installs the first IndexedDB revisions of a database hydrated without them", async () => {
     {
       const dbName = `revisions_upgrade_${Math.random()}`;
       const adapter = new IndexedDbStorageAdapter(dbName, ["task"], schema as any);
-      // Hydrated before revisions existed: no revisions store yet.
+      // Hydrated before any revision was installed.
       await adapter.upsertRecord("task", { id: "task:1", title: "old" });
       const stamp = await adapter.revisionWriteStamp();
       expect(stamp).toBeGreaterThanOrEqual(0);
@@ -930,8 +945,59 @@ describe("DATA-41 client revisions: round 4", () => {
     });
   }
 
-  it("keeps an IndexedDB database at the version ceiling, its records and queued mutations, when revisions start", async () => {
-    const dbName = `revisions_ceiling_${Math.random()}`;
+  it("never lets an edit of a row returned by a memory read change the state paired with its revision", async () => {
+    const storage = new MemoryStorageAdapter(["task"]);
+    const server = { id: "task:1", title: "server", notes: "n", meta: { tags: ["a"] } };
+    await storage.putRecordsWithRevisions("task", [{ id: "task:1", record: server, rev: 7 }]);
+    const reads = [
+      async () => (await storage.getRecord("task", "task:1"))!,
+      async () => (await storage.listRecords("task"))[0],
+      async () => (await storage.findRecords("task", "title", "server"))[0],
+    ];
+    for (const read of reads) {
+      const row: any = await read();
+      row.title = "edited";
+      row.meta.tags.push("edited");
+      const pair = await storage.getRecordWithRevision("task", "task:1");
+      expect(pair).toEqual({ record: { id: "task:1", title: "server", notes: "n", meta: { tags: ["a"] } }, rev: 7 });
+    }
+  });
+
+  it("installs nothing from a versioned relation traversal whose target rows declare their own $rev field", async () => {
+    const labelled: DatafnSchema = {
+      resources: [
+        { name: "task", version: 1, fields: [{ name: "title", type: "string", required: false }, { name: "labelId", type: "string", required: false }] },
+        { name: "label", version: 1, fields: [{ name: "name", type: "string", required: false }, { name: "$rev", type: "number", required: false }] },
+      ],
+      relations: [{ from: "task", to: "label", type: "many-one", relation: "label", fkField: "labelId" }],
+    } as any;
+    const server = await createDatafnServer({
+      schema: labelled, database: memoryAdapter(), allowUnknownResources: true, revisions: { enabled: true },
+    });
+    servers.push(server);
+    await serverPush(server, "seed", [
+      { resource: "label", operation: "insert", id: "label:1", record: { name: "L", $rev: 42 } },
+      { resource: "task", operation: "insert", id: "task:1", record: { title: "a", labelId: "label:1" } },
+    ]);
+    const storage = new MemoryStorageAdapter(["task", "label"]);
+    const client = createDatafnClient({
+      schema: labelled,
+      clientId: "client:relation",
+      storage,
+      sync: { offlinability: true, remote: "http://datafn.test/datafn", http: { fetch: async (i: any, init?: any) =>
+        server.router.handle(new Request(i, init)) } },
+    });
+    await client.sync.cloneNow();
+    const before = await client.getWithRevision("task", "task:1");
+    expect(before.rev).toBe(1);
+    const related: any = await client.query({ resource: "task", version: 1, id: "task:1", relation: "label", withRevisions: true } as any);
+    expect(JSON.stringify(related)).toContain("label:1");
+    expect(await storage.getRecord("task", "label:1")).toBeNull();
+    expect(await client.getWithRevision("task", "task:1")).toEqual(before);
+  });
+
+  it("never upgrades an existing IndexedDB database for revisions, so a tab of an earlier release keeps working", async () => {
+    const dbName = `revisions_existing_${Math.random()}`;
     const first = new IndexedDbStorageAdapter(dbName, ["task"], schema as any);
     await first.upsertRecord("task", { id: "task:1", title: "kept" });
     await first.changelogAppend({
@@ -940,24 +1006,46 @@ describe("DATA-41 client revisions: round 4", () => {
       timestampMs: Date.now(),
       mutation: { version: 1, clientId: "client:a", mutationId: "queued-1", resource: "task", operation: "merge", id: "task:1", record: { title: "kept" } },
     } as any);
+    const created = await (first as any).dbPromise as IDBDatabase;
+    const version = created.version + 1;
     await first.close();
-    // The database reached the supported version ceiling without a revisions store.
-    await new Promise<void>((resolve, reject) => {
-      const request = indexedDB.open(dbName, 1000);
-      request.onsuccess = () => { request.result.close(); resolve(); };
+    // A database from before revisions: no revisions store. Its tab stays
+    // open and, like that release, closes on a version change.
+    const earlier = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open(dbName, version);
+      request.onupgradeneeded = () => request.result.deleteObjectStore("__datafn_revisions");
+      request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(request.error);
     });
+    let versionChanged = false;
+    earlier.onversionchange = () => {
+      versionChanged = true;
+      earlier.close();
+    };
 
     const storage = new IndexedDbStorageAdapter(dbName, ["task"], schema as any);
-    // A push against a server without revisions still takes a write stamp.
-    const server = await startServer(false);
-    await engineFor(server, storage).processPush();
+    for (const enabled of [false, true]) {
+      const server = await startServer(enabled);
+      await engineFor(server, storage).processPush();
+    }
 
+    expect(versionChanged).toBe(false);
+    expect(((await (storage as any).dbPromise) as IDBDatabase).version).toBe(version);
+    // The earlier tab can still write.
+    await new Promise<void>((resolve, reject) => {
+      const tx = earlier.transaction("task", "readwrite");
+      tx.objectStore("task").put({ id: "task:2", title: "from-earlier-tab" });
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
     expect(await storage.getRecord("task", "task:1")).toMatchObject({ id: "task:1", title: "kept" });
+    // Revisions stay unknown without the store.
     expect(await storage.revisionWriteStamp()).toBe(-1);
+    expect(await storage.getRecordWithRevision("task", "task:1")).toMatchObject({ rev: undefined });
     expect(await storage.putRecordsWithRevisions("task", [{ id: "task:1", record: { id: "task:1", title: "server" }, rev: 2 }]))
       .toEqual({ installed: [], current: [] });
     expect(await storage.getRecord("task", "task:1")).toMatchObject({ title: "kept" });
+    earlier.close();
     await storage.close();
   });
 

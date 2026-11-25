@@ -760,7 +760,8 @@ describe("IndexedDbStorageAdapter.upsertRecords", () => {
     );
 
     expect(
-      transaction.mock.calls.filter(([stores, mode]) => stores === "notes" && mode === "readwrite"),
+      // DATA-41: the transaction also stamps the writes in the revisions store.
+      transaction.mock.calls.filter(([stores, mode]) => [stores].flat().includes("notes") && mode === "readwrite"),
     ).toHaveLength(1);
     transaction.mockRestore();
     expect((await storage.listRecords("notes")).map((r) => r.id)).toEqual(

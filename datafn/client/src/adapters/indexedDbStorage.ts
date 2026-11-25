@@ -116,7 +116,6 @@ function deepMergeOneLevel(
 export class IndexedDbStorageAdapter implements DatafnStorageAdapter {
   readonly capabilities = { atomicMergeIfMissing: true, reportsMergeOutcome: true, revisions: true } as const;
   /** DATA-41: create the revisions store at the next upgrade. */
-  private revisionsStoreRequested = false;
   /** Closed by the caller: do not reopen after a version change. */
   private closed = false;
   private dbPromise: Promise<IDBDatabase>;
@@ -410,9 +409,11 @@ export class IndexedDbStorageAdapter implements DatafnStorageAdapter {
         }
 
         // DATA-41: record revisions and write stamps, written with their
-        // records. Created on the first revision install, so a database
-        // without revisions keeps its single-store record transactions.
-        if (this.revisionsStoreRequested && !db.objectStoreNames.contains(REVISIONS_STORE)) {
+        // records. Added only by an upgrade that runs anyway (a new database
+        // or a schema change), never by an upgrade of its own: that would
+        // close every other connection, including tabs of an earlier release
+        // that cannot reopen. Without the store revisions stay unknown.
+        if (!db.objectStoreNames.contains(REVISIONS_STORE)) {
           db.createObjectStore(REVISIONS_STORE, { keyPath: "key" });
         }
 
@@ -527,15 +528,7 @@ export class IndexedDbStorageAdapter implements DatafnStorageAdapter {
     storeName: string,
     db: IDBDatabase,
   ): Promise<IDBDatabase> {
-    // DATA-41: the revisions store needs no schema (its upgrade step does
-    // not read one).
-    if ((!this.schema && storeName !== REVISIONS_STORE) || !this.isExpectedStore(storeName)) {
-      return db;
-    }
-    // DATA-41: the revisions store is optional bookkeeping. At the version
-    // ceiling it is not added (adding it would recreate the database and
-    // erase records and queued mutations): revisions stay unknown.
-    if (storeName === REVISIONS_STORE && db.version + 1 > MAX_IDB_VERSION) {
+    if (!this.schema || !this.isExpectedStore(storeName)) {
       return db;
     }
 
@@ -730,17 +723,10 @@ export class IndexedDbStorageAdapter implements DatafnStorageAdapter {
   }
 
   async revisionWriteStamp(): Promise<number> {
-    let db = await this.dbPromise;
-    // The first request that may install revisions adds the store (a version
-    // upgrade), so writes from here on are stamped and its install can tell
-    // which records changed after it started.
-    if (!db.objectStoreNames.contains(REVISIONS_STORE)) {
-      this.revisionsStoreRequested = true;
-      db = await this.repairMissingStore(REVISIONS_STORE, db);
-      // Still none: a later install cannot tell which records changed, so
-      // -1 makes it skip every record.
-      if (!db.objectStoreNames.contains(REVISIONS_STORE)) return -1;
-    }
+    const db = await this.dbPromise;
+    // Without the revisions store (see the upgrade step) writes are not
+    // stamped, so -1 makes a later install skip every record.
+    if (!db.objectStoreNames.contains(REVISIONS_STORE)) return -1;
     const request = db.transaction(REVISIONS_STORE, "readonly").objectStore(REVISIONS_STORE).get(WRITE_STAMP_KEY);
     return new Promise((resolve, reject) => {
       request.onsuccess = () => resolve(Number(request.result?.w) || 0);
@@ -755,12 +741,6 @@ export class IndexedDbStorageAdapter implements DatafnStorageAdapter {
   ): Promise<DatafnRevisionInstallResult> {
     this.validateTableName(resource);
     if (entries.length === 0) return { installed: [], current: [] };
-    const current = await this.dbPromise;
-    if (!current.objectStoreNames.contains(REVISIONS_STORE)) {
-      // The first revision install adds the store (a version upgrade).
-      this.revisionsStoreRequested = true;
-      await this.repairMissingStore(REVISIONS_STORE, current);
-    }
     const { tx, store, revisions } = await this.recordWriteTransaction(resource, ["changelog"]);
     if (!revisions) {
       tx.abort();

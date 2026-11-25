@@ -55,6 +55,24 @@ function isVersionedQuery(query: unknown): query is Record<string, unknown> {
     (query as Record<string, unknown>).withRevisions === true;
 }
 
+/**
+ * DATA-41: whether a versioned query's rows are complete rows of its own
+ * resource, as the server issues revisions only for those. A relation
+ * traversal returns another resource's rows (whose own fields may include an
+ * application `$rev`), and a projection, grouping, aggregation, temporal or
+ * shared-with-me query returns no complete row of this namespace, so none of
+ * them is installed.
+ */
+function installsVersionedRows(query: Record<string, unknown>): boolean {
+  if (query.relation !== undefined || query.temporal !== undefined) return false;
+  if (query.groupBy !== undefined || query.aggregations !== undefined || hasTemporalGrouping(query)) return false;
+  const select = query.select;
+  if (select !== undefined && !(Array.isArray(select) && select.length === 1 && select[0] === "*")) return false;
+  if (Array.isArray(query.omit) ? query.omit.length > 0 : query.omit !== undefined) return false;
+  const metadata = query.metadata as Record<string, unknown> | undefined;
+  return metadata?.accessMode === undefined || metadata.accessMode === "namespace";
+}
+
 /** DATA-41: client hooks for installing a versioned query's rows. */
 export type VersionedQueryHooks = {
   /** Local mutations applied to storage but not yet in the changelog (debounced). */
@@ -84,7 +102,7 @@ async function finishVersionedQueryResult(
   if (!Array.isArray(rows)) return result;
   const resource = query.resource;
   const decrypted = await decryptQueryRowsForE2ee(schema, e2ee, resource, rows as Array<Record<string, unknown>>);
-  if (storage && (await storage.getHydrationState(resource)) === "ready") {
+  if (installsVersionedRows(query) && storage && (await storage.getHydrationState(resource)) === "ready") {
     const entries = decrypted.flatMap((row) => {
       const rev = readRowRevision(row);
       return rev !== undefined && typeof row.id === "string"

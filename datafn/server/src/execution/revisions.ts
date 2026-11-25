@@ -269,13 +269,16 @@ function attachRead(
 
 /**
  * Reads rows with `read` and attaches each readable row's revision as
- * `$rev`, never a revision newer than the row it is returned with. With
- * transactions the rows and revisions come from one snapshot (REPEATABLE READ
- * on PostgreSQL; SQLite transactions are serialized). Without, the rows are
- * read twice: revisions are read after the first read (to learn the ids) and
- * before the second, whose rows are returned, so a revision can only be
- * older than its row. Callers create `__datafn_revisions` first; a missing
- * table would abort a PostgreSQL transaction.
+ * `$rev`, only where the row is known to be the state at that revision. With
+ * a verified snapshot (REPEATABLE READ on PostgreSQL; SQLite transactions are
+ * serialized) the rows and revisions come from one snapshot. On any other
+ * transactional database a write and its revision commit together, so the
+ * revisions are read before and after the returned rows, and a row gets one
+ * only when both reads agree (no write to it committed in between). Without
+ * transactions a write and its revision are separate statements, so no read
+ * order can establish the pair and no revision is attached. Callers create
+ * `__datafn_revisions` first; a missing table would abort a PostgreSQL
+ * transaction.
  */
 export async function readWithRevisions<T>(
   db: Adapter,
@@ -289,21 +292,26 @@ export async function readWithRevisions<T>(
     (rowsOf(result) ?? []).map((row) => row.id).filter((id): id is string => typeof id === "string");
   const unsnapshotted = async (readDb: Adapter) => {
     const ids = idsOf(await read(readDb));
-    const revisions = await readRevisions(readDb, namespace, resource, ids);
+    const before = await readRevisions(readDb, namespace, resource, ids);
     const result = await read(readDb);
+    const after = await readRevisions(readDb, namespace, resource, ids);
     const rows = rowsOf(result);
     const firstRead = new Set(ids);
-    if (rows) attachRead(rows, revisions, readable, (id) => firstRead.has(id));
+    const unchanged = (id: string) => {
+      const a = before.get(id);
+      const b = after.get(id);
+      return firstRead.has(id) && a?.rev === b?.rev && a?.deleted === b?.deleted;
+    };
+    if (rows) attachRead(rows, after, readable, unchanged);
     return result;
   };
+  if (!transactionsUsable(db)) return read(db);
   // Only a verified snapshot pairs rows with revisions read after them:
   // PostgreSQL at REPEATABLE READ, or SQLite (one writer at a time). Any other
   // database, including SQL reached without raw SQL access (whose isolation
-  // level is unknown), reads revisions before the returned rows.
+  // level is unknown), checks the revisions before and after the rows.
   const dialect = db.rawSql?.dialect;
-  if (!transactionsUsable(db) || (dialect !== "postgres" && dialect !== "sqlite")) {
-    return unsnapshotted(db);
-  }
+  if (dialect !== "postgres" && dialect !== "sqlite") return unsnapshotted(db);
   try {
     return await db.transaction(async (tx) => {
       const snapshotDb = tx as unknown as Adapter;
@@ -321,7 +329,8 @@ export async function readWithRevisions<T>(
   } catch (error) {
     const message = String((error as Error)?.message ?? error).toLowerCase();
     if (message.includes("not supported") || message.includes("cannot return a promise")) {
-      return unsnapshotted(db);
+      // No usable transactions, so writes are not atomic either.
+      return read(db);
     }
     throw error;
   }

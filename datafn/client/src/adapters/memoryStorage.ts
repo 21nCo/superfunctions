@@ -73,7 +73,17 @@ export class MemoryStorageAdapter implements DatafnStorageAdapter {
   ): Promise<Record<string, unknown> | null> {
     this.validateTableName(resource);
     const table = this.records.get(resource);
-    return table?.get(id) || null;
+    const record = table?.get(id);
+    return record ? this.exposed(resource, record) : null;
+  }
+
+  /**
+   * DATA-41: a stored row as a reader gets it. A row paired with a revision
+   * is copied, so a caller changing the returned row (or a nested value in
+   * it) cannot change the state stored under that revision.
+   */
+  private exposed(resource: string, record: Record<string, unknown>): Record<string, unknown> {
+    return this.revisions.has(revisionKey(resource, record.id as string)) ? cloneRecord(record) : record;
   }
 
   async listRecords(resource: string): Promise<Record<string, unknown>[]> {
@@ -86,7 +96,7 @@ export class MemoryStorageAdapter implements DatafnStorageAdapter {
       const idA = (a.id as string) || "";
       const idB = (b.id as string) || "";
       return idA < idB ? -1 : idA > idB ? 1 : 0;
-    });
+    }).map((record) => this.exposed(resource, record));
   }
 
   async upsertRecord(
@@ -348,7 +358,8 @@ export class MemoryStorageAdapter implements DatafnStorageAdapter {
         const idA = (a.id as string) || "";
         const idB = (b.id as string) || "";
         return idA < idB ? -1 : idA > idB ? 1 : 0;
-      });
+      })
+      .map((record) => this.exposed(resource, record));
   }
 
   // --- Sync State ---

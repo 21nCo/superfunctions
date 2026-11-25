@@ -20,7 +20,7 @@ import type { SequenceStore } from "./sequence-store.js";
 import { ChangeTrackingService, recordChangeWithRetry } from "./change-tracking.js";
 import { issuesRevisions, recordedRevision, REVISION_FIELD } from "../revisions.js";
 import type { ChangeEntryInput } from "./change-tracking.js";
-import { canReadEveryField } from "../../validation/authz.js";
+import { canReadEveryField, isPrivateShareableResource, resolveAccessLevel } from "../../validation/authz.js";
 import {
   applyInactivePropagation,
   applyRelationDeletePolicies,
@@ -499,11 +499,19 @@ export async function executePush(
       where: [{ field: "id", operator: "eq", value: mut.id }],
       namespace,
     })) as Record<string, unknown> | null;
+    if (!row || !canReadEveryField(schema, mut.resource, row)) return base;
+    // Record-level access was checked before the write; a grant revoked
+    // since then must not let the reply disclose the row, so it is checked
+    // again in the write's transaction.
+    if (
+      isPrivateShareableResource(schema, mut.resource) &&
+      !(await resolveAccessLevel(targetDb, schema, mut.resource, mut.id, actorId, namespace))
+    ) {
+      return base;
+    }
     // The row carries its revision as `$rev` metadata, so a host filter that
     // trims the row and drops `$rev` leaves the client without a revision.
-    return row && canReadEveryField(schema, mut.resource, row)
-      ? { ...base, record: { ...row, [REVISION_FIELD]: rev } }
-      : base;
+    return { ...base, record: { ...row, [REVISION_FIELD]: rev } };
   }
 
   // Local dedup: track mutations processed in this batch (clientId:mutationId → ok)

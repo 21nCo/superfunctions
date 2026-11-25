@@ -127,9 +127,9 @@ function sameValue(left: unknown, right: unknown): boolean {
  * still the row the query selected and authorized. It must equal the query's
  * row on every field the query returned; a field the query's strategy left
  * out may differ only when it is a forward many-one foreign key that the
- * query did not filter on. A row changed, trashed or no longer matching the
- * filter between the two reads fails, and keeps the query's row without a
- * revision.
+ * query did not filter on, directly or through a relation. A row changed,
+ * trashed or no longer matching the filter between the two reads fails, and
+ * keeps the query's row without a revision.
  */
 function storedRowMatchesSelection(
   schema: DatafnSchema,
@@ -147,11 +147,19 @@ function storedRowMatchesSelection(
   // than lifecycle state (a row trashed or archived between the reads fails).
   const omittable = getFkFieldsToOmit(schema, resource);
   const declared = new Set(schema.resources.find((r) => r.name === resource)?.fields.map((f) => f.name) ?? []);
+  // A filter through a relation (`project.name`, `{ project: {...} }`)
+  // depends on the foreign keys, which the query's row may not show.
+  const relationFiltered = [...filterFields].some(
+    (key) => key.includes(".") || (key !== "id" && !declared.has(key) && !LIFECYCLE_FIELDS.has(key)),
+  );
   for (const [field, value] of Object.entries(stored)) {
     if (field === "$rev" || field === "__ns" || field in selected) continue;
+    // A field the selection depends on but the query's row does not show
+    // cannot be compared, so the stored row may not match the selection.
+    if (filterFields.has(field) || (relationFiltered && omittable.has(field))) return false;
     if (value === null || value === undefined) continue;
-    if (omittable.has(field) && !filterFields.has(field)) continue;
-    if (!declared.has(field) && !LIFECYCLE_FIELDS.has(field) && !filterFields.has(field)) continue;
+    if (omittable.has(field)) continue;
+    if (!declared.has(field) && !LIFECYCLE_FIELDS.has(field)) continue;
     return false;
   }
   return true;
@@ -919,6 +927,18 @@ export function createQueryHandler(
                   timer,
                 ).then((result) => {
                   queryDurations.push(Date.now() - queryStart);
+                  // DATA-41: shared rows come from other namespaces, whose
+                  // revisions a client cannot pair with its own records, so
+                  // they get none; a versioned read still never returns a
+                  // field the read policy withholds.
+                  if (query.withRevisions === true && query.relation === undefined && typeof query.resource === "string") {
+                    const rows = (result as { data?: unknown })?.data;
+                    if (Array.isArray(rows)) {
+                      rows.forEach((row, index) => {
+                        rows[index] = withoutHiddenDeclaredFields(validatedSchema, String(query.resource), row);
+                      });
+                    }
+                  }
                   return result;
                 });
               }

@@ -914,6 +914,59 @@ async function executePullGlobalCursor(
   };
 }
 
+/** DATA-41: one change of a record as canonical pull collects it. */
+type CanonicalRecordEntry = {
+  /** A complete row, a partial patch or a delete. */
+  kind: "row" | "patch" | "delete";
+  bucket: "records" | "merged" | "deleted";
+  row?: Record<string, unknown>;
+  /** The record's revision after this change, when the change recorded one. */
+  rev?: number;
+};
+
+/**
+ * DATA-41: orders one record's changes for the canonical buckets, which
+ * clients apply as rows, then patches, then deletes.
+ *
+ * serverSeq order is not commit order (a push reserves its sequences before
+ * it writes), so changes are reordered only when commit order is known: every
+ * change belongs to a write that recorded a revision. A write records `rev`
+ * on its last change of the record, so the changes before it take that
+ * revision. The last complete row or delete in revision order then
+ * supersedes everything before it, and the patches after it follow. A
+ * record re-created by patches after a delete gets their combined fields as a
+ * whole-row replacement (without `$rev`), so the delete is not applied after
+ * them. Without a known order (revisions off, legacy changes, or a write whose
+ * last change is on a later page) every change goes to its bucket in
+ * sequence order, as before DATA-41.
+ */
+function placeRecordChanges(entries: CanonicalRecordEntry[]): CanonicalRecordEntry[] {
+  const ordered: Array<{ entry: CanonicalRecordEntry; rev: number; index: number }> = [];
+  let pending: CanonicalRecordEntry[] = [];
+  for (const entry of entries) {
+    pending.push(entry);
+    if (entry.rev === undefined) continue;
+    for (const member of pending) ordered.push({ entry: member, rev: entry.rev, index: ordered.length });
+    pending = [];
+  }
+  if (pending.length > 0) return entries;
+  ordered.sort((a, b) => a.rev - b.rev || a.index - b.index);
+  let base = -1;
+  for (let i = ordered.length - 1; i >= 0; i -= 1) {
+    if (ordered[i].entry.kind !== "patch") {
+      base = i;
+      break;
+    }
+  }
+  if (base < 0) return ordered.map(({ entry }) => entry);
+  const after = ordered.slice(base + 1).map(({ entry }) => entry);
+  const head = ordered[base].entry;
+  if (head.kind !== "delete" || after.length === 0) return [head, ...after];
+  const row: Record<string, unknown> = {};
+  for (const patch of after) Object.assign(row, withoutRowRevision(patch.row ?? {}));
+  return [{ kind: "row", bucket: "records", row }];
+}
+
 async function executePullCanonical(
   request: PullRequestCanonical,
   schema: DatafnSchema,
@@ -985,24 +1038,18 @@ async function executePullCanonical(
   // its revision as `$rev` (see wireChange).
   const withRev = (resource: string, change: ChangeEntry): Record<string, unknown> =>
     wireChange(schema, resource, change).record!;
-  // DATA-41: the buckets lose the order of one record's changes (clients
-  // apply rows, then patches, then deletes), so a whole row supersedes the
-  // earlier rows, patches and deletes of its id. A delete then re-insert
-  // therefore leaves the re-inserted row, not a delete applied after it.
-  const dropEarlier = (
-    bucket: Record<string, Array<Record<string, unknown>>>,
-    resource: string,
-    id: string,
-  ) => {
-    const rows = bucket[resource];
-    if (rows?.some((row) => row.id === id)) bucket[resource] = rows.filter((row) => row.id !== id);
-  };
+  const revisionOf = (resource: string, change: ChangeEntry): number | undefined =>
+    change.rev !== undefined && issuesRevisions(schema, resource) ? change.rev : undefined;
   const isRevisionRow = (resource: string, row: Record<string, unknown>) =>
     DATAFN_REVISION_FIELD in row && issuesRevisions(schema, resource);
-  const dropEarlierDelete = (resource: string, id: string) => {
-    const ids = deleted[resource];
-    if (ids?.includes(id)) deleted[resource] = ids.filter((deletedId) => deletedId !== id);
-    if (deletedRevisions[resource]) delete deletedRevisions[resource][id];
+  // DATA-41: a record's changes, collected in serverSeq order and placed in
+  // the buckets afterwards (see placeRecordChanges).
+  const recordChanges = new Map<string, { resource: string; id: string; entries: CanonicalRecordEntry[] }>();
+  const collect = (resource: string, id: string, entry: CanonicalRecordEntry) => {
+    const key = `${resource}\u0000${id}`;
+    let slot = recordChanges.get(key);
+    if (!slot) recordChanges.set(key, (slot = { resource, id, entries: [] }));
+    slot.entries.push(entry);
   };
   const joins: Record<string, { upsert: Array<Record<string, unknown>>; delete: Array<{ from: string; to: string }> }> = Object.create(null);
   const cursors: Record<string, string> = Object.create(null);
@@ -1079,14 +1126,14 @@ async function executePullCanonical(
           continue;
         }
       }
-      if (!merged[resource]) {
-        merged[resource] = [];
-      }
       const row = withRev(resource, change);
-      // DATA-41: a merge carrying `$rev` is the complete row (a KV write),
-      // which supersedes an earlier delete of its id like a whole row does.
-      if (isRevisionRow(resource, row)) dropEarlierDelete(resource, change.id);
-      merged[resource].push(row);
+      // DATA-41: a merge carrying `$rev` is the complete row (a KV write).
+      collect(resource, change.id, {
+        kind: isRevisionRow(resource, row) ? "row" : "patch",
+        bucket: "merged",
+        row,
+        rev: revisionOf(resource, change),
+      });
       continue;
     }
 
@@ -1104,18 +1151,32 @@ async function executePullCanonical(
           continue;
         }
       }
-      dropEarlier(records, resource, change.id);
-      dropEarlier(merged, resource, change.id);
-      dropEarlierDelete(resource, change.id);
-      records[resource].push(withRev(resource, change));
+      collect(resource, change.id, {
+        kind: "row",
+        bucket: "records",
+        row: withRev(resource, change),
+        rev: revisionOf(resource, change),
+      });
       continue;
     }
 
     if (change.op === "delete") {
-      // Deletes apply after rows and patches, so they already win over them.
-      deleted[resource].push(change.id);
-      if (change.rev !== undefined && issuesRevisions(schema, resource)) {
-        (deletedRevisions[resource] ??= Object.create(null) as Record<string, number>)[change.id] = change.rev;
+      collect(resource, change.id, { kind: "delete", bucket: "deleted", rev: revisionOf(resource, change) });
+    }
+  }
+
+  for (const { resource, id, entries } of recordChanges.values()) {
+    for (const placed of placeRecordChanges(entries)) {
+      if (placed.kind === "delete") {
+        (deleted[resource] ??= []).push(id);
+        if (placed.rev !== undefined) {
+          const revisions = (deletedRevisions[resource] ??= Object.create(null) as Record<string, number>);
+          revisions[id] = Math.max(revisions[id] ?? 0, placed.rev);
+        }
+      } else if (placed.bucket === "records") {
+        (records[resource] ??= []).push(placed.row!);
+      } else {
+        (merged[resource] ??= []).push(placed.row!);
       }
     }
   }
