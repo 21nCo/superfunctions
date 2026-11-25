@@ -1,0 +1,40 @@
+filefn/docs/content/docs/reference/errors.md
+  s_20e59dd6c64205::t_57eb239339a254 72
+filefn/docs/static/llms-full.txt
+  s_20e59dd6c64205::t_8c721b0082acb7 8678
+filefn/server/src/index.ts
+  s_20e59dd6c64205::t_a500019080e822 213-216
+  s_20e59dd6c64205::t_f1230843f6d4bb 218
+filefn/server/tests/workers/worker.ts
+  s_20e59dd6c64205::t_a04ebba75d27c3 26,56-60,76,92,95,97-106,109
+  s_20e59dd6c64205::t_54111e1a5d98fe 93-94,96
+filefn/server/tests/workers/smoke.test.ts
+  s_20e59dd6c64205::t_a04ebba75d27c3 189-203
+filefn/server/src/__tests__/client-file-ids.test.ts
+  s_20e59dd6c64205::t_a04ebba75d27c3 628-648
+  s_20e59dd6c64205::t_aa72e451fde482 7,82
+filefn/server/src/runtime.ts
+  s_20e59dd6c64205::t_f1230843f6d4bb 5
+  s_20e59dd6c64205::t_a500019080e822 6-7
+filefn/server/src/upload-sessions/service.ts
+  s_20e59dd6c64205::t_57eb239339a254 691-696,725,2226-2233
+filefn/server/src/metrics.ts
+  s_20e59dd6c64205::t_f1230843f6d4bb 10,18-21,36,38-42,54
+  s_20e59dd6c64205::t_a500019080e822 50-53
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "55e9fcd5ed7bbcecb9a491939b78328d9f294077",
+  "prompts": {},
+  "sessions": {
+    "s_20e59dd6c64205": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a211b0-8c37-7b63-8f91-222b058dcfea",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

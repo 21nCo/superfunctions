@@ -1,0 +1,19 @@
+billfn/provider-dodo/src/index.ts
+  s_ad3a3856a87c81::t_ee4e455f2e34e0 163-172,937-938,949,960
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ebff7ba59c1726440b031bc7b6e33eea0af6e0ed",
+  "prompts": {},
+  "sessions": {
+    "s_ad3a3856a87c81": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a2126c-2a4d-7b03-aaf0-909847a5e9c7",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

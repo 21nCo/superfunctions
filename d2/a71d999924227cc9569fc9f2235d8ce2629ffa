@@ -1,0 +1,51 @@
+searchfn/docs/content/docs/documentation/deploy/vercel.mdx
+  s_08ba8baed8969a::t_bb879c116d36ce 18-19,23,110-116
+searchfn/docs/public/llms-full.txt
+  s_08ba8baed8969a::t_bb879c116d36ce 3345-3346,3350,3539,3761,3772-3773,3776,4089-4090,4094,4154,4295-4296,4300,4387-4393,5132,5135-5139,5141,5265,5273,5281-5283,5285-5286,5290,5486,5498,5503,5608-5612,6083,6089-6095,7341-7344,7374,7378,8514-8516,10545,10551-10557,10637-10643
+searchfn/docs/content/docs/documentation/deploy/fly.mdx
+  s_08ba8baed8969a::t_bb879c116d36ce 70,81-82,85
+searchfn/docs/content/docs/documentation/security/request-authz.mdx
+  s_08ba8baed8969a::t_a162359a6423de 88,100,105
+searchfn/docs/content/docs/documentation/deploy/railway.mdx
+  s_08ba8baed8969a::t_bb879c116d36ce 16-17,21,81
+searchfn/server/src/http/errors.ts
+  s_08ba8baed8969a::t_d4aab093df72d9 85,88
+  s_08ba8baed8969a::t_69096a8ee9b349 86-87,89-91,99
+searchfn/docs/content/docs/operations/observability.mdx
+  s_08ba8baed8969a::t_bb879c116d36ce 8,14-20
+searchfn/docs/content/docs/documentation/deploy/cloudflare-workers.mdx
+  s_08ba8baed8969a::t_bb879c116d36ce 23-24,28,217
+searchfn/server/src/server.ts
+  s_08ba8baed8969a::t_69096a8ee9b349 103,142-152,157,160,165,168,171,173,177,180,187,190,202,204-206,216,221,244
+searchfn/docs/content/docs/recipes/multi-tenant.mdx
+  s_08ba8baed8969a::t_a162359a6423de 72-74
+searchfn/docs/content/docs/reference/events.mdx
+  s_08ba8baed8969a::t_bb879c116d36ce 10,16-22,102-108
+searchfn/docs/content/docs/recipes/authfn-integration.mdx
+  s_08ba8baed8969a::t_a162359a6423de 35-38,68,72
+searchfn/docs/content/docs/documentation/security/payload-limits.mdx
+  s_08ba8baed8969a::t_a162359a6423de 88,96,104-106,108-109,113
+searchfn/server/__tests__/authorization.test.ts
+  s_08ba8baed8969a::t_07dcaf52a329f8 160
+  s_08ba8baed8969a::t_3cc9a77e64efea 82-116,141,144-145,147,149,154-159
+searchfn/docs/content/docs/documentation/security/multi-tenant-isolation.mdx
+  s_08ba8baed8969a::t_a162359a6423de 84,87-91,93
+searchfn/docs/content/docs/documentation/security/secret-redaction.mdx
+  s_08ba8baed8969a::t_bb879c116d36ce 53-57
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d2a71d999924227cc9569fc9f2235d8ce2629ffa",
+  "prompts": {},
+  "sessions": {
+    "s_08ba8baed8969a": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a211ab-e567-7052-ae97-961e8a10be50",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": null
+    }
+  }
+}
