@@ -49,7 +49,7 @@ describe("validateOpenAPI", () => {
       const doc = documentWithReference(ref);
       const snapshot = structuredClone(doc);
       await expect(validateOpenAPI(doc)).resolves.toEqual([
-        { path: "openapi", message: expect.stringContaining("explicit allowlist"), severity: "error" },
+        { path: "components.schemas.Value.$ref", message: expect.stringContaining("explicit allowlist"), severity: "error" },
       ]);
       expect(doc).toEqual(snapshot);
     }
@@ -137,7 +137,7 @@ describe("validateOpenAPI", () => {
       Second: { $ref: "#/components/schemas/First" },
     });
     await expect(validateOpenAPI(doc)).resolves.toEqual([
-      { path: "openapi", message: "Circular OpenAPI $ref aliases cannot be traversed", severity: "error" },
+      { path: "components.schemas.First.$ref", message: "Circular OpenAPI $ref aliases cannot be traversed", severity: "error" },
     ]);
   });
 
@@ -276,7 +276,7 @@ describe("validateOpenAPI", () => {
     const options = { externalReferences: new Map([["https://example.invalid/unused.json", "{}"]]) };
     for (const validationOptions of [undefined, options]) {
       await expect(validateOpenAPI(doc, validationOptions)).resolves.toEqual([
-        { path: "openapi", message: expect.stringContaining("JSON pointers"), severity: "error" },
+        { path: "components.schemas.Value.$ref", message: expect.stringContaining("JSON pointers"), severity: "error" },
       ]);
     }
   });
@@ -292,17 +292,17 @@ describe("validateOpenAPI", () => {
 
     externalReferences.set(ref, '{"$ref":"#missing"}');
     await expect(validateOpenAPI(doc, { externalReferences })).resolves.toEqual([
-      { path: "openapi", message: expect.stringContaining("JSON pointers"), severity: "error" },
+      { path: "components.schemas.Value.$ref", message: expect.stringContaining("JSON pointers"), severity: "error" },
     ]);
 
     externalReferences.set(ref, '{"example":{"$ref":"#missing"}}');
     await expect(validateOpenAPI(documentWithReference(ref + "#/example"), { externalReferences })).resolves.toEqual([
-      { path: "openapi", message: expect.stringContaining("JSON pointers"), severity: "error" },
+      { path: "components.schemas.Value.$ref", message: expect.stringContaining("JSON pointers"), severity: "error" },
     ]);
 
     externalReferences.set(ref, '{"$ref":"another-example.json"}');
     await expect(validateOpenAPI(doc, { externalReferences })).resolves.toEqual([
-      { path: "openapi", message: expect.stringContaining("explicit allowlist"), severity: "error" },
+      { path: "components.schemas.Value.$ref", message: expect.stringContaining("explicit allowlist"), severity: "error" },
     ]);
   });
 
@@ -311,7 +311,7 @@ describe("validateOpenAPI", () => {
     const doc = documentWithReference("./#/components/schemas/Shared");
     const externalReferences = new Map([["https://example.invalid/unused.json", "{}"]]);
     await expect(validateOpenAPI(doc, { externalReferences })).resolves.toEqual([
-      { path: "openapi", message: expect.stringContaining("explicit allowlist"), severity: "error" },
+      { path: "components.schemas.Value.$ref", message: expect.stringContaining("explicit allowlist"), severity: "error" },
     ]);
 
     externalReferences.set(directory, JSON.stringify({
@@ -320,6 +320,21 @@ describe("validateOpenAPI", () => {
     const result = await validateAndDereferenceOpenAPI(doc, { externalReferences });
     expect(result.errors).toEqual([]);
     expect(result.document?.components?.schemas?.Value).toEqual({ type: "integer" });
+  });
+
+  it("bounds nested YAML alias expansion in preloaded schemas", async () => {
+    const uri = "https://example.invalid/types.yaml";
+    const schema = [
+      "type: object",
+      "x-leaf: &leaf { id: 1 }",
+      "x-group: &group [" + Array.from({ length: 10 }, () => "*leaf").join(", ") + "]",
+      "examples:",
+      ...Array.from({ length: 10 }, () => "  - *group"),
+    ].join("\n");
+    const errors = await validateOpenAPI(documentWithReference(uri), { externalReferences: new Map([[uri, schema]]) });
+    expect(errors).toEqual([
+      { path: "components.schemas.Value.$ref", message: expect.stringMatching(/alias count/i), severity: "error" },
+    ]);
   });
 
   it.each([
@@ -378,7 +393,7 @@ describe("validateOpenAPI", () => {
     try {
       const externalReferences = new Map([["C:\\project\\nested\\value.yaml", "type: integer"]]);
       await expect(validateOpenAPI(documentWithReference("./nested%5Cvalue.yaml"), { externalReferences })).resolves.toEqual([
-        { path: "openapi", message: expect.stringContaining("explicit allowlist"), severity: "error" },
+        { path: "components.schemas.Value.$ref", message: expect.stringContaining("explicit allowlist"), severity: "error" },
       ]);
     } finally {
       cwd.mockRestore();
@@ -411,7 +426,7 @@ describe("validateOpenAPI", () => {
       const doc = documentWithReference("./" + filename);
       const externalReferences = new Map([[directory + "/" + differentFilename, '{"type":"string"}']]);
       await expect(validateOpenAPI(doc, { externalReferences })).resolves.toEqual([
-        { path: "openapi", message: expect.stringContaining("explicit allowlist"), severity: "error" },
+        { path: "components.schemas.Value.$ref", message: expect.stringContaining("explicit allowlist"), severity: "error" },
       ]);
       externalReferences.set(directory + "/" + filename, '{"type":"integer"}');
       const result = await validateAndDereferenceOpenAPI(doc, { externalReferences });
@@ -480,7 +495,7 @@ describe("validateOpenAPI", () => {
     await expect(validateOpenAPI(documentWithReference(ref), {
       externalReferences: new Map([[ref, encodedSchema]]),
     })).resolves.toEqual([
-      { path: "openapi", message: expect.stringContaining("JSON pointers"), severity: "error" },
+      { path: "components.schemas.Value.$ref", message: expect.stringContaining("JSON pointers"), severity: "error" },
     ]);
   });
 

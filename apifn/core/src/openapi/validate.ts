@@ -1,5 +1,5 @@
 import SwaggerParser from "@apidevtools/swagger-parser";
-import { parseDocument } from "yaml";
+import { parseDocument, visit } from "yaml";
 import type { OpenAPIDocument, ValidationError } from "../types.js";
 import { openAPIReferenceContext, type OpenAPIReferenceMode } from "./reference-context.js";
 
@@ -51,6 +51,23 @@ interface ReferenceCopies {
   field: string;
   targets: unknown[];
   originals: Map<string, string>;
+}
+
+interface ReferencePath {
+  key: string;
+  parent?: ReferencePath;
+  viaReference?: boolean;
+}
+
+class ReferencePreparationError extends Error {
+  readonly path: string[];
+
+  constructor(site: ReferencePath, cause: unknown) {
+    super(cause instanceof Error ? cause.message : "OpenAPI ref could not be prepared", { cause });
+    const segments: string[] = [];
+    for (let cursor: ReferencePath | undefined = site; cursor; cursor = cursor.parent) segments.push(cursor.key);
+    this.path = segments.reverse();
+  }
 }
 
 function decodeFragment(fragment: string): string {
@@ -164,14 +181,16 @@ function prepareReferences(document: OpenAPIDocument, externalReferences?: Reado
   const supplied = new Map<string, ReferenceDocument>();
   const literalReferences = new Map<object, string>();
   const seen = new WeakMap<object, Map<OpenAPIReferenceMode, object>>();
-  const pending: Array<ReferenceTarget & { value: object; copy: object }> = [];
+  const pending: Array<ReferenceTarget & { value: object; copy: object; path?: ReferencePath }> = [];
   let field = "x-apifn-reference-copies";
   while (Object.hasOwn(document, field)) field += "-";
   const referenceCopies: ReferenceCopies = { field, targets: [], originals: new Map() };
   const copiedPointers = new Map<ReferenceDocument, Map<string, string>>();
   const aliasTargets = new WeakMap<object, ReferenceTarget>();
 
-  function enqueue(value: unknown, mode: OpenAPIReferenceMode, source: ReferenceDocument): unknown {
+  function enqueue(
+    value: unknown, mode: OpenAPIReferenceMode, source: ReferenceDocument, parentPath?: ReferencePath, key?: string
+  ): unknown {
     if (typeof value !== "object" || value === null) return value;
     const contexts = seen.get(value) ?? new Map<OpenAPIReferenceMode, object>();
     const existing = contexts.get(mode);
@@ -183,7 +202,8 @@ function prepareReferences(document: OpenAPIDocument, externalReferences?: Reado
       : prototype === Object.prototype || prototype === null ? { ...value } : value;
     contexts.set(mode, copy);
     seen.set(value, contexts);
-    pending.push({ value, copy, mode, source });
+    const path = key === undefined || parentPath?.viaReference ? parentPath : { key, parent: parentPath };
+    pending.push({ value, copy, mode, source, path });
     return copy;
   }
 
@@ -198,9 +218,10 @@ function prepareReferences(document: OpenAPIDocument, externalReferences?: Reado
       if (contents === undefined) throw new Error(EXTERNAL_REF_ERROR);
       const parsed = parseDocument(contents);
       if (parsed.errors.length) throw new Error(parsed.errors[0].message);
-      // Alias instances retain their object identity, so copying named targets
-      // does not expand the alias graph.
-      external = { value: parsed.toJS({ maxAliasCount: -1 }), location: targetLocation };
+      // Allow wide lists of explicit aliases while bounding amplification from nested aliases.
+      let aliasBudget = 1;
+      visit(parsed, { Alias: () => { aliasBudget += 1; } });
+      external = { value: parsed.toJS({ maxAliasCount: Math.max(100, aliasBudget) }), location: targetLocation };
       supplied.set(key, external);
     }
     return { source: external, fragment };
@@ -299,7 +320,7 @@ function prepareReferences(document: OpenAPIDocument, externalReferences?: Reado
     return pointerTarget(source, tokens, aliases, directAlias);
   }
 
-  function rewriteReference(ref: string, source: ReferenceDocument, mode: OpenAPIReferenceMode): string {
+  function rewriteReference(ref: string, source: ReferenceDocument, mode: OpenAPIReferenceMode, site: ReferencePath): string {
     const destination = location(source, ref);
     const { tokens, target } = lookupPointer(destination.source, destination.fragment);
     const canonical = encodePointer(tokens);
@@ -323,24 +344,30 @@ function prepareReferences(document: OpenAPIDocument, externalReferences?: Reado
     pointers.set(key, preparedRef);
     copiedPointers.set(destination.source, pointers);
     referenceCopies.originals.set(preparedRef, isLocal ? canonical : ref);
-    referenceCopies.targets.push(enqueue(target.value, mode, target.source));
+    referenceCopies.targets.push(enqueue(target.value, mode, target.source, site));
     return preparedRef;
   }
 
   const copy = enqueue(root.value, "node", root) as OpenAPIDocument;
   while (pending.length) {
-    const { value, copy, mode, source } = pending.pop()!;
+    const { value, copy, mode, source, path } = pending.pop()!;
     if ("$ref" in value && typeof value.$ref === "string") {
       if (mode === "literal") {
         literalReferences.set(copy, value.$ref);
         Reflect.deleteProperty(copy, "$ref");
       } else if (value.$ref) {
-        Reflect.set(copy, "$ref", rewriteReference(value.$ref, source, mode));
+        // Diagnostics for preloaded targets point to the importing ref in the caller's document.
+        const site = path?.viaReference ? path : { key: "$ref", parent: path, viaReference: true };
+        try {
+          Reflect.set(copy, "$ref", rewriteReference(value.$ref, source, mode, site));
+        } catch (error) {
+          throw new ReferencePreparationError(site, error);
+        }
       }
     }
     for (const [key, child] of Object.entries(value)) {
       if (key === "$ref" && typeof child === "string") continue;
-      Reflect.set(copy, key, enqueue(child, referenceChildMode(value, mode, key, child), source));
+      Reflect.set(copy, key, enqueue(child, referenceChildMode(value, mode, key, child), source, path, key));
     }
   }
   if (referenceCopies.targets.length) Reflect.set(copy, field, referenceCopies.targets);
@@ -364,7 +391,7 @@ function toValidationErrors(error: unknown): ValidationError[] {
   const message = error instanceof Error ? error.message : "Validation error";
   return [
     {
-      path: "openapi",
+      path: error instanceof ReferencePreparationError ? error.path.join(".") : "openapi",
       message,
       severity: "error",
     },
