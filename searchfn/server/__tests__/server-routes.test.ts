@@ -37,7 +37,7 @@ describe("@searchfn/server routes", () => {
 
   describe("SRV-001: constructor and endpoint registration", () => {
     it("creates server with all 6 endpoints", async () => {
-      const server = await createSearchFnServer({ adapter });
+      const server = await createSearchFnServer({ allowUnauthenticated: true, adapter });
       const routes = server.router.getRoutes();
       const paths = routes.map((r: any) => `${r.method} ${r.path}`);
 
@@ -50,7 +50,7 @@ describe("@searchfn/server routes", () => {
     });
 
     it("uses custom basePath", async () => {
-      const server = await createSearchFnServer({ adapter, basePath: "/api/search" });
+      const server = await createSearchFnServer({ allowUnauthenticated: true, adapter, basePath: "/api/search" });
       const routes = server.router.getRoutes();
       const paths = routes.map((r: any) => `${r.method} ${r.path}`);
       expect(paths).toContain("GET /api/search/status");
@@ -67,7 +67,7 @@ describe("@searchfn/server routes", () => {
         async clear() {},
         dispose: disposeSpy,
       };
-      const server = await createSearchFnServer({ adapter: mockAdapter });
+      const server = await createSearchFnServer({ allowUnauthenticated: true, adapter: mockAdapter });
       await server.close();
       expect(disposeSpy).toHaveBeenCalledOnce();
     });
@@ -80,7 +80,7 @@ describe("@searchfn/server routes", () => {
         async remove() {},
         async clear() {},
       };
-      const server = await createSearchFnServer({ adapter: mockAdapter });
+      const server = await createSearchFnServer({ allowUnauthenticated: true, adapter: mockAdapter });
       await expect(server.close()).resolves.toBeUndefined();
     });
   });
@@ -89,7 +89,7 @@ describe("@searchfn/server routes", () => {
 
   describe("SRV-004: GET /status", () => {
     it("returns adapter name and capabilities", async () => {
-      const server = await createSearchFnServer({ adapter });
+      const server = await createSearchFnServer({ allowUnauthenticated: true, adapter });
       const { status, body } = await req(server.router, "GET", "/searchfn/status");
       expect(status).toBe(200);
       expect(body.ok).toBe(true);
@@ -113,7 +113,7 @@ describe("@searchfn/server routes", () => {
         async clear() {},
       };
 
-      const server = await createSearchFnServer({ adapter: failingAdapter });
+      const server = await createSearchFnServer({ allowUnauthenticated: true, adapter: failingAdapter });
       const failed = await req(server.router, "POST", "/searchfn/index", {
         resource: "tasks",
         documents: [{ id: "t1", fields: { title: "hello" } }],
@@ -132,7 +132,7 @@ describe("@searchfn/server routes", () => {
 
   describe("API-002: canonical envelopes", () => {
     it("success envelope has ok:true + result", async () => {
-      const server = await createSearchFnServer({ adapter });
+      const server = await createSearchFnServer({ allowUnauthenticated: true, adapter });
       const { body } = await req(server.router, "GET", "/searchfn/status");
       expect(body).toHaveProperty("ok", true);
       expect(body).toHaveProperty("result");
@@ -140,7 +140,7 @@ describe("@searchfn/server routes", () => {
     });
 
     it("error envelope has ok:false + error.code + error.message", async () => {
-      const server = await createSearchFnServer({ adapter });
+      const server = await createSearchFnServer({ allowUnauthenticated: true, adapter });
       const { body } = await req(server.router, "POST", "/searchfn/search", {
         resource: "tasks",
         query: "   ",
@@ -156,7 +156,7 @@ describe("@searchfn/server routes", () => {
 
   describe("POST /index", () => {
     it("indexes documents and returns count", async () => {
-      const server = await createSearchFnServer({ adapter });
+      const server = await createSearchFnServer({ allowUnauthenticated: true, adapter });
       const { status, body } = await req(server.router, "POST", "/searchfn/index", {
         resource: "tasks",
         documents: [
@@ -174,7 +174,7 @@ describe("@searchfn/server routes", () => {
 
   describe("POST /search", () => {
     it("returns matching ids in envelope", async () => {
-      const server = await createSearchFnServer({ adapter });
+      const server = await createSearchFnServer({ allowUnauthenticated: true, adapter });
       await req(server.router, "POST", "/searchfn/index", {
         resource: "tasks",
         documents: [
@@ -196,7 +196,7 @@ describe("@searchfn/server routes", () => {
     });
 
     it("rejects invalid optional search parameters", async () => {
-      const server = await createSearchFnServer({ adapter });
+      const server = await createSearchFnServer({ allowUnauthenticated: true, adapter });
       const { status, body } = await req(server.router, "POST", "/searchfn/search", {
         resource: "tasks",
         query: "hello",
@@ -213,7 +213,7 @@ describe("@searchfn/server routes", () => {
 
   describe("POST /search-all", () => {
     it("returns merged results across resources", async () => {
-      const server = await createSearchFnServer({ adapter });
+      const server = await createSearchFnServer({ allowUnauthenticated: true, adapter });
       await req(server.router, "POST", "/searchfn/index", {
         resource: "tasks",
         documents: [{ id: "t1", fields: { title: "alpha beta" } }],
@@ -238,7 +238,7 @@ describe("@searchfn/server routes", () => {
 
   describe("POST /remove", () => {
     it("removes documents", async () => {
-      const server = await createSearchFnServer({ adapter });
+      const server = await createSearchFnServer({ allowUnauthenticated: true, adapter });
       await req(server.router, "POST", "/searchfn/index", {
         resource: "tasks",
         documents: [{ id: "t1", fields: { title: "remove me" } }],
@@ -257,7 +257,7 @@ describe("@searchfn/server routes", () => {
 
   describe("POST /clear", () => {
     it("clears a resource", async () => {
-      const server = await createSearchFnServer({ adapter });
+      const server = await createSearchFnServer({ allowUnauthenticated: true, adapter });
       await req(server.router, "POST", "/searchfn/index", {
         resource: "tasks",
         documents: [{ id: "t1", fields: { title: "clear me" } }],
@@ -271,7 +271,7 @@ describe("@searchfn/server routes", () => {
     });
 
     it("rejects non-object request bodies", async () => {
-      const server = await createSearchFnServer({ adapter });
+      const server = await createSearchFnServer({ allowUnauthenticated: true, adapter });
       const { status, body } = await req(server.router, "POST", "/searchfn/clear", ["tasks"]);
 
       expect(status).toBe(400);
@@ -280,7 +280,7 @@ describe("@searchfn/server routes", () => {
     });
 
     it("rejects missing resource on clear", async () => {
-      const server = await createSearchFnServer({ adapter });
+      const server = await createSearchFnServer({ allowUnauthenticated: true, adapter });
       const { status, body } = await req(server.router, "POST", "/searchfn/clear", {});
 
       expect(status).toBe(400);
@@ -302,7 +302,7 @@ describe("@searchfn/server routes", () => {
         async remove() {},
         async clear() {},
       };
-      const server = await createSearchFnServer({ adapter: forbiddenAdapter });
+      const server = await createSearchFnServer({ allowUnauthenticated: true, adapter: forbiddenAdapter });
       const { status, body } = await req(server.router, "POST", "/searchfn/index", {
         resource: "tasks",
         documents: [{ id: "1", fields: { title: "x" } }],
@@ -324,7 +324,7 @@ describe("@searchfn/server routes", () => {
         async remove() {},
         async clear() {},
       };
-      const server = await createSearchFnServer({ adapter: badAdapter });
+      const server = await createSearchFnServer({ allowUnauthenticated: true, adapter: badAdapter });
       const { status, body } = await req(server.router, "POST", "/searchfn/index", {
         resource: "tasks",
         documents: [{ id: "1", fields: { title: "x" } }],
@@ -347,7 +347,7 @@ describe("@searchfn/server routes", () => {
         async clear() {},
       };
 
-      const server = await createSearchFnServer({ adapter: spyAdapter });
+      const server = await createSearchFnServer({ allowUnauthenticated: true, adapter: spyAdapter });
       await req(server.router, "POST", "/searchfn/search", {
         resource: "tasks",
         query: "to",
@@ -369,7 +369,7 @@ describe("@searchfn/server routes", () => {
         async clear() {},
       };
 
-      const server = await createSearchFnServer({ adapter: spyAdapter });
+      const server = await createSearchFnServer({ allowUnauthenticated: true, adapter: spyAdapter });
       await req(server.router, "POST", "/searchfn/search", {
         resource: "tasks",
         query: "todo",
@@ -395,7 +395,7 @@ describe("@searchfn/server routes", () => {
         async clear() {},
       };
 
-      const server = await createSearchFnServer({ adapter: spyAdapter });
+      const server = await createSearchFnServer({ allowUnauthenticated: true, adapter: spyAdapter });
       await req(server.router, "POST", "/searchfn/search-all", {
         query: "to",
         resources: ["tasks"],
@@ -418,7 +418,7 @@ describe("@searchfn/server routes", () => {
         // no searchAll
       };
 
-      const server = await createSearchFnServer({ adapter: spyAdapter });
+      const server = await createSearchFnServer({ allowUnauthenticated: true, adapter: spyAdapter });
       await req(server.router, "POST", "/searchfn/search-all", {
         query: "to",
         resources: ["tasks"],

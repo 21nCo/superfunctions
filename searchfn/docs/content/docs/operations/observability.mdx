@@ -5,16 +5,23 @@ description: Structured logging, health checks, and failure classification for S
 
 ## Structured Logging
 
-Pass a `logger` to `createSearchFnServer` to receive structured log events for every operation:
+Pass `observability.logger` to `createSearchFnServer` to receive structured log events for every operation:
+
+Define `authorizeSearchRequest` in your application using the [authorization guide](/docs/documentation/security/request-authz).
 
 ```typescript
+import { authorizeSearchRequest } from "./search-authorization.js";
+
 const server = await createSearchFnServer({
+  authorize: authorizeSearchRequest,
   adapter,
-  logger: {
-    info: (msg, ctx) => console.log(JSON.stringify({ level: "info", msg, ...ctx })),
-    warn: (msg, ctx) => console.warn(JSON.stringify({ level: "warn", msg, ...ctx })),
-    error: (msg, ctx) => console.error(JSON.stringify({ level: "error", msg, ...ctx })),
-    debug: (msg, ctx) => console.debug(JSON.stringify({ level: "debug", msg, ...ctx })),
+  observability: {
+    logger: {
+      info: (msg, ctx) => console.log(JSON.stringify({ level: "info", msg, ...ctx })),
+      warn: (msg, ctx) => console.warn(JSON.stringify({ level: "warn", msg, ...ctx })),
+      error: (msg, ctx) => console.error(JSON.stringify({ level: "error", msg, ...ctx })),
+      debug: (msg, ctx) => console.debug(JSON.stringify({ level: "debug", msg, ...ctx })),
+    },
   },
 });
 ```

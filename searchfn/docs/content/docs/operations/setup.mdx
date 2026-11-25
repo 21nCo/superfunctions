@@ -11,7 +11,10 @@ description: Deploy SearchFn in production with proper configuration, limits, an
 4. **Create the server** — use `createSearchFnServer()` to expose search over HTTP.
 5. **Mount the router** — attach the server router to your HTTP framework using a `@superfunctions/http` adapter.
 
+Define `authorizeSearchRequest` in your application using the [authorization guide](/docs/documentation/security/request-authz).
+
 ```typescript
+import { authorizeSearchRequest } from "./search-authorization.js";
 import { createSearchFnServer } from "@searchfn/server";
 import { PostgresAdapter } from "@searchfn/adapter-postgres";
 
@@ -22,6 +25,7 @@ await adapter.initialize({
   resources: [{ name: "tasks", searchFields: ["title", "description"] }],
 });
 const server = await createSearchFnServer({
+  authorize: authorizeSearchRequest,
   adapter,
   basePath: "/searchfn",
 });
@@ -44,6 +48,7 @@ The server enforces these limits by default. Override them in the `limits` confi
 
 ```typescript
 const server = await createSearchFnServer({
+  authorize: authorizeSearchRequest,
   adapter,
   limits: {
     maxQueryLength: 500,
