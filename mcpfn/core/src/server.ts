@@ -42,7 +42,7 @@ import {
   type McpFnClientProfilesOptions,
   type McpFnResolvedClientProfile,
 } from "./client-profiles.js";
-import { errorResult, McpFnError, McpFnClientProfileError, McpFnValidationError, McpFnOutputValidationError } from "./errors.js";
+import { errorResult, jsonSafe, McpFnError, McpFnClientProfileError, McpFnValidationError, McpFnOutputValidationError } from "./errors.js";
 import { assertMcpAppContracts } from "./apps.js";
 import { createManifest, type CreateManifestOptions } from "./manifest.js";
 import type { McpFnRegistry } from "./registry.js";
@@ -392,6 +392,7 @@ export class McpFnServer<TContext = undefined> {
               resolved,
               tool: listedTool,
               arguments: request.params.arguments,
+              clientProfiles: this.clientProfiles,
             });
             await this.emitProfileEvidence({
               stage: currentStage,
@@ -505,6 +506,27 @@ export class McpFnServer<TContext = undefined> {
                     ...(profile ? { profile } : {}),
                   })
                 : error;
+            // Task-augmented calls answer with a JSON-RPC error. Keep the
+            // McpFn code of an argument-enrichment failure in its data
+            // instead of letting the SDK drop it.
+            if (isTaskRequest && currentStage === "argument-enrichment" && lifecycleError instanceof McpFnError) {
+              const data = jsonSafe(lifecycleError.details);
+              // Rejected client input is InvalidParams; a failing enrichment
+              // hook (an unavailable tenant lookup, say) is a server error.
+              const clientInput = ["MCPFN_FORGED_SERVER_ARGUMENT", "MCPFN_INVALID_PROFILE_ARGUMENTS"].includes(lifecycleError.code);
+              throw new McpError(clientInput ? ErrorCode.InvalidParams : ErrorCode.InternalError, lifecycleError.message, {
+                // Object details are spread; arrays and scalars keep their place
+                // under `details`.
+                ...(data !== null && typeof data === "object" && !Array.isArray(data)
+                  ? data
+                  : data === undefined ? {} : { details: data }),
+                // Set after serialization so details (including a toJSON
+                // method) cannot replace the McpFn code, stage or profile.
+                lifecycleStage: currentStage,
+                ...(profile ? { profile } : {}),
+                code: lifecycleError.code,
+              });
+            }
             if (isTaskRequest) throw lifecycleError;
             return errorResult(lifecycleError, {
               includeStructuredContent: !this.registry.hasOutputSchema(
@@ -721,6 +743,7 @@ export class McpFnServer<TContext = undefined> {
         knownTools,
         schemaResources: this.registry.schemaDefinitions(),
         resolved,
+        clientProfiles: this.clientProfiles,
       });
       await this.emitProfileEvidence({
         stage: "catalog-projection",

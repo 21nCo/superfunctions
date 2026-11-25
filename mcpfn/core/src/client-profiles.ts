@@ -86,6 +86,18 @@ export interface McpFnClientProfilesOptions<TContext = undefined> {
     | undefined
     | Promise<McpFnVerifiedClientIdentity | undefined>;
   evidence?(event: McpFnClientProfileEvidence): void | Promise<void>;
+  /**
+   * A client that matches no profile (no verified identity, or an identity no
+   * profile accepts) keeps the canonical catalog, except that by default
+   * (`"reject"`) it does not see tools for which any profile declares
+   * server-owned arguments, and calling one answers like an unknown tool. It
+   * could not call them anyway: it may not supply those required arguments,
+   * so it cannot choose a tenant or workspace value merely by not matching a
+   * profile. `"allow"` lists those tools and passes their arguments to the
+   * handler unchanged; the handler must then derive the value from trusted
+   * context itself.
+   */
+  unmatchedServerOwnedArguments?: "reject" | "allow";
 }
 
 export interface McpFnCatalogChange {
@@ -102,6 +114,13 @@ export interface McpFnResolvedClientProfile<TContext> {
   verifiedIdentity?: McpFnVerifiedClientIdentity;
   reportedClient: McpFnReportedClient;
   profile?: McpFnClientProfile<TContext>;
+  /**
+   * The profiles and unmatched-client policy this result was resolved with.
+   * Set by resolveMcpFnClientProfile so buildMcpFnEffectiveCatalog and
+   * enrichMcpFnClientProfileCall apply the same policy without being passed
+   * the options again.
+   */
+  clientProfiles?: Pick<McpFnClientProfilesOptions<TContext>, "profiles" | "unmatchedServerOwnedArguments">;
 }
 
 function assertProfileMetadata(profile: McpFnClientProfile<unknown>): void {
@@ -121,6 +140,15 @@ function assertProfileMetadata(profile: McpFnClientProfile<unknown>): void {
 export function validateMcpFnClientProfiles<TContext>(
   options: McpFnClientProfilesOptions<TContext>,
 ): void {
+  if (
+    options.unmatchedServerOwnedArguments !== undefined &&
+    !["reject", "allow"].includes(options.unmatchedServerOwnedArguments)
+  ) {
+    throw new McpFnClientProfileError(
+      "MCPFN_INVALID_CLIENT_PROFILE",
+      'unmatchedServerOwnedArguments must be "reject" or "allow"',
+    );
+  }
   const ids = new Set<string>();
   for (const profile of options.profiles) {
     if (!profile || typeof profile !== "object" || typeof profile.matches !== "function") {
@@ -166,7 +194,11 @@ export async function resolveMcpFnClientProfile<TContext>(
     context: input.context,
     extra: input.extra,
   });
-  if (!verifiedIdentity) return { ...input, verifiedIdentity };
+  const policy = {
+    profiles: options.profiles,
+    unmatchedServerOwnedArguments: options.unmatchedServerOwnedArguments,
+  };
+  if (!verifiedIdentity) return { ...input, verifiedIdentity, clientProfiles: policy };
   if (typeof verifiedIdentity.subject !== "string" || !verifiedIdentity.subject || verifiedIdentity.subject.length > 256) {
     throw new McpFnClientProfileError(
       "MCPFN_INVALID_VERIFIED_IDENTITY",
@@ -184,7 +216,7 @@ export async function resolveMcpFnClientProfile<TContext>(
       { profiles: matches.map(({ id, version }) => ({ id, version })) },
     );
   }
-  return { ...input, verifiedIdentity, profile: matches[0] };
+  return { ...input, verifiedIdentity, profile: matches[0], clientProfiles: policy };
 }
 
 function isJsonMetadata(value: unknown, ancestors = new Set<object>()): boolean {
@@ -335,11 +367,34 @@ export async function buildMcpFnEffectiveCatalog<TContext>(input: {
   /** All registered resources, including schemas of hidden tools and prompts. */
   schemaResources?: readonly object[];
   resolved: McpFnResolvedClientProfile<TContext>;
+  /**
+   * The server's profile options; they take precedence over
+   * `resolved.clientProfiles`. With either, a client that matches no profile
+   * does not see tools that a profile gives server-owned arguments unless
+   * `unmatchedServerOwnedArguments` is `"allow"`: such a client could never
+   * call them.
+   */
+  clientProfiles?: Pick<
+    McpFnClientProfilesOptions<TContext>,
+    "profiles" | "unmatchedServerOwnedArguments"
+  >;
 }): Promise<{ tools: McpFnListedTool[]; changes: McpFnCatalogChange[] }> {
   const canonicalTools = structuredClone(input.canonicalTools);
   const knownTools = structuredClone(input.knownTools ?? input.canonicalTools);
   const profile = input.resolved.profile;
-  if (!profile) return { tools: canonicalTools, changes: [] };
+  if (!profile) {
+    const options = input.clientProfiles ?? input.resolved.clientProfiles;
+    if (!options || options.unmatchedServerOwnedArguments === "allow") {
+      return { tools: canonicalTools, changes: [] };
+    }
+    const tools: McpFnListedTool[] = [];
+    const changes: McpFnCatalogChange[] = [];
+    for (const tool of canonicalTools) {
+      if (unmatchedServerOwned(options.profiles, tool.name).length === 0) tools.push(tool);
+      else changes.push({ kind: "removed", path: `tools.${tool.name}`, tool: tool.name, beforeHash: sha256(tool) });
+    }
+    return { tools, changes };
+  }
   assertTrustedProfileIdentity(input.resolved);
   const projected = profile.projectCatalog
     ? await profile.projectCatalog({
@@ -386,6 +441,11 @@ export async function buildMcpFnEffectiveCatalog<TContext>(input: {
     }
   }
   return { tools, changes };
+}
+
+/** Every argument any profile declares server-owned for this tool. */
+function unmatchedServerOwned<T>(profiles: readonly McpFnClientProfile<T>[], name: string): string[] {
+  return [...new Set(profiles.flatMap((profile) => ownedArguments(profile, name)))];
 }
 
 function ownedArguments<T>(profile: McpFnClientProfile<T>, name: string): readonly string[] {
@@ -468,12 +528,18 @@ function assertValidProfileSchema(schema: Record<string, unknown>, resources: re
   catch { throw new McpFnClientProfileError("MCPFN_INVALID_PROJECTED_CATALOG", "Projected schema must be valid JSON Schema"); }
 }
 
-function objectArguments(value: unknown): Record<string, unknown> {
+function objectArguments(value: unknown, source: "client" | "enricher" = "client"): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new McpFnClientProfileError(
-      "MCPFN_INVALID_PROFILE_ARGUMENTS",
-      "Tool arguments must be an object before trusted enrichment",
-    );
+    // A malformed enricher result is a server fault, not client input.
+    throw source === "client"
+      ? new McpFnClientProfileError(
+          "MCPFN_INVALID_PROFILE_ARGUMENTS",
+          "Tool arguments must be an object before trusted enrichment",
+        )
+      : new McpFnClientProfileError(
+          "MCPFN_PROFILE_ARGUMENT_MUTATION",
+          "Trusted enrichment must return an arguments object",
+        );
   }
   return value as Record<string, unknown>;
 }
@@ -482,9 +548,44 @@ export async function enrichMcpFnClientProfileCall<TContext>(input: {
   resolved: McpFnResolvedClientProfile<TContext>;
   tool: McpFnListedTool;
   arguments: unknown;
+  /**
+   * The server's profile options. They take precedence over
+   * `resolved.clientProfiles` (set by resolveMcpFnClientProfile). For a call
+   * that matched no profile, the `unmatchedServerOwnedArguments` setting of
+   * whichever is present (`"reject"` when unset) rejects only arguments that
+   * some profile declares server-owned for the requested tool. Every other
+   * unmatched call passes through unchanged, as does every call when neither
+   * options object is present or the setting is `"allow"`.
+   */
+  clientProfiles?: Pick<
+    McpFnClientProfilesOptions<TContext>,
+    "profiles" | "unmatchedServerOwnedArguments"
+  >;
 }): Promise<unknown> {
   const profile = input.resolved.profile;
-  if (!profile) return input.arguments ?? {};
+  if (!profile) {
+    const value = input.arguments ?? {};
+    // Defence in depth: the effective catalog already hides these tools from
+    // unmatched clients, so a direct caller of this function is the only way here.
+    const options = input.clientProfiles ?? input.resolved.clientProfiles;
+    if (
+      options &&
+      options.unmatchedServerOwnedArguments !== "allow" &&
+      value && typeof value === "object" && !Array.isArray(value)
+    ) {
+      for (const name of unmatchedServerOwned(options.profiles, input.tool.name)) {
+        if (Object.hasOwn(value, name)) {
+          throw new McpFnClientProfileError(
+            "MCPFN_FORGED_SERVER_ARGUMENT",
+            `Model arguments may not provide server-owned property ${name}`,
+            { tool: input.tool.name, rejectedProperty: name },
+          );
+        }
+      }
+    }
+    // Non-object arguments still reach canonical validation, which rejects them.
+    return value;
+  }
   const original = objectArguments(input.arguments ?? {});
   assertTrustedProfileIdentity(input.resolved);
   const owned = new Set(ownedArguments(profile, input.tool.name));
@@ -507,6 +608,7 @@ export async function enrichMcpFnClientProfileCall<TContext>(input: {
       tool: structuredClone(input.tool),
       arguments: structuredClone(original),
     }),
+    "enricher",
   );
   for (const [name, value] of Object.entries(original)) {
     if (owned.has(name)) continue;
