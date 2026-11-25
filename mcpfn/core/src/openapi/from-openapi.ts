@@ -305,10 +305,10 @@ class OperationConverter {
   private readonly depth = new ValidationDepth((nodes) => this.schemas.chargeCopy(nodes));
   /** Why a schema checked as written failed to compile (null: it compiled), by source object and by content. */
   private readonly checkedAsWritten = new WeakMap<object, string | null | OpenApiSkip>();
-  /** Request body schemas whose checked conversion failed for a reason of their own. */
-  private readonly bodyFailures = new WeakMap<object, OpenApiSkip>();
-  /** Why each request body schema chosen among several entries fails to compile (null when it compiles). */
-  private readonly bodyVerdicts = new WeakMap<object, string | null>();
+  /** Request body schemas whose checked conversion failed for a reason of their own, for optional and required bodies. */
+  private readonly bodyFailures = [new WeakMap<object, OpenApiSkip>(), new WeakMap<object, OpenApiSkip>()] as const;
+  /** Why each request body schema chosen among several entries fails to compile (null when it compiles), for optional and required bodies. */
+  private readonly bodyVerdicts = [new WeakMap<object, string | null>(), new WeakMap<object, string | null>()] as const;
   private readonly verdicts = new Map<string, string | null>();
 
   constructor(
@@ -455,10 +455,10 @@ class OperationConverter {
         // A media type object without `schema` declares no schema: it accepts any JSON value.
         bodyGroup = body.schema === undefined ? {} : this.schemas.convertRoot(body.schema, "input", bodyRefs);
         this.assertProjectable(body.schema, "input", "request body");
-        if (checkBody) this.assertBodyCompiles(body.schema, bodyGroup, bodyRefs);
+        if (checkBody) this.assertBodyCompiles(body.schema, bodyGroup, bodyRefs, body.info.required);
       };
       // A checked entry's schema that failed for a reason of its own fails again without any work.
-      if (checkBody && isObject(body.schema)) remembered(this.bodyFailures, body.schema, check);
+      if (checkBody && isObject(body.schema)) remembered(this.bodyFailures[body.info.required ? 1 : 0], body.schema, check);
       else check();
     }
     for (const location of ["path", "query", "header"] as const) {
@@ -764,6 +764,7 @@ class OperationConverter {
     root: McpFnJsonSchema | boolean,
     definitions: Record<string, unknown>,
     mode: "plain" | "input" | "output",
+    required = true,
   ): string | null {
     if (!isObject(root)) return null;
     const budget = this.schemas.copyBudget();
@@ -771,24 +772,25 @@ class OperationConverter {
     const copy = treeCopy(root, budget, values);
     // Definitions with the same names differ between modes. The key holds
     // the whole copy, so it covers the wrapper built from it below.
-    const key = contentKey(`compile:${mode}`, copy, values, definitions);
+    const key = contentKey(`compile:${mode}:${required}`, copy, values, definitions);
     let failure = key === undefined ? undefined : this.verdicts.get(key);
     if (failure === undefined) {
       // The generated definitions go on a wrapper, as in a tool schema, so
       // they never replace definitions the schema itself declares.
       const wrapped = Object.keys(definitions).length > 0;
       // How deep a value nests is checked on the contract the registry
-      // validates, never on a schema as written before projection.
+      // validates, never on a schema as written before projection. A schema
+      // only checked (`plain`) is measured in place, as a compiler reads it.
       failure = this.compileFailure(
         wrapped ? { type: "object", properties: { value: copy }, definitions: treeCopy(definitions, budget) } : copy,
-        mode === "plain" ? undefined : () => this.schemas.frames(root, mode),
+        () => this.schemas.frames(root, mode, required),
       );
       if (key !== undefined) this.verdicts.set(key, failure);
     }
     return failure;
   }
 
-  private compileFailure(schema: object, frames: (() => number) | undefined): string | null {
+  private compileFailure(schema: object, frames: () => number): string | null {
     this.compiler ??= createSchemaCompiler();
     try {
       this.compiler.compile(schema);
@@ -798,15 +800,20 @@ class OperationConverter {
     }
     // @cfworker/json-schema follows references only while validating, so
     // its compile never overflows on a chain too deep to validate.
-    return frames && this.compiler.engine === "cfworker" && !this.depth.fits(frames()) ? TOO_DEEP_VERDICT : null;
+    return this.compiler.engine === "cfworker" && !this.depth.fits(frames()) ? TOO_DEEP_VERDICT : null;
   }
 
-  /** A request body schema compiles as the registry compiles it, checked once per source schema object. */
-  private assertBodyCompiles(schema: unknown, converted: McpFnJsonSchema | boolean, refs: ReadonlySet<string>): void {
-    let verdict = isObject(schema) ? this.bodyVerdicts.get(schema) : undefined;
+  /**
+   * A request body schema compiles as the registry compiles it, checked once
+   * per source schema object. An optional body is measured as in the tool
+   * input, where a call may leave it out.
+   */
+  private assertBodyCompiles(schema: unknown, converted: McpFnJsonSchema | boolean, refs: ReadonlySet<string>, required: boolean): void {
+    const verdicts = this.bodyVerdicts[required ? 1 : 0];
+    let verdict = isObject(schema) ? verdicts.get(schema) : undefined;
     if (verdict === undefined) {
-      verdict = this.compileVerdict(converted, this.schemas.definitions(refs, "input"), "input");
-      if (isObject(schema)) this.bodyVerdicts.set(schema, verdict);
+      verdict = this.compileVerdict(converted, this.schemas.definitions(refs, "input"), "input", required);
+      if (isObject(schema)) verdicts.set(schema, verdict);
     }
     throwIfInvalid(verdict, "request body");
   }

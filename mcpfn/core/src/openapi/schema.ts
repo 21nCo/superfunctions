@@ -1682,19 +1682,23 @@ export class SchemaConverter {
    * chain, as its depth is the instance's own. A chain of forced children
    * that never ends has no finite valid instance and is infinitely deep.
    * Each component is walked once per call, and a root once per tool
-   * schema, each walk charged to the call's total.
+   * schema, each walk charged to the call's total. A root a call may leave
+   * out (`required` false) forces nothing of its own. A schema only checked
+   * (`plain`) is measured in place: no value is validated against it.
    */
-  frames(root: McpFnJsonSchema | boolean, mode: SchemaMode): number {
-    const own = this.positions(root, mode);
+  frames(root: McpFnJsonSchema | boolean, mode: SchemaMode, required = true): number {
+    const stacked = mode !== "plain";
+    const own = this.positions(root, mode, stacked && required);
     const reach = memoMap(this.reachFrames, mode, () => new Map<string, number>());
+    const local = (positions: Positions) => (stacked ? this.localFrames(positions, mode) : positions.frames);
     // Only the root's own chain is taken by every value: a chain elsewhere
     // that never ends means no valid value has that child, not that none fits.
-    let most = this.localFrames(own, mode);
+    let most = local(own);
     for (const [name, frame] of own.forced) most = Math.max(most, frame + this.forcedFrames(name, mode));
     for (const name of own.refs) {
       const below = settleGraph(name, (key) => this.componentPositions(key, mode).refs, reach, (component, deeper) => {
         let frames = deeper;
-        for (const key of component) frames = Math.max(frames, this.localFrames(this.componentPositions(key, mode), mode));
+        for (const key of component) frames = Math.max(frames, local(this.componentPositions(key, mode)));
         return frames;
       });
       most = Math.max(most, below);
@@ -1756,7 +1760,7 @@ export class SchemaConverter {
    * members and references must be satisfied; `anyOf`, `oneOf`, `not`,
    * conditions and dependencies need not.
    */
-  private positions(schema: unknown, mode: SchemaMode): Positions {
+  private positions(schema: unknown, mode: SchemaMode, required = true): Positions {
     const result: Positions = { frames: 0, forcedFrames: 0, refs: new Set(), forced: new Map(), carried: new Map() };
     let visited = 0;
     const visit = (node: unknown, frame: number, own: boolean, must: boolean, whole?: Conjunction): void => {
@@ -1791,7 +1795,7 @@ export class SchemaConverter {
         whole,
       );
     };
-    visit(schema, 1, true, true);
+    visit(schema, 1, required, true);
     this.total.chargeNodes(visited);
     return result;
   }
@@ -2115,14 +2119,15 @@ function forEachInPlace(schema: JsonObject, visit: (member: unknown) => void, al
  */
 interface Conjunction {
   required: string[];
+  names: Set<string>;
   types: Set<string> | undefined;
   minItems: number;
   nodes: number;
 }
 
 function conjunction(schema: JsonObject): Conjunction {
-  const result: Conjunction = { required: [], types: undefined, minItems: 0, nodes: 0 };
   const names = new Set<string>();
+  const result: Conjunction = { required: [], names, types: undefined, minItems: 0, nodes: 0 };
   const pending: unknown[] = [schema];
   while (pending.length > 0) {
     const node = pending.pop();
@@ -2160,17 +2165,19 @@ function forEachChild(
   charge: (pairs: number) => void = () => undefined,
   whole: Conjunction = conjunction(schema),
 ): void {
-  const required = onlyType(whole, "object") ? whole.required : [];
   const properties = isObject(schema.properties) ? schema.properties : {};
   const patterns = objectEntries(schema.patternProperties);
+  // Only a schema with patterns or `additionalProperties` reads every
+  // required name; each `allOf` member that does is charged for them.
+  const scan = patterns.length > 0 || schema.additionalProperties !== undefined;
+  const object = onlyType(whole, "object");
+  const required = object && scan ? whole.required : [];
   // Every required name is matched against every pattern: charged first.
-  if (required.length > 0 && patterns.length > 0) charge(required.length * patterns.length);
-  const forcedProperties = new Set<string>();
+  if (required.length > 0) charge(required.length * (1 + patterns.length));
   const forcedPatterns = new Set<string>();
   let forcedAdditional = false;
   for (const name of required) {
     const declared = Object.hasOwn(properties, name);
-    if (declared) forcedProperties.add(name);
     // Matching patterns apply beside `properties`; `additionalProperties` only
     // without either. A pattern validators cannot read forces nothing.
     let matched = false;
@@ -2185,7 +2192,7 @@ function forEachChild(
     }
     if (!declared && !matched && readable) forcedAdditional = true;
   }
-  for (const [name, member] of objectEntries(schema.properties)) visit(member, forcedProperties.has(name));
+  for (const [name, member] of objectEntries(schema.properties)) visit(member, object && whole.names.has(name));
   for (const [pattern, member] of patterns) visit(member, forcedPatterns.has(pattern));
   visit(schema.additionalProperties, forcedAdditional);
   visit(schema.propertyNames, false);

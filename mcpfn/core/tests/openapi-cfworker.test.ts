@@ -28,12 +28,12 @@ describe("fromOpenAPI under @cfworker/json-schema", () => {
       },
       { executor: recordingExecutor() },
     );
-    // The GET tool is checked when it registers. The HEAD response is
-    // discarded, so no value is ever validated against it here.
+    // HEAD is checked while converting, the GET tool when it registers.
     expect(result.skipped.map(({ operation, code, reason }) => [operation.operationId, code, reason]).sort()).toEqual([
       ["deep", "schema-too-large", "a schema or reference chain nests too deeply"],
+      ["deepHead", "schema-too-large", "a schema or reference chain nests too deeply"],
     ]);
-    expect(result.tools.map(({ name }) => name)).toEqual(["deepHead", "short"]);
+    expect(result.tools.map(({ name }) => name)).toEqual(["short"]);
     expect(result.registry.has("short")).toBe(true);
   }, 60_000);
 
@@ -201,6 +201,41 @@ describe("fromOpenAPI under @cfworker/json-schema", () => {
     });
     expect(executor.calls).toEqual([]);
   }, 120_000);
+
+  it("measures an optional body as the tool input does, with or without fallback media, and charges wide allOf scans", () => {
+    const loop = { $ref: "#/components/schemas/Loop" };
+    const names = Array.from({ length: 2_000 }, (_, index) => `n${index}`);
+    const members = Array.from({ length: 2_000 }, () => ({ additionalProperties: { type: "string" } }));
+    const post = (operationId: string, required: boolean, content: Record<string, unknown>) => ({
+      post: { operationId, requestBody: { required, content }, responses: { "204": { description: "Done" } } },
+    });
+    const started = performance.now();
+    const result = fromOpenAPI(
+      {
+        openapi: "3.1.0",
+        paths: {
+          "/sole": post("optionalSole", false, { "application/json": { schema: loop } }),
+          "/media": post("optionalMedia", false, { "application/json": { schema: loop }, "application/example+json": { schema: { type: "string" } } }),
+          "/required": post("requiredMedia", true, { "application/json": { schema: loop }, "application/example+json": { schema: { type: "string" } } }),
+          "/wide": post("wide", true, { "application/json": { schema: { type: "object", required: names, allOf: members } } }),
+          "/ok": post("ok", true, { "application/json": { schema: { type: "object" } } }),
+        },
+        components: { schemas: { Loop: { type: "object", required: ["next"], properties: { next: loop } } } },
+      },
+      { executor: recordingExecutor(), allowMutations: true },
+    );
+    expect(performance.now() - started).toBeLessThan(10_000);
+    expect(result.tools.map(({ name, operation }) => [name, operation.requestBody?.contentType])).toEqual([
+      ["optionalSole", "application/json"],
+      ["optionalMedia", "application/json"],
+      ["requiredMedia", "application/example+json"],
+      ["ok", "application/json"],
+    ]);
+    // 2,000 members each reading 2,000 required names are charged before the scan.
+    expect(result.skipped.map(({ operation, code, reason }) => [operation.operationId, code, reason])).toEqual([
+      ["wide", "schema-too-large", expect.stringMatching(/^the document's schemas expand in total to more than \d+ nodes$/)],
+    ]);
+  }, 60_000);
 
   it("reports a value too deep for the validator's stack as invalid arguments and rethrows any other validator error", async () => {
     const handler = vi.fn(async () => ({ content: [] }));
