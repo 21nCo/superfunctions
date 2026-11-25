@@ -1,6 +1,6 @@
 {
   "name": "@authfn/social-oauth",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "Social OAuth plugin for AuthFn",
   "repository": {
     "type": "git",
@@ -30,7 +30,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "authfn": "0.9.0",
+    "authfn": "0.10.0",
     "@superfunctions/db": "0.3.4",
     "@superfunctions/http": "0.2.0",
     "@superfunctions/oauth-core": "0.1.1",

@@ -1,6 +1,6 @@
 {
   "name": "@billfn/provider-apple",
-  "version": "0.10.0",
+  "version": "0.10.1",
   "description": "Apple provider adapter for billfn",
   "type": "module",
   "main": "./dist/index.js",
