@@ -23,7 +23,7 @@ function authInfo(subject: string, clientId = "client-a"): AuthInfo {
   return { token: "test-access-token", clientId, scopes: [], extra: { subject } };
 }
 
-let gate: Promise<void> | undefined;
+let gate: (() => Promise<void>) | undefined;
 
 async function setup(options: McpFnWebStandardHandlerOptions<undefined> = {}) {
   const registry = new McpFnRegistry().register({
@@ -31,7 +31,7 @@ async function setup(options: McpFnWebStandardHandlerOptions<undefined> = {}) {
     description: "Echo a value.",
     inputSchema: { type: "object", properties: { value: { type: "string" } }, required: ["value"] },
     handler: async ({ value }) => {
-      await gate;
+      await gate?.();
       return structuredResult({ value });
     },
   });
@@ -407,12 +407,14 @@ describe("createWebStandardHandler session limits and expiry (MCP-SEC-04)", () =
     expect((await initialize()).status).toBe(200);
   });
 
-  it("delivers an SSE initialization error before releasing its slot", async () => {
+  it("delivers a protocol initialization error and expires its accepted session", async () => {
+    vi.useFakeTimers();
     let attempts = 0;
     const onClosed = vi.fn();
     const { initialize, call } = await setup({
       enableJsonResponse: false,
       maxSessions: 1,
+      sessionIdleTimeoutMs: 100,
       onsessionclosed: onClosed,
       configureRequestServer: (child) => {
         if (++attempts === 1) child.protocol.setRequestHandler(InitializeRequestSchema, () => {
@@ -422,6 +424,7 @@ describe("createWebStandardHandler session limits and expiry (MCP-SEC-04)", () =
     });
     const failed = await initialize();
     expect(failed.text).toContain('"error":{"code":-32603');
+    await vi.advanceTimersByTimeAsync(100);
     expect((await call(failed.sessionId!)).status).toBe(404);
     expect(onClosed).toHaveBeenCalledExactlyOnceWith(failed.sessionId);
     expect((await initialize()).status).toBe(200);
@@ -449,7 +452,7 @@ describe("createWebStandardHandler session limits and expiry (MCP-SEC-04)", () =
     expect((await initialize()).status).toBe(200);
   });
 
-  it("keeps an open SSE stream active until it is canceled", async () => {
+  it("expires a session while a stand-alone SSE stream is open", async () => {
     vi.useFakeTimers();
     const onClosed = vi.fn();
     const { handler, initialize } = await setup({ sessionIdleTimeoutMs: 100, onsessionclosed: onClosed });
@@ -458,11 +461,36 @@ describe("createWebStandardHandler session limits and expiry (MCP-SEC-04)", () =
       headers: { accept: "text/event-stream", "mcp-session-id": sessionId!, "mcp-protocol-version": "2025-11-25" },
     }));
     expect(stream.status).toBe(200);
-    await vi.advanceTimersByTimeAsync(200);
-    expect(onClosed).not.toHaveBeenCalled();
-    await stream.body!.cancel();
     await vi.advanceTimersByTimeAsync(100);
     expect(onClosed).toHaveBeenCalledExactlyOnceWith(sessionId);
+    expect(await stream.text()).toBe("");
+  });
+
+  it("expires and settles a pending JSON request", async () => {
+    vi.useFakeTimers();
+    let enter!: () => void;
+    let release!: () => void;
+    const entered = new Promise<void>((resolve) => { enter = resolve; });
+    const hold = new Promise<void>((resolve) => { release = resolve; });
+    const { initialize, call } = await setup({ sessionIdleTimeoutMs: 100 });
+    const { sessionId } = await initialize();
+    gate = async () => { enter(); await hold; };
+    const pending = call(sessionId!);
+    await entered;
+    await vi.advanceTimersByTimeAsync(100);
+    expect((await pending).status).toBe(404);
+    release();
+  });
+
+  it("rejects an unlisted SDK Origin at capacity", async () => {
+    const { initialize } = await setup({
+      maxSessions: 1,
+      enableDnsRebindingProtection: true,
+      allowedOrigins: ["https://app.example"],
+    });
+    expect((await initialize()).status).toBe(200);
+    expect((await initialize(undefined, { origin: "https://other.example" })).status).toBe(403);
+    expect((await initialize(undefined, { origin: "https://app.example" })).status).toBe(503);
   });
 
   it("allows the expiry hook to close the parent server", async () => {
@@ -473,6 +501,17 @@ describe("createWebStandardHandler session limits and expiry (MCP-SEC-04)", () =
     await vi.advanceTimersByTimeAsync(100);
     expect(onClosed).toHaveBeenCalledTimes(1);
     expect((await initialize()).status).toBe(200);
+  });
+
+  it("closes the parent transport when a session cleanup hook throws", async () => {
+    const dispose = vi.fn();
+    const { initialize, server } = await setup({
+      onsessionclosed: () => { throw new Error("Test cleanup error"); },
+    });
+    await server.connect({ start: async () => {}, send: async () => {}, close: async () => { dispose(); } });
+    await initialize();
+    await server.close();
+    expect(dispose).toHaveBeenCalledTimes(1);
   });
 });
 
