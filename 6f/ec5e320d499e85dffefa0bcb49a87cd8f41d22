@@ -1,0 +1,43 @@
+datafn/docs/content/docs/documentation/sync/revisions.mdx
+  s_1249bd91e0e351::t_1d78ec646566ea 50-53
+datafn/docs/public/llms-full.txt
+  s_1249bd91e0e351::t_4bb23386c060b8 19186-19189
+datafn/server/__tests__/revisions.test.ts
+  s_1249bd91e0e351::t_a04cb97d4ebaed 9-17,76,79,1412-1565
+datafn/server/src/execution/revisions.ts
+  s_1249bd91e0e351::t_c48514d860ceb0 29-52,268,385-423,514-515,517-520,524-526,528,530
+datafn/server/src/execution/sync/clone.ts
+  s_1249bd91e0e351::t_e57e7727d7d749 10,184-187,194-195
+datafn/server/src/execution/sync/pull.ts
+  s_1249bd91e0e351::t_eda2bed99f360f 9,887-892,929-932,940,944,1187-1189
+datafn/server/src/routes/query.ts
+  s_1249bd91e0e351::t_61bcc4d18a06f7 33,35,950-957,961-968,970-974,977-980
+datafn/server/src/execution/mutation/__tests__/share-spv2.test.ts
+  s_b52b8c1b7f4522::t_9ab85cfffed8bd 1653-1731
+datafn/server/src/execution/mutation/execute.ts
+  s_b52b8c1b7f4522::t_0419a3152d855c 1601-1606
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6fec5e320d499e85dffefa0bcb49a87cd8f41d22",
+  "prompts": {},
+  "sessions": {
+    "s_1249bd91e0e351": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a2131a-2ee1-7040-aaeb-f4b9e01820a7",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_b52b8c1b7f4522": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a7618df4-bf22-4edd-ab8f-5c9972f5b3d0",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
