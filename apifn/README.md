@@ -146,17 +146,23 @@ run the CLI commands in [Non-GitHub CI](#non-github-ci).
 The workflow has two jobs. `evaluate` checks out and runs everything below with a read-only token (`contents: read`),
 because the caller's install scripts, router and config run there. `api-check` holds the only token that can write to
 the pull request: it checks out, installs and imports nothing, posts the comment from `evaluate`'s report and applies
-the gate `evaluate` decided. Require `<caller job> / api-check` as the status check. A step of `evaluate` that fails
-before the check runs (invalid inputs, the install, the CLI build) is reported as an error in the summary and the
-comment and fails `api-check` whatever `enforce_gates` says. `api-check` runs only after `evaluate` finishes, so it is
-skipped when `evaluate` is cancelled or loses its runner; rerun the workflow then.
+the gate `evaluate` decided. Require both `<caller job> / evaluate` and `<caller job> / api-check` as status checks.
+Every step of `evaluate` continues on error and has a timeout, so a step that fails before the check runs (invalid
+inputs, the install, the CLI build) is reported as an error in the summary and the comment and fails `api-check`
+whatever `enforce_gates` says. `api-check` runs only after `evaluate` succeeds, so it is skipped when `evaluate` is
+cancelled, times out or loses its runner; a skipped check passes branch protection, but the failed `evaluate` check
+blocks the merge. Rerun the workflow then.
+
+The guards below protect against caller code that is not adversarial: install scripts and router or config imports
+that generate or rewrite files. Code in the pull request runs in `evaluate` and could forge its result; the job split
+keeps the pull-request write token away from it, and review of the pull request covers the rest.
 
 With `router_path`:
 
 - Checks out the caller without keeping the token in `.git/config`
 - Runs `npm ci` in `working_directory` (when it has a `package.json`), because the router imports the caller's packages. The job fails when the install changes checked-out files or adds untracked ones outside `node_modules` (for example a `prepare` script regenerating the spec), because `apifn check` must read the committed router and spec
-- Runs `apifn check <router_path> --base origin/<base_branch> --format markdown --report …` and the same check with `--format json --report …` (`--base-spec` instead when `base_spec` is set; an HTTP(S) `base_spec` is downloaded once for both runs); both reports are written to `$RUNNER_TEMP`, not the checkout, so output the router or config prints while loading does not affect them
-- After both runs, requires the spec the report names to be the file committed at `HEAD`, reached only through symlinks committed at `HEAD` with the same targets (a spec missing from both is reported as drift). A spec or symlink that the install, the router or the config created or changed, including a gitignored one, makes the check report an error and the verdict `fail`
+- Runs `apifn check <router_path> --base <commit of origin/base_branch> --format markdown --report …` and the same check with `--format json --report …` (`--base-spec` instead when `base_spec` is set; an HTTP(S) `base_spec` is downloaded once for both runs, at most 32 MiB). The base commit is resolved from the remote-tracking ref `refs/remotes/origin/<base_branch>` before any caller code runs. Both reports are written to `$RUNNER_TEMP`, not the checkout, so output the router or config prints while loading does not affect them
+- After both runs, requires `HEAD` to still be the checked-out commit, and the spec the CLI opened (`spec_path` as given, or the config default) to be the file committed at that commit, reached only through symlinks committed there with the same targets (a spec missing from both is reported as drift). A spec or symlink that the install, the router or the config created or changed, including a gitignored one, makes the check report an error and the verdict `fail`
 - Fails an uncovered breaking change unless `allow_breaking` is true, even when the caller's apifn config sets `diff.failOnBreaking: false`
 - Uses the Markdown report as the job summary and PR comment when both runs agree (exit code, verdict, drift and breaking changes); otherwise the summary reports an error and the verdict is `fail`
 
@@ -164,13 +170,13 @@ Without `router_path`:
 
 - Validates OpenAPI specs via `apifn validate --format json`
 - Diffs current spec against base branch via `apifn diff --format json`
-- Emits machine-readable JSON artifacts (`validate-report.json`, `diff-report.json`)
+- Writes machine-readable JSON reports (`validate-report.json`, `diff-report.json`); a missing or malformed report fails the check
 - Builds a markdown summary
 
 Either way:
 
-- Runs collection tests via `apifn test --reporter json` into `test-report.json` when `collection_dir` is set; without it the summary reports the tests as **not run**
-- Posts or updates one PR comment holding `<!-- apifn-ci-report -->` (optional). A fork PR gets a read-only token, so it gets no comment, but its gates still apply. A report longer than a comment allows is cut and links the job summary; a failed post is a warning and does not decide the job
+- Runs collection tests via `apifn test --reporter json` (its report goes to `$RUNNER_TEMP`) when `collection_dir` is set; without it the summary reports the tests as **not run**. Tests that produce no report fail
+- Posts or updates one PR comment holding `<!-- apifn-ci-report -->` (optional). A fork PR gets a read-only token, so it gets no comment, but its gates still apply. A report over 60000 UTF-8 bytes is cut and links the job summary; a failed post is a warning and does not decide the job
 - Sets the outputs `verdict`, `drift` and `breaking`
 - Fails the job on drift, validation failures, uncovered breaking changes and test failures (unless `enforce_gates` is false)
 
