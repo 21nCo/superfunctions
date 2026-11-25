@@ -1,5 +1,7 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { InMemoryTaskStore } from "@modelcontextprotocol/sdk/experimental/tasks/stores/in-memory.js";
+import { CreateTaskResultSchema, ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
 import Ajv from "ajv";
 import Ajv2020 from "ajv/dist/2020.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -232,6 +234,7 @@ describe("McpFn client profiles", () => {
     registry: McpFnRegistry<RequestContext>,
     clientName = "reported-client",
     evidence?: (event: McpFnClientProfileEvidence) => void,
+    unmatchedServerOwnedArguments?: "reject" | "allow",
   ) {
     const server = createMcpFnServer({
       info: { name: "profile-server", version: "1.0.0" },
@@ -240,6 +243,7 @@ describe("McpFn client profiles", () => {
       clientProfiles: {
         profiles: [profile],
         evidence,
+        unmatchedServerOwnedArguments,
         resolveVerifiedIdentity: ({ context: trusted }) =>
           trusted.subject ? { subject: trusted.subject } : undefined,
       },
@@ -344,17 +348,174 @@ describe("McpFn client profiles", () => {
     expect(reported).toHaveBeenCalledWith("reported-client");
   });
 
-  it("keeps generic clients canonical when no verified profile matches", async () => {
+  // Audit MCP-SEC-01: a client that matches no profile must not choose a
+  // server-owned value (a tenant) just by not matching.
+  it.each([
+    ["an identity no profile matches", { subject: "generic-client" }],
+    ["no verified identity", {}],
+  ])("hides and refuses tools with server-owned arguments for a client with %s", async (_label, context) => {
+    const { registry, handler } = lookupRegistry();
+    const { client } = await connect(context, tenantProfile(), registry);
+    expect((await client.listTools()).tools).toEqual([]);
+    await expect(client.callTool({
+      name: "lookup",
+      arguments: { query: "safe", tenantId: "model-value" },
+    })).rejects.toThrow(/Tool lookup not found/);
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("rejects server-owned arguments of unmatched calls passed straight to enrichment", async () => {
+    await expect(enrichMcpFnClientProfileCall({
+      resolved: { context: undefined, extra: {} as McpFnRequestExtra, reportedClient: {} },
+      tool: { name: "lookup", description: "Lookup", inputSchema: { type: "object" } },
+      arguments: { query: "safe", tenantId: "model-value" },
+      clientProfiles: { profiles: [tenantProfile() as McpFnClientProfile<undefined>] },
+    })).rejects.toMatchObject({ code: "MCPFN_FORGED_SERVER_ARGUMENT" });
+  });
+
+  it("reports tools hidden from an unmatched client as removed catalog changes", async () => {
+    const { buildMcpFnEffectiveCatalog } = await import("../src/client-profiles.js");
+    const lookup = { name: "lookup", inputSchema: { type: "object" as const, properties: { tenantId: { type: "string" } }, required: ["tenantId"] } };
+    const other = { name: "other", inputSchema: { type: "object" as const } };
+    const result = await buildMcpFnEffectiveCatalog({
+      canonicalTools: [lookup, other],
+      resolved: { context: undefined, extra: {} as McpFnRequestExtra, reportedClient: {} },
+      clientProfiles: { profiles: [tenantProfile() as McpFnClientProfile<undefined>] },
+    });
+    expect(result.tools.map((tool) => tool.name)).toEqual(["other"]);
+    expect(result.changes).toEqual([
+      { kind: "removed", path: "tools.lookup", tool: "lookup", beforeHash: expect.stringMatching(/^[0-9a-f]{64}$/) },
+    ]);
+  });
+
+  it("keeps the McpFn code and JSON-safe details in task-augmented enrichment errors", async () => {
+    const registry = new McpFnRegistry<RequestContext>().register({
+      name: "lookup",
+      description: "Look up a value in the authenticated tenant.",
+      inputSchema: { type: "object", properties: { query: { type: "string" }, tenantId: { type: "string" } }, required: ["query", "tenantId"], additionalProperties: false },
+      execution: { taskSupport: "optional" },
+      handler: async (args) => structuredResult(args),
+      taskHandler: { createTask: vi.fn(), getTask: vi.fn(), getTaskResult: vi.fn() } as never,
+    });
+    const profile = { ...tenantProfile(), enrichArguments: () => { throw new McpFnError("TENANT_LOOKUP_FAILED", "Tenant lookup failed", { code: "upstream-503", attempts: 2n, toJSON: () => ({ code: "upstream-503", attempts: "2", lifecycleStage: "handler" }) }); } };
+    const server = createMcpFnServer({
+      info: { name: "profile-server", version: "1.0.0" },
+      registry,
+      context: () => ({ subject: "authenticated-client", tenantId: "trusted-tenant" }),
+      taskStore: new InMemoryTaskStore(),
+      clientProfiles: { profiles: [profile], resolveVerifiedIdentity: ({ context: trusted }) => trusted.subject ? { subject: trusted.subject } : undefined },
+    });
+    const client = new Client({ name: "reported-client", version: "9.9.9" }, { capabilities: {} });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    closeables.push(client, server);
+    const error = await client.request(
+      { method: "tools/call", params: { name: "lookup", arguments: { query: "safe" }, task: { ttl: 60_000 } } },
+      CreateTaskResultSchema,
+    ).then(() => undefined, (failure: unknown) => failure);
+    expect(error).toMatchObject({
+      code: ErrorCode.InternalError,
+      data: { code: "TENANT_LOOKUP_FAILED", attempts: "2", lifecycleStage: "argument-enrichment", profile: { id: "consumer/trusted", version: "1" } },
+    });
+  });
+
+  it.each([null, ["array"]])("treats an enricher returning %j as a server fault", async (returned) => {
+    await expect(enrichMcpFnClientProfileCall({
+      resolved: { context: undefined, extra: {} as McpFnRequestExtra, reportedClient: {}, verifiedIdentity: { subject: "trusted" }, profile: { id: "p", version: "1", matches: () => true, enrichArguments: () => returned as never } },
+      tool: { name: "lookup", description: "Lookup", inputSchema: { type: "object" } },
+      arguments: { query: "safe" },
+    })).rejects.toMatchObject({ code: "MCPFN_PROFILE_ARGUMENT_MUTATION" });
+  });
+
+  it("carries the unmatched-client policy through the public helper pipeline", async () => {
+    const { buildMcpFnEffectiveCatalog, resolveMcpFnClientProfile } = await import("../src/client-profiles.js");
+    const resolved = await resolveMcpFnClientProfile(
+      { profiles: [tenantProfile() as McpFnClientProfile<undefined>], resolveVerifiedIdentity: () => ({ subject: "generic-client" }) },
+      { context: undefined, extra: {} as McpFnRequestExtra, reportedClient: {} },
+    );
+    const lookup = { name: "lookup", description: "Lookup", inputSchema: { type: "object" as const, properties: { tenantId: { type: "string" } }, required: ["tenantId"] } };
+    expect((await buildMcpFnEffectiveCatalog({ canonicalTools: [lookup], resolved })).tools).toEqual([]);
+    await expect(enrichMcpFnClientProfileCall({ resolved, tool: lookup, arguments: { tenantId: "model-value" } }))
+      .rejects.toMatchObject({ code: "MCPFN_FORGED_SERVER_ARGUMENT" });
+  });
+
+  it.each([[["first", "second"]], ["scalar detail"], [42]])("keeps non-object enrichment details %j under data.details", async (details) => {
+    const registry = new McpFnRegistry<RequestContext>().register({
+      name: "lookup",
+      description: "Look up a value in the authenticated tenant.",
+      inputSchema: { type: "object", properties: { query: { type: "string" }, tenantId: { type: "string" } }, required: ["query", "tenantId"], additionalProperties: false },
+      execution: { taskSupport: "optional" },
+      handler: async (args) => structuredResult(args),
+      taskHandler: { createTask: vi.fn(), getTask: vi.fn(), getTaskResult: vi.fn() } as never,
+    });
+    const profile = { ...tenantProfile(), enrichArguments: () => { throw new McpFnError("TENANT_LOOKUP_FAILED", "Tenant lookup failed", details); } };
+    const server = createMcpFnServer({
+      info: { name: "profile-server", version: "1.0.0" },
+      registry,
+      context: () => ({ subject: "authenticated-client", tenantId: "trusted-tenant" }),
+      taskStore: new InMemoryTaskStore(),
+      clientProfiles: { profiles: [profile], resolveVerifiedIdentity: ({ context: trusted }) => trusted.subject ? { subject: trusted.subject } : undefined },
+    });
+    const client = new Client({ name: "reported-client", version: "9.9.9" }, { capabilities: {} });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    closeables.push(client, server);
+    const error = await client.request(
+      { method: "tools/call", params: { name: "lookup", arguments: { query: "safe" }, task: { ttl: 60_000 } } },
+      CreateTaskResultSchema,
+    ).then(() => undefined, (failure: unknown) => failure);
+    expect(error).toMatchObject({ data: { code: "TENANT_LOOKUP_FAILED", details } });
+  });
+
+  it("answers a forged server-owned argument in a task-augmented call with InvalidParams", async () => {
+    const createTask = vi.fn();
+    const registry = new McpFnRegistry<RequestContext>().register({
+      name: "lookup",
+      description: "Look up a value in the authenticated tenant.",
+      inputSchema: { type: "object", properties: { query: { type: "string" }, tenantId: { type: "string" } }, required: ["query", "tenantId"], additionalProperties: false },
+      execution: { taskSupport: "optional" },
+      handler: async (args) => structuredResult(args),
+      taskHandler: { createTask, getTask: vi.fn(), getTaskResult: vi.fn() } as never,
+    });
+    const server = createMcpFnServer({
+      info: { name: "profile-server", version: "1.0.0" },
+      registry,
+      context: () => ({ subject: "authenticated-client", tenantId: "trusted-tenant" }),
+      taskStore: new InMemoryTaskStore(),
+      clientProfiles: {
+        profiles: [tenantProfile()],
+        resolveVerifiedIdentity: ({ context: trusted }) => trusted.subject ? { subject: trusted.subject } : undefined,
+      },
+    });
+    const client = new Client({ name: "reported-client", version: "9.9.9" }, { capabilities: {} });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    closeables.push(client, server);
+    const error = await client.request(
+      { method: "tools/call", params: { name: "lookup", arguments: { query: "safe", tenantId: "model-value" }, task: { ttl: 60_000 } } },
+      CreateTaskResultSchema,
+    ).then(() => undefined, (failure: unknown) => failure);
+    expect(error).toBeInstanceOf(McpError);
+    expect(error).toMatchObject({
+      code: ErrorCode.InvalidParams,
+      data: { code: "MCPFN_FORGED_SERVER_ARGUMENT", rejectedProperty: "tenantId", lifecycleStage: "argument-enrichment" },
+    });
+    expect(createTask).not.toHaveBeenCalled();
+  });
+
+  it("keeps generic calls canonical when unmatchedServerOwnedArguments is allow", async () => {
     const { registry } = lookupRegistry();
     const { client } = await connect(
       { subject: "generic-client" },
       tenantProfile(),
       registry,
+      undefined,
+      undefined,
+      "allow",
     );
-    expect((await client.listTools()).tools[0]?.inputSchema.required).toEqual([
-      "query",
-      "tenantId",
-    ]);
     await expect(
       client.callTool({
         name: "lookup",
@@ -363,6 +524,32 @@ describe("McpFn client profiles", () => {
     ).resolves.toMatchObject({
       structuredContent: { query: "safe", tenantId: "model-value" },
     });
+  });
+
+  it("leaves unmatched calls to tools without server-owned arguments unchanged", async () => {
+    const handler = vi.fn(async (args: Record<string, unknown>) => structuredResult(args));
+    const registry = new McpFnRegistry<RequestContext>().register({
+      name: "echo",
+      description: "Echo",
+      inputSchema: { type: "object", properties: { tenantId: { type: "string" } }, required: ["tenantId"] },
+      handler,
+    });
+    const { client } = await connect({ subject: "generic-client" }, tenantProfile(), registry);
+    await expect(
+      client.callTool({ name: "echo", arguments: { tenantId: "model-value" } }),
+    ).resolves.toMatchObject({ structuredContent: { tenantId: "model-value" } });
+  });
+
+  it("rejects an unknown unmatchedServerOwnedArguments policy", () => {
+    expect(() => createMcpFnServer({
+      info: { name: "profile-server", version: "1.0.0" },
+      registry: lookupRegistry().registry,
+      clientProfiles: {
+        profiles: [tenantProfile()],
+        resolveVerifiedIdentity: () => undefined,
+        unmatchedServerOwnedArguments: "canonical" as never,
+      },
+    })).toThrow(/unmatchedServerOwnedArguments/);
   });
 
   it("forwards non-object generic arguments to canonical validation", async () => {
@@ -643,7 +830,7 @@ describe("McpFn client profiles", () => {
   });
 
   it("bounds long rejected property names", async () => {
-    const { client } = await connect({ subject: "generic" }, tenantProfile(), lookupRegistry().registry);
+    const { client } = await connect({ subject: "generic" }, tenantProfile(), lookupRegistry().registry, undefined, undefined, "allow");
     const unknown = "unexpected".repeat(50);
     const result = await client.callTool({ name: "lookup", arguments: { query: "ok", tenantId: "ok", [unknown]: "secret" } });
     expect(JSON.stringify(result)).toContain(unknown.slice(0, 256));
@@ -656,7 +843,7 @@ describe("McpFn client profiles", () => {
     const { registry } = lookupRegistry(vi.fn(async () => {
       throw new McpFnError("secret-input".repeat(10000), "secret-input", { issues: [{ message: "secret-input" }] });
     }));
-    const { client } = await connect({ subject: "generic" }, tenantProfile(), registry, "reported", event => { events.push(event); });
+    const { client } = await connect({ subject: "generic" }, tenantProfile(), registry, "reported", event => { events.push(event); }, "allow");
     await client.callTool({ name: "lookup", arguments: { query: "ok", tenantId: "ok" } });
     expect(events.filter(e => e.stage === "handler" && e.outcome === "failed")).toHaveLength(1);
     expect(JSON.stringify(events)).not.toContain("secret-input");
@@ -665,7 +852,7 @@ describe("McpFn client profiles", () => {
 
   it.each(["domain detail", ["domain", 1], 42, null])("preserves non-object domain error details: %j", async details => {
     const { registry } = lookupRegistry(vi.fn(async () => { throw new McpFnError("DOMAIN_ERROR", "Domain failure", details); }));
-    const { client } = await connect({ subject: "generic" }, tenantProfile(), registry);
+    const { client } = await connect({ subject: "generic" }, tenantProfile(), registry, undefined, undefined, "allow");
     const result = await client.callTool({ name: "lookup", arguments: { query: "ok", tenantId: "ok" } });
     expect(result.isError).toBe(true);
     expect(result.structuredContent).toMatchObject({ error: { details } });
