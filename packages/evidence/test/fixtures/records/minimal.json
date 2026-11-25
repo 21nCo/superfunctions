@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "recordId": "set-25.unit-test.2026-11-01",
+  "evidenceClass": "unit-test",
+  "subjectIds": ["SET-25"],
+  "status": "passed",
+  "source": {
+    "commit": "1111111111111111111111111111111111111111",
+    "dirty": false,
+    "lockfileSha256": null,
+    "artifactHashes": [{ "path": "reports/unit.json", "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }]
+  },
+  "environment": { "os": "linux", "arch": "x64", "runtime": "node 22.13.0", "tools": {} },
+  "timing": { "startedAt": "2026-11-01T09:00:00Z", "completedAt": "2026-11-01T10:00:00Z", "durationMs": 3600000 },
+  "expiresAt": "2026-11-02T09:00:00Z"
+}

@@ -1,0 +1,54 @@
+{
+  "name": "@superfunctions/evidence",
+  "version": "0.1.0",
+  "description": "Source-bound evidence records: the record format v1 JSON Schema, its types and a runtime-neutral validator",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./schema/evidence-record.v1.json": "./schema/evidence-record.v1.json",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "schema",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run && node scripts/verify-packed.mjs",
+    "test:watch": "vitest --watch",
+    "lint": "tsc --noEmit -p tsconfig.check.json",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.check.json",
+    "clean": "rm -rf dist",
+    "verify:packed": "node scripts/verify-packed.mjs"
+  },
+  "keywords": [
+    "evidence",
+    "provenance",
+    "json-schema",
+    "superfunctions"
+  ],
+  "author": "21n",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21nCo/superfunctions.git",
+    "directory": "packages/evidence"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "ajv": "8.17.1",
+    "esbuild": "0.21.5",
+    "typescript": "^5.6.0",
+    "vitest": "^3.2.4"
+  }
+}

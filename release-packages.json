@@ -54,6 +54,7 @@
   { "slug": "superfunctions-envelope", "path": "packages/envelope", "name": "@superfunctions/envelope" },
   { "slug": "superfunctions-errors", "path": "packages/errors", "name": "@superfunctions/errors" },
   { "slug": "superfunctions-delivery", "path": "packages/delivery", "name": "@superfunctions/delivery" },
+  { "slug": "superfunctions-evidence", "path": "packages/evidence", "name": "@superfunctions/evidence" },
   { "slug": "extfn-core", "path": "extfn/core", "name": "@extfn/core" },
   { "slug": "extfn-cli", "path": "extfn/cli", "name": "@extfn/cli" },
   { "slug": "extfn-svelte", "path": "extfn/svelte", "name": "@extfn/svelte" },
