@@ -523,8 +523,9 @@ const id = name => { const found = fs.lstatSync(name, { bigint: true }); return 
 const fail = () => { throw Object.assign(new Error("replaced"), { code: "EREPLACED" }); };
 const wipe = self => {
   for (const name of fs.readdirSync(".")) {
-    const entry = fs.lstatSync(name, { bigint: true }), own = entry.dev + ":" + entry.ino;
-    if (!entry.isDirectory()) { fs.unlinkSync(name); continue; }
+    const entry = fs.lstatSync(name, { bigint: true, throwIfNoEntry: false }), own = entry && entry.dev + ":" + entry.ino;
+    if (entry && !entry.isDirectory()) try { fs.unlinkSync(name); } catch (error) { if (error.code !== "ENOENT") throw error; }
+    if (!entry?.isDirectory()) continue;
     process.chdir(name);
     if (id(".") !== own) fail();
     wipe(own);

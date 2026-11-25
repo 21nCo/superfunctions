@@ -1295,6 +1295,7 @@ describe("CliHarnessAdapter preflight and configuration", () => {
       await mkdir(path.join(path.dirname(out), "nested", "deeper"), { recursive: true });
       await writeFile(path.join(path.dirname(out), "nested", "deeper", "note.txt"), "note");
       await symlink(outside, path.join(path.dirname(out), "nested", "link"));
+      await symlink(path.join(directory, "missing"), path.join(path.dirname(out), "dangling"));
       await writeFile(out, JSON.stringify({ findings: [], evidence: [], inspectedPaths: ["src/index.ts"], uninspected: [] }));
       return { code: 0, signal: null, stdout: "", stderr: "", timedOut: false, canceled: false };
     };
