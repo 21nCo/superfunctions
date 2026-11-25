@@ -314,6 +314,10 @@ test("only files a task the step ran declares as an output are not drift", () =>
   // A declared file that went back to HEAD is not proven restored by an archive that lacks it.
   const reverted = [baseline(files(BUILD), snapshot), step("build", files(BUILD, NEW), {}, [restoredBuild, fresh])];
   assert.deepEqual([...taintedEntries(reverted, files(BUILD, NEW), archive({})).tainted], [NEW]);
+  // A replay never deletes, so deleting even a file a task the step ran declares is drift.
+  const deleted = { ...snapshot, "ui/src/catalog.generated.ts": "deleted" };
+  const deleting = [baseline(files(BUILD), snapshot), step("build", files(BUILD, NEW), deleted, [buildTask, fresh])];
+  assert.deepEqual([...taintedEntries(deleting, files(BUILD, NEW)).tainted], [NEW]);
   // A file the build declares, written while the build ran in this step, is not drift.
   const ranAgain = [baseline(), built, step("typecheck", files(BUILD, TYPECHECK), rewritten, [buildTask, typecheck])];
   assert.deepEqual([...taintedEntries(ranAgain, files(BUILD, TYPECHECK)).tainted], []);
@@ -410,6 +414,11 @@ test("a cache archive's files hash as the drift snapshot hashes the same files, 
   assert.deepEqual([...contents.keys()].sort(byCodeUnit), Object.keys(snapshot).sort(byCodeUnit));
   for (const [file, hash] of contents) assert.equal(hash, snapshot[file], file);
   assert.throws(() => archivedContents(tarEntry("pkg/fifo", { type: "6" })), /unsupported tar entry "6"/);
+  // A size past the archive's end, or not octal (a negative one would move backwards), gives no evidence.
+  assert.throws(() => archivedContents(tarEntry("pkg/a", { data: "abc" }).subarray(0, 514)), /ends past the archive/);
+  const negative = tarEntry("pkg/a", { data: "abc" });
+  negative.write("-0000002000", 124);
+  assert.throws(() => archivedContents(negative), /unsupported tar entry size "-0000002000"/);
 
   const { cacheDir } = freshDirs();
   mkdirSync(cacheDir);

@@ -192,9 +192,11 @@ function tarHeader(header) {
   const field = (start, end) => header.toString("utf8", start, end).replace(/\0[\s\S]*$/, "");
   const prefix = field(257, 263) === "ustar" ? field(345, 500) : "";
   const name = field(0, 100);
+  const size = field(124, 136).trim() || "0";
+  if (!/^[0-7]+$/.test(size)) throw new Error(`unsupported tar entry size ${JSON.stringify(size)} for ${name}`);
   return {
     type: field(156, 157) || "0",
-    size: Number.parseInt(field(124, 136).trim() || "0", 8),
+    size: Number.parseInt(size, 8),
     name: prefix ? `${prefix}/${name}` : name,
     link: field(157, 257),
   };
@@ -207,6 +209,7 @@ export function archivedContents(tar) {
   const long = {}; // GNU long name (L) and long link target (K) entries apply to the next entry
   for (let offset = 0; offset + 512 <= tar.length && tar[offset] !== 0; ) {
     const header = tarHeader(tar.subarray(offset, offset + 512));
+    if (offset + 512 + header.size > tar.length) throw new Error(`tar entry ${header.name} ends past the archive`);
     const data = tar.subarray(offset + 512, offset + 512 + header.size);
     offset += 512 + Math.ceil(header.size / 512) * 512;
     if (header.type === "L" || header.type === "K") {
@@ -306,10 +309,12 @@ function stepTaint(step, previous, archived) {
   } catch (error) {
     return { reason: error.message, drift: [] };
   }
-  // A file now absent from the snapshot (back to HEAD, or an untracked file removed) is never proven restored.
+  // A replay only writes files, so a deletion is never restored. A file now absent from the snapshot (back to HEAD, or
+  // an untracked file removed) is never proven restored by an archive.
   const archivedNow = (hash, file) => step.snapshot[file] !== undefined && archived(hash, file) === step.snapshot[file];
   const restored = (file) =>
-    ran(file) || replayed.some(({ hash, declares }) => declares(file) && archivedNow(hash, file));
+    step.snapshot[file] !== "deleted" &&
+    (ran(file) || replayed.some(({ hash, declares }) => declares(file) && archivedNow(hash, file)));
   const files = new Set([...Object.keys(previous), ...Object.keys(step.snapshot)]);
   const drift = [...files].filter((file) => previous[file] !== step.snapshot[file] && !restored(file));
   if (drift.length === 0) return null;
