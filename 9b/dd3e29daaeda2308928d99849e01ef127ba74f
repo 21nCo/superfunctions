@@ -1,0 +1,276 @@
+langfn/typescript/tests/release-gate.test.ts
+  s_12235e5930aa22::t_d274f3d80c74de 205
+  s_12235e5930aa22::t_aac72025b9a91e 43-48
+.github/workflows/ci.yml
+  s_12235e5930aa22::t_5fe16759525235 82-84,218-262,266,268,270,272-273,278,280,282,284-285,291-295,300,302,304,306-331,374-403,405-433
+apifn/admin/turbo.json
+  s_12235e5930aa22::t_a76db9e54a81a7 15,31,47
+apifn/contracts/package.json
+  s_12235e5930aa22::t_956a5465a25f15 62
+apifn/sdk/package.json
+  s_12235e5930aa22::t_940c672a51a750 48
+authfn/adapters/lookup-cloudflare-do/package.json
+  s_12235e5930aa22::t_e98bf23be462bb 3,34
+authfn/adapters/lookup-dynamodb/package.json
+  s_12235e5930aa22::t_00f372fb5386b5 3,36
+authfn/admin/package.json
+  s_12235e5930aa22::t_c88f0510cd95bf 3,40,43,46-47
+authfn/api-keys/package.json
+  s_12235e5930aa22::t_289af5df5f0fb4 3,29
+authfn/client/package.json
+  s_12235e5930aa22::t_31db1819d90e6b 3,33,37-42
+authfn/core/README.md
+  s_12235e5930aa22::t_749b64919c7c02 13-22
+authfn/core/package.json
+  s_12235e5930aa22::t_ab84ecfc3c64c9 3,79
+authfn/core/vitest.config.ts
+  s_12235e5930aa22::t_cb3f293850b3f5 6-8
+authfn/docs/content/api/authfn.json
+  s_12235e5930aa22::t_f674fe8fd125e0 441-454
+authfn/docs/package.json
+  s_12235e5930aa22::t_2bfcc9f95573f8 26-32,44
+authfn/email-otp/package.json
+  s_12235e5930aa22::t_0e562e7b8dcc52 3,29
+authfn/multi-region/package.json
+  s_12235e5930aa22::t_19055d17d6c104 3,29
+authfn/native-handoff/package.json
+  s_12235e5930aa22::t_e78c5d7ca4af5f 3,29
+authfn/oauth-provider/package.json
+  s_12235e5930aa22::t_b20c4670d37d02 3,30
+authfn/password/package.json
+  s_12235e5930aa22::t_d1ce86e9ea7aea 3,29
+authfn/python/CHANGELOG.md
+  s_12235e5930aa22::t_3e3edc4e758a41 10-11,14-20,103-104
+authfn/python/authfn/__init__.py
+  s_12235e5930aa22::t_e32851921a533d 3
+authfn/python/pyproject.toml
+  s_12235e5930aa22::t_cb248cb19a3613 7
+authfn/schema-plugin/package.json
+  s_12235e5930aa22::t_1dfa746001fb41 3,29
+authfn/social-oauth/package.json
+  s_12235e5930aa22::t_8a32353df73fb4 3,33,40
+authfn/svelte/package.json
+  s_12235e5930aa22::t_7adab17fef04cc 3,32,36
+authfn/two-factor/package.json
+  s_12235e5930aa22::t_d0cfc6245717da 3,29
+billfn/docs/package.json
+  s_12235e5930aa22::t_cbd27fffd8b408 30,42
+datafn/docs/public/llms-full.txt
+  s_12235e5930aa22::t_e8451fe7a9e31e 7306,7311-7314,7320-7323,13305,13332,13335-13336
+filefn/docs/package.json
+  s_12235e5930aa22::t_cd2f1ec209e47e 40-41,50
+langfn/README.md
+  s_12235e5930aa22::t_f0cb152cf1d1f6 5,12
+langfn/RELEASE_GATE.md
+  s_12235e5930aa22::t_5f364a73ac6288 3
+langfn/docs/content/docs/getting-started.md
+  s_12235e5930aa22::t_b838fa47b6f52c 6
+langfn/docs/content/docs/index.md
+  s_12235e5930aa22::t_42d570b817d344 8
+langfn/docs/content/docs/reference/release-gate.md
+  s_12235e5930aa22::t_11ebfebae891ac 6
+langfn/docs/content/docs/reference/typescript.md
+  s_12235e5930aa22::t_5fb0e535326ef6 8
+langfn/docs/static/llms-full.txt
+  s_12235e5930aa22::t_53c290a3626ae1 16,169,391,414
+langfn/typescript/README.md
+  s_12235e5930aa22::t_6f1003241d4652 5,10,13
+langfn/typescript/package.json
+  s_12235e5930aa22::t_5d9db46924a620 3
+langfn/typescript/src/http/routes.ts
+  s_12235e5930aa22::t_f36d85f4f69f57 43
+langfn/typescript/src/mcp/client.ts
+  s_12235e5930aa22::t_00316964199742 9
+langfn/typescript/src/mcp/server.ts
+  s_12235e5930aa22::t_4c492f8431dc6f 99-106,108-109,111-121,134
+langfn/typescript/tests/http-routes.test.ts
+  s_12235e5930aa22::t_701d66ba5fde69 17
+langfn/typescript/tests/package-contract.test.ts
+  s_12235e5930aa22::t_93187411aa9d8a 19,48-49,62-63
+mcpfn/auth/README.md
+  s_12235e5930aa22::t_1a8ed0fd6016cd 19-22,32-44,96-108,121-135
+mcpfn/auth/package.json
+  s_12235e5930aa22::t_1dff37c44c9c9d 3
+mcpfn/auth/src/hosted-authorization.ts
+  s_12235e5930aa22::t_6db95f0f799eda 1347-1386,1409-1411,1423-1437,1440,1448,1475-1503,1511-1527,1530,1666-1670,1679-1692
+mcpfn/auth/src/oauth-client.ts
+  s_12235e5930aa22::t_258c3c332fe9fe 224-239,261-271
+mcpfn/auth/src/provider-adapter.ts
+  s_12235e5930aa22::t_9b09854a88d8fb 82-92,106-122,137-148,152-164,170,174-175,184-185,200-204,264-272,301-302,306-307,314-322
+mcpfn/auth/src/resource-server.ts
+  s_12235e5930aa22::t_9d8eb477c003b2 32-36,175-184,211-219
+mcpfn/auth/tests/audit-hardening.test.ts
+  s_12235e5930aa22::t_194d95eb560838 1-390
+mcpfn/auth/tests/auth.test.ts
+  s_12235e5930aa22::t_54f7a36b9af12e 170,205
+mcpfn/auth/tests/oauth-platform.test.ts
+  s_12235e5930aa22::t_507bd9bad495b4 1242-1261,1271,1278,1286-1319,1321-1344,1346-1395,1397-1398,1402-1440,1784,1799,1811,1839,1864,1973,2006,2049,2060,2093,2101,2119
+mcpfn/cli/package.json
+  s_12235e5930aa22::t_d60d7b558af238 3,26-27,29-30
+mcpfn/client/CHANGELOG.md
+  s_12235e5930aa22::t_5358eab3677197 3-9
+mcpfn/client/package.json
+  s_12235e5930aa22::t_eaec414b5e5b66 3
+mcpfn/core/README.md
+  s_12235e5930aa22::t_c0f5ac81cb3407 273-286,362-379
+mcpfn/core/src/errors.ts
+  s_12235e5930aa22::t_09d33a1bb98725 1,59-158,161,163-169
+mcpfn/core/src/server.ts
+  s_12235e5930aa22::t_4960d1cef9581c 5,12-14,19,50-52,92-117,139-168,171-272,306-324,356-462,518,521,533-535,550-553,590,836-838,851-852,880-881,897-908,910-911,933-939,965-971,981-988,994-1101,1251-1284,1290-1291,1294,1320-1336,1338-1343,1347-1358,1361-1374,1376-1410,1412-1443,1445-1464,1466,1468-1477,1479,1481,1483-1497,1499,1501-1555,1720,1723-1726
+mcpfn/core/src/validation.ts
+  s_12235e5930aa22::t_5254e7d34eff06 60-63,76-92,675-676
+mcpfn/core/tests/error-and-validation-security.test.ts
+  s_12235e5930aa22::t_3540427c3ff5a5 1-531
+mcpfn/core/tests/http-session-security.test.ts
+  s_12235e5930aa22::t_970857e374d0f1 1-773
+mcpfn/core/tests/openapi-cfworker.test.ts
+  s_12235e5930aa22::t_d59d2b1e234c84 197-198,300
+mcpfn/core/tests/server.test.ts
+  s_12235e5930aa22::t_84965c2d81eea6 486-487
+mcpfn/core/tests/validation.test.ts
+  s_12235e5930aa22::t_735e6c7166f34e 6-20
+mcpfn/datafn/README.md
+  s_12235e5930aa22::t_2163b016ccf719 45-52
+mcpfn/datafn/package.json
+  s_12235e5930aa22::t_b57ef84641de50 3,30
+mcpfn/datafn/src/adapter.ts
+  s_12235e5930aa22::t_159ebc0f6ae59c 119-127,279-305,325-336
+mcpfn/datafn/src/types.ts
+  s_12235e5930aa22::t_fcb35261c260c0 42-49,51-52
+mcpfn/datafn/tests/adapter.test.ts
+  s_12235e5930aa22::t_fbc139e12f6d89 36,121,138,160,193,219,242,280,344,370-446
+mcpfn/docs/content/docs/authorization.md
+  s_12235e5930aa22::t_10244154526044 25-28
+mcpfn/docs/content/docs/deployment.md
+  s_12235e5930aa22::t_ff1a53d38d6395 14-19
+mcpfn/docs/content/docs/reference/auth.md
+  s_12235e5930aa22::t_53802786979cb4 22-25,35-47,99-111,124-138
+mcpfn/docs/content/docs/reference/core.md
+  s_12235e5930aa22::t_43d111f2ed55ab 110-123,201-212
+mcpfn/docs/content/docs/reference/datafn.md
+  s_12235e5930aa22::t_27aa9662f1aeb0 51-58
+mcpfn/docs/content/docs/reference/testing.md
+  s_12235e5930aa22::t_dababbe5a1f594 28
+mcpfn/docs/static/llms-full.txt
+  s_12235e5930aa22::t_9a375fc543ca51 35-38,108-113,457-460,470-482,534-546,559-573,852-865,943-954,1058-1065,1381
+mcpfn/examples/calculator-http-server.ts
+  s_12235e5930aa22::t_001517bdb16719 1,6-29,31-32,37-44,50-54
+mcpfn/inspector/package.json
+  s_12235e5930aa22::t_b3bfd77015df15 3,24-25
+mcpfn/testing/README.md
+  s_12235e5930aa22::t_c5466cf8f2f8a0 25
+mcpfn/testing/package.json
+  s_12235e5930aa22::t_39ab54322c0846 3,33-34
+mcpfn/testing/src/conformance.ts
+  s_12235e5930aa22::t_60f5f970417251 3,100-101,114-117,125-127,177,274-280,282-283,420-430
+mcpfn/testing/src/host-authorization.ts
+  s_12235e5930aa22::t_ee28772336cb8e 85-95,669-673,803,809-857,859-862,865-884,887-890,897-903
+mcpfn/testing/tests/authenticated-output.test.ts
+  s_12235e5930aa22::t_11920025f0f698 148-167
+mcpfn/testing/tests/host-authorization.test.ts
+  s_12235e5930aa22::t_f681569ae7264e 1067-1070,1074,1076-1078,1081,1121,1135-1137,1142,1144-1155,1159-1162,1208-1210,1258-1263,1273,1278-1281,1292,1324-1325,1328,1348-1449,1483,1485,1545,1589,1612,1631
+mcpfn/testing/tests/testing.test.ts
+  s_12235e5930aa22::t_0ee40d89d16d7c 754-759,766
+memoryfn/README.md
+  s_12235e5930aa22::t_0b5f8f6f7c1cfe 15-19
+memoryfn/admin/README.md
+  s_12235e5930aa22::t_cbd8fe8c8a0474 1-44
+memoryfn/admin/package.json
+  s_12235e5930aa22::t_324be25c3be189 1-43
+memoryfn/admin/src/__tests__/admin.test.ts
+  s_12235e5930aa22::t_f949c6b976000a 1-165
+memoryfn/admin/src/adapter.ts
+  s_12235e5930aa22::t_0b36448dfd0930 1-26
+memoryfn/admin/src/capability.ts
+  s_12235e5930aa22::t_36a27a9364a471 1-197
+memoryfn/admin/src/client.ts
+  s_12235e5930aa22::t_49dea32c37dbcf 1-27
+memoryfn/admin/src/domain-service.ts
+  s_12235e5930aa22::t_755b230fb82634 1-114
+memoryfn/admin/src/index.ts
+  s_12235e5930aa22::t_00fda40a8d21fd 1-20
+memoryfn/admin/src/types.ts
+  s_12235e5930aa22::t_3091cb495bb191 1-62
+memoryfn/admin/tsconfig.json
+  s_12235e5930aa22::t_8faa0d317edfff 1-33
+memoryfn/admin/vitest.config.ts
+  s_12235e5930aa22::t_4cd1a614e00a41 1-8
+memoryfn/python/README.md
+  s_12235e5930aa22::t_3c14598f200646 1-40
+memoryfn/python/memoryfn/__init__.py
+  s_12235e5930aa22::t_7390a9c0b8e93f 1-5
+memoryfn/python/memoryfn/core/config.py
+  s_12235e5930aa22::t_1cd11590082ee7 1-9
+memoryfn/python/memoryfn/core/pipeline.py
+  s_12235e5930aa22::t_358a94124b672e 1-95
+memoryfn/python/memoryfn/core/types.py
+  s_12235e5930aa22::t_c061bc6dd32f1c 1-60
+memoryfn/python/memoryfn/extraction/facts.py
+  s_12235e5930aa22::t_080504109af5a6 1-25
+memoryfn/python/memoryfn/providers/openai.py
+  s_12235e5930aa22::t_91124c4035924c 1-34
+memoryfn/python/memoryfn/storage/postgres.py
+  s_12235e5930aa22::t_fd3c33d5a96beb 1-140
+memoryfn/python/pyproject.toml
+  s_12235e5930aa22::t_f46cef101bb417 1-32
+memoryfn/python/tests/test_pipeline.py
+  s_12235e5930aa22::t_9b4a9797d47bd8 1-61
+memoryfn/python/uv.lock
+  s_12235e5930aa22::t_cd3dddd71c9826 1-982
+memoryfn/typescript/package.json
+  s_12235e5930aa22::t_e43e6c1e293d41 3
+package-lock.json
+  s_12235e5930aa22::t_e91af9c19dd9ae 1271,1275,1295,1301,1321,1324,1327,1330-1331,1358,1361,1390,1394,1397-1402,1429,1437,1521-1527,1539,1846,1849,3892,3896,3925,3929,3958,3962,4001,4004,4033,4036,4056,4064,4066,4126,4129,4136,4152,4155,4324,4336,11935-11936,11953,15056,16869,16961-17040,17423,17426-17427,17429-17430,17883,18817,18825,19277,19280-19281,19743,19746-19747,24010-24022,24397,31013-31016,58515,58569,59113,59142,59275,59331,59753,64280
+packages/admin/package.json
+  s_12235e5930aa22::t_2201570a2fc3bd 3
+packages/cli/package.json
+  s_12235e5930aa22::t_7f88964ccd9e31 44
+packages/oauth-core/package.json
+  s_12235e5930aa22::t_cbbe48d66a622f 48
+packages/oauth-flow/package.json
+  s_12235e5930aa22::t_a92abe591aa983 43
+packages/oauth-storage/package.json
+  s_12235e5930aa22::t_146ab30e56f8e8 3
+packages/oauth-testing/package.json
+  s_12235e5930aa22::t_b23b20bfb50a65 43
+plugfn/core/package.json
+  s_12235e5930aa22::t_998ffc5df16476 40
+release-packages.json
+  s_12235e5930aa22::t_6157233ce29efd 4,9
+scripts/ci-plan.mjs
+  s_12235e5930aa22::t_32225f5792558f 32-39,54
+scripts/test-mcpfn-cloudflare-worker.mjs
+  s_12235e5930aa22::t_00acd54cf4e049 168
+scripts/turbo-cache-config.test.mjs
+  s_12235e5930aa22::t_0c102cad68501b 23-24
+scripts/turbo-cache-merge.mjs
+  s_12235e5930aa22::t_417c262a62d6c7 1-509
+scripts/turbo-cache-merge.test.mjs
+  s_12235e5930aa22::t_c7c83eb7b844a1 1-608
+superconsole/package.json
+  s_12235e5930aa22::t_894c37417ade33 28
+superconsole/src/lib/server/super-console.ts
+  s_12235e5930aa22::t_a3f4f6daa72874 901-905
+superfunctions.owners.json
+  s_12235e5930aa22::t_cf269e38cfc60f 61,66,267
+turbo.json
+  s_12235e5930aa22::t_8acfbae237dd63 19
+mcpfn/core/src/registry.ts
+  s_12235e5930aa22::t_c06bf1c8864c9b 459-482,958-970,973-976,983-991,1187-1189,1191,1208-1209,1211
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9bdd3e29daaeda2308928d99849e01ef127ba74f",
+  "prompts": {},
+  "sessions": {
+    "s_12235e5930aa22": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a211ab-2f55-7b20-a3cd-c79e6e4b95cb",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": null
+    }
+  }
+}
