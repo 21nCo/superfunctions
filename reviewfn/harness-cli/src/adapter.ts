@@ -32,6 +32,8 @@ const REPAIR_ECHO_BYTES = 16_384;
 const OUTPUT_FILE_POLL_MS = 100;
 /** Levels of JSON string escaping a secret is still recognized under; each level is decoded in linear time. */
 const MAX_ESCAPE_DEPTH = 8;
+/** What replaces a text whose escaping nests deeper than MAX_ESCAPE_DEPTH, which is omitted rather than kept unchecked. */
+const REDACTION_LIMIT = "[OMITTED: JSON escaping nested past the redaction limit]";
 /** How long a `stderr-regex` model reporter may match, in a worker that is terminated when it runs over or the run is canceled. */
 const MODEL_REPORT_TIMEOUT_MS = 2_000;
 /**
@@ -250,12 +252,16 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
     const pinned = input.slot?.harness.version;
     if (pinned !== undefined && state.harnessVersion !== pinned) return state.finish("failed", `The CLI reported version ${String(state.harnessVersion)}, not the pinned ${pinned}, so the review was not run.`);
     let directory: string | undefined;
+    let created: string | undefined;
     try {
       directory = await mkdtemp(path.join(tmpdir(), "reviewfn-cli-"));
-      return await this.attempts({ ...prepared, executable, key, directory, identities: new Map([[directory, await identity(directory)]]) });
+      created = await identity(directory);
+      return await this.attempts({ ...prepared, executable, key, directory, identities: new Map([[directory, created]]) });
     } finally {
-      // rm removes a link that replaced the directory, or one inside it, never what it points to.
-      if (directory) await rm(directory, { recursive: true, force: true });
+      // rm removes the adapter's own directory, or a link that replaced it, never what a link points to; a directory that
+      // took its place is left alone.
+      const found = directory === undefined ? undefined : await identity(directory).catch(() => undefined);
+      if (directory && (found === undefined || created === undefined || found === created)) await rm(directory, { recursive: true, force: true });
     }
   }
 
@@ -320,7 +326,7 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
     // ever followed, shown to or read for a later one.
     let files: { promptFile: string; schemaFile: string; outputFile: string };
     try { files = await attemptFiles(run, attempt, prompt); }
-    catch (error) { return state.finish(input.signal?.aborted ? "canceled" : "failed", `The CLI attempt's files could not be created: ${message(error)}`); }
+    catch (error) { return lapsed(run, before) ?? state.finish("failed", `The CLI attempt's files could not be created: ${message(error)}`); }
     const { outputFile } = files;
     // Just before the spawn (Node cannot exec an open file), the executable must still be the one whose version was read,
     // in directories that are still the adapter's; the deadline is read after that and the file writes, so neither can
@@ -362,7 +368,7 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
     // An answer is read only from the directories the adapter created, never through a link that replaced one.
     const replaced = !await intact(run, path.dirname(outputFile));
     const output = replaced ? { error: "The CLI's attempt directory was replaced." } : await readAnswer(run, outputFile, result.stdout);
-    const terminal = terminalOutcome(run, attempt, result, output, fileOverrun);
+    const terminal = lapsed(run, "before its answer was judged") ?? terminalOutcome(run, attempt, result, output, fileOverrun);
     if (terminal) return terminal;
     // After cancellation and every overrun, before an answer is accepted or repaired: the deadline must not have passed,
     // and the executable and directories must be unchanged.
@@ -375,10 +381,12 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
    * then the elapsed deadline (timed_out), then a changed executable, then a replaced run or attempt directory.
    */
   private async refusal(run: AttemptContext, attemptDirectory: string, when: string, changedText: string, replaced = false): Promise<SlotHarnessOutput | undefined> {
-    const changed = await this.changed(run) ? changedText : replaced || !await intact(run, attemptDirectory) ? `The CLI's run or attempt directory was replaced, so the attempt was refused ${when}.` : undefined;
-    if (run.input.signal?.aborted) return run.state.finish("canceled", "The CLI run was canceled.");
-    if (Date.now() >= run.deadline) return run.state.finish("timed_out", `The CLI exceeded its configured bound ${when}.`);
-    return changed === undefined ? undefined : run.state.finish("failed", changed);
+    // The directories are read first, so the executable's identity is the last read before a spawn.
+    const moved = replaced || !await intact(run, attemptDirectory);
+    const changed = await this.changed(run);
+    const ended = lapsed(run, when);
+    if (ended || changed) return ended ?? run.state.finish("failed", changedText);
+    return moved ? run.state.finish("failed", `The CLI's run or attempt directory was replaced, so the attempt was refused ${when}.`) : undefined;
   }
 
   /** Configuration errors that refuse both preflight and run before any process starts. */
@@ -473,6 +481,12 @@ interface Prepared {
 /** `identities` holds the device and inode of the run directory and each attempt's, as the adapter created them. */
 interface AttemptContext extends Prepared { executable: string; key: string; directory: string; identities: Map<string, string>; schemaText: string }
 
+/** After an awaited check: the caller's cancellation, then the elapsed deadline (timed_out), or undefined. */
+function lapsed(run: Prepared, when: string): SlotHarnessOutput | undefined {
+  if (run.input.signal?.aborted) return run.state.finish("canceled", "The CLI run was canceled.");
+  return Date.now() >= run.deadline ? run.state.finish("timed_out", `The CLI exceeded its configured bound ${when}.`) : undefined;
+}
+
 /** A directory's device and inode, read without following a link; anything but a directory is refused. */
 async function identity(directory: string): Promise<string> {
   const info = await lstat(directory, { bigint: true });
@@ -505,18 +519,20 @@ const SHORT_ESCAPES: Record<string, string> = { '"': '"', "\\": "\\", "/": "/", 
  * `text` with every secret redacted as written and under up to MAX_ESCAPE_DEPTH levels of JSON string escaping (short
  * escapes, or `\uXXXX` in either hex case): the escapes are decoded one level at a time, each in linear time, keeping
  * where each decoded unit started in `text`, and every occurrence at any level marks its whole original span, overlapping
- * spans merged, so a shorter secret never leaves part of a longer one.
+ * spans merged, so a shorter secret never leaves part of a longer one. A text still escaped past that depth is omitted.
  */
 function redact(text: string, secrets: readonly string[]): string {
   const values = secrets.filter(secret => secret.length > 0);
+  if (values.length === 0) return redactText(text, secrets);
   const spans: Array<[number, number]> = [];
   let level = { text, starts: Uint32Array.from({ length: text.length + 1 }, (_, index) => index) };
-  for (let depth = 0; depth <= MAX_ESCAPE_DEPTH; depth += 1) {
+  for (let depth = 0; ; depth += 1) {
     for (const value of values) {
       for (let at = level.text.indexOf(value); at !== -1; at = level.text.indexOf(value, at + value.length)) spans.push([level.starts[at], level.starts[at + value.length]]);
     }
-    const next = depth < MAX_ESCAPE_DEPTH && level.text.includes("\\") ? unescapeLevel(level.text, level.starts) : level;
+    const next = level.text.includes("\\") ? unescapeLevel(level.text, level.starts) : level;
     if (next.text.length === level.text.length) break;
+    if (depth === MAX_ESCAPE_DEPTH) return REDACTION_LIMIT;
     level = next;
   }
   let result = "";
@@ -806,7 +822,8 @@ function watchOutputFile(file: string, maxBytes: number, parent: AbortSignal | u
     onOutput: bytes => { streamed += bytes; check(); },
     overrun: () => { check(); return overrun; },
     peak: () => peak,
-    settle: () => pending,
+    // One last measurement after the CLI ended, so a file written after the last poll is charged too.
+    settle: () => pending.then(() => lstat(file)).then(stat => { peak = Math.max(peak, stat.size); }, () => { /* never written */ }),
   };
 }
 
