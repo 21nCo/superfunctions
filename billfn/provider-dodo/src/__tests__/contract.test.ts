@@ -1119,6 +1119,7 @@ describe('refundCharge -> POST /refunds', () => {
         }),
         vi.advanceTimersByTimeAsync(DODO_PROVIDER_HTTP_DEADLINE_MS)
       ]);
+      expect(vi.mocked(fetchMock).mock.calls[0]?.[1]?.signal?.aborted).toBe(true);
     } finally {
       vi.useRealTimers();
     }

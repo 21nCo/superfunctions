@@ -293,7 +293,7 @@ export function createAppleProvider(providerConfig: AppleProviderConfig): BillFn
         fetchImpl,
         config,
         transactionId,
-        `/subscription/cancel/${encodeStoreKitPathSegment(transactionId)}`,
+        'cancel',
         {
           method: 'POST'
         }
@@ -342,7 +342,7 @@ export function createAppleProvider(providerConfig: AppleProviderConfig): BillFn
         fetchImpl,
         config,
         transactionId,
-        `/subscription/revoke/${encodeStoreKitPathSegment(transactionId)}`,
+        'revoke',
         {
           method: 'POST',
           body: JSON.stringify({
@@ -593,7 +593,7 @@ async function requestAdvancedCommerce(
   fetchImpl: typeof fetch,
   config: ResolvedAppleProviderConfig,
   transactionId: string,
-  path: string,
+  operation: 'cancel' | 'revoke',
   init: RequestInit
 ) {
   const advancedCommerce = config.advancedCommerce ?? {};
@@ -608,7 +608,7 @@ async function requestAdvancedCommerce(
   const baseUrl = (advancedCommerce.baseUrl ?? 'https://api.storekit.itunes.apple.com/advancedCommerce/v1').replace(/\/$/, '');
   const { response, raw } = await fetchProviderText(
     fetchImpl,
-    `${baseUrl}${path}`,
+    `${baseUrl}/subscription/${operation}/${encodeStoreKitPathSegment(transactionId)}`,
     {
       ...init,
       headers: {
@@ -617,7 +617,7 @@ async function requestAdvancedCommerce(
         ...(init.headers ?? {})
       }
     },
-    'mutation'
+    operation
   );
   if (!response.ok) {
     throw createBillFnError({
@@ -658,7 +658,7 @@ async function fetchProviderText(
   fetchImpl: typeof fetch,
   url: string,
   init: Omit<RequestInit, 'signal'>,
-  kind: 'read' | 'mutation'
+  kind: 'read' | 'cancel' | 'revoke'
 ): Promise<{ response: Response; raw: string }> {
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -682,14 +682,16 @@ async function fetchProviderText(
     if (!controller.signal.aborted) {
       throw error;
     }
-    if (kind === 'mutation' && response && !response.ok) {
+    // Apple documents HTTP 200 from the cancellation endpoint as confirmation that auto-renew is off.
+    // https://developer.apple.com/documentation/advancedcommerceapi/cancel-a-subscription
+    if (kind !== 'read' && response && (!response.ok || (kind === 'cancel' && response.status === 200))) {
       return { response, raw: '' };
     }
     throw createBillFnError({
       code: 'BILLFN_PROVIDER_ERROR',
-      message: kind === 'mutation'
-        ? 'Apple did not answer before the deadline; whether the change was applied is unknown'
-        : 'Apple did not answer before the deadline; the read can be retried',
+      message: kind === 'read'
+        ? 'Apple did not answer before the deadline; the read can be retried'
+        : 'Apple did not answer before the deadline; whether the change was applied is unknown',
       retryable: kind === 'read'
     });
   } finally {

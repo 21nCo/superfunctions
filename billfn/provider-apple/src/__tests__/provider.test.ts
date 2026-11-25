@@ -833,12 +833,51 @@ describe('provider HTTP deadlines', () => {
         vi.advanceTimersByTimeAsync(APPLE_PROVIDER_HTTP_DEADLINE_MS)
       ]);
       expect(String(vi.mocked(fetchMock).mock.calls[0]?.[0])).toContain('/advancedCommerce/v1/subscription/revoke/txn_1');
+      expect(vi.mocked(fetchMock).mock.calls[0]?.[1]?.signal?.aborted).toBe(true);
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it('treats a stalled Advanced Commerce success body as an unknown outcome', async () => {
+  it('preserves an Apple cancellation confirmed with HTTP 200 when the body stalls', async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchMock = vi.fn(async () => new Response(new ReadableStream(), { status: 200 })) as typeof fetch;
+      const pending = apple(fetchMock).cancelSubscription?.({
+        subscription: {
+          id: 'sub_local',
+          billingAccountId: billingAccount.id,
+          planKey: plan.planKey,
+          priceId: 'price_apple',
+          provider: 'apple',
+          providerSubscriptionId: 'orig_1',
+          providerChargeId: 'txn_1',
+          status: 'active',
+          autoRenew: true,
+          createdAt: billingAccount.createdAt,
+          updatedAt: billingAccount.updatedAt
+        }
+      });
+      await Promise.all([
+        expect(pending).resolves.toMatchObject({
+          operationStatus: 'applied',
+          billingState: {
+            subscriptionStatus: 'canceled',
+            providerSubscriptionId: 'orig_1',
+            providerChargeId: 'txn_1',
+            autoRenew: false
+          }
+        }),
+        vi.advanceTimersByTimeAsync(APPLE_PROVIDER_HTTP_DEADLINE_MS)
+      ]);
+      expect((await pending)?.raw).toEqual({});
+      expect(String(vi.mocked(fetchMock).mock.calls[0]?.[0])).toContain('/advancedCommerce/v1/subscription/cancel/txn_1');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('treats a stalled Advanced Commerce revocation body as an unknown outcome', async () => {
     vi.useFakeTimers();
     try {
       const fetchMock = vi.fn(async () => ({
