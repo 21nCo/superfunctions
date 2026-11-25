@@ -1,4 +1,4 @@
-import { createObservabilityMiddleware, createRouter, type Router, type Route } from "@superfunctions/http";
+import { createObservabilityMiddleware, createRouter, type Router, type Route, type RouteContext } from "@superfunctions/http";
 import type { SearchAdapter } from "@searchfn/adapter-contracts";
 import {
   normalizeObservability,
@@ -23,6 +23,7 @@ import { clearHandler } from "./routes/clear.js";
 import type { SearchFnEvent } from "./events.js";
 
 export type ServerContext = Record<string, unknown>;
+type RouterPolicyContext = ServerContext & RouteContext;
 export type SearchFnAction = "status" | "index" | "search" | "searchAll" | "remove" | "clear";
 
 interface SearchFnLogger {
@@ -50,15 +51,20 @@ type Authorize<TContext> = (
   resources: readonly string[],
 ) => Promise<boolean> | boolean;
 
-interface PolicyContextConfig<TContext> {
+type PolicyContextFactory<TContext> = (request: Request) => Promise<TContext> | TContext;
+
+interface PolicyContextOptions<TContext> {
   /** Load the authorization policy's per-request identity and other context. */
-  context: (request: Request) => Promise<TContext> | TContext;
+  context?: PolicyContextFactory<TContext>;
   authorize?: Authorize<TContext>;
 }
 
-export type SearchFnServerConfig<TContext extends ServerContext = ServerContext> = SearchFnServerOptions & (
-  | { context?: undefined; authorize?: Authorize<ServerContext> }
-  | PolicyContextConfig<TContext>
+type FactoryPolicyOptions<TContext> = PolicyContextOptions<TContext> & {
+  context: PolicyContextFactory<TContext>;
+};
+
+export type SearchFnServerConfig<TContext = RouterPolicyContext> = SearchFnServerOptions & (
+  RouterPolicyContext extends TContext ? PolicyContextOptions<TContext> : FactoryPolicyOptions<TContext>
 );
 
 export interface SearchFnServer {
@@ -120,14 +126,17 @@ function snapshotPayload(body: Record<string, unknown>): Record<string, unknown>
   return snapshot;
 }
 
-export function createSearchFnServer<TContext extends ServerContext>(
-  config: SearchFnServerOptions & PolicyContextConfig<TContext>,
+export function createSearchFnServer<TContext>(
+  config: SearchFnServerOptions & FactoryPolicyOptions<TContext>,
 ): Promise<SearchFnServer>;
-export function createSearchFnServer<TContext extends ServerContext = ServerContext>(
+export function createSearchFnServer<TContext = RouterPolicyContext>(
   config: SearchFnServerConfig<TContext>,
 ): Promise<SearchFnServer>;
-export async function createSearchFnServer<TContext extends ServerContext>(
-  config: SearchFnServerConfig<TContext>,
+export async function createSearchFnServer<TContext>(
+  config: SearchFnServerOptions & (
+    | { context?: undefined; authorize?: Authorize<RouterPolicyContext> }
+    | FactoryPolicyOptions<TContext>
+  ),
 ): Promise<SearchFnServer> {
   const {
     adapter,
@@ -162,8 +171,8 @@ export async function createSearchFnServer<TContext extends ServerContext>(
   function wrap(
     action: SearchFnAction,
     handler: (req: Request, body: Record<string, unknown>) => Promise<Response>,
-  ): (req: Request, ctx: ServerContext) => Promise<Response> {
-    return async (req: Request, ctx: ServerContext): Promise<Response> => {
+  ): (req: Request, ctx: RouterPolicyContext) => Promise<Response> {
+    return async (req: Request, ctx: RouterPolicyContext): Promise<Response> => {
       const start = Date.now();
       const logCtx: Record<string, unknown> = {
         operation: action,

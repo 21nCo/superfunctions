@@ -1,5 +1,5 @@
 import { describe, expect, expectTypeOf, it, vi } from "vitest";
-import { createSearchFnServer, type SearchFnAction, type ServerContext } from "../src";
+import { createSearchFnServer, type SearchFnAction, type SearchFnServerConfig, type ServerContext } from "../src";
 
 function testAdapter() {
   return {
@@ -105,7 +105,6 @@ describe("SearchFn authorization", () => {
 
   it("passes custom context to the policy intact", async () => {
     class AuthorizationContext {
-      [key: string]: unknown;
       #authorized = true;
       params = { scope: "docs" };
 
@@ -132,6 +131,29 @@ describe("SearchFn authorization", () => {
     expect((await server.router.handle(post("clear", { resource: "docs" }))).status).toBe(200);
     expect(middlewareContext).toHaveBeenCalledWith(expect.objectContaining({ params: {} }));
     expect(middlewareContext.mock.calls[0][0].canClearDocs).toBeUndefined();
+  });
+
+  it("accepts a declared policy context that can be null", async () => {
+    interface Identity { userId: string }
+    const config: SearchFnServerConfig<Identity | null> = {
+      adapter: testAdapter(),
+      context: () => null,
+      authorize: (ctx) => {
+        expectTypeOf(ctx).toEqualTypeOf<Identity | null>();
+        return ctx?.userId === "test-user";
+      },
+    };
+    const server = await createSearchFnServer(config);
+    expect((await server.router.handle(post("clear", { resource: "docs" }))).status).toBe(403);
+  });
+
+  it("accepts factory-free policies typed with standard router fields", async () => {
+    const server = await createSearchFnServer({
+      adapter: testAdapter(),
+      authorize: (ctx: { query: URLSearchParams }) => ctx.query.get("health") === "ready",
+    });
+    const response = await server.router.handle(new Request("https://test.example/searchfn/status?health=ready"));
+    expect(response.status).toBe(200);
   });
 
   it.each([{ resources: undefined }, { resources: null }, { resources: [] }])(
