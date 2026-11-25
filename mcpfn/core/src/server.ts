@@ -899,16 +899,17 @@ export class McpFnServer<TContext = undefined> {
   ): Promise<
     (request: Request, options?: HandleRequestOptions) => Promise<Response>
   > {
+    // The host's session hooks are read once, here, and later called on the
+    // host's own options object (keeping its receiver even if the object
+    // changes afterwards).
     const {
       configureRequestServer,
       originPolicy = "reject-unlisted",
       sessionPrincipal = defaultSessionPrincipal,
+      onsessioninitialized: onSessionInitialized,
+      onsessionclosed: onSessionClosed,
       ...transportOptions
     } = options;
-    // The host's session hooks, captured now and called on the host's own
-    // options object (keeping its receiver even if the object changes later).
-    const onSessionInitialized = options.onsessioninitialized;
-    const onSessionClosed = options.onsessionclosed;
     if (originPolicy !== "reject-unlisted" && originPolicy !== "off") {
       throw new McpFnError("MCPFN_INVALID_OPTIONS", 'originPolicy must be "reject-unlisted" or "off"');
     }
