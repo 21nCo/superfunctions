@@ -531,15 +531,23 @@ export function diffTables(
       );
     }
     // COMPACT and REDUNDANT tables limit an index key part to 767 bytes. Check
-    // the indexes the table has after the migration, at 4 bytes per character
-    // (MODIFY COLUMN takes the table charset), and refuse before any DDL.
+    // the changed columns of the indexes the table has after the migration,
+    // in the character set MODIFY COLUMN keeps (unknown: utf8mb4), and refuse
+    // before any DDL.
     if (/^(compact|redundant)$/i.test(curTable.rowFormat ?? '')) {
+      const finalLength = (column: string) => {
+        const field = Object.entries(reqFieldMap).find(([name, f]) => (f.fieldName ?? name) === column)?.[1];
+        return changedMySqlColumns.has(column) && field?.type === 'string' ? field.maxLength ?? 0 : 0;
+      };
+      const charset = (column: string) => curColMap.get(column)?.characterSet ?? '';
+      const bytesPerChar = (column: string) =>
+        /^(latin1|ascii|binary)$/i.test(charset(column)) ? 1 : /^utf8(mb3)?$/i.test(charset(column)) ? 3 : 4;
       const oversized = requiredIndexes.flatMap((index) => index.columns
-        .filter((column) => (widenedVarcharLengths.get(column) ?? 0) * 4 > 767)
-        .map((column) => `${index.name} (${column} VARCHAR(${widenedVarcharLengths.get(column)}))`));
+        .filter((column) => finalLength(column) * bytesPerChar(column) > 767)
+        .map((column) => `${index.name} (${column} VARCHAR(${finalLength(column)}))`));
       if (oversized.length > 0) {
         throw new Error(
-          `Cannot generate MySQL column change for ${dbName}: its ${curTable.rowFormat} row format limits index key parts to 767 bytes, which the widened key would exceed: ${oversized.join(', ')}. Convert the table first with ALTER TABLE ${dbName} ROW_FORMAT=DYNAMIC, then generate the migration again.`,
+          `Cannot generate MySQL column change for ${dbName}: its ${curTable.rowFormat} row format limits index key parts to 767 bytes, which the migrated key would exceed: ${oversized.join(', ')}. Convert the table first with ALTER TABLE ${dbName} ROW_FORMAT=DYNAMIC, then generate the migration again.`,
         );
       }
     }

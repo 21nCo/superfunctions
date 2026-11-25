@@ -237,36 +237,26 @@ describe('plugfn schema v8 migration', () => {
   });
 
   /**
-   * The connection and config generate-migration works from. Drizzle and
-   * Kysely name the database in their connection string; the PrismaClient
-   * goes through createAdapterFromConfig, and its own datasource (database
-   * "app") differs from DATABASE_URL.
+   * The connection generate-migration introspects. Each connection's own
+   * database is "app" (SELECT DATABASE()); no config URL is read, since a
+   * pool's database option can override it. The PrismaClient goes through
+   * createAdapterFromConfig with a datasource that differs from DATABASE_URL.
    */
   async function commandConnection(
     adapterType: (typeof adapterTypes)[number],
     snapshot: DatabaseTable[],
     prismaProvider: Record<string, unknown> = { _activeProvider: 'mysql' },
-  ): Promise<{ connection: AdapterConnection; config: SuperfunctionsConfig }> {
+  ): Promise<AdapterConnection> {
     const rawConnection = mysqlConnection(adapterType, snapshot);
     if (adapterType === 'prisma') {
       const prisma = { ...rawConnection, ...prismaProvider, $disconnect: async () => undefined };
-      const config = { adapter: { type: 'prisma', prisma: { prisma } } } as unknown as SuperfunctionsConfig;
-      return { connection: await createAdapterFromConfig(config), config };
+      return createAdapterFromConfig({ adapter: { type: 'prisma', prisma: { prisma } } } as unknown as SuperfunctionsConfig);
     }
-    const config = {
-      adapter: {
-        type: adapterType,
-        [adapterType]: { dialect: 'mysql', connectionString: 'mysql://example.invalid:3306/app' },
-      },
-    } as unknown as SuperfunctionsConfig;
     return {
-      connection: {
-        adapter: {} as AdapterConnection['adapter'],
-        dialect: 'mysql',
-        rawConnection,
-        close: async () => undefined,
-      },
-      config,
+      adapter: {} as AdapterConnection['adapter'],
+      dialect: 'mysql',
+      rawConnection,
+      close: async () => undefined,
     };
   }
 
@@ -285,13 +275,13 @@ describe('plugfn schema v8 migration', () => {
         ...adapterTypes.map((type) => [type, undefined] as const),
         ...prismaProviders.map((provider) => ['prisma', provider] as const),
       ]) {
-        const { connection, config } = await commandConnection(
+        const connection = await commandConnection(
           adapterType,
           mysqlV7Snapshot(schema.schemas, DEV_V7_CLAIM_TOKEN_LENGTH),
           prismaProvider,
         );
         expect(connection.dialect, adapterType).toBe('mysql');
-        const currentTables = await introspectCurrentTables(connection, adapterType, config);
+        const currentTables = await introspectCurrentTables(connection);
 
         expect(currentTables.map((table) => table.name).sort(), adapterType).toEqual(
           schema.schemas.map((table) => table.modelName).sort(),
@@ -312,11 +302,11 @@ describe('plugfn schema v8 migration', () => {
 
   it('refuses the widening before any DDL on a COMPACT table whose key part would exceed 767 bytes', async () => {
     for (const adapterType of adapterTypes) {
-      const { connection, config } = await commandConnection(
+      const connection = await commandConnection(
         adapterType,
         mysqlV7Snapshot(schema.schemas, DEV_V7_CLAIM_TOKEN_LENGTH, 'Compact'),
       );
-      const currentTables = await introspectCurrentTables(connection, adapterType, config);
+      const currentTables = await introspectCurrentTables(connection);
 
       expect(
         () =>

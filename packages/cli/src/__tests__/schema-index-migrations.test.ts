@@ -949,31 +949,32 @@ describe("schema index migrations", () => {
   });
 
   it("refuses a widened full-column key over 767 bytes on COMPACT or REDUNDANT tables", () => {
-    const widenTo = (maxLength: number, indexFields = ["claimToken"]) => ({
+    const widenTo = (maxLength: number, indexFields = ["claimToken"], required = false) => ({
       ...syncJobs,
       fields: {
         ...syncJobs.fields,
-        claimToken: { ...syncJobs.fields.claimToken, maxLength },
+        claimToken: { ...syncJobs.fields.claimToken, maxLength, required },
         owner: { type: "string", required: false, fieldName: "owner", maxLength: 32 },
       },
       indexes: [{ name: "plugfn_sync_jobs_claim_token_idx", fields: indexFields, unique: true }],
     } as unknown as TableSchema);
-    const varcharColumn = (columnName: string, length: number) => ({
+    const varcharColumn = (columnName: string, length: number, characterSet = "utf8mb4") => ({
       dialect: "mysql" as const,
       tableName: "plugfn_sync_jobs",
       columnName,
       dataType: "varchar",
       columnType: `varchar(${length})`,
       maxLength: length,
+      characterSet,
       isNullable: true,
       defaultValue: null,
       isPrimaryKey: false,
       isUnique: false,
     });
-    const current = (rowFormat: string, prefixLength: number | null = null) => [{
+    const current = (rowFormat: string, prefixLength: number | null = null, characterSet?: string) => [{
       name: "plugfn_sync_jobs",
       rowFormat,
-      columns: [varcharColumn("claim_token", 64), varcharColumn("owner", 32)],
+      columns: [varcharColumn("claim_token", 64, characterSet), varcharColumn("owner", 32)],
       indexes: [{
         name: "plugfn_sync_jobs_claim_token_idx",
         tableName: "plugfn_sync_jobs",
@@ -990,14 +991,21 @@ describe("schema index migrations", () => {
       expect(diffs[0].rebuiltIndexes).toEqual([]);
     };
 
-    // 192 utf8mb4 characters can take 768 bytes; 191 fit in 764. MODIFY
-    // COLUMN takes the table charset, so every column counts 4 bytes.
+    // 192 utf8mb4 characters can take 768 bytes; 191 fit in 764.
     for (const rowFormat of ["Compact", "REDUNDANT"]) {
       expect(() => diffTables([widenTo(192)], current(rowFormat), "plugfn")).toThrow(
         new RegExp(`${rowFormat} row format limits index key parts to 767 bytes.*plugfn_sync_jobs_claim_token_idx \\(claim_token VARCHAR\\(192\\)\\).*ROW_FORMAT=DYNAMIC`),
       );
       inPlace(diffTables([widenTo(191)], current(rowFormat), "plugfn"), 191);
     }
+    // MODIFY COLUMN keeps the column's character set: 700 latin1 characters
+    // fit, an unknown character set counts as utf8mb4.
+    inPlace(diffTables([widenTo(700)], current("Compact", null, "latin1"), "plugfn"), 700);
+    expect(() => diffTables([widenTo(192)], current("Compact", null, ""), "plugfn")).toThrow(/767 bytes/);
+    // A widening combined with another change rebuilds the key; still refused.
+    expect(() => diffTables([widenTo(192, ["claimToken"], true)], current("Compact"), "plugfn")).toThrow(
+      /plugfn_sync_jobs_claim_token_idx \(claim_token VARCHAR\(192\)\)/,
+    );
     // A prefixed key part would be rebuilt at full width, so it is refused too.
     expect(() => diffTables([widenTo(768)], current("Compact", 32), "plugfn")).toThrow(
       /plugfn_sync_jobs_claim_token_idx \(claim_token VARCHAR\(768\)\)/,
