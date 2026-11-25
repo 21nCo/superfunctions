@@ -1,14 +1,17 @@
+import { firstEndpoint, getRelationFkFieldsForResource } from "@datafn/core";
 import type { DatafnRelationSchema } from "../../core-types.js";
 
-export function htreeFkField(relation: DatafnRelationSchema): string {
-  return relation.fkField || relation.foreignKey || relation.inverse || "parentId";
+function foreignKeyDescriptor(relation: DatafnRelationSchema) {
+  const owner = firstEndpoint(relation.type === "many-one" ? relation.from : relation.to);
+  // Derive the names for this relation alone. Core de-duplicates a resource's
+  // full field list by FK name, and two relations can share the same FK.
+  return getRelationFkFieldsForResource({ resources: [], relations: [relation] }, owner)[0];
 }
 
-export function fkResourceFieldForRelation(relation: DatafnRelationSchema, side: "from" | "to"): string {
-  if (relation.fkResourceField) return relation.fkResourceField;
-  if (relation.type === "htree") return `${htreeFkField(relation).replace(/Id$/, "")}Resource`;
-  const base = side === "to"
-    ? (relation.relation || "target")
-    : (relation.inverse || relation.relation || "source");
-  return `${base.replace(/Id$/, "")}Resource`;
+export function htreeFkField(relation: DatafnRelationSchema): string {
+  return foreignKeyDescriptor(relation)?.field ?? "parentId";
+}
+
+export function fkResourceFieldForRelation(relation: DatafnRelationSchema): string | undefined {
+  return foreignKeyDescriptor(relation)?.resourceField;
 }

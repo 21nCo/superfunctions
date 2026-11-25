@@ -246,9 +246,8 @@ function getFkFieldsToOmit(schema: DatafnSchema, targetResource: string): Set<st
       if (endpointIncludes(rel.from, targetResource) && rel.type === "many-one") {
         const fkField = relationFkFieldForManyOne(rel);
         cached.add(fkField);
-        if (Array.isArray(rel.to) && rel.to.length > 1) {
-          cached.add(fkResourceFieldForRelation(rel, "to"));
-        }
+        const discriminatorField = fkResourceFieldForRelation(rel);
+        if (discriminatorField) cached.add(discriminatorField);
       }
     }
   }

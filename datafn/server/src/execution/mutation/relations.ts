@@ -109,7 +109,8 @@ function fkResourcePatch(
 ): Record<string, unknown> {
   const endpoint = side === "to" ? relation.to : relation.from;
   if (!endpointIsPolymorphic(endpoint)) return {};
-  return { [fkResourceFieldForRelation(relation, side)]: resource };
+  const field = fkResourceFieldForRelation(relation);
+  return field ? { [field]: resource } : {};
 }
 
 function joinHtreePath(parentPath: unknown, parentId: string | null): string {
@@ -874,7 +875,7 @@ async function validateRelationDeletePolicies(
         namespace,
         visited,
         resourceField: endpointIsPolymorphic(relation.to)
-          ? fkResourceFieldForRelation(relation, "to")
+          ? fkResourceFieldForRelation(relation)
           : undefined,
         deletedResource: resource,
       });
@@ -893,7 +894,7 @@ async function validateRelationDeletePolicies(
         namespace,
         visited,
         resourceField: endpointIsPolymorphic(relation.from)
-          ? fkResourceFieldForRelation(relation, "from")
+          ? fkResourceFieldForRelation(relation)
           : undefined,
         deletedResource: resource,
       });
@@ -912,7 +913,7 @@ async function validateRelationDeletePolicies(
         namespace,
         visited,
         resourceField: endpointIsPolymorphic(relation.from)
-          ? fkResourceFieldForRelation(relation, "from")
+          ? fkResourceFieldForRelation(relation)
           : undefined,
         deletedResource: resource,
       });
@@ -1025,7 +1026,7 @@ export async function applyRelationDeletePolicies(
         changes,
         extraNullFields: fkResourcePatch(relation, "to", null),
         resourceField: endpointIsPolymorphic(relation.to)
-          ? fkResourceFieldForRelation(relation, "to")
+          ? fkResourceFieldForRelation(relation)
           : undefined,
         deletedResource: resource,
       });
@@ -1046,7 +1047,7 @@ export async function applyRelationDeletePolicies(
         changes,
         extraNullFields: fkResourcePatch(relation, "from", null),
         resourceField: endpointIsPolymorphic(relation.from)
-          ? fkResourceFieldForRelation(relation, "from")
+          ? fkResourceFieldForRelation(relation)
           : undefined,
         deletedResource: resource,
       });
@@ -1070,7 +1071,7 @@ export async function applyRelationDeletePolicies(
           ...fkResourcePatch(relation, "from", null),
         },
         resourceField: endpointIsPolymorphic(relation.from)
-          ? fkResourceFieldForRelation(relation, "from")
+          ? fkResourceFieldForRelation(relation)
           : undefined,
         deletedResource: resource,
       });

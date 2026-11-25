@@ -189,7 +189,7 @@ export function foreignKeyTargetResolver(
   const fk = relationForeignKey(relation);
   const endpoint = relation.type === "many-one" ? relation.to : relation.from;
   const discriminator = isPolymorphicForeignKey(relation)
-    ? fkResourceFieldForRelation(relation, relation.type === "many-one" ? "to" : "from")
+    ? fkResourceFieldForRelation(relation)
     : undefined;
   return (record: Record<string, unknown>) => {
     const id = record[fk];
