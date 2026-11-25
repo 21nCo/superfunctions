@@ -65,7 +65,11 @@ import {
   setSpv2MigrationRuntimeConfig,
   type Spv2MigrationRuntimeConfig,
 } from "./execution/migration/spv2.js";
-import type { DatafnPublicLinksPlugin } from "./plugins/public-links.js";
+import {
+  PUBLIC_LINK_RESOLVE_PATH,
+  preparePublicLinkResolveRequest,
+  type DatafnPublicLinksPlugin,
+} from "./plugins/public-links.js";
 import { getDatafnMultiRegionRuntimeConfig } from "./plugins/multi-region.js";
 import {
   DatafnRoutingError,
@@ -1670,6 +1674,8 @@ export async function createDatafnServer<TContext = any>(
     },
   ];
 
+  const publicLinkBodyLimit = multiRegionRuntime?.placement ? undefined : limits.maxPayloadBytes || undefined;
+  let boundedResolveRoute: Route<TContext> | undefined;
   if (configuredDatabase) {
     for (const plugin of plugins) {
       if (!plugin.routes) {
@@ -1679,11 +1685,16 @@ export async function createDatafnServer<TContext = any>(
         database: db ?? configuredDatabase,
         crossNamespaceDatabase: crossNamespaceDb,
         schema: validatedSchema,
-        maxPayloadBytes: multiRegionRuntime?.placement ? undefined : limits.maxPayloadBytes || undefined,
+        maxPayloadBytes: publicLinkBodyLimit,
       }) as DatafnComposableRoute<TContext>[];
       for (const route of pluginRoutes) {
         if (!multiRegionRuntime?.placement || route.meta?.datafnPlacement === "none") {
-          routes.push(withPluginRouteGuards(route));
+          const guarded = withPluginRouteGuards(route);
+          routes.push(guarded);
+          if (publicLinkBodyLimit !== undefined && plugin.name === "datafn-public-links" &&
+              route.method === "POST" && route.path === PUBLIC_LINK_RESOLVE_PATH) {
+            boundedResolveRoute = guarded;
+          }
           continue;
         }
         const declaration = route.meta?.datafnPlacement;
@@ -1765,6 +1776,22 @@ export async function createDatafnServer<TContext = any>(
         ]
       : undefined,
   });
+  if (publicLinkBodyLimit !== undefined && boundedResolveRoute) {
+    const handle = router.handle;
+    const resolveRoute = boundedResolveRoute;
+    const handleBoundedResolve = async (request: Request): Promise<Response> => {
+      const path = new URL(request.url).pathname;
+      if (request.method !== "POST" ||
+          (path !== PUBLIC_LINK_RESOLVE_PATH && path !== `${PUBLIC_LINK_RESOLVE_PATH}/`) ||
+          router.match(request.method, path)?.route !== resolveRoute) {
+        return handle(request);
+      }
+      const prepared = await preparePublicLinkResolveRequest(request, publicLinkBodyLimit);
+      return prepared instanceof Response ? prepared : handle(prepared);
+    };
+    router.handle = handleBoundedResolve;
+    router.handler = handleBoundedResolve;
+  }
 
   // REL-009: Graceful shutdown implementation
   const serverClose = async (): Promise<void> => {

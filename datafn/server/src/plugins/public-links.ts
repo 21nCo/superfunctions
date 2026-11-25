@@ -7,7 +7,7 @@ import {
   type DatafnSchema,
 } from "@datafn/core";
 import { errorResponse, okResponse } from "../http/errors.js";
-import { checkPayloadLimit, readBodyWithLimit } from "../http/middleware.js";
+import { readBodyWithLimit, readLimitedBody } from "../http/middleware.js";
 import {
   executeShare,
   getFailedSharePermissionRecord,
@@ -27,6 +27,21 @@ import {
 
 export type DatafnPublicLinkShareLevel = "viewer" | "editor" | "owner";
 export type DatafnPublicLinkShareScope = "record" | "resource";
+
+export const PUBLIC_LINK_RESOLVE_PATH = "/datafn/public-links/resolve";
+const boundedResolveRequests = new WeakSet<Request>();
+
+/** Preserve a bounded body for the router's middleware and its route handler. */
+export async function preparePublicLinkResolveRequest(
+  request: Request,
+  maxPayloadBytes: number,
+): Promise<Request | Response> {
+  const read = await readLimitedBody(request, maxPayloadBytes);
+  if (!read.ok) return read.response;
+  const bounded = request.body ? new Request(request, { body: read.bytes }) : request;
+  boundedResolveRequests.add(bounded);
+  return bounded;
+}
 
 export interface DatafnPublicLinkRecord {
   id: string;
@@ -315,11 +330,13 @@ export function createDatafnPublicLinksPlugin<TSession = unknown>(
         },
         {
           method: "POST",
-          path: "/datafn/public-links/resolve",
+          path: PUBLIC_LINK_RESOLVE_PATH,
           meta: { datafnPlacement: publicLinkPlacement },
-          handler: async (request) => {
+          handler: async (request, context) => {
             let body: unknown;
-            if (maxPayloadBytes !== undefined && !request.bodyUsed) {
+            if (boundedResolveRequests.has(request)) {
+              body = await context.json().catch(() => null);
+            } else if (maxPayloadBytes !== undefined) {
               const read = await readBodyWithLimit(request, maxPayloadBytes);
               if (!read.ok) return read.response;
               try {
@@ -328,10 +345,6 @@ export function createDatafnPublicLinksPlugin<TSession = unknown>(
                 body = null;
               }
             } else {
-              if (maxPayloadBytes !== undefined) {
-                const oversized = checkPayloadLimit(request, maxPayloadBytes);
-                if (oversized) return oversized;
-              }
               body = await request.json().catch(() => null);
             }
             const token =

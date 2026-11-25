@@ -165,6 +165,19 @@ describe("predicate field authorization", () => {
     expect(result.body.result.data).toEqual([{ id: "per_1" }]);
   });
 
+  it("uses the related resource to resolve each hop of a dot-path", async () => {
+    const harness = await createHarness();
+    server = harness.server;
+    const result = await harness.post("query", {
+      resource: "people",
+      version: 1,
+      select: ["id"],
+      filters: { "employer.staff.name": "Ada" },
+    });
+    expect(result.status).toBe(200);
+    expect(result.body.result.data).toEqual([{ id: "per_1" }]);
+  });
+
   it("allows a readable guard and rejects an unreadable guard before the write", async () => {
     const harness = await createHarness();
     server = harness.server;

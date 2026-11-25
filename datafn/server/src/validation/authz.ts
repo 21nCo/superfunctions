@@ -529,35 +529,18 @@ function authorizeRelationFilter(
   let currentNames = targets;
   for (let segmentIndex = 1; segmentIndex < parts.length; segmentIndex++) {
     const segment = parts[segmentIndex];
-    if (!segment) continue;
     const isLast = segmentIndex === parts.length - 1;
-    const nextTargets = [
-      ...new Set(
-        currentNames.flatMap((name) =>
-          isNestedFilterField(getResourceSchema(schema, name), segment)
-            ? []
-            : resolveRelationTargetResources(schema, name, segment),
-        ),
-      ),
-    ];
-    const segmentIsField = currentNames.some((name) => {
+    const nextTargets = new Set<string>();
+    for (const name of currentNames) {
       const current = getResourceSchema(schema, name);
-      if (!current) return false;
-      return (
-        current.fields.some((field) => field.name === segment) ||
-        getCapabilityFieldSets(schema, current).capabilityFields.has(segment)
-      );
-    });
-
-    if (nextTargets.length > 0 && !(isLast && segmentIsField)) {
-      const hiddenSourceField = currentNames.some((name) => {
-        const current = getResourceSchema(schema, name);
-        return current &&
-          (current.fields.some((field) => field.name === segment) ||
-            isForeignKeyNamedManyOne(schema, name, segment)) &&
-          !canReadField(schema, current, segment);
-      });
-      if (hiddenSourceField) {
+      const related = isLast || isNestedFilterField(current, segment)
+        ? []
+        : resolveRelationTargetResources(schema, name, segment);
+      // An endpoint may read a stored field even when another endpoint follows a relation.
+      const readsField = related.length === 0 ||
+        current?.fields.some((field) => field.name === segment) ||
+        isForeignKeyNamedManyOne(schema, name, segment);
+      if (!current || (readsField && !canReadField(schema, current, segment))) {
         return {
           ok: false,
           code: "FORBIDDEN",
@@ -565,24 +548,10 @@ function authorizeRelationFilter(
           path: `filters.${key}`,
         };
       }
-      currentNames = nextTargets;
-      continue;
+      for (const target of related) nextTargets.add(target);
     }
-
-    const readable = currentNames.every((name) => {
-      const current = getResourceSchema(schema, name);
-      return current ? canReadField(schema, current, segment) : true;
-    });
-    if (!readable) {
-      return {
-        ok: false,
-        code: "FORBIDDEN",
-        message: "Authorization denied",
-        path: `filters.${key}`,
-      };
-    }
-    // A non-relation segment is a field. Later segments are inside that value.
-    break;
+    if (nextTargets.size === 0) break;
+    currentNames = [...nextTargets];
   }
 
   return { ok: true };

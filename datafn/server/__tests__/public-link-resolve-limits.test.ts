@@ -135,17 +135,27 @@ describe("public link resolve limits", () => {
 
   it("rejects an over-limit stream that has no Content-Length", async () => {
     const server = await start({ limits: { maxPayloadBytes: 32 } });
+    let middlewareRan = false;
+    server.router.use(async (_request, _context, next) => {
+      middlewareRan = true;
+      return next();
+    });
     const request = streamRequest(128);
     expect(request.headers.get("content-length")).toBeNull();
     const result = await read(await server.router.handle(request, {}));
     expect(result.status).toBe(413);
     expect(result.body.error.code).toBe("LIMIT_EXCEEDED");
     expect(result.raw).not.toContain("Public link is invalid or revoked");
+    expect(middlewareRan).toBe(false);
   });
 
-  it("resolves a valid token without placement", async () => {
+  it("resolves a valid token after middleware parses the bounded body", async () => {
     const server = await start();
     const token = await createToken(server);
+    server.router.use(async (_request, context, next) => {
+      expect(await context.json()).toEqual({ token });
+      return next();
+    });
     const result = await resolve(server, token);
     expect(result.status).toBe(200);
     expect(result.body.ok).toBe(true);

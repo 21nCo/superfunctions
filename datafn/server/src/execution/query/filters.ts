@@ -16,10 +16,24 @@ import {
   resolveEndpointResource,
   resourceNameFromId,
 } from "@datafn/core";
-import type { DatafnResourceSchema, DatafnSchema } from "../../core-types.js";
+import type { DatafnFieldSchema } from "../../core-types.js";
+import { DatafnExecutionError } from "../errors.js";
+
+// Keep the same traversal bound as Core's dot-path evaluator.
+const MAX_RELATION_FILTER_DEPTH = 10;
+
+type FilterResource = {
+  name: string;
+  fields: readonly { name: string; type?: DatafnFieldSchema["type"] }[];
+};
+
+type FilterSchema = {
+  resources: readonly FilterResource[];
+  relations?: readonly unknown[];
+};
 
 /** A dot-path rooted in a declared structured field stays inside that field. */
-export function isNestedFilterField(resource: DatafnResourceSchema | undefined, name: string): boolean {
+export function isNestedFilterField(resource: FilterResource | undefined, name: string): boolean {
   const field = resource?.fields.find((candidate) => candidate.name === name);
   return field?.type === "object" || field?.type === "json" || field?.type === "array" || field?.type === "file";
 }
@@ -36,16 +50,40 @@ function normalizeOps(value: unknown): unknown {
   return out;
 }
 
-function buildResolver(schema: DatafnSchema, store: any) {
-  return (resource: string, recordId: string, relName: string): Record<string, unknown>[] => {
-    const source = schema.resources.find((candidate) => candidate.name === resource);
-    if (isNestedFilterField(source, relName)) return [];
-    const rel = findRelation(schema, resource, relName);
-    if (!rel) return [];
-    const rec = store.getRecord(resource, recordId);
-    if (!rec) return [];
-    return getRelatedRecords(rec, rel, store, resource, schema);
-  };
+function evaluateFieldFilter(
+  record: Record<string, unknown>,
+  key: string,
+  value: unknown,
+  resourceName: string,
+  schema: FilterSchema,
+  store: any,
+  depth = 0,
+): boolean {
+  if (depth > MAX_RELATION_FILTER_DEPTH) {
+    throw new DatafnExecutionError(
+      "DFQL_INVALID",
+      `Filter nesting depth exceeds maximum of ${MAX_RELATION_FILTER_DEPTH}`,
+      "filters",
+    );
+  }
+  const dot = key.indexOf(".");
+  if (dot === -1 || record[key.slice(0, dot)] != null) {
+    return coreEvaluateFilter(record, { [key]: value });
+  }
+
+  const head = key.slice(0, dot);
+  const source = schema.resources.find((candidate) => candidate.name === resourceName);
+  if (isNestedFilterField(source, head)) return false;
+  const relation = findRelation(schema, resourceName, head);
+  if (!relation) return false;
+  const tail = key.slice(dot + 1);
+  if (tail === "__proto__" || tail === "constructor" || tail === "prototype") {
+    throw new DatafnExecutionError("DFQL_INVALID", "Unsafe relation filter path", "filters");
+  }
+  const target = relationTargetEndpoint(relation.relation, relation.direction);
+  return getRelatedRecords(record, relation, store, resourceName, schema).some((related) =>
+    evaluateFieldFilter(related, tail, value, recordResourceName(schema, related.id, target), schema, store, depth + 1),
+  );
 }
 
 /**
@@ -56,11 +94,9 @@ export function evaluateFilter(
   record: Record<string, unknown>,
   filters: Record<string, unknown>,
   resourceName: string,
-  schema: any,
+  schema: FilterSchema,
   store: any,
 ): boolean {
-  const resolveRelation = buildResolver(schema, store);
-
   for (const [key, value] of Object.entries(filters)) {
     // Recurse $and/$or through server's evaluateFilter (handles nested quantifiers)
     if (key === "$and") {
@@ -87,10 +123,7 @@ export function evaluateFilter(
       }
     }
 
-    // Delegate field filters to core (with operator normalization + relation resolver)
-    const normalizedValue = normalizeOps(value);
-    const fieldFilter = { [key]: normalizedValue };
-    if (!coreEvaluateFilter(record, fieldFilter, { resolveRelation, resource: resourceName })) {
+    if (!evaluateFieldFilter(record, key, normalizeOps(value), resourceName, schema, store)) {
       return false;
     }
   }
