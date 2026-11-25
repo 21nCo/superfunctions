@@ -286,8 +286,9 @@ export function createDatafnMcpRegistry<TMcpContext, TDatafnContext>(
     );
   }
 
-  // Refuse non-scalar filters before registering any tool, so a rejected
-  // configuration leaves a supplied registry untouched.
+  // Refuse non-scalar filters before registering any tool, so this check
+  // never leaves a supplied registry partly populated. (The registration
+  // loop's other validation errors, which predate it, can still stop part-way.)
   for (const [resourceName, exposure] of Object.entries(options.expose)) {
     const list = operationOptions<DatafnListToolOptions>(exposure.list, true);
     const resource = schema.resources.find((candidate) => candidate.name === resourceName);
