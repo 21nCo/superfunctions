@@ -530,21 +530,26 @@ export function diffTables(
           .join(', ')}`,
       );
     }
-    // COMPACT and REDUNDANT tables limit an index key part to 767 bytes. Check
-    // the changed columns of the indexes the table has after the migration,
-    // in the character set MODIFY COLUMN keeps (unknown: utf8mb4), and refuse
-    // before any DDL.
+    // COMPACT and REDUNDANT tables limit an index key part to 767 bytes. A
+    // changed column rebuilds or alters its indexes at their declared widths
+    // (prefixes included), in the character set MODIFY COLUMN keeps (unknown:
+    // utf8mb4), so check those indexes' key parts and refuse before any DDL.
     if (/^(compact|redundant)$/i.test(curTable.rowFormat ?? '')) {
       const finalLength = (column: string) => {
         const field = Object.entries(reqFieldMap).find(([name, f]) => (f.fieldName ?? name) === column)?.[1];
-        return changedMySqlColumns.has(column) && field?.type === 'string' ? field.maxLength ?? 0 : 0;
+        return field?.type === 'string' ? field.maxLength ?? 0 : 0;
       };
-      const charset = (column: string) => curColMap.get(column)?.characterSet ?? '';
-      const bytesPerChar = (column: string) =>
-        /^(latin1|ascii|binary)$/i.test(charset(column)) ? 1 : /^utf8(mb3)?$/i.test(charset(column)) ? 3 : 4;
-      const oversized = requiredIndexes.flatMap((index) => index.columns
-        .filter((column) => finalLength(column) * bytesPerChar(column) > 767)
-        .map((column) => `${index.name} (${column} VARCHAR(${finalLength(column)}))`));
+      const bytesPerChar = (column: string) => {
+        const name = curColMap.get(column)?.characterSet ?? '';
+        if (/^(ascii|binary|latin[1-7]|cp12(50|51|56|57)|cp8(50|52|66)|dec8|greek|hebrew|hp8|keybcs2|koi8[ru]|mac(ce|roman)|swe7|tis620|armscii8|geostd8)$/i.test(name)) return 1;
+        if (/^(big5|cp932|euckr|gb2312|gbk|sjis|ucs2)$/i.test(name)) return 2;
+        return /^(utf8|utf8mb3|eucjpms|ujis)$/i.test(name) ? 3 : 4;
+      };
+      const oversized = requiredIndexes
+        .filter((index) => index.columns.some((column) => changedMySqlColumns.has(column)))
+        .flatMap((index) => index.columns
+          .filter((column) => finalLength(column) * bytesPerChar(column) > 767)
+          .map((column) => `${index.name} (${column} VARCHAR(${finalLength(column)}))`));
       if (oversized.length > 0) {
         throw new Error(
           `Cannot generate MySQL column change for ${dbName}: its ${curTable.rowFormat} row format limits index key parts to 767 bytes, which the migrated key would exceed: ${oversized.join(', ')}. Convert the table first with ALTER TABLE ${dbName} ROW_FORMAT=DYNAMIC, then generate the migration again.`,

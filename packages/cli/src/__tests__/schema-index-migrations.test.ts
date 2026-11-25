@@ -949,12 +949,12 @@ describe("schema index migrations", () => {
   });
 
   it("refuses a widened full-column key over 767 bytes on COMPACT or REDUNDANT tables", () => {
-    const widenTo = (maxLength: number, indexFields = ["claimToken"], required = false) => ({
+    const widenTo = (maxLength: number, indexFields = ["claimToken"], required = false, ownerLength = 32) => ({
       ...syncJobs,
       fields: {
         ...syncJobs.fields,
         claimToken: { ...syncJobs.fields.claimToken, maxLength, required },
-        owner: { type: "string", required: false, fieldName: "owner", maxLength: 32 },
+        owner: { type: "string", required: false, fieldName: "owner", maxLength: ownerLength },
       },
       indexes: [{ name: "plugfn_sync_jobs_claim_token_idx", fields: indexFields, unique: true }],
     } as unknown as TableSchema);
@@ -1000,11 +1000,25 @@ describe("schema index migrations", () => {
     }
     // MODIFY COLUMN keeps the column's character set: 700 latin1 characters
     // fit, an unknown character set counts as utf8mb4.
-    inPlace(diffTables([widenTo(700)], current("Compact", null, "latin1"), "plugfn"), 700);
+    for (const characterSet of ["latin1", "latin2", "cp1251"]) {
+      inPlace(diffTables([widenTo(700)], current("Compact", null, characterSet), "plugfn"), 700);
+    }
     expect(() => diffTables([widenTo(192)], current("Compact", null, ""), "plugfn")).toThrow(/767 bytes/);
     // A widening combined with another change rebuilds the key; still refused.
     expect(() => diffTables([widenTo(192, ["claimToken"], true)], current("Compact"), "plugfn")).toThrow(
       /plugfn_sync_jobs_claim_token_idx \(claim_token VARCHAR\(192\)\)/,
+    );
+    // Rebuilding a composite key drops the prefix of an unchanged key part:
+    // owner(100) would become a full 250-character utf8mb4 key part.
+    const composite = current("Compact");
+    composite[0].columns[1] = varcharColumn("owner", 250);
+    composite[0].indexes[0] = {
+      ...composite[0].indexes[0],
+      columns: ["claim_token", "owner"],
+      prefixLengths: [null, 100],
+    };
+    expect(() => diffTables([widenTo(191, ["claimToken", "owner"], false, 250)], composite, "plugfn")).toThrow(
+      /plugfn_sync_jobs_claim_token_idx \(owner VARCHAR\(250\)\)/,
     );
     // A prefixed key part would be rebuilt at full width, so it is refused too.
     expect(() => diffTables([widenTo(768)], current("Compact", 32), "plugfn")).toThrow(
