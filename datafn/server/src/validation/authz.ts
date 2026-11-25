@@ -225,13 +225,6 @@ function resolveRelationTargetResources(
   return match ? endpointList(relationTargetEndpoint(match.relation, match.direction)) : [];
 }
 
-export function relationQuerySelectTokens(relationName: string, select: unknown): string[] {
-  const tokens = Array.isArray(select) && select.length > 0 ? select : ["*"];
-  return tokens
-    .filter((token): token is string => typeof token === "string")
-    .map((token) => `${relationName}.${token}`);
-}
-
 /**
  * Validate that a query adheres to read permissions policy
  */
@@ -284,12 +277,9 @@ export function validateQueryAuthz(
   const { capabilityFields } = getCapabilityFieldSets(schema, resource);
 
   // Validate select fields (including nested relation target fields)
-  const select = typeof query.relation === "string" && typeof query.id === "string"
-    ? relationQuerySelectTokens(query.relation, query.select)
-    : query.select;
-  if (Array.isArray(select)) {
-    for (let i = 0; i < select.length; i++) {
-      const token = select[i];
+  if (query.select && Array.isArray(query.select)) {
+    for (let i = 0; i < query.select.length; i++) {
+      const token = query.select[i];
       if (typeof token !== "string") continue;
       if (token === "*") continue;
 

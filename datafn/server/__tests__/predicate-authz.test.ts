@@ -239,6 +239,24 @@ describe("predicate field authorization", () => {
     expect(result.body.error.code).toBe("FORBIDDEN");
   });
 
+  it("authorizes transact query fields against the resource that the step projects", async () => {
+    const [people, employers] = schema.resources;
+    const harness = await createHarness({
+      ...schema,
+      resources: [people, {
+        ...employers,
+        fields: [...employers.fields, { name: "secret", type: "string", required: false }],
+        permissions: { ...employers.permissions, read: { fields: ["name", "secret"] } },
+      }],
+    });
+    server = harness.server;
+    const result = await harness.post("transact", { steps: [{ query: {
+      resource: "people", version: 1, relation: "employer", id: "per_1", select: ["secret"],
+    } }] });
+    expect(result.status).toBe(403);
+    expect(result.body.error.code).toBe("FORBIDDEN");
+  });
+
   it("authorizes a HAVING alias by its computed source instead of the same-named column", async () => {
     const [people, employers] = schema.resources;
     const harness = await createHarness({

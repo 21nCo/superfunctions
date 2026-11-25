@@ -23,7 +23,6 @@ import { materializeSelect } from "../../execution/query/select.js";
 import { parseSortTerms, sortRecords } from "../../execution/query/sort.js";
 import { executeSearchQuery } from "../../execution/query/search.js";
 import { DatafnExecutionError } from "../../execution/errors.js";
-import { relationQuerySelectTokens } from "../../validation/authz.js";
 import { findRelationMatch } from "@datafn/core";
 import {
   executeDbNativeResourceSearch,
@@ -45,6 +44,13 @@ function mergeAnchorFilter(
     return { $and: [...filters.$and as Record<string, unknown>[], idFilter] };
   }
   return { $and: [filters, idFilter] };
+}
+
+export function relationQuerySelectTokens(relationName: string, select: unknown): string[] {
+  const tokens = Array.isArray(select) && select.length > 0 ? select : ["*"];
+  return tokens
+    .filter((token): token is string => typeof token === "string")
+    .map((token) => `${relationName}.${token}`);
 }
 
 function normalizeRelationQueryValue(value: unknown): Record<string, unknown>[] {

@@ -27,7 +27,7 @@ import {
   validateQueryAuthz,
 } from "../validation/authz.js";
 import { runBounded } from "./query/batch-executor.js";
-import { executeSingleQuery } from "./query/execute.js";
+import { executeSingleQuery, relationQuerySelectTokens } from "./query/execute.js";
 import { validateQueryBody } from "./query/validate.js";
 import { injectCapabilityAutoFilters, type QueryMetadata } from "../execution/query/pushdown.js";
 import { mergeSharedWithMeRows } from "../execution/query/execute.js";
@@ -768,7 +768,10 @@ export function createQueryHandler(
               }
             }
           }
-          const authzResult = validateQueryAuthz(query, validatedSchema, {
+          const authzQuery = typeof query.relation === "string" && typeof query.id === "string"
+            ? { ...query, select: relationQuerySelectTokens(query.relation, query.select) }
+            : query;
+          const authzResult = validateQueryAuthz(authzQuery, validatedSchema, {
             allowUnknownResources: handlerOpts?.allowUnknownResources,
             debug: handlerOpts?.debug,
           });
