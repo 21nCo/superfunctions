@@ -56,7 +56,7 @@ describe("MUT-REPLACE-001: Replace Operation Semantics", () => {
       namespace: "datafn"
     });
 
-    server = await createDatafnServer({ allowUnknownResources: true,
+    server = await createDatafnServer({ allowUnknownResources: true, debug: true,
       schema,
       database: db,
     });

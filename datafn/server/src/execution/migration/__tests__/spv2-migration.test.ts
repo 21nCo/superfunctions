@@ -88,6 +88,7 @@ async function createHarness(config?: {
 
   const server = await createDatafnServer({
     allowUnknownResources: true,
+    debug: true,
     schema,
     database: db,
     observability: {

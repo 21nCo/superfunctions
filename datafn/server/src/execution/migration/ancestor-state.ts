@@ -7,6 +7,7 @@ import {
   resolveEndpointResource,
   type DatafnSchema,
 } from "@datafn/core";
+import { fkResourceFieldForRelation, htreeFkField } from "../relations/foreign-key.js";
 
 /** Repair reads primary state and links, never the derived flags being repaired. */
 export async function resolveAuthoritativeAncestorInactive(
@@ -39,15 +40,13 @@ export async function resolveAuthoritativeAncestorInactive(
       const field = relation.type === "many-one"
         ? relationFkFieldForManyOne(relation)
         : relation.type === "htree"
-          ? relation.fkField || relation.foreignKey || relation.inverse || "parentId"
+          ? htreeFkField(relation)
           : relationFkFieldForOneMany(relation);
       const parentId = row[field];
       if (parentId === null || parentId === undefined || parentId === "") continue;
       if (typeof parentId !== "string") throw new Error("Ancestor repair: malformed parent link");
-      const resourceField = relation.fkResourceField || (relation.type === "htree"
-        ? `${field.replace(/Id$/, "")}Resource`
-        : `${(relation.type === "many-one" ? relation.relation || "target" : relation.inverse || relation.relation || "source").replace(/Id$/, "")}Resource`);
-      const discriminator = row[resourceField];
+      const resourceField = fkResourceFieldForRelation(relation);
+      const discriminator = resourceField ? row[resourceField] : undefined;
       const inferred = resolveEndpointResource(endpoint, parentId, schema);
       let parentResource = inferred;
       if (endpointList(endpoint).length > 1 && discriminator != null) {

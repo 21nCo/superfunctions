@@ -225,6 +225,8 @@ export async function executePushdownQuery(
   db: Adapter,
   namespace: string,
   actorId?: string,
+  allowUnknownResources = true,
+  projectRecords = true,
 ): Promise<QueryResult> {
   const { records, nextCursor, count } = await pushdownCore(
     query,
@@ -232,18 +234,13 @@ export async function executePushdownQuery(
     db,
     namespace,
     actorId,
+    allowUnknownResources,
   );
 
   // Simple field projection (no relation expansion)
-  const data = records.map((record) =>
-    projectFieldsPushdown(
-      record,
-      query.resource,
-      schema,
-      query.select,
-      query.omit,
-    ),
-  );
+  const data = projectRecords
+    ? records.map((record) => projectFieldsPushdown(record, query.resource, schema, query.select, query.omit))
+    : records;
 
   return { data, count, nextCursor };
 }
@@ -270,6 +267,7 @@ export async function executePartialPushdownQuery(
   db: Adapter,
   namespace: string,
   actorId?: string,
+  allowUnknownResources = true,
 ): Promise<QueryResult> {
   // 1. Execute the push-down core (same as FULL_PUSHDOWN up to trimming)
   const { records, nextCursor, count } = await pushdownCore(
@@ -278,6 +276,7 @@ export async function executePartialPushdownQuery(
     db,
     namespace,
     actorId,
+    allowUnknownResources,
   );
 
   // 2. Build a targeted DataStore from the already-fetched primary records.
@@ -292,6 +291,7 @@ export async function executePartialPushdownQuery(
     namespace,
     undefined,
     actorId,
+    allowUnknownResources,
   );
 
   // 3. Materialize select (relation expansion + field projection)
@@ -327,6 +327,7 @@ async function pushdownCore(
   db: Adapter,
   namespace: string,
   actorId?: string,
+  allowUnknownResources = true,
 ): Promise<{
   records: Record<string, unknown>[];
   nextCursor: Record<string, unknown> | null;
@@ -382,7 +383,7 @@ async function pushdownCore(
           filters,
           queryWithAutoFilters.resource,
           schema,
-          { db, namespace, actorId },
+          { db, namespace, actorId, allowUnknownResources },
         ),
       );
   if (filterPlan === null) {

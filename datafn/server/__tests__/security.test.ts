@@ -886,6 +886,7 @@ describe("VAL-006: ID length limit enforcement", () => {
   beforeEach(async () => {
     server = await createDatafnServer({
       allowUnknownResources: true,
+      debug: true,
       schema: typeTestSchema,
       database: memoryAdapter(),
       limits: { maxIdLength: 255 },
