@@ -153,19 +153,21 @@ function sessionScopedEventStore(base: EventStore, sessionId: () => string | und
       : {}),
     async replayEventsAfter(lastEventId, { send }) {
       if (base.getStreamIdForEventId) {
-        if (unscoped(await base.getStreamIdForEventId(lastEventId)) === undefined) throw foreign();
-        const streamId = unscoped(await base.replayEventsAfter(lastEventId, { send }));
-        if (streamId === undefined) throw foreign();
-        return streamId;
+        const known = await base.getStreamIdForEventId(lastEventId);
+        if (known && unscoped(known) === undefined) throw foreign();
       }
-      // Without a lookup, hold the replay until the store says whose it is.
+      // Hold the replay until the store says whose stream it was.
       const replayed: Array<[string, Parameters<typeof send>[1]]> = [];
-      const streamId = unscoped(await base.replayEventsAfter(lastEventId, {
+      const streamId = await base.replayEventsAfter(lastEventId, {
         send: async (eventId, message) => { replayed.push([eventId, message]); },
-      }));
-      if (streamId === undefined) throw foreign();
+      });
+      // Stores answer an unknown or expired event with "" and send nothing:
+      // pass that through, so the client gets an empty resumed stream.
+      if (streamId === "" && replayed.length === 0) return "";
+      const own = unscoped(streamId);
+      if (own === undefined) throw foreign();
       for (const [eventId, message] of replayed) await send(eventId, message);
-      return streamId;
+      return own;
     },
   };
 }

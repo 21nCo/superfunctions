@@ -254,6 +254,18 @@ describe("createWebStandardHandler session binding (MCP-SEC-03)", () => {
     await resumed.body?.cancel();
   });
 
+  it("answers an unknown Last-Event-ID with an empty resumed stream", async () => {
+    const { InMemoryEventStore } = await import("@modelcontextprotocol/sdk/examples/shared/inMemoryEventStore.js");
+    const { handler, initialize } = await setup({ enableJsonResponse: false, eventStore: new InMemoryEventStore() } as never);
+    const alice = await initialize(authInfo("alice"));
+    const resumed = await handler(new Request("http://127.0.0.1:8080/mcp", {
+      method: "GET",
+      headers: { accept: "text/event-stream", "mcp-session-id": alice.sessionId!, "mcp-protocol-version": "2025-11-25", "last-event-id": "evicted-event" },
+    }), { authInfo: authInfo("alice") });
+    expect(resumed.status).toBe(200);
+    await resumed.body?.cancel();
+  });
+
   it("keeps subjectless tokens from different issuers apart", async () => {
     const { initialize, call } = await setup();
     const from = (issuer: string): AuthInfo => ({ token: "test-shared-token-text", clientId: "client-a", scopes: [], extra: { issuer } });

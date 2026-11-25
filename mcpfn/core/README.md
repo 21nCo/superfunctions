@@ -186,8 +186,10 @@ request's `Host`; a browser may omit `Origin` on a same-origin GET, so local ser
 transport). A session belongs to the principal that created it
 (`sessionPrincipal`, by default the `authInfo.extra.subject` and client ID, with `extra.issuer` when the verifier reports one, or the token itself when the verifier sets no subject, so set `extra.subject` for sessions to outlive token refresh); a request
 from another principal, including GET and DELETE, gets the same 404 as an
-unknown session. A configured `eventStore` is scoped per session, so `Last-Event-ID`
-resumption only replays the session's own events.
+unknown session. In sessionful mode a configured `eventStore` is scoped per
+session, so `Last-Event-ID` resumption only replays the session's own events; a
+stateless handler has no session to scope it to, so don't share an event store
+between principals there.
 
 ## Cloudflare Workers and edge runtimes
 
