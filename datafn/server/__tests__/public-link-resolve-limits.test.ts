@@ -223,16 +223,29 @@ describe("public link resolve limits", () => {
   });
 
   it("rate limits resolve without blocking the first token use", async () => {
+    let resolveContextCalls = 0;
     const limited = await start({
-      rateLimit: { enabled: true, maxRequests: 1, windowSeconds: 60 },
+      context: (request: Request) => {
+        if (new URL(request.url).pathname.endsWith("/resolve")) resolveContextCalls++;
+        return { rateKey: "test-client" };
+      },
+      rateLimit: {
+        enabled: true,
+        maxRequests: 1,
+        windowSeconds: 60,
+        keyExtractor: (context: { rateKey: string }) => context.rateKey,
+      },
     });
     const token = await createToken(limited);
     const first = await resolve(limited, token);
     expect(first.status).toBe(200);
     expect(first.body.ok).toBe(true);
-    const second = await resolve(limited, token);
+    const exhausted = streamRequest(128);
+    const second = await read(await limited.router.handle(exhausted));
     expect(second.status).toBe(429);
     expect(second.body.error.code).toBe("RATE_LIMITED");
+    expect(exhausted.bodyUsed).toBe(false);
+    expect(resolveContextCalls).toBe(2);
 
     const open = await start({ rateLimit: { enabled: false } });
     const openToken = await createToken(open);

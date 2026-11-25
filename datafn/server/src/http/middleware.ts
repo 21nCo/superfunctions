@@ -48,6 +48,7 @@ export async function readLimitedBody(
   const chunks: Uint8Array[] = [];
   let total = 0;
   try {
+    if (req.bodyUsed) throw new TypeError("Request body already consumed");
     const reader = req.body.getReader();
     try {
       while (true) {

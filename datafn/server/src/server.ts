@@ -14,8 +14,10 @@ import type { SearchProvider } from "./search-provider.js";
 import { parseDatafnRequest, collectStructuralResourceSelectors, validateSchema, ensureBuiltinKv, ensureBuiltinTemporal, isNamespaced } from "@datafn/core";
 import {
   createObservabilityMiddleware,
+  createRouteContext,
   createRouter,
   executeMiddlewareChain,
+  mergeContexts,
   type Router,
   type Route,
   type RouteHandler,
@@ -1542,6 +1544,7 @@ export async function createDatafnServer<TContext = any>(
     search: (payload, context) => executeInProcess("search", searchHandler, payload, context),
   };
 
+  const checkedResolveContexts = new WeakMap<Request, { userContext: TContext }>();
   const withPluginRouteGuards = (
     route: DatafnComposableRoute<TContext>,
   ): DatafnComposableRoute<TContext> => {
@@ -1553,7 +1556,7 @@ export async function createDatafnServer<TContext = any>(
     return {
       ...routeDefinition,
       handler: async (request, context) => {
-        if (rateLimitMiddleware) {
+        if (rateLimitMiddleware && !checkedResolveContexts.has(request)) {
           const limited = await rateLimitMiddleware(route.path, context);
           if (limited) return limited;
         }
@@ -1761,11 +1764,24 @@ export async function createDatafnServer<TContext = any>(
     }
   }
 
+  const resolveUserContext = async (request: Request): Promise<TContext> => {
+    const configured = config.context;
+    if (typeof configured === "function") {
+      return (configured as (request: Request) => TContext | Promise<TContext>)(request);
+    }
+    return configured === undefined ? ({} as TContext) : configured;
+  };
+
   // Create router
   const router = createRouter<TContext>({
     routes,
     basePath: "/",
-    context: config.context,
+    context: boundedResolveRoute && rateLimitMiddleware
+      ? (request) => {
+          const checked = checkedResolveContexts.get(request);
+          return checked ? checked.userContext : resolveUserContext(request);
+        }
+      : config.context,
     middleware: observabilityScope
       ? [
           createObservabilityMiddleware({
@@ -1786,8 +1802,23 @@ export async function createDatafnServer<TContext = any>(
           router.match(request.method, path)?.route !== resolveRoute) {
         return handle(request);
       }
-      const prepared = await preparePublicLinkResolveRequest(request, publicLinkBodyLimit);
-      return prepared instanceof Response ? prepared : handle(prepared);
+      try {
+        let checkedContext: { userContext: TContext } | undefined;
+        if (rateLimitMiddleware) {
+          const userContext = await resolveUserContext(request);
+          const context = mergeContexts(userContext, createRouteContext(request, {}));
+          const limited = await rateLimitMiddleware(resolveRoute.path, context);
+          if (limited) return limited;
+          checkedContext = { userContext };
+        }
+        const prepared = await preparePublicLinkResolveRequest(request, publicLinkBodyLimit);
+        if (prepared instanceof Response) return prepared;
+        if (checkedContext) checkedResolveContexts.set(prepared, checkedContext);
+        return handle(prepared);
+      } catch (error) {
+        logger.error("Public-link resolve request preparation failed", { error: String(error) });
+        return Response.json({ error: "Internal Server Error" }, { status: 500 });
+      }
     };
     router.handle = handleBoundedResolve;
     router.handler = handleBoundedResolve;

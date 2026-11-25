@@ -8,16 +8,15 @@ import {
   endpointList,
   evaluateFilter as coreEvaluateFilter,
   findRelationMatch,
-  firstEndpoint,
   OP_REMAP,
   relationKeyFor,
   relationTargetEndpoint,
   relationFkFieldForManyOne,
   resolveEndpointResource,
-  resourceNameFromId,
 } from "@datafn/core";
 import type { DatafnFieldSchema } from "../../core-types.js";
 import { DatafnExecutionError } from "../errors.js";
+import type { DataStore } from "../store.js";
 
 // Keep the same traversal bound as Core's dot-path evaluator.
 const MAX_RELATION_FILTER_DEPTH = 10;
@@ -56,7 +55,7 @@ function evaluateFieldFilter(
   value: unknown,
   resourceName: string,
   schema: FilterSchema,
-  store: any,
+  store: DataStore,
   depth = 0,
 ): boolean {
   if (depth > MAX_RELATION_FILTER_DEPTH) {
@@ -80,9 +79,8 @@ function evaluateFieldFilter(
   if (tail === "__proto__" || tail === "constructor" || tail === "prototype") {
     throw new DatafnExecutionError("DFQL_INVALID", "Unsafe relation filter path", "filters");
   }
-  const target = relationTargetEndpoint(relation.relation, relation.direction);
-  return getRelatedRecords(record, relation, store, resourceName, schema).some((related) =>
-    evaluateFieldFilter(related, tail, value, recordResourceName(schema, related.id, target), schema, store, depth + 1),
+  return getRelatedRecords(record, relation, store, resourceName, schema).some(({ resource, record: related }) =>
+    evaluateFieldFilter(related, tail, value, resource, schema, store, depth + 1),
   );
 }
 
@@ -135,115 +133,90 @@ function findRelation(schema: any, resourceName: string, relationName: string) {
   return findRelationMatch(schema, resourceName, relationName) ?? null;
 }
 
-function recordResourceName(
-  schema: any,
-  id: unknown,
-  fallback: string | readonly string[],
-): string {
-  return (
-    resolveEndpointResource(fallback, id, schema) ??
-    resourceNameFromId(id) ??
-    firstEndpoint(fallback)
-  );
-}
+type RelatedRecord = { resource: string; record: Record<string, unknown> };
 
 function getRelatedRecords(
-  record: any,
-  rel: any,
-  store: any,
+  record: Record<string, unknown>,
+  rel: NonNullable<ReturnType<typeof findRelationMatch>>,
+  store: DataStore,
   resourceName: string,
-  schema: any,
-): Record<string, unknown>[] {
+  schema: FilterSchema,
+): RelatedRecord[] {
   const relation = rel.relation;
   const direction = rel.direction;
   const isForward = direction === "forward";
   const targetEndpoint = relationTargetEndpoint(relation, direction);
+  const findById = (id: unknown, endpoint = targetEndpoint): RelatedRecord[] => {
+    if (typeof id !== "string" || !id) return [];
+    const identified = resolveEndpointResource(endpoint, id, schema);
+    const candidates = identified ? [identified] : endpointList(endpoint);
+    const matches = candidates.flatMap((resource) => {
+      const found = store.getRecord(resource, id);
+      return found ? [{ resource, record: found }] : [];
+    });
+    // Legacy IDs can lack a usable prefix. Limit lookups to declared endpoints
+    // and require a unique match before following the relation.
+    return matches.length === 1 ? matches : [];
+  };
+  const findByForeignKey = (fk: string): RelatedRecord[] =>
+    endpointList(targetEndpoint).flatMap((resource) =>
+      store.findRecords(resource, fk, record.id).map((found) => ({ resource, record: found })),
+    );
 
   if (relation.type === "many-one") {
-    if (isForward) {
-      const fk = relationFkFieldForManyOne(relation);
-      const targetId = record[fk];
-      if (!targetId) return [];
-      const target = store.getRecord(recordResourceName(schema, targetId, targetEndpoint), targetId as string);
-      return target ? [target] : [];
-    } else {
-      const fk = relationFkFieldForManyOne(relation);
-      return endpointList(targetEndpoint).flatMap((targetResource) =>
-        store.findRecords(targetResource, fk, record.id),
-      );
-    }
-  } else if (relation.type === "one-many") {
-    if (isForward) {
-      const fk = relation.fkField || relation.foreignKey || `${relation.inverse}Id`;
-      return endpointList(targetEndpoint).flatMap((targetResource) =>
-        store.findRecords(targetResource, fk, record.id),
-      );
-    } else {
-      const fk = relation.fkField || relation.foreignKey || `${relation.inverse}Id`;
-      const targetId = record[fk];
-      if (!targetId) return [];
-      const target = store.getRecord(recordResourceName(schema, targetId, targetEndpoint), targetId as string);
-      return target ? [target] : [];
-    }
-  } else if (relation.type === "many-many") {
+    const fk = relationFkFieldForManyOne(relation);
+    return isForward ? findById(record[fk]) : findByForeignKey(fk);
+  }
+  if (relation.type === "one-many") {
+    const fk = relation.fkField || relation.foreignKey || `${relation.inverse}Id`;
+    return isForward ? findByForeignKey(fk) : findById(record[fk]);
+  }
+  if (relation.type === "many-many") {
     if (isForward) {
       const joinRows = store.getJoinRows(relationKeyFor(resourceName, relation));
-      const relatedIds = joinRows
-        .filter((row: any) => row.from === record.id)
-        .map((row: any) => row.to);
-      return relatedIds
-        .map((id: unknown) => store.getRecord(recordResourceName(schema, id, targetEndpoint), id as string))
-        .filter((target: unknown): target is Record<string, unknown> => Boolean(target));
-    } else {
-      return endpointList(relation.from).flatMap((fromResource) => {
-        const joinRows = store.getJoinRows(relationKeyFor(fromResource, relation));
-        return joinRows
-          .filter((row: any) => row.to === record.id)
-          .map((row: any) => row.from)
-          .map((id: unknown) => store.getRecord(recordResourceName(schema, id, targetEndpoint), id as string))
-          .filter((target: unknown): target is Record<string, unknown> => Boolean(target));
-      });
+      return joinRows.filter((row) => row.from === record.id).flatMap((row) => findById(row.to));
     }
+    return endpointList(relation.from).flatMap((resource) => {
+      const joinRows = store.getJoinRows(relationKeyFor(resource, relation));
+      return joinRows.filter((row) => row.to === record.id).flatMap((row) => findById(row.from, resource));
+    });
   }
   return [];
 }
 
 function evaluateRelationFilter(
-  record: any,
+  record: Record<string, unknown>,
   relationName: string,
   ops: any,
   resourceName: string,
-  schema: any,
-  store: any,
+  schema: FilterSchema,
+  store: DataStore,
 ): boolean {
   const rel = findRelation(schema, resourceName, relationName);
   if (!rel) return false;
 
   const relatedRecords = getRelatedRecords(record, rel, store, resourceName, schema);
-  const targetEndpoint = relationTargetEndpoint(rel.relation, rel.direction);
-  const relatedResource = (relatedRecord: Record<string, unknown>) =>
-    recordResourceName(schema, relatedRecord.id, targetEndpoint);
 
   if (ops.$any) {
     const subFilter = ops.$any as Record<string, unknown>;
-    return relatedRecords.some((r) =>
-      evaluateFilter(r, subFilter, relatedResource(r), schema, store),
+    return relatedRecords.some(({ record, resource }) =>
+      evaluateFilter(record, subFilter, resource, schema, store),
     );
   }
 
   if (ops.$all) {
     const subFilter = ops.$all as Record<string, unknown>;
     if (relatedRecords.length === 0) return false;
-    return relatedRecords.every((r) =>
-      evaluateFilter(r, subFilter, relatedResource(r), schema, store),
+    return relatedRecords.every(({ record, resource }) =>
+      evaluateFilter(record, subFilter, resource, schema, store),
     );
   }
 
   if (ops.$none) {
     const subFilter = ops.$none as Record<string, unknown>;
     if (relatedRecords.length === 0) return true;
-    return !relatedRecords.some((r) =>
-      evaluateFilter(r, subFilter, relatedResource(r), schema, store),
+    return !relatedRecords.some(({ record, resource }) =>
+      evaluateFilter(record, subFilter, resource, schema, store),
     );
   }
 
