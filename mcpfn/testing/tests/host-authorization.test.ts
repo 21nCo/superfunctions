@@ -1118,6 +1118,7 @@ describe("unvetted-client authorization rejections", () => {
         });
         // A fetched document with an unsupported registered scope is rejected
         // as invalid_scope before the redirect URI is matched.
+        delete fixture.registration.metadata.token_endpoint_auth_methods_supported;
         Object.assign(fixture.registration.metadata, { token_endpoint_auth_method: "none", scope: "mcp:admin" });
         fixture.expected.errorCode = "invalid_scope";
         const [unsupportedScope] = await runHostedAuthorizationRegression({
@@ -1130,7 +1131,6 @@ describe("unvetted-client authorization rejections", () => {
         expect(unsupportedScope).toMatchObject({ status: "passed", errorCode: "invalid_scope" });
         withoutMethod(fixture);
         delete fixture.registration.metadata.scope;
-        delete fixture.registration.metadata.token_endpoint_auth_methods_supported;
         fixture.expected.errorCode = "invalid_target";
         // Both paths use none: with none supported, the registration is
         // eligible and a callback carrying the expected error passes.
@@ -1289,6 +1289,7 @@ describe("unvetted-client authorization rejections", () => {
           const [result] = await runHostedAuthorizationRegression(rejectWith(error, ["none"]), [fixture]);
           expect(result).toMatchObject({ status: "passed", errorCode: error });
         }
+        delete fixture.registration.metadata.token_endpoint_auth_methods_supported;
         fixture.registration.metadata.token_endpoint_auth_method = "none";
         for (const [error, status] of [
           ["invalid_scope", "passed"],
@@ -1342,6 +1343,25 @@ describe("unvetted-client authorization rejections", () => {
             expect(result).toMatchObject({ status: "passed", responseStatus: 400, errorCode: error });
           }
         }
+      });
+
+      it.each([
+        ["declares none outside its list", { token_endpoint_auth_method: "none", token_endpoint_auth_methods_supported: ["private_key_jwt"] }],
+        ["lists a nested array", { token_endpoint_auth_methods_supported: [["none"]] }],
+        ["lists nothing", { token_endpoint_auth_methods_supported: [] }],
+      ])("never counts a metadata document that %s as fetchable", async (_name, extra) => {
+        const fixture = rejectionFixture(METADATA_DOCUMENT);
+        redirect(LOOPBACK, RUNTIME_PORT)(fixture);
+        delete fixture.registration.metadata.token_endpoint_auth_method;
+        Object.assign(fixture.registration.metadata, extra);
+        fixture.expected.errorCode = "invalid_target";
+        // Stored with none, the registration could succeed; fetched, it is
+        // refused: a callback is indeterminate, never a pass.
+        const [callback] = await runHostedAuthorizationRegression(
+          { ...callbackTarget(), tokenEndpointAuthMethods: ["none"] },
+          [fixture],
+        );
+        expect(callback).toMatchObject({ status: "failed", error: INDETERMINATE });
       });
 
       it.each([

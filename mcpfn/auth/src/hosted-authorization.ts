@@ -1344,6 +1344,33 @@ function validateHostedCapabilities(
   }
 }
 
+/**
+ * The token endpoint method a Client ID Metadata Document selects (draft,
+ * section 5): RFC 7591's client_secret_basic default does not apply. When
+ * token_endpoint_auth_methods_supported is present it must be a nonempty list
+ * of strings, a declared method must be in it, and without a declared method
+ * none is selected only if the list includes it. Undefined when the
+ * declarations are malformed or inconsistent.
+ */
+function clientMetadataDocumentAuthMethod(record: Record<string, unknown>): string | undefined {
+  const supported = record.token_endpoint_auth_methods_supported;
+  if (
+    supported !== undefined &&
+    (!Array.isArray(supported) || supported.length === 0 ||
+      !supported.every((method) => typeof method === "string"))
+  ) {
+    return undefined;
+  }
+  const methods = supported as string[] | undefined;
+  const declared = record.token_endpoint_auth_method;
+  if (declared !== undefined && declared !== null) {
+    if (typeof declared !== "string") return undefined;
+    return methods && !methods.includes(declared) ? undefined : declared;
+  }
+  if (!methods || methods.includes("none")) return "none";
+  return methods[0];
+}
+
 async function resolveClient(
   options: McpFnAuthorizationCompatibilityOptions,
   clientId: string,
@@ -1386,13 +1413,14 @@ async function resolveClient(
       "Client ID Metadata Document client_id must equal its URL",
     );
   }
-  // A metadata document is public, so it cannot carry a shared secret. Per
-  // the Client ID Metadata Document draft (section 5), RFC 7591's default does
-  // not apply: an omitted method means none, or comes from
-  // token_endpoint_auth_methods_supported when the document lists it.
-  const supportedMethods = (record as { token_endpoint_auth_methods_supported?: unknown }).token_endpoint_auth_methods_supported;
-  const documentAuthMethod = (record as OAuthClientMetadata).token_endpoint_auth_method ??
-    (Array.isArray(supportedMethods) && !supportedMethods.includes("none") ? String(supportedMethods[0]) : "none");
+  // A metadata document is public, so it cannot carry a shared secret.
+  const documentAuthMethod = clientMetadataDocumentAuthMethod(record);
+  if (documentAuthMethod === undefined) {
+    throw new McpFnHostedAuthorizationError(
+      "invalid_client_metadata",
+      "Client ID Metadata Document token endpoint authentication methods are malformed or inconsistent",
+    );
+  }
   if (documentAuthMethod !== "none") {
     throw new McpFnHostedAuthorizationError(
       "invalid_client_metadata",

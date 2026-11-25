@@ -806,18 +806,34 @@ function registrationEligibility(
   return { eligibility: method, scopeRejection: false };
 }
 
-/** The method the server applies to a Client ID Metadata Document it fetches. */
+/**
+ * The method a Client ID Metadata Document selects when the server fetches it
+ * (draft, section 5): token_endpoint_auth_methods_supported, when present,
+ * must be a nonempty list of strings that includes any declared method;
+ * without a declared method, none only if the list includes it. Undefined
+ * when the declarations are malformed or inconsistent (refused).
+ */
 function fetchedAuthMethod(
-  client: McpFnNormalizedClientRegistration,
+  _client: McpFnNormalizedClientRegistration,
   registration: McpFnHostedRegistrationFixture,
-): string {
-  const declared: unknown = registration.metadata.token_endpoint_auth_method;
-  if (declared !== undefined && declared !== null) return client.tokenEndpointAuthMethod;
-  // Client ID Metadata Document draft, section 5: without a method, none,
-  // unless the document's supported-methods list leaves none out.
-  const supported: unknown = (registration.metadata as { token_endpoint_auth_methods_supported?: unknown })
-    .token_endpoint_auth_methods_supported;
-  return Array.isArray(supported) && !supported.includes("none") ? String(supported[0]) : "none";
+): string | undefined {
+  const metadata = registration.metadata as Record<string, unknown>;
+  const supported = metadata.token_endpoint_auth_methods_supported;
+  if (
+    supported !== undefined &&
+    (!Array.isArray(supported) || supported.length === 0 ||
+      !supported.every((method) => typeof method === "string"))
+  ) {
+    return undefined;
+  }
+  const methods = supported as string[] | undefined;
+  const declared = metadata.token_endpoint_auth_method;
+  if (declared !== undefined && declared !== null) {
+    if (typeof declared !== "string") return undefined;
+    return methods && !methods.includes(declared) ? undefined : declared;
+  }
+  if (!methods || methods.includes("none")) return "none";
+  return methods[0];
 }
 
 /**

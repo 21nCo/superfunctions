@@ -1245,6 +1245,14 @@ describe("McpFn hosted authorization compatibility", () => {
     ["omits the method", {}, 200],
     ["lists only none as supported", { token_endpoint_auth_methods_supported: ["none"] }, 200],
     ["lists only client_secret_basic as supported", { token_endpoint_auth_methods_supported: ["client_secret_basic"] }, 400],
+    ["lists none after another method", { token_endpoint_auth_methods_supported: ["client_secret_basic", "none"] }, 200],
+    ["declares none, which its list includes", { token_endpoint_auth_method: "none", token_endpoint_auth_methods_supported: ["none"] }, 200],
+    ["declares none, which its list leaves out", { token_endpoint_auth_method: "none", token_endpoint_auth_methods_supported: ["private_key_jwt"] }, 400],
+    ["declares a non-string method", { token_endpoint_auth_method: ["none"] }, 400],
+    ["lists a nested array", { token_endpoint_auth_methods_supported: [["none"]] }, 400],
+    ["lists an object", { token_endpoint_auth_methods_supported: [{ toString: null }] }, 400],
+    ["lists nothing", { token_endpoint_auth_methods_supported: [] }, 400],
+    ["gives a string, not a list", { token_endpoint_auth_methods_supported: "none" }, 400],
   ] as const)("decides a Client ID Metadata Document that %s", async (_label, extra, status) => {
     const clientId = "https://clients.example.com/client.json";
     const authorize = vi.fn(async () => Response.json({ ok: true }));
