@@ -48,6 +48,7 @@ interface PreparedReferenceTarget extends ReferenceTarget {
   value: object;
   copy: object;
   copyPath?: ReferencePath;
+  addressable: boolean;
 }
 
 interface PointerLookup {
@@ -247,7 +248,8 @@ function prepareReferences(document: OpenAPIDocument, externalReferences?: Reado
   const root: ReferenceDocument = { value: document, location: workingDirectoryLocation() };
   const supplied = new Map<string, ReferenceDocument>();
   const literalReferences = new Map<object, string>();
-  const seen = new WeakMap<object, Map<OpenAPIReferenceMode, object>>();
+  const seen = new WeakMap<object, Map<OpenAPIReferenceMode, PreparedReferenceTarget>>();
+  const seenBehindReference = new WeakMap<object, Map<OpenAPIReferenceMode, PreparedReferenceTarget>>();
   const pending: PreparedReferenceTarget[] = [];
   let field = "x-apifn-reference-copies";
   while (Object.hasOwn(document, field)) field += "-";
@@ -260,20 +262,22 @@ function prepareReferences(document: OpenAPIDocument, externalReferences?: Reado
     return new ReferencePreparationError(site, error);
   }
 
-  function enqueue(target: ReferenceTarget, copyPath?: ReferencePath): unknown {
+  function enqueue(target: ReferenceTarget, copyPath?: ReferencePath, addressable = true): unknown {
     const { value, mode } = target;
     if (typeof value !== "object" || value === null) return value;
-    const contexts = seen.get(value) ?? new Map<OpenAPIReferenceMode, object>();
+    const copies = addressable ? seen : seenBehindReference;
+    const contexts = copies.get(value) ?? new Map<OpenAPIReferenceMode, PreparedReferenceTarget>();
     const existing = contexts.get(mode);
-    if (existing) return existing;
+    if (existing) return existing.copy;
 
     // YAML aliases can share a value between a schema and literal example data.
     const prototype = Object.getPrototypeOf(value);
     const copy = Array.isArray(value) ? [...value]
       : prototype === Object.prototype || prototype === null ? { ...value } : value;
-    contexts.set(mode, copy);
-    seen.set(value, contexts);
-    pending.push({ ...target, value, copy, copyPath });
+    const prepared = { ...target, value, copy, copyPath, addressable };
+    contexts.set(mode, prepared);
+    copies.set(value, contexts);
+    pending.push(prepared);
     return copy;
   }
 
@@ -438,7 +442,12 @@ function prepareReferences(document: OpenAPIDocument, externalReferences?: Reado
       pointers.set(key, preparedRef);
       copiedPointers.set(destination.source, pointers);
       referenceCopies.originals.set(preparedRef, isLocal ? canonical : ref);
-      referenceCopies.targets.push(enqueue(
+      const prepared = typeof target.value === "object" && target.value !== null
+        ? seen.get(target.value)?.get(mode)
+        : undefined;
+      // Different pointers can reach the same source node through aliases.
+      // Forward to its first position instead of attaching its copy twice.
+      referenceCopies.targets.push(prepared ? { $ref: encodePointer(pathKeys(prepared.copyPath)) } : enqueue(
         { ...target, mode, importSite: target.importSite ?? site },
         { key: targetIndex, parent: { key: field } },
       ));
@@ -457,7 +466,7 @@ function prepareReferences(document: OpenAPIDocument, externalReferences?: Reado
   const copy = enqueue({ value: root.value, mode: "node", source: root }) as OpenAPIDocument;
   while (pending.length) {
     const current = pending.pop()!;
-    const { value, copy, mode, source, path, importSite, copyPath } = current;
+    const { value, copy, mode, source, path, importSite, copyPath, addressable } = current;
     if ("$ref" in value && typeof value.$ref === "string") {
       if (mode === "literal") {
         literalReferences.set(copy, value.$ref);
@@ -472,11 +481,15 @@ function prepareReferences(document: OpenAPIDocument, externalReferences?: Reado
         }
       }
     }
+    // A parser pointer can follow this ref before reading its sibling fields.
+    // Those fields need independent copies if imported into addressable slots.
+    const childrenAddressable = addressable && (mode === "literal" || typeof Reflect.get(copy, "$ref") !== "string");
     for (const [key, child] of Object.entries(value)) {
       if (key === "$ref" && typeof child === "string") continue;
       Reflect.set(copy, key, enqueue(
         { value: child, mode: referenceChildMode(value, mode, key, child), source, path: { key, parent: path }, importSite },
         { key, parent: copyPath },
+        childrenAddressable,
       ));
     }
   }

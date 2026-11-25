@@ -577,6 +577,26 @@ describe("validateOpenAPI", () => {
     }
   });
 
+  it.each([false, true])("uses one target position for alias paths (reversed=%s)", async (reversed) => {
+    const uri = "https://example.invalid/types.json";
+    const ref = "#/A/properties/target/properties/self";
+    const target = { type: "object", properties: { self: { $ref: ref } } };
+    const contents = { A: { properties: { target } }, B: { $ref: "#/A" } };
+    const imports = Object.entries({
+      Direct: { $ref: uri + "#/A/properties/target" },
+      Alias: { $ref: uri + "#/B/properties/target" },
+    });
+    const doc = {
+      ...documentWithReference(uri),
+      components: { schemas: Object.fromEntries(reversed ? imports.reverse() : imports) },
+    };
+    const result = await validateAndDereferenceOpenAPI(doc, {
+      externalReferences: new Map([[uri, JSON.stringify(contents)]]),
+    });
+    expect(result.errors).toEqual([]);
+    expect(result.document?.components?.schemas).toEqual({ Direct: target, Alias: target });
+  });
+
   it.each(["parent-only", "parent-first", "child-first"])("preserves recursive siblings with %s imports", async (order) => {
     const uri = "https://example.invalid/types.json";
     const contents = {
@@ -640,17 +660,20 @@ describe("validateOpenAPI", () => {
     );
   });
 
-  it("resolves an acyclic root alias through sibling definitions in a preloaded schema", async () => {
+  it.each([false, true])("resolves an acyclic root alias through sibling definitions (recursive=%s)", async (recursive) => {
     const uri = "https://example.invalid/types.json";
+    const target = recursive
+      ? { type: "object", properties: { self: { $ref: "#/$defs/Target/properties/self" } } }
+      : { type: "integer" };
     const contents = JSON.stringify({
       $ref: "#/$defs/Alias",
-      $defs: { Alias: { $ref: "#/$defs/Target" }, Target: { type: "integer" } },
+      $defs: { Alias: { $ref: "#/$defs/Target" }, Target: target },
     });
     const result = await validateAndDereferenceOpenAPI(documentWithReference(uri), {
       externalReferences: new Map([[uri, contents]]),
     });
     expect(result.errors).toEqual([]);
-    expect(result.document?.components?.schemas?.Value).toMatchObject({ type: "integer" });
+    expect(result.document?.components?.schemas?.Value).toMatchObject(target);
   });
 
   it("dereferences literal data used as a schema through an intermediate alias", async () => {
