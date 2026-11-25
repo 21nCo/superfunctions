@@ -364,6 +364,21 @@ describe("validateOpenAPI", () => {
     ]);
   });
 
+  it("identifies an unlisted reference in an extension used as a schema", async () => {
+    const doc = documentWithReference("#/components/schemas/Alias/properties/item");
+    const schemas = {
+      Alias: { $ref: "#/x-templates/Proxy" },
+      Value: doc.components.schemas.Value,
+    };
+    await expect(validateOpenAPI({
+      ...doc,
+      components: { schemas },
+      "x-templates": { Proxy: { $ref: "https://example.invalid/types.yaml" } },
+    })).resolves.toEqual([
+      { path: "x-templates.Proxy.$ref", message: expect.stringContaining("explicit allowlist"), severity: "error" },
+    ]);
+  });
+
   it.each([
     { directory: "/virtual/C#/service", ref: "./types.json", key: "/virtual/C#/service/types.json" },
     { directory: "C:\\project", ref: "./shared.yaml", key: "C:\\project\\shared.yaml" },

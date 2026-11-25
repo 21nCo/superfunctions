@@ -69,14 +69,19 @@ function referencePath(document: OpenAPIDocument, referrer: object): string {
   const pending: Array<{ value: object; mode: OpenAPIReferenceMode; path?: ReferencePath }> = [
     { value: document, mode: "node" },
   ];
+  let site: ReferencePath | undefined;
   while (pending.length) {
     const { value, mode, path } = pending.pop()!;
-    // YAML aliases can share an object between a reference and a literal payload.
-    if (mode === "literal") continue;
     if (value === referrer) {
-      const segments = ["$ref"];
-      for (let cursor = path; cursor; cursor = cursor.parent) segments.push(cursor.key);
-      return segments.reverse().join(".");
+      const occurrence = { key: "$ref", parent: path };
+      if (mode !== "literal") {
+        site = occurrence;
+        break;
+      }
+      // A pointer can use an extension value as a schema. Prefer any schema
+      // occurrence, and keep the extension path if that is the only location.
+      site ??= occurrence;
+      continue;
     }
     const contexts = seen.get(value) ?? new Set<OpenAPIReferenceMode>();
     if (contexts.has(mode)) continue;
@@ -88,7 +93,10 @@ function referencePath(document: OpenAPIDocument, referrer: object): string {
       }
     }
   }
-  return "openapi";
+  if (!site) return "openapi";
+  const segments: string[] = [];
+  for (let cursor: ReferencePath | undefined = site; cursor; cursor = cursor.parent) segments.push(cursor.key);
+  return segments.reverse().join(".");
 }
 
 function parsePreloadedDocument(contents: string): unknown {
