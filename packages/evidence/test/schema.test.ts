@@ -1,13 +1,9 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { evidenceRecordSchemaV1, validateEvidenceRecord } from "../src/index.js";
-import { STRUCTURAL_CODES, cases, materialize, pointers, records, removeAt, setAt, validateWithSchema } from "./fixtures.js";
+import { STRUCTURAL_CODES, cases, crossValueFailures, materialize, pointers, records, removeAt, schemaErrors, setAt, validatePlainSchema, validateWithSchema } from "./fixtures.js";
 
 const schemaFile = JSON.parse(readFileSync(new URL("../schema/evidence-record.v1.json", import.meta.url), "utf8"));
-
-function schemaErrors(): string {
-  return JSON.stringify(validateWithSchema.errors);
-}
 
 describe("exported JSON Schema", () => {
   it("is the same document as schema/evidence-record.v1.json", () => {
@@ -20,16 +16,22 @@ describe("exported JSON Schema", () => {
   });
 
   it.each(cases.valid.map((entry) => [entry.name, entry] as const))("accepts the valid case: %s", (_name, entry) => {
-    expect(validateWithSchema(materialize(entry).record), schemaErrors()).toBe(true);
+    const { record } = materialize(entry);
+    expect(validateWithSchema(record), schemaErrors(record)).toBe(true);
   });
 
   it.each(cases.invalid.map((entry) => [entry.name, entry] as const))("agrees on the invalid case: %s", (_name, entry) => {
     const { record } = materialize(entry);
-    expect(validateWithSchema(record), schemaErrors()).toBe(entry.schema === "accept");
-    // A record the schema accepts has failures only beyond structure, or a
-    // documented constraint JSON Schema cannot express.
+    expect(validateWithSchema(record), schemaErrors(record)).toBe(entry.schema === "accept");
+    // Every structural failure is rejected; every other failure is beyond structure.
     const structural = entry.expected.some((failure) => STRUCTURAL_CODES.has(failure.code));
-    expect(structural).toBe(entry.schema === "reject" || entry.schemaNote !== undefined);
+    expect(structural).toBe(entry.schema === "reject");
+    // Only a case with a schemaNote relies on a cross-value check: the plain
+    // schema accepts it, and the check reports the validator's failure path.
+    expect(validatePlainSchema(record), schemaErrors(record)).toBe(entry.schema === "accept" || entry.schemaNote !== undefined);
+    if (entry.schemaNote !== undefined) {
+      expect(crossValueFailures(record)).toEqual(entry.expected.map((failure) => failure.path));
+    }
   });
 
   const full = { ...cases.options, expectedCommit: "2".repeat(64) };
@@ -46,7 +48,7 @@ describe("exported JSON Schema", () => {
           const record = structuredClone(base);
           mutate(record, pointer);
           const structural = validateEvidenceRecord(record, options).failures.some((failure) => STRUCTURAL_CODES.has(failure.code));
-          expect(validateWithSchema(record), `${pointer} ${how}: ${schemaErrors()}`).toBe(!structural);
+          expect(validateWithSchema(record), `${pointer} ${how}: ${schemaErrors(record)}`).toBe(!structural);
         }
       }
     });

@@ -2,11 +2,14 @@
 // runtime agrees: Date.parse accepts forms RFC 3339 does not and rolls invalid
 // calendar dates over.
 //
-// Times keep every fraction digit, so comparisons are exact at any precision.
-// A leap second (second 60) is accepted in any minute, since the package keeps
-// no leap-second table. It sorts after second 59 of its minute and before the
-// next minute's second 0. Elapsed time counts on the POSIX scale, where second
-// 60 is the same second as the next minute's second 0.
+// Times keep every fraction digit, so comparisons are exact at any precision,
+// and every step is linear in the length of the fraction. A leap second
+// (second 60) is accepted only where UTC can insert one: at 23:59:60 UTC, after
+// the offset is applied, on the last day of a month. The package keeps no table
+// of the leap seconds that actually happened. A leap second sorts after second
+// 59 of its minute and before the next minute's second 0. Elapsed time counts on
+// the POSIX scale, where second 60 is the same second as the next minute's
+// second 0.
 
 const DATE_TIME =
   /^([0-9]{4})-([0-9]{2})-([0-9]{2})[Tt]([0-9]{2}):([0-9]{2}):([0-9]{2})(?:\.([0-9]+))?(?:[Zz]|([+-])([0-9]{2}):([0-9]{2}))$/;
@@ -83,8 +86,17 @@ function decimalOf(value: number): Decimal {
   return scale >= 0 ? { value: digits, scale } : { value: digits * pow10(-scale), scale: 0 };
 }
 
+/** Drops trailing zeros by scanning from the end, so a long fraction costs linear time. */
 function trimFraction(digits: string): string {
-  return digits.replace(/0+$/, "");
+  let end = digits.length;
+  while (end > 0 && digits.charCodeAt(end - 1) === 48) end -= 1;
+  return digits.slice(0, end);
+}
+
+/** True when a UTC minute is 23:59 on the last day of a month, the only minute UTC can end with second 60. */
+function isLeapSecondMinute(minutes: number): boolean {
+  const next = minutes + 1;
+  return next % 1440 === 0 && civilFromDays(next / 1440)[2] === 1;
 }
 
 /** Seconds since the epoch on the POSIX scale, times 10^scale (scale must cover the fraction). */
@@ -113,6 +125,7 @@ export function parseRfc3339(value: unknown): Instant | undefined {
   if (hour > 23 || minute > 59 || second > 60 || offsetHour > 23 || offsetMinute > 59) return undefined;
   const offset = (sign === "-" ? -1 : 1) * (offsetHour * 60 + offsetMinute);
   const minutes = daysFromCivil(year, month, day) * 1440 + hour * 60 + minute - offset;
+  if (second === 60 && !isLeapSecondMinute(minutes)) return undefined;
   return { minute: BigInt(minutes), second, fraction: trimFraction(match[7] ?? "") };
 }
 

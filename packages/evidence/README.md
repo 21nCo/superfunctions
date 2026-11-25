@@ -79,11 +79,21 @@ Every member is required unless marked optional. Unknown members are rejected at
 - `expiresAt`: an RFC 3339 date-time with an offset.
 - `supersedes` (optional): a record ID, or null.
 
-Date-times take a `Z` or numeric offset and an optional fraction of a second, on a real proleptic Gregorian calendar day; `T` and `Z` may be lowercase, as RFC 3339 allows. Times compare exactly, with every fraction digit, including a `now` given as an RFC 3339 string; a `Date` or epoch-milliseconds `now` is exact to the value given. A leap second (second 60) is accepted in any minute, since the package keeps no leap-second table: it sorts after second 59 of its minute and before the next minute's second 0. The policy limit (`completedAt` plus the class's hours) is computed on the POSIX time scale, where second 60 counts as the next minute's second 0, and takes the hours as the decimal JavaScript prints for them (so `0.1` is exactly 6 minutes).
+Date-times take a `Z` or numeric offset and an optional fraction of a second, on a real proleptic Gregorian calendar day; `T` and `Z` may be lowercase, as RFC 3339 allows. Times compare exactly, with every fraction digit, including a `now` given as an RFC 3339 string, and parsing stays linear in the length of the fraction. A `Date` or epoch-milliseconds `now` is taken as the decimal JavaScript prints for its milliseconds, the same way as policy hours, so `0.1` milliseconds is exactly 100 microseconds.
+
+A leap second (second 60) is accepted only where UTC can insert one: at 23:59:60 UTC, after applying the offset, on the last day of a month, so `2016-12-31T23:59:60Z` and `2017-01-01T00:59:60.5+01:00` are valid and `2026-11-01T10:00:60Z` or `2016-12-31T23:59:60+01:00` is `EVIDENCE_MALFORMED` (or `EVIDENCE_OPTIONS_INVALID` as `now`). The package keeps no table of the leap seconds that actually happened. A leap second sorts after second 59 of its minute and before the next minute's second 0. The policy limit (`completedAt` plus the class's hours) is computed on the POSIX time scale, where second 60 counts as the next minute's second 0, and takes the hours as the decimal JavaScript prints for them (so `0.1` is exactly 6 minutes). The verdict is the same on the UTC and POSIX scales; only `detail.maximumExpiresAt` is written on the POSIX scale, so it never shows second 60.
 
 ## JSON Schema
 
-The JSON Schema (draft 2020-12, `$id` `urn:superfunctions:evidence-record:v1`) is exported as `evidenceRecordSchemaV1` (frozen) and as the file `@superfunctions/evidence/schema/evidence-record.v1.json`. It describes the same format, except for two rules JSON Schema cannot express, which only `validateEvidenceRecord` enforces: unique `artifactHashes[].path` values and `startedAt` not later than `completedAt`. The schema checks date-times with a pattern rather than `format`, so validators reject malformed dates and days a month does not have (such as 30 February, or 29 February 2100) without a format plugin.
+The JSON Schema (draft 2020-12, `$id` `urn:superfunctions:evidence-record:v1`) is exported as `evidenceRecordSchemaV1` (frozen) and as the file `@superfunctions/evidence/schema/evidence-record.v1.json`. The schema checks date-times with a pattern rather than `format`, so validators reject malformed dates and days a month does not have (such as 30 February, or 29 February 2100) without a format plugin.
+
+The plain schema cannot express three rules, which `validateEvidenceRecord` enforces. A consumer that validates with a JSON Schema validator must check them next to the schema, as this package's schema agreement tests do:
+
+- Each `source.artifactHashes[].path` is unique within the record (exact string comparison).
+- `timing.startedAt` is not later than `timing.completedAt`, compared as instants with every fraction digit.
+- A date-time with second 60 at a nonzero offset falls at 23:59:60 UTC on the last day of a month. The pattern enforces this at `Z`, `+00:00` and `-00:00`, but cannot apply other offsets.
+
+Ajv 8 misses a repeated `"__proto__"` string in `uniqueItems` (for example `subjectIds: ["__proto__", "__proto__"]`) and accepts the record. That is an Ajv defect; the schema is correct, and `validateEvidenceRecord` rejects the duplicate.
 
 ## Not in this version
 

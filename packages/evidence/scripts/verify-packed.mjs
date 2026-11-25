@@ -15,7 +15,6 @@ import { fileURLToPath } from "node:url";
 import { runInNewContext } from "node:vm";
 
 const packageDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const workdir = realpathSync(mkdtempSync(path.join(tmpdir(), "evidence-packed-")));
 const keep = process.argv.includes("--keep");
 // Resolve the build tools the way the package's own scripts do: from the
 // package, falling back to a hoisted workspace install above it.
@@ -62,6 +61,8 @@ const record = ${JSON.stringify(record)};
 globalThis.__evidence = { schemaId: evidenceRecordSchemaV1.$id, result: validateEvidenceRecord(record, ${JSON.stringify(options)}) };
 `;
 
+// Created just before the try, so the finally always removes it.
+const workdir = realpathSync(mkdtempSync(path.join(tmpdir(), "evidence-packed-")));
 try {
   run("npm", ["run", "build"], packageDir);
   const packed = JSON.parse(run("npm", ["pack", "--json", "--pack-destination", workdir], packageDir));

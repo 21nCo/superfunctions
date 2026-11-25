@@ -79,6 +79,11 @@ describe("invalid records", () => {
     expect(summary(validateEvidenceRecord(record, options))).toEqual([{ code: "EVIDENCE_MALFORMED", path: "/__proto__" }]);
   });
 
+  it("rejects a repeated __proto__ subject ID, which Ajv's uniqueItems misses", () => {
+    const record = { ...(records.minimal as object), subjectIds: ["__proto__", "__proto__"] };
+    expect(summary(validateEvidenceRecord(record, options))).toEqual([{ code: "EVIDENCE_MALFORMED", path: "/subjectIds/1" }]);
+  });
+
   it("treats a member whose value is undefined as absent", () => {
     const record = { ...(records.minimal as object), recordId: undefined, extra: undefined };
     expect(summary(validateEvidenceRecord(record, options))).toEqual([{ code: "EVIDENCE_MISSING_FIELD", path: "/recordId" }]);
@@ -113,6 +118,8 @@ describe("options", () => {
     ["now an invalid Date", { ...options, now: new Date("not a date") }, ["now"]],
     ["now without an offset", { ...options, now: "2026-11-01T12:00:00" }, ["now"]],
     ["now not a date-time", { ...options, now: "yesterday" }, ["now"]],
+    ["now a leap second outside 23:59 UTC", { ...options, now: "2026-11-01T12:00:60Z" }, ["now"]],
+    ["now a leap second at an offset that is not 23:59 UTC", { ...options, now: "2016-12-31T23:59:60+01:00" }, ["now"]],
     ["now a plain object", { ...options, now: {} }, ["now"]],
     ["now an object claiming to be a Date", { ...options, now: { [Symbol.toStringTag]: "Date", getTime: () => 0 } }, ["now"]],
     ["expiryPolicy missing", { ...options, expiryPolicy: undefined }, ["expiryPolicy"]],
@@ -132,6 +139,25 @@ describe("options", () => {
         failures: [{ code: "EVIDENCE_OPTIONS_INVALID", detail: { invalid: names } }],
       });
     }
+  });
+
+  it("compares a fraction of about 100000 digits exactly and in linear time", () => {
+    // A trailing-zero trim that backtracks would take minutes on these.
+    const tiny = `${"0".repeat(99_999)}1`;
+    const record = structuredClone(records.minimal) as object;
+    setAt(record, "/timing/completedAt", `2026-11-01T10:00:00.${tiny}Z`);
+    setAt(record, "/expiresAt", `2026-11-02T10:00:00.${tiny}Z`);
+    const started = performance.now();
+    expect(validateEvidenceRecord(record, { ...options, now: `2026-11-01T10:00:00.${tiny}Z` })).toEqual({ ok: true, failures: [] });
+    expect(summary(validateEvidenceRecord(record, { ...options, now: `2026-11-01T10:00:00.${tiny}1Z` }))).toEqual([]);
+    expect(summary(validateEvidenceRecord(record, { ...options, now: `2026-11-01T10:00:00.${"0".repeat(99_999)}0Z` }))).toEqual([
+      { code: "EVIDENCE_COMPLETED_IN_FUTURE", path: "/timing/completedAt" },
+    ]);
+    setAt(record, "/expiresAt", `2026-11-02T10:00:00.${"0".repeat(99_999)}2Z`);
+    expect(summary(validateEvidenceRecord(record, { ...options, now: `2026-11-01T10:00:00.${tiny}Z` }))).toEqual([
+      { code: "EVIDENCE_EXPIRY_EXCEEDS_POLICY", path: "/expiresAt" },
+    ]);
+    expect(performance.now() - started).toBeLessThan(500);
   });
 
   it("accepts a leap second as now", () => {

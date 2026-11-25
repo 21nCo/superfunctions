@@ -14,7 +14,7 @@ export const evidenceRecordSchemaV1 = deepFreeze({
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:superfunctions:evidence-record:v1",
   "title": "Superfunctions evidence record v1",
-  "description": "A source-bound evidence record. Dates are RFC 3339 date-times with an offset. validateEvidenceRecord also enforces what JSON Schema cannot express: unique artifactHashes[].path values and startedAt <= completedAt.",
+  "description": "A source-bound evidence record. Dates are RFC 3339 date-times with an offset. validateEvidenceRecord also enforces three rules this schema cannot express: unique artifactHashes[].path values, startedAt <= completedAt, and a leap second at a nonzero offset falling at 23:59:60 UTC on the last day of a month.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -206,9 +206,9 @@ export const evidenceRecordSchemaV1 = deepFreeze({
       "pattern": "^[0-9a-f]{64}$"
     },
     "dateTime": {
-      "description": "An RFC 3339 date-time with a Z or numeric offset on a real proleptic Gregorian calendar day. A leap second (second 60) is accepted in any minute.",
+      "description": "An RFC 3339 date-time with a Z or numeric offset on a real proleptic Gregorian calendar day. A leap second (second 60) is accepted only at 23:59:60 UTC on the last day of a month. The pattern enforces that at Z, +00:00 and -00:00; at any other offset it accepts second 60 in any minute, and validateEvidenceRecord applies the offset and enforces it.",
       "type": "string",
-      "pattern": "^(?:[0-9]{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12][0-9]|3[01])|(?:0[469]|11)-(?:0[1-9]|[12][0-9]|30)|02-(?:0[1-9]|1[0-9]|2[0-8]))|(?:[0-9]{2}(?:0[48]|[2468][048]|[13579][26])|(?:0[048]|[2468][048]|[13579][26])00)-02-29)[Tt](?:[01][0-9]|2[0-3]):[0-5][0-9]:(?:[0-5][0-9]|60)(?:\\.[0-9]+)?(?:[Zz]|[+-](?:[01][0-9]|2[0-3]):[0-5][0-9])$"
+      "pattern": "^(?:(?:[0-9]{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12][0-9]|3[01])|(?:0[469]|11)-(?:0[1-9]|[12][0-9]|30)|02-(?:0[1-9]|1[0-9]|2[0-8]))|(?:[0-9]{2}(?:0[48]|[2468][048]|[13579][26])|(?:0[048]|[2468][048]|[13579][26])00)-02-29)[Tt](?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\\.[0-9]+)?(?:[Zz]|[+-](?:[01][0-9]|2[0-3]):[0-5][0-9])|(?:[0-9]{4}-(?:(?:0[13578]|1[02])-31|(?:0[469]|11)-30)|(?!(?:[0-9]{2}(?:0[48]|[2468][048]|[13579][26])|(?:0[048]|[2468][048]|[13579][26])00)-)[0-9]{4}-02-28|(?:[0-9]{2}(?:0[48]|[2468][048]|[13579][26])|(?:0[048]|[2468][048]|[13579][26])00)-02-29)[Tt]23:59:60(?:\\.[0-9]+)?(?:[Zz]|[+-]00:00)|(?:[0-9]{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12][0-9]|3[01])|(?:0[469]|11)-(?:0[1-9]|[12][0-9]|30)|02-(?:0[1-9]|1[0-9]|2[0-8]))|(?:[0-9]{2}(?:0[48]|[2468][048]|[13579][26])|(?:0[048]|[2468][048]|[13579][26])00)-02-29)[Tt](?:[01][0-9]|2[0-3]):[0-5][0-9]:60(?:\\.[0-9]+)?[+-](?!00:00)(?:[01][0-9]|2[0-3]):[0-5][0-9])$"
     }
   }
 } as const);
