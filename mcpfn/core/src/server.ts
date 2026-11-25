@@ -109,9 +109,10 @@ export type McpFnWebStandardHandlerOptions<TContext> = ConstructorParameters<
   /**
    * Requests carrying an `Origin` header are refused with HTTP 403 unless the
    * origin is listed in `allowedOrigins`, or it is a loopback origin (such as
-   * `http://localhost:3000`) equal to the request's own `Host`. This blocks
-   * DNS-rebinding pages from reaching a local server; non-browser clients send
-   * no `Origin` and are unaffected. Defaults to `"reject-unlisted"`. `"off"`
+   * `http://localhost:3000`) equal to the request's own `Host`. This stops
+   * DNS-rebinding pages' requests that carry `Origin` (browsers may omit it
+   * on same-origin GET), so a local server should also accept only its own
+   * `Host` names; non-browser clients send no `Origin` and are unaffected. Defaults to `"reject-unlisted"`. `"off"`
    * disables the check, and setting `enableDnsRebindingProtection` (true or
    * false) hands Host/Origin checking to the SDK transport instead.
    */
@@ -166,6 +167,8 @@ function originAllowed(
   try {
     const url = new URL(request.url);
     const host = request.headers.get("host") ?? url.host;
+    // Only a bare host name (or bracketed IPv6) with an optional port.
+    if (!/^(?:\[[0-9a-f:.]+\]|[a-z0-9.-]+)(?::\d{1,5})?$/i.test(host)) return false;
     return new URL(`${url.protocol}//${host}`).origin === parsed.origin;
   } catch {
     return false;

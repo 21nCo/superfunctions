@@ -186,7 +186,7 @@ Task support is declared with `execution.taskSupport` and a `taskHandler`; a tas
 
 HTTP security defaults: a request carrying an `Origin` header is refused with
 HTTP 403 unless `allowedOrigins` lists it or it is a loopback origin equal to the
-request's `Host` (`originPolicy: "off"` disables this; setting
+request's `Host`; a browser may omit `Origin` on a same-origin GET, so local servers should also accept only their own `Host` names (`originPolicy: "off"` disables this; setting
 `enableDnsRebindingProtection` hands Host and Origin checks to the SDK
 transport). A session belongs to the principal that created it
 (`sessionPrincipal`, by default the `authInfo.extra.subject` and client ID, or the token itself when the verifier sets no subject, so set `extra.subject` for sessions to outlive token refresh); a request

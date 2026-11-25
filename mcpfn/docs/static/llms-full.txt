@@ -103,7 +103,7 @@ Initialization metadata is available only to sessionful client-profile hooks. St
 
 ## Local servers and HTTP sessions
 
-A Streamable HTTP server on `127.0.0.1` or `localhost` is reachable from any web page through DNS rebinding: the page's own host name resolves to the loopback address, so the browser treats the request as same-origin. `createWebStandardHandler()` refuses requests whose `Origin` header is not listed in `allowedOrigins` (a loopback origin equal to the request's `Host` is accepted), which covers browsers. Also check `Host` in front of the handler and accept only the names the server listens on, or pass `enableDnsRebindingProtection: true` with `allowedHosts` (and `allowedOrigins`) so the SDK transport does both checks. Cap request bodies before building the Web `Request`. `examples/calculator-http-server.ts` does all three.
+A Streamable HTTP server on `127.0.0.1` or `localhost` is reachable from any web page through DNS rebinding: the page's own host name resolves to the loopback address, so the browser treats the request as same-origin. `createWebStandardHandler()` refuses requests whose `Origin` header is not listed in `allowedOrigins` (a loopback origin equal to the request's `Host` is accepted), which covers browser requests that carry `Origin`. Browsers can omit `Origin` on a same-origin GET, so also check `Host` in front of the handler and accept only the names the server listens on, or pass `enableDnsRebindingProtection: true` with `allowedHosts` (and `allowedOrigins`) so the SDK transport does both checks. Cap request bodies before building the Web `Request`. `examples/calculator-http-server.ts` does all three.
 
 Sessionful handlers bind each session to the principal that created it and answer 404 to a request from anyone else, so a leaked `mcp-session-id` is not enough to read another user's event stream or end their session. By default the principal is the subject (`authInfo.extra.subject`) and client ID of the request's `authInfo`, or the access token itself when the verifier sets no subject (a refreshed token then needs a new session); supply `sessionPrincipal` to derive it from other trusted request data (never the body). Authenticate `initialize` so anonymous callers cannot create sessions.
 
@@ -880,7 +880,7 @@ Task support is declared with `execution.taskSupport` and a `taskHandler`; a tas
 
 HTTP security defaults: a request carrying an `Origin` header is refused with
 HTTP 403 unless `allowedOrigins` lists it or it is a loopback origin equal to the
-request's `Host` (`originPolicy: "off"` disables this; setting
+request's `Host`; a browser may omit `Origin` on a same-origin GET, so local servers should also accept only their own `Host` names (`originPolicy: "off"` disables this; setting
 `enableDnsRebindingProtection` hands Host and Origin checks to the SDK
 transport). A session belongs to the principal that created it
 (`sessionPrincipal`, by default the `authInfo.extra.subject` and client ID, or the token itself when the verifier sets no subject, so set `extra.subject` for sessions to outlive token refresh); a request
