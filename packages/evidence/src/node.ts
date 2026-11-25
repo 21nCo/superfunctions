@@ -54,6 +54,15 @@ function fromError(error: unknown, symlinkAt?: string): ArtifactProblem {
   return { code: "EVIDENCE_ARTIFACT_UNREADABLE", detail: { reason: code } };
 }
 
+// A lone UTF-16 surrogate (what String.prototype.isWellFormed rejects). Node
+// encodes one as U+FFFD, so such a path would name a different file on disk.
+const LONE_SURROGATE = /\p{Surrogate}/u;
+
+/** True when `value` is well-formed Unicode and so reaches the filesystem unchanged. */
+function isWellFormed(value: string): boolean {
+  return !LONE_SURROGATE.test(value);
+}
+
 /** True when `real` is below `root`; both are real paths. */
 function isUnder(real: string, root: string): boolean {
   const prefix = root.endsWith(path.sep) ? root : root + path.sep;
@@ -110,6 +119,8 @@ async function hashFile(file: string, relative: string): Promise<ArtifactProblem
 
 /** Returns the artifact's SHA-256, or why it cannot be trusted. */
 async function checkArtifact(root: string, artifact: EvidenceArtifactHash): Promise<ArtifactProblem | string> {
+  // No file can be named by a path the filesystem cannot encode, so nothing is looked up.
+  if (!isWellFormed(artifact.path)) return { code: "EVIDENCE_ARTIFACT_MISSING", detail: { reason: "path is not well-formed Unicode" } };
   const found = await walk(root, artifact.path);
   if (isProblem(found)) return found;
   if (!found.isFile()) return { code: "EVIDENCE_ARTIFACT_NOT_REGULAR_FILE" };
@@ -127,8 +138,12 @@ async function checkArtifact(root: string, artifact: EvidenceArtifactHash): Prom
 
 /** Resolves `artifactRoot` once; undefined when it is not an absolute path to an existing directory. */
 async function resolveRoot(artifactRoot: unknown): Promise<string | undefined> {
-  if (typeof artifactRoot !== "string" || artifactRoot.includes("\u0000") || !path.isAbsolute(artifactRoot)) return undefined;
+  if (typeof artifactRoot !== "string" || artifactRoot.includes("\u0000") || !isWellFormed(artifactRoot) || !path.isAbsolute(artifactRoot)) return undefined;
   try {
+    // Stat the path as supplied, so the OS walks it as written ("file.txt/.." is
+    // not a directory even though realpath would collapse it); stat still
+    // follows a symlinked root.
+    if (!(await fs.stat(artifactRoot)).isDirectory()) return undefined;
     const real = await fs.realpath(artifactRoot);
     return (await fs.stat(real)).isDirectory() ? real : undefined;
   } catch {

@@ -4,7 +4,7 @@ import { execFileSync } from "node:child_process";
 import { chmodSync, mkdirSync, promises as fsp, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { EVIDENCE_FAILURE_CODES } from "../src/index.js";
+import { EVIDENCE_FAILURE_CODES, validateEvidenceRecord } from "../src/index.js";
 import { verifyEvidence } from "../src/node.js";
 import { makeTree, optionsFor, permissionsApply, recordWith, removeTrees, sha256, summary, writeArtifact } from "./artifacts.js";
 import { records } from "./fixtures.js";
@@ -230,9 +230,9 @@ describe("verifyEvidence: what it reads", () => {
     expect(calls.open).not.toHaveBeenCalled();
     expect(calls.lstat).not.toHaveBeenCalled();
     expect(calls.readFile).not.toHaveBeenCalled();
-    // Only the root itself is resolved, to check the option.
+    // Only the root itself is checked, as supplied and as resolved.
     expect(calls.realpath.mock.calls.map(([target]) => target)).toEqual([root]);
-    expect(calls.stat.mock.calls.map(([target]) => target)).toEqual([realpathSync(root)]);
+    expect(calls.stat.mock.calls.map(([target]) => target)).toEqual([root, realpathSync(root)]);
   });
 
   it("reads no artifact for a malformed record that also lists a changed artifact", async () => {
@@ -242,6 +242,34 @@ describe("verifyEvidence: what it reads", () => {
     const result = await verifyEvidence({ ...record, recordId: "" }, optionsFor(root));
     expect(summary(result)).toEqual([{ code: "EVIDENCE_MALFORMED", path: "/recordId" }]);
     expect(calls.open).not.toHaveBeenCalled();
+  });
+});
+
+describe("verifyEvidence: artifact paths that are not well-formed Unicode", () => {
+  it.each([
+    ["a lone high surrogate", "r\ud800.json"],
+    ["a lone low surrogate", "r\udc00.json"],
+  ])("reports %s as missing without touching the filesystem, though its U+FFFD spelling exists", async (_name, artifactPath) => {
+    const root = makeTree();
+    const lookalike = writeArtifact(root, "r\ufffd.json", "bytes\n");
+    const record = recordWith([{ path: artifactPath, sha256: lookalike.sha256 }, lookalike]);
+    expect(validateEvidenceRecord(record, optionsFor(root))).toEqual({ ok: true, failures: [] });
+    const open = vi.spyOn(fsp, "open");
+    const lstat = vi.spyOn(fsp, "lstat");
+    const result = await verifyEvidence(record, optionsFor(root));
+    expect(result).toEqual({
+      ok: false,
+      failures: [{ code: "EVIDENCE_ARTIFACT_MISSING", path: artifactPointer(0, "path"), detail: { artifact: artifactPath, reason: "path is not well-formed Unicode" } }],
+    });
+    // Only the well-formed U+FFFD entry is read.
+    expect(lstat).toHaveBeenCalledTimes(1);
+    expect(open).toHaveBeenCalledTimes(1);
+  });
+
+  it("verifies a path that contains a literal U+FFFD or a surrogate pair", async () => {
+    const root = makeTree();
+    const record = recordWith([writeArtifact(root, "r\ufffd.json", "a"), writeArtifact(root, "emoji-\ud83d\ude00/x.json", "b")]);
+    expect(await verifyEvidence(record, optionsFor(root))).toEqual({ ok: true, failures: [] });
   });
 });
 
@@ -262,6 +290,28 @@ describe("verifyEvidence: artifactRoot", () => {
     writeArtifact(tree, "file.txt", "x");
     const result = await verifyEvidence(passingTree().record, optionsFor(path.join(tree, "file.txt")));
     expect(result.failures).toEqual([{ code: "EVIDENCE_OPTIONS_INVALID", detail: { invalid: ["artifactRoot"] } }]);
+  });
+
+  it("rejects a root reached through a regular file, which realpath alone would collapse to its directory", async () => {
+    const tree = makeTree();
+    const { root, record } = passingTree();
+    writeArtifact(tree, "file.txt", "x");
+    // String concatenation keeps "file.txt/.." as written; path.join would normalize it away.
+    const result = await verifyEvidence(record, optionsFor(`${root}/reports/unit.json/..`));
+    expect(result).toEqual({ ok: false, failures: [{ code: "EVIDENCE_OPTIONS_INVALID", detail: { invalid: ["artifactRoot"] } }] });
+    expect((await verifyEvidence(record, optionsFor(`${tree}/file.txt/..`))).failures).toEqual([{ code: "EVIDENCE_OPTIONS_INVALID", detail: { invalid: ["artifactRoot"] } }]);
+    // ".." through a real directory is still a directory as the OS walks it.
+    expect(await verifyEvidence(record, optionsFor(`${root}/reports/..`))).toEqual({ ok: true, failures: [] });
+  });
+
+  it("rejects a root that is not well-formed Unicode, even when its U+FFFD spelling is a directory", async () => {
+    const tree = makeTree();
+    const replaced = path.join(tree, "r\ufffd");
+    writeArtifact(replaced, "reports/unit.json", "x");
+    const record = recordWith([{ path: "reports/unit.json", sha256: sha256("x") }]);
+    expect(await verifyEvidence(record, optionsFor(replaced))).toEqual({ ok: true, failures: [] });
+    const result = await verifyEvidence(record, optionsFor(`${tree}/r\ud800`));
+    expect(result).toEqual({ ok: false, failures: [{ code: "EVIDENCE_OPTIONS_INVALID", detail: { invalid: ["artifactRoot"] } }] });
   });
 
   it("names artifactRoot with the other invalid options and returns no record failures", async () => {

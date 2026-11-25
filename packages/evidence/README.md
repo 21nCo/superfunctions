@@ -61,7 +61,7 @@ const result = await verifyEvidence(JSON.parse(text), {
 
 `verifyEvidence(record, options)` runs `validateEvidenceRecord` with the same options, then re-hashes every `source.artifactHashes` entry under `artifactRoot` and resolves to the same `{ ok, failures }` shape, with the record's failures first and then the artifacts' failures in list order.
 
-- `artifactRoot` must be an absolute path to an existing directory; otherwise the result is `EVIDENCE_OPTIONS_INVALID` alone, with `artifactRoot` in `detail.invalid` (after any other invalid option names). The root is resolved once with `realpath`, so the root may itself be a symlink or sit below one.
+- `artifactRoot` must be an absolute, well-formed Unicode path that names an existing directory as the operating system walks it as written (so `/checkout/file.txt/..` is refused); otherwise the result is `EVIDENCE_OPTIONS_INVALID` alone, with `artifactRoot` in `detail.invalid` (after any other invalid option names). The root is then resolved once with `realpath`, so the root may itself be a symlink or sit below one.
 - When the record is missing or has a structural failure (`EVIDENCE_MISSING`, `EVIDENCE_MISSING_FIELD` or `EVIDENCE_MALFORMED`), or an option is invalid, no artifact is read. Otherwise every artifact is checked, also when the record has other failures such as `EVIDENCE_COMMIT_MISMATCH`.
 - The artifact list is copied when the record is validated, before any file is touched, so changing the record object while the promise is pending does not change what is checked.
 - An artifact is hashed with streaming SHA-256 over its raw bytes, with no size limit, one file at a time. `format` is recorded but never interpreted: a catchfn evidence event file is bytes to this package.
@@ -69,7 +69,7 @@ const result = await verifyEvidence(JSON.parse(text), {
 
 | Code | When | `path` | `detail` |
 | --- | --- | --- | --- |
-| `EVIDENCE_ARTIFACT_MISSING` | Nothing exists at the path, or a component before the last is not a directory | `/source/artifactHashes/<i>/path` | `artifact` |
+| `EVIDENCE_ARTIFACT_MISSING` | Nothing exists at the path, a component before the last is not a directory, or the path is not well-formed Unicode (it has a lone surrogate, which the filesystem cannot name, so nothing is looked up) | `/source/artifactHashes/<i>/path` | `artifact`, and `reason` for a path that is not well-formed |
 | `EVIDENCE_ARTIFACT_NOT_REGULAR_FILE` | The path names a directory, FIFO, socket or device | `/source/artifactHashes/<i>/path` | `artifact` |
 | `EVIDENCE_ARTIFACT_SYMLINK` | The file or a directory between the root and it is a symlink | `/source/artifactHashes/<i>/path` | `artifact`, `symlink`: the path up to the link |
 | `EVIDENCE_ARTIFACT_OUTSIDE_ROOT` | The file's real path is not under the root's real path | `/source/artifactHashes/<i>/path` | `artifact` |
