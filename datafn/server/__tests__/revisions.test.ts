@@ -175,6 +175,59 @@ describe("DATA-41 revisions: every committed write bumps", () => {
     expect(await rev("comment", "comment:1")).toEqual({ rev: 2, deleted: true });
   });
 
+  it("orders a record's revisions by commit, not by the sequences a batch reserved", async () => {
+    const database = memoryAdapter();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    let reached!: () => void;
+    const atGate = new Promise<void>((resolve) => (reached = resolve));
+    // The memory adapter serializes whole transactions; without them a push
+    // keeps its reserved sequences across mutations, so requests interleave.
+    // Change rows for task:y wait at a gate.
+    const gated = (method: "create" | "createMany") => async (table: string, data: any) => {
+      const rows = Array.isArray(data) ? data : [data];
+      if (table === "__datafn_changes" && rows.some((row: any) => row.record_id === "task:y")) {
+        reached();
+        await gate;
+      }
+      return (database.internal as any)[method](table, data);
+    };
+    const nonTransactional = {
+      ...database,
+      capabilities: { ...database.capabilities, transactions: { supported: false, nested: false } },
+      internal: new Proxy(database.internal, {
+        get: (target, property, receiver) =>
+          property === "create" || property === "createMany"
+            ? gated(property)
+            : Reflect.get(target, property, receiver),
+      }),
+    } as Adapter;
+    const { send, push, rev } = await serve({ database: nonTransactional });
+    await push({ resource: "task", operation: "insert", id: "task:x", record: { title: "x" } });
+
+    // A reserves two sequences, records task:y and pauses before writing task:x.
+    const batch = (["a1", "a2"] as const).map((mutationId, i) => ({
+      version: 1, clientId: "client:a", mutationId, resource: "task",
+      ...(i === 0
+        ? { operation: "insert", id: "task:y", record: { title: "y" } }
+        : { operation: "merge", id: "task:x", record: { title: "from-a" } }),
+    }));
+    const pushA = send("push", { clientId: "client:a", mutations: batch });
+    await atGate;
+    await push({ resource: "task", operation: "merge", id: "task:x", record: { title: "from-b" } }, "client:b");
+    release();
+    expect((await pushA).body.result.ok).toBe(true);
+
+    const changes = (await database.internal.findMany("__datafn_changes", []))
+      .filter((row) => row.record_id === "task:x" && row.op === "merge")
+      .sort((left, right) => Number(left.server_seq) - Number(right.server_seq));
+    const [fromA, fromB] = changes.map((row) => ({ title: JSON.parse(String(row.record)).title, rev: row.rev }));
+    // A's change has the lower (reserved) sequence but committed last.
+    expect(fromA).toEqual({ title: "from-a", rev: 3 });
+    expect(fromB).toEqual({ title: "from-b", rev: 2 });
+    expect(await rev("task", "task:x")).toEqual({ rev: 3, deleted: false });
+  });
+
   it("keeps revisions across change-log pruning and continues from the tombstone", async () => {
     const { database, push, rev } = await serve();
     await push({ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } });
