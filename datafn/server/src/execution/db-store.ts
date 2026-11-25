@@ -22,6 +22,7 @@ import {
 import type { DatafnLogger } from "../logger.js";
 import type { DatafnRelationSchema, DatafnSchema } from "../core-types.js";
 import {
+  hasResourceReadPolicy,
   isNamespaceOwnerActor,
   isPrivateShareableResource,
   resolveAccessLevel,
@@ -103,7 +104,13 @@ export class DbDataStore implements DataStore {
     namespace: string,
     actorId: string | undefined,
     logger?: DatafnLogger,
+    allowUnknownResources = true,
   ): Promise<void> {
+    if (!allowUnknownResources) {
+      for (const resource of store.recordsCache.keys()) {
+        if (!hasResourceReadPolicy(schema, resource)) store.recordsCache.delete(resource);
+      }
+    }
     // The namespace owner sees every row; skip the per-row access lookups.
     if (isNamespaceOwnerActor(actorId, namespace)) {
       return;
@@ -210,6 +217,7 @@ export class DbDataStore implements DataStore {
     namespace: string = "datafn",
     logger?: DatafnLogger,
     actorId?: string,
+    allowUnknownResources = true,
   ): Promise<DbDataStore> {
     const store = new DbDataStore();
 
@@ -224,6 +232,7 @@ export class DbDataStore implements DataStore {
         namespace,
         actorId,
         logger,
+        allowUnknownResources,
       );
       return store;
     }
@@ -367,6 +376,7 @@ export class DbDataStore implements DataStore {
       namespace,
       actorId,
       logger,
+      allowUnknownResources,
     );
     return store;
   }
@@ -677,6 +687,7 @@ export class DbDataStore implements DataStore {
     preFilterWhere?: WhereClause[],
     logger?: DatafnLogger,
     actorId?: string,
+    allowUnknownResources = true,
   ): Promise<DbDataStore> {
     const resourcesToLoad = new Set<string>([query.resource]);
     const relationsToLoad = new Set<string>();
@@ -1071,6 +1082,7 @@ export class DbDataStore implements DataStore {
       namespace,
       actorId,
       logger,
+      allowUnknownResources,
     );
     return store;
   }

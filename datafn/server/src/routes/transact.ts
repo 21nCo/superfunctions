@@ -158,6 +158,7 @@ export function createTransactHandler(
         sequenceStore,
         plugins,
         logger,
+        handlerOpts?.allowUnknownResources === true,
         );
 
         if (!result.ok && result.error) {

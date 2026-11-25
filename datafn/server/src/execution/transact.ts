@@ -57,6 +57,7 @@ export async function executeTransaction(
   sequenceStore: SequenceStore | undefined,
   plugins: DatafnPlugin[] = [],
   logger?: DatafnLogger,
+  allowUnknownResources = true,
 ): Promise<TransactResult> {
   const steps = request.steps;
   const isAtomic = request.atomic !== false; // Default true
@@ -195,6 +196,7 @@ export async function executeTransaction(
         undefined,
         logger,
         actorId,
+        allowUnknownResources,
       );
       // Execute query
       try {

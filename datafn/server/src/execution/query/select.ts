@@ -593,6 +593,14 @@ function relationReturnsSingleRecord(match: DatafnRelationMatch): boolean {
     (match.relation.type === "one-many" && match.direction === "inverse");
 }
 
+function needsQualifiedForeignKeyProjection(match: DatafnRelationMatch): boolean {
+  const { relation } = match;
+  return isPolymorphicForeignKey(relation) || (
+    (relation.type === "many-one" || relation.type === "one-many") &&
+    !relationReturnsSingleRecord(match) && endpointList(targetEndpointFor(match)).length > 1
+  );
+}
+
 function expandQualifiedRecords(
   record: Record<string, unknown>,
   match: DatafnRelationMatch,
@@ -604,7 +612,7 @@ function expandQualifiedRecords(
   if (match.relation.type === "many-many") {
     return expandManyManyRecords(record, match, schema, store, resource, metadata);
   }
-  if (!isPolymorphicForeignKey(match.relation)) return undefined;
+  if (!needsQualifiedForeignKeyProjection(match)) return undefined;
   return getForeignKeyRelatedRecords(record, match, store, resource, schema)
     .filter(({ record }) => filterAncestorInactiveRecords([record], match, metadata).length > 0)
     .sort((a, b) => String(a.record.id || "").localeCompare(String(b.record.id || "")));
@@ -746,7 +754,7 @@ function expandRelation(
   const relation = match.relation;
   const isForward = match.direction === "forward";
   const currentResource = resource ?? firstEndpoint(match.direction === "forward" ? relation.from : relation.to);
-  if (isPolymorphicForeignKey(relation)) {
+  if (needsQualifiedForeignKeyProjection(match)) {
     const records = expandQualifiedRecords(record, match, schema, store, currentResource, metadata) ?? [];
     const materialized = records.map(({ record, resource }) =>
       materializeRelatedRecord(record, match, ["*"], schema, store, omit, metadata, resource),

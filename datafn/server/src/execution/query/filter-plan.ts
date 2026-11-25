@@ -37,6 +37,7 @@ import {
 } from "@datafn/core";
 import type { DatafnSchema } from "../../core-types.js";
 import {
+  hasResourceReadPolicy,
   isNamespaceOwnerActor,
   isPrivateShareableResource,
   resolveAccessLevel,
@@ -92,6 +93,7 @@ export interface FilterPlanContext {
   db: Adapter;
   namespace: string;
   actorId?: string;
+  allowUnknownResources?: boolean;
 }
 
 /**
@@ -563,6 +565,7 @@ async function findMatchingRelated(
   const matching = new Map<string, Record<string, unknown>[]>();
   let total = 0;
   for (const [resource, conjuncts] of targets) {
+    if (ctx.allowUnknownResources === false && !hasResourceReadPolicy(schema, resource)) continue;
     const branches = expandBranches(conjuncts, extra);
     if (!branches) return null;
     const rows: Record<string, unknown>[] = [];

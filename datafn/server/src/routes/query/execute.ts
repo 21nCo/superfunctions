@@ -80,6 +80,7 @@ async function executeRelationQuery(
   logger?: DatafnLogger,
   timer?: ExecutionTimer | null,
   multiRegionRuntime?: DatafnMultiRegionRuntimeConfig | null,
+  allowUnknownResources = true,
 ): Promise<unknown> {
   const resource = query.resource as string;
   const relationName = query.relation as string;
@@ -132,6 +133,7 @@ async function executeRelationQuery(
     logger,
     timer,
     multiRegionRuntime,
+    { allowUnknownResources },
   );
   const anchorData =
     anchorResult &&
@@ -156,6 +158,7 @@ async function executeRelationQuery(
     namespace,
     logger,
     actorId,
+    allowUnknownResources,
   );
   const materialized = materializeSelect(
     anchorData[0],
@@ -198,8 +201,9 @@ export async function executeSingleQuery(
   logger?: DatafnLogger,
   timer?: ExecutionTimer | null,
   multiRegionRuntime?: DatafnMultiRegionRuntimeConfig | null,
-  timezoneNamespace: string = namespace,
+  options: { timezoneNamespace?: string; allowUnknownResources?: boolean } = {},
 ): Promise<unknown> {
+  const { timezoneNamespace = namespace, allowUnknownResources = true } = options;
   if (typeof query.relation === "string" && typeof query.id === "string") {
     return executeRelationQuery(
       query,
@@ -211,6 +215,7 @@ export async function executeSingleQuery(
       logger,
       timer,
       multiRegionRuntime,
+      allowUnknownResources,
     );
   }
 
@@ -229,8 +234,8 @@ export async function executeSingleQuery(
   if (strategy === "FULL_PUSHDOWN" || strategy === "PARTIAL_PUSHDOWN") {
     try {
       return strategy === "FULL_PUSHDOWN"
-        ? await executePushdownQuery(query as any, schema, db, namespace, actorId)
-        : await executePartialPushdownQuery(query as any, schema, db, namespace, actorId);
+        ? await executePushdownQuery(query as any, schema, db, namespace, actorId, allowUnknownResources)
+        : await executePartialPushdownQuery(query as any, schema, db, namespace, actorId, allowUnknownResources);
     } catch (error) {
       // A relation filter matched too many records to push down; evaluate
       // the query in memory below.
@@ -289,6 +294,7 @@ export async function executeSingleQuery(
     preFilterWhere,
     logger,
     actorId,
+    allowUnknownResources,
   );
 
   // Execute search query or regular query

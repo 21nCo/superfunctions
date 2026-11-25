@@ -119,7 +119,7 @@ const NODES = [
   { id: "node:8", label: "Golf", metaType: "", creationContext: null, mdParent: [] },
 ];
 
-async function createServer(options: { schema?: DatafnSchema } = {}) {
+async function createServer(options: { schema?: DatafnSchema; allowUnknownResources?: boolean } = {}) {
   const db = memoryAdapter();
   await db.initialize();
   const seed = (model: string, data: Record<string, unknown>) =>
@@ -151,7 +151,7 @@ async function createServer(options: { schema?: DatafnSchema } = {}) {
 
   const server = await createDatafnServer({
     debug: true,
-    allowUnknownResources: true,
+    allowUnknownResources: options.allowUnknownResources ?? true,
     schema: options.schema ?? SCHEMA,
     limits: { maxLimit: 100 },
     database: db,
@@ -172,6 +172,23 @@ async function query(server: Awaited<ReturnType<typeof createDatafnServer>>, bod
   );
   const json = (await res.json()) as Json;
   return { status: res.status, body: json };
+}
+
+async function expectQueryAndTransactData(
+  server: Awaited<ReturnType<typeof createDatafnServer>>,
+  request: Json,
+  data: Json[],
+) {
+  const standalone = await query(server, request);
+  const response = await server.router.handle(new Request("http://localhost/datafn/transact", {
+    method: "POST",
+    body: JSON.stringify({ atomic: false, steps: [{ query: { version: 1, ...request } }] }),
+  }));
+  const transaction = await response.json();
+  expect(standalone.status).toBe(200);
+  expect(response.status).toBe(200);
+  expect(standalone.body.result.data).toEqual(data);
+  expect(transaction.result.results[0].data).toEqual(data);
 }
 
 /** An always-true filter the adapter cannot express: forces in-memory evaluation. */
@@ -1114,6 +1131,60 @@ it("uses the same declared endpoint for legacy IDs in query and transact", async
     expect(response.status).toBe(200);
     expect(standalone.body.result.data[0]).toMatchObject(expected);
     expect(transaction.result.results[0].data).toEqual(standalone.body.result.data);
+  }
+});
+
+it("projects an inverse FK row under its actual owner's field policy", async () => {
+  const schema: DatafnSchema = {
+    ...SCHEMA,
+    resources: SCHEMA.resources.map((resource) => ({
+      ...resource,
+      permissions: { read: { fields: resource.name === "objective" ? ["label", "parentId"] : ["label"] } },
+    })),
+    relations: [...(SCHEMA.relations ?? []), {
+      type: "many-one",
+      from: ["node", "objective"],
+      to: "collection",
+      relation: "group",
+      inverse: "groupEntries",
+      fkField: "groupId",
+    }],
+  };
+  const { db, server } = await createServer({ schema, allowUnknownResources: false });
+  await db.create({ model: "objective", namespace: "datafn", data: {
+    id: "legacy-entry", label: "Goal", parentId: "objective:parent", groupId: "collection:home",
+  } });
+  await expectQueryAndTransactData(server, {
+    resource: "collection", filters: { id: "collection:home" }, select: ["id", "groupEntries.*"],
+  }, [{ id: "collection:home", groupEntries: [{ id: "legacy-entry", label: "Goal", parentId: "objective:parent" }] }]);
+});
+
+it("excludes related projections without a policy unless the server allows unknown resources", async () => {
+  const schema: DatafnSchema = {
+    ...SCHEMA,
+    resources: SCHEMA.resources.map((resource) => (resource.name === "objective"
+      ? resource
+      : { ...resource, permissions: { read: { fields: ["label"] } } })),
+    relations: [...(SCHEMA.relations ?? []), {
+      type: "many-one",
+      from: "task",
+      to: ["node", "objective"],
+      relation: "relatedItem",
+      inverse: "relatedTasks",
+      fkField: "itemId",
+      fkResourceField: "itemResource",
+    }],
+  };
+  for (const allowUnknownResources of [false, true]) {
+    const { db, server } = await createServer({ schema, allowUnknownResources });
+    await db.create({ model: "objective", namespace: "datafn", data: { id: "legacy-item", label: "Goal" } });
+    await db.create({ model: "task", namespace: "datafn", data: {
+      id: "task:linked", itemId: "legacy-item", itemResource: "objective",
+    } });
+    await expectQueryAndTransactData(server, {
+      resource: "task", filters: { id: "task:linked" }, select: ["id", "relatedItem.*"],
+    }, [{ id: "task:linked", relatedItem: allowUnknownResources ? { id: "legacy-item", label: "Goal" } : null }]);
+    await server.close();
   }
 });
 

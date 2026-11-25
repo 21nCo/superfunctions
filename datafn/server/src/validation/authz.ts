@@ -191,6 +191,11 @@ export function getReadableRelationFields(
   return new Set(["id", ...capabilityFields, ...getReadFields(policy)]);
 }
 
+export function hasResourceReadPolicy(schema: DatafnSchema, resourceName: string): boolean {
+  const resource = getResourceSchema(schema, resourceName);
+  return resource !== undefined && resolvePermissions(schema, resource) !== undefined;
+}
+
 /**
  * A relation of `resource` whose foreign key is stored on `resource` under
  * the relation's own name (e.g. a many-one `parent` with fkField "parent").

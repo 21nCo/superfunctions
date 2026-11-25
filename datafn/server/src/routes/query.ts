@@ -499,7 +499,7 @@ export function createQueryHandler(
         timer,
         multiRegionRuntime,
         // Timezone "user" means the viewer's timezone history, not the owner's.
-        namespace,
+        { timezoneNamespace: namespace, allowUnknownResources: handlerOpts?.allowUnknownResources === true },
       );
       if (
         result &&
@@ -876,6 +876,7 @@ export function createQueryHandler(
                   logger,
                   timer,
                   multiRegionRuntime,
+                  { allowUnknownResources: handlerOpts?.allowUnknownResources === true },
                 );
               }).then((result) => {
                 queryDurations.push(Date.now() - queryStart);
