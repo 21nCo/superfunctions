@@ -4,7 +4,7 @@
  * 
  * DO NOT EDIT MANUALLY
  * 
- * To regenerate: npx superfunctions generate-schema
+ * To regenerate: npx superfunctions generate-schema --dialect postgres
  */
 
 import { boolean, index, integer, json, pgTable, text, timestamp, uniqueIndex } from 'drizzle-orm/pg-core';
@@ -93,11 +93,13 @@ export const plugfn_workflows = pgTable(
   metadata: json('metadata'),
   name: text('name').notNull(),
   status: text('status').notNull(),
+  tenantId: text('tenant_id'),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull(),
   userId: text('user_id').notNull(),
   },
   (table) => ({
     idx_plugfn_workflows_status: index('idx_plugfn_workflows_status').on(table.status),
+    idx_plugfn_workflows_tenant_user: index('idx_plugfn_workflows_tenant_user').on(table.tenantId, table.userId),
     idx_plugfn_workflows_user_id: index('idx_plugfn_workflows_user_id').on(table.userId)
   })
 );
