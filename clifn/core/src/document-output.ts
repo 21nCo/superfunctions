@@ -351,14 +351,23 @@ function toDocumentError(thrown: unknown, budgets: Budgets): { text: JsonText; e
 export function createDocumentOutput(options: DocumentOutputOptions): DocumentOutput {
   // Read once, for the messages and the advisory warnings alike.
   const quiet = options.quiet ?? false;
-  // Messages keep the 'lines' JSON shape and the quiet and verbose rules; only their stream changes.
+  // Messages keep the 'lines' JSON shape and the quiet and verbose rules; only their stream changes. Like every other
+  // stderr line in this mode they are advisory: a writer that throws loses the message, never the result document or
+  // its exit code, and its exception never reaches stdout.
+  const logWriter = (text: string) => {
+    try {
+      options.stderr(text);
+    } catch {
+      // The message is lost; the result document still reports the run.
+    }
+  };
   const logs = createOutput({
     mode: "json",
     quiet,
     verbose: options.verbose,
     color: options.color,
-    stdout: options.stderr,
-    stderr: options.stderr,
+    stdout: logWriter,
+    stderr: logWriter,
   });
   // Collected output calls: only the value of the last json() call is kept (it may become the data), with the
   // kinds of the first calls, enough to warn for each unused one up to MAX_WARNINGS_PER_KIND and once for the rest.
@@ -533,26 +542,21 @@ export function createDocumentOutput(options: DocumentOutputOptions): DocumentOu
   };
 
   // Writes the `,"diagnostics":[...]` member from the kept text: each diagnostic that fits what the data or error left,
-  // whole, or without its details when only they do not fit. Returns undefined when none is printed.
-  const writeDiagnostics = (budgets: Budgets): JsonText | undefined => {
+  // whole, or without its details when only they do not fit. `text` is undefined when none is printed; `printed`
+  // marks the entries printed, for `adviseDiagnostics`.
+  const writeDiagnostics = (budgets: Budgets): { text: JsonText | undefined; printed: boolean[] } => {
     let charsLeft = budgets.text.charsLeft - DIAGNOSTICS_MEMBER_LENGTH;
     const text = new JsonText();
     text.write(',"diagnostics":[');
-    const advice = boundedAdvice("further diagnostics were dropped from the result document");
-    // At most `maxDiagnostics` were counted, so these loops are bounded.
-    for (let index = 0; index < unreadableCount; index += 1) {
-      advice.add("a returned diagnostic was dropped from the result document: it could not be read");
-    }
-    if (reentrantCount > 0) {
-      advise(`${reentrantCount} diagnostics added while another diagnostic was being read were dropped`);
-    }
-    let printed = 0;
+    const printed: boolean[] = [];
+    let count = 0;
     entries.forEach((entry, index) => {
+      printed[index] = false;
       if (entry !== undefined) {
-        const head = (printed > 0 ? 1 : 0) + entry.head.length + 1;
+        const head = (count > 0 ? 1 : 0) + entry.head.length + 1;
         const whole = head + (entry.details?.length ?? 0);
         if (head <= charsLeft) {
-          if (printed > 0) {
+          if (count > 0) {
             text.write(",");
           }
           text.write(entry.head);
@@ -563,21 +567,45 @@ export function createDocumentOutput(options: DocumentOutputOptions): DocumentOu
             charsLeft -= head;
           }
           text.write("}");
-          printed += 1;
-          return;
+          printed[index] = true;
+          count += 1;
         }
       }
-      advice.add(`diagnostic ${index} was dropped from the result document: it could not be redacted or printed`);
     });
-    if (droppedRest) {
-      advise(`diagnostics past the first ${consumed()} were dropped: the result document cannot print them all`);
-    }
-    if (printed === 0) {
-      return undefined;
+    if (count === 0) {
+      return { text: undefined, printed };
     }
     budgets.text.charsLeft = charsLeft;
     text.write("]");
-    return text;
+    return { text, printed };
+  };
+
+  // The fixed warnings for the diagnostics the printed document leaves out: unreadable, unusable or not printed ones,
+  // those added while another was read, and those never read. `printed` is undefined when the fixed failure document
+  // replaces the result, which prints none of them. Each kind is bounded (see `boundedAdvice`); quiet skips them all.
+  const adviseDiagnostics = (printed: readonly boolean[] | undefined) => {
+    const advice = boundedAdvice("further diagnostics were dropped from the result document");
+    // At most `maxDiagnostics` were counted, so these loops are bounded.
+    for (let index = 0; index < unreadableCount; index += 1) {
+      advice.add("a returned diagnostic was dropped from the result document: it could not be read");
+    }
+    if (reentrantCount > 0) {
+      advise(`${reentrantCount} diagnostics added while another diagnostic was being read were dropped`);
+    }
+    let replaced = 0;
+    entries.forEach((entry, index) => {
+      if (entry !== undefined && printed === undefined) {
+        replaced += 1;
+      } else if (entry === undefined || printed?.[index] !== true) {
+        advice.add(`diagnostic ${index} was dropped from the result document: it could not be redacted or printed`);
+      }
+    });
+    if (replaced > 0) {
+      advise(`${replaced} diagnostics were dropped: the result document could not be prepared`);
+    }
+    if (droppedRest) {
+      advise(`diagnostics past the first ${consumed()} were dropped: the result document cannot print them all`);
+    }
   };
 
   return {
@@ -585,6 +613,7 @@ export function createDocumentOutput(options: DocumentOutputOptions): DocumentOu
     diagnostics,
     failPreparation() {
       warnUnused(-1);
+      adviseDiagnostics(undefined);
       options.stdout(SERIALIZATION_FAILURE_TEXT);
       return 1;
     },
@@ -597,22 +626,23 @@ export function createDocumentOutput(options: DocumentOutputOptions): DocumentOu
       // units, never given back, bounds everything walked or written for the data or error that does not print (see
       // `WorkBudget`); the diagnostics were written under budgets of their own when they were added.
       const budgets: Budgets = { text: createDocumentBudget(limit - 1), work: createWorkBudget(limit) };
+      // The json() call whose value became the data, and the diagnostics printed; warned about once the document is
+      // known, so the fixed failure document warns for every call and diagnostic it leaves out.
+      let used = -1;
+      let printedDiagnostics: boolean[] | undefined;
       try {
         const document = new JsonText();
         if (outcome.ok) {
           let data = outcome.data;
-          let used = -1;
           if (data === undefined && lastJson !== -1) {
             data = lastJsonValue;
             used = lastJson;
           }
-          warnUnused(used);
           spendText(budgets.text, SUCCESS_FRAME_LENGTH);
           document.write('{"ok":true,"data":');
           document.append(toDocumentData(data, budgets));
           exitCode = outcome.exitCode;
         } else {
-          warnUnused(-1);
           // Not a throwing charge: a code and message that do not fit fall back to fixed ones and keep the exit code.
           budgets.text.charsLeft -= FAILURE_FRAME_LENGTH;
           const error = toDocumentError(outcome.error, budgets);
@@ -622,8 +652,9 @@ export function createDocumentOutput(options: DocumentOutputOptions): DocumentOu
         }
 
         const diagnosticsText = writeDiagnostics(budgets);
-        if (diagnosticsText !== undefined) {
-          document.append(diagnosticsText);
+        printedDiagnostics = diagnosticsText.printed;
+        if (diagnosticsText.text !== undefined) {
+          document.append(diagnosticsText.text);
         }
         document.write("}\n");
         // Every piece was charged at its exact length, so this check only guards the accounting.
@@ -638,7 +669,11 @@ export function createDocumentOutput(options: DocumentOutputOptions): DocumentOu
         // Whatever failed while the document was prepared, stdout still receives exactly one document.
         text = SERIALIZATION_FAILURE_TEXT;
         exitCode = 1;
+        used = -1;
+        printedDiagnostics = undefined;
       }
+      warnUnused(used);
+      adviseDiagnostics(printedDiagnostics);
       options.stdout(text);
       return exitCode;
     },

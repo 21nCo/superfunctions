@@ -520,12 +520,13 @@ describe("document work spent on redacted and dropped values", () => {
     expect(parseOnlyDocument(details)).toEqual({ ok: false, error: { code: "BRANCHING", message: "branching" } });
     expect(calls).toBeLessThan(2 * 20_000);
 
-    // Under a redacted key nothing prints: each value costs one unit of the work allowance (twice the limit).
+    // Under a redacted key nothing prints: each value costs one unit of the work allowance (twice the limit, plus a
+    // quarter of it for printed keys).
     calls = 0;
     const masked = finishWith(20_000, { ok: true, data: { visible: 1, secret: branching }, exitCode: 0 });
     expect(masked.out).toBe(`${JSON.stringify(FAILURE_DOCUMENT)}\n`);
     expect(calls).toBeGreaterThan(0);
-    expect(calls).toBeLessThan(2 * 20_000);
+    expect(calls).toBeLessThan(2.25 * 20_000);
   });
 
   it("charges the text of dropped diagnostics to the work budget, so they cannot re-encode text without end", () => {
@@ -705,7 +706,7 @@ describe("document diagnostics retained by size", () => {
     const { counter, generate } = freshDiagnostics(1_000);
     const { output, result } = documentWith(10_000);
     addReturnedDiagnostics(generate(), output.diagnostics);
-    // Nine kept ones fill the text; each one then dropped for size costs the work allowance (20,000 units) the text
+    // Nine kept ones fill the text; each one then dropped for size costs the work allowance (22,500 units) the text
     // that was left (about 580), so reading stops far below the 255 empty diagnostics the count allows.
     expect(counter.reads).toBeGreaterThan(9);
     expect(counter.reads).toBeLessThan(50);
@@ -1477,7 +1478,7 @@ describe("document sensitive-key matching", () => {
   it("charges each dropped member one unit of work, so dropped keys stay bounded", () => {
     const shared = { ["x".repeat(5_000)]: undefined };
     const rows = Array.from({ length: 2_000 }, () => shared);
-    // Each row prints "{}" and costs one unit for its dropped member: 2,000 units of a 20,000 allowance.
+    // Each row prints "{}" and costs one unit for its dropped member: 2,000 units of a 22,500 allowance.
     const fits = finishWith(10_000, { ok: true, data: rows, exitCode: 2 });
     expect(fits.exitCode).toBe(2);
     expect(fits.out).toBe(`${JSON.stringify({ ok: true, data: rows })}\n`);
@@ -1504,10 +1505,12 @@ describe("document keys JSON skips", () => {
     const nativeReads = [...reads];
     reads.length = 0;
     const work = createWorkBudget(50);
+    // Twice the limit, plus a quarter of it (rounded up) for the keys of printed members.
+    expect(work.unitsLeft).toBe(113);
     expect(String(serializeJsonMember("data", { record, proxied }, { work }))).toBe(native);
     expect(reads).toEqual(nativeReads);
     // Each listed key once: the two members of the outer object and the four keys (two skipped) of each inner one.
-    expect(work.unitsLeft).toBe(90);
+    expect(work.unitsLeft).toBe(103);
   });
 
   it("fails an object referenced many times whose hidden keys outrun the work allowance", () => {
@@ -1515,7 +1518,7 @@ describe("document keys JSON skips", () => {
     for (let index = 0; index < 5_000; index += 1) {
       Object.defineProperty(hidden, `h${index}`, { value: index, enumerable: false });
     }
-    // Each reference prints "{}" but sweeps 5,000 keys JSON skips: the fourth sweep is past the 20,000-unit allowance.
+    // Each reference prints "{}" but sweeps 5,000 keys JSON skips: the fifth sweep is past the 22,500-unit allowance.
     const few = finishWith(10_000, { ok: true, data: [hidden, hidden, hidden], exitCode: 2 });
     expect(few.exitCode).toBe(2);
     expect(parseOnlyDocument(few)).toEqual({ ok: true, data: [{}, {}, {}] });
@@ -1539,8 +1542,8 @@ describe("document keys JSON skips", () => {
       output.diagnostics.add({ code: "D", severity: "info", message: "m", details });
     }
     expect(output.finish({ ok: true, data: "done", exitCode: 3 })).toBe(3);
-    // The diagnostics' 20,000-unit allowance pays for about 20 listings of 1,000 keys; the rest are never read.
-    expect(listings).toBeLessThanOrEqual(21);
+    // The diagnostics' 22,500-unit allowance pays for about 22 listings of 1,000 keys; the rest are never read.
+    expect(listings).toBeLessThanOrEqual(23);
     const document = JSON.parse(stdout.join("")) as { data: string; diagnostics: Diagnostic[] };
     expect(document.data).toBe("done");
     expect(document.diagnostics.length).toBe(listings);
@@ -1614,26 +1617,82 @@ describe("document key lists open on the path", () => {
   });
 
   it("fails nested lists below a small text budget on the work allowance, which charges each listed key", () => {
-    // 10,000 characters: 20,000 units pay for about 20 levels of 1,000 keys before the work allowance stops the walk.
+    // 10,000 characters: 22,500 units pay for 22 levels of 1,000 keys after the outer 2; the 23rd listing is charged
+    // and stops the walk.
     const { counter, level } = sharedKeyLevels(1_000, 1_000);
     const data = finishWith(10_000, { ok: true, data: { visible: "kept", nested: level(0) }, exitCode: 3 });
     expect(data.exitCode).toBe(1);
     expect(data.out).toBe(`${JSON.stringify(FAILURE_DOCUMENT)}\n`);
-    expect(counter.ownKeys).toBe(20);
+    expect(counter.ownKeys).toBe(23);
+  });
+
+  it("fails a list that would take the open lists past the bound before reading any of its descriptors", () => {
+    // At 100,000 characters the bound is MIN_OPEN_KEYS (65,536) keys: two nested levels of 40,000 keys pass it.
+    const counter = { listed: 0, described: 0 };
+    const levels = (count: number, depth: number) => {
+      const keys = Array.from({ length: count }, (_, index) => `k${index}`);
+      const level = (index: number): object =>
+        new Proxy(
+          {},
+          {
+            ownKeys: () => ((counter.listed += 1), keys),
+            getOwnPropertyDescriptor: () => ((counter.described += 1), { value: 1, enumerable: true, configurable: true }),
+            get: (_target, key) => (key === "k0" ? (index + 1 < depth ? level(index + 1) : 1) : 1),
+          }
+        );
+      return level(0);
+    };
+    const reset = () => {
+      counter.listed = 0;
+      counter.described = 0;
+    };
+
+    const data = finishWith(100_000, { ok: true, data: { password: levels(40_000, 2) }, exitCode: 3 });
+    expect(data.exitCode).toBe(1);
+    expect(data.out).toBe(`${JSON.stringify(FAILURE_DOCUMENT)}\n`);
+    // The inner list is taken and charged, and none of its descriptors is read.
+    expect(counter).toEqual({ listed: 2, described: 40_000 });
+
+    reset();
+    const details = finishWith(100_000, {
+      ok: false,
+      error: Object.assign(new Error("closed"), { code: "CLOSED", exitCode: 7, details: { password: levels(40_000, 2) } }),
+    });
+    expect(details.exitCode).toBe(7);
+    expect(parseOnlyDocument(details)).toEqual({ ok: false, error: { code: "CLOSED", message: "closed" } });
+    expect(counter).toEqual({ listed: 2, described: 40_000 });
+
+    reset();
+    const diagnostics = finishWith(100_000, { ok: true, data: "done", exitCode: 3 }, [
+      { code: "DEEP", severity: "info", message: "m", details: { password: levels(40_000, 2) } },
+    ]);
+    expect(diagnostics.exitCode).toBe(3);
+    expect(parseOnlyDocument(diagnostics)).toEqual({
+      ok: true,
+      data: "done",
+      diagnostics: [{ code: "DEEP", severity: "info", message: "m" }],
+    });
+    expect(counter).toEqual({ listed: 2, described: 40_000 });
+
+    // Two levels of 30,000 keys stay within the bound together and print the placeholder.
+    reset();
+    const within = finishWith(100_000, { ok: true, data: { password: levels(30_000, 2), visible: "kept" }, exitCode: 3 });
+    expect(within.exitCode).toBe(3);
+    expect(parseOnlyDocument(within)).toEqual({ ok: true, data: { password: "[REDACTED]", visible: "kept" } });
+    expect(counter.described).toBe(60_000);
   });
 
   it("prints the placeholder of a redacted subtree whose open lists stay within the work allowance", () => {
-    // 9,000 keys, each holding a small object: 18,002 listed keys of a 20,000-unit allowance, at most 9,003 open.
+    // 11,000 keys, each holding a small object: 22,002 listed keys of a 22,500-unit allowance, at most 11,003 open.
     const secret: Record<string, unknown> = {};
-    for (let index = 0; index < 9_000; index += 1) {
+    for (let index = 0; index < 11_000; index += 1) {
       secret[`k${index}`] = { a: 1 };
     }
     const kept = finishWith(10_000, { ok: true, data: { password: secret, visible: "kept" }, exitCode: 3 });
     expect(kept.exitCode).toBe(3);
     expect(parseOnlyDocument(kept)).toEqual({ ok: true, data: { password: "[REDACTED]", visible: "kept" } });
-    // 10,000 keys of objects are 20,002 listed keys: past the allowance, so the walk fails safely.
-    secret.k9000 = { a: 1 };
-    for (let index = 9_001; index < 10_000; index += 1) {
+    // 11,250 keys of objects are 22,502 listed keys: past the allowance, so the walk fails safely.
+    for (let index = 11_000; index < 11_250; index += 1) {
       secret[`k${index}`] = { a: 1 };
     }
     const failed = finishWith(10_000, { ok: true, data: { password: secret, visible: "kept" }, exitCode: 3 });
@@ -1647,12 +1706,36 @@ describe("document work allowance next to printed text", () => {
 
   it("prints a document that fits next to a redacted walk within its own allowance", () => {
     const visible = "v".repeat(8_000);
-    // The text is 8,058 characters of a 10,000 limit; the redacted object is 1 + 19,000 units of a 20,000 allowance.
+    // The text is 8,058 characters of a 10,000 limit; the redacted object is 2 + 19,000 units of a 22,500 allowance.
     const fits = finishWith(10_000, { ok: true, data: { password: keyed(19_000), visible }, exitCode: 3 });
     expect(fits.exitCode).toBe(3);
     expect(parseOnlyDocument(fits)).toEqual({ ok: true, data: { password: "[REDACTED]", visible } });
 
-    const over = finishWith(10_000, { ok: true, data: { password: keyed(20_000), visible }, exitCode: 3 });
+    const over = finishWith(10_000, { ok: true, data: { password: keyed(22_500), visible }, exitCode: 3 });
+    expect(over.exitCode).toBe(1);
+    expect(over.out).toBe(`${JSON.stringify(FAILURE_DOCUMENT)}\n`);
+  });
+
+  it("prints a redacted walk of up to twice the limit next to the visible siblings that fit, in any member order", () => {
+    // The redacted array is listed after its key, the visible member after it: 2 + 19,999 units.
+    const array = finishWith(10_000, { ok: true, data: { password: new Array(19_999), visible: "kept" }, exitCode: 3 });
+    expect(array.exitCode).toBe(3);
+    expect(parseOnlyDocument(array)).toEqual({ ok: true, data: { password: "[REDACTED]", visible: "kept" } });
+
+    // 1,200 printed keys (listed before the redacted object's 19,000) and the redacted object: 20,201 units.
+    const visible = Object.fromEntries(Array.from({ length: 1_200 }, (_, index) => [String(index), 1]));
+    const many = finishWith(10_000, { ok: true, data: { ...visible, password: keyed(19_000) }, exitCode: 3 });
+    expect(many.exitCode).toBe(3);
+    expect(parseOnlyDocument(many)).toEqual({ ok: true, data: { ...visible, password: "[REDACTED]" } });
+
+    // A 2,000-character limit: a 3,990-item redacted array and 20 visible siblings after it are 4,011 units.
+    const siblings = Object.fromEntries(Array.from({ length: 20 }, (_, index) => [`v${index}`, index]));
+    const small = finishWith(2_000, { ok: true, data: { password: new Array(3_990), ...siblings }, exitCode: 3 });
+    expect(small.exitCode).toBe(3);
+    expect(parseOnlyDocument(small)).toEqual({ ok: true, data: { password: "[REDACTED]", ...siblings } });
+
+    // Past twice the limit plus the quarter for printed keys (22,500 units), the walk still fails before any item.
+    const over = finishWith(10_000, { ok: true, data: { password: new Array(22_500) }, exitCode: 3 });
     expect(over.exitCode).toBe(1);
     expect(over.out).toBe(`${JSON.stringify(FAILURE_DOCUMENT)}\n`);
   });

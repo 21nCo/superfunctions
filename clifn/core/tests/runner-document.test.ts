@@ -320,6 +320,68 @@ describe("runAction with jsonStyle 'document'", () => {
   });
 
   it.each([
+    [
+      "a data getter that throws",
+      (): RunnerActionResult => ({
+        get data(): unknown {
+          throw new Error("getter-failure-text");
+        },
+      }),
+      ["output.table()"],
+    ],
+    [
+      "a data toJSON that throws",
+      (): RunnerActionResult => ({
+        data: {
+          toJSON() {
+            throw new Error("tojson-failure-text");
+          },
+        },
+      }),
+      ["output.table()"],
+    ],
+    [
+      "a json() value whose toJSON throws",
+      (ctx: RunnerContext): undefined => {
+        ctx.output.json({
+          toJSON() {
+            throw new Error("json-failure-text");
+          },
+        });
+      },
+      ["output.table()", "output.json()"],
+    ],
+  ])("warns for every diagnostic and output call the fixed failure document leaves out: %s", async (_name, finish, calls) => {
+    const action: Action = async (_options, ctx) => {
+      ctx.diagnostics.add({ code: 1 } as never);
+      ctx.diagnostics.add({ code: "KEPT", severity: "info", message: "kept" });
+      ctx.output.table({ columns: ["id"], rows: [{ id: 1 }] });
+      return finish(ctx);
+    };
+    const result = await runDocument(action);
+
+    expect(result.exitCode).toBe(1);
+    expect(parseOnlyDocument(result)).toEqual({
+      ok: false,
+      error: { code: "CLIFN_RUNNER_FAILED", message: "Unable to serialize the result document" },
+    });
+    expect(stderrLines(result.stderr)).toEqual([
+      ...calls.map((call) => ({
+        level: "warn",
+        message: `${call} was not printed: document mode prints one result document; return the value as data`,
+      })),
+      { level: "warn", message: "diagnostic 0 was dropped from the result document: it could not be redacted or printed" },
+      { level: "warn", message: "1 diagnostics were dropped: the result document could not be prepared" },
+    ]);
+    expect(result.stderr).not.toContain("failure-text");
+
+    const quiet = await runDocument(action, { quiet: true });
+    expect(quiet.exitCode).toBe(1);
+    expect(quiet.out).toBe(result.out);
+    expect(quiet.stderr).toBe("");
+  });
+
+  it.each([
     ["a json(undefined) call", (ctx: RunnerContext) => ctx.output.json(undefined), undefined],
     ["function data", undefined, () => 1],
     ["symbol data", undefined, Symbol("data")],
@@ -1306,6 +1368,17 @@ describe("document mode follows JSON.stringify for arrays, toJSON calls and boxe
     });
   });
 
+  const rawJSON = (JSON as { rawJSON?: (text: string) => object }).rawJSON;
+  it.skipIf(rawJSON === undefined)("prints JSON.rawJSON values as their raw text, as JSON.stringify does", async () => {
+    const make = rawJSON as (text: string) => object;
+    const data = { big: make("12345678901234567890"), list: [make("1e400"), make('"text"')], password: make("1") };
+    const result = await runDocument(async () => ({ data }));
+    expect(result.out).toBe(
+      `${JSON.stringify({ ok: true, data: { ...data, password: "[REDACTED]" } })}\n`
+    );
+    expect(result.out).toContain('"big":12345678901234567890');
+  });
+
   it("unwraps boxed primitives by internal slot, as JSON.stringify does, in this and another realm", async () => {
     const make = () => {
       const numberLike = Object.assign(Object.create(Number.prototype) as object, { a: 1 });
@@ -1650,6 +1723,39 @@ describe("document mode log routing", () => {
         "",
       ].join("\n")
     );
+  });
+
+  it("keeps the result, its exit code and stdout when the stderr writer throws on every level and spinner result", async () => {
+    for (const quiet of [false, true]) {
+      const attempted: string[] = [];
+      const stdout: string[] = [];
+      const exitCode = await runAction(
+        async (options: Record<string, never>, ctx: RunnerContext) => {
+          await everyLevel(options, ctx);
+          return { data: "done", exitCode: 4 };
+        },
+        {},
+        {
+          color: false,
+          verbose: true,
+          quiet,
+          mode: "json",
+          jsonStyle: "document",
+          stdout: (text) => stdout.push(text),
+          stderr: (text) => {
+            attempted.push(text);
+            throw new Error("stderr closed");
+          },
+        }
+      );
+
+      expect(exitCode).toBe(4);
+      expect(stdout).toEqual(['{"ok":true,"data":"done"}\n']);
+      // Every level and both spinner results were written, one at a time, each throw swallowed; quiet still filters.
+      expect(stderrLines(attempted.join("")).map((line) => line.level)).toEqual(
+        quiet ? ["error", "error"] : ["debug", "info", "success", "warn", "error", "success", "error"]
+      );
+    }
   });
 
   it("keeps quiet and verbose rules: quiet leaves only errors, debug needs verbose", async () => {

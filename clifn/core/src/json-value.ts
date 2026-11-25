@@ -45,6 +45,11 @@ export const MIN_OPEN_KEYS = 65_536;
  * the units bound that allocation. Reading and printing each member is charged as for any other object.
  */
 export const TYPED_ARRAY_INDEX_UNITS = 32;
+/**
+ * The share of the text budget added to the work budget for listed keys whose members print: a printed member costs at
+ * least 4 characters, so a document that fits prints at most a quarter of its text budget in keys.
+ */
+const LISTED_KEYS_SHARE = 4;
 
 /** Thrown when a value's JSON text, or the work to walk it, cannot fit what is left of a document's budget. */
 export class DocumentBudgetExceeded extends RangeError {}
@@ -61,8 +66,10 @@ export interface DocumentBudget {
  * each code unit scanned in a string found too long to print, TYPED_ARRAY_INDEX_UNITS per typed array index (and per
  * item of an array Node's built-in Buffer toJSON must allocate, see `projectBuffer`), and each character of a segment
  * (details or a diagnostic) that was written and then left out. Each unit is charged once and never given back, also
- * when the value it was charged for fails. Printed text is charged to the text budget; a document that fits lists at
- * most a quarter of its text budget in printed keys, so it prints next to discarded work within this allowance.
+ * when the value it was charged for fails. Printed text is charged to the text budget. The allowance is twice the
+ * text budget for work that prints nothing, plus a quarter of it (LISTED_KEYS_SHARE) for the keys of members that
+ * print: every printed member costs at least 4 characters (`"":0`), so a document that fits prints at most that many
+ * keys, and its discarded work keeps the whole twofold allowance whatever the order of its members.
  */
 export interface WorkBudget {
   unitsLeft: number;
@@ -83,12 +90,13 @@ export function createDocumentBudget(limit: number = documentLimit()): DocumentB
 }
 
 /**
- * The work budget of a document whose text budget is `limit`: twice as many units as the document has characters, its
- * own allowance next to the text. A segment dropped after it was written costs at most its text, so one dropped
+ * The work budget of a document whose text budget is `limit`: twice as many units as the document has characters for
+ * work that prints nothing, plus a quarter as many for the keys of members that print (see `WorkBudget`), its own
+ * allowance next to the text. A segment dropped after it was written costs at most its text, so one dropped
  * segment never spends the whole allowance by itself.
  */
 export function createWorkBudget(limit: number = documentLimit()): WorkBudget {
-  return { unitsLeft: 2 * limit };
+  return { unitsLeft: 2 * limit + Math.ceil(limit / LISTED_KEYS_SHARE) };
 }
 
 function exceeded(): never {
@@ -210,6 +218,8 @@ const booleanValueOf = Boolean.prototype.valueOf;
 const propertyIsEnumerable = Object.prototype.propertyIsEnumerable;
 /** Node's built-in `Buffer.prototype.toJSON`, which copies every byte into a new array (see `projectBuffer`). */
 const bufferToJSON = Buffer.prototype.toJSON;
+/** `JSON.isRawJSON` where the engine has it (Node 21 and later). */
+const isRawJSON = (JSON as { isRawJSON?: (value: unknown) => boolean }).isRawJSON;
 /** %Array.prototype%, the prototype of the data array `Buffer.prototype.toJSON` creates. */
 const arrayPrototype = Object.getPrototypeOf([]) as object;
 const bigintValueOf = BigInt.prototype.valueOf;
@@ -459,8 +469,10 @@ const bufferStandIns = new WeakSet<object>();
  *   and holds numbers, the projection is an object with the same members whose `data` is a stand-in read from the
  *   buffer in place: it prints exactly what the native array prints, is bounded like any array before its first item
  *   (2n + 1 characters printed, n units of work under a redacted key, decided once the member's key is matched), and
- *   allocates nothing in proportion to n. Reading a typed array's items runs no code, so the output and every
- *   observable step are those of the native call;
+ *   allocates nothing in proportion to n. Reading a typed array's items runs no code, so the output is that of
+ *   the native call, which runs no user code either unless %Array.prototype% itself is changed: an index accessor
+ *   installed on %Array.prototype% (which the native call's array writes would run, and which also changes arrays
+ *   this library builds) is an unsupported environment;
  * - otherwise (a bigint typed array, or an inherited `toJSON` that would receive the array) the native toJSON runs,
  *   after its array is charged at TYPED_ARRAY_INDEX_UNITS of work per item, printed or not.
  * Returns undefined when the native toJSON is to run.
@@ -510,9 +522,15 @@ function isDropped(value: unknown): boolean {
   return value === undefined || typeof value === "function" || typeof value === "symbol";
 }
 
-/** Writes a projected value that JSON prints: an object or array through `serializeNode`, a primitive directly. */
+/**
+ * Writes a projected value that JSON prints: a `JSON.rawJSON` value as its raw text (charged as text, as JSON.stringify
+ * prints it), another object or array through `serializeNode`, a primitive directly.
+ */
 function writeValue(walk: Walk, value: unknown, original: unknown, key: string, depth: number): void {
-  if (typeof value === "object" && value !== null) {
+  if (typeof value === "object" && value !== null && isRawJSON?.(value) === true) {
+    // A frozen object with an own data property: reading it runs no code.
+    emit(walk, String(Reflect.get(value, "rawJSON")));
+  } else if (typeof value === "object" && value !== null) {
     serializeNode(walk, value, original, key, depth);
   } else {
     writePrimitive(walk, value);
@@ -653,7 +671,8 @@ function boundTypedArray(walk: Walk, record: object): void {
  * non-enumerable or vanished key) or walked under a redacted key. Only one list of the object's keys is held: for an
  * object that is not a Proxy, which runs no code to report its descriptors, the enumerable string keys are kept in
  * place in the list [[OwnPropertyKeys]] returned. When the lists the objects open on the path hold together already
- * pass the bound of OPEN_KEYS_SHARE, it throws before [[OwnPropertyKeys]] runs.
+ * pass the bound of OPEN_KEYS_SHARE, it throws before [[OwnPropertyKeys]] runs; when they would pass it with this
+ * object's list, it throws once that list is charged, before any descriptor is read.
  */
 function enumerableKeys(walk: Walk, record: object): string[] {
   if (walk.openKeys > walk.maxOpenKeys) {
@@ -662,6 +681,10 @@ function enumerableKeys(walk: Walk, record: object): string[] {
   }
   const keys = Reflect.ownKeys(record);
   spendWork(walk.work, keys.length);
+  if (walk.openKeys + keys.length > walk.maxOpenKeys) {
+    // With the lists its ancestors hold, this one passes the bound: no descriptor is read, and the charge stays.
+    exceeded();
+  }
   const proxy = types.isProxy(record);
   let count = 0;
   for (let index = 0; index < keys.length; index += 1) {
@@ -754,8 +777,8 @@ export interface SerializeJsonMemberOptions {
  *   array by its internal length once its key's redaction is known (a receiver whose length cannot be bounded that
  *   way fails, see `projectBuffer`), an object with more own keys than the work left fails before any descriptor or
  *   value is read, and the key lists of the objects open on the path may hold a quarter of the text budget (in keys,
- *   at least MIN_OPEN_KEYS) together, so a nested object below lists that hold more fails before its own keys are
- *   listed (see OPEN_KEYS_SHARE); so oversized sparse, proxy, typed, Buffer, hidden-key or generated values fail at
+ *   at least MIN_OPEN_KEYS) together, so an object whose list would take them past that bound fails before any of
+ *   its descriptors is read (see OPEN_KEYS_SHARE); so oversized sparse, proxy, typed, Buffer, hidden-key or generated values fail at
  *   once, and an object listed again and again stops once its keys have spent the work allowance; a bigint is
  *   checked by bit length before its decimal text is built, and not converted under a redacted key. The engine
  *   builds an object's own key list before it can be counted (a Proxy's from what its ownKeys trap returns, or from
