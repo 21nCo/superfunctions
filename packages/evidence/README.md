@@ -2,7 +2,7 @@
 
 Source-bound evidence records: a JSON format that says which work was checked, at which commit, with which artifacts and environment, with what outcome and until when the result counts. The package exports the record format v1 JSON Schema, its TypeScript types, `validateEvidenceRecord`, which checks a record against the commit it must come from, the evaluation time and an expiry policy, and `checkEvidenceCrossValues`, which checks the rules the JSON Schema cannot express.
 
-It has no runtime dependencies and uses no Node built-ins, so the same validator and checker run in Node, browsers and workers.
+It has no runtime dependencies. The `.` entry uses no Node built-ins, so the same validator and checker run in Node, browsers and workers. The `@superfunctions/evidence/node` entry adds `verifyEvidence`, which also re-hashes the record's artifacts in a checkout on disk.
 
 ```sh
 npm install @superfunctions/evidence
@@ -42,7 +42,43 @@ Invalid options or a missing record return that one failure. Otherwise every che
 | `EVIDENCE_DIRTY` | `source.dirty` is true | `/source/dirty` | |
 | `EVIDENCE_NOT_PASSED` | `status` is `failed`, `blocked`, `skipped` or `not-applicable` | `/status` | `status` |
 
-The list is exported as `EVIDENCE_FAILURE_CODES`. `detail.now` and `detail.maximumExpiresAt` are RFC 3339 UTC date-times with at least millisecond digits; they are left out when the instant falls outside the years 0000 to 9999 in UTC, which RFC 3339 cannot write.
+The list is exported as `EVIDENCE_FAILURE_CODES`, together with the `EVIDENCE_ARTIFACT_*` codes that only `verifyEvidence` reports (see below). `detail.now` and `detail.maximumExpiresAt` are RFC 3339 UTC date-times with at least millisecond digits; they are left out when the instant falls outside the years 0000 to 9999 in UTC, which RFC 3339 cannot write.
+
+## Verify a record against a checkout
+
+`@superfunctions/evidence/node` requires Node 22 or later.
+
+```ts
+import { verifyEvidence } from "@superfunctions/evidence/node";
+
+const result = await verifyEvidence(JSON.parse(text), {
+  expectedCommit: "<the 40- or 64-character commit under test>",
+  now: new Date(),
+  expiryPolicy: { "unit-test": 24 },
+  artifactRoot: "/abs/path/to/checkout", // source.artifactHashes[].path is relative to it
+});
+```
+
+`verifyEvidence(record, options)` runs `validateEvidenceRecord` with the same options, then re-hashes every `source.artifactHashes` entry under `artifactRoot` and resolves to the same `{ ok, failures }` shape, with the record's failures first and then the artifacts' failures in list order.
+
+- `artifactRoot` must be an absolute, well-formed Unicode path that names an existing directory as the operating system walks it as written (so `/checkout/file.txt/..` is refused); otherwise the result is `EVIDENCE_OPTIONS_INVALID` alone, with `artifactRoot` in `detail.invalid` (after any other invalid option names). The root is then resolved once with `realpath`, so the root may itself be a symlink or sit below one; a root whose real path is not valid UTF-8 (a name with a byte such as `0xFF`, which a string can only spell as U+FFFD and so would name a different directory) is also `EVIDENCE_OPTIONS_INVALID`.
+- When the record is missing or has a structural failure (`EVIDENCE_MISSING`, `EVIDENCE_MISSING_FIELD` or `EVIDENCE_MALFORMED`), or an option is invalid, no artifact is read. Otherwise every artifact is checked, also when the record has other failures such as `EVIDENCE_COMMIT_MISMATCH`.
+- The artifact list is copied when the record is validated, before any file is touched, so changing the record object while the promise is pending does not change what is checked.
+- An artifact is hashed with streaming SHA-256 over its raw bytes, with no size limit, one file at a time. `format` is recorded but never interpreted: a catchfn evidence event file is bytes to this package.
+- Each artifact path is walked from the root one component at a time without following symlinks. The artifact must be a regular file, with no symlink anywhere below the root, including the file itself, even when the link's target is inside the root.
+
+| Code | When | `path` | `detail` |
+| --- | --- | --- | --- |
+| `EVIDENCE_ARTIFACT_MISSING` | Nothing exists at the path, a component before the last is not a directory, or the path is not well-formed Unicode (it has a lone surrogate, which the filesystem cannot name, so nothing is looked up) | `/source/artifactHashes/<i>/path` | `artifact`, and `reason` for a path that is not well-formed |
+| `EVIDENCE_ARTIFACT_NOT_REGULAR_FILE` | The path names a directory, FIFO, socket or device | `/source/artifactHashes/<i>/path` | `artifact` |
+| `EVIDENCE_ARTIFACT_SYMLINK` | The file or a directory between the root and it is a symlink | `/source/artifactHashes/<i>/path` | `artifact`, `symlink`: the path up to the link |
+| `EVIDENCE_ARTIFACT_OUTSIDE_ROOT` | The file's real path is not under the root's real path, or is not valid UTF-8 and so cannot be shown to be | `/source/artifactHashes/<i>/path` | `artifact`, and `reason` for a real path that is not valid UTF-8 |
+| `EVIDENCE_ARTIFACT_UNREADABLE` | The file or a directory on the way cannot be read, for example without permission | `/source/artifactHashes/<i>/path` | `artifact`, `reason`: the error code, such as `EACCES` |
+| `EVIDENCE_ARTIFACT_HASH_MISMATCH` | The file's SHA-256 differs from `sha256` | `/source/artifactHashes/<i>/sha256` | `artifact`, `expected`, `actual` |
+
+`artifact` is the path as the record lists it; no detail contains an absolute path.
+
+The verifier guards against a record that lists any path and against files that changed, were removed, were left partly written or were replaced by a symlink, directory or special file after the record was written. It does not guard against another process swapping a file or directory between the checks and the read, and it does not handle Windows path semantics (drive letters, case-insensitive names, junctions).
 
 ## Record format v1
 
@@ -112,6 +148,6 @@ const valid = validateSchema(record) && checkEvidenceCrossValues(record).length 
 
 ## Not in this version
 
-- Re-hashing artifacts against files on disk.
+- Guarding re-hashing against a concurrent process or local user racing the verifier, and Windows path semantics.
 - Profile data such as signatures, test counts, defects or requirement ID patterns. Profiles add them on top of this format.
 - Validating inputs that are not plain JSON values, such as getters, proxies or class instances.
