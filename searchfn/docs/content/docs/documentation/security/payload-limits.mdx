@@ -20,6 +20,7 @@ Without limits, a single malicious or buggy client can exhaust server memory by 
 
 ```typescript
 const sf = await createSearchFnServer({
+  authorize: authorizeSearchRequest,
   adapter,
   limits: {
     maxQueryLength: 500,
@@ -49,7 +50,7 @@ If you need different limits per endpoint, run two SearchFn servers:
 const userSf = await createSearchFnServer({
   adapter,
   basePath: "/searchfn",
-  limits: { maxLimit: 50, maxIndexBatch: 0 }, // read-only for users
+  limits: { maxLimit: 50 },
   authorize: async (ctx, action) => action === "search" || action === "searchAll",
 });
 

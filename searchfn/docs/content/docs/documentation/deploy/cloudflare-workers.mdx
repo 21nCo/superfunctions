@@ -39,6 +39,7 @@ async function getServer(env: Env) {
       apiKey: env.MEILI_API_KEY,
     });
   sf = await createSearchFnServer({
+    authorize: authorizeSearchRequest,
     adapter,
     basePath: "/searchfn",
   });
@@ -93,7 +94,6 @@ async function getServer(env: Env) {
   sf = await createSearchFnServer({
     adapter,
     basePath: "/searchfn",
-    // Without authorize, anyone can call /searchfn/index, /remove and /clear.
     // This Worker serves reads only; index from your own authenticated code with adapter.index().
     authorize: (_ctx, action) => action === "status" || action === "search" || action === "searchAll",
   });
@@ -223,6 +223,7 @@ export class TenantSearch extends DurableObject {
           indexPrefix: `tenant-${this.ctx.id.toString()}_`,
         });
       this.sf = await createSearchFnServer({
+        authorize: authorizeSearchRequest,
         adapter,
         basePath: "/searchfn",
       });

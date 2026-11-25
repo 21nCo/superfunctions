@@ -1,31 +1,21 @@
 import type { SearchAdapter } from "@searchfn/adapter-contracts";
-import { parseJsonBody, errorResponse, mapAdapterErrorToResponse, okResponse } from "../http/errors.js";
+import { errorResponse, mapAdapterErrorToResponse, okResponse } from "../http/errors.js";
 import {
   validateFieldBoosts,
   validateFields,
   validateFuzzy,
   validateLimit,
-  validateObjectBody,
   validatePrefix,
   validateQuery,
-  validateResourcesArray,
 } from "../http/validation.js";
 import type { ServerLimits } from "../http/validation.js";
-import type { ServerContext } from "../server.js";
 
 export function searchAllHandler(adapter: SearchAdapter, limits: ServerLimits) {
-  return async (req: Request, _ctx: ServerContext): Promise<Response> => {
-    const parsed = await parseJsonBody(req, limits.maxPayloadBytes);
-    if (!parsed.ok) return parsed.response;
-
-    const { value: body, error: bodyErr } = validateObjectBody(parsed.data);
-    if (bodyErr) return bodyErr;
-
+  return async (req: Request, body: Record<string, unknown>): Promise<Response> => {
     const queryErr = validateQuery(body.query, limits);
     if (queryErr) return queryErr;
 
-    const resourcesErr = validateResourcesArray(body.resources, limits);
-    if (resourcesErr) return resourcesErr;
+    const resources = (body.resources as string[] | null | undefined) ?? undefined;
 
     const { value: limit, error: limitErr } = validateLimit(
       body.limit,
@@ -54,7 +44,7 @@ export function searchAllHandler(adapter: SearchAdapter, limits: ServerLimits) {
 
     if (!adapter.searchAll) {
       // Fallback: adapter doesn't support searchAll natively
-      if (!body.resources || (body.resources as string[]).length === 0) {
+      if (!resources?.length) {
         return errorResponse(
           "DFQL_INVALID",
           "resources are required when adapter.searchAll is unavailable",
@@ -63,7 +53,6 @@ export function searchAllHandler(adapter: SearchAdapter, limits: ServerLimits) {
       }
       // Manual per-resource search and merge
       try {
-        const resources = body.resources as string[];
         const allResults: Array<{ resource: string; id: string | number; score: number }> = [];
         for (const resource of resources) {
           const ids = await adapter.search({
@@ -98,7 +87,7 @@ export function searchAllHandler(adapter: SearchAdapter, limits: ServerLimits) {
     try {
       const results = await adapter.searchAll({
         query: body.query as string,
-        resources: body.resources as string[] | undefined,
+        resources,
         fields: Array.isArray(body.fields) ? body.fields : undefined,
         limit,
         limitPerResource,

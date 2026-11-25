@@ -28,6 +28,7 @@ function getServer() {
         connectionString: process.env.SEARCH_DB_URL!,
       });
     sfPromise = createSearchFnServer({
+      authorize: authorizeSearchRequest,
       adapter,
       basePath: "/searchfn",
     }).then(async (sf) => {
@@ -101,6 +102,7 @@ Vercel's logs are Datadog-flavoured by default. Send structured JSON; Vercel par
 
 ```typescript
 const sf = await createSearchFnServer({
+  authorize: authorizeSearchRequest,
   adapter,
   logger: {
     info: (msg, ctx) => console.log(JSON.stringify({ level: "info", msg, ...ctx })),

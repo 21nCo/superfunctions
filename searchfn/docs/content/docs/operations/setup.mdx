@@ -22,6 +22,7 @@ await adapter.initialize({
   resources: [{ name: "tasks", searchFields: ["title", "description"] }],
 });
 const server = await createSearchFnServer({
+  authorize: authorizeSearchRequest,
   adapter,
   basePath: "/searchfn",
 });
@@ -44,6 +45,7 @@ The server enforces these limits by default. Override them in the `limits` confi
 
 ```typescript
 const server = await createSearchFnServer({
+  authorize: authorizeSearchRequest,
   adapter,
   limits: {
     maxQueryLength: 500,

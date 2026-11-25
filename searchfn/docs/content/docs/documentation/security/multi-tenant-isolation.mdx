@@ -63,18 +63,12 @@ The query touched documents from other tenants. The scoring, IDF, and term frequ
 Even with resource-name isolation, the `authorize` callback must cross-check the resource against the caller's tenant:
 
 ```typescript
-async function authorize(ctx, action, payload) {
-  const session = await getSession(ctx.request);
+async function authorize(_ctx, action, _payload, request, resources) {
+  const session = await getSession(request);
   if (!session) return false;
+  if (action === "status") return false;
 
-  const resources = collectResources(payload);
   return resources.every((r) => resourceBelongsToTenant(r, session.user.tenantId));
-}
-
-function collectResources(payload: any): string[] {
-  if (payload.resource) return [payload.resource];
-  if (payload.resources) return payload.resources;
-  return [];
 }
 
 function resourceBelongsToTenant(resource: string, tenantId: string): boolean {
@@ -107,7 +101,7 @@ logger: {
 
 ### Postgres
 
-`PostgresAdapter` writes resources to separate tables (`_searchfn_articles_tenant_a`, `_searchfn_articles_tenant_b`). Row-level security isn't needed — the rows are physically separate.
+`PostgresAdapter` derives physical table names from the resource name. Use resource names whose lowercase letters, digits, and underscores remain unique after normalization, or use separate databases or schemas for tenants.
 
 ### Meilisearch
 
@@ -115,7 +109,7 @@ Each resource becomes a Meili index. Indices are independent; an API key can be 
 
 ### Elasticsearch / OpenSearch
 
-Each resource becomes an ES index. Use ES's [API key with index-scoped privileges](https://www.elastic.co/guide/en/elasticsearch/reference/current/security-api-create-api-key.html) for defense-in-depth.
+The adapters normalize resource names when deriving index names. Use names that stay unique after normalization, and scope credentials to the corresponding indexes with [index-scoped privileges](https://www.elastic.co/guide/en/elasticsearch/reference/current/security-api-create-api-key.html).
 
 ### IndexedDB
 
@@ -123,7 +117,7 @@ Per-user isolation in the browser is implicit (different users = different brows
 
 ## Audit before launch
 
-- Search for `payload.resource` and `payload.resources` references in your `authorize` — make sure they're inspected.
+- Check every entry in the validated `resources` argument in your `authorize` callback.
 - Try a manual cross-tenant request in staging and confirm it returns `FORBIDDEN`.
 - Confirm the test catches a regression where someone removes the `authorize` check.
 

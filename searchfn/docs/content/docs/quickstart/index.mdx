@@ -24,7 +24,7 @@ Pick your runtime. Each guide installs the right packages, picks a sensible defa
 A SearchFn deployment is three layers:
 
 1. **An adapter** — picks where the index lives.
-2. **A server** — `createSearchFnServer({ adapter, basePath, ... })` mounted onto your HTTP framework.
+2. **A server** — `createSearchFnServer({ adapter, basePath, authorize })` mounted onto your HTTP framework. The local demos opt out of authorization. Configure your application policy before exposing these routes to other users.
 3. **A client** — either the SearchFn client SDK (`@searchfn/client`) or the DataFn search provider (`@searchfn/datafn-provider`) if you're using DataFn.
 
 The Quickstart pages stitch all three for your framework, but each layer is independently swappable. You can change adapters without changing client code, and you can switch from direct client use to the DataFn provider without changing the server.

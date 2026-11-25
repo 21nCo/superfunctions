@@ -11,6 +11,7 @@ Pass a `logger` to `createSearchFnServer`:
 
 ```typescript
 const sf = await createSearchFnServer({
+  authorize: authorizeSearchRequest,
   adapter,
   logger: {
     info: (msg, ctx) => console.log(JSON.stringify({ level: "info", msg, ...ctx })),
@@ -94,6 +95,7 @@ Counts and metadata: resource names, query length, document count per index batc
 const dd = new TracingApi();
 
 const sf = await createSearchFnServer({
+  authorize: authorizeSearchRequest,
   adapter,
   logger: {
     info: (msg, ctx) => dd.send({ message: msg, ...ctx, service: "searchfn" }),

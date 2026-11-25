@@ -5,12 +5,13 @@ description: Authorization, secret handling, and credential management for Searc
 
 ## Authorization
 
-`createSearchFnServer` supports a per-action `authorize` callback. It is called before every operation with the request context, action name, and payload:
+`createSearchFnServer` requires a per-action `authorize` callback unless you explicitly set `allowUnauthenticated: true`. The callback receives the request context, action name, parsed payload, original request, and validated resource list.
 
 ```typescript
 const server = await createSearchFnServer({
   adapter,
-  authorize: async (ctx, action, payload) => {
+  context: async (request) => ({ user: await getVerifiedUser(request) }),
+  authorize: (ctx, action) => {
     if (action === "status") return true;
     if (action === "search" || action === "searchAll") return !!ctx.user;
     return ctx.user?.role === "admin";

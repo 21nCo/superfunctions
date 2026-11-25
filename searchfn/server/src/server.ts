@@ -7,7 +7,13 @@ import {
   type SuperfunctionObservability,
 } from "@superfunctions/observability";
 import { errorResponse, parseJsonBody } from "./http/errors.js";
-import { DEFAULT_LIMITS, type ServerLimits } from "./http/validation.js";
+import {
+  DEFAULT_LIMITS,
+  type ServerLimits,
+  validateObjectBody,
+  validateResource,
+  validateResourcesArray,
+} from "./http/validation.js";
 import { statusHandler, type ServerHealthSnapshot } from "./routes/status.js";
 import { indexHandler } from "./routes/index.js";
 import { searchHandler } from "./routes/search.js";
@@ -17,6 +23,7 @@ import { clearHandler } from "./routes/clear.js";
 import type { SearchFnEvent } from "./events.js";
 
 export type ServerContext = Record<string, unknown>;
+export type SearchFnAction = "status" | "index" | "search" | "searchAll" | "remove" | "clear";
 
 interface SearchFnLogger {
   info(message: string, context?: Record<string, unknown>): void;
@@ -29,10 +36,17 @@ export interface SearchFnServerConfig<TContext = unknown> {
   adapter: SearchAdapter;
   basePath?: string;
   limits?: Partial<ServerLimits>;
+  /** Explicitly allow requests without a SearchFn authorization policy. */
+  allowUnauthenticated?: boolean;
+  /** Load per-request identity and other context from request metadata. */
+  context?: (request: Request) => Promise<TContext> | TContext;
+  /** Authorize the action and every validated resource in scope. Read POST fields from payload. */
   authorize?: (
     ctx: TContext,
-    action: "status" | "index" | "search" | "searchAll" | "remove" | "clear",
+    action: SearchFnAction,
     payload: unknown,
+    request: Request,
+    resources: readonly string[],
   ) => Promise<boolean> | boolean;
   observability?: ObservabilityInput<SearchFnEvent>;
 }
@@ -89,6 +103,10 @@ export async function createSearchFnServer<TContext extends ServerContext = Serv
     authorize,
   } = config;
 
+  if (typeof authorize !== "function" && (authorize !== undefined || config.allowUnauthenticated !== true)) {
+    throw new TypeError("SearchFn requires authorize or allowUnauthenticated: true");
+  }
+
   const observability = normalizeObservability<SearchFnEvent>(config.observability)?.child({
     component: "searchfn",
   });
@@ -107,12 +125,9 @@ export async function createSearchFnServer<TContext extends ServerContext = Serv
     }
   };
 
-  type Action = "status" | "index" | "search" | "searchAll" | "remove" | "clear";
-
-  // Wrap handler to inject auth + logging
   function wrap(
-    action: Action,
-    handler: (req: Request, ctx: TContext) => Promise<Response>,
+    action: SearchFnAction,
+    handler: (req: Request, body: Record<string, unknown>) => Promise<Response>,
   ): (req: Request, ctx: TContext) => Promise<Response> {
     return async (req: Request, ctx: TContext): Promise<Response> => {
       const start = Date.now();
@@ -123,13 +138,45 @@ export async function createSearchFnServer<TContext extends ServerContext = Serv
 
       logger?.debug("request.start", redactContext(logCtx));
 
-      // Auth check
+      let body: Record<string, unknown> = {};
+      let resources: readonly string[] = [];
+      if (action !== "status") {
+        const parsed = await parseJsonBody(req, limits.maxPayloadBytes);
+        if (!parsed.ok) return parsed.response;
+
+        const { value, error } = validateObjectBody(parsed.data);
+        if (error) return error;
+        body = value;
+
+        if (action === "searchAll") {
+          if (Object.prototype.hasOwnProperty.call(body, "resource")) {
+            return errorResponse("DFQL_INVALID", "Use resources for search-all", { path: "resource" });
+          }
+          const resourcesError = validateResourcesArray(body.resources, limits);
+          if (resourcesError) return resourcesError;
+          resources = (body.resources as string[] | null | undefined) ?? [];
+          if (authorize && resources.length === 0) {
+            return errorResponse("DFQL_INVALID", "Search-all requires at least one resource with authorization enabled", {
+              path: "resources",
+            });
+          }
+        } else {
+          if (Object.prototype.hasOwnProperty.call(body, "resources")) {
+            return errorResponse("DFQL_INVALID", "Use resource for this action", { path: "resources" });
+          }
+          const resourceError = validateResource(body.resource);
+          if (resourceError) return resourceError;
+          resources = [body.resource as string];
+        }
+      }
+
       if (authorize) {
         try {
-          const payload = await getAuthorizationPayload(req, limits.maxPayloadBytes);
-          const allowed = await authorize(ctx, action, payload);
-          if (!allowed) {
-            logger?.warn("authorization.denied", redactContext({ ...logCtx }));
+          // Give the policy its own snapshot so it cannot change what the adapter executes.
+          const payload = action === "status" ? null : structuredClone(body);
+          const allowed = await authorize(ctx, action, payload, req, [...resources]);
+          if (allowed !== true) {
+            logger?.warn("authorization.denied", redactContext(logCtx));
             await emitSearchFnEvent(observability, {
               type: "searchfn.authorization.denied",
               severity: "warn",
@@ -162,7 +209,7 @@ export async function createSearchFnServer<TContext extends ServerContext = Serv
       }
 
       try {
-        const response = await handler(req, ctx);
+        const response = await handler(req, body);
         if (response.status >= 500) {
           markDegraded();
         }
@@ -226,18 +273,19 @@ export async function createSearchFnServer<TContext extends ServerContext = Serv
     {
       method: "POST",
       path: `${basePath}/remove`,
-      handler: wrap("remove", removeHandler(adapter, limits)),
+      handler: wrap("remove", removeHandler(adapter)),
     },
     {
       method: "POST",
       path: `${basePath}/clear`,
-      handler: wrap("clear", clearHandler(adapter, limits)),
+      handler: wrap("clear", clearHandler(adapter)),
     },
   ];
 
   const router = createRouter<TContext>({
     routes,
     basePath: "/",
+    context: config.context,
     middleware: observability
       ? [
           createObservabilityMiddleware({
@@ -279,24 +327,4 @@ async function emitSearchFnEvent(
     domain: "searchfn",
     ...event,
   } as SearchFnEvent);
-}
-
-async function getAuthorizationPayload(
-  req: Request,
-  maxPayloadBytes: number,
-): Promise<unknown> {
-  if (req.method === "GET" || req.method === "HEAD") {
-    return null;
-  }
-
-  const contentType = req.headers.get("content-type");
-  if (contentType && !contentType.includes("application/json")) {
-    return null;
-  }
-
-  const parsed = await parseJsonBody(req.clone(), maxPayloadBytes);
-  if (!parsed.ok) {
-    return null;
-  }
-  return parsed.data;
 }

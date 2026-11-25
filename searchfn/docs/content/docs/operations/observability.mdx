@@ -9,6 +9,7 @@ Pass a `logger` to `createSearchFnServer` to receive structured log events for e
 
 ```typescript
 const server = await createSearchFnServer({
+  authorize: authorizeSearchRequest,
   adapter,
   logger: {
     info: (msg, ctx) => console.log(JSON.stringify({ level: "info", msg, ...ctx })),

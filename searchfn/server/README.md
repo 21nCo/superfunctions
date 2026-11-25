@@ -24,6 +24,7 @@ await adapter.initialize?.({
 const searchfn = await createSearchFnServer({
   adapter,
   basePath: "/searchfn",
+  allowUnauthenticated: true, // This example calls the router in-process.
 });
 
 const response = await searchfn.router.handle(
@@ -72,17 +73,23 @@ type SearchFnServerConfig<TContext> = {
   adapter: SearchAdapter;
   basePath?: string;
   limits?: Partial<ServerLimits>;
+  allowUnauthenticated?: boolean;
+  context?: (request: Request) => TContext | Promise<TContext>;
   authorize?: (
     ctx: TContext,
     action: "status" | "index" | "search" | "searchAll" | "remove" | "clear",
     payload: unknown,
+    request: Request,
+    resources: readonly string[],
   ) => Promise<boolean> | boolean;
-  logger?: SearchFnLogger;
+  observability?: ObservabilityInput<SearchFnEvent>;
 };
 ```
 
 ### Notes
 
-- `authorize(...)` runs before each handler and receives the parsed JSON payload when applicable.
+- Server creation requires an `authorize` callback or `allowUnauthenticated: true`. Use the explicit opt-in for in-process callers, local demos, or deployments with an upstream authorization policy covering every operation.
+- `authorize(...)` receives the context, action, parsed payload snapshot, original request, and validated list of resource names. Read headers from `request` and body fields from `payload`. Only a return value of `true` permits the operation.
+- Send `Content-Type: application/json` on POSTs. Use `resource` for single-resource routes and `resources` for `search-all`. An authorized `search-all` requires a non-empty resource list.
 - `limits` controls payload size, query length, search fan-out, and indexing batch caps.
 - `close()` delegates to `adapter.dispose()` when the adapter implements it.

@@ -8,6 +8,7 @@ export type SearchFnErrorCode =
   | "LIMIT_EXCEEDED"
   | "DFQL_ABORTED"
   | "DFQL_UNSUPPORTED"
+  | "UNSUPPORTED_MEDIA_TYPE"
   | "FORBIDDEN"
   | "INTERNAL";
 
@@ -43,6 +44,7 @@ const STATUS_MAP: Record<SearchFnErrorCode, number> = {
   LIMIT_EXCEEDED: 400,
   DFQL_ABORTED: 499,
   DFQL_UNSUPPORTED: 400,
+  UNSUPPORTED_MEDIA_TYPE: 415,
   FORBIDDEN: 403,
   INTERNAL: 500,
 };
@@ -87,6 +89,14 @@ export async function parseJsonBody(
   req: Request,
   maxPayloadBytes?: number,
 ): Promise<{ ok: true; data: unknown } | { ok: false; response: Response }> {
+  const mediaType = req.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
+  if (mediaType !== "application/json") {
+    return {
+      ok: false,
+      response: errorResponse("UNSUPPORTED_MEDIA_TYPE", "Content-Type must be application/json"),
+    };
+  }
+
   try {
     const lengthHeader = req.headers.get("content-length");
     if (maxPayloadBytes && lengthHeader) {

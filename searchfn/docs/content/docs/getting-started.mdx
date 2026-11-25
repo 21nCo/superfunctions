@@ -114,6 +114,7 @@ import { createSearchFnServer } from "@searchfn/server";
 import { MemoryAdapter } from "@searchfn/adapter-memory";
 
 const server = await createSearchFnServer({
+  allowUnauthenticated: true, // Local demo only.
   adapter: new MemoryAdapter(),
   basePath: "/searchfn",
 });

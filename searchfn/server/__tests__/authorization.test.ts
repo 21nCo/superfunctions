@@ -1,0 +1,130 @@
+import { describe, expect, it, vi } from "vitest";
+import { createSearchFnServer, type SearchFnAction } from "../src";
+
+function testAdapter() {
+  return {
+    name: "test",
+    index: vi.fn(async () => {}),
+    search: vi.fn(async () => []),
+    searchAll: vi.fn(async () => []),
+    remove: vi.fn(async () => {}),
+    clear: vi.fn(async () => {}),
+  };
+}
+
+function post(path: string, body: unknown, contentType = "application/json") {
+  return new Request(`https://test.example/searchfn/${path}`, {
+    method: "POST",
+    headers: { "content-type": contentType },
+    body: JSON.stringify(body),
+  });
+}
+
+describe("SearchFn authorization", () => {
+  it("requires an authorization policy or explicit unauthenticated mode", async () => {
+    const adapter = testAdapter();
+    await expect(createSearchFnServer({ adapter })).rejects.toThrow("requires authorize");
+
+    const server = await createSearchFnServer({ adapter, allowUnauthenticated: true });
+    const response = await server.router.handle(post("search-all", { query: "sample" }));
+    expect(response.status).toBe(200);
+    expect(adapter.searchAll).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ["status", "status", null, []],
+    ["index", "index", { resource: "docs", documents: [{ id: "doc-1", fields: { title: "sample" } }] }, ["docs"]],
+    ["search", "search", { resource: "docs", query: "sample" }, ["docs"]],
+    ["search-all", "searchAll", { resources: ["docs", "notes"], query: "sample" }, ["docs", "notes"]],
+    ["remove", "remove", { resource: "docs", ids: ["doc-1"] }, ["docs"]],
+    ["clear", "clear", { resource: "docs" }, ["docs"]],
+  ] satisfies [string, SearchFnAction, unknown, string[]][])(
+    "passes the request, identity and effective targets to the policy for %s",
+    async (path, action, payload, resources) => {
+      const adapter = testAdapter();
+      const authorize = vi.fn((ctx: { principal: string | null }) => ctx.principal === "test-reader");
+      const server = await createSearchFnServer({
+        adapter,
+        context: (request) => ({ principal: request.headers.get("x-test-principal") }),
+        authorize,
+      });
+      const request = action === "status"
+        ? new Request("https://test.example/searchfn/status")
+        : post(path, payload, "Application/JSON; charset=utf-8");
+      request.headers.set("x-test-principal", "test-reader");
+
+      expect((await server.router.handle(request)).status).toBe(200);
+      expect(authorize).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ principal: "test-reader" }), action, payload, request, resources,
+      );
+    },
+  );
+
+  it.each(["deny", "throw"])("keeps the adapter untouched when the policy says %s", async (decision) => {
+    const adapter = testAdapter();
+    const server = await createSearchFnServer({
+      adapter,
+      allowUnauthenticated: true,
+      authorize: () => {
+        if (decision === "throw") throw new Error("policy failure");
+        return false;
+      },
+    });
+
+    const response = await server.router.handle(post("clear", { resource: "docs" }));
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({
+      ok: false, error: { code: "FORBIDDEN", message: "Authorization denied" },
+    });
+    expect(adapter.clear).not.toHaveBeenCalled();
+  });
+
+  it.each([{ resources: undefined }, { resources: null }, { resources: [] }])(
+    "requires explicit authorized search-all targets ($resources)",
+    async ({ resources }) => {
+      const adapter = testAdapter();
+      const authorize = vi.fn(() => true);
+      const server = await createSearchFnServer({ adapter, authorize });
+
+      const response = await server.router.handle(post("search-all", { query: "sample", resources }));
+      expect(response.status).toBe(400);
+      expect(authorize).not.toHaveBeenCalled();
+      expect(adapter.searchAll).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["index", "search", "remove", "clear", "search-all"])("rejects ambiguous scope fields on %s", async (path) => {
+    const adapter = testAdapter();
+    const authorize = vi.fn(() => true);
+    const server = await createSearchFnServer({ adapter, authorize });
+
+    const response = await server.router.handle(post(path, { resource: "docs", resources: ["docs"] }));
+    expect(response.status).toBe(400);
+    expect(authorize).not.toHaveBeenCalled();
+  });
+
+  it("rejects non-JSON media types before consulting the policy", async () => {
+    const adapter = testAdapter();
+    const authorize = vi.fn(() => true);
+    const server = await createSearchFnServer({ adapter, authorize });
+
+    const response = await server.router.handle(post("clear", { resource: "docs" }, "text/plain"));
+    expect(response.status).toBe(415);
+    expect(authorize).not.toHaveBeenCalled();
+    expect(adapter.clear).not.toHaveBeenCalled();
+  });
+
+  it("keeps the validated adapter input independent of policy edits", async () => {
+    const adapter = testAdapter();
+    const server = await createSearchFnServer({
+      adapter,
+      authorize: (_ctx, _action, payload) => {
+        (payload as { resources: string[] }).resources.push("notes");
+        return true;
+      },
+    });
+
+    expect((await server.router.handle(post("search-all", { query: "sample", resources: ["docs"] }))).status).toBe(200);
+    expect(adapter.searchAll).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ resources: ["docs"] }));
+  });
+});

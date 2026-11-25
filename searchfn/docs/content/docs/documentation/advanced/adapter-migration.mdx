@@ -49,6 +49,7 @@ Wire it in:
 ```typescript
 const adapter = new DualAdapter(oldAdapter, newAdapter);
 const sf = await createSearchFnServer({
+  authorize: authorizeSearchRequest,
   adapter,
   basePath: "/searchfn",
 });
@@ -115,6 +116,7 @@ Or remove the dual wrapper entirely:
 
 ```typescript
 const sf = await createSearchFnServer({
+  authorize: authorizeSearchRequest,
   adapter: newAdapter,                              // direct
   basePath: "/searchfn",
 });

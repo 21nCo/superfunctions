@@ -22,6 +22,7 @@ const adapter = new PostgresAdapter({
     connectionString: process.env.DATABASE_URL!,
   });
 const sf = await createSearchFnServer({
+  authorize: authorizeSearchRequest,
   adapter,
   basePath: "/searchfn",
 });
