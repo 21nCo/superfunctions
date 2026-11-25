@@ -19,7 +19,8 @@ import {
   type DatafnRelationMatch,
 } from "@datafn/core";
 import type { DataStore } from "../store.js";
-import { resolvePredicateEndpoint } from "./filters.js";
+import { getReadableRelationFields } from "../../validation/authz.js";
+import { getForeignKeyRelatedRecords, hasPredicateField, isPolymorphicForeignKey, resolvePredicateEndpoint } from "./filters.js";
 
 export type { SelectToken } from "@datafn/core";
 
@@ -170,7 +171,7 @@ function materializeRelatedRecord(
   knownResource?: string,
 ): Record<string, unknown> {
   const resource = knownResource ?? recordResourceName(schema, record.id, targetEndpointFor(match));
-  return materializeSelect(record, resource, select, schema, store, omit, metadata);
+  return materializeSelect(record, resource, select, schema, store, omit, metadata, { enforceRelationFields: true });
 }
 
 function htreeAncestors(
@@ -265,10 +266,24 @@ export function materializeSelect(
   store: DataStore,
   omit?: string[],
   metadata?: QueryMetadata,
-  visibleJoinRowsOnly = false,
+  options?: { visibleJoinRowsOnly?: boolean; enforceRelationFields?: boolean },
 ): Record<string, unknown> {
   const resourceSchema = schema.resources.find((r) => r.name === resource);
   if (!resourceSchema) return { id: record.id };
+  const readableRelationFields = options?.enforceRelationFields
+    ? getReadableRelationFields(schema, resourceSchema)
+    : undefined;
+  const canProjectField = (field: string) => !readableRelationFields || readableRelationFields.has(field);
+  const hidesRelationField = (field: string) => !canProjectField(field) &&
+    hasPredicateField(schema, resourceSchema, field);
+  const projectHtreeRecord = (child: Record<string, unknown>) => {
+    const normalized = stripNullsForNonNullableFields(child, resourceSchema);
+    if (!readableRelationFields) return applyOmit(normalized, omit);
+    const readable = Object.fromEntries(Object.entries(normalized).filter(([field]) =>
+      canProjectField(field),
+    ));
+    return applyOmit(readable, omit);
+  };
 
   // Persisted stores can hold null for non-nullable fields (nullable SQL
   // columns, replace clears). Expose them as undefined in query results.
@@ -286,7 +301,7 @@ export function materializeSelect(
   if (!select || select.length === 0) {
     const result: Record<string, unknown> = { id: record.id };
     for (const field of resourceSchema.fields) {
-      if (record[field.name] !== undefined) {
+      if (record[field.name] !== undefined && canProjectField(field.name)) {
         result[field.name] = record[field.name];
       }
     }
@@ -303,7 +318,7 @@ export function materializeSelect(
       result.id = record.id;
       includedFields.add("id");
       for (const field of resourceSchema.fields) {
-        if (record[field.name] !== undefined) {
+        if (record[field.name] !== undefined && canProjectField(field.name)) {
           result[field.name] = record[field.name];
           includedFields.add(field.name);
         }
@@ -318,24 +333,19 @@ export function materializeSelect(
       const restToken = parts.slice(1).join(".");
 
       const relation = findRelation(schema, resource, firstRelation);
-      if (!relation) continue;
+      if (!relation || hidesRelationField(firstRelation)) continue;
 
       // Check if we already have records for this relation
       const existingRecords = result[firstRelation];
 
       // Always expand from source records so successive nested tokens (e.g. items.id + items.title)
       // do not lose fields when earlier tokens projected only partial child objects.
-      const joinedRecords = relation.relation.type === "many-many"
-        ? expandManyManyRecords(record, relation, schema, store, resource, metadata)
-        : undefined;
-      const intermediateRecords = joinedRecords?.map((entry) => entry.record) ?? expandRelationToRecords(
-        record,
-        relation,
-        schema,
-        store,
-        resource,
-        metadata,
-      );
+      const qualifiedRecords = expandQualifiedRecords(record, relation, schema, store, resource, metadata);
+      const intermediateRecords = qualifiedRecords
+        ? relationReturnsSingleRecord(relation)
+          ? qualifiedRecords[0]?.record
+          : qualifiedRecords.map((entry) => entry.record)
+        : expandRelationToRecords(record, relation, schema, store, resource, metadata);
 
       if (!intermediateRecords) continue;
 
@@ -352,15 +362,15 @@ export function materializeSelect(
             store,
             omit,
             metadata,
-            joinedRecords?.[index]?.resource,
+            qualifiedRecords?.[index]?.resource,
           );
 
           // Merge with existing record if present
           let mergedRecord;
           if (existingRecords && Array.isArray(existingRecords)) {
-            // The same sorted joins are projected for each token. Use their
+            // The same sorted records are projected for each token. Use their
             // position so duplicate IDs from distinct resources stay separate.
-            const existingRecord = joinedRecords
+            const existingRecord = qualifiedRecords
               ? existingRecords[index]
               : existingRecords.find((r: any) => r.id === intermediateRecord.id);
             if (existingRecord && typeof existingRecord === "object" && existingRecord.id === intermediateRecord.id) {
@@ -386,6 +396,7 @@ export function materializeSelect(
           store,
           omit,
           metadata,
+          qualifiedRecords?.[0]?.resource,
         );
 
         // Merge with existing if present
@@ -403,6 +414,7 @@ export function materializeSelect(
     }
 
     const parsed = parseSelectToken(token);
+    if (hidesRelationField(parsed.baseName)) continue;
 
     const htreeRelation = findRelation(schema, resource, parsed.baseName);
     if (htreeRelation?.relation.type === "htree") {
@@ -419,9 +431,7 @@ export function materializeSelect(
             ),
             htreeRelation,
             metadata,
-          ).map((c) =>
-            applyOmit(stripNullsForNonNullableFields(c, resourceSchema), omit),
-          );
+          ).map(projectHtreeRecord);
         } else if (parsed.directive === "**") {
           result[parsed.baseName] = filterAncestorInactiveRecords(
             htreeChildren(
@@ -433,9 +443,7 @@ export function materializeSelect(
             ),
             htreeRelation,
             metadata,
-          ).map((d) =>
-            applyOmit(stripNullsForNonNullableFields(d, resourceSchema), omit),
-          );
+          ).map(projectHtreeRecord);
         }
         includedFields.add(parsed.baseName);
       } else if (parsed.baseName === "parent") {
@@ -444,9 +452,7 @@ export function materializeSelect(
           resource,
           htreeRelation.relation,
           store,
-        ).map((a) =>
-          applyOmit(stripNullsForNonNullableFields(a, resourceSchema), omit),
-        );
+        ).map(projectHtreeRecord);
         includedFields.add(parsed.baseName);
       }
       continue;
@@ -460,7 +466,7 @@ export function materializeSelect(
         // ids-only relation token
         result[parsed.baseName] = getRelationIds(record, relation, schema, store, resource, metadata);
         includedFields.add(parsed.baseName);
-      } else {
+      } else if (canProjectField(parsed.baseName)) {
         // Regular field
         result[parsed.baseName] = record[parsed.baseName];
         includedFields.add(parsed.baseName);
@@ -487,7 +493,7 @@ export function materializeSelect(
     } else if (parsed.directive === "#") {
       // Emit join rows for many-many
       if (relation.relation.type === "many-many") {
-        result[parsed.baseName] = getJoinRows(record, relation, resource, schema, store, visibleJoinRowsOnly);
+        result[parsed.baseName] = getJoinRows(record, relation, resource, schema, store, options?.visibleJoinRowsOnly === true);
       }
     } else if (parsed.directive === "*#") {
       // Expand relation with metadata for many-many
@@ -582,6 +588,28 @@ function expandManyManyRecords(
   });
 }
 
+function relationReturnsSingleRecord(match: DatafnRelationMatch): boolean {
+  return (match.relation.type === "many-one" && match.direction === "forward") ||
+    (match.relation.type === "one-many" && match.direction === "inverse");
+}
+
+function expandQualifiedRecords(
+  record: Record<string, unknown>,
+  match: DatafnRelationMatch,
+  schema: DatafnSchema,
+  store: DataStore,
+  resource: string,
+  metadata?: QueryMetadata,
+) {
+  if (match.relation.type === "many-many") {
+    return expandManyManyRecords(record, match, schema, store, resource, metadata);
+  }
+  if (!isPolymorphicForeignKey(match.relation)) return undefined;
+  return getForeignKeyRelatedRecords(record, match, store, resource, schema)
+    .filter(({ record }) => filterAncestorInactiveRecords([record], match, metadata).length > 0)
+    .sort((a, b) => String(a.record.id || "").localeCompare(String(b.record.id || "")));
+}
+
 /**
  * Get relation ids (for ids-only tokens)
  */
@@ -595,6 +623,10 @@ function getRelationIds(
 ): unknown {
   const relation = match.relation;
   const isForward = match.direction === "forward";
+
+  if (isPolymorphicForeignKey(relation) && !relationReturnsSingleRecord(match)) {
+    return expandQualifiedRecords(record, match, schema, store, resource, metadata)?.map(({ record }) => record.id);
+  }
 
   if (relation.type === "many-one") {
     if (isForward) {
@@ -714,6 +746,13 @@ function expandRelation(
   const relation = match.relation;
   const isForward = match.direction === "forward";
   const currentResource = resource ?? firstEndpoint(match.direction === "forward" ? relation.from : relation.to);
+  if (isPolymorphicForeignKey(relation)) {
+    const records = expandQualifiedRecords(record, match, schema, store, currentResource, metadata) ?? [];
+    const materialized = records.map(({ record, resource }) =>
+      materializeRelatedRecord(record, match, ["*"], schema, store, omit, metadata, resource),
+    );
+    return relationReturnsSingleRecord(match) ? materialized[0] ?? null : materialized;
+  }
   if (relation.type === "many-one") {
     const records = expandRelationToRecords(record, match, schema, store, currentResource, metadata);
     if (!records) return isForward ? null : [];
@@ -727,7 +766,7 @@ function expandRelation(
 
   if (relation.type === "many-many") {
     return expandManyManyRecords(record, match, schema, store, currentResource, metadata).map((related) => {
-      const result = materializeSelect(related.record, related.resource, ["*"], schema, store, omit, metadata);
+      const result = materializeRelatedRecord(related.record, match, ["*"], schema, store, omit, metadata, related.resource);
       if (!includeMetadata) return result;
       const relationMetadata: Record<string, unknown> = {};
       for (const field of relation.metadata ?? []) {

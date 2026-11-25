@@ -165,7 +165,7 @@ async function executeRelationQuery(
     store,
     Array.isArray(query.omit) ? (query.omit as string[]) : undefined,
     query.metadata as Record<string, unknown> | undefined,
-    isMetadataOnlyRelationSelect(query.select),
+    { visibleJoinRowsOnly: isMetadataOnlyRelationSelect(query.select) },
   );
   let data = normalizeRelationQueryValue(materialized[relationName]);
   if (Array.isArray(query.sort)) {

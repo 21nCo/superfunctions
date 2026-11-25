@@ -41,7 +41,7 @@ import {
   isPrivateShareableResource,
   resolveAccessLevel,
 } from "../../validation/authz.js";
-import { resolvePredicateEndpoint } from "./filters.js";
+import { isPolymorphicForeignKey, relationForeignKey, resolvePredicateEndpoint } from "./filters.js";
 import { MAX_PUSHDOWN_IN_VALUES } from "./planner.js";
 
 /** Most disjoint WHERE lists one filter may expand to (one per OR-group combination). */
@@ -344,8 +344,7 @@ function compileRelationFilter(
   // fk NOT IN (…)`; it stays in memory.
   if (quantifier === "$none" && foreignKeyOnPrimary(match)) return null;
   // FK membership alone cannot distinguish polymorphic records that share an ID.
-  if (relation.type === "many-one" && endpointList(relation.to).length > 1) return null;
-  if (relation.type === "one-many" && (relation.fkField || relation.foreignKey) && endpointList(relation.from).length > 1) return null;
+  if (isPolymorphicForeignKey(relation)) return null;
 
   const targets = new Map<string, Conjunct[]>();
   for (const target of endpointList(relationTargetEndpoint(match.relation, match.direction))) {
@@ -499,14 +498,6 @@ function foreignKeyOnPrimary(match: RelationMatch): boolean {
     (type === "one-many" && match.direction === "inverse");
 }
 
-/** The foreign key field of a many-one or one-many relation, as the in-memory evaluator reads it. */
-function relationForeignKey(match: RelationMatch): string {
-  const relation = match.relation as any;
-  return relation.type === "many-one"
-    ? relationFkFieldForManyOne(relation)
-    : relation.fkField || relation.foreignKey || `${relation.inverse}Id`;
-}
-
 async function filterVisibleRows(
   rows: Record<string, unknown>[],
   resource: string,
@@ -639,7 +630,7 @@ async function resolveRelationConjunct(
   };
 
   if (relation.type === "many-one" || relation.type === "one-many") {
-    const fk = relationForeignKey(match);
+    const fk = relationForeignKey(relation);
     if (foreignKeyOnPrimary(match)) {
       // `$any` only (compile rejects `$none` here): fk IN matching related ids.
       const matching = await findMatchingRelated(targets, subFilter, schema, ctx);

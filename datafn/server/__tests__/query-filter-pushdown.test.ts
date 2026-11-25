@@ -1090,11 +1090,41 @@ it("uses the same declared endpoint for legacy IDs in query and transact", async
     expect(standalone.body.result.data).toEqual(data);
     expect(transaction.result.results[0].data).toEqual(data);
   }
+
+  const owner = { resource: "task", version: 1, filters: { id: "task:explicit" } };
+  const forward = { ...owner, select: ["id", "relatedItem.label", "container.*"] };
+  expect(classifyQuery(forward, schema)).toBe("PARTIAL_PUSHDOWN");
+  const inverseSelect = ["id", "linkedTasks", "containedTasks.*"];
+  for (const [request, expected] of [
+    [forward, { relatedItem: { id: "legacy-item", label: "Goal" }, container: { id: "legacy-item", label: "Goal" } }],
+    [{ ...forward, filters: { $and: [owner.filters, body.filters] } },
+      { relatedItem: { id: "legacy-item", label: "Goal" }, container: { id: "legacy-item", label: "Goal" } }],
+    [{ resource: "objective", version: 1, filters: { id: "legacy-item" }, select: inverseSelect },
+      { linkedTasks: ["task:explicit"], containedTasks: [{ id: "task:explicit" }] }],
+    [{ resource: "node", version: 1, filters: { id: "legacy-item" }, select: inverseSelect },
+      { linkedTasks: [], containedTasks: [] }],
+  ] as const) {
+    const standalone = await query(server, request);
+    const response = await server.router.handle(new Request("http://localhost/datafn/transact", {
+      method: "POST",
+      body: JSON.stringify({ atomic: false, steps: [{ query: request }] }),
+    }));
+    const transaction = await response.json();
+    expect(standalone.status).toBe(200);
+    expect(response.status).toBe(200);
+    expect(standalone.body.result.data[0]).toMatchObject(expected);
+    expect(transaction.result.results[0].data).toEqual(standalone.body.result.data);
+  }
 });
 
 it("preserves both resource discriminators on inverse predicates", async () => {
   const schema: DatafnSchema = {
     ...SCHEMA,
+    resources: SCHEMA.resources.map((resource) => {
+      if (resource.name === "objective") return { ...resource, permissions: { read: { fields: ["label"] } } };
+      if (resource.name === "node") return { ...resource, permissions: { read: { fields: ["label", "metaType"] } } };
+      return resource;
+    }),
     relations: [...(SCHEMA.relations ?? []), {
       type: "many-many",
       from: ["node", "objective", "collection"],
@@ -1107,8 +1137,8 @@ it("preserves both resource discriminators on inverse predicates", async () => {
   const { db, server } = await createServer({ schema });
   const seed = (model: string, data: Record<string, unknown>) =>
     db.create({ model, namespace: "datafn", data });
-  await seed("objective", { id: "legacy-entry", label: "Legacy entry" });
-  await seed("node", { id: "legacy-entry", label: "Node entry" });
+  await seed("objective", { id: "legacy-entry", label: "Legacy entry", parentId: "objective:parent" });
+  await seed("node", { id: "legacy-entry", label: "Node entry", metaType: "note" });
   await seed("collection", { id: "legacy-target", label: "Linked collection" });
   await seed("task", { id: "legacy-target", label: "Unlinked task" });
   await seed("test_entries", {
@@ -1188,6 +1218,11 @@ it("preserves both resource discriminators on inverse predicates", async () => {
     const result = await query(server, { ...linked, select });
     expect(result.status).toBe(200);
     expect(result.body.result.data).toEqual(transaction.result.results[index + 2].data);
+    if (index === 1 || index === 2) {
+      const entries = result.body.result.data[0].entries as Json[];
+      expect(entries.find((entry) => entry.label === "Legacy entry")).not.toHaveProperty("parentId");
+      expect(entries.find((entry) => entry.label === "Node entry")).toHaveProperty("metaType", "note");
+    }
   }
 
   const join = { from: "legacy-entry", to: "legacy-target" };

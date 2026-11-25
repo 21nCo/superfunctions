@@ -181,6 +181,16 @@ function canReadField(
   return getReadFields(resolvePermissions(schema, resource)).includes(field);
 }
 
+export function getReadableRelationFields(
+  schema: DatafnSchema,
+  resource: DatafnResourceSchema,
+): ReadonlySet<string> | undefined {
+  const policy = resolvePermissions(schema, resource);
+  if (!policy) return undefined;
+  const { capabilityFields } = getCapabilityFieldSets(schema, resource);
+  return new Set(["id", ...capabilityFields, ...getReadFields(policy)]);
+}
+
 /**
  * A relation of `resource` whose foreign key is stored on `resource` under
  * the relation's own name (e.g. a many-one `parent` with fkField "parent").

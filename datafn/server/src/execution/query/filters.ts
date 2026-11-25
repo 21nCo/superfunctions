@@ -18,8 +18,9 @@ import {
   relationFkFieldForManyOne,
   resolveCapabilities,
   resolveEndpointResource,
+  type DatafnRelationMatch,
 } from "@datafn/core";
-import type { DatafnFieldSchema, DatafnResourceSchema, DatafnSchema } from "../../core-types.js";
+import type { DatafnFieldSchema, DatafnRelationSchema, DatafnResourceSchema, DatafnSchema } from "../../core-types.js";
 import { DatafnExecutionError } from "../errors.js";
 import type { DataStore } from "../store.js";
 
@@ -168,6 +169,61 @@ export function resolvePredicateEndpoint(
   return resolveEndpointResource(endpoint, id, schema) ?? firstEndpoint(endpoint);
 }
 
+export function relationForeignKey(relation: DatafnRelationSchema): string {
+  return relation.type === "many-one"
+    ? relationFkFieldForManyOne(relation)
+    : relation.fkField || relation.foreignKey || `${relation.inverse}Id`;
+}
+
+export function isPolymorphicForeignKey(relation: DatafnRelationSchema): boolean {
+  if (relation.type === "many-one") return endpointList(relation.to).length > 1;
+  return relation.type === "one-many" && Boolean(relation.fkField || relation.foreignKey) &&
+    endpointList(relation.from).length > 1;
+}
+
+export function foreignKeyTargetResolver(
+  schema: FilterSchema,
+  relation: DatafnRelationSchema,
+  ownerResource: string,
+) {
+  const fk = relationForeignKey(relation);
+  const endpoint = relation.type === "many-one" ? relation.to : relation.from;
+  const discriminator = isPolymorphicForeignKey(relation)
+    ? getRelationFkFieldsForResource(schema as DatafnSchema, ownerResource)
+      .find(({ field }) => field === fk)?.resourceField
+    : undefined;
+  return (record: Record<string, unknown>) => {
+    const id = record[fk];
+    if (typeof id !== "string" || !id) return undefined;
+    const resource = resolvePredicateEndpoint(schema, id, endpoint, discriminator ? record[discriminator] : undefined);
+    return resource ? { id, resource } : undefined;
+  };
+}
+
+export function getForeignKeyRelatedRecords(
+  record: Record<string, unknown>,
+  match: DatafnRelationMatch,
+  store: DataStore,
+  resourceName: string,
+  schema: FilterSchema,
+): RelatedRecord[] {
+  const { relation, direction } = match;
+  if ((direction === "forward") === (relation.type === "many-one")) {
+    const target = foreignKeyTargetResolver(schema, relation, resourceName)(record);
+    if (!target) return [];
+    const found = store.getRecord(target.resource, target.id);
+    return found ? [{ resource: target.resource, record: found }] : [];
+  }
+  const fk = relationForeignKey(relation);
+  const polymorphicFk = isPolymorphicForeignKey(relation);
+  return endpointList(relationTargetEndpoint(relation, direction)).flatMap((resource) => {
+    const resolveTarget = polymorphicFk ? foreignKeyTargetResolver(schema, relation, resource) : undefined;
+    return store.findRecords(resource, fk, record.id)
+      .filter((found) => !resolveTarget || resolveTarget(found)?.resource === resourceName)
+      .map((found) => ({ resource, record: found }));
+  });
+}
+
 function getRelatedRecords(
   record: Record<string, unknown>,
   rel: NonNullable<ReturnType<typeof findRelationMatch>>,
@@ -186,30 +242,7 @@ function getRelatedRecords(
     return found ? [{ resource, record: found }] : [];
   };
   if (relation.type === "many-one" || relation.type === "one-many") {
-    const manyOne = relation.type === "many-one";
-    const configuredFk = relation.fkField || relation.foreignKey;
-    const fkEndpoint = manyOne ? relation.to : relation.from;
-    const polymorphicFk = Boolean(manyOne || configuredFk) && endpointList(fkEndpoint).length > 1;
-    const fk = manyOne
-      ? relationFkFieldForManyOne(relation)
-      : configuredFk || `${relation.inverse}Id`;
-    const fkResourceField = (ownerResource: string): string | undefined => {
-      if (!polymorphicFk) return undefined;
-      return getRelationFkFieldsForResource(schema as DatafnSchema, ownerResource)
-        .find(({ field }) => field === fk)?.resourceField;
-    };
-    if (isForward === manyOne) {
-      const discriminator = fkResourceField(resourceName);
-      return findById(record[fk], targetEndpoint, discriminator ? record[discriminator] : undefined);
-    }
-    return endpointList(targetEndpoint).flatMap((resource) => {
-      const discriminator = fkResourceField(resource);
-      return store.findRecords(resource, fk, record.id)
-        .filter((found) => !polymorphicFk || resolvePredicateEndpoint(
-          schema, found[fk], fkEndpoint, discriminator ? found[discriminator] : undefined,
-        ) === resourceName)
-        .map((found) => ({ resource, record: found }));
-    });
+    return getForeignKeyRelatedRecords(record, rel, store, resourceName, schema);
   }
   if (relation.type === "many-many") {
     if (isForward) {
