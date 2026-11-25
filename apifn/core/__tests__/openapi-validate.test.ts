@@ -364,16 +364,18 @@ describe("validateOpenAPI", () => {
     ]);
   });
 
-  it("identifies an unlisted reference in an extension used as a schema", async () => {
+  it.each([false, true])("locates the extension selected by the schema pointer (reversed=%s)", async (reversed) => {
     const doc = documentWithReference("#/components/schemas/Alias/properties/item");
     const schemas = {
       Alias: { $ref: "#/x-templates/Proxy" },
       Value: doc.components.schemas.Value,
     };
+    const proxy = { $ref: "https://example.invalid/types.yaml" };
+    const extensions = Object.entries({ "x-templates": { Proxy: proxy }, "x-other": proxy });
     await expect(validateOpenAPI({
       ...doc,
       components: { schemas },
-      "x-templates": { Proxy: { $ref: "https://example.invalid/types.yaml" } },
+      ...Object.fromEntries(reversed ? extensions.reverse() : extensions),
     })).resolves.toEqual([
       { path: "x-templates.Proxy.$ref", message: expect.stringContaining("explicit allowlist"), severity: "error" },
     ]);
