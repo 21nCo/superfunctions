@@ -361,7 +361,7 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
       // a run that served another model is void whether it then completed, failed, hung or overran its bounds.
       const unreported = reporter ? await reportStderrModel(run, reporter, result.stderr) : undefined;
       if (unreported) return unreported;
-      const outcome = await this.judge(run, attempt, outputFile, result, watch.overrun(), helper);
+      const outcome = await this.judge(run, attempt, outputFile, result, watch, helper);
       state.chargeMeasured(watch.peak());
       return outcome;
     } finally {
@@ -371,10 +371,11 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
   }
 
   /** The attempt's outcome once its process ended: its answer read, then its terminal outcome or the answer judged. */
-  private async judge(run: AttemptContext, attempt: number, outputFile: string, result: CommandResult, fileOverrun: string | undefined, helper: DirectoryHelper): Promise<SlotHarnessOutput | Rejection> {
+  private async judge(run: AttemptContext, attempt: number, outputFile: string, result: CommandResult, watch: OutputWatch, helper: DirectoryHelper): Promise<SlotHarnessOutput | Rejection> {
+    const fileOverrun = watch.overrun();
     // An answer is read only from the directories the adapter created, never through a link that replaced one.
     let replaced = !await intact(run, path.dirname(outputFile));
-    const output = replaced ? { error: DIRECTORY_REPLACED } : await readAnswer(run, outputFile, result.stdout, helper);
+    const output = replaced ? { error: DIRECTORY_REPLACED } : await readAnswer(run, outputFile, result.stdout, helper, watch.fileAllowance());
     replaced ||= "error" in output && output.error === DIRECTORY_REPLACED;
     const terminal = lapsed(run, "before its answer was judged") ?? terminalOutcome(run, attempt, result, output, fileOverrun);
     if (terminal) return terminal;
@@ -846,8 +847,10 @@ parentPort.once("message", text => {
 });`)}`);
 
 /** The attempt's answer as the CLI wrote it, with its `json-path` model report read. */
-async function readAnswer(run: AttemptContext, outputFile: string, stdout: string, helper: DirectoryHelper): Promise<OutputRead> {
-  const output = run.profile.outputVia === "file" ? await readOutputFile(run, helper, outputFile, run.state.remainingOutputBytes()) : stdoutObject(stdout);
+async function readAnswer(run: AttemptContext, outputFile: string, stdout: string, helper: DirectoryHelper, fileAllowance: number): Promise<OutputRead> {
+  // The file is read against the raw allowance the live check used (the attempt's budget less its stream bytes), never
+  // one narrowed by the redacted transcript, so a model report the CLI was allowed to write is always read.
+  const output = run.profile.outputVia === "file" ? await readOutputFile(run, helper, outputFile, fileAllowance) : stdoutObject(stdout);
   if ("text" in output && output.text !== undefined) run.state.recordOutputFile(output.text);
   if ("value" in output && run.profile.modelReport.startsWith("json-path:")) run.state.note(valueAtPath(output.value, run.profile.modelReport.slice("json-path:".length)));
   return output;
@@ -968,7 +971,9 @@ async function readOutputFile(run: AttemptContext, helper: DirectoryHelper, file
  * `onOutput`, against one output budget, and abort the returned signal, which also follows the caller's, once together
  * they outgrow it.
  */
-function watchOutputFile(file: string, maxBytes: number, parent: AbortSignal | undefined): { signal: AbortSignal; stop: () => void; overrun: () => string | undefined; onOutput: (bytes: number) => void; peak: () => number; settle: () => Promise<void> } {
+interface OutputWatch { signal: AbortSignal; stop: () => void; overrun: () => string | undefined; onOutput: (bytes: number) => void; peak: () => number; fileAllowance: () => number; settle: () => Promise<void> }
+
+function watchOutputFile(file: string, maxBytes: number, parent: AbortSignal | undefined): OutputWatch {
   const controller = new AbortController();
   let overrun: string | undefined;
   let checking = false;
@@ -995,6 +1000,8 @@ function watchOutputFile(file: string, maxBytes: number, parent: AbortSignal | u
     onOutput: bytes => { streamed += bytes; check(); },
     overrun: () => { check(); return overrun; },
     peak: () => peak,
+    // The output file bytes the live check allows next to the stream bytes reported so far.
+    fileAllowance: () => maxBytes - streamed,
     // One last measurement after the CLI ended, so a file written after the last poll is charged too.
     settle: () => pending.then(() => lstat(file)).then(stat => { peak = Math.max(peak, stat.isFile() ? stat.size : 0); }, () => { /* never written */ }),
   };
@@ -1318,15 +1325,19 @@ class RunState {
   }
 
   /**
-   * The output with the run's events, transcript and observation, held to the limit the panel applies to each channel:
-   * a channel over it ends the run timed_out, keeping what was observed. Cancellation keeps its terminal.
+   * The output with the run's events, transcript and observation. The CLI's raw output is held to the budget while it
+   * runs and when its file is read; what is retained (redacted, so a marker may be longer than the text it replaced) is
+   * held to the same limit on its own: each channel is cut to it, whatever the terminal, and the terminal is kept.
    */
   private bounded(answer: SlotHarnessOutput): SlotHarnessOutput {
-    const telemetry = { events: redactValue(this.events, this.secrets), transcript: this.transcript.join("\n"), observed: this.observation() };
-    const sizes = [Buffer.byteLength(telemetry.transcript), Buffer.byteLength(JSON.stringify(telemetry.events))];
-    if (answer.terminal === "canceled" || sizes.every(size => size <= this.maxOutputBytes)) return { ...answer, ...telemetry };
-    const reason = `The CLI output exceeded its ${this.maxOutputBytes}-byte budget once stored (transcript ${sizes[0]} bytes, events ${sizes[1]} bytes).`;
-    return { ...failure("timed_out", reason), ...telemetry };
+    const events = redactValue(this.events, this.secrets);
+    // As JSON.stringify(events) serializes them: brackets plus a comma between events.
+    let used = 1;
+    const over = events.findIndex(event => (used += Buffer.byteLength(JSON.stringify(event)) + 1) > this.maxOutputBytes);
+    if (over >= 0) events.length = over;
+    let transcript = Buffer.from(this.transcript.join("\n")).subarray(0, this.maxOutputBytes).toString("utf8");
+    while (Buffer.byteLength(transcript) > this.maxOutputBytes) transcript = transcript.slice(0, -1);
+    return { ...answer, events, transcript, observed: this.observation() };
   }
 
   private observation(): SlotObservation {

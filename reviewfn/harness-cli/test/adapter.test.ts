@@ -1035,6 +1035,53 @@ describe("CliHarnessAdapter preflight and configuration", () => {
     expect(output.error).toMatch(/at its largest\) grew past the remaining/);
   });
 
+  /** A CLI that writes `file` to its output file and `stdout` (reported as the shared runner reports it), then ends as `ending`. */
+  const writing = (file: string, stdout: string, ending: { timedOut?: boolean; canceled?: boolean; stderr?: string } = {}): CommandRunner => async (_command, args, options) => {
+    if (args.includes("--version")) return { code: 0, signal: null, stdout: "fake-cli version 1.2.3\n", stderr: "", timedOut: false, canceled: false };
+    if (file) await writeFile(args[args.indexOf("--out") + 1], file);
+    const stderr = ending.stderr ?? "";
+    options.onOutput?.(Buffer.byteLength(stdout) + Buffer.byteLength(stderr));
+    return { code: ending.timedOut || ending.canceled ? null : 0, signal: null, stdout, stderr, timedOut: ending.timedOut ?? false, canceled: ending.canceled ?? false };
+  };
+  const limited = (maxOutputBytes: number) => ({ policy: { ...DEFAULT_POLICY, limits: { ...DEFAULT_POLICY.limits, maxOutputBytes } } });
+  // With only a 4-character credential, a cut stream withholds its last 3 characters behind the longer "[REDACTED]".
+  const shortSecret = () => ({ PATH: process.env.PATH, REVIEW_AUTH: "test" });
+
+  it("reads a timed-out run's file model report against the raw allowance, even when a withheld tail's marker is longer than the tail", async () => {
+    // 1,000 stdout bytes and a 19-byte report fit the 1,021 bytes left of a 1,024-byte budget; the "[REDACTED]" that
+    // withholds the cut stream's last 3 characters is 7 bytes longer than them, which once narrowed the file read to 13.
+    const runner = writing(JSON.stringify({ model: "model-x" }), `${"z".repeat(998)}\nz`, { timedOut: true });
+    const output = await new CliHarnessAdapter({ environment: shortSecret(), runner }).run(input(configuration(profile({ outputVia: "file", modelReport: "json-path:model" })), limited(1_024)));
+    expect(output.terminal).toBe("timed_out");
+    expect(output.observed).toMatchObject({ model: "model-x", modelMismatch: true });
+    expect(Buffer.byteLength(output.transcript ?? "")).toBeLessThanOrEqual(1_024);
+  });
+
+  it("accepts an output file one byte under the allowance the live check gives it next to the streams", async () => {
+    const answer = JSON.stringify({ findings: [], evidence: [], inspectedPaths: ["src/index.ts"], uninspected: [] });
+    // 1,021 bytes left of a 1,024-byte budget, 500 of them on stdout: the file may have up to 521.
+    const runner = writing(answer.padEnd(520, " "), `${"z".repeat(499)}\n`);
+    const output = await new CliHarnessAdapter({ environment: environment(), runner }).run(input(configuration(profile({ outputVia: "file" })), limited(1_024)));
+    expect(output.error).toBeUndefined();
+    expect(output.terminal).toBe("completed");
+  });
+
+  it.each([["timed_out", { timedOut: true }], ["canceled", { canceled: true }]] as const)("returns a %s run's redaction-expanded transcript within the output limit", async (terminal, ending) => {
+    const controller = new AbortController();
+    // 1,021 raw stream bytes; each stream's withheld last 3 characters become a marker 7 bytes longer.
+    const cli = writing("", `${"z".repeat(1_008)}\nz`, { ...ending, stderr: "e".repeat(9) + "\ne" });
+    const runner: CommandRunner = async (command, args, options) => {
+      const result = await cli(command, args, options);
+      if (ending.canceled && !args.includes("--version")) controller.abort();
+      return result;
+    };
+    const output = await new CliHarnessAdapter({ environment: shortSecret(), runner }).run(input(configuration(profile()), { ...limited(1_024), signal: controller.signal }));
+    expect(output.terminal).toBe(terminal);
+    expect(Buffer.byteLength(output.transcript ?? "")).toBeLessThanOrEqual(1_024);
+    expect(Buffer.byteLength(JSON.stringify(output.events))).toBeLessThanOrEqual(1_024);
+    expect(output.transcript).toMatch(/^z{1007}\[REDACTED\]\n/);
+  });
+
   it("never starts an executable replaced while its attempt's files were written", async () => {
     let reviews = 0;
     const runner: CommandRunner = async (_command, args) => {

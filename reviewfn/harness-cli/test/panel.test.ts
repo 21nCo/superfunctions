@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { DEFAULT_CONFIG, DEFAULT_POLICY, PanelCoordinator, applyRepositoryPanelPolicy, type HarnessOutput, type HarnessProfile, type PanelPolicy, type PanelRunRequest, type PanelSlot, type SlotHarnessInput, type SlotHarnessOutput } from "@superfunctions/reviewfn-core";
+import { DEFAULT_CONFIG, DEFAULT_POLICY, PanelCoordinator, applyRepositoryPanelPolicy, type CommandRunner, type HarnessOutput, type HarnessProfile, type PanelPolicy, type PanelRunRequest, type PanelSlot, type SlotHarnessInput, type SlotHarnessOutput } from "@superfunctions/reviewfn-core";
 import { FakeContextAdapter, FakeExecutionAdapter, FakeSourceControlAdapter, MemoryArtifactStore } from "@superfunctions/reviewfn-testing";
 
 import { AGENT, LAUNCH } from "./launcher.js";
@@ -104,6 +104,22 @@ describe("generic CLI slots in the panel", () => {
     const panelPolicy: PanelPolicy = { version: 1, slots: [slot("lingering", "lingering", "model-r")], quorum: { stage1: 1, stage2: 0 }, requirementsSlot: null, incremental: "full", profiles: { lingering } };
     const policy = { ...DEFAULT_POLICY, limits: { ...DEFAULT_POLICY.limits, harnessTimeoutMs: 2_000 } };
     const result = await coordinator(undefined, 50).run({ root: repo, base, head, config, policy, panelPolicy });
+    expect(result.report.slotRuns[0]).toMatchObject({ terminal: "void", voidReasons: ["model_mismatch"], identity: { model: "model-x" } });
+  }, 60_000);
+
+  it("voids a timed-out slot whose file model report fits its raw budget but not one narrowed by a withheld tail's marker", async () => {
+    // 1,000 stdout bytes and a 19-byte report fit the 1,021 bytes a 1,024-byte budget leaves; with a 4-character
+    // credential the cut stream's last 3 characters are withheld behind a marker 7 bytes longer than them.
+    const runner: CommandRunner = async (_command, args, options) => {
+      if (args.includes("--version")) return { code: 0, signal: null, stdout: "fake-cli version 1.2.3\n", stderr: "", timedOut: false, canceled: false };
+      await writeFile(args[args.indexOf("--out") + 1], JSON.stringify({ model: "model-x" }));
+      options.onOutput?.(1_000);
+      return { code: null, signal: null, stdout: `${"z".repeat(998)}\nz`, stderr: "", timedOut: true, canceled: false };
+    };
+    const cut: HarnessProfile = { ...await profile("cut", "json-path:model", ["--out", "{outputFile}"]), outputVia: "file" };
+    const panelPolicy: PanelPolicy = { version: 1, slots: [{ ...slot("cut", "cut", "model-r"), budget: { timeoutMs: 60_000, maxOutputBytes: 1_024 } }], quorum: { stage1: 1, stage2: 0 }, requirementsSlot: null, incremental: "full", profiles: { cut } };
+    const harness = new CliHarnessAdapter({ environment: { PATH: process.env.PATH, FIXTURE_KEY: "test" }, runner });
+    const result = await coordinator(harness).run({ root: repo, base, head, config, policy: DEFAULT_POLICY, panelPolicy });
     expect(result.report.slotRuns[0]).toMatchObject({ terminal: "void", voidReasons: ["model_mismatch"], identity: { model: "model-x" } });
   }, 60_000);
 
