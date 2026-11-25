@@ -30,6 +30,8 @@ const MAX_MODEL_CHARS = 256;
 const REPAIR_ECHO_BYTES = 16_384;
 /** How often a running CLI's output file is measured against the remaining output budget. */
 const OUTPUT_FILE_POLL_MS = 100;
+/** Levels of JSON string escaping a secret is still recognized under; each level is decoded in linear time. */
+const MAX_ESCAPE_DEPTH = 8;
 /** How long a `stderr-regex` model reporter may match, in a worker that is terminated when it runs over or the run is canceled. */
 const MODEL_REPORT_TIMEOUT_MS = 2_000;
 /**
@@ -250,8 +252,9 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
     let directory: string | undefined;
     try {
       directory = await mkdtemp(path.join(tmpdir(), "reviewfn-cli-"));
-      return await this.attempts({ ...prepared, executable, key, directory });
+      return await this.attempts({ ...prepared, executable, key, directory, identities: new Map([[directory, await identity(directory)]]) });
     } finally {
+      // rm removes a link that replaced the directory, or one inside it, never what it points to.
       if (directory) await rm(directory, { recursive: true, force: true });
     }
   }
@@ -284,7 +287,7 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
   }
 
   /** The first attempt and, when its answer is rejected, the one repair attempt. */
-  private async attempts(prepared: Prepared & { executable: string; key: string; directory: string }): Promise<SlotHarnessOutput> {
+  private async attempts(prepared: Omit<AttemptContext, "schemaText">): Promise<SlotHarnessOutput> {
     const { state, input, profile } = prepared;
     // The CLI is shown (in the prompt and {schemaFile}) a schema that also declares its json-path model report, so a CLI
     // that enforces the schema can still emit it; its answer is validated against the slot's own schema as written, and
@@ -317,35 +320,37 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
     // ever followed, shown to or read for a later one.
     let files: { promptFile: string; schemaFile: string; outputFile: string };
     try { files = await attemptFiles(run, attempt, prompt); }
-    catch (error) { return state.finish("failed", `The CLI attempt's files could not be created: ${message(error)}`); }
+    catch (error) { return state.finish(input.signal?.aborted ? "canceled" : "failed", `The CLI attempt's files could not be created: ${message(error)}`); }
     const { outputFile } = files;
-    // Just before the spawn (Node cannot exec an open file), the executable must still be the one whose version was read;
-    // the deadline is read after that and the file writes, so neither can extend it.
-    if (await this.changed(run)) return state.finish("failed", `The CLI executable changed after its version was read, so it was refused ${before}.`);
+    // Just before the spawn (Node cannot exec an open file), the executable must still be the one whose version was read,
+    // in directories that are still the adapter's; the deadline is read after that and the file writes, so neither can
+    // extend it.
+    const refused = await this.refusal(run, path.dirname(outputFile), before, `The CLI executable changed after its version was read, so it was refused ${before}.`);
+    if (refused) return refused;
     const remaining = run.deadline - Date.now();
     if (remaining <= 0) return state.finish("timed_out", `The CLI exceeded its configured bound ${before}.`);
     const args = cliArguments(profile.argv, { ...files, workspace: input.workspace, model: input.configuration.inference.model });
     state.push("started", { attempt, promptVia: profile.promptVia, outputVia: profile.outputVia, sandbox: profile.capabilities.sandbox });
-    // An output file is measured while the CLI runs, together with the stdout and stderr bytes the runner reports: once
-    // they outgrow the remaining budget between them the run is aborted, which kills the whole process group, and it ends
-    // timed_out like any other overrun, never canceled.
-    const watch = profile.outputVia === "file" ? watchOutputFile(outputFile, outputBytes, input.signal) : undefined;
+    // The output file, whatever outputVia is (a profile may pass {outputFile} with stdout-last-json), is measured while the
+    // CLI runs, together with the stdout and stderr bytes the runner reports: once they outgrow the remaining budget between
+    // them the run is aborted, which kills the whole process group, and it ends timed_out like any other overrun.
+    const watch = watchOutputFile(outputFile, outputBytes, input.signal);
     // A stderr reporter's worker starts with the CLI, so a report is matched as soon as the CLI stops.
     const reporter = profile.modelReport.startsWith("stderr-regex:") ? startReporter(profile.modelReport.slice("stderr-regex:".length), input.configuration.inference.model) : undefined;
     try {
       let result: CommandResult;
-      try { result = await this.runner(run.executable, args, { cwd: input.workspace, env: run.environment, timeoutMs: remaining, maxOutputBytes: outputBytes, signal: watch?.signal ?? input.signal, onOutput: watch?.onOutput, stdin: profile.promptVia === "stdin" ? prompt : "" }); }
+      try { result = await this.runner(run.executable, args, { cwd: input.workspace, env: run.environment, timeoutMs: remaining, maxOutputBytes: outputBytes, signal: watch.signal, onOutput: watch.onOutput, stdin: profile.promptVia === "stdin" ? prompt : "" }); }
       catch (error) { return state.finish(input.signal?.aborted ? "canceled" : "failed", `The CLI could not be started: ${message(error)}`); }
-      finally { watch?.stop(); }
+      finally { watch.stop(); }
       // A measurement still in flight when the CLI ended is settled before the answer is judged.
-      await watch?.settle();
+      await watch.settle();
       state.record(result);
       // Every model report is read from what this attempt left, within the output budget, before any terminal return:
       // a run that served another model is void whether it then completed, failed, hung or overran its bounds.
       const unreported = reporter ? await reportStderrModel(run, reporter, result.stderr) : undefined;
       if (unreported) return unreported;
-      const outcome = await this.judge(run, attempt, outputFile, result, watch?.overrun());
-      if (watch) state.chargeMeasured(watch.peak());
+      const outcome = await this.judge(run, attempt, outputFile, result, watch.overrun());
+      state.chargeMeasured(watch.peak());
       return outcome;
     } finally {
       reporter?.dispose();
@@ -354,13 +359,26 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
 
   /** The attempt's outcome once its process ended: its answer read, then its terminal outcome or the answer judged. */
   private async judge(run: AttemptContext, attempt: number, outputFile: string, result: CommandResult, fileOverrun: string | undefined): Promise<SlotHarnessOutput | Rejection> {
-    const output = await readAnswer(run, outputFile, result.stdout);
+    // An answer is read only from the directories the adapter created, never through a link that replaced one.
+    const replaced = !await intact(run, path.dirname(outputFile));
+    const output = replaced ? { error: "The CLI's attempt directory was replaced." } : await readAnswer(run, outputFile, result.stdout);
     const terminal = terminalOutcome(run, attempt, result, output, fileOverrun);
     if (terminal) return terminal;
-    // After cancellation and every overrun, before an answer is accepted or repaired: the executable must be unchanged.
-    const changed = await this.changed(run) && !run.input.signal?.aborted;
-    if (changed || run.input.signal?.aborted) return run.state.finish(changed ? "failed" : "canceled", changed ? "The CLI executable changed while the attempt ran, so its answer was refused." : "The CLI run was canceled.");
-    return accept(run, attempt, output);
+    // After cancellation and every overrun, before an answer is accepted or repaired: the deadline must not have passed,
+    // and the executable and directories must be unchanged.
+    const refused = await this.refusal(run, path.dirname(outputFile), "before its answer was accepted", "The CLI executable changed while the attempt ran, so its answer was refused.", replaced);
+    return refused ?? accept(run, attempt, output);
+  }
+
+  /**
+   * After the executable's identity and the attempt's directories are read, in one precedence: the caller's cancellation,
+   * then the elapsed deadline (timed_out), then a changed executable, then a replaced run or attempt directory.
+   */
+  private async refusal(run: AttemptContext, attemptDirectory: string, when: string, changedText: string, replaced = false): Promise<SlotHarnessOutput | undefined> {
+    const changed = await this.changed(run) ? changedText : replaced || !await intact(run, attemptDirectory) ? `The CLI's run or attempt directory was replaced, so the attempt was refused ${when}.` : undefined;
+    if (run.input.signal?.aborted) return run.state.finish("canceled", "The CLI run was canceled.");
+    if (Date.now() >= run.deadline) return run.state.finish("timed_out", `The CLI exceeded its configured bound ${when}.`);
+    return changed === undefined ? undefined : run.state.finish("failed", changed);
   }
 
   /** Configuration errors that refuse both preflight and run before any process starts. */
@@ -452,11 +470,29 @@ interface Prepared {
   deadline: number;
 }
 
-interface AttemptContext extends Prepared { executable: string; key: string; directory: string; schemaText: string }
+/** `identities` holds the device and inode of the run directory and each attempt's, as the adapter created them. */
+interface AttemptContext extends Prepared { executable: string; key: string; directory: string; identities: Map<string, string>; schemaText: string }
+
+/** A directory's device and inode, read without following a link; anything but a directory is refused. */
+async function identity(directory: string): Promise<string> {
+  const info = await lstat(directory, { bigint: true });
+  if (!info.isDirectory()) throw new Error(`${directory} is not a directory`);
+  return `${info.dev}:${info.ino}`;
+}
+
+/** Whether the run directory and, when given, the attempt's are still the ones the adapter created. */
+async function intact(run: AttemptContext, attemptDirectory?: string): Promise<boolean> {
+  for (const directory of [run.directory, ...(attemptDirectory === undefined ? [] : [attemptDirectory])]) {
+    if (await identity(directory).catch(() => undefined) !== run.identities.get(directory)) return false;
+  }
+  return true;
+}
 
 /** A new directory for one attempt, created exclusively inside the run directory, with its schema and prompt files. */
 async function attemptFiles(run: AttemptContext, attempt: number, prompt: string): Promise<{ promptFile: string; schemaFile: string; outputFile: string }> {
+  if (!await intact(run)) throw new Error("the run directory was replaced");
   const directory = await mkdtemp(path.join(run.directory, `attempt-${attempt}-`));
+  run.identities.set(directory, await identity(directory));
   const files = { promptFile: path.join(directory, "prompt.md"), schemaFile: path.join(directory, "schema.json"), outputFile: path.join(directory, "output.json") };
   await writeFile(files.schemaFile, run.schemaText, { mode: 0o600, flag: "wx" });
   if (run.profile.promptVia === "file" || run.profile.argv.includes("{promptFile}")) await writeFile(files.promptFile, prompt, { mode: 0o600, flag: "wx" });
@@ -466,29 +502,22 @@ async function attemptFiles(run: AttemptContext, attempt: number, prompt: string
 const SHORT_ESCAPES: Record<string, string> = { '"': '"', "\\": "\\", "/": "/", b: "\b", f: "\f", n: "\n", r: "\r", t: "\t" };
 
 /**
- * `text` with every secret redacted as written and as a JSON string can escape it (a short escape, or `\uXXXX` in either
- * hex case): the text's escapes are decoded once, keeping where each decoded unit started, and every occurrence in either
- * form marks its whole original span, overlapping spans merged, so a shorter secret never leaves part of a longer one.
+ * `text` with every secret redacted as written and under up to MAX_ESCAPE_DEPTH levels of JSON string escaping (short
+ * escapes, or `\uXXXX` in either hex case): the escapes are decoded one level at a time, each in linear time, keeping
+ * where each decoded unit started in `text`, and every occurrence at any level marks its whole original span, overlapping
+ * spans merged, so a shorter secret never leaves part of a longer one.
  */
 function redact(text: string, secrets: readonly string[]): string {
   const values = secrets.filter(secret => secret.length > 0);
-  let decoded = "";
-  const starts = new Uint32Array(text.length + 1);
-  let size = 0;
-  const escaped = text.includes("\\");
-  for (let index = 0; escaped && index < text.length;) {
-    starts[size++] = index;
-    const next = text[index + 1] ?? "";
-    const hex = text.slice(index + 2, index + 6);
-    if (text[index] === "\\" && Object.hasOwn(SHORT_ESCAPES, next)) { decoded += SHORT_ESCAPES[next]; index += 2; }
-    else if (text[index] === "\\" && next === "u" && /^[\da-f]{4}$/i.test(hex)) { decoded += String.fromCharCode(Number.parseInt(hex, 16)); index += 6; }
-    else { decoded += text[index]; index += 1; }
-  }
-  starts[size] = text.length;
   const spans: Array<[number, number]> = [];
-  for (const value of values) {
-    for (let at = text.indexOf(value); at !== -1; at = text.indexOf(value, at + value.length)) spans.push([at, at + value.length]);
-    for (let at = size ? decoded.indexOf(value) : -1; at !== -1; at = decoded.indexOf(value, at + value.length)) spans.push([starts[at], starts[at + value.length]]);
+  let level = { text, starts: Uint32Array.from({ length: text.length + 1 }, (_, index) => index) };
+  for (let depth = 0; depth <= MAX_ESCAPE_DEPTH; depth += 1) {
+    for (const value of values) {
+      for (let at = level.text.indexOf(value); at !== -1; at = level.text.indexOf(value, at + value.length)) spans.push([level.starts[at], level.starts[at + value.length]]);
+    }
+    const next = depth < MAX_ESCAPE_DEPTH && level.text.includes("\\") ? unescapeLevel(level.text, level.starts) : level;
+    if (next.text.length === level.text.length) break;
+    level = next;
   }
   let result = "";
   let end = -1;
@@ -498,6 +527,30 @@ function redact(text: string, secrets: readonly string[]): string {
     end = to;
   }
   return redactText(result + text.slice(Math.max(end, 0)), secrets);
+}
+
+/** One level of JSON string escapes decoded, with where in the original text each decoded unit started. */
+function unescapeLevel(text: string, origins: Uint32Array<ArrayBuffer>): { text: string; starts: Uint32Array<ArrayBuffer> } {
+  let decoded = "";
+  const starts = new Uint32Array(text.length + 1);
+  let size = 0;
+  for (let index = 0; index < text.length;) {
+    starts[size++] = origins[index];
+    const next = text[index] === "\\" ? text[index + 1] ?? "" : "";
+    if (Object.hasOwn(SHORT_ESCAPES, next)) { decoded += SHORT_ESCAPES[next]; index += 2; }
+    else if (next === "u" && /^[\da-f]{4}$/i.test(text.slice(index + 2, index + 6))) { decoded += String.fromCharCode(Number.parseInt(text.slice(index + 2, index + 6), 16)); index += 6; }
+    else { decoded += text[index]; index += 1; }
+  }
+  starts[size] = origins[text.length];
+  return { text: decoded, starts };
+}
+
+/** A JSON value with `redact` applied to every string and key, and core `redactJson` to every other value. */
+function redactValue<T>(value: T, secrets: readonly string[]): T {
+  if (typeof value === "string") return redact(value, secrets) as T;
+  if (Array.isArray(value)) return value.map(item => redactValue(item, secrets)) as T;
+  if (isRecord(value)) return Object.fromEntries(Object.entries(value).map(([key, item]) => [redact(key, secrets), redactValue(item, secrets)])) as T;
+  return redactJson(value, secrets);
 }
 
 /** An answer rejected by validation, with what the repair prompt echoes back. */
@@ -687,7 +740,7 @@ function accept(run: AttemptContext, attempt: number, output: OutputRead): SlotH
   const unconfirmed = run.state.unconfirmedModel();
   if (unconfirmed) return run.state.finish("failed", unconfirmed);
   run.state.push("completed", { attempt });
-  return run.state.complete(redactJson(payload, run.secrets));
+  return run.state.complete(redactValue(payload, run.secrets));
 }
 
 /** The last JSON object line of stdout, with the line it was parsed from. */
@@ -734,7 +787,7 @@ function watchOutputFile(file: string, maxBytes: number, parent: AbortSignal | u
   let peak = 0;
   let pending: Promise<void> = Promise.resolve();
   const check = () => {
-    if (streamed + peak <= maxBytes || overrun !== undefined) return;
+    if (peak === 0 || streamed + peak <= maxBytes || overrun !== undefined) return;
     overrun = `The CLI output file (${peak} bytes at its largest) grew past the remaining ${Math.max(0, maxBytes)}-byte output budget with ${streamed} bytes of stdout and stderr while it ran.`;
     controller.abort();
   };
@@ -1065,7 +1118,7 @@ class RunState {
    * a channel over it ends the run timed_out, keeping what was observed. Cancellation keeps its terminal.
    */
   private bounded(answer: SlotHarnessOutput): SlotHarnessOutput {
-    const telemetry = { events: redactJson(this.events, this.secrets), transcript: this.transcript.join("\n"), observed: this.observation() };
+    const telemetry = { events: redactValue(this.events, this.secrets), transcript: this.transcript.join("\n"), observed: this.observation() };
     const sizes = [Buffer.byteLength(telemetry.transcript), Buffer.byteLength(JSON.stringify(telemetry.events))];
     if (answer.terminal === "canceled" || sizes.every(size => size <= this.maxOutputBytes)) return { ...answer, ...telemetry };
     const reason = `The CLI output exceeded its ${this.maxOutputBytes}-byte budget once stored (transcript ${sizes[0]} bytes, events ${sizes[1]} bytes).`;

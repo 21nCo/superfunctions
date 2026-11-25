@@ -1,4 +1,4 @@
-import { chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -127,6 +127,14 @@ describe("CliHarnessAdapter prompt and output channels", () => {
     const output = await run(profile({ outputVia: "file", extra: ["--mixed", "60000"] }), undefined, { policy: { ...DEFAULT_POLICY, limits: { ...DEFAULT_POLICY.limits, maxOutputBytes: 100_000, harnessTimeoutMs: 60_000 } } });
     expect(output.terminal).toBe("timed_out");
     expect(output.error).toMatch(/grew past the remaining .* of stdout and stderr while it ran/);
+    expect(Date.now() - started).toBeLessThan(20_000);
+  }, 30_000);
+
+  it("kills a stdout-last-json CLI that floods the {outputFile} its argv is given, then hangs, as a timeout", async () => {
+    const started = Date.now();
+    const output = await run(profile({ extra: ["--out", "{outputFile}", "--flood", "1"] }), undefined, { policy: { ...DEFAULT_POLICY, limits: { ...DEFAULT_POLICY.limits, maxOutputBytes: 200_000, harnessTimeoutMs: 60_000 } } });
+    expect(output.terminal).toBe("timed_out");
+    expect(output.error).toContain("while it ran");
     expect(Date.now() - started).toBeLessThan(20_000);
   }, 30_000);
 });
@@ -1017,6 +1025,111 @@ describe("CliHarnessAdapter preflight and configuration", () => {
     expect(reviews).toBe(2);
     expect(output.terminal).toBe("timed_out");
     expect(output.error).toMatch(/output file .*exceeded the remaining/);
+  });
+
+  it("ends timed_out a valid answer from an unchanged executable whose identity read after the CLI crosses the deadline", async () => {
+    const runner: CommandRunner = async (_command, args) => {
+      if (args.includes("--version")) return { code: 0, signal: null, stdout: "fake-cli version 1.2.3\n", stderr: "", timedOut: false, canceled: false };
+      // The identity read that follows the CLI is slower than the time left, and no caller signal will end the run.
+      identity.delayMs = 400;
+      return { code: 0, signal: null, stdout: `${JSON.stringify({ findings: [], evidence: [], inspectedPaths: ["src/index.ts"], uninspected: [] })}\n`, stderr: "", timedOut: false, canceled: false };
+    };
+    const policy = { ...DEFAULT_POLICY, limits: { ...DEFAULT_POLICY.limits, harnessTimeoutMs: 300 } };
+    const output = await new CliHarnessAdapter({ environment: environment(), runner }).run(input(configuration(profile()), { policy }));
+    expect(output.terminal).toBe("timed_out");
+    expect(output.error).toBe("The CLI exceeded its configured bound before its answer was accepted.");
+  });
+
+  it("ends canceled, never starting the CLI, when the caller aborts while the identity read before the spawn finds a replaced executable", async () => {
+    const controller = new AbortController();
+    let reviews = 0;
+    const runner: CommandRunner = async (_command, args) => {
+      if (args.includes("--version")) {
+        // The executable is replaced while the attempt's files are written, and the identity read before the spawn is slow.
+        Object.assign(identity, { shiftOnAttemptDirectory: true, delayMs: 300 });
+        setTimeout(() => controller.abort(), 100);
+        return { code: 0, signal: null, stdout: "fake-cli version 1.2.3\n", stderr: "", timedOut: false, canceled: false };
+      }
+      reviews += 1;
+      return { code: 0, signal: null, stdout: "", stderr: "", timedOut: false, canceled: false };
+    };
+    const output = await new CliHarnessAdapter({ environment: environment(), runner }).run(input(configuration(profile()), { signal: controller.signal }));
+    expect(reviews).toBe(0);
+    expect(output.terminal).toBe("canceled");
+  });
+
+  it("refuses a valid answer read through an attempt directory the CLI replaced with a link, and runs no repair", async () => {
+    const outside = path.join(directory, "outside");
+    let reviews = 0;
+    const runner: CommandRunner = async (_command, args) => {
+      if (args.includes("--version")) return { code: 0, signal: null, stdout: "fake-cli version 1.2.3\n", stderr: "", timedOut: false, canceled: false };
+      reviews += 1;
+      // The CLI swaps its attempt directory for a link to one where it planted a valid answer.
+      const attemptDirectory = path.dirname(args[args.indexOf("--out") + 1]);
+      await mkdir(outside);
+      await writeFile(path.join(outside, "output.json"), JSON.stringify({ findings: [], evidence: [], inspectedPaths: ["src/index.ts"], uninspected: [] }));
+      await rm(attemptDirectory, { recursive: true });
+      await symlink(outside, attemptDirectory);
+      return { code: 0, signal: null, stdout: "", stderr: "", timedOut: false, canceled: false };
+    };
+    const output = await new CliHarnessAdapter({ environment: environment(), runner }).run(input(configuration(profile({ outputVia: "file" }))));
+    expect(reviews).toBe(1);
+    expect(output.terminal).toBe("failed");
+    expect(output.error).toBe("The CLI's run or attempt directory was replaced, so the attempt was refused before its answer was accepted.");
+  });
+
+  it("creates no repair attempt through a run directory the CLI replaced with a link", async () => {
+    const outside = path.join(directory, "outside");
+    let reviews = 0;
+    const runner: CommandRunner = async (_command, args) => {
+      if (args.includes("--version")) return { code: 0, signal: null, stdout: "fake-cli version 1.2.3\n", stderr: "", timedOut: false, canceled: false };
+      reviews += 1;
+      // A malformed answer, which earns a repair, then the run directory moved away and replaced with a link to it.
+      const out = args[args.indexOf("--out") + 1];
+      await writeFile(out, JSON.stringify({ findings: "none" }));
+      const runDirectory = path.dirname(path.dirname(out));
+      await rename(runDirectory, outside);
+      await symlink(outside, runDirectory);
+      return { code: 0, signal: null, stdout: "", stderr: "", timedOut: false, canceled: false };
+    };
+    const output = await new CliHarnessAdapter({ environment: environment(), runner }).run(input(configuration(profile({ outputVia: "file" }))));
+    expect(reviews).toBe(1);
+    expect(output.terminal).toBe("failed");
+    expect(output.error).toMatch(/run or attempt directory was replaced/);
+    expect((await readdir(outside)).filter(name => name.startsWith("attempt-2-"))).toEqual([]);
+  });
+
+  it("redacts a credential echoed under nested JSON escaping from the transcript, the repair prompt, the payload and the events", async () => {
+    const credential = ["test-credential", '"quoted"', "\\back\\slash"].join("-");
+    const nested = (depth: number) => Array.from({ length: depth }).reduce<string>(text => JSON.stringify(text), credential);
+    const prompts: string[] = [];
+    const runner: CommandRunner = async (_command, args, options) => {
+      if (args.includes("--version")) return { code: 0, signal: null, stdout: "fake-cli version 1.2.3\n", stderr: "", timedOut: false, canceled: false };
+      prompts.push(options.stdin ?? "");
+      const valid = { ...{ findings: [], evidence: [], inspectedPaths: ["src/index.ts"], uninspected: [] }, uninspected: [{ scope: "review", reason: `echo ${nested(3)}` }] };
+      await writeFile(args[args.indexOf("--out") + 1], JSON.stringify(prompts.length === 1 ? { findings: `leaked ${nested(2)}` } : valid));
+      return { code: 0, signal: null, stdout: `${JSON.stringify({ echo: nested(2) })}\n${JSON.stringify({ echo: nested(4) })}\n`, stderr: `${nested(3)}\n`, timedOut: false, canceled: false };
+    };
+    const output = await new CliHarnessAdapter({ environment: { ...environment(), REVIEW_AUTH: credential }, runner }).run(input(configuration(profile({ outputVia: "file" }))));
+    expect(output.terminal).toBe("completed");
+    expect(prompts).toHaveLength(2);
+    expect(prompts[1]).toContain("Repair: your previous answer was rejected");
+    expect(JSON.stringify(output.uninspected)).toContain("[REDACTED]");
+    // Escaping never changes the credential's letters, so none of them may survive in any form.
+    for (const text of [output.transcript ?? "", prompts[1], JSON.stringify(output.uninspected), JSON.stringify(output.events)]) expect(text).not.toMatch(/quoted|slash/);
+  });
+
+  it("redacts a credential under eight levels of JSON escaping in linear time, beside a long run of backslashes", async () => {
+    const credential = 'test-"deep"-value';
+    const deep = Array.from({ length: 8 }).reduce<string>(text => JSON.stringify(text), credential);
+    const runner: CommandRunner = async (_command, args) => args.includes("--version")
+      ? { code: 0, signal: null, stdout: "fake-cli version 1.2.3\n", stderr: "", timedOut: false, canceled: false }
+      : { code: 0, signal: null, stdout: `${deep}\n${"\\".repeat(100_000)}\n${JSON.stringify({ findings: [], evidence: [], inspectedPaths: ["src/index.ts"], uninspected: [] })}\n`, stderr: "", timedOut: false, canceled: false };
+    const started = Date.now();
+    const output = await new CliHarnessAdapter({ environment: { ...environment(), REVIEW_AUTH: credential }, runner }).run(input(configuration(profile())));
+    expect(output.terminal).toBe("completed");
+    expect(output.transcript).not.toContain("deep");
+    expect(Date.now() - started).toBeLessThan(2_000);
   });
 
   it("keeps its contract version after preflight, for the CLI's harness contract versions", async () => {
