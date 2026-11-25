@@ -1522,10 +1522,14 @@ export class McpFnServer<TContext = undefined> {
             await response.body?.cancel().catch(() => undefined);
             return setupStopped();
           }
-          if (acceptedId !== undefined && response.ok) return response;
+          if (!response.ok) {
+            void close().catch(() => undefined);
+            return response;
+          }
+          if (acceptedId !== undefined) return response;
           return await releaseAfterResponse(response, close);
         } catch (error) {
-          await close().catch(() => undefined);
+          void close().catch(() => undefined);
           throw error;
         } finally {
           request.signal.removeEventListener("abort", expire);

@@ -443,6 +443,33 @@ describe("createWebStandardHandler session limits and expiry (MCP-SEC-04)", () =
     expect((await initialize()).status).toBe(200);
   });
 
+  it("returns a failed SSE setup response while the host cleanup is still pending", async () => {
+    vi.useFakeTimers();
+    let release!: () => void;
+    const cleanup = new Promise<void>((resolve) => { release = resolve; });
+    let events = 0;
+    const onClosed = vi.fn(() => cleanup);
+    const { initialize } = await setup({
+      enableJsonResponse: false,
+      maxSessions: 1,
+      onsessionclosed: onClosed,
+      eventStore: {
+        async storeEvent() {
+          if (++events === 1) throw new Error("Test priming error");
+          return `event-${events}`;
+        },
+        async replayEventsAfter() { return ""; },
+      },
+    });
+    expect((await initialize()).status).toBe(400);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(onClosed).toHaveBeenCalledExactlyOnceWith("session-1");
+    expect((await initialize()).status).toBe(503);
+    release();
+    await vi.advanceTimersByTimeAsync(0);
+    expect((await initialize()).status).toBe(200);
+  });
+
   it.each(["configuration", "acceptance"])("answers 408 while the host %s hook is still pending", async (stage) => {
     vi.useFakeTimers();
     let markEntered!: () => void;
