@@ -951,7 +951,7 @@ class OperationConverter {
     // read alike only when it is required with a typed schema, which rejects
     // the inherited value Ajv reads when it is absent; never "__proto__".
     const schema = raw.schema;
-    const alike = name !== "__proto__" && raw.required === true && isObject(schema) && schema.type !== undefined;
+    const alike = name !== "__proto__" && raw.required === true && isObject(schema) && schema.type !== undefined && !Object.hasOwn(schema, "$ref");
     if (isPrototypeName(name) && !alike) {
       throw new OpenApiSkip(
         "unsupported-parameter-name",

@@ -1029,8 +1029,9 @@ export class SchemaConverter {
   /**
    * Refuse a schema object whose `properties` or `required` names a property
    * every object inherits, unless both engines judge it alike: the same
-   * object requires it and gives it a `properties` entry with a `type`, which
-   * rejects the inherited value Ajv reads when it is absent. "__proto__" is
+   * object requires it and gives it a `properties` entry with a `type` (no
+   * `$ref`, `readOnly` or `writeOnly` beside it), which rejects the inherited
+   * value Ajv reads when it is absent. "__proto__" is
    * refused always: Ajv leaves that key of `properties` out.
    */
   private checkInheritedNames(schema: JsonObject): void {
@@ -1040,7 +1041,10 @@ export class SchemaConverter {
     if (declared.size === 0 && required.size === 0) return;
     for (const name of [...declared, ...required]) {
       const property = declared.has(name) ? properties![name] : undefined;
-      const alike = name !== "__proto__" && required.has(name) && isObject(property) && property.type !== undefined;
+      // A `$ref` (whose 3.0 siblings are dropped) or an access flag (projected to `false`) may lose the type.
+      const typed = isObject(property) && property.type !== undefined && !Object.hasOwn(property, "$ref")
+        && property.readOnly !== true && property.writeOnly !== true;
+      const alike = name !== "__proto__" && required.has(name) && typed;
       if (!alike) throw new OpenApiSkip("unsupported-property-name", prototypePropertyReason(name));
     }
   }

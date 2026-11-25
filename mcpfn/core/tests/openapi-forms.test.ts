@@ -1349,7 +1349,12 @@ describe("fromOpenAPI bounded and dialect-aware conversion", () => {
         // Split across allOf members, it is not read together.
         "/h": { post: { operationId: "split", requestBody: body({ type: "object", allOf: [{ required: ["constructor"] }, { properties: { constructor: { type: "string" } } }] }), responses: ok } },
         "/i": { post: { operationId: "untyped", requestBody: body({ type: "object", required: ["constructor"], properties: { constructor: {} } }), responses: ok } },
+        // 3.0 drops a `type` beside `$ref`, and readOnly projects the property to `false`.
+        "/j": { post: { operationId: "referenced", requestBody: body({ type: "object", required: ["constructor"], properties: { constructor: { $ref: "#/components/schemas/Any", type: "string" } } }), responses: ok } },
+        "/k": { post: { operationId: "readOnly", requestBody: body({ type: "object", required: ["constructor"], properties: { constructor: { type: "string", readOnly: true } } }), responses: ok } },
+        "/l": { get: { operationId: "referencedParameter", parameters: [{ name: "toString", in: "query", required: true, schema: { $ref: "#/components/schemas/Any", type: "string" } }], responses: ok } },
       },
+      components: { schemas: { Any: {} } },
     }, options());
     const reason = (name: string) => PROTO_PROPERTY.replace("__proto__", name);
     expect(skips(result)).toEqual([
@@ -1360,6 +1365,9 @@ describe("fromOpenAPI bounded and dialect-aware conversion", () => {
       ["output", "unsupported-property-name", reason("hasOwnProperty")],
       ["split", "unsupported-property-name", reason("constructor")],
       ["untyped", "unsupported-property-name", reason("constructor")],
+      ["referenced", "unsupported-property-name", reason("constructor")],
+      ["readOnly", "unsupported-property-name", reason("constructor")],
+      ["referencedParameter", "unsupported-parameter-name", "query parameter toString cannot be declared: the validators do not read the names every object inherits alike"],
     ]);
     expect(result.tools.map(({ name }) => name)).toEqual(["plain", "typed"]);
     expectArguments(tool(result.tools, "typed").inputSchema, { valid: [{ body: { constructor: "ok" } }], invalid: [{ body: {} }, { body: { constructor: 1 } }] });

@@ -169,7 +169,8 @@ for (const { operation, code, reason } of skipped) {
   ...) unless it is required with a typed schema
   (`unsupported-parameter-name`), a schema that declares or requires such a
   name unless the same schema object requires it and gives it a
-  `properties` entry with a `type`, or that lists one in a dependency, in a
+  `properties` entry with a `type` (no `$ref`, `readOnly` or `writeOnly`
+  beside it), or that lists one in a dependency, in a
   body or a response (`unsupported-property-name`); `__proto__` is refused
   always. This holds under either engine: Ajv reads those names through the
   prototype (and leaves a `__proto__` key of `properties` out) while
