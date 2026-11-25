@@ -249,6 +249,38 @@ describe.skipIf(!url)("DATA-41 versioned query on a PostgreSQL server", { timeou
     expect(rows).toEqual([{ id, title: "again" }]);
   });
 
+  it("raises exactly one tombstone when two deletes of one record overlap from two connections", async () => {
+    const first = connect();
+    const second = connect();
+    await ensureRevisionsTable(first);
+    const id = "task:twice";
+    await first.rawSql!.execute(`INSERT INTO "task" (id, "__ns", title) VALUES ('${id}', 'datafn', 'first')`);
+    await first.transaction(async (tx) => bumpRevision(tx as Adapter, "datafn", "task", id, false));
+    // T1 deletes the record and raises its tombstone, holding its transaction open.
+    const raised = deferred();
+    const commit = deferred();
+    const t1 = first.transaction(async (tx) => {
+      await (tx as Adapter).rawSql!.execute(`DELETE FROM "task" WHERE id = '${id}'`);
+      const rev = await bumpTombstone(tx as Adapter, "datafn", "task", id);
+      raised.resolve();
+      await commit.promise;
+      return rev;
+    });
+    await raised.promise;
+    // T2 also saw the record; its DELETE waits on T1's row lock and then
+    // matches nothing, so it removed nothing and must raise nothing.
+    const t2 = second.transaction(async (tx) => {
+      await (tx as Adapter).rawSql!.execute(`DELETE FROM "task" WHERE id = '${id}'`);
+      return bumpTombstone(tx as Adapter, "datafn", "task", id);
+    });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    commit.resolve();
+    expect(await t1).toBe(2);
+    expect(await t2).toBeUndefined();
+    expect((await readRevisions(first, "datafn", "task", [id])).get(id)).toEqual({ rev: 2, deleted: true });
+    expect(await first.rawSql!.query(`SELECT id FROM "task" WHERE id = '${id}'`)).toEqual([]);
+  });
+
   it("returns each row with the revision of exactly that row while another connection writes", async () => {
     // The writer has its own pool, so its writes commit on another session.
     const writer = await serve(connect());

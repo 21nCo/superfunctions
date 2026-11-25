@@ -1848,3 +1848,163 @@ describe("DATA-41 revisions: a tombstone needs an actual delete (round 10)", () 
     for (const change of await deleteChanges(served.send, "task:1")) expect(change).not.toHaveProperty("rev");
   });
 });
+
+describe("DATA-41 revisions: a tombstone needs a present-to-absent delete (round 11)", () => {
+  /**
+   * Replays a concurrent delete that committed first: this write's existence
+   * read still returns the stale row for each id in `stale` (findOne once; a
+   * listed row in every findMany until the test clears it, since the cascade
+   * reads its children more than once), although the record is already deleted and its
+   * revision row is already a tombstone, so this write's DELETE removes
+   * nothing.
+   */
+  function staleReads(database: Adapter, stale: Map<string, Record<string, unknown>>): Adapter {
+    const wrap = (db: Adapter): Adapter =>
+      new Proxy(db, {
+        get(target, property, receiver) {
+          if (property === "findOne") {
+            return async (args: any) => {
+              const id = (args.where ?? []).find((w: any) => w.field === "id")?.value;
+              const row = stale.get(id);
+              if (row && row.__model === args.model && !row.__list) {
+                stale.delete(id);
+                return { ...row };
+              }
+              return target.findOne(args);
+            };
+          }
+          if (property === "findMany") {
+            return async (args: any) => {
+              const rows = (await target.findMany(args)) as Record<string, unknown>[];
+              for (const [id, row] of [...stale]) {
+                if (row.__model !== args.model || !row.__list) continue;
+                row.__seen = true;
+                rows.push({ ...row, id });
+              }
+              return rows;
+            };
+          }
+          if (property === "transaction") {
+            return (fn: (tx: Adapter) => Promise<unknown>) => target.transaction((tx) => fn(wrap(tx as Adapter)));
+          }
+          return Reflect.get(target, property, receiver);
+        },
+      });
+    return wrap(database);
+  }
+
+  async function deleteChanges(send: (route: string, body: unknown) => Promise<{ body: Json }>, id: string) {
+    const pull = await send("pull", { clientId: "client:p", cursor: "0" });
+    expect(pull.body.ok).toBe(true);
+    return (pull.body.result.changes as Json[]).filter((change) => change.id === id && change.op === "delete");
+  }
+
+  /** task:1 inserted (rev 1) and deleted (tombstone 2); its next existence read is stale. */
+  async function tombstoned() {
+    const stale = new Map<string, Record<string, unknown>>();
+    const served = await serve({ database: staleReads(memoryAdapter(), stale) });
+    await served.push({ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } });
+    const first = await served.push({ resource: "task", operation: "delete", id: "task:1" });
+    expect(first.body.result.revisions[first.mutationId]).toMatchObject({ rev: 2, deleted: true });
+    expect(await served.rev("task", "task:1")).toEqual({ rev: 2, deleted: true });
+    stale.set("task:1", { __model: "task", id: "task:1", title: "a" });
+    return { ...served, stale };
+  }
+
+  async function expectOnlyFirstTombstoneHasRev(send: (route: string, body: unknown) => Promise<{ body: Json }>) {
+    const revs = (await deleteChanges(send, "task:1")).map((change) => change.rev);
+    expect(revs.filter((rev) => rev !== undefined)).toEqual([2]);
+  }
+
+  it("raises nothing for a push delete of a record a concurrent delete already tombstoned", async () => {
+    const served = await tombstoned();
+    const res = await served.push({ resource: "task", operation: "delete", id: "task:1" });
+    expect(res.body.ok).toBe(true);
+    expect(served.stale.size).toBe(0);
+    expect(res.body.result.revisions?.[res.mutationId]).toBeUndefined();
+    expect(await served.rev("task", "task:1")).toEqual({ rev: 2, deleted: true });
+    await expectOnlyFirstTombstoneHasRev(served.send);
+  });
+
+  it("raises nothing for a /mutation delete of a record a concurrent delete already tombstoned", async () => {
+    const served = await tombstoned();
+    const res = await served.send("mutation", { resource: "task", version: 1, operation: "delete", id: "task:1", clientId: "c", mutationId: "direct-del-2" });
+    expect(res.body.result.ok).toBe(true);
+    expect(served.stale.size).toBe(0);
+    expect(res.body.result).not.toHaveProperty("rev");
+    expect(await served.rev("task", "task:1")).toEqual({ rev: 2, deleted: true });
+    await expectOnlyFirstTombstoneHasRev(served.send);
+  });
+
+  it("raises nothing for a /transact delete of a record a concurrent delete already tombstoned", async () => {
+    const served = await tombstoned();
+    const res = await served.send("transact", {
+      atomic: true,
+      steps: [{ mutation: { resource: "task", version: 1, operation: "delete", id: "task:1", clientId: "c", mutationId: "tx-del-2" } }],
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.result.results[0].ok).toBe(true);
+    expect(served.stale.size).toBe(0);
+    expect(JSON.stringify(res.body.result.results[0])).not.toContain('"rev"');
+    expect(await served.rev("task", "task:1")).toEqual({ rev: 2, deleted: true });
+    await expectOnlyFirstTombstoneHasRev(served.send);
+  });
+
+  it("leaves an already-tombstoned cascade child unchanged and still tombstones the parent and its live sibling", async () => {
+    const stale = new Map<string, Record<string, unknown>>();
+    const served = await serve({ database: staleReads(memoryAdapter(), stale) });
+    await served.push({ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } });
+    await served.push({ resource: "comment", operation: "insert", id: "comment:1", record: { body: "x", taskId: "task:1" } });
+    await served.push({ resource: "comment", operation: "insert", id: "comment:2", record: { body: "y", taskId: "task:1" } });
+    await served.push({ resource: "comment", operation: "delete", id: "comment:1" });
+    expect(await served.rev("comment", "comment:1")).toEqual({ rev: 2, deleted: true });
+    // The cascade's child read still sees comment:1, which a concurrent
+    // delete already removed and tombstoned.
+    const staleChild: Record<string, unknown> = { __model: "comment", __list: true, id: "comment:1", body: "x", taskId: "task:1" };
+    stale.set("comment:1", staleChild);
+    const res = await served.push({ resource: "task", operation: "delete", id: "task:1" });
+    stale.clear();
+    expect(res.body.ok).toBe(true);
+    expect(staleChild.__seen).toBe(true);
+    expect(res.body.result.revisions[res.mutationId]).toMatchObject({ rev: 2, deleted: true });
+    expect(await served.rev("task", "task:1")).toEqual({ rev: 2, deleted: true });
+    expect(await served.rev("comment", "comment:2")).toEqual({ rev: 2, deleted: true });
+    expect(await served.rev("comment", "comment:1")).toEqual({ rev: 2, deleted: true });
+    const revs = (await deleteChanges(served.send, "comment:1")).map((change) => change.rev);
+    expect(revs.filter((rev) => rev !== undefined)).toEqual([2]);
+  });
+
+  it("skips the tombstone when a compare-and-swap retry finds that a concurrent delete raised it", async () => {
+    const database = memoryAdapter();
+    let concurrentDelete: (() => Promise<void>) | undefined;
+    const racing = {
+      ...database,
+      capabilities: { ...database.capabilities, transactions: { supported: false, nested: false } },
+      internal: new Proxy(database.internal, {
+        get: (target, property, receiver) =>
+          property === "update"
+            ? async (table: string, where: unknown, data: unknown) => {
+                if (table === "__datafn_revisions" && concurrentDelete) {
+                  // Another delete of the record commits its tombstone
+                  // between this delete's revision read and its swap.
+                  const write = concurrentDelete;
+                  concurrentDelete = undefined;
+                  await write();
+                }
+                return (target as any).update(table, where, data);
+              }
+            : Reflect.get(target, property, receiver),
+      }),
+    } as Adapter;
+    const served = await serve({ database: racing });
+    await served.push({ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } });
+    concurrentDelete = async () => {
+      await bumpRevision(database, NS, "task", "task:1", true);
+    };
+    const res = await served.push({ resource: "task", operation: "delete", id: "task:1" });
+    expect(res.body.ok).toBe(true);
+    expect(concurrentDelete).toBeUndefined();
+    expect(res.body.result.revisions?.[res.mutationId]).toBeUndefined();
+    expect(await served.rev("task", "task:1")).toEqual({ rev: 2, deleted: true });
+  });
+});

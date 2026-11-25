@@ -185,14 +185,20 @@ export async function bumpRevision(
 }
 
 /**
- * DATA-41: raises a deleted record's revision to a tombstone, but only while
- * the record row is absent in the write's own view. A delete that matched no
- * row because a concurrent writer re-inserted the record (and raised its
- * revision) first must not mark that live record deleted, so each attempt,
- * every compare-and-swap retry included, checks the record row after reading
- * the revision row and before the swap. A writer that commits after that read
- * changes the revision, so the swap fails and the next attempt sees its row.
- * Returns undefined, raising nothing, when the record row is present.
+ * DATA-41: raises a deleted record's revision to a tombstone, but only for a
+ * write that moved the record from present to absent. Each attempt, every
+ * compare-and-swap retry included, reads the revision row and then checks,
+ * before the swap:
+ * - a revision row that is already a tombstone means an earlier delete raised
+ *   it (a concurrent delete that removed the row first, or a repeated delete),
+ *   so this delete removed nothing and raises nothing;
+ * - a record row present in the write's own view means a concurrent writer
+ *   re-inserted the record (and raised its revision) first, so this delete
+ *   must not mark that live record deleted.
+ * A writer that commits after the revision read changes the revision, so the
+ * swap fails and the next attempt sees its state. Returns undefined, raising
+ * nothing, in both cases. A record with no revision row or a live one still
+ * gets its tombstone.
  */
 export async function bumpTombstone(
   db: Adapter,
@@ -200,12 +206,17 @@ export async function bumpTombstone(
   resource: string,
   recordId: string,
 ): Promise<number | undefined> {
-  return raiseRevision(db, namespace, resource, recordId, true, async () =>
+  return raiseRevision(db, namespace, resource, recordId, true, async (row) =>
+    isTombstone(row) ||
     (await db.findOne({
       model: resource,
       where: [{ field: "id", operator: "eq", value: recordId }],
       namespace,
     })) !== null);
+}
+
+function isTombstone(row: Record<string, unknown> | null): boolean {
+  return row !== null && Number(row.deleted) === 1;
 }
 
 async function raiseRevision(
@@ -214,14 +225,14 @@ async function raiseRevision(
   resource: string,
   recordId: string,
   deleted: boolean,
-  recordPresent?: () => Promise<boolean>,
+  skip?: (row: Record<string, unknown> | null) => Promise<boolean>,
 ): Promise<number | undefined> {
   const id = revisionRowId(namespace, resource, recordId);
   const where = [{ field: "id", op: "eq" as const, value: id }];
   for (let attempt = 0; attempt < MAX_BUMP_ATTEMPTS; attempt++) {
     const updatedAt = new Date().toISOString();
     const row = await db.internal.findOne(REVISIONS_TABLE, where);
-    if (recordPresent && (await recordPresent())) return undefined;
+    if (skip && (await skip(row))) return undefined;
     if (!row) {
       const created = await createIfAbsent(db, {
         id,
