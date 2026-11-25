@@ -50,6 +50,10 @@ export interface TestCommandOptions {
     delay?: number;
     /** Environment variable overrides */
     envVar?: string[];
+    /** Process environment variable names available to the collection */
+    allowEnv?: string[];
+    /** Execute scripts in a trusted collection */
+    allowScripts?: boolean;
     /** Dotenv file to load as overrides */
     dotenv?: string;
     /** Headers to redact */
@@ -131,12 +135,17 @@ export async function runTestCommand(options: TestCommandOptions): Promise<numbe
             retries: options.retries,
             delay: options.delay,
             overrides,
+            processEnv: Object.fromEntries((options.allowEnv ?? []).map((name) => [name, process.env[name]])),
+            allowScripts: options.allowScripts === true,
             redactHeaders: options.redactHeader,
             reporter,
         });
     } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        options.output.error(`Collection run failed: ${message}`);
+        const hint = message.startsWith("Collection scripts are disabled")
+            ? " Use --allow-scripts only for trusted collections."
+            : "";
+        options.output.error(`Collection run failed: ${message}${hint}`);
         return 2;
     }
 

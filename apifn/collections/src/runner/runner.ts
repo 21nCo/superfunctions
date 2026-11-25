@@ -48,6 +48,8 @@ interface RequestEntry {
   request: OpenCollectionRequest;
 }
 
+type RequestScripts = NonNullable<NonNullable<OpenCollectionRequest["runtime"]>["scripts"]>;
+
 function sortItems(items: CollectionItem[]): CollectionItem[] {
   return [...items].sort((a, b) => {
     const aSeq = a.seq ?? Number.MAX_SAFE_INTEGER;
@@ -244,6 +246,7 @@ async function executeRequest(
     redactHeaders: string[];
     reporter?: RunReporter;
     isolateContext?: boolean;
+    scripts: RequestScripts;
   }
 ): Promise<RequestResult> {
   options.reporter?.onRequestStart?.(entry.item);
@@ -257,7 +260,7 @@ async function executeRequest(
     body: interpolated.body,
   };
   const assertionResults: RequestResult["assertions"] = [];
-  const scripts = entry.request.runtime?.scripts ?? [];
+  const { scripts } = options;
 
   for (const script of scripts) {
     if (script.type !== "pre-request") {
@@ -499,17 +502,32 @@ export async function runCollection(
 ): Promise<RunReport> {
   const startedAt = new Date();
   const environment = getEnvironment(collection, options.environment);
-  const processEnv = process.env;
+  const processEnv = options.processEnv ?? {};
   const collectionVariables =
     (collection as unknown as { variables?: Record<string, string> }).variables ?? {};
   const context = resolveVariableContext({
     overrides: options.overrides,
     environment: environment.variables,
     collection: collectionVariables,
-    processEnv,
   });
 
   const entries = flattenRequestItems(collection.items);
+  const selected = new Map<RequestEntry, RequestScripts>();
+  const includePaths = options.includePaths && new Set(options.includePaths);
+  for (const entry of entries) {
+    if (includePaths && !includePaths.has(entry.item.path)) continue;
+    if (!shouldRunEntry(entry, options)) continue;
+    const scripts = entry.request.runtime?.scripts ?? [];
+    if (!Array.isArray(scripts)) {
+      throw new Error(`Expected an array of collection scripts in '${entry.item.path}'.`);
+    }
+    if (scripts.length && options.allowScripts !== true) {
+      throw new Error(
+        `Collection scripts are disabled for '${entry.item.path}'. Set allowScripts to true only for trusted collections.`
+      );
+    }
+    selected.set(entry, [...scripts]);
+  }
   const reporter = options.reporter;
   reporter?.onStart?.(collection, options);
 
@@ -536,7 +554,8 @@ export async function runCollection(
         }
 
         const entry = entries[index];
-        if (!shouldRunEntry(entry, options)) {
+        const scripts = selected.get(entry);
+        if (!scripts) {
           const skipped = skippedResult(entry);
           results[index] = skipped;
           reporter?.onRequestComplete?.(skipped);
@@ -554,6 +573,7 @@ export async function runCollection(
           redactHeaders: redactList,
           reporter,
           isolateContext: true,
+          scripts,
         });
 
         results[index] = result;
@@ -573,7 +593,8 @@ export async function runCollection(
         continue;
       }
 
-      if (!shouldRunEntry(entry, options)) {
+      const scripts = selected.get(entry);
+      if (!scripts) {
         const skipped = skippedResult(entry);
         results[index] = skipped;
         reporter?.onRequestComplete?.(skipped);
@@ -590,6 +611,7 @@ export async function runCollection(
         cookieJar,
         redactHeaders: redactList,
         reporter,
+        scripts,
       });
 
       results[index] = result;
