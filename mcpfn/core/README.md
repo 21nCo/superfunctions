@@ -203,11 +203,17 @@ for (const { operation, code, reason } of skipped) {
   property a `required` list names, through `properties`, a matching
   `patternProperties` entry or else `additionalProperties`, when only
   objects are accepted, and the items up to `minItems` when only arrays are,
-  read from the schema itself, its `allOf` members and its references. Any
-  other child value starts again, since its depth is the instance's own,
-  and a chain of required children that never ends, which no finite value
+  read together from one schema object and its inline `allOf` members (for
+  example `required` in one member and `properties` in another). Any other
+  child value starts again, since its depth is the instance's own, and a
+  chain of required children that never ends, which no finite value
   satisfies, is too deep. This reading is charged to the same budget. Near
-  the validator's own limit, that verdict is the validator's. A schema compiled
+  the validator's own limit, that verdict is the validator's. A forced child
+  whose `type`, `required` or `minItems` sits only behind a `$ref` is not
+  read as forced, so such a tool can register; a call whose value then nests
+  too deeply for the engine's stack is rejected by the registry like any
+  other invalid arguments (`MCPFN_INVALID_ARGUMENTS`, keyword `depth`),
+  never as a thrown `RangeError`. A schema compiled
   only to be checked (a `HEAD` or non-object response, or one with
   properties to leave out) is compiled once per distinct schema. A Swagger
   2.0 document throws.

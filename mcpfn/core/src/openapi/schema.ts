@@ -1759,7 +1759,7 @@ export class SchemaConverter {
   private positions(schema: unknown, mode: SchemaMode): Positions {
     const result: Positions = { frames: 0, forcedFrames: 0, refs: new Set(), forced: new Map(), carried: new Map() };
     let visited = 0;
-    const visit = (node: unknown, frame: number, own: boolean, must: boolean): void => {
+    const visit = (node: unknown, frame: number, own: boolean, must: boolean, whole?: Conjunction): void => {
       if (node === undefined) return;
       visited += 1;
       let reached = frame;
@@ -1776,12 +1776,19 @@ export class SchemaConverter {
       result.frames = Math.max(result.frames, reached);
       if (own) result.forcedFrames = Math.max(result.forcedFrames, reached);
       if (!isObject(node)) return;
-      for (const member of arrayOf(node.allOf)) visit(member, frame + 1, own, must);
+      // `allOf` members validate the same value: a child one member declares is
+      // forced by `required`, `type` or `minItems` in another.
+      if (whole === undefined) {
+        whole = conjunction(node);
+        visited += whole.nodes;
+      }
+      for (const member of arrayOf(node.allOf)) visit(member, frame + 1, own, must, whole);
       forEachInPlace(node, (member) => visit(member, frame + 1, own, false), false);
       forEachChild(
         node,
         (member, forced) => (forced && must ? visit(member, frame + 1, own, true) : visit(member, 1, false, true)),
         (pairs) => this.total.chargeNodes(pairs),
+        whole,
       );
     };
     visit(schema, 1, true, true);
@@ -2101,19 +2108,59 @@ function forEachInPlace(schema: JsonObject, visit: (member: unknown) => void, al
 }
 
 /**
+ * What a schema and its inline `allOf` members, applied to the same value,
+ * demand of it together: the names any of them `required`, the JSON types all
+ * of their `type`s allow (undefined when none has one), and the largest
+ * `minItems`. Members behind a `$ref` are not read. `nodes` counts the walk.
+ */
+interface Conjunction {
+  required: string[];
+  types: Set<string> | undefined;
+  minItems: number;
+  nodes: number;
+}
+
+function conjunction(schema: JsonObject): Conjunction {
+  const result: Conjunction = { required: [], types: undefined, minItems: 0, nodes: 0 };
+  const names = new Set<string>();
+  const pending: unknown[] = [schema];
+  while (pending.length > 0) {
+    const node = pending.pop();
+    result.nodes += 1;
+    if (!isObject(node)) continue;
+    for (const name of arrayOf(node.required)) {
+      if (typeof name === "string" && !names.has(name)) {
+        names.add(name);
+        result.required.push(name);
+      }
+    }
+    if (node.type !== undefined) {
+      const listed = typeof node.type === "string" ? [node.type] : arrayOf(node.type);
+      const own = new Set(listed.filter((type): type is string => typeof type === "string"));
+      result.types = result.types === undefined ? own : new Set([...result.types].filter((type) => own.has(type)));
+    }
+    if (typeof node.minItems === "number") result.minItems = Math.max(result.minItems, node.minItems);
+    for (const member of arrayOf(node.allOf)) pending.push(member);
+  }
+  return result;
+}
+
+/**
  * The subschemas a draft-07 validator applies to child values (properties,
  * items, ...) of the instance `schema` validates, each with whether every
  * value `schema` accepts has that child: a property `required` lists (its
  * `properties` entry and the `patternProperties` matching it, else
  * `additionalProperties`) when only objects are accepted, and items up to
- * `minItems` when only arrays are.
+ * `minItems` when only arrays are. `whole` is what `schema` with the `allOf`
+ * members it belongs to demands of the value (`conjunction`).
  */
 function forEachChild(
   schema: JsonObject,
   visit: (member: unknown, forced: boolean) => void,
   charge: (pairs: number) => void = () => undefined,
+  whole: Conjunction = conjunction(schema),
 ): void {
-  const required = onlyType(schema, "object") ? arrayOf(schema.required).filter((name) => typeof name === "string") : [];
+  const required = onlyType(whole, "object") ? whole.required : [];
   const properties = isObject(schema.properties) ? schema.properties : {};
   const patterns = objectEntries(schema.patternProperties);
   // Every required name is matched against every pattern: charged first.
@@ -2143,7 +2190,7 @@ function forEachChild(
   visit(schema.additionalProperties, forcedAdditional);
   visit(schema.propertyNames, false);
   visit(schema.contains, false);
-  const minItems = onlyType(schema, "array") && typeof schema.minItems === "number" ? schema.minItems : 0;
+  const minItems = onlyType(whole, "array") ? whole.minItems : 0;
   if (Array.isArray(schema.items)) {
     const items = arrayOf(schema.items);
     items.forEach((member, index) => visit(member, minItems > index));
@@ -2153,12 +2200,9 @@ function forEachChild(
   }
 }
 
-/** Whether `schema` accepts only values of JSON type `type` by its own `type`. */
-function onlyType(schema: JsonObject, type: string): boolean {
-  const types = schema.type;
-  if (typeof types === "string") return types === type;
-  const list = arrayOf(types);
-  return list.length > 0 && list.every((entry) => entry === type);
+/** Whether a conjunction accepts only values of JSON type `type` by its `type`s. */
+function onlyType(whole: Conjunction, type: string): boolean {
+  return whole.types !== undefined && whole.types.size === 1 && whole.types.has(type);
 }
 
 /**

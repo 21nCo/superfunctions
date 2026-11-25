@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
+import { McpFnValidationError } from "../src/errors.js";
 import { fromOpenAPI } from "../src/openapi/index.js";
+import { McpFnRegistry } from "../src/registry.js";
 import { createSchemaCompiler } from "../src/validation.js";
 import { expectArguments, recordingExecutor, requestExtra, tool } from "./openapi-helpers.js";
 
@@ -161,6 +163,68 @@ describe("fromOpenAPI under @cfworker/json-schema", () => {
     expect(forward.tools.map(({ name }) => name).sort()).toEqual(["emptyItemsChain", "unmatchedPatternChain"]);
     expect(reverse.tools.map(({ name }) => name).sort()).toEqual(["emptyItemsChain", "unmatchedPatternChain"]);
   }, 120_000);
+
+  it("stacks a child forced by required, type or minItems in another allOf member of the same schema", async () => {
+    const schemas = {
+      ...chain("Q", 2_500, (next) => ({ type: "object", properties: { next }, allOf: [{ required: ["next"] }] })),
+      ...chain("Y", 2_500, (next) => ({ required: ["next"], properties: { next }, allOf: [{ type: ["object", "null"] }, { type: ["object", "string"] }] })),
+      ...chain("M", 2_500, (items) => ({ allOf: [{ type: "array", minItems: 1 }, { items }] })),
+      // anyOf need not hold, and a nullable type lets null stop the chain.
+      ...chain("V", 2_500, (next) => ({ type: "object", properties: { next }, anyOf: [{ required: ["next"] }] })),
+      ...chain("W", 2_500, (next) => ({ required: ["next"], properties: { next }, allOf: [{ type: ["object", "null"] }] })),
+      // A forced edge split across a $ref is not analysed (deferred): the registry reports a value too deep to validate.
+      ...chain("X", 2_500, (next) => ({ allOf: [{ $ref: "#/components/schemas/Base" }], required: ["next"], properties: { next } })),
+      Base: { type: "object" },
+    };
+    const executor = recordingExecutor();
+    const result = fromOpenAPI(
+      {
+        openapi: "3.1.0",
+        paths: {
+          "/q": body("allOfRequired", "Q0"),
+          "/y": body("allOfType", "Y0"),
+          "/m": body("allOfMinItems", "M0"),
+          "/v": body("anyOfRequired", "V0"),
+          "/w": body("nullableAllOf", "W0"),
+          "/x": body("crossRef", "X0"),
+        },
+        components: { schemas },
+      },
+      { executor, allowMutations: true },
+    );
+    expect(verdicts(result)).toEqual([tooDeep("allOfMinItems"), tooDeep("allOfRequired"), tooDeep("allOfType")]);
+    expect(result.tools.map(({ name }) => name)).toEqual(["anyOfRequired", "nullableAllOf", "crossRef"]);
+    const deep = { body: nested(200_000) };
+    await expect(result.registry.callTool("crossRef", deep, undefined, requestExtra())).rejects.toMatchObject({
+      code: "MCPFN_INVALID_ARGUMENTS",
+      details: { issues: [expect.objectContaining({ instancePath: "/", keyword: "depth" })] },
+    });
+    expect(executor.calls).toEqual([]);
+  }, 120_000);
+
+  it("reports a value too deep for the validator's stack as invalid arguments and rethrows any other validator error", async () => {
+    const handler = vi.fn(async () => ({ content: [] }));
+    const registry = new McpFnRegistry().register({
+      name: "tree",
+      description: "A recursive value.",
+      inputSchema: { type: "object", properties: { next: { $ref: "#/definitions/Node" } }, definitions: { Node: { type: "object", properties: { next: { $ref: "#/definitions/Node" } } } } },
+      handler,
+    });
+    const error = await registry.callTool("tree", nested(200_000), undefined, requestExtra()).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(McpFnValidationError);
+    expect(error).toMatchObject({ details: { issues: [{ instancePath: "/", keyword: "depth", message: "must not nest too deeply to validate" }] } });
+    await expect(registry.callTool("tree", nested(5), undefined, requestExtra())).resolves.toEqual({ content: [] });
+    expect(handler).toHaveBeenCalledTimes(1);
+    const plain = new McpFnRegistry().register({
+      name: "plain",
+      description: "Plain.",
+      inputSchema: { type: "object", properties: { a: { type: "object", properties: { next: { type: "string" } } } } },
+      handler,
+    });
+    const getter = { get next(): unknown { throw new RangeError("Invalid array length"); } };
+    await expect(plain.callTool("plain", { a: getter }, undefined, requestExtra())).rejects.toThrow(new RangeError("Invalid array length"));
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
 
   it("keeps a forced cycle a valid value can bypass or projection removes, and never runs document patterns as expressions", () => {
     const names = Array.from({ length: 2_000 }, (_, index) => `n${index}`);
