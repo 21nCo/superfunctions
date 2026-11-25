@@ -1,0 +1,21 @@
+flowfn/typescript/src/queue/dlq.ts
+  s_827e97bf22987a::t_fec6a1883160b6 284,286-288
+flowfn/typescript/tests/dlq.test.ts
+  s_827e97bf22987a::t_0d5611d5a2cb40 353-363
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "62941ff9f0405a8cf87e95a778fcfd605442dffd",
+  "prompts": {},
+  "sessions": {
+    "s_827e97bf22987a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_827e97bf22987a",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

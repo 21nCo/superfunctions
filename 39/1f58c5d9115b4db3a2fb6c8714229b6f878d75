@@ -1,0 +1,23 @@
+watchfn/typescript/README.md
+  s_8514ac23252a13::t_c001651cface4d 46
+watchfn/typescript/src/collectors/errors/exception-handler.ts
+  s_8514ac23252a13::t_67a503a4d660a7 14,16-18,20-30,34-39,42-44,46-48,92,101-104
+watchfn/typescript/tests/collectors/exception-lifecycle.test.ts
+  s_8514ac23252a13::t_29a6b411d8741d 230-281
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "391f58c5d9115b4db3a2fb6c8714229b6f878d75",
+  "prompts": {},
+  "sessions": {
+    "s_8514ac23252a13": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_8514ac23252a13",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

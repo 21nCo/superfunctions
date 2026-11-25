@@ -1,0 +1,25 @@
+filefn/docs/content/docs/adapters/storage-s3.md
+  s_b841cebdcfad95::t_f649d985545305 63
+filefn/docs/content/docs/features/downloads.md
+  s_b841cebdcfad95::t_63b8324274d306 61
+filefn/docs/static/llms-full.txt
+  s_b841cebdcfad95::t_9a33d15851ecc6 854,3520
+filefn/server/src/download-headers.ts
+  s_b841cebdcfad95::t_f9a11671a6fff6 59-62,106,212-215
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b8eef99936561371fa94f0fd6831cf6638f8d4ac",
+  "prompts": {},
+  "sessions": {
+    "s_b841cebdcfad95": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "436f4738-d86e-44e1-82bc-c432f9aaabf3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

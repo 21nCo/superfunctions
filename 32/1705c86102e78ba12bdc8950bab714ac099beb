@@ -1,0 +1,29 @@
+filefn/docs/content/docs/features/share-links.md
+  s_b841cebdcfad95::t_d6f018e460ad6e 63
+filefn/docs/static/llms-full.txt
+  s_b841cebdcfad95::t_1b71d09d8f68f7 4360
+filefn/python/filefn/server/shares/service.py
+  s_b841cebdcfad95::t_3c69fd6b56cf56 23-26,63,271-277
+filefn/python/tests/test_downloads.py
+  s_b841cebdcfad95::t_65f784e0f8ae39 894-915
+filefn/server/src/shares/service.ts
+  s_b841cebdcfad95::t_508eccecee6c44 67-69,234-235,240,335,337,346-347,355-362
+filefn/server/tests/sharing-security.test.ts
+  s_b841cebdcfad95::t_67e3b24896347d 6,280-281,288-289,293,313,315-319,321-324,326-341
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "321705c86102e78ba12bdc8950bab714ac099beb",
+  "prompts": {},
+  "sessions": {
+    "s_b841cebdcfad95": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "436f4738-d86e-44e1-82bc-c432f9aaabf3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,31 @@
+mcpfn/auth/README.md
+  s_c8d3e62c4e5cbc::t_c42df90b1be2a4 82-84
+mcpfn/docs/content/docs/reference/auth.md
+  s_c8d3e62c4e5cbc::t_9f9a94bd50df11 85-87
+mcpfn/docs/static/llms-full.txt
+  s_f1ec4de2a6ae19::t_a4f0344a195eed 510-512
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6c6c2123f9de23ed36b8e199b59f46593bac9462",
+  "prompts": {},
+  "sessions": {
+    "s_c8d3e62c4e5cbc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "81c58342-6481-4e86-8c66-8c52736f9b64",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_f1ec4de2a6ae19": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21018-8037-7b61-a435-e187daf13467",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

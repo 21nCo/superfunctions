@@ -1,0 +1,49 @@
+datafn/server/__tests__/release-manifest-pins.test.ts
+  s_1731e39e38ef67::t_1933a3030d3b04 1-90
+datafn/admin/package.json
+  s_0f77ac2ff026da::t_d34ccb64093776 41
+datafn/cli/package.json
+  s_0f77ac2ff026da::t_bc56d24f82d956 30-31
+datafn/extfn/package.json
+  s_0f77ac2ff026da::t_b55a366bbf0ec7 34-35
+datafn/server/package.json
+  s_0f77ac2ff026da::t_ebb63a185eb95e 57,65
+datafn/svelte/package.json
+  s_0f77ac2ff026da::t_dc3f1f8de42f5b 22
+datafn/swift-bridge/package.json
+  s_0f77ac2ff026da::t_50035f722e520f 26-27
+package-lock.json
+  s_f74dbb5531c16c::t_d76b54d6e270ce 8783,8897-8898,10140-10141,10180,10188,10240,10474-10475
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e39493d43aa89b68a3c795208392623fca4bfcab",
+  "prompts": {},
+  "sessions": {
+    "s_0f77ac2ff026da": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a2113c-c300-7182-9292-bf4c81191c63",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_1731e39e38ef67": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01a21142-2eb2-76c2-8264-b11730b7c224",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_f74dbb5531c16c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a2116e-571e-7223-9e0b-16aa8d406c62",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

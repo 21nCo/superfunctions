@@ -1,0 +1,29 @@
+scripts/turbo-cache-merge.mjs
+  s_fbd7a3cf61568a::t_d0f2e8aedb625d 9-11,61-87,93-96,99,102,105,108,149-154,161-181,188,192,232-250,274-275,297-315,337-339,342,348
+scripts/turbo-cache-merge.test.mjs
+  s_c8d3e62c4e5cbc::t_e15db17cdcef7f 10,145-150,188,208-213,222-223,263-279,281-284,286-290,293-295
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5a322fef2f45a898c5498493123bc2c874e0000e",
+  "prompts": {},
+  "sessions": {
+    "s_c8d3e62c4e5cbc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "81c58342-6481-4e86-8c66-8c52736f9b64",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_fbd7a3cf61568a": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a20ff0-eca0-70b3-92fc-0c48c1192ab7",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

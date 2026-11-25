@@ -1,0 +1,33 @@
+contentfn/.conduct/history-index-readiness.md
+  s_3077aa9c10565a::t_5ac2287c33320e 3-37
+contentfn/README.md
+  s_3077aa9c10565a::t_afb4425f0e9b08 170-171
+contentfn/SPEC.md
+  s_3077aa9c10565a::t_01d7ff3b5b74ff 492
+contentfn/server/README.md
+  s_3077aa9c10565a::t_562fe226069306 14
+contentfn/server/src/__tests__/review-regressions.test.ts
+  s_3077aa9c10565a::t_1b29b4963553da 299-323,477-492,702-738
+contentfn/server/src/http/node-handler.ts
+  s_3077aa9c10565a::t_3b08272da837b5 25,45-53
+contentfn/server/src/realtime/server.ts
+  s_3077aa9c10565a::t_6a0ee313ad00b1 91-99,101-102
+contentfn/server/src/webhooks/deliver.ts
+  s_3077aa9c10565a::t_eeb0996184b687 13,119-120,174-198
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3e6090defc0b3a4b74c0e51c155bc01ae71878e6",
+  "prompts": {},
+  "sessions": {
+    "s_3077aa9c10565a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_3077aa9c10565a",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

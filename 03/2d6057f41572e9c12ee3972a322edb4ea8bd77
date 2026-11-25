@@ -1,0 +1,19 @@
+billfn/core/src/service.ts
+  s_327a3aed46a663::t_8366afe3a30d92 310
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "032d6057f41572e9c12ee3972a322edb4ea8bd77",
+  "prompts": {},
+  "sessions": {
+    "s_327a3aed46a663": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2d17b65d-40bc-4fc5-b433-17c664da7af4",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

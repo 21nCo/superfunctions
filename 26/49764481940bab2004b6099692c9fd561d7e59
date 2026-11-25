@@ -1,0 +1,217 @@
+.gitignore
+  s_b841cebdcfad95::t_9167b572423a8f 58
+apifn/cli/__tests__/__snapshots__/check-command.test.ts.snap
+  s_b841cebdcfad95::t_a19e74893ce523 1-92
+apifn/cli/__tests__/check-command.test.ts
+  s_b841cebdcfad95::t_3cb2c4fa5553f4 1-5107
+apifn/cli/__tests__/fixtures/check/base-zero/apifn.config.ts
+  s_b841cebdcfad95::t_538a51e243a55f 1-5
+apifn/cli/__tests__/fixtures/check/base/apifn.config.ts
+  s_b841cebdcfad95::t_b45e6ae540db5e 1-4
+apifn/cli/__tests__/fixtures/check/base/router.ts
+  s_b841cebdcfad95::t_939305769712f1 1-29
+apifn/cli/__tests__/fixtures/check/breaking-major/apifn.config.ts
+  s_b841cebdcfad95::t_a3f85983b4ca51 1-4
+apifn/cli/__tests__/fixtures/check/breaking-major/router.ts
+  s_b841cebdcfad95::t_9a314b5f6d84e8 1-18
+apifn/cli/__tests__/fixtures/check/breaking-zero-minor/apifn.config.ts
+  s_b841cebdcfad95::t_bf6596da03cae3 1-5
+apifn/cli/__tests__/fixtures/check/breaking/apifn.config.ts
+  s_b841cebdcfad95::t_5ae522b34500b3 1-4
+apifn/cli/__tests__/fixtures/check/breaking/router.ts
+  s_b841cebdcfad95::t_46ae52709ef532 1-18
+apifn/cli/__tests__/fixtures/check/compatible/apifn.config.ts
+  s_b841cebdcfad95::t_bfa2ee5ceaa9a8 1-4
+apifn/cli/__tests__/fixtures/check/compatible/router.ts
+  s_b841cebdcfad95::t_a677b0ef8687eb 1-40
+apifn/cli/__tests__/fixtures/check/invalid-diff/apifn.config.ts
+  s_b841cebdcfad95::t_501138435a3b3a 1-4
+apifn/cli/__tests__/fixtures/check/invalid-diff/router.ts
+  s_b841cebdcfad95::t_b42f632b001175 1-31
+apifn/cli/__tests__/fixtures/check/invalid/apifn.config.ts
+  s_b841cebdcfad95::t_4a696145aa7b2c 1-4
+apifn/cli/__tests__/fixtures/check/invalid/router.ts
+  s_b841cebdcfad95::t_0868c54ca278a5 1-29
+apifn/cli/__tests__/fixtures/check/non-semver/apifn.config.ts
+  s_b841cebdcfad95::t_6ccb1e87a01da7 1-5
+apifn/cli/__tests__/temp-dirs.ts
+  s_b841cebdcfad95::t_70cc0cc86b37af 9-10,12-14
+apifn/cli/package.json
+  s_b841cebdcfad95::t_1a381e52f6284b 3
+apifn/cli/src/bin.ts
+  s_b841cebdcfad95::t_84ddb914f3ab86 3,5,8-11
+apifn/cli/src/commands/check-args.ts
+  s_b841cebdcfad95::t_ce5ab08f5cebb0 1-199
+apifn/cli/src/commands/check-compare.ts
+  s_b841cebdcfad95::t_e24e7c72ee1dcd 1-483
+apifn/cli/src/commands/check-git.ts
+  s_b841cebdcfad95::t_ff5c27a24a7782 1-448
+apifn/cli/src/commands/check-io.ts
+  s_b841cebdcfad95::t_8d8c659bc45c6b 1-124
+apifn/cli/src/commands/check-parse.ts
+  s_b841cebdcfad95::t_b586e58d94294c 1-314
+apifn/cli/src/commands/check-paths.ts
+  s_b841cebdcfad95::t_0db72b79538e69 1-136
+apifn/cli/src/commands/check-publish.ts
+  s_b841cebdcfad95::t_a70a8c07f4dbdb 1-954
+apifn/cli/src/commands/check-report.ts
+  s_b841cebdcfad95::t_33b5e278951fdb 1-182
+apifn/cli/src/commands/check.ts
+  s_b841cebdcfad95::t_434dbf6c466e91 1-662
+apifn/cli/src/commands/diff.ts
+  s_b841cebdcfad95::t_e0dc837eb2c513 41-42
+apifn/cli/src/commands/generate.ts
+  s_b841cebdcfad95::t_fe262b3a05b0e4 5,7,10-30,32,34-36,43,56-73,76,78,81
+apifn/cli/src/index.ts
+  s_b841cebdcfad95::t_43cf98e8a4ecbf 10-11,24-31,307-363,515-530,533,536-537,545
+apifn/cli/src/signals.ts
+  s_b841cebdcfad95::t_4bf6a1263158d4 1-56
+apifn/cli/src/utils/router-loader.ts
+  s_b841cebdcfad95::t_e93250d3a22d77 3,14-20,22-24,27-35,47-54
+filefn/docs/content/docs/adapters/storage-s3.md
+  s_b841cebdcfad95::t_3ae03eceb7dc2f 63
+filefn/docs/content/docs/core-concepts/policies.md
+  s_b841cebdcfad95::t_78e24ed3bff698 72,106-108
+filefn/docs/content/docs/features/downloads.md
+  s_b841cebdcfad95::t_4702a7bb34b864 57-68,77,80-93,95,98
+filefn/docs/content/docs/recipes/processing-container.md
+  s_b841cebdcfad95::t_c7c585e8e662bf 24
+filefn/docs/static/llms-full.txt
+  s_b841cebdcfad95::t_400684f70a4788 854,2333,2367-2369,3524-3535,3544,3547,3549-3560,3562,3565,7210
+filefn/processing/container/README.md
+  s_b841cebdcfad95::t_0fc370025b4086 50-51,151-152
+filefn/processing/container/src/config.ts
+  s_b841cebdcfad95::t_73eb537097823b 96-109,112
+filefn/processing/container/src/tesseract-cli.ts
+  s_b841cebdcfad95::t_897727b0fd8109 5,48-51,56
+filefn/processing/container/tests/config.test.ts
+  s_b841cebdcfad95::t_5a31bac986555b 10,17,78-88
+filefn/processing/container/tests/main.test.ts
+  s_b841cebdcfad95::t_b64bb1ce371ce7 16,75
+filefn/processing/container/tests/tesseract-cli.test.ts
+  s_b841cebdcfad95::t_e1764c6a123501 77-85
+filefn/processing/src/content-sniff.ts
+  s_b841cebdcfad95::t_ef106a0cec39d7 1-177
+filefn/processing/src/index.ts
+  s_b841cebdcfad95::t_61c7c0ac5954e4 59-70
+filefn/processing/src/processors/audio.ts
+  s_b841cebdcfad95::t_18afd79ca0af16 8,71-74
+filefn/processing/src/processors/image-transform.ts
+  s_b841cebdcfad95::t_e26dd07a5fc715 3,66-71,87,131
+filefn/processing/src/processors/ocr.ts
+  s_b841cebdcfad95::t_c208305f8e3fae 4,72-75
+filefn/processing/src/processors/pdf-preview.ts
+  s_b841cebdcfad95::t_35c6daa49ddd89 3,37-38,48,88-94
+filefn/processing/src/processors/thumbnail.ts
+  s_b841cebdcfad95::t_add28c6fcd03f4 3,33-38,46,90
+filefn/processing/src/processors/video.ts
+  s_b841cebdcfad95::t_b8351be081f91f 8,68-71,73
+filefn/processing/src/providers/audio-command.ts
+  s_b841cebdcfad95::t_c7c9d658d5a3b3 1,123-125,134,172-175,179,207-210,214
+filefn/processing/src/providers/tesseract-ocr.ts
+  s_b841cebdcfad95::t_e8ba6069d442c8 2,7-8,19-22,28
+filefn/processing/src/providers/video-command.ts
+  s_b841cebdcfad95::t_0fd91b366fdab9 1,82-84,93,131-134,154-155,184-187,191-192
+filefn/processing/tests/processing.test.ts
+  s_b841cebdcfad95::t_2856d15d13c63c 4,13-14,484-639
+filefn/processing/tests/video-audio.test.ts
+  s_b841cebdcfad95::t_3b6f921cd97546 15-16,18,89-90
+filefn/python/filefn/server/policies.py
+  s_b841cebdcfad95::t_0b6587b50c994a 110-114
+filefn/python/tests/test_core.py
+  s_b841cebdcfad95::t_de9f89ae4300cc 113-122
+filefn/server/src/__tests__/idempotency-complete.test.ts
+  s_b841cebdcfad95::t_a0b9f48c8c28cc 135-136
+filefn/server/src/__tests__/policies.test.ts
+  s_b841cebdcfad95::t_8c98dd65feb1d4 17-18
+filefn/server/src/__tests__/upload-size-validate.test.ts
+  s_b841cebdcfad95::t_43be182c7a7164 13-14,22,48-49,66-68
+filefn/server/src/download-headers.ts
+  s_b841cebdcfad95::t_4b0930896679ac 1-238
+filefn/server/src/errors.ts
+  s_b841cebdcfad95::t_313044b352a0cf 43,232-240
+filefn/server/src/files/routes.ts
+  s_b841cebdcfad95::t_fe59b8aa9ff117 6,243
+filefn/server/src/files/service.ts
+  s_b841cebdcfad95::t_daedbd9664d7bd 8,336,487,503,519,540-549,592-597,601,605-606,608-623,625-628,631-632,634-636,640,965-977
+filefn/server/src/index.ts
+  s_b841cebdcfad95::t_f625fdf4606b63 274,525-526,629-635
+filefn/server/src/policies.ts
+  s_b841cebdcfad95::t_b0099d7eaa3c0c 1,90-164,173-176,200-204
+filefn/server/src/processing/routes.ts
+  s_b841cebdcfad95::t_735631111d012b 7,121-123,151,190-192,216-218,227,244-246,248,252,265
+filefn/server/src/processing/service.ts
+  s_b841cebdcfad95::t_5352cf025079c4 8,206-212,605,651-672,684-700,2137-2141,2149,2151,2154,2176-2178,2187,2214,2226,2245-2246
+filefn/server/src/shares/routes.ts
+  s_b841cebdcfad95::t_b503e5ac00bf4a 6,140
+filefn/server/src/shares/service.ts
+  s_b841cebdcfad95::t_e607cef05a02c3 7,379
+filefn/server/src/upload-sessions/service.ts
+  s_b841cebdcfad95::t_cc4d86f09a5e19 5,8,244-258,334-341,348-351,359-360,366-375,377,379-392,638-648,1407-1419,1427,1435-1446,1594-1596,1598-1604,1658-1660,1663-1667,1683-1684,1714-1715,1718-1745,1788-1790,2007-2011,2021-2030,2079-2094,2096,2098-2106
+filefn/server/tests/read-path-security.test.ts
+  s_b841cebdcfad95::t_cd75ab3c6914c4 1-401
+filefn/server/tests/storage-key-security.test.ts
+  s_b841cebdcfad95::t_8a8e2c8deb8f4a 1-155
+filefn/server/tests/upload-size-security.test.ts
+  s_b841cebdcfad95::t_1d583eb2fd2801 1-280
+package-lock.json
+  s_b841cebdcfad95::t_6251f6689672df 110
+packages/storage-local/src/adapter.test.ts
+  s_b841cebdcfad95::t_7beca15f5052c3 265-306,360-391
+packages/storage-local/src/adapter.ts
+  s_b841cebdcfad95::t_929a74a4bd8bab 2-3,51-60,166-172,174-189,235-242,246-247,255-268
+reviewfn/core/src/coordinator.ts
+  s_b841cebdcfad95::t_42ad051864c0cf 105,108,317,319-320
+reviewfn/core/src/executable.ts
+  s_b841cebdcfad95::t_637af2eeb96ab2 21,31-46
+reviewfn/core/src/panel/coordinator.ts
+  s_b841cebdcfad95::t_e4c4a23777b715 18-19,44-48,54-55,187,191-199,203-216,328-329,333,337-338,351,397,402-403,408-410,420-421,487,493-494,497-498,513-516,519,530,570,624-627,631-634,636-637,640-643,660-661,768,904,908-911,913
+reviewfn/core/src/panel/policy.ts
+  s_b841cebdcfad95::t_924801b36bbb6d 51-59
+reviewfn/core/src/panel/render.ts
+  s_b841cebdcfad95::t_870e6186a2c32c 3,37,40,141-142,165-168
+reviewfn/core/src/panel/schema.ts
+  s_b841cebdcfad95::t_459fe540779502 10-15,26,84-86,98-108,113-116,126,132-137
+reviewfn/core/src/panel/types.ts
+  s_b841cebdcfad95::t_69c9b15ac198e3 16-21,28-50,62-63,87-101,115-120,134-135
+reviewfn/core/src/panel/validate.ts
+  s_b841cebdcfad95::t_5db1c2c86fe830 7-9,52-66,75-76,78,147-153,156,159-162,166,170,177,179-183,251-323,326-348,355-361,492,503-514,517-520,523-532,607,678-680
+reviewfn/core/src/types.ts
+  s_b841cebdcfad95::t_d8d11c50a616a8 1-2,236-240,271-272
+reviewfn/core/test/panel-orchestrator.test.ts
+  s_b841cebdcfad95::t_f992c2c0ffc2f8 56-74
+reviewfn/core/test/panel-render.test.ts
+  s_b841cebdcfad95::t_2a520fb93103af 109-117
+reviewfn/core/test/panel.test.ts
+  s_b841cebdcfad95::t_e03c495efdd57c 6,322-335,639-786,969-971,981-994
+reviewfn/docs/content/docs/reference/panel-report-schema.md
+  s_b841cebdcfad95::t_be672aec15778c 14,16-18,22,24,26,32-33,50,92,98
+reviewfn/docs/content/docs/reference/panel.md
+  s_b841cebdcfad95::t_128350c65783ee 50-51,60
+reviewfn/docs/panel-report-schema.md
+  s_b841cebdcfad95::t_343c51cd3395c0 11,13-15,19,21,23,29-30,47,89,95
+reviewfn/docs/panel.md
+  s_b841cebdcfad95::t_0126f3647818a6 47-48,57
+reviewfn/docs/static/llms-full.txt
+  s_b841cebdcfad95::t_a081b00677f3d3 220,222-224,228,230,232,238-239,256,298,304,366-367,376
+reviewfn/testing/test/coordinator.test.ts
+  s_b841cebdcfad95::t_6352003a5a92c0 2,128-141
+reviewfn/testing/test/panel-coordinator.test.ts
+  s_b841cebdcfad95::t_2ac7c4f80e6bd3 11,232-349
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2649764481940bab2004b6099692c9fd561d7e59",
+  "prompts": {},
+  "sessions": {
+    "s_b841cebdcfad95": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "436f4738-d86e-44e1-82bc-c432f9aaabf3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

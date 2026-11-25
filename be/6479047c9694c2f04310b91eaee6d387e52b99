@@ -1,0 +1,25 @@
+testfn/typescript/README.md
+  s_19abec75182420::t_eb33d3bd538455 158,175
+testfn/typescript/src/fixtures/authfn/plugin.ts
+  s_19abec75182420::t_6e899ce90b55ca 21-26,31-50,55-61,69,74-80,95-101,106
+testfn/typescript/src/fixtures/authfn/session.ts
+  s_19abec75182420::t_15b93f25bebe87 88-117,129-131,134-136,139-140,144-146,148
+testfn/typescript/tests/authfn-fixture.test.ts
+  s_19abec75182420::t_fbf226a78e2263 2-3,5,44,46-92,283-357
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "be6479047c9694c2f04310b91eaee6d387e52b99",
+  "prompts": {},
+  "sessions": {
+    "s_19abec75182420": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d61a7abd-8c27-4e7c-ba23-13d43e2da322",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,21 @@
+filefn/server/tests/domain-metrics.test.ts
+  s_20e59dd6c64205::t_5f869c7a5544d7 204-221
+filefn/server/src/metrics.ts
+  s_20e59dd6c64205::t_5f869c7a5544d7 5,19-22
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ddde09a639fd1c00062d2f8a15d30bbd364c1802",
+  "prompts": {},
+  "sessions": {
+    "s_20e59dd6c64205": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a211b0-8c37-7b63-8f91-222b058dcfea",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,56 @@
+datafn/server/__tests__/public-link-resolve-limits.test.ts
+  s_09f19affbc7889::t_d2fe8540cf2ef1 166,172
+  s_09f19affbc7889::t_2f1038b8900f90 18,155-165,167-171,173-174
+  s_09f19affbc7889::t_d8550efa5ff807 175-176
+datafn/server/src/http/middleware.ts
+  s_09f19affbc7889::t_308c9c64f62b0b 51-63,65-66
+datafn/server/src/validation/authz.ts
+  s_09f19affbc7889::t_f85eddb228b1d5 627-629,636
+  s_09f19affbc7889::t_916a9f88df4595 53,487-490,547-560,655,685-686
+datafn/client/__tests__/cloneUp-null-columns.test.ts
+  s_09f19affbc7889::t_5a3dbf7cf10e9c 51-56
+datafn/client/__tests__/cloneUp-server.test.ts
+  s_09f19affbc7889::t_5a3dbf7cf10e9c 60
+datafn/server/__tests__/reliability-critical.test.ts
+  s_09f19affbc7889::t_2c42acbbbf45b8 164,225
+datafn/server/src/execution/mutation/__tests__/share-spv2.test.ts
+  s_09f19affbc7889::t_2c42acbbbf45b8 2905
+datafn/server/__tests__/dfql-select.test.ts
+  s_09f19affbc7889::t_5a3dbf7cf10e9c 19
+datafn/server/src/routes/transact.ts
+  s_09f19affbc7889::t_5a5e5ed2fd76a0 10,71-83,107
+datafn/server/src/multi-region-routing.ts
+  s_09f19affbc7889::t_190003b8ee0247 1661,1718-1720
+datafn/server/__tests__/driver-error-redaction.test.ts
+  s_09f19affbc7889::t_2c42acbbbf45b8 8,193
+  s_09f19affbc7889::t_46c8ed7780aeea 185-192,194-209
+datafn/server/__tests__/transact-step-classification.test.ts
+  s_09f19affbc7889::t_5a3dbf7cf10e9c 35
+datafn/server/src/execution/mutation/__tests__/ancestor-inactive-system-field.test.ts
+  s_09f19affbc7889::t_5a3dbf7cf10e9c 83
+datafn/core/src/protocol.ts
+  s_09f19affbc7889::t_dc264b4c698c1b 343-361,363-364,368
+datafn/server/src/server.ts
+  s_09f19affbc7889::t_308c9c64f62b0b 17,51,1158-1160,1230-1233,1235,1245-1248,1250,1554,1582-1583
+  s_09f19affbc7889::t_f85eddb228b1d5 1574-1578
+datafn/server/src/routes/sync.ts
+  s_09f19affbc7889::t_916a9f88df4595 431
+datafn/server/src/execution/transact.ts
+  s_09f19affbc7889::t_511416770139a9 12,141,146,333,340,395-397,400
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6d3d4d5f26ca60a31eef2f453f84f1c9dea68ac4",
+  "prompts": {},
+  "sessions": {
+    "s_09f19affbc7889": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a211b0-71ed-7282-8a24-bcadc7fcc607",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

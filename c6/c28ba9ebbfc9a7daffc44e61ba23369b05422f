@@ -1,0 +1,36 @@
+filefn/server/src/metrics.ts
+  s_20e59dd6c64205::t_abe7ee645a55ec 17,19
+  s_20e59dd6c64205::t_efec399031c68f 1-7,16,21-26,37-42
+  s_20e59dd6c64205::t_9c8d4eed8d0b31 43-44
+filefn/server/src/upload-sessions/service.ts
+  s_20e59dd6c64205::t_efec399031c68f 578,603,2086
+filefn/docs/content/docs/core-concepts/observability.md
+  s_20e59dd6c64205::t_efec399031c68f 99
+filefn/server/src/__tests__/client-file-ids.test.ts
+  s_20e59dd6c64205::t_fb16a47480b733 8,215,232,626-650
+  s_20e59dd6c64205::t_f691b2a9d88de1 651
+filefn/server/tests/domain-metrics.test.ts
+  s_20e59dd6c64205::t_abe7ee645a55ec 1,6,170-190,193-202,204-215,219,221
+filefn/docs/content/docs/reference/changelog.md
+  s_20e59dd6c64205::t_efec399031c68f 13
+filefn/server/src/index.ts
+  s_20e59dd6c64205::t_efec399031c68f 6,29,213,293,307
+filefn/docs/static/llms-full.txt
+  s_20e59dd6c64205::t_d79d0f14edf686 2118,8287
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c6c28ba9ebbfc9a7daffc44e61ba23369b05422f",
+  "prompts": {},
+  "sessions": {
+    "s_20e59dd6c64205": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a211b0-8c37-7b63-8f91-222b058dcfea",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

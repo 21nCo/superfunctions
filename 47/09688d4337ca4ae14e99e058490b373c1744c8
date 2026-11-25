@@ -1,0 +1,21 @@
+scripts/turbo-cache-merge.mjs
+  s_f1ec4de2a6ae19::t_c6be61f5312e48 195-196,199,212,312-313,316-317
+scripts/turbo-cache-merge.test.mjs
+  s_f1ec4de2a6ae19::t_104da433b902c4 317-320,417-421
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4709688d4337ca4ae14e99e058490b373c1744c8",
+  "prompts": {},
+  "sessions": {
+    "s_f1ec4de2a6ae19": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21018-8037-7b61-a435-e187daf13467",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

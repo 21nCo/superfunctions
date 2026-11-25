@@ -1,0 +1,37 @@
+filefn/examples/production/server/src/filefn-path.test.mjs
+  s_20e59dd6c64205::t_87c98323064811 9
+filefn/examples/full-demo/server/package.json
+  s_20e59dd6c64205::t_87c98323064811 7-8
+filefn/docs/content/docs/features/rate-limiting.md
+  s_20e59dd6c64205::t_87c98323064811 80
+filefn/docs/static/llms-full.txt
+  s_20e59dd6c64205::t_e961b92cd200cd 1568,1576,2082-2100,2426,2454-2457,2728-2730,3393-3394,4306,4336-4378,4383,4385,8279-8337,8339,8341,8343,8347,8666,8675,8806,8811
+filefn/examples/production/server/src/filefn-path.ts
+  s_20e59dd6c64205::t_87c98323064811 3
+filefn/examples/full-demo/server/src/index.ts
+  s_20e59dd6c64205::t_87c98323064811 48,347-350
+filefn/examples/production/server/package.json
+  s_20e59dd6c64205::t_87c98323064811 8-9
+filefn/docs/static/llms.txt
+  s_20e59dd6c64205::t_e961b92cd200cd 43,62
+filefn/docs/content/docs/examples/production.md
+  s_20e59dd6c64205::t_2bc724b078d375 107-108
+filefn/examples/full-demo/server/demo-upload.test.mjs
+  s_20e59dd6c64205::t_bb8c48c63cd7a0 9,12,15-17,21,23,26-27,29,32-34,36-38,40,43-47,49,52,55-56
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1ec974cb7573baf7ae73f772aee4bf3624390760",
+  "prompts": {},
+  "sessions": {
+    "s_20e59dd6c64205": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a211b0-8c37-7b63-8f91-222b058dcfea",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

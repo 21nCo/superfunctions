@@ -1,0 +1,24 @@
+mcpfn/core/tests/http-session-security.test.ts
+  s_326c90f370b5d2::t_c1f8d751e2d730 498-533
+mcpfn/core/README.md
+  s_326c90f370b5d2::t_9b444b8a70809d 198
+mcpfn/core/src/server.ts
+  s_326c90f370b5d2::t_c1f8d751e2d730 1477,1518,1526-1529
+  s_326c90f370b5d2::t_06be1856107a6c 1530-1531
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "99811fdbbc5ecbc5c927ea391d5e71fd71e984e3",
+  "prompts": {},
+  "sessions": {
+    "s_326c90f370b5d2": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21124-a83e-7641-a8a7-9795baa64e3b",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

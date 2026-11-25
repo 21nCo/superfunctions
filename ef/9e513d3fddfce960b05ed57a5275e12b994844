@@ -1,0 +1,45 @@
+filefn/server/tests/hardening.test.ts
+  s_b841cebdcfad95::t_77466f90e2e73d 1-116
+filefn/client/src/__tests__/transport.test.ts
+  s_b841cebdcfad95::t_bf0933ef219001 231-241
+filefn/client/src/client.ts
+  s_b841cebdcfad95::t_c464790b7ca3e1 553-554,558
+filefn/python/pyproject.toml
+  s_b841cebdcfad95::t_7ae19f1ae49f7f 29
+filefn/server/src/auth.ts
+  s_b841cebdcfad95::t_56107750005c23 1-7
+filefn/server/src/authz/authorizer.ts
+  s_b841cebdcfad95::t_7b5d5ae686f6ec 119-124,126,131,139,146-147,157,161,167,169,175,177
+filefn/server/src/authz/grants.routes.ts
+  s_b841cebdcfad95::t_4d1bff0d43dd88 4-6,11-18,38-49,64,88,105,123
+filefn/server/src/files/routes.ts
+  s_b841cebdcfad95::t_a3a079ed8241db 6,17-20,23,39,51,64,78,86,104,130,135,164,182,200,225,246,251
+filefn/server/src/index.ts
+  s_b841cebdcfad95::t_9f7e49622c715d 31-32,46-53,72-76,165-169,236-240,313,322,325,336-338,355,357,366,368,391-402,414-419,493,654-656,658-661,664-669
+filefn/server/src/processing/routes.ts
+  s_b841cebdcfad95::t_4f310f38ed62a4 7,18-21,23,90,98-102,109,118-120,128,132,161,196,200,221,225,252-253,258
+filefn/server/src/rate-limit-key.ts
+  s_b841cebdcfad95::t_d1ad865b62d622 1-21
+filefn/server/src/shares/routes.ts
+  s_b841cebdcfad95::t_bf8f8491c68067 6,17-20,22,42,57-58,67,81,97,111,116,137,142,167,185
+filefn/server/src/upload-sessions/routes.ts
+  s_b841cebdcfad95::t_70ebb83e90bb83 6,27,61,72,85,99,112,131,147,153,169,181,199,204,220,224,243
+filefn/server/src/upload-sessions/service.ts
+  s_b841cebdcfad95::t_cd6fed4938bef0 523,1157-1176,1191,1369
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ef9e513d3fddfce960b05ed57a5275e12b994844",
+  "prompts": {},
+  "sessions": {
+    "s_b841cebdcfad95": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "436f4738-d86e-44e1-82bc-c432f9aaabf3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

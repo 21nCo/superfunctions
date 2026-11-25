@@ -1,0 +1,35 @@
+datafn/core/src/protocol-classify.test.ts
+  s_1731e39e38ef67::t_5f60287ce5895e 1-29
+datafn/server/__tests__/transact-step-classification.test.ts
+  s_1731e39e38ef67::t_e639bf75afd58e 1-83
+datafn/core/src/index.ts
+  s_e249c21df0b6ca::t_ad24060ade6553 117,124
+datafn/core/src/protocol.ts
+  s_e249c21df0b6ca::t_761faf10a728ee 329-363,378-380,382-384,388-390
+datafn/server/src/routes/transact.ts
+  s_e249c21df0b6ca::t_f9191af09f3708 10,14-17,75-81,83-84,86-88,90-92,94-105,107-112,115-134,136-138,140,148-152,176-178
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5f4676b2b486bf6e17890c5742dc9499e5d6ca96",
+  "prompts": {},
+  "sessions": {
+    "s_1731e39e38ef67": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01a21142-2eb2-76c2-8264-b11730b7c224",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_e249c21df0b6ca": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21163-7ea1-7fa0-bd1a-6cec3a618447",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,23 @@
+packages/http-hono/package.json
+  s_5ff67f4beb1505::t_bc970fefdeb1de 3
+datafn/server/package.json
+  s_5ff67f4beb1505::t_bc970fefdeb1de 66
+package-lock.json
+  s_5ff67f4beb1505::t_f49da653402e95 10244,58906
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8a85f1591eb6771bdbecdf254bf7c337a1aa2111",
+  "prompts": {},
+  "sessions": {
+    "s_5ff67f4beb1505": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "73166eca-997b-44a0-a098-c721dce63df5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

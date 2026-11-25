@@ -1,0 +1,49 @@
+cachefn/typescript/src/storage/redis/upstash.ts
+  s_89d0d31e825404::t_b7cae074d2b5f5 1-80
+cachefn/typescript/README.md
+  s_89d0d31e825404::t_088ec761249762 9-10,191-250
+cachefn/typescript/__tests__/fixtures/upstash-rest.json
+  s_89d0d31e825404::t_cbb36073c979a0 1-65
+cachefn/typescript/__tests__/helpers/fake-redis.ts
+  s_89d0d31e825404::t_199111949cffd0 1-251
+cachefn/typescript/__tests__/redis-adapters.test.ts
+  s_89d0d31e825404::t_9f94fa0f5e16f5 1-159
+cachefn/typescript/__tests__/redis-storage.test.ts
+  s_89d0d31e825404::t_4c4f4b64218552 1-434
+cachefn/typescript/package.json
+  s_89d0d31e825404::t_490df0f80a6530 20-29,61-62
+cachefn/typescript/scripts/packed-consumer.mjs
+  s_89d0d31e825404::t_5b5f2d0f1d3f44 22-28,47-57
+cachefn/typescript/scripts/redis-acceptance.mjs
+  s_89d0d31e825404::t_eedb5b243277a0 1-168
+cachefn/typescript/src/storage/redis/commands.ts
+  s_89d0d31e825404::t_138952406050f1 1-69
+cachefn/typescript/src/storage/redis/index.ts
+  s_89d0d31e825404::t_2e6ff680af787d 1-12
+cachefn/typescript/src/storage/redis/ioredis.ts
+  s_89d0d31e825404::t_18a0c5d3a485af 1-42
+cachefn/typescript/src/storage/redis/redis-storage.ts
+  s_89d0d31e825404::t_0bb90468958322 1-407
+cachefn/typescript/src/storage/redis/scripts.ts
+  s_89d0d31e825404::t_9ba179d6f26a81 1-90
+cachefn/typescript/tsup.config.ts
+  s_89d0d31e825404::t_2969be10cc4006 4
+cachefn/typescript/type-tests/storage-backend.ts
+  s_89d0d31e825404::t_f53ffa7c882ab6 25-36
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "848ed27795fff6b209648898f89665804153dc66",
+  "prompts": {},
+  "sessions": {
+    "s_89d0d31e825404": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8d42203a-bae4-497f-869e-288392e3b8f7",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

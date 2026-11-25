@@ -1,0 +1,59 @@
+package-lock.json
+  s_cca2118238ab45::t_08b90f8ad82304 69845,69867,69882,73619,76738,77452,77742,79329,79344,79465,80102,80111,80121,80683,80926,81028,82350,82365,83179,85375,88109,88297,90536,90556,90576,90610,91631,91651,91661,91810,91829,92646,94406,97117,99762,127520-127521,127567
+testfn/admin/package.json
+  s_cca2118238ab45::t_6212dee2196439 42-43
+testfn/python/testfn/_files.py
+  s_cca2118238ab45::t_2883e87dcf824d 1-32
+testfn/python/testfn/reporters.py
+  s_cca2118238ab45::t_2fc4c7f0661eaf 5,45,49
+testfn/python/testfn/runner.py
+  s_cca2118238ab45::t_78c450ae3b6277 101
+testfn/python/testfn/visual.py
+  s_cca2118238ab45::t_5bd6107514fe45 9-10,29,34
+testfn/python/tests/test_runner_reporting.py
+  s_cca2118238ab45::t_d5ba9634791dd2 56-77
+testfn/python/tests/test_visual.py
+  s_cca2118238ab45::t_8bee5de2325a9e 85-125
+testfn/scripts/framework-acceptance.mjs
+  s_cca2118238ab45::t_d6e1b9f212915d 103
+testfn/typescript/README.md
+  s_cca2118238ab45::t_c3b65a43e0de88 212
+testfn/typescript/package.json
+  s_cca2118238ab45::t_10d0bfef486cb4 121
+testfn/typescript/src/core/test-runner.ts
+  s_cca2118238ab45::t_00eba81330965d 12,59-61,156
+testfn/typescript/src/integrations/base-adapter.ts
+  s_cca2118238ab45::t_8375178f84fc3c 29-45
+testfn/typescript/src/integrations/json-adapter.ts
+  s_cca2118238ab45::t_3c75bceee7ff3b 42,96-101,124-125
+testfn/typescript/src/integrations/playwright-adapter.ts
+  s_cca2118238ab45::t_88218aec12c774 182
+testfn/typescript/src/integrations/process.ts
+  s_cca2118238ab45::t_a04fdeb01dc4f7 13-14,39,42-54,68-71,114,160,225-228
+testfn/typescript/src/integrations/puppeteer-adapter.ts
+  s_cca2118238ab45::t_2c5a2b2ad4ee22 21-33
+testfn/typescript/src/storage/artifacts.ts
+  s_cca2118238ab45::t_49a11ceed6f907 70-78,92-109,113,127
+testfn/typescript/src/storage/test-storage.ts
+  s_cca2118238ab45::t_4338fa5f3c328b 194-200
+testfn/typescript/tests/framework-failure-contract.test.ts
+  s_cca2118238ab45::t_7a32754bf26ef1 6-7,106-109,120-184,222-316
+testfn/typescript/tests/storage.test.ts
+  s_cca2118238ab45::t_d6ca24aeda6be3 2,226-268
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "056bf6b3d35fd0fabc16de050d6111a392b32721",
+  "prompts": {},
+  "sessions": {
+    "s_cca2118238ab45": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9776c6ff-1a95-4d3d-8cd4-96317b37ba6d",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,29 @@
+mcpfn/core/README.md
+  s_c8d3e62c4e5cbc::t_6e7933b0ac43a1 115
+mcpfn/core/src/errors.ts
+  s_c8d3e62c4e5cbc::t_5d5fca7f24ff42 81-87
+mcpfn/core/src/server.ts
+  s_c8d3e62c4e5cbc::t_16e2340fabd5f4 722-728
+mcpfn/core/tests/error-and-validation-security.test.ts
+  s_c8d3e62c4e5cbc::t_632bc54ef83ae8 175,197,200-211,213-214
+mcpfn/docs/content/docs/reference/core.md
+  s_c8d3e62c4e5cbc::t_2bbceb92b3d79e 118
+mcpfn/docs/static/llms-full.txt
+  s_c8d3e62c4e5cbc::t_8262bde85551f7 803
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b5b43fb908fa24d6ccf342292e36862e1dd96bfe",
+  "prompts": {},
+  "sessions": {
+    "s_c8d3e62c4e5cbc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "81c58342-6481-4e86-8c66-8c52736f9b64",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,21 @@
+filefn/server/src/processing/routes.ts
+  s_b841cebdcfad95::t_f19f7ee7e40cf5 120-122,189-191,215-217,243-244,246,250
+filefn/server/tests/read-path-security.test.ts
+  s_b841cebdcfad95::t_51b31d80ff1d33 246,255,257,281,283,291-293,295
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5377edba09d8c343e220859e115fe388243e5e8b",
+  "prompts": {},
+  "sessions": {
+    "s_b841cebdcfad95": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "436f4738-d86e-44e1-82bc-c432f9aaabf3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

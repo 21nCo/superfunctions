@@ -1,0 +1,39 @@
+apifn/README.md
+  s_124319b903d839::t_305deda68678c7 37-39
+apifn/cli/README.md
+  s_124319b903d839::t_2985ecb79b3326 147-149,162-163,166-173
+apifn/cli/__tests__/check-command.test.ts
+  s_124319b903d839::t_e54561d9a9a314 1161-1162,2845-2853,2855-2872,3518,3520-3679,3682-3747
+apifn/cli/src/bin.ts
+  s_124319b903d839::t_64d6bde9a50ae8 3,5,8-11
+apifn/cli/src/commands/check-args.ts
+  s_124319b903d839::t_f968f371a7f025 176-180,187-188,191-192
+apifn/cli/src/commands/check-compare.ts
+  s_124319b903d839::t_cefb123facc70b 68-70,73-74,98-101,103-110,121-122,133-136,147-150,154,184,191-194,223-228,236,244-260
+apifn/cli/src/commands/check-paths.ts
+  s_124319b903d839::t_b46f09fa817834 57-58,61-64,67,78-79,81,114,116
+apifn/cli/src/commands/check-publish.ts
+  s_124319b903d839::t_47e73217e35457 38-44,607-609,618-619,625-626,638,644-661,678,680-687,691,694,700-702,704-720
+apifn/cli/src/commands/check.ts
+  s_124319b903d839::t_00513da470d199 75-76,203,553
+apifn/cli/src/index.ts
+  s_124319b903d839::t_fa4f159e5b9d79 24-29,350
+apifn/cli/src/signals.ts
+  s_124319b903d839::t_9efd59cc6dbd12 1-30
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "faf8efc7c05585b17bb80ede02c1150d41b26c16",
+  "prompts": {},
+  "sessions": {
+    "s_124319b903d839": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "459fa815-0e7a-4823-b25b-3c85bd3d320a",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
