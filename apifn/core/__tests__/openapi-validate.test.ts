@@ -322,18 +322,38 @@ describe("validateOpenAPI", () => {
     expect(result.document?.components?.schemas?.Value).toEqual({ type: "integer" });
   });
 
-  it("bounds nested YAML alias expansion in preloaded schemas", async () => {
+  it.each([
+    ["a mapping", "{ id: 1 }", 1, /alias count/i],
+    ["an empty sequence", "[]", 4, /alias expansion/i],
+  ])("bounds nested YAML alias expansion over %s", async (_label, leaf, depth, message) => {
     const uri = "https://example.invalid/types.yaml";
+    const copies = (name: string) => Array.from({ length: 10 }, () => "*" + name).join(", ");
+    const groups = Array.from({ length: depth }, (_, index) =>
+      `x-group${index + 1}: &group${index + 1} [${copies("group" + index)}]`
+    );
     const schema = [
       "type: object",
-      "x-leaf: &leaf { id: 1 }",
-      "x-group: &group [" + Array.from({ length: 10 }, () => "*leaf").join(", ") + "]",
-      "examples:",
-      ...Array.from({ length: 10 }, () => "  - *group"),
+      "x-leaf: &group0 " + leaf,
+      ...groups,
+      "examples: [" + copies("group" + depth) + "]",
     ].join("\n");
     const errors = await validateOpenAPI(documentWithReference(uri), { externalReferences: new Map([[uri, schema]]) });
     expect(errors).toEqual([
-      { path: "components.schemas.Value.$ref", message: expect.stringMatching(/alias count/i), severity: "error" },
+      { path: "components.schemas.Value.$ref", message: expect.stringMatching(message), severity: "error" },
+    ]);
+  });
+
+  it.each([false, true])("identifies the unlisted alias regardless of schema order (reversed=%s)", async (reversed) => {
+    const schemas = Object.entries({
+      Alias: { $ref: "https://example.invalid/types.yaml" },
+      Value: { $ref: "#/components/schemas/Alias/properties/item" },
+    });
+    const doc = {
+      ...documentWithReference("#/components/schemas/Alias"),
+      components: { schemas: Object.fromEntries(reversed ? schemas.reverse() : schemas) },
+    };
+    await expect(validateOpenAPI(doc)).resolves.toEqual([
+      { path: "components.schemas.Alias.$ref", message: expect.stringContaining("explicit allowlist"), severity: "error" },
     ]);
   });
 
