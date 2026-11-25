@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Apply schema version 3 before deploying. Add nullable `failed_attempt_count` and `locked_until` columns to `two_factor_enrollments` and the `idx_authfn_otp_challenges_email_created_at` index to `otp_challenges`.
 - The two-factor plugin requires a database adapter with `update_many` that supports conditional writes and reports the number of affected rows. AuthFn checks for this method at initialization.
-- Put HTTP rate limiting in front of the Python OTP and two-factor routes. The TypeScript cross-challenge OTP budget and TOTP failed-attempt limit are still pending in Python.
+- Put HTTP rate limiting in front of the Python OTP and two-factor routes. The TypeScript cross-challenge OTP budget and TOTP failed-attempt limit are still pending in Python. If the kernels share a database, serve two-factor routes from TypeScript when relying on its enrollment lockout.
 
 ## [0.2.0] - 2026-11-18
 
