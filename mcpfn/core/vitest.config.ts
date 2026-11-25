@@ -16,6 +16,7 @@ export default defineConfig({
   },
   test: {
     environment: "node",
+    setupFiles: ["tests/yield-between-tests.ts"],
     projects: [
       { extends: true, test: { name: "unit", include: ["tests/**/*.test.ts"], exclude: [scaleTests, timedTests, cfworkerTests] } },
       // Timing bounds run on their own, after every other test file.
