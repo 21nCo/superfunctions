@@ -84,8 +84,9 @@ export function mapAdapterErrorToResponse(
 
 const mediaTypeWord = "[!#$%&'*+.^_`|~0-9a-z-]+";
 const mediaTypeQuotedString = String.raw`"(?:[\t\x20-\x21\x23-\x5b\x5d-\x7e\x80-\xff]|\\[\t\x20-\x7e\x80-\xff])*"`;
+// RFC 9110 §5.6.6 allows a semicolon followed by an empty parameter.
 const jsonContentType = new RegExp(
-  String.raw`^application/json(?:[ \t]*;[ \t]*${mediaTypeWord}=(?:${mediaTypeWord}|${mediaTypeQuotedString}))*$`,
+  String.raw`^application/json(?:[ \t]*;(?:[ \t]*${mediaTypeWord}=(?:${mediaTypeWord}|${mediaTypeQuotedString}))?)*[ \t]*$`,
   "i",
 );
 

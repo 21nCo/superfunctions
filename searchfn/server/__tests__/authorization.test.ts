@@ -162,10 +162,10 @@ describe("SearchFn authorization", () => {
     expect(adapter.clear).not.toHaveBeenCalled();
   });
 
-  it("accepts a quoted comma within a single JSON media type", async () => {
+  it.each(['Application/JSON; note="a,b"', "application/json;", "application/json; ; charset=utf-8;"])("accepts valid JSON Content-Type %s", async (contentType) => {
     const adapter = testAdapter();
     const server = await createSearchFnServer({ adapter, authorize: () => true });
-    const response = await server.router.handle(post("clear", { resource: "docs" }, 'Application/JSON; note="a,b"'));
+    const response = await server.router.handle(post("clear", { resource: "docs" }, contentType));
     expect(response.status).toBe(200);
   });
 
