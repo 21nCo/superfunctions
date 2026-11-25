@@ -15,6 +15,9 @@ import {
 import { generateDrizzleSchemaFile } from "../utils/schema-generators.js";
 import { hasUnsafeMySqlMetadataSyntax } from "../utils/mysql-types.js";
 
+// The key-budget facts introspection reads from a default MySQL 8 server.
+const MYSQL_8_INNODB = { engine: "InnoDB", rowFormat: "Dynamic", innodbPageSize: 16_384, serverVersion: "8.4.3" };
+
 const syncJobs = {
   modelName: "syncJobs",
   fields: {
@@ -548,6 +551,7 @@ describe("schema index migrations", () => {
   it("migrates existing MySQL TEXT before creating a bounded unique index", () => {
     const diffs = diffTables([syncJobs], [{
       name: "plugfn_sync_jobs",
+      ...MYSQL_8_INNODB,
       columns: [
         {
           dialect: "mysql",
@@ -605,6 +609,7 @@ describe("schema index migrations", () => {
     } as unknown as TableSchema;
     const diffs = diffTables([replacementSchema], [{
       name: "plugfn_sync_jobs",
+      ...MYSQL_8_INNODB,
       columns: [{
         dialect: "mysql",
         tableName: "plugfn_sync_jobs",
@@ -861,6 +866,7 @@ describe("schema index migrations", () => {
     } as unknown as TableSchema;
     const diffs = diffTables([widened], [{
       name: "plugfn_sync_jobs",
+      ...MYSQL_8_INNODB,
       columns: [{
         dialect: "mysql",
         tableName: "plugfn_sync_jobs",
@@ -919,6 +925,7 @@ describe("schema index migrations", () => {
     } as unknown as TableSchema;
     const diffs = diffTables([widened], [{
       name: "plugfn_sync_jobs",
+      ...MYSQL_8_INNODB,
       columns: [{
         dialect: "mysql",
         tableName: "plugfn_sync_jobs",
@@ -984,6 +991,7 @@ describe("schema index migrations", () => {
       { prefixLength = null as number | null, columnBytes = 4 as number | null, innodbPageSize = 16384, tableBytes = 4 } = {},
     ) => [{
       name: "plugfn_sync_jobs",
+      ...MYSQL_8_INNODB,
       rowFormat,
       innodbPageSize,
       characterSetMaxBytes: tableBytes,
@@ -1014,6 +1022,30 @@ describe("schema index migrations", () => {
       );
       inPlace(diffTables([widenTo(191)], current(rowFormat), "plugfn"), 191);
     }
+    // Fail closed: COMPRESSED pages (KEY_BLOCK_SIZE), other engines, servers
+    // whose innodb_large_prefix may be off and missing metadata are refused
+    // before any DDL, also for a width-only widening kept in place.
+    type Layout = { engine?: string; rowFormat?: string; innodbPageSize?: number; serverVersion?: string };
+    const unproven = (layout: Layout) => [{ ...current("Dynamic")[0], ...layout }];
+    const unmodelled: Layout[] = [
+      { rowFormat: "Compressed" }, { engine: "MyISAM" }, { serverVersion: "5.7.44-log" },
+      { serverVersion: "10.2.44-MariaDB" }, { engine: undefined }, { rowFormat: undefined },
+      { innodbPageSize: undefined }, { innodbPageSize: 12_288 }, { serverVersion: undefined },
+    ];
+    for (const layout of unmodelled) {
+      for (const maxLength of [65, 768]) {
+        expect(() => diffTables([widenTo(maxLength)], unproven(layout), "plugfn"), JSON.stringify(layout))
+          .toThrow(/key size of plugfn_sync_jobs_claim_token_idx cannot be proven to fit, because/);
+      }
+    }
+    expect(() => diffTables([widenTo(768)], unproven({ rowFormat: "Compressed" }), "plugfn")).toThrow(
+      /its InnoDB engine and Compressed row format .*KEY_BLOCK_SIZE.*ALTER TABLE plugfn_sync_jobs ENGINE=InnoDB ROW_FORMAT=DYNAMIC/,
+    );
+    expect(() => diffTables([widenTo(768)], unproven({ serverVersion: "5.7.44-log" }), "plugfn")).toThrow(
+      /server version 5\.7\.44-log may limit key parts to 767 bytes \(innodb_large_prefix\); upgrade to MySQL 8\.0/,
+    );
+    inPlace(diffTables([widenTo(768)], unproven({ serverVersion: "10.6.16-MariaDB" }), "plugfn"), 768);
+    inPlace(diffTables([widenTo(768)], unproven({ serverVersion: "8.0.36", innodbPageSize: 65_536 }), "plugfn"), 768);
     // MODIFY COLUMN keeps a string column's own character set (700 latin1
     // bytes fit); an unknown one counts as utf8mb4.
     inPlace(diffTables([widenTo(700)], current("Compact", { columnBytes: 1 }), "plugfn"), 700);
@@ -1135,6 +1167,7 @@ describe("schema index migrations", () => {
     // limit, so the change is refused before the index is dropped.
     expect(() => diffTables([widened], [{
       name: "plugfn_sync_jobs",
+      ...MYSQL_8_INNODB,
       columns: [varcharColumn("claim_token", 64), varcharColumn("owner", 400)],
       indexes: [{ ...currentIndex, prefixLengths: [null, null] }],
       constraints: [],
@@ -1147,6 +1180,7 @@ describe("schema index migrations", () => {
     } as TableSchema;
     const prefixed = diffTables([prefixedSchema], [{
       name: "plugfn_sync_jobs",
+      ...MYSQL_8_INNODB,
       columns: [varcharColumn("claim_token", 64), varcharColumn("owner", 100)],
       indexes: [{ ...currentIndex, prefixLengths: [32, null] }],
       constraints: [],
@@ -1414,6 +1448,7 @@ describe("schema index migrations", () => {
     } as unknown as TableSchema;
     const currentTable = {
       name: "plugfn_sync_jobs",
+      ...MYSQL_8_INNODB,
       columns: [{
         dialect: "mysql" as const,
         tableName: "plugfn_sync_jobs",

@@ -59,8 +59,7 @@ function mysqlColumn(tableName: string, columnName: string, field: FieldSchema):
 function mysqlV7Snapshot(
   tables: TableSchema[],
   claimTokenLength: number,
-  rowFormat = 'Dynamic',
-  innodbPageSize = 16_384,
+  layout: Partial<Pick<DatabaseTable, 'engine' | 'rowFormat' | 'innodbPageSize' | 'serverVersion'>> = {},
 ): DatabaseTable[] {
   return tables.map((table) => {
     const columns = Object.entries(table.fields).map(([name, field]) => {
@@ -91,8 +90,11 @@ function mysqlV7Snapshot(
     return {
       name: table.modelName,
       schema: 'app',
-      rowFormat,
-      innodbPageSize,
+      engine: 'InnoDB',
+      rowFormat: 'Dynamic',
+      innodbPageSize: 16_384,
+      serverVersion: '8.4.3',
+      ...layout,
       characterSetMaxBytes: 4,
       columns,
       indexes,
@@ -109,12 +111,13 @@ function mysqlV7Snapshot(
 function informationSchemaRows(snapshot: DatabaseTable[], int: (value: number) => number | bigint) {
   return (sql: string, params: unknown[]): Record<string, unknown>[] => {
     if (sql.includes('SELECT DATABASE()')) return [{ database_name: 'app' }];
-    if (sql.includes('@@innodb_page_size')) return [{ page_size: int(snapshot[0].innodbPageSize!) }];
+    if (sql.includes('@@innodb_page_size')) return [{ page_size: int(snapshot[0].innodbPageSize!), server_version: snapshot[0].serverVersion }];
     // Only the connection's own database holds the plugfn tables.
     if (params[0] !== 'app') return [];
     if (sql.includes('information_schema.TABLES')) {
       return snapshot.map((table) => ({
         table_name: table.name,
+        engine: table.engine,
         row_format: table.rowFormat,
         character_set_max_bytes: int(table.characterSetMaxBytes!),
       }));
@@ -305,7 +308,7 @@ describe('plugfn schema v8 migration', () => {
         );
         // The key budget inputs arrive as numbers, also from Prisma's bigint.
         const syncJobs = currentTables.find((table) => table.name === 'plugfn_sync_jobs')!;
-        expect(syncJobs, adapterType).toMatchObject({ rowFormat: 'Dynamic', innodbPageSize: 16_384, characterSetMaxBytes: 4 });
+        expect(syncJobs, adapterType).toMatchObject({ engine: 'InnoDB', rowFormat: 'Dynamic', innodbPageSize: 16_384, serverVersion: '8.4.3', characterSetMaxBytes: 4 });
         expect(syncJobs.columns.find((column) => column.columnName === 'claim_token')?.characterSetMaxBytes).toBe(4);
         expectDevV7Widening(
           adapterType,
@@ -321,18 +324,22 @@ describe('plugfn schema v8 migration', () => {
     }
   });
 
-  it('refuses the widening before any DDL when the 768-character key exceeds the row format or page-size budget', async () => {
+  it('refuses the widening before any DDL when the 768-character key exceeds or cannot be proven within the key budget', async () => {
     const refusals = [
       // COMPACT: one key part may take 767 bytes; ROW_FORMAT=DYNAMIC lifts it.
-      ['Compact', 16_384, /plugfn_sync_jobs: its Compact row format limits index key parts to 767 bytes.*idx_plugfn_sync_jobs_claim_token \(claim_token 3072 bytes\).*ROW_FORMAT=DYNAMIC/],
+      [{ rowFormat: 'Compact' }, /plugfn_sync_jobs: its Compact row format limits index key parts to 767 bytes.*idx_plugfn_sync_jobs_claim_token \(claim_token 3072 bytes\).*ROW_FORMAT=DYNAMIC/],
       // 8 KiB pages cap the whole key at 1,536 bytes in every row format.
-      ['Dynamic', 8_192, /idx_plugfn_sync_jobs_claim_token \(claim_token 3072 bytes\) would take 3072 bytes, over the 1536-byte InnoDB key limit for innodb_page_size 8192(?!.*ROW_FORMAT)/],
+      [{ innodbPageSize: 8_192 }, /idx_plugfn_sync_jobs_claim_token \(claim_token 3072 bytes\) would take 3072 bytes, over the 1536-byte InnoDB key limit for innodb_page_size 8192(?!.*ROW_FORMAT)/],
+      // COMPRESSED pages (KEY_BLOCK_SIZE) and pre-8.0 servers, whose
+      // innodb_large_prefix may cap key parts at 767 bytes, are not modelled.
+      [{ rowFormat: 'Compressed' }, /key size of idx_plugfn_sync_jobs_claim_token cannot be proven to fit, because its InnoDB engine and Compressed row format.*KEY_BLOCK_SIZE.*ALTER TABLE plugfn_sync_jobs ENGINE=InnoDB ROW_FORMAT=DYNAMIC/],
+      [{ serverVersion: '5.7.44-log' }, /key size of idx_plugfn_sync_jobs_claim_token cannot be proven to fit, because server version 5\.7\.44-log may limit key parts to 767 bytes/],
     ] as const;
-    for (const [rowFormat, innodbPageSize, refusal] of refusals) {
+    for (const [layout, refusal] of refusals) {
       for (const adapterType of adapterTypes) {
         const connection = await commandConnection(
           adapterType,
-          mysqlV7Snapshot(schema.schemas, DEV_V7_CLAIM_TOKEN_LENGTH, rowFormat, innodbPageSize),
+          mysqlV7Snapshot(schema.schemas, DEV_V7_CLAIM_TOKEN_LENGTH, layout),
         );
         const currentTables = await introspectCurrentTables(connection);
 

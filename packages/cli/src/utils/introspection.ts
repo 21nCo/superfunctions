@@ -30,10 +30,11 @@ export interface DatabaseColumn {
 export interface DatabaseTable {
   name: string;
   schema?: string;
-  /** MySQL InnoDB row format (information_schema.TABLES.ROW_FORMAT). */
+  /** MySQL key-budget facts: ENGINE, ROW_FORMAT, @@innodb_page_size and VERSION(). */
+  engine?: string | null;
   rowFormat?: string | null;
-  /** MySQL @@innodb_page_size, which caps the total index key size. */
   innodbPageSize?: number | null;
+  serverVersion?: string | null;
   /** MySQL bytes per character of the table's default character set. */
   characterSetMaxBytes?: number | null;
   columns: DatabaseColumn[];
@@ -205,10 +206,10 @@ export async function introspectMySQL(
 ): Promise<DatabaseTable[]> {
   const db = { query: mysqlQuery(connection) };
   const toNumber = (value: unknown) => (value == null ? null : Number(value)); // Prisma: bigint
-  const [[pageSizeRow] = []] = await db.query('SELECT @@innodb_page_size AS page_size', []);
+  const [[pageSizeRow] = []] = await db.query('SELECT @@innodb_page_size AS page_size, VERSION() AS server_version', []);
   // Query tables
   const tablesQuery = `
-    SELECT TABLE_NAME as table_name, ROW_FORMAT as row_format,
+    SELECT TABLE_NAME as table_name, ENGINE as engine, ROW_FORMAT as row_format,
       (SELECT cs.MAXLEN FROM information_schema.COLLATIONS co
         JOIN information_schema.CHARACTER_SETS cs ON cs.CHARACTER_SET_NAME = co.CHARACTER_SET_NAME
         WHERE co.COLLATION_NAME = t.TABLE_COLLATION) as character_set_max_bytes
@@ -225,7 +226,7 @@ export async function introspectMySQL(
 
   const result: DatabaseTable[] = [];
 
-  for (const { table_name, row_format, character_set_max_bytes } of tables) {
+  for (const { table_name, engine, row_format, character_set_max_bytes } of tables) {
     // Query columns
     const columnsQuery = `
       SELECT 
@@ -335,8 +336,10 @@ export async function introspectMySQL(
     result.push({
       name: table_name,
       schema: database,
+      engine: engine ?? null,
       rowFormat: row_format ?? null,
       innodbPageSize: toNumber(pageSizeRow?.page_size),
+      serverVersion: pageSizeRow?.server_version ?? null,
       characterSetMaxBytes: toNumber(character_set_max_bytes),
       columns: (columns as any[]).map((c) => ({
         dialect: 'mysql' as const,

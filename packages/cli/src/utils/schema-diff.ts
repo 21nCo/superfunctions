@@ -466,27 +466,15 @@ export function diffTables(
     // A width-only VARCHAR widening keeps every full-column index on the
     // column: one MODIFY COLUMN statement rebuilds it in place, so a unique
     // index never stops enforcing uniqueness (if the key budget below fits).
-    const widenedVarcharColumns = new Set<string>();
-    for (const change of columnChanges) {
+    const widenedVarcharColumns = new Set(columnChanges.filter((change) => {
       const widening = /^maxLength changed from (\d+) to (\d+)$/.exec(change.change);
-      if (
-        widening &&
-        /^varchar$/i.test(change.current?.dataType.trim() ?? '') &&
-        Number(widening[2]) >= Number(widening[1])
-      ) {
-        widenedVarcharColumns.add(change.column);
-      }
-    }
-    const keepsIndexThroughWidening = (index: DatabaseTable['indexes'][number]) => {
-      const indexType = index.indexType?.toUpperCase();
-      if (indexType && indexType !== 'BTREE') return false;
-      return index.columns.every((column, position) => {
-        const currentColumn = curColMap.get(column);
-        return index.prefixLengths?.[position] == null &&
-          /^(?:var)?char$/i.test(currentColumn?.dataType.trim() ?? '') &&
-          (!changedMySqlColumns.has(column) || widenedVarcharColumns.has(column));
-      });
-    };
+      return widening && /^varchar$/i.test(change.current?.dataType.trim() ?? '') && Number(widening[2]) >= Number(widening[1]);
+    }).map((change) => change.column));
+    const keepsIndexThroughWidening = (index: DatabaseTable['indexes'][number]) =>
+      (!index.indexType || index.indexType.toUpperCase() === 'BTREE') &&
+      index.columns.every((column, position) => index.prefixLengths?.[position] == null &&
+        /^(?:var)?char$/i.test(curColMap.get(column)?.dataType.trim() ?? '') &&
+        (!changedMySqlColumns.has(column) || widenedVarcharColumns.has(column)));
     const unpreservedIndexDependencies = curTable.indexes.filter((index) =>
       index.columns.some((column) => changedMySqlColumns.has(column)) &&
       (
@@ -526,17 +514,15 @@ export function diffTables(
     // any DDL. String parts: declared width (TEXT: the 191-character prefix)
     // in the character set MODIFY COLUMN keeps, the column's own or else the
     // table default (unknown: utf8mb4). Other parts: the physical type of an
-    // unchanged column, else the emitted type. Refuse what cannot be sized.
-    const budget = mysqlIndexKeyBudget(curTable.rowFormat, curTable.innodbPageSize);
+    // unchanged column, else the emitted type. Refuse what cannot be sized or modelled.
+    const budget = mysqlIndexKeyBudget(curTable);
     const keyPartBytes = (column: string): number => {
       const field = Object.entries(reqFieldMap).find(([name, f]) => (f.fieldName ?? name) === column)?.[1];
       const type = field && (/^date(?:time)?$/.test(field.type)
         ? ({ timestamp: 'datetime', timestamptz: 'timestamp', 'iso-text': 'text' } as Record<string, string>)[resolveDateStorageType(field)] ?? 'bigint'
         : mapFieldTypeToSQLType(field, 'mysql'));
       const current = curColMap.get(column);
-      const charBytes = current?.characterSet || current?.characterSetMaxBytes
-        ? current.characterSetMaxBytes
-        : curTable.characterSetMaxBytes;
+      const charBytes = current?.characterSet || current?.characterSetMaxBytes ? current.characterSetMaxBytes : curTable.characterSetMaxBytes;
       if (type === 'text') return (field?.type === 'string' ? field.maxLength ?? 191 : 191) * (charBytes ?? 4);
       const bytes = mysqlFixedKeyBytes(current && !changedMySqlColumns.has(column) ? current.columnType ?? current.dataType : type ?? '');
       if (bytes) return bytes;
@@ -544,6 +530,7 @@ export function diffTables(
     };
     for (const index of requiredIndexes) {
       if (!index.columns.some((column) => changedMySqlColumns.has(column))) continue;
+      if (typeof budget === 'string') throw new Error(`Cannot generate MySQL column change for ${dbName}: the key size of ${index.name} cannot be proven to fit, because ${budget}.`);
       const parts = index.columns.map((column) => ({ column, bytes: keyPartBytes(column) }));
       const total = parts.reduce((sum, part) => sum + part.bytes, 0);
       if (total <= budget.total && parts.every((part) => part.bytes <= budget.part)) continue;
