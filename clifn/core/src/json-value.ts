@@ -178,7 +178,11 @@ export function workLeft(work: WorkBudget, kind: WorkKind, redacted = false): nu
 }
 
 const MIB = 2 ** 20;
-/** NODE_OPTIONS as the process started with it: Node reads it once at startup, so a later change sets no limit. */
+/**
+ * NODE_OPTIONS as this module read it when it loaded. Node reads it once at startup and no API reports that value, so
+ * a change made before this module loads (for child processes) is caught only by the young-generation check in
+ * `oldGenerationLimit`: a changed value whose remainder is also a young generation's size is taken as given.
+ */
 const startupNodeOptions = process.env.NODE_OPTIONS;
 
 /** Splits NODE_OPTIONS as Node does: on spaces, with double quotes grouping and a backslash escaping inside them. */
@@ -216,7 +220,10 @@ function oldSpaceFlag(options: readonly string[]): number | undefined {
   return size;
 }
 
-/** Whether `bytes` is a size V8 gives a young generation: a power of two, or three times one (two semi-spaces and its large-object space). */
+/**
+ * Whether `bytes` is a size V8 gives a young generation: a power of two, or three times one (two semi-spaces and its
+ * large-object space). V8 rounds a semi-space up to a power of two, also one set with `--max-semi-space-size`.
+ */
 function isYoungGenerationSize(bytes: number): boolean {
   let size = bytes % 3 === 0 ? bytes / 3 : bytes;
   while (size > 1 && size % 2 === 0) {
@@ -232,7 +239,7 @@ function isYoungGenerationSize(bytes: number): boolean {
  * 22, 128 MiB on Node 26, 224 MiB on Node 24), and V8 does not report the old generation's limit on its own. A worker
  * reports its young generation in `resourceLimits`, so its old generation is the rest of its heap limit, whatever
  * flags overrode the size it asked for. The main thread reports neither, so the `--max-old-space-size` it started with
- * (the command line's, which takes precedence, then NODE_OPTIONS' as read at startup) is used only when the rest of
+ * (the command line's, which takes precedence, then NODE_OPTIONS' as this module read it when it loaded) is used only when the rest of
  * the heap limit is a young generation's size, which a flag that did not set this heap (a NODE_OPTIONS changed for
  * child processes, one the command line overrode) does not leave. Otherwise the heap limit is used: V8's default old
  * generation, sized from the machine's memory, is most of it. Read once: none of these change while the process runs.

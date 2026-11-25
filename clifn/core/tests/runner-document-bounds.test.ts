@@ -2632,6 +2632,8 @@ describe("document memory in a constrained heap", () => {
     // the process flag that overrode its 24 MiB request sizes it.
     expect(limitWith(["--max-old-space-size=32"])).toMatchObject({ limit: (32 * MiB) / 16, worker: (32 * MiB) / 16 });
     expect(limitWith([], "--max-old-space-size=48").limit).toBe((48 * MiB) / 16);
+    // V8 rounds a custom semi-space up to a power of two, so the rest is still a young generation's size.
+    expect(limitWith(["--max-old-space-size=32", "--max-semi-space-size=5"]).limit).toBe((32 * MiB) / 16);
     // Quoted as Node accepts it in NODE_OPTIONS.
     expect(limitWith([], '"--max-old-space-size=48"').limit).toBe((48 * MiB) / 16);
     // The command line takes precedence over NODE_OPTIONS, in either spelling.
