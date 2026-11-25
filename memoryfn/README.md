@@ -12,6 +12,10 @@ await memory.close();
 
 Use injected Postgres storage for durable data and configure an embedder for semantic retrieval. The process-local adapter is intended for tests and explicit ephemeral use. SQLite requires a supplied adapter.
 
-Read [TypeScript storage, migrations and lifecycle](typescript/README.md). Application membership, sharing and authoritative deletion state remain the consumer's responsibility. This is an unpublished candidate; the registry version does not identify these local changes. Admin and Python packages have not been adopted into this dev worktree.
+Read [TypeScript storage, migrations and lifecycle](typescript/README.md). Application membership, sharing and authoritative deletion state remain the consumer's responsibility. This is an unpublished candidate; the registry version does not identify these local changes.
+
+The function-owned `@memoryfn/admin` package ([admin](admin/README.md)) exposes only the operations this runtime backs today: environment-scoped `memoryfn.memories.search` and `memoryfn.memories.ingest`. The binding derives tenant and container scope from the authenticated Super Console context; callers cannot select another tenant.
+
+The [Python SDK](python/README.md) is an earlier, smaller implementation: PostgreSQL storage and OpenAI only, with no forgetting, revisions or document ingestion. Its search never filters by tenant and filters by container tags only when tags are given; a search without tags returns matches from every stored memory. It does not provide the TypeScript package's tenant isolation.
 
 Semantic search requires a configured embedder and fails with `MEMORY_EMBEDDER_REQUIRED` otherwise. The built-in PostgreSQL schema uses 1536 dimensions; the factory requests that dimension and rejects conflicting configuration, including injected `PostgresAdapter` instances.
