@@ -32,6 +32,7 @@ describe("transact step classification", () => {
     const create = vi.spyOn(adapter, "create");
     server = await createDatafnServer({
       allowUnknownResources: true,
+      debug: true,
       schema,
       database: adapter,
     });

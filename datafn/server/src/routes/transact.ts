@@ -7,13 +7,9 @@ import { okResponse, errorResponse } from "../http/errors.js";
 import { executeTransaction } from "../execution/transact.js";
 import { buildSchemaIndex, validateMutation, validateQuery } from "../validation/index.js";
 import { validateQueryAuthz, validateMutationAuthz, type AuthzOptions } from "../validation/authz.js";
-import { classifyTransactStep } from "@datafn/core";
+import { parseDatafnRequest } from "@datafn/core";
 import { logRequest } from "../logging.js";
 import type { DatafnLogger } from "../logger.js";
-
-function isStepRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 /**
  * Options for transact handler
@@ -72,45 +68,19 @@ export function createTransactHandler(
         });
         }
 
-        // Classify once. Schema validation, authorization, and execution share it.
-        // A bare step with string resource and operation is a mutation even when id is not a string.
-        const prepared: Array<{
-          kind: "mutation" | "query";
-          body: Record<string, unknown>;
-          pathSuffix: "" | ".mutation" | ".query";
-        }> = [];
-        for (let i = 0; i < body.steps.length; i++) {
-          const step = body.steps[i];
-          if (!isStepRecord(step)) {
-            return errorResponse({
-              code: "DFQL_INVALID",
-              message: "Invalid DFQL: step must be object",
-              details: { path: `steps[${i}]` },
-            });
-          }
-          const classified = classifyTransactStep(step);
-          if (!classified.ok) {
-            return errorResponse({
-              code: "DFQL_INVALID",
-              message: classified.message,
-              details: { path: `steps[${i}]` },
-            });
-          }
-          if (!isStepRecord(classified.body)) {
-            return errorResponse({
-              code: "DFQL_INVALID",
-              message: classified.kind === "mutation"
-                ? "Invalid DFQL: mutation must be object"
-                : "Invalid DFQL: expected object",
-              details: { path: `steps[${i}]${classified.pathSuffix}` },
-            });
-          }
-          prepared.push({
-            kind: classified.kind,
-            body: classified.body,
-            pathSuffix: classified.pathSuffix,
-          });
-        }
+        // Reuse the protocol's classification for schema validation, authorization, and execution.
+        const parsed = parseDatafnRequest("transact", body);
+        if (!parsed.ok) return errorResponse(parsed.error);
+        if (parsed.result.kind !== "transact") throw new Error("Expected transact protocol");
+        const prepared = parsed.result.steps.map(({ type: kind }, index) => {
+          const raw = body.steps[index];
+          const wrapped = raw[kind] !== undefined;
+          return {
+            kind,
+            body: (wrapped ? raw[kind] : raw) as Record<string, unknown>,
+            pathSuffix: wrapped ? `.${kind}` : "",
+          };
+        });
 
         for (let i = 0; i < prepared.length; i++) {
           const step = prepared[i]!;
@@ -134,7 +104,7 @@ export function createTransactHandler(
             const { code, message, path: errorPath } = validationResult.error as { code: string; message: string; path: string };
             return errorResponse({
               code: code as any,
-              message,
+              message: handlerOpts?.debug ? message : "Validation error",
               details: { path: errorPath },
             });
           }

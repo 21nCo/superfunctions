@@ -161,7 +161,7 @@ describe("REL-001: Transaction atomicity — no silent fallthrough", () => {
 
     expect(result.ok).toBe(false);
     expect(result.error?.code).toBe("INTERNAL");
-    expect(result.error?.message).toContain("serialization failure");
+    expect(result.error?.message).toBe("Transaction failed");
   });
 
   it("TV-REL-002: Adapter without transaction fn uses sequential", async () => {
@@ -222,7 +222,7 @@ describe("REL-001: Transaction atomicity — no silent fallthrough", () => {
     expect(result.ok).toBe(true);
     expect(result.result?.ok).toBe(false);
     expect(result.result?.results[0].error.code).toBe("INTERNAL");
-    expect(result.result?.results[0].error.message).toBe("null");
+    expect(result.result?.results[0].error.message).toBe("Internal error");
 
     executeMutationSpy.mockRestore();
     vi.restoreAllMocks();

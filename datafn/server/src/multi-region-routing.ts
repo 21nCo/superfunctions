@@ -1658,7 +1658,7 @@ export async function prepareDatafnRoutingRequest(
     if (done) break;
     total += value.byteLength;
     if (total > limit) {
-      await reader.cancel("request body limit exceeded").catch(() => undefined);
+      void reader.cancel("request body limit exceeded").catch(() => undefined);
       throw payloadTooLargeError(limit);
     }
     chunks.push(value);
@@ -1715,7 +1715,9 @@ async function requestBodyDigest(
     if (done) break;
     total += value.byteLength;
     if (total > maxBodyBytes) {
-      await reader.cancel("request body limit exceeded").catch(() => undefined);
+      // Route assertion verification reads a clone, so cancellation can wait
+      // on a sibling stream. The 413 must be returned independently.
+      void reader.cancel("request body limit exceeded").catch(() => undefined);
       throw new DatafnRequestBodyTooLargeError(maxBodyBytes);
     }
     hash.update(value);

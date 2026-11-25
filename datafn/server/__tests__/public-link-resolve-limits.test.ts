@@ -15,6 +15,7 @@ import {
   type DatafnServer,
 } from "../src/index.js";
 import type { DatafnSchema } from "../src/core-types.js";
+import type { DatafnComposableRoute } from "../src/server.js";
 
 const schema: DatafnSchema = {
   resources: [
@@ -149,6 +150,28 @@ describe("public link resolve limits", () => {
     expect(result.status).toBe(200);
     expect(result.body.ok).toBe(true);
     expect(result.body.result.resource).toBe("linkTag");
+  });
+
+  it("keeps the bounded body and route parameters readable through plugin context", async () => {
+    const route: DatafnComposableRoute<{ actor: string }> = {
+      method: "POST",
+      path: "/datafn/example/:id",
+      handler: async (_request, context) => Response.json({
+        id: context.params.id,
+        actor: context.actor,
+        body: await context.json(),
+      }),
+    };
+    const server = await start({
+      context: { actor: "test-actor" },
+      plugins: [{ name: "test-route", runsOn: ["server"], routes: () => [route] }],
+    });
+    const result = await read(await server.router.handle(new Request("http://localhost/datafn/example/test-id", {
+      method: "POST",
+      body: JSON.stringify({ name: "Ada" }),
+    })));
+    expect(result.status).toBe(200);
+    expect(result.body).toEqual({ id: "test-id", actor: "test-actor", body: { name: "Ada" } });
   });
 
   it("resolves a valid token when placement is configured", async () => {

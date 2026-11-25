@@ -5,6 +5,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { memoryAdapter } from "@superfunctions/db/adapters";
 import { createDatafnServer } from "../src/server.js";
+import { DbDataStore } from "../src/execution/db-store.js";
 import type { DatafnSchema } from "../src/core-types.js";
 
 const INSERT_PHRASE = "driver-test-failure-insert";
@@ -179,6 +180,31 @@ describe("driver error redaction", () => {
     expect(response.status).toBe(200);
     expect(raw).not.toContain(TXN_PHRASE);
     expect(body.result.errors[0].message).toBe("Transaction failed");
+  });
+
+  it.each([true, false])("redacts driver failures from transact with atomic: %s", async (atomic) => {
+    const db = memoryAdapter();
+    await db.initialize?.();
+    const server = await start(db, true);
+    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    if (atomic) {
+      vi.spyOn(db, "transaction").mockRejectedValueOnce(new Error(TXN_PHRASE));
+    } else {
+      vi.spyOn(DbDataStore, "forQuery").mockRejectedValueOnce(new Error(TXN_PHRASE));
+    }
+
+    const response = await server.router.handle(new Request("http://localhost/datafn/transact", {
+      method: "POST",
+      body: JSON.stringify({ atomic, steps: [{ query: { resource: "users", version: 1 } }] }),
+    }), {});
+    const body = await response.json();
+    const error = atomic ? body.error : body.result.results[0].error;
+    expect(error).toMatchObject({
+      code: "INTERNAL",
+      message: atomic ? "Transaction failed" : "Internal error",
+    });
+    expect(JSON.stringify(body)).not.toContain(TXN_PHRASE);
+    expect(JSON.stringify(logged.mock.calls)).toContain(TXN_PHRASE);
   });
 
   it("keeps driver text out of the response when debug is enabled", async () => {

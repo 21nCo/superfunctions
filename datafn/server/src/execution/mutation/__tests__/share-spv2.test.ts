@@ -2902,7 +2902,7 @@ describe("share SPV2 mutation semantics", () => {
       const body = await response.json() as any;
       expect(body.error).toMatchObject({
         code: "INTERNAL",
-        message: "Transaction setup failed: outbox unavailable",
+        message: "Transaction failed",
       });
       await expect(localDb.findMany({
         model: globalPermissionsTable,

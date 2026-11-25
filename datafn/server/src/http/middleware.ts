@@ -45,20 +45,25 @@ export async function readLimitedBody(
     return { ok: true, bytes: new Uint8Array() };
   }
 
-  const reader = req.body.getReader();
   const chunks: Uint8Array[] = [];
   let total = 0;
   try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      if (!value) continue;
-      total += value.byteLength;
-      if (total > maxBytes) {
-        await reader.cancel("request body limit exceeded").catch(() => undefined);
-        return { ok: false, response: payloadTooLarge(maxBytes) };
+    const reader = req.body.getReader();
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (!value) continue;
+        total += value.byteLength;
+        if (total > maxBytes) {
+          // A tee or an async producer can delay cancellation beyond the response.
+          void reader.cancel("request body limit exceeded").catch(() => undefined);
+          return { ok: false, response: payloadTooLarge(maxBytes) };
+        }
+        chunks.push(value);
       }
-      chunks.push(value);
+    } finally {
+      reader.releaseLock();
     }
   } catch (error) {
     logger?.warn("Failed to read request body", { error: String(error), operation: "readBody" });

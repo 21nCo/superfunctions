@@ -9,6 +9,7 @@ import type { DFQLMutation } from "./mutation/dfql.js";
 import type { SequenceStore } from "./sync/sequence-store.js";
 import { executeMutation } from "./mutation/execute.js";
 import { executeQuery } from "./query/execute.js";
+import { DatafnExecutionError } from "./errors.js";
 import { DbDataStore } from "./db-store.js";
 import { ChangeTrackingService } from "./sync/change-tracking.js";
 import type { DatafnLogger } from "../logger.js";
@@ -137,11 +138,12 @@ export async function executeTransaction(
         }
       });
     }
+    logger?.error("Transaction setup failed", { error: String(error), operation: "transact" });
     return {
       ok: false,
       error: {
         code: "INTERNAL",
-        message: `Transaction setup failed: ${error?.message || String(error)}`,
+        message: "Transaction failed",
         details: { path: "$" },
       },
     };
@@ -328,13 +330,14 @@ export async function executeTransaction(
         // Fall through to sequential execution below
       } else {
         await reconcilePermissionDirectoryAfterSettlement();
+        logger?.error("Transaction failed", { error: String(error), operation: "transact" });
         // DB-level error (serialization, timeout, constraint) → INTERNAL error
         // NEVER fall through to sequential execution when adapter HAS transaction support
         return {
           ok: false,
           error: {
             code: "INTERNAL",
-            message: `Transaction failed: ${msg || "unknown error"}`,
+            message: "Transaction failed",
             details: { path: "$" },
           },
         };
@@ -389,11 +392,12 @@ export async function executeTransaction(
         error: String(e?.message || e),
       });
       // Map to an error result
-      const errorCode =
-        typeof e?.code === "string" && e.code.length > 0 ? e.code : "INTERNAL";
+      const clientError = e instanceof DatafnExecutionError && e.code !== "INTERNAL"
+        ? { code: e.code, message: e.message }
+        : { code: "INTERNAL", message: "Internal error" };
       results.push({
         ok: false,
-        error: { code: errorCode, message: e?.message || String(e) }
+        error: clientError,
       });
       if (isAtomic) {
         await drainPrequeuedUnshareTasks();

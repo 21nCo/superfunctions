@@ -14,6 +14,7 @@ import type { SearchProvider } from "./search-provider.js";
 import { parseDatafnRequest, collectStructuralResourceSelectors, validateSchema, ensureBuiltinKv, ensureBuiltinTemporal, isNamespaced } from "@datafn/core";
 import {
   createObservabilityMiddleware,
+  createRouteContext,
   createRouter,
   executeMiddlewareChain,
   type Router,
@@ -47,7 +48,7 @@ import { DbIdempotencyStore } from "./execution/idempotency-db.js";
 import { ChangeTrackingService } from "./execution/sync/change-tracking.js";
 import { errorResponse, errorToEnvelope } from "./http/errors.js";
 import { createRestRoutes, sanitizePathSegment } from "./routes/rest.js";
-import { checkPayloadLimit, readBodyWithLimit, readLimitedBody } from "./http/middleware.js";
+import { checkPayloadLimit, readLimitedBody } from "./http/middleware.js";
 import { parseJsonBody } from "./http/json.js";
 import { WebSocketManager, type WebSocketClient, type WsAuthContext } from "./ws.js";
 import type { WsManagerConfig } from "./ws.js";
@@ -1154,9 +1155,9 @@ export async function createDatafnServer<TContext = any>(
   ): ((req: Request, ctx: TContext) => Promise<Response>) => {
     return async (req: Request, ctx: TContext): Promise<Response> => {
       const enrichedCtx = createEnrichedContext(ctx);
-      // Body parsing consumes the original Request. Preserve one clone so a
-      // signed routing assertion can bind the exact forwarded body.
-      const placementRequest = multiRegionRuntime?.placement && origin === "http" ? req.clone() : undefined;
+      const parseBody = req.method === "POST" || req.method === "PUT" || req.method === "PATCH";
+      const verifyHttpPlacement = multiRegionRuntime?.placement && origin === "http" && action !== "status";
+      let placementRequest: Request | undefined;
       let payload: unknown = null;
       // REL-009: Reject new requests immediately when shutting down
       if (shuttingDown) {
@@ -1226,10 +1227,12 @@ export async function createDatafnServer<TContext = any>(
 
         // For POST/PUT/PATCH endpoints, parse JSON body FIRST before authorization
         // AUTH-001: Invalid JSON must return DFQL_INVALID, never FORBIDDEN
-        if (req.method === "POST" || req.method === "PUT" || req.method === "PATCH") {
-          // If maxPayloadBytes is set but Content-Length was missing, enforce on actual body
+        if (verifyHttpPlacement && (!parseBody || !limits.maxPayloadBytes)) {
+          placementRequest = req.clone();
+        }
+        if (parseBody) {
           if (limits.maxPayloadBytes) {
-            const bodyResult = await readBodyWithLimit(req, limits.maxPayloadBytes, logger);
+            const bodyResult = await readLimitedBody(req, limits.maxPayloadBytes, logger);
             if (!bodyResult.ok) {
               return completeDatafnResponse({
                 action,
@@ -1239,9 +1242,12 @@ export async function createDatafnServer<TContext = any>(
                 response: bodyResult.response,
               });
             }
-            // Parse JSON from the already-read body text
+            // Preserve the exact bounded bytes for a signed routing assertion.
+            if (verifyHttpPlacement) {
+              placementRequest = req.body ? new Request(req, { body: bodyResult.bytes }) : req;
+            }
             try {
-              payload = JSON.parse(bodyResult.body);
+              payload = JSON.parse(new TextDecoder().decode(bodyResult.bytes));
             } catch {
               await emitDataFnEvent({
                 domain: "datafn",
@@ -1544,14 +1550,8 @@ export async function createDatafnServer<TContext = any>(
     const read = await readLimitedBody(request, limits.maxPayloadBytes, logger);
     if (!read.ok) return read.response;
     const headers = new Headers(request.headers);
-    headers.delete("content-length");
     headers.set("content-length", String(read.bytes.byteLength));
-    return new Request(request.url, {
-      method: request.method,
-      headers,
-      body: read.bytes,
-      signal: request.signal,
-    });
+    return new Request(request, { headers, body: read.bytes });
   };
 
   const withPluginRouteGuards = (
@@ -1571,11 +1571,16 @@ export async function createDatafnServer<TContext = any>(
         }
         const bounded = await requestWithBoundedBody(request);
         if (bounded instanceof Response) return bounded;
+        let routeContext = context;
+        if (bounded !== request) {
+          const { json, text, formData } = createRouteContext(bounded, context.params);
+          routeContext = { ...context, json, text, formData };
+        }
         return executeMiddlewareChain(
           originalMiddleware ?? [],
           bounded,
-          context,
-          async () => originalHandler(bounded, context),
+          routeContext,
+          async () => originalHandler(bounded, routeContext),
         );
       },
     };

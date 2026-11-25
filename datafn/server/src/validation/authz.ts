@@ -50,7 +50,7 @@ export type AuthzError = {
 export type AuthzOptions = {
   /** VAL-001: Allow queries/mutations on resources with no policy. Default: false (deny-by-default). */
   allowUnknownResources?: boolean;
-  /** VAL-009: Debug mode — when false, strip field/schema details from error messages. Default: true. */
+  /** VAL-009: Include field/schema details in error messages when enabled. */
   debug?: boolean;
 };
 
@@ -484,7 +484,10 @@ function authorizeRelationFilter(
   // A scalar comparison on an FK stored under the relation name is a field filter.
   // A quantifier still filters the related resource, so it is not that field read.
   if (!quantifier && parts.length === 1) return "scalar";
-  if (!quantifier && fkNamed && !canReadField(schema, resource, head)) {
+  // A stored field can shadow a relation in a dot-path. A declared FK can
+  // also expose its association through a quantifier. Check source and target.
+  const hasSourceField = resource.fields.some((field) => field.name === head);
+  if ((hasSourceField || (!quantifier && fkNamed)) && !canReadField(schema, resource, head)) {
     return {
       ok: false,
       code: "FORBIDDEN",
@@ -541,22 +544,20 @@ function authorizeRelationFilter(
     });
 
     if (nextTargets.length > 0 && !(isLast && segmentIsField)) {
-      const segmentIsFk = currentNames.some((name) =>
-        isForeignKeyNamedManyOne(schema, name, segment),
-      );
-      if (segmentIsFk) {
-        const readable = currentNames.every((name) => {
-          const current = getResourceSchema(schema, name);
-          return current ? canReadField(schema, current, segment) : true;
-        });
-        if (!readable) {
-          return {
-            ok: false,
-            code: "FORBIDDEN",
-            message: "Authorization denied",
-            path: `filters.${key}`,
-          };
-        }
+      const hiddenSourceField = currentNames.some((name) => {
+        const current = getResourceSchema(schema, name);
+        return current &&
+          (current.fields.some((field) => field.name === segment) ||
+            isForeignKeyNamedManyOne(schema, name, segment)) &&
+          !canReadField(schema, current, segment);
+      });
+      if (hiddenSourceField) {
+        return {
+          ok: false,
+          code: "FORBIDDEN",
+          message: "Authorization denied",
+          path: `filters.${key}`,
+        };
       }
       currentNames = nextTargets;
       continue;
@@ -617,24 +618,22 @@ function extractFieldsFromFilter(
     const baseField = parts[0];
     if (!baseField) continue;
 
-    // id and capability-managed fields are always allowed for filtering
-    if (baseField === "id") continue;
-    if (parts.length === 1 && capabilityFields.has(baseField)) continue;
-
     const relationResult = authorizeRelationFilter(key, value, resource, schema);
     if (relationResult !== "scalar") {
       if (!relationResult.ok) return relationResult;
       continue;
     }
 
+    // Scalar filters on id and capability-managed fields are always allowed.
+    if (baseField === "id" || capabilityFields.has(baseField)) continue;
+
     // A scalar filter on a relation that stores its id under its own name
     // (e.g. node.parent) filters that field, declared or not.
     const isField = resource.fields.some((f) => f.name === baseField) ||
-                    capabilityFields.has(baseField) ||
                     (!!schema && parts.length === 1 &&
                       isForeignKeyNamedManyOne(schema, resource.name, baseField));
 
-    if (isField && !readFields.includes(baseField) && !capabilityFields.has(baseField)) {
+    if (isField && !readFields.includes(baseField)) {
       return {
         ok: false,
         code: "FORBIDDEN",
@@ -653,7 +652,7 @@ function extractFieldsFromFilter(
 export function validateMutationAuthz(
   mutation: Record<string, unknown>,
   schema: DatafnSchema,
-  opts?: AuthzOptions,
+  opts?: AuthzOptions & { evaluateGuard?: boolean },
 ): { ok: true } | AuthzError {
   const resource = schema.resources.find((r) => r.name === mutation.resource);
   if (!resource) {
@@ -683,7 +682,8 @@ export function validateMutationAuthz(
   const writeFields = policy.write?.fields || [];
 
   // Guards read stored values. A field the caller cannot read must not be a predicate.
-  if (mutation.if && typeof mutation.if === "object" && !Array.isArray(mutation.if)) {
+  if (opts?.evaluateGuard !== false &&
+      mutation.if && typeof mutation.if === "object" && !Array.isArray(mutation.if)) {
     const guardResult = extractFieldsFromFilter(
       mutation.if as Record<string, unknown>,
       resource,

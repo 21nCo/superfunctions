@@ -428,6 +428,7 @@ export function createPushHandler(
             const authzResult = validateMutationAuthz(mut, validatedSchema, {
               allowUnknownResources: handlerOpts?.allowUnknownResources,
               debug: handlerOpts?.debug,
+              evaluateGuard: false, // Sync push validates guards but does not evaluate them.
             });
             if (!authzResult.ok) {
               return errorResponse({
