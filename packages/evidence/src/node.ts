@@ -63,6 +63,17 @@ function isWellFormed(value: string): boolean {
   return !LONE_SURROGATE.test(value);
 }
 
+/**
+ * Resolves `target` to its real path, decoding the bytes the OS returns
+ * losslessly: undefined when they are not valid UTF-8, because Node would
+ * substitute U+FFFD and the string would name a different file.
+ */
+async function realpathExact(target: string): Promise<string | undefined> {
+  const bytes = await fs.realpath(target, { encoding: "buffer" });
+  const text = bytes.toString("utf8");
+  return Buffer.from(text, "utf8").equals(bytes) ? text : undefined;
+}
+
 /** True when `real` is below `root`; both are real paths. */
 function isUnder(real: string, root: string): boolean {
   const prefix = root.endsWith(path.sep) ? root : root + path.sep;
@@ -125,12 +136,14 @@ async function checkArtifact(root: string, artifact: EvidenceArtifactHash): Prom
   if (isProblem(found)) return found;
   if (!found.isFile()) return { code: "EVIDENCE_ARTIFACT_NOT_REGULAR_FILE" };
   const joined = path.join(root, ...artifact.path.split("/").filter((segment) => segment.length > 0));
-  let real: string;
+  let real: string | undefined;
   try {
-    real = await fs.realpath(joined);
+    real = await realpathExact(joined);
   } catch (error) {
     return fromError(error);
   }
+  // A real path that is not valid UTF-8 cannot be shown to be under the root.
+  if (real === undefined) return { code: "EVIDENCE_ARTIFACT_OUTSIDE_ROOT", detail: { reason: "real path is not valid UTF-8" } };
   if (!isUnder(real, root)) return { code: "EVIDENCE_ARTIFACT_OUTSIDE_ROOT" };
   // Open the path as written, so a trailing slash after a file name is refused by the kernel.
   return hashFile(`${root}${root.endsWith(path.sep) ? "" : path.sep}${artifact.path}`, artifact.path);
@@ -144,7 +157,10 @@ async function resolveRoot(artifactRoot: unknown): Promise<string | undefined> {
     // not a directory even though realpath would collapse it); stat still
     // follows a symlinked root.
     if (!(await fs.stat(artifactRoot)).isDirectory()) return undefined;
-    const real = await fs.realpath(artifactRoot);
+    // A real path that is not valid UTF-8 has no exact string spelling, so every
+    // later lookup would reach a different directory: refuse it.
+    const real = await realpathExact(artifactRoot);
+    if (real === undefined) return undefined;
     return (await fs.stat(real)).isDirectory() ? real : undefined;
   } catch {
     return undefined;

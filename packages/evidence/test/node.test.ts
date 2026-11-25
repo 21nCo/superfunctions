@@ -41,6 +41,20 @@ function passingTree() {
 
 const artifactPointer = (index: number, member: "path" | "sha256") => `/source/artifactHashes/${index}/${member}`;
 
+/**
+ * Makes fs.promises.realpath resolve `target` to `bytes`, as Node does: a Buffer
+ * when asked for one, otherwise the UTF-8 decode (U+FFFD for invalid bytes).
+ */
+function realpathResolving(target: string, bytes: Buffer) {
+  const realpath = fsp.realpath.bind(fsp);
+  vi.spyOn(fsp, "realpath").mockImplementation(async (candidate, options) => {
+    if (candidate !== target) return realpath(candidate, options as never);
+    // The mocked overload's options type leaves out "buffer", so widen it.
+    const encoding: unknown = typeof options === "string" ? options : (options as { encoding?: unknown } | null | undefined)?.encoding;
+    return (encoding === "buffer" ? bytes : bytes.toString("utf8")) as never;
+  });
+}
+
 describe("verifyEvidence: artifacts that match", () => {
   it("re-hashes a report and a catchfn evidence event v1 file and passes", async () => {
     const { root, events, record } = passingTree();
@@ -145,11 +159,22 @@ describe("verifyEvidence: artifacts that fail", () => {
     const elsewhere = realpathSync(makeTree());
     // Nothing on a POSIX tree reaches outside without a symlink, so stand in for a
     // mount or bind that does: the artifact's real path is under another directory.
-    const realpath = fsp.realpath.bind(fsp);
-    vi.spyOn(fsp, "realpath").mockImplementation(async (target, ...rest) =>
-      target === path.join(realRoot, "reports", "unit.json") ? path.join(elsewhere, "unit.json") : realpath(target, ...rest),
-    );
+    realpathResolving(path.join(realRoot, "reports", "unit.json"), Buffer.from(path.join(elsewhere, "unit.json")));
     expect(summary(await verifyEvidence(record, optionsFor(root)))).toEqual([{ code: "EVIDENCE_ARTIFACT_OUTSIDE_ROOT", path: artifactPointer(0, "path"), artifact: "reports/unit.json" }]);
+  });
+
+  it("reports an artifact whose real path is not valid UTF-8 as outside the root, though its U+FFFD spelling is under it", async () => {
+    const { root, record } = passingTree();
+    const realRoot = realpathSync(root);
+    const unit = path.join(realRoot, "reports", "unit.json");
+    // A byte 0xFF in the real path: decoded as UTF-8 it would read as U+FFFD.
+    const invalid = Buffer.concat([Buffer.from(path.join(realRoot, "reports", "unit")), Buffer.from([0xff]), Buffer.from(".json")]);
+    writeArtifact(root, "reports/unit\ufffd.json", '{"passed":12}\n');
+    realpathResolving(unit, invalid);
+    const result = await verifyEvidence(record, optionsFor(root));
+    expect(result.failures).toEqual([
+      { code: "EVIDENCE_ARTIFACT_OUTSIDE_ROOT", path: artifactPointer(0, "path"), detail: { artifact: "reports/unit.json", reason: "real path is not valid UTF-8" } },
+    ]);
   });
 
   it.skipIf(!permissionsApply)("reports a file without read permission and a directory without search permission as unreadable", async () => {
@@ -312,6 +337,42 @@ describe("verifyEvidence: artifactRoot", () => {
     expect(await verifyEvidence(record, optionsFor(replaced))).toEqual({ ok: true, failures: [] });
     const result = await verifyEvidence(record, optionsFor(`${tree}/r\ud800`));
     expect(result).toEqual({ ok: false, failures: [{ code: "EVIDENCE_OPTIONS_INVALID", detail: { invalid: ["artifactRoot"] } }] });
+  });
+
+  it("rejects a root whose real path is not valid UTF-8 and reads no artifact", async () => {
+    const { root, record } = passingTree();
+    // The root resolves to a directory whose name has a byte 0xFF; a string can only spell it as U+FFFD.
+    const invalid = Buffer.concat([Buffer.from(realpathSync(root)), Buffer.from([0xff])]);
+    mkdirSync(`${realpathSync(root)}\ufffd`);
+    realpathResolving(root, invalid);
+    const lstat = vi.spyOn(fsp, "lstat");
+    const open = vi.spyOn(fsp, "open");
+    expect(await verifyEvidence(record, optionsFor(root))).toEqual({ ok: false, failures: [{ code: "EVIDENCE_OPTIONS_INVALID", detail: { invalid: ["artifactRoot"] } }] });
+    expect(lstat).not.toHaveBeenCalled();
+    expect(open).not.toHaveBeenCalled();
+  });
+
+  // APFS and most macOS volumes refuse names that are not valid UTF-8, so the real
+  // directory can only be made on Linux (the CI JavaScript job).
+  it.skipIf(process.platform !== "linux")("rejects a symlinked root that resolves to a directory named with a byte that is not UTF-8", async () => {
+    const tree = makeTree();
+    const content = "checkout bytes\n";
+    const invalidDir = Buffer.concat([Buffer.from(`${tree}/`), Buffer.from([0xff]), Buffer.from("-checkout")]);
+    mkdirSync(invalidDir);
+    writeFileSync(Buffer.concat([invalidDir, Buffer.from("/unit.json")]), content);
+    // The lookalike a lossy decode would reach instead, holding matching bytes.
+    writeArtifact(path.join(tree, "\ufffd-checkout"), "unit.json", content);
+    symlinkSync(invalidDir, Buffer.from(`${tree}/root`));
+    const record = recordWith([{ path: "unit.json", sha256: sha256(content) }]);
+    const result = await verifyEvidence(record, optionsFor(path.join(tree, "root")));
+    expect(result).toEqual({ ok: false, failures: [{ code: "EVIDENCE_OPTIONS_INVALID", detail: { invalid: ["artifactRoot"] } }] });
+  });
+
+  it("accepts a symlinked root whose real path has a literal U+FFFD", async () => {
+    const tree = makeTree();
+    const artifact = writeArtifact(path.join(tree, "\ufffd-checkout"), "unit.json", "x");
+    symlinkSync(path.join(tree, "\ufffd-checkout"), path.join(tree, "root"));
+    expect(await verifyEvidence(recordWith([artifact]), optionsFor(path.join(tree, "root")))).toEqual({ ok: true, failures: [] });
   });
 
   it("names artifactRoot with the other invalid options and returns no record failures", async () => {
