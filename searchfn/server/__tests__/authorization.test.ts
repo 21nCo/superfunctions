@@ -103,12 +103,23 @@ describe("SearchFn authorization", () => {
     expect(adapter.clear).not.toHaveBeenCalled();
   });
 
-  it("preserves host context when a key is also used by the router", async () => {
+  it("passes custom context to the policy intact", async () => {
+    class AuthorizationContext {
+      [key: string]: unknown;
+      #authorized = true;
+      params = { scope: "docs" };
+
+      canClearDocs() {
+        return this.#authorized && this.params.scope === "docs";
+      }
+    }
+
     const adapter = testAdapter();
+    const identity = new AuthorizationContext();
     const server = await createSearchFnServer({
       adapter,
-      context: () => ({ params: { authorized: true } }),
-      authorize: (ctx) => ctx.params.authorized,
+      context: () => identity,
+      authorize: (ctx) => ctx === identity && ctx.canClearDocs(),
     });
 
     expect((await server.router.handle(post("clear", { resource: "docs" }))).status).toBe(200);

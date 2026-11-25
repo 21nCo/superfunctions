@@ -97,7 +97,7 @@ const sf = await createSearchFnServer({
 });
 ```
 
-The optional `context` factory runs before the policy and can load verified identity from request headers or cookies. The policy receives route parameters, the parsed URL, and query parameters, with any matching keys supplied by your factory taking precedence. Read POST body fields from `payload` because the server has already read the request body. `status` receives `null` and an empty resource list.
+The optional `context` factory runs before the policy and can load verified identity from request headers or cookies. Its result is passed directly as `ctx`. Without a factory, `ctx` includes the router's route parameters, parsed URL, and query parameters. Read POST body fields from `payload` because the server has already read the request body. `status` receives `null` and an empty resource list.
 
 ## Failure modes
 

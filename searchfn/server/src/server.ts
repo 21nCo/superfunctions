@@ -184,7 +184,7 @@ export async function createSearchFnServer<TContext extends ServerContext = Serv
 
       if (authorize) {
         try {
-          const policyContext = context ? { ...ctx, ...await context(req) } : ctx;
+          const policyContext = context ? await context(req) : ctx;
           // Give the policy its own snapshot so it cannot change what the adapter executes.
           const payload = action === "status" ? null : structuredClone(body);
           const allowed = await authorize(policyContext, action, payload, req, [...resources]);
