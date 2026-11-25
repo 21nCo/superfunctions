@@ -126,20 +126,22 @@ describe("createWebStandardHandler session binding (MCP-SEC-03)", () => {
   });
 
   it("does not create a session when close() runs while the host accepts it", async () => {
+    let markEntered!: () => void;
     let open!: () => void;
+    const entered = new Promise<void>((resolve) => { markEntered = resolve; });
     const hold = new Promise<void>((resolve) => { open = resolve; });
     const closed: string[] = [];
     const { initialize, call, server } = await setup({
-      onsessioninitialized: () => hold,
+      onsessioninitialized: () => { markEntered(); return hold; },
       onsessionclosed: (id) => { closed.push(id); },
     });
     const pending = initialize();
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await entered;
     await server.close();
-    open();
     const result = await pending;
     expect(result.status).toBe(503);
-    expect(closed).toEqual(["session-1"]);
+    open();
+    await vi.waitFor(() => expect(closed).toEqual(["session-1"]));
     expect((await call("session-1")).status).not.toBe(200);
   });
 
@@ -318,6 +320,36 @@ describe("createWebStandardHandler session binding (MCP-SEC-03)", () => {
     await resumed.body?.cancel();
   });
 
+  it("refuses replay after a new session reuses an expired session's public ID", async () => {
+    vi.useFakeTimers();
+    const streamIds = new Map<string, string>();
+    const eventStore = {
+      async storeEvent(streamId: string) {
+        const id = `event-${streamIds.size + 1}`;
+        streamIds.set(id, streamId);
+        return id;
+      },
+      async getStreamIdForEventId(id: string) { return streamIds.get(id); },
+      replayEventsAfter: vi.fn(async (id: string) => streamIds.get(id) ?? ""),
+    };
+    const { handler, initialize } = await setup({
+      enableJsonResponse: false, eventStore, sessionIdleTimeoutMs: 100,
+      sessionIdGenerator: () => "test-reused-id",
+    });
+    const first = await initialize(authInfo("alice"));
+    const cursor = first.text.match(/^id: (.+)$/m)?.[1];
+    expect(cursor).toBeDefined();
+    await vi.advanceTimersByTimeAsync(100);
+    const next = await initialize(authInfo("bob"));
+    expect(next.sessionId).toBe(first.sessionId);
+    const replay = await handler(new Request("http://127.0.0.1:8080/mcp", {
+      method: "GET",
+      headers: { accept: "text/event-stream", "mcp-session-id": next.sessionId!, "mcp-protocol-version": "2025-11-25", "last-event-id": cursor! },
+    }), { authInfo: authInfo("bob") });
+    expect(replay.status).toBe(400);
+    expect(eventStore.replayEventsAfter).not.toHaveBeenCalled();
+  });
+
   it("keeps subjectless tokens from different issuers apart", async () => {
     const { initialize, call } = await setup();
     const from = (issuer: string): AuthInfo => ({ token: "test-shared-token-text", clientId: "client-a", scopes: [], extra: { issuer } });
@@ -351,6 +383,7 @@ describe("createWebStandardHandler session binding (MCP-SEC-03)", () => {
     expect(response.status).toBe(status);
     if (status === 408) expect(await response.text()).toContain("Session initialization timed out");
     expect(response.headers.get("mcp-session-id")).toBeNull();
+    await vi.advanceTimersByTimeAsync(0);
     expect((await initialize()).status).toBe(200);
   });
 

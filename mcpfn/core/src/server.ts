@@ -175,20 +175,18 @@ function validateSessionLimit(name: string, value: number): void {
 }
 
 /**
- * An event store view whose stream IDs are prefixed with one session's ID, and
- * which refuses to replay events stored for any other session.
+ * An event store view that refuses to replay events from any other session.
  */
-function sessionScopedEventStore(base: EventStore, sessionId: () => string | undefined): EventStore {
-  // Header-safe (event IDs often embed the stream ID and travel back in
-  // Last-Event-ID): a hex digest of the session ID and a dot.
-  const prefix = () => `${createHash("sha256").update(sessionId() ?? "").digest("hex").slice(0, 32)}.`;
+function sessionScopedEventStore(base: EventStore): EventStore {
+  // A header-safe namespace independent of a host-supplied session ID, which
+  // may be reused after a session closes while old events still exist.
+  const prefix = `${randomUUID().replaceAll("-", "")}.`;
   const unscoped = (streamId: string | undefined) => {
-    const own = prefix();
-    return streamId !== undefined && streamId.startsWith(own) ? streamId.slice(own.length) : undefined;
+    return streamId?.startsWith(prefix) ? streamId.slice(prefix.length) : undefined;
   };
   const foreign = () => new Error("Event ID does not belong to this session");
   return {
-    storeEvent: (streamId, message) => base.storeEvent(prefix() + streamId, message),
+    storeEvent: (streamId, message) => base.storeEvent(prefix + streamId, message),
     ...(base.getStreamIdForEventId
       ? { getStreamIdForEventId: async (eventId: string) => unscoped(await base.getStreamIdForEventId!(eventId)) }
       : {}),
@@ -1381,10 +1379,14 @@ export class McpFnServer<TContext = undefined> {
       let acceptedId: string | undefined;
       let setupPending = true;
       let setupTimedOut = false;
-      let reportSetupTimeout: (() => void) | undefined;
-      const timeoutResponse = () => jsonRpcErrorResponse(408, -32000, "Session initialization timed out");
-      const setupDeadline = new Promise<Response>((resolve) => {
-        reportSetupTimeout = () => resolve(timeoutResponse());
+      const setupStopped = () => {
+        if (request.signal.aborted) return clientClosedResponse();
+        if (setupTimedOut) return jsonRpcErrorResponse(408, -32000, "Session initialization timed out");
+        return serverClosed();
+      };
+      let reportSetupStop: (() => void) | undefined;
+      const setupInterrupted = new Promise<Response>((resolve) => {
+        reportSetupStop = () => resolve(setupStopped());
       });
       let disposed = false;
       let closing: Promise<void> | undefined;
@@ -1424,13 +1426,18 @@ export class McpFnServer<TContext = undefined> {
         if (acceptedId !== undefined) for (const stop of stopResponses) stop();
         return closing;
       };
+      const stopSession = () => {
+        if (closing) return closing;
+        const result = close();
+        if (setupPending) reportSetupStop?.();
+        return result;
+      };
       const idleTimeRemaining = () => sessionIdleTimeoutMs - (performance.now() - lastActivity);
-      const expire = () => { void close().catch(() => undefined); };
+      const expire = () => { void stopSession().catch(() => undefined); };
       const expireIfIdle = () => {
         if (!closing && idleTimeRemaining() <= 0) {
           setupTimedOut = setupPending;
           expire();
-          if (setupTimedOut) reportSetupTimeout?.();
         }
         return Boolean(closing);
       };
@@ -1440,10 +1447,10 @@ export class McpFnServer<TContext = undefined> {
         timer = setTimeout(scheduleExpiry, Math.min(idleTimeRemaining(), 2 ** 31 - 1));
         timer.unref?.();
       };
-      const transport: WebStandardStreamableHTTPServerTransport = new WebStandardStreamableHTTPServerTransport({
+      const transport = new WebStandardStreamableHTTPServerTransport({
         ...transportOptions,
         ...(transportOptions.eventStore
-          ? { eventStore: sessionScopedEventStore(transportOptions.eventStore, () => transport.sessionId) }
+          ? { eventStore: sessionScopedEventStore(transportOptions.eventStore) }
           : {}),
         onsessioninitialized: async (id) => {
           if (expireIfIdle()) throw new Error("Session setup closed");
@@ -1462,7 +1469,7 @@ export class McpFnServer<TContext = undefined> {
           clearTimeout(timer);
           scheduleExpiry();
         },
-        onsessionclosed: close,
+        onsessionclosed: stopSession,
       });
       const session: Session = {
         principal,
@@ -1480,15 +1487,10 @@ export class McpFnServer<TContext = undefined> {
       };
       admitted.add(session);
       this.requestServers.add(requestServer);
-      this.httpSessionClosers.set(requestServer, close);
+      this.httpSessionClosers.set(requestServer, stopSession);
 
-      const setupStopped = () => {
-        if (request.signal.aborted) return clientClosedResponse();
-        if (setupTimedOut) return timeoutResponse();
-        return serverClosed();
-      };
-      // Stop waiting for setup at the deadline. If a host hook is still
-      // running, its completion and cleanup continue to hold the slot.
+      // Report an interrupted setup promptly. Pending host hooks retain their
+      // capacity until their work and cleanup finish.
       const initialize = async () => {
         request.signal.addEventListener("abort", expire, { once: true });
         try {
@@ -1528,11 +1530,11 @@ export class McpFnServer<TContext = undefined> {
         } finally {
           request.signal.removeEventListener("abort", expire);
           setupPending = false;
-          reportSetupTimeout = undefined;
+          reportSetupStop = undefined;
           releaseSlot();
         }
       };
-      return Promise.race([initialize(), setupDeadline]);
+      return Promise.race([initialize(), setupInterrupted]);
     };
   }
 
