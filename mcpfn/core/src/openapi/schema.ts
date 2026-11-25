@@ -1037,6 +1037,7 @@ export class SchemaConverter {
     const properties = isObject(schema.properties) ? schema.properties : undefined;
     const declared = properties ? this.namesIn(properties, "keys") : NO_NAMES;
     const required = Array.isArray(schema.required) ? this.namesIn(schema.required, "list") : NO_NAMES;
+    if (declared.size === 0 && required.size === 0) return;
     for (const name of [...declared, ...required]) {
       const property = declared.has(name) ? properties![name] : undefined;
       const alike = name !== "__proto__" && required.has(name) && isObject(property) && property.type !== undefined;
