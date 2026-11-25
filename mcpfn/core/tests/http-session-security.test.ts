@@ -171,6 +171,7 @@ describe("createWebStandardHandler Origin policy (MCP-SEC-07)", () => {
     }));
     expect((await send("https://localhost/mcp", "localhost:443", "https://localhost")).status).not.toBe(403);
     expect((await send("https://localhost/mcp", "localhost", "http://localhost")).status).toBe(403);
+    expect((await send("https://localhost/mcp", "localhost:000443", "https://localhost")).status).not.toBe(403);
     expect((await send("https://localhost/mcp", "localhost/path", "https://localhost")).status).toBe(403);
     expect((await send("https://localhost/mcp", "user@localhost", "https://localhost")).status).toBe(403);
   });

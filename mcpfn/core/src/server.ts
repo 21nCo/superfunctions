@@ -168,7 +168,8 @@ function originAllowed(
     const url = new URL(request.url);
     const host = request.headers.get("host") ?? url.host;
     // Only a bare host name (or bracketed IPv6) with an optional port.
-    if (!/^(?:\[[0-9a-f:.]+\]|[a-z0-9.-]+)(?::\d{1,5})?$/i.test(host)) return false;
+    // The URL parser then checks the port's range (and drops default ports).
+    if (!/^(?:\[[0-9a-f:.]+\]|[a-z0-9.-]+)(?::\d+)?$/i.test(host)) return false;
     return new URL(`${url.protocol}//${host}`).origin === parsed.origin;
   } catch {
     return false;
