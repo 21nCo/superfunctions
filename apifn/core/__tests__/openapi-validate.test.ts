@@ -98,16 +98,20 @@ describe("validateOpenAPI", () => {
     expect(result.document?.components?.schemas?.Value).toEqual({ type: "integer" });
   });
 
-  it("keeps a legacy slash-containing key when both pointer interpretations exist", async () => {
-    const doc = documentWithReference("#/components/schemas/Shared/properties/a%2Fproperties/b");
-    Object.assign(doc.components.schemas.Shared, {
+  it.each([false, true])("prefers the slash-containing pointer key (preloaded=%s)", async (preloaded) => {
+    const uri = "https://example.invalid/types.json";
+    const target = "/properties/a%2Fproperties/b";
+    const doc = documentWithReference(preloaded ? uri + "#" + target : "#/components/schemas/Shared" + target);
+    const schema = {
       type: "object",
       properties: {
         "a/properties/b": { type: "integer" },
         a: { type: "object", properties: { b: { type: "string" } } },
       },
-    });
-    const result = await validateAndDereferenceOpenAPI(doc);
+    };
+    Object.assign(doc.components.schemas.Shared, schema);
+    const externalReferences = preloaded ? new Map([[uri, JSON.stringify(schema)]]) : undefined;
+    const result = await validateAndDereferenceOpenAPI(doc, { externalReferences });
     expect(result.errors).toEqual([]);
     expect(result.document?.components?.schemas?.Value).toEqual({ type: "integer" });
   });
@@ -515,6 +519,7 @@ describe("validateOpenAPI", () => {
   it.each([
     ["types.json%3Frevision=1", "types.json?revision=1"],
     ["types.json?", "types.json"],
+    ["types.json?variant=a\\b", "types.json?variant=a/b"],
   ])("requires the exact allowlist key for %s instead of %s", async (filename, differentFilename) => {
     const directory = "/virtual/project";
     const cwd = vi.spyOn(process, "cwd").mockReturnValue(directory);
@@ -552,6 +557,17 @@ describe("validateOpenAPI", () => {
     });
     expect(result.errors).toEqual([]);
     expect(result.document?.components?.schemas?.Value).toEqual({ type: "integer" });
+  });
+
+  it("keeps a direct self-reference at its own position in a preloaded schema", async () => {
+    const uri = "https://example.invalid/types.json";
+    const ref = "#/properties/self";
+    const contents = { type: "object", properties: { self: { $ref: ref } } };
+    const result = await validateAndDereferenceOpenAPI(documentWithReference(uri), {
+      externalReferences: new Map([[uri, JSON.stringify(contents)]]),
+    });
+    expect(result.errors).toEqual([]);
+    expect(result.document?.components?.schemas?.Value).toEqual(contents);
   });
 
   it("resolves an acyclic root alias through sibling definitions in a preloaded schema", async () => {

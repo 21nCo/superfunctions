@@ -44,6 +44,12 @@ interface ReferenceTarget {
   importSite?: ReferenceSite;
 }
 
+interface PreparedReferenceTarget extends ReferenceTarget {
+  value: object;
+  copy: object;
+  copyPath?: ReferencePath;
+}
+
 interface PointerLookup {
   tokens: string[];
   target: ReferenceTarget | "reference" | undefined;
@@ -75,10 +81,14 @@ class ReferencePreparationError extends Error {
 
   constructor(site: ReferencePath | undefined, cause: unknown) {
     super(cause instanceof Error ? cause.message : "OpenAPI ref could not be prepared", { cause });
-    const segments = ["$ref"];
-    for (let cursor = site; cursor; cursor = cursor.parent) segments.push(cursor.key);
-    this.path = segments.reverse().join(".");
+    this.path = [...pathKeys(site), "$ref"].join(".");
   }
+}
+
+function pathKeys(path?: ReferencePath): string[] {
+  const segments: string[] = [];
+  for (let cursor = path; cursor; cursor = cursor.parent) segments.push(cursor.key);
+  return segments.reverse();
 }
 
 function parsePreloadedDocument(contents: string): unknown {
@@ -178,9 +188,11 @@ function absolutePathKey(pathname: string): string {
 }
 
 function resolveDocumentURI(base: DocumentLocation, ref: string) {
-  const normalized = ref.replaceAll("\\", "/");
+  const pathEnd = ref.search(/[?#]/);
+  const refPath = pathEnd < 0 ? ref : ref.slice(0, pathEnd);
+  const normalized = refPath.replaceAll("\\", "/") + ref.slice(refPath.length);
   const windowsDrive = WINDOWS_DRIVE_PATH.test(normalized);
-  const share = WINDOWS_SHARE_PATH.exec(ref.split(/[?#]/, 1)[0]);
+  const share = WINDOWS_SHARE_PATH.exec(refPath);
   const windowsPath = share ? "C:/" + normalized.slice(share[0].length) : normalized;
   const isAbsoluteWindowsPath = windowsDrive || share !== null;
   const url = isAbsoluteWindowsPath ? new URL("file:///" + windowsPath) : new URL(normalized, base.url);
@@ -236,7 +248,7 @@ function prepareReferences(document: OpenAPIDocument, externalReferences?: Reado
   const supplied = new Map<string, ReferenceDocument>();
   const literalReferences = new Map<object, string>();
   const seen = new WeakMap<object, Map<OpenAPIReferenceMode, object>>();
-  const pending: Array<ReferenceTarget & { value: object; copy: object }> = [];
+  const pending: PreparedReferenceTarget[] = [];
   let field = "x-apifn-reference-copies";
   while (Object.hasOwn(document, field)) field += "-";
   const referenceCopies: ReferenceCopies = { field, targets: [], originals: new Map() };
@@ -248,10 +260,8 @@ function prepareReferences(document: OpenAPIDocument, externalReferences?: Reado
     return new ReferencePreparationError(site, error);
   }
 
-  function enqueue(
-    value: unknown, mode: OpenAPIReferenceMode, source: ReferenceDocument,
-    path?: ReferencePath, importSite?: ReferenceSite
-  ): unknown {
+  function enqueue(target: ReferenceTarget, copyPath?: ReferencePath): unknown {
+    const { value, mode } = target;
     if (typeof value !== "object" || value === null) return value;
     const contexts = seen.get(value) ?? new Map<OpenAPIReferenceMode, object>();
     const existing = contexts.get(mode);
@@ -263,7 +273,7 @@ function prepareReferences(document: OpenAPIDocument, externalReferences?: Reado
       : prototype === Object.prototype || prototype === null ? { ...value } : value;
     contexts.set(mode, copy);
     seen.set(value, contexts);
-    pending.push({ value, copy, mode, source, path, importSite });
+    pending.push({ ...target, value, copy, copyPath });
     return copy;
   }
 
@@ -378,8 +388,10 @@ function prepareReferences(document: OpenAPIDocument, externalReferences?: Reado
     source: ReferenceDocument, fragment: string, options: PointerOptions = {}
   ): PointerLookup {
     if (fragment === "") return { tokens: [], target: { value: source.value, mode: "node", source } };
-    if (source === root && fragment.startsWith("/")) {
-      const legacy = fragment.split("/").slice(1).map((token) => decodeFragment(unescapePointerToken(token)));
+    if (fragment.startsWith("/")) {
+      const legacy = fragment.split("/").slice(1).map((token) => source === root
+        ? decodeFragment(unescapePointerToken(token))
+        : unescapePointerToken(decodeFragment(token)));
       const legacyLookup = pointerTarget(source, legacy, options);
       if (legacyLookup.target || !/%2f/i.test(fragment)) return legacyLookup;
       const decoded = decodeFragment(fragment).split("/").slice(1).map(unescapePointerToken);
@@ -395,7 +407,7 @@ function prepareReferences(document: OpenAPIDocument, externalReferences?: Reado
   }
 
   function rewriteReference(
-    ref: string, source: ReferenceDocument, mode: OpenAPIReferenceMode, site?: ReferenceSite
+    ref: string, { source, mode, value, copyPath }: PreparedReferenceTarget, site?: ReferenceSite
   ): string {
     const destination = location(source, ref);
     const { tokens, target } = lookupPointer(destination.source, destination.fragment, { importSite: site });
@@ -404,6 +416,11 @@ function prepareReferences(document: OpenAPIDocument, externalReferences?: Reado
     if (!target || target === "reference") {
       if (isLocal) return canonical; // Let Swagger Parser report local missing or circular pointers.
       throw new Error("OpenAPI $ref target does not exist");
+    }
+    if (source !== root && target.source === source && target.value === value) {
+      const self = encodePointer(pathKeys(copyPath));
+      referenceCopies.originals.set(self, ref);
+      return self;
     }
     if (isLocal && target.source === root &&
         (target.mode !== "literal" || typeof target.value !== "object" || target.value === null)) {
@@ -416,17 +433,22 @@ function prepareReferences(document: OpenAPIDocument, externalReferences?: Reado
     const key = mode + canonical;
     const existing = pointers.get(key);
     if (existing) return existing;
-    const preparedRef = "#/" + field + "/" + referenceCopies.targets.length;
+    const targetIndex = String(referenceCopies.targets.length);
+    const preparedRef = "#/" + field + "/" + targetIndex;
     pointers.set(key, preparedRef);
     copiedPointers.set(destination.source, pointers);
     referenceCopies.originals.set(preparedRef, isLocal ? canonical : ref);
-    referenceCopies.targets.push(enqueue(target.value, mode, target.source, target.path, target.importSite ?? site));
+    referenceCopies.targets.push(enqueue(
+      { ...target, mode, importSite: target.importSite ?? site },
+      { key: targetIndex, parent: { key: field } },
+    ));
     return preparedRef;
   }
 
-  const copy = enqueue(root.value, "node", root) as OpenAPIDocument;
+  const copy = enqueue({ value: root.value, mode: "node", source: root }) as OpenAPIDocument;
   while (pending.length) {
-    const { value, copy, mode, source, path, importSite } = pending.pop()!;
+    const current = pending.pop()!;
+    const { value, copy, mode, source, path, importSite, copyPath } = current;
     if ("$ref" in value && typeof value.$ref === "string") {
       if (mode === "literal") {
         literalReferences.set(copy, value.$ref);
@@ -435,7 +457,7 @@ function prepareReferences(document: OpenAPIDocument, externalReferences?: Reado
         // Diagnostics for preloaded targets point to the importing ref in the caller's document.
         const site = source === root ? { path } : importSite;
         try {
-          Reflect.set(copy, "$ref", rewriteReference(value.$ref, source, mode, site));
+          Reflect.set(copy, "$ref", rewriteReference(value.$ref, current, site));
         } catch (error) {
           throw errorAtReference(site?.path, error);
         }
@@ -443,7 +465,10 @@ function prepareReferences(document: OpenAPIDocument, externalReferences?: Reado
     }
     for (const [key, child] of Object.entries(value)) {
       if (key === "$ref" && typeof child === "string") continue;
-      Reflect.set(copy, key, enqueue(child, referenceChildMode(value, mode, key, child), source, { key, parent: path }, importSite));
+      Reflect.set(copy, key, enqueue(
+        { value: child, mode: referenceChildMode(value, mode, key, child), source, path: { key, parent: path }, importSite },
+        { key, parent: copyPath },
+      ));
     }
   }
   if (referenceCopies.targets.length) Reflect.set(copy, field, referenceCopies.targets);
