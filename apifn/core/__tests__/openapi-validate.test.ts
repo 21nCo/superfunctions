@@ -112,6 +112,22 @@ describe("validateOpenAPI", () => {
     expect(result.document?.components?.schemas?.Value).toEqual({ type: "integer" });
   });
 
+  it("resolves a chain of aliases that use encoded-slash tokens", async () => {
+    const depth = 24;
+    let end: object = { type: "integer" };
+    const schemas: Record<string, object> = {};
+    for (let index = 0; index < depth; index += 1) {
+      end = { type: "object", properties: { "a/b": end } };
+      const next = index + 1 === depth ? "End" : `Alias${index + 1}`;
+      schemas[`Alias${index}`] = { $ref: `#/components/schemas/${next}/properties/a%2Fb` };
+    }
+    const doc = documentWithReference("#/components/schemas/Alias0");
+    Object.assign(doc.components.schemas, schemas, { End: end });
+    const result = await validateAndDereferenceOpenAPI(doc);
+    expect(result.errors).toEqual([]);
+    expect(result.document?.components?.schemas?.Value).toEqual({ type: "integer" });
+  });
+
   it("accepts literal fragment-shaped example data with or without an allowlist", async () => {
     const doc = documentWithReference("#/components/schemas/Shared");
     Object.assign(doc.components.schemas.Shared, {
@@ -261,6 +277,19 @@ describe("validateOpenAPI", () => {
     expect(result.document?.components?.schemas?.Value).toEqual({ type: "integer" });
   });
 
+  it("resolves a preloaded file relative to a working directory containing a hash", async () => {
+    const directory = "/virtual/C#/service";
+    const cwd = vi.spyOn(process, "cwd").mockReturnValue(directory);
+    try {
+      const externalReferences = new Map([[directory + "/types.json", '{"type":"integer"}']]);
+      const result = await validateAndDereferenceOpenAPI(documentWithReference("./types.json"), { externalReferences });
+      expect(result.errors).toEqual([]);
+      expect(result.document?.components?.schemas?.Value).toEqual({ type: "integer" });
+    } finally {
+      cwd.mockRestore();
+    }
+  });
+
   it("dereferences literal data used as a schema through an intermediate alias", async () => {
     const doc = documentWithReference("#/components/schemas/Alias/default");
     const literal = { $ref: "#/components/schemas/Leaf" };
@@ -319,6 +348,25 @@ describe("validateOpenAPI", () => {
     });
     expect(result.errors).toEqual([]);
     expect(result.document?.components?.examples?.Sample).toEqual({ value: { $ref: pointer } });
+  });
+
+  it("looks through a preloaded Example Object without following literal payload refs", async () => {
+    const ref = "https://example.invalid/example.json";
+    const literal = { $ref: "literal-data.json", schema: { type: "integer" } };
+    const spec = documentWithReference(ref + "#/value/schema");
+    const doc = {
+      ...spec,
+      components: {
+        ...spec.components,
+        examples: { Sample: { $ref: ref } },
+      },
+    };
+    const result = await validateAndDereferenceOpenAPI(doc, {
+      externalReferences: new Map([[ref, JSON.stringify({ value: literal })]]),
+    });
+    expect(result.errors).toEqual([]);
+    expect(result.document?.components?.schemas?.Value).toEqual({ type: "integer" });
+    expect(result.document?.components?.examples?.Sample).toEqual({ value: literal });
   });
 
   it("preserves parser support for YAML aliases when a local extension reference is present", async () => {

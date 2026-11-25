@@ -34,6 +34,8 @@ interface ReferenceTarget {
   source: ReferenceDocument;
 }
 
+type PointerLookup = ReferenceTarget | "reference" | undefined;
+
 interface ReferenceCopies {
   field: string;
   targets: unknown[];
@@ -58,15 +60,26 @@ function encodePointer(tokens: string[]): string {
   ).join("");
 }
 
-function resolveDocumentURI(base: string, ref: string): string {
+function resolveDocumentURI(base: string, ref: string): { uri: string; fragment: string } {
   const normalized = ref.replaceAll("\\", "/");
   const isPath = base.startsWith("/");
-  const pathOrigin = "https://apifn-local-path.invalid";
-  const url = new URL(normalized, isPath ? pathOrigin + base : base);
+  const pathBase = new URL("https://apifn-local-path.invalid");
+  if (isPath) pathBase.pathname = base.split("/").map(encodeURIComponent).join("/");
+  const url = new URL(normalized, isPath ? pathBase : base);
   const absolute = /^(?:[a-z][a-z0-9+.-]*:|\/\/)/i.test(normalized.trimStart());
-  return isPath && !absolute && url.origin === pathOrigin
-    ? url.pathname + url.search + url.hash
-    : url.href;
+  const fragment = url.hash.slice(1);
+  const uri = isPath && !absolute && url.origin === pathBase.origin
+    ? decodeFragment(url.pathname) + url.search
+    : url.href.split("#", 1)[0];
+  return { uri, fragment };
+}
+
+const EXAMPLE_FIELDS = new Set(["value", "externalValue", "summary", "description"]);
+
+function isStandaloneExample(value: unknown): boolean {
+  return typeof value === "object" && value !== null && !Array.isArray(value) &&
+    (Object.hasOwn(value, "value") || Object.hasOwn(value, "externalValue")) &&
+    Object.keys(value).every((key) => EXAMPLE_FIELDS.has(key) || key.startsWith("x-"));
 }
 
 function restoreReferenceCopies(document: object, { field, targets, originals }: ReferenceCopies): void {
@@ -120,9 +133,7 @@ function prepareReferences(document: OpenAPIDocument, externalReferences?: Reado
     if (ref.startsWith("#")) return { source, fragment: ref.slice(1) };
     if (!externalReferences?.size) throw new Error(EXTERNAL_REF_ERROR);
 
-    const resolved = resolveDocumentURI(source.uri, ref);
-    const hash = resolved.indexOf("#");
-    const key = hash === -1 ? resolved : resolved.slice(0, hash);
+    const { uri: key, fragment } = resolveDocumentURI(source.uri, ref);
     let external = supplied.get(key);
     if (!external) {
       const contents = externalReferences.get(key);
@@ -134,15 +145,18 @@ function prepareReferences(document: OpenAPIDocument, externalReferences?: Reado
       external = { value: parsed.toJS({ maxAliasCount: -1 }), uri: key };
       supplied.set(key, external);
     }
-    return { source: external, fragment: hash === -1 ? "" : resolved.slice(hash + 1) };
+    return { source: external, fragment };
   }
 
   function pointerTarget(
     source: ReferenceDocument, tokens: string[], aliases: Set<object>
-  ): ReferenceTarget | "reference" | undefined {
+  ): PointerLookup {
     let value = source.value;
     let mode: OpenAPIReferenceMode = "node";
     for (let index = 0; index < tokens.length; index += 1) {
+      // A preloaded value can be a standalone Example Object outside the
+      // OpenAPI examples maps that normally establish its context.
+      if (source !== root && mode === "node" && isStandaloneExample(value)) mode = "example";
       // Follow aliases before looking up remaining tokens, keeping siblings
       // that Swagger Parser gives precedence over the referenced object.
       const chain = new Set(aliases);
@@ -153,7 +167,7 @@ function prepareReferences(document: OpenAPIDocument, externalReferences?: Reado
         if (chain.has(value)) break;
         chain.add(value);
         const alias = location(source, value.$ref);
-        const target = pointerTarget(alias.source, pointerTokens(alias.source, alias.fragment, chain), chain);
+        const { target } = lookupPointer(alias.source, alias.fragment, chain);
         if (!target || target === "reference") return "reference";
         for (const [key, sibling] of Object.entries(value)) {
           if (key !== "$ref" && !overrides.has(key)) {
@@ -188,30 +202,33 @@ function prepareReferences(document: OpenAPIDocument, externalReferences?: Reado
     return { value, mode, source };
   }
 
-  function pointerTokens(source: ReferenceDocument, fragment: string, aliases = new Set<object>()): string[] {
-    if (fragment === "") return [];
+  function lookupPointer(
+    source: ReferenceDocument, fragment: string, aliases = new Set<object>()
+  ): { tokens: string[]; target: PointerLookup } {
+    if (fragment === "") return { tokens: [], target: { value: source.value, mode: "node", source } };
     if (fragment.startsWith("/")) {
       const legacy = fragment.split("/").slice(1).map((token) => decodeFragment(unescapePointerToken(token)));
-      if (source !== root || !/%2f/i.test(fragment) ||
-          pointerTarget(source, legacy, new Set(aliases))) return legacy;
+      const target = pointerTarget(source, legacy, aliases);
+      if (target || source !== root || !/%2f/i.test(fragment)) return { tokens: legacy, target };
       const decoded = decodeFragment(fragment).split("/").slice(1).map(unescapePointerToken);
-      return pointerTarget(source, decoded, new Set(aliases)) ? decoded : legacy;
+      const decodedTarget = pointerTarget(source, decoded, aliases);
+      return decodedTarget ? { tokens: decoded, target: decodedTarget } : { tokens: legacy, target };
     }
     const decoded = decodeFragment(fragment);
     if (source !== root || !decoded.startsWith("/")) {
       throw new Error("OpenAPI $ref fragments must be slash-delimited JSON pointers");
     }
-    return decoded.split("/").slice(1).map(unescapePointerToken);
+    const tokens = decoded.split("/").slice(1).map(unescapePointerToken);
+    return { tokens, target: pointerTarget(source, tokens, aliases) };
   }
 
   function rewriteReference(ref: string, source: ReferenceDocument, mode: OpenAPIReferenceMode): string {
     const destination = location(source, ref);
-    const tokens = pointerTokens(destination.source, destination.fragment);
+    const { tokens, target } = lookupPointer(destination.source, destination.fragment);
     if (destination.source === root && tokens[0] === field) {
       throw new Error("OpenAPI $ref target does not exist");
     }
     const canonical = encodePointer(tokens);
-    const target = pointerTarget(destination.source, tokens, new Set());
     const isLocal = destination.source === root;
     if (!target || target === "reference") {
       if (isLocal) return canonical; // Let Swagger Parser report local missing or circular pointers.
@@ -296,7 +313,9 @@ export async function validateAndDereferenceOpenAPI(
     const { copy, referenceCopies, literalReferences } = prepareReferences(
       structuredClone(document), options?.externalReferences,
     );
-    const validated = await SwaggerParser.validate(copy as never, {
+    // Prepared pointers address the copy and need a parser base independent
+    // of filesystem characters in the working directory.
+    const validated = await SwaggerParser.validate("/apifn-validation/openapi.json", copy as never, {
       resolve: { external: false, file: false, http: false },
     });
     restoreReferenceCopies(validated, referenceCopies);
