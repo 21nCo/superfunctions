@@ -67,7 +67,6 @@ import {
 } from "./execution/migration/spv2.js";
 import {
   PUBLIC_LINK_RESOLVE_PATH,
-  getPublicLinkResolveBodyRejection,
   preparePublicLinkResolveRequest,
   type DatafnPublicLinksPlugin,
 } from "./plugins/public-links.js";
@@ -1554,8 +1553,6 @@ export async function createDatafnServer<TContext = any>(
     return {
       ...routeDefinition,
       handler: async (request, context) => {
-        const bodyRejection = getPublicLinkResolveBodyRejection(request);
-        if (bodyRejection) return bodyRejection;
         if (rateLimitMiddleware) {
           const limited = await rateLimitMiddleware(route.path, context);
           if (limited) return limited;
@@ -1764,25 +1761,11 @@ export async function createDatafnServer<TContext = any>(
     }
   }
 
-  // Let the router's response middleware see errors from a bounded resolve
-  // body even when the configured context factory was its first reader.
-  const configuredContext = config.context;
-  const routerContext = boundedResolveRoute && typeof configuredContext === "function"
-    ? async (request: Request) => {
-        try {
-          return await (configuredContext as (request: Request) => TContext | Promise<TContext>)(request);
-        } catch (error) {
-          if (getPublicLinkResolveBodyRejection(request)) return {} as TContext;
-          throw error;
-        }
-      }
-    : configuredContext;
-
   // Create router
   const router = createRouter<TContext>({
     routes,
     basePath: "/",
-    context: routerContext,
+    context: config.context,
     middleware: observabilityScope
       ? [
           createObservabilityMiddleware({

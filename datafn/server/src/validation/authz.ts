@@ -225,12 +225,17 @@ export function validateQueryAuthz(
   }
 
   const policy = resolvePermissions(schema, resource);
+  const computedFields = getTemporalGroupAliases(query);
+  if (query.aggregations && typeof query.aggregations === "object" && !Array.isArray(query.aggregations)) {
+    for (const alias of Object.keys(query.aggregations)) computedFields.add(alias);
+  }
   const checkPredicate = (key: "filters" | "having") => {
     const filter = query[key];
     if (!filter || typeof filter !== "object" || Array.isArray(filter)) return { ok: true } as const;
     const { capabilityFields } = getCapabilityFieldSets(schema, resource);
     const result = extractFieldsFromFilter(
-      filter as Record<string, unknown>, resource, policy, capabilityFields, schema, opts?.allowUnknownResources,
+      filter as Record<string, unknown>, resource, policy, capabilityFields, schema,
+      opts?.allowUnknownResources, key === "having" ? computedFields : undefined,
     );
     return key === "having" && !result.ok
       ? { ...result, path: `having.${result.path.replace(/^filters\./, "")}` }
@@ -563,6 +568,7 @@ function extractFieldsFromFilter(
   capabilityFields: Set<string>,
   schema?: DatafnSchema,
   allowUnknownResources = false,
+  computedFields?: ReadonlySet<string>,
 ): { ok: true } | AuthzError {
   const readFields = policy?.read?.fields || [];
 
@@ -579,6 +585,7 @@ function extractFieldsFromFilter(
               capabilityFields,
               schema,
               allowUnknownResources,
+              computedFields,
             );
             if (!result.ok) return result;
           }
@@ -590,6 +597,9 @@ function extractFieldsFromFilter(
     const parts = key.split(".");
     const baseField = parts[0];
     if (!baseField) continue;
+    // HAVING evaluates the computed column. The aggregation and its source
+    // field are authorized independently.
+    if (computedFields?.has(key) && !isQuantifierFilterValue(value)) continue;
 
     const relationResult = authorizeRelationFilter(key, value, resource, policy, schema, allowUnknownResources);
     if (relationResult !== "scalar") {

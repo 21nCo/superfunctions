@@ -164,7 +164,7 @@ describe("public link resolve limits", () => {
     expect(request.headers.get("content-length")).toBeNull();
     const result = await read(await server.router.handle(request, {}));
     expect(result.status).toBe(413);
-    expect(result.allowOrigin).toBe("https://example.test");
+    expect(result.allowOrigin).toBe(firstReader === "middleware" ? "https://example.test" : null);
     expect(result.body.error.code).toBe("LIMIT_EXCEEDED");
     expect(result.raw).not.toContain("Public link is invalid or revoked");
     expect(parsedBody).toBe(false);
@@ -187,6 +187,22 @@ describe("public link resolve limits", () => {
     })));
     expect(headerOnly.status).toBe(200);
     expect(headerOnly.body.result.resource).toBe("linkTag");
+  });
+
+  it("forwards cancellation when middleware discards a body without reading it", async () => {
+    const server = await start();
+    let canceled = false;
+    server.router.use(async (request) => {
+      await request.body?.cancel();
+      return new Response(null, { status: 204 });
+    });
+    const body = new ReadableStream<Uint8Array>({
+      cancel() { canceled = true; },
+    });
+    const init: RequestInit & { duplex: "half" } = { method: "POST", body, duplex: "half" };
+    const response = await server.router.handle(new Request("http://localhost/datafn/public-links/resolve", init));
+    expect(response.status).toBe(204);
+    expect(canceled).toBe(true);
   });
 
   it("preserves the body cache shared by global middleware and a plugin handler", async () => {

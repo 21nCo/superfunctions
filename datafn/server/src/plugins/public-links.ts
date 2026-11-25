@@ -86,6 +86,8 @@ export function preparePublicLinkResolveRequest(
       if (reader) {
         void reader.cancel(reason).catch(() => undefined);
         reader.releaseLock();
+      } else {
+        void source.cancel(reason).catch(() => undefined);
       }
     },
   }, { highWaterMark: 0 });
@@ -93,10 +95,6 @@ export function preparePublicLinkResolveRequest(
   const bounded = new Request(request, init);
   boundedResolveBodies.set(bounded, state);
   return bounded;
-}
-
-export function getPublicLinkResolveBodyRejection(request: Request): Response | null {
-  return boundedResolveBodies.get(request)?.rejection ?? null;
 }
 
 function unreadableResolveBody(): Response {

@@ -201,6 +201,28 @@ describe("predicate field authorization", () => {
     expect(result.body.result.data).toEqual([{ id: "per_1" }]);
   });
 
+  it("authorizes a HAVING alias by its computed source instead of the same-named column", async () => {
+    const [people, employers] = schema.resources;
+    const harness = await createHarness({
+      ...schema,
+      resources: [{
+        ...people,
+        fields: people.fields.filter((field) => field.name !== "employerId"),
+        permissions: { ...people.permissions, read: { fields: ["name"] } },
+      }, employers],
+    });
+    server = harness.server;
+    const result = await harness.post("query", {
+      resource: "people",
+      version: 1,
+      groupBy: ["name"],
+      aggregations: { employerId: { op: "count", field: "*" } },
+      having: { employerId: { gt: 0 } },
+    });
+    expect(result.status).toBe(200);
+    expect(result.body.result.groups).toEqual([{ name: "Ada", employerId: 1 }]);
+  });
+
   it("keeps explicit target permissions when the root resource has no policy", async () => {
     const [people, employers] = schema.resources;
     const harness = await createHarness({

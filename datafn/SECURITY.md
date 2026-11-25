@@ -61,7 +61,7 @@ const server = await createDatafnServer({
 
 ## Layer 2: Payload Size Limits
 
-**When:** Core data routes check the size after rate limiting and before JSON parsing. Without placement, the router checks the public-link resolve body before middleware can read it. With placement, the route uses the placement streaming cap.
+**When:** Core data routes check the size after rate limiting and before JSON parsing. Without placement, the public-link resolve stream is capped as it is read. With placement, the route uses the placement streaming cap. Failures during context creation follow the router's context error path.
 **Config:** `createDatafnServer({ limits: { maxPayloadBytes: 1_048_576 } })`
 **Default:** `maxPayloadBytes` is 5,242,880 when unset.
 
