@@ -57,11 +57,21 @@ struct EmbeddedWebView: UIViewRepresentable {
 
         private static func normalizedHost(_ host: String) -> String {
             let literal = host.hasPrefix("[") && host.hasSuffix("]") ? String(host.dropFirst().dropLast()) : host
-            var address = in6_addr()
-            guard inet_pton(AF_INET6, literal, &address) == 1 else { return host }
             let bufferSize = socklen_t(INET6_ADDRSTRLEN)
             var buffer = [CChar](repeating: 0, count: Int(bufferSize))
-            guard inet_ntop(AF_INET6, &address, &buffer, bufferSize) != nil else { return host }
+            var ipv6 = in6_addr()
+            let formatted: Bool
+            if inet_pton(AF_INET6, literal, &ipv6) == 1 {
+                formatted = inet_ntop(AF_INET6, &ipv6, &buffer, bufferSize) != nil
+            } else {
+                let candidate = host.hasSuffix(".") ? String(host.dropLast()) : host
+                let addressCharacters = CharacterSet(charactersIn: "0123456789abcdefx.")
+                guard candidate.unicodeScalars.allSatisfy(addressCharacters.contains) else { return host }
+                var ipv4 = in_addr()
+                guard inet_aton(candidate, &ipv4) == 1 else { return host }
+                formatted = inet_ntop(AF_INET, &ipv4, &buffer, bufferSize) != nil
+            }
+            guard formatted else { return host }
             return String(decoding: buffer.prefix { $0 != 0 }.map(UInt8.init(bitPattern:)), as: UTF8.self)
         }
 
