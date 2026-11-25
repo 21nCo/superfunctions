@@ -384,6 +384,7 @@ export function validateQueryAuthz(
       resource,
       policy,
       capabilityFields,
+      schema,
     );
     if (!havingResult.ok) {
       return { ...havingResult, path: `having.${havingResult.path.replace(/^filters\./, "")}` };
@@ -449,6 +450,137 @@ export function validateQueryAuthz(
   return { ok: true };
 }
 
+function isQuantifierFilterValue(value: unknown): value is Record<string, unknown> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    ("$any" in value || "$all" in value || "$none" in value)
+  );
+}
+
+const RELATION_QUANTIFIERS = ["$any", "$all", "$none"] as const;
+
+/**
+ * Read policy for a relation dot-path or a nested quantifier filter.
+ * Returns "scalar" when the key is not a relation traversal.
+ */
+function authorizeRelationFilter(
+  key: string,
+  value: unknown,
+  resource: DatafnResourceSchema,
+  schema: DatafnSchema | undefined,
+): "scalar" | { ok: true } | AuthzError {
+  if (!schema) return "scalar";
+  const parts = key.split(".");
+  const head = parts[0];
+  if (!head) return "scalar";
+
+  const targets = resolveRelationTargetResources(schema, resource.name, head);
+  if (targets.length === 0) return "scalar";
+
+  const quantifier = parts.length === 1 && isQuantifierFilterValue(value);
+  const fkNamed = isForeignKeyNamedManyOne(schema, resource.name, head);
+  // A scalar comparison on an FK stored under the relation name is a field filter.
+  // A quantifier still filters the related resource, so it is not that field read.
+  if (!quantifier && parts.length === 1) return "scalar";
+  if (!quantifier && fkNamed && !canReadField(schema, resource, head)) {
+    return {
+      ok: false,
+      code: "FORBIDDEN",
+      message: "Authorization denied",
+      path: `filters.${key}`,
+    };
+  }
+
+  if (quantifier) {
+    for (const op of RELATION_QUANTIFIERS) {
+      if (!(op in value)) continue;
+      const sub = value[op];
+      if (!sub || typeof sub !== "object" || Array.isArray(sub)) continue;
+      for (const targetName of targets) {
+        const target = getResourceSchema(schema, targetName);
+        if (!target) continue;
+        const targetPolicy = resolvePermissions(schema, target) ?? { read: { fields: [] } };
+        const { capabilityFields: targetFields } = getCapabilityFieldSets(schema, target);
+        const result = extractFieldsFromFilter(
+          sub as Record<string, unknown>,
+          target,
+          targetPolicy,
+          targetFields,
+          schema,
+        );
+        if (!result.ok) {
+          return {
+            ...result,
+            path: `filters.${key}.${op}.${result.path.replace(/^filters\./, "")}`,
+          };
+        }
+      }
+    }
+    return { ok: true };
+  }
+
+  let currentNames = targets;
+  for (let segmentIndex = 1; segmentIndex < parts.length; segmentIndex++) {
+    const segment = parts[segmentIndex];
+    if (!segment) continue;
+    const isLast = segmentIndex === parts.length - 1;
+    const nextTargets = [
+      ...new Set(
+        currentNames.flatMap((name) => resolveRelationTargetResources(schema, name, segment)),
+      ),
+    ];
+    const segmentIsField = currentNames.some((name) => {
+      const current = getResourceSchema(schema, name);
+      if (!current) return false;
+      return (
+        current.fields.some((field) => field.name === segment) ||
+        getCapabilityFieldSets(schema, current).capabilityFields.has(segment)
+      );
+    });
+
+    if (nextTargets.length > 0 && !(isLast && segmentIsField)) {
+      const segmentIsFk = currentNames.some((name) =>
+        isForeignKeyNamedManyOne(schema, name, segment),
+      );
+      if (segmentIsFk) {
+        const readable = currentNames.every((name) => {
+          const current = getResourceSchema(schema, name);
+          return current ? canReadField(schema, current, segment) : true;
+        });
+        if (!readable) {
+          return {
+            ok: false,
+            code: "FORBIDDEN",
+            message: "Authorization denied",
+            path: `filters.${key}`,
+          };
+        }
+      }
+      currentNames = nextTargets;
+      continue;
+    }
+
+    const readable = currentNames.every((name) => {
+      const current = getResourceSchema(schema, name);
+      return current ? canReadField(schema, current, segment) : true;
+    });
+    if (!readable) {
+      return {
+        ok: false,
+        code: "FORBIDDEN",
+        message: "Authorization denied",
+        path: `filters.${key}`,
+      };
+    }
+    // A non-relation segment is a field. Later segments are inside that value.
+    break;
+  }
+
+  return { ok: true };
+}
+
 /**
  * Extract and validate fields from a filter object
  */
@@ -481,28 +613,28 @@ function extractFieldsFromFilter(
       continue;
     }
 
-    // Extract base field name (handle dot-paths like "goal.label")
     const parts = key.split(".");
     const baseField = parts[0];
+    if (!baseField) continue;
 
     // id and capability-managed fields are always allowed for filtering
     if (baseField === "id") continue;
-    if (capabilityFields.has(baseField)) continue;
+    if (parts.length === 1 && capabilityFields.has(baseField)) continue;
 
-    // Check if it's a direct field (not a relation). A scalar filter on a
-    // relation that stores its id under its own name (e.g. node.parent)
-    // filters that field, declared or not; quantifier objects stay relation
-    // filters.
-    const isQuantifier =
-      parts.length === 1 &&
-      typeof value === "object" && value !== null && !Array.isArray(value) &&
-      ("$any" in value || "$all" in value || "$none" in value);
+    const relationResult = authorizeRelationFilter(key, value, resource, schema);
+    if (relationResult !== "scalar") {
+      if (!relationResult.ok) return relationResult;
+      continue;
+    }
+
+    // A scalar filter on a relation that stores its id under its own name
+    // (e.g. node.parent) filters that field, declared or not.
     const isField = resource.fields.some((f) => f.name === baseField) ||
                     capabilityFields.has(baseField) ||
-                    (!!schema && parts.length === 1 && !isQuantifier &&
+                    (!!schema && parts.length === 1 &&
                       isForeignKeyNamedManyOne(schema, resource.name, baseField));
 
-    if (isField && !readFields.includes(baseField)) {
+    if (isField && !readFields.includes(baseField) && !capabilityFields.has(baseField)) {
       return {
         ok: false,
         code: "FORBIDDEN",
@@ -546,9 +678,26 @@ export function validateMutationAuthz(
     return { ok: true };
   }
 
-  const { readonlyCapabilityFields } = getCapabilityFieldSets(schema, resource);
+  const { capabilityFields, readonlyCapabilityFields } = getCapabilityFieldSets(schema, resource);
 
   const writeFields = policy.write?.fields || [];
+
+  // Guards read stored values. A field the caller cannot read must not be a predicate.
+  if (mutation.if && typeof mutation.if === "object" && !Array.isArray(mutation.if)) {
+    const guardResult = extractFieldsFromFilter(
+      mutation.if as Record<string, unknown>,
+      resource,
+      policy,
+      capabilityFields,
+      schema,
+    );
+    if (!guardResult.ok) {
+      return {
+        ...guardResult,
+        path: `if.${guardResult.path.replace(/^filters\./, "")}`,
+      };
+    }
+  }
 
   // Validate record fields for insert/merge/replace operations
   if (mutation.record && typeof mutation.record === "object") {
