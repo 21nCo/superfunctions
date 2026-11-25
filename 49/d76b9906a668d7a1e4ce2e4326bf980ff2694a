@@ -1,0 +1,29 @@
+clifn/core/CHANGELOG.md
+  s_cbbc6cf229225f::t_7807f141b24526 8
+clifn/core/README.md
+  s_cbbc6cf229225f::t_5b3e3e4c148bdd 265
+clifn/core/src/json-value.ts
+  s_cbbc6cf229225f::t_e135c1581deeae 180-227,232-238,242-244,246-248,251
+clifn/core/tests/runner-document-bounds.test.ts
+  s_cbbc6cf229225f::t_c8c7efe7807cb1 2596,2598,2604,2609,2616,2622-2626,2631-2633,2635-2636,2639-2640,2642-2644,2657,2662,2665-2668,2670-2692
+clifn/docs/content/docs/reference/core-readme.md
+  s_cbbc6cf229225f::t_2c0d7c20b51e8d 268
+clifn/docs/static/llms-full.txt
+  s_cbbc6cf229225f::t_17ba80cf32c96a 576
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "49d76b9906a668d7a1e4ce2e4326bf980ff2694a",
+  "prompts": {},
+  "sessions": {
+    "s_cbbc6cf229225f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fbe29093-fa5c-470b-8386-936394a4822c",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

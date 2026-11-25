@@ -1,0 +1,21 @@
+packages/cli/src/__tests__/schema-index-migrations.test.ts
+  s_16be15e550007d::t_f166ee0a7621ce 1045,1053-1054
+packages/cli/src/utils/mysql-types.ts
+  s_16be15e550007d::t_15a6a2cd75fb89 38-40,42-44
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5b95533d5858379ba9fbca1b44a90c175074a0e3",
+  "prompts": {},
+  "sessions": {
+    "s_16be15e550007d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "44b38904-9085-4967-8629-ea949fdc5da6",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

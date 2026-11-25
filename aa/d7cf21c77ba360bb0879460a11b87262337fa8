@@ -1,0 +1,31 @@
+packages/cli/CHANGELOG.md
+  s_521bdb3d7f2ab9::t_38df61c307cc4b 7
+packages/cli/src/__tests__/plugfn-schema-migration.test.ts
+  s_521bdb3d7f2ab9::t_ac87d057651a8a 62,93-97,114,120,311,327,330,332-336,338,342
+packages/cli/src/__tests__/schema-index-migrations.test.ts
+  s_521bdb3d7f2ab9::t_e0dc535d4f2c5e 18-20,554,612,869,928,994,1025-1048,1170,1183,1451
+packages/cli/src/utils/introspection.ts
+  s_521bdb3d7f2ab9::t_b178e3f56b4bdc 33-34,37,209,212,229,339,342
+packages/cli/src/utils/mysql-types.ts
+  s_521bdb3d7f2ab9::t_f579330a133391 37-52
+packages/cli/src/utils/schema-diff.ts
+  s_521bdb3d7f2ab9::t_01e83f35dbab41 469,471-477,517-518,525,533
+plugfn/CHANGELOG.md
+  s_521bdb3d7f2ab9::t_40c7cdd4bc6fbe 5
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "aad7cf21c77ba360bb0879460a11b87262337fa8",
+  "prompts": {},
+  "sessions": {
+    "s_521bdb3d7f2ab9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_521bdb3d7f2ab9",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
