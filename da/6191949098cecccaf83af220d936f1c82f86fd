@@ -1,0 +1,19 @@
+apifn/README.md
+  s_a53647f7f9b276::t_26515644d581f8 155-157
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "da6191949098cecccaf83af220d936f1c82f86fd",
+  "prompts": {},
+  "sessions": {
+    "s_a53647f7f9b276": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a2139d-87fd-7710-98a5-0525e984c6d4",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,27 @@
+packages/cli/src/__tests__/plugfn-schema-migration.test.ts
+  s_26f0b67ee1c996::t_6bebbe20a0001c 1-163
+plugfn/CHANGELOG.md
+  s_26f0b67ee1c996::t_eec2f134a6fb56 5
+plugfn/core/package.json
+  s_26f0b67ee1c996::t_7bf98751f056f2 79
+plugfn/core/src/schema.ts
+  s_26f0b67ee1c996::t_825c343b71a6a6 12
+plugfn/core/tests/schema.test.ts
+  s_26f0b67ee1c996::t_e753220ceb126b 12-13
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b57dab498eee8f460441537f84a9d71a943600ae",
+  "prompts": {},
+  "sessions": {
+    "s_26f0b67ee1c996": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "edf2aa05-3902-4827-9887-40a985d49519",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
