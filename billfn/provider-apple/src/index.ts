@@ -301,7 +301,7 @@ export function createAppleProvider(providerConfig: AppleProviderConfig): BillFn
       return {
         operationStatus: 'applied',
         billingState: {
-          subscriptionStatus: 'canceled',
+          subscriptionStatus: input.subscription.status,
           checkoutStatus: 'succeeded',
           providerSubscriptionId: input.subscription.providerSubscriptionId,
           providerChargeId: input.subscription.providerChargeId,
@@ -596,9 +596,10 @@ async function requestAdvancedCommerce(
   operation: 'cancel' | 'revoke',
   init: RequestInit
 ) {
+  const transactionPath = encodeStoreKitPathSegment(transactionId);
   const advancedCommerce = config.advancedCommerce ?? {};
   const bundleId = config.bundleIds.length > 1
-    ? (await requestStoreKitForTransaction(fetchImpl, config, `/inApps/v1/transactions/${encodeStoreKitPathSegment(transactionId)}`))
+    ? (await requestStoreKitForTransaction(fetchImpl, config, `/inApps/v1/transactions/${transactionPath}`))
         .bundleId
     : config.bundleIds[0];
   const hostTokenProvider = advancedCommerce.tokenProvider;
@@ -608,7 +609,7 @@ async function requestAdvancedCommerce(
   const baseUrl = (advancedCommerce.baseUrl ?? 'https://api.storekit.itunes.apple.com/advancedCommerce/v1').replace(/\/$/, '');
   const { response, raw } = await fetchProviderText(
     fetchImpl,
-    `${baseUrl}/subscription/${operation}/${encodeStoreKitPathSegment(transactionId)}`,
+    `${baseUrl}/subscription/${operation}/${transactionPath}`,
     {
       ...init,
       headers: {

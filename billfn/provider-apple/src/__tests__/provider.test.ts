@@ -839,10 +839,15 @@ describe('provider HTTP deadlines', () => {
     }
   });
 
-  it('preserves an Apple cancellation confirmed with HTTP 200 when the body stalls', async () => {
+  it.each([
+    ['arrives', () => Response.json({})],
+    ['stalls', () => new Response(new ReadableStream(), { status: 200 })]
+  ])('turns off auto-renew without ending the current period when Apple confirms cancellation and its body %s', async (_label, respond) => {
     vi.useFakeTimers();
     try {
-      const fetchMock = vi.fn(async () => new Response(new ReadableStream(), { status: 200 })) as typeof fetch;
+      const fetchMock = vi.fn(async () => respond()) as typeof fetch;
+      const currentPeriodStart = '2026-04-20T00:00:00.000Z';
+      const currentPeriodEnd = '2026-05-20T00:00:00.000Z';
       const pending = apple(fetchMock).cancelSubscription?.({
         subscription: {
           id: 'sub_local',
@@ -853,6 +858,8 @@ describe('provider HTTP deadlines', () => {
           providerSubscriptionId: 'orig_1',
           providerChargeId: 'txn_1',
           status: 'active',
+          currentPeriodStart,
+          currentPeriodEnd,
           autoRenew: true,
           createdAt: billingAccount.createdAt,
           updatedAt: billingAccount.updatedAt
@@ -862,9 +869,11 @@ describe('provider HTTP deadlines', () => {
         expect(pending).resolves.toMatchObject({
           operationStatus: 'applied',
           billingState: {
-            subscriptionStatus: 'canceled',
+            subscriptionStatus: 'active',
             providerSubscriptionId: 'orig_1',
             providerChargeId: 'txn_1',
+            currentPeriodStart,
+            currentPeriodEnd,
             autoRenew: false
           }
         }),
@@ -875,6 +884,15 @@ describe('provider HTTP deadlines', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('validates an Advanced Commerce reference before acquiring a token', async () => {
+    const fetchMock = vi.fn<typeof fetch>();
+    const tokenProvider = vi.fn(async () => 'test-api-token');
+    const provider = createAppleProvider({ bundleId: 'com.example.app', fetch: fetchMock, tokenProvider, advancedCommerce: { enabled: true } });
+    await expect(provider.refundCharge?.({ providerChargeId: '..' })).rejects.toMatchObject({ code: 'BILLFN_VALIDATION_ERROR' });
+    expect(tokenProvider).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('treats a stalled Advanced Commerce revocation body as an unknown outcome', async () => {
