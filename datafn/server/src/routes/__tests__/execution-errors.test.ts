@@ -43,7 +43,7 @@ describe("EXEC-001: Query Execution Error Surfacing", () => {
     const db = memoryAdapter();
     await db.initialize();
 
-    const server = await createDatafnServer({ allowUnknownResources: true,
+    const server = await createDatafnServer({ allowUnknownResources: true, debug: true,
       schema: fixtureF1Schema,
       limits: { maxLimit: 100 },
       database: db,
@@ -82,7 +82,7 @@ describe("EXEC-001: Query Execution Error Surfacing", () => {
     const db = memoryAdapter();
     await db.initialize();
 
-    const server = await createDatafnServer({ allowUnknownResources: true,
+    const server = await createDatafnServer({ allowUnknownResources: true, debug: true,
       schema: fixtureF1Schema,
       limits: { maxLimit: 100 },
       database: db,
@@ -127,7 +127,7 @@ describe("EXEC-001: Query Execution Error Surfacing", () => {
     const db = memoryAdapter();
     await db.initialize();
 
-    const server = await createDatafnServer({ allowUnknownResources: true,
+    const server = await createDatafnServer({ allowUnknownResources: true, debug: true,
       schema: fixtureF1Schema,
       limits: { maxLimit: 100 },
       database: db,
@@ -165,7 +165,7 @@ describe("EXEC-001: Query Execution Error Surfacing", () => {
     const db = memoryAdapter();
     await db.initialize();
 
-    const server = await createDatafnServer({ allowUnknownResources: true,
+    const server = await createDatafnServer({ allowUnknownResources: true, debug: true,
       schema: fixtureF1Schema,
       limits: { maxLimit: 100 },
       database: db,
@@ -204,7 +204,7 @@ describe("EXEC-002: Mutation Execution Error Surfacing", () => {
     const db = memoryAdapter();
     await db.initialize();
 
-    const server = await createDatafnServer({ allowUnknownResources: true,
+    const server = await createDatafnServer({ allowUnknownResources: true, debug: true,
       schema: fixtureF1Schema,
       limits: { maxLimit: 100 },
       database: db,

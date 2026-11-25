@@ -103,6 +103,7 @@ describe("share SPV2 mutation semantics", () => {
     db = memoryAdapter();
     await db.initialize();
     server = await createDatafnServer({
+      debug: true,
       allowUnknownResources: true,
       schema,
       database: db,

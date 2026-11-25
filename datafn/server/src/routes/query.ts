@@ -672,7 +672,7 @@ export function createQueryHandler(
         });
         if (!validationResult.ok) {
           // VAL-009: In production (debug: false), strip field/schema details from messages
-          const debug = handlerOpts?.debug ?? true;
+          const debug = handlerOpts?.debug ?? false;
           const message = debug ? validationResult.error.message : "Validation error";
           return errorResponse({
             code: validationResult.error.code,

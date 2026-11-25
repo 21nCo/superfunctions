@@ -492,8 +492,8 @@ export async function createDatafnServer<TContext = any>(
   const schemaWithBuiltins = ensureBuiltinTemporal(ensureBuiltinKv(schemaValidation.result));
   const validatedSchema = excludeInternalResources(schemaWithBuiltins, internalResourceNames);
 
-  // VAL-009: Debug mode — default to true in non-production
-  const debugMode = config.debug ?? (process.env.NODE_ENV !== "production");
+  // Detailed errors are opt-in. Unset stays off in every environment, including an unset NODE_ENV.
+  const debugMode = config.debug === true;
 
   const observabilityScope = normalizeObservability<DataFnEvent>(
     config.observability as ObservabilityInput<DataFnEvent>,

@@ -150,6 +150,7 @@ async function createServer(options: { schema?: DatafnSchema } = {}) {
   await seed("record_links", { id: "rl2", in: "task:2", out: "objective:goal" });
 
   const server = await createDatafnServer({
+    debug: true,
     allowUnknownResources: true,
     schema: options.schema ?? SCHEMA,
     limits: { maxLimit: 100 },
