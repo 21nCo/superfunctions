@@ -1064,19 +1064,17 @@ describe("unvetted-client authorization rejections", () => {
           redirect(LOOPBACK, RUNTIME_PORT)(fixture);
           Object.assign(fixture.registration.metadata, { token_endpoint_auth_method: method });
         };
-        // Stored registration: the server defaults the method to none. The
-        // harness cannot tell a stored from a fetched document, so with only
-        // one default declared a post-match page is indeterminate.
-        for (const declared of [["none"], ["client_secret_basic"]]) {
+        // Stored registration: the server defaults the method to none. A
+        // fetched document without a method is always refused (it would be
+        // client_secret_basic, and a public document must use none). The
+        // harness cannot tell the two apart, so a post-match page is
+        // indeterminate whenever the stored path could succeed.
+        for (const declared of [["none"], ["none", "client_secret_basic"]]) {
           const [stored] = await runAgainstMcpFn([METADATA_DOCUMENT], undefined, withoutMethod, undefined, {
             tokenEndpointAuthMethods: declared,
           });
           expect(stored).toMatchObject({ status: "failed", error: INDETERMINATE });
         }
-        const [storedBoth] = await runAgainstMcpFn([METADATA_DOCUMENT], undefined, withoutMethod, undefined, {
-          tokenEndpointAuthMethods: ["none", "client_secret_basic"],
-        });
-        expect(storedBoth).toMatchObject({ status: "passed", responseStatus: 400, errorCode: "invalid_target" });
         // Fetched document: the server defaults the method to
         // client_secret_basic, which this target does not support.
         const fixture = rejectionFixture(METADATA_DOCUMENT);
@@ -1133,31 +1131,26 @@ describe("unvetted-client authorization rejections", () => {
         withoutMethod(fixture);
         delete fixture.registration.metadata.scope;
         fixture.expected.errorCode = "invalid_target";
-        // Only one default is supported: a callback is indeterminate.
-        for (const declared of [["none"], ["client_secret_basic"]]) {
+        // The stored path supports none: a callback is indeterminate, since
+        // the fetched path never accepts a document without a method.
+        for (const declared of [["none"], ["none", "client_secret_basic"], undefined]) {
           const [callback] = await runHostedAuthorizationRegression(
             { ...callbackTarget(), tokenEndpointAuthMethods: declared },
             [fixture],
           );
           expect(callback).toMatchObject({ status: "failed", error: INDETERMINATE });
         }
-        // Both defaults are supported, or no constraint is declared: eligible.
-        for (const declared of [["none", "client_secret_basic"], undefined]) {
-          const [callback] = await runHostedAuthorizationRegression(
+        // Neither path can accept it: the registration is ineligible.
+        for (const declared of [["client_secret_basic"], ["client_secret_post"]]) {
+          const [neither] = await runHostedAuthorizationRegression(
             { ...callbackTarget(), tokenEndpointAuthMethods: declared },
             [fixture],
           );
-          expect(callback).toMatchObject({ status: "passed", errorCode: "invalid_target" });
+          expect(neither).toMatchObject({
+            status: "failed",
+            error: "Rejected redirect URI must not receive a callback",
+          });
         }
-        // Neither default is supported: the registration is ineligible.
-        const [neither] = await runHostedAuthorizationRegression(
-          { ...callbackTarget(), tokenEndpointAuthMethods: ["client_secret_post"] },
-          [fixture],
-        );
-        expect(neither).toMatchObject({
-          status: "failed",
-          error: "Rejected redirect URI must not receive a callback",
-        });
         // Another source without a method is none.
         const dynamic = rejectionFixture(DYNAMIC);
         withoutMethod(dynamic);
@@ -1202,9 +1195,9 @@ describe("unvetted-client authorization rejections", () => {
             fixture.registration.metadata.token_endpoint_auth_method = "client_secret_post";
           }), { tokenEndpointAuthMethods: ["none"] }, REJECTED, { tokenEndpointAuthMethods: ["client_secret_post"] }],
           [allowed(METADATA_DOCUMENT, (fixture) => {
-            delete fixture.registration.metadata.token_endpoint_auth_method;
-          }), { tokenEndpointAuthMethods: ["none"] }, INDETERMINATE, {
-            tokenEndpointAuthMethods: ["none", "client_secret_basic"],
+            fixture.registration.metadata.token_endpoint_auth_method = "none";
+          }), { tokenEndpointAuthMethods: ["client_secret_post"] }, REJECTED, {
+            tokenEndpointAuthMethods: ["none"],
           }],
         ];
         for (const [fixture, unsupported, error, supported] of cases) {
@@ -1262,12 +1255,16 @@ describe("unvetted-client authorization rejections", () => {
           prepareRegistration: async () => {},
           request: async () => Response.json({ error }, { status: 400 }),
         });
-        // Fetched without a method, the document uses client_secret_basic.
+        // Fetched without a method, the document would use client_secret_basic,
+        // which a public document may not: it is refused before its scope.
         const [basic] = await runHostedAuthorizationRegression(
           rejectWith("invalid_scope", ["client_secret_basic"]),
           [fixture],
         );
-        expect(basic).toMatchObject({ status: "passed", errorCode: "invalid_scope" });
+        expect(basic).toMatchObject({
+          status: "failed",
+          error: "An ineligible client registration must be rejected as a client error, not invalid_scope",
+        });
         const [none] = await runHostedAuthorizationRegression(rejectWith("invalid_scope", ["none"]), [fixture]);
         expect(none).toMatchObject({
           status: "failed",
@@ -1309,7 +1306,7 @@ describe("unvetted-client authorization rejections", () => {
       });
 
       it("never accepts a post-match response for an indeterminate metadata document", async () => {
-        for (const declared of [["none"], ["client_secret_basic"]]) {
+        for (const declared of [["none"], ["none", "client_secret_basic"]]) {
           const fixture = rejectionFixture(METADATA_DOCUMENT);
           redirect(LOOPBACK, RUNTIME_PORT)(fixture);
           delete fixture.registration.metadata.token_endpoint_auth_method;
