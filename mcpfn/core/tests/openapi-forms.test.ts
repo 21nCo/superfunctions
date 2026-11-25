@@ -1315,6 +1315,20 @@ describe("fromOpenAPI bounded and dialect-aware conversion", () => {
         });
       }
     }
+    // One wide map shared by every operation is read once, not once per operation.
+    const shared: Record<string, string[]> = {};
+    for (let index = 0; index < 3_000; index += 1) shared[`p${index}`] = [index === 2_999 ? "__proto__" : `q${index}`];
+    const paths: Record<string, unknown> = {};
+    for (let index = 0; index < 3_000; index += 1) {
+      paths[`/op${index}`] = { post: { operationId: `op${index}`, requestBody: body({ type: "object", dependentRequired: shared }), responses: ok } };
+    }
+    paths["/plain"] = { post: { operationId: "plainDependency", requestBody: body({ type: "object", dependentRequired: { flag: ["name"] } }), responses: ok } };
+    const started = performance.now();
+    const wide = fromOpenAPI({ openapi: "3.1.0", paths }, options());
+    expect(performance.now() - started).toBeLessThan(2_000);
+    expect(new Set(wide.skipped.map(({ code }) => code))).toEqual(new Set(["unsupported-property-name"]));
+    expect(wide.skipped).toHaveLength(3_000);
+    expect(wide.tools.map(({ name }) => name)).toEqual(["plainDependency"]);
   });
 
   it("skips a schema or parameter naming any property every object inherits, as under @cfworker/json-schema", () => {
