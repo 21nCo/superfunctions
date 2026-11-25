@@ -751,12 +751,19 @@ describe("McpFn testing", () => {
         request.end();
       });
       expect(JSON.parse(hostileBody)).toEqual({ ok: true });
+      // MCP-21 audit, MCP-SEC-15: a caller that knows only the port, not the
+      // random path prefix, gets no credentials.
+      const guessed = new URL(proxy.url);
+      expect(guessed.pathname).toMatch(/^\/mcpfn-proxy-[0-9a-f]{32}\/mcp$/);
+      const unauthenticated = await fetch(`${guessed.origin}/mcp`);
+      await expect(unauthenticated.json()).resolves.toEqual({ ok: true });
       expect(observed).toEqual([
         {
           authorization: "Bearer conformance-secret",
           host: `127.0.0.1:${address.port}`,
         },
         { host: "untrusted.example.test" },
+        { host: guessed.host },
       ]);
     } finally {
       await proxy.close();

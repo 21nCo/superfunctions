@@ -1,6 +1,6 @@
 import { terminateConformanceRunner } from "./conformance-process.js";
 import { spawn } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import {
   createServer,
@@ -97,7 +97,8 @@ function validateAuthenticatedConformanceUrl(url: string): { upstream: URL; host
 /**
  * Start a loopback-only streaming proxy for runners that cannot send auth
  * headers. Authenticated requests use one fixed upstream authority and path.
- * Host-manipulation probes are forwarded without injected credentials.
+ * Host-manipulation probes, and requests outside the random path prefix in
+ * the returned URL, are forwarded without injected credentials.
  */
 export async function createAuthenticatedConformanceProxy(
   options: AuthenticatedConformanceProxyOptions,
@@ -110,6 +111,10 @@ export async function createAuthenticatedConformanceProxy(
   const activeRequests = new Set<ReturnType<typeof httpRequest>>();
   const activeSockets = new Set<Socket>();
   let proxyAuthority: string | undefined;
+  // Credentials are added only to requests under this unguessable path prefix,
+  // so another local process or a browser page that finds the port cannot use
+  // them: only the conformance runner is given the proxy URL.
+  const pathToken = `/mcpfn-proxy-${randomBytes(16).toString("hex")}`;
   const server = createServer((incoming, outgoing) => {
     if (!incoming.url?.startsWith("/")) {
       outgoing.writeHead(400).end();
@@ -117,7 +122,9 @@ export async function createAuthenticatedConformanceProxy(
     }
     const headers: IncomingHttpHeaders = { ...incoming.headers };
     delete headers.connection;
-    const usesProxyAuthority = incoming.headers.host === proxyAuthority;
+    const tokenPath = incoming.url === pathToken || incoming.url.startsWith(`${pathToken}/`) ||
+      incoming.url.startsWith(`${pathToken}?`);
+    const usesProxyAuthority = tokenPath && incoming.headers.host === proxyAuthority;
     injected.forEach((value, name) => {
       const normalizedName = name.toLowerCase();
       delete headers[normalizedName];
@@ -167,7 +174,7 @@ export async function createAuthenticatedConformanceProxy(
     throw new Error("Authenticated conformance proxy did not bind a TCP port");
   }
   const url = new URL(
-    upstream.pathname + upstream.search,
+    pathToken + upstream.pathname + upstream.search,
     `http://127.0.0.1:${address.port}`,
   );
   proxyAuthority = url.host;
@@ -264,9 +271,16 @@ async function runConformance(
   }
   const args = buildOfficialConformanceArgs(options);
   const invocation = npxInvocation(args);
-  const childEnvironment = buildOfficialConformanceEnvironment(
-    options.sensitiveEnvironmentVariables,
+  // npm must not write its arguments (the target URL, which for an
+  // authenticated run carries the proxy's path token) to a debug log or
+  // timing file. npm reads these settings case-insensitively, so drop every
+  // inherited spelling before setting them.
+  const childEnvironment: Record<string, string | undefined> = Object.fromEntries(
+    Object.entries(buildOfficialConformanceEnvironment(options.sensitiveEnvironmentVariables))
+      .filter(([name]) => !["npm_config_logs_max", "npm_config_timing"].includes(name.toLowerCase())),
   );
+  childEnvironment.npm_config_logs_max = "0";
+  childEnvironment.npm_config_timing = "false";
 
   return await new Promise<OfficialConformanceResult>((resolve) => {
     const child = spawn(invocation.command, invocation.args, {
@@ -403,7 +417,17 @@ export async function runAuthenticatedOfficialConformance(
       url: conformance.url,
       headers: lease.credential.headers,
     });
-    result = redactRemoteCredential(lease.credential, await runConformance({ ...conformance, stdio: "pipe", url: proxy.url }, value => String(redactRemoteCredential(lease.credential, value))), { preserveKeys: true });
+    // The proxy URL's path token is a credential too: keep it out of the
+    // captured output. (It is visible in the runner's arguments while the
+    // proxy runs, to processes allowed to inspect them.)
+    const pathToken = new URL(proxy.url).pathname.split("/")[1] ?? "";
+    // The path token goes first, so a credential value that overlaps it
+    // cannot break it up before it is matched.
+    const redact = (value: string) => String(redactRemoteCredential(
+      lease.credential,
+      pathToken ? value.split(pathToken).join("[REDACTED]") : value,
+    ));
+    result = redactRemoteCredential(lease.credential, await runConformance({ ...conformance, stdio: "pipe", url: proxy.url }, redact), { preserveKeys: true });
   } catch (error) {
     operationFailure = safeFailure(error);
   }

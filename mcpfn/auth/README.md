@@ -93,6 +93,19 @@ External Client ID Metadata Documents require an explicit URL allow-policy.
 McpFn disables automatic redirects, reapplies that policy at every redirect,
 streams responses through a byte cap, and applies a ten-second deadline by
 default. `maxBytes`, `timeoutMs`, and `maxRedirects` can tighten those bounds.
+A Client ID Metadata Document must contain a `client_id` equal to its URL, be
+served with a single `application/json` media type, and use
+`token_endpoint_auth_method` `none`. Per the draft, when
+`token_endpoint_auth_methods_supported` is present it must be a nonempty list of
+strings containing any declared method, and `none` is selected whenever it is
+listed; without a list, an omitted method means `none`. Neither field may
+name a shared-secret method (`client_secret_basic`, `client_secret_post`,
+`client_secret_jwt`). Anything else is refused with `invalid_client_metadata`. Stored self-registered clients have unsafe link fields dropped
+before their metadata is used. In registrations and documents, `client_uri`, `logo_uri`,
+`tos_uri` and `policy_uri` may be omitted or `null`; any other value must be an
+absolute `https://` URL without credentials, or the client is refused with
+`invalid_client_metadata`. The `allow` policy sees only the URL: reject
+private, loopback and link-local hosts there.
 
 The AuthFn adapter uses a structural provider contract. `@superfunctions/auth`
 is an optional peer: installing or importing AuthFn is not required for other
