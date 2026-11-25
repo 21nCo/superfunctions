@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "tsc"
+    "build": "tsc",
+    "test": "node --import tsx --test src/filefn-path.test.mjs"
   },
   "dependencies": {
     "@hono/node-server": "^1.11.1",

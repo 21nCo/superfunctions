@@ -6,5 +6,6 @@ test('strips the /filefn mount and keeps a leading slash', () => {
   assert.equal(stripFileFnPrefix('/filefn'), '/');
   assert.equal(stripFileFnPrefix('/filefn/'), '/');
   assert.equal(stripFileFnPrefix('/filefn/upload/init'), '/upload/init');
+  assert.equal(stripFileFnPrefix('/filefn-other'), '/filefn-other');
   assert.equal(stripFileFnPrefix('/health'), '/health');
 });

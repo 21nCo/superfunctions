@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "dev": "npm exec --yes --package=tsx@4.20.5 -- tsx watch src/index.ts",
-    "build": "tsc"
+    "build": "tsc",
+    "test": "node --test demo-upload.test.mjs"
   },
   "dependencies": {
     "@filefn/server": "*",

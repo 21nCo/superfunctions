@@ -45,7 +45,7 @@ type UploadSession = {
   expiresAt: string;
 };
 
-const port = Number(process.env.PORT) || 3001;
+const port = process.env.PORT === "0" ? 0 : Number(process.env.PORT) || 3001;
 const files = new Map<string, DemoFile>();
 const uploads = new Map<string, UploadSession>();
 
@@ -344,7 +344,10 @@ const server = createServer(async (req, res) => {
 });
 
 server.listen(port, () => {
-  console.log(`Server is running on port ${port}`);
+  const address = server.address();
+  if (address && typeof address === "object") {
+    console.log(`Server is running on port ${address.port}`);
+  }
 });
 
 function sendEnvelope(

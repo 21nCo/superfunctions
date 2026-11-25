@@ -77,7 +77,7 @@ const fileFn = createFileFn({
 });
 ```
 
-Two guests then have independent buckets. The second `uploadInit` from one guest is limited without spending that guest's `list` budget, and a guest who never appears in `clientKey` still shares the unnamed anonymous bucket with every other unnamed guest.
+Two guests then have independent buckets. After one guest makes 10 `uploadInit` requests in the window, the next is limited without spending that guest's `list` budget. Guests for whom `clientKey` returns no value share the unnamed anonymous bucket.
 
 Buckets for signed-in callers are per tenant and principal. With `mode: "local"`, each distinct client key keeps an in-memory bucket until that key is seen again, so for anonymous traffic from many clients use `"strict"` or `"best-effort"` with a store that expires entries.
 
