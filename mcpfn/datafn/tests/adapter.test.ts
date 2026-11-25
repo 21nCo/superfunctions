@@ -413,6 +413,17 @@ describe("DataFn McpFn adapter", () => {
         clientId: () => "test",
         expose: { notes: { fields: ["id", "title"], list: { filterFields: ["settings"] } } },
       })).toThrow(/non-scalar field settings/);
+      // A rejected configuration registers nothing in the supplied registry.
+      const { McpFnRegistry } = await import("@mcpfn/core");
+      const shared = new McpFnRegistry();
+      expect(() => createDatafnMcpRegistry({
+        executor: datafn.executor,
+        context: () => undefined,
+        clientId: () => "test",
+        registry: shared,
+        expose: { notes: { fields: ["id", "title"], list: { filterFields: ["settings"] } } },
+      })).toThrow(/non-scalar field settings/);
+      expect(shared.listTools()).toEqual([]);
     });
   });
 });

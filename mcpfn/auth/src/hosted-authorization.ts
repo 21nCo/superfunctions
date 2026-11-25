@@ -1605,24 +1605,15 @@ async function assertClientMetadataResponse(response: Response): Promise<void> {
 
 /**
  * The lower-cased media type of a Content-Type holding exactly one value, or
- * undefined. Combined duplicate headers are joined with commas; a comma counts
- * only outside a quoted parameter value, and an unterminated quote is refused.
+ * undefined. The whole header must be one media type with optional
+ * token=token or token="quoted" parameters, so combined duplicate headers
+ * (joined with commas) and stray quotes are refused.
  */
+const SINGLE_MEDIA_TYPE =
+  /^\s*([!#$%&'*+.^_`|~0-9a-z-]+\/[!#$%&'*+.^_`|~0-9a-z-]+)\s*(?:;\s*[!#$%&'*+.^_`|~0-9a-z-]+=(?:[!#$%&'*+.^_`|~0-9a-z-]+|"(?:[^"\\]|\\.)*")\s*)*$/i;
+
 function singleMediaType(contentType: string): string | undefined {
-  let quoted = false;
-  for (let index = 0; index < contentType.length; index += 1) {
-    const character = contentType[index];
-    if (quoted) {
-      if (character === "\\") index += 1;
-      else if (character === '"') quoted = false;
-    } else if (character === '"') {
-      quoted = true;
-    } else if (character === ",") {
-      return undefined;
-    }
-  }
-  if (quoted) return undefined;
-  return contentType.split(";", 1)[0]?.trim().toLowerCase();
+  return SINGLE_MEDIA_TYPE.exec(contentType)?.[1]?.toLowerCase();
 }
 
 function clientMetadataTimeoutError(): McpFnHostedAuthorizationError {

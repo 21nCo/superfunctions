@@ -286,6 +286,23 @@ export function createDatafnMcpRegistry<TMcpContext, TDatafnContext>(
     );
   }
 
+  // Refuse non-scalar filters before registering any tool, so a rejected
+  // configuration leaves a supplied registry untouched.
+  for (const [resourceName, exposure] of Object.entries(options.expose)) {
+    const list = operationOptions<DatafnListToolOptions>(exposure.list, true);
+    const resource = schema.resources.find((candidate) => candidate.name === resourceName);
+    if (!list?.filterFields || !resource) continue;
+    const schemaFields = fieldMaps(schema, resource).schemaFields;
+    for (const field of list.filterFields) {
+      const definition = schemaFields.get(field);
+      if (field !== "id" && definition && !scalarFilterSchema(definition)) {
+        throw new McpFnValidationError(
+          `DataFn resource ${resourceName} cannot filter on non-scalar field ${field}`,
+        );
+      }
+    }
+  }
+
   for (const resourceName of Object.keys(options.expose).sort()) {
     const exposure = options.expose[resourceName]!;
     const resource = schema.resources.find((candidate) => candidate.name === resourceName);
