@@ -164,6 +164,10 @@ export interface RunOptions {
   reporter?: RunReporter;
   /** Variables that override environment variables */
   overrides?: Record<string, string>;
+  /** Explicit values available to `{{process.env.NAME}}` interpolation */
+  processEnv?: NodeJS.ProcessEnv;
+  /** Execute collection scripts as trusted code. Defaults to false. */
+  allowScripts?: boolean;
   /** Headers to redact in captured request/response details */
   redactHeaders?: string[];
 }

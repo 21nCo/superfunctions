@@ -499,17 +499,26 @@ export async function runCollection(
 ): Promise<RunReport> {
   const startedAt = new Date();
   const environment = getEnvironment(collection, options.environment);
-  const processEnv = process.env;
+  const processEnv = options.processEnv ?? {};
   const collectionVariables =
     (collection as unknown as { variables?: Record<string, string> }).variables ?? {};
   const context = resolveVariableContext({
     overrides: options.overrides,
     environment: environment.variables,
     collection: collectionVariables,
-    processEnv,
   });
 
   const entries = flattenRequestItems(collection.items);
+  if (options.allowScripts !== true) {
+    const scriptedEntry = entries.find((entry) =>
+      entry.request.runtime?.scripts?.length && shouldRunEntry(entry, options)
+    );
+    if (scriptedEntry) {
+      throw new Error(
+        `Collection scripts are disabled for '${scriptedEntry.item.path}'. Set allowScripts to true only for trusted collections.`
+      );
+    }
+  }
   const reporter = options.reporter;
   reporter?.onStart?.(collection, options);
 

@@ -44,7 +44,7 @@
     "@superfunctions/admin": "^0.1.4"
   },
   "devDependencies": {
-    "@apifn/collections": "0.0.4",
+    "@apifn/collections": "0.0.5",
     "@superfunctions/admin": "^0.1.4",
     "typescript": "^5.6.0",
     "vitest": "^3.2.4"

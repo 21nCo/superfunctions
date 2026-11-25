@@ -152,6 +152,7 @@ describe("runCollection", () => {
       environment: "development",
       parallel: true,
       concurrency: 1,
+      allowScripts: true,
       httpClient,
     });
 
@@ -224,6 +225,7 @@ describe("runCollection", () => {
 
     const report = await runCollection(collection, {
       environment: "development",
+      allowScripts: true,
       httpClient,
       bail: true,
     });
@@ -235,6 +237,54 @@ describe("runCollection", () => {
       { name: "should have items", passed: true },
     ]);
   });
+
+  it.each(["pre-request", "tests", "post-response"] as const)(
+    "rejects %s scripts before sending any requests by default",
+    async (type) => {
+      const collection = makeCollection();
+      const second = collection.items[0]!.children![1]!;
+      second.request!.runtime = { scripts: [{ type, code: "throw new Error('script ran')" }] };
+      const send = vi.fn(async () => response());
+      const options = { environment: "development", httpClient: { send } };
+
+      await expect(runCollection(collection, options)).rejects.toThrow("Collection scripts are disabled");
+      expect(send).not.toHaveBeenCalled();
+
+      const report = await runCollection(collection, { ...options, exclude: ["Second"] });
+      expect(report.summary).toMatchObject({ passed: 2, skipped: 1 });
+    }
+  );
+
+  it.each(["url", "header", "body", "query"] as const)(
+    "requires explicit process environment values for %s interpolation",
+    async (field) => {
+      const collection = makeCollection();
+      const first = collection.items[0]!.children![0]!;
+      collection.items[0]!.children = [first];
+      const http = first.request!.http;
+      const template = "{{process.env.APIFN_TEST_VALUE}}";
+      if (field === "url") http.url += `/${template}`;
+      if (field === "header") http.headers = [{ name: "x-test-value", value: template }];
+      if (field === "body") http.body = { type: "json", data: `"${template}"` };
+      if (field === "query") http.params = { query: [{ name: "value", value: template }] };
+
+      const send = vi.fn(async (_request: HttpClientRequest) => response());
+      const options = { environment: "development", httpClient: { send } };
+      vi.stubEnv("APIFN_TEST_VALUE", "ambient-value");
+      try {
+        await expect(runCollection(collection, options)).rejects.toThrow(
+          "Environment variable APIFN_TEST_VALUE is not set"
+        );
+        expect(send).not.toHaveBeenCalled();
+        await runCollection(collection, { ...options, processEnv: { APIFN_TEST_VALUE: "allowed-value" } });
+        const sentRequest = JSON.stringify(send.mock.calls[0]?.[0]);
+        expect(sentRequest).toContain("allowed-value");
+        expect(sentRequest).not.toContain("ambient-value");
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    }
+  );
 
   it("caps captured response bodies by UTF-8 byte length", async () => {
     const collection = makeCollection();
@@ -483,6 +533,7 @@ describe("runCollection", () => {
 
     const report = await runCollection(collection, {
       environment: "development",
+      allowScripts: true,
       cookieJar: createCookieJar(),
       httpClient: {
         async send(request) {

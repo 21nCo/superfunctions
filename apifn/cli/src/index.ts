@@ -202,6 +202,8 @@ export async function runCli(
     .option("--retries <n>", "Retry failed requests")
     .option("--delay <ms>", "Delay between sequential requests in milliseconds")
     .option("--env-var <keyValue>", "Override an environment variable (KEY=value)")
+    .option("--allow-env <name>", "Expose a named process environment variable to the collection")
+    .option("--allow-scripts", "Execute scripts in a trusted collection")
     .option("--dotenv <path>", "Load dotenv file as environment overrides")
     .option("--redact-header <name>", "Additional response/request header to redact")
     .option("--output <path>", "Write machine-readable report artifact")
@@ -220,6 +222,8 @@ export async function runCli(
           retries?: string;
           delay?: string;
           envVar?: string | string[];
+          allowEnv?: string | string[];
+          allowScripts?: boolean;
           dotenv?: string;
           redactHeader?: string | string[];
           output?: string;
@@ -254,6 +258,8 @@ export async function runCli(
           retries: options.retries ? Number(options.retries) : undefined,
           delay: options.delay ? Number(options.delay) : undefined,
           envVar: toArray(options.envVar),
+          allowEnv: toArray(options.allowEnv),
+          allowScripts: options.allowScripts,
           dotenv: options.dotenv,
           redactHeader: toArray(options.redactHeader),
           outputPath: options.output,

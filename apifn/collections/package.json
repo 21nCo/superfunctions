@@ -1,6 +1,6 @@
 {
   "name": "@apifn/collections",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "description": "OpenCollection YAML read/write/run for ApiFn",
   "type": "module",
   "main": "dist/index.cjs",

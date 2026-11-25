@@ -198,6 +198,53 @@ describe("apifn test command — CLI-004, CLI-011, RUN-009", () => {
         expect(code).toBe(2);
     });
 
+    it("requires an explicit flag to run trusted collection scripts", async () => {
+        const dir = await createPassingCollection(`http://127.0.0.1:${PASS_PORT}`);
+        const request = path.join(dir, "health.yml");
+        await writeFile(request, (await readFile(request, "utf8")) + [
+            "runtime:",
+            "  scripts:",
+            "    - type: tests",
+            `      code: 'test("script executed", () => expect(res.status).to.equal(200));'`,
+            "",
+        ].join("\n"));
+
+        let stderr = "";
+        const args = ["test", dir, "--reporter", "json"];
+        expect(await runCli(args, { stderr: (line) => { stderr += line; } })).toBe(2);
+        expect(stderr).toContain("--allow-scripts");
+
+        let stdout = "";
+        expect(await runCli([...args, "--allow-scripts"], {
+            stdout: (line) => { stdout += line; },
+        })).toBe(0);
+        expect(JSON.parse(stdout).results[0].assertions).toEqual([
+            { name: "script executed", passed: true },
+        ]);
+    });
+
+    it("forwards only process environment variables named by --allow-env", async () => {
+        const dir = await createPassingCollection(`http://127.0.0.1:${PASS_PORT}`);
+        const request = path.join(dir, "health.yml");
+        const yaml = await readFile(request, "utf8");
+        await writeFile(request, yaml.replace("/health", "/{{process.env.APIFN_TEST_PATH}}"));
+        vi.stubEnv("APIFN_TEST_PATH", "allowed-path");
+        try {
+            const args = ["test", dir, "--reporter", "json"];
+            let stderr = "";
+            expect(await runCli(args, { stderr: (line) => { stderr += line; } })).toBe(2);
+            expect(stderr).toContain("Environment variable APIFN_TEST_PATH is not set");
+
+            let stdout = "";
+            expect(await runCli([...args, "--allow-env", "APIFN_TEST_PATH"], {
+                stdout: (line) => { stdout += line; },
+            })).toBe(0);
+            expect(JSON.parse(stdout).results[0].url).toContain("/allowed-path");
+        } finally {
+            vi.unstubAllEnvs();
+        }
+    });
+
     it("--silent reporter produces no output", async () => {
         const lines: string[] = [];
         const code = await runCli(["test", passDir, "--env", "development", "--reporter", "silent"], {

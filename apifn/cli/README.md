@@ -100,6 +100,8 @@ apifn test .apifn/collection --env development --reporter json --output test-rep
 | `--retries <n>` | Retry failed requests |
 | `--delay <ms>` | Delay between sequential requests |
 | `--env-var <KEY=value>` | Override an environment variable (repeatable) |
+| `--allow-env <name>` | Expose a named process environment variable to interpolation (repeatable) |
+| `--allow-scripts` | Execute scripts from a trusted collection |
 | `--dotenv <path>` | Load a dotenv file as overrides |
 | `--redact-header <name>` | Additional header to redact (repeatable) |
 | `--output <path>` | Write a machine-readable report |
