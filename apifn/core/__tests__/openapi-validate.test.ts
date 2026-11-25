@@ -322,51 +322,24 @@ describe("validateOpenAPI", () => {
     expect(result.document?.components?.schemas?.Value).toEqual({ type: "integer" });
   });
 
-  it("resolves a preloaded file relative to a working directory containing a hash", async () => {
-    const directory = "/virtual/C#/service";
+  it.each([
+    { directory: "/virtual/C#/service", ref: "./types.json", key: "/virtual/C#/service/types.json" },
+    { directory: "C:\\project", ref: "./shared.yaml", key: "C:\\project\\shared.yaml" },
+    { directory: "C:\\project", ref: "C:\\project\\shared.yaml", key: "C:\\project\\shared.yaml" },
+    { directory: "C:\\project", ref: "\\shared.yaml", key: "C:\\shared.yaml", other: "/shared.yaml" },
+    { directory: "C:\\project", ref: "../../shared.yaml", key: "C:\\shared.yaml", other: "/shared.yaml" },
+    {
+      directory: "/virtual/project\\branch",
+      ref: "./shared.yaml",
+      key: "/virtual/project%5Cbranch/shared.yaml",
+      other: "/virtual/project/branch/shared.yaml",
+    },
+  ])("resolves $ref from $directory to $key", async ({ directory, ref, key, other }) => {
     const cwd = vi.spyOn(process, "cwd").mockReturnValue(directory);
     try {
-      const externalReferences = new Map([[directory + "/types.json", '{"type":"integer"}']]);
-      const result = await validateAndDereferenceOpenAPI(documentWithReference("./types.json"), { externalReferences });
-      expect(result.errors).toEqual([]);
-      expect(result.document?.components?.schemas?.Value).toEqual({ type: "integer" });
-    } finally {
-      cwd.mockRestore();
-    }
-  });
-
-  it.each(["./shared.yaml", "C:\\project\\shared.yaml"])("accepts a native Windows path key for %s", async (ref) => {
-    const cwd = vi.spyOn(process, "cwd").mockReturnValue("C:\\project");
-    try {
-      const externalReferences = new Map([["C:\\project\\shared.yaml", "type: integer"]]);
+      const externalReferences = new Map([[key, "type: integer"]]);
+      if (other) externalReferences.set(other, "type: string");
       const result = await validateAndDereferenceOpenAPI(documentWithReference(ref), { externalReferences });
-      expect(result.errors).toEqual([]);
-      expect(result.document?.components?.schemas?.Value).toEqual({ type: "integer" });
-    } finally {
-      cwd.mockRestore();
-    }
-  });
-
-  it.each(["\\shared.yaml", "../../shared.yaml"])("keeps the Windows drive when resolving %s", async (ref) => {
-    const cwd = vi.spyOn(process, "cwd").mockReturnValue("C:\\project");
-    try {
-      const externalReferences = new Map([["C:\\shared.yaml", "type: integer"], ["/shared.yaml", "type: string"]]);
-      const result = await validateAndDereferenceOpenAPI(documentWithReference(ref), { externalReferences });
-      expect(result.errors).toEqual([]);
-      expect(result.document?.components?.schemas?.Value).toEqual({ type: "integer" });
-    } finally {
-      cwd.mockRestore();
-    }
-  });
-
-  it("preserves a backslash inside a POSIX working directory segment", async () => {
-    const cwd = vi.spyOn(process, "cwd").mockReturnValue("/virtual/project\\branch");
-    try {
-      const externalReferences = new Map([
-        ["/virtual/project/branch/shared.yaml", "type: string"],
-        ["/virtual/project%5Cbranch/shared.yaml", "type: integer"],
-      ]);
-      const result = await validateAndDereferenceOpenAPI(documentWithReference("./shared.yaml"), { externalReferences });
       expect(result.errors).toEqual([]);
       expect(result.document?.components?.schemas?.Value).toEqual({ type: "integer" });
     } finally {
@@ -402,32 +375,19 @@ describe("validateOpenAPI", () => {
     }
   });
 
-  it("keeps a question mark in a filename distinct from a URI query", async () => {
-    const cwd = vi.spyOn(process, "cwd").mockReturnValue("/virtual/project");
+  it.each([
+    ["types.json%3Frevision=1", "types.json?revision=1"],
+    ["types.json?", "types.json"],
+  ])("requires the exact allowlist key for %s instead of %s", async (filename, differentFilename) => {
+    const directory = "/virtual/project";
+    const cwd = vi.spyOn(process, "cwd").mockReturnValue(directory);
     try {
-      const doc = documentWithReference("./types.json%3Frevision=1");
-      const externalReferences = new Map([["/virtual/project/types.json?revision=1", '{"type":"string"}']]);
+      const doc = documentWithReference("./" + filename);
+      const externalReferences = new Map([[directory + "/" + differentFilename, '{"type":"string"}']]);
       await expect(validateOpenAPI(doc, { externalReferences })).resolves.toEqual([
         { path: "openapi", message: expect.stringContaining("explicit allowlist"), severity: "error" },
       ]);
-      externalReferences.set("/virtual/project/types.json%3Frevision=1", '{"type":"integer"}');
-      const result = await validateAndDereferenceOpenAPI(doc, { externalReferences });
-      expect(result.errors).toEqual([]);
-      expect(result.document?.components?.schemas?.Value).toEqual({ type: "integer" });
-    } finally {
-      cwd.mockRestore();
-    }
-  });
-
-  it("keeps a bare query delimiter in the exact local allowlist key", async () => {
-    const cwd = vi.spyOn(process, "cwd").mockReturnValue("/virtual/project");
-    try {
-      const doc = documentWithReference("./types.json?");
-      const externalReferences = new Map([["/virtual/project/types.json", '{"type":"string"}']]);
-      await expect(validateOpenAPI(doc, { externalReferences })).resolves.toEqual([
-        { path: "openapi", message: expect.stringContaining("explicit allowlist"), severity: "error" },
-      ]);
-      externalReferences.set("/virtual/project/types.json?", '{"type":"integer"}');
+      externalReferences.set(directory + "/" + filename, '{"type":"integer"}');
       const result = await validateAndDereferenceOpenAPI(doc, { externalReferences });
       expect(result.errors).toEqual([]);
       expect(result.document?.components?.schemas?.Value).toEqual({ type: "integer" });
