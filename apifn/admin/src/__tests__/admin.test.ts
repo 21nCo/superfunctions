@@ -105,4 +105,55 @@ describe("@apifn/admin", () => {
       baseUrl: "https://operator:secret@example.test/api",
     }, context("project"))).rejects.toMatchObject({ code: "invalid_argument" });
   });
+
+  it("rejects external references when registering or comparing specs", async () => {
+    const adapter = createApiFnAdminAdapter(createApiFnOperatorService({
+      store: new MemoryApiFnOperatorStore(),
+    }));
+    const ctx = context("project");
+    const external = {
+      ...document,
+      components: { schemas: { External: { $ref: "https://example.invalid/schema.json" } } },
+    };
+    await expect(adapter.execute("apifn.specs.register", { id: "external", name: "External", document: external }, ctx))
+      .rejects.toMatchObject({ code: "invalid_argument" });
+    await expect(adapter.execute("apifn.specs.get", { id: "external" }, ctx))
+      .rejects.toMatchObject({ code: "not_found" });
+
+    await adapter.execute("apifn.specs.register", { id: "tasks", name: "Tasks", document }, ctx);
+    await expect(adapter.execute("apifn.specs.compare", { id: "tasks", candidate: external }, ctx))
+      .rejects.toMatchObject({ code: "invalid_argument" });
+  });
+
+  it("compares referenced request bodies that contain recursive schemas", async () => {
+    const adapter = createApiFnAdminAdapter(createApiFnOperatorService({
+      store: new MemoryApiFnOperatorStore(),
+    }));
+    const ctx = context("project");
+    const spec = {
+      ...document,
+      paths: {
+        "/tasks": { post: {
+          requestBody: { $ref: "#/components/requestBodies/Task" },
+          responses: { "200": { description: "OK" } },
+        } },
+      },
+      components: {
+        requestBodies: {
+          Task: { required: false, content: {
+            "application/json": { schema: { $ref: "#/components/schemas/Task" } },
+          } },
+        },
+        schemas: {
+          Task: { type: "object", properties: { subtask: { $ref: "#/components/schemas/Task" } } },
+        },
+      },
+    };
+    await adapter.execute("apifn.specs.register", { id: "tasks", name: "Tasks", document: spec }, ctx);
+    const candidate = structuredClone(spec);
+    candidate.components.requestBodies.Task.required = true;
+    const compared = await adapter.execute<any>("apifn.specs.compare", { id: "tasks", candidate }, ctx);
+    expect(compared.data.item.hasBreakingChanges).toBe(true);
+    expect(spec.paths["/tasks"].post.requestBody).toEqual({ $ref: "#/components/requestBodies/Task" });
+  });
 });
