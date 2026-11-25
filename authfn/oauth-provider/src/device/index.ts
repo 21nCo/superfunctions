@@ -270,7 +270,10 @@ export function createDeviceRoutes(runtime: OAuthProviderRuntime): Route[] {
     {
       method: 'POST',
       path: OAUTH_DEVICE_AUTHORIZATION_PATH,
-      meta: createAuthFnRouteMeta('oauthDeviceAuthorization', 'OAuth 2.0 device authorization endpoint', { mode: 'none' }),
+      meta: {
+        ...createAuthFnRouteMeta('oauthDeviceAuthorization', 'OAuth 2.0 device authorization endpoint', { mode: 'none' }),
+        authfnOwnBodyLimit: true
+      },
       handler: (request) => handleOAuth(async () => {
         const params = await readCappedFormBody(request);
         const client = await authenticateClient(runtime, request, params);

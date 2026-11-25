@@ -43,7 +43,7 @@ import {
   readSignUpProfile
 } from './users.js';
 import { readPluginRuntimeConfig } from './plugin-runtime.js';
-import { assertPasswordWithinLimits, type PasswordPolicyOptions, updatePasswordCredential } from './passwords.js';
+import { assertPasswordWithinLimits, type PasswordPolicyOptions, preparePasswordCredentialUpdate } from './passwords.js';
 import { resolveEnvironment } from './environment.js';
 import {
   allowsOtpSignUpExistingUser,
@@ -288,6 +288,16 @@ export async function verifyOtpChallenge(
   runtimeOptions: OtpRuntimeOptions,
   input: VerifyOtpInput
 ): Promise<VerifyOtpResult> {
+  return verifyOtpChallengeBeforeConsume(config, hooks, runtimeOptions, input);
+}
+
+async function verifyOtpChallengeBeforeConsume(
+  config: AuthFnRuntimeConfig,
+  hooks: Partial<AuthFnHooks>,
+  runtimeOptions: OtpRuntimeOptions,
+  input: VerifyOtpInput,
+  beforeConsume?: (user: AuthFnUserRecord) => Promise<void>
+): Promise<VerifyOtpResult> {
   const email = normalizeEmail(input.email);
   const challenge = await findLatestChallenge(config, input.purpose, email);
   if (!challenge) {
@@ -426,6 +436,7 @@ export async function verifyOtpChallenge(
       verifiedByHolder = await isAccountHolderRequest(config, input.request, user.id);
     }
 
+    if (user && beforeConsume) await beforeConsume(user);
     consuming = true;
     consumed = await consumeOtpChallenge(config, challenge, now);
   } catch (error) {
@@ -637,30 +648,33 @@ export async function completeResetPassword(
   assertPasswordWithinLimits(input.newPassword);
   const email = normalizeEmail(input.email);
   const runtime = input.request ? await resolveEnvironment(config, input.request) : undefined;
-  const challenge = await verifyOtpChallenge(config, {}, runtimeOptions, {
+  let updatePassword: Awaited<ReturnType<typeof preparePasswordCredentialUpdate>> | undefined;
+  const challenge = await verifyOtpChallengeBeforeConsume(config, {}, runtimeOptions, {
     request: input.request,
     purpose: input.purpose,
     email,
     code: input.code
+  }, async (user) => {
+    updatePassword = await preparePasswordCredentialUpdate(config, {
+      userId: user.id,
+      password: input.newPassword
+    }, {
+      ...runtimeOptions.passwordPolicy,
+      request: input.request,
+      environment: runtime,
+      email,
+      purpose: 'reset-password'
+    });
   });
 
-  const user = challenge.user ?? await findUserByPrimaryEmail(config, email);
-  if (!user) {
+  const user = challenge.user;
+  if (!user || !updatePassword) {
     throw new AuthFnOtpInvalidError('Password reset requires an existing user', {
       email
     });
   }
 
-  await updatePasswordCredential(config, {
-    userId: user.id,
-    password: input.newPassword
-  }, {
-    ...runtimeOptions.passwordPolicy,
-    request: input.request,
-    environment: runtime,
-    email,
-    purpose: 'reset-password'
-  });
+  await updatePassword();
   // Whoever reset the password proved control of the mailbox. Sessions and
   // unfinished two-factor sign-ins that began before the reset (possibly by
   // someone who knew the old password) stop working. On an account whose

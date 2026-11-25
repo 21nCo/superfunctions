@@ -1,6 +1,6 @@
 import type { AtomicKVStoreAdapter, KVStoreAdapter } from '@superfunctions/db';
 import type { Middleware } from '@superfunctions/http';
-import { AuthFnConfigError, AuthFnPayloadTooLargeError, AuthFnRateLimitedError } from './errors.js';
+import { AuthFnConfigError, AuthFnRateLimitedError } from './errors.js';
 import { readCookieValues, resolveCookiePolicy } from './cookies.js';
 import { resolveEnvironment } from './environment.js';
 import type {
@@ -36,7 +36,10 @@ const defaultPolicies: Record<AuthFnRateLimitScope, AuthFnRateLimitCategory> = {
   account: { ipLimit: 120, windowSeconds: 60 },
 };
 
-export function createAuthFnRateLimitMiddleware(config: AuthFnRuntimeConfig): Middleware | undefined {
+export function createAuthFnRateLimitMiddleware(
+  config: AuthFnRuntimeConfig,
+  hasRouteBodyLimit?: (request: Request) => boolean
+): Middleware | undefined {
   const rateLimit = config.rateLimit;
   if (!rateLimit?.enabled) {
     return undefined;
@@ -52,9 +55,12 @@ export function createAuthFnRateLimitMiddleware(config: AuthFnRuntimeConfig): Mi
     const path = new URL(request.url).pathname;
     const scope = scopeForPath(path);
     const policy = policyForScope(config, scope);
-    const identifier = scope === 'two-factor'
-      ? await readTwoFactorIdentifier(request.clone(), config, normalizePath(path))
-      : await readIdentifier(request.clone());
+    let identifier: string | null = null;
+    if (!hasRouteBodyLimit?.(request)) {
+      identifier = scope === 'two-factor'
+        ? await readTwoFactorIdentifier(request.clone(), config, normalizePath(path))
+        : await readIdentifier(request.clone());
+    }
     const ip = (await rateLimit.resolveClientIp?.(request))?.trim() || 'unknown';
     const identifierHash = identifier && policy.identifierLimit ? await hashIdentifier(identifier) : null;
     // One clock reading per request, taken after every asynchronous step, so
@@ -325,10 +331,7 @@ async function readIdentifier(request: Request): Promise<string | null> {
         ? body.identifier
         : undefined;
     return value?.trim().toLowerCase() ?? null;
-  } catch (error) {
-    if (error instanceof AuthFnPayloadTooLargeError) {
-      throw error;
-    }
+  } catch {
     return null;
   }
 }
@@ -356,10 +359,7 @@ async function readTwoFactorIdentifier(
       return CANONICAL_CHALLENGE_ID.test(challengeId)
         ? `two-factor-challenge:${challengeId}`
         : 'two-factor-challenge:non-canonical';
-    } catch (error) {
-      if (error instanceof AuthFnPayloadTooLargeError) {
-        throw error;
-      }
+    } catch {
       return null;
     }
   }

@@ -13,7 +13,7 @@ export function resolveRequestId(request: Request): string {
     return cached;
   }
 
-  const incoming = request.headers.get('x-request-id')?.trim();
+  const incoming = request.headers.get('x-request-id');
   const requestId = incoming && isAcceptableRequestId(incoming) ? incoming : createRequestId();
   requestIds.set(request, requestId);
   return requestId;

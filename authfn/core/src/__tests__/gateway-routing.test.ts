@@ -19,6 +19,7 @@ import type {
   MultiRegionPluginRuntimeConfig
 } from '../plugin-types.js';
 import { authFnMultiRegionEnvironment } from '../core/regions.js';
+import { AUTHFN_MAX_BODY_BYTES } from '../http/body-limit.js';
 
 const keyring: AuthFnRoutingKeyring = {
   active: {
@@ -28,6 +29,31 @@ const keyring: AuthFnRoutingKeyring = {
 };
 
 describe('AuthFn canonical gateway routing', () => {
+  it('rejects an oversized body before resolving identity or claiming placement', async () => {
+    const directory = createInMemoryAuthFnPlacementDirectory();
+    let identityLookups = 0;
+    const gateway = createAuthFnCanonicalGateway<unknown>({
+      publicAuthority: 'https://account.example.com',
+      placementDirectory: directory,
+      keyring,
+      resolveIdentity: () => {
+        identityLookups += 1;
+        return { identityKey: 'person:new', allowInitialPlacement: true };
+      },
+      selectInitialRegion: () => 'us-east-1',
+      resolveCell: () => null,
+      dispatch: () => Promise.resolve(new Response())
+    });
+    const request = new Request('https://account.example.com/auth/sign-up/password', {
+      method: 'POST',
+      body: 'a'.repeat(AUTHFN_MAX_BODY_BYTES + 1)
+    });
+
+    expect((await gateway.handle(request)).status).toBe(413);
+    expect(identityLookups).toBe(0);
+    await expect(directory.get('person:new')).resolves.toBeNull();
+  });
+
   it('claims placement only for explicitly approved first-use routes', async () => {
     const directory = createInMemoryAuthFnPlacementDirectory();
     const effects: string[] = [];

@@ -348,7 +348,7 @@ function createSocialRoutes(
       }),
       handler: async (request) => {
         const runtime = await resolveEnvironment(ctx.config, request);
-        const body = await request.json().catch(emptyJsonUnlessPayloadTooLarge) as SocialHandoffExchangeBody;
+        const body = await request.json().catch(() => ({})) as SocialHandoffExchangeBody;
         const code = readRequiredString(body.code, 'code');
         const verifier = readRequiredString(body.verifier, 'verifier');
         const stateStore = new DbAdapterOAuthStateStore(
@@ -800,7 +800,7 @@ function createSocialRoutes(
       }),
       handler: async (request) => {
         const runtime = await resolveEnvironment(ctx.config, request);
-        const body = await request.json().catch(emptyJsonUnlessPayloadTooLarge) as NativeAppleStartBody;
+        const body = await request.json().catch(() => ({})) as NativeAppleStartBody;
         const providerId = 'apple';
         const callbackUri = buildCallbackUri(runtime.baseUrl, ctx.basePath, providerId);
         const providerSettings = resolveProviderSettings(ctx.config, config, runtime, providerId, callbackUri);
@@ -2028,13 +2028,6 @@ function isSensitiveOAuthFailureKey(key: string): boolean {
     'set-cookie',
     'token'
   ].some((sensitive) => normalized.includes(sensitive));
-}
-
-function emptyJsonUnlessPayloadTooLarge(error: unknown): Record<string, unknown> {
-  if (error instanceof Error && error.name === 'AuthFnPayloadTooLargeError') {
-    throw error;
-  }
-  return {};
 }
 
 async function createFormPostCallbackRequest(request: Request): Promise<Request> {

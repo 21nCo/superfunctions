@@ -232,7 +232,8 @@ function createPasswordRoutes(
           email: body.email ?? '',
           password: body.password ?? ''
         }, {
-          requireEmailVerifiedForSignIn: config.requireEmailVerifiedForSignIn
+          requireEmailVerifiedForSignIn: config.requireEmailVerifiedForSignIn,
+          request
         });
         const twoFactorConfig = getTwoFactorPluginConfig(ctx.config);
         if (twoFactorConfig) {

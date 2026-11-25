@@ -40,6 +40,7 @@ import {
 } from '../core/passwords.js';
 import { createUser } from '../core/users.js';
 import { AUTHFN_MAX_BODY_BYTES } from '../http/body-limit.js';
+import { jsonSuccess, resolveRequestId } from '../http/envelopes.js';
 import { createTestServer } from './test-server.js';
 
 const PASSWORD = 'Sup3rSecurePassphrase!';
@@ -186,6 +187,31 @@ describe('authfn contained audit fixes', () => {
     expect((await response.json()).error.code).toBe('AUTHFN_VALIDATION_ERROR');
     expect(scryptProbe.calls).toBe(0);
     expect(tracked.count()).toBe(0);
+  });
+
+  it('bounds raw body readers and preserves the original request on accepted requests', async () => {
+    const auth = createTestServer(passwordConfig(memoryAdapter({ debug: false })));
+    const request = jsonRequest('/auth/test-body', { value: 'test-value' });
+    const requestId = resolveRequestId(request);
+    let calls = 0;
+    auth.router.addRoute({
+      method: 'POST',
+      path: '/test-body',
+      async handler(routed) {
+        calls += 1;
+        expect(routed).toBe(request);
+        expect(routed.bodyUsed).toBe(false);
+        const data = await new Response(routed.body).json();
+        return jsonSuccess(routed, data);
+      }
+    });
+
+    const tooLarge = await auth.router.handler(oversizedStreamRequest(request.url));
+    expect(tooLarge.status).toBe(413);
+    expect(calls).toBe(0);
+    const accepted = await auth.router.handler(request);
+    await expect(accepted.json()).resolves.toMatchObject({ requestId, data: { value: 'test-value' } });
+    expect(calls).toBe(1);
   });
 
   it('rejects an over-long password on signup, sign-in, and reset before the database or scrypt', async () => {
@@ -359,7 +385,7 @@ describe('authfn contained audit fixes', () => {
     }));
     const wrong = await auth.router.handle(jsonRequest('/auth/sign-in/password', {
       email: 'ada@example.com',
-      password: WRONG_PASSWORD
+      password: 'too-short'
     }));
     const unverifiedWrong = await auth.router.handle(jsonRequest('/auth/sign-in/password', {
       email: 'ada@example.com',
@@ -399,6 +425,13 @@ describe('authfn contained audit fixes', () => {
     expect(scryptProbe.calls).toBe(0);
   });
 
+  it('keeps the invalid-credentials result for the Python scrypt format', async () => {
+    const salt = Buffer.alloc(16, 0x2e).toString('hex');
+    const digest = Buffer.alloc(64, 0x2e).toString('hex');
+    await expect(verifyPassword(PASSWORD, `scrypt$16384$8$1$${salt}$${digest}`)).resolves.toBe(false);
+    expect(scryptProbe.calls).toBe(1);
+  });
+
   it('runs at most the configured number of scrypt operations at once', async () => {
     scryptProbe.delayMs = 30;
     scryptProbe.calls = 0;
@@ -407,6 +440,19 @@ describe('authfn contained audit fixes', () => {
     expect(scryptProbe.calls).toBe(8);
     expect(scryptProbe.maxInFlight).toBeGreaterThan(0);
     expect(scryptProbe.maxInFlight).toBeLessThanOrEqual(AUTHFN_PASSWORD_KDF_CONCURRENCY);
+  });
+
+  it('rejects password work that exceeds the pending limit and frees a canceled place', async () => {
+    scryptProbe.delayMs = 15;
+    const controller = new AbortController();
+    const active = Array.from({ length: AUTHFN_PASSWORD_KDF_CONCURRENCY }, () => hashPassword(PASSWORD));
+    const canceled = expect(hashPassword(PASSWORD, controller.signal)).rejects.toMatchObject({ name: 'AbortError' });
+    const pending = Array.from({ length: 15 }, () => hashPassword(PASSWORD));
+    await expect(hashPassword(PASSWORD)).rejects.toMatchObject({ status: 429, retryable: true });
+    controller.abort();
+    const replacement = hashPassword(PASSWORD);
+    await Promise.all([canceled, ...active, ...pending, replacement]);
+    expect(scryptProbe.calls).toBe(active.length + pending.length + 1);
   });
 });
 

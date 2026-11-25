@@ -13,8 +13,9 @@ The Python kernel keeps a package changelog at `authfn/python/CHANGELOG.md`.
 
 ## Unreleased
 
-- Auth request bodies are limited to 64 KiB. A larger body, including a stream with no `Content-Length`, is rejected with HTTP 413 and `AUTHFN_VALIDATION_ERROR` before rate limiting, placement, or the route handler. Passwords longer than 1024 UTF-8 bytes are rejected before scrypt. Password hashing uses async scrypt at the existing cost (N=16384, r=8, p=1), accepts only stored hashes with those parameters and a 64-byte digest, and runs at most four scrypt operations at once.
-- Password sign-in returns `AUTHFN_EMAIL_NOT_VERIFIED` only after the password matches. A missing account, a missing password, and a wrong password all do one scrypt verification and return `AUTHFN_INVALID_CREDENTIALS` with no account id.
+- AuthFn's TypeScript router and canonical gateway reject bodies over 64 KiB with HTTP 413, including streams without `Content-Length`. OAuth client registration and device authorization retain their endpoint-specific body limits and error formats at the router.
+- Passwords longer than 1024 UTF-8 bytes are rejected before scrypt. Node.js runs scrypt off the event loop at the existing cost. Password hashing and verification share a limit of four active and sixteen queued operations. Requests above that limit receive a retryable HTTP 429.
+- Password sign-in returns `AUTHFN_EMAIL_NOT_VERIFIED` only after the password matches. An unknown account, an account with no password set, and a wrong password all perform one scrypt derivation and return `AUTHFN_INVALID_CREDENTIALS` with no account id.
 - An inbound `X-Request-Id` is reused only when it is 1–128 printable ASCII characters with no spaces. Any other value is replaced with a generated id in both success and error envelopes. The id is cached on the request.
 
 ## Release cadence

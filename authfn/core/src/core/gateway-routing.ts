@@ -16,12 +16,12 @@ import {
   AuthFnPlacementMovingError,
   AuthFnRegionMismatchError,
   AuthFnRegionNotFoundError,
-  AuthFnPayloadTooLargeError,
   AuthFnRoutingAssertionInvalidError,
   AuthFnRoutingCellUnavailableError,
   AuthFnValidationError
 } from './errors.js';
 import { jsonError, resolveRequestId } from '../http/envelopes.js';
+import { assertAuthRequestBodyLimit } from '../http/body-limit.js';
 import { emitAuthEvent, eventRequestId } from './observability.js';
 
 const ASSERTION_HEADER = 'x-authfn-routing-assertion';
@@ -471,6 +471,7 @@ export function createAuthFnCanonicalGateway<TTarget>(
       }
       const classification = classifyAuthFnRoute(request, basePath);
       try {
+        await assertAuthRequestBodyLimit(request);
         const sanitizedRequest = stripClientRoutingHeaders(request);
         if (classification.scope === 'global') {
           if (!options.handleGlobal) {
@@ -597,9 +598,6 @@ export function createAuthFnCellPlacementMiddleware(
       verifiedRoutingIdentityKeys.set(request, assertion.identityKey);
       return next().finally(() => verifiedRoutingIdentityKeys.delete(request));
     } catch (error) {
-      if (error instanceof AuthFnPayloadTooLargeError) {
-        throw error;
-      }
       verifiedRoutingIdentityKeys.delete(request);
       const code = readErrorCode(error);
       await emitAuthEvent(config, {

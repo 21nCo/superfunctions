@@ -199,7 +199,7 @@ describe('authfn envelopes', () => {
   });
 
   it('replaces rejected request ids and keeps one generated id on the request', async () => {
-    const rejected = ['bad id', 'req\tid', 'x'.repeat(129), 'req_café', '   '];
+    const rejected = ['bad id', 'req\tid', 'x'.repeat(129), 'req_café', '\u00a0req_id\u00a0', '   '];
     for (const value of rejected) {
       const request = new Request('https://account.example.com/auth/session', {
         headers: { 'x-request-id': value }

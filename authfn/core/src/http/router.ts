@@ -1,4 +1,4 @@
-import { createObservabilityMiddleware, createRouter, type Route, type Router } from '@superfunctions/http';
+import { createObservabilityMiddleware, createRouter, type Middleware, type Route, type Router } from '@superfunctions/http';
 import type { AuthFnRuntimeConfig, AuthFnHooks } from '../types.js';
 import { AuthFnNotImplementedError, AuthFnUnauthenticatedError } from '../core/errors.js';
 import { AuthFnValidationError, isAuthFnErrorWithCookies } from '../core/errors.js';
@@ -18,7 +18,7 @@ import { createAuthFnRateLimitMiddleware } from '../core/rate-limit.js';
 import { createAuthFnCellPlacementMiddleware } from '../core/gateway-routing.js';
 import { getMultiRegionPluginConfig } from '../core/regions.js';
 import { findUserById } from '../core/users.js';
-import { boundAuthRequest } from './body-limit.js';
+import { assertAuthRequestBodyLimit } from './body-limit.js';
 import { jsonError, jsonSuccess } from './envelopes.js';
 
 export function createAuthFnRouter(
@@ -26,12 +26,16 @@ export function createAuthFnRouter(
   _hooks: Partial<AuthFnHooks>,
   pluginRoutes: Route[]
 ): Router {
-  const rateLimitMiddleware = createAuthFnRateLimitMiddleware(config);
+  function hasRouteBodyLimit(request: Request): boolean {
+    const route = router.match(request.method, new URL(request.url).pathname)?.route;
+    return route?.meta?.authfnOwnBodyLimit === true;
+  }
+  const rateLimitMiddleware = createAuthFnRateLimitMiddleware(config, hasRouteBodyLimit);
   const multiRegionConfig = getMultiRegionPluginConfig(config);
   const placementMiddleware = multiRegionConfig
     ? createAuthFnCellPlacementMiddleware(config, multiRegionConfig)
     : null;
-  const middleware = [
+  const middleware: Middleware[] = [
     ...(config.observability
       ? [
           createObservabilityMiddleware({
@@ -41,6 +45,12 @@ export function createAuthFnRouter(
           })
         ]
       : []),
+    async (request, _context, next) => {
+      if (!hasRouteBodyLimit(request)) {
+        await assertAuthRequestBodyLimit(request);
+      }
+      return next();
+    },
     ...(placementMiddleware ? [placementMiddleware] : []),
     ...(rateLimitMiddleware ? [rateLimitMiddleware] : [])
   ];
@@ -75,10 +85,6 @@ export function createAuthFnRouter(
       return response;
     }
   });
-  const innerHandle = router.handle.bind(router);
-  const handle = (request: Request): Promise<Response> => innerHandle(boundAuthRequest(request));
-  router.handle = handle;
-  router.handler = handle;
   return router;
 }
 
