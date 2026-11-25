@@ -305,7 +305,7 @@ class OperationConverter {
   private readonly reserved = new WeakMap<object, number>();
   /** Shared tool schemas compiled once, at their first reuse, before reuses are charged. */
   private readonly reuseChecked = new WeakSet<object>();
-  /** Shared schemas whose reuse check the document budget refused, with the room it had then. */
+  /** Shared schemas whose reuse check the document budget refused, with the room it left. */
   private readonly exhausted = new WeakMap<object, { room: number; error: OpenApiSkip }>();
   /** Shared tool schemas that check found the registry would refuse, with why: every tool holding one is skipped, the first included. */
   private readonly refused = new WeakMap<object, OpenApiSkip>();
@@ -623,10 +623,10 @@ class OperationConverter {
       // compiled once, at its first reuse, to know. Its first holder's
       // reservation is given back now, and every holder gets its verdict.
       if (!this.reuseChecked.has(known)) {
-        // A check the document budget refused fails the same way until released reservations make more room.
+        // A check the document budget refused fails the same way until there is
+        // more room than it left: work it completed and kept is charged in that.
         const stale = this.exhausted.get(known);
         if (stale !== undefined && this.schemas.room() <= stale.room) throw stale.error;
-        const room = this.schemas.room();
         let skip: OpenApiSkip | undefined;
         try {
           const failure = this.compileFailure(known, () => this.framesOf(known));
@@ -637,7 +637,7 @@ class OperationConverter {
           // once released reservations make room. Any other skip refuses the schema.
           if (!(error instanceof OpenApiSkip)) throw error;
           if (!rememberable(error)) {
-            this.exhausted.set(known, { room, error });
+            this.exhausted.set(known, { room: this.schemas.room(), error });
             throw error;
           }
           skip = error;

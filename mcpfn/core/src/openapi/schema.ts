@@ -1009,18 +1009,35 @@ export class SchemaConverter {
     if (this.engine() !== "cfworker") {
       throw new OpenApiSkip("unsupported-property-name", "property __proto__ cannot be declared: Ajv ignores it in properties");
     }
+    // `true` accepts the inherited value as it accepts any own one.
+    if (property === true) return;
     let objects = true;
     try {
       objects = this.admits(property).values.has("object");
     } catch (error) {
       if (error instanceof OpenApiSkip && !rememberable(error)) throw error;
     }
-    if (objects || !arrayOf(schema.required).includes("__proto__")) {
+    if (objects || !this.requiresInline(schema, "__proto__")) {
       throw new OpenApiSkip(
         "unsupported-property-name",
         "property __proto__ must be required and admit no object: the validator reads the inherited Object.prototype when it is absent",
       );
     }
+  }
+
+  /** Whether `schema` or one of its inline `allOf` members, read with it, lists `name` in `required`. */
+  private requiresInline(schema: JsonObject, name: string): boolean {
+    const pending: unknown[] = [schema];
+    const seen = new Set<object>();
+    while (pending.length > 0) {
+      const node = pending.pop();
+      if (!isObject(node) || seen.has(node)) continue;
+      seen.add(node);
+      this.total.chargeNodes(1);
+      if (arrayOf(node.required).includes(name)) return true;
+      pending.push(...arrayOf(node.allOf));
+    }
+    return false;
   }
 
   private convertEntry(
@@ -2256,9 +2273,12 @@ function conjunction(schema: JsonObject): Conjunction {
   for (const name of required) if (!(name in Object.prototype) || owned.has(name)) own(name);
   // A closed object's own names are declared ones: `minProperties` of them
   // must all be present when there are no more than that.
-  for (const declared of closed) {
-    if (declared.length > 0 && result.minProperties >= declared.length) declared.forEach(own);
-  }
+  // Several closed members admit only the names each of them declares.
+  const allowed = closed.slice(1).reduce((names, next) => {
+    const declared = new Set(next);
+    return names.filter((name) => declared.has(name));
+  }, closed[0] ?? []);
+  if (allowed.length > 0 && result.minProperties >= allowed.length) allowed.forEach(own);
   return result;
 }
 

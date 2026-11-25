@@ -462,6 +462,11 @@ describe("fromOpenAPI under @cfworker/json-schema", () => {
       // A declared `toString` in another allOf member makes it an own property, and the
       // closed member's `minProperties` forces `next` for the other member's recursion.
       Owned: { type: "object", allOf: [{ required: ["toString"] }, { properties: { toString: { type: "object" } } }, { patternProperties: { "^toString$": { $ref: "#/components/schemas/Owned" } } }] },
+      // Two closed members admit only `next`, which `minProperties` then forces.
+      ...chain("I", 2_500, (next) => ({ type: "object", minProperties: 1, allOf: [
+        { additionalProperties: false, properties: { next, a: { type: "integer" } } },
+        { additionalProperties: false, properties: { next: true, b: { type: "integer" } } },
+      ] })),
       ClosedAllOf: { type: "object", minProperties: 1, allOf: [{ additionalProperties: false, properties: { next: true } }, { properties: { next: { $ref: "#/components/schemas/ClosedAllOf" } } }] },
     };
     const post = (operationId: string, content: Record<string, unknown>) => ({
@@ -481,13 +486,14 @@ describe("fromOpenAPI under @cfworker/json-schema", () => {
           "/pattern": post("inheritedPattern", { "application/json": ref("Pattern") }),
           "/owned": { ...post("ownedInherited", { "application/json": ref("Owned") }), get: { operationId: "ownedInheritedOutput", responses: json({ $ref: "#/components/schemas/Owned" }) } },
           "/closed-all-of": post("closedAllOf", { "application/json": ref("ClosedAllOf") }),
+          "/intersection": post("closedIntersection", { "application/json": ref("I0") }),
         },
         components: { schemas },
       },
       { executor: recordingExecutor(), allowMutations: true },
     );
     expect(verdicts(result)).toEqual([
-      tooDeep("closedAllOf"), tooDeep("closedMin"), tooDeep("closedMinOutput"), tooDeep("ownedInherited"), tooDeep("ownedInheritedOutput"),
+      tooDeep("closedAllOf"), tooDeep("closedIntersection"), tooDeep("closedMin"), tooDeep("closedMinOutput"), tooDeep("ownedInherited"), tooDeep("ownedInheritedOutput"),
     ]);
     expect(result.tools.map(({ name, operation }) => [name, operation.requestBody?.contentType])).toEqual([
       ["closedMinFallback", "application/example+json"],
@@ -521,6 +527,21 @@ describe("fromOpenAPI under @cfworker/json-schema", () => {
     for (const invalid of ['{"body":{}}', '{"body":{"__proto__":1}}']) {
       await expect(result.registry.callTool("protoBody", JSON.parse(invalid), undefined, requestExtra())).rejects.toMatchObject({ code: "MCPFN_INVALID_ARGUMENTS" });
     }
+    // `required` in an inline allOf member, and a `true` schema, which accepts the inherited value too.
+    const split = { type: "object", properties: { PROTO: { type: "string" } }, allOf: [{ required: ["PROTO"] }] };
+    const any = { type: "object", additionalProperties: false, properties: { PROTO: true } };
+    const more = fromOpenAPI(JSON.parse(JSON.stringify({
+      openapi: "3.1.0",
+      paths: {
+        "/split": { post: { operationId: "splitBody", requestBody: { required: true, content: { "application/json": { schema: split } } }, responses: { "204": { description: "Done" } } } },
+        "/any": { get: { operationId: "anyOutput", responses: json(any) } },
+      },
+    }).replaceAll("PROTO", "__proto__")) as Record<string, unknown>, { executor: recordingExecutor(), allowMutations: true });
+    expect(more.skipped).toEqual([]);
+    const splitBody = createSchemaCompiler("cfworker").compile(tool(more.tools, "splitBody").inputSchema);
+    expect([splitBody(JSON.parse('{"body":{"__proto__":"ok"}}')), splitBody({ body: {} })]).toEqual([true, false]);
+    const anyOutput = createSchemaCompiler("cfworker").compile(tool(more.tools, "anyOutput").outputSchema!);
+    expect([anyOutput({}), anyOutput(JSON.parse('{"__proto__":1}')), anyOutput({ x: 1 })]).toEqual([true, true, false]);
     const output = createSchemaCompiler("cfworker").compile(tool(result.tools, "protoOutput").outputSchema!);
     expect([output(JSON.parse('{"__proto__":"ok"}')), output({}), output(JSON.parse('{"__proto__":1}'))]).toEqual([true, false, false]);
   });
