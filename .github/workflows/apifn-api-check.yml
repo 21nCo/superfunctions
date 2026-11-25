@@ -196,7 +196,8 @@ jobs:
   # Every step continues on error and the later steps run only while none failed (steps.*.outcome), so a failed step
   # still reaches the summary and the gate decision, and the api-check job reports it. Every step has a timeout and
   # their sum stays below the job's (360 minutes), so a hung install or router import fails its step rather than the
-  # job; if this job still fails as a whole (a lost runner, a cancellation), api-check runs anyway and fails. The summary cannot fail on a report's shape; if it fails anyway, the gate decision reports it as a failure.
+  # job; if this job still fails as a whole (a lost runner, a cancellation), api-check runs anyway and fails. The
+  # summary cannot fail on a report's shape; if it fails anyway, the gate decision reports it as a failure.
   #
   # Threat model: the drift, base and install guards protect against caller code that is not adversarial (lifecycle
   # scripts, router or config imports that generate or rewrite files). Hostile code in the pull request runs in this
@@ -479,10 +480,10 @@ jobs:
       # --report, so output the caller's router or config prints while loading cannot corrupt them; the summary step
       # cross-checks the two runs (exit codes, verdict, drift, breaking) and reports an error when they disagree. Both
       # runs diff against the base Pin base fixed before any caller code ran: the base_spec snapshot or the base
-      # branch commit. After both runs HEAD must still be the checked-out commit, and the
-      # spec the CLI opened (spec_path as given, or the config default the report names), with every symlink on its
-      # path, must be committed at that commit (spec_state committed, or missing at both), so a spec generated or
-      # rewritten by the install, the router or the config cannot hide drift.
+      # branch commit. After both runs HEAD must still be the checked-out commit, and the spec the CLI opened
+      # (spec_path as given, or the config default the report names), with every symlink on its path, must be
+      # committed at that commit (spec_state committed, or missing at both), so a spec generated or rewritten by the
+      # install, the router or the config cannot hide drift.
       - name: Run apifn check
         id: check
         if: ${{ !contains(steps.*.outcome, 'failure') && inputs.router_path != '' }}
@@ -1053,14 +1054,12 @@ jobs:
           code=$?
           echo "code=$code" >> "$GITHUB_OUTPUT"
 
-  # Posts the comment and applies the gate the evaluate job decided. It runs only after the evaluate job succeeds, which
-  # it does unless it is cancelled, times out or loses its runner: every evaluate step continues on error and has a
-  # timeout, so every failure before or during the check is reported there. A skipped job passes branch protection,
-  # so callers require both "<caller job> / evaluate" and "<caller job> / api-check" (apifn/README.md).
+  # Posts the comment and applies the gate the evaluate job decided. Every evaluate step continues on error and has a
+  # timeout, so every failure before or during the check is reported there. This job runs whatever the evaluate job's
+  # result (always()), so an evaluate job that fails as a whole (a lost runner, its timeout, a cancellation) fails this
+  # required check instead of skipping it (a skipped check passes branch protection). Its guard is the evaluate job's,
+  # so both run or both skip (scripts/verify-owners.mjs).
   # This is the only job whose token can write to the pull request; it checks out, installs and imports nothing.
-  # It runs whatever the evaluate job's result (always()), so an evaluate job that fails as a whole (a lost runner, its
-  # timeout, a cancellation) fails this required check instead of skipping it, and a skip never passes branch
-  # protection. The guard is the evaluate job's, so both run or both skip (scripts/verify-owners.mjs).
   api-check:
     if: always() && (github.repository == '21nCo/superfunctions' || inputs.called_as_reusable_workflow == true)
     needs: evaluate
