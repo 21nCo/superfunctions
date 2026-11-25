@@ -2599,6 +2599,7 @@ describe("document memory in a constrained heap", () => {
       if (process.argv[2]) process.env.NODE_OPTIONS = process.argv[2];
       const { documentLimit } = await import(process.argv[1]);
       if (process.argv[3]) process.env.NODE_OPTIONS = process.argv[3];
+      if (process.argv[4]) process.execArgv.push(process.argv[4]);
       const { constants } = await import("node:buffer");
       const { getHeapStatistics } = await import("node:v8");
       const { Worker } = await import("node:worker_threads");
@@ -2636,7 +2637,7 @@ describe("document memory in a constrained heap", () => {
       coincidentEnv: number;
       defaultYoung: number;
     };
-    const limitWith = (execArgv: string[], nodeOptions?: string, nodeOptionsBefore = "", nodeOptionsAfter = "") => {
+    const limitWith = (execArgv: string[], nodeOptions?: string, nodeOptionsBefore = "", nodeOptionsAfter = "", execArgvAfter = "") => {
       const env: NodeJS.ProcessEnv = { ...process.env };
       delete env.NODE_OPTIONS;
       if (nodeOptions !== undefined) {
@@ -2644,7 +2645,7 @@ describe("document memory in a constrained heap", () => {
       }
       const child = spawnSync(
         process.execPath,
-        [...execArgv, "--input-type=module", "-e", probe, jsonValueUrl, nodeOptionsBefore, nodeOptionsAfter],
+        [...execArgv, "--input-type=module", "-e", probe, jsonValueUrl, nodeOptionsBefore, nodeOptionsAfter, execArgvAfter],
         { encoding: "utf8", env, timeout: 60_000 }
       );
       expect(child.stderr).toBe("");
@@ -2708,6 +2709,11 @@ describe("document memory in a constrained heap", () => {
     expect(unflagged.asked).toBe(of(24));
     expect(limitWith([], undefined, "--max-old-space-size=4").limit).toBe(unflagged.limit);
     expect(limitWith(["--max-old-space-size=0"]).limit).toBe(unflagged.limit);
+    // A command line's 0 still overrides NODE_OPTIONS, also for a worker that inherits both: its own 38 MiB, not 4.
+    expect(limitWith(["--max-old-space-size=0"], "--max-old-space-size=4")).toMatchObject({ limit: unflagged.limit, coincident: of(38) });
+    // The command line is read as it was when the module loaded, not as the process changed it afterwards.
+    expect(limitWith(["--max-old-space-size=32"], undefined, "", "", "--max-semi-space-size=1").limit).toBe(of(32));
+    expect(limitWith([], undefined, "", "", "--max-old-space-size=4000").limit).toBe(unflagged.limit);
     expect(limitWith([], "--max-old-space-size=0").limit).toBe(unflagged.limit);
   }, 120_000);
 

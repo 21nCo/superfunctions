@@ -192,6 +192,8 @@ const SEMI_SPACE_FLAG = /^--?max[-_]semi[-_]space[-_]size=\+?(\d+)$/;
  * change made afterwards (for child processes) did not size this heap, so it is never read again.
  */
 const startupNodeOptions = process.env.NODE_OPTIONS ?? "";
+/** The command line as this module found it when it loaded (the process can change the array). */
+const startupExecArgv: readonly string[] = [...process.execArgv];
 
 /** Splits NODE_OPTIONS as Node does: on spaces, with double quotes grouping and a backslash escaping inside them. */
 function nodeOptionsTokens(options: string): string[] {
@@ -216,13 +218,13 @@ function nodeOptionsTokens(options: string): string[] {
   return tokens;
 }
 
-/** The last value of the size flag `flag` among `options` (V8 takes the last), in MiB; 0 (V8 sizes it) is none. */
+/** The last value of the size flag `flag` among `options` (V8 takes the last), in MiB; 0 leaves the size to V8. */
 function sizeFlag(options: readonly string[], flag: RegExp): number | undefined {
   let size: number | undefined;
   for (const option of options) {
     const match = flag.exec(option);
     if (match) {
-      size = Number(match[1]) > 0 ? Number(match[1]) : undefined;
+      size = Number(match[1]);
     }
   }
   return size;
@@ -264,37 +266,41 @@ function lessYoungGeneration(heapLimit: number, young: number): number {
  * either NODE_OPTIONS' when it and the young generation the flags leave add up to the heap limit, so a NODE_OPTIONS
  * changed before load cannot raise it. In a worker, the `--max-old-space-size` it sees (the command line's, else
  * NODE_OPTIONS') also caps it, since a process flag overrides the worker's own old generation; that covers a hidden
- * flag changing its young generation. A size of 0 is V8's own sizing and counts as no flag. A `--max-semi-space-size`
- * hidden from a worker that sees no `--max-old-space-size` (`execArgv: []` and `env: {}`) is not accounted for. Read once.
+ * flag changing its young generation. A size of 0 leaves that size to V8 (a command line's 0 still overrides
+ * NODE_OPTIONS). Not accounted for: a `--max-semi-space-size` hidden from a worker that sees no `--max-old-space-size`
+ * (`execArgv: []` and `env: {}`) or removed from NODE_OPTIONS before this module loaded, and a worker's own `env`
+ * NODE_OPTIONS, which is taken at its word. The command line and NODE_OPTIONS are read as they were at load. Read once.
  */
 function oldGenerationLimit(): number {
   const heapLimit = getHeapStatistics().heap_size_limit;
-  const commandLine = process.execArgv;
+  const commandLine = startupExecArgv;
   const nodeOptions = nodeOptionsTokens(startupNodeOptions);
   const [commandOld, commandSemi] = [sizeFlag(commandLine, OLD_SPACE_FLAG), sizeFlag(commandLine, SEMI_SPACE_FLAG)];
   const [optionsOld, optionsSemi] = [sizeFlag(nodeOptions, OLD_SPACE_FLAG), sizeFlag(nodeOptions, SEMI_SPACE_FLAG)];
   const [major, minor] = process.versions.v8.split(".");
   const defaultYoung = youngGeneration(DEFAULT_SEMI_SPACE_MB[`${major}.${minor}`] ?? LARGEST_DEFAULT_SEMI_SPACE_MB);
-  const optionsYoung = optionsSemi === undefined ? 0 : youngGeneration(optionsSemi);
   const requested = resourceLimits.maxYoungGenerationSizeMb;
   const own = !isMainThread && typeof requested === "number" && requested > 0 ? youngGeneration(requested / 3) : defaultYoung;
-  if (isMainThread && commandOld !== undefined && commandOld * MIB < heapLimit && isYoungGenerationSize(heapLimit - commandOld * MIB)) {
+  // A semi-space size of 0 leaves the young generation Node configured.
+  const semiYoung = (semi: number) => (semi > 0 ? youngGeneration(semi) : own);
+  const optionsYoung = optionsSemi === undefined ? 0 : semiYoung(optionsSemi);
+  if (isMainThread && commandOld && commandOld * MIB < heapLimit && isYoungGenerationSize(heapLimit - commandOld * MIB)) {
     return commandOld * MIB;
   }
   // NODE_OPTIONS' old generation, when it and the young generation the flags leave add up to the heap limit.
   let flagsLeave = own;
   if (commandSemi !== undefined) {
-    flagsLeave = youngGeneration(commandSemi);
+    flagsLeave = semiYoung(commandSemi);
   } else if (optionsSemi !== undefined) {
     flagsLeave = optionsYoung;
   }
-  if (commandOld === undefined && optionsOld !== undefined && optionsOld * MIB + flagsLeave === heapLimit) {
+  if (commandOld === undefined && optionsOld && optionsOld * MIB + flagsLeave === heapLimit) {
     return optionsOld * MIB;
   }
   let old = lessYoungGeneration(heapLimit, commandSemi === undefined ? Math.max(own, optionsYoung) : flagsLeave);
-  // A process flag overrides a worker's own old generation, so the one a worker sees caps it.
+  // A process flag overrides a worker's own old generation, so the one a worker sees caps it (a command line's 0 too).
   const processOld = commandOld ?? optionsOld;
-  if (!isMainThread && processOld !== undefined) {
+  if (!isMainThread && processOld) {
     old = Math.min(old, processOld * MIB);
   }
   return old;
