@@ -128,12 +128,13 @@ describe("public link resolve limits", () => {
     return token as string;
   }
 
-  async function resolve(server: Server, token: string) {
+  async function resolve(server: Server, token: string, keepalive = false) {
     return read(await server.router.handle(
       new Request("http://localhost/datafn/public-links/resolve", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ token }),
+        keepalive,
       }),
       {},
     ));
@@ -182,6 +183,9 @@ describe("public link resolve limits", () => {
     expect(result.status).toBe(200);
     expect(result.body.ok).toBe(true);
     expect(result.body.result.resource).toBe("linkTag");
+    const retained = await resolve(server, token, true);
+    expect(retained.status).toBe(200);
+    expect(retained.body.result.resource).toBe("linkTag");
     const headerOnly = await read(await server.router.handle(new Request("http://localhost/datafn/public-links/resolve", {
       method: "POST",
       headers: { "x-datafn-public-link-token": token },

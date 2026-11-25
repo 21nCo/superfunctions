@@ -91,7 +91,7 @@ export function preparePublicLinkResolveRequest(
       }
     },
   }, { highWaterMark: 0 });
-  const init: RequestInit & { duplex: "half" } = { body, duplex: "half" };
+  const init: RequestInit & { duplex: "half" } = { body, duplex: "half", keepalive: false };
   const bounded = new Request(request, init);
   boundedResolveBodies.set(bounded, state);
   return bounded;

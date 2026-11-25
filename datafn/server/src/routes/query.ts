@@ -31,7 +31,6 @@ import { executeSingleQuery } from "./query/execute.js";
 import { validateQueryBody } from "./query/validate.js";
 import { injectCapabilityAutoFilters, type QueryMetadata } from "../execution/query/pushdown.js";
 import { mergeSharedWithMeRows } from "../execution/query/execute.js";
-import { createAuthResolverCache, type AuthResolverCache } from "../execution/auth/cache.js";
 import { resolveEffectivePrincipals } from "../execution/auth/principal-resolver.js";
 import {
   canonicalizePrincipalFromLegacyUserId,
@@ -64,6 +63,7 @@ export interface QueryHandlerOpts {
 }
 
 type QueryEnvelopeMetadata = QueryMetadata;
+type RequestPrincipalResolutions = Map<string, Promise<string[]>>;
 
 /**
  * Create query validation + execution route handler
@@ -95,7 +95,7 @@ export function createQueryHandler(
     resource: string,
     namespace: string,
     actorId: string | undefined,
-    cache: AuthResolverCache,
+    cache: RequestPrincipalResolutions,
   ): Promise<{ shareableAccessIds: string[]; hasShareableScopeAccess?: boolean } | undefined> => {
     if (!db || !isPrivateShareableResource(validatedSchema, resource)) {
       return undefined;
@@ -229,15 +229,18 @@ export function createQueryHandler(
   const resolveActorPrincipals = async (
     namespace: string,
     actorId: string,
-    cache: AuthResolverCache,
+    cache: RequestPrincipalResolutions,
   ): Promise<string[]> => {
     if (!db) {
       return [];
     }
-    const result = await resolveEffectivePrincipals({
+    const key = JSON.stringify([namespace, actorId]);
+    const cached = cache.get(key);
+    if (cached) return cached;
+
+    const resolution = resolveEffectivePrincipals({
       namespace,
       actorId,
-      cache,
       store: {
         getDirectMemberships: async ({ namespace: actorNamespace, actorId: actor }) => {
           const rows = await db.findMany({
@@ -277,8 +280,9 @@ export function createQueryHandler(
           return edges;
         },
       },
-    });
-    return result.effectivePrincipals;
+    }).then(({ effectivePrincipals }) => effectivePrincipals);
+    cache.set(key, resolution);
+    return resolution;
   };
 
   const resolveSharedWithMeNamespaceAccess = async (
@@ -286,7 +290,7 @@ export function createQueryHandler(
     namespace: string,
     actorId: string | undefined,
     metadata: QueryEnvelopeMetadata | undefined,
-    cache: AuthResolverCache,
+    cache: RequestPrincipalResolutions,
   ): Promise<Map<string, { scope: boolean; recordIds: Set<string> }>> => {
     const access = new Map<string, { scope: boolean; recordIds: Set<string> }>();
     if (!db || !actorId) {
@@ -429,7 +433,7 @@ export function createQueryHandler(
     namespace: string,
     actorId: string | undefined,
     timer: ExecutionTimer | null | undefined,
-    cache: AuthResolverCache,
+    cache: RequestPrincipalResolutions,
   ): Promise<unknown> => {
     if (query.groupBy) {
       return { groups: [], nextCursor: null };
@@ -784,7 +788,7 @@ export function createQueryHandler(
           // Membership and hierarchy are written by the host, outside this
           // handler, so a cache kept on the handler would survive revocation.
           // One cache per request still dedupes lookups inside a batch.
-          const principalResolverCache = createAuthResolverCache();
+          const principalResolverCache: RequestPrincipalResolutions = new Map();
 
           timer?.startPhase("plan");
           // FIX-SRV-003: Bounded concurrency — queue excess queries instead of rejecting

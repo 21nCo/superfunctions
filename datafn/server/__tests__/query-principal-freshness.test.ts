@@ -2,7 +2,7 @@
  * DFN-07: principal membership and hierarchy are resolved per request.
  * A cache kept on the query handler would keep serving a revoked grant.
  */
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { memoryAdapter } from "@superfunctions/db/adapters";
 import { createDatafnServer } from "../src/server.js";
 import type { DatafnSchema } from "../src/core-types.js";
@@ -37,25 +37,23 @@ async function createHarness() {
       getActorId: () => "bob" as any,
     },
   });
+  const request = { resource: "notes", version: 1, operation: "find", select: ["id", "title"] };
+  const send = (body: unknown) => server.router.handle(
+    new Request("http://localhost/datafn/query", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+    {},
+  );
   const query = async () => {
-    const res = await server.router.handle(
-      new Request("http://localhost/datafn/query", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          resource: "notes",
-          version: 1,
-          operation: "find",
-          select: ["id", "title"],
-        }),
-      }),
-      {},
-    );
+    const res = await send(request);
     const body = await res.json() as any;
     const ids = (body.result?.data ?? []).map((row: { id: string }) => row.id).sort();
     return { status: res.status, ok: body.ok, ids };
   };
-  return { db, server, query };
+  const batchQuery = () => send([request, request, request]);
+  return { db, server, query, batchQuery };
 }
 
 describe("query principal freshness", () => {
@@ -108,9 +106,16 @@ describe("query principal freshness", () => {
       namespace: NAMESPACE,
     });
 
-    const first = await harness.query();
+    const findMany = vi.spyOn(harness.db, "findMany");
+    const first = await harness.batchQuery();
     expect(first.status).toBe(200);
-    expect(first.ids).toEqual(["note_own", "note_shared"]);
+    const batch = await first.json();
+    expect(batch.result).toHaveLength(3);
+    for (const result of batch.result) {
+      expect(result.data.map((row: { id: string }) => row.id).sort()).toEqual(["note_own", "note_shared"]);
+    }
+    expect(findMany.mock.calls.filter(([params]) => params.model === "__datafn_principal_memberships")).toHaveLength(1);
+    expect(findMany.mock.calls.filter(([params]) => params.model === "__datafn_principal_hierarchy")).toHaveLength(1);
 
     await harness.db.update({
       model: "__datafn_principal_memberships",

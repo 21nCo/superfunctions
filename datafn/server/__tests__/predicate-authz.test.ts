@@ -226,6 +226,19 @@ describe("predicate field authorization", () => {
     expect(result.body.error.code).toBe("FORBIDDEN");
   });
 
+  it("checks the source FK policy for a dedicated relation's default selection", async () => {
+    const harness = await createHarness({
+      ...schema,
+      relations: [{ ...schema.relations![0], fkField: "employer" }],
+    }, { employer: "emp_1" });
+    server = harness.server;
+    const result = await harness.post("query", {
+      resource: "people", version: 1, relation: "employer", id: "per_1",
+    });
+    expect(result.status).toBe(403);
+    expect(result.body.error.code).toBe("FORBIDDEN");
+  });
+
   it("authorizes a HAVING alias by its computed source instead of the same-named column", async () => {
     const [people, employers] = schema.resources;
     const harness = await createHarness({
