@@ -11,6 +11,12 @@ The Node kernel package is **`authfn`**. Plugin packages (`@authfn/password`, `@
 
 The Python kernel keeps a package changelog at `authfn/python/CHANGELOG.md`.
 
+## Unreleased
+
+- Auth request bodies are limited to 64 KiB. A larger body, including a stream with no `Content-Length`, is rejected with HTTP 413 and `AUTHFN_VALIDATION_ERROR` before rate limiting, placement, or the route handler. Passwords longer than 1024 UTF-8 bytes are rejected before scrypt. Password hashing uses async scrypt at the existing cost (N=16384, r=8, p=1), accepts only stored hashes with those parameters and a 64-byte digest, and runs at most four scrypt operations at once.
+- Password sign-in returns `AUTHFN_EMAIL_NOT_VERIFIED` only after the password matches. A missing account, a missing password, and a wrong password all do one scrypt verification and return `AUTHFN_INVALID_CREDENTIALS` with no account id.
+- An inbound `X-Request-Id` is reused only when it is 1–128 printable ASCII characters with no spaces. Any other value is replaced with a generated id in both success and error envelopes. The id is cached on the request.
+
 ## Release cadence
 
 Packages are released independently. The version of `authfn` is the canonical Node kernel version. The client, Svelte, Python, and Swift SDKs track the kernel's wire format (envelopes, error codes), not its TypeScript surface — so they release on a slower cadence.

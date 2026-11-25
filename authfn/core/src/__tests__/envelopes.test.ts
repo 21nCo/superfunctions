@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { errorEnvelope, jsonError } from '../http/envelopes.js';
+import { errorEnvelope, jsonError, jsonSuccess, resolveRequestId } from '../http/envelopes.js';
 
 describe('authfn envelopes', () => {
   it('preserves authfn-shaped errors from another realm', async () => {
@@ -164,5 +164,58 @@ describe('authfn envelopes', () => {
       },
       requestId: expect.any(String)
     });
+  });
+
+  it('caches an acceptable upstream request id', () => {
+    const request = new Request('https://account.example.com/auth/session', {
+      headers: { 'x-request-id': 'req_original' }
+    });
+
+    expect(resolveRequestId(request)).toBe('req_original');
+    request.headers.set('x-request-id', 'req_tampered');
+    expect(resolveRequestId(request)).toBe('req_original');
+  });
+
+  it('echoes an ordinary upstream id on success and error envelopes', async () => {
+    const successRequest = new Request('https://account.example.com/auth/session', {
+      headers: { 'x-request-id': 'req_original' }
+    });
+    const success = jsonSuccess(successRequest, { session: null });
+    expect(success.headers.get('x-request-id')).toBe('req_original');
+    await expect(success.json()).resolves.toMatchObject({
+      ok: true,
+      requestId: 'req_original'
+    });
+
+    const errorRequest = new Request('https://account.example.com/auth/session', {
+      headers: { 'x-request-id': 'req_upstream' }
+    });
+    const error = jsonError(errorRequest, new Error('Failed query'));
+    expect(error.headers.get('x-request-id')).toBe('req_upstream');
+    await expect(error.json()).resolves.toMatchObject({
+      ok: false,
+      requestId: 'req_upstream'
+    });
+  });
+
+  it('replaces rejected request ids and keeps one generated id on the request', async () => {
+    const rejected = ['bad id', 'req\tid', 'x'.repeat(129), 'req_café', '   '];
+    for (const value of rejected) {
+      const request = new Request('https://account.example.com/auth/session', {
+        headers: { 'x-request-id': value }
+      });
+      const first = resolveRequestId(request);
+      expect(first).toMatch(/^req_[0-9a-f]{16}$/);
+      expect(first).not.toBe(value.trim());
+      request.headers.set('x-request-id', 'req_tampered');
+      expect(resolveRequestId(request)).toBe(first);
+
+      const success = jsonSuccess(request, { session: null });
+      const failure = jsonError(request, new Error('Failed query'));
+      expect(success.headers.get('x-request-id')).toBe(first);
+      expect(failure.headers.get('x-request-id')).toBe(first);
+      await expect(success.json()).resolves.toMatchObject({ requestId: first });
+      await expect(failure.json()).resolves.toMatchObject({ requestId: first });
+    }
   });
 });

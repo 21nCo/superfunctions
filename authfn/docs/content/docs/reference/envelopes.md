@@ -95,13 +95,13 @@ Examples:
 
 ## Status codes
 
-The envelope shape is the same for `2xx` (success) and `4xx`/`5xx` (error). The HTTP status mirrors `error.code`'s mapped status — so `AUTHFN_VALIDATION_ERROR` is `400`, `AUTHFN_UNAUTHENTICATED` is `401`, `AUTHFN_RATE_LIMITED` is `429`, and so on. See [errors](./errors).
+The envelope shape is the same for `2xx` (success) and `4xx`/`5xx` (error). The HTTP status mirrors `error.code`'s mapped status — so `AUTHFN_VALIDATION_ERROR` is `400` (or `413` when the request body exceeds 64 KiB), `AUTHFN_UNAUTHENTICATED` is `401`, `AUTHFN_RATE_LIMITED` is `429`, and so on. See [errors](./errors).
 
 ## Headers
 
 | Header | Meaning |
 | --- | --- |
-| `X-Request-Id` | Mirrors `requestId` in the body. Useful for log correlation. |
+| `X-Request-Id` | Mirrors `requestId` in the body. An inbound value is kept only when it is 1–128 printable ASCII characters with no spaces; otherwise authfn generates one. |
 | `X-Authfn-Region` | Region id that handled the request (multi-region only). |
 | `Set-Cookie: authfn_session=...; ...` | Set after a successful sign-in or refresh. |
 | `Set-Cookie: authfn_csrf=...` | Companion CSRF cookie. |

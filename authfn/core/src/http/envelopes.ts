@@ -4,6 +4,9 @@ import { toAuthFnError } from '../core/errors.js';
 
 const requestIds = new WeakMap<Request, string>();
 
+/** Longest inbound `x-request-id` that is echoed. Longer values are replaced. */
+export const AUTHFN_REQUEST_ID_MAX_LENGTH = 128;
+
 export function resolveRequestId(request: Request): string {
   const cached = requestIds.get(request);
   if (cached) {
@@ -11,14 +14,26 @@ export function resolveRequestId(request: Request): string {
   }
 
   const incoming = request.headers.get('x-request-id')?.trim();
-  if (incoming) {
-    requestIds.set(request, incoming);
-    return incoming;
-  }
+  const requestId = incoming && isAcceptableRequestId(incoming) ? incoming : createRequestId();
+  requestIds.set(request, requestId);
+  return requestId;
+}
 
-  const generated = createRequestId();
-  requestIds.set(request, generated);
-  return generated;
+/**
+ * Printable ASCII with no spaces or controls (0x21–0x7E), 1–128 characters.
+ * Anything else is generated locally so a caller cannot plant a log line.
+ */
+function isAcceptableRequestId(value: string): boolean {
+  if (value.length < 1 || value.length > AUTHFN_REQUEST_ID_MAX_LENGTH) {
+    return false;
+  }
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code < 0x21 || code > 0x7e) {
+      return false;
+    }
+  }
+  return true;
 }
 
 export function createRequestId(): string {
