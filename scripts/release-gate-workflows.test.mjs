@@ -344,3 +344,28 @@ test('publish-tag.yml: a channel-only dispatch of a tag made before the manifest
     assert.doesNotMatch(odd.stdout, /is owned by public/, tagOwner);
   }
 });
+
+/** Action `uses:` refs, ignoring a trailing `# version` comment. */
+function actionUses(text) {
+  return [...text.matchAll(/^\s*(?:-\s*)?uses:\s*(\S+)/gm)].map((match) => match[1]);
+}
+
+/** Refs that are not `owner/repo@` plus a 40-character commit. */
+function unpinnedActionUses(text) {
+  return actionUses(text).filter((ref) => !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+@[0-9a-f]{40}$/.test(ref));
+}
+
+test('publish workflows reject a mutable action ref', () => {
+  assert.deepEqual(
+    unpinnedActionUses('      - uses: actions/setup-node@v4\n'),
+    ['actions/setup-node@v4']
+  );
+  assert.deepEqual(
+    unpinnedActionUses('      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0\n'),
+    []
+  );
+  for (const file of ['publish-tag.yml', 'publish-python.yml']) {
+    const text = readFileSync(path.join(workflowsDir, file), 'utf8');
+    assert.deepEqual(unpinnedActionUses(text), [], `${file} has a mutable action ref`);
+  }
+});
