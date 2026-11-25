@@ -185,7 +185,7 @@ The generated script performs work in numbered phases:
 
 8. **Firewall** -- If UFW is available, opens ports 22 (SSH), 80 (HTTP), and 443 (HTTPS), then enables the firewall.
 
-HostFn logs all output in the private setup directory on the server. If setup fails, HostFn downloads the log and displays its last 50 lines in your terminal.
+HostFn keeps the full log in the private setup directory on the server after each run. If setup fails, HostFn downloads the log and displays its last 50 lines in your terminal.
 
 ## Error Handling
 

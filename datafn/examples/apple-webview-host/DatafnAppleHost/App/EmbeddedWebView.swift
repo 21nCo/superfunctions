@@ -46,7 +46,7 @@ struct EmbeddedWebView: UIViewRepresentable {
     final class Coordinator: NSObject, WKNavigationDelegate {
         var allowedURL: URL?
 
-        static func webOrigin(of url: URL) -> (scheme: String, host: String, port: Int)? {
+        nonisolated static func webOrigin(of url: URL) -> (scheme: String, host: String, port: Int)? {
             guard let scheme = url.scheme?.lowercased(),
                   scheme == "http" || scheme == "https",
                   let host = url.host?.lowercased(), !host.isEmpty else {
@@ -55,7 +55,7 @@ struct EmbeddedWebView: UIViewRepresentable {
             return (scheme, normalizedHost(host), url.port ?? (scheme == "https" ? 443 : 80))
         }
 
-        private static func normalizedHost(_ host: String) -> String {
+        private nonisolated static func normalizedHost(_ host: String) -> String {
             let literal = host.hasPrefix("[") && host.hasSuffix("]") ? String(host.dropFirst().dropLast()) : host
             var address = in6_addr()
             guard inet_pton(AF_INET6, literal, &address) == 1 else {
@@ -73,7 +73,7 @@ struct EmbeddedWebView: UIViewRepresentable {
         }
 
         // HTTP(S) URL hosts use the browser's IPv4 number syntax, including abbreviated addresses.
-        private static func normalizedIPv4(_ host: String) -> String? {
+        private nonisolated static func normalizedIPv4(_ host: String) -> String? {
             let addressCharacters = CharacterSet(charactersIn: "0123456789abcdefx.")
             guard host.unicodeScalars.allSatisfy(addressCharacters.contains) else { return nil }
             var parts = host.split(separator: ".", omittingEmptySubsequences: false)

@@ -212,10 +212,7 @@ export async function serverSetupCommand(
     process.exitCode = 1;
   } finally {
     if (ssh && remoteDirectory) {
-      const files = completed
-        ? `${remoteDirectory}/hostfn-setup.sh ${remoteDirectory}/hostfn-setup.log`
-        : `${remoteDirectory}/hostfn-setup.sh`;
-      const cleanup = `rm -f ${files} && rmdir ${remoteDirectory}`;
+      const cleanup = `rm -f ${remoteDirectory}/hostfn-setup.sh && if [ ! -e ${remoteDirectory}/hostfn-setup.log ]; then rmdir ${remoteDirectory}; fi`;
       await ssh.exec(cleanup, setupExecOptions).catch(() => {});
     }
     ssh?.disconnect();
