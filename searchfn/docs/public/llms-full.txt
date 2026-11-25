@@ -3342,9 +3342,12 @@ Cloudflare Workers is V8 isolates, not Node. The adapter choices narrow signific
 
 ## Setup
 
+Define `authorizeSearchRequest` in your application using the [authorization guide](/docs/documentation/security/request-authz).
+
 ```typescript
 // worker.ts
 import { createSearchFnServer } from "@searchfn/server";
+import { authorizeSearchRequest } from "./search-authorization.js";
 import { MeilisearchAdapter } from "@searchfn/adapter-meilisearch";
 
 interface Env {
@@ -3533,6 +3536,7 @@ For per-tenant isolation backed by Durable Objects:
 
 ```typescript
 import { DurableObject } from "cloudflare:workers";
+import { authorizeSearchRequest } from "./search-authorization.js";
 
 export class TenantSearch extends DurableObject {
   private sf: Awaited<ReturnType<typeof createSearchFnServer>> | null = null;
@@ -3754,7 +3758,7 @@ primary_region = "iad"
   timeout = "5s"
 ```
 
-The `status` endpoint doubles as the health check.
+The `status` endpoint doubles as the health check. Allow the Fly health check in your policy before deploying.
 
 ## Postgres
 
@@ -3765,8 +3769,11 @@ fly postgres attach my-searchfn-db --app my-searchfn
 
 Fly injects `DATABASE_URL` into the app. The example reads that variable directly; resource initialization must use the same database.
 
+Define `authorizeSearchRequest` in your application using the [authorization guide](/docs/documentation/security/request-authz).
+
 ```typescript
 import { createSearchFnServer } from "@searchfn/server";
+import { authorizeSearchRequest } from "./search-authorization.js";
 import express from "express";
 import { toExpress } from "@superfunctions/http-express";
 import { PostgresAdapter } from "@searchfn/adapter-postgres";
@@ -4079,9 +4086,12 @@ Railway's templated Postgres + auto-deploy fit SearchFn well.
 
 ## Server code
 
+Define `authorizeSearchRequest` in your application using the [authorization guide](/docs/documentation/security/request-authz).
+
 ```typescript
 import { createServer } from "node:http";
 import { createSearchFnServer } from "@searchfn/server";
+import { authorizeSearchRequest } from "./search-authorization.js";
 import { PostgresAdapter } from "@searchfn/adapter-postgres";
 
 const adapter = new PostgresAdapter({
@@ -4141,7 +4151,7 @@ Railway has a one-click Meilisearch template. After deploying it:
 
 ## Health check
 
-In the Railway service settings, set the health check path to `/searchfn/status`. Railway auto-restarts unhealthy instances.
+In the Railway service settings, set the health check path to `/searchfn/status`. Allow this health check in your policy before deploying.
 
 ## See also
 
@@ -4282,9 +4292,12 @@ Vercel runs SearchFn well if you pick an external adapter (Postgres, Meilisearch
 
 ## Next.js App Router
 
+Define `authorizeSearchRequest` in your application using the [authorization guide](/docs/documentation/security/request-authz).
+
 ```typescript
 // app/searchfn/[...path]/route.ts
 import { createSearchFnServer } from "@searchfn/server";
+import { authorizeSearchRequest } from "../../../search-authorization";
 import { PostgresAdapter } from "@searchfn/adapter-postgres";
 
 let sfPromise: ReturnType<typeof createSearchFnServer> | null = null;
@@ -4371,11 +4384,13 @@ Vercel's logs are Datadog-flavoured by default. Send structured JSON; Vercel par
 const sf = await createSearchFnServer({
   authorize: authorizeSearchRequest,
   adapter,
-  logger: {
-    info: (msg, ctx) => console.log(JSON.stringify({ level: "info", msg, ...ctx })),
-    warn: (msg, ctx) => console.warn(JSON.stringify({ level: "warn", msg, ...ctx })),
-    error: (msg, ctx) => console.error(JSON.stringify({ level: "error", msg, ...ctx })),
-    debug: () => {},
+  observability: {
+    logger: {
+      info: (msg, ctx) => console.log(JSON.stringify({ level: "info", msg, ...ctx })),
+      warn: (msg, ctx) => console.warn(JSON.stringify({ level: "warn", msg, ...ctx })),
+      error: (msg, ctx) => console.error(JSON.stringify({ level: "error", msg, ...ctx })),
+      debug: () => {},
+    },
   },
 });
 ```
@@ -5114,20 +5129,16 @@ A malicious tenant who tries `resource: "articles:other-tenant"` gets `FORBIDDEN
 
 ## Logging
 
-Every cross-tenant attempt is a potential incident. Log them:
+Record denial events with `observability.logger`. Emit any tenant-specific audit record from the policy, where verified identity and the target list are both available.
 
 ```typescript
-logger: {
-  warn: (msg, ctx) => {
-    if (msg === "authorization.denied" && ctx.crossTenant) {
-      pagerduty.send({
-        severity: "high",
-        title: "Cross-tenant search attempt",
-        ...ctx,
-      });
-    }
+observability: {
+  logger: {
+    warn: (message, context) => {
+      if (message === "authorization.denied") audit({ operation: context?.operation });
+    },
   },
-}
+},
 ```
 
 ## Backend-specific notes
@@ -5251,7 +5262,7 @@ Clients should treat this as a non-retryable client error — retrying won't hel
 
 ## HTTP framework limits
 
-SearchFn's `maxPayloadBytes` is checked **after** the request body has been read. To stop attacks before the body is read, configure your HTTP framework's body limit at the same value or slightly higher:
+SearchFn checks `maxPayloadBytes` while streaming the request body. Configure your HTTP framework's body limit too if it buffers requests before handing them to SearchFn:
 
 - Express: `express.json({ limit: "2mb" })`
 - Fastify: `Fastify({ bodyLimit: 2 * 1024 * 1024 })`
@@ -5259,7 +5270,7 @@ SearchFn's `maxPayloadBytes` is checked **after** the request body has been read
 
 ## Rate limiting
 
-Limits cap individual request size, not request rate. For per-user rate limits, use the `authorize` callback:
+For per-user rate limits on requests that pass parsing and resource validation, use the `authorize` callback:
 
 ```typescript
 import { Ratelimit } from "@upstash/ratelimit";
@@ -5267,15 +5278,16 @@ import { Ratelimit } from "@upstash/ratelimit";
 const indexLimiter = new Ratelimit({ redis, limiter: Ratelimit.slidingWindow(10, "1 m") });
 const searchLimiter = new Ratelimit({ redis, limiter: Ratelimit.slidingWindow(120, "1 m") });
 
-async function authorize(ctx, action) {
-  const userId = ctx.user?.id ?? ctx.ip;
+async function authorize(_ctx, action, _payload, request, resources) {
+  const session = await getSession(request);
+  if (!session || !(await passesAuth(session, action, resources))) return false;
   const limiter = action === "index" ? indexLimiter : searchLimiter;
-  const { success } = await limiter.limit(userId);
-  return success && passesAuth(ctx, action);
+  const { success } = await limiter.limit(session.user.id);
+  return success;
 }
 ```
 
-Rate-limit denials look like authorization failures (`FORBIDDEN`) — surface this as 429 if you want HTTP semantics correct.
+The callback returns `FORBIDDEN` on denial. Use a limiter before `router.handle` to count every request and return HTTP `429` when the limit is reached.
 
 ## See also
 
@@ -5471,7 +5483,7 @@ async function authorize(_ctx, action, _payload, request) {
 }
 ```
 
-`authorize` is a flexible enough hook to be the only auth/limit layer if you want it to be.
+This limiter counts requests that pass body parsing and resource validation. Apply a request-wide limiter before `router.handle` to also count rejected requests.
 
 ## Request and context
 
@@ -5483,12 +5495,12 @@ const sf = await createSearchFnServer({
 });
 ```
 
-The optional `context` factory runs for each matched request and can load verified identity from request headers or cookies. The router also supplies route parameters, the parsed URL, and query parameters. Read POST body fields from `payload` because the server has already read the request body. `status` receives `null` and an empty resource list.
+The optional `context` factory runs before the policy and can load verified identity from request headers or cookies. The policy receives route parameters, the parsed URL, and query parameters, with any matching keys supplied by your factory taking precedence. Read POST body fields from `payload` because the server has already read the request body. `status` receives `null` and an empty resource list.
 
 ## Failure modes
 
 - **`authorize` returns `false`** → `FORBIDDEN` (403).
-- **`authorize` throws** → the server logs `authorization.error`, emits `searchfn.authorization.failed`, and returns `FORBIDDEN` (403).
+- **`context` or `authorize` throws** → the server logs `authorization.error`, emits `searchfn.authorization.failed`, and returns `FORBIDDEN` (403). The response and event omit the underlying error details.
 - **A POST uses a non-JSON media type** → `UNSUPPORTED_MEDIA_TYPE` (415) before authorization. Send `Content-Type: application/json`.
 
 Treat `authorize` like any other async function — handle your own errors.
@@ -5593,9 +5605,11 @@ const customRedactor = createRedactor({
 const sf = await createSearchFnServer({
   authorize: authorizeSearchRequest,
   adapter,
-  logger: {
-    info: (msg, ctx) => console.log(msg, customRedactor(ctx)),
-    // ... etc
+  observability: {
+    logger: {
+      info: (msg, ctx) => console.log(msg, customRedactor(ctx)),
+      // ... etc
+    },
   },
 });
 ```
@@ -6066,17 +6080,19 @@ Description: Structured logging, health checks, and failure classification for S
 
 ## Structured Logging
 
-Pass a `logger` to `createSearchFnServer` to receive structured log events for every operation:
+Pass `observability.logger` to `createSearchFnServer` to receive structured log events for every operation:
 
 ```typescript
 const server = await createSearchFnServer({
   authorize: authorizeSearchRequest,
   adapter,
-  logger: {
-    info: (msg, ctx) => console.log(JSON.stringify({ level: "info", msg, ...ctx })),
-    warn: (msg, ctx) => console.warn(JSON.stringify({ level: "warn", msg, ...ctx })),
-    error: (msg, ctx) => console.error(JSON.stringify({ level: "error", msg, ...ctx })),
-    debug: (msg, ctx) => console.debug(JSON.stringify({ level: "debug", msg, ...ctx })),
+  observability: {
+    logger: {
+      info: (msg, ctx) => console.log(JSON.stringify({ level: "info", msg, ...ctx })),
+      warn: (msg, ctx) => console.warn(JSON.stringify({ level: "warn", msg, ...ctx })),
+      error: (msg, ctx) => console.error(JSON.stringify({ level: "error", msg, ...ctx })),
+      debug: (msg, ctx) => console.debug(JSON.stringify({ level: "debug", msg, ...ctx })),
+    },
   },
 });
 ```
@@ -7322,7 +7338,10 @@ If different resources have different access rules:
 authorize: async (_ctx, action, _payload, request, resources) => {
   const session = await auth.provider.authenticate(request);
   if (!session || action === "status") return false;
-  return resources.every((resource) => canAccess(session, action, resource));
+  for (const resource of resources) {
+    if (!(await canAccess(session, action, resource))) return false;
+  }
+  return true;
 },
 ```
 
@@ -7352,11 +7371,11 @@ For service accounts (background indexers, CI pipelines), pass a different crede
 authorize: async (_ctx, action, _payload, request) => {
   if (action !== "index") return false;
   const session = await auth.provider.authenticate(request);
-  return session?.type === "api-key" && hasScopes(session, "search:index");
+  return session?.type === "api-key" && hasScopes(session, "search:index", { registry: scopes });
 },
 ```
 
-Register `search:index` in AuthFn and grant it to the indexer's key. Rotate service keys and store them in a secret manager.
+Use the `scopes` registry from your AuthFn configuration, register `search:index`, and grant it to the indexer's key. Rotate service keys and store them in a secret manager.
 
 ## Logging denied requests
 
@@ -8492,8 +8511,9 @@ const sf = await createSearchFnServer({
   adapter,
   context: async (request) => ({ session: await getSession(request) }),
   authorize: (ctx, action, _payload, _request, resources) => {
-    if (!ctx.session || action === "status") return false;
-    return resources.every((resource) => resource === `articles:${ctx.session.user.tenantId}`);
+    const tenantId = ctx.session?.user.tenantId;
+    if (!tenantId || action === "status") return false;
+    return resources.every((resource) => resource === `articles:${tenantId}`);
   },
 });
 ```
@@ -10522,17 +10542,19 @@ SearchFn emits structured events from two surfaces: the TypeScript server's `log
 
 ## TypeScript server events
 
-Pass a `logger` to `createSearchFnServer`:
+Pass `observability.logger` to `createSearchFnServer`:
 
 ```typescript
 const sf = await createSearchFnServer({
   authorize: authorizeSearchRequest,
   adapter,
-  logger: {
-    info: (msg, ctx) => console.log(JSON.stringify({ level: "info", msg, ...ctx })),
-    warn: (msg, ctx) => console.warn(JSON.stringify({ level: "warn", msg, ...ctx })),
-    error: (msg, ctx) => console.error(JSON.stringify({ level: "error", msg, ...ctx })),
-    debug: (msg, ctx) => console.debug(JSON.stringify({ level: "debug", msg, ...ctx })),
+  observability: {
+    logger: {
+      info: (msg, ctx) => console.log(JSON.stringify({ level: "info", msg, ...ctx })),
+      warn: (msg, ctx) => console.warn(JSON.stringify({ level: "warn", msg, ...ctx })),
+      error: (msg, ctx) => console.error(JSON.stringify({ level: "error", msg, ...ctx })),
+      debug: (msg, ctx) => console.debug(JSON.stringify({ level: "debug", msg, ...ctx })),
+    },
   },
 });
 ```
@@ -10612,11 +10634,13 @@ const dd = new TracingApi();
 const sf = await createSearchFnServer({
   authorize: authorizeSearchRequest,
   adapter,
-  logger: {
-    info: (msg, ctx) => dd.send({ message: msg, ...ctx, service: "searchfn" }),
-    warn: (msg, ctx) => dd.send({ message: msg, level: "warn", ...ctx, service: "searchfn" }),
-    error: (msg, ctx) => dd.send({ message: msg, level: "error", ...ctx, service: "searchfn" }),
-    debug: () => {},
+  observability: {
+    logger: {
+      info: (msg, ctx) => dd.send({ message: msg, ...ctx, service: "searchfn" }),
+      warn: (msg, ctx) => dd.send({ message: msg, level: "warn", ...ctx, service: "searchfn" }),
+      error: (msg, ctx) => dd.send({ message: msg, level: "error", ...ctx, service: "searchfn" }),
+      debug: () => {},
+    },
   },
 });
 ```

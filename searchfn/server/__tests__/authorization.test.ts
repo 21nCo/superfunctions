@@ -79,6 +79,41 @@ describe("SearchFn authorization", () => {
     expect(adapter.clear).not.toHaveBeenCalled();
   });
 
+  it("denies a failed identity lookup and records a sanitized authorization event", async () => {
+    const adapter = testAdapter();
+    const authorize = vi.fn(() => true);
+    const events = vi.fn();
+    const error = vi.fn();
+    const server = await createSearchFnServer({
+      adapter,
+      authorize,
+      context: async () => { throw new Error("test-credential"); },
+      observability: { events, logger: { error } },
+    });
+
+    const response = await server.router.handle(post("clear", { resource: "docs" }));
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({
+      ok: false, error: { code: "FORBIDDEN", message: "Authorization denied" },
+    });
+    expect(events).toHaveBeenCalledWith(expect.objectContaining({ type: "searchfn.authorization.failed" }));
+    expect(error).toHaveBeenCalledWith("authorization.error", expect.objectContaining({ operation: "clear" }));
+    expect(JSON.stringify([events.mock.calls, error.mock.calls])).not.toContain("test-credential");
+    expect(authorize).not.toHaveBeenCalled();
+    expect(adapter.clear).not.toHaveBeenCalled();
+  });
+
+  it("preserves host context when a key is also used by the router", async () => {
+    const adapter = testAdapter();
+    const server = await createSearchFnServer({
+      adapter,
+      context: () => ({ params: { authorized: true } }),
+      authorize: (ctx) => ctx.params.authorized,
+    });
+
+    expect((await server.router.handle(post("clear", { resource: "docs" }))).status).toBe(200);
+  });
+
   it.each([{ resources: undefined }, { resources: null }, { resources: [] }])(
     "requires explicit authorized search-all targets ($resources)",
     async ({ resources }) => {
@@ -103,15 +138,24 @@ describe("SearchFn authorization", () => {
     expect(authorize).not.toHaveBeenCalled();
   });
 
-  it("rejects non-JSON media types before consulting the policy", async () => {
+  it.each(["text/plain", "application/json; charset=utf-8, text/plain"])("rejects unsupported Content-Type %s", async (contentType) => {
     const adapter = testAdapter();
     const authorize = vi.fn(() => true);
-    const server = await createSearchFnServer({ adapter, authorize });
+    const info = vi.fn();
+    const server = await createSearchFnServer({ adapter, authorize, observability: { logger: { info } } });
 
-    const response = await server.router.handle(post("clear", { resource: "docs" }, "text/plain"));
+    const response = await server.router.handle(post("clear", { resource: "docs" }, contentType));
     expect(response.status).toBe(415);
+    expect(info).toHaveBeenCalledWith("request.end", expect.objectContaining({ status: 415, success: false }));
     expect(authorize).not.toHaveBeenCalled();
     expect(adapter.clear).not.toHaveBeenCalled();
+  });
+
+  it("accepts a quoted comma within a single JSON media type", async () => {
+    const adapter = testAdapter();
+    const server = await createSearchFnServer({ adapter, authorize: () => true });
+    const response = await server.router.handle(post("clear", { resource: "docs" }, 'Application/JSON; note="a,b"'));
+    expect(response.status).toBe(200);
   });
 
   it("keeps the validated adapter input independent of policy edits", async () => {

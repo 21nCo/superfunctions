@@ -81,20 +81,16 @@ A malicious tenant who tries `resource: "articles:other-tenant"` gets `FORBIDDEN
 
 ## Logging
 
-Every cross-tenant attempt is a potential incident. Log them:
+Record denial events with `observability.logger`. Emit any tenant-specific audit record from the policy, where verified identity and the target list are both available.
 
 ```typescript
-logger: {
-  warn: (msg, ctx) => {
-    if (msg === "authorization.denied" && ctx.crossTenant) {
-      pagerduty.send({
-        severity: "high",
-        title: "Cross-tenant search attempt",
-        ...ctx,
-      });
-    }
+observability: {
+  logger: {
+    warn: (message, context) => {
+      if (message === "authorization.denied") audit({ operation: context?.operation });
+    },
   },
-}
+},
 ```
 
 ## Backend-specific notes

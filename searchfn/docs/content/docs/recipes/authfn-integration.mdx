@@ -32,7 +32,10 @@ If different resources have different access rules:
 authorize: async (_ctx, action, _payload, request, resources) => {
   const session = await auth.provider.authenticate(request);
   if (!session || action === "status") return false;
-  return resources.every((resource) => canAccess(session, action, resource));
+  for (const resource of resources) {
+    if (!(await canAccess(session, action, resource))) return false;
+  }
+  return true;
 },
 ```
 
@@ -62,11 +65,11 @@ For service accounts (background indexers, CI pipelines), pass a different crede
 authorize: async (_ctx, action, _payload, request) => {
   if (action !== "index") return false;
   const session = await auth.provider.authenticate(request);
-  return session?.type === "api-key" && hasScopes(session, "search:index");
+  return session?.type === "api-key" && hasScopes(session, "search:index", { registry: scopes });
 },
 ```
 
-Register `search:index` in AuthFn and grant it to the indexer's key. Rotate service keys and store them in a secret manager.
+Use the `scopes` registry from your AuthFn configuration, register `search:index`, and grant it to the indexer's key. Rotate service keys and store them in a secret manager.
 
 ## Logging denied requests
 

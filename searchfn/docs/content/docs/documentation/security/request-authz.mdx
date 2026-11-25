@@ -85,7 +85,7 @@ async function authorize(_ctx, action, _payload, request) {
 }
 ```
 
-`authorize` is a flexible enough hook to be the only auth/limit layer if you want it to be.
+This limiter counts requests that pass body parsing and resource validation. Apply a request-wide limiter before `router.handle` to also count rejected requests.
 
 ## Request and context
 
@@ -97,12 +97,12 @@ const sf = await createSearchFnServer({
 });
 ```
 
-The optional `context` factory runs for each matched request and can load verified identity from request headers or cookies. The router also supplies route parameters, the parsed URL, and query parameters. Read POST body fields from `payload` because the server has already read the request body. `status` receives `null` and an empty resource list.
+The optional `context` factory runs before the policy and can load verified identity from request headers or cookies. The policy receives route parameters, the parsed URL, and query parameters, with any matching keys supplied by your factory taking precedence. Read POST body fields from `payload` because the server has already read the request body. `status` receives `null` and an empty resource list.
 
 ## Failure modes
 
 - **`authorize` returns `false`** → `FORBIDDEN` (403).
-- **`authorize` throws** → the server logs `authorization.error`, emits `searchfn.authorization.failed`, and returns `FORBIDDEN` (403).
+- **`context` or `authorize` throws** → the server logs `authorization.error`, emits `searchfn.authorization.failed`, and returns `FORBIDDEN` (403). The response and event omit the underlying error details.
 - **A POST uses a non-JSON media type** → `UNSUPPORTED_MEDIA_TYPE` (415) before authorization. Send `Content-Type: application/json`.
 
 Treat `authorize` like any other async function — handle your own errors.

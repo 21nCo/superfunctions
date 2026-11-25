@@ -82,6 +82,13 @@ export function mapAdapterErrorToResponse(
   return errorResponse("INTERNAL", fallbackMessage);
 }
 
+const mediaTypeWord = "[!#$%&'*+.^_`|~0-9a-z-]+";
+const mediaTypeQuotedString = String.raw`"(?:[\t\x20-\x21\x23-\x5b\x5d-\x7e\x80-\xff]|\\[\t\x20-\x7e\x80-\xff])*"`;
+const jsonContentType = new RegExp(
+  String.raw`^application/json(?:[ \t]*;[ \t]*${mediaTypeWord}=(?:${mediaTypeWord}|${mediaTypeQuotedString}))*$`,
+  "i",
+);
+
 /**
  * Safely parse JSON body from a Request.
  */
@@ -89,8 +96,7 @@ export async function parseJsonBody(
   req: Request,
   maxPayloadBytes?: number,
 ): Promise<{ ok: true; data: unknown } | { ok: false; response: Response }> {
-  const mediaType = req.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
-  if (mediaType !== "application/json") {
+  if (!jsonContentType.test(req.headers.get("content-type") ?? "")) {
     return {
       ok: false,
       response: errorResponse("UNSUPPORTED_MEDIA_TYPE", "Content-Type must be application/json"),

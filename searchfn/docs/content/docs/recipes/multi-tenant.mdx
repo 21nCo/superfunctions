@@ -69,8 +69,9 @@ const sf = await createSearchFnServer({
   adapter,
   context: async (request) => ({ session: await getSession(request) }),
   authorize: (ctx, action, _payload, _request, resources) => {
-    if (!ctx.session || action === "status") return false;
-    return resources.every((resource) => resource === `articles:${ctx.session.user.tenantId}`);
+    const tenantId = ctx.session?.user.tenantId;
+    if (!tenantId || action === "status") return false;
+    return resources.every((resource) => resource === `articles:${tenantId}`);
   },
 });
 ```

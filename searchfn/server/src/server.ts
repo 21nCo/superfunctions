@@ -100,6 +100,7 @@ export async function createSearchFnServer<TContext extends ServerContext = Serv
     adapter,
     basePath = "/searchfn",
     limits: limitsOverrides,
+    context,
     authorize,
   } = config;
 
@@ -138,43 +139,55 @@ export async function createSearchFnServer<TContext extends ServerContext = Serv
 
       logger?.debug("request.start", redactContext(logCtx));
 
+      function endRequest(response: Response): Response {
+        if (response.status >= 500) markDegraded();
+        logger?.info("request.end", redactContext({
+          ...logCtx,
+          durationMs: Date.now() - start,
+          success: response.status < 400,
+          status: response.status,
+        }));
+        return response;
+      }
+
       let body: Record<string, unknown> = {};
       let resources: readonly string[] = [];
       if (action !== "status") {
         const parsed = await parseJsonBody(req, limits.maxPayloadBytes);
-        if (!parsed.ok) return parsed.response;
+        if (!parsed.ok) return endRequest(parsed.response);
 
         const { value, error } = validateObjectBody(parsed.data);
-        if (error) return error;
+        if (error) return endRequest(error);
         body = value;
 
         if (action === "searchAll") {
           if (Object.prototype.hasOwnProperty.call(body, "resource")) {
-            return errorResponse("DFQL_INVALID", "Use resources for search-all", { path: "resource" });
+            return endRequest(errorResponse("DFQL_INVALID", "Use resources for search-all", { path: "resource" }));
           }
           const resourcesError = validateResourcesArray(body.resources, limits);
-          if (resourcesError) return resourcesError;
+          if (resourcesError) return endRequest(resourcesError);
           resources = (body.resources as string[] | null | undefined) ?? [];
           if (authorize && resources.length === 0) {
-            return errorResponse("DFQL_INVALID", "Search-all requires at least one resource with authorization enabled", {
+            return endRequest(errorResponse("DFQL_INVALID", "Search-all requires at least one resource with authorization enabled", {
               path: "resources",
-            });
+            }));
           }
         } else {
           if (Object.prototype.hasOwnProperty.call(body, "resources")) {
-            return errorResponse("DFQL_INVALID", "Use resource for this action", { path: "resources" });
+            return endRequest(errorResponse("DFQL_INVALID", "Use resource for this action", { path: "resources" }));
           }
           const resourceError = validateResource(body.resource);
-          if (resourceError) return resourceError;
+          if (resourceError) return endRequest(resourceError);
           resources = [body.resource as string];
         }
       }
 
       if (authorize) {
         try {
+          const policyContext = context ? { ...ctx, ...await context(req) } : ctx;
           // Give the policy its own snapshot so it cannot change what the adapter executes.
           const payload = action === "status" ? null : structuredClone(body);
-          const allowed = await authorize(ctx, action, payload, req, [...resources]);
+          const allowed = await authorize(policyContext, action, payload, req, [...resources]);
           if (allowed !== true) {
             logger?.warn("authorization.denied", redactContext(logCtx));
             await emitSearchFnEvent(observability, {
@@ -186,14 +199,11 @@ export async function createSearchFnServer<TContext extends ServerContext = Serv
                 adapter: adapter.name,
               },
             });
-            return errorResponse("FORBIDDEN", "Authorization denied");
+            return endRequest(errorResponse("FORBIDDEN", "Authorization denied"));
           }
-        } catch (error) {
-          const errorContext = {
-            ...logCtx,
-            ...toErrorLogContext(error),
-          };
-          logger?.error("authorization.error", redactContext(errorContext));
+        } catch {
+          // Identity and policy errors may contain credentials or other private values.
+          logger?.error("authorization.error", redactContext(logCtx));
           await emitSearchFnEvent(observability, {
             type: "searchfn.authorization.failed",
             severity: "error",
@@ -201,28 +211,15 @@ export async function createSearchFnServer<TContext extends ServerContext = Serv
             metadata: {
               operation: action,
               adapter: adapter.name,
-              ...toErrorLogContext(error),
             },
           });
-          return errorResponse("FORBIDDEN", "Authorization denied");
+          return endRequest(errorResponse("FORBIDDEN", "Authorization denied"));
         }
       }
 
       try {
-        const response = await handler(req, body);
-        if (response.status >= 500) {
-          markDegraded();
-        }
-        const durationMs = Date.now() - start;
-        logger?.info("request.end", redactContext({
-          ...logCtx,
-          durationMs,
-          success: response.status < 400,
-          status: response.status,
-        }));
-        return response;
+        return endRequest(await handler(req, body));
       } catch (error) {
-        markDegraded();
         const durationMs = Date.now() - start;
         const errorContext = {
           ...logCtx,
@@ -244,7 +241,7 @@ export async function createSearchFnServer<TContext extends ServerContext = Serv
             ...toErrorLogContext(error),
           },
         });
-        return errorResponse("INTERNAL", "Unexpected server error");
+        return endRequest(errorResponse("INTERNAL", "Unexpected server error"));
       }
     };
   }
@@ -285,7 +282,6 @@ export async function createSearchFnServer<TContext extends ServerContext = Serv
   const router = createRouter<TContext>({
     routes,
     basePath: "/",
-    context: config.context,
     middleware: observability
       ? [
           createObservabilityMiddleware({
