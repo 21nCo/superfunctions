@@ -550,10 +550,12 @@ export async function enrichMcpFnClientProfileCall<TContext>(input: {
   arguments: unknown;
   /**
    * The server's profile options. They take precedence over
-   * `resolved.clientProfiles` (set by resolveMcpFnClientProfile). The
-   * `unmatchedServerOwnedArguments` policy of whichever is present applies; a
-   * call that matched no profile passes through unchanged only when neither
-   * supplies a policy or the policy is `"allow"`.
+   * `resolved.clientProfiles` (set by resolveMcpFnClientProfile). For a call
+   * that matched no profile, the policy of whichever is present (default
+   * `"reject"`) rejects only arguments that some profile declares server-owned
+   * for the requested tool; every other unmatched call, and every call when
+   * neither supplies a policy or the policy is `"allow"`, passes through
+   * unchanged.
    */
   clientProfiles?: Pick<
     McpFnClientProfilesOptions<TContext>,
