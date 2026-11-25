@@ -293,6 +293,8 @@ class OperationConverter {
   private readonly reserved = new WeakMap<object, number>();
   /** Shared tool schemas compiled once, at their first reuse, before reuses are charged. */
   private readonly reuseChecked = new WeakSet<object>();
+  /** Shared tool schemas that check found nesting too deeply: every tool holding one is skipped, the first included. */
+  private readonly refused = new WeakSet<object>();
   /** Validator frames each tool schema stacks for one value (`SchemaConverter.frames`). */
   private readonly toolFrames = new WeakMap<object, number>();
   /** How deep @cfworker/json-schema validates on this call's stack, measured once per call. */
@@ -550,6 +552,7 @@ class OperationConverter {
         if (this.compileFailure(known, () => this.toolFrames.get(known) ?? 0) === TOO_DEEP_VERDICT) {
           const skip = new OpenApiSkip("schema-too-large", TOO_DEEP);
           this.shared.set(key, skip);
+          this.refused.add(known);
           throw skip;
         }
       }
@@ -593,6 +596,11 @@ class OperationConverter {
     const count = this.reserved.get(schema) ?? 0;
     if (count > 0) this.reserved.set(schema, count - 1);
     return count > 0;
+  }
+
+  /** Whether a tool schema here was found nesting too deeply when it was reused (`toolSchema`). */
+  refuses(schemas: readonly object[]): boolean {
+    return schemas.some((schema) => this.refused.has(schema));
   }
 
   /** Give back the catalog copies reserved with these schemas, for a tool that will not register. */
@@ -1287,7 +1295,7 @@ function register<TContext>(
   candidates.forEach((candidate, index) => {
     const { operation } = candidate;
     const pair: [object, object] = [candidate.inputSchema, candidate.outputSchema ?? NO_OUTPUT];
-    if (overflowed.get(pair[0])?.has(pair[1])) {
+    if (overflowed.get(pair[0])?.has(pair[1]) || converter.refuses(pair)) {
       converter.dropReservations(pair);
       skipped.push(tooDeepSkip(operation));
       return;
