@@ -1,12 +1,12 @@
 import SwaggerParser from "@apidevtools/swagger-parser";
-import { parse as parseYaml } from "yaml";
 import type { OpenAPIDocument, ValidationError } from "../types.js";
 import { openAPIReferenceContext, type OpenAPIReferenceMode } from "./reference-context.js";
 
 export interface OpenAPIValidationOptions {
   /**
    * Preloaded JSON or YAML for external documents, keyed by the resolved URI or
-   * absolute file path, without a fragment. Validation never reads files or URLs.
+   * absolute file path, without a fragment. Within those documents, use
+   * slash-delimited `#/` pointers. Validation never reads files or URLs.
    */
   externalReferences?: ReadonlyMap<string, string>;
 }
@@ -15,7 +15,7 @@ const EXTERNAL_REF_ERROR = "External OpenAPI $ref requires an explicit allowlist
 
 function assertReferencePolicy(
   document: unknown,
-  { allowExternal, stage }: { allowExternal: boolean; stage: "input" | "preloaded" | "resolved" }
+  { allowExternal, normalizePointers }: { allowExternal: boolean; normalizePointers: boolean }
 ): void {
   const { childMode, entryMode, arrayItemMode, isMap } = openAPIReferenceContext;
   const seen = new WeakMap<object, Set<OpenAPIReferenceMode>>();
@@ -34,11 +34,11 @@ function assertReferencePolicy(
         // The parser scans even literal data for external references.
         if (!allowExternal) throw new Error(EXTERNAL_REF_ERROR);
       } else if (mode !== "literal" && !isMap(mode) && ref !== "#" && !ref.startsWith("#/")) {
-        if (stage !== "resolved" && /^#%2f/i.test(ref)) {
+        if (normalizePointers && /^#%2f/i.test(ref)) {
           const pointer = decodeURIComponent(ref.slice(1));
           value.$ref = "#" + pointer.split("/").map(encodeURIComponent).join("/");
-        } else if (stage !== "preloaded") {
-          throw new Error("OpenAPI $ref fragments must be JSON pointers");
+        } else {
+          throw new Error("OpenAPI $ref fragments must be slash-delimited JSON pointers");
         }
       }
     }
@@ -96,7 +96,7 @@ export async function validateAndDereferenceOpenAPI(
     const copy = structuredClone(document);
     const externalReferences = options?.externalReferences;
     const allowExternal = Boolean(externalReferences?.size);
-    assertReferencePolicy(copy, { allowExternal, stage: "input" });
+    assertReferencePolicy(copy, { allowExternal, normalizePointers: true });
     const validated = await SwaggerParser.validate(copy as never, {
       resolve: {
         external: allowExternal,
@@ -104,22 +104,18 @@ export async function validateAndDereferenceOpenAPI(
         http: false,
         allowlist: {
           canRead: true,
-          read({ url }: { url: string }): unknown {
+          read({ url }: { url: string }): string {
             const contents = externalReferences?.get(url);
-            if (contents === undefined) {
-              deniedReference = true;
-              throw new Error(EXTERNAL_REF_ERROR);
-            }
-            const parsed: unknown = parseYaml(contents);
-            assertReferencePolicy(parsed, { allowExternal: true, stage: "preloaded" });
-            return typeof parsed === "string" ? JSON.stringify(parsed) : parsed;
+            if (contents !== undefined) return contents;
+            deniedReference = true;
+            throw new Error(EXTERNAL_REF_ERROR);
           },
         },
       },
     });
     // A preloaded document may be a map of schemas. Check the referenced
     // subtrees in the context where they appear after dereferencing.
-    if (allowExternal) assertReferencePolicy(validated, { allowExternal: false, stage: "resolved" });
+    if (allowExternal) assertReferencePolicy(validated, { allowExternal: false, normalizePointers: false });
     return { document: validated as unknown as OpenAPIDocument, errors: [] };
   } catch (error) {
     return { document: null, errors: toValidationErrors(deniedReference ? new Error(EXTERNAL_REF_ERROR) : error) };

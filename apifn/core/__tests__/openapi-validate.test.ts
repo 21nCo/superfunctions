@@ -114,12 +114,12 @@ describe("validateOpenAPI", () => {
     ]);
   });
 
-  it("resolves encoded pointers in preloaded schemas and preserves literal examples", async () => {
+  it("resolves slash-delimited pointers in preloaded schemas and preserves literal examples", async () => {
     const ref = "https://example.invalid/preloaded.json";
     const encoded = "#%2F$defs%2FShared";
     const contents = JSON.stringify({
       $defs: { Shared: { type: "string" } },
-      $ref: encoded,
+      $ref: "#/$defs/Shared",
       examples: [{ $ref: encoded }],
     });
     const result = await validateAndDereferenceOpenAPI(documentWithReference(ref), {
@@ -130,5 +130,31 @@ describe("validateOpenAPI", () => {
       type: "string",
       examples: [{ $ref: encoded }],
     });
+
+    const encodedSchema = contents.replace("#/$defs/Shared", encoded);
+    await expect(validateOpenAPI(documentWithReference(ref), {
+      externalReferences: new Map([[ref, encodedSchema]]),
+    })).resolves.toEqual([
+      { path: "openapi", message: expect.stringContaining("JSON pointers"), severity: "error" },
+    ]);
+  });
+
+  it("keeps the literal value of an Example Object referenced from a preloaded map", async () => {
+    const ref = "https://example.invalid/schema-map.json";
+    const encoded = "#%2F$defs%2FShared";
+    const doc = {
+      openapi: "3.1.0" as const,
+      info: { title: "Example API", version: "1.0.0" },
+      paths: {},
+      components: { examples: { Sample: { $ref: ref + "#/exampleRecords/Selected" } } },
+    };
+    const result = await validateAndDereferenceOpenAPI(doc, {
+      externalReferences: new Map([[ref, JSON.stringify({
+        $defs: { Shared: { type: "string" } },
+        exampleRecords: { Selected: { value: { $ref: encoded } } },
+      })]]),
+    });
+    expect(result.errors).toEqual([]);
+    expect(result.document?.components?.examples?.Sample).toEqual({ value: { $ref: encoded } });
   });
 });
