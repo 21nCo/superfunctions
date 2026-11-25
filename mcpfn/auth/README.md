@@ -30,7 +30,10 @@ metadata before opening a browser, correlates callback state, stores PKCE and
 tokens in memory unless an encrypted store is supplied, classifies token
 exchange/refresh/revocation diagnostics, and redacts credentials.
 Stored tokens and client information keep the `issuer` the MCP SDK records,
-so they are only sent to that authorization server. Tokens saved without an
+so refresh tokens and client secrets are only presented to that authorization
+server during OAuth. The access token itself is sent to the MCP server the
+provider is used with, so give each MCP resource its own credential store (or
+encrypted-store namespace). Tokens saved without an
 `issuer` (by an earlier version) are returned without their refresh token, so
 the client authorizes again when the access token expires, and confidential
 client information (with a `client_secret`) saved without an `issuer` is not
