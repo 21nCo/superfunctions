@@ -122,12 +122,16 @@ function exceeded(): never {
   throw new DocumentBudgetExceeded("Value too large for a result document");
 }
 
-/** Counts `chars` of text against the budget; throws a RangeError when they do not fit. */
+/**
+ * Counts `chars` of text against the budget; throws a RangeError when they do not fit, before anything is counted, so
+ * text that is never written never consumes the budget (and a segment dropped after the throw is charged only what it
+ * wrote).
+ */
 export function spendText(budget: DocumentBudget, chars: number): void {
-  budget.charsLeft -= chars;
-  if (budget.charsLeft < 0) {
+  if (chars > budget.charsLeft) {
     exceeded();
   }
+  budget.charsLeft -= chars;
 }
 
 /** Counts `units` of work against the budget, never given back; throws a RangeError when they do not fit. */
@@ -188,6 +192,11 @@ function escapedFits(text: string, room: number, work: WorkBudget | undefined): 
  * one that could only fit without escapes is counted first (that scan is charged to `work`).
  */
 export function encodeString(text: string, room: number, work?: WorkBudget): string | undefined {
+  // The encoder's boundary: only a primitive string is ever encoded, so no object (such as one a replaced prototype
+  // method returned) can reach JSON.stringify here and print its members unredacted.
+  if (typeof text !== "string") {
+    throw new TypeError("Only a string can be written as JSON string text");
+  }
   if (text.length + 2 > room) {
     return undefined;
   }
@@ -250,8 +259,6 @@ const isRawJSON = (JSON as { isRawJSON?: (value: unknown) => boolean }).isRawJSO
 /** %Array.prototype%, the prototype of the data array `Buffer.prototype.toJSON` creates. */
 const arrayPrototype = Object.getPrototypeOf([]) as object;
 const bigintValueOf = BigInt.prototype.valueOf;
-/** The intrinsic `BigInt.prototype.toString`, so a replaced prototype method never converts a bigint here. */
-const bigintToString = BigInt.prototype.toString;
 /** %TypedArray%.prototype.length: reads the length from the internal slot, for a typed array of any realm. */
 const typedArrayLength = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(Uint8Array.prototype), "length")
   ?.get as () => number;
@@ -280,6 +287,47 @@ interface Walk {
   openKeys: number;
   /** The most keys those lists may hold together when another object on the path is listed. */
   readonly maxOpenKeys: number;
+  /** The object member whose own value is being projected, while its key's redaction is not known yet. */
+  projecting: MemberKey | undefined;
+}
+
+/** An object member outside a redacted value, and its key's redaction once it is decided. */
+interface MemberKey {
+  readonly name: string;
+  redacted?: boolean;
+}
+
+/**
+ * The longest key matched against `isSensitive` before its member is known to print at no further charge. A longer
+ * key matched then is charged its length to the work budget, so matching keys never scans more than a constant per
+ * charge in work that prints nothing (a printed key is also charged as text when it is written).
+ */
+const FREE_KEY_MATCH_LENGTH = 64;
+
+/**
+ * Decides the redaction of the member being projected, the first time its projection charges work, so that work is
+ * charged to the allowance its key selects: under a redacted key, the one for work that prints nothing. Matching runs
+ * no code. A key whose JSON text cannot fit what is left of the text budget is not matched: if its member prints,
+ * writing the key fails the value anyway.
+ */
+function resolveRedaction(walk: Walk): void {
+  const member = walk.projecting;
+  if (member === undefined) {
+    return;
+  }
+  walk.projecting = undefined;
+  const { name } = member;
+  if (name.length + 2 > walk.budget.charsLeft) {
+    member.redacted = false;
+    return;
+  }
+  if (name.length > FREE_KEY_MATCH_LENGTH) {
+    spendWork(walk.work, name.length);
+  }
+  member.redacted = walk.isSensitive?.(name) === true;
+  if (member.redacted) {
+    walk.discarding = true;
+  }
 }
 
 /**
@@ -287,6 +335,7 @@ interface Walk {
  * redacted key, otherwise to the allowance for values that print (see `WorkBudget`).
  */
 function spendValueWork(walk: Walk, units: number): void {
+  resolveRedaction(walk);
   if (walk.discarding) {
     spendWork(walk.work, units);
   } else {
@@ -296,6 +345,7 @@ function spendValueWork(walk: Walk, units: number): void {
 
 /** What is left of the allowance `spendValueWork` charges. */
 function valueWorkLeft(walk: Walk): number {
+  resolveRedaction(walk);
   return walk.discarding ? walk.work.unitsLeft : walk.work.printedUnitsLeft;
 }
 
@@ -308,6 +358,9 @@ function emit(walk: Walk, text: string): void {
 }
 
 function emitString(walk: Walk, text: string): void {
+  if (typeof text !== "string") {
+    throw new TypeError("Only a string can be written as JSON string text");
+  }
   if (walk.discarding) {
     // A redacted string is neither scanned nor encoded: its one unit was charged when it was read.
     return;
@@ -435,8 +488,9 @@ function unbox(walk: Walk, value: object): unknown {
 /**
  * Writes a bigint as a string. Under a redacted key it is not converted at all; otherwise its magnitude is checked by
  * bit length first, so no decimal text longer than what is left of the budgets is ever built. The decimal text comes
- * from the intrinsic BigInt.prototype.toString captured when this module loaded, so a replaced prototype method runs
- * no code here and cannot hand the encoder anything but a string.
+ * from the ToString abstract operation of the primitive (`String(value)`), which never reads BigInt.prototype, so a
+ * replaced `toString`, even one installed before this module loaded, runs no code here and cannot hand the encoder
+ * anything but a string.
  */
 function emitBigInt(walk: Walk, value: bigint): void {
   if (walk.discarding) {
@@ -450,7 +504,7 @@ function emitBigInt(walk: Walk, value: bigint): void {
   if (BigInt.asIntN(bits + 1, value) !== value) {
     exceeded();
   }
-  emitString(walk, Reflect.apply(bigintToString, value, []) as string);
+  emitString(walk, String(value));
 }
 
 /** Writes a primitive's JSON text (bigints as strings); returns false when JSON drops it. */
@@ -586,23 +640,40 @@ function writeValue(walk: Walk, value: unknown, original: unknown, key: string, 
 
 /**
  * SerializeJSONProperty: reads and projects `holder[key]` once, then, when JSON prints it, calls `writeKey` (which
- * writes an object member's key and says whether its value is redacted) and writes the value. A redacted value prints
- * "[REDACTED]" and is still walked in order, so its getters and toJSON run as in JSON.stringify, but no text is built
- * for it: it costs one unit of work, and so does every value in it (each object member when its key is listed, each
- * array item when it is read). Returns false when JSON drops the member; the key is then neither written nor matched.
+ * writes an object member's key) and writes the value. Below an object member outside a redacted value, a value whose
+ * key `isSensitive` matches prints "[REDACTED]" and is still walked in order, so its getters and toJSON run as in
+ * JSON.stringify, but no text is built for it: it costs one unit of work, and so does every value in it (each object
+ * member when its key is listed, each array item when it is read). The work its own projection does (a Number box's
+ * numeric string, the array Node's built-in Buffer toJSON allocates) is charged to the allowance its key's redaction
+ * selects, decided when that work is first charged (see `resolveRedaction`); a key that projection charges nothing for
+ * is matched after it is written, so the match never scans more than was printed. Returns false when JSON drops the
+ * member; its key is then not written, and not matched unless its projection charged work.
  */
 function serializeProperty(
   walk: Walk,
   holder: object,
   key: string,
   depth: number,
-  writeKey?: () => boolean
+  writeKey?: () => void
 ): boolean {
-  const { original, value } = project(walk, holder, key);
+  const outer = walk.discarding;
+  const member: MemberKey | undefined =
+    writeKey !== undefined && !outer && walk.isSensitive !== undefined ? { name: key } : undefined;
+  walk.projecting = member;
+  let projected: { original: unknown; value: unknown };
+  try {
+    projected = project(walk, holder, key);
+  } finally {
+    walk.projecting = undefined;
+    walk.discarding = outer;
+  }
+  const { original, value } = projected;
   if (isDropped(value)) {
     return false;
   }
-  if (writeKey?.() !== true) {
+  writeKey?.();
+  const redacted = member !== undefined && (member.redacted ?? walk.isSensitive?.(key) === true);
+  if (!redacted) {
     writeValue(walk, value, original, key, depth);
     return true;
   }
@@ -612,7 +683,7 @@ function serializeProperty(
     // The member itself was charged when its key was listed.
     writeValue(walk, value, original, key, depth);
   } finally {
-    walk.discarding = false;
+    walk.discarding = outer;
   }
   return true;
 }
@@ -754,9 +825,9 @@ function enumerableKeys(walk: Walk, record: object): string[] {
 /**
  * SerializeJSONObject: own enumerable string keys in order (see `enumerableKeys`, which charges each listed key one
  * unit of work), each read once; dropped members are left out. A member that prints is charged as text (its key is
- * written before it is matched against `isSensitive`, so the match never scans more than was printed); a member JSON
- * drops prints nothing, its key neither written nor matched. A typed array is bounded by its length before its keys are listed. A sensitive
- * member that JSON prints is written as "[REDACTED]".
+ * matched against `isSensitive` once it is written, or when its projection first charges work, see
+ * `serializeProperty`); a member JSON drops prints nothing, its key not written. A typed array is bounded by its length
+ * before its keys are listed. A sensitive member that JSON prints is written as "[REDACTED]".
  */
 function serializeObject(walk: Walk, record: object, depth: number): void {
   boundTypedArray(walk, record);
@@ -775,7 +846,7 @@ function serializeMembers(walk: Walk, record: object, names: readonly string[], 
   for (const name of names) {
     serializeProperty(walk, record, name, depth, () => {
       if (walk.discarding) {
-        return false;
+        return;
       }
       if (members > 0) {
         emit(walk, ",");
@@ -783,7 +854,6 @@ function serializeMembers(walk: Walk, record: object, names: readonly string[], 
       emitString(walk, name);
       emit(walk, ":");
       members += 1;
-      return walk.isSensitive?.(name) === true;
     });
   }
   emit(walk, "}");
@@ -835,9 +905,10 @@ export interface SerializeJsonMemberOptions {
  *
  * With `isSensitive`, every object key below the member that it matches prints "[REDACTED]" when JSON prints the
  * member at all; the key is matched after the holder's toJSON ran, so keys a projection creates are covered too, and
- * only once the member is known to print (a dropped member's key is never scanned). Its value is still walked in
- * order, so its getters and toJSON run as in JSON.stringify, but no text is built for it: it charges `budget` only
- * for its key and the placeholder, and its walk is charged to `work`, one unit per value (see `WorkBudget`).
+ * no later than the work of projecting the member's own value is first charged (no code runs to match it), so that
+ * work is charged to the allowance for work that prints nothing. Its value is still walked in order, so its getters and toJSON run as
+ * in JSON.stringify, but no text is built for it: it charges `budget` only for its key and the placeholder, and its
+ * walk is charged to `work`, one unit per value (see `WorkBudget`).
  *
  * Returns undefined when JSON drops the member (undefined, a function, a symbol, or a `toJSON` that returns one).
  * Throws what JSON.stringify throws, such as a throwing getter or `toJSON`, or a Number box whose `valueOf` returns a
@@ -861,6 +932,7 @@ export function serializeJsonMember(
     discarding: false,
     openKeys: 0,
     maxOpenKeys: Math.max(MIN_OPEN_KEYS, Math.floor(Math.max(0, budget.charsLeft) / OPEN_KEYS_SHARE)),
+    projecting: undefined,
   };
   return serializeProperty(walk, holder, key, 0) ? out : undefined;
 }

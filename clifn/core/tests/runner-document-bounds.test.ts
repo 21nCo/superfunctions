@@ -14,7 +14,14 @@ import {
   type DocumentOutcome,
 } from "../src/document-output.js";
 import { classifyRunnerError } from "../src/errors.js";
-import { createDocumentBudget, createWorkBudget, MAX_NESTING_DEPTH, serializeJsonMember } from "../src/json-value.js";
+import {
+  createDocumentBudget,
+  createWorkBudget,
+  encodeString,
+  MAX_NESTING_DEPTH,
+  serializeJsonMember,
+  spendText,
+} from "../src/json-value.js";
 import {
   runAction,
   type RunnerActionResult,
@@ -1149,6 +1156,58 @@ describe("document fixed text under a polluted prototype", () => {
       rmSync(dirname(runnerModule), { recursive: true, force: true });
     }
   });
+
+  it("prints bigints with their primitive ToString when BigInt.prototype.toString was replaced before import", () => {
+    const runnerModule = transpiledRunner();
+    try {
+      // The replacement returns an object with a sensitive key; a converter that called it would print that object.
+      const script = String.raw`
+        let calls = 0;
+        BigInt.prototype.toString = function () { calls += 1; return { token: ["test", "replaced", "token"].join("-") }; };
+        const { createDocumentOutput } = await import(process.argv[1]);
+        const textBox = (value) => Object.assign(new String(""), { toString: () => value });
+        const run = (outcome, details) => {
+          const stdout = [];
+          const stderr = [];
+          const output = createDocumentOutput({ maxLength: 10000, stdout: (text) => stdout.push(text), stderr: (text) => stderr.push(text) });
+          if (details !== undefined) output.diagnostics.add({ code: "D", severity: "info", message: "m", details });
+          return String(output.finish(outcome)) + "\0" + stdout.join("") + "\0" + stderr.join("") + "\0";
+        };
+        const failure = Object.assign(new Error("closed"), { code: "CLOSED", exitCode: 7, details: { id: 2n, text: textBox(5n) } });
+        process.stdout.write(
+          run({ ok: true, data: { id: 1n, text: textBox(4n) }, exitCode: 3 }) +
+            run({ ok: false, error: failure }) +
+            run({ ok: true, data: "done", exitCode: 2 }, { id: 3n, text: textBox(6n) }) +
+            String(calls)
+        );
+      `;
+      const documentModule = pathToFileURL(join(dirname(runnerModule), "document-output.js")).href;
+      const child = spawnSync(process.execPath, ["--input-type=module", "-e", script, documentModule], { encoding: "utf8", timeout: 60_000 });
+      expect(child.stderr).toBe("");
+      expect(child.status).toBe(0);
+      expect(child.stdout).not.toContain("test-replaced-token");
+      expect(child.stdout.split("\0")).toEqual([
+        "3",
+        '{"ok":true,"data":{"id":"1","text":"4"}}\n',
+        "",
+        "7",
+        '{"ok":false,"error":{"code":"CLOSED","message":"closed","details":{"id":"2","text":"5"}}}\n',
+        "",
+        "2",
+        '{"ok":true,"data":"done","diagnostics":[{"code":"D","severity":"info","message":"m","details":{"id":"3","text":"6"}}]}\n',
+        "",
+        "0",
+      ]);
+    } finally {
+      rmSync(dirname(runnerModule), { recursive: true, force: true });
+    }
+  });
+
+  it("encodes only primitive strings", () => {
+    expect(() => encodeString({ token: "test-dummy-token" } as never, 100)).toThrow(TypeError);
+    expect(() => encodeString(1n as never, 100)).toThrow(TypeError);
+    expect(encodeString("ok", 100)).toBe('"ok"');
+  });
 });
 
 describe("document runner option reads", () => {
@@ -1875,6 +1934,118 @@ describe("document work allowance next to printed text", () => {
       ok: false,
       error: { code: "CLOSED", message: "closed", details: { visible: details.visible, secret: "[REDACTED]" } },
     });
+  });
+
+  it("charges the projection of a value directly under a redacted key to the allowance for discarded work", () => {
+    // Each box's valueOf returns a 1,000-character numeric string: 60 visible boxes spend the whole 60,000-unit
+    // allowance for values that print at limit 10,000, so any box or Buffer under a redacted key must be charged to
+    // the allowance for work that prints nothing.
+    const box = () => Object.assign(new Number(0), { valueOf: () => `${" ".repeat(999)}1` });
+    const boxes = (count: number) => Array.from({ length: count }, box);
+    const ones = (count: number) => Array.from({ length: count }, () => 1);
+    // A bigint typed array whose toJSON is Node's built-in Buffer toJSON runs natively: 100 items at 32 units each.
+    const bigBuffer = () => Object.assign(new BigInt64Array(100), { toJSON: Buffer.prototype.toJSON });
+    const shapes: Array<[Record<string, unknown>, Record<string, unknown>]> = [
+      [
+        { v: boxes(55), r: Array.from({ length: 6 }, () => ({ token: box() })) },
+        { v: ones(55), r: Array.from({ length: 6 }, () => ({ token: "[REDACTED]" })) },
+      ],
+      [{ v: boxes(60), token: box() }, { v: ones(60), token: "[REDACTED]" }],
+      [{ token: box(), v: boxes(60) }, { token: "[REDACTED]", v: ones(60) }],
+      [{ v: boxes(60), password: bigBuffer() }, { v: ones(60), password: "[REDACTED]" }],
+      [{ password: bigBuffer(), v: boxes(60) }, { password: "[REDACTED]", v: ones(60) }],
+    ];
+    for (const [value, printed] of shapes) {
+      const data = finishWith(10_000, { ok: true, data: value, exitCode: 3 });
+      expect(data.exitCode).toBe(3);
+      expect(parseOnlyDocument(data)).toEqual({ ok: true, data: printed });
+
+      const failure = finishWith(10_000, {
+        ok: false,
+        error: Object.assign(new Error("closed"), { code: "CLOSED", exitCode: 7, details: value }),
+      });
+      expect(failure.exitCode).toBe(7);
+      expect(parseOnlyDocument(failure)).toEqual({ ok: false, error: { code: "CLOSED", message: "closed", details: printed } });
+
+      const diagnostic = { code: "D", severity: "info", message: "m", details: value } as Diagnostic;
+      const listed = finishWith(10_000, { ok: true, data: "done", exitCode: 2 }, [diagnostic]);
+      expect(listed.exitCode).toBe(2);
+      expect(parseOnlyDocument(listed)).toEqual({
+        ok: true,
+        data: "done",
+        diagnostics: [{ code: "D", severity: "info", message: "m", details: printed }],
+      });
+    }
+    // One box more than the allowance for values that print still fails, so the shapes above are at its edge.
+    expect(finishWith(10_000, { ok: true, data: { v: boxes(61) }, exitCode: 3 }).out).toBe(
+      `${JSON.stringify(FAILURE_DOCUMENT)}\n`
+    );
+  });
+});
+
+describe("document key matching during projection", () => {
+  it("matches a key when its projection first charges work, and never matches a dropped member's key otherwise", () => {
+    const box = () => Object.assign(new Number(0), { valueOf: () => `${" ".repeat(999)}1` });
+    const longKey = `${"x".repeat(100)}token`;
+    const isSensitive = vi.fn((key: string) => key.includes("token"));
+    const budget = createDocumentBudget(10_000);
+    const work = createWorkBudget(10_000);
+    const before = { ...work };
+    const text = serializeJsonMember(
+      "data",
+      { [`${"y".repeat(100)}token`]: undefined, [longKey]: box(), visible: box() },
+      { budget, work, isSensitive }
+    );
+    expect(JSON.parse(String(text))).toEqual({ [longKey]: "[REDACTED]", visible: 1 });
+    // The dropped member's key is never matched; the redacted key is matched once, before its box is read.
+    expect(isSensitive.mock.calls).toEqual([[longKey], ["visible"]]);
+    // 3 listed keys, the long key's scan and the redacted box's 1,000-character read, all from the discarded allowance;
+    // only the visible box is charged to the allowance for values that print.
+    expect(before.unitsLeft - work.unitsLeft).toBe(3 + longKey.length + 1_000);
+    expect(before.printedUnitsLeft - work.printedUnitsLeft).toBe(1_000);
+  });
+});
+
+describe("document text charged only when written", () => {
+  it("never counts text that does not fit", () => {
+    const budget = createDocumentBudget(10);
+    expect(() => spendText(budget, 11)).toThrow(RangeError);
+    expect(budget.charsLeft).toBe(10);
+    spendText(budget, 10);
+    expect(budget.charsLeft).toBe(0);
+  });
+
+  const rawJSON = (JSON as { rawJSON?: (text: string) => object }).rawJSON;
+  it.skipIf(rawJSON === undefined)("charges an oversized JSON.rawJSON member nothing it did not write", () => {
+    const make = rawJSON as (text: string) => object;
+    const oversized = () => ({ raw: make(`"${"x".repeat(6_000)}"`) });
+    // The first diagnostic's details are left out; what they wrote is charged, not the 6,000 unwritten characters,
+    // so the second diagnostic still fits the work allowance at limit 2,000.
+    const listed = finishWith(2_000, { ok: true, data: "done", exitCode: 3 }, [
+      { code: "A", severity: "info", message: "m", details: oversized() } as Diagnostic,
+      { code: "B", severity: "info", message: "m" },
+    ]);
+    expect(listed.exitCode).toBe(3);
+    expect(parseOnlyDocument(listed)).toEqual({
+      ok: true,
+      data: "done",
+      diagnostics: [
+        { code: "A", severity: "info", message: "m" },
+        { code: "B", severity: "info", message: "m" },
+      ],
+    });
+    expect(listed.stderr).toBe("");
+
+    const data = finishWith(2_000, { ok: true, data: oversized(), exitCode: 3 });
+    expect(data.exitCode).toBe(1);
+    expect(data.out).toBe(`${JSON.stringify(FAILURE_DOCUMENT)}\n`);
+
+    const failure = finishWith(2_000, {
+      ok: false,
+      error: Object.assign(new Error("closed"), { code: "CLOSED", exitCode: 7, details: oversized() }),
+    });
+    expect(failure.exitCode).toBe(7);
+    expect(parseOnlyDocument(failure)).toEqual({ ok: false, error: { code: "CLOSED", message: "closed" } });
   });
 });
 
