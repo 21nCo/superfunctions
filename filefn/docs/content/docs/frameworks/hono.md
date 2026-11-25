@@ -60,6 +60,8 @@ app.all("/filefn/*", async (c) => {
 });
 ```
 
+With `required: false`, requests without a session are served as the shared `anonymous` principal: they can upload, but nobody owns an anonymous upload, so they cannot read back a private one, share it or delete it. Set `required: true` if every upload should belong to a signed-in user.
+
 ## CSRF
 
 filefn's auth path is enforced by `auth.resolveSession`. For browser-issued proxy uploads (`PUT /upload/:id/parts/:n`), pair filefn with your authfn CSRF protection. The bundled clients send credentials by default; on the server, validate the `Origin` / `Referer` header on every state-changing route.

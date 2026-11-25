@@ -96,7 +96,7 @@ describe("Query routing", () => {
     ]);
   });
 
-  it("re-sorts and re-limits local overlays while preserving the remote envelope", async () => {
+  it("re-sorts unbounded local overlays while preserving the remote envelope", async () => {
     const storage = new MemoryStorageAdapter(["tasks"]);
     await storage.upsertRecord("tasks", { id: "task:local-a", title: "Alpha" });
     await storage.upsertRecord("tasks", { id: "task:local-b", title: "Bravo" });
@@ -122,7 +122,7 @@ describe("Query routing", () => {
 
     const result = await executeQuery(
       remote,
-      { resource: "tasks", select: ["id", "title"], sort: ["title:asc"], limit: 2 },
+      { resource: "tasks", select: ["id", "title"], sort: ["title:asc"] },
       storage,
       [],
       schema,
@@ -132,13 +132,14 @@ describe("Query routing", () => {
       data: [
         { id: "task:local-a", title: "Alpha" },
         { id: "task:local-b", title: "Bravo" },
+        { id: "task:remote-z", title: "Zulu" },
       ],
       nextCursor: "next-page",
       count: 20,
     });
   });
 
-  it("does not overlay local rows onto offset or cursor pages", async () => {
+  it("does not overlay local rows onto limited, offset, or cursor pages", async () => {
     const storage = new MemoryStorageAdapter(["tasks"]);
     await storage.upsertRecord("tasks", { id: "task:local", title: "Local" });
     await storage.setHydrationState("tasks", "hydrating");
@@ -157,6 +158,13 @@ describe("Query routing", () => {
       reconcile: vi.fn(),
     };
 
+    await expect(executeQuery(
+      remote,
+      { resource: "tasks", sort: ["id:asc"], limit: 1 },
+      storage,
+      [],
+      schema,
+    )).resolves.toEqual(remoteResult);
     await expect(executeQuery(
       remote,
       { resource: "tasks", offset: 10, limit: 10 },

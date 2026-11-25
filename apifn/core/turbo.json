@@ -1,9 +1,31 @@
 {
   "$schema": "https://turbo.build/schema.json",
-  "extends": ["//"],
+  "extends": [
+    "//"
+  ],
   "tasks": {
+    "build": {
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/apifn/collections/**",
+        "!$TURBO_ROOT$/apifn/collections/dist/**",
+        "!$TURBO_ROOT$/apifn/collections/node_modules/**"
+      ]
+    },
     "test": {
-      "dependsOn": ["^build", "build", "@apifn/collections#build"]
+      "dependsOn": [
+        "^build",
+        "build",
+        "@apifn/collections#build"
+      ]
+    },
+    "lint": {
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/apifn/collections/**",
+        "!$TURBO_ROOT$/apifn/collections/dist/**",
+        "!$TURBO_ROOT$/apifn/collections/node_modules/**"
+      ]
     }
   }
 }

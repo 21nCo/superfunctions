@@ -13,6 +13,7 @@ const env = {
   FILEFN_R2_ACCESS_KEY_ID: 'key',
   FILEFN_R2_SECRET_ACCESS_KEY: 'secret',
   FILEFN_DATABASE: fixture('shared-database.ts'),
+  FILEFN_CONTAINER_TOKEN: 'test-container-token',
   PORT: '0',
 };
 
@@ -71,7 +72,7 @@ describe('startContainer', () => {
 
     const request = fetch(`http://127.0.0.1:${running.port}/jobs`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', authorization: 'Bearer test-container-token' },
       body: JSON.stringify({ job: { fileId: 'file_1' } }),
       signal: disconnected.signal,
     }).catch((error: unknown) => error);

@@ -1,0 +1,62 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "extends": ["//"],
+  "tasks": {
+    "build": {
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/authfn/api-keys/src/**",
+        "$TURBO_ROOT$/authfn/core/src/**",
+        "$TURBO_ROOT$/authfn/email-otp/src/**",
+        "$TURBO_ROOT$/authfn/multi-region/src/**",
+        "$TURBO_ROOT$/authfn/password/src/**",
+        "$TURBO_ROOT$/authfn/social-oauth/src/**",
+        "$TURBO_ROOT$/authfn/two-factor/src/**",
+        "$TURBO_ROOT$/authfn/core/package.json",
+        "$TURBO_ROOT$/plugfn/core/src/**"
+      ]
+    },
+    "typecheck": {
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/authfn/api-keys/src/**",
+        "$TURBO_ROOT$/authfn/core/src/**",
+        "$TURBO_ROOT$/authfn/email-otp/src/**",
+        "$TURBO_ROOT$/authfn/multi-region/src/**",
+        "$TURBO_ROOT$/authfn/password/src/**",
+        "$TURBO_ROOT$/authfn/social-oauth/src/**",
+        "$TURBO_ROOT$/authfn/two-factor/src/**",
+        "$TURBO_ROOT$/authfn/core/package.json",
+        "$TURBO_ROOT$/plugfn/core/src/**"
+      ]
+    },
+    "test": {
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/authfn/api-keys/src/**",
+        "$TURBO_ROOT$/authfn/core/src/**",
+        "$TURBO_ROOT$/authfn/email-otp/src/**",
+        "$TURBO_ROOT$/authfn/multi-region/src/**",
+        "$TURBO_ROOT$/authfn/password/src/**",
+        "$TURBO_ROOT$/authfn/social-oauth/src/**",
+        "$TURBO_ROOT$/authfn/two-factor/src/**",
+        "$TURBO_ROOT$/authfn/core/package.json",
+        "$TURBO_ROOT$/plugfn/core/src/**"
+      ]
+    },
+    "lint": {
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/authfn/api-keys/src/**",
+        "$TURBO_ROOT$/authfn/core/src/**",
+        "$TURBO_ROOT$/authfn/email-otp/src/**",
+        "$TURBO_ROOT$/authfn/multi-region/src/**",
+        "$TURBO_ROOT$/authfn/password/src/**",
+        "$TURBO_ROOT$/authfn/social-oauth/src/**",
+        "$TURBO_ROOT$/authfn/two-factor/src/**",
+        "$TURBO_ROOT$/authfn/core/package.json",
+        "$TURBO_ROOT$/plugfn/core/src/**"
+      ]
+    }
+  }
+}

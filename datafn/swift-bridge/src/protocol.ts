@@ -20,8 +20,12 @@ const negotiatedCapabilities = new WeakMap<
 export function beginBridgeCapabilityNegotiation(
   bus: DatafnBridgeBus,
 ): number {
-  const generation = (negotiatedCapabilities.get(bus)?.generation ?? 0) + 1;
-  negotiatedCapabilities.set(bus, { generation, capabilities: new Set() });
+  const previous = negotiatedCapabilities.get(bus);
+  const generation = (previous?.generation ?? 0) + 1;
+  negotiatedCapabilities.set(bus, {
+    generation,
+    capabilities: previous?.capabilities ?? new Set(),
+  });
   return generation;
 }
 

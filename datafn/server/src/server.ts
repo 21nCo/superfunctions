@@ -619,7 +619,7 @@ export async function createDatafnServer<TContext = any>(
         ? new DbIdempotencyStore(db, "datafn", logger)
         : undefined;
       if (config.retention.idempotencyDays && idempotencyStoreForPrune) {
-        const deleted = await idempotencyStoreForPrune.pruneIdempotency(config.retention.idempotencyDays);
+        const deleted = await idempotencyStoreForPrune.pruneIdempotencyAllNamespaces(config.retention.idempotencyDays);
         logger.info("Pruned idempotency entries", { deleted, operation: "startup-prune" });
         await emitDataFnEvent({
           domain: "datafn",
@@ -759,7 +759,7 @@ export async function createDatafnServer<TContext = any>(
         }
         const idStore = new DbIdempotencyStore(dbForInterval, "datafn", logger);
         if (retentionForInterval.idempotencyDays) {
-          const deleted = await idStore.pruneIdempotency(retentionForInterval.idempotencyDays);
+          const deleted = await idStore.pruneIdempotencyAllNamespaces(retentionForInterval.idempotencyDays);
           logger.info("Periodic prune: removed idempotency entries", { deleted, operation: "periodic-prune" });
           await emitDataFnEvent({
             domain: "datafn",
@@ -807,14 +807,19 @@ export async function createDatafnServer<TContext = any>(
     return "datafn";
   };
 
-  // Helper to extract actor ID (for audit attribution)
+  // Helper to extract actor ID (audit attribution and access decisions).
+  // DFN-04/DFN-20: a failing identity lookup fails the request. Continuing
+  // without an actor would treat an authenticated caller as anonymous on some
+  // paths and skip owner checks on others.
   const extractActorId = async (ctx: TContext): Promise<string | undefined> => {
     if (config.namespaceProvider?.getActorId) {
       try {
         return await config.namespaceProvider.getActorId(ctx);
       } catch (error) {
-        logger.warn("Failed to extract actorId, proceeding without audit attribution", { error: String(error), operation: "extract-actor-id" });
-        return undefined;
+        logger.warn("Failed to extract actorId; rejecting the request", { error: String(error), operation: "extract-actor-id" });
+        const err = new Error("Actor could not be resolved");
+        (err as any).code = "ACTOR_UNRESOLVED";
+        throw err;
       }
     }
     return undefined;
@@ -1809,10 +1814,22 @@ export async function createDatafnServer<TContext = any>(
     }
     const limit = Math.min(params.limit ?? 50, 10_000);
     const limitPerResource = Math.min(params.limitPerResource ?? limit, 1_000);
-    const namespace =
-      params.namespace && params.namespace.trim() !== ""
-        ? params.namespace
-        : await extractNamespace(_ctx as TContext);
+    // Without a context argument, use a static configured context like the
+    // executor does; with none, the namespace resolver gets an empty object.
+    // A configured null context counts as absent. An explicit null argument
+    // runs anonymous and never falls back to the configured context.
+    const staticCtx =
+      _ctx === undefined && typeof config.context !== "function"
+        ? (config.context ?? undefined)
+        : undefined;
+    const searchCtx = _ctx === undefined ? staticCtx : (_ctx ?? undefined);
+    // An explicit null ctx reaches the namespace resolver as null, as on
+    // earlier versions; {} is used only when no context is available.
+    const ctxNamespace = async () =>
+      extractNamespace((_ctx === null ? _ctx : (searchCtx ?? {})) as TContext);
+    const namespaceOverride =
+      params.namespace && params.namespace.trim() !== "" ? params.namespace : undefined;
+    const namespace = namespaceOverride ?? (await ctxNamespace());
     if (multiRegionRuntime?.placement) {
       await validateDatafnPlacement({
         namespace,
@@ -1821,7 +1838,29 @@ export async function createDatafnServer<TContext = any>(
         trustedInternal: true,
       });
     }
-    const actorId = await extractActorId(_ctx as TContext);
+    // The actor comes only from a real context: the caller's, or a static
+    // configured context searched in its own namespace. Without one the
+    // search runs anonymous and getActorId is not called, so a resolver that
+    // reads ambient request state can never lend its actor to a contextless
+    // (possibly cross-namespace) search.
+    // A static namespace that can't be resolved here (a resolver that needs
+    // an active request) counts as not matching: the search runs anonymous.
+    const staticNamespaceMatches = async (target: string): Promise<boolean> => {
+      try {
+        return (await ctxNamespace()) === target;
+      } catch {
+        return false;
+      }
+    };
+    const staticActorOutOfScope =
+      staticCtx !== undefined &&
+      namespaceOverride !== undefined &&
+      config.namespaceProvider?.getActorId !== undefined &&
+      !(await staticNamespaceMatches(namespaceOverride));
+    const actorId =
+      searchCtx === undefined || staticActorOutOfScope
+        ? undefined
+        : await extractActorId(searchCtx as TContext);
 
     const searchParams = {
       ...params,

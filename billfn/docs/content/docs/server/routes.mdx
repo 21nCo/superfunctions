@@ -19,7 +19,7 @@ BillFn’s router divides its surface into:
 | `GET` | `/billfn/entitlements` | Returns billing account, entitlement snapshot, and current subscription |
 | `GET` | `/billfn/usage` | Returns usage and limit information for the account |
 
-`/billfn/entitlements` and `/billfn/usage` resolve the subject from query params or from the configured auth resolver.
+`/billfn/entitlements`, `/billfn/usage` and every write route below act for the subject that `auth.resolveSubject` returns. Without a resolver they answer `401 BILLFN_UNAUTHENTICATED`, unless the host sets `auth.allowClientSubject: true`; the router then takes the body `subject` when it names one, and otherwise the subject in the query params (for reads and writes alike). Only trusted server-to-server callers should use that mode, because any caller can name any account. See [Setup](/docs/server/setup#who-the-router-acts-for).
 
 ## Write Routes
 
@@ -30,7 +30,7 @@ BillFn’s router divides its surface into:
 | `POST` | `/billfn/subscriptions/cancel` | Cancel a subscription when the provider supports it |
 | `POST` | `/billfn/subscriptions/change` | Change a subscription to a target price id |
 | `POST` | `/billfn/subscriptions/resume` | Resume or reactivate a subscription |
-| `POST` | `/billfn/subscriptions/refund` | Create a refund or provider-managed revoke flow |
+| `POST` | `/billfn/subscriptions/refund` | Create a refund or provider-managed revoke flow; answers 403 unless `refunds.authorize` approves the resolved refund target ([Setup](/docs/server/setup#refunds-through-the-router)) |
 | `POST` | `/billfn/subscriptions/sync` | Re-fetch normalized subscription state from the provider |
 | `POST` | `/billfn/purchases/restore` | Restore a purchase into an existing billing account context |
 
@@ -65,9 +65,6 @@ Current provider support:
   "planKey": "pro",
   "provider": "dodo",
   "interval": "month",
-  "subject": {
-    "principalId": "user_123"
-  },
   "customer": {
     "email": "user@example.com",
     "name": "Nucleus User"
@@ -76,6 +73,12 @@ Current provider support:
   "cancelUrl": "https://app.example.com/settings/billing/cancel"
 }
 ```
+
+## Requests
+
+Routes that take a JSON body require a single `content-type` of `application/json` (or another `type/subtype+json`); anything else, such as a cross-site form post sent as `text/plain`, answers `400 BILLFN_VALIDATION_ERROR` before the route acts. Routes without a body, such as `POST /ops/reconciliation/jobs/:jobId/run`, and the provider webhook routes do not check it. A body that middleware already started reading is refused too. Request bodies, webhook deliveries included, are limited to 256 KiB; the webhook ingress applies the same limit before any owner lookup. Checkout `metadata` is an object of at most 20 keys (up to 40 characters each) with string (up to 500 characters), number or boolean values. The host remains responsible for CSRF protection of cookie sessions (see [Server setup](/docs/server/setup#recommended-production-wiring)).
+
+## Responses
 
 Successful responses use the shared envelope shape:
 
@@ -109,5 +112,7 @@ Failures remain envelope-based:
   }
 }
 ```
+
+Error `details` never carry a provider's raw response body or BillFn configuration (bundle ids, catalog price ids); the router leaves them out of the response (BillFn does not log them).
 
 The client SDKs preserve this shape instead of flattening it away.

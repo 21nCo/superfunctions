@@ -136,7 +136,9 @@ function setup(checkout?: BillFnConfig['checkout']) {
     db,
     catalog,
     providers: { dodo: provider('dodo'), apple: provider('apple') },
-    checkout
+    checkout,
+    // These tests name the subject in the request body.
+    auth: { allowClientSubject: true }
   });
   const storedSessions = () => db.findMany<{ priceId: string }>({ model: 'checkoutSessions', where: [], namespace: 'billfn' });
   const storedChangeRequests = () =>

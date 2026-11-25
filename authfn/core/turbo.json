@@ -1,0 +1,66 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "extends": ["//"],
+  "tasks": {
+    "build": {
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/authfn/api-keys/src/**",
+        "$TURBO_ROOT$/authfn/client/src/**",
+        "$TURBO_ROOT$/authfn/email-otp/src/**",
+        "$TURBO_ROOT$/authfn/multi-region/src/**",
+        "$TURBO_ROOT$/authfn/native-handoff/src/**",
+        "$TURBO_ROOT$/authfn/password/src/**",
+        "$TURBO_ROOT$/authfn/social-oauth/src/**",
+        "$TURBO_ROOT$/authfn/two-factor/src/**",
+        "$TURBO_ROOT$/authfn/docs/static/llms-full.txt",
+        "$TURBO_ROOT$/packages/cli/src/**"
+      ]
+    },
+    "typecheck": {
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/authfn/api-keys/src/**",
+        "$TURBO_ROOT$/authfn/client/src/**",
+        "$TURBO_ROOT$/authfn/email-otp/src/**",
+        "$TURBO_ROOT$/authfn/multi-region/src/**",
+        "$TURBO_ROOT$/authfn/native-handoff/src/**",
+        "$TURBO_ROOT$/authfn/password/src/**",
+        "$TURBO_ROOT$/authfn/social-oauth/src/**",
+        "$TURBO_ROOT$/authfn/two-factor/src/**",
+        "$TURBO_ROOT$/authfn/docs/static/llms-full.txt",
+        "$TURBO_ROOT$/packages/cli/src/**"
+      ]
+    },
+    "test": {
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/authfn/api-keys/src/**",
+        "$TURBO_ROOT$/authfn/client/src/**",
+        "$TURBO_ROOT$/authfn/email-otp/src/**",
+        "$TURBO_ROOT$/authfn/multi-region/src/**",
+        "$TURBO_ROOT$/authfn/native-handoff/src/**",
+        "$TURBO_ROOT$/authfn/password/src/**",
+        "$TURBO_ROOT$/authfn/social-oauth/src/**",
+        "$TURBO_ROOT$/authfn/two-factor/src/**",
+        "$TURBO_ROOT$/authfn/docs/static/llms-full.txt",
+        "$TURBO_ROOT$/packages/cli/src/**"
+      ]
+    },
+    "lint": {
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/authfn/api-keys/src/**",
+        "$TURBO_ROOT$/authfn/client/src/**",
+        "$TURBO_ROOT$/authfn/email-otp/src/**",
+        "$TURBO_ROOT$/authfn/multi-region/src/**",
+        "$TURBO_ROOT$/authfn/native-handoff/src/**",
+        "$TURBO_ROOT$/authfn/password/src/**",
+        "$TURBO_ROOT$/authfn/social-oauth/src/**",
+        "$TURBO_ROOT$/authfn/two-factor/src/**",
+        "$TURBO_ROOT$/authfn/docs/static/llms-full.txt",
+        "$TURBO_ROOT$/packages/cli/src/**"
+      ]
+    }
+  }
+}

@@ -1,3 +1,5 @@
+import type { HarnessProfile } from "./panel/types.js";
+
 export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
 
@@ -231,7 +233,11 @@ export interface ReviewFnConfig {
   version: 1;
   retainTranscript?: boolean;
   profile: string;
-  harness: { adapter: string; version: string; executable?: string };
+  /**
+   * `profile` and `profileDefinition` are never read from a configuration file: the panel sets them from a slot's
+   * `harness.profile` and the trusted panel policy's matching profile, for a profile-driven harness such as `cli`.
+   */
+  harness: { adapter: string; version: string; executable?: string; profile?: string; profileDefinition?: HarnessProfile };
   inference: { provider: string; model: string; auth: string; credentialEnv?: string };
   context: Array<{ adapter: string; account?: string; expectedWorkspace?: string; issue?: string; paths?: string[] }>;
   review: { categories: Requirement["category"][]; evidenceRequired: boolean };
@@ -262,7 +268,8 @@ export interface PreflightDiagnostic {
 
 export interface PreflightResult {
   ok: boolean;
-  resolved?: { provider: string; model: string; auth: string; harnessVersion: string };
+  /** `modelObserved: true` means the harness observed `model` from the agent itself; a harness profile slot's model is verified only then. */
+  resolved?: { provider: string; model: string; auth: string; harnessVersion: string; modelObserved?: boolean };
   diagnostics: PreflightDiagnostic[];
 }
 

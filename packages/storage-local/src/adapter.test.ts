@@ -262,6 +262,48 @@ describe('@superfunctions/storage-local', () => {
     });
   });
 
+  describe('upload streams', () => {
+    it('makes the object visible only on close and leaves nothing on abort', async () => {
+      const adapter = createLocalStorageAdapter({ rootDir: testDir });
+      const stream = await adapter.openUploadStream!({ key: 'a/part1' });
+      const writer = stream.getWriter();
+      await writer.write(new Uint8Array([1, 2, 3]));
+      await expect(adapter.statObject({ key: 'a/part1' })).rejects.toThrow();
+      await writer.abort(new Error('too large'));
+      const { readdir } = await import('node:fs/promises');
+      expect(await readdir(join(testDir, 'a'))).toEqual([]);
+
+      const ok = (await adapter.openUploadStream!({ key: 'a/part1' })).getWriter();
+      await ok.write(new Uint8Array([1, 2, 3]));
+      await ok.close();
+      expect((await adapter.statObject({ key: 'a/part1' })).size).toBe(3);
+      expect(await readdir(join(testDir, 'a'))).toEqual(['part1']);
+    });
+
+    it('removes the temporary file when a write fails and the stream errors', async () => {
+      const adapter = createLocalStorageAdapter({ rootDir: testDir });
+      const { readdir, rm: remove } = await import('node:fs/promises');
+      const stream = await adapter.openUploadStream!({ key: 'b/part1' });
+      const writer = stream.getWriter();
+      await writer.write(new Uint8Array([1]));
+      // Remove the directory under the stream so the next write or close fails.
+      await remove(join(testDir, 'b'), { recursive: true, force: true });
+      await writer.close().catch(() => {});
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      const leftovers = await readdir(testDir, { recursive: true }).catch(() => []);
+      expect(leftovers.filter((name) => String(name).endsWith('.tmp'))).toEqual([]);
+    });
+
+    it('keeps a long final segment within the name limit', async () => {
+      const adapter = createLocalStorageAdapter({ rootDir: testDir });
+      const key = `c/${'n'.repeat(240)}`;
+      const writer = (await adapter.openUploadStream!({ key })).getWriter();
+      await writer.write(new Uint8Array([1, 2]));
+      await writer.close();
+      expect((await adapter.statObject({ key })).size).toBe(2);
+    });
+  });
+
   describe('Security - Path traversal prevention', () => {
     it('should prevent path traversal with ../', async () => {
       const adapter = createLocalStorageAdapter({ rootDir: testDir });
@@ -313,6 +355,38 @@ describe('@superfunctions/storage-local', () => {
       } finally {
         await rm(outsideDir, { recursive: true, force: true });
       }
+    });
+
+    it('should refuse dot segments that stay inside the root', async () => {
+      // Regression for FILE-30 F-01: `t1/bob/f/v-../../../alice/f/v-report.txt`
+      // normalizes to a path inside the root, so it used to name alice's object.
+      const adapter = createLocalStorageAdapter({ rootDir: testDir });
+      await mkdir(join(testDir, 'alice'), { recursive: true });
+      await writeFile(join(testDir, 'alice', 'report.txt'), 'alice data');
+
+      const keys = ['bob/x/../../alice/report.txt', './alice/report.txt', 'alice/./report.txt'];
+      for (const key of keys) {
+        await expect(adapter.statObject({ key })).rejects.toThrow('path traversal');
+        await expect(adapter.deleteObject({ key })).rejects.toThrow('path traversal');
+      }
+      expect(await readFile(join(testDir, 'alice', 'report.txt'), 'utf8')).toBe('alice data');
+    });
+
+    it('should treat a backslash as part of a name on POSIX', async () => {
+      if (process.platform === 'win32') return;
+      const adapter = createLocalStorageAdapter({ rootDir: testDir });
+      await writeFile(join(testDir, 'archive\\.\\report.txt'), 'literal name');
+      const stat = await adapter.statObject({ key: 'archive\\.\\report.txt' });
+      expect(stat.size).toBe(12);
+    });
+
+    it('should still allow dots inside a segment', async () => {
+      const adapter = createLocalStorageAdapter({ rootDir: testDir });
+      await mkdir(join(testDir, 'acme.com'), { recursive: true });
+      await writeFile(join(testDir, 'acme.com', 'a..b.txt'), 'content');
+
+      const stat = await adapter.statObject({ key: 'acme.com/a..b.txt' });
+      expect(stat.size).toBe(7);
     });
 
     it('should allow safe nested paths', async () => {

@@ -288,6 +288,19 @@ function createApp(options: {
   }
 
   async function readBytes(fileId: string, principalId: string | undefined) {
+    if (!principalId || principalId === 'anonymous') {
+      // Nobody owns an anonymous upload (FILE-30 F-02), so an unauthenticated
+      // caller cannot read a private one back; read the stored object instead.
+      await expect(fileFn.services.files.getDownloadStream(fileId, undefined, { principalId }))
+        .rejects.toMatchObject({ code: 'FILEFN_FORBIDDEN' });
+      const file = await database.findOne<{ currentVersionId: string }>({
+        model: 'files', where: [{ field: 'fileId', operator: 'eq', value: fileId }], namespace: 'filefn',
+      });
+      const version = await database.findOne<{ storageKey: string }>({
+        model: 'fileVersions', where: [{ field: 'versionId', operator: 'eq', value: file!.currentVersionId }], namespace: 'filefn',
+      });
+      return Buffer.from(fixture.objects.get(version!.storageKey)!).toString();
+    }
     const download = await fileFn.services.files.getDownloadStream(fileId, undefined, { principalId });
     return new Response(download.stream).text();
   }

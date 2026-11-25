@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 export interface PolicyStoragePathContext {
   fileName: string;
   principalId?: string;
@@ -86,6 +87,81 @@ export function validatePolicyConstraints(
   return { valid: true };
 }
 
+// C0 controls, DEL and C1 controls.
+// eslint-disable-next-line no-control-regex
+const STORAGE_KEY_CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/g;
+
+function percentEncode(char: string): string {
+  return Array.from(new TextEncoder().encode(char), (byte) => `%${byte.toString(16).toUpperCase().padStart(2, '0')}`).join('');
+}
+
+/**
+ * Turns one value into a single storage key segment without collisions:
+ * `%`, path separators and control characters are percent-encoded, as are the
+ * dots of a leading run of two or more dots and a segment that is exactly `.`.
+ * Everything else is kept as it is (dots inside a name, underscores, spaces),
+ * so safe IDs keep their own segment and distinct IDs never share one (for
+ * example `team/east` becomes `team%2Feast`, never `team_east`). An empty
+ * value becomes `%20`, which no other value produces.
+ */
+export function sanitizeStorageKeySegment(value: string): string {
+  const encoded = String(value)
+    .replace(/[%\\/\u0000-\u001f\u007f-\u009f]/g, percentEncode)
+    .replace(/^\.\.+/, (dots) => '%2E'.repeat(dots.length))
+    // A leading drive letter and colon (`C:`), which Windows would read as a drive.
+    .replace(/^([A-Za-z]):/, '$1%3A');
+  // `%20` is never produced for a nonempty value (a space is kept verbatim and
+  // `%` itself is encoded), so it marks an empty value without colliding.
+  if (encoded.length === 0) return '%20';
+  if (encoded === '.') return '%2E';
+  return encoded;
+}
+
+/** Longest tenant, principal, file ID or file-name part of a default key, in UTF-8 bytes. */
+const MAX_KEY_PART_BYTES = 120;
+
+/**
+ * A sanitized key part, shortened when it is longer than MAX_KEY_PART_BYTES so
+ * each key segment stays within the 255-byte name limit of common
+ * filesystems. A shortened part keeps its start, then `%~` and 128 bits of
+ * the SHA-256 of the whole part, then (for file names) its extension. `%~`
+ * never appears in a sanitized value (`%` is always encoded), so a shortened
+ * part can never equal another ID's segment.
+ */
+function boundedKeyPart(value: string, keepExtension: boolean): string {
+  const sanitized = sanitizeStorageKeySegment(value);
+  const encoder = new TextEncoder();
+  if (encoder.encode(sanitized).length <= MAX_KEY_PART_BYTES) return sanitized;
+  const extension = keepExtension ? /\.[A-Za-z0-9]{1,10}$/.exec(sanitized)?.[0] ?? '' : '';
+  const suffix = `%~${createHash('sha256').update(sanitized).digest('hex').slice(0, 32)}${extension}`;
+  let head = '';
+  for (const char of sanitized) {
+    if (encoder.encode(head + char).length + suffix.length > MAX_KEY_PART_BYTES) break;
+    head += char;
+  }
+  // Never end the head inside a percent-escape.
+  head = head.replace(/%[0-9A-F]?$/, '');
+  return `${head}${suffix}`;
+}
+
+/**
+ * Returns why a storage key is unsafe, or null when it is safe. A safe key is
+ * relative, uses `/` only, has no empty, `.` or `..` segment and no control
+ * characters, so no adapter can resolve it outside its own path.
+ */
+export function unsafeStorageKeyReason(key: string): string | null {
+  if (typeof key !== 'string' || key.length === 0) return 'empty key';
+  if (new RegExp(STORAGE_KEY_CONTROL_CHARACTERS.source).test(key)) return 'control character';
+  if (key.includes('\\')) return 'backslash';
+  // Slash-rooted, or starting with a Windows drive (`C:/x` or drive-relative `C:x`).
+  if (key.startsWith('/') || /^[A-Za-z]:/.test(key)) return 'absolute key';
+  for (const segment of key.split('/')) {
+    if (segment === '') return 'empty segment';
+    if (segment === '.' || segment === '..') return 'dot segment';
+  }
+  return null;
+}
+
 export function computeStoragePath(
   policy: Policy,
   ctx: PolicyStoragePathContext
@@ -93,18 +169,11 @@ export function computeStoragePath(
   if (policy.storagePath) {
     return policy.storagePath(ctx);
   }
-  const sanitizePathSegment = (value: string): string =>
-    value
-      .replace(/[\\/]+/g, '_')
-      .replace(/\.\.+/g, '_')
-      .replace(/[\u0000-\u001f\u007f]+/g, '')
-      .replace(/_+/g, '_')
-      .trim() || '_';
   const parts: string[] = [];
-  if (ctx.tenantId) parts.push(sanitizePathSegment(ctx.tenantId));
-  if (ctx.principalId) parts.push(sanitizePathSegment(ctx.principalId));
-  parts.push(sanitizePathSegment(ctx.fileId));
-  parts.push(`${sanitizePathSegment(ctx.versionId)}-${sanitizePathSegment(ctx.fileName)}`);
+  if (ctx.tenantId) parts.push(boundedKeyPart(ctx.tenantId, false));
+  if (ctx.principalId) parts.push(boundedKeyPart(ctx.principalId, false));
+  parts.push(boundedKeyPart(ctx.fileId, false));
+  parts.push(`${sanitizeStorageKeySegment(ctx.versionId)}-${boundedKeyPart(ctx.fileName, true)}`);
   return parts.join('/');
 }
 
@@ -128,6 +197,11 @@ export function matchesContentType(pattern: string, mimeType: string): boolean {
 
   if (normalizedPattern.endsWith('/*')) {
     const prefix = normalizedPattern.slice(0, normalizedPattern.length - 1);
+    // SVG is a document that can run script, not a raster image: `image/*`
+    // does not admit it. A policy that wants SVG names `image/svg+xml`.
+    if (prefix === 'image/' && normalizedMimeType.split(';', 1)[0].trim() === 'image/svg+xml') {
+      return false;
+    }
     return normalizedMimeType.startsWith(prefix);
   }
 

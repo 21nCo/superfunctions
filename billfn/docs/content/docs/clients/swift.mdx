@@ -97,7 +97,11 @@ In an embedded web app, `@billfn/swift-bridge`'s `checkout()`, `restore()` and `
 
 On the web side, call `billing.subscribe(handler)` when the page starts showing billing state, before its first StoreKit request and whether or not it starts a checkout, and keep the subscription while that state is shown; subscribing needs no handshake. Its `transaction.updated` events carry `{ outcome }`, and they are the only way a `pending` checkout (Ask to Buy) or one that ended with `BRIDGE_INTERACTIVE_TIMEOUT` reaches the web app once it completes; the bridge does not replay events sent before the subscription. The [multi-region Workers recipe](/docs/recipes/multi-region-workers#apple-storekit-2-and-the-apple-helpers) shows such a module.
 
+The dispatcher answers any request it is handed, so the app's `WKScriptMessageHandler` must hand it only messages from the page it trusts. Check `message.frameInfo.isMainFrame` and that `message.frameInfo.securityOrigin` matches the trusted origin exactly (its `protocol`, `host` and `port`, where `port` 0 means the scheme's default) before passing the message on, and ignore anything else: a third-party frame or a navigated-away page could otherwise start a StoreKit purchase (the purchase still needs the user's App Store confirmation).
+
 ## Embedded web example
+
+The example assumes the bridge web view never leaves the trusted origin: its `WKNavigationDelegate` refuses main-frame navigations elsewhere. Under that assumption the check below is enough, since the page that receives a delivery is always the trusted one.
 
 ```swift
 import BillFnStoreKit
@@ -111,12 +115,16 @@ let dispatcher = BillFnBridgeDispatcher(
 )
 
 // Forward each processed transaction to the web view as a transaction.updated event.
+// The web view stays on the trusted origin (see above), so the trusted page receives it.
 Task {
     for await outcome in storeKit.outcomes {
+        guard isTrustedPage(webView.url) else { continue } // your trusted-origin check
         postToWebView(dispatcher.transactionEvent(outcome)) // your WKWebView message delivery
     }
 }
 ```
+
+Outgoing messages carry transaction identifiers, the app account token and billing state, so they need the same care as incoming ones: post `transaction.updated` events and the replies to bridge requests only to the trusted main-frame document, and drop a reply when the page that asked has navigated away. The simplest way is to keep the bridge web view on the trusted origin (refuse other navigations in `WKNavigationDelegate`). A web view that may navigate elsewhere cannot rely on a `webView.url` check before sending, because a delivery can land after the page changes: it should stop delivering bridge messages as soon as a navigation starts, and deliver only to a document it has confirmed as trusted.
 
 The full sample lives in [embedded-web.swift](https://github.com/21nCo/super-functions/blob/dev/billfn/swift/examples/embedded-web.swift).
 

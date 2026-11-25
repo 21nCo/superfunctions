@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_CONFIG, DEFAULT_POLICY, ReviewCoordinator, type HarnessOutput } from "@superfunctions/reviewfn-core";
+import { DEFAULT_CONFIG, DEFAULT_POLICY, ReviewCoordinator, harnessAuthDiagnostics, type HarnessOutput } from "@superfunctions/reviewfn-core";
 import { FakeContextAdapter, FakeExecutionAdapter, FakeHarnessAdapter, FakePublisher, FakeSourceControlAdapter, MemoryArtifactStore } from "../src/index.js";
 
 const manifest = { version: 1 as const, sources: [{ id: "issue:1", type: "issue" as const, retrievedAt: "2026-01-01T00:00:00.000Z", digest: "d".repeat(64), status: "available" as const, content: "must return value" }], selection: { candidates: ["ISS-1"], selected: ["issue:1"], rule: "explicit" }, limits: { maxSources: 10, maxBytes: 1000, maxDepth: 2 }, incompleteReasons: [] };
@@ -124,4 +124,18 @@ it.each(["api-key", "chatgpt", "action-proxy"])("checks PR authentication before
   const coordinator = new ReviewCoordinator({ sourceControl: new FakeSourceControlAdapter(), contexts: [new FakeContextAdapter("fixture", manifest)], harness: { capabilities: { ...harness.capabilities, id: "codex" }, preflight: harness.preflight.bind(harness), run: harness.run.bind(harness) }, execution: new FakeExecutionAdapter(), artifacts: new MemoryArtifactStore() });
   const diagnostics = await coordinator.preflight({ root: ".", base: "base", head: "head", pullRequest: 177, config: { ...config, inference: { ...config.inference, auth } }, policy: DEFAULT_POLICY });
   expect(diagnostics.some(item => item.code === "REVIEWFN_PR_AUTH_REQUIRED")).toBe(auth !== "action-proxy");
+});
+
+it.each(["cli", "claude-code"])("never preflights a %s harness that refuses pull-request review", async id => {
+  for (const auth of ["none", "api-key", "chatgpt", "action-proxy"]) expect(harnessAuthDiagnostics({ pullRequest: 177 }, id, auth)).toEqual([expect.objectContaining({ code: "REVIEWFN_PR_AUTH_REQUIRED", level: "error" })]);
+  expect(harnessAuthDiagnostics({}, id, "none")).toEqual([]);
+  const harness = new FakeHarnessAdapter(output);
+  let preflights = 0;
+  const preflight: typeof harness.preflight = (...args) => { preflights += 1; return harness.preflight(...args); };
+  const coordinator = new ReviewCoordinator({ sourceControl: new FakeSourceControlAdapter(), contexts: [new FakeContextAdapter("fixture", manifest)], harness: { capabilities: { ...harness.capabilities, id }, preflight, run: harness.run.bind(harness) }, execution: new FakeExecutionAdapter(), artifacts: new MemoryArtifactStore() });
+  const refused = await coordinator.preflight({ root: ".", base: "base", head: "head", pullRequest: 177, config, policy: DEFAULT_POLICY });
+  expect(refused.filter(item => item.code === "REVIEWFN_PR_AUTH_REQUIRED")).toHaveLength(1);
+  expect(preflights).toBe(0);
+  await coordinator.preflight({ root: ".", base: "base", head: "head", config, policy: DEFAULT_POLICY });
+  expect(preflights).toBe(1);
 });
