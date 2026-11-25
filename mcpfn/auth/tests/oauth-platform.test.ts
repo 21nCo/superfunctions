@@ -1346,6 +1346,26 @@ describe("McpFn hosted authorization compatibility", () => {
     expect(authorize).toHaveBeenCalledOnce();
   });
 
+  it("checks a long malformed Content-Type in linear time", async () => {
+    const clientId = "https://clients.example.com/client.json";
+    const contentType = `application/json${"; ".repeat(5_000)}"`;
+    const compatibility = createMcpAuthorizationCompatibilityHandler({
+      issuer,
+      clients: { resolve: async () => null },
+      authorize: async () => Response.json({ ok: true }),
+      tokenAuthority: { exchangeAuthorizationCode: async () => ({ access_token: "opaque", token_type: "Bearer" }) },
+      clientMetadataDocuments: {
+        enabled: true,
+        allow: async () => true,
+        fetch: async () => new Response(JSON.stringify({ client_id: clientId, redirect_uris: ["https://client.example.com/callback"], token_endpoint_auth_method: "none" }), { headers: { "content-type": contentType } }),
+      },
+    });
+    const started = performance.now();
+    const response = await compatibility(new Request(authorizationUrl(clientId, "https://client.example.com/callback")));
+    expect(response.status).toBeGreaterThanOrEqual(400);
+    expect(performance.now() - started).toBeLessThan(1_000);
+  });
+
   it("maps metadata document failures to invalid_client at credential endpoints", async () => {
     const clientId = "https://clients.example.com/client.json";
     const compatibility = createMcpAuthorizationCompatibilityHandler({

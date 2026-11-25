@@ -1611,7 +1611,7 @@ async function assertClientMetadataResponse(response: Response): Promise<void> {
  * (joined with commas) and stray quotes are refused.
  */
 const SINGLE_MEDIA_TYPE =
-  /^\s*([!#$%&'*+.^_`|~0-9a-z-]+\/[!#$%&'*+.^_`|~0-9a-z-]+)\s*(?:;\s*(?:[!#$%&'*+.^_`|~0-9a-z-]+=(?:[!#$%&'*+.^_`|~0-9a-z-]+|"(?:[^"\\]|\\.)*"))?\s*)*$/i;
+  /^\s*([!#$%&'*+.^_`|~0-9a-z-]+\/[!#$%&'*+.^_`|~0-9a-z-]+)\s*(?:;\s*(?:[!#$%&'*+.^_`|~0-9a-z-]+=(?:[!#$%&'*+.^_`|~0-9a-z-]+|"(?:[^"\\]|\\.)*")\s*)?)*$/i;
 
 function singleMediaType(contentType: string): string | undefined {
   return SINGLE_MEDIA_TYPE.exec(contentType)?.[1]?.toLowerCase();
