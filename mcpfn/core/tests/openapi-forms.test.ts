@@ -418,7 +418,7 @@ describe("fromOpenAPI skip reasons", () => {
       query: { type: "object", properties: { proto: { type: "string" } }, additionalProperties: false },
     });
     expectArguments(plain.inputSchema, { valid: [{}, { query: { proto: "x" } }], invalid: [{ query: { other: "x" } }] });
-    for (const [location, name] of [["path", "__proto__"], ["header", "__PROTO__"]] as const) {
+    for (const [location, name] of [["path", "__proto__"], ["header", "__proto__"]] as const) {
       const result = fromOpenAPI({
         openapi: "3.1.0",
         paths: {
@@ -434,6 +434,13 @@ describe("fromOpenAPI skip reasons", () => {
       expect(result.tools).toEqual([]);
       expect(result.skipped).toEqual([expect.objectContaining({ code: "unsupported-parameter-name" })]);
     }
+    // Only that exact key is ignored: another spelling of the header stays an ordinary property.
+    const spelled = fromOpenAPI({
+      openapi: "3.1.0",
+      paths: { "/items": { get: { operationId: "getItem", parameters: [{ name: "__PROTO__", in: "header", required: true, schema: { type: "string" } }], responses: { "200": { description: "OK" } } } } },
+    }, { executor: recordingExecutor() });
+    expect(spelled.skipped).toEqual([]);
+    expectArguments(tool(spelled.tools, "getItem").inputSchema, { valid: [{ header: { __PROTO__: "ok" } }], invalid: [{}, { header: { __PROTO__: 1 } }] });
   });
 
   it("skips each non-default parameter style", () => {
@@ -1691,6 +1698,24 @@ describe("fromOpenAPI bounded and dialect-aware conversion", () => {
       ["ref_m0", "unresolved-ref", "reference #/components/parameters/gone has no target"],
       ["ref_m1", "unresolved-ref", "reference #/components/parameters/gone has no target"],
     ]);
+  });
+
+  it("decodes a shared alias entry once and charges every resolution, ignored headers included, to the document total", () => {
+    const parameters: Record<string, unknown> = {};
+    const shared = Array.from({ length: 1_000 }, (_, index) => {
+      parameters[`h${index}`] = { name: `Proxy-H${index}`, in: "header", schema: { type: "string" } };
+      return { $ref: `#/components/parameters/h${index}` };
+    });
+    const item = { get: { parameters: shared, responses: ok } };
+    const paths = Object.fromEntries(Array.from({ length: 2_000 }, (_, index) => [`/p${index}`, item]));
+    const started = performance.now();
+    const result = fromOpenAPI({ openapi: "3.1.0", paths, components: { parameters } }, options());
+    expect(performance.now() - started).toBeLessThan(5_000);
+    // 1,000 resolutions per operation over a document of a few thousand values: the total stops them.
+    const codes = new Set(result.skipped.map((entry) => entry.code));
+    expect(codes).toEqual(new Set(["schema-too-large"]));
+    expect(result.tools.length).toBeGreaterThan(0);
+    expect(result.tools.length + result.skipped.length).toBe(2_000);
   });
 
   it("charges every closure walk for the edges it queues, so wrappers sharing a wide hub with an invalid child stop once the total is spent", () => {

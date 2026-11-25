@@ -169,8 +169,8 @@ describe("fromOpenAPI under @cfworker/json-schema", () => {
       ...chain("Q", 2_500, (next) => ({ type: "object", properties: { next }, allOf: [{ required: ["next"] }] })),
       ...chain("Y", 2_500, (next) => ({ required: ["next"], properties: { next }, allOf: [{ type: ["object", "null"] }, { type: ["object", "string"] }] })),
       ...chain("M", 2_500, (items) => ({ allOf: [{ type: "array", minItems: 1 }, { items }] })),
-      // anyOf need not hold, and a nullable type lets null stop the chain.
-      ...chain("V", 2_500, (next) => ({ type: "object", properties: { next }, anyOf: [{ required: ["next"] }] })),
+      // An anyOf with another open member need not hold, and a nullable type lets null stop the chain.
+      ...chain("V", 2_500, (next) => ({ type: "object", properties: { next }, anyOf: [{ required: ["next"] }, { maxProperties: 0 }] })),
       ...chain("W", 2_500, (next) => ({ required: ["next"], properties: { next }, allOf: [{ type: ["object", "null"] }] })),
       // A forced edge split across a $ref is not analysed (deferred): the registry reports a value too deep to validate.
       ...chain("X", 2_500, (next) => ({ allOf: [{ $ref: "#/components/schemas/Base" }], required: ["next"], properties: { next } })),
@@ -357,6 +357,11 @@ describe("fromOpenAPI under @cfworker/json-schema", () => {
       Num: { allOf: [{ type: ["object", "number"] }, { type: ["object", "integer"] }], required: ["next"], properties: { next: { $ref: "#/components/schemas/Num" } } },
       Branch: { anyOf: [{ type: "string" }, { $ref: "#/components/schemas/R0" }] },
       Holder: { type: "object", properties: { deep: { $ref: "#/components/schemas/R0" } } },
+      // A branch every valid value must take still stacks.
+      ...chain("S", 2_500, (next) => ({ anyOf: [{ type: "object", required: ["next"], properties: { next } }] })),
+      ...chain("G", 2_500, (next) => ({ oneOf: [{ type: "object", required: ["next"], properties: { next } }] })),
+      ...chain("K", 2_500, (next) => ({ type: "object", anyOf: [{ type: "string" }, { required: ["next"], properties: { next } }] })),
+      ...chain("F", 2_500, (next) => ({ if: true, then: { type: "object", required: ["next"], properties: { next } } })),
     };
     const post = (operationId: string, bodyRequired: boolean, content: Record<string, unknown>) => ({
       post: { operationId, requestBody: { required: bodyRequired, content }, responses: { "204": { description: "Done" } } },
@@ -372,18 +377,27 @@ describe("fromOpenAPI under @cfworker/json-schema", () => {
           "/branch": post("shallowBranch", true, { "application/json": ref("Branch") }),
           "/holder": post("optionalProperty", true, { "application/json": ref("Holder") }),
           "/required": post("requiredChain", true, { "application/json": ref("R0") }),
+          "/sole-any": post("soleAnyOf", true, { "application/json": ref("S0") }),
+          "/sole-one": post("soleOneOf", true, { "application/json": ref("G0") }),
+          "/typed-any": post("contradictedAnyOf", true, { "application/json": ref("K0") }),
+          "/if": post("alwaysIf", true, { "application/json": ref("F0") }),
+          "/fallback": post("soleAnyOfFallback", true, { "application/json": ref("S0"), "application/example+json": { schema: { type: "string" } } }),
+          "/out": { get: { operationId: "soleAnyOfOutput", responses: json({ $ref: "#/components/schemas/S0" }) } },
         },
         components: { schemas },
       },
       { executor: recordingExecutor(), allowMutations: true },
     );
-    expect(verdicts(result)).toEqual([tooDeep("requiredChain")]);
+    expect(verdicts(result)).toEqual([
+      tooDeep("alwaysIf"), tooDeep("contradictedAnyOf"), tooDeep("requiredChain"), tooDeep("soleAnyOf"), tooDeep("soleAnyOfOutput"), tooDeep("soleOneOf"),
+    ]);
     expect(result.tools.map(({ name, operation }) => [name, operation.requestBody?.contentType])).toEqual([
       ["optionalSole", "application/json"],
       ["optionalMedia", "application/json"],
       ["integerAllOf", "application/json"],
       ["shallowBranch", "application/json"],
       ["optionalProperty", "application/json"],
+      ["soleAnyOfFallback", "application/example+json"],
     ]);
     for (const name of ["optionalSole", "optionalMedia", "integerAllOf", "shallowBranch", "optionalProperty"]) {
       expect(result.registry.has(name)).toBe(true);

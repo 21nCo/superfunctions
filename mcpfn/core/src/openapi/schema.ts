@@ -522,6 +522,11 @@ export class SchemaConverter {
     this.total.chargeNodes(nodes);
   }
 
+  /** Charge `nodes` of other document-wide work (following component aliases) to the call's total. */
+  chargeWork(nodes: number): void {
+    this.total.chargeNodes(nodes);
+  }
+
   /** Give back a catalog copy charged for a tool that was then not registered. */
   releaseCopy(nodes: number): void {
     this.total.release(nodes);
@@ -1791,8 +1796,12 @@ export class SchemaConverter {
         visited += whole.nodes;
         if (visited >= POSITION_CHARGE_BATCH) flush();
       }
-      for (const member of arrayOf(node.allOf)) visit(member, frame + 1, local + 1, own, must, whole);
-      forEachInPlace(node, (member) => visit(member, frame + 1, local + 1, own, false), false);
+      // A branch every valid value must take applies like an `allOf` member.
+      const taken = takenBranches(node);
+      for (const member of [...arrayOf(node.allOf), ...taken]) visit(member, frame + 1, local + 1, own, must, whole);
+      forEachInPlace(node, (member) => {
+        if (!taken.includes(member)) visit(member, frame + 1, local + 1, own, false);
+      }, false);
       forEachChild(
         node,
         (member, forced) => (forced && own && must ? visit(member, frame + 1, 1, true, true) : visit(member, 1, 1, false, false)),
@@ -2154,12 +2163,12 @@ function conjunction(schema: JsonObject): Conjunction {
       }
     }
     if (node.type !== undefined) {
-      const listed = typeof node.type === "string" ? [node.type] : arrayOf(node.type);
-      const own = new Set(listed.flatMap((type) => kindsOfType(type)));
+      const own = new Set(typeEntries(node.type).flatMap((type) => kindsOfType(type)));
       result.types = result.types === undefined ? own : new Set([...result.types].filter((kind) => own.has(kind)));
     }
     if (typeof node.minItems === "number") result.minItems = Math.max(result.minItems, node.minItems);
-    for (const member of arrayOf(node.allOf)) pending.push(member);
+    result.nodes += arrayOf(node.anyOf).length + arrayOf(node.oneOf).length;
+    for (const member of [...arrayOf(node.allOf), ...takenBranches(node)]) pending.push(member);
   }
   return result;
 }
@@ -2220,6 +2229,38 @@ function forEachChild(
   } else {
     visit(schema.items, minItems >= 1);
   }
+}
+
+/**
+ * The in-place branches of `schema` every value it accepts must satisfy:
+ * the only member of `anyOf` or `oneOf` whose `type` does not contradict the
+ * schema's own `type`, and `then` under an always-true `if` (`else` under
+ * `false`). At most three, each read where the schema is.
+ */
+function takenBranches(schema: JsonObject): unknown[] {
+  const taken: unknown[] = [];
+  const own = schema.type === undefined ? undefined : new Set(typeEntries(schema.type).flatMap((type) => kindsOfType(type)));
+  for (const keyword of ["anyOf", "oneOf"] as const) {
+    let open: unknown;
+    let count = 0;
+    for (const member of arrayOf(schema[keyword])) {
+      if (member === false) continue;
+      if (own !== undefined && isObject(member) && member.type !== undefined &&
+        !typeEntries(member.type).some((type) => kindsOfType(type).some((kind) => own.has(kind)))) continue;
+      open = member;
+      count += 1;
+      if (count > 1) break;
+    }
+    if (count === 1) taken.push(open);
+  }
+  const always = schema.if === true || (isObject(schema.if) && Object.keys(schema.if).length === 0);
+  if (always && schema.then !== undefined) taken.push(schema.then);
+  if (schema.if === false && schema.else !== undefined) taken.push(schema.else);
+  return taken;
+}
+
+function typeEntries(type: unknown): unknown[] {
+  return typeof type === "string" ? [type] : arrayOf(type);
 }
 
 /** Whether a conjunction accepts only values of JSON type `type` by its `type`s. */
