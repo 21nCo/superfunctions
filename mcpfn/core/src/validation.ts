@@ -66,6 +66,9 @@ function createAjv(): Ajv {
     // Draft-07 requires sibling keywords next to $ref to be ignored. Ajv's
     // newer default extends that dialect; keep both engines on the spec rule.
     ignoreKeywordsWithRef: true,
+    // Read own properties only, as @cfworker/json-schema (4.1.6 and later)
+    // does: an inherited name such as `toString` does not satisfy `required`.
+    ownProperties: true,
     logger: false,
     // Registration compiles every tool schema eagerly. Ajv's optimisation
     // pass over the generated code costs more than it saves for these small

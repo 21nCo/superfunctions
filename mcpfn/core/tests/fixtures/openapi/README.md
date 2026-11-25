@@ -8,11 +8,13 @@
   that stay supported, to show the classification both ways.
   `skip-nonproductive-recursion.json` also keeps a schema that recurses
   through a property, which stays supported.
-  `skip-prototype-parameter-name.json` also keeps a parameter with an
-  ordinary name, which stays supported.
-  `skip-prototype-property-name.json` declares a `__proto__` property in a
-  body, a nested component and a response, and keeps a body with an
-  ordinary name, which stays supported.
+  `skip-prototype-parameter-name.json` has an optional and a required
+  `__proto__` parameter and keeps a parameter with an ordinary name, which
+  stays supported.
+  `skip-prototype-property-name.json` declares or requires `__proto__` in a
+  body, a nested component, a response, a `required` list alone, across
+  `allOf` members and as an optional `true` property, and keeps a body with
+  an ordinary name, which stays supported.
 - `skip-access-flag-*.json` cover the readOnly (input) and writeOnly (output)
   projection rule. A flagged property is left out only along a plain chain
   (`properties`, one `items` schema, a schema `additionalProperties`,

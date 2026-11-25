@@ -449,18 +449,17 @@ describe("fromOpenAPI under @cfworker/json-schema", () => {
     expectArguments(tool(result.tools, "integerAllOf").inputSchema, { valid: [{ body: 1 }, { body: { next: 2 } }], invalid: [{ body: 1.5 }, { body: {} }] });
   }, 120_000);
 
-  it("stacks every declared property of a closed object minProperties forces, and not names every object inherits", () => {
+  it("stacks every declared property of a closed object minProperties forces, and every required name as an own property", () => {
     const closed = (next: unknown) => ({ type: "object", additionalProperties: false, minProperties: 1, properties: { next } });
     const schemas = {
       ...chain("C", 2_500, closed),
       // A second declared name or an open object lets a valid value leave `next` out.
       ...chain("D", 2_500, (next) => ({ type: "object", additionalProperties: false, minProperties: 1, properties: { next, v: { type: "integer" } } })),
       ...chain("O", 2_500, (next) => ({ type: "object", minProperties: 1, properties: { next } })),
-      // `toString` is found on every object without an own property, so nothing is visited.
+      // A required name is an own property, `toString` included, so these chains never end.
       Inherited: { anyOf: [{ type: "object", required: ["toString"], additionalProperties: { $ref: "#/components/schemas/Inherited" } }] },
       Pattern: { type: "object", required: ["toString"], patternProperties: { "^to": { $ref: "#/components/schemas/Pattern" } } },
-      // A declared `toString` in another allOf member makes it an own property, and the
-      // closed member's `minProperties` forces `next` for the other member's recursion.
+      // The closed member's `minProperties` forces `next` for the other member's recursion.
       Owned: { type: "object", allOf: [{ required: ["toString"] }, { properties: { toString: { type: "object" } } }, { patternProperties: { "^toString$": { $ref: "#/components/schemas/Owned" } } }] },
       // Two closed members admit only `next`, which `minProperties` then forces.
       // A name declared false is never owned.
@@ -470,6 +469,11 @@ describe("fromOpenAPI under @cfworker/json-schema", () => {
         { additionalProperties: false, properties: { next: true, b: { type: "integer" } } },
       ] })),
       ClosedAllOf: { type: "object", minProperties: 1, allOf: [{ additionalProperties: false, properties: { next: true } }, { properties: { next: { $ref: "#/components/schemas/ClosedAllOf" } } }] },
+      // A name another allOf member declares false leaves the closed member only `next`;
+      // a false name the closed member does not admit anyway leaves `alt` as a shallow choice.
+      ...chain("F", 2_500, (next) => ({ type: "object", allOf: [{ additionalProperties: false, minProperties: 1, properties: { next, alt: {} } }, { properties: { alt: false } }] })),
+      ...chain("G", 2_500, (next) => ({ type: "object", allOf: [{ additionalProperties: false, minProperties: 1, properties: { next, alt: {} } }, { properties: { other: false } }] })),
+      Named: { type: "object", required: ["toString"] },
     };
     const post = (operationId: string, content: Record<string, unknown>) => ({
       post: { operationId, requestBody: { required: true, content }, responses: { "204": { description: "Done" } } },
@@ -490,97 +494,50 @@ describe("fromOpenAPI under @cfworker/json-schema", () => {
           "/closed-all-of": post("closedAllOf", { "application/json": ref("ClosedAllOf") }),
           "/intersection": post("closedIntersection", { "application/json": ref("I0") }),
           "/dead": post("closedDead", { "application/json": ref("X0") }),
+          "/false-member": post("closedFalseMember", { "application/json": ref("F0") }),
+          "/false-other": post("closedFalseOther", { "application/json": ref("G0") }),
+          "/named": post("requiredToString", { "application/json": ref("Named") }),
         },
         components: { schemas },
       },
       { executor: recordingExecutor(), allowMutations: true },
     );
     expect(verdicts(result)).toEqual([
-      tooDeep("closedAllOf"), tooDeep("closedDead"), tooDeep("closedIntersection"), tooDeep("closedMin"), tooDeep("closedMinOutput"), tooDeep("ownedInherited"), tooDeep("ownedInheritedOutput"),
+      tooDeep("closedAllOf"), tooDeep("closedDead"), tooDeep("closedFalseMember"), tooDeep("closedIntersection"), tooDeep("closedMin"), tooDeep("closedMinOutput"),
+      tooDeep("inherited"), tooDeep("inheritedOutput"), tooDeep("inheritedPattern"), tooDeep("ownedInherited"), tooDeep("ownedInheritedOutput"),
     ]);
     expect(result.tools.map(({ name, operation }) => [name, operation.requestBody?.contentType])).toEqual([
       ["closedMinFallback", "application/example+json"],
       ["closedChoice", "application/json"],
       ["openMin", "application/json"],
-      ["inherited", "application/json"],
-      ["inheritedOutput", undefined],
-      ["inheritedPattern", "application/json"],
+      ["closedFalseOther", "application/json"],
+      ["requiredToString", "application/json"],
     ]);
     const validate = (name: string) => createSchemaCompiler("cfworker").compile(tool(result.tools, name).inputSchema);
-    expect([validate("closedChoice")({ body: { v: 1 } }), validate("openMin")({ body: { x: 1 } }), validate("inherited")({ body: {} }), validate("inheritedPattern")({ body: {} })])
-      .toEqual([true, true, true, true]);
-    expect(createSchemaCompiler("cfworker").compile(tool(result.tools, "inheritedOutput").outputSchema!)({})).toBe(true);
+    expect([validate("closedChoice")({ body: { v: 1 } }), validate("openMin")({ body: { x: 1 } }), validate("closedFalseOther")({ body: { alt: 1 } })])
+      .toEqual([true, true, true]);
+    // Both engines check own properties only: the inherited `toString` does not satisfy `required`.
+    for (const engine of ["cfworker", "ajv"] as const) {
+      const named = createSchemaCompiler(engine).compile(tool(result.tools, "requiredToString").inputSchema);
+      expect([named({ body: {} }), named({ body: { toString: "x" } })]).toEqual([false, true]);
+    }
   }, 120_000);
 
-  it("registers a required __proto__ body or response property that admits no object, which this engine checks as an own property", async () => {
-    const executor = recordingExecutor();
-    const schema = { type: "object", required: ["PROTO"], additionalProperties: false, properties: { PROTO: { type: "string" } } };
-    const document = JSON.parse(JSON.stringify({
-      openapi: "3.1.0",
-      paths: {
-        "/in": { post: { operationId: "protoBody", requestBody: { required: true, content: { "application/json": { schema } } }, responses: { "204": { description: "Done" } } } },
-        "/out": { get: { operationId: "protoOutput", responses: json(schema) } },
-      },
-    }).replaceAll("PROTO", "__proto__")) as Record<string, unknown>;
-    const result = fromOpenAPI(document, { executor, allowMutations: true });
-    expect(result.skipped).toEqual([]);
-    const args = JSON.parse('{"body":{"__proto__":"ok"}}') as Record<string, unknown>;
-    await result.registry.callTool("protoBody", args, undefined, requestExtra());
-    expect(executor.calls.map((call) => call.args)).toEqual([args]);
-    for (const invalid of ['{"body":{}}', '{"body":{"__proto__":1}}']) {
-      await expect(result.registry.callTool("protoBody", JSON.parse(invalid), undefined, requestExtra())).rejects.toMatchObject({ code: "MCPFN_INVALID_ARGUMENTS" });
-    }
-    // `required` in an inline allOf member, and a `true` schema, which accepts the inherited value too.
-    const split = { type: "object", properties: { PROTO: { type: "string" } }, allOf: [{ required: ["PROTO"] }] };
-    const any = { type: "object", additionalProperties: false, properties: { PROTO: true } };
-    const more = fromOpenAPI(JSON.parse(JSON.stringify({
-      openapi: "3.1.0",
-      paths: {
-        "/required-any": { post: { operationId: "requiredAny", requestBody: { required: true, content: { "application/json": { schema: { ...any, required: ["PROTO"] } } } }, responses: { "204": { description: "Done" } } } },
-        "/split": { post: { operationId: "splitBody", requestBody: { required: true, content: { "application/json": { schema: split } } }, responses: { "204": { description: "Done" } } } },
-        "/any": { get: { operationId: "anyOutput", responses: json(any) } },
-      },
-    }).replaceAll("PROTO", "__proto__")) as Record<string, unknown>, { executor: recordingExecutor(), allowMutations: true });
-    // Required, `true` would let the inherited value satisfy it.
-    expect(more.skipped.map(({ operation, code }) => [operation.operationId, code])).toEqual([["requiredAny", "unsupported-property-name"]]);
-    const splitBody = createSchemaCompiler("cfworker").compile(tool(more.tools, "splitBody").inputSchema);
-    expect([splitBody(JSON.parse('{"body":{"__proto__":"ok"}}')), splitBody({ body: {} })]).toEqual([true, false]);
-    const anyOutput = createSchemaCompiler("cfworker").compile(tool(more.tools, "anyOutput").outputSchema!);
-    expect([anyOutput({}), anyOutput(JSON.parse('{"__proto__":1}')), anyOutput({ x: 1 })]).toEqual([true, true, false]);
-    const output = createSchemaCompiler("cfworker").compile(tool(result.tools, "protoOutput").outputSchema!);
-    expect([output(JSON.parse('{"__proto__":"ok"}')), output({}), output(JSON.parse('{"__proto__":1}'))]).toEqual([true, false, false]);
-  });
-
-  it("skips a body, nested or response property named __proto__, which this engine reads from Object.prototype when absent", () => {
+  it("skips a schema that declares or requires __proto__ in a body, nested schema or response, as under Ajv", () => {
     const result = fromOpenAPI(fixture("skip-prototype-property-name"), { executor: recordingExecutor(), allowMutations: true });
     expect(verdicts(result).map(([operationId, code]) => [operationId, code])).toEqual([
-      ["protoBody", "unsupported-property-name"], ["protoNested", "unsupported-property-name"], ["protoOutput", "unsupported-property-name"],
+      ["protoBody", "unsupported-property-name"], ["protoNested", "unsupported-property-name"], ["protoOptional", "unsupported-property-name"],
+      ["protoOutput", "unsupported-property-name"], ["protoRequired", "unsupported-property-name"], ["protoSplit", "unsupported-property-name"],
     ]);
     expect(result.tools.map(({ name }) => name)).toEqual(["plainBody"]);
     const validate = createSchemaCompiler("cfworker").compile(tool(result.tools, "plainBody").inputSchema);
     expect([validate({ body: { proto: {} } }), validate({ body: {} })]).toEqual([true, false]);
   });
 
-  it("registers a __proto__ query parameter, which this engine validates as an own property, and delivers it", async () => {
-    const executor = recordingExecutor();
-    const result = fromOpenAPI({
-      openapi: "3.1.0",
-      paths: { "/items": { get: { operationId: "listItems", parameters: [{ name: "__proto__", in: "query", required: true, schema: { type: "string" } }], responses: { "200": { description: "OK" } } } } },
-    }, { executor });
-    expect(result.skipped).toEqual([]);
-    const args = JSON.parse('{"query":{"__proto__":"ok"}}') as Record<string, unknown>;
-    await result.registry.callTool("listItems", args, undefined, requestExtra());
-    expect(executor.calls.map((call) => call.args)).toEqual([args]);
-    expect(Object.hasOwn((executor.calls[0]!.args as { query: object }).query, "__proto__")).toBe(true);
-    await expect(result.registry.callTool("listItems", JSON.parse('{"query":{"__proto__":1}}'), undefined, requestExtra()))
-      .rejects.toMatchObject({ code: "MCPFN_INVALID_ARGUMENTS" });
-    // Left out, the validator would read the inherited Object.prototype: an optional one is skipped.
-    const optional = fromOpenAPI({
-      openapi: "3.1.0",
-      paths: { "/items": { get: { operationId: "listItems", parameters: [{ name: "__proto__", in: "query", schema: { type: "string" } }, { name: "q", in: "query", schema: { type: "string" } }], responses: { "200": { description: "OK" } } } } },
-    }, { executor: recordingExecutor() });
-    expect(verdicts(optional)).toEqual([[
-      "listItems", "unsupported-parameter-name", "optional query parameter __proto__ cannot be left out: the validator reads the inherited Object.prototype",
-    ]]);
+  it("skips a __proto__ parameter, required or optional, as under Ajv", () => {
+    const result = fromOpenAPI(fixture("skip-prototype-parameter-name"), { executor: recordingExecutor() });
+    const reason = "query parameter __proto__ cannot be declared: the validators do not read that property name alike";
+    expect(verdicts(result)).toEqual([["listItems", "unsupported-parameter-name", reason], ["listRequired", "unsupported-parameter-name", reason]]);
+    expect(result.tools.map(({ name }) => name)).toEqual(["listPlain"]);
   });
 });

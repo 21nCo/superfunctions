@@ -14,7 +14,7 @@ function convert(name: string, options: Partial<Parameters<typeof fromOpenAPI>[1
   return fromOpenAPI(fixture(name), { executor: recordingExecutor(), allowMutations: true, ...options });
 }
 
-const PROTO_PROPERTY = "property __proto__ cannot be declared: Ajv ignores it in properties";
+const PROTO_PROPERTY = "property __proto__ cannot be declared or required: the validators do not read that name alike";
 const OVERLAP = "anyOf/oneOf members that can overlap, not, if/then/else or a dependency";
 const REQUIRED_ELSEWHERE = "a required list of another schema for the same object";
 
@@ -407,12 +407,15 @@ describe("fromOpenAPI skip reasons", () => {
     expect(skipped[0]!.reason).toMatch(reason);
   });
 
-  it("skips a body, nested or response property named __proto__, which Ajv ignores in properties, and keeps ordinary names", () => {
+  it("skips a body, nested or response schema that declares or requires __proto__, required, optional or split across allOf, and keeps ordinary names", () => {
     const { tools, skipped } = convert("skip-prototype-property-name");
     expect(skips({ tools, skipped } as Result)).toEqual([
       ["protoBody", "unsupported-property-name", PROTO_PROPERTY],
       ["protoNested", "unsupported-property-name", `${PROTO_PROPERTY} (in #/components/schemas/Holder)`],
       ["protoOutput", "unsupported-property-name", PROTO_PROPERTY],
+      ["protoRequired", "unsupported-property-name", PROTO_PROPERTY],
+      ["protoSplit", "unsupported-property-name", PROTO_PROPERTY],
+      ["protoOptional", "unsupported-property-name", PROTO_PROPERTY],
     ]);
     expect(tools.map(({ name }) => name)).toEqual(["plainBody"]);
     expectArguments(tool(tools, "plainBody").inputSchema, {
@@ -444,13 +447,13 @@ describe("fromOpenAPI skip reasons", () => {
     expect(refusals).toBeGreaterThan(1);
   });
 
-  it("skips a parameter named __proto__, which Ajv leaves out of a closed group, and keeps ordinary names", () => {
+  it("skips a parameter named __proto__, required or optional, which the validators do not read alike, and keeps ordinary names", () => {
     const { tools, skipped } = convert("skip-prototype-parameter-name");
-    expect(skips({ tools, skipped } as Result)).toEqual([[
-      "listItems",
-      "unsupported-parameter-name",
-      "query parameter __proto__ cannot be declared in a closed group: Ajv ignores that property name",
-    ]]);
+    const reason = "query parameter __proto__ cannot be declared: the validators do not read that property name alike";
+    expect(skips({ tools, skipped } as Result)).toEqual([
+      ["listItems", "unsupported-parameter-name", reason],
+      ["listRequired", "unsupported-parameter-name", reason],
+    ]);
     const plain = tool(tools, "listPlain");
     expect(plain.inputSchema.properties).toEqual({
       query: { type: "object", properties: { proto: { type: "string" } }, additionalProperties: false },

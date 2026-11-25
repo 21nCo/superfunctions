@@ -320,6 +320,10 @@ function surveyValues(root: unknown, keys: WeakMap<object, readonly string[]>): 
   return count;
 }
 
+/** Why a schema property named "__proto__" is refused (`refusePrototypeName`). */
+export const PROTOTYPE_PROPERTY_REASON =
+  "property __proto__ cannot be declared or required: the validators do not read that name alike";
+
 /**
  * A document array, read only when it holds exactly its indices: its length
  * is then its member count, and the array methods it inherits are not
@@ -505,6 +509,8 @@ export class SchemaConverter {
   private readonly projections = new Map<DirectionalKeyword, WeakMap<object, AccessConflict | null>>();
   /** Schema objects whose conversion failed for a reason of their own, by mode, for the whole call. */
   private readonly failures = new Map<SchemaMode, WeakMap<object, OpenApiSkip>>();
+  /** The `required` arrays already read for a "__proto__" name (`refusePrototypeName`). */
+  private readonly readRequired = new WeakSet<object>();
   private budget: NodeBudget;
 
   constructor(
@@ -517,8 +523,6 @@ export class SchemaConverter {
      * schema without its own supported `$schema` is then refused.
      */
     private readonly unsupportedDialect?: string,
-    /** The engine the registry validates with, read when a schema declares a `__proto__` property. */
-    private readonly engine: () => string = () => "ajv",
   ) {
     this.budget = total.child();
   }
@@ -999,48 +1003,13 @@ export class SchemaConverter {
   }
 
   /**
-   * Ajv leaves a "__proto__" key of properties out, so it never checks that
-   * property. @cfworker/json-schema checks an own one, and the inherited
-   * Object.prototype when it is absent (its `required` finds that too): only
-   * a required property whose schema admits no object is checked as written
-   * there, in a body or a response alike.
+   * The validators disagree on a property named "__proto__": Ajv leaves that
+   * key of `properties` out and finds Object.prototype for it in `required`,
+   * while @cfworker/json-schema reads own properties only. A schema that
+   * declares or requires it is refused under either engine.
    */
-  private assertPrototypeProperty(schema: JsonObject, property: unknown): void {
-    if (this.engine() !== "cfworker") {
-      throw new OpenApiSkip("unsupported-property-name", "property __proto__ cannot be declared: Ajv ignores it in properties");
-    }
-    const required = this.requiresInline(schema, "__proto__");
-    // An optional `true` accepts the inherited value as it accepts any own one.
-    if (property === true && !required) return;
-    let objects = true;
-    try {
-      objects = this.admits(property).values.has("object");
-    } catch (error) {
-      if (error instanceof OpenApiSkip && !rememberable(error)) throw error;
-    }
-    if (objects || !required) {
-      throw new OpenApiSkip(
-        "unsupported-property-name",
-        "property __proto__ must be required and admit no object: the validator reads the inherited Object.prototype when it is absent",
-      );
-    }
-  }
-
-  /** Whether `schema` or one of its inline `allOf` members, read with it, lists `name` in `required`. */
-  private requiresInline(schema: JsonObject, name: string): boolean {
-    const pending: unknown[] = [schema];
-    const seen = new Set<object>();
-    while (pending.length > 0) {
-      const node = pending.pop();
-      if (!isObject(node) || seen.has(node)) continue;
-      seen.add(node);
-      // OpenAPI 3.0 ignores the siblings of a `$ref`.
-      if (this.version === "3.0" && node !== schema && "$ref" in node) continue;
-      this.total.chargeNodes(1 + arrayOf(node.required).length);
-      if (arrayOf(node.required).includes(name)) return true;
-      pending.push(...arrayOf(node.allOf));
-    }
-    return false;
+  private refusePrototypeName(): never {
+    throw new OpenApiSkip("unsupported-property-name", PROTOTYPE_PROPERTY_REASON);
   }
 
   private convertEntry(
@@ -1051,7 +1020,7 @@ export class SchemaConverter {
     refs: Set<string>,
   ): [string, unknown] | undefined {
     if (SCHEMA_MAP_KEYWORDS.has(keyword) && isObject(value)) {
-      if (keyword === "properties" && Object.hasOwn(value, "__proto__")) this.assertPrototypeProperty(schema, value.__proto__);
+      if (keyword === "properties" && Object.hasOwn(value, "__proto__")) this.refusePrototypeName();
       return [keyword, this.convertMap(value, mode, refs)];
     }
     if ((SCHEMA_ARRAY_KEYWORDS.has(keyword) || keyword === "items") && Array.isArray(value)) {
@@ -1060,6 +1029,11 @@ export class SchemaConverter {
       const converted: unknown[] = [];
       for (const item of value) converted.push(this.convert(item, mode, refs));
       return [keyword, converted];
+    }
+    // Each document array is read once per call, so the reading stays within the document's size.
+    if (keyword === "required" && Array.isArray(value) && !this.readRequired.has(value)) {
+      if (documentItems(value).includes("__proto__")) this.refusePrototypeName();
+      this.readRequired.add(value);
     }
     if (keyword === "items") return [keyword, this.convert(value, mode, refs)];
     if (SCHEMA_KEYWORDS.has(keyword)) return [keyword, this.convert(value, mode, refs)];
@@ -2200,13 +2174,11 @@ function forEachInPlace(schema: JsonObject, visit: (member: unknown) => void, al
  * demand of it together: the names any of them `required`, the JSON types all
  * of their `type`s allow (undefined when none has one), and the largest
  * `minItems` and `minProperties`. `required` and `names` hold the names every
- * accepted object owns: those a `required` list names, except a name every
- * object inherits (`toString`), which satisfies @cfworker/json-schema's
- * `required` without an own property unless a declared `properties` entry
- * would be applied to the inherited function; and every declared name of a
- * closed object (`additionalProperties: false`, no patterns) whose
- * `minProperties` leaves none of them out. Members behind a `$ref` are not
- * read. `nodes` counts the walk.
+ * accepted object owns (the validators check own properties only): those a
+ * `required` list names, and every name the closed objects
+ * (`additionalProperties: false`, no patterns) all declare and no member
+ * declares `false`, when `minProperties` leaves none of them out. Members
+ * behind a `$ref` are not read. `nodes` counts the walk.
  */
 interface Conjunction {
   required: string[];
@@ -2241,11 +2213,10 @@ function conjunction(schema: JsonObject): Conjunction {
     if (node.type !== undefined) result.selectors = narrowed(result.selectors, node.type);
     for (const member of arrayOf(node.allOf)) inline.push(member);
   }
-  // Names a `properties` entry other than `true` declares: @cfworker/json-schema
-  // applies it to an inherited value (`toString`) too, and throws on a function.
-  const owned = new Set<string>();
   // The declared names of each closed object (`additionalProperties: false`, no patterns).
   const closed: string[][] = [];
+  // Names some member declares `false`: no accepted object owns them.
+  const refused = new Set<string>();
   const required: string[] = [];
   const pending: unknown[] = [schema];
   while (pending.length > 0) {
@@ -2255,10 +2226,9 @@ function conjunction(schema: JsonObject): Conjunction {
     const declared = objectEntries(node.properties);
     // The entries of `required`, `type` and `properties` read here are walked too.
     result.nodes += arrayOf(node.required).length + arrayOf(node.type).length + declared.length;
-    for (const [name, member] of declared) if (member !== true) owned.add(name);
+    for (const [name, member] of declared) if (member === false) refused.add(name);
     if (node.additionalProperties === false && objectEntries(node.patternProperties).length === 0) {
-      // A name declared `false` is never owned.
-      closed.push(declared.filter(([, member]) => member !== false).map(([name]) => name));
+      closed.push(declared.map(([name]) => name));
     }
     for (const name of arrayOf(node.required)) if (typeof name === "string") required.push(name);
     if (node.type !== undefined) result.types = narrowed(result.types, node.type);
@@ -2272,16 +2242,15 @@ function conjunction(schema: JsonObject): Conjunction {
     names.add(name);
     result.required.push(name);
   };
-  // A required name every object inherits needs an own property only where
-  // a declared schema would otherwise be applied to the inherited function.
-  for (const name of required) if (!(name in Object.prototype) || owned.has(name)) own(name);
+  required.forEach(own);
   // A closed object's own names are declared ones: `minProperties` of them
   // must all be present when there are no more than that.
-  // Several closed members admit only the names each of them declares.
+  // Several closed members admit only the names each of them declares, and
+  // a name any member declares `false` is admitted by none.
   const allowed = closed.slice(1).reduce((names, next) => {
     const declared = new Set(next);
     return names.filter((name) => declared.has(name));
-  }, closed[0] ?? []);
+  }, closed[0] ?? []).filter((name) => !refused.has(name));
   if (allowed.length > 0 && result.minProperties >= allowed.length) allowed.forEach(own);
   return result;
 }

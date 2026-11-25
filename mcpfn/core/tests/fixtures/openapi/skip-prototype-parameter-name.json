@@ -24,6 +24,26 @@
         }
       }
     },
+    "/required-items": {
+      "get": {
+        "operationId": "listRequired",
+        "parameters": [
+          {
+            "name": "__proto__",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
     "/plain": {
       "get": {
         "operationId": "listPlain",

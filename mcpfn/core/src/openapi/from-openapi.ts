@@ -338,7 +338,6 @@ class OperationConverter {
       isObject(this.components.schemas) ? this.components.schemas : {},
       NodeBudget.forDocument(document),
       version === "3.1" && dialect !== undefined && !isDefaultDialect(dialect) ? JSON.stringify(dialect) : undefined,
-      () => (this.compiler ??= createSchemaCompiler()).engine,
     );
   }
 
@@ -947,17 +946,12 @@ class OperationConverter {
       throw new OpenApiSkip("invalid-operation", `parameter ${name} has unknown location ${JSON.stringify(location)}`);
     }
     if (location === "header" && isForbiddenHeader(name)) return undefined;
-    // Ajv leaves a "__proto__" key of properties out of a closed group, so it
-    // would list the parameter and still reject every call that supplies it.
-    // @cfworker/json-schema validates that own property, but when it is left
-    // out reads the inherited Object.prototype instead: only a required one works.
-    this.compiler ??= createSchemaCompiler();
-    if (name === "__proto__" && (this.compiler.engine === "ajv" || raw.required !== true)) {
+    // The validators disagree on a "__proto__" property: Ajv leaves it out of
+    // a closed group, @cfworker/json-schema reads own properties only.
+    if (name === "__proto__") {
       throw new OpenApiSkip(
         "unsupported-parameter-name",
-        this.compiler.engine === "ajv"
-          ? `${location} parameter ${name} cannot be declared in a closed group: Ajv ignores that property name`
-          : `optional ${location} parameter ${name} cannot be left out: the validator reads the inherited Object.prototype`,
+        `${location} parameter ${name} cannot be declared: the validators do not read that property name alike`,
       );
     }
     if (raw.schema === undefined) {
