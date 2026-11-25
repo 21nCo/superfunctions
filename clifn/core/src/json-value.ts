@@ -1,4 +1,4 @@
-import { constants } from "node:buffer";
+import { Buffer, constants } from "node:buffer";
 import { types } from "node:util";
 import { getHeapStatistics } from "node:v8";
 
@@ -12,7 +12,8 @@ const REDACTED = '"[REDACTED]"';
  * limit is marked "[Circular]" in place; finite chains up to this depth print exactly as JSON.stringify prints them.
  * The count depends only on the active path, so a sibling projected for another key (one that terminates) prints in
  * full at any depth and in any member order. A toJSON that branches back to itself under several keys is bounded by
- * the work budget and MAX_NESTING_DEPTH instead: its document fails with a RangeError rather than printing.
+ * the text budget (or, under a redacted key, the work budget) and MAX_NESTING_DEPTH instead: its document fails with a
+ * RangeError rather than printing.
  */
 export const PROJECTION_REPEAT_LIMIT = 64;
 /**
@@ -23,9 +24,9 @@ export const MAX_NESTING_DEPTH = 512;
 /** The share of V8's heap limit one result document may use as text (see `documentLimit`). */
 const HEAP_SHARE = 16;
 /**
- * The work units an index of a typed array costs before its keys are listed: `Object.keys` creates each index key as a
- * new string (about 32 bytes with its slot) although the array stores its elements outside the heap, so the units bound
- * that allocation, not just the walk.
+ * The work units an index of a typed array costs before its keys are listed, printed or not: `Object.keys` creates each
+ * index key as a new string (about 32 bytes with its slot) although the array stores its elements outside the heap, so
+ * the units bound that allocation. Reading and printing each member is charged as for any other object.
  */
 export const TYPED_ARRAY_INDEX_UNITS = 32;
 
@@ -38,9 +39,11 @@ export interface DocumentBudget {
 }
 
 /**
- * How much walking one result document may still do, in units: each printed character, each value walked under a
- * redacted key and each object member or array item reserved before it is read. It is never given back, so work spent
- * on text that is then dropped (redacted values, details or diagnostics that do not fit) stays bounded.
+ * How much work that prints nothing one result document may still do, in units, separate from its text: each value
+ * walked under a redacted key, each object member JSON drops, each code unit scanned in a string found too long to
+ * print, TYPED_ARRAY_INDEX_UNITS per typed array index, and each character of a segment (details or a diagnostic) that
+ * was written and then left out. Each unit is charged once and never given back. Printed text is charged to the text
+ * budget only, so a document that fits prints next to discarded work within this allowance.
  */
 export interface WorkBudget {
   unitsLeft: number;
@@ -60,7 +63,11 @@ export function createDocumentBudget(limit: number = documentLimit()): DocumentB
   return { charsLeft: limit };
 }
 
-/** The work budget of a document whose text budget is `limit`: the text itself and as much again for discarded work. */
+/**
+ * The work budget of a document whose text budget is `limit`: twice as many units as the document has characters, its
+ * own allowance next to the text. A segment dropped after it was written costs at most its text, so one dropped
+ * segment never spends the whole allowance by itself.
+ */
 export function createWorkBudget(limit: number = documentLimit()): WorkBudget {
   return { unitsLeft: 2 * limit };
 }
@@ -181,6 +188,8 @@ export class JsonText implements TextSink {
 }
 
 const booleanValueOf = Boolean.prototype.valueOf;
+/** Node's built-in `Buffer.prototype.toJSON`, which copies every byte into a new array (see `boundBufferProjection`). */
+const bufferToJSON = Buffer.prototype.toJSON;
 const bigintValueOf = BigInt.prototype.valueOf;
 /** %TypedArray%.prototype.length: reads the length from the internal slot, for a typed array of any realm. */
 const typedArrayLength = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(Uint8Array.prototype), "length")
@@ -210,7 +219,6 @@ function emit(walk: Walk, text: string): void {
     return;
   }
   spendText(walk.budget, text.length);
-  spendWork(walk.work, text.length);
   walk.out.write(text);
 }
 
@@ -219,7 +227,7 @@ function emitString(walk: Walk, text: string): void {
     // A redacted string is neither scanned nor encoded: its one unit was charged when it was read.
     return;
   }
-  const encoded = encodeString(text, Math.min(walk.budget.charsLeft, walk.work.unitsLeft), walk.work);
+  const encoded = encodeString(text, walk.budget.charsLeft, walk.work);
   if (encoded === undefined) {
     exceeded();
   }
@@ -268,7 +276,7 @@ function emitBigInt(walk: Walk, value: bigint): void {
   if (walk.discarding) {
     return;
   }
-  const room = Math.min(walk.budget.charsLeft, walk.work.unitsLeft);
+  const room = walk.budget.charsLeft;
   // A magnitude of at least 2^bits has more than `room` decimal digits, so its text cannot fit. The check needs no
   // copy of the value: asIntN keeps `value` unchanged only when -2^bits <= value < 2^bits, for either sign, and its
   // result is at most `bits` bits long.
@@ -295,38 +303,86 @@ function writePrimitive(walk: Walk, value: unknown): boolean {
   return true;
 }
 
+/**
+ * Bounds Node's built-in `Buffer.prototype.toJSON` before it runs: it copies each byte of `this` into a new array of
+ * `this.length` items, so a typed array's internal length is checked first against what printing (or, under a
+ * redacted key, walking) that array would cost. The array prints at least 2n + 1 characters, and each of its items
+ * costs one unit of work when discarded. A toJSON a caller supplies is the caller's own work and is not bounded here.
+ */
+function boundBufferProjection(walk: Walk, value: object, toJSON: unknown): void {
+  if (toJSON !== bufferToJSON || !types.isTypedArray(value)) {
+    return;
+  }
+  const length = Reflect.apply(typedArrayLength, value, []);
+  if (walk.discarding ? length > walk.work.unitsLeft : 2 * length + 1 > walk.budget.charsLeft) {
+    exceeded();
+  }
+}
+
 /** The first steps of SerializeJSONProperty: reads `holder[key]` once, applies its toJSON and unboxes the result. */
-function project(holder: object, key: string): { original: unknown; value: unknown } {
+function project(walk: Walk, holder: object, key: string): { original: unknown; value: unknown } {
   const original: unknown = Reflect.get(holder, key);
   let value = original;
   if (isTracked(value) || typeof value === "bigint") {
     const toJSON: unknown = (value as { toJSON?: unknown }).toJSON;
     if (typeof toJSON === "function") {
+      if (isTracked(value)) {
+        boundBufferProjection(walk, value, toJSON);
+      }
       value = Reflect.apply(toJSON, value, [key]);
     }
   }
   return { original, value: typeof value === "object" && value !== null ? unbox(value) : value };
 }
 
+/** True when JSON drops a projected value: undefined, a function or a symbol. */
+function isDropped(value: unknown): boolean {
+  return value === undefined || typeof value === "function" || typeof value === "symbol";
+}
+
+/** Writes a projected value that JSON prints: an object or array through `serializeNode`, a primitive directly. */
+function writeValue(walk: Walk, value: unknown, original: unknown, key: string, depth: number): void {
+  if (typeof value === "object" && value !== null) {
+    serializeNode(walk, value, original, key, depth);
+  } else {
+    writePrimitive(walk, value);
+  }
+}
+
 /**
- * SerializeJSONProperty: writes the JSON text of `holder[key]`, after `before` once the member is known to print.
- * Returns false when JSON drops the member.
+ * SerializeJSONProperty: reads and projects `holder[key]` once, then, when JSON prints it, calls `writeKey` (which
+ * writes an object member's key and says whether its value is redacted) and writes the value. A redacted value prints
+ * "[REDACTED]" and is still walked in order, so its getters and toJSON run as in JSON.stringify, but no text is built
+ * for it: it and every value in it cost one unit of work. Returns false when JSON drops the member; the key is then
+ * neither written nor matched.
  */
-function serializeProperty(walk: Walk, holder: object, key: string, depth: number, before?: () => void): boolean {
+function serializeProperty(
+  walk: Walk,
+  holder: object,
+  key: string,
+  depth: number,
+  writeKey?: () => boolean
+): boolean {
   if (walk.discarding) {
     spendWork(walk.work, 1);
   }
-  const { original, value } = project(holder, key);
-  if (typeof value === "object" && value !== null) {
-    before?.();
-    serializeNode(walk, value, original, key, depth);
-    return true;
-  }
-  if (value === undefined || typeof value === "function" || typeof value === "symbol") {
+  const { original, value } = project(walk, holder, key);
+  if (isDropped(value)) {
     return false;
   }
-  before?.();
-  return writePrimitive(walk, value);
+  if (writeKey?.() !== true) {
+    writeValue(walk, value, original, key, depth);
+    return true;
+  }
+  emit(walk, REDACTED);
+  walk.discarding = true;
+  try {
+    spendWork(walk.work, 1);
+    writeValue(walk, value, original, key, depth);
+  } finally {
+    walk.discarding = false;
+  }
+  return true;
 }
 
 /**
@@ -373,12 +429,13 @@ function serializeNode(walk: Walk, node: object, original: unknown, key: string,
 
 /**
  * SerializeJSONArray: the length is converted once. Every index prints at least one character and a separator, so an
- * array whose brackets, separators and one character per item (2n + 1) cannot fit the text budget, or whose items
- * cannot fit the work budget, throws before any index is read. Each index is read once; a dropped item prints null.
+ * array whose brackets, separators and one character per item (2n + 1) cannot fit the text budget, or, under a
+ * redacted key, whose items (one unit each) cannot fit the work budget, throws before any index is read. Each index is
+ * read once; a dropped item prints null.
  */
 function serializeArray(walk: Walk, array: object, depth: number): void {
   const length = toLength(Reflect.get(array, "length"));
-  if (length > walk.work.unitsLeft || (!walk.discarding && (length === 0 ? 2 : 2 * length + 1) > walk.budget.charsLeft)) {
+  if (walk.discarding ? length > walk.work.unitsLeft : (length === 0 ? 2 : 2 * length + 1) > walk.budget.charsLeft) {
     exceeded();
   }
   emit(walk, "[");
@@ -394,25 +451,10 @@ function serializeArray(walk: Walk, array: object, depth: number): void {
 }
 
 /**
- * Walks the value of a sensitive member without writing it, so its getters and toJSON run in order as in
- * JSON.stringify. Its text is never built: each value in it costs one unit of the work budget, which is never given
- * back. Returns false when JSON drops the member.
- */
-function discardProperty(walk: Walk, record: object, name: string, depth: number): boolean {
-  const discarding = walk.discarding;
-  walk.discarding = true;
-  try {
-    return serializeProperty(walk, record, name, depth);
-  } finally {
-    walk.discarding = discarding;
-  }
-}
-
-/**
  * Bounds a typed array by its internal length before its keys are listed: each index costs TYPED_ARRAY_INDEX_UNITS of
- * work (under a redacted key too), and outside one, an array of numbers whose members (`"0":0` and a separator, 6n + 1
- * characters) cannot fit the text budget throws. Other objects hold their own keys, so listing them is bounded by
- * the memory the value already takes, and they are charged one unit per key once listed.
+ * work, printed or not, and outside a redacted key an array of numbers whose members (`"0":0` and a separator, 6n + 1
+ * characters) cannot fit the text budget throws. A rejected array is charged nothing. Other objects hold their own
+ * keys, so listing them is bounded by the memory the value already takes.
  */
 function boundTypedArray(walk: Walk, record: object): void {
   if (!types.isTypedArray(record)) {
@@ -421,8 +463,6 @@ function boundTypedArray(walk: Walk, record: object): void {
   const length = Reflect.apply(typedArrayLength, record, []);
   // A bigint member can be dropped by a toJSON, so only arrays of numbers are known to print every index.
   const numbers = !types.isBigInt64Array(record) && !types.isBigUint64Array(record);
-  // Rejected before anything is charged: the keys of a rejected array are never listed, so that work is not spent
-  // and cannot crowd out later members, details or diagnostics.
   if (
     length * TYPED_ARRAY_INDEX_UNITS > walk.work.unitsLeft ||
     (!walk.discarding && numbers && length > 0 && 6 * length + 1 > walk.budget.charsLeft)
@@ -433,32 +473,36 @@ function boundTypedArray(walk: Walk, record: object): void {
 }
 
 /**
- * SerializeJSONObject: own enumerable string keys in order, each read once; dropped members are left out. Each key
- * costs one unit of work before any value is read, and a typed array is bounded by its length before its keys are
- * listed. A sensitive member that JSON prints is written as "[REDACTED]".
+ * SerializeJSONObject: own enumerable string keys in order, each read once; dropped members are left out. A member
+ * that prints is charged as text (its key is written before it is matched against `isSensitive`, so the match never
+ * scans more than was printed) and a member JSON drops costs one unit of work, its key neither written nor matched.
+ * An object with more keys than both budgets could pay for throws before any value is read, and a typed array is
+ * bounded by its length before its keys are listed. A sensitive member that JSON prints is written as "[REDACTED]".
  */
 function serializeObject(walk: Walk, record: object, depth: number): void {
   boundTypedArray(walk, record);
   const names = Object.keys(record);
-  spendWork(walk.work, names.length);
+  if (names.length > walk.work.unitsLeft + (walk.discarding ? 0 : walk.budget.charsLeft)) {
+    exceeded();
+  }
   emit(walk, "{");
   let members = 0;
-  const writeKey = (name: string) => {
-    if (members > 0) {
-      emit(walk, ",");
-    }
-    emitString(walk, name);
-    emit(walk, ":");
-    members += 1;
-  };
   for (const name of names) {
-    if (!walk.discarding && walk.isSensitive?.(name)) {
-      if (discardProperty(walk, record, name, depth)) {
-        writeKey(name);
-        emit(walk, REDACTED);
+    const printed = serializeProperty(walk, record, name, depth, () => {
+      if (walk.discarding) {
+        return false;
       }
-    } else {
-      serializeProperty(walk, record, name, depth, () => writeKey(name));
+      if (members > 0) {
+        emit(walk, ",");
+      }
+      emitString(walk, name);
+      emit(walk, ":");
+      members += 1;
+      return walk.isSensitive?.(name) === true;
+    });
+    if (!printed && !walk.discarding) {
+      // A dropped member prints nothing; discarded members were charged as they were read.
+      spendWork(walk.work, 1);
     }
   }
   emit(walk, "}");
@@ -467,7 +511,7 @@ function serializeObject(walk: Walk, record: object, depth: number): void {
 export interface SerializeJsonMemberOptions {
   /** The text budget, charged as text is written. Defaults to a fresh `createDocumentBudget()`. */
   budget?: DocumentBudget;
-  /** The work budget, never given back. Defaults to a fresh `createWorkBudget()`. */
+  /** The work budget for what prints nothing, never given back. Defaults to a fresh `createWorkBudget()`. */
   work?: WorkBudget;
   /** Object keys whose values print "[REDACTED]". */
   isSensitive?: (key: string) => boolean;
@@ -489,19 +533,25 @@ export interface SerializeJsonMemberOptions {
  *   prints PROJECTION_REPEAT_LIMIT (64) nested projections for that key and then "[Circular]" in place; a finite
  *   chain deeper than 64 projections of one value for one key is cut the same way. Projections for other keys, such
  *   as a sibling that terminates, print as JSON.stringify prints them, at any depth and in any member order; one
- *   that keeps branching back to the value under new keys fails on the work budget or the nesting limit;
+ *   that keeps branching back to the value under new keys fails on the text budget (the work budget under a
+ *   redacted key) or the nesting limit;
  * - nesting deeper than MAX_NESTING_DEPTH (512) objects and arrays throws a RangeError before the next level is read;
- * - text that cannot fit what is left of `budget`, or a walk that cannot fit what is left of `work`, throws a
- *   RangeError; an array checks 2n + 1 characters (and n units of work) before its index 0 is read, a typed array
- *   checks its internal length before its keys are listed, and an object charges one unit per key before any value is
- *   read, so oversized sparse, proxy, typed or generated values fail at once; a bigint is checked by bit length before
- *   its decimal text is built, and not converted under a redacted key. A Proxy's own keys are listed by the engine
- *   (through its ownKeys trap) before they can be charged, so a Proxy is bounded only by the keys its trap returns.
+ * - text that cannot fit what is left of `budget`, or work that prints nothing and cannot fit what is left of `work`,
+ *   throws a RangeError. Printed text is charged to `budget` only; `work` pays for each value under a redacted key,
+ *   each dropped object member and each scan of a string too long to print (see `WorkBudget`). An array checks
+ *   2n + 1 characters (n units of work under a redacted key) before its index 0 is read, a typed array checks its
+ *   internal length before its keys are listed, Node's built-in Buffer toJSON is checked by the buffer's internal
+ *   length before it copies the bytes, and an object with more keys than both budgets could pay for fails before any
+ *   value is read, so oversized sparse, proxy, typed, Buffer or generated values fail at once; a bigint is checked by
+ *   bit length before its decimal text is built, and not converted under a redacted key. A Proxy's own keys are listed
+ *   by the engine (through its ownKeys trap) before they can be charged, so a Proxy is bounded only by the keys its
+ *   trap returns.
  *
  * With `isSensitive`, every object key below the member that it matches prints "[REDACTED]" when JSON prints the
- * member at all; the key is matched after the holder's toJSON ran, so keys a projection creates are covered too. Its
- * value is still walked in order, so its getters and toJSON run as in JSON.stringify, but no text is built for it:
- * it charges `budget` only for the placeholder, and its walk is charged to `work`.
+ * member at all; the key is matched after the holder's toJSON ran, so keys a projection creates are covered too, and
+ * only once the member is known to print (a dropped member's key is never scanned). Its value is still walked in
+ * order, so its getters and toJSON run as in JSON.stringify, but no text is built for it: it charges `budget` only
+ * for its key and the placeholder, and its walk is charged to `work`, one unit per value.
  *
  * Returns undefined when JSON drops the member (undefined, a function, a symbol, or a `toJSON` that returns one).
  * Throws what JSON.stringify throws, such as a throwing getter or `toJSON`, or a Number box whose `valueOf` returns a

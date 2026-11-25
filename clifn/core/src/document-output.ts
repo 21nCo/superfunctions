@@ -73,7 +73,10 @@ const MIN_DIAGNOSTIC_LENGTH = '{"code":"","severity":"","message":""},'.length;
  */
 export const MAX_WARNINGS_PER_KIND = 20;
 
-/** The budgets of one document: its text (given back when a segment is dropped) and its work (never given back). */
+/**
+ * The budgets of one document: its text (given back when a segment is dropped) and its work for what prints nothing
+ * (never given back), including the text of each segment that was written and then dropped.
+ */
 interface Budgets {
   text: DocumentBudget;
   work: WorkBudget;
@@ -85,16 +88,23 @@ function segmentOf(budget: DocumentBudget): DocumentBudget {
 }
 
 /**
+ * Charges `consumed` characters of a segment that was written and then dropped to the work budget, without throwing:
+ * the text budget gives them back, the work budget keeps them, so the next charge fails once the work is spent.
+ */
+function chargeDropped(work: WorkBudget, consumed: number): void {
+  work.unitsLeft -= Math.max(0, consumed);
+}
+
+/**
  * Charges and returns the JSON text of the string `text`, or throws a RangeError when it does not fit what is left of
- * the budgets; no text is built for a string that does not fit (see `encodeString`). A kept string costs its text
- * and the same work, never given back, so text a dropped diagnostic encoded stays bounded too.
+ * the text budget; no text is built for a string that does not fit (see `encodeString`). A kept string costs its text;
+ * when its segment is dropped later, that text is charged to the work budget (see `chargeDropped`).
  */
 function chargeString(text: string, budgets: Budgets): string {
-  const encoded = encodeString(text, Math.min(budgets.text.charsLeft, budgets.work.unitsLeft), budgets.work);
+  const encoded = encodeString(text, budgets.text.charsLeft, budgets.work);
   if (encoded === undefined) {
     throw new DocumentBudgetExceeded("Value too large for a result document");
   }
-  spendWork(budgets.work, encoded.length);
   spendText(budgets.text, encoded.length);
   return encoded;
 }
@@ -130,8 +140,9 @@ function toDocumentData(data: unknown, budgets: Budgets): JsonText {
 /**
  * Writes `details` as the `"details":{...}` text of an error or diagnostic, redacted as it is written, when it
  * serializes to a JSON object that fits: anything else (a value that does not project to an object, text or work that
- * does not fit, or, unless `rethrow`, a throwing getter or toJSON) is left out and its text charges nothing; the work
- * it took stays spent. With `rethrow`, a getter or toJSON that throws is rethrown, so the diagnostic is dropped.
+ * does not fit, or, unless `rethrow`, a throwing getter or toJSON) is left out: its text is given back to the text
+ * budget and charged to the work budget, and the work it took stays spent. With `rethrow`, a getter or toJSON that
+ * throws is rethrown, so the diagnostic is dropped.
  */
 function toDocumentDetails(
   details: unknown,
@@ -140,6 +151,7 @@ function toDocumentDetails(
   rethrow: boolean
 ): JsonText | undefined {
   const segment = segmentOf(budgets.text);
+  let kept = false;
   try {
     spendText(segment, separator ? DETAILS_MEMBER_LENGTH : DETAILS_MEMBER_LENGTH - 1);
     const text = serializeJsonMember("details", details, {
@@ -151,6 +163,7 @@ function toDocumentDetails(
       return undefined;
     }
     budgets.text.charsLeft = segment.charsLeft;
+    kept = true;
     const member = new JsonText();
     member.write(separator ? ',"details":' : '"details":');
     member.append(text);
@@ -161,6 +174,10 @@ function toDocumentDetails(
     }
     // Left out; the caller keeps the rest.
     return undefined;
+  } finally {
+    if (!kept) {
+      chargeDropped(budgets.work, budgets.text.charsLeft - segment.charsLeft);
+    }
   }
 }
 
@@ -205,10 +222,13 @@ function toDocumentDiagnostic(diagnostic: Diagnostic, budgets: Budgets): JsonTex
  */
 function chargeErrorText(payload: RunnerErrorPayload, budgets: Budgets): { codeText: string; messageText: string } {
   const budget = budgets.text;
-  // The error is written first, while the work budget (twice the text budget) is still whole.
-  let codeText = encodeString(payload.code, budget.charsLeft, budgets.work);
+  // The error is written first, while the work budget is still whole. A code or message that is not a string (which
+  // classification never returns) takes the same fixed fallbacks, so the message printed is always a string.
+  let codeText = typeof payload.code === "string" ? encodeString(payload.code, budget.charsLeft, budgets.work) : undefined;
   let messageText =
-    codeText === undefined ? undefined : encodeString(payload.message, budget.charsLeft - codeText.length, budgets.work);
+    codeText === undefined || typeof payload.message !== "string"
+      ? undefined
+      : encodeString(payload.message, budget.charsLeft - codeText.length, budgets.work);
   if (codeText === undefined || messageText === undefined) {
     messageText = JSON.stringify(MESSAGE_TOO_LONG);
     if (codeText === undefined || budget.charsLeft - codeText.length < messageText.length) {
@@ -362,6 +382,7 @@ export function createDocumentOutput(options: DocumentOutputOptions): DocumentOu
         segment.charsLeft = item.charsLeft;
         kept += 1;
       } catch {
+        chargeDropped(budgets.work, segment.charsLeft - item.charsLeft);
         advice.add(`diagnostic ${index} was dropped from the result document: it could not be redacted or printed`);
       }
     }
@@ -388,8 +409,8 @@ export function createDocumentOutput(options: DocumentOutputOptions): DocumentOu
       let exitCode = 1;
       // One text budget for the whole document, charged at the exact length of its text: its frame, the data or the
       // error, then each diagnostic in order, each a segment that is kept whole or dropped whole. The newline is
-      // reserved, so a document that fits can always be written with it. One work budget, never given back, bounds
-      // everything walked to prepare it, kept or not.
+      // reserved, so a document that fits can always be written with it. A separate work budget of twice as many
+      // units, never given back, bounds everything walked or written to prepare it that does not print (see `WorkBudget`).
       const budgets: Budgets = { text: createDocumentBudget(limit - 1), work: createWorkBudget(limit) };
       try {
         const document = new JsonText();

@@ -86,8 +86,10 @@ function plainMessage(error: unknown, message: unknown): string {
     return error;
   }
   try {
-    if (error instanceof Error && isNonEmptyString(error.name)) {
-      return error.name;
+    // Read once, so a getter cannot pass the check with one value and return another.
+    const name: unknown = error instanceof Error ? error.name : undefined;
+    if (isNonEmptyString(name)) {
+      return name;
     }
   } catch {
     // A proxy whose traps throw has no usable name.
