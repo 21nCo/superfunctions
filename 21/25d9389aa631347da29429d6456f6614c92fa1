@@ -1,0 +1,59 @@
+apifn/README.md
+  s_83fa589146e8c6::t_7984bc94cdab53 24,26-29,31,33
+apifn/admin/package.json
+  s_83fa589146e8c6::t_703798d4f2c157 3,41,47
+apifn/admin/src/__tests__/admin.test.ts
+  s_83fa589146e8c6::t_536d4009e5c092 108-158
+apifn/admin/src/operator-service.ts
+  s_83fa589146e8c6::t_60aba18641780e 4,228-229,253-254
+apifn/cli/package.json
+  s_83fa589146e8c6::t_d268ff72ac6273 3,26-31
+apifn/cli/src/commands/check-compare.ts
+  s_83fa589146e8c6::t_0aa1f952296905 7-8,12-13,120,127,129,153,175
+apifn/collections/package.json
+  s_83fa589146e8c6::t_beb791c278c956 3,23
+apifn/contracts/package.json
+  s_83fa589146e8c6::t_ee11a641797d4f 3,43
+apifn/core/README.md
+  s_83fa589146e8c6::t_d9ec2835d0988b 87-90
+apifn/core/__tests__/openapi-validate.test.ts
+  s_83fa589146e8c6::t_10e367904440c9 1-10,45-293
+apifn/core/package.json
+  s_83fa589146e8c6::t_86542a54682fc1 3
+apifn/core/src/index.ts
+  s_83fa589146e8c6::t_d67e43cd856624 89-92
+apifn/core/src/openapi/reference-context.ts
+  s_83fa589146e8c6::t_75f11a2902e00a 1-77
+apifn/core/src/openapi/validate.ts
+  s_83fa589146e8c6::t_44079def439fbf 2,4-219,246-247,249-257,259-307,309
+apifn/docsfn/package.json
+  s_83fa589146e8c6::t_be894f07e4d2f2 3,32-34
+apifn/mock/package.json
+  s_83fa589146e8c6::t_c0a0e94176c3de 3,23
+apifn/react/package.json
+  s_83fa589146e8c6::t_9d5e80e0e450dc 3,22
+apifn/sdk/package.json
+  s_83fa589146e8c6::t_d544d76375219d 3,32
+apifn/snippets/package.json
+  s_83fa589146e8c6::t_2b050a562cf279 3,23
+apifn/svelte/package.json
+  s_83fa589146e8c6::t_3ff6864db4a094 3,50
+package-lock.json
+  s_83fa589146e8c6::t_adeb9782619541 93,96,99,110,113-118,137,140,263,266,305,392,395-397,429,432,443,446,809,812,846,849,860,863
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2125d9389aa631347da29429d6456f6614c92fa1",
+  "prompts": {},
+  "sessions": {
+    "s_83fa589146e8c6": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21253-9943-7ef0-8aad-8a89b106fa79",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
