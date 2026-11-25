@@ -84,15 +84,16 @@ class ReferencePreparationError extends Error {
 function parsePreloadedDocument(contents: string): unknown {
   const parsed = parseDocument(contents);
   if (parsed.errors.length) throw new Error(parsed.errors[0].message);
-  let aliasCount = 0;
+  let hasAliases = false;
   let sourceNodes = 0;
   visit(parsed, (_key, node) => {
     sourceNodes += 1;
-    if (isAlias(node)) aliasCount += 1;
+    hasAliases ||= isAlias(node);
   });
-  // The parser retains alias identity. Its native limit also permits wide alias lists.
-  const value = parsed.toJS({ maxAliasCount: Math.max(100, aliasCount + 1) });
-  if (aliasCount === 0) return value;
+  // The parser retains alias identity. Check the expanded graph size below,
+  // since the parser's anchor-count estimate can reject small nested graphs.
+  const value = parsed.toJS({ maxAliasCount: -1 });
+  if (!hasAliases) return value;
 
   // Bound the expanded size before passing the graph to a tree-walking validator.
   // Count empty collections as nodes and treat a cycle as larger than the budget.

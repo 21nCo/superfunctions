@@ -323,10 +323,11 @@ describe("validateOpenAPI", () => {
   });
 
   it.each([
-    ["a mapping", "{ id: 1 }", 1, /alias count/i],
-    ["an empty sequence", "[]", 4, /alias expansion/i],
-  ])("bounds nested YAML alias expansion over %s", async (_label, leaf, depth, message) => {
+    ["a mapping", "{ id: 1 }"],
+    ["an empty sequence", "[]"],
+  ])("bounds nested YAML alias expansion over %s", async (_label, leaf) => {
     const uri = "https://example.invalid/types.yaml";
+    const depth = 4;
     const copies = (name: string) => Array.from({ length: 10 }, () => "*" + name).join(", ");
     const groups = Array.from({ length: depth }, (_, index) =>
       `x-group${index + 1}: &group${index + 1} [${copies("group" + index)}]`
@@ -339,8 +340,22 @@ describe("validateOpenAPI", () => {
     ].join("\n");
     const errors = await validateOpenAPI(documentWithReference(uri), { externalReferences: new Map([[uri, schema]]) });
     expect(errors).toEqual([
-      { path: "components.schemas.Value.$ref", message: expect.stringMatching(message), severity: "error" },
+      { path: "components.schemas.Value.$ref", message: expect.stringMatching(/alias expansion/i), severity: "error" },
     ]);
+  });
+
+  it("accepts preloaded YAML with modest nested alias reuse", async () => {
+    const uri = "https://example.invalid/types.yaml";
+    const schema = [
+      "type: object",
+      "x-error: &error { code: invalid }",
+      "x-responses: &responses { bad: *error, denied: *error, missing: *error, failed: *error }",
+      "examples:",
+      ...Array.from({ length: 30 }, () => "  - *responses"),
+    ].join("\n");
+    await expect(validateOpenAPI(documentWithReference(uri), {
+      externalReferences: new Map([[uri, schema]]),
+    })).resolves.toEqual([]);
   });
 
   it.each([
