@@ -1364,6 +1364,39 @@ describe("unvetted-client authorization rejections", () => {
         expect(callback).toMatchObject({ status: "failed", error: INDETERMINATE });
       });
 
+      it("does not count a document with an unsafe link as fetchable", async () => {
+        const fixture = rejectionFixture(METADATA_DOCUMENT);
+        redirect(LOOPBACK, RUNTIME_PORT)(fixture);
+        delete fixture.registration.metadata.token_endpoint_auth_method;
+        Object.assign(fixture.registration.metadata, {
+          token_endpoint_auth_methods_supported: ["private_key_jwt", "none"],
+          logo_uri: "http://client.example.com/logo.png",
+        });
+        fixture.expected.errorCode = "invalid_target";
+        // Stored, the link is dropped and none is used; fetched, the
+        // document is refused: a callback is indeterminate, never a pass.
+        const [callback] = await runHostedAuthorizationRegression(
+          { ...callbackTarget(), tokenEndpointAuthMethods: ["none"] },
+          [fixture],
+        );
+        expect(callback).toMatchObject({ status: "failed", error: INDETERMINATE });
+        // Neither path answers invalid_scope for an unsupported scope: the
+        // fetch refuses the link first, the store answers invalid_client.
+        Object.assign(fixture.registration.metadata, { scope: "mcp:admin" });
+        delete fixture.expected.errorCode;
+        const [scope] = await runHostedAuthorizationRegression({
+          issuer,
+          tokenEndpointAuthMethods: ["none"],
+          supportedScopes: ["mcp:read"],
+          prepareRegistration: async () => {},
+          request: async () => Response.json({ error: "invalid_scope" }, { status: 400 }),
+        }, [fixture]);
+        expect(scope).toMatchObject({
+          status: "failed",
+          error: "An ineligible client registration must be rejected as a client error, not invalid_scope",
+        });
+      });
+
       it("decides a metadata document that also offers none per resolution path", async () => {
         const fixture = rejectionFixture(METADATA_DOCUMENT);
         redirect(LOOPBACK, RUNTIME_PORT)(fixture);

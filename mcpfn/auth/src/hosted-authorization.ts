@@ -1344,6 +1344,12 @@ function validateHostedCapabilities(
   }
 }
 
+const SHARED_SECRET_METHODS: ReadonlySet<string> = new Set([
+  "client_secret_basic",
+  "client_secret_post",
+  "client_secret_jwt",
+]);
+
 /**
  * The token endpoint method a Client ID Metadata Document selects (draft,
  * section 5): RFC 7591's client_secret_basic default does not apply. When
@@ -1363,6 +1369,11 @@ function clientMetadataDocumentAuthMethod(record: Record<string, unknown>): stri
   }
   const methods = supported as string[] | undefined;
   const declared = record.token_endpoint_auth_method;
+  // Draft section 4.1: a document never names a shared-secret method, in
+  // either field, even one the server would not select.
+  if ([declared, ...(methods ?? [])].some((method) => SHARED_SECRET_METHODS.has(method as string))) {
+    return undefined;
+  }
   if (declared !== undefined && declared !== null) {
     if (typeof declared !== "string") return undefined;
     if (methods && !methods.includes(declared)) return undefined;

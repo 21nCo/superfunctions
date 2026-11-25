@@ -84,8 +84,9 @@ served with a single `application/json` media type, and use
 `token_endpoint_auth_method` `none`. Per the draft, when
 `token_endpoint_auth_methods_supported` is present it must be a nonempty list of
 strings containing any declared method, and `none` is selected whenever it is
-listed; without a list, an omitted method means `none`. Anything else is
-refused with `invalid_client_metadata`. Stored self-registered clients have unsafe link fields dropped
+listed; without a list, an omitted method means `none`. Neither field may
+name a shared-secret method (`client_secret_basic`, `client_secret_post`,
+`client_secret_jwt`). Anything else is refused with `invalid_client_metadata`. Stored self-registered clients have unsafe link fields dropped
 before their metadata is used. In registrations and documents, `client_uri`, `logo_uri`,
 `tos_uri` and `policy_uri` may be omitted or `null`; any other value must be an
 absolute `https://` URL without credentials, or the client is refused with

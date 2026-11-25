@@ -806,6 +806,12 @@ function registrationEligibility(
   return { eligibility: method, scopeRejection: false };
 }
 
+const SHARED_SECRET_METHODS: ReadonlySet<string> = new Set([
+  "client_secret_basic",
+  "client_secret_post",
+  "client_secret_jwt",
+]);
+
 /**
  * The method a Client ID Metadata Document selects when the server fetches it
  * (draft, section 5): token_endpoint_auth_methods_supported, when present,
@@ -827,6 +833,11 @@ function fetchedAuthMethod(registration: McpFnHostedRegistrationFixture): string
   }
   const methods = supported as string[] | undefined;
   const declared = metadata.token_endpoint_auth_method;
+  // Draft section 4.1: a document never names a shared-secret method, in
+  // either field, even one the server would not select.
+  if ([declared, ...(methods ?? [])].some((method) => SHARED_SECRET_METHODS.has(method as string))) {
+    return undefined;
+  }
   if (declared !== undefined && declared !== null) {
     if (typeof declared !== "string") return undefined;
     if (methods && !methods.includes(declared)) return undefined;
@@ -840,13 +851,36 @@ function fetchedAuthMethod(registration: McpFnHostedRegistrationFixture): string
 /**
  * Whether the server accepts the fixture as a Client ID Metadata Document it
  * fetches: such a document is public, so its method (none when omitted) must
- * be `none`, and the target must support `none`.
+ * be `none`, the target must support `none`, and its link fields must pass
+ * the fetch-time checks.
  */
 function fetchedDocumentAccepted(
   registration: McpFnHostedRegistrationFixture,
   supported: readonly string[] | undefined,
 ): boolean {
-  return fetchedAuthMethod(registration) === "none" && (!supported || supported.includes("none"));
+  return fetchedAuthMethod(registration) === "none" && (!supported || supported.includes("none")) &&
+    fetchedLinksAccepted(registration);
+}
+
+/**
+ * A fetched document is refused (invalid_client_metadata, before its redirect
+ * URI or scope is checked) when a link field is present and is not an absolute
+ * https:// URL without credentials; a stored registration only has such a
+ * link dropped.
+ */
+function fetchedLinksAccepted(registration: McpFnHostedRegistrationFixture): boolean {
+  const metadata = registration.metadata as Record<string, unknown>;
+  return ["client_uri", "logo_uri", "tos_uri", "policy_uri"].every((field) => {
+    const value = metadata[field];
+    if (value === undefined || value === null) return true;
+    if (typeof value !== "string" || !/^https:\/\//i.test(value)) return false;
+    try {
+      const url = new URL(value);
+      return url.protocol === "https:" && !url.username && !url.password;
+    } catch {
+      return false;
+    }
+  });
 }
 
 /**
