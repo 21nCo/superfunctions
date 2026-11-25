@@ -211,6 +211,7 @@
     "superfunctions-docs-theme": "public",
     "superfunctions-envelope": "public",
     "superfunctions-errors": "public",
+    "superfunctions-evidence": "public",
     "superfunctions-files": "public",
     "superfunctions-http": "public",
     "superfunctions-http-express": "public",
