@@ -114,10 +114,8 @@ export async function serverSetupCommand(
 
     connectSpinner.succeed('Connected to server');
 
-    const temp = await ssh.exec(
-      'directory=$(mktemp -d /tmp/hostfn-setup.XXXXXXXX) && printf "\\nHOSTFN_SETUP_DIR=%s\\n" "$directory"',
-      setupExecOptions
-    );
+    const createDirectory = 'directory=$(mktemp -d /tmp/hostfn-setup.XXXXXXXX) && printf "\\nHOSTFN_SETUP_DIR=%s\\n" "$directory"';
+    const temp = await ssh.exec(`bash -c '${createDirectory}'`, setupExecOptions);
     const directory = temp.stdout.match(/^HOSTFN_SETUP_DIR=(\/tmp\/hostfn-setup\.[A-Za-z0-9]{8})\r?$/m)?.[1];
     if (temp.exitCode !== 0 || !directory) {
       throw new Error('Could not create a private setup directory on the server');
@@ -141,7 +139,7 @@ export async function serverSetupCommand(
     Logger.info('Executing setup (this may take several minutes)...');
     Logger.br();
 
-    const result = await ssh.exec(`HOSTFN_SETUP_LOG=${remoteLogPath} bash ${remoteScriptPath}`, {
+    const result = await ssh.exec(`env HOSTFN_SETUP_LOG=${remoteLogPath} bash ${remoteScriptPath}`, {
       streaming: true,
       ...setupExecOptions,
     });
