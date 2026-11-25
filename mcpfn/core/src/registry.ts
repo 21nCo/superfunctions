@@ -455,6 +455,30 @@ export function promptArguments<TContext>(
     : schemaPromptArguments(definition);
 }
 
+/** Most values (objects, arrays and scalars together) one tool call may carry. */
+const MAX_ARGUMENT_NODES = 100_000;
+
+function exceedsJsonNodes(value: unknown, limit: number): boolean {
+  let count = 0;
+  const stack: unknown[] = [value];
+  while (stack.length) {
+    const current = stack.pop();
+    count += 1;
+    if (count > limit) return true;
+    if (Array.isArray(current)) {
+      if (count + stack.length + current.length > limit) return true;
+      for (const item of current) stack.push(item);
+    } else if (current && typeof current === "object") {
+      for (const key in current) {
+        if (!Object.hasOwn(current, key)) continue;
+        if (count + stack.length + 1 > limit) return true;
+        stack.push((current as Record<string, unknown>)[key]);
+      }
+    }
+  }
+  return false;
+}
+
 export class McpFnRegistry<TContext = undefined> {
   private readonly schemaCompiler: SchemaCompiler;
   private readonly registrations: Array<(target: McpFnRegistry<TContext>) => void> = [];
@@ -930,6 +954,18 @@ export class McpFnRegistry<TContext = undefined> {
     issues?: ReturnType<typeof formatMcpFnSchemaIssues>;
   } {
     const normalizedArgs = args ?? {};
+    // Bound validation work before any schema engine runs: @cfworker/json-schema
+    // keeps reporting every extra property or tuple item even when it stops at
+    // the first failure elsewhere.
+    if (exceedsJsonNodes(normalizedArgs, MAX_ARGUMENT_NODES)) {
+      return {
+        args: {},
+        issues: [{
+          path: "/", instancePath: "/", schemaPath: "#", keyword: "maxNodes",
+          message: `Tool arguments may contain at most ${MAX_ARGUMENT_NODES} values`,
+        }],
+      };
+    }
     if (!registered.validateInput(normalizedArgs)) {
       return {
         args:

@@ -805,7 +805,7 @@ stops at the first failure where the schema allows it: a large array whose
 `items` fail stops at the first bad item, while a failing `anyOf` or `oneOf`
 still reports each branch and, on `@cfworker/json-schema`, a tuple with
 `additionalItems: false` reports each extra item (responses keep at most 100
-issues). Each client may hold at most `maxResourceSubscriptions` (default 1000) resource
+issues), and tool arguments with more than 100,000 values in total are refused before any schema validation. Each client may hold at most `maxResourceSubscriptions` (default 1000) resource
 subscriptions.
 
 One `McpFnServer` instance connects to one transport. Create a new instance per concurrent connection and share the registry.

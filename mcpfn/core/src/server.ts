@@ -324,21 +324,12 @@ export class McpFnServer<TContext = undefined> {
       ],
     });
     this.installHandlers();
+    this.withholdHandlerErrors();
   }
 
   private installHandlers(): void {
-    // Every request handler withholds unexpected error text (context
-    // factories, visibility hooks, task creation and registry handlers alike);
-    // McpFnError and McpError pass through unchanged.
-    const protocol = this.protocol;
-    const register = protocol.setRequestHandler.bind(protocol);
-    const handlers = {
-      setRequestHandler: ((schema: unknown, handler: (request: { method: string }, extra: unknown) => Promise<unknown>) =>
-        register(schema as never, ((request: { method: string }, extra: unknown) =>
-          this.withheldProtocolErrors(request.method, () => handler(request, extra))) as never)) as typeof protocol.setRequestHandler,
-    };
     if (this.capabilities.tools) {
-      handlers.setRequestHandler(
+      this.protocol.setRequestHandler(
         ListToolsRequestSchema,
         async (request, extra) => {
           const tools = this.registry.listTools();
@@ -368,7 +359,7 @@ export class McpFnServer<TContext = undefined> {
           };
         },
       );
-      handlers.setRequestHandler(
+      this.protocol.setRequestHandler(
         CallToolRequestSchema,
         async (request, extra) => {
           const context = await this.contextFactory(extra);
@@ -567,7 +558,7 @@ export class McpFnServer<TContext = undefined> {
     }
 
     if (this.capabilities.resources) {
-      handlers.setRequestHandler(
+      this.protocol.setRequestHandler(
         ListResourcesRequestSchema,
         async (request, extra) => {
           const context = await this.contextFactory(extra);
@@ -583,7 +574,7 @@ export class McpFnServer<TContext = undefined> {
           };
         },
       );
-      handlers.setRequestHandler(
+      this.protocol.setRequestHandler(
         ListResourceTemplatesRequestSchema,
         async (request) => {
           const result = page(
@@ -597,7 +588,7 @@ export class McpFnServer<TContext = undefined> {
           };
         },
       );
-      handlers.setRequestHandler(
+      this.protocol.setRequestHandler(
         ReadResourceRequestSchema,
         async (request, extra) => {
           const context = await this.contextFactory(extra);
@@ -606,7 +597,7 @@ export class McpFnServer<TContext = undefined> {
         },
       );
       if (this.capabilities.resources.subscribe) {
-        handlers.setRequestHandler(
+        this.protocol.setRequestHandler(
           SubscribeRequestSchema,
           async (request, extra) => {
             const uri = request.params.uri;
@@ -618,9 +609,16 @@ export class McpFnServer<TContext = undefined> {
             }
             pending.add(token);
             try {
-              // Count each URI once, whether subscribed, pending or both.
-              const held = new Set([...this.resourceSubscriptions, ...this.pendingResourceSubscriptions.keys()]);
-              if (!this.resourceSubscriptions.has(uri) && held.size > this.maxResourceSubscriptions) {
+              // Count each URI once, whether subscribed, pending or both,
+              // without copying either set.
+              let held = this.resourceSubscriptions.size;
+              if (!this.resourceSubscriptions.has(uri)) {
+                for (const pendingUri of this.pendingResourceSubscriptions.keys()) {
+                  if (!this.resourceSubscriptions.has(pendingUri)) held += 1;
+                  if (held > this.maxResourceSubscriptions) break;
+                }
+              }
+              if (!this.resourceSubscriptions.has(uri) && held > this.maxResourceSubscriptions) {
                 throw new McpError(ErrorCode.InvalidRequest, "Too many resource subscriptions");
               }
               const context = await this.contextFactory(extra);
@@ -638,7 +636,7 @@ export class McpFnServer<TContext = undefined> {
             }
           },
         );
-        handlers.setRequestHandler(
+        this.protocol.setRequestHandler(
           UnsubscribeRequestSchema,
           async (request, extra) => {
             // Stop delivery first: a client that asked to unsubscribe gets no
@@ -661,7 +659,7 @@ export class McpFnServer<TContext = undefined> {
     }
 
     if (this.capabilities.prompts) {
-      handlers.setRequestHandler(
+      this.protocol.setRequestHandler(
         ListPromptsRequestSchema,
         async (request) => {
           const result = page(
@@ -675,7 +673,7 @@ export class McpFnServer<TContext = undefined> {
           };
         },
       );
-      handlers.setRequestHandler(
+      this.protocol.setRequestHandler(
         GetPromptRequestSchema,
         async (request, extra) => {
           const context = await this.contextFactory(extra);
@@ -691,7 +689,7 @@ export class McpFnServer<TContext = undefined> {
     }
 
     if (this.capabilities.completions) {
-      handlers.setRequestHandler(
+      this.protocol.setRequestHandler(
         CompleteRequestSchema,
         async (request, extra) => {
           const context = await this.contextFactory(extra);
@@ -713,6 +711,37 @@ export class McpFnServer<TContext = undefined> {
    * correlation ID shown instead. Returns undefined for errors that are
    * returned as they are.
    */
+  // Every request handler withholds unexpected error text: McpFn's own
+  // (context factories, visibility hooks, task creation, registry handlers)
+  // and the SDK's (such as tasks/get and tasks/result reading the task
+  // store). The SDK looks handlers up in its request-handler map, so wrap
+  // each lookup, the fallback handler included. McpFnError and McpError pass
+  // through unchanged.
+  private withholdHandlerErrors(): void {
+    type Handler = (request: { method: string }, extra: unknown) => Promise<unknown>;
+    const protocol = this.protocol as unknown as {
+      _requestHandlers?: Map<string, Handler>;
+      fallbackRequestHandler?: Handler;
+    };
+    const original = protocol._requestHandlers;
+    if (!(original instanceof Map)) return;
+    const wrap = (handler: Handler): Handler => (request, extra) =>
+      this.withheldProtocolErrors(request.method, () => handler(request, extra));
+    const handlers = new Map(original);
+    protocol._requestHandlers = Object.assign(handlers, {
+      get(method: string) {
+        const handler = Map.prototype.get.call(handlers, method) as Handler | undefined;
+        return handler && wrap(handler);
+      },
+    });
+    let fallback = protocol.fallbackRequestHandler;
+    Object.defineProperty(protocol, "fallbackRequestHandler", {
+      configurable: true,
+      get: () => fallback && wrap(fallback),
+      set: (value: Handler | undefined) => { fallback = value; },
+    });
+  }
+
   private async reportWithheldError(
     error: unknown,
     method: string,

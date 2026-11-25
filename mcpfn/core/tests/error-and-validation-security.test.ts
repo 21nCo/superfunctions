@@ -56,6 +56,25 @@ describe("schema validation of untrusted arguments (MCP-SEC-06)", () => {
   });
 });
 
+describe("argument size bound (MCP-SEC-06)", () => {
+  it("refuses arguments with more values than the bound before schema validation", async () => {
+    const handler = vi.fn(async () => structuredResult({ ok: true }));
+    const registry = new McpFnRegistry().register({
+      name: "closed",
+      description: "Closed object.",
+      inputSchema: { type: "object", properties: { a: { type: "string" } }, additionalProperties: false },
+      handler,
+    });
+    const client = await connect(registry);
+    const huge = Object.fromEntries(Array.from({ length: 100_001 }, (_, index) => [`k${index}`, 1]));
+    const result = await client.callTool({ name: "closed", arguments: huge });
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result)).toContain("maxNodes");
+    expect(handler).not.toHaveBeenCalled();
+    expect((await client.callTool({ name: "closed", arguments: { a: "fine" } })).isError).not.toBe(true);
+  });
+});
+
 describe("tool error text (MCP-SEC-08)", () => {
   function failingRegistry(error: () => unknown) {
     return new McpFnRegistry().register({
@@ -276,6 +295,27 @@ describe("withheld errors outside tool handlers (MCP-SEC-08)", () => {
       CreateTaskResultSchema,
     ).then(() => undefined, (failure: unknown) => failure);
     expect(error).toMatchObject({ code: ErrorCode.InternalError, data: { errorId: expect.any(String) } });
+    expect(String((error as Error).message)).not.toContain("/srv/app");
+  });
+
+  it("withholds task store errors raised inside the SDK's own task handlers", async () => {
+    const { InMemoryTaskStore } = await import("@modelcontextprotocol/sdk/experimental/tasks/stores/in-memory.js");
+    const { GetTaskResultSchema } = await import("@modelcontextprotocol/sdk/types.js");
+    const store = new InMemoryTaskStore();
+    store.getTask = async () => { throw systemError(); };
+    const registry = new McpFnRegistry().register({
+      name: "slow",
+      description: "Task tool.",
+      inputSchema: { type: "object" },
+      execution: { taskSupport: "required" },
+      handler: async () => structuredResult({ ok: true }),
+      taskHandler: { createTask: vi.fn(), getTask: vi.fn(), getTaskResult: vi.fn() } as never,
+    });
+    const client = await connect(registry, { taskStore: store });
+    const error = await client.request({ method: "tasks/get", params: { taskId: "task-1" } }, GetTaskResultSchema)
+      .then(() => undefined, (failure: unknown) => failure);
+    expect(error).toBeDefined();
+    expect(JSON.stringify(error)).not.toContain("/srv/app");
     expect(String((error as Error).message)).not.toContain("/srv/app");
   });
 
