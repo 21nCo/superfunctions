@@ -166,13 +166,9 @@ for (const { operation, code, reason } of skipped) {
   excluding `null` unless it lists it). Anything else is listed in `skipped` with a code and reason:
   external or URL references, `cookie` parameters, a parameter named after
   a property every object inherits (`__proto__`, `toString`, `constructor`,
-  ...) unless it is required with a typed schema
-  (`unsupported-parameter-name`), a schema that declares or requires such a
-  name unless the same schema object requires it and gives it a
-  `properties` entry with a `type` (no `$ref`, `readOnly` or `writeOnly`
-  beside it), or that lists one in a dependency, in a
-  body or a response (`unsupported-property-name`); `__proto__` is refused
-  always. This holds under either engine: Ajv reads those names through the
+  ...) (`unsupported-parameter-name`), and a schema that declares, requires
+  or lists in a dependency such a name, in a body or a response
+  (`unsupported-property-name`), with no exception, under either engine: Ajv reads those names through the
   prototype (and leaves a `__proto__` key of `properties` out) while
   @cfworker/json-schema reads own properties only. Also skipped:
   non-default styles,

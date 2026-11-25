@@ -534,7 +534,7 @@ describe("fromOpenAPI under @cfworker/json-schema", () => {
     expect(wide.tools.map(({ name }) => name)).toEqual(["wideFlat"]);
   });
 
-  it("skips a schema or parameter naming a property every object inherits unless it is required with a type, which Ajv reads through the prototype and this engine does not", async () => {
+  it("skips a schema or parameter naming any property every object inherits, with no exception, which Ajv reads through the prototype and this engine does not", () => {
     const named = (schema: unknown, parameter = "q") => fromOpenAPI({
       openapi: "3.1.0",
       paths: {
@@ -562,26 +562,38 @@ describe("fromOpenAPI under @cfworker/json-schema", () => {
     expect(verdicts(parameter)).toEqual([["listItems", "unsupported-parameter-name", "query parameter hasOwnProperty cannot be declared: the validators do not read the names every object inherits alike"]]);
     // Another spelling is an ordinary name.
     expect(named({ type: "object", required: ["ToString"], properties: { ToString: { type: "string" } } }, "Constructor").skipped).toEqual([]);
-    // Required with a typed schema, the name is judged alike: the type rejects the inherited value Ajv reads.
-    const executor = recordingExecutor();
-    const typed = fromOpenAPI({
+    // Required with a typed schema, or with an access flag behind allOf, anyOf/oneOf or a $ref, it is still skipped: no exception is made.
+    const body = (schema: unknown) => ({ required: true, content: { "application/json": { schema } } });
+    const property = (constructor: unknown) => ({ type: "object", required: ["constructor"], properties: { constructor } });
+    const strict = fromOpenAPI({
       openapi: "3.1.0",
       paths: {
-        "/items": {
-          post: { operationId: "named", requestBody: { required: true, content: { "application/json": { schema: { type: "object", required: ["constructor"], properties: { constructor: { type: "string" } } } } } }, responses: { "204": { description: "Done" } } },
-          get: { operationId: "listItems", parameters: [{ name: "toString", in: "query", required: true, schema: { type: "string" } }], responses: { "200": { description: "OK" } } },
-        },
+        "/typed": { post: { operationId: "typed", requestBody: body(property({ type: "string" })), responses: { "204": { description: "Done" } } } },
+        "/all": { post: { operationId: "allOfFlag", requestBody: body(property({ type: "string", allOf: [{ readOnly: true }] })), responses: { "204": { description: "Done" } } } },
+        "/any": { post: { operationId: "anyOfFlag", requestBody: body(property({ type: "string", anyOf: [{ readOnly: true }] })), responses: { "204": { description: "Done" } } } },
+        "/one": { post: { operationId: "oneOfFlag", requestBody: body(property({ type: "string", oneOf: [{ readOnly: true }] })), responses: { "204": { description: "Done" } } } },
+        "/ref": { post: { operationId: "refFlag", requestBody: body(property({ $ref: "#/components/schemas/Hidden" })), responses: { "204": { description: "Done" } } } },
+        "/query": { get: { operationId: "typedParameter", parameters: [{ name: "toString", in: "query", required: true, schema: { type: "string" } }], responses: { "200": { description: "OK" } } } },
+        "/plain": { post: { operationId: "plain", requestBody: body({ type: "object", required: ["ToString"], properties: { ToString: { type: "string" } } }), responses: { "204": { description: "Done" } } } },
       },
-    }, { executor, allowMutations: true });
-    expect(typed.skipped).toEqual([]);
-    for (const engine of ["ajv", "cfworker"] as const) {
-      const body = createSchemaCompiler(engine).compile(tool(typed.tools, "named").inputSchema);
-      const query = createSchemaCompiler(engine).compile(tool(typed.tools, "listItems").inputSchema);
-      expect([body({ body: { constructor: "ok" } }), body({ body: {} }), body({ body: { constructor: 1 } })]).toEqual([true, false, false]);
-      expect([query({ query: { toString: "ok" } }), query({ query: {} }), query({})]).toEqual([true, false, false]);
-    }
-    await typed.registry.callTool("named", { body: { constructor: "ok" } }, undefined, requestExtra());
-    expect(executor.calls.map((call) => call.args)).toEqual([{ body: { constructor: "ok" } }]);
+      components: { schemas: { Hidden: { type: "string", readOnly: true } } },
+    }, { executor: recordingExecutor(), allowMutations: true });
+    const inherited = (name: string) => `property ${name} cannot be declared or required: the validators do not read the names every object inherits alike`;
+    expect(verdicts(strict)).toEqual([
+      ["allOfFlag", "unsupported-property-name", inherited("constructor")],
+      ["anyOfFlag", "unsupported-property-name", inherited("constructor")],
+      ["oneOfFlag", "unsupported-property-name", inherited("constructor")],
+      ["refFlag", "unsupported-property-name", inherited("constructor")],
+      ["typed", "unsupported-property-name", inherited("constructor")],
+      ["typedParameter", "unsupported-parameter-name", "query parameter toString cannot be declared: the validators do not read the names every object inherits alike"],
+    ]);
+    expect(strict.tools.map(({ name }) => name)).toEqual(["plain"]);
+    // The tool that registers is read alike by both engines.
+    const verdictsOf = (engine: "ajv" | "cfworker") => {
+      const check = createSchemaCompiler(engine).compile(tool(strict.tools, "plain").inputSchema);
+      return [check({ body: { ToString: "ok" } }), check({ body: {} }), check({ body: { ToString: "ok", toString: "x" } })];
+    };
+    expect(verdictsOf("cfworker")).toEqual(verdictsOf("ajv"));
   });
 
   it("skips a __proto__ parameter, required or optional, as under Ajv", () => {

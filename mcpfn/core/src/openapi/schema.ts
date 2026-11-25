@@ -1028,25 +1028,17 @@ export class SchemaConverter {
 
   /**
    * Refuse a schema object whose `properties` or `required` names a property
-   * every object inherits, unless both engines judge it alike: the same
-   * object requires it and gives it a `properties` entry with a `type` (no
-   * `$ref`, `readOnly` or `writeOnly` beside it), which rejects the inherited
-   * value Ajv reads when it is absent. "__proto__" is
-   * refused always: Ajv leaves that key of `properties` out.
+   * every object inherits ("__proto__", "toString", "constructor", ...), with
+   * no exception: Ajv reads those names through the prototype (and leaves a
+   * `__proto__` key of `properties` out) while @cfworker/json-schema reads
+   * own properties only, so the engines would not judge them alike.
    */
   private checkInheritedNames(schema: JsonObject): void {
     const properties = isObject(schema.properties) ? schema.properties : undefined;
     const declared = properties ? this.namesIn(properties, "keys") : NO_NAMES;
     const required = Array.isArray(schema.required) ? this.namesIn(schema.required, "list") : NO_NAMES;
-    if (declared.size === 0 && required.size === 0) return;
-    for (const name of [...declared, ...required]) {
-      const property = declared.has(name) ? properties![name] : undefined;
-      // A `$ref` (whose 3.0 siblings are dropped) or an access flag (projected to `false`) may lose the type.
-      const typed = isObject(property) && property.type !== undefined && !Object.hasOwn(property, "$ref")
-        && property.readOnly !== true && property.writeOnly !== true;
-      const alike = name !== "__proto__" && required.has(name) && typed;
-      if (!alike) throw new OpenApiSkip("unsupported-property-name", prototypePropertyReason(name));
-    }
+    const [name] = declared.size > 0 ? declared : required;
+    if (name !== undefined) throw new OpenApiSkip("unsupported-property-name", prototypePropertyReason(name));
   }
 
   /** Refuse a dependency map that names an inherited property, as a key or in a list: the engines read it differently. */

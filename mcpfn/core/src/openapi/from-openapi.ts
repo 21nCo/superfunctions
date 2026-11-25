@@ -947,12 +947,9 @@ class OperationConverter {
       throw new OpenApiSkip("invalid-operation", `parameter ${name} has unknown location ${JSON.stringify(location)}`);
     }
     if (location === "header" && isForbiddenHeader(name)) return undefined;
-    // A name every object inherits becomes a group property the validators
-    // read alike only when it is required with a typed schema, which rejects
-    // the inherited value Ajv reads when it is absent; never "__proto__".
-    const schema = raw.schema;
-    const alike = name !== "__proto__" && raw.required === true && isObject(schema) && schema.type !== undefined && !Object.hasOwn(schema, "$ref");
-    if (isPrototypeName(name) && !alike) {
+    // A name every object inherits is never a group property: Ajv reads it
+    // through the prototype and @cfworker/json-schema reads own properties only.
+    if (isPrototypeName(name)) {
       throw new OpenApiSkip(
         "unsupported-parameter-name",
         `${location} parameter ${name} cannot be declared: the validators do not read the names every object inherits alike`,

@@ -1334,7 +1334,7 @@ describe("fromOpenAPI bounded and dialect-aware conversion", () => {
     }
   });
 
-  it("skips a schema or parameter naming any property every object inherits unless required with a type in the same object, as under @cfworker/json-schema", () => {
+  it("skips a schema or parameter naming any property every object inherits, with no exception, as under @cfworker/json-schema", () => {
     const result = fromOpenAPI({
       openapi: "3.0.3",
       paths: {
@@ -1344,7 +1344,7 @@ describe("fromOpenAPI bounded and dialect-aware conversion", () => {
         "/d": { get: { operationId: "parameter", parameters: [{ name: "isPrototypeOf", in: "query", schema: { type: "string" } }], responses: ok } },
         "/e": { get: { operationId: "output", responses: json({ type: "object", properties: { hasOwnProperty: { type: "string" } } }) } },
         "/f": { post: { operationId: "plain", requestBody: body({ type: "object", required: ["ToString"], properties: { ToString: { type: "string" } } }), responses: ok } },
-        // Required with a type in the same object, the engines judge it alike.
+        // Required with a type in the same object, it is still skipped: no exception is made.
         "/g": { post: { operationId: "typed", requestBody: body({ type: "object", required: ["constructor"], properties: { constructor: { type: "string" } } }), responses: ok } },
         // Split across allOf members, it is not read together.
         "/h": { post: { operationId: "split", requestBody: body({ type: "object", allOf: [{ required: ["constructor"] }, { properties: { constructor: { type: "string" } } }] }), responses: ok } },
@@ -1353,8 +1353,16 @@ describe("fromOpenAPI bounded and dialect-aware conversion", () => {
         "/j": { post: { operationId: "referenced", requestBody: body({ type: "object", required: ["constructor"], properties: { constructor: { $ref: "#/components/schemas/Any", type: "string" } } }), responses: ok } },
         "/k": { post: { operationId: "readOnly", requestBody: body({ type: "object", required: ["constructor"], properties: { constructor: { type: "string", readOnly: true } } }), responses: ok } },
         "/l": { get: { operationId: "referencedParameter", parameters: [{ name: "toString", in: "query", required: true, schema: { $ref: "#/components/schemas/Any", type: "string" } }], responses: ok } },
+        "/m": { get: { operationId: "typedParameter", parameters: [{ name: "toString", in: "query", required: true, schema: { type: "string" } }], responses: ok } },
+        "/n": { post: { operationId: "optionalTyped", requestBody: body({ type: "object", properties: { constructor: { type: "string" } } }), responses: ok } },
+        // Access flags the projection reads through allOf, anyOf/oneOf or a $ref.
+        "/o": { post: { operationId: "allOfFlag", requestBody: body({ type: "object", required: ["constructor"], properties: { constructor: { type: "string", allOf: [{ readOnly: true }] } } }), responses: ok } },
+        "/p": { post: { operationId: "anyOfFlag", requestBody: body({ type: "object", required: ["constructor"], properties: { constructor: { type: "string", anyOf: [{ readOnly: true }] } } }), responses: ok } },
+        "/q": { post: { operationId: "oneOfFlag", requestBody: body({ type: "object", required: ["constructor"], properties: { constructor: { type: "string", oneOf: [{ readOnly: true }] } } }), responses: ok } },
+        "/r": { post: { operationId: "refFlag", requestBody: body({ type: "object", required: ["constructor"], properties: { constructor: { $ref: "#/components/schemas/Hidden" } } }), responses: ok } },
+        "/s": { get: { operationId: "writeOnlyOutput", responses: json({ type: "object", required: ["toString"], properties: { toString: { type: "string", allOf: [{ writeOnly: true }] } } }) } },
       },
-      components: { schemas: { Any: {} } },
+      components: { schemas: { Any: {}, Hidden: { type: "string", readOnly: true } } },
     }, options());
     const reason = (name: string) => PROTO_PROPERTY.replace("__proto__", name);
     expect(skips(result)).toEqual([
@@ -1363,14 +1371,21 @@ describe("fromOpenAPI bounded and dialect-aware conversion", () => {
       ["dependency", "unsupported-property-name", reason("valueOf")],
       ["parameter", "unsupported-parameter-name", "query parameter isPrototypeOf cannot be declared: the validators do not read the names every object inherits alike"],
       ["output", "unsupported-property-name", reason("hasOwnProperty")],
+      ["typed", "unsupported-property-name", reason("constructor")],
       ["split", "unsupported-property-name", reason("constructor")],
       ["untyped", "unsupported-property-name", reason("constructor")],
       ["referenced", "unsupported-property-name", reason("constructor")],
       ["readOnly", "unsupported-property-name", reason("constructor")],
       ["referencedParameter", "unsupported-parameter-name", "query parameter toString cannot be declared: the validators do not read the names every object inherits alike"],
+      ["typedParameter", "unsupported-parameter-name", "query parameter toString cannot be declared: the validators do not read the names every object inherits alike"],
+      ["optionalTyped", "unsupported-property-name", reason("constructor")],
+      ["allOfFlag", "unsupported-property-name", reason("constructor")],
+      ["anyOfFlag", "unsupported-property-name", reason("constructor")],
+      ["oneOfFlag", "unsupported-property-name", reason("constructor")],
+      ["refFlag", "unsupported-property-name", reason("constructor")],
+      ["writeOnlyOutput", "unsupported-property-name", reason("toString")],
     ]);
-    expect(result.tools.map(({ name }) => name)).toEqual(["plain", "typed"]);
-    expectArguments(tool(result.tools, "typed").inputSchema, { valid: [{ body: { constructor: "ok" } }], invalid: [{ body: {} }, { body: { constructor: 1 } }] });
+    expect(result.tools.map(({ name }) => name)).toEqual(["plain"]);
     // One map read as properties and then as a dependency is checked in each role, in either order.
     const names = { flag: ["__proto__"] };
     for (const order of [["keys", "dependency"], ["dependency", "keys"]]) {
