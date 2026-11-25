@@ -1,3 +1,4 @@
+import { types } from "node:util";
 import type { Diagnostic } from "./diagnostics.js";
 import { classifyRunnerFailure, RUNNER_FAILED_CODE, type RunnerErrorPayload } from "./errors.js";
 import {
@@ -80,10 +81,12 @@ export const MESSAGE_TOO_LONG = "The error message was too long to print.";
 /** The message of the document printed when the result document could not be prepared. */
 export const SERIALIZATION_FAILURE_MESSAGE = "Unable to serialize the result document";
 
-const SERIALIZATION_FAILURE_TEXT = `${JSON.stringify({
-  ok: false,
-  error: { code: RUNNER_FAILED_CODE, message: SERIALIZATION_FAILURE_MESSAGE },
-})}\n`;
+/**
+ * The fixed document itself, written as text: no object is serialized for it, so nothing inherited (such as an
+ * `Object.prototype.toJSON`) can change it.
+ */
+const SERIALIZATION_FAILURE_TEXT =
+  '{"ok":false,"error":{"code":"CLIFN_RUNNER_FAILED","message":"Unable to serialize the result document"}}\n';
 
 /** The text of `{"ok":true,"data":}` and of `{"ok":false,"error":{"code":,"message":}}` around their values. */
 const SUCCESS_FRAME_LENGTH = '{"ok":true,"data":}'.length;
@@ -149,12 +152,42 @@ function chargeString(text: string, budgets: Budgets, maxCharge: number): string
   return encoded;
 }
 
+const functionToString = Function.prototype.toString;
+/** What `Function.prototype.toString` returns for the built-in `Object` constructor of any realm. */
+const NATIVE_OBJECT_SOURCE = Reflect.apply(functionToString, Object, []) as string;
+
+/**
+ * Whether `prototype` is %Object.prototype% of some realm (this one or another, such as a `vm` context), checked
+ * without running code: it is not a Proxy, has no prototype, and its own `constructor` is a data property holding the
+ * built-in `Object` (not a Proxy, native source text) whose own `prototype` data property is `prototype` again.
+ */
+function isObjectPrototype(prototype: object): boolean {
+  if (prototype === Object.prototype) {
+    return true;
+  }
+  if (types.isProxy(prototype) || Reflect.getPrototypeOf(prototype) !== null) {
+    return false;
+  }
+  const constructor: unknown = Reflect.getOwnPropertyDescriptor(prototype, "constructor")?.value;
+  if (typeof constructor !== "function" || types.isProxy(constructor)) {
+    return false;
+  }
+  return (
+    Reflect.getOwnPropertyDescriptor(constructor, "prototype")?.value === prototype &&
+    Reflect.apply(functionToString, constructor, []) === NATIVE_OBJECT_SOURCE
+  );
+}
+
+/**
+ * A plain object of any realm: not an array, with a null prototype or the realm's %Object.prototype% (see
+ * `isObjectPrototype`). Class instances, Maps and other built-ins are not plain.
+ */
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return false;
   }
-  const prototype = Object.getPrototypeOf(value);
-  return prototype === Object.prototype || prototype === null;
+  const prototype = Object.getPrototypeOf(value) as object | null;
+  return prototype === null || isObjectPrototype(prototype);
 }
 
 /**
@@ -232,8 +265,8 @@ interface PreparedDiagnostic {
  * `createDiagnostic` keeps, reading each from the original diagnostic once, without cloning. The code, severity,
  * message and path are strings written directly, never through a prototype or `toJSON`; the details serialize through
  * their own `toJSON` and are kept only when they serialize to an object that fits (see `toDocumentDetails`). Throws
- * when the diagnostic is not an object, its code, severity or message is not a string, its path is neither a string
- * nor undefined, or those members do not fit `budgets` (see `chargeString` for `maxCharge`).
+ * when the diagnostic is not an object, its code or message is not a string, its severity is not error, warning or
+ * info, its path is neither a string nor undefined, or those members do not fit `budgets` (see `chargeString` for `maxCharge`).
  */
 function toDocumentDiagnostic(
   diagnostic: Diagnostic,
@@ -243,7 +276,7 @@ function toDocumentDiagnostic(
   const { code, severity, message, path, details } = diagnostic;
   if (
     typeof code !== "string" ||
-    typeof severity !== "string" ||
+    (severity !== "error" && severity !== "warning" && severity !== "info") ||
     typeof message !== "string" ||
     (path !== undefined && typeof path !== "string")
   ) {
@@ -316,10 +349,12 @@ function toDocumentError(thrown: unknown, budgets: Budgets): { text: JsonText; e
  * calls are collected instead of printed, and `finish` prints the one result document on stdout.
  */
 export function createDocumentOutput(options: DocumentOutputOptions): DocumentOutput {
+  // Read once, for the messages and the advisory warnings alike.
+  const quiet = options.quiet ?? false;
   // Messages keep the 'lines' JSON shape and the quiet and verbose rules; only their stream changes.
   const logs = createOutput({
     mode: "json",
-    quiet: options.quiet,
+    quiet,
     verbose: options.verbose,
     color: options.color,
     stdout: options.stderr,
@@ -369,10 +404,14 @@ export function createDocumentOutput(options: DocumentOutputOptions): DocumentOu
     spinner,
   };
 
-  // Advisory stderr lines: a writer that throws on one cannot change the result document or the exit code.
+  // Advisory stderr lines: a writer that throws on one cannot change the result document or the exit code. Each is a
+  // fixed warn line written as text, the shape `logs.warn` prints, so nothing inherited can change it; quiet skips it.
   const advise = (message: string) => {
+    if (quiet) {
+      return;
+    }
     try {
-      logs.warn(message);
+      options.stderr(`{"level":"warn","message":${JSON.stringify(message)}}\n`);
     } catch {
       // The warning is lost; the result document still reports the run.
     }

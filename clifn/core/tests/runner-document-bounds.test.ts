@@ -1053,6 +1053,197 @@ describe("document diagnostic envelope", () => {
   });
 });
 
+describe("document fixed text under a polluted prototype", () => {
+  it("writes the fixed failure document and its warnings as fixed text when Object.prototype.toJSON was set before import", () => {
+    const runnerModule = transpiledRunner();
+    try {
+      // The child pollutes the prototype before the module is imported, then writes each run's stdout and stderr as
+      // raw text, separated by NUL characters, so nothing it reports goes through JSON.stringify of an object.
+      const script = String.raw`
+        Object.defineProperty(Object.prototype, "toJSON", {
+          configurable: true, writable: true, value() { return { token: ["test", "inherited", "token"].join("-") }; },
+        });
+        const { createDocumentOutput } = await import(process.argv[1]);
+        for (const quiet of [false, true]) {
+          const stdout = [];
+          const stderr = [];
+          const output = createDocumentOutput({ quiet, maxLength: 10000, stdout: (text) => stdout.push(text), stderr: (text) => stderr.push(text) });
+          output.service.json("unused");
+          output.service.table([]);
+          const exitCode = output.finish({ ok: true, data: { toJSON() { throw new Error("not printed"); } }, exitCode: 3 });
+          // A second document, printed, with a diagnostic it drops.
+          const second = createDocumentOutput({ quiet, maxLength: 10000, stdout: (text) => stdout.push(text), stderr: (text) => stderr.push(text) });
+          second.diagnostics.add({ code: "D", severity: "warn", message: "m" });
+          const secondExit = second.finish({ ok: true, data: "done", exitCode: 3 });
+          process.stdout.write(String(exitCode) + "," + String(secondExit) + "\0" + stdout.join("") + "\0" + stderr.join("") + "\0");
+        }
+      `;
+      const documentModule = pathToFileURL(join(dirname(runnerModule), "document-output.js")).href;
+      const child = spawnSync(process.execPath, ["--input-type=module", "-e", script, documentModule], { encoding: "utf8", timeout: 60_000 });
+      expect(child.stderr).toBe("");
+      expect(child.status).toBe(0);
+      const [loudExit, loudOut, loudErr, quietExit, quietOut, quietErr] = child.stdout.split("\0");
+      const printed = `${JSON.stringify(FAILURE_DOCUMENT)}\n{"ok":true,"data":"done"}\n`;
+      expect([loudExit, loudOut, quietExit, quietOut]).toEqual(["1,3", printed, "1,3", printed]);
+      expect(child.stdout).not.toContain("test-inherited-token");
+      expect(
+        (loudErr ?? "")
+          .trim()
+          .split("\n")
+          .map((line) => JSON.parse(line) as unknown)
+      ).toEqual([
+        { level: "warn", message: "output.json() was not printed: document mode prints one result document; return the value as data" },
+        { level: "warn", message: "output.table() was not printed: document mode prints one result document; return the value as data" },
+        { level: "warn", message: "diagnostic 0 was dropped from the result document: it could not be redacted or printed" },
+      ]);
+      expect(quietErr).toBe("");
+    } finally {
+      rmSync(dirname(runnerModule), { recursive: true, force: true });
+    }
+  });
+});
+
+describe("document runner option reads", () => {
+  function countedOptions(reads: string[], stdout: string[], jsonStyle?: "document") {
+    let modeReads = 0;
+    return {
+      get quiet() {
+        reads.push("quiet");
+        return false;
+      },
+      get verbose() {
+        reads.push("verbose");
+        return false;
+      },
+      get color() {
+        reads.push("color");
+        return false;
+      },
+      get stderrColor() {
+        reads.push("stderrColor");
+        return false;
+      },
+      // json on its first read, text afterwards: the output must follow the one value read.
+      get mode() {
+        reads.push("mode");
+        modeReads += 1;
+        return modeReads === 1 ? "json" : "text";
+      },
+      get jsonStyle() {
+        reads.push("jsonStyle");
+        return jsonStyle;
+      },
+      get stdout() {
+        reads.push("stdout");
+        return (text: string) => stdout.push(text);
+      },
+      get stderr() {
+        reads.push("stderr");
+        return () => {};
+      },
+    } as RunnerOptions;
+  }
+
+  it("reads mode, stdout and stderr once, in the order JSON lines always read them, and uses those values", async () => {
+    const reads: string[] = [];
+    const stdout: string[] = [];
+    const exitCode = await runAction((_options, ctx) => {
+      ctx.output.info("hello");
+    }, {}, countedOptions(reads, stdout));
+    expect(exitCode).toBe(0);
+    expect(stdout.join("")).toBe('{"level":"info","message":"hello"}\n');
+    // The last read is the one JSON lines has always made after the action, to decide whether to print its data.
+    expect(reads).toEqual(["quiet", "verbose", "color", "stderrColor", "mode", "stdout", "stderr", "jsonStyle", "mode"]);
+  });
+
+  it("chooses document mode from the same single read of mode", async () => {
+    const reads: string[] = [];
+    const stdout: string[] = [];
+    const exitCode = await runAction(() => ({ data: "done", exitCode: 3 }), {}, countedOptions(reads, stdout, "document"));
+    expect(exitCode).toBe(3);
+    expect(stdout).toEqual(['{"ok":true,"data":"done"}\n']);
+    expect(reads.filter((read) => read === "mode" || read === "stdout" || read === "stderr")).toEqual(["mode", "stdout", "stderr"]);
+  });
+});
+
+describe("document diagnostics that are not usable", () => {
+  it("omits a severity other than error, warning or info from the document and the listed copies, with a warning", async () => {
+    let listed: readonly Diagnostic[] = [];
+    const result = await runDocument(
+      (_options, ctx) => {
+        ctx.diagnostics.add({ code: "WARN", severity: "warn" as Diagnostic["severity"], message: "m" });
+        ctx.diagnostics.add({ code: "OK", severity: "warning", message: "m" });
+        return {
+          data: "done",
+          exitCode: 7,
+          diagnostics: [
+            { code: "FATAL", severity: "fatal" as Diagnostic["severity"], message: "m" },
+            { code: "EMPTY", severity: "" as Diagnostic["severity"], message: "m" },
+            { code: "INFO", severity: "info", message: "m" },
+          ],
+        };
+      },
+      { onDiagnostics: (diagnostics) => (listed = diagnostics) }
+    );
+    expect(result.exitCode).toBe(7);
+    const expected = [
+      { code: "OK", severity: "warning", message: "m" },
+      { code: "INFO", severity: "info", message: "m" },
+    ];
+    expect(parseOnlyDocument(result)).toEqual({ ok: true, data: "done", diagnostics: expected });
+    expect(listed).toEqual(expected);
+    expect(result.stderr.trim().split("\n").map((line) => (JSON.parse(line) as { message: string }).message)).toEqual(
+      [0, 2, 3].map((index) => `diagnostic ${index} was dropped from the result document: it could not be redacted or printed`)
+    );
+  });
+
+  it("counts returned diagnostics that are not an object as one unreadable list, never iterating them", async () => {
+    for (const returned of ["abc", 5, true]) {
+      const result = await runDocument(() => ({ data: "done", exitCode: 2, diagnostics: returned as unknown as Diagnostic[] }));
+      expect(result.exitCode).toBe(2);
+      expect(parseOnlyDocument(result)).toEqual({ ok: true, data: "done" });
+      expect(result.stderr).toBe(
+        '{"level":"warn","message":"a returned diagnostic was dropped from the result document: it could not be read"}\n'
+      );
+    }
+  });
+});
+
+describe("document error details from another realm", () => {
+  it("keeps and redacts plain details of any realm and still drops non-plain ones", async () => {
+    const thrown = (details: unknown) =>
+      runDocument(() => {
+        throw Object.assign(new Error("closed"), { code: "CLOSED", exitCode: 7, details });
+      });
+    const foreign = runInNewContext(
+      '({ visible: "kept", token: ["test", "foreign", "token"].join("-"), nested: { password: "test-foreign-password" } })'
+    ) as unknown;
+    expect(Object.getPrototypeOf(foreign)).not.toBe(Object.prototype);
+    const kept = await thrown(foreign);
+    expect(kept.exitCode).toBe(7);
+    expect(kept.out).not.toContain("test-foreign");
+    expect(parseOnlyDocument(kept)).toEqual({
+      ok: false,
+      error: { code: "CLOSED", message: "closed", details: { visible: "kept", token: "[REDACTED]", nested: { password: "[REDACTED]" } } },
+    });
+    const nullPrototype = await thrown(runInNewContext('Object.assign(Object.create(null), { visible: 1 })'));
+    expect(parseOnlyDocument(nullPrototype)).toEqual({ ok: false, error: { code: "CLOSED", message: "closed", details: { visible: 1 } } });
+
+    // A class instance, a Map, an array and a lookalike prototype (its constructor is not the built-in Object).
+    const lookalike = Object.create(Object.assign(Object.create(null), { constructor: function Object() {} })) as object;
+    for (const details of [
+      runInNewContext("new (class Record { constructor() { this.visible = 1; } })()"),
+      runInNewContext("new Map([[1, 2]])"),
+      runInNewContext("[1, 2]"),
+      Object.assign(lookalike, { visible: 1 }),
+    ]) {
+      const dropped = await thrown(details);
+      expect(dropped.exitCode).toBe(7);
+      expect(parseOnlyDocument(dropped)).toEqual({ ok: false, error: { code: "CLOSED", message: "closed" } });
+    }
+  });
+});
+
 describe("document typed arrays and bigints", () => {
   it("prints a small typed array with its own members as JSON.stringify does", () => {
     const typed = Object.assign(new Uint8Array([1, 2, 3]), { label: "bytes" });
@@ -1298,7 +1489,7 @@ describe("document sensitive-key matching", () => {
 });
 
 describe("document keys JSON skips", () => {
-  it("lists keys as JSON.stringify does and charges each symbol or non-enumerable key one unit of work", () => {
+  it("lists keys as JSON.stringify does and charges each listed key one unit of work, skipped keys included", () => {
     const record: Record<string | symbol, unknown> = { b: 2 };
     Object.defineProperty(record, "hidden", { value: "not printed", enumerable: false });
     record[Symbol("s")] = "not printed";
@@ -1312,11 +1503,11 @@ describe("document keys JSON skips", () => {
     const native = JSON.stringify({ record, proxied });
     const nativeReads = [...reads];
     reads.length = 0;
-    const work = createWorkBudget(100);
+    const work = createWorkBudget(50);
     expect(String(serializeJsonMember("data", { record, proxied }, { work }))).toBe(native);
     expect(reads).toEqual(nativeReads);
-    // Two skipped keys in each of the two objects.
-    expect(work.unitsLeft).toBe(196);
+    // Each listed key once: the two members of the outer object and the four keys (two skipped) of each inner one.
+    expect(work.unitsLeft).toBe(90);
   });
 
   it("fails an object referenced many times whose hidden keys outrun the work allowance", () => {
@@ -1331,6 +1522,30 @@ describe("document keys JSON skips", () => {
     const many = finishWith(10_000, { ok: true, data: Array.from({ length: 100 }, () => hidden), exitCode: 2 });
     expect(many.exitCode).toBe(1);
     expect(many.out).toBe(`${JSON.stringify(FAILURE_DOCUMENT)}\n`);
+  });
+
+  it("charges the keys it lists even when the object then fails, so listing the same details again stops", () => {
+    // 1,000 keys whose first member cannot fit, so every add drops the details after listing all of their keys.
+    const target: Record<string, unknown> = { k0: new Array(2 ** 30) };
+    for (let index = 1; index < 1_000; index += 1) {
+      target[`k${index}`] = index;
+    }
+    let listings = 0;
+    const details = new Proxy(target, { ownKeys: (inner) => ((listings += 1), Reflect.ownKeys(inner)) });
+    const stdout: string[] = [];
+    const stderr: string[] = [];
+    const output = createDocumentOutput({ maxLength: 10_000, stdout: (text) => stdout.push(text), stderr: (text) => stderr.push(text) });
+    for (let index = 0; index < 200; index += 1) {
+      output.diagnostics.add({ code: "D", severity: "info", message: "m", details });
+    }
+    expect(output.finish({ ok: true, data: "done", exitCode: 3 })).toBe(3);
+    // The diagnostics' 20,000-unit allowance pays for about 20 listings of 1,000 keys; the rest are never read.
+    expect(listings).toBeLessThanOrEqual(21);
+    const document = JSON.parse(stdout.join("")) as { data: string; diagnostics: Diagnostic[] };
+    expect(document.data).toBe("done");
+    expect(document.diagnostics.length).toBe(listings);
+    expect(document.diagnostics.every((diagnostic) => diagnostic.details === undefined)).toBe(true);
+    expect(stderr.join("")).toContain(`diagnostics past the first ${listings} were dropped`);
   });
 });
 
@@ -1363,25 +1578,25 @@ describe("document key lists open on the path", () => {
   });
 
   it("fails before listing a nested object once the lists open above it pass the bound, in data, details and diagnostics", () => {
-    // 10,000 characters: the lists open on the path may hold about 2,500 keys, so the fourth level is never listed.
-    // Each level drops 999 members (999 units of a 20,000-unit allowance), so only the open lists stop it this early.
+    // 400,000 characters: the lists open on the path may hold about 100,000 keys, so level 101 is never listed. Each
+    // level lists 1,000 keys (1,000 units of an 800,000-unit allowance), so only the open lists stop it this early.
     const { counter, level } = sharedKeyLevels(1_000, 1_000);
-    const data = finishWith(10_000, { ok: true, data: { visible: "kept", nested: level(0) }, exitCode: 3 });
+    const data = finishWith(400_000, { ok: true, data: { visible: "kept", nested: level(0) }, exitCode: 3 });
     expect(data.exitCode).toBe(1);
     expect(data.out).toBe(`${JSON.stringify(FAILURE_DOCUMENT)}\n`);
-    expect(counter.ownKeys).toBe(3);
+    expect(counter.ownKeys).toBe(100);
 
     counter.ownKeys = 0;
-    const details = finishWith(10_000, {
+    const details = finishWith(400_000, {
       ok: false,
       error: Object.assign(new Error("closed"), { code: "CLOSED", exitCode: 7, details: { visible: "kept", nested: level(0) } }),
     });
     expect(details.exitCode).toBe(7);
     expect(parseOnlyDocument(details)).toEqual({ ok: false, error: { code: "CLOSED", message: "closed" } });
-    expect(counter.ownKeys).toBeLessThanOrEqual(3);
+    expect(counter.ownKeys).toBeLessThanOrEqual(100);
 
     counter.ownKeys = 0;
-    const diagnostics = finishWith(10_000, { ok: true, data: "done", exitCode: 3 }, [
+    const diagnostics = finishWith(400_000, { ok: true, data: "done", exitCode: 3 }, [
       { code: "DEEP", severity: "info", message: "m", details: { nested: level(0) } },
       { code: "KEPT", severity: "info", message: "m" },
     ]);
@@ -1395,7 +1610,35 @@ describe("document key lists open on the path", () => {
         { code: "KEPT", severity: "info", message: "m" },
       ],
     });
-    expect(counter.ownKeys).toBeLessThanOrEqual(3);
+    expect(counter.ownKeys).toBeLessThanOrEqual(100);
+  });
+
+  it("fails nested lists below a small text budget on the work allowance, which charges each listed key", () => {
+    // 10,000 characters: 20,000 units pay for about 20 levels of 1,000 keys before the work allowance stops the walk.
+    const { counter, level } = sharedKeyLevels(1_000, 1_000);
+    const data = finishWith(10_000, { ok: true, data: { visible: "kept", nested: level(0) }, exitCode: 3 });
+    expect(data.exitCode).toBe(1);
+    expect(data.out).toBe(`${JSON.stringify(FAILURE_DOCUMENT)}\n`);
+    expect(counter.ownKeys).toBe(20);
+  });
+
+  it("prints the placeholder of a redacted subtree whose open lists stay within the work allowance", () => {
+    // 9,000 keys, each holding a small object: 18,002 listed keys of a 20,000-unit allowance, at most 9,003 open.
+    const secret: Record<string, unknown> = {};
+    for (let index = 0; index < 9_000; index += 1) {
+      secret[`k${index}`] = { a: 1 };
+    }
+    const kept = finishWith(10_000, { ok: true, data: { password: secret, visible: "kept" }, exitCode: 3 });
+    expect(kept.exitCode).toBe(3);
+    expect(parseOnlyDocument(kept)).toEqual({ ok: true, data: { password: "[REDACTED]", visible: "kept" } });
+    // 10,000 keys of objects are 20,002 listed keys: past the allowance, so the walk fails safely.
+    secret.k9000 = { a: 1 };
+    for (let index = 9_001; index < 10_000; index += 1) {
+      secret[`k${index}`] = { a: 1 };
+    }
+    const failed = finishWith(10_000, { ok: true, data: { password: secret, visible: "kept" }, exitCode: 3 });
+    expect(failed.exitCode).toBe(1);
+    expect(failed.out).toBe(`${JSON.stringify(FAILURE_DOCUMENT)}\n`);
   });
 });
 
@@ -1590,6 +1833,13 @@ describe("document memory in a constrained heap", () => {
         }
         return { data: "done", exitCode: 2 };
       }, listener);
+      // A returned string far larger than this heap, which iterating would read character by character.
+      await run("diagnostics-string", () => ({ data: "done", exitCode: 2, diagnostics: "x".repeat(2 ** 26) }));
+      // An ordinary object with 500,000 indexed elements: the one key list the engine builds for it nearly fills this
+      // heap (about 16 MiB of index strings), so no second list may be held next to it.
+      const indexed = () => { const x = {}; for (let i = 0; i < 500_000; i += 1) x[i] = 0; return x; };
+      await run("indexed", () => ({ exitCode: 3, data: { visible: "kept", x: indexed() } }));
+      await run("indexed-redacted", () => ({ exitCode: 3, data: { visible: "kept", token: indexed() } }));
       // Proxies returning one shared list of 100,000 keys at every level: no level holds the list itself.
       const sharedKeys = Array.from({ length: 100_000 }, (_, index) => "k" + index);
       const sharedLevel = () => new Proxy({}, {
@@ -1657,6 +1907,14 @@ describe("document memory in a constrained heap", () => {
     )).toBe(true);
     expect(cases.reentrant).toMatchObject({ writes: 1, exitCode: 2 });
     expect(cases.reentrant.out.startsWith('{"ok":true,"data":"done","diagnostics":[{"code":"O","severity":"info","message":"o"}')).toBe(true);
+    expect(cases["diagnostics-string"]).toEqual({ name: "diagnostics-string", writes: 1, exitCode: 2, out: '{"ok":true,"data":"done"}\n' });
+    expect(cases.indexed).toEqual({ name: "indexed", writes: 1, exitCode: 1, out: failure });
+    expect(cases["indexed-redacted"]).toEqual({
+      name: "indexed-redacted",
+      writes: 1,
+      exitCode: 3,
+      out: '{"ok":true,"data":{"visible":"kept","token":"[REDACTED]"}}\n',
+    });
     expect(cases["open-keys"]).toEqual({ name: "open-keys", writes: 1, exitCode: 1, out: failure });
     expect(cases["open-keys-details"]).toMatchObject({
       writes: 1,

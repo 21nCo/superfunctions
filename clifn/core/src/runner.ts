@@ -97,9 +97,16 @@ export async function runAction<TOptions>(
   const diagnostics: Diagnostic[] = [];
   const baseExec = createExec();
   const baseScaffold = createScaffold();
-  const documentMode = runnerOptions.mode === "json" && runnerOptions.jsonStyle === "document";
-  // Each writer option is read once, whichever output uses it.
+  // The output options are read once each, in the order the output was always created with them, and both the
+  // document check and whichever output is created use these values.
+  const quiet = runnerOptions.quiet;
+  const verbose = runnerOptions.verbose;
+  const color = runnerOptions.color;
+  const stderrColor = runnerOptions.stderrColor;
+  const mode = runnerOptions.mode;
+  const stdoutOption = runnerOptions.stdout;
   const stderrOption = runnerOptions.stderr;
+  const documentMode = mode === "json" && runnerOptions.jsonStyle === "document";
   const documentStderr = stderrOption ?? ((text: string) => process.stderr.write(text));
   // Streamed child output that has no writer of its own: written to stderr as advice, so a stderr writer that throws
   // loses those chunks but never throws from the child's stream listener, where nothing could catch it.
@@ -112,22 +119,22 @@ export async function runAction<TOptions>(
   };
   const document = documentMode
     ? createDocumentOutput({
-        quiet: runnerOptions.quiet,
-        verbose: runnerOptions.verbose,
-        color: runnerOptions.color,
-        stdout: runnerOptions.stdout ?? ((text: string) => process.stdout.write(text)),
+        quiet,
+        verbose,
+        color,
+        stdout: stdoutOption ?? ((text: string) => process.stdout.write(text)),
         stderr: documentStderr,
       })
     : undefined;
   const output =
     document?.service ??
     createOutput({
-      quiet: runnerOptions.quiet,
-      verbose: runnerOptions.verbose,
-      color: runnerOptions.color,
-      stderrColor: runnerOptions.stderrColor,
-      mode: runnerOptions.mode,
-      stdout: runnerOptions.stdout,
+      quiet,
+      verbose,
+      color,
+      stderrColor,
+      mode,
+      stdout: stdoutOption,
       stderr: stderrOption,
     });
 
@@ -235,12 +242,18 @@ function toLength(value: unknown): number {
  * after it is full, so an oversized, sparse or proxied array, or an endless iterable of fresh diagnostics, is cut
  * once the document's bounds are reached (see `DocumentDiagnostics`). Reading them never fails the run: an entry that
  * cannot be read (a throwing index getter) is counted as unreadable and its siblings are still read; a list whose
- * length, iterator or next step throws, or that is not a list at all, ends there with one unreadable entry. Holes
+ * length, iterator or next step throws, or that is not a list at all, ends there with one unreadable entry; a value
+ * that is not an object (such as a string, which would iterate as its characters) is one unreadable entry, and no
+ * iterator is created for it. Holes
  * and other values that are not diagnostics are dropped by the collector with its fixed warning. Internal: not
  * exported from the package.
  */
 export function addReturnedDiagnostics(returned: unknown, collector: DocumentDiagnostics): void {
   if (returned === undefined || returned === null) {
+    return;
+  }
+  if (typeof returned !== "object" && typeof returned !== "function") {
+    collector.unreadable();
     return;
   }
   try {

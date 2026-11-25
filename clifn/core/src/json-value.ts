@@ -25,13 +25,20 @@ export const MAX_NESTING_DEPTH = 512;
 const HEAP_SHARE = 16;
 /**
  * The share of the text budget, in keys, that the key lists of the objects open on the active path may hold together
- * once a nested object is listed. Each list is a snapshot the walk keeps until it leaves that object (about 8 bytes a
- * key, besides the keys themselves), and a Proxy can return the same list at every level for constant memory of its
- * own, so the lists are bounded together, not one at a time. Every key of an object whose members all print costs at
- * least 5 characters (`"":0` and a separator), so a document that fits never reaches a quarter of its text budget in
- * open keys; only objects with more members that print nothing (dropped or under a redacted key) can.
+ * once a nested object is listed, but never fewer than MIN_OPEN_KEYS. Each list is a snapshot the walk keeps until it
+ * leaves that object (about 8 bytes a key, besides the keys themselves), and a Proxy can return the same list at every
+ * level for constant memory of its own, so the lists are bounded together, not one at a time. Every key of an object
+ * whose members all print costs at least 5 characters (`"":0` and a separator), so a document that fits never reaches
+ * a quarter of its text budget in open keys; only objects with more members that print nothing (dropped or under a
+ * redacted key) can. Every listed key is also charged to the work budget (see `enumerableKeys`), so the lists a walk
+ * takes in total are bounded by the work allowance, and this bound only limits how many are live at once.
  */
 const OPEN_KEYS_SHARE = 4;
+/**
+ * The open keys always allowed together, however small the text budget (about 1.5 MiB of lists at most): below it, the
+ * work allowance alone bounds the lists, so a redacted subtree within that allowance prints its placeholder.
+ */
+export const MIN_OPEN_KEYS = 65_536;
 /**
  * The work units an index of a typed array costs before its keys are listed, printed or not: `Object.keys` creates each
  * index key as a new string (about 32 bytes with its slot) although the array stores its elements outside the heap, so
@@ -48,12 +55,14 @@ export interface DocumentBudget {
 }
 
 /**
- * How much work that prints nothing one result document may still do, in units, separate from its text: each value
- * walked under a redacted key, each object member JSON drops, each own key JSON skips (a symbol or a non-enumerable
- * key), each code unit scanned in a string found too long to print, TYPED_ARRAY_INDEX_UNITS per typed array index
- * (and per item of an array Node's built-in Buffer toJSON must allocate, see `projectBuffer`), and each character of a segment (details or a diagnostic) that
- * was written and then left out. Each unit is charged once and never given back. Printed text is charged to the text
- * budget only, so a document that fits prints next to discarded work within this allowance.
+ * How much work one result document may still do, in units, separate from its text: each own key of each object
+ * listed (when it is listed, before any of its members is read, whether the member then prints, is dropped, is skipped
+ * as a symbol or non-enumerable key, or is walked under a redacted key), each array item walked under a redacted key,
+ * each code unit scanned in a string found too long to print, TYPED_ARRAY_INDEX_UNITS per typed array index (and per
+ * item of an array Node's built-in Buffer toJSON must allocate, see `projectBuffer`), and each character of a segment
+ * (details or a diagnostic) that was written and then left out. Each unit is charged once and never given back, also
+ * when the value it was charged for fails. Printed text is charged to the text budget; a document that fits lists at
+ * most a quarter of its text budget in printed keys, so it prints next to discarded work within this allowance.
  */
 export interface WorkBudget {
   unitsLeft: number;
@@ -198,6 +207,7 @@ export class JsonText implements TextSink {
 }
 
 const booleanValueOf = Boolean.prototype.valueOf;
+const propertyIsEnumerable = Object.prototype.propertyIsEnumerable;
 /** Node's built-in `Buffer.prototype.toJSON`, which copies every byte into a new array (see `projectBuffer`). */
 const bufferToJSON = Buffer.prototype.toJSON;
 /** %Array.prototype%, the prototype of the data array `Buffer.prototype.toJSON` creates. */
@@ -222,7 +232,10 @@ interface Walk {
   readonly work: WorkBudget;
   /** Which object keys print "[REDACTED]" instead of their value, or undefined for none. */
   readonly isSensitive: ((key: string) => boolean) | undefined;
-  /** True while a redacted value is walked: no text is written or charged, and each value costs one unit of work. */
+  /**
+   * True while a redacted value is walked: no text is written or charged; each array item costs one unit of work and
+   * each object member was charged when its key was listed.
+   */
   discarding: boolean;
   /** How many keys the key lists of the objects open on the active path hold together (see OPEN_KEYS_SHARE). */
   openKeys: number;
@@ -430,8 +443,8 @@ function writeValue(walk: Walk, value: unknown, original: unknown, key: string, 
  * SerializeJSONProperty: reads and projects `holder[key]` once, then, when JSON prints it, calls `writeKey` (which
  * writes an object member's key and says whether its value is redacted) and writes the value. A redacted value prints
  * "[REDACTED]" and is still walked in order, so its getters and toJSON run as in JSON.stringify, but no text is built
- * for it: it and every value in it cost one unit of work. Returns false when JSON drops the member; the key is then
- * neither written nor matched.
+ * for it: it costs one unit of work, and so does every value in it (each object member when its key is listed, each
+ * array item when it is read). Returns false when JSON drops the member; the key is then neither written nor matched.
  */
 function serializeProperty(
   walk: Walk,
@@ -440,9 +453,6 @@ function serializeProperty(
   depth: number,
   writeKey?: () => boolean
 ): boolean {
-  if (walk.discarding) {
-    spendWork(walk.work, 1);
-  }
   const { original, value } = project(walk, holder, key);
   if (isDropped(value)) {
     return false;
@@ -454,7 +464,7 @@ function serializeProperty(
   emit(walk, REDACTED);
   walk.discarding = true;
   try {
-    spendWork(walk.work, 1);
+    // The member itself was charged when its key was listed.
     writeValue(walk, value, original, key, depth);
   } finally {
     walk.discarding = false;
@@ -523,6 +533,9 @@ function serializeArray(walk: Walk, array: object, depth: number, knownLength?: 
     if (index > 0) {
       emit(walk, ",");
     }
+    if (walk.discarding) {
+      spendWork(walk.work, 1);
+    }
     if (!serializeProperty(walk, array, String(index), depth)) {
       emit(walk, "null");
     }
@@ -554,11 +567,13 @@ function boundTypedArray(walk: Walk, record: object): void {
 
 /**
  * EnumerableOwnProperties: [[OwnPropertyKeys]] once, then [[GetOwnProperty]] for each string key, as JSON.stringify
- * runs them. A list longer than both budgets could pay for throws before any descriptor is read, and each key that
- * prints nothing at this step (a symbol, a non-enumerable or vanished key) costs one unit of work, so sweeping keys
- * JSON skips is bounded by the work allowance. An ordinary object runs no code to list its keys, so its enumerable
- * keys are taken from `Object.keys`, which sweeps the same list. When the lists the objects open on the path hold
- * together already pass the bound of OPEN_KEYS_SHARE, it throws before [[OwnPropertyKeys]] runs.
+ * runs them. Every key listed costs one unit of work at once, never given back, before any descriptor is read: a list
+ * longer than the work left throws, and listing the same object again and again stops once the allowance is spent,
+ * also when its members then fail. That unit also pays for the member it lists, printed, dropped, skipped (a symbol, a
+ * non-enumerable or vanished key) or walked under a redacted key. Only one list of the object's keys is held: for an
+ * object that is not a Proxy, which runs no code to report its descriptors, the enumerable string keys are kept in
+ * place in the list [[OwnPropertyKeys]] returned. When the lists the objects open on the path hold together already
+ * pass the bound of OPEN_KEYS_SHARE, it throws before [[OwnPropertyKeys]] runs.
  */
 function enumerableKeys(walk: Walk, record: object): string[] {
   if (walk.openKeys > walk.maxOpenKeys) {
@@ -566,30 +581,30 @@ function enumerableKeys(walk: Walk, record: object): string[] {
     exceeded();
   }
   const keys = Reflect.ownKeys(record);
-  if (keys.length > walk.work.unitsLeft + (walk.discarding ? 0 : walk.budget.charsLeft)) {
-    exceeded();
-  }
-  if (!types.isProxy(record)) {
-    const names = Object.keys(record);
-    spendWork(walk.work, keys.length - names.length);
-    return names;
-  }
-  const names: string[] = [];
-  for (const key of keys) {
-    if (typeof key === "string" && Reflect.getOwnPropertyDescriptor(record, key)?.enumerable === true) {
-      names.push(key);
-    } else {
-      spendWork(walk.work, 1);
+  spendWork(walk.work, keys.length);
+  const proxy = types.isProxy(record);
+  let count = 0;
+  for (let index = 0; index < keys.length; index += 1) {
+    const key = keys[index];
+    if (
+      typeof key === "string" &&
+      (proxy
+        ? Reflect.getOwnPropertyDescriptor(record, key)?.enumerable === true
+        : Reflect.apply(propertyIsEnumerable, record, [key]) === true)
+    ) {
+      keys[count] = key;
+      count += 1;
     }
   }
-  return names;
+  keys.length = count;
+  return keys as string[];
 }
 
 /**
- * SerializeJSONObject: own enumerable string keys in order (see `enumerableKeys`), each read once; dropped members
- * are left out. A member that prints is charged as text (its key is written before it is matched against
- * `isSensitive`, so the match never scans more than was printed) and a member JSON drops costs one unit of work, its
- * key neither written nor matched. A typed array is bounded by its length before its keys are listed. A sensitive
+ * SerializeJSONObject: own enumerable string keys in order (see `enumerableKeys`, which charges each listed key one
+ * unit of work), each read once; dropped members are left out. A member that prints is charged as text (its key is
+ * written before it is matched against `isSensitive`, so the match never scans more than was printed); a member JSON
+ * drops prints nothing, its key neither written nor matched. A typed array is bounded by its length before its keys are listed. A sensitive
  * member that JSON prints is written as "[REDACTED]".
  */
 function serializeObject(walk: Walk, record: object, depth: number): void {
@@ -607,7 +622,7 @@ function serializeMembers(walk: Walk, record: object, names: readonly string[], 
   emit(walk, "{");
   let members = 0;
   for (const name of names) {
-    const printed = serializeProperty(walk, record, name, depth, () => {
+    serializeProperty(walk, record, name, depth, () => {
       if (walk.discarding) {
         return false;
       }
@@ -619,10 +634,6 @@ function serializeMembers(walk: Walk, record: object, names: readonly string[], 
       members += 1;
       return walk.isSensitive?.(name) === true;
     });
-    if (!printed && !walk.discarding) {
-      // A dropped member prints nothing; discarded members were charged as they were read.
-      spendWork(walk.work, 1);
-    }
   }
   emit(walk, "}");
 }
@@ -655,25 +666,26 @@ export interface SerializeJsonMemberOptions {
  *   that keeps branching back to the value under new keys fails on the text budget (the work budget under a
  *   redacted key) or the nesting limit;
  * - nesting deeper than MAX_NESTING_DEPTH (512) objects and arrays throws a RangeError before the next level is read;
- * - text that cannot fit what is left of `budget`, or work that prints nothing and cannot fit what is left of `work`,
- *   throws a RangeError. Printed text is charged to `budget` only; `work` pays for each value under a redacted key,
- *   each dropped object member and each scan of a string too long to print (see `WorkBudget`). An array checks
- *   2n + 1 characters (n units of work under a redacted key) before its index 0 is read, a typed array checks its
- *   internal length before its keys are listed, a Buffer projected by Node's built-in toJSON is read in place
- *   and bounded like an array by its internal length once its key's redaction is known (a receiver whose length
- *   cannot be bounded that way fails, see `projectBuffer`), an object with more own keys than both budgets could pay
- *   for fails before any descriptor or value is read, each key JSON skips costs a unit of work, and the key lists
- *   of the objects open on the path may hold a quarter of the text budget (in keys) together, so a nested object
- *   below lists that hold more fails before its own keys are listed (see OPEN_KEYS_SHARE); so oversized
- *   sparse, proxy, typed, Buffer, hidden-key or generated values fail at once; a bigint is checked by bit length
- *   before its decimal text is built, and not converted under a redacted key. A Proxy's own keys are listed by its
- *   ownKeys trap, so the list it returns exists before it can be charged.
+ * - text that cannot fit what is left of `budget`, or work that cannot fit what is left of `work`, throws a
+ *   RangeError. Printed text is charged to `budget` only; `work` pays for each own key listed, each array item under
+ *   a redacted key and each scan of a string too long to print (see `WorkBudget`). An array checks 2n + 1 characters
+ *   (n units of work under a redacted key) before its index 0 is read, a typed array checks its internal length
+ *   before its keys are listed, a Buffer projected by Node's built-in toJSON is read in place and bounded like an
+ *   array by its internal length once its key's redaction is known (a receiver whose length cannot be bounded that
+ *   way fails, see `projectBuffer`), an object with more own keys than the work left fails before any descriptor or
+ *   value is read, and the key lists of the objects open on the path may hold a quarter of the text budget (in keys,
+ *   at least MIN_OPEN_KEYS) together, so a nested object below lists that hold more fails before its own keys are
+ *   listed (see OPEN_KEYS_SHARE); so oversized sparse, proxy, typed, Buffer, hidden-key or generated values fail at
+ *   once, and an object listed again and again stops once its keys have spent the work allowance; a bigint is
+ *   checked by bit length before its decimal text is built, and not converted under a redacted key. The engine
+ *   builds an object's own key list before it can be counted (a Proxy's from what its ownKeys trap returns, or from
+ *   its target when it has no such trap), as JSON.stringify does; only that one list is held.
  *
  * With `isSensitive`, every object key below the member that it matches prints "[REDACTED]" when JSON prints the
  * member at all; the key is matched after the holder's toJSON ran, so keys a projection creates are covered too, and
  * only once the member is known to print (a dropped member's key is never scanned). Its value is still walked in
  * order, so its getters and toJSON run as in JSON.stringify, but no text is built for it: it charges `budget` only
- * for its key and the placeholder, and its walk is charged to `work`, one unit per value.
+ * for its key and the placeholder, and its walk is charged to `work`, one unit per value (see `WorkBudget`).
  *
  * Returns undefined when JSON drops the member (undefined, a function, a symbol, or a `toJSON` that returns one).
  * Throws what JSON.stringify throws, such as a throwing getter or `toJSON`, or a Number box whose `valueOf` returns a
@@ -696,7 +708,7 @@ export function serializeJsonMember(
     isSensitive,
     discarding: false,
     openKeys: 0,
-    maxOpenKeys: Math.floor(Math.max(0, budget.charsLeft) / OPEN_KEYS_SHARE),
+    maxOpenKeys: Math.max(MIN_OPEN_KEYS, Math.floor(Math.max(0, budget.charsLeft) / OPEN_KEYS_SHARE)),
   };
   return serializeProperty(walk, holder, key, 0) ? out : undefined;
 }

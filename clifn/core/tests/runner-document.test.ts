@@ -765,11 +765,11 @@ describe("document mode follows JSON.stringify for arrays, toJSON calls and boxe
 
     const diagnostics = await runDocument((_options, ctx) => {
       ctx.diagnostics.add({ code: "D", severity: "info", message: "m", details: projectedCycle() });
-      return { data: null, diagnostics: [{ code: "R", severity: "warn", message: "r", details: projectedCycle() }] };
+      return { data: null, diagnostics: [{ code: "R", severity: "warning", message: "r", details: projectedCycle() }] };
     });
     expect(parseOnlyDocument(diagnostics).diagnostics).toEqual([
       { code: "D", severity: "info", message: "m", details: printedCycle },
-      { code: "R", severity: "warn", message: "r", details: printedCycle },
+      { code: "R", severity: "warning", message: "r", details: printedCycle },
     ]);
 
     const failure = await runDocument(() => {
