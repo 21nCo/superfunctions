@@ -1226,6 +1226,18 @@ describe("CliHarnessAdapter preflight and configuration", () => {
     expect(output.transcript).toContain('"inspectedPaths"');
   });
 
+  it("withholds 150,000 short lines escaped past the redaction depth and still completes", async () => {
+    // Each `\u005c` decodes to a backslash that starts the next one, so this line is still escaped after nine levels.
+    const line = `\\u005c${"u005c".repeat(9)}n`;
+    const answer = JSON.stringify({ findings: [], evidence: [], inspectedPaths: ["src/index.ts"], uninspected: [] });
+    const runner: CommandRunner = async (_command, args) => args.includes("--version")
+      ? { code: 0, signal: null, stdout: "fake-cli version 1.2.3\n", stderr: "", timedOut: false, canceled: false }
+      : { code: 0, signal: null, stdout: `${`${line}\n`.repeat(150_000)}${answer}\n`, stderr: "", timedOut: false, canceled: false };
+    const output = await new CliHarnessAdapter({ environment: environment(), runner }).run(input(configuration(profile())));
+    expect(output.error).toBeUndefined();
+    expect(output.terminal).toBe("completed");
+  }, 30_000);
+
   it("keeps its contract version after preflight, for the CLI's harness contract versions", async () => {
     const harness = new CliHarnessAdapter({ environment: environment() });
     await harness.preflight(configuration(profile()));

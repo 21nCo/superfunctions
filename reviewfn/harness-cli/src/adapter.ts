@@ -530,7 +530,7 @@ function redact(text: string, secrets: readonly string[]): string {
     }
     const next = level.text.includes("\\") ? unescapeLevel(level.text, level.starts) : level;
     if (next.text.length === level.text.length) break;
-    if (depth === MAX_ESCAPE_DEPTH) { spans.push(...escapedLines(text, level)); break; }
+    if (depth === MAX_ESCAPE_DEPTH) { escapedLines(text, level, spans); break; }
     level = next;
   }
   let result = "";
@@ -543,14 +543,15 @@ function redact(text: string, secrets: readonly string[]): string {
   return redactText(result + text.slice(Math.max(end, 0)), secrets);
 }
 
-/** The lines of `text` (as spans of it) holding an escape still pending at `level`, each found once, in linear time. */
-function escapedLines(text: string, level: { text: string; starts: Uint32Array<ArrayBuffer> }): Array<[number, number]> {
-  const lines: Array<[number, number]> = [];
+/** Adds to `spans` each line of `text` holding an escape still pending at `level`, each found once, in linear time. */
+function escapedLines(text: string, level: { text: string; starts: Uint32Array<ArrayBuffer> }, spans: Array<[number, number]>): void {
+  let covered = 0;
   for (let index = level.text.indexOf("\\"); index !== -1; index = level.text.indexOf("\\", index + 2)) {
     const at = level.starts[index];
-    if ((Object.hasOwn(SHORT_ESCAPES, level.text[index + 1] ?? "") || level.text[index + 1] === "u") && at >= (lines.at(-1)?.[1] ?? 0)) lines.push([text.lastIndexOf("\n", at) + 1, text.includes("\n", at) ? text.indexOf("\n", at) : text.length]);
+    if (!(Object.hasOwn(SHORT_ESCAPES, level.text[index + 1] ?? "") || level.text[index + 1] === "u") || at < covered) continue;
+    covered = text.includes("\n", at) ? text.indexOf("\n", at) : text.length;
+    spans.push([text.lastIndexOf("\n", at) + 1, covered]);
   }
-  return lines;
 }
 
 /** One level of JSON string escapes decoded, with where in the original text each decoded unit started. */
