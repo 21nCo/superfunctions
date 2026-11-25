@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { getSchema, PLUGFN_SCHEMA_VERSION } from '../src/schema.js';
 
@@ -27,7 +28,7 @@ describe('PlugFn schema metadata', () => {
     expect(syncJobs).toBeDefined();
     expect(syncJobs!.fields.claimToken).toMatchObject({
       fieldName: 'claim_token',
-      maxLength: 64,
+      maxLength: 768,
     });
     expect(syncJobs!.indexes).toContainEqual({
       name: 'idx_plugfn_sync_jobs_claim_token',
@@ -45,5 +46,13 @@ describe('PlugFn schema metadata', () => {
       name: 'idx_plugfn_workflows_tenant_user',
       fields: ['tenantId', 'userId'],
     });
+  });
+
+  it('keeps package discovery metadata aligned with the runtime schema', () => {
+    const packageMetadata = JSON.parse(
+      readFileSync(new URL('../package.json', import.meta.url), 'utf8')
+    ) as { superfunctions?: { schemaVersion?: number } };
+
+    expect(packageMetadata.superfunctions?.schemaVersion).toBe(PLUGFN_SCHEMA_VERSION);
   });
 });

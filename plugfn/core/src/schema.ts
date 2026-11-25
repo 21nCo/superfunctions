@@ -226,7 +226,7 @@ export function getSchema(options: PlugFnSchemaOptions = {}): { version: number;
           resource: { type: 'string', required: true, fieldName: 'resource' },
           mode: { type: 'string', required: true, fieldName: 'mode' },
           status: { type: 'string', required: true, fieldName: 'status' },
-          claimToken: { type: 'string', required: false, fieldName: 'claim_token', maxLength: 64 },
+          claimToken: { type: 'string', required: false, fieldName: 'claim_token', maxLength: 768 },
           ownerKind: { type: 'string', required: false, fieldName: 'owner_kind' },
           ownerId: { type: 'string', required: false, fieldName: 'owner_id' },
           cursor: { type: 'string', required: false, fieldName: 'cursor' },

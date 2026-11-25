@@ -129,6 +129,32 @@ const DEFAULT_PROVIDER_POLICIES: ProviderPolicyDefinition[] = [
       'mail.connect.insecure': 'insecure transport disabled',
     },
   },
+  {
+    providerId: 'forwarding',
+    policyVersion: DEFAULT_POLICY_VERSION,
+    metadata: {
+      inbound: true,
+      outbound: false,
+      managed: false,
+    },
+    allowedOperations: ['mail.forwarding.enable', 'mail.forwarding.health'],
+    blockedOperations: {
+      'mail.forwarding.enable.mandatory': 'forwarding cannot be mandatory',
+    },
+  },
+  {
+    providerId: 'managed-mail',
+    policyVersion: DEFAULT_POLICY_VERSION,
+    metadata: {
+      inbound: true,
+      outbound: true,
+      managed: true,
+    },
+    allowedOperations: ['mail.managed.enable', 'mail.managed.incident'],
+    blockedOperations: {
+      'mail.managed.enable.finance-unsafe': 'backup channel and risk acknowledgment required',
+    },
+  },
 ];
 
 export class ProviderPolicyService {

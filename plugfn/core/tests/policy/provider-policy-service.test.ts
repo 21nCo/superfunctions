@@ -5,9 +5,8 @@ import {
 } from '../../src/policy/provider-policy-service.js';
 
 describe('provider policy service', () => {
-  it('contains inbound-only policy metadata for mail account providers', () => {
+  it('contains inbound-only account policies plus forwarding and managed-mail policies', () => {
     const service = createProviderPolicyService();
-    expect(service.listPolicies()).toHaveLength(5);
     expect(service.listPolicies()).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -17,6 +16,16 @@ describe('provider policy service', () => {
         expect.objectContaining({
           providerId: 'imap-smtp',
           metadata: { inbound: true, outbound: false, managed: false },
+        }),
+        expect.objectContaining({
+          providerId: 'forwarding',
+          metadata: { inbound: true, outbound: false, managed: false },
+          allowedOperations: expect.arrayContaining(['mail.forwarding.enable']),
+        }),
+        expect.objectContaining({
+          providerId: 'managed-mail',
+          metadata: { inbound: true, outbound: true, managed: true },
+          allowedOperations: expect.arrayContaining(['mail.managed.enable']),
         }),
       ])
     );
