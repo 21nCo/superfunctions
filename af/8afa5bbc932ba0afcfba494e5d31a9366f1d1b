@@ -1,0 +1,29 @@
+flowfn/typescript/src/adapters/postgres/postgres.test.ts
+  s_2048834d4731f2::t_1299103efbf36d 46-47
+flowfn/typescript/src/adapters/redis.test.ts
+  s_2048834d4731f2::t_276c37f7bf1f85 210-211
+flowfn/typescript/src/core/durable-scheduler.ts
+  s_2048834d4731f2::t_c8b9cf16a64cbb 124-125
+flowfn/typescript/src/core/late-renewal.test.ts
+  s_2048834d4731f2::t_fd6c4828ef7b45 1-73
+flowfn/typescript/src/workflow/recovery.test.ts
+  s_2048834d4731f2::t_4fe47626a8b13b 1-58
+flowfn/typescript/src/workflow/workflow.ts
+  s_2048834d4731f2::t_91a6ecc440941d 268,377-378,427,437,645-646,792-800,806-851,877,880,882,889-899,1045,1058-1063,1067-1068,1070-1078,1080,1083-1086,1097,1106-1111,1115
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "af8afa5bbc932ba0afcfba494e5d31a9366f1d1b",
+  "prompts": {},
+  "sessions": {
+    "s_2048834d4731f2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_2048834d4731f2",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

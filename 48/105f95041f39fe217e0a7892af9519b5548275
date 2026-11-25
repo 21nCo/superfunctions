@@ -1,0 +1,21 @@
+watchfn/python/tests/test_http.py
+  s_d4ad9c190afd07::t_96875baee84b7d 83-99
+watchfn/python/watchfn/http/handlers.py
+  s_d4ad9c190afd07::t_824fab5c8cc2cb 20-45,122
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "48105f95041f39fe217e0a7892af9519b5548275",
+  "prompts": {},
+  "sessions": {
+    "s_d4ad9c190afd07": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_d4ad9c190afd07",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

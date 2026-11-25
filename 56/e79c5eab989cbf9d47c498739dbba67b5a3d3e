@@ -1,0 +1,41 @@
+watchfn/python/README.md
+  s_62eec99052e595::t_1a61a063764a45 329-335
+watchfn/python/tests/test_alert_dispatch.py
+  s_62eec99052e595::t_6721dd7d1f3994 239-240,242,271-291
+watchfn/python/tests/test_email_dispatch.py
+  s_62eec99052e595::t_13eb31811355c3 174-175,177-195
+watchfn/python/tests/test_pagerduty_dispatch.py
+  s_62eec99052e595::t_d191c9e3837358 138-139
+watchfn/python/watchfn/__init__.py
+  s_62eec99052e595::t_21c710bb849805 11-12
+watchfn/python/watchfn/alerts/dispatch.py
+  s_62eec99052e595::t_1696cdad3894f5 10,126-157,169-185,242-243,246-260,262-267
+watchfn/python/watchfn/alerts/durable.py
+  s_62eec99052e595::t_014f7111d2fe12 8,29-35,120,489-491
+watchfn/python/watchfn/alerts/lifecycle.py
+  s_62eec99052e595::t_ed25d6edbec07f 41-56
+watchfn/typescript/README.md
+  s_62eec99052e595::t_2fb8782112949d 128-134
+watchfn/typescript/src/alerts/alert-manager.ts
+  s_62eec99052e595::t_5d2a777ccae675 335,437-445,447,456-479,501,503-520,522
+watchfn/typescript/tests/alerts/pagerduty.test.ts
+  s_62eec99052e595::t_30dfc536a0cb5c 211-212
+watchfn/typescript/tests/alerts/public-manager.test.ts
+  s_62eec99052e595::t_91e4b1691bf821 33,74-107
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "56e79c5eab989cbf9d47c498739dbba67b5a3d3e",
+  "prompts": {},
+  "sessions": {
+    "s_62eec99052e595": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_62eec99052e595",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

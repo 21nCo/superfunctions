@@ -1,0 +1,27 @@
+cachefn/typescript/__tests__/backend-conformance.test.ts
+  s_3ca457c6c517d9::t_bc2ac322f1dd5b 41-49
+cachefn/typescript/__tests__/cache-fill.test.ts
+  s_3ca457c6c517d9::t_30c6387c33faf2 97-98,100-105
+cachefn/typescript/src/storage/indexeddb-storage.ts
+  s_3ca457c6c517d9::t_2bccb9306966f9 143,146-147
+cachefn/typescript/src/storage/local-storage.ts
+  s_3ca457c6c517d9::t_d026849e0a03f3 82-83
+cachefn/typescript/src/storage/memory-storage.ts
+  s_3ca457c6c517d9::t_7bcb59f518fc60 67-68
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "750d5d27d2ed11ab2d6c69782c31a691a18c98f0",
+  "prompts": {},
+  "sessions": {
+    "s_3ca457c6c517d9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_3ca457c6c517d9",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

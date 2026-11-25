@@ -1,0 +1,35 @@
+flowfn/typescript/src/adapters/postgres/notifications.ts
+  s_c7ec784961d5e7::t_23f7be8be226cc 44-51
+flowfn/typescript/src/adapters/postgres/wakeup.test.ts
+  s_c7ec784961d5e7::t_f73697ef1a3202 219-244
+flowfn/typescript/src/queue/queue.ts
+  s_c7ec784961d5e7::t_4b09873bbf7802 1,469-475,893-895,909,927-929,932,935,1030-1034,1096-1118,1121-1125,1127,1130-1131,1133,1135,1367
+flowfn/typescript/README.md
+  s_c7ec784961d5e7::t_d71d40ae176e83 82-85,110-117
+flowfn/typescript/docs/API.md
+  s_c7ec784961d5e7::t_80affa9692cce7 408-411
+flowfn/typescript/scripts/idle-wakeup-measure.mjs
+  s_c7ec784961d5e7::t_9f4fdf7c9be188 34,37-38,46,51,90-91
+flowfn/typescript/src/adapters/postgres/notifications.test.ts
+  s_c7ec784961d5e7::t_b94049288fd954 165-184
+flowfn/typescript/src/queue/idle-wakeup.test.ts
+  s_c7ec784961d5e7::t_ca9c73c9cc7688 30,832-990
+flowfn/typescript/src/queue/types.ts
+  s_c7ec784961d5e7::t_1f5c09e5bdbede 75-78,180-185
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7216ce8487f758ac766a12009eb17a1d1e3c65de",
+  "prompts": {},
+  "sessions": {
+    "s_c7ec784961d5e7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "725aba51-cd3f-454e-b48e-f55aeead54ac",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

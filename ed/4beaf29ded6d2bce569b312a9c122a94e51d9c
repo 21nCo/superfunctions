@@ -1,0 +1,25 @@
+testfn/typescript/README.md
+  s_e4f3bd239add86::t_7329ae5ca90bff 267
+testfn/typescript/src/storage/artifacts.ts
+  s_e4f3bd239add86::t_d134ae5b130ad9 35-38,112
+testfn/typescript/src/storage/test-storage.ts
+  s_e4f3bd239add86::t_7bfcb0184da839 204-211
+testfn/typescript/tests/storage-concurrency.test.ts
+  s_e4f3bd239add86::t_69b4f67e0684fa 267,372
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ed4beaf29ded6d2bce569b312a9c122a94e51d9c",
+  "prompts": {},
+  "sessions": {
+    "s_e4f3bd239add86": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5c1139b1-b12b-4628-9cfc-7aa197c3cf98",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

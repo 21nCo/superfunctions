@@ -1,0 +1,55 @@
+cifn/deploy/README.md
+  s_b996deaa3d01f1::t_17f1aeaaa9c34a 13-16,29,77-79,149-151,162,183
+cifn/deploy/docker-compose.yml
+  s_b996deaa3d01f1::t_f310dd18bb6532 15-18,35-36,55-58,63-66
+cifn/deploy/env.example
+  s_b996deaa3d01f1::t_3fccdd835aff2f 16-19
+cifn/deploy/hostfn.example.config.json
+  s_b996deaa3d01f1::t_56264fa3b23f24 21-24,30,46-47,66-69,84-85,103,108
+cifn/typescript/control-plane/scripts/verify-lifecycle.mjs
+  s_b996deaa3d01f1::t_7a2b27a7fd6d0f 112
+cifn/typescript/control-plane/scripts/verify-remote-execution.mjs
+  s_b996deaa3d01f1::t_330176a3202108 144-154
+cifn/typescript/control-plane/src/api/routes.ts
+  s_b996deaa3d01f1::t_a47d81ff5e3612 125-128,419-434
+cifn/typescript/control-plane/src/dispatch/publisher.ts
+  s_b996deaa3d01f1::t_7f3f665dccbf9a 1,3,6-15,24
+cifn/typescript/control-plane/src/observability/lifecycle.ts
+  s_b996deaa3d01f1::t_4bca0cb014674e 19,50-90,93,101
+cifn/typescript/control-plane/src/sendfn/email-transport.test.ts
+  s_b996deaa3d01f1::t_4dc9bee1ec2af2 22-26,125
+cifn/typescript/control-plane/src/store/database-store.test.ts
+  s_b996deaa3d01f1::t_033a501dc38b3f 4,18,26-30,250-253,268-269,331-332,357-398,406,453,469,478,494,535,550,682,726,834-865,884-892,900-904,910-916,922-925,974,1083
+cifn/typescript/control-plane/src/store/database-store.ts
+  s_b996deaa3d01f1::t_8aa9588992fce8 4,46-53,189,212-214,306-308,312,315,432-435,437,820
+cifn/typescript/control-plane/src/store/log-delivery.test.ts
+  s_b996deaa3d01f1::t_f10e66c29413cd 6,30,66
+cifn/typescript/control-plane/src/triggers/fork-approval.test.ts
+  s_b996deaa3d01f1::t_343ac19ba13290 8-12,54,56
+cifn/typescript/runner/src/claim-journal.ts
+  s_b996deaa3d01f1::t_c6eb167f45202f 17,20-35
+cifn/typescript/runner/src/log-spool.ts
+  s_b996deaa3d01f1::t_93654ab5c08d29 84-85,94-99
+cifn/typescript/runner/src/remote-checkout.test.ts
+  s_b996deaa3d01f1::t_ef91d95aa73122 12-16,56
+cifn/typescript/runner/src/remote-runner.test.ts
+  s_b996deaa3d01f1::t_520aecaf6cef32 128-129,314-392
+cifn/typescript/runner/src/remote-runner.ts
+  s_b996deaa3d01f1::t_3caff3c6e8894b 52-53,75-76,81,83,92-100,109-115,180-186,214-235,239-242
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d5cefe902f280ed6e3f6bbf3fbfab63fe3f9f848",
+  "prompts": {},
+  "sessions": {
+    "s_b996deaa3d01f1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c40e7b19-3313-4542-ad8e-39c9c4c912f1",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

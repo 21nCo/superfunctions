@@ -1,0 +1,27 @@
+watchfn/scripts/packed-adapters-acceptance.mjs
+  s_d0ba66e70fdc38::t_c7a6f93c6e20c7 15,18,20-22,44-45,48,53-62,66-67,72-73
+watchfn/typescript/src/integrations/botfn/types.ts
+  s_d0ba66e70fdc38::t_192fb101d9ac95 1,24-37
+watchfn/typescript/src/query/query-engine.ts
+  s_d0ba66e70fdc38::t_181c42fc67cdb9 4-6,9-12
+watchfn/typescript/src/utils/branded-error.ts
+  s_d0ba66e70fdc38::t_517aabbe98704d 1-12
+watchfn/typescript/tests/http/bundled-error-identity.test.ts
+  s_d0ba66e70fdc38::t_3f3ebac021cc64 1-35
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5151e0cf95a73cc0fd146c36f67df5241c87933a",
+  "prompts": {},
+  "sessions": {
+    "s_d0ba66e70fdc38": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_d0ba66e70fdc38",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,25 @@
+cifn/typescript/control-plane/src/queue/flowfn-client.ts
+  s_a7924e4c84f9d1::t_7f5244d3bafd68 90-91
+cifn/typescript/control-plane/src/triggers/triggers.test.ts
+  s_a7924e4c84f9d1::t_e6d1ac99ec8f0f 572-575
+cifn/typescript/runner/src/log-spool.test.ts
+  s_a7924e4c84f9d1::t_984d0bafd539d8 578-594
+cifn/typescript/runner/src/remote-runner.ts
+  s_a7924e4c84f9d1::t_39820a53651583 454-456,501-504
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7f6a9378a4efbc6fc4f9b1337d003bfc0ab90fd3",
+  "prompts": {},
+  "sessions": {
+    "s_a7924e4c84f9d1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_a7924e4c84f9d1",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,29 @@
+testfn/.conduct/python-readiness.md
+  s_19abec75182420::t_7ff6be2f260cea 11
+testfn/python/README.md
+  s_19abec75182420::t_9d5ccbfaed3700 120-121
+testfn/python/testfn/adapters/pytest.py
+  s_19abec75182420::t_8c4d7315d27ba7 366-367
+testfn/python/tests/test_execution_contract.py
+  s_19abec75182420::t_e2f4052f99a7ee 915,932,934,936-937,939
+testfn/typescript/src/storage/backends.ts
+  s_19abec75182420::t_3abb80a1122a03 345,369-371,373,375-393,397
+testfn/typescript/tests/storage-history-bounds.test.ts
+  s_19abec75182420::t_9a031c8ccc3dd1 88-100,102,104-113,116-153
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7ea84eeef323cc1e2a30747b71c07cd2a48602ef",
+  "prompts": {},
+  "sessions": {
+    "s_19abec75182420": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d61a7abd-8c27-4e7c-ba23-13d43e2da322",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

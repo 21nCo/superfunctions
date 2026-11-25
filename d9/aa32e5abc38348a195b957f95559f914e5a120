@@ -1,0 +1,49 @@
+cachefn/typescript/README.md
+  s_d67ac8f9aaace2::t_540719cbb1269a 168-171,465-466,494
+cachefn/typescript/__tests__/backend-conformance.test.ts
+  s_d67ac8f9aaace2::t_f542d3350abcc2 4,31-49
+cachefn/typescript/__tests__/cache-fill.test.ts
+  s_d67ac8f9aaace2::t_6ba8ef5f291eba 3,72-100
+cachefn/typescript/__tests__/db-storage.test.ts
+  s_d67ac8f9aaace2::t_d868d622896504 145-146
+cachefn/typescript/__tests__/llm-cached-model.test.ts
+  s_d67ac8f9aaace2::t_743e584c3f8809 563-624
+cachefn/typescript/__tests__/redis-storage.test.ts
+  s_d67ac8f9aaace2::t_ea165e4d1a0280 107-108,110-111
+cachefn/typescript/src/core/cache.ts
+  s_d67ac8f9aaace2::t_4dae0538129ca3 86-87,215-216,329-333,376-380
+cachefn/typescript/src/core/types.ts
+  s_d67ac8f9aaace2::t_bd732fc5b8646f 84-87
+cachefn/typescript/src/llm/cached-model.ts
+  s_d67ac8f9aaace2::t_da78407ff50c44 46
+cachefn/typescript/src/storage/auto-storage.ts
+  s_d67ac8f9aaace2::t_20026369967d39 120
+cachefn/typescript/src/storage/db/db-storage.ts
+  s_d67ac8f9aaace2::t_c8a83b3d5b5ff2 520,538-539,542,563
+cachefn/typescript/src/storage/indexeddb-storage.ts
+  s_d67ac8f9aaace2::t_191369f29efae8 141-143
+cachefn/typescript/src/storage/local-storage.ts
+  s_d67ac8f9aaace2::t_e0d0c6eaae71c3 70-71,82
+cachefn/typescript/src/storage/memory-storage.ts
+  s_d67ac8f9aaace2::t_e2c60e331e44fc 64-68
+cachefn/typescript/src/storage/redis/redis-storage.ts
+  s_d67ac8f9aaace2::t_f0e8f5a6c61c54 306,321-322,325,336
+cachefn/typescript/src/storage/storage-interface.ts
+  s_d67ac8f9aaace2::t_1b43bfa2a69b1d 37-40,42
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d9aa32e5abc38348a195b957f95559f914e5a120",
+  "prompts": {},
+  "sessions": {
+    "s_d67ac8f9aaace2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_d67ac8f9aaace2",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

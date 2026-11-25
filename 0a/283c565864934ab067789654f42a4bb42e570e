@@ -1,0 +1,34 @@
+cifn/typescript/runner/src/remote-runner.test.ts
+  h_bdc5b81c173ee9 959-980
+cifn/typescript/runner/src/runner.ts
+  h_bdc5b81c173ee9 777
+cifn/typescript/control-plane/src/store/memory-store.ts
+  h_bdc5b81c173ee9 210-212
+cifn/typescript/control-plane/src/api/routes.ts
+  h_bdc5b81c173ee9 402-405
+cifn/typescript/control-plane/src/store/database-store.test.ts
+  h_bdc5b81c173ee9 257,259-260
+cifn/typescript/control-plane/src/queue/flowfn-client.ts
+  h_bdc5b81c173ee9 8-9,89,112
+cifn/typescript/runner/src/claim-journal.ts
+  h_bdc5b81c173ee9 38-48,99-102,121-123,145-148,150-170,178
+cifn/typescript/control-plane/src/triggers/triggers.test.ts
+  h_bdc5b81c173ee9 642-654
+cifn/typescript/runner/src/log-spool.ts
+  h_bdc5b81c173ee9 346-348,359-371
+cifn/typescript/runner/src/log-spool.test.ts
+  h_bdc5b81c173ee9 365,377-380
+cifn/typescript/runner/src/remote-runner.ts
+  h_bdc5b81c173ee9 424,427
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0a283c565864934ab067789654f42a4bb42e570e",
+  "prompts": {},
+  "humans": {
+    "h_bdc5b81c173ee9": {
+      "author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
