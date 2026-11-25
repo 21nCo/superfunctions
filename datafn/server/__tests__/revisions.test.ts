@@ -1303,3 +1303,101 @@ describe("DATA-41 revisions: round 3", () => {
     expect(query.result.data[0]).not.toHaveProperty("$rev");
   });
 });
+
+describe("DATA-41 revisions: canonical pull coalescing (round 7)", () => {
+  for (const enabled of [true, false]) {
+    it(`keeps a resource's own $rev value through coalescing (revisions ${enabled ? "on" : "off"})`, async () => {
+      const { push, send } = await serve({ enabled });
+      await push({ resource: "legacy", operation: "insert", id: "legacy:1", record: { $rev: "v1" } });
+      await push({ resource: "legacy", operation: "replace", id: "legacy:1", record: { $rev: "v2" } });
+      await push({ resource: "legacy", operation: "merge", id: "legacy:1", record: { $rev: "m1" } });
+      await push({ resource: "legacy", operation: "merge", id: "legacy:1", record: { $rev: "m2" } });
+      const pull = await send("pull", { clientId: "client:b", cursors: { legacy: "0" } });
+      expect(pull.body.ok).toBe(true);
+      expect(pull.body.result.records.legacy).toEqual([expect.objectContaining({ id: "legacy:1", $rev: "v2" })]);
+      expect(pull.body.result.merged.legacy).toEqual([expect.objectContaining({ id: "legacy:1", $rev: "m2" })]);
+    });
+  }
+
+  it("attaches no revision to a row whose stored id the pull rewrites or merges with another id", async () => {
+    const { push, send, rev } = await serve();
+    const spaced = await push({ resource: "task", operation: "insert", id: "task:x ", record: { title: "spaced" } });
+    expect(spaced.body.ok).toBe(true);
+    expect(await rev("task", "task:x ")).toMatchObject({ rev: 1 });
+    await push({ resource: "task", operation: "insert", id: "task:y", record: { title: "plain" } });
+    await push({ resource: "task", operation: "insert", id: "task:y ", record: { title: "spaced" } });
+    await push({ resource: "task", operation: "insert", id: "task:z", record: { title: "plain" } });
+    const pull = await send("pull", { clientId: "client:b", cursors: { task: "0" } });
+    const rows = pull.body.result.records.task as Json[];
+    expect(rows.find((row) => row.id === "task:x")).not.toHaveProperty("$rev");
+    expect(rows.find((row) => row.id === "task:y")).not.toHaveProperty("$rev");
+    expect(rows.find((row) => row.id === "task:z")).toMatchObject({ $rev: 1 });
+  });
+});
+
+describe("DATA-41 revisions: versioned query snapshot failures (round 7)", () => {
+  it("reruns outside the snapshot when a planned filter is rejected inside it and the fallback reads an aborted transaction", async () => {
+    const database = memoryAdapter();
+    const { push } = await serve({ database });
+    await push({ resource: "project", operation: "insert", id: "project:p", record: { name: "P" } });
+    await push({ resource: "project", operation: "insert", id: "project:q", record: { name: "Q" } });
+    await push({ resource: "task", operation: "insert", id: "task:1", record: { title: "a", projectId: "project:p" } });
+    await push({ resource: "task", operation: "insert", id: "task:2", record: { title: "b", projectId: "project:q" } });
+    await push({ resource: "task", operation: "insert", id: "task:3", record: { title: "c", projectId: "project:p" } });
+    // PostgreSQL-like: the first failed statement aborts the snapshot
+    // transaction, and every later statement in it fails (25P02).
+    const rawSql = { dialect: "postgres", execute: async () => undefined, query: async () => [] };
+    let snapshots = 0;
+    let rejected = 0;
+    const postgresLike = {
+      ...database,
+      rawSql,
+      transaction: async (fn: (tx: Adapter) => Promise<unknown>) => {
+        snapshots += 1;
+        let aborted = false;
+        const guard = <A extends unknown[], R>(call: (...args: A) => Promise<R>) => async (...args: A) => {
+          if (aborted) throw new Error("current transaction is aborted, commands ignored until end of transaction block");
+          return call(...args);
+        };
+        return fn({
+          ...database,
+          rawSql: { ...rawSql, execute: guard(rawSql.execute), query: guard(rawSql.query) },
+          findOne: guard(database.findOne.bind(database)),
+          count: guard(database.count.bind(database)),
+          findMany: guard(async (args: any) => {
+            // The planned relation filter's statement is rejected.
+            if (args.model === "project" && Array.isArray(args.where) && args.where.length > 0) {
+              rejected += 1;
+              aborted = true;
+              throw new Error("syntax error at or near planned filter");
+            }
+            return database.findMany(args);
+          }),
+        } as Adapter);
+      },
+    } as unknown as Adapter;
+    const reader = await serve({ database: postgresLike });
+    const query = await reader.send("query", {
+      resource: "task",
+      version: 1,
+      withRevisions: true,
+      filters: { "project.name": { eq: "P" } },
+    });
+    expect(snapshots).toBeGreaterThan(0);
+    expect(rejected).toBeGreaterThan(0);
+    expect(query.status).toBe(200);
+    const data = query.body.result.data as Json[];
+    expect(data.map((row) => row.id).sort()).toEqual(["task:1", "task:3"]);
+    for (const row of data) expect(row).not.toHaveProperty("$rev");
+  });
+});
+
+describe("DATA-41 revisions: push revision map keys (round 7)", () => {
+  it("returns the revision of a mutation whose id is __proto__", async () => {
+    const { push } = await serve();
+    const result = await push({ resource: "task", operation: "insert", id: "task:proto", record: { title: "a" }, mutationId: "__proto__" });
+    expect(result.body.ok).toBe(true);
+    expect(Object.prototype.hasOwnProperty.call(result.body.result.revisions, "__proto__")).toBe(true);
+    expect(result.body.result.revisions["__proto__"]).toMatchObject({ resource: "task", id: "task:proto", rev: 1 });
+  });
+});

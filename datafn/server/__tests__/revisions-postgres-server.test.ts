@@ -14,6 +14,11 @@ import { ChangeTrackingService } from "../src/execution/sync/change-tracking.js"
 import { createDatafnServer } from "../src/server.js";
 
 const url = process.env.DATAFN_TEST_POSTGRES_URL;
+// CI (.github/workflows/datafn-postgres.yml) sets this, so a missing server
+// fails the suite instead of skipping it.
+if (!url && process.env.DATAFN_TEST_POSTGRES_REQUIRED === "1") {
+  throw new Error("DATAFN_TEST_POSTGRES_REQUIRED is set but DATAFN_TEST_POSTGRES_URL is not");
+}
 const run = `${process.pid}_${Date.now()}`;
 const namespace = `data41-${run}`;
 const taskTable = `data41_task_${run}`;

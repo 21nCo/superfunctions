@@ -246,6 +246,50 @@ function attachRead(
 }
 
 /**
+ * DATA-41: an adapter for a read inside a revision snapshot that remembers
+ * whether any of its calls (raw SQL included) failed. Query paths fall back
+ * or swallow some read errors (a rejected push-down filter, a failed
+ * in-memory load), which on PostgreSQL leaves the snapshot transaction
+ * aborted and every later read empty. A caller that finds `failed()` leaves
+ * the snapshot and reads again outside it, without revisions.
+ */
+export function guardSnapshotReads(db: Adapter): { db: Adapter; failed: () => boolean } {
+  let failed = false;
+  const fail = (error: unknown): never => {
+    failed = true;
+    throw error;
+  };
+  const wrap = <T extends object>(target: T): T =>
+    new Proxy(target, {
+      get(obj, key) {
+        const value = Reflect.get(obj, key, obj);
+        if (key === "rawSql" && value && typeof value === "object") return wrap(value as object);
+        if (typeof value !== "function") return value;
+        return (...args: unknown[]) => {
+          let out: unknown;
+          try {
+            out = (value as (...a: unknown[]) => unknown).apply(obj, args);
+          } catch (error) {
+            return fail(error);
+          }
+          return out && typeof (out as Promise<unknown>).then === "function"
+            ? (out as Promise<unknown>).then(undefined, fail)
+            : out;
+        };
+      },
+    });
+  return { db: wrap(db), failed: () => failed };
+}
+
+/** A read inside a revision snapshot failed; read again outside it. */
+export class SnapshotReadFailedError extends Error {
+  constructor() {
+    super("A read inside the revision snapshot failed");
+    this.name = "SnapshotReadFailedError";
+  }
+}
+
+/**
  * Reads rows with `read` and attaches each readable row's revision as
  * `$rev`, only where the row is known to be the state at that revision. With
  * a verified snapshot (REPEATABLE READ on PostgreSQL; SQLite transactions are

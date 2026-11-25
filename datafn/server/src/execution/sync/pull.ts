@@ -915,14 +915,18 @@ async function executePullGlobalCursor(
 }
 
 /**
- * DATA-41: a coalesced canonical entry (several changes of one id combined in
- * serverSeq order, as before DATA-41) keeps `$rev` only when every combined
- * change carried one, the last has the highest, and the combined row is that
- * last complete row. serverSeq order is not commit order, so otherwise the
- * entry goes without a revision.
+ * DATA-41: a canonical entry (one or several changes of one id combined in
+ * serverSeq order, as before DATA-41) keeps `$rev` only when it describes the
+ * stored record its revision belongs to: every combined change carried one,
+ * the last has the highest, the combined row is that last complete row, and
+ * no change's stored id differs from the entry's (trimmed) id. serverSeq
+ * order is not commit order, so otherwise the entry goes without a revision.
+ * Called only for resources that issue revisions, so a resource's own `$rev`
+ * field is never touched.
  */
 function certifyCoalesced(
   combined: Record<string, unknown>,
+  id: string,
   parts: ReadonlyArray<Record<string, unknown>>,
 ): Record<string, unknown> {
   const last = parts[parts.length - 1];
@@ -931,7 +935,12 @@ function certifyCoalesced(
     lastRev !== undefined &&
     parts.every((part) => {
       const rev = readRowRevision(part);
-      return rev !== undefined && rev <= lastRev && Object.keys(part).every((key) => key in last);
+      return (
+        part.id === id &&
+        rev !== undefined &&
+        rev <= lastRev &&
+        Object.keys(part).every((key) => key in last)
+      );
     });
   return certified ? combined : withoutRowRevision(combined);
 }
@@ -1184,6 +1193,7 @@ async function executePullCanonical(
   }
 
   for (const resource of Object.keys(records)) {
+    const certify = issuesRevisions(schema, resource);
     const byId = new Map<string, Record<string, unknown>>();
     const coalesced = new Map<string, Array<Record<string, unknown>>>();
     for (const record of records[resource]) {
@@ -1192,10 +1202,10 @@ async function executePullCanonical(
         continue;
       }
       byId.set(id, { ...record, id });
-      coalesced.set(id, [...(coalesced.get(id) ?? []), record]);
+      if (certify) coalesced.set(id, [...(coalesced.get(id) ?? []), record]);
     }
     for (const [id, parts] of coalesced) {
-      if (parts.length > 1) byId.set(id, certifyCoalesced(byId.get(id)!, parts));
+      byId.set(id, certifyCoalesced(byId.get(id)!, id, parts));
     }
     records[resource] = Array.from(byId.values()).sort((a, b) =>
       String(a.id).localeCompare(String(b.id)),
@@ -1203,6 +1213,7 @@ async function executePullCanonical(
   }
 
   for (const resource of Object.keys(merged)) {
+    const certify = issuesRevisions(schema, resource);
     const byId = new Map<string, Record<string, unknown>>();
     const coalesced = new Map<string, Array<Record<string, unknown>>>();
     for (const record of merged[resource]) {
@@ -1212,10 +1223,10 @@ async function executePullCanonical(
       }
       const existing = byId.get(id) ?? { id };
       byId.set(id, { ...existing, ...record, id });
-      coalesced.set(id, [...(coalesced.get(id) ?? []), record]);
+      if (certify) coalesced.set(id, [...(coalesced.get(id) ?? []), record]);
     }
     for (const [id, parts] of coalesced) {
-      if (parts.length > 1) byId.set(id, certifyCoalesced(byId.get(id)!, parts));
+      byId.set(id, certifyCoalesced(byId.get(id)!, id, parts));
     }
     merged[resource] = Array.from(byId.values()).sort((a, b) =>
       String(a.id).localeCompare(String(b.id)),

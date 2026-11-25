@@ -30,7 +30,9 @@ import {
 } from "../validation/authz.js";
 import {
   REVISION_FIELD,
+  SnapshotReadFailedError,
   ensureRevisionsTable,
+  guardSnapshotReads,
   issuesRevisions,
   readWithRevisions,
 } from "../execution/revisions.js";
@@ -949,8 +951,9 @@ export function createQueryHandler(
                 // them), so each row it selected is paired with the revision
                 // read in that same snapshot. A row that gets no revision (an
                 // unreadable field, a tombstone, no verified pairing) is
-                // returned as the plain query projects it. A query that fails
-                // inside the snapshot (a PostgreSQL push-down fallback aborts
+                // returned as the plain query projects it. A query with any
+                // failed read inside the snapshot (thrown, or swallowed by a
+                // push-down or in-memory fallback, which on PostgreSQL aborts
                 // the transaction) is run again outside it, without revisions.
                 const readable = (row: Record<string, unknown>) =>
                   canReadEveryField(validatedSchema, resourceName, row);
@@ -963,9 +966,16 @@ export function createQueryHandler(
                       db,
                       namespace,
                       resourceName,
-                      (readDb) => {
-                        if (readDb !== db) snapshotRead = true;
-                        return run(readDb, false);
+                      async (readDb) => {
+                        if (readDb === db) return run(readDb, false);
+                        snapshotRead = true;
+                        // A read error the query swallowed or fell back from
+                        // (an aborted PostgreSQL snapshot reads as empty)
+                        // leaves the snapshot too.
+                        const guarded = guardSnapshotReads(readDb);
+                        const snapshotResult = await run(guarded.db, false);
+                        if (guarded.failed()) throw new SnapshotReadFailedError();
+                        return snapshotResult;
                       },
                       rowsOf,
                       readable,

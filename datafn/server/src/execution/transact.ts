@@ -44,7 +44,11 @@ export interface TransactResult {
 }
 
 /**
- * Execute a transaction (sequence of mutations/queries) as an atomic unit
+ * Execute a transaction (sequence of mutations/queries) as an atomic unit.
+ *
+ * Precondition (DATA-41): the caller has created `__datafn_revisions` (the
+ * /transact route runs ensureRevisionsTable first), since creating it inside
+ * the open transaction would abort it on PostgreSQL.
  */
 export async function executeTransaction(
   request: { atomic?: boolean; steps: TransactStep[] },

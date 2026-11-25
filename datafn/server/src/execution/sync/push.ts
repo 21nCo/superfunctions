@@ -447,7 +447,8 @@ export async function executePush(
     }));
   }
 
-  const revisions: Record<string, DatafnPushRevision> = {};
+  // Keyed by client mutation ids, so no inherited keys (`__proto__`).
+  const revisions: Record<string, DatafnPushRevision> = Object.create(null);
   /**
    * DATA-41: the highest revision each record reached in this push, across
    * every committed mutation's changes, its side effects (cascades, setNull,
@@ -469,7 +470,7 @@ export async function executePush(
    * superseded entry keeps only its revision.
    */
   const settledRevisions = (): Record<string, DatafnPushRevision> => {
-    const settled: Record<string, DatafnPushRevision> = {};
+    const settled: Record<string, DatafnPushRevision> = Object.create(null);
     for (const [mutationId, revision] of Object.entries(revisions)) {
       const latest = batchRevisions.get(revisionKey(revision.resource, revision.id)) ?? revision.rev;
       settled[mutationId] = latest > revision.rev
