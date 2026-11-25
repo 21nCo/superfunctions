@@ -1330,8 +1330,9 @@ describe("fromOpenAPI bounded and dialect-aware conversion", () => {
   });
 
   it("does not let tools that reuse a large component use up a budget meant for shared objects", () => {
+    // Each tool pays for its own copies (its schema and its catalog entry), within the document total.
     const properties = Object.fromEntries(
-      Array.from({ length: 2000 }, (_, index) => [`p${index}`, { type: "string", description: "d" }]),
+      Array.from({ length: 400 }, (_, index) => [`p${index}`, { type: "string", description: "d" }]),
     );
     const paths: Record<string, unknown> = {};
     for (let index = 0; index < 150; index += 1) {
@@ -1910,7 +1911,8 @@ describe("fromOpenAPI projection, work and dialect bounds", () => {
       { ...options(), registry: { register: () => undefined, has: () => false } as unknown as McpFnRegistry },
     );
     expect(bounded.tools[0]?.name).toBe("w0");
-    expect(bounded.tools.length).toBeGreaterThan(100);
+    // Each tool converts the object and pays for its schema copy and its catalog copy.
+    expect(bounded.tools.length).toBeGreaterThan(40);
     expect(bounded.skipped.length).toBeGreaterThan(0);
     expect(new Set(bounded.skipped.map((entry) => entry.reason))).toEqual(
       new Set([expect.stringMatching(/^the document's schemas expand in total to more than \d+ nodes$/) as unknown as string]),
@@ -3234,8 +3236,8 @@ describe("fromOpenAPI body fallback, synchronous schemas, per-kind alternatives 
       ({ patch: { operationId, requestBody: { content }, responses: ok, ...extra } });
     const contentTypes = (result: Result) => result.tools.map((entry) => [entry.name, entry.operation.requestBody?.contentType]);
     // A preferred body many operations share is checked once, not charged to the document budget per operation
-    // (250 operations of 4,000 nodes fit the budget once, not twice).
-    const shared = { type: "object", $defs: Object.fromEntries(Array.from({ length: 4000 }, (_, index) => [`d${index}`, {}])) };
+    // (250 operations of 1,200 entries fit with each one's own conversion and copies, not with a check each too).
+    const shared = { type: "object", $defs: Object.fromEntries(Array.from({ length: 1200 }, (_, index) => [`d${index}`, {}])) };
     const paths = Object.fromEntries(
       Array.from({ length: 250 }, (_, index) => [`/s${index}`, patch(`s${index}`, { "application/json": { schema: shared }, ...fallback })]),
     );
@@ -3346,4 +3348,54 @@ describe("fromOpenAPI body fallback, synchronous schemas, per-kind alternatives 
     expect(convertWith(occupied, 200).tools.at(1)!.name).toBe(`${stem}_300`);
     expect(occupied.probes).toBeLessThan(8 * 2 * 200);
   });
+});
+
+describe("fromOpenAPI tool schema copies within the document total", () => {
+  const json = (schema: unknown) => ({ "200": { description: "OK", content: { "application/json": { schema } } } });
+  const get = (operationId: string, schema: unknown) => ({ get: { operationId, responses: json(schema) } });
+
+  it("charges an inlined output root while it is copied, a copy that then fails included", () => {
+    const cyclic: Record<string, unknown> = {};
+    cyclic.self = cyclic;
+    const properties = Object.fromEntries(Array.from({ length: 10_000 }, (_, index) => [`p${index}`, { type: "string" }]));
+    const paths: Record<string, unknown> = {};
+    for (let index = 0; index < 200; index += 1) paths[`/big${index}`] = get(`big${index}`, { $ref: "#/components/schemas/Big" });
+    const document = { openapi: "3.1.0", paths, components: { schemas: { Big: { type: "object", properties, default: cyclic } } } };
+    // Tools sharing schemas: the copy that failed is remembered by content, so it is made once.
+    const shared = fromOpenAPI(document, { executor: recordingExecutor() });
+    expect(new Set(shared.skipped.map(({ code }) => code))).toEqual(new Set(["circular-object"]));
+    // A copy per tool: each failed copy is charged for what it copied, so the document total bounds them.
+    const fresh = fromOpenAPI(document, { executor: recordingExecutor(), registry: new McpFnRegistry() });
+    expect(fresh.skipped[0]?.code).toBe("circular-object");
+    expect(fresh.skipped.map(({ code }) => code)).toContain("schema-too-large");
+  }, 30_000);
+
+  it("charges every tool's copies of a large literal its root holds, earlier operations first", () => {
+    const schema = { type: "object", default: Array.from({ length: 60_000 }, (_, index) => index) };
+    const paths: Record<string, unknown> = {};
+    for (let index = 0; index < 200; index += 1) paths[`/l${index}`] = get(`l${index}`, schema);
+    const result = fromOpenAPI({ openapi: "3.1.0", paths }, { executor: recordingExecutor() });
+    const names = result.tools.map(({ name }) => name);
+    expect(names.length).toBeGreaterThan(10);
+    expect(names.length).toBeLessThan(200);
+    // The tools that fit are the first ones in document order.
+    expect(names).toEqual(names.map((_, index) => `l${index}`));
+    expect(new Set(result.skipped.map(({ code }) => code))).toEqual(new Set(["schema-too-large"]));
+  });
+
+  it("charges no catalog copies for reuses of a schema the registry refuses, so a later sibling still fits", () => {
+    // Two-letter names keep the chain within the sharing key, so the operations share one schema.
+    const letters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    const name = (index: number) => `${letters[Math.floor(index / letters.length)]}${letters[index % letters.length]}`;
+    const schemas: Record<string, unknown> = { [name(900)]: { type: "object", default: Array.from({ length: 60_000 }, (_, index) => index) } };
+    for (let index = 0; index < 900; index += 1) schemas[name(index)] = { allOf: [{ $ref: `#/components/schemas/${name(index + 1)}` }] };
+    const paths: Record<string, unknown> = {};
+    for (let index = 0; index < 150; index += 1) paths[`/d${index}`] = get(`d${index}`, { $ref: `#/components/schemas/${name(0)}` });
+    paths["/ok"] = get("ok", { type: "object", properties: { n: { type: "integer" } } });
+    const result = fromOpenAPI({ openapi: "3.1.0", paths, components: { schemas } }, { executor: recordingExecutor() });
+    expect(result.tools.map(({ name }) => name)).toEqual(["ok"]);
+    expect(new Set(skips(result).map(([, code, reason]) => `${code}: ${reason}`))).toEqual(
+      new Set(["schema-too-large: a schema or reference chain nests too deeply"]),
+    );
+  }, 60_000);
 });

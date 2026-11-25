@@ -116,8 +116,7 @@ const SUPPORTED_DIALECTS = new Set([
  * component schemas it holds and copies made to check a schema) is charged
  * node by node while it is made, so
  * work stops where the budget runs out and a copy that fails is charged only
- * for what it copied. A tool's copy of its own root is bounded by the charged
- * conversion of that root (`rootCopyBudget`).
+ * for what it copied.
  * No single schema has a fixed size or depth limit of its own.
  */
 const DOCUMENT_NODE_FLOOR = 1_000_000;
@@ -175,15 +174,6 @@ export class NodeBudget {
     this.call = call ?? total?.call ?? { keys: new WeakMap(), circular: new WeakSet() };
   }
 
-  /**
-   * A budget with only its own sharing check, charged to no total, that
-   * shares what this call learnt: for a tool's own copy of a root whose
-   * conversion was charged node by node (the check bounds the copy by a
-   * constant factor of what it reads).
-   */
-  uncharged(): NodeBudget {
-    return new NodeBudget(Number.POSITIVE_INFINITY, undefined, REGION, this.call);
-  }
 
   /** The own enumerable keys of `value` (an array's indices without its holes), listed once per call. */
   ownKeys(value: object): readonly string[] {
@@ -226,13 +216,24 @@ export class NodeBudget {
     return this.produced;
   }
 
-  /** Charge `count` nodes at once: a converted closure that a tool emits again. */
+  /**
+   * Charge `count` nodes at once (a closure walk, a catalog copy, a probe),
+   * or nothing when they do not fit: work refused for the budget is not
+   * done, so it leaves the budget to other operations.
+   */
   chargeNodes(count: number): void {
-    this.total?.chargeNodes(count);
-    this.produced += count;
-    if (this.produced > this.limit) {
+    if (count === 0) return;
+    if (this.produced + count > this.limit) {
       throw new OpenApiSkip("schema-too-large", `${this.subject} to more than ${this.limit} nodes`);
     }
+    this.total?.chargeNodes(count);
+    this.produced += count;
+  }
+
+  /** Give back `count` nodes charged at once for work that was then not done (`chargeNodes`). */
+  release(count: number): void {
+    this.total?.release(count);
+    this.produced -= count;
   }
 
   /** Charge one produced node read from `value`. */
@@ -366,8 +367,14 @@ export function parseComponentRef(
 interface ConvertedComponent {
   schema?: McpFnJsonSchema | boolean;
   refs?: Set<string>;
-  /** Definitions this one validates the same instance against (allOf/anyOf/oneOf/not/if/then/else/dependencies). */
-  inPlace?: Set<string>;
+  /**
+   * Definitions this one validates the same instance against
+   * (allOf/anyOf/oneOf/not/if/then/else/dependencies), each with the
+   * validator frames from this schema's frame to the definition's.
+   */
+  inPlace?: Map<string, number>;
+  /** Validator frames its own in-place keywords stack, references aside. */
+  ownFrames?: number;
   error?: OpenApiSkip;
 }
 
@@ -510,17 +517,14 @@ export class SchemaConverter {
     return this.total.child();
   }
 
-  /** Charge `nodes` to the call's total: a copy a tool's catalog entry repeats (see `toolSchema`). */
+  /** Charge `nodes` to the call's total: the copy of a tool's schemas its catalog entry gets (see `register`). */
   chargeCopy(nodes: number): void {
     this.total.chargeNodes(nodes);
   }
 
-  /**
-   * A budget for a tool's own copy of its root, which the operation's own
-   * conversion already charged (`NodeBudget.uncharged`).
-   */
-  rootCopyBudget(): NodeBudget {
-    return this.total.uncharged();
+  /** Give back a catalog copy charged for a tool that was then not registered. */
+  releaseCopy(nodes: number): void {
+    this.total.release(nodes);
   }
 
   /** Run `task` with a fresh node budget (one per operation input, operation output or component). */
@@ -1554,8 +1558,8 @@ export class SchemaConverter {
         const refs = new Set<string>();
         const schema = this.budgeted(() => this.convertRoot(this.component(name), mode, refs));
         // Only references the conversion made are edges: a malformed keyword it kept as written makes none.
-        const made = (found: Set<string>) => new Set([...found].filter((key) => refs.has(key)));
-        entry = { schema, refs, inPlace: made(inPlaceReferences(schema)) };
+        const { links, own } = inPlaceReferences(schema);
+        entry = { schema, refs, inPlace: new Map([...links].filter(([key]) => refs.has(key))), ownFrames: own };
       } catch (error) {
         if (!(error instanceof OpenApiSkip)) throw error;
         entry = {
@@ -1667,6 +1671,64 @@ export class SchemaConverter {
     return entries;
   }
 
+  /**
+   * The most frames a validator that follows references while it validates
+   * (@cfworker/json-schema) stacks for one value of a tool schema whose
+   * converted `root` refers to a checked closure: at every position a value
+   * can take (the root, and each property, item or other child schema), the
+   * subschemas and references applied there in place, followed to their end.
+   * It depends on the schema alone, never on a sample value: how deep child
+   * values nest is the instance's own. Each component is walked once per
+   * call, and a root once per tool schema.
+   */
+  frames(root: McpFnJsonSchema | boolean, mode: SchemaMode): number {
+    const { frames, refs } = this.positions(root, mode);
+    const reach = memoMap(this.reachFrames, mode, () => new Map<string, number>());
+    const local = memoMap(this.positionFrames, mode, () => new Map<string, { frames: number; refs: Set<string> }>());
+    const of = (name: string) => {
+      let known = local.get(name);
+      if (!known) local.set(name, (known = this.positions(this.converted(name, mode).schema, mode)));
+      return known;
+    };
+    let most = frames;
+    for (const name of refs) {
+      const below = settleGraph(name, (key) => of(key).refs, reach, (component, deeper) => {
+        let frames = deeper;
+        for (const key of component) frames = Math.max(frames, of(key).frames);
+        return frames;
+      });
+      most = Math.max(most, below);
+    }
+    return most;
+  }
+
+  /** By mode, for the whole call: the frames and references at the positions of one component (`positions`). */
+  private readonly positionFrames = new Map<SchemaMode, Map<string, { frames: number; refs: Set<string> }>>();
+  /** By mode, for the whole call: the most frames at any position a component's schema reaches (`frames`). */
+  private readonly reachFrames = new Map<SchemaMode, Map<string, number>>();
+
+  /** The most frames at any position within `schema` itself, and the definitions it applies anywhere. */
+  private positions(schema: unknown, mode: SchemaMode): { frames: number; refs: Set<string> } {
+    const refs = new Set<string>();
+    let most = 0;
+    const visit = (node: unknown, frame: number): void => {
+      if (node === undefined) return;
+      most = Math.max(most, frame);
+      if (!isObject(node)) return;
+      if (typeof node.$ref === "string" && node.$ref.startsWith(DEFINITION_REF)) {
+        const name = node.$ref.slice(DEFINITION_REF.length);
+        refs.add(name);
+        // Within a checked closure no in-place chain is a cycle.
+        most = Math.max(most, frame + Math.max(0, this.inPlaceDepth(name, mode)));
+      }
+      forEachInPlace(node, (member) => visit(member, frame + 1));
+      // A child value starts its own chain of frames.
+      forEachChild(node, (member) => visit(member, 1));
+    };
+    visit(schema, 1);
+    return { frames: most, refs };
+  }
+
   /** The closure as `definitions`. Each tool schema holding it is charged while it is copied (`copyBudget`). */
   private emit(names: string[], mode: SchemaMode): Record<string, McpFnJsonSchema | boolean> {
     const result: Array<[string, McpFnJsonSchema | boolean]> = [];
@@ -1675,9 +1737,10 @@ export class SchemaConverter {
   }
 
   /**
-   * The longest chain of in-place references from component `name` (1 when
-   * it has none), or -1 when it reaches an in-place cycle. Walked with an
-   * explicit stack over converted components, and kept for the whole call.
+   * The most validator frames that validating one value against component
+   * `name` stacks by applying subschemas and references in place (at least
+   * 1), or -1 when it reaches an in-place cycle. Walked with an explicit
+   * stack over converted components, and kept for the whole call.
    */
   private inPlaceDepth(name: string, mode: SchemaMode): number {
     const depths = memoMap(this.inPlaceDepths, mode, () => new Map<string, number>());
@@ -1685,7 +1748,7 @@ export class SchemaConverter {
     if (known !== undefined) return known;
     const linksOf = (key: string) => this.converted(key, mode).inPlace!;
     const active = new Set([name]);
-    const stack = [{ key: name, next: linksOf(name).values() }];
+    const stack = [{ key: name, next: linksOf(name).keys() }];
     while (stack.length > 0) {
       const frame = stack.at(-1)!;
       const step = frame.next.next();
@@ -1697,17 +1760,17 @@ export class SchemaConverter {
           break;
         }
         active.add(step.value);
-        stack.push({ key: step.value, next: linksOf(step.value).values() });
+        stack.push({ key: step.value, next: linksOf(step.value).keys() });
         continue;
       }
       stack.pop();
       active.delete(frame.key);
-      let below = 0;
-      for (const next of linksOf(frame.key)) {
+      let frames = this.converted(frame.key, mode).ownFrames ?? 1;
+      for (const [next, distance] of linksOf(frame.key)) {
         const depth = depths.get(next)!;
-        below = depth < 0 || below < 0 ? -1 : Math.max(below, depth);
+        frames = depth < 0 || frames < 0 ? -1 : Math.max(frames, distance + depth);
       }
-      depths.set(frame.key, below < 0 ? -1 : below + 1);
+      depths.set(frame.key, frames);
     }
     return depths.get(name)!;
   }
@@ -1880,9 +1943,8 @@ const SUBSCHEMA_KEYWORDS = [
 ] as const;
 
 const IN_PLACE_ARRAY_KEYWORDS = ["allOf", "anyOf", "oneOf"] as const;
-const IN_PLACE_KEYWORDS = ["not", "if", "then", "else"] as const;
 
-const NO_COMPONENT: ConvertedComponent = { refs: new Set(), inPlace: new Set() };
+const NO_COMPONENT: ConvertedComponent = { refs: new Set(), inPlace: new Map(), ownFrames: 1 };
 
 /**
  * A value per node of a graph, settled once per strongly connected component
@@ -1940,22 +2002,57 @@ function settleGraph(
   return memo.get(start)!;
 }
 
-/** Definitions a converted schema applies to the same instance it validates. */
-function inPlaceReferences(schema: McpFnJsonSchema | boolean): Set<string> {
-  const found = new Set<string>();
-  const walk = (current: unknown): void => {
+/**
+ * Definitions a converted schema applies to the same instance it validates,
+ * each with the most validator frames from the schema's own frame to the
+ * definition's (1 for a `$ref` on the schema itself), and the frames its
+ * in-place keywords stack without references. `then` and `else` apply only
+ * beside `if`, as validators apply them.
+ */
+function inPlaceReferences(schema: McpFnJsonSchema | boolean): { links: Map<string, number>; own: number } {
+  const links = new Map<string, number>();
+  let own = 1;
+  const walk = (current: unknown, frame: number): void => {
     if (!isObject(current)) return;
+    own = Math.max(own, frame);
     if (typeof current.$ref === "string" && current.$ref.startsWith(DEFINITION_REF)) {
-      found.add(current.$ref.slice(DEFINITION_REF.length));
+      const name = current.$ref.slice(DEFINITION_REF.length);
+      links.set(name, Math.max(links.get(name) ?? 0, frame));
     }
-    for (const keyword of IN_PLACE_ARRAY_KEYWORDS) {
-      for (const member of arrayOf(current[keyword])) walk(member);
-    }
-    for (const keyword of IN_PLACE_KEYWORDS) walk(current[keyword]);
-    for (const [, dependency] of objectEntries(current.dependencies)) walk(dependency);
+    forEachInPlace(current, (member) => walk(member, frame + 1));
   };
-  walk(schema);
-  return found;
+  walk(schema, 1);
+  return { links, own };
+}
+
+/** The subschemas a draft-07 validator applies to the same instance as `schema`. */
+function forEachInPlace(schema: JsonObject, visit: (member: unknown) => void): void {
+  for (const keyword of IN_PLACE_ARRAY_KEYWORDS) {
+    for (const member of arrayOf(schema[keyword])) visit(member);
+  }
+  visit(schema.not);
+  if (schema.if !== undefined) {
+    visit(schema.if);
+    visit(schema.then);
+    visit(schema.else);
+  }
+  for (const [, dependency] of objectEntries(schema.dependencies)) visit(dependency);
+}
+
+/** The subschemas a draft-07 validator applies to child values (properties, items, ...) of the instance `schema` validates. */
+function forEachChild(schema: JsonObject, visit: (member: unknown) => void): void {
+  for (const keyword of ["properties", "patternProperties"] as const) {
+    for (const [, member] of objectEntries(schema[keyword])) visit(member);
+  }
+  visit(schema.additionalProperties);
+  visit(schema.propertyNames);
+  visit(schema.contains);
+  if (Array.isArray(schema.items)) {
+    for (const member of arrayOf(schema.items)) visit(member);
+    visit(schema.additionalItems);
+  } else {
+    visit(schema.items);
+  }
 }
 
 /** A stack overflow (the converter's or a validator's) means schemas or references nest too deeply. */
@@ -1966,7 +2063,7 @@ export const TOO_DEEP = "a schema or reference chain nests too deeply";
  * never descends into a child value; validators recurse on it without end.
  * Names the in-place cycle a closure reaches; walked with an explicit stack, so no chain is too long to check. */
 function assertProductiveRecursion(entries: ReadonlyMap<string, ConvertedComponent>): void {
-  const links = (key: string): Iterator<string> => (entries.get(key)?.inPlace ?? new Set<string>()).values();
+  const links = (key: string): Iterator<string> => (entries.get(key)?.inPlace ?? new Map<string, number>()).keys();
   const done = new Set<string>();
   const active = new Set<string>();
   for (const start of entries.keys()) {

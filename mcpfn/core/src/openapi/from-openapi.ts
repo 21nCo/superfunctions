@@ -286,9 +286,17 @@ class OperationConverter {
   private readonly schemas: SchemaConverter;
   private compiler: SchemaCompiler | undefined;
   /** Tool schemas by content, when tools share them (see `toolSchema`). */
-  private readonly shared = new Map<string, McpFnObjectSchema | undefined>();
-  /** Nodes each shared schema's copy of its definitions cost, charged again per tool reusing it. */
-  private readonly sharedCosts = new Map<string, number>();
+  private readonly shared = new Map<string, McpFnObjectSchema | undefined | OpenApiSkip>();
+  /** Nodes in each tool schema's copy, which its catalog entry copies again (`register`). */
+  private readonly copyNodes = new WeakMap<object, number>();
+  /** Catalog copies charged, in document order, for tools holding each tool schema and not yet claimed when they register. */
+  private readonly reserved = new WeakMap<object, number>();
+  /** Shared tool schemas compiled once, at their first reuse, before reuses are charged. */
+  private readonly reuseChecked = new WeakSet<object>();
+  /** Validator frames each tool schema stacks for one value (`SchemaConverter.frames`). */
+  private readonly toolFrames = new WeakMap<object, number>();
+  /** How deep @cfworker/json-schema validates on this call's stack, measured once per call. */
+  private readonly depth = new ValidationDepth((nodes) => this.schemas.chargeCopy(nodes));
   /** Why a schema checked as written failed to compile (null: it compiled), by source object and by content. */
   private readonly checkedAsWritten = new WeakMap<object, string | null | OpenApiSkip>();
   /** Request body schemas whose checked conversion failed for a reason of their own. */
@@ -318,11 +326,23 @@ class OperationConverter {
    * their own node budget, which conversion and copying both charge.
    */
   candidate(path: string, pathItem: JsonObject, method: OpenApiMethod, raw: JsonObject): Candidate {
-    const { inputs, inputSchema } = this.input(path, pathItem, raw);
-    const operation = deepFreeze(this.operation(path, pathItem, method, raw, inputs));
-    const outputSchema = this.schemas.budgeted(() => this.outputSchema(raw, method));
-    return { operation, inputSchema, ...(outputSchema ? { outputSchema } : {}) };
+    // Catalog copies reserved for an operation that then fails are given back.
+    this.pending = [];
+    try {
+      const { inputs, inputSchema } = this.input(path, pathItem, raw);
+      const operation = deepFreeze(this.operation(path, pathItem, method, raw, inputs));
+      const outputSchema = this.schemas.budgeted(() => this.outputSchema(raw, method));
+      return { operation, inputSchema, ...(outputSchema ? { outputSchema } : {}) };
+    } catch (error) {
+      this.dropReservations(this.pending);
+      throw error;
+    } finally {
+      this.pending = [];
+    }
   }
+
+  /** Tool schemas holding a catalog copy reserved for the operation being converted. */
+  private pending: object[] = [];
 
   /** Follow a `$ref` chain to a parameter, request body or response object. */
   resolve(value: unknown, kind: "parameters" | "requestBodies" | "responses"): JsonObject {
@@ -493,33 +513,104 @@ class OperationConverter {
     definitions: Record<string, McpFnJsonSchema | boolean>,
     finish: () => McpFnObjectSchema | undefined,
   ): McpFnObjectSchema | undefined {
-    let cost = 0;
     const produce = () => {
       const schema = finish();
       if (schema === undefined) return undefined;
-      if (Object.keys(definitions).length === 0) return treeCopy(schema, this.schemas.rootCopyBudget());
-      // The root first, so a root that fails to copy is charged nothing for the definitions it holds;
-      // the definitions, converted once per call, are charged to every tool copying them as they are read.
-      const rest = treeCopy(Object.fromEntries(Object.entries(schema).filter(([key]) => key !== "definitions")), this.schemas.rootCopyBudget()) as McpFnObjectSchema;
+      // Every copy is charged to the call's total node by node while it is
+      // made, the root included (it may inline a component or hold a large
+      // literal): a copy that fails is charged for what it copied. The root
+      // goes first, so one that fails is charged nothing for the definitions.
       const budget = this.schemas.copyBudget();
-      const copied = { ...rest, definitions: treeCopy(definitions, budget) };
-      cost = budget.used;
+      const copied: McpFnObjectSchema = Object.keys(definitions).length === 0
+        ? treeCopy(schema, budget)
+        : {
+            ...(treeCopy(Object.fromEntries(Object.entries(schema).filter(([key]) => key !== "definitions")), budget) as McpFnObjectSchema),
+            definitions: treeCopy(definitions, budget),
+          };
+      this.copyNodes.set(copied, budget.used);
+      // The catalog copy of the tool holding it, charged in document order.
+      this.schemas.chargeCopy(budget.used);
+      this.reserved.set(copied, 1);
+      this.pending.push(copied);
+      this.toolFrames.set(copied, this.schemas.frames(root, kind));
       return copied;
     };
     if (!this.shareSchemas) return produce();
     const values = { json: true, chars: 0 };
-    const key = contentKey(kind, treeCopy(root, this.schemas.rootCopyBudget(), values), values, definitions);
-    if (key !== undefined && this.shared.has(key)) {
-      // The registry shares the schema, but each tool's catalog entry copies its definitions again (`register`).
-      this.schemas.chargeCopy(this.sharedCosts.get(key)!);
-      return this.shared.get(key);
+    const key = contentKey(kind, treeCopy(root, this.schemas.copyBudget(), values), values, definitions);
+    if (key === undefined) return produce();
+    const known = this.shared.get(key);
+    // A schema whose copy failed fails the same way for every tool with the same content.
+    if (known instanceof OpenApiSkip) throw known;
+    if (known !== undefined) {
+      // A schema the registry will refuse for nesting too deeply holds no
+      // catalog copies: it is compiled once, at its first reuse, to know.
+      if (!this.reuseChecked.has(known)) {
+        this.reuseChecked.add(known);
+        if (this.compileFailure(known, () => this.toolFrames.get(known) ?? 0) === TOO_DEEP_VERDICT) {
+          const skip = new OpenApiSkip("schema-too-large", TOO_DEEP);
+          this.shared.set(key, skip);
+          throw skip;
+        }
+      }
+      this.schemas.chargeCopy(this.copyNodes.get(known) ?? 0);
+      this.reserved.set(known, (this.reserved.get(known) ?? 0) + 1);
+      this.pending.push(known);
+      return known;
     }
-    const result = produce();
-    if (key !== undefined) {
+    if (this.shared.has(key)) return undefined;
+    try {
+      const result = produce();
       this.shared.set(key, result && deepFreeze(result));
-      this.sharedCosts.set(key, cost);
+      return result;
+    } catch (error) {
+      if (error instanceof OpenApiSkip) this.shared.set(key, error);
+      throw error;
     }
-    return result;
+  }
+
+  /**
+   * Hold the catalog copy of a tool with these schemas (`register`): a
+   * reservation made with a schema is claimed, the rest is charged now, or
+   * nothing when it does not fit. Returns the nodes held, given back with
+   * `releaseCopy` when the tool does not register.
+   */
+  holdCatalog(schemas: readonly object[]): number {
+    let now = 0;
+    let claimed = 0;
+    for (const schema of schemas) {
+      const nodes = this.copyNodes.get(schema) ?? 0;
+      if ((this.reserved.get(schema) ?? 0) > 0) claimed += nodes;
+      else now += nodes;
+    }
+    this.schemas.chargeCopy(now);
+    for (const schema of schemas) this.claim(schema);
+    return now + claimed;
+  }
+
+  /** Take one reservation made with `schema`, if any; whether there was one. */
+  private claim(schema: object): boolean {
+    const count = this.reserved.get(schema) ?? 0;
+    if (count > 0) this.reserved.set(schema, count - 1);
+    return count > 0;
+  }
+
+  /** Give back the catalog copies reserved with these schemas, for a tool that will not register. */
+  dropReservations(schemas: readonly object[]): void {
+    for (const schema of schemas) {
+      if (this.claim(schema)) this.schemas.releaseCopy(this.copyNodes.get(schema) ?? 0);
+    }
+  }
+
+  releaseCopy(nodes: number): void {
+    this.schemas.releaseCopy(nodes);
+  }
+
+  /** Whether @cfworker/json-schema validates a value against each of these tool schemas without overflowing its stack. */
+  validatesDeepEnough(schemas: readonly object[]): boolean {
+    let frames = 0;
+    for (const schema of schemas) frames = Math.max(frames, this.toolFrames.get(schema) ?? 0);
+    return this.depth.fits(frames);
   }
 
   /**
@@ -637,23 +728,24 @@ class OperationConverter {
       const wrapped = Object.keys(definitions).length > 0;
       failure = this.compileFailure(
         wrapped ? { type: "object", properties: { value: copy }, definitions: treeCopy(definitions, budget) } : copy,
-        // A value that reaches the checked schema, under the wrapper or not.
-        wrapped ? { value: null } : null,
+        () => this.schemas.frames(root, mode),
       );
       if (key !== undefined) this.verdicts.set(key, failure);
     }
     return failure;
   }
 
-  private compileFailure(schema: object, probe: unknown): string | null {
+  private compileFailure(schema: object, frames: () => number): string | null {
     this.compiler ??= createSchemaCompiler();
     try {
-      reachReferences(this.compiler.engine, this.compiler.compile(schema), probe);
-      return null;
+      this.compiler.compile(schema);
     } catch (error) {
       if (error instanceof RangeError) return TOO_DEEP_VERDICT;
       return error instanceof Error ? error.message : String(error);
     }
+    // @cfworker/json-schema follows references only while validating, so
+    // its compile never overflows on a chain too deep to validate.
+    return this.compiler.engine === "cfworker" && !this.depth.fits(frames()) ? TOO_DEEP_VERDICT : null;
   }
 
   /** A request body schema compiles as the registry compiles it, checked once per source schema object. */
@@ -912,25 +1004,56 @@ function candidateFailure(error: unknown): OpenApiSkip {
 }
 
 /**
- * @cfworker/json-schema follows references only while validating, so its
- * compile never overflows on a chain too deep to validate: one value is
- * validated too, which follows every reference applied in place once.
+ * How many frames @cfworker/json-schema stacks validating one value before
+ * its stack overflows, measured with the engine on this call's stack rather
+ * than fixed: chains of references of a given length are validated, and
+ * what passed and what overflowed is kept for the call, so tools with equal
+ * depths get one verdict however warm the engine is. Until a chain
+ * overflows, each probe at least doubles the longest that passed, so rising
+ * depths cost few probes; after that the limit is bisected. Each probe is
+ * charged to the call's budget.
  */
-function reachReferences(engine: string, validate: (value: unknown) => boolean, probe: unknown = null): void {
-  if (engine === "cfworker") validate(probe);
-}
+class ValidationDepth {
+  private passes = 1;
+  private overflows = Number.POSITIVE_INFINITY;
 
-/** Whether validating with @cfworker/json-schema overflows on a tool's input or output schema. */
-function overflowsWhenValidated(schemas: [object, object]): boolean {
-  for (const schema of schemas) {
-    if (schema === NO_OUTPUT) continue;
-    try {
-      reachReferences("cfworker", createSchemaCompiler("cfworker").compile(schema));
-    } catch (error) {
-      if (error instanceof RangeError) return true;
+  constructor(private readonly charge: (nodes: number) => void) {}
+
+  fits(frames: number): boolean {
+    if (frames <= this.passes) return true;
+    if (frames >= this.overflows) return false;
+    if (this.overflows === Number.POSITIVE_INFINITY) this.probe(Math.max(frames, 2 * this.passes));
+    while (frames > this.passes && frames < this.overflows) {
+      this.probe(Math.floor((this.passes + this.overflows) / 2));
+    }
+    return frames <= this.passes;
+  }
+
+  private probe(frames: number): void {
+    this.charge(frames);
+    if (chainValidates(frames)) {
+      this.passes = Math.max(this.passes, frames);
+      if (this.overflows <= this.passes) this.overflows = this.passes + 1;
+    } else {
+      this.overflows = Math.min(this.overflows, frames);
+      if (this.passes >= this.overflows) this.passes = this.overflows - 1;
     }
   }
-  return false;
+}
+
+/** Whether @cfworker/json-schema validates a value through `frames` frames: a root and a chain of references after it. */
+function chainValidates(frames: number): boolean {
+  const definitions: Record<string, object> = {};
+  for (let index = 1; index < frames; index += 1) {
+    definitions[`d${index}`] = index + 1 < frames ? { $ref: `#/definitions/d${index + 1}` } : {};
+  }
+  try {
+    createSchemaCompiler("cfworker").compile(frames > 1 ? { $ref: "#/definitions/d1", definitions } : {})(null);
+    return true;
+  } catch (error) {
+    if (error instanceof RangeError) return false;
+    throw error;
+  }
 }
 
 /** A compile verdict for a stack overflow, kept like any other verdict. */
@@ -1052,7 +1175,7 @@ export function fromOpenAPI<TContext>(
     if (unusable) skipped.push(unusable);
     else convertPathItem(converter, filters, path, pathItem as JsonObject, skipped, candidates);
   }
-  return register(candidates, skipped, options);
+  return register(converter, candidates, skipped, options);
 }
 
 function convertPathItem<TContext>(
@@ -1138,6 +1261,7 @@ function tagsOf(raw: JsonObject): string[] {
 }
 
 function register<TContext>(
+  converter: OperationConverter,
   candidates: Candidate[],
   skipped: OpenApiSkippedOperation[],
   options: FromOpenApiOptions<TContext>,
@@ -1164,14 +1288,26 @@ function register<TContext>(
     const { operation } = candidate;
     const pair: [object, object] = [candidate.inputSchema, candidate.outputSchema ?? NO_OUTPUT];
     if (overflowed.get(pair[0])?.has(pair[1])) {
+      converter.dropReservations(pair);
       skipped.push(tooDeepSkip(operation));
       return;
     }
     engine ??= createSchemaCompiler().engine;
-    if (engine === "cfworker" && overflowsWhenValidated(pair)) {
-      if (!overflowed.has(pair[0])) overflowed.set(pair[0], new WeakSet());
-      overflowed.get(pair[0])!.add(pair[1]);
-      skipped.push(tooDeepSkip(operation));
+    // The catalog entry's copy is held before the tool registers, and given
+    // back when it does not, so only copies made stay charged.
+    let catalogNodes = 0;
+    try {
+      if (engine === "cfworker" && !converter.validatesDeepEnough(pair)) {
+        converter.dropReservations(pair);
+        if (!overflowed.has(pair[0])) overflowed.set(pair[0], new WeakSet());
+        overflowed.get(pair[0])!.add(pair[1]);
+        skipped.push(tooDeepSkip(operation));
+        return;
+      }
+      catalogNodes = converter.holdCatalog(pair);
+    } catch (error) {
+      const skip = candidateFailure(error);
+      skipped.push({ operation: operationRef(operation), code: skip.code, reason: skip.message });
       return;
     }
     const last = index === candidates.length - 1;
@@ -1190,6 +1326,7 @@ function register<TContext>(
         handler: (args, _context, extra) => executor.execute({ operation, args, signal: extra.signal }),
       });
     } catch (error) {
+      converter.releaseCopy(catalogNodes);
       if (!isValidationError(error)) throw error;
       failed.add(inputSchema);
       if (outputSchema) failed.add(outputSchema);
