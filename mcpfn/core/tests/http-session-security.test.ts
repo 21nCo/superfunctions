@@ -236,6 +236,32 @@ describe("createWebStandardHandler session binding (MCP-SEC-03)", () => {
     }
   });
 
+  it("keeps event IDs header-safe so a session can resume with the SDK's event store", async () => {
+    const { InMemoryEventStore } = await import("@modelcontextprotocol/sdk/examples/shared/inMemoryEventStore.js");
+    const { post, handler, initialize } = await setup({ enableJsonResponse: false, eventStore: new InMemoryEventStore() } as never);
+    const alice = await initialize(authInfo("alice"));
+    const call = await post(
+      { jsonrpc: "2.0", id: 9, method: "tools/call", params: { name: "echo", arguments: { value: "hi" } } },
+      { sessionId: alice.sessionId!, auth: authInfo("alice") },
+    );
+    const ids = [...(await call.text()).matchAll(/^id: (.+)$/gm)].map((match) => match[1]!);
+    expect(ids.length).toBeGreaterThan(0);
+    const resumed = await handler(new Request("http://127.0.0.1:8080/mcp", {
+      method: "GET",
+      headers: { accept: "text/event-stream", "mcp-session-id": alice.sessionId!, "mcp-protocol-version": "2025-11-25", "last-event-id": ids[0]! },
+    }), { authInfo: authInfo("alice") });
+    expect(resumed.status).toBe(200);
+    await resumed.body?.cancel();
+  });
+
+  it("keeps subjectless tokens from different issuers apart", async () => {
+    const { initialize, call } = await setup();
+    const from = (issuer: string): AuthInfo => ({ token: "test-shared-token-text", clientId: "client-a", scopes: [], extra: { issuer } });
+    const { sessionId } = await initialize(from("https://issuer-one.example"));
+    expect((await call(sessionId!, from("https://issuer-two.example"))).status).toBe(404);
+    expect((await call(sessionId!, from("https://issuer-one.example"))).status).toBe(200);
+  });
+
   it("answers 503 when close() runs while the initialize body is still being read", async () => {
     const { handler, server } = await setup();
     let push!: (chunk: Uint8Array) => void;

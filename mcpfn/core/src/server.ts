@@ -138,7 +138,9 @@ export type McpFnWebStandardHandlerOptions<TContext> = ConstructorParameters<
  * which refuses to replay events stored for any other session.
  */
 function sessionScopedEventStore(base: EventStore, sessionId: () => string | undefined): EventStore {
-  const prefix = () => `${sessionId() ?? ""}\u0000`;
+  // Header-safe (event IDs often embed the stream ID and travel back in
+  // Last-Event-ID): a hex digest of the session ID and a dot.
+  const prefix = () => `${createHash("sha256").update(sessionId() ?? "").digest("hex").slice(0, 32)}.`;
   const unscoped = (streamId: string | undefined) => {
     const own = prefix();
     return streamId !== undefined && streamId.startsWith(own) ? streamId.slice(own.length) : undefined;
@@ -179,7 +181,7 @@ function defaultSessionPrincipal(input: { authInfo: AuthInfo | undefined }): str
   // Without a verified subject, users of one OAuth client are told apart only
   // by their token: bind the session to it (a refreshed token then needs a new
   // session). Verifiers should set extra.subject.
-  return JSON.stringify(["token", createHash("sha256").update(authInfo.token).digest("hex")]);
+  return JSON.stringify(["token", issuer, createHash("sha256").update(authInfo.token).digest("hex")]);
 }
 
 function isLoopbackHostname(hostname: string): boolean {
