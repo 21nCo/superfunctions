@@ -50,7 +50,8 @@ import {
   deleteOAuthAccountByConnectionId,
   findOAuthAccountByProviderAccountId,
   requireOAuthAccountForUser,
-  upsertOAuthAccount
+  upsertOAuthAccount,
+  type AuthFnOAuthAccountRecord
 } from 'authfn/core/oauth-accounts';
 import {
   AuthFnConflictError,
@@ -66,7 +67,7 @@ import {
   AuthFnValidationError,
   toAuthFnError
 } from 'authfn/core/errors';
-import { createUser, findUserById, findUserByPrimaryEmail, isAuthFnUserDisabled } from 'authfn/core/users';
+import { createUser, findUserById, findUserByPrimaryEmail } from 'authfn/core/users';
 import { assertAuthFnDatabaseKeyLength } from 'authfn/core/limits';
 import { createAuthFnRouteMeta } from 'authfn/http/router';
 import { jsonSuccess, resolveRequestId } from 'authfn/http/envelopes';
@@ -131,6 +132,7 @@ interface NativeAppleCompleteBody {
   identityToken?: string;
   authorizationCode?: string;
   user?: {
+    /** Accepted for compatibility and ignored: the email comes from the verified identity token. */
     email?: string;
     name?: {
       firstName?: string;
@@ -157,6 +159,7 @@ interface ResolvedSocialIdentity {
   profile: AuthFnSocialProfile;
   connectionId: string;
   existingAccountId?: string;
+  existingAccount?: AuthFnOAuthAccountRecord;
   linkedExistingUser?: boolean;
 }
 
@@ -373,7 +376,10 @@ function createSocialRoutes(
         if (!user) {
           throw new AuthFnOAuthCallbackInvalidError('Social handoff user no longer exists', { userId });
         }
-        if (isAuthFnUserDisabled(user)) {
+        // Same check as core's isAuthFnUserDisabled, which published authfn 0.8.0
+        // does not export yet. AUTH-34: use core's helper once authfn 0.9.0
+        // ships with the plugins re-released on it.
+        if (user.metadata?.disabled === true) {
           throw new AuthFnOAuthCallbackInvalidError('Social handoff user is disabled', { userId });
         }
         // The code was minted by a social sign-in through a linked provider
@@ -903,7 +909,12 @@ function createSocialRoutes(
           providerSettings,
           profile
         );
-        const account = await upsertOAuthAccount(ctx.config, {
+        // A token without an email says nothing about the email, so the
+        // already linked account found while resolving the identity is used
+        // as stored rather than rewritten: writing it back could erase the
+        // email it holds.
+        const storedAccount = profile.email === undefined ? resolved.existingAccount : undefined;
+        const account = storedAccount ?? await upsertOAuthAccount(ctx.config, {
           userId: resolved.user.id,
           provider: 'apple',
           providerAccountId: profile.providerAccountId,
@@ -1237,7 +1248,8 @@ async function resolveLocalIdentityFromProfile(
       user: linkedUser,
       profile,
       connectionId: existingAccount.connectionId,
-      existingAccountId: existingAccount.id
+      existingAccountId: existingAccount.id,
+      existingAccount
     };
   }
   assertAuthFnDatabaseKeyLength(profile.providerAccountId, 'providerAccountId');
@@ -1526,15 +1538,18 @@ function resolveAppleProfile(tokenSet: SocialTokenSet): AuthFnSocialProfile {
     });
   }
 
+  // The email and its verified flag come only from the token, and the email
+  // counts as verified only when the token says so.
+  const emailVerified = claims.emailVerified === true;
   return {
     providerAccountId: claims.sub,
     email: normalizeEmail(claims.email),
-    emailVerified: claims.emailVerified ?? true,
+    emailVerified,
     name: claims.name,
     profile: cleanObject({
       sub: claims.sub,
       email: normalizeEmail(claims.email),
-      emailVerified: claims.emailVerified ?? true,
+      emailVerified,
       name: claims.name
     })
   };
@@ -1558,8 +1573,11 @@ function resolveAppleFormPostProfile(
     });
   }
 
+  // `user` is unsigned request data (Apple posts it through the browser), so it
+  // supplies the display name only. The email and its verified flag come only
+  // from the verified identity token.
   const user = parseAppleUserPayload(userPayload);
-  const email = normalizeEmail(user?.email ?? claims.email);
+  const email = normalizeEmail(claims.email);
   if (!email) {
     throw new AuthFnOAuthCallbackInvalidError('Apple OAuth form_post callback missing email claim', {
       provider: 'apple'
@@ -1567,15 +1585,16 @@ function resolveAppleFormPostProfile(
   }
 
   const name = resolveAppleDisplayName(user) ?? claims.name;
+  const emailVerified = claims.emailVerified === true;
   return {
     providerAccountId: claims.sub,
     email,
-    emailVerified: claims.emailVerified ?? true,
+    emailVerified,
     name,
     profile: cleanObject({
       sub: claims.sub,
       email,
-      emailVerified: claims.emailVerified ?? true,
+      emailVerified,
       name,
       firstName: user?.name?.firstName,
       lastName: user?.name?.lastName
@@ -1604,18 +1623,18 @@ async function resolveAppleNativeProfile(
     });
   }
 
-  const email = normalizeEmail(readOptionalString(claims.email) ?? userPayload?.email);
-  if (!email) {
-    throw new AuthFnOAuthCallbackInvalidError('Apple native identity token missing email claim', {
-      provider: 'apple'
-    });
-  }
+  // The request body is unsigned, so `user` supplies the display name only.
+  // The email and its verified flag come only from the verified identity
+  // token. A token without an email resolves the identity by subject alone:
+  // an Apple ID already linked still signs in, and a new one creates an
+  // account without an email, so nothing is linked or marked verified by email.
+  const email = normalizeEmail(readOptionalString(claims.email));
 
   const firstName = readOptionalString(userPayload?.name?.firstName);
   const lastName = readOptionalString(userPayload?.name?.lastName);
   const payloadName = [firstName, lastName].filter(Boolean).join(' ').trim();
   const name = readOptionalString(claims.name) ?? (payloadName || undefined);
-  const emailVerified = readBooleanClaim(claims.email_verified) ?? true;
+  const emailVerified = email !== undefined && readBooleanClaim(claims.email_verified) === true;
 
   return {
     providerAccountId: subject,
@@ -1625,7 +1644,7 @@ async function resolveAppleNativeProfile(
     profile: cleanObject({
       sub: subject,
       email,
-      emailVerified,
+      emailVerified: email === undefined ? undefined : emailVerified,
       name,
       firstName,
       lastName,
@@ -1652,8 +1671,9 @@ async function verifyAppleIdentityToken(
   }
 }
 
+// Reads only the name from Apple's unsigned `user` payload. Its `email` is
+// deliberately ignored: the email must come from the verified identity token.
 function parseAppleUserPayload(value: string | undefined): {
-  email?: string;
   name?: {
     firstName?: string;
     lastName?: string;
@@ -1667,7 +1687,6 @@ function parseAppleUserPayload(value: string | undefined): {
     const parsed = JSON.parse(value) as Record<string, unknown>;
     const name = readRecord(parsed.name);
     return {
-      email: readOptionalString(parsed.email),
       name: name
         ? {
             firstName: readOptionalString(name.firstName),

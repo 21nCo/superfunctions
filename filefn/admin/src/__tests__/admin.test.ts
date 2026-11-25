@@ -452,4 +452,18 @@ describe("@filefn/admin", () => {
       { limit: 3, offset: 2 },
     );
   });
+
+  it("reports FileFn input validation errors as invalid_argument", async () => {
+    const rejection = Object.assign(new Error("fileName must not contain path separators"), {
+      code: "FILEFN_INVALID_REQUEST",
+      details: { field: "fileName" },
+    });
+    const createUploadSession = vi.fn(async () => {
+      throw rejection;
+    });
+    const service = domain({ fileFn: { createUploadSession } as Partial<FileFn> });
+    await expect(
+      service.createUpload({ policy: "p", fileName: "folder/report.txt", size: 1, mimeType: "text/plain" } as never, context),
+    ).rejects.toMatchObject({ code: "invalid_argument", details: { field: "fileName" } });
+  });
 });

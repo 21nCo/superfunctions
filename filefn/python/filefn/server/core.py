@@ -44,6 +44,14 @@ class AuthConfig(BaseModel):
     tenant_id_field: str = "tenantId"
 
 
+class GrantsConfig(BaseModel):
+    # Allow a grant to a tenant other than the file's own (off by default).
+    allow_cross_tenant: bool = Field(default=False, alias="allowCrossTenant")
+
+    class Config:
+        populate_by_name = True
+
+
 class DedupConfig(BaseModel):
     enabled: bool = False
 
@@ -72,6 +80,7 @@ class FileFnConfig(BaseModel):
     signed_url_ttl_seconds: Optional[int] = None
     dedup: Optional[DedupConfig] = None
     processing: Optional[ProcessingConfig] = None
+    grants: Optional[GrantsConfig] = None
 
     class Config:
         arbitrary_types_allowed = True
@@ -100,9 +109,19 @@ class FileFn:
         self.namespace = namespace
 
     async def create_upload_session(self, input: Dict[str, Any], ctx: Any) -> Dict[str, Any]:
+        from pydantic import ValidationError
+
+        from . import errors
         from .upload_sessions.service import CreateSessionInput
 
-        result = await self.upload_service.create_session(CreateSessionInput(**input), ctx)
+        if not isinstance(input, dict):
+            raise errors.invalid_request("Upload init body must be a JSON object", {"field": "body"})
+        try:
+            session_input = CreateSessionInput.model_validate(input)
+        except ValidationError as error:
+            fields = sorted({str(item["loc"][0]) for item in error.errors() if item.get("loc")})
+            raise errors.invalid_request("Upload init body does not match the contract", {"fields": fields}) from None
+        result = await self.upload_service.create_session(session_input, ctx)
         return cast(Dict[str, Any], result)
 
     async def get_upload_session_status(self, input: Dict[str, Any], ctx: Any) -> Dict[str, Any]:
@@ -272,6 +291,7 @@ def create_file_fn(config: FileFnConfig) -> FileFn:
         GrantsServiceConfig(
             db=config.db,
             namespace=namespace,
+            allow_cross_tenant=config.grants.allow_cross_tenant if config.grants is not None else False,
         )
     )
 

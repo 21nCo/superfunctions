@@ -63,6 +63,7 @@ Custom authorizers can implement org-wide read, project-scoped writes, anything 
 // We grant alice read + share for 24h.
 const grant = await fetch(`/filefn/file_xyz/permissions`, {
   method: "POST",
+  headers: { "content-type": "application/json" },
   body: JSON.stringify({
     userId: "alice",
     canRead: true,

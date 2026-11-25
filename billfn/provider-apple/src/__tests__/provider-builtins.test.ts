@@ -186,7 +186,7 @@ describe('createAppleProvider with several bundle IDs', () => {
 
   it("signs each StoreKit request for the app it asks, and succeeds with the transaction's own app as bid", async () => {
     const { requests, fetchMock } = storeKit();
-    const provider = createAppleProvider({ bundleIds, appStoreServerApiKey, fetch: fetchMock });
+    const provider = createAppleProvider({ allowSandbox: true, bundleIds, appStoreServerApiKey, fetch: fetchMock });
     const state = await provider.importSubscription!({ providerReference: 'orig_1' } as never);
     expect(state).toMatchObject({ providerSubscriptionId: 'orig_1' });
     expect(requests).toEqual([
@@ -222,7 +222,7 @@ describe('createAppleProvider with several bundle IDs', () => {
 
   it("finds the transaction's app before an Advanced Commerce request and signs it for that app", async () => {
     const { requests, fetchMock } = storeKit();
-    const provider = createAppleProvider({ bundleIds, appStoreServerApiKey, fetch: fetchMock, advancedCommerce: { enabled: true } });
+    const provider = createAppleProvider({ allowSandbox: true, bundleIds, appStoreServerApiKey, fetch: fetchMock, advancedCommerce: { enabled: true } });
     await provider.cancelSubscription!({ subscription: { providerChargeId: 'txn_1', providerSubscriptionId: 'orig_1' } } as never);
     expect(requests.at(-1)).toEqual({
       url: 'https://api.storekit.itunes.apple.com/advancedCommerce/v1/subscription/cancel/txn_1',
@@ -243,6 +243,7 @@ describe('createAppleProvider with several bundle IDs', () => {
     });
     const tokenProvider = vi.fn(async (context?: { bundleId: string }) => `host-advanced-commerce-token-for-${context?.bundleId}`);
     const provider = createAppleProvider({
+      allowSandbox: true,
       bundleIds,
       appStoreServerApiKey,
       fetch: fetchMock as typeof fetch,
@@ -261,6 +262,39 @@ describe('createAppleProvider with several bundle IDs', () => {
         authorization: `Bearer host-advanced-commerce-token-for-${owner}`
       }
     ]);
+  });
+
+  it.each(['custom', 'prorated_remaining_period'] as const)(
+    'refuses a %s (partial) refund before any Apple request instead of revoking the transaction',
+    async (mode) => {
+      const fetchMock = vi.fn(async () => Response.json({}));
+      const provider = createAppleProvider({
+        bundleIds,
+        appStoreServerApiKey,
+        fetch: fetchMock as typeof fetch,
+        advancedCommerce: { enabled: true, tokenProvider: async () => 'test-advanced-commerce-token' }
+      });
+
+      await expect(
+        provider.refundCharge!({ providerChargeId: 'txn_1', mode, amount: 600, reason: 'customer_request' } as never)
+      ).rejects.toMatchObject({ code: 'BILLFN_VALIDATION_ERROR' });
+      expect(fetchMock).not.toHaveBeenCalled();
+    }
+  );
+
+  it('refuses a full refund that names an amount before any Apple request', async () => {
+    const fetchMock = vi.fn(async () => Response.json({}));
+    const provider = createAppleProvider({
+      bundleIds,
+      appStoreServerApiKey,
+      fetch: fetchMock as typeof fetch,
+      advancedCommerce: { enabled: true, tokenProvider: async () => 'test-advanced-commerce-token' }
+    });
+
+    await expect(
+      provider.refundCharge!({ providerChargeId: 'txn_1', mode: 'full', amount: 600, reason: 'customer_request' } as never)
+    ).rejects.toMatchObject({ code: 'BILLFN_VALIDATION_ERROR' });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('restores a one-time purchase from the transaction history of the app its price is sold in', async () => {
@@ -291,9 +325,17 @@ describe('createAppleProvider with several bundle IDs', () => {
 
   it('reports a transaction no listed app owns as not found', async () => {
     const fetchMock = vi.fn(async () => notFound());
-    const provider = createAppleProvider({ bundleIds, appStoreServerApiKey, fetch: fetchMock as typeof fetch });
+    const provider = createAppleProvider({ allowSandbox: true, bundleIds, appStoreServerApiKey, fetch: fetchMock as typeof fetch });
     await expect(provider.importSubscription!({ providerReference: 'orig_1' } as never)).resolves.toBeNull();
     expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+
+  it('asks each listed app only in production by default', async () => {
+    const fetchMock = vi.fn(async () => notFound());
+    const provider = createAppleProvider({ bundleIds, appStoreServerApiKey, fetch: fetchMock as typeof fetch });
+    await expect(provider.importSubscription!({ providerReference: 'orig_1' } as never)).resolves.toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls.every((call) => new URL(String((call as unknown[])[0])).hostname === 'api.storekit.itunes.apple.com')).toBe(true);
   });
 
   it("passes the bundle ID to the host's token provider", async () => {
@@ -306,7 +348,7 @@ describe('createAppleProvider with several bundle IDs', () => {
         : notFound();
     });
     const tokenProvider = vi.fn(async (context?: { bundleId: string }) => `host-token-for-${context?.bundleId}`);
-    const provider = createAppleProvider({ bundleIds, tokenProvider, fetch: fetchMock as typeof fetch });
+    const provider = createAppleProvider({ allowSandbox: true, bundleIds, tokenProvider, fetch: fetchMock as typeof fetch });
     await expect(provider.importSubscription!({ providerReference: 'orig_1' } as never)).resolves.toMatchObject({
       providerSubscriptionId: 'orig_1'
     });

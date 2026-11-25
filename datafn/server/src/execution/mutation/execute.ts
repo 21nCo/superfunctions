@@ -5,7 +5,12 @@
 import type { DatafnSchema, DatafnPlugin } from "../../core-types.js";
 import type { Adapter } from "@superfunctions/db";
 import { randomUUID } from "crypto";
-import { isRetryableMutationResult, type IdempotencyStore, type MutationResult } from "../idempotency.js";
+import {
+  isRetryableMutationResult,
+  scopeIdempotencyStore,
+  type IdempotencyStore,
+  type MutationResult,
+} from "../idempotency.js";
 import { type DFQLMutation, buildReplaceRecord } from "./dfql.js";
 import { findSystemFieldWrite, normalizeRelationFkRecord, resolveCapabilities } from "@datafn/core";
 import {
@@ -1115,6 +1120,8 @@ export async function executeMutation(
   ) => void,
   prequeuedPermissionDirectoryTaskId?: string,
 ): Promise<MutationResult> {
+  // DFN-01: idempotency records belong to the request's namespace and actor.
+  idempotencyStore = scopeIdempotencyStore(idempotencyStore, { namespace, actorId });
   const multiRegionRuntime = getDatafnMultiRegionRuntimeConfig(plugins);
   let permissionDirectoryTaskId: string | null =
     prequeuedPermissionDirectoryTaskId ?? null;

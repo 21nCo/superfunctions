@@ -41,7 +41,7 @@
     "@superfunctions/oauth-flow": "0.1.1",
     "@superfunctions/oauth-http": "0.1.0",
     "@superfunctions/oauth-providers": "0.1.1",
-    "@superfunctions/oauth-storage": "0.1.1",
+    "@superfunctions/oauth-storage": "0.1.2",
     "@types/node": "^22.0.0",
     "authfn": "0.4.1",
     "jose": "^5.10.0",

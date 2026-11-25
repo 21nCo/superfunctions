@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 /**
  * Idempotency store for mutation deduplication
  */
@@ -35,6 +37,109 @@ export interface IdempotencyStore {
 
   /** Return an equivalent store bound to a transaction-scoped adapter. */
   withDb?(db: import("@superfunctions/db").Adapter): IdempotencyStore;
+
+  /**
+   * Return a view of this store whose records belong to one namespace and
+   * actor. Stores that do not implement this are wrapped by
+   * `scopeIdempotencyStore`, which qualifies the client id instead.
+   */
+  scoped?(scope: IdempotencyScope): IdempotencyStore;
+}
+
+/** The tenant and caller an idempotency record belongs to. */
+export interface IdempotencyScope {
+  namespace: string;
+  actorId?: string;
+}
+
+const SCOPED = Symbol.for("datafn.idempotency.scoped");
+
+type ScopedStore = IdempotencyStore & { [SCOPED]?: string };
+
+function scopeKey(scope: IdempotencyScope): string {
+  return JSON.stringify([scope.namespace, scope.actorId ?? null]);
+}
+
+/**
+ * Primary key of a scoped idempotency record: a fixed-length SHA-256 digest of
+ * the namespace, actor (null when anonymous), client id and mutation id, so
+ * long namespaces or actor ids cannot exceed an index entry limit. Versioned
+ * ("v2:") so records written by 0.2.x (keyed "namespace:clientId:mutationId"
+ * under the fixed "datafn" namespace, with no tenant or actor) never match.
+ */
+export function idempotencyRecordId(
+  namespace: string,
+  actorId: string | undefined,
+  clientId: string,
+  mutationId: string,
+): string {
+  const digest = createHash("sha256")
+    .update(JSON.stringify([namespace, actorId ?? null, clientId, mutationId]))
+    .digest("hex");
+  return `v2:${digest}`;
+}
+
+/**
+ * Bind `store` to `scope`, refusing to re-bind a store that is already bound
+ * to a different scope. Returns `next` marked with the scope.
+ */
+export function markIdempotencyScope<T extends IdempotencyStore>(
+  store: IdempotencyStore,
+  scope: IdempotencyScope,
+  next: () => T,
+): T | IdempotencyStore {
+  const key = scopeKey(scope);
+  const existing = (store as ScopedStore)[SCOPED];
+  if (existing !== undefined) {
+    if (existing === key) return store;
+    throw new Error("Idempotency store is already bound to another scope");
+  }
+  const scoped = next() as T & ScopedStore;
+  scoped[SCOPED] = key;
+  return scoped;
+}
+
+/**
+ * Carry the scope guard from a scoped store to a store derived from it (for
+ * example by `withDb`), so the derived store cannot be re-scoped elsewhere.
+ */
+export function carryIdempotencyScope<T extends IdempotencyStore>(
+  from: IdempotencyStore,
+  to: T,
+): T {
+  const key = (from as ScopedStore)[SCOPED];
+  if (key !== undefined) (to as ScopedStore)[SCOPED] = key;
+  return to;
+}
+
+/**
+ * DFN-01: bind an idempotency store to the request's namespace and actor, so a
+ * (clientId, mutationId) pair used by one tenant or user never matches a
+ * record written for another. Scoping an already-scoped store for the same
+ * scope returns it unchanged; a different scope is an error.
+ */
+export function scopeIdempotencyStore(
+  store: IdempotencyStore,
+  scope: IdempotencyScope,
+): IdempotencyStore {
+  return markIdempotencyScope(store, scope, () =>
+    store.scoped ? store.scoped(scope) : wrapScoped(store, scope),
+  );
+}
+
+function wrapScoped(store: IdempotencyStore, scope: IdempotencyScope): IdempotencyStore {
+  const qualify = (clientId: string) =>
+    JSON.stringify([scope.namespace, scope.actorId ?? null, clientId]);
+  const view: IdempotencyStore = {
+    get: (clientId, mutationId) => store.get(qualify(clientId), mutationId),
+    set: (clientId, mutationId, result) =>
+      store.set(qualify(clientId), mutationId, result),
+  };
+  if (store.ensureReady) view.ensureReady = () => store.ensureReady!();
+  if (store.withDb) {
+    view.withDb = (db) => scopeIdempotencyStore(store.withDb!(db), scope);
+  }
+  return view;
 }
 
 export function isRetryableMutationResult(

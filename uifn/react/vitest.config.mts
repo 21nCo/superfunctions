@@ -1,4 +1,6 @@
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
+import { packageReactAliases } from "../../scripts/vitest-package-react.mjs";
 
 export default defineConfig({
   test: {
@@ -8,5 +10,6 @@ export default defineConfig({
   },
   resolve: {
     conditions: ["browser"],
+    alias: packageReactAliases(fileURLToPath(new URL(".", import.meta.url))),
   },
 });

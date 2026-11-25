@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { idempotencyRecordId } from "../../idempotency.js";
 import {
   createMemoryIndexedDirectoryStore,
   memoryAdapter,
@@ -24,6 +25,7 @@ import {
   ensurePermissionDirectoryOutbox,
   markPermissionDirectorySyncReady,
 } from "../permission-directory-outbox.js";
+import { executePush } from "../../sync/push.js";
 
 const namespace = "user:owner";
 const globalPermissionsTable = "__datafn_permissions_global";
@@ -1928,6 +1930,74 @@ describe("share SPV2 mutation semantics", () => {
       .resolves.toEqual({ processed: 1, pending: 0 });
   });
 
+  it("fences explicit settlement when an interval owner claims after lookup", async () => {
+    const localDb = memoryAdapter();
+    await localDb.initialize();
+    const backingDirectory = createMemoryIndexedDirectoryStore();
+    let signalDeleteStarted!: () => void;
+    let releaseDelete!: () => void;
+    const deleteStarted = new Promise<void>((resolve) => {
+      signalDeleteStarted = resolve;
+    });
+    const deleteReleased = new Promise<void>((resolve) => {
+      releaseDelete = resolve;
+    });
+    let blockDelete = true;
+    const directory = {
+      ...backingDirectory,
+      delete: async (key: string) => {
+        if (blockDelete) {
+          blockDelete = false;
+          signalDeleteStarted();
+          await deleteReleased;
+        }
+        return backingDirectory.delete(key);
+      },
+    };
+    const runtime = { regionId: "region:test", directory };
+    const taskId = await enqueuePermissionDirectorySync(localDb, {
+      operation: "unshare",
+      resource: "notes",
+      id: "note:explicit-claim-race",
+      shareWith: { principalId: "user:partner" },
+    }, namespace, runtime.regionId);
+    const initialTask = await localDb.internal.findOne(
+      "__datafn_permission_directory_outbox",
+      [{ field: "id", op: "eq", value: taskId }],
+    );
+    const claimedLease = new Date(Date.now() + 60 * 1000).toISOString();
+
+    try {
+      const explicitDrain = drainPermissionDirectorySync(
+        localDb,
+        taskId,
+        runtime,
+      );
+      await deleteStarted;
+      await expect(localDb.internal.update(
+        "__datafn_permission_directory_outbox",
+        [
+          { field: "id", op: "eq", value: taskId },
+          {
+            field: "next_attempt_at",
+            op: "eq",
+            value: initialTask!.next_attempt_at,
+          },
+        ],
+        { next_attempt_at: claimedLease },
+      )).resolves.toBe(1);
+      releaseDelete();
+
+      await expect(explicitDrain).resolves.toBe(false);
+      await expect(localDb.internal.findOne(
+        "__datafn_permission_directory_outbox",
+        [{ field: "id", op: "eq", value: taskId }],
+      )).resolves.toMatchObject({ next_attempt_at: claimedLease });
+    } finally {
+      releaseDelete();
+    }
+  });
+
   it("prequeues sequential transact shares before committing their grants", async () => {
     const localDb = memoryAdapter();
     await localDb.initialize();
@@ -2041,10 +2111,10 @@ describe("share SPV2 mutation semantics", () => {
         record: { title: "Push outbox" },
       });
       await localDb.internal.create("__datafn_idempotency", {
-        id: "datafn:push-outbox:push-outbox-share",
-        namespace: "datafn",
-        client_id: "push-outbox",
-        mutation_id: "push-outbox-share",
+        id: idempotencyRecordId(namespace, "user:owner", "push-outbox", "push-outbox-share"),
+        namespace,
+        client_id: null,
+        mutation_id: null,
         result: JSON.stringify({
           ok: false,
           mutationId: "push-outbox-share",
@@ -2126,10 +2196,10 @@ describe("share SPV2 mutation semantics", () => {
         record: { title: "Atomic push outbox" },
       });
       await localDb.internal.create("__datafn_idempotency", {
-        id: "datafn:push-atomic-outbox:push-atomic-outbox-share",
-        namespace: "datafn",
-        client_id: "push-atomic-outbox",
-        mutation_id: "push-atomic-outbox-share",
+        id: idempotencyRecordId(namespace, "user:owner", "push-atomic-outbox", "push-atomic-outbox-share"),
+        namespace,
+        client_id: null,
+        mutation_id: null,
         result: JSON.stringify({
           ok: false,
           mutationId: "push-atomic-outbox-share",
@@ -2222,10 +2292,10 @@ describe("share SPV2 mutation semantics", () => {
       });
 
       await localDb.internal.create("__datafn_idempotency", {
-        id: "datafn:push-unshare-prequeue:push-unshare-prequeue-unshare",
-        namespace: "datafn",
-        client_id: "push-unshare-prequeue",
-        mutation_id: "push-unshare-prequeue-unshare",
+        id: idempotencyRecordId(namespace, "user:owner", "push-unshare-prequeue", "push-unshare-prequeue-unshare"),
+        namespace,
+        client_id: null,
+        mutation_id: null,
         result: JSON.stringify({
           ok: false,
           mutationId: "push-unshare-prequeue-unshare",
@@ -2268,6 +2338,81 @@ describe("share SPV2 mutation semantics", () => {
         value: "user:partner#notes",
       });
       expect(indexed.records).toHaveLength(1);
+    } finally {
+      await localServer.close();
+    }
+  });
+
+  it("keeps a directory grant when non-transactional push rejects unsharing the creator", async () => {
+    const localDb = memoryAdapter();
+    await localDb.initialize();
+    (localDb.capabilities.transactions as { supported: boolean }).supported = false;
+    const directory = createMemoryIndexedDirectoryStore();
+    const localServer = await createDatafnServer({
+      allowUnknownResources: true,
+      schema,
+      database: localDb,
+      plugins: [datafnMultiRegionPlugin({ regionId: "region:test", directory })],
+      namespaceProvider: {
+        getNamespace: () => namespace,
+        getActorId: () => "user:owner",
+      },
+    });
+    const request = async (path: string, payload: Record<string, unknown>) => {
+      const response = await localServer.router.handle(new Request(
+        `http://localhost/datafn/${path}`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(payload),
+        },
+      ));
+      return response.json() as Promise<any>;
+    };
+
+    try {
+      await request("mutation", {
+        resource: "notes",
+        version: 1,
+        operation: "insert",
+        clientId: "push-invalid-unshare",
+        mutationId: "push-invalid-unshare-insert",
+        id: "note:push-invalid-unshare",
+        record: { title: "Push invalid unshare" },
+      });
+      await request("mutation", {
+        resource: "notes",
+        version: 1,
+        operation: "share",
+        clientId: "push-invalid-unshare",
+        mutationId: "push-invalid-unshare-share",
+        id: "note:push-invalid-unshare",
+        shareWith: { principalId: "user:owner", level: "viewer" },
+      });
+
+      const result = await request("push", {
+        clientId: "push-invalid-unshare",
+        mutations: [{
+          resource: "notes",
+          version: 1,
+          operation: "unshare",
+          clientId: "push-invalid-unshare",
+          mutationId: "push-invalid-unshare-unshare",
+          id: "note:push-invalid-unshare",
+          shareWith: { principalId: "user:owner" },
+        }],
+      });
+
+      expect(result.result.ok).toBe(false);
+      const indexed = await directory.query({
+        index: "datafn.permission.principalResource",
+        value: "user:owner#notes",
+      });
+      expect(indexed.records).toHaveLength(1);
+      await expect(localDb.internal.findMany(
+        "__datafn_permission_directory_outbox",
+        [],
+      )).resolves.toEqual([]);
     } finally {
       await localServer.close();
     }
@@ -2367,6 +2512,134 @@ describe("share SPV2 mutation semantics", () => {
         [],
       );
       expect(repairTask).toBeDefined();
+
+      rejectPut = false;
+      await expect(drainPermissionDirectorySync(
+        localDb,
+        String(repairTask.id),
+        { regionId: "region:test", directory },
+      )).resolves.toBe(true);
+      const repairedRows = await backingDirectory.query({
+        index: "datafn.permission.principalResource",
+        value: "user:partner#notes",
+      });
+      expect(repairedRows.records).toHaveLength(1);
+    } finally {
+      await localServer.close();
+    }
+  });
+
+  it("reconciles a rolled-back push unshare when failure persistence rejects", async () => {
+    const localDb = memoryAdapter();
+    await localDb.initialize();
+    const backingDirectory = createMemoryIndexedDirectoryStore();
+    let rejectPut = false;
+    const directory = {
+      ...backingDirectory,
+      put: async (record: Parameters<typeof backingDirectory.put>[0]) => {
+        if (rejectPut) throw new Error("directory unavailable");
+        return backingDirectory.put(record);
+      },
+    };
+    const localServer = await createDatafnServer({
+      allowUnknownResources: true,
+      schema,
+      database: localDb,
+      plugins: [datafnMultiRegionPlugin({ regionId: "region:test", directory })],
+      namespaceProvider: {
+        getNamespace: () => namespace,
+        getActorId: () => "user:owner",
+      },
+    });
+    const request = async (path: string, payload: Record<string, unknown>) => {
+      const response = await localServer.router.handle(new Request(
+        `http://localhost/datafn/${path}`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(payload),
+        },
+      ));
+      return response.json() as Promise<any>;
+    };
+
+    try {
+      await request("mutation", {
+        resource: "notes",
+        version: 1,
+        operation: "insert",
+        clientId: "push-unshare-failure-write",
+        mutationId: "push-unshare-failure-write-insert",
+        id: "note:push-unshare-failure-write",
+        record: { title: "Push unshare failure write" },
+      });
+      await request("mutation", {
+        resource: "notes",
+        version: 1,
+        operation: "share",
+        clientId: "push-unshare-failure-write",
+        mutationId: "push-unshare-failure-write-share",
+        id: "note:push-unshare-failure-write",
+        shareWith: { principalId: "user:partner", level: "viewer" },
+      });
+
+      const originalTransaction = localDb.transaction.bind(localDb);
+      let transactionCalls = 0;
+      localDb.transaction = (async (callback: (tx: any) => Promise<unknown>) => {
+        transactionCalls += 1;
+        return originalTransaction(async (tx: any) => {
+          const result = await callback(tx);
+          if (transactionCalls === 2) throw new Error("commit failed");
+          return result;
+        });
+      }) as typeof localDb.transaction;
+      rejectPut = true;
+
+      await expect(executePush(
+        {
+          clientId: "push-unshare-failure-write",
+          mutations: [{
+            resource: "notes",
+            version: 1,
+            operation: "unshare",
+            clientId: "push-unshare-failure-write",
+            mutationId: "push-unshare-failure-write-unshare",
+            id: "note:push-unshare-failure-write",
+            shareWith: { principalId: "user:partner" },
+          }],
+        },
+        schema,
+        localDb,
+        {
+          get: async () => null,
+          set: async () => {
+            throw new Error("idempotency result unavailable");
+          },
+        },
+        namespace,
+        undefined,
+        undefined,
+        "user:owner",
+        undefined,
+        { regionId: "region:test", directory },
+      )).rejects.toThrow("idempotency result unavailable");
+
+      await expect(localDb.findMany({
+        model: globalPermissionsTable,
+        where: [],
+        namespace,
+      })).resolves.toHaveLength(1);
+      await expect(backingDirectory.query({
+        index: "datafn.permission.principalResource",
+        value: "user:partner#notes",
+      })).resolves.toEqual({ records: [] });
+      const [repairTask] = await localDb.internal.findMany(
+        "__datafn_permission_directory_outbox",
+        [],
+      );
+      expect(repairTask).toBeDefined();
+      expect(Number(repairTask.attempts)).toBe(1);
+      expect(String(repairTask.last_error)).toContain("directory unavailable");
 
       rejectPut = false;
       await expect(drainPermissionDirectorySync(
@@ -2640,6 +2913,82 @@ describe("share SPV2 mutation semantics", () => {
         value: "user:partner#notes",
       });
       expect(indexed.records).toHaveLength(1);
+    } finally {
+      await localServer.close();
+    }
+  });
+
+  it("settles a prequeued transact task when unsharing the creator is rejected", async () => {
+    const localDb = memoryAdapter();
+    await localDb.initialize();
+    const directory = createMemoryIndexedDirectoryStore();
+    const localServer = await createDatafnServer({
+      allowUnknownResources: true,
+      schema,
+      database: localDb,
+      plugins: [datafnMultiRegionPlugin({ regionId: "region:test", directory })],
+      namespaceProvider: {
+        getNamespace: () => namespace,
+        getActorId: () => "user:owner",
+      },
+    });
+    const request = async (path: string, payload: Record<string, unknown>) => {
+      const response = await localServer.router.handle(new Request(
+        `http://localhost/datafn/${path}`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(payload),
+        },
+      ));
+      return response.json() as Promise<any>;
+    };
+
+    try {
+      await request("mutation", {
+        resource: "notes",
+        version: 1,
+        operation: "insert",
+        clientId: "transact-invalid-unshare",
+        mutationId: "transact-invalid-unshare-insert",
+        id: "note:transact-invalid-unshare",
+        record: { title: "Transact invalid unshare" },
+      });
+      await request("mutation", {
+        resource: "notes",
+        version: 1,
+        operation: "share",
+        clientId: "transact-invalid-unshare",
+        mutationId: "transact-invalid-unshare-share",
+        id: "note:transact-invalid-unshare",
+        shareWith: { principalId: "user:owner", level: "viewer" },
+      });
+
+      const result = await request("transact", {
+        atomic: true,
+        steps: [{
+          mutation: {
+            resource: "notes",
+            version: 1,
+            operation: "unshare",
+            clientId: "transact-invalid-unshare",
+            mutationId: "transact-invalid-unshare-unshare",
+            id: "note:transact-invalid-unshare",
+            shareWith: { principalId: "user:owner" },
+          },
+        }],
+      });
+
+      expect(result.result.ok).toBe(false);
+      const indexed = await directory.query({
+        index: "datafn.permission.principalResource",
+        value: "user:owner#notes",
+      });
+      expect(indexed.records).toHaveLength(1);
+      await expect(localDb.internal.findMany(
+        "__datafn_permission_directory_outbox",
+        [],
+      )).resolves.toEqual([]);
     } finally {
       await localServer.close();
     }

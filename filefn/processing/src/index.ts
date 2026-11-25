@@ -56,6 +56,18 @@ export {
   createOCRProcessor,
   OCR_SUPPORTED_MIME_TYPES,
 } from './processors/ocr.js';
+// Input checks for decoders: raster/PDF signatures and pinned ffmpeg demuxers.
+// (The declared-type family check stays internal: it passes types outside its
+// families unchecked, so it isn't a verification on its own.)
+export {
+  CONTENT_TYPE_MISMATCH_ERROR,
+  MAX_INPUT_PIXELS,
+  SHARP_INPUT_OPTIONS,
+  assertRasterImage,
+  ffmpegInputArgs,
+  isRasterImageBytes,
+  pdfStart,
+} from './content-sniff.js';
 export { createTesseractJsOCRProvider } from './providers/tesseract-ocr.js';
 
 export {

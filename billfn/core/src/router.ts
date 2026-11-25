@@ -1,9 +1,15 @@
 import { createRouter, type Route } from '@superfunctions/http';
 import { createBillFnError } from './errors.js';
-import { errorResponse, jsonResponse, successResponse } from './http.js';
+import { errorResponse, jsonResponse, readBoundedBytes, successResponse } from './http.js';
 import { normalizeBasePath, resolveRequestSubject } from './helpers.js';
-import { createBillFnService } from './service.js';
-import type { BillFnConfig, BillFnReconciliationJobKind, BillableSubject, BillingProviderName } from './types.js';
+import { assertCheckoutMetadata, createBillFnService } from './service.js';
+import type {
+  BillFnConfig,
+  BillFnRefundAuthorizationInput,
+  BillFnReconciliationJobKind,
+  BillableSubject,
+  BillingProviderName
+} from './types.js';
 
 const PROVIDER_NAMES: ReadonlySet<string> = new Set<BillingProviderName>([
   'dodo',
@@ -38,10 +44,132 @@ function readBearerToken(request: Request): string | null {
   return match ? match[1] : null;
 }
 
+/** The largest request body the router reads: account routes and provider webhooks are a few kilobytes. */
+export const MAX_REQUEST_BODY_BYTES = 256 * 1024;
+
+/** Reads a request body as text, refusing one larger than MAX_REQUEST_BODY_BYTES before or while reading it. */
+async function readBoundedText(request: Request): Promise<string> {
+  let bytes: Awaited<ReturnType<typeof readBoundedBytes>>;
+  try {
+    bytes = await readBoundedBytes(request, MAX_REQUEST_BODY_BYTES);
+  } catch {
+    // The body could not be read (a stream locked by middleware, a broken connection).
+    throw createBillFnError({ code: 'BILLFN_VALIDATION_ERROR', message: 'The request body could not be read' });
+  }
+  if (bytes === 'too_large') {
+    throw bodyTooLarge();
+  }
+  if (bytes === 'already_read') {
+    throw createBillFnError({ code: 'BILLFN_VALIDATION_ERROR', message: 'The request body was already read before BillFn' });
+  }
+  return new TextDecoder().decode(bytes);
+}
+
+function bodyTooLarge() {
+  return createBillFnError({
+    code: 'BILLFN_VALIDATION_ERROR',
+    message: `Request body must be at most ${MAX_REQUEST_BODY_BYTES} bytes`
+  });
+}
+
+/** RFC 9110 token characters. */
+const TOKEN_CHAR = /[A-Za-z0-9!#$%&'*+.^_`|~-]/;
+
+/**
+ * Parses a header holding one RFC 9110 media type in a single left-to-right pass (no backtracking): `type/subtype`,
+ * then `;` parameters that are empty or `token=token` / `token="quoted string"` (backslash escapes inside quotes),
+ * with optional spaces or tabs around the separators. Returns the lowercased type and subtype, or null when the
+ * header is anything else (a second media type, a parameter without a value, an unterminated quote).
+ */
+function parseMediaType(header: string): { type: string; subtype: string } | null {
+  let index = 0;
+  const skipSpaces = () => {
+    while (index < header.length && (header[index] === ' ' || header[index] === '\t')) {
+      index += 1;
+    }
+  };
+  const readToken = () => {
+    const start = index;
+    while (index < header.length && TOKEN_CHAR.test(header[index]!)) {
+      index += 1;
+    }
+    return header.slice(start, index);
+  };
+  skipSpaces();
+  const type = readToken();
+  if (!type || header[index] !== '/') {
+    return null;
+  }
+  index += 1;
+  const subtype = readToken();
+  if (!subtype) {
+    return null;
+  }
+  for (;;) {
+    skipSpaces();
+    if (index === header.length) {
+      return { type: type.toLowerCase(), subtype: subtype.toLowerCase() };
+    }
+    if (header[index] !== ';') {
+      return null;
+    }
+    index += 1;
+    skipSpaces();
+    // An empty parameter (`;;` or a trailing `;`) is allowed by the grammar.
+    if (index === header.length || header[index] === ';') {
+      continue;
+    }
+    if (!readToken() || header[index] !== '=') {
+      return null;
+    }
+    index += 1;
+    if (header[index] === '"') {
+      index += 1;
+      let closed = false;
+      while (index < header.length) {
+        const char = header[index]!;
+        if (char === '\\') {
+          index += 2;
+        } else if (char === '"') {
+          index += 1;
+          closed = true;
+          break;
+        } else {
+          index += 1;
+        }
+      }
+      if (!closed) {
+        return null;
+      }
+    } else if (!readToken()) {
+      return null;
+    }
+  }
+}
+
+/** application/json, or a type/subtype with the +json structured suffix, as the whole (single) media type. */
+function isJsonContentType(header: string | null) {
+  const parsed = header ? parseMediaType(header) : null;
+  if (!parsed) {
+    return false;
+  }
+  const { type, subtype } = parsed;
+  return (type === 'application' && subtype === 'json') || (subtype.endsWith('+json') && subtype.length > '+json'.length);
+}
+
 async function parseJsonBody<T>(request: Request): Promise<T> {
+  // A JSON content type is required, so a cross-site form post (text/plain, sent without a CORS preflight) is
+  // refused instead of parsed.
+  if (!isJsonContentType(request.headers.get('content-type'))) {
+    throw createBillFnError({
+      code: 'BILLFN_VALIDATION_ERROR',
+      message: 'Request body must be sent as application/json'
+    });
+  }
+  const text = await readBoundedText(request);
   let body: unknown;
   try {
-    body = await request.json();
+    body = JSON.parse(text);
   } catch {
     throw createBillFnError({
       code: 'BILLFN_VALIDATION_ERROR',
@@ -67,6 +195,15 @@ export function createBillFnRouter(config: BillFnConfig) {
       throw createBillFnError({
         code: 'BILLFN_UNAUTHORIZED',
         message: 'Operations access is not authorized'
+      });
+    }
+  };
+  const ensureRefundAuthorized = async (input: BillFnRefundAuthorizationInput) => {
+    const authorized = await (config.refunds?.authorize?.(input) ?? false);
+    if (authorized !== true) {
+      throw createBillFnError({
+        code: 'BILLFN_UNAUTHORIZED',
+        message: 'Refunds through the BillFn router are not authorized'
       });
     }
   };
@@ -116,7 +253,7 @@ export function createBillFnRouter(config: BillFnConfig) {
       method: 'GET',
       path: '/entitlements',
       handler: async (request) => {
-        const subject = await resolveRequestSubject(request, config.auth?.resolveSubject);
+        const subject = await resolveRequestSubject(request, config.auth);
         const response = await service.getEntitlements(subject);
         if (!response.ok) {
           return jsonResponse(response, response.error.status);
@@ -128,7 +265,7 @@ export function createBillFnRouter(config: BillFnConfig) {
       method: 'GET',
       path: '/usage',
       handler: async (request, context) => {
-        const subject = await resolveRequestSubject(request, config.auth?.resolveSubject);
+        const subject = await resolveRequestSubject(request, config.auth);
         const resource = context.query.get('resource') ?? undefined;
         const response = await service.getUsage(subject, resource);
         if (!response.ok) {
@@ -157,14 +294,17 @@ export function createBillFnRouter(config: BillFnConfig) {
           successUrl?: string;
           cancelUrl?: string;
         }>(request);
-        const subject = await resolveRequestSubject(request, config.auth?.resolveSubject, body.subject);
+        // The request's metadata is unchecked JSON; the check itself narrows it to the type the service takes.
+        const metadata: unknown = body.metadata;
+        assertCheckoutMetadata(metadata);
+        const subject = await resolveRequestSubject(request, config.auth, body.subject);
         const response = await service.createCheckout({
           subject,
           planKey: body.planKey,
           provider: body.provider as never,
           interval: body.interval as never,
           priceId: body.priceId as string | undefined,
-          metadata: body.metadata,
+          metadata,
           customer: body.customer,
           returnUrl: body.returnUrl,
           successUrl: body.successUrl,
@@ -185,7 +325,7 @@ export function createBillFnRouter(config: BillFnConfig) {
           checkoutSessionId: string;
           payload?: Record<string, unknown>;
         }>(request);
-        const subject = await resolveRequestSubject(request, config.auth?.resolveSubject, body.subject);
+        const subject = await resolveRequestSubject(request, config.auth, body.subject);
         const response = await service.verifyCheckout({
           subject,
           checkoutSessionId: body.checkoutSessionId,
@@ -206,7 +346,7 @@ export function createBillFnRouter(config: BillFnConfig) {
           subscriptionId?: string;
           reason?: string;
         }>(request);
-        const subject = await resolveRequestSubject(request, config.auth?.resolveSubject, body.subject);
+        const subject = await resolveRequestSubject(request, config.auth, body.subject);
         const response = await service.cancelSubscription({
           subject,
           subscriptionId: body.subscriptionId,
@@ -230,7 +370,7 @@ export function createBillFnRouter(config: BillFnConfig) {
           prorationBehavior?: 'provider_default' | 'prorate' | 'none';
           reason?: string;
         }>(request);
-        const subject = await resolveRequestSubject(request, config.auth?.resolveSubject, body.subject);
+        const subject = await resolveRequestSubject(request, config.auth, body.subject);
         const response = await service.changeSubscription({
           subject,
           subscriptionId: body.subscriptionId,
@@ -253,7 +393,7 @@ export function createBillFnRouter(config: BillFnConfig) {
           subject?: BillableSubject;
           subscriptionId?: string;
         }>(request);
-        const subject = await resolveRequestSubject(request, config.auth?.resolveSubject, body.subject);
+        const subject = await resolveRequestSubject(request, config.auth, body.subject);
         const response = await service.resumeSubscription({
           subject,
           subscriptionId: body.subscriptionId
@@ -276,15 +416,18 @@ export function createBillFnRouter(config: BillFnConfig) {
           amount?: number;
           reason?: string;
         }>(request);
-        const subject = await resolveRequestSubject(request, config.auth?.resolveSubject, body.subject);
-        const response = await service.refundCharge({
-          subject,
-          subscriptionId: body.subscriptionId,
-          providerChargeId: body.providerChargeId,
-          mode: body.mode,
-          amount: body.amount,
-          reason: body.reason
-        });
+        const subject = await resolveRequestSubject(request, config.auth, body.subject);
+        const response = await service.refundCharge(
+          {
+            subject,
+            subscriptionId: body.subscriptionId,
+            providerChargeId: body.providerChargeId,
+            mode: body.mode,
+            amount: body.amount,
+            reason: body.reason
+          },
+          { authorize: (target) => ensureRefundAuthorized({ request, ...target }) }
+        );
         if (!response.ok) {
           return jsonResponse(response, response.error.status);
         }
@@ -299,7 +442,7 @@ export function createBillFnRouter(config: BillFnConfig) {
           subject?: BillableSubject;
           subscriptionId?: string;
         }>(request);
-        const subject = await resolveRequestSubject(request, config.auth?.resolveSubject, body.subject);
+        const subject = await resolveRequestSubject(request, config.auth, body.subject);
         const response = await service.syncSubscription({
           subject,
           subscriptionId: body.subscriptionId
@@ -322,7 +465,7 @@ export function createBillFnRouter(config: BillFnConfig) {
           purchaseReference: string;
           payload?: Record<string, unknown>;
         }>(request);
-        const subject = await resolveRequestSubject(request, config.auth?.resolveSubject, body.subject);
+        const subject = await resolveRequestSubject(request, config.auth, body.subject);
         const response = await service.restorePurchases({
           subject,
           planKey: body.planKey,
@@ -341,7 +484,7 @@ export function createBillFnRouter(config: BillFnConfig) {
       method: 'POST',
       path: '/webhooks/:provider',
       handler: async (request, context) => {
-        const rawBody = await request.text();
+        const rawBody = await readBoundedText(request);
         const response = await service.handleWebhook({
           provider: context.params.provider as never,
           rawBody,

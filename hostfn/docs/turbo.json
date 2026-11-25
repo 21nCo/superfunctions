@@ -1,0 +1,21 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "extends": ["//"],
+  "tasks": {
+    "build": {
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/datafn/**",
+        "!$TURBO_ROOT$/datafn/**/node_modules/**",
+        "!$TURBO_ROOT$/datafn/**/.next/**",
+        "!$TURBO_ROOT$/datafn/**/dist/**",
+        "!$TURBO_ROOT$/datafn/**/.turbo/**",
+        "$TURBO_ROOT$/searchfn/**",
+        "!$TURBO_ROOT$/searchfn/**/node_modules/**",
+        "!$TURBO_ROOT$/searchfn/**/.next/**",
+        "!$TURBO_ROOT$/searchfn/**/dist/**",
+        "!$TURBO_ROOT$/searchfn/**/.turbo/**"
+      ]
+    }
+  }
+}

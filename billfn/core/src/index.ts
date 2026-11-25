@@ -36,7 +36,7 @@ export function createBillFn(config: BillFnConfig): BillFnInstance {
     cancelSubscription: service.cancelSubscription,
     changeSubscription: service.changeSubscription,
     resumeSubscription: service.resumeSubscription,
-    refundCharge: service.refundCharge,
+    refundCharge: (input) => service.refundCharge(input),
     syncSubscription: service.syncSubscription,
     restorePurchases: service.restorePurchases,
     getEntitlements: service.getEntitlements,

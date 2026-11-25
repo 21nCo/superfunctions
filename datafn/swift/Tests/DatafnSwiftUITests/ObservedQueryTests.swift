@@ -24,6 +24,12 @@ private final class LockedBox<Value>: @unchecked Sendable {
         defer { lock.unlock() }
         return storage
     }
+
+    func withValue<T>(_ transform: (inout Value) -> T) -> T {
+        lock.lock()
+        defer { lock.unlock() }
+        return transform(&storage)
+    }
 }
 
 @Suite("SwiftUI observed query")
@@ -48,6 +54,9 @@ struct ObservedQueryTests {
             )
         }
 
+        try await waitUntil {
+            await MainActor.run { !query.value.isEmpty }
+        }
         let initialValue = await MainActor.run { query.value }
         #expect(initialValue == [[
             "id": "task:1",

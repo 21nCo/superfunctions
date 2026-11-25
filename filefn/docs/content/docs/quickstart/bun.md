@@ -46,6 +46,8 @@ Bun.serve({
 });
 ```
 
+`auth: { required: false }` keeps this quickstart short: anyone can upload, and because every unauthenticated caller is the same `anonymous` principal, nobody owns those uploads afterwards. They are readable only when the policy is `public`, and nobody can delete or share them over HTTP. Configure `auth.resolveSession` before real users upload (see [Security](../core-concepts/security)).
+
 ## Why Bun is the fastest path
 
 - Native multipart upload streaming through `Bun.file`

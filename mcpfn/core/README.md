@@ -104,6 +104,20 @@ that must map schema failures into a stable legacy envelope.
 
 When a tool declares a success `outputSchema`, error details remain in its JSON text content and `structuredContent` is omitted so the official SDK does not validate an error envelope against the success schema. Tools without an output schema retain both structured and text error envelopes.
 
+In a tool result, only `McpFnError` (and its subclasses), the SDK's `McpError` (as code `MCPFN_TOOL_ERROR`, its JSON-RPC code not kept, with its message and its `data` as `details`) and a thrown plain `{ code, message }` object reach the client with their code, message and details. Resource, prompt, completion, subscription and other request handlers keep only `McpFnError` and `McpError`; a thrown plain object is withheld there too. Any other thrown value, such as a filesystem, database or upstream
+HTTP error, becomes `{ code: "MCPFN_TOOL_ERROR", message: "The tool failed",
+details: { errorId } }`; resource, prompt, completion and subscription handlers
+answer such errors with a JSON-RPC `InternalError` carrying the same `errorId`.
+This covers errors from context factories, visibility hooks and task creation
+as well. The original error goes to the server's `onError({ error, errorId,
+method, tool })` sink, which is not awaited. An `McpError` from another copy of the SDK (such as the application's own) is recognised by its `McpError` name and `MCP error <code>:` message; a renamed subclass of it is withheld, so throw `McpFnError` for domain errors that must reach the client. `exposeErrors: true` restores verbatim error text. Argument validation
+stops at the first failure where the schema allows it: a large array whose
+`items` fail stops at the first bad item, while a failing `anyOf` or `oneOf`
+still reports each branch and, on `@cfworker/json-schema`, a tuple with
+`additionalItems: false` reports each extra item (responses keep at most 100
+issues), and tool arguments with more than 100,000 values in total are refused before any schema validation. Each client may hold at most `maxResourceSubscriptions` (default 1000) resource
+subscriptions.
+
 One `McpFnServer` instance connects to one transport. Create a new instance per concurrent connection and share the registry.
 
 ## Authenticated client profiles
@@ -157,8 +171,16 @@ same effective catalog, rejects model-supplied server-owned fields, enriches
 from trusted context, and only then invokes canonical Ajv validation. Declared
 server-owned fields must be canonical required properties, must be absent from
 the projected schema, and must be supplied by the enricher. A profile cannot
-invent or duplicate tools or mutate model-owned arguments. No matching profile
-preserves canonical behavior.
+invent or duplicate tools or mutate model-owned arguments.
+
+A client that matches no profile (no verified identity, or one no profile
+accepts) sees the canonical catalog without the tools that any profile gives
+server-owned arguments: it could never call them, since it may not supply
+those arguments and they are required. Calling such a tool answers like an
+unknown tool, so a client cannot pick a tenant or workspace by not matching a
+profile. Set `unmatchedServerOwnedArguments: "allow"` to list those tools and
+pass their arguments through unchanged, as before; the handler must then
+derive the value from trusted context itself.
 
 The optional `evidence` sink receives only bounded structural lifecycle
 events. It is observational: a sink failure cannot fail or change a request.
@@ -170,6 +192,24 @@ Use `registerResource`, `registerResourceTemplate`, and `registerPrompt` on the 
 Task support is declared with `execution.taskSupport` and a `taskHandler`; a task-capable server must receive an official SDK `TaskStore`. `server.listRoots()`, `server.sample()`, and `server.elicit()` invoke matching client capabilities over a transport connected with `server.connect()`. Behind `createWebStandardHandler()`, each request or session is served by its own isolated server, so tool handlers call `server.listRootsForRequest(extra)`, `server.sampleForRequest(extra, ...)` and `server.elicitForRequest(extra, ...)` with the handler's `extra`; the plain methods throw `MCPFN_CLIENT_REQUEST_NEEDS_REQUEST` there. Server notifications never leak one client's data to other sessions: `sendLoggingMessage(params)` reaches only the transport connected with `server.connect()`, and `sendLoggingMessage(params, sessionId)` reaches only the client with that session id (tool handlers pass `extra.sessionId`; stateless handlers log through `extra.sendNotification`). `sendResourceUpdated()` reaches the directly connected transport and only those `createWebStandardHandler()` sessions that hold a successful `resources/subscribe` for that exact URI, until they unsubscribe or the session closes (an unsubscribe also cancels a subscribe for that URI that is still running). `sendToolListChanged()`, `sendResourceListChanged()` and `sendPromptListChanged()` carry no data and reach every connected client. Declare required client features in `clientRequirements` so manifests and host-profile tests can reject incompatible hosts before deployment.
 
 `createWebStandardHandler()` accepts the official SDK `HandleRequestOptions`, including validated `authInfo`. Use `@mcpfn/auth` to publish OAuth protected-resource metadata and produce that trusted value. In stateless mode, McpFn creates and disposes an isolated SDK server and transport for every request. Attach protocol instrumentation with `configureRequestServer`; it receives the live isolated server before transport connection and runs once per request, or once per session initialization attempt. Because configuration precedes SDK request validation, a rejected attempt can invoke the hook without retaining a session. Supply a cryptographically secure `sessionIdGenerator` when the server uses sampling, elicitation, or another server-to-client request that must be correlated across HTTP requests; session-enabled handlers retain their transport across the session.
+
+Each stateful handler defaults to 1,000 sessions (`maxSessions`) and 100 sessions per principal (`maxSessionsPerPrincipal`). Anonymous clients share one principal allowance. A request without a session ID reserves a slot during initialization, and closing sessions count until cleanup finishes. At capacity, requests for new sessions receive HTTP 429 for the principal limit or HTTP 503 for the handler limit. Clients can retry after a slot is freed.
+
+An idle session expires after 30 minutes without a matching HTTP request that passes the configured Host and Origin checks (`sessionIdleTimeoutMs`), even if a response stream is open or a previous request is still pending. Initialization has the same time limit from admission until the HTTP response is ready. A stalled initialization receives HTTP 408. Expiry closes the isolated server and transport and calls `onsessionclosed`, when supplied. Subsequent requests receive HTTP 404 and must initialize a new session. Set any of the three options to a positive safe integer to adjust the defaults.
+
+Use `onsessionclosed` to release host-managed session resources such as subscription registrations. Pending lifecycle hooks and event-store writes started during setup hold capacity until they finish and cleanup completes. Give hooks and event stores that rely on external services their own timeouts.
+
+HTTP security defaults: a request carrying an `Origin` header is refused with
+HTTP 403 unless `allowedOrigins` lists it or it is a loopback origin equal to the
+request's `Host`; a browser may omit `Origin` on a same-origin GET, so local servers should also accept only their own `Host` names (`originPolicy: "off"` disables this; setting
+`enableDnsRebindingProtection` hands Host and Origin checks to the SDK
+transport). A session belongs to the principal that created it
+(`sessionPrincipal`, by default the `authInfo.extra.subject` and client ID, with `extra.issuer` and `extra.tenantId` when the verifier reports them, or the token itself when the verifier sets no subject, so set `extra.subject` for sessions to outlive token refresh; a server that trusts more than one issuer must also set `extra.issuer`, since subjects from verifiers that leave it unset share one namespace); a request
+from another principal, including GET and DELETE, gets the same 404 as an
+unknown session. In sessionful mode a configured `eventStore` is scoped per
+session, so `Last-Event-ID` resumption only replays the session's own events; a
+stateless handler has no session to scope it to, so don't share an event store
+between principals there.
 
 ## Cloudflare Workers and edge runtimes
 

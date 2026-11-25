@@ -4,11 +4,11 @@ import { InMemoryTaskStore } from "@modelcontextprotocol/sdk/experimental/tasks/
 import { cac } from "cac";
 import { diagnoseMcpAuthorization } from "@mcpfn/auth";
 import {
-  stdioTarget,
   streamableHttpTarget,
   McpFnClientError,
   type McpFnTarget,
 } from "@mcpfn/client";
+import { stdioTarget } from "@mcpfn/client/stdio";
 import {
   diffManifests,
   validateManifest,

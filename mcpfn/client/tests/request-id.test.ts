@@ -1,0 +1,133 @@
+import { Worker } from "node:worker_threads";
+
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import { createMcpFnClient, customTarget, type McpFnDiagnosticEvent } from "../src/index.js";
+
+async function failedConnectRequestIds(): Promise<string[]> {
+  const events: McpFnDiagnosticEvent[] = [];
+  const client = createMcpFnClient({
+    target: customTarget({ kind: "custom", open: () => { throw new Error("offline"); } }),
+    diagnostics: (event) => { events.push(event); },
+  });
+  await expect(client.connect()).rejects.toMatchObject({ code: "MCPFN_TARGET_OPEN_FAILED" });
+  await client.close();
+  return [...new Set(events.map((event) => event.requestId))];
+}
+
+// Runs the built client in a real worker thread with no global Web Crypto and
+// a frozen clock, and returns the request ID of its first failed connect.
+// Worker threads share the process ID and performance.timeOrigin of the main
+// thread, and each starts its own fallback sequence.
+function workerThreadRequestId(): Promise<string> {
+  const entry = new URL("../dist/index.js", import.meta.url).href;
+  const source = `
+    const { parentPort } = require("node:worker_threads");
+    Object.defineProperty(globalThis, "crypto", { value: undefined, configurable: true });
+    Date.now = () => 1700000000000;
+    import(${JSON.stringify(entry)}).then(async ({ createMcpFnClient, customTarget }) => {
+      const ids = [];
+      const client = createMcpFnClient({
+        target: customTarget({ kind: "custom", open: () => { throw new Error("offline"); } }),
+        diagnostics: (event) => { ids.push(event.requestId); },
+      });
+      await client.connect().catch(() => undefined);
+      await client.close();
+      parentPort.postMessage(ids[0]);
+    });
+  `;
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(source, { eval: true });
+    worker.once("message", (id: string) => { resolve(id); void worker.terminate(); });
+    worker.once("error", reject);
+  });
+}
+
+describe("default request IDs", () => {
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  it("use Web Crypto UUIDs", async () => {
+    const randomUUID = vi.spyOn(globalThis.crypto, "randomUUID");
+    const ids = await failedConnectRequestIds();
+    expect(randomUUID).toHaveBeenCalled();
+    expect(ids.length).toBeGreaterThan(0);
+    for (const id of ids) expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    randomUUID.mockRestore();
+  });
+
+  it("stay unique without global Web Crypto (Node.js 18 default)", async () => {
+    vi.stubGlobal("crypto", undefined);
+    const ids = [...await failedConnectRequestIds(), ...await failedConnectRequestIds()];
+    expect(ids.length).toBeGreaterThan(1);
+    expect(new Set(ids).size).toBe(ids.length);
+    for (const id of ids) expect(id).toMatch(/^mcpfn-[0-9a-z]+-[0-9a-z]+-[0-9a-z]+_[0-9a-z]+_[0-9a-z]+$/);
+  });
+
+  it("tell processes with one process ID apart by their time origin", async () => {
+    vi.stubGlobal("crypto", undefined);
+    vi.spyOn(Date, "now").mockReturnValue(1_700_000_000_000);
+    const ids: string[] = [];
+    try {
+      for (const timeOrigin of [1_700_000_000_000.25, 1_700_000_000_000.5]) {
+        // A fresh global sequence and start time, as in another container
+        // replica that also runs as PID 1.
+        delete (globalThis as Record<symbol, unknown>)[
+          Symbol.for("@mcpfn/client/fallback-request-sequence")
+        ];
+        vi.stubGlobal("performance", { timeOrigin });
+        ids.push((await failedConnectRequestIds())[0]!);
+      }
+    } finally {
+      vi.restoreAllMocks();
+    }
+    expect(ids[0]).not.toBe(ids[1]);
+  });
+
+  it("use Web Crypto random bits, not Math.random, when only randomUUID is missing", async () => {
+    const getRandomValues = vi.fn((array: Uint32Array) => {
+      array[0] = 0xffffffff;
+      return array;
+    });
+    vi.stubGlobal("crypto", { getRandomValues });
+    const random = vi.spyOn(Math, "random");
+    try {
+      const ids = await failedConnectRequestIds();
+      expect(getRandomValues).toHaveBeenCalled();
+      expect(random).not.toHaveBeenCalled();
+      for (const id of ids) expect(id).toMatch(/^mcpfn-[0-9a-z]+-[0-9a-z]+-1z141z3$/);
+    } finally {
+      random.mockRestore();
+    }
+  });
+
+  it("do not collide across separately loaded copies of the client in one millisecond", async () => {
+    // An app can load both the ESM and the CJS build. With the time fixed and
+    // one realm, only the shared sequence keeps them apart.
+    vi.stubGlobal("crypto", undefined);
+    vi.spyOn(Date, "now").mockReturnValue(1_700_000_000_000);
+    try {
+      const ids: string[] = [];
+      for (let copy = 0; copy < 2; copy++) {
+        vi.resetModules();
+        const isolated = await import("../src/index.js");
+        const events: McpFnDiagnosticEvent[] = [];
+        const client = isolated.createMcpFnClient({
+          target: isolated.customTarget({ kind: "custom", open: () => { throw new Error("offline"); } }),
+          diagnostics: (event) => { events.push(event); },
+        });
+        await expect(client.connect()).rejects.toMatchObject({ code: "MCPFN_TARGET_OPEN_FAILED" });
+        await client.close();
+        ids.push(events[0]!.requestId);
+      }
+      expect(ids[0]).not.toBe(ids[1]);
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  it("do not collide across worker threads in one millisecond without Web Crypto", async () => {
+    const ids = await Promise.all([workerThreadRequestId(), workerThreadRequestId()]);
+    for (const id of ids) expect(id).toMatch(/^mcpfn-/);
+    expect(ids[0]).not.toBe(ids[1]);
+  });
+});

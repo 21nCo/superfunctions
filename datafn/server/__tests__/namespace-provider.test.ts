@@ -231,8 +231,8 @@ describe("Actor ID extraction (NS-015)", () => {
     await server.close();
   });
 
-  // TV-NS-029 negative: getActorId throws → request still succeeds
-  it("TV-NS-029 negative: getActorId error does not fail request", async () => {
+  // TV-NS-029 negative (DFN-04): getActorId throws → request fails closed
+  it("TV-NS-029 negative: getActorId error fails the request and writes nothing", async () => {
     const db = memoryAdapter({ libraryNamespace: "datafn" });
     const server = await createDatafnServer({
       schema: testSchema, allowUnknownResources: true,
@@ -258,8 +258,9 @@ describe("Actor ID extraction (NS-015)", () => {
       ]),
     );
     const body = await res.json();
-    expect(body.ok).toBe(true);
-    expect(body.result.applied).toContain("m-1");
+    expect(res.status).toBe(500);
+    expect(body.ok).toBe(false);
+    expect(await db.findMany({ model: "task", namespace: "ns-1" } as any)).toHaveLength(0);
     await server.close();
   });
 

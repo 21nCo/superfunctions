@@ -27,18 +27,22 @@ describe("PER-006: O(1) changelog dedup (MemoryStorageAdapter)", () => {
     const listBefore = await adapter.changelogList({ limit: ENTRY_COUNT + 1 });
     expect(listBefore).toHaveLength(ENTRY_COUNT);
 
-    // Measure dedup lookup (duplicate of mut-0)
-    const t0 = performance.now();
-    const deduped = await adapter.changelogAppend({
-      clientId: "client-perf",
-      mutationId: "mut-0", // already in log at seq=1
-      mutation: { id: "task-0" },
-      timestampMs: 999,
-    });
-    const dt = performance.now() - t0;
+    // Measure dedup lookup (duplicate of mut-0). Keep the fastest of a few
+    // calls so a busy CI runner pausing once does not fail the timing check.
+    let dt = Number.POSITIVE_INFINITY;
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const t0 = performance.now();
+      const deduped = await adapter.changelogAppend({
+        clientId: "client-perf",
+        mutationId: "mut-0", // already in log at seq=1
+        mutation: { id: "task-0" },
+        timestampMs: 999,
+      });
+      dt = Math.min(dt, performance.now() - t0);
 
-    // Should return the original entry (seq=1, not a new seq)
-    expect(deduped.seq).toBe(1);
+      // Should return the original entry (seq=1, not a new seq)
+      expect(deduped.seq).toBe(1);
+    }
 
     // Changelog must not have grown
     const listAfter = await adapter.changelogList({ limit: ENTRY_COUNT + 1 });
