@@ -1,0 +1,29 @@
+datafn/server/__tests__/request-check-coverage.test.ts
+  s_1731e39e38ef67::t_323b3f239a34b7 1-82
+datafn/SECURITY.md
+  s_d25e0a2e1d83dc::t_bd5939d2bbbb86 9,12-25,32,35,64,66,68-70,78,239,394-395,427
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "dad9a4a7ad5b0b2aea30d5a244745dcca5f1bce8",
+  "prompts": {},
+  "sessions": {
+    "s_1731e39e38ef67": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01a21142-2eb2-76c2-8264-b11730b7c224",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_d25e0a2e1d83dc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5e47d311-30a0-46a8-9433-81edaa0591aa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

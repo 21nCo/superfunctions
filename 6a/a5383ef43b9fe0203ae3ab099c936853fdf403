@@ -1,0 +1,25 @@
+filefn/docs/content/docs/core-concepts/rate-limiting.md
+  s_3ed13376daf624::t_6c8b0300162a14 3,31-34
+filefn/docs/content/docs/core-concepts/security.md
+  s_3ed13376daf624::t_27a91a63e7156f 59-61
+filefn/docs/content/docs/features/rate-limiting.md
+  s_3ed13376daf624::t_51f2a411bded75 3,33-35,40,42-82
+filefn/server/tests/hardening.test.ts
+  s_3ed13376daf624::t_56af0cc8ae03fe 160-191
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6aa5383ef43b9fe0203ae3ab099c936853fdf403",
+  "prompts": {},
+  "sessions": {
+    "s_3ed13376daf624": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a2114a-4190-7393-8504-5795186786f7",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

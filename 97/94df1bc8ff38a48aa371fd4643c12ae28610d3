@@ -1,0 +1,19 @@
+filefn/server/tests/action-pins.test.ts
+  s_3d4270cc698e42::t_5253c485f8a1fa 1-27
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9794df1bc8ff38a48aa371fd4643c12ae28610d3",
+  "prompts": {},
+  "sessions": {
+    "s_3d4270cc698e42": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01a21141-4855-7812-90bc-c0aa5abbd34e",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
