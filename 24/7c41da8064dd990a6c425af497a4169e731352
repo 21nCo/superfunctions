@@ -1,0 +1,47 @@
+datafn/client/src/adapters/indexedDbStorage.ts
+  s_7c21b9f6433ef9::t_0dfd9602748824 29,699,715,749,751,761,771,787-792,800
+datafn/client/src/adapters/memoryStorage.ts
+  s_7c21b9f6433ef9::t_ac8ceb9eb49b79 20,128,131,142,154,160-165,171
+datafn/client/src/client.ts
+  s_83fa589146e8c6::t_24c3b2e8f94ecb 51,1692-1693,1696
+datafn/client/src/index.ts
+  s_7c21b9f6433ef9::t_9dffb8811ed666 74-78
+datafn/client/src/storage.ts
+  s_7c21b9f6433ef9::t_250712be9bbf63 73-96,157,168-170,176
+datafn/client/src/sync/apply.ts
+  s_7c21b9f6433ef9::t_b83cf47e42eab5 7,20-26,30,35-48,59-60,67-70,75,83-86,105-106,108,112-115,124-125
+datafn/client/src/sync/cloneUp.ts
+  s_83fa589146e8c6::t_53785f28896ca3 24,626-634
+datafn/client/src/sync/engine.ts
+  s_83fa589146e8c6::t_11093137cad060 36,1882-1884,1898-1905,1912,1934
+datafn/client/src/query.ts
+  s_83fa589146e8c6::t_fcf2aa7060bcdb 94
+datafn/client/__tests__/revisions.test.ts
+  s_7c21b9f6433ef9::t_87bc33217ca3e2 139,258,449,455,604,659,666,697-899
+datafn/client/src/adapters/shared.ts
+  s_7c21b9f6433ef9::t_6280cc494ce966 94-97,99-104,109,127,130
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "247c41da8064dd990a6c425af497a4169e731352",
+  "prompts": {},
+  "sessions": {
+    "s_7c21b9f6433ef9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "37c5af9a-8716-4a9c-bf76-336df5c3b732",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_83fa589146e8c6": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21253-9943-7ef0-8aad-8a89b106fa79",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
