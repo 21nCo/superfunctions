@@ -7,8 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0]
+
 ### Security
 - Social OAuth provider tokens are encrypted with a secret key from the new `encryption_key_resolver` (at least 32 bytes). Earlier releases derived the key from the namespace and key reference alone, so anyone who could read the `oauth_tokens` table could decrypt the tokens. Storing a token without a configured key now fails with `AUTHFN_CONFIG_INVALID`. Sign-in checks the key before redirecting to the provider, so a missing key fails before anything is written. Existing rows written with the old derived key are re-encrypted with the configured key by running `token_vault.migrate_legacy_tokens()` once after upgrading (it needs an adapter with `update_many`); nothing else reads the old key (AUTH-32 AF-14).
+- Two-factor recovery codes are claimed and spent with conditional writes. Python also accepts recovery codes hashed by the TypeScript kernel with the enrollment ID (AUTH-32 AF-07).
+- OTP verification skips challenges that were never admitted and picks the latest challenge by creation time and ID (AUTH-32 AF-02).
+
+### Changed
+- Apply schema version 3 before deploying. Add nullable `failed_attempt_count` and `locked_until` columns to `two_factor_enrollments` and the `idx_authfn_otp_challenges_email_created_at` index to `otp_challenges`.
+- The two-factor plugin requires a database adapter with `update_many` that supports conditional writes and reports the number of affected rows. AuthFn checks for this method at initialization.
+- Put HTTP rate limiting in front of the Python OTP and two-factor routes. The TypeScript cross-challenge OTP budget and TOTP failed-attempt limit are still pending in Python. If the kernels share a database, serve two-factor routes for TypeScript-created enrollments from TypeScript when relying on its enrollment lockout. The default enrollment secret formats differ. Plan a migration or re-enrollment before moving users enrolled in Python to TypeScript.
 
 ## [0.2.0] - 2026-11-18
 
@@ -91,6 +100,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Python 3.11
 - Python 3.12
 
-[Unreleased]: https://github.com/21nCo/superfunctions/compare/python-authfn-v0.2.0...HEAD
+[Unreleased]: https://github.com/21nCo/superfunctions/compare/python-authfn-v0.3.0...HEAD
+[0.3.0]: https://github.com/21nCo/superfunctions/releases/tag/python-authfn-v0.3.0
 [0.2.0]: https://github.com/21nCo/superfunctions/releases/tag/python-authfn-v0.2.0
 [0.1.0]: https://github.com/21nCo/super-functions/releases/tag/v0.1.0
