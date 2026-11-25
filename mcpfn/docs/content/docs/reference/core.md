@@ -198,6 +198,18 @@ Task support is declared with `execution.taskSupport` and a `taskHandler`; a tas
 
 `createWebStandardHandler()` accepts the official SDK `HandleRequestOptions`, including validated `authInfo`. Use `@mcpfn/auth` to publish OAuth protected-resource metadata and produce that trusted value. In stateless mode, McpFn creates and disposes an isolated SDK server and transport for every request. Attach protocol instrumentation with `configureRequestServer`; it receives the live isolated server before transport connection and runs once per request, or once per session initialization attempt. Because configuration precedes SDK request validation, a rejected attempt can invoke the hook without retaining a session. Supply a cryptographically secure `sessionIdGenerator` when the server uses sampling, elicitation, or another server-to-client request that must be correlated across HTTP requests; session-enabled handlers retain their transport across the session.
 
+HTTP security defaults: a request carrying an `Origin` header is refused with
+HTTP 403 unless `allowedOrigins` lists it or it is a loopback origin equal to the
+request's `Host`; a browser may omit `Origin` on a same-origin GET, so local servers should also accept only their own `Host` names (`originPolicy: "off"` disables this; setting
+`enableDnsRebindingProtection` hands Host and Origin checks to the SDK
+transport). A session belongs to the principal that created it
+(`sessionPrincipal`, by default the `authInfo.extra.subject` and client ID, with `extra.issuer` when the verifier reports one, or the token itself when the verifier sets no subject, so set `extra.subject` for sessions to outlive token refresh; a server that trusts more than one issuer must also set `extra.issuer`, since subjects from verifiers that leave it unset share one namespace); a request
+from another principal, including GET and DELETE, gets the same 404 as an
+unknown session. In sessionful mode a configured `eventStore` is scoped per
+session, so `Last-Event-ID` resumption only replays the session's own events; a
+stateless handler has no session to scope it to, so don't share an event store
+between principals there.
+
 ## Cloudflare Workers and edge runtimes
 
 `@mcpfn/core` is a self-contained bundle: the official MCP SDK and a single
