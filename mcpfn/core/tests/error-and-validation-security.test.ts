@@ -127,6 +127,13 @@ describe("tool error text (MCP-SEC-08)", () => {
     expect((await client.callTool({ name: "read_file" })).isError).toBe(true);
   });
 
+  it("does not throw on errors whose getters throw", () => {
+    const hostile = Object.assign(new Error("readable text"), { code: 7 });
+    Object.defineProperty(hostile, "name", { get() { throw new Error("getter"); } });
+    expect(JSON.stringify(errorResult(hostile))).not.toContain("readable text");
+    expect(JSON.stringify(errorResult(hostile, { verbatim: true }))).toContain("readable text");
+  });
+
   it("withholds errorResult text unless verbatim", () => {
     expect(JSON.stringify(errorResult(systemError()))).not.toContain("/srv/app");
     expect(JSON.stringify(errorResult(systemError(), { verbatim: true }))).toContain("/srv/app");

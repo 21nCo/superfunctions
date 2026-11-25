@@ -75,6 +75,15 @@ export interface McpFnErrorResultOptions {
  * package bundles its own, so instanceof alone misses an application's).
  */
 export function isMcpErrorLike(error: unknown): error is Error & { code: number } {
+  try {
+    return mcpErrorShape(error);
+  } catch {
+    // A getter that throws: not something this classifier can trust.
+    return false;
+  }
+}
+
+function mcpErrorShape(error: unknown): boolean {
   if (error instanceof McpError) return true;
   if (!(error instanceof Error)) return false;
   const code = (error as { code?: unknown }).code;
@@ -93,8 +102,12 @@ export function isMcpErrorLike(error: unknown): error is Error & { code: number 
  * only McpFnError and McpError.
  */
 export function isMcpFnClientSafeError(error: unknown, options: { plainObjects?: boolean } = {}): boolean {
-  return error instanceof McpFnError || isMcpErrorLike(error) ||
-    (options.plainObjects !== false && isCodedPlainObject(error));
+  try {
+    return error instanceof McpFnError || isMcpErrorLike(error) ||
+      (options.plainObjects !== false && isCodedPlainObject(error));
+  } catch {
+    return false;
+  }
 }
 
 function isCodedPlainObject(error: unknown): error is { code: string; message: string } {
@@ -110,6 +123,21 @@ function ownDetails(error: object): unknown {
 }
 
 function verbatimError(error: unknown): { code: string; message: string; details?: unknown } {
+  try {
+    return inspectError(error);
+  } catch {
+    let message = "The tool failed";
+    try {
+      const value: unknown = (error as { message?: unknown } | null)?.message;
+      if (typeof value === "string") message = value;
+    } catch {
+      // Keep the generic message.
+    }
+    return { code: "MCPFN_TOOL_ERROR", message };
+  }
+}
+
+function inspectError(error: unknown): { code: string; message: string; details?: unknown } {
   if (error instanceof McpFnError) return { code: error.code, message: error.message, details: error.details };
   if (isMcpErrorLike(error)) {
     const data = (error as { data?: unknown }).data;
