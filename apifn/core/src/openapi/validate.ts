@@ -247,8 +247,9 @@ function prepareReferences(document: OpenAPIDocument, externalReferences?: Reado
   const root: ReferenceDocument = { value: document, location: workingDirectoryLocation() };
   const supplied = new Map<string, ReferenceDocument>();
   const literalReferences = new Map<object, string>();
-  const seen = new WeakMap<object, Map<OpenAPIReferenceMode, object>>();
+  const seen = new WeakMap<object, Map<OpenAPIReferenceMode, PreparedReferenceTarget>>();
   const pending: PreparedReferenceTarget[] = [];
+  const recursiveMerges = new Map<object, object>();
   let field = "x-apifn-reference-copies";
   while (Object.hasOwn(document, field)) field += "-";
   const referenceCopies: ReferenceCopies = { field, targets: [], originals: new Map() };
@@ -263,17 +264,18 @@ function prepareReferences(document: OpenAPIDocument, externalReferences?: Reado
   function enqueue(target: ReferenceTarget, copyPath?: ReferencePath): unknown {
     const { value, mode } = target;
     if (typeof value !== "object" || value === null) return value;
-    const contexts = seen.get(value) ?? new Map<OpenAPIReferenceMode, object>();
+    const contexts = seen.get(value) ?? new Map<OpenAPIReferenceMode, PreparedReferenceTarget>();
     const existing = contexts.get(mode);
-    if (existing) return existing;
+    if (existing) return existing.copy;
 
     // YAML aliases can share a value between a schema and literal example data.
     const prototype = Object.getPrototypeOf(value);
     const copy = Array.isArray(value) ? [...value]
       : prototype === Object.prototype || prototype === null ? { ...value } : value;
-    contexts.set(mode, copy);
+    const prepared = { ...target, value, copy, copyPath };
+    contexts.set(mode, prepared);
     seen.set(value, contexts);
-    pending.push({ ...target, value, copy, copyPath });
+    pending.push(prepared);
     return copy;
   }
 
@@ -407,7 +409,7 @@ function prepareReferences(document: OpenAPIDocument, externalReferences?: Reado
   }
 
   function rewriteReference(
-    ref: string, { source, mode, value, copyPath }: PreparedReferenceTarget, site?: ReferenceSite
+    ref: string, { source, mode, value, copy, copyPath }: PreparedReferenceTarget, site?: ReferenceSite
   ): string {
     const destination = location(source, ref);
     const { tokens, target } = lookupPointer(destination.source, destination.fragment, { importSite: site });
@@ -421,6 +423,16 @@ function prepareReferences(document: OpenAPIDocument, externalReferences?: Reado
       const self = encodePointer(pathKeys(copyPath));
       referenceCopies.originals.set(self, ref);
       return self;
+    }
+    if (!isLocal && typeof target.value === "object" && target.value !== null &&
+        !Object.hasOwn(target.value, "$ref") && Object.keys(value).length > 1) {
+      const prepared = seen.get(target.value)?.get(mode);
+      for (let ancestor = copyPath?.parent; prepared && ancestor; ancestor = ancestor.parent) {
+        if (prepared.copyPath === ancestor) {
+          recursiveMerges.set(copy, prepared.copy);
+          return canonical;
+        }
+      }
     }
     if (isLocal && target.source === root &&
         (target.mode !== "literal" || typeof target.value !== "object" || target.value === null)) {
@@ -470,6 +482,14 @@ function prepareReferences(document: OpenAPIDocument, externalReferences?: Reado
         { key, parent: copyPath },
       ));
     }
+  }
+  // The parser can reuse the parent copy for a circular reference and drop
+  // its siblings. Preserve its normal shallow merge for prepared ancestors.
+  for (const [reference, ancestor] of recursiveMerges) {
+    for (const [key, child] of Object.entries(ancestor)) {
+      if (!Object.hasOwn(reference, key)) Reflect.set(reference, key, child);
+    }
+    Reflect.deleteProperty(reference, "$ref");
   }
   if (referenceCopies.targets.length) Reflect.set(copy, field, referenceCopies.targets);
   return { copy, referenceCopies, literalReferences };

@@ -570,6 +570,21 @@ describe("validateOpenAPI", () => {
     expect(result.document?.components?.schemas?.Value).toEqual(contents);
   });
 
+  it("preserves sibling constraints on a recursive preloaded schema", async () => {
+    const uri = "https://example.invalid/types.json";
+    const contents = {
+      type: "object",
+      properties: { child: { $ref: "#", required: ["label"] }, label: { type: "string" } },
+    };
+    const result = await validateAndDereferenceOpenAPI(documentWithReference(uri), {
+      externalReferences: new Map([[uri, JSON.stringify(contents)]]),
+    });
+    expect(result.errors).toEqual([]);
+    const schema = result.document?.components?.schemas?.Value as typeof contents;
+    expect(schema.properties.child.required).toEqual(["label"]);
+    expect(schema.properties.child).toHaveProperty("properties", schema.properties);
+  });
+
   it("resolves an acyclic root alias through sibling definitions in a preloaded schema", async () => {
     const uri = "https://example.invalid/types.json";
     const contents = JSON.stringify({
