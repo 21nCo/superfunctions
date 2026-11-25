@@ -2,6 +2,7 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
   WebStandardStreamableHTTPServerTransport,
+  type EventStore,
   type HandleRequestOptions,
 } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import type {
@@ -132,11 +133,49 @@ export type McpFnWebStandardHandlerOptions<TContext> = ConstructorParameters<
   }) => string | undefined | Promise<string | undefined>;
 };
 
+/**
+ * An event store view whose stream IDs are prefixed with one session's ID, and
+ * which refuses to replay events stored for any other session.
+ */
+function sessionScopedEventStore(base: EventStore, sessionId: () => string | undefined): EventStore {
+  const prefix = () => `${sessionId() ?? ""}\u0000`;
+  const unscoped = (streamId: string | undefined) => {
+    const own = prefix();
+    return streamId !== undefined && streamId.startsWith(own) ? streamId.slice(own.length) : undefined;
+  };
+  const foreign = () => new Error("Event ID does not belong to this session");
+  return {
+    storeEvent: (streamId, message) => base.storeEvent(prefix() + streamId, message),
+    ...(base.getStreamIdForEventId
+      ? { getStreamIdForEventId: async (eventId: string) => unscoped(await base.getStreamIdForEventId!(eventId)) }
+      : {}),
+    async replayEventsAfter(lastEventId, { send }) {
+      if (base.getStreamIdForEventId) {
+        if (unscoped(await base.getStreamIdForEventId(lastEventId)) === undefined) throw foreign();
+        const streamId = unscoped(await base.replayEventsAfter(lastEventId, { send }));
+        if (streamId === undefined) throw foreign();
+        return streamId;
+      }
+      // Without a lookup, hold the replay until the store says whose it is.
+      const replayed: Array<[string, Parameters<typeof send>[1]]> = [];
+      const streamId = unscoped(await base.replayEventsAfter(lastEventId, {
+        send: async (eventId, message) => { replayed.push([eventId, message]); },
+      }));
+      if (streamId === undefined) throw foreign();
+      for (const [eventId, message] of replayed) await send(eventId, message);
+      return streamId;
+    },
+  };
+}
+
 function defaultSessionPrincipal(input: { authInfo: AuthInfo | undefined }): string | undefined {
   const authInfo = input.authInfo;
   if (!authInfo) return undefined;
   const subject = authInfo.extra?.subject;
-  if (typeof subject === "string" && subject) return JSON.stringify(["subject", subject, authInfo.clientId ?? null]);
+  // Subjects and client IDs are unique per issuer: include the verifier's
+  // issuer when it reports one (extra.issuer), for servers trusting several.
+  const issuer = typeof authInfo.extra?.issuer === "string" ? authInfo.extra.issuer : null;
+  if (typeof subject === "string" && subject) return JSON.stringify(["subject", issuer, subject, authInfo.clientId ?? null]);
   // Without a verified subject, users of one OAuth client are told apart only
   // by their token: bind the session to it (a refreshed token then needs a new
   // session). Verifiers should set extra.subject.
@@ -1009,6 +1048,11 @@ export class McpFnServer<TContext = undefined> {
       };
       transport = new WebStandardStreamableHTTPServerTransport({
         ...transportOptions,
+        // One event store serves every session: scope its streams to this
+        // session so Last-Event-ID resumption cannot replay another's events.
+        ...(transportOptions.eventStore
+          ? { eventStore: sessionScopedEventStore(transportOptions.eventStore, () => transport.sessionId) }
+          : {}),
         onsessioninitialized: async (id) => {
           // close() ran while this request was being set up: no session, and
           // the client gets a retryable 503 (see below), not the SDK's 400.
@@ -1051,7 +1095,9 @@ export class McpFnServer<TContext = undefined> {
         await configureRequestServer?.(requestServer);
         await requestServer.connect(transport);
         const response = await transport.handleRequest(request, handleOptions);
-        if (closedDuringInitialization) {
+        // close() can also land while the SDK reads the body, before it calls
+        // onsessioninitialized (it then answers 404): answer 503 either way.
+        if (closedDuringInitialization || (!initializedSessionId && generation !== this.closeGeneration)) {
           await response.body?.cancel().catch(() => undefined);
           await release();
           return jsonRpcErrorResponse(503, -32000, "Server closed");

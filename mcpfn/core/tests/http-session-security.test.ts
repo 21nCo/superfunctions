@@ -176,6 +176,91 @@ describe("createWebStandardHandler session binding (MCP-SEC-03)", () => {
     expect((closed[0] as unknown[])[0]).toBe(options);
   });
 
+  it("keeps principals from different issuers apart", async () => {
+    const { initialize, call } = await setup();
+    const from = (issuer: string): AuthInfo => ({ token: "test-access-token", clientId: "client-a", scopes: [], extra: { subject: "alice", issuer } });
+    const { sessionId } = await initialize(from("https://issuer-one.example"));
+    expect((await call(sessionId!, from("https://issuer-two.example"))).status).toBe(404);
+    expect((await call(sessionId!, from("https://issuer-one.example"))).status).toBe(200);
+  });
+
+  it("does not replay another session's events from a shared event store", async () => {
+    const events = new Map<string, { streamId: string; message: unknown }>();
+    let next = 0;
+    const eventStore = {
+      async storeEvent(streamId: string, message: unknown) {
+        const id = `event-${++next}`;
+        events.set(id, { streamId, message });
+        return id;
+      },
+      async replayEventsAfter(lastEventId: string, { send }: { send: (id: string, message: unknown) => Promise<void> }) {
+        const origin = events.get(lastEventId);
+        if (!origin) throw new Error("unknown event");
+        let after = false;
+        for (const [id, event] of events) {
+          if (id === lastEventId) { after = true; continue; }
+          if (after && event.streamId === origin.streamId) await send(id, event.message);
+        }
+        return origin.streamId;
+      },
+    };
+    const { initialize, post, handler } = await setup({ enableJsonResponse: false, eventStore } as never);
+    const alice = await initialize(authInfo("alice"));
+    const bob = await initialize(authInfo("bob"));
+    const secret = await post(
+      { jsonrpc: "2.0", id: 9, method: "tools/call", params: { name: "echo", arguments: { value: "alice-private" } } },
+      { sessionId: alice.sessionId!, auth: authInfo("alice") },
+    );
+    expect(await secret.text()).toContain("alice-private");
+    const aliceEvents = [...events.keys()];
+    for (const lastEventId of aliceEvents) {
+      const replay = await handler(new Request("http://127.0.0.1:8080/mcp", {
+        method: "GET",
+        headers: { accept: "text/event-stream", "mcp-session-id": bob.sessionId!, "mcp-protocol-version": "2025-11-25", "last-event-id": lastEventId },
+      }), { authInfo: authInfo("bob") });
+      // Read what the (possibly open) SSE stream delivers within a short window.
+      let text = "";
+      const reader = replay.body?.getReader();
+      const decoder = new TextDecoder();
+      const deadline = Date.now() + 100;
+      while (reader && Date.now() < deadline) {
+        const chunk = await Promise.race([
+          reader.read(),
+          new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), deadline - Date.now())),
+        ]);
+        if (!chunk || chunk.done) break;
+        text += decoder.decode(chunk.value, { stream: true });
+      }
+      await reader?.cancel().catch(() => undefined);
+      expect(text).not.toContain("alice-private");
+    }
+  });
+
+  it("answers 503 when close() runs while the initialize body is still being read", async () => {
+    const { handler, server } = await setup();
+    let push!: (chunk: Uint8Array) => void;
+    let finish!: () => void;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        push = (chunk) => controller.enqueue(chunk);
+        finish = () => controller.close();
+      },
+    });
+    const pending = handler(new Request("http://127.0.0.1:8080/mcp", {
+      method: "POST",
+      headers: { accept: "application/json, text/event-stream", "content-type": "application/json" },
+      body,
+      duplex: "half",
+    } as RequestInit));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    await server.close();
+    push(new TextEncoder().encode(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "c", version: "1" } } })));
+    finish();
+    const response = await pending;
+    expect(response.status).toBe(503);
+    expect(response.headers.get("mcp-session-id")).toBeNull();
+  });
+
   it("uses a host-supplied principal key", async () => {
     const { initialize, call } = await setup({
       sessionPrincipal: ({ request }) => request.headers.get("x-tenant") ?? undefined,
