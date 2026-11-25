@@ -1027,29 +1027,59 @@ it("uses the same declared endpoint for legacy IDs in query and transact", async
       relation: "relatedItem",
       inverse: "relatedTasks",
       fkField: "itemId",
+      fkResourceField: "itemResource",
+    }, {
+      type: "one-many",
+      from: ["node", "objective"],
+      to: "task",
+      relation: "containedTasks",
+      inverse: "container",
     }],
   };
   const { db, server } = await createServer({ schema });
   await db.create({ model: "objective", namespace: "datafn", data: { id: "legacy-item", label: "Goal" } });
-  await db.create({ model: "task", namespace: "datafn", data: { id: "task:legacy", itemId: "legacy-item" } });
+  await db.create({ model: "node", namespace: "datafn", data: { id: "legacy-item", label: "Node" } });
+  await db.create({ model: "task", namespace: "datafn", data: { id: "task:legacy", label: "Unqualified", itemId: "legacy-item" } });
+  await db.create({ model: "task", namespace: "datafn", data: {
+    id: "task:explicit",
+    label: "Linked",
+    itemId: "legacy-item",
+    itemResource: "objective",
+    container: "legacy-item",
+    containerResource: "objective",
+  } });
   await db.create({ model: "task", namespace: "datafn", data: { id: "task:qualified", itemId: "objective:goal" } });
   const body = {
     resource: "task",
     version: 1,
     select: ["id"],
+    sort: ["id:asc"],
     filters: { relatedItem: { $any: { label: "Goal" } } },
   };
-
-  const pushed = await query(server, body);
-  const response = await server.router.handle(new Request("http://localhost/datafn/transact", {
-    method: "POST",
-    body: JSON.stringify({ atomic: false, steps: [{ query: body }] }),
-  }));
-  const transaction = await response.json();
-  expect(pushed.status).toBe(200);
-  expect(response.status).toBe(200);
-  expect(pushed.body.result.data).toEqual([{ id: "task:qualified" }]);
-  expect(transaction.result.results[0].data).toEqual(pushed.body.result.data);
+  const inverse = {
+    version: 1,
+    select: ["id"],
+    filters: { relatedTasks: { $any: { label: "Linked" } } },
+  };
+  for (const [request, data] of [
+    [body, [{ id: "task:explicit" }, { id: "task:qualified" }]],
+    [{ ...inverse, resource: "objective" }, [{ id: "legacy-item" }]],
+    [{ ...inverse, resource: "node" }, []],
+    [{ ...body, filters: { container: { $any: { label: "Goal" } } } }, [{ id: "task:explicit" }]],
+    [{ ...inverse, resource: "objective", filters: { containedTasks: { $any: { label: "Linked" } } } }, [{ id: "legacy-item" }]],
+    [{ ...inverse, resource: "node", filters: { containedTasks: { $any: { label: "Linked" } } } }, []],
+  ] as const) {
+    const standalone = await query(server, request);
+    const response = await server.router.handle(new Request("http://localhost/datafn/transact", {
+      method: "POST",
+      body: JSON.stringify({ atomic: false, steps: [{ query: request }] }),
+    }));
+    const transaction = await response.json();
+    expect(standalone.status).toBe(200);
+    expect(response.status).toBe(200);
+    expect(standalone.body.result.data).toEqual(data);
+    expect(transaction.result.results[0].data).toEqual(data);
+  }
 });
 
 it("preserves both resource discriminators on inverse predicates", async () => {

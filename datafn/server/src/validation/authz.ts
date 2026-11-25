@@ -483,8 +483,8 @@ function authorizeRelationFilter(
   const quantifier = parts.length === 1 && isQuantifierFilterValue(value);
   if (!quantifier && isNestedFilterField(resource, head)) return "scalar";
   const fkNamed = isForeignKeyNamedManyOne(schema, resource.name, head);
-  // A scalar comparison on an FK stored under the relation name is a field filter.
-  // A quantifier still filters the related resource, so it is not that field read.
+  // Scalar comparisons go through field authorization. Traversals also
+  // authorize the related fields they reference.
   if (!quantifier && parts.length === 1) return "scalar";
   // A stored field can shadow a relation in a dot-path. A declared FK can
   // also expose its association through a quantifier. Check source and target.

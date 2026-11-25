@@ -343,6 +343,9 @@ function compileRelationFilter(
   // `$none` with the foreign key on the primary side needs `fk IS NULL OR
   // fk NOT IN (…)`; it stays in memory.
   if (quantifier === "$none" && foreignKeyOnPrimary(match)) return null;
+  // FK membership alone cannot distinguish polymorphic records that share an ID.
+  if (relation.type === "many-one" && endpointList(relation.to).length > 1) return null;
+  if (relation.type === "one-many" && endpointList(relation.from).length > 1) return null;
 
   const targets = new Map<string, Conjunct[]>();
   for (const target of endpointList(relationTargetEndpoint(match.relation, match.direction))) {
