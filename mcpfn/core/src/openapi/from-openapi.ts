@@ -385,7 +385,7 @@ class OperationConverter {
 
   /** Follow a `$ref` chain to a parameter, request body or response object. */
   resolve(value: unknown, kind: "parameters" | "requestBodies" | "responses"): JsonObject {
-    // Every resolution is charged to the call's total, and each link it decodes once.
+    // Every resolution is charged to the call's total, and each link it decodes.
     this.schemas.chargeWork(1);
     if (!isObject(value) || !("$ref" in value)) return entryObject(value, kind);
     const remembered = this.resolvedEntries[kind].get(value);
@@ -394,26 +394,34 @@ class OperationConverter {
     let current: unknown = value;
     let outcome: JsonObject | OpenApiSkip | undefined;
     let cycleStart = -1;
-    try {
-      while (isObject(current) && "$ref" in current) {
-        const name = parseComponentRef(current.$ref, kind);
-        outcome = this.resolved.get(`${kind}/${name}`);
-        if (outcome !== undefined) break;
-        if (visited.has(name)) {
-          cycleStart = visited.get(name)!;
-          break;
-        }
-        visited.set(name, visited.size);
-        const section = this.components[kind];
-        if (!isObject(section) || !Object.hasOwn(section, name)) {
-          throw new OpenApiSkip("unresolved-ref", `reference #/components/${kind}/${name} has no target`);
-        }
-        current = section[name];
+    while (isObject(current) && "$ref" in current) {
+      // Charged before each link is decoded: a walk the total refuses stops
+      // there and leaves nothing remembered for a later operation to reuse.
+      this.schemas.chargeWork(1);
+      let name: string;
+      try {
+        name = parseComponentRef(current.$ref, kind);
+      } catch (error) {
+        if (!(error instanceof OpenApiSkip)) throw error;
+        outcome = error;
+        break;
       }
-      if (outcome === undefined && cycleStart < 0) outcome = entryObject(current, kind);
-    } catch (error) {
-      if (!(error instanceof OpenApiSkip)) throw error;
-      outcome = error;
+      outcome = this.resolved.get(`${kind}/${name}`);
+      if (outcome !== undefined) break;
+      if (visited.has(name)) {
+        cycleStart = visited.get(name)!;
+        break;
+      }
+      visited.set(name, visited.size);
+      const section = this.components[kind];
+      if (!isObject(section) || !Object.hasOwn(section, name)) {
+        outcome = new OpenApiSkip("unresolved-ref", `reference #/components/${kind}/${name} has no target`);
+        break;
+      }
+      current = section[name];
+    }
+    if (outcome === undefined && cycleStart < 0) {
+      outcome = isObject(current) ? current : new OpenApiSkip("invalid-operation", `a ${kind} entry is not an object`);
     }
     // Each name on the chain shares its outcome, except that a name on a
     // cycle reports the cycle through itself, as a walk starting there would.
@@ -426,7 +434,6 @@ class OperationConverter {
     });
     const result = names.length > 0 ? this.resolved.get(`${kind}/${names[0]}`)! : outcome;
     this.resolvedEntries[kind].set(value, result);
-    this.schemas.chargeWork(names.length);
     return settled(result);
   }
 
@@ -925,12 +932,14 @@ class OperationConverter {
       throw new OpenApiSkip("invalid-operation", `parameter ${name} has unknown location ${JSON.stringify(location)}`);
     }
     if (location === "header" && isForbiddenHeader(name)) return undefined;
-    // Validators ignore a "__proto__" key of properties, so the closed group
+    // Ajv leaves a "__proto__" key of properties out of a closed group, so it
     // would list the parameter and still reject every call that supplies it.
-    if (name === "__proto__") {
+    // @cfworker/json-schema validates that own property like any other.
+    this.compiler ??= createSchemaCompiler();
+    if (name === "__proto__" && this.compiler.engine === "ajv") {
       throw new OpenApiSkip(
         "unsupported-parameter-name",
-        `${location} parameter ${name} cannot be declared in a closed group: the validators ignore that property name`,
+        `${location} parameter ${name} cannot be declared in a closed group: Ajv ignores that property name`,
       );
     }
     if (raw.schema === undefined) {

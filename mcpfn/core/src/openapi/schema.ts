@@ -1797,7 +1797,7 @@ export class SchemaConverter {
         if (visited >= POSITION_CHARGE_BATCH) flush();
       }
       // A branch every valid value must take applies like an `allOf` member.
-      const taken = takenBranches(node);
+      const taken = takenBranches(node, whole.selectors);
       for (const member of [...arrayOf(node.allOf), ...taken]) visit(member, frame + 1, local + 1, own, must, whole);
       forEachInPlace(node, (member) => {
         if (!taken.includes(member)) visit(member, frame + 1, local + 1, own, false);
@@ -2136,6 +2136,8 @@ interface Conjunction {
   names: Set<string>;
   /** The kinds of value its `type`s admit (`number` admits integers). */
   types: Set<ValueKind> | undefined;
+  /** The kinds the schema and its inline `allOf` members admit, which select the branches taken (`takenBranches`). */
+  selectors: Set<ValueKind> | undefined;
   minItems: number;
   nodes: number;
 }
@@ -2144,11 +2146,19 @@ interface Conjunction {
 const POSITION_CHARGE_BATCH = 1024;
 
 /** A conjunction that demands nothing: every child value starts its own chain. */
-const UNFORCED: Conjunction = { required: [], names: new Set(), types: undefined, minItems: 0, nodes: 0 };
+const UNFORCED: Conjunction = { required: [], names: new Set(), types: undefined, selectors: undefined, minItems: 0, nodes: 0 };
 
 function conjunction(schema: JsonObject): Conjunction {
   const names = new Set<string>();
-  const result: Conjunction = { required: [], names, types: undefined, minItems: 0, nodes: 0 };
+  const result: Conjunction = { required: [], names, types: undefined, selectors: undefined, minItems: 0, nodes: 0 };
+  const inline: unknown[] = [schema];
+  while (inline.length > 0) {
+    const node = inline.pop();
+    result.nodes += 1;
+    if (!isObject(node)) continue;
+    if (node.type !== undefined) result.selectors = narrowed(result.selectors, node.type);
+    for (const member of arrayOf(node.allOf)) inline.push(member);
+  }
   const pending: unknown[] = [schema];
   while (pending.length > 0) {
     const node = pending.pop();
@@ -2162,13 +2172,10 @@ function conjunction(schema: JsonObject): Conjunction {
         result.required.push(name);
       }
     }
-    if (node.type !== undefined) {
-      const own = new Set(typeEntries(node.type).flatMap((type) => kindsOfType(type)));
-      result.types = result.types === undefined ? own : new Set([...result.types].filter((kind) => own.has(kind)));
-    }
+    if (node.type !== undefined) result.types = narrowed(result.types, node.type);
     if (typeof node.minItems === "number") result.minItems = Math.max(result.minItems, node.minItems);
     result.nodes += arrayOf(node.anyOf).length + arrayOf(node.oneOf).length;
-    for (const member of [...arrayOf(node.allOf), ...takenBranches(node)]) pending.push(member);
+    for (const member of [...arrayOf(node.allOf), ...takenBranches(node, result.selectors)]) pending.push(member);
   }
   return result;
 }
@@ -2234,12 +2241,13 @@ function forEachChild(
 /**
  * The in-place branches of `schema` every value it accepts must satisfy:
  * the only member of `anyOf` or `oneOf` whose `type` does not contradict the
- * schema's own `type`, and `then` under an always-true `if` (`else` under
- * `false`). At most three, each read where the schema is.
+ * kinds the schema's inline conjunction admits (`selectors`) and its own
+ * `type`, and `then` under an always-true `if` (`else` under `false`). At
+ * most three, each read where the schema is.
  */
-function takenBranches(schema: JsonObject): unknown[] {
+function takenBranches(schema: JsonObject, selectors: Set<ValueKind> | undefined): unknown[] {
   const taken: unknown[] = [];
-  const own = schema.type === undefined ? undefined : new Set(typeEntries(schema.type).flatMap((type) => kindsOfType(type)));
+  const own = schema.type === undefined ? selectors : narrowed(selectors, schema.type);
   for (const keyword of ["anyOf", "oneOf"] as const) {
     let open: unknown;
     let count = 0;
@@ -2261,6 +2269,12 @@ function takenBranches(schema: JsonObject): unknown[] {
 
 function typeEntries(type: unknown): unknown[] {
   return typeof type === "string" ? [type] : arrayOf(type);
+}
+
+/** The kinds of `kinds` (all when undefined) that `type` also admits. */
+function narrowed(kinds: Set<ValueKind> | undefined, type: unknown): Set<ValueKind> {
+  const own = new Set(typeEntries(type).flatMap((entry) => kindsOfType(entry)));
+  return kinds === undefined ? own : new Set([...kinds].filter((kind) => own.has(kind)));
 }
 
 /** Whether a conjunction accepts only values of JSON type `type` by its `type`s. */

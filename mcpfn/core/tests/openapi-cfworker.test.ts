@@ -362,6 +362,8 @@ describe("fromOpenAPI under @cfworker/json-schema", () => {
       ...chain("G", 2_500, (next) => ({ oneOf: [{ type: "object", required: ["next"], properties: { next } }] })),
       ...chain("K", 2_500, (next) => ({ type: "object", anyOf: [{ type: "string" }, { required: ["next"], properties: { next } }] })),
       ...chain("F", 2_500, (next) => ({ if: true, then: { type: "object", required: ["next"], properties: { next } } })),
+      // The type that rules out the other branch sits in an inline allOf member.
+      ...chain("Z", 2_500, (next) => ({ allOf: [{ type: "object" }, { anyOf: [{ type: "string" }, { required: ["next"], properties: { next } }] }] })),
     };
     const post = (operationId: string, bodyRequired: boolean, content: Record<string, unknown>) => ({
       post: { operationId, requestBody: { required: bodyRequired, content }, responses: { "204": { description: "Done" } } },
@@ -381,6 +383,7 @@ describe("fromOpenAPI under @cfworker/json-schema", () => {
           "/sole-one": post("soleOneOf", true, { "application/json": ref("G0") }),
           "/typed-any": post("contradictedAnyOf", true, { "application/json": ref("K0") }),
           "/if": post("alwaysIf", true, { "application/json": ref("F0") }),
+          "/all-any": post("allOfTypedAnyOf", true, { "application/json": ref("Z0") }),
           "/fallback": post("soleAnyOfFallback", true, { "application/json": ref("S0"), "application/example+json": { schema: { type: "string" } } }),
           "/out": { get: { operationId: "soleAnyOfOutput", responses: json({ $ref: "#/components/schemas/S0" }) } },
         },
@@ -389,7 +392,7 @@ describe("fromOpenAPI under @cfworker/json-schema", () => {
       { executor: recordingExecutor(), allowMutations: true },
     );
     expect(verdicts(result)).toEqual([
-      tooDeep("alwaysIf"), tooDeep("contradictedAnyOf"), tooDeep("requiredChain"), tooDeep("soleAnyOf"), tooDeep("soleAnyOfOutput"), tooDeep("soleOneOf"),
+      tooDeep("allOfTypedAnyOf"), tooDeep("alwaysIf"), tooDeep("contradictedAnyOf"), tooDeep("requiredChain"), tooDeep("soleAnyOf"), tooDeep("soleAnyOfOutput"), tooDeep("soleOneOf"),
     ]);
     expect(result.tools.map(({ name, operation }) => [name, operation.requestBody?.contentType])).toEqual([
       ["optionalSole", "application/json"],
@@ -409,4 +412,19 @@ describe("fromOpenAPI under @cfworker/json-schema", () => {
     // Ajv decides by its compile, and the recursive integer form compiles there too.
     expectArguments(tool(result.tools, "integerAllOf").inputSchema, { valid: [{ body: 1 }, { body: { next: 2 } }], invalid: [{ body: 1.5 }, { body: {} }] });
   }, 120_000);
+
+  it("registers a __proto__ query parameter, which this engine validates as an own property, and delivers it", async () => {
+    const executor = recordingExecutor();
+    const result = fromOpenAPI({
+      openapi: "3.1.0",
+      paths: { "/items": { get: { operationId: "listItems", parameters: [{ name: "__proto__", in: "query", required: true, schema: { type: "string" } }], responses: { "200": { description: "OK" } } } } },
+    }, { executor });
+    expect(result.skipped).toEqual([]);
+    const args = JSON.parse('{"query":{"__proto__":"ok"}}') as Record<string, unknown>;
+    await result.registry.callTool("listItems", args, undefined, requestExtra());
+    expect(executor.calls.map((call) => call.args)).toEqual([args]);
+    expect(Object.hasOwn((executor.calls[0]!.args as { query: object }).query, "__proto__")).toBe(true);
+    await expect(result.registry.callTool("listItems", JSON.parse('{"query":{"__proto__":1}}'), undefined, requestExtra()))
+      .rejects.toMatchObject({ code: "MCPFN_INVALID_ARGUMENTS" });
+  });
 });

@@ -406,12 +406,12 @@ describe("fromOpenAPI skip reasons", () => {
     expect(skipped[0]!.reason).toMatch(reason);
   });
 
-  it("skips a parameter named __proto__, which neither validator can list in a closed group, and keeps ordinary names", () => {
+  it("skips a parameter named __proto__, which Ajv leaves out of a closed group, and keeps ordinary names", () => {
     const { tools, skipped } = convert("skip-prototype-parameter-name");
     expect(skips({ tools, skipped } as Result)).toEqual([[
       "listItems",
       "unsupported-parameter-name",
-      "query parameter __proto__ cannot be declared in a closed group: the validators ignore that property name",
+      "query parameter __proto__ cannot be declared in a closed group: Ajv ignores that property name",
     ]]);
     const plain = tool(tools, "listPlain");
     expect(plain.inputSchema.properties).toEqual({
@@ -1715,6 +1715,8 @@ describe("fromOpenAPI bounded and dialect-aware conversion", () => {
     const codes = new Set(result.skipped.map((entry) => entry.code));
     expect(codes).toEqual(new Set(["schema-too-large"]));
     expect(result.tools.length).toBeGreaterThan(0);
+    // Once the total refuses a resolution, no later operation reuses its outcome.
+    expect(result.tools.map((entry) => entry.operation.path)).toEqual(Object.keys(paths).slice(0, result.tools.length));
     expect(result.tools.length + result.skipped.length).toBe(2_000);
   });
 
