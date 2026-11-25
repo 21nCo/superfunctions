@@ -6,6 +6,21 @@ export const MYSQL_MAX_SAFE_VARCHAR_LENGTH = 16_383;
 // InnoDB's modern maximum index-key size is 3,072 bytes. utf8mb4 can use four
 // bytes per character, so this is the largest portable full-column key part.
 export const MYSQL_MAX_SAFE_INDEXED_VARCHAR_LENGTH = 768;
+// COMPACT and REDUNDANT InnoDB row formats cap each index key part at 767
+// bytes; DYNAMIC and COMPRESSED allow 3,072.
+export const MYSQL_LEGACY_ROW_FORMAT_KEY_PART_BYTES = 767;
+
+export function isLegacyMySqlRowFormat(rowFormat: string | null | undefined): boolean {
+  return /^(compact|redundant)$/i.test(rowFormat?.trim() ?? "");
+}
+
+/** Worst-case bytes per character of a MySQL character set (unknown: utf8mb4). */
+export function mysqlMaxBytesPerChar(characterSet: string | null | undefined): number {
+  const name = characterSet?.trim().toLowerCase() ?? "";
+  if (/^(latin1|ascii|binary)$/.test(name)) return 1;
+  if (/^(utf8|utf8mb3)$/.test(name)) return 3;
+  return 4;
+}
 
 export function mysqlVarcharLength(field: FieldSchema): number | null {
   if (field.maxLength === undefined) return null;

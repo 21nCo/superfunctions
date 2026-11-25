@@ -4,8 +4,13 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import type { SuperfunctionsConfig } from '../index.js';
 import { loadConfig } from '../utils/config.js';
-import { createAdapterFromConfig, getRawConnection } from '../utils/adapter-helper.js';
+import {
+  createAdapterFromConfig,
+  getRawConnection,
+  type AdapterConnection,
+} from '../utils/adapter-helper.js';
 import {
   diffTables,
   createMigrationPlan,
@@ -20,6 +25,7 @@ import {
 import {
   introspectPostgres,
   introspectMySQL,
+  mysqlConnectionDatabase,
   introspectSQLite,
   type DatabaseTable,
 } from '../utils/introspection.js';
@@ -166,6 +172,39 @@ function extractDatabaseName(connectionString: string): string | null {
   }
 }
 
+
+/**
+ * Introspect the tables the configured connection currently holds. For
+ * MySQL, the schema to read comes from the adapter's connection string, or
+ * for Prisma from the client's own connection (its datasource can differ
+ * from DATABASE_URL).
+ */
+export async function introspectCurrentTables(
+  connection: AdapterConnection,
+  adapterType: string,
+  config: SuperfunctionsConfig,
+): Promise<DatabaseTable[]> {
+  const rawConn = getRawConnection(connection);
+
+  if (connection.dialect === 'postgres') {
+    return introspectPostgres(rawConn, 'public');
+  }
+  if (connection.dialect === 'mysql') {
+    let dbName = 'database'; // fallback
+    if (adapterType === 'drizzle' && config.adapter.drizzle?.connectionString) {
+      dbName = extractDatabaseName(config.adapter.drizzle.connectionString) ?? 'database';
+    } else if (adapterType === 'kysely' && config.adapter.kysely?.connectionString) {
+      dbName = extractDatabaseName(config.adapter.kysely.connectionString) ?? 'database';
+    } else if (adapterType === 'prisma') {
+      dbName = await mysqlConnectionDatabase(rawConn);
+    }
+    return introspectMySQL(rawConn, dbName);
+  }
+  if (connection.dialect === 'sqlite') {
+    return introspectSQLite(rawConn);
+  }
+  throw new Error(`Unsupported dialect: ${connection.dialect}`);
+}
 
 export async function generateMigrations(
   configPath: string,
@@ -366,34 +405,7 @@ export async function generateMigrations(
 
     // Introspect current database schema
     console.log('🔍 Introspecting database schema...');
-    const rawConn = getRawConnection(connection);
-    let currentTables;
-
-    if (connection.dialect === 'postgres') {
-      currentTables = await introspectPostgres(rawConn, 'public');
-    } else if (connection.dialect === 'mysql') {
-      // Extract database name from connection string based on adapter type
-      let dbName = 'database'; // fallback
-
-      if (adapterType === 'drizzle' && config.adapter.drizzle?.connectionString) {
-        dbName = extractDatabaseName(config.adapter.drizzle.connectionString) ?? 'database';
-      } else if (adapterType === 'kysely' && config.adapter.kysely?.connectionString) {
-        dbName = extractDatabaseName(config.adapter.kysely.connectionString) ?? 'database';
-      } else if (adapterType === 'prisma') {
-        // Prisma uses DATABASE_URL from environment or connection string
-        // For now, try to get from process.env.DATABASE_URL if available
-        const prismaConnString = process.env.DATABASE_URL;
-        if (prismaConnString) {
-          dbName = extractDatabaseName(prismaConnString) ?? 'database';
-        }
-      }
-
-      currentTables = await introspectMySQL(rawConn, dbName);
-    } else if (connection.dialect === 'sqlite') {
-      currentTables = await introspectSQLite(rawConn);
-    } else {
-      throw new Error(`Unsupported dialect: ${connection.dialect}`);
-    }
+    const currentTables = await introspectCurrentTables(connection, adapterType, config);
 
     console.log(`   Found ${currentTables.length} existing tables\n`);
 

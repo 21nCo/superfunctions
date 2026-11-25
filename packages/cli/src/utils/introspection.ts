@@ -28,6 +28,8 @@ export interface DatabaseColumn {
 export interface DatabaseTable {
   name: string;
   schema?: string;
+  /** MySQL InnoDB row format (information_schema.TABLES.ROW_FORMAT). */
+  rowFormat?: string | null;
   columns: DatabaseColumn[];
   indexes: DatabaseIndex[];
   constraints: DatabaseConstraint[];
@@ -181,6 +183,19 @@ function mysqlQuery(db: any): MySqlQuery {
 }
 
 /**
+ * The default database of a MySQL connection (`SELECT DATABASE()`), so
+ * introspection reads the schema the connection actually migrates.
+ */
+export async function mysqlConnectionDatabase(connection: any): Promise<string> {
+  const [rows] = await mysqlQuery(connection)('SELECT DATABASE() AS database_name', []);
+  const database = rows?.[0]?.database_name;
+  if (typeof database !== 'string' || database.length === 0) {
+    throw new Error('The MySQL connection has no default database; add the database name to its connection URL.');
+  }
+  return database;
+}
+
+/**
  * Introspect MySQL database schema
  */
 export async function introspectMySQL(
@@ -191,7 +206,7 @@ export async function introspectMySQL(
   const db = { query: mysqlQuery(connection) };
   // Query tables
   const tablesQuery = `
-    SELECT TABLE_NAME as table_name
+    SELECT TABLE_NAME as table_name, ROW_FORMAT as row_format
     FROM information_schema.TABLES 
     WHERE TABLE_SCHEMA = ?
       AND TABLE_TYPE = 'BASE TABLE'
@@ -205,7 +220,7 @@ export async function introspectMySQL(
 
   const result: DatabaseTable[] = [];
 
-  for (const { table_name } of tables) {
+  for (const { table_name, row_format } of tables) {
     // Query columns
     const columnsQuery = `
       SELECT 
@@ -314,6 +329,7 @@ export async function introspectMySQL(
     result.push({
       name: table_name,
       schema: database,
+      rowFormat: row_format ?? null,
       columns: (columns as any[]).map((c) => ({
         dialect: 'mysql' as const,
         tableName: table_name,

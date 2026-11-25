@@ -2,8 +2,11 @@ import type { TableSchema, FieldSchema } from '@superfunctions/db';
 import type { DatabaseTable } from './introspection.js';
 import {
   databaseStringLength,
+  isLegacyMySqlRowFormat,
   isUnboundedMySqlTextType,
+  MYSQL_LEGACY_ROW_FORMAT_KEY_PART_BYTES,
   MYSQL_MAX_SAFE_INDEXED_VARCHAR_LENGTH,
+  mysqlMaxBytesPerChar,
   mysqlVarcharLength,
   satisfiesUnboundedMySqlString,
 } from './mysql-types.js';
@@ -529,6 +532,29 @@ export function diffTables(
           .map((constraint) => `${constraint.tableName}.${constraint.name}`)
           .join(', ')}`,
       );
+    }
+    // A COMPACT or REDUNDANT table cannot hold a widened full-column key part
+    // over 767 bytes, whether the index is kept or rebuilt: refuse before any
+    // DDL rather than emit a migration MySQL rejects with ERROR 1071.
+    if (isLegacyMySqlRowFormat(curTable.rowFormat)) {
+      const oversizedKeyParts = curTable.indexes.flatMap((index) =>
+        index.columns.flatMap((column, position) => {
+          const length = widenedVarcharLengths.get(column);
+          const currentColumn = curColMap.get(column);
+          return length !== undefined &&
+            currentColumn &&
+            index.prefixLengths?.[position] == null &&
+            length * mysqlMaxBytesPerChar(currentColumn.characterSet) >
+              MYSQL_LEGACY_ROW_FORMAT_KEY_PART_BYTES
+            ? [`${index.name} (${column} VARCHAR(${length}))`]
+            : [];
+        }),
+      );
+      if (oversizedKeyParts.length > 0) {
+        throw new Error(
+          `Cannot generate MySQL column change for ${dbName}: its ${curTable.rowFormat} row format limits index key parts to ${MYSQL_LEGACY_ROW_FORMAT_KEY_PART_BYTES} bytes, which the widened key would exceed: ${oversizedKeyParts.join(', ')}. Convert the table first with ALTER TABLE ${dbName} ROW_FORMAT=DYNAMIC, then generate the migration again.`,
+        );
+      }
     }
     const rebuiltIndexes: NonNullable<TableDiff['rebuiltIndexes']> =
       changedMySqlColumns.size === 0

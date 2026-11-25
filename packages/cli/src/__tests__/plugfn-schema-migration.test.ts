@@ -1,7 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { FieldSchema, TableSchema } from '@superfunctions/db';
-import { createPendingMigration } from '../commands/generate.js';
-import { introspectMySQL, type DatabaseColumn, type DatabaseTable } from '../utils/introspection.js';
+import { createPendingMigration, introspectCurrentTables } from '../commands/generate.js';
+import type { SuperfunctionsConfig } from '../index.js';
+import { createAdapterFromConfig, type AdapterConnection } from '../utils/adapter-helper.js';
+import type { DatabaseColumn, DatabaseTable } from '../utils/introspection.js';
 import { getSchema, PLUGFN_SCHEMA_VERSION } from '../../../../plugfn/core/src/schema.js';
 
 // The last schema version whose plugfn_sync_jobs.claim_token was VARCHAR(64)
@@ -53,7 +55,11 @@ function mysqlColumn(tableName: string, columnName: string, field: FieldSchema):
  * of the current schema, with plugfn_sync_jobs.claim_token at the given width.
  * TEXT key parts carry the prefix length MySQL reports in STATISTICS.SUB_PART.
  */
-function mysqlV7Snapshot(tables: TableSchema[], claimTokenLength: number): DatabaseTable[] {
+function mysqlV7Snapshot(
+  tables: TableSchema[],
+  claimTokenLength: number,
+  rowFormat = 'Dynamic',
+): DatabaseTable[] {
   return tables.map((table) => {
     const columns = Object.entries(table.fields).map(([name, field]) => {
       const columnName = field.fieldName ?? name;
@@ -80,7 +86,7 @@ function mysqlV7Snapshot(tables: TableSchema[], claimTokenLength: number): Datab
       indexType: 'BTREE',
       prefixLengths: index.columns.map(prefixFor),
     }));
-    return { name: table.modelName, schema: 'app', columns, indexes, constraints: [] };
+    return { name: table.modelName, schema: 'app', rowFormat, columns, indexes, constraints: [] };
   });
 }
 
@@ -91,8 +97,11 @@ function mysqlV7Snapshot(tables: TableSchema[], claimTokenLength: number): Datab
  */
 function informationSchemaRows(snapshot: DatabaseTable[], int: (value: number) => number | bigint) {
   return (sql: string, params: unknown[]): Record<string, unknown>[] => {
+    if (sql.includes('SELECT DATABASE()')) return [{ database_name: 'app' }];
+    // Only the connection's own database holds the plugfn tables.
+    if (params[0] !== 'app') return [];
     if (sql.includes('information_schema.TABLES')) {
-      return snapshot.map((table) => ({ table_name: table.name }));
+      return snapshot.map((table) => ({ table_name: table.name, row_format: table.rowFormat }));
     }
     const table = snapshot.find((candidate) => candidate.name === params[1]);
     if (!table) throw new Error(`unexpected introspection query: ${sql}`);
@@ -223,23 +232,93 @@ describe('plugfn schema v8 migration', () => {
     }
   });
 
-  it('introspects a dev v7 MySQL database through each adapter connection and widens claim_token', async () => {
-    for (const adapterType of adapterTypes) {
-      const connection = mysqlConnection(adapterType, mysqlV7Snapshot(schema.schemas, DEV_V7_CLAIM_TOKEN_LENGTH));
-      const currentTables = await introspectMySQL(connection, 'app');
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
 
-      expect(currentTables.map((table) => table.name).sort(), adapterType).toEqual(
-        schema.schemas.map((table) => table.modelName).sort(),
-      );
-      expectDevV7Widening(
-        adapterType,
-        createPendingMigration({
+  /**
+   * The connection and config generate-migration works from. Drizzle and
+   * Kysely name the database in their connection string; the PrismaClient
+   * goes through createAdapterFromConfig, and its own datasource (database
+   * "app") differs from DATABASE_URL.
+   */
+  async function commandConnection(
+    adapterType: (typeof adapterTypes)[number],
+    snapshot: DatabaseTable[],
+  ): Promise<{ connection: AdapterConnection; config: SuperfunctionsConfig }> {
+    const rawConnection = mysqlConnection(adapterType, snapshot);
+    if (adapterType === 'prisma') {
+      const prisma = { ...rawConnection, _activeProvider: 'mysql', $disconnect: async () => undefined };
+      const config = { adapter: { type: 'prisma', prisma: { prisma } } } as unknown as SuperfunctionsConfig;
+      return { connection: await createAdapterFromConfig(config), config };
+    }
+    const config = {
+      adapter: {
+        type: adapterType,
+        [adapterType]: { dialect: 'mysql', connectionString: 'mysql://example.invalid:3306/app' },
+      },
+    } as unknown as SuperfunctionsConfig;
+    return {
+      connection: {
+        adapter: {} as AdapterConnection['adapter'],
+        dialect: 'mysql',
+        rawConnection,
+        close: async () => undefined,
+      },
+      config,
+    };
+  }
+
+  it('introspects a dev v7 MySQL database through the generate command path and widens claim_token', async () => {
+    // DATABASE_URL names another dialect or database than the PrismaClient's
+    // datasource; the CLI must follow the client.
+    for (const databaseUrl of ['postgresql://example.invalid:5432/otherdb', 'mysql://example.invalid:3306/otherdb']) {
+      vi.stubEnv('DATABASE_URL', databaseUrl);
+      for (const adapterType of adapterTypes) {
+        const { connection, config } = await commandConnection(
           adapterType,
-          dialect: 'mysql',
-          library,
-          currentVersion: V7_SCHEMA_VERSION,
-          currentTables,
-        }),
+          mysqlV7Snapshot(schema.schemas, DEV_V7_CLAIM_TOKEN_LENGTH),
+        );
+        expect(connection.dialect, adapterType).toBe('mysql');
+        const currentTables = await introspectCurrentTables(connection, adapterType, config);
+
+        expect(currentTables.map((table) => table.name).sort(), adapterType).toEqual(
+          schema.schemas.map((table) => table.modelName).sort(),
+        );
+        expectDevV7Widening(
+          adapterType,
+          createPendingMigration({
+            adapterType,
+            dialect: 'mysql',
+            library,
+            currentVersion: V7_SCHEMA_VERSION,
+            currentTables,
+          }),
+        );
+      }
+    }
+  });
+
+  it('refuses the widening before any DDL on a COMPACT table whose key part would exceed 767 bytes', async () => {
+    for (const adapterType of adapterTypes) {
+      const { connection, config } = await commandConnection(
+        adapterType,
+        mysqlV7Snapshot(schema.schemas, DEV_V7_CLAIM_TOKEN_LENGTH, 'Compact'),
+      );
+      const currentTables = await introspectCurrentTables(connection, adapterType, config);
+
+      expect(
+        () =>
+          createPendingMigration({
+            adapterType,
+            dialect: 'mysql',
+            library,
+            currentVersion: V7_SCHEMA_VERSION,
+            currentTables,
+          }),
+        adapterType,
+      ).toThrow(
+        /plugfn_sync_jobs: its Compact row format limits index key parts to 767 bytes.*idx_plugfn_sync_jobs_claim_token \(claim_token VARCHAR\(768\)\).*ROW_FORMAT=DYNAMIC/,
       );
     }
   });
