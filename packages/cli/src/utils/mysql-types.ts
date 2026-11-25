@@ -39,7 +39,7 @@ export function satisfiesUnboundedMySqlString(dataType: string): boolean {
 // key 3,072, 1,536 or 768 bytes on 16+, 8 or 4 KiB pages. Other engines, row
 // formats (COMPRESSED: KEY_BLOCK_SIZE) or page sizes are not modelled: return why.
 export function mysqlIndexKeyBudget(t: { name: string; engine?: string | null; rowFormat?: string | null; innodbPageSize?: number | null; serverVersion?: string | null }) {
-  const version = /^(\d+)\.(\d+)\.\d+(?:-\S+)?$/.exec(t.serverVersion ?? '')?.map(Number);
+  const version = /^(\d{1,3})\.(\d{1,3})\.\d{1,4}(?:-\S+)?$/.exec(t.serverVersion ?? '')?.map(Number);
   const [floorMajor, floorMinor] = /-mariadb/i.test(t.serverVersion ?? '') ? [10, 3] : [8, 0];
   const largePrefix = !!version && (version[1] > floorMajor || (version[1] === floorMajor && version[2] >= floorMinor));
   if (!/^innodb$/i.test(t.engine ?? '') || !/^(dynamic|compact|redundant)$/i.test(t.rowFormat ?? '')) {

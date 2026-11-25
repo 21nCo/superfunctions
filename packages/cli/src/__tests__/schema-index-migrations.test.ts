@@ -1042,7 +1042,7 @@ describe("schema index migrations", () => {
     );
     // A server whose innodb_large_prefix may be off (or whose version is
     // unknown or malformed) keeps the 767-byte key part limit on DYNAMIC rows.
-    for (const serverVersion of ["5.7.44-log", "10.2.44-MariaDB", undefined, "8.0garbage", "8.0", "8.0.36-", "7.100.0", "9.10.0-MariaDB"]) {
+    for (const serverVersion of ["5.7.44-log", "10.2.44-MariaDB", undefined, "8.0garbage", "8.0", "8.0.36-", "7.100.0", "9.10.0-MariaDB", "999999999999999999999999.0.0"]) {
       inPlace(diffTables([widenTo(191)], unproven({ serverVersion }), "plugfn"), 191);
       expect(() => diffTables([widenTo(192)], unproven({ serverVersion }), "plugfn")).toThrow(new RegExp(
         `server version ${serverVersion ?? "unknown"}, whose innodb_large_prefix may be off, limits index key parts to 767 bytes.*\\(claim_token 768 bytes\\).*Upgrade to MySQL 8\\.0`,
