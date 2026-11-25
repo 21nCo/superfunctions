@@ -1687,7 +1687,10 @@ export class SchemaConverter {
   frames(root: McpFnJsonSchema | boolean, mode: SchemaMode): number {
     const own = this.positions(root, mode);
     const reach = memoMap(this.reachFrames, mode, () => new Map<string, number>());
+    // Only the root's own chain is taken by every value: a chain elsewhere
+    // that never ends means no valid value has that child, not that none fits.
     let most = this.localFrames(own, mode);
+    for (const [name, frame] of own.forced) most = Math.max(most, frame + this.forcedFrames(name, mode));
     for (const name of own.refs) {
       const below = settleGraph(name, (key) => this.componentPositions(key, mode).refs, reach, (component, deeper) => {
         let frames = deeper;
@@ -1716,10 +1719,13 @@ export class SchemaConverter {
     return known;
   }
 
-  /** The most frames at the positions of one walked schema, with the forced chains its references continue. */
+  /** The most frames at the positions of one walked schema, with the finite forced chains its references continue. */
   private localFrames(own: Positions, mode: SchemaMode): number {
     let most = own.frames;
-    for (const [name, frame] of own.carried) most = Math.max(most, frame + this.forcedFrames(name, mode));
+    for (const [name, frame] of own.carried) {
+      const forced = this.forcedFrames(name, mode);
+      if (Number.isFinite(forced)) most = Math.max(most, frame + forced);
+    }
     return most;
   }
 
@@ -1772,8 +1778,10 @@ export class SchemaConverter {
       if (!isObject(node)) return;
       for (const member of arrayOf(node.allOf)) visit(member, frame + 1, own, must);
       forEachInPlace(node, (member) => visit(member, frame + 1, own, false), false);
-      forEachChild(node, (member, forced) =>
-        forced && must ? visit(member, frame + 1, own, true) : visit(member, 1, false, true),
+      forEachChild(
+        node,
+        (member, forced) => (forced && must ? visit(member, frame + 1, own, true) : visit(member, 1, false, true)),
+        (pairs) => this.total.chargeNodes(pairs),
       );
     };
     visit(schema, 1, true, true);
@@ -2100,10 +2108,16 @@ function forEachInPlace(schema: JsonObject, visit: (member: unknown) => void, al
  * `additionalProperties`) when only objects are accepted, and items up to
  * `minItems` when only arrays are.
  */
-function forEachChild(schema: JsonObject, visit: (member: unknown, forced: boolean) => void): void {
+function forEachChild(
+  schema: JsonObject,
+  visit: (member: unknown, forced: boolean) => void,
+  charge: (pairs: number) => void = () => undefined,
+): void {
   const required = onlyType(schema, "object") ? arrayOf(schema.required).filter((name) => typeof name === "string") : [];
   const properties = isObject(schema.properties) ? schema.properties : {};
   const patterns = objectEntries(schema.patternProperties);
+  // Every required name is matched against every pattern: charged first.
+  if (required.length > 0 && patterns.length > 0) charge(required.length * patterns.length);
   const forcedProperties = new Set<string>();
   const forcedPatterns = new Set<string>();
   let forcedAdditional = false;
@@ -2147,13 +2161,21 @@ function onlyType(schema: JsonObject, type: string): boolean {
   return list.length > 0 && list.every((entry) => entry === type);
 }
 
-/** Whether a `patternProperties` pattern matches `name` as validators read it (undefined: not a pattern they read). */
+/**
+ * Whether a `patternProperties` pattern matches `name`, for a pattern of
+ * literal characters with optional `^` and `$` anchors (undefined for any
+ * other pattern). No pattern from the document runs as a regular expression
+ * while converting.
+ */
 function patternMatches(pattern: string, name: string): boolean | undefined {
-  try {
-    return new RegExp(pattern, "u").test(name);
-  } catch {
-    return undefined;
-  }
+  const start = pattern.startsWith("^");
+  const end = pattern.length > (start ? 1 : 0) && pattern.endsWith("$") && !pattern.endsWith("\\$");
+  const literal = pattern.slice(start ? 1 : 0, end ? -1 : undefined);
+  if (/[\\.^$|?*+()[\]{}]/.test(literal)) return undefined;
+  if (start && end) return name === literal;
+  if (start) return name.startsWith(literal);
+  if (end) return name.endsWith(literal);
+  return name.includes(literal);
 }
 
 /** Keep the largest frame each definition is applied at. */

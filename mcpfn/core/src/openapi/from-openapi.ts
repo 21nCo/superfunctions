@@ -338,6 +338,12 @@ class OperationConverter {
       const { inputs, inputSchema } = this.input(path, pathItem, raw);
       const operation = deepFreeze(this.operation(path, pathItem, method, raw, inputs));
       const outputSchema = this.schemas.budgeted(() => this.outputSchema(raw, method));
+      const holder = { schemas: this.pending, dropped: false };
+      this.holders.set(operation, holder);
+      for (const schema of holder.schemas) {
+        if (!this.holdersOf.has(schema)) this.holdersOf.set(schema, []);
+        this.holdersOf.get(schema)!.push(holder);
+      }
       return { operation, inputSchema, ...(outputSchema ? { outputSchema } : {}) };
     } catch (error) {
       this.dropReservations(this.pending);
@@ -349,6 +355,10 @@ class OperationConverter {
 
   /** Tool schemas holding a catalog copy reserved for the operation being converted. */
   private pending: object[] = [];
+  /** The catalog copies each converted operation reserved, given back once (`dropOperation`). */
+  private readonly holders = new WeakMap<object, Holder>();
+  /** The operations holding a reservation made with each tool schema. */
+  private readonly holdersOf = new WeakMap<object, Holder[]>();
 
   /** Follow a `$ref` chain to a parameter, request body or response object. */
   resolve(value: unknown, kind: "parameters" | "requestBodies" | "responses"): JsonObject {
@@ -559,8 +569,8 @@ class OperationConverter {
           const skip = invalidSkip(failure, kind);
           this.shared.set(key, skip);
           this.refused.set(known, skip);
-          this.schemas.releaseCopy((this.reserved.get(known) ?? 0) * (this.copyNodes.get(known) ?? 0));
-          this.reserved.delete(known);
+          // Every operation already holding it will be skipped: all it reserved goes back now.
+          for (const holder of this.holdersOf.get(known) ?? []) this.release(holder);
           throw skip;
         }
       }
@@ -615,8 +625,20 @@ class OperationConverter {
     return undefined;
   }
 
-  /** Give back the catalog copies reserved with these schemas, for a tool that will not register. */
-  dropReservations(schemas: readonly object[]): void {
+  /** Give back the catalog copies a converted operation reserved, for a tool that will not register. */
+  dropOperation(operation: object): void {
+    const holder = this.holders.get(operation);
+    if (holder) this.release(holder);
+  }
+
+  private release(holder: Holder): void {
+    if (holder.dropped) return;
+    holder.dropped = true;
+    this.dropReservations(holder.schemas);
+  }
+
+  /** Give back the catalog copies reserved with these schemas. */
+  private dropReservations(schemas: readonly object[]): void {
     for (const schema of schemas) {
       if (this.claim(schema)) this.schemas.releaseCopy(this.copyNodes.get(schema) ?? 0);
     }
@@ -755,16 +777,18 @@ class OperationConverter {
       // The generated definitions go on a wrapper, as in a tool schema, so
       // they never replace definitions the schema itself declares.
       const wrapped = Object.keys(definitions).length > 0;
+      // How deep a value nests is checked on the contract the registry
+      // validates, never on a schema as written before projection.
       failure = this.compileFailure(
         wrapped ? { type: "object", properties: { value: copy }, definitions: treeCopy(definitions, budget) } : copy,
-        () => this.schemas.frames(root, mode),
+        mode === "plain" ? undefined : () => this.schemas.frames(root, mode),
       );
       if (key !== undefined) this.verdicts.set(key, failure);
     }
     return failure;
   }
 
-  private compileFailure(schema: object, frames: () => number): string | null {
+  private compileFailure(schema: object, frames: (() => number) | undefined): string | null {
     this.compiler ??= createSchemaCompiler();
     try {
       this.compiler.compile(schema);
@@ -774,7 +798,7 @@ class OperationConverter {
     }
     // @cfworker/json-schema follows references only while validating, so
     // its compile never overflows on a chain too deep to validate.
-    return this.compiler.engine === "cfworker" && !this.depth.fits(frames()) ? TOO_DEEP_VERDICT : null;
+    return frames && this.compiler.engine === "cfworker" && !this.depth.fits(frames()) ? TOO_DEEP_VERDICT : null;
   }
 
   /** A request body schema compiles as the registry compiles it, checked once per source schema object. */
@@ -1085,6 +1109,12 @@ function chainValidates(frames: number): boolean {
   }
 }
 
+/** The catalog copies one converted operation reserved, and whether they were given back. */
+interface Holder {
+  schemas: object[];
+  dropped: boolean;
+}
+
 /** A compile verdict for a stack overflow, kept like any other verdict. */
 const TOO_DEEP_VERDICT = "\0too deep";
 
@@ -1321,7 +1351,7 @@ function register<TContext>(
     const pair: [object, object] = [candidate.inputSchema, candidate.outputSchema ?? NO_OUTPUT];
     const refusal = converter.refusal(pair);
     if (overflowed.get(pair[0])?.has(pair[1]) || refusal) {
-      converter.dropReservations(pair);
+      converter.dropOperation(operation);
       skipped.push(refusal ? { operation: operationRef(operation), code: refusal.code, reason: refusal.message } : tooDeepSkip(operation));
       return;
     }
@@ -1331,7 +1361,7 @@ function register<TContext>(
     let catalogNodes = 0;
     try {
       if (engine === "cfworker" && !converter.validatesDeepEnough(pair)) {
-        converter.dropReservations(pair);
+        converter.dropOperation(operation);
         if (!overflowed.has(pair[0])) overflowed.set(pair[0], new WeakSet());
         overflowed.get(pair[0])!.add(pair[1]);
         skipped.push(tooDeepSkip(operation));
@@ -1340,7 +1370,7 @@ function register<TContext>(
       catalogNodes = converter.holdCatalog(pair);
     } catch (error) {
       // Measuring or holding ran out of budget: the tool's reservations go back.
-      converter.dropReservations(pair);
+      converter.dropOperation(operation);
       const skip = candidateFailure(error);
       skipped.push({ operation: operationRef(operation), code: skip.code, reason: skip.message });
       return;

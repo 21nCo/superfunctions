@@ -26,12 +26,12 @@ describe("fromOpenAPI under @cfworker/json-schema", () => {
       },
       { executor: recordingExecutor() },
     );
-    // HEAD is checked while converting, the GET tool when it registers.
+    // The GET tool is checked when it registers. The HEAD response is
+    // discarded, so no value is ever validated against it here.
     expect(result.skipped.map(({ operation, code, reason }) => [operation.operationId, code, reason]).sort()).toEqual([
       ["deep", "schema-too-large", "a schema or reference chain nests too deeply"],
-      ["deepHead", "schema-too-large", "a schema or reference chain nests too deeply"],
     ]);
-    expect(result.tools.map(({ name }) => name)).toEqual(["short"]);
+    expect(result.tools.map(({ name }) => name)).toEqual(["deepHead", "short"]);
     expect(result.registry.has("short")).toBe(true);
   }, 60_000);
 
@@ -161,4 +161,39 @@ describe("fromOpenAPI under @cfworker/json-schema", () => {
     expect(forward.tools.map(({ name }) => name).sort()).toEqual(["emptyItemsChain", "unmatchedPatternChain"]);
     expect(reverse.tools.map(({ name }) => name).sort()).toEqual(["emptyItemsChain", "unmatchedPatternChain"]);
   }, 120_000);
+
+  it("keeps a forced cycle a valid value can bypass or projection removes, and never runs document patterns as expressions", () => {
+    const names = Array.from({ length: 2_000 }, (_, index) => `n${index}`);
+    const started = performance.now();
+    const result = fromOpenAPI(
+      {
+        openapi: "3.1.0",
+        paths: {
+          "/alt": body("bypassable", "Alt"),
+          "/projected": body("projected", "Node"),
+          "/patterns": body("patterns", "Wide"),
+          "/backtracking": body("backtracking", "Backtracking"),
+        },
+        components: {
+          schemas: {
+            Loop: { type: "object", required: ["next"], properties: { next: { $ref: "#/components/schemas/Loop" } } },
+            Alt: { anyOf: [{ type: "null" }, { $ref: "#/components/schemas/Loop" }] },
+            // The request drops the read-only link, so `{}` is a valid body.
+            Node: { type: "object", required: ["next"], properties: { next: { allOf: [{ $ref: "#/components/schemas/Node" }], readOnly: true } } },
+            Wide: { type: "object", required: names, patternProperties: Object.fromEntries(names.map((name) => [`^p${name}$`, { type: "string" }])) },
+            Backtracking: { type: "object", required: ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa!"], patternProperties: { "^(a|a)*$": { type: "string" } } },
+          },
+        },
+      },
+      { executor: recordingExecutor(), allowMutations: true },
+    );
+    expect(performance.now() - started).toBeLessThan(10_000);
+    // Matching 2,000 required names against 2,000 patterns is charged before it runs.
+    expect(result.skipped.map(({ operation, code, reason }) => [operation.operationId, code, reason])).toEqual([
+      ["patterns", "schema-too-large", expect.stringMatching(/^the document's schemas expand in total to more than \d+ nodes$/)],
+    ]);
+    expect(result.tools.map(({ name }) => name)).toEqual(["bypassable", "projected", "backtracking"]);
+    expectArguments(tool(result.tools, "bypassable").inputSchema, { valid: [{ body: null }] });
+    expectArguments(tool(result.tools, "projected").inputSchema, { valid: [{ body: {} }] });
+  }, 60_000);
 });
