@@ -105,8 +105,10 @@ export class MCPServer {
     options?: Parameters<McpFnServer["createWebStandardHandler"]>[0],
   ): Promise<(request: Request) => Promise<Response>> {
     const server = this.createServer();
+    // Retained only once the handler exists (options can fail validation).
+    const handler = await server.createWebStandardHandler(options);
     this.activeServers.add(server);
-    return await server.createWebStandardHandler(options);
+    return handler;
   }
 
   async close(): Promise<void> {

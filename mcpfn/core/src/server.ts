@@ -342,6 +342,9 @@ export class McpFnServer<TContext = undefined> {
   // Request handlers of this server still running, and a callback for when
   // the last one settles (used by createWebStandardHandler's idle tracking).
   private inFlightRequests = 0;
+  // False while a stateful session's initialization is not yet accepted:
+  // the server is closed with its parent but receives no broadcasts.
+  private broadcastReady = true;
   private onRequestsSettled?: () => void;
 
   constructor(options: McpFnServerOptions<TContext>) {
@@ -406,21 +409,30 @@ export class McpFnServer<TContext = undefined> {
     const handlers = protocol._requestHandlers;
     if (!(handlers instanceof Map)) return;
     const server = this;
+    const countedHandler = (handler: (request: unknown, extra: unknown) => Promise<unknown>) =>
+      async (request: unknown, extra: unknown) => {
+        server.inFlightRequests += 1;
+        try {
+          return await handler(request, extra);
+        } finally {
+          server.inFlightRequests -= 1;
+          if (server.inFlightRequests === 0) server.onRequestsSettled?.();
+        }
+      };
     const counted = new Map(handlers);
+    // The SDK calls fallbackRequestHandler when no handler matches; count it too.
+    const target = this.protocol as unknown as { fallbackRequestHandler?: (request: unknown, extra: unknown) => Promise<unknown> };
+    let fallback = target.fallbackRequestHandler;
+    Object.defineProperty(target, "fallbackRequestHandler", {
+      configurable: true,
+      get: () => fallback && countedHandler(fallback),
+      set: (value) => { fallback = value; },
+    });
     protocol._requestHandlers = Object.assign(counted, {
       get(method: string) {
         const handler = Map.prototype.get.call(counted, method) as
           ((request: unknown, extra: unknown) => Promise<unknown>) | undefined;
-        if (!handler) return undefined;
-        return async (request: unknown, extra: unknown) => {
-          server.inFlightRequests += 1;
-          try {
-            return await handler(request, extra);
-          } finally {
-            server.inFlightRequests -= 1;
-            if (server.inFlightRequests === 0) server.onRequestsSettled?.();
-          }
-        };
+        return handler && countedHandler(handler);
       },
     });
   }
@@ -1050,9 +1062,16 @@ export class McpFnServer<TContext = undefined> {
     // refusal when every candidate is busy.
     const reserve = (session: Session): Session[] | Response => {
       const victims: Session[] = [];
-      const count = (match: (candidate: Session) => boolean) => {
+      // A session marked to make room for another reservation already has
+      // its slot paired with that reservation, so the global count skips it.
+      // A principal's count keeps it until it is actually evicted.
+      const count = (match: (candidate: Session) => boolean, pairedFree: boolean) => {
         let total = 0;
-        for (const candidate of sessions.values()) if (match(candidate) && !victims.includes(candidate)) total += 1;
+        for (const candidate of sessions.values()) {
+          if (!match(candidate) || victims.includes(candidate)) continue;
+          if (pairedFree && doomed.has(candidate)) continue;
+          total += 1;
+        }
         for (const candidate of closingSessions) if (match(candidate)) total += 1;
         for (const candidate of reservedSessions) if (match(candidate)) total += 1;
         return total;
@@ -1068,10 +1087,10 @@ export class McpFnServer<TContext = undefined> {
         doomed.add(entry[1]);
         return true;
       };
-      while (count((candidate) => candidate.bucket === session.bucket) >= maxPerPrincipal) {
+      while (count((candidate) => candidate.bucket === session.bucket, false) >= maxPerPrincipal) {
         if (!choose(session.bucket)) return refuse(jsonRpcErrorResponse(429, -32000, "Too many sessions for this principal"));
       }
-      while (count(() => true) >= maxSessions) {
+      while (count(() => true, true) >= maxSessions) {
         if (!choose()) return refuse(jsonRpcErrorResponse(503, -32000, "Too many sessions"));
       }
       reservedSessions.add(session);
@@ -1189,10 +1208,12 @@ export class McpFnServer<TContext = undefined> {
           } finally {
             reservedSessions.delete(session);
           }
+          // The parent was closed meanwhile: do not publish.
+          if (!this.requestServers.has(requestServer)) throw new Error("Server closed");
           // Published, and reachable by broadcasts, only once accepted.
           initialized = session;
           sessions.set(id, session);
-          this.requestServers.add(requestServer);
+          requestServer.broadcastReady = true;
           requestServer.onRequestsSettled = () => {
             if (session.active === 0) session.lastActive = Date.now();
           };
@@ -1201,6 +1222,9 @@ export class McpFnServer<TContext = undefined> {
         onsessionclosed: () => close(true),
       });
 
+      // Closed with its parent from now on, but no broadcasts until accepted.
+      requestServer.broadcastReady = false;
+      this.requestServers.add(requestServer);
       try {
         await configureRequestServer?.(requestServer);
         await requestServer.connect(transport);
@@ -1305,7 +1329,7 @@ export class McpFnServer<TContext = undefined> {
   // The per-request or per-session servers created by createWebStandardHandler
   // that currently have a client. Each one owns a single HTTP client's transport.
   private connectedRequestServers(): McpFnServer<TContext>[] {
-    return [...this.requestServers].filter((server) => server.connected);
+    return [...this.requestServers].filter((server) => server.connected && server.broadcastReady);
   }
 
   // This server and every per-request or per-session server with a client.

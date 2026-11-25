@@ -71,7 +71,7 @@ async function setup(options: McpFnWebStandardHandlerOptions<undefined> = {}) {
     const text = await response.text();
     return { status: response.status, text };
   };
-  return { handler, post, initialize, call, closed };
+  return { handler, post, initialize, call, closed, server };
 }
 
 describe("createWebStandardHandler session binding (MCP-SEC-03)", () => {
@@ -242,6 +242,37 @@ describe("createWebStandardHandler session limits (MCP-SEC-04)", () => {
     fail = true;
     expect((await initialize()).status).toBeGreaterThanOrEqual(400);
     expect((await call(kept.sessionId!)).status).toBe(200);
+  });
+
+  it("lets concurrent replacements each take a different idle session", async () => {
+    let hold: Promise<void> | undefined;
+    const { initialize } = await setup({
+      maxSessions: 2,
+      onsessioninitialized: () => hold,
+    });
+    await initialize();
+    await initialize();
+    let open!: () => void;
+    hold = new Promise((resolve) => { open = resolve; });
+    const first = initialize();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    hold = undefined;
+    const second = await initialize();
+    open();
+    expect([(await first).status, second.status]).toEqual([200, 200]);
+  });
+
+  it("does not publish a session whose initialization outlived server.close()", async () => {
+    let open!: () => void;
+    const hold = new Promise<void>((resolve) => { open = resolve; });
+    const { initialize, call, server } = await setup({ onsessioninitialized: () => hold });
+    const pending = initialize();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    await server.close();
+    open();
+    const result = await pending;
+    expect(result.status).not.toBe(200);
+    if (result.sessionId) expect((await call(result.sessionId)).status).toBe(404);
   });
 
   it("lets sessions without a principal share one per-principal allowance", async () => {
