@@ -292,6 +292,36 @@ function transactionsUsable(db: Adapter): boolean {
   return db.capabilities?.transactions?.supported !== false && typeof db.transaction === "function";
 }
 
+const pairingProbes = new WeakMap<object, Promise<boolean>>();
+
+/**
+ * DATA-41: whether a write on `db` commits together with its revision, so a
+ * row read after the write (in its transaction) is the state at that
+ * revision. Not on adapters without transactions (D1), nor on those that
+ * expose one but reject async callbacks (Drizzle with better-sqlite3), where
+ * push runs non-atomically. PostgreSQL adapters run async transactions; any
+ * other adapter is probed once with an empty transaction. A failed probe
+ * answers no without being remembered.
+ */
+export function revisionPairsVerifiable(db: Adapter): Promise<boolean> {
+  if (!transactionsUsable(db)) return Promise.resolve(false);
+  if (db.rawSql?.dialect === "postgres") return Promise.resolve(true);
+  let probe = pairingProbes.get(db);
+  if (!probe) {
+    probe = Promise.resolve()
+      .then(() => db.transaction(async () => undefined))
+      .then(
+        () => true,
+        () => {
+          pairingProbes.delete(db);
+          return false;
+        },
+      );
+    pairingProbes.set(db, probe);
+  }
+  return probe;
+}
+
 /**
  * Replaces each returned row of `resource` that has a revision with a copy
  * carrying it as `$rev`,
@@ -569,13 +599,15 @@ export async function assignWriteRevisions(
  * one and the resource issues revisions. The record carries it as `$rev` only
  * when it is the complete committed row (insert, replace and upsert rows, and
  * KV rows, which revision assignment records from storage) and the caller may
- * read every field; clients pair a revision only with such a row. A revisioned
+ * read every field, and only where `pairable` (the write committed together
+ * with its revision); clients pair a revision only with such a row. A revisioned
  * record the read policy restricts has its unreadable fields withheld.
  */
 export function wireChange(
   schema: DatafnSchema,
   resource: string,
   change: { op: string; record: Record<string, unknown> | null; rev?: number },
+  pairable: boolean,
 ): { record: Record<string, unknown> | null; rev?: number } {
   const issuing = issuesRevisions(schema, resource);
   const rev = change.rev !== undefined && issuing ? change.rev : undefined;
@@ -591,7 +623,9 @@ export function wireChange(
   if (!canReadEveryField(schema, resource, record)) {
     return { record: withoutUnreadableFields(schema, resource, record), ...revField };
   }
-  if (rev === undefined) return { record };
+  // Without a verified write boundary (see revisionPairsVerifiable) the
+  // recorded row may be another write's state: `rev` alone is sent.
+  if (rev === undefined || !pairable) return { record, ...revField };
   const complete = change.op !== "delete" && (change.op !== "merge" || isKvResource(resource));
   return { record: complete ? certify({ ...record, [REVISION_FIELD]: rev }) : record, rev };
 }

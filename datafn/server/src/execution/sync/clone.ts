@@ -10,6 +10,7 @@ import { ChangeTrackingService } from "./change-tracking.js";
 import { issuesRevisions, readWithRevisionsOrPlain, withoutUncertifiedRevision } from "../revisions.js";
 import type { DatafnLogger } from "../../logger.js";
 import {
+  canReadEveryField,
   isNamespaceOwnerActor,
   isPrivateShareableResource,
   resolveAccessLevel,
@@ -184,14 +185,19 @@ export async function executeClone(
    * in one snapshot, attaching each row's revision as `$rev`. Revisions are
    * optional: if their setup or read fails, the rows are read again without
    * them, so only a failure of the row read reaches the catch below. A stored
-   * `$rev` the server did not pair with its row is not returned.
+   * `$rev` the server did not pair with its row is not returned, and a row
+   * the caller may not read in full gets none.
    */
   const readCloneRows = async (
     table: string,
     read: (readDb: Adapter) => Promise<Array<Record<string, unknown>>>,
   ): Promise<Array<Record<string, unknown>>> => {
     if (!issuesRevisions(schema, table)) return read(db);
-    const rows = await readWithRevisionsOrPlain(db, namespace, table, read, () => read(db), (r) => r);
+    // A row the caller may not read in full gets no revision (its row
+    // content is returned as before).
+    const rows = await readWithRevisionsOrPlain(db, namespace, table, read, () => read(db), (r) => r, (row) =>
+      canReadEveryField(schema, table, row),
+    );
     return rows.map(withoutUncertifiedRevision);
   };
 

@@ -92,9 +92,46 @@ describe("DATA-41 revisions on Drizzle SQLite (no transactions)", () => {
     expect(changes.map((change) => [change.id, change.rev])).toEqual([
       ["task:a", 1], ["task:a", 2], ["task:a", 3], ["task:b", 1],
     ]);
-    // Complete rows (the inserts) carry their revision as $rev.
-    expect(changes[0].record).toMatchObject({ id: "task:a", title: "Alpha", $rev: 1 });
-    expect(changes[3].record).toMatchObject({ id: "task:b", $rev: 1 });
+    // Without transactions a write and its revision commit separately, so
+    // no recorded row is certified with a revision: rev alone (round 12).
+    expect(changes[0].record).toMatchObject({ id: "task:a", title: "Alpha" });
+    for (const change of changes) expect(change.record).not.toHaveProperty("$rev");
+  });
+
+  it("returns rev without a row or tombstone on push and no $rev rows on pull (round 12)", async () => {
+    const { call } = await start();
+    const pushed = await call("push", {
+      clientId: "c1",
+      mutations: [
+        insert("task:a", "m1"),
+        { resource: "task", version: 1, operation: "replace", id: "task:a", clientId: "c1", mutationId: "m2", record: { id: "task:a", title: "Bravo", priority: 2, done: true } },
+        insert("task:b", "m3"),
+        { resource: "task", version: 1, operation: "delete", id: "task:b", clientId: "c1", mutationId: "m4" },
+      ],
+    });
+    expect(pushed.status).toBe(200);
+    expect(pushed.body.result.ok).toBe(true);
+    expect(pushed.body.result.revisions).toEqual({
+      m1: { resource: "task", id: "task:a", rev: 1 },
+      m2: { resource: "task", id: "task:a", rev: 2 },
+      m3: { resource: "task", id: "task:b", rev: 1 },
+      m4: { resource: "task", id: "task:b", rev: 2 },
+    });
+
+    const global = await call("pull", { clientId: "c2", cursor: "0" });
+    const changes = global.body.result.changes as Array<Record<string, any>>;
+    expect(changes.map((change) => [change.id, change.rev])).toEqual([
+      ["task:a", 1], ["task:a", 2], ["task:b", 1], ["task:b", 2],
+    ]);
+    for (const change of changes) if (change.record) expect(change.record).not.toHaveProperty("$rev");
+
+    const canonical = await call("pull", { clientId: "c2", cursors: { task: "0" } });
+    expect(canonical.status).toBe(200);
+    const records = canonical.body.result.records.task as Array<Record<string, any>>;
+    expect(records.find((row) => row.id === "task:a")).toMatchObject({ title: "Bravo" });
+    for (const row of records) expect(row).not.toHaveProperty("$rev");
+    // Tombstone revisions come from the change's rev, not a certified row.
+    expect(canonical.body.result.deletedRevisions).toEqual({ task: { "task:b": 2 } });
   });
 
   it("creates no revision storage for an atomic /transact it refuses", async () => {

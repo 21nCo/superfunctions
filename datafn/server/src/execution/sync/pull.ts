@@ -6,7 +6,14 @@ import type { DatafnErrorCode, DatafnSchema } from "../../core-types.js";
 import type { Adapter } from "@superfunctions/db";
 import type { SequenceStore } from "./sequence-store.js";
 import { ChangeTrackingService, type ChangeEntry } from "./change-tracking.js";
-import { issuesRevisions, isRevisionCertified, wireChange, withoutUncertifiedRevision } from "../revisions.js";
+import {
+  issuesRevisions,
+  isRevisionCertified,
+  revisionPairsVerifiable,
+  revisionsEnabled,
+  wireChange,
+  withoutUncertifiedRevision,
+} from "../revisions.js";
 import { readRowRevision, withoutRowRevision } from "@datafn/core";
 import { isPrivateShareableResource, resolveAccessLevel } from "../../validation/authz.js";
 import {
@@ -795,6 +802,9 @@ async function executePullGlobalCursor(
   }
 
   const changeTracking = new ChangeTrackingService(db, namespace, sequenceStore);
+  // DATA-41: recorded rows certify their revision only where writes commit
+  // together with it.
+  const pairable = revisionsEnabled(schema) && (await revisionPairsVerifiable(db));
   const sinceSeq = parseInt(request.cursor, 10);
   const rawChanges = await changeTracking.getGlobalChanges({
     sinceSeq,
@@ -853,7 +863,7 @@ async function executePullGlobalCursor(
 
     // DATA-41: a complete row carries its revision as `$rev`; `rev` is the
     // record's revision after any change that recorded one.
-    const wire = wireChange(schema, change.resource, change);
+    const wire = wireChange(schema, change.resource, change, pairable);
     visibleChanges.push({
       serverSeq: change.serverSeq,
       resource: change.resource,
@@ -1010,6 +1020,9 @@ async function executePullCanonical(
 
   const changeTracking = new ChangeTrackingService(db, namespace, sequenceStore);
   const actorId = normalizeNonEmptyString((request as { actorId?: string }).actorId) ?? undefined;
+  // DATA-41: recorded rows certify their revision only where writes commit
+  // together with it.
+  const pairable = revisionsEnabled(schema) && (await revisionPairsVerifiable(db));
 
   const requestedResourceKeys = Object.keys(request.cursors).filter(
     (resource) => resource !== ACTOR_FEED_CURSOR_KEY,
@@ -1022,7 +1035,7 @@ async function executePullCanonical(
   // DATA-41: a change's row as it goes on the wire; a complete row carries
   // its revision as `$rev` (see wireChange).
   const withRev = (resource: string, change: ChangeEntry): Record<string, unknown> =>
-    wireChange(schema, resource, change).record!;
+    wireChange(schema, resource, change, pairable).record!;
   const revisionOf = (resource: string, change: ChangeEntry): number | undefined =>
     change.rev !== undefined && issuesRevisions(schema, resource) ? change.rev : undefined;
   // DATA-41: ids with a delete that recorded no revision get no tombstone
@@ -1190,6 +1203,10 @@ async function executePullCanonical(
         records[synthetic.resource].push(synthetic.record);
       } else if (synthetic.op === "delete") {
         deleted[synthetic.resource].push(synthetic.id);
+        // DATA-41: a visibility delete (a revoked grant or a lost
+        // membership) records no tombstone revision, so an id it collapses
+        // into carries none.
+        if (deletedRevisions[synthetic.resource]) delete deletedRevisions[synthetic.resource][synthetic.id];
       }
     }
 

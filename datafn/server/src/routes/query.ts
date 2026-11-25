@@ -124,10 +124,13 @@ export function createQueryHandler(
     namespace: string,
     actorId: string | undefined,
     cache: RequestPrincipalResolutions,
+    // DATA-41: a versioned query resolves access on its revision snapshot.
+    accessDb: Adapter | undefined = db,
   ): Promise<{ shareableAccessIds: string[]; hasShareableScopeAccess?: boolean } | undefined> => {
-    if (!db || !isPrivateShareableResource(validatedSchema, resource)) {
+    if (!accessDb || !isPrivateShareableResource(validatedSchema, resource)) {
       return undefined;
     }
+    const db = accessDb;
     if (!actorId) {
       return { shareableAccessIds: [] };
     }
@@ -175,7 +178,7 @@ export function createQueryHandler(
     }
 
     if (readMode !== "v1") {
-      const principals = await resolveActorPrincipals(namespace, actorId, cache);
+      const principals = await resolveActorPrincipals(namespace, actorId, cache, db);
       let hasScopeGrant = false;
       for (const principalId of principals) {
         const permissionRows = await db.findMany({
@@ -258,10 +261,12 @@ export function createQueryHandler(
     namespace: string,
     actorId: string,
     cache: RequestPrincipalResolutions,
+    principalDb: Adapter | undefined = db,
   ): Promise<string[]> => {
-    if (!db) {
+    if (!principalDb) {
       return [];
     }
+    const db = principalDb;
     const key = JSON.stringify([namespace, actorId]);
     const cached = cache.get(key);
     if (cached) return cached;
@@ -888,20 +893,27 @@ export function createQueryHandler(
                 });
               }
 
-              return resolveShareableAccessIds(
-                String(query.resource),
-                namespace,
-                actorId,
-                principalResolverCache,
-              ).then((shareableAccess) => {
-                // Access fields are the server's to set: a client-supplied
-                // hasShareableScopeAccess or shareableAccessIds must never
-                // widen or replace the access filter.
-                const {
-                  shareableAccessIds: _clientAccessIds,
-                  hasShareableScopeAccess: _clientScopeAccess,
-                  ...clientMetadata
-                } = (metadata ?? {}) as QueryEnvelopeMetadata;
+              // Access fields are the server's to set: a client-supplied
+              // hasShareableScopeAccess or shareableAccessIds must never
+              // widen or replace the access filter.
+              const {
+                shareableAccessIds: _clientAccessIds,
+                hasShareableScopeAccess: _clientScopeAccess,
+                ...clientMetadata
+              } = (metadata ?? {}) as QueryEnvelopeMetadata;
+              const run = async (
+                readDb: Adapter,
+                projectRecords = true,
+                accessDb: Adapter = readDb,
+                cache: RequestPrincipalResolutions = principalResolverCache,
+              ) => {
+                const shareableAccess = await resolveShareableAccessIds(
+                  String(query.resource),
+                  namespace,
+                  actorId,
+                  cache,
+                  accessDb,
+                );
                 const queryWithMetadata = {
                   ...query,
                   metadata: {
@@ -913,7 +925,7 @@ export function createQueryHandler(
                   queryWithMetadata as any,
                   validatedSchema,
                 );
-                const run = (readDb: Adapter, projectRecords = true) => executeSingleQuery(
+                return executeSingleQuery(
                   queryWithAutoFilters as unknown as Record<string, unknown>,
                   validatedSchema,
                   readDb,
@@ -925,6 +937,8 @@ export function createQueryHandler(
                   multiRegionRuntime,
                   { allowUnknownResources: handlerOpts?.allowUnknownResources === true, projectRecords },
                 );
+              };
+              return (async () => {
                 const rowsOf = (result: unknown) => {
                   const rows = (result as { data?: unknown })?.data;
                   return Array.isArray(rows) ? (rows as Array<Record<string, unknown>>) : undefined;
@@ -944,17 +958,20 @@ export function createQueryHandler(
                     return result;
                   });
                 }
-                // DATA-41: the query itself runs inside the revision snapshot
-                // and returns its stored rows unprojected (as clone returns
-                // them), so each row it selected is paired with the revision
-                // read in that same snapshot. A row the server did not pair
-                // with a revision (an unreadable field, a tombstone, no
-                // verified pairing, or a stored legacy `$rev` value) is
-                // returned as the plain query projects it, without `$rev`.
-                // If revision setup or any read inside the snapshot fails
-                // (thrown, or swallowed by a push-down or in-memory fallback,
-                // which on PostgreSQL aborts the transaction), the query is
-                // run again outside it, without revisions.
+                // DATA-41: the query itself, including its row-level access
+                // (owned rows, grants and principal memberships of a private
+                // shareable resource, resolved without the request's cache),
+                // runs inside the revision snapshot and returns its stored
+                // rows unprojected (as clone returns them), so each row it
+                // selected is paired with the revision read in that same
+                // snapshot. A row the server did not pair with a revision (an
+                // unreadable field, a tombstone, no verified pairing, or a
+                // stored legacy `$rev` value) is returned as the plain query
+                // projects it, without `$rev`. If revision setup or any read
+                // inside the snapshot fails (thrown, or swallowed by a
+                // push-down or in-memory fallback, which on PostgreSQL aborts
+                // the transaction), the query is run again outside it, with
+                // access resolved as before and without revisions.
                 const readable = (row: Record<string, unknown>) =>
                   canReadEveryField(validatedSchema, resourceName, row);
                 const select = Array.isArray(query.select) ? (query.select as string[]) : undefined;
@@ -963,7 +980,7 @@ export function createQueryHandler(
                   db,
                   namespace,
                   resourceName,
-                  (readDb) => run(readDb, false),
+                  (readDb) => run(readDb, false, readDb, new Map()),
                   () => {
                     plain = true;
                     return run(db);
@@ -982,7 +999,7 @@ export function createQueryHandler(
                   });
                   return result;
                 });
-              }).then((result) => {
+              })().then((result) => {
                 queryDurations.push(Date.now() - queryStart);
                 return result;
               });

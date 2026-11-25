@@ -15,6 +15,7 @@ import {
   readWithRevisions,
 } from "../src/execution/revisions.js";
 import { executeClone } from "../src/execution/sync/clone.js";
+import { executePull } from "../src/execution/sync/pull.js";
 import { ChangeTrackingService } from "../src/execution/sync/change-tracking.js";
 import { INTERNAL_TABLE_SCHEMAS } from "../src/execution/internal-tables.js";
 import { resolveNamespaceStoragePlan } from "../src/namespace-storage.js";
@@ -1523,14 +1524,14 @@ describe("DATA-41 revisions: legacy $rev values are never revisions (round 8)", 
     relations: [],
   };
 
-  async function evolve() {
+  async function evolve(next: unknown = after) {
     const database = memoryAdapter();
     const old = await serve({ database, schema: before, enabled: false });
     const insert = await old.push({ resource: "evolving", operation: "insert", id: "evolving:1", record: { title: "t", $rev: 7, secretNote: "s" } });
     expect(insert.body.ok).toBe(true);
     const merge = await old.push({ resource: "evolving", operation: "merge", id: "evolving:1", record: { $rev: 8 } });
     expect(merge.body.ok).toBe(true);
-    return serve({ database, schema: after });
+    return serve({ database, schema: next });
   }
 
   it("projects a versioned row whose stored $rev the server did not pair, so no legacy $rev or hidden field leaks", async () => {
@@ -1558,9 +1559,15 @@ describe("DATA-41 revisions: legacy $rev values are never revisions (round 8)", 
     }
     const clone = await current.send("clone", { clientId: "client:b", tables: ["evolving"] });
     expect(clone.body.result.data.evolving).toHaveLength(1);
-    // Clone pairs the row with the server's revision (bumped by both writes
-    // while revisions were off), never the stored application value 8.
-    expect(clone.body.result.data.evolving[0].$rev).toBe(2);
+    // The stored row keeps a column the read policy does not list
+    // (secretNote), so clone pairs it with no revision (round 12), and never
+    // sends the stored application value 8.
+    expect(clone.body.result.data.evolving[0]).not.toHaveProperty("$rev");
+    // Without a read policy clone pairs the row with the server's revision
+    // (bumped by both writes while revisions were off), not the value 8.
+    const open = await evolve({ ...after, resources: [{ ...after.resources[0], permissions: undefined }] });
+    const openClone = await open.send("clone", { clientId: "client:b", tables: ["evolving"] });
+    expect(openClone.body.result.data.evolving[0].$rev).toBe(2);
   });
 });
 
@@ -2006,5 +2013,142 @@ describe("DATA-41 revisions: a tombstone needs a present-to-absent delete (round
     expect(concurrentDelete).toBeUndefined();
     expect(res.body.result.revisions?.[res.mutationId]).toBeUndefined();
     expect(await served.rev("task", "task:1")).toEqual({ rev: 2, deleted: true });
+  });
+});
+
+describe("DATA-41 revisions: round 12", () => {
+  it("returns no $rev on clone rows the caller may not read in full, on every clone mode", async () => {
+    const database = memoryAdapter();
+    const { push } = await serve({ database });
+    for (const id of ["secretive:1", "secretive:2", "secretive:3"]) {
+      expect((await push({ resource: "secretive", operation: "insert", id, record: { title: id, hidden: "h" } })).body.ok).toBe(true);
+    }
+    await push({ resource: "task", operation: "insert", id: "task:1", record: { title: "t" } });
+    configureRevisions(schema, { enabled: true });
+    const page = await executeClone(
+      { clientId: "client:b", tables: ["secretive"], page: { table: "secretive", limit: 2 } } as any,
+      schema,
+      database,
+      NS,
+    );
+    const capped = await executeClone({ clientId: "client:b", tables: ["secretive"] } as any, schema, database, NS, undefined, 2);
+    const full = await executeClone({ clientId: "client:b", tables: ["secretive", "task"] } as any, schema, database, NS);
+    for (const rows of [page.data.secretive, capped.data.secretive, full.data.secretive]) {
+      expect(rows.length).toBeGreaterThan(0);
+      for (const row of rows) expect(row).not.toHaveProperty("$rev");
+    }
+    expect(full.data.secretive).toHaveLength(3);
+    // A fully readable resource keeps its revisions.
+    expect(full.data.task).toEqual([expect.objectContaining({ id: "task:1", $rev: 1 })]);
+  });
+
+  it("decides shareable access of a versioned query on its snapshot, not the state before it", async () => {
+    const shared = {
+      resources: [{
+        name: "notebook",
+        version: 1,
+        capabilities: ["timestamps", "audit", { shareable: { levels: ["viewer", "editor", "owner"], default: "private" } }],
+        fields: [{ name: "title", type: "string" as const, required: false }],
+      }],
+      relations: [],
+    } as any;
+    const base = memoryAdapter();
+    // PostgreSQL-like: the snapshot sees the grant revoked by a write that
+    // committed after the request began but before the snapshot.
+    const rawSql = { dialect: "postgres", execute: async () => undefined, query: async () => [] };
+    let snapshots = 0;
+    const database = {
+      ...base,
+      rawSql,
+      transaction: async (fn: (tx: Adapter) => Promise<unknown>) => {
+        snapshots += 1;
+        return fn({
+          ...base,
+          rawSql,
+          findMany: async (args: any) => {
+            const rows = await base.findMany(args);
+            return args.model === "__datafn_permissions_global"
+              ? rows.map((row: Json) => ({ ...row, revokedAt: 2 }))
+              : rows;
+          },
+        } as Adapter);
+      },
+    } as unknown as Adapter;
+    const server = await createDatafnServer({
+      schema: shared,
+      database,
+      allowUnknownResources: true,
+      revisions: { enabled: true },
+      namespaceProvider: { getNamespace: () => "team", getActorId: () => "bob" as any },
+    });
+    await base.create({
+      model: "notebook",
+      data: { id: "notebook:1", title: "Trip", createdBy: "alice", __ns: "team" },
+      namespace: "team",
+    });
+    await base.create({
+      model: "__datafn_permissions_global",
+      data: {
+        id: "grant-1", resourceType: "notebook", resourceNs: "team", resourceId: "notebook:1",
+        principalId: "user:bob", level: "viewer", grantKind: "record", sourceRef: null,
+        grantedBy: "alice", grantedAt: 1, revokedAt: null, __ns: "team",
+      },
+      namespace: "team",
+    });
+    const query = async (withRevisions: boolean) => {
+      const res = await server.router.handle(new Request("http://localhost/datafn/query", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ resource: "notebook", version: 1, ...(withRevisions ? { withRevisions: true } : {}) }),
+      }));
+      expect(res.status).toBe(200);
+      return ((await res.json()) as Json).result.data as Json[];
+    };
+    // Outside the snapshot the grant is still active.
+    expect((await query(false)).map((row) => row.id)).toEqual(["notebook:1"]);
+    expect(await query(true)).toEqual([]);
+    expect(snapshots).toBeGreaterThan(0);
+  });
+
+  it("gives an id no tombstone revision when a visibility delete collapses into its delete", async () => {
+    const shared = {
+      resources: [{
+        name: "notebook",
+        version: 1,
+        capabilities: [{ shareable: { levels: ["viewer", "editor", "owner"], default: "private" } }],
+        fields: [{ name: "title", type: "string" as const, required: false }],
+      }],
+      relations: [],
+    } as any;
+    configureRevisions(shared, { enabled: true });
+    const database = memoryAdapter();
+    const tracking = new ChangeTrackingService(database, NS);
+    tracking.useRevisionsOf(shared);
+    await tracking.ensureReady();
+    await tracking.ensureRevisionsReady();
+    const grant = {
+      id: "grant-1", resourceType: "notebook", resourceNs: NS, resourceId: "notebook:1",
+      principalId: "user:bob", level: "viewer", grantKind: "record", sourceRef: null,
+      grantedBy: "alice", grantedAt: 1, revokedAt: null,
+    };
+    await tracking.recordChanges([{ serverSeq: 1, resource: "notebook", id: "notebook:1", op: "insert", record: { id: "notebook:1", title: "a" } }]);
+    // A physical delete that recorded tombstone revision 2 (the row is gone).
+    await tracking.recordChanges([{ serverSeq: 2, resource: "notebook", id: "notebook:1", op: "delete", record: null }]);
+    const pull = () =>
+      executePull({ clientId: "client:b", cursors: { notebook: "0" }, actorId: "bob" } as any, shared, database, NS) as Promise<Json>;
+
+    const before = await pull();
+    expect(before.ok).toBe(true);
+    expect(before.deleted.notebook).toContain("notebook:1");
+    expect(before.deletedRevisions).toEqual({ notebook: { "notebook:1": 2 } });
+
+    // The grant is created and then revoked: a visibility delete for the
+    // same id, which records no tombstone revision.
+    await tracking.recordChanges([{ serverSeq: 3, resource: "__datafn_permissions_global", id: "grant-1", op: "insert", record: grant }]);
+    await tracking.recordChanges([{ serverSeq: 4, resource: "__datafn_permissions_global", id: "grant-1", op: "delete", record: null }]);
+    const after = await pull();
+    expect(after.ok).toBe(true);
+    expect(after.deleted.notebook).toContain("notebook:1");
+    expect(after.deletedRevisions?.notebook?.["notebook:1"]).toBeUndefined();
   });
 });

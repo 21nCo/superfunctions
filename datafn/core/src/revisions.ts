@@ -19,10 +19,15 @@ export interface DatafnPushRevision {
    * The record's complete row at `rev`, read in the write's transaction,
    * carrying `rev` again as `$rev` row metadata (only that `$rev` belongs to
    * the row). Absent when the caller may not read every field, or on a
-   * deduplicated reply; the caller then holds no row proven at `rev`.
+   * deduplicated reply, or when the database has no transactions (the
+   * write and its revision commit separately); the caller then holds no row
+   * proven at `rev`.
    */
   record?: Record<string, unknown>;
-  /** The write deleted the record; `rev` is its tombstone revision. */
+  /**
+   * The write deleted the record; `rev` is its tombstone revision. Absent,
+   * like `record`, when the database has no transactions.
+   */
   deleted?: true;
 }
 

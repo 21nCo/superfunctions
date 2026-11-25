@@ -12,6 +12,7 @@ import type { Adapter } from "@superfunctions/db";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { bumpRevision, configureRevisions, ensureRevisionsTable, readRevisions, readWithRevisions } from "../src/execution/revisions.js";
 import { ChangeTrackingService } from "../src/execution/sync/change-tracking.js";
+import { executeTransaction } from "../src/execution/transact.js";
 import {
   inspectPostgresNamespaceStorage,
   quotePostgresIdentifier,
@@ -153,4 +154,41 @@ describe("DATA-41 revisions on PostgreSQL", { timeout: PG_TIMEOUT_MS }, () => {
       await targetKysely.destroy();
     }
   });
+});
+
+describe("DATA-41 revisions: direct executeTransaction on PostgreSQL (round 12)", () => {
+  it(
+    "creates revision storage itself before its write transaction on a fresh database",
+    async () => {
+      await adapter.rawSql!.execute(`CREATE TABLE "task" (id text primary key, title text)`);
+      const db = kyselyAdapter({ db: kysely, dialect: "postgres", schema: { task: "task" } }) as Adapter;
+      const results = new Map<string, unknown>();
+      const idempotencyStore = {
+        get: async (clientId: string, mutationId: string) => results.get(`${clientId}:${mutationId}`),
+        set: async (clientId: string, mutationId: string, result: unknown) => {
+          results.set(`${clientId}:${mutationId}`, result);
+        },
+      } as any;
+      const insert = (id: string, mutationId: string) => ({
+        mutation: { resource: "task", version: 1, operation: "insert", id, clientId: "c1", mutationId, record: { title: id } } as any,
+      });
+      const result = await executeTransaction(
+        { atomic: true, steps: [insert("task:1", "m1"), insert("task:2", "m2")] },
+        revisionSchema,
+        db,
+        idempotencyStore,
+        undefined,
+        "ns",
+        undefined,
+        undefined,
+      );
+      expect(result.ok, JSON.stringify(result)).toBe(true);
+      expect((result as any).result.ok, JSON.stringify(result)).toBe(true);
+      expect((result as any).result.results.map((step: any) => step.rev)).toEqual([1, 1]);
+      const revisions = await readRevisions(adapter, "ns", "task", ["task:1", "task:2"]);
+      expect(revisions.get("task:1")).toMatchObject({ rev: 1, deleted: false });
+      expect(revisions.get("task:2")).toMatchObject({ rev: 1, deleted: false });
+    },
+    PG_TIMEOUT_MS,
+  );
 });

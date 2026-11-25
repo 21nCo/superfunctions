@@ -5,7 +5,6 @@ import type { SequenceStore } from "../execution/sync/sequence-store.js";
 import { getBodyFromContext } from "../http/json.js";
 import { okResponse, errorResponse } from "../http/errors.js";
 import { executeTransaction } from "../execution/transact.js";
-import { ensureRevisionsTable } from "../execution/revisions.js";
 import { buildSchemaIndex, validateMutation, validateQuery } from "../validation/index.js";
 import { validateQueryAuthz, validateMutationAuthz, type AuthzOptions } from "../validation/authz.js";
 import { parseDatafnRequest } from "@datafn/core";
@@ -147,15 +146,6 @@ export function createTransactHandler(
         const normalizedSteps = prepared.map((step) =>
           step.kind === "mutation" ? { mutation: step.body } : { query: step.body },
         );
-
-        // DATA-41: mutations bump revisions inside the transaction, so the
-        // revisions table must exist before it opens.
-        // An atomic request the adapter cannot run (no transactions) is
-        // refused before anything is created.
-        const refusedAtomic = body.atomic !== false && db?.capabilities?.transactions?.supported === false;
-        if (db && !refusedAtomic && normalizedSteps.some((step: any) => step.mutation)) {
-          await ensureRevisionsTable(db);
-        }
 
         const result = await executeTransaction(
         { ...body, steps: normalizedSteps },

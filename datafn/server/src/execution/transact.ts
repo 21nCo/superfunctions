@@ -282,6 +282,8 @@ export async function executeTransaction(
         // not need these tables and must not perform mutation-side DDL.
         await idempotencyStore.ensureReady?.();
         await changeTracking.ensureReady();
+        // DATA-41: every write inside raises a revision, so its table too.
+        await changeTracking.ensureRevisionsReady();
       }
       await (db as any).transaction(async (tx: Adapter) => {
         deferredPermissionDirectorySyncs.length = 0;

@@ -482,17 +482,22 @@ export async function executePush(
 
   /**
    * DATA-41: the mutated record's revision and complete row after the write,
-   * read on `targetDb` (the write's transaction when there is one).
+   * read on `targetDb` (the write's transaction when there is one). Without
+   * a transaction (`inTransaction` false) the write and its revision commit
+   * separately, so another write may land between them and the row read
+   * here: the result carries the revision alone, with no row or tombstone.
    */
   async function postWriteRevision(
     mut: any,
     targetDb: Adapter,
     recorded: ChangeEntryInput[],
+    inTransaction: boolean,
   ): Promise<DatafnPushRevision | undefined> {
     if (typeof mut.id !== "string" || !issuesRevisions(schema, mut.resource)) return undefined;
     const rev = recordedRevision(recorded, mut.resource, mut.id);
     if (rev === undefined) return undefined;
     const base = { resource: mut.resource as string, id: mut.id as string, rev };
+    if (!inTransaction) return base;
     const last = [...recorded].reverse().find((entry) => entry.resource === mut.resource && entry.id === mut.id);
     if (last?.op === "delete") return { ...base, deleted: true };
     const row = (await targetDb.findOne({
@@ -1354,7 +1359,7 @@ export async function executePush(
             // FIX-REL-002: retry within transaction
             await recordChangeWithRetry(txChangeTracking, entry, 2, logger);
           }
-          mutationRevision = await postWriteRevision(mut, txDb, recorded);
+          mutationRevision = await postWriteRevision(mut, txDb, recorded, true);
         });
         sequenceAllocation.initialBatchAllocated = txSequenceAllocation.initialBatchAllocated;
         sequenceAllocation.pool = txSequenceAllocation.pool;
@@ -1459,7 +1464,7 @@ export async function executePush(
           for (const entry of recorded) {
             await recordChangeWithRetry(changeTracking, entry, 2, logger);
           }
-          mutationRevision = await postWriteRevision(mut, db, recorded);
+          mutationRevision = await postWriteRevision(mut, db, recorded, false);
         } catch (error) {
           logger?.error("Change tracking failed in push after retries", { error: String(error), operation: "push.changeTracking" });
           changeTrackingFailed = true;
