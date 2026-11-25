@@ -265,6 +265,7 @@ export function materializeSelect(
   store: DataStore,
   omit?: string[],
   metadata?: QueryMetadata,
+  visibleJoinRowsOnly = false,
 ): Record<string, unknown> {
   const resourceSchema = schema.resources.find((r) => r.name === resource);
   if (!resourceSchema) return { id: record.id };
@@ -486,7 +487,7 @@ export function materializeSelect(
     } else if (parsed.directive === "#") {
       // Emit join rows for many-many
       if (relation.relation.type === "many-many") {
-        result[parsed.baseName] = getJoinRows(record, relation, resource, schema, store);
+        result[parsed.baseName] = getJoinRows(record, relation, resource, schema, store, visibleJoinRowsOnly);
       }
     } else if (parsed.directive === "*#") {
       // Expand relation with metadata for many-many
@@ -762,9 +763,12 @@ function getJoinRows(
   resource: string,
   schema: DatafnSchema,
   store: DataStore,
+  visibleOnly: boolean,
 ): unknown[] {
   const relation = match.relation;
-  const sorted = sortJoinRows(getManyManyRows(record, match, resource, schema, store), relation);
+  const sorted = visibleOnly
+    ? expandManyManyRecords(record, match, schema, store, resource).map(({ join }) => join)
+    : sortJoinRows(getManyManyRows(record, match, resource, schema, store), relation);
 
   // Return join rows with from, to, and metadata
   return sorted.map((join) => {

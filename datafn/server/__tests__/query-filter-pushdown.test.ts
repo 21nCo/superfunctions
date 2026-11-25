@@ -1149,6 +1149,17 @@ it("preserves both resource discriminators on inverse predicates", async () => {
     expect(result.status).toBe(200);
     expect(result.body.result.data).toEqual(transaction.result.results[index + 2].data);
   }
+
+  const join = { from: "legacy-entry", to: "legacy-target" };
+  for (const [resource, relation, id, data] of [
+    ["objective", "entryGroups", "legacy-entry", [join]],
+    ["collection", "entries", "legacy-target", [join, join]],
+    ["task", "entries", "legacy-target", []],
+  ] as const) {
+    const result = await query(server, { resource, relation, id, version: 1, select: ["#"], count: true });
+    expect(result.status).toBe(200);
+    expect(result.body.result).toEqual({ data, nextCursor: null, count: data.length });
+  }
 });
 
 describe("relation expansion by name for in-memory queries", () => {
