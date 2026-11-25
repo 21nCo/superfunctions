@@ -41,6 +41,7 @@ interface ReferenceTarget {
   mode: OpenAPIReferenceMode;
   source: ReferenceDocument;
   path?: ReferencePath;
+  importSite?: ReferenceSite;
 }
 
 interface PointerLookup {
@@ -57,6 +58,16 @@ interface ReferenceCopies {
 interface ReferencePath {
   key: string;
   parent?: ReferencePath;
+}
+
+interface ReferenceSite {
+  path?: ReferencePath;
+}
+
+interface PointerOptions {
+  aliases?: Set<object>;
+  directAlias?: object;
+  importSite?: ReferenceSite;
 }
 
 class ReferencePreparationError extends Error {
@@ -215,7 +226,7 @@ function prepareReferences(document: OpenAPIDocument, externalReferences?: Reado
   const supplied = new Map<string, ReferenceDocument>();
   const literalReferences = new Map<object, string>();
   const seen = new WeakMap<object, Map<OpenAPIReferenceMode, object>>();
-  const pending: Array<ReferenceTarget & { value: object; copy: object; importSite?: ReferencePath }> = [];
+  const pending: Array<ReferenceTarget & { value: object; copy: object }> = [];
   let field = "x-apifn-reference-copies";
   while (Object.hasOwn(document, field)) field += "-";
   const referenceCopies: ReferenceCopies = { field, targets: [], originals: new Map() };
@@ -229,7 +240,7 @@ function prepareReferences(document: OpenAPIDocument, externalReferences?: Reado
 
   function enqueue(
     value: unknown, mode: OpenAPIReferenceMode, source: ReferenceDocument,
-    path?: ReferencePath, importSite?: ReferencePath
+    path?: ReferencePath, importSite?: ReferenceSite
   ): unknown {
     if (typeof value !== "object" || value === null) return value;
     const contexts = seen.get(value) ?? new Map<OpenAPIReferenceMode, object>();
@@ -262,11 +273,13 @@ function prepareReferences(document: OpenAPIDocument, externalReferences?: Reado
   }
 
   function pointerTarget(
-    source: ReferenceDocument, tokens: string[], aliases: Set<object>, directAlias?: object
+    source: ReferenceDocument, tokens: string[],
+    { aliases = new Set<object>(), directAlias, importSite: outerSite }: PointerOptions
   ): PointerLookup {
     let value = source.value;
     let mode: OpenAPIReferenceMode = "node";
     let path: ReferencePath | undefined;
+    let importSite: ReferenceSite | undefined;
     const matched: string[] = [];
     const unresolved = (index: number, target?: "reference"): PointerLookup =>
       ({ tokens: [...matched, ...tokens.slice(index)], target });
@@ -274,7 +287,7 @@ function prepareReferences(document: OpenAPIDocument, externalReferences?: Reado
       // Follow aliases before looking up remaining tokens, keeping siblings
       // that Swagger Parser gives precedence over the referenced object.
       const chain = new Set(aliases);
-      const overrides = new Map<string, { value: unknown; source: ReferenceDocument; path?: ReferencePath }>();
+      const overrides = new Map<string, Omit<ReferenceTarget, "mode">>();
       while (typeof value === "object" && value !== null && mode !== "literal" &&
           "$ref" in value && typeof value.$ref === "string" && value.$ref) {
         // A reference can point into its own siblings. Following a cycle
@@ -286,13 +299,13 @@ function prepareReferences(document: OpenAPIDocument, externalReferences?: Reado
         chain.add(value);
         let target = aliasTargets.get(value);
         if (!target) {
+          const site = source === root ? { path } : importSite ?? outerSite;
           let lookup: PointerLookup;
           try {
             const alias = location(source, value.$ref);
-            lookup = lookupPointer(alias.source, alias.fragment, chain, value);
+            lookup = lookupPointer(alias.source, alias.fragment, { aliases: chain, directAlias: value, importSite: site });
           } catch (error) {
-            if (source === root) throw errorAtReference(path, error);
-            throw error;
+            throw errorAtReference(site?.path, error);
           }
           if (!lookup.target || lookup.target === "reference") return unresolved(index, "reference");
           target = lookup.target;
@@ -302,11 +315,13 @@ function prepareReferences(document: OpenAPIDocument, externalReferences?: Reado
         if (target.value === value) break;
         for (const [key, sibling] of Object.entries(value)) {
           if (key !== "$ref" && !overrides.has(key)) {
-            overrides.set(key, { value: sibling, source, path });
+            overrides.set(key, { value: sibling, source, path, importSite });
           }
         }
         if (mode === "node" && target.mode === "example") mode = "example";
+        const aliasSite = source === root ? { path } : importSite;
         source = target.source;
+        importSite = source === root ? undefined : target.importSite ?? aliasSite;
         path = target.path;
         value = target.value;
       }
@@ -336,24 +351,27 @@ function prepareReferences(document: OpenAPIDocument, externalReferences?: Reado
       matched.push(key);
       const child: unknown = Reflect.get(parent, key);
       const sibling = overrides.get(key);
-      if (sibling) source = sibling.source;
+      if (sibling) {
+        source = sibling.source;
+        importSite = sibling.importSite;
+      }
       path = { key, parent: sibling ? sibling.path : path };
       mode = referenceChildMode(parent, mode, key, child);
       value = child;
     }
-    return { tokens: matched, target: { value, mode, source, path } };
+    return { tokens: matched, target: { value, mode, source, path, importSite } };
   }
 
   function lookupPointer(
-    source: ReferenceDocument, fragment: string, aliases = new Set<object>(), directAlias?: object
+    source: ReferenceDocument, fragment: string, options: PointerOptions = {}
   ): PointerLookup {
     if (fragment === "") return { tokens: [], target: { value: source.value, mode: "node", source } };
     if (source === root && fragment.startsWith("/")) {
       const legacy = fragment.split("/").slice(1).map((token) => decodeFragment(unescapePointerToken(token)));
-      const legacyLookup = pointerTarget(source, legacy, aliases, directAlias);
+      const legacyLookup = pointerTarget(source, legacy, options);
       if (legacyLookup.target || !/%2f/i.test(fragment)) return legacyLookup;
       const decoded = decodeFragment(fragment).split("/").slice(1).map(unescapePointerToken);
-      const decodedLookup = pointerTarget(source, decoded, aliases, directAlias);
+      const decodedLookup = pointerTarget(source, decoded, options);
       return decodedLookup.target ? decodedLookup : legacyLookup;
     }
     const decoded = decodeFragment(fragment);
@@ -361,14 +379,14 @@ function prepareReferences(document: OpenAPIDocument, externalReferences?: Reado
       throw new Error("OpenAPI $ref fragments must be slash-delimited JSON pointers");
     }
     const tokens = decoded.split("/").slice(1).map(unescapePointerToken);
-    return pointerTarget(source, tokens, aliases, directAlias);
+    return pointerTarget(source, tokens, options);
   }
 
   function rewriteReference(
-    ref: string, source: ReferenceDocument, mode: OpenAPIReferenceMode, site?: ReferencePath
+    ref: string, source: ReferenceDocument, mode: OpenAPIReferenceMode, site?: ReferenceSite
   ): string {
     const destination = location(source, ref);
-    const { tokens, target } = lookupPointer(destination.source, destination.fragment);
+    const { tokens, target } = lookupPointer(destination.source, destination.fragment, { importSite: site });
     const canonical = encodePointer(tokens);
     const isLocal = destination.source === root;
     if (!target || target === "reference") {
@@ -390,7 +408,7 @@ function prepareReferences(document: OpenAPIDocument, externalReferences?: Reado
     pointers.set(key, preparedRef);
     copiedPointers.set(destination.source, pointers);
     referenceCopies.originals.set(preparedRef, isLocal ? canonical : ref);
-    referenceCopies.targets.push(enqueue(target.value, mode, target.source, target.path, site));
+    referenceCopies.targets.push(enqueue(target.value, mode, target.source, target.path, target.importSite ?? site));
     return preparedRef;
   }
 
@@ -403,11 +421,11 @@ function prepareReferences(document: OpenAPIDocument, externalReferences?: Reado
         Reflect.deleteProperty(copy, "$ref");
       } else if (value.$ref) {
         // Diagnostics for preloaded targets point to the importing ref in the caller's document.
-        const site = source === root ? path : importSite;
+        const site = source === root ? { path } : importSite;
         try {
           Reflect.set(copy, "$ref", rewriteReference(value.$ref, source, mode, site));
         } catch (error) {
-          throw errorAtReference(site, error);
+          throw errorAtReference(site?.path, error);
         }
       }
     }

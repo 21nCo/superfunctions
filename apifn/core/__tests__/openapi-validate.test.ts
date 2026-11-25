@@ -343,16 +343,23 @@ describe("validateOpenAPI", () => {
     ]);
   });
 
-  it.each([false, true])("identifies the unlisted alias regardless of schema order (reversed=%s)", async (reversed) => {
+  it.each([
+    { reversed: false, preloaded: false },
+    { reversed: true, preloaded: false },
+    { reversed: false, preloaded: true },
+    { reversed: true, preloaded: true },
+  ])("identifies the importing alias (reversed=$reversed, preloaded=$preloaded)", async ({ reversed, preloaded }) => {
+    const uri = "https://example.invalid/types.yaml";
     const schemas = Object.entries({
-      Alias: { $ref: "https://example.invalid/types.yaml" },
+      Alias: { $ref: uri },
       Value: { $ref: "#/components/schemas/Alias/properties/item" },
     });
     const doc = {
       ...documentWithReference("#/components/schemas/Alias"),
       components: { schemas: Object.fromEntries(reversed ? schemas.reverse() : schemas) },
     };
-    await expect(validateOpenAPI(doc)).resolves.toEqual([
+    const externalReferences = preloaded ? new Map([[uri, "$ref: ./unlisted.yaml"]]) : undefined;
+    await expect(validateOpenAPI(doc, { externalReferences })).resolves.toEqual([
       { path: "components.schemas.Alias.$ref", message: expect.stringContaining("explicit allowlist"), severity: "error" },
     ]);
   });
