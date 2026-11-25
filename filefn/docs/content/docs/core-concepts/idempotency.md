@@ -26,7 +26,9 @@ The server:
 4. If a row exists with a **different** payload hash → fail with `FILEFN_IDEMPOTENCY_CONFLICT`.
 5. Otherwise → create a new session and store the key + hash.
 
-The window is the upload-session TTL. Re-using a key after the session expires creates a new session.
+A replayed session also reports its `status`. A `completed` one carries the stored `fileId` and `versionId`, so the client confirms the file instead of uploading again; `expired` (past its TTL) and `aborted` are final, and the client starts again under a new key.
+
+Servers before 0.8 read the key only from the header. 0.8 also honors an `idempotencyKey` in the JSON body (what `@filefn/client` 0.4 and earlier sent) for one minor version, with a deprecation warning; a request giving both must give the same value.
 
 Unauthenticated (anonymous) callers get no idempotency: they all share one scope, and only the caller that created a session holds its `uploadSessionToken`, so a retry always creates a fresh session with its own token. The abandoned session expires on its own.
 

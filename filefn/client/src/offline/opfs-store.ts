@@ -110,11 +110,14 @@ function deriveFallbackLocalSource(upload: Pick<PendingUpload, 'fileName' | 'mim
 
 export interface OPFSStoreConfig {
   rootDir?: string;
+  /** Storage root. Defaults to `navigator.storage.getDirectory()`. */
+  getRoot?: () => Promise<FileSystemDirectoryHandle | { getDirectoryHandle(name: string, options?: { create?: boolean }): Promise<unknown> }>;
 }
 
 export class OPFSStore {
   private static readonly LOCAL_OBJECT_URL_REVOKE_DELAY_MS = 5 * 60 * 1000;
   private rootDirName: string;
+  private getRoot?: OPFSStoreConfig['getRoot'];
   private rootDir: FileSystemDirectoryHandle | null = null;
   private isInitialized = false;
   private localObjectUrls = new Map<string, string>();
@@ -122,6 +125,7 @@ export class OPFSStore {
 
   constructor(config: OPFSStoreConfig = {}) {
     this.rootDirName = config.rootDir || 'filefn-pending-uploads';
+    this.getRoot = config.getRoot;
   }
 
   /**
@@ -141,12 +145,12 @@ export class OPFSStore {
   async init(): Promise<void> {
     if (this.isInitialized) return;
 
-    if (!OPFSStore.isSupported()) {
+    if (!this.getRoot && !OPFSStore.isSupported()) {
       throw new Error('OPFS is not supported in this environment');
     }
 
     try {
-      const opfsRoot = await (navigator.storage as any).getDirectory();
+      const opfsRoot: any = this.getRoot ? await this.getRoot() : await (navigator.storage as any).getDirectory();
       this.rootDir = await opfsRoot.getDirectoryHandle(this.rootDirName, { create: true });
       this.isInitialized = true;
     } catch (error) {

@@ -2429,6 +2429,11 @@
               "$ref": "#/components/schemas/JSONValue"
             },
             "description": "At most 16384 bytes as JSON and 32 levels deep."
+          },
+          "idempotencyKey": {
+            "type": "string",
+            "deprecated": true,
+            "description": "Deprecated: send the x-idempotency-key header. Honored only without that header (or with the same value) and answered with a deprecation warning; ignored after the next minor release."
           }
         },
         "required": [
@@ -2462,6 +2467,25 @@
           },
           "expiresAt": {
             "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "in_progress",
+              "completed",
+              "aborted",
+              "expired"
+            ],
+            "description": "Set only when an idempotency key replays an existing session. completed carries fileId and versionId; aborted and expired are final, so start again under a new key."
+          },
+          "fileId": {
+            "type": "string",
+            "description": "The file a completed replayed session stored."
+          },
+          "versionId": {
+            "type": "string",
+            "description": "The version a completed replayed session stored."
           }
         },
         "required": [

@@ -413,11 +413,16 @@ export function createHttpClient(config: FileFnClientConfig): HttpClient {
 
   return {
     async initUpload(params, signal) {
+      // The key travels in the x-idempotency-key header, the server's contract.
+      // (0.4 and earlier sent it in the body, which servers before 0.8 ignored.)
+      const { idempotencyKey, ...body } = params;
       return request<InitUploadResponse>(
         "POST",
         "/upload/init",
-        params,
+        body,
         signal,
+        retryOptions,
+        idempotencyKey ? { "x-idempotency-key": idempotencyKey } : undefined,
       );
     },
 

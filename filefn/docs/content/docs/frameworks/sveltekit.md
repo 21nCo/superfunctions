@@ -48,10 +48,12 @@ export const DELETE = handler;
 import { createFileFnClient } from "@filefn/client";
 import { browser } from "$app/environment";
 
+// Offline work is scoped to the signed-in user: on sign-out or a user change,
+// call filefnClient.dispose() and create a new client.
 export const filefnClient = browser
   ? createFileFnClient({
       baseUrl: "/filefn",
-      offline: { enabled: true, opfsDir: "filefn-offline" },
+      offline: { enabled: true, partition: { serviceId: "app", principal: { kind: "user", principalId: getSignedInUserId() } } },
     })
   : null;
 ```

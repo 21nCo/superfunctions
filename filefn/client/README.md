@@ -71,4 +71,10 @@ In a browser, `baseUrl` and the part URL are resolved against the document base 
 
 ### Offline replay
 
-With `offline: { enabled: true }`, uploads staged while offline are replayed by the client that runs the sync, using that client's `fetch`, `credentials` and current `getAuthHeaders` result. Auth headers are never written to OPFS, so an upload staged before a page reload is sent with the fresh token of the client created after it.
+With `offline: { enabled: true, partition }`, uploads staged while offline are replayed by the client that runs the sync, using that client's `fetch`, `credentials` and current `getAuthHeaders` result. Auth headers are never written to OPFS, so an upload staged before a page reload is sent with the fresh token of the client created after it.
+
+### Offline queue
+
+Offline uploads go to a durable OPFS queue bound to `offline.partition` (a service and a user or guest namespace you trust). Each staged generation of an entry can be held, verified and published through your hooks, and stays provisional until publication is confirmed; tabs coordinate through `navigator.locks` (or `offline.queue.coordinator`), and without either the queue refuses durable work. Call `client.dispose()` on logout or account switch. Unscoped uploads staged by 0.4 and earlier are never replayed automatically; see `OfflineQueue.migrateLegacyUpload`. The full contract is in the FileFn docs under Features › Offline.
+
+`upload/init` sends the idempotency key in the `x-idempotency-key` header. A replay of a completed session is reconciled from the stored file without uploading parts again; an expired or aborted one starts again under a fresh key.

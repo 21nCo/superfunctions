@@ -12,7 +12,7 @@ Goal: a flaky-network-friendly upload that persists across tab reloads and resum
 ```ts
 const client = createFileFnClient({
   baseUrl: "/filefn",
-  offline: { enabled: true, opfsDir: "filefn-offline" },
+  offline: { enabled: true, partition: { serviceId: "app", principal: { kind: "user", principalId: session.userId } } },
 });
 ```
 

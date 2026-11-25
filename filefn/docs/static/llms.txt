@@ -55,7 +55,7 @@
 - [Downloads](https://filefn.com/docs/features/downloads): How filefn returns signed download URLs, proxies download bytes, and handles version-targeted downloads.
 - [Grants](https://filefn.com/docs/features/grants): Per-user / per-tenant permission grants — read, write, delete, share — with TTLs.
 - [HEIC preprocessing](https://filefn.com/docs/features/heic): Automatic HEIC → JPEG conversion in @filefn/client and FileFnSwift.
-- [Offline](https://filefn.com/docs/features/offline): OPFS-staged offline uploads, automatic resume on reconnect, and pending-local previews.
+- [Offline](https://filefn.com/docs/features/offline): A durable, principal-scoped OPFS queue with holds, verification, publication and idempotent replay.
 - [Policies](https://filefn.com/docs/features/policies): Named upload contracts that gate content type, size, visibility, storage target, and storage path layout.
 - [Processing](https://filefn.com/docs/features/processing): The filefn processing pipeline — thumbnails, PDF previews, OCR, image transforms, audio waveforms, video posters — with composable processors and stable artifacts.
 - [Quota](https://filefn.com/docs/features/quota): Pluggable storage quotas — per-user, per-tenant, or any custom dimension.

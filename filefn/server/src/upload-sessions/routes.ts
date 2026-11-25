@@ -2,7 +2,7 @@ import type { UploadSessionService } from './service.js';
 import type { FileFnPrincipal, AuthConfig } from '../auth.js';
 import type { RateLimiter } from '@superfunctions/middleware';
 import { resolvePrincipal } from '../auth.js';
-import { FileFnError, authRequired, rateLimited } from '../errors.js';
+import { FileFnError, authRequired, invalidRequest, rateLimited } from '../errors.js';
 import { rateLimitSubject, type RateLimitClientKey } from '../rate-limit-key.js';
 import { readJsonBody } from '../http-body.js';
 
@@ -34,6 +34,33 @@ function getRequestId(request: Request): string | undefined {
 
 function getIdempotencyKey(request: Request): string | undefined {
   return request.headers.get('x-idempotency-key') || undefined;
+}
+
+/** Warning returned when `upload/init` took its idempotency key from the JSON body. */
+export const BODY_IDEMPOTENCY_KEY_DEPRECATED =
+  'idempotencyKey in the upload/init body is deprecated and will be ignored after the next minor release; send the x-idempotency-key header';
+
+/**
+ * The idempotency key of an `upload/init` request. The `x-idempotency-key`
+ * header is the contract. The JSON body's `idempotencyKey` (what
+ * `@filefn/client` 0.4 and earlier sent) is still honored for one minor
+ * version, with a deprecation warning. A request giving both must give the
+ * same value.
+ */
+function resolveInitIdempotencyKey(
+  request: Request,
+  body: Record<string, unknown> | null | undefined,
+): { idempotencyKey: unknown; fromBody: boolean } {
+  const header = getIdempotencyKey(request);
+  const bodyKey = body && typeof body === 'object' ? body.idempotencyKey : undefined;
+  const hasBodyKey = bodyKey !== undefined && bodyKey !== null && bodyKey !== '';
+  if (header !== undefined) {
+    if (hasBodyKey && bodyKey !== header) {
+      throw invalidRequest('x-idempotency-key and body idempotencyKey differ', { field: 'idempotencyKey' });
+    }
+    return { idempotencyKey: header, fromBody: false };
+  }
+  return hasBodyKey ? { idempotencyKey: bodyKey, fromBody: true } : { idempotencyKey: undefined, fromBody: false };
 }
 
 function getUploadSessionToken(request: Request): string | undefined {
@@ -106,14 +133,18 @@ export function createUploadSessionRoutes(ctx: RouteContext) {
           mimeType: string;
           fileId?: string;
           metadata?: Record<string, unknown>;
+          idempotencyKey?: unknown;
         }>(request);
+        const { idempotencyKey, fromBody } = resolveInitIdempotencyKey(request, body);
 
         const result = await service.createSession(
-          { ...body, idempotencyKey: getIdempotencyKey(request) },
+          // createSession validates the key (a string of bounded length).
+          { ...body, idempotencyKey: idempotencyKey as string | undefined },
           { principalId: principal?.principalId, tenantId: principal?.tenantId, roles: principal?.roles, requestId }
         );
+        const warnings = fromBody ? [...result.warnings, BODY_IDEMPOTENCY_KEY_DEPRECATED] : result.warnings;
 
-        return successResponse(result, requestId, result.warnings);
+        return successResponse({ ...result, warnings }, requestId, warnings);
       } catch (err) {
         if (err instanceof FileFnError) {
           return errorResponse(err, requestId);

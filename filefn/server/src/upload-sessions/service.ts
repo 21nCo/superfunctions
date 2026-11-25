@@ -735,6 +735,31 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
   }
 
   // The result a completed session recorded.
+  /**
+   * What an idempotent `upload/init` replay reports about the session it found,
+   * so a client reconciles instead of uploading again: `status` as
+   * getSessionStatus reports it (a pending or in-progress session past its
+   * expiry reads 'expired'), plus the recorded `fileId` and `versionId` of a
+   * completed session. A client treats 'expired' and 'aborted' as final and
+   * starts again under a new key.
+   */
+  async function replayedSessionState(session: UploadSession): Promise<{
+    status: 'pending' | 'in_progress' | 'completed' | 'aborted' | 'expired';
+    fileId?: string;
+    versionId?: string;
+  }> {
+    if (session.status === 'completed') {
+      return { status: 'completed', ...(await recordedResult(session)) };
+    }
+    if (isAbortedStatus(session.status)) return { status: 'aborted' };
+    if (session.status === 'expired') return { status: 'expired' };
+    // 'completing' and 'publishing' hold a completion that is still running;
+    // the session can finish even past its expiry.
+    if (session.status === 'completing' || session.status === 'publishing') return { status: 'in_progress' };
+    if (Date.parse(session.expiresAt) <= Date.now()) return { status: 'expired' };
+    return { status: session.status === 'pending' ? 'pending' : 'in_progress' };
+  }
+
   async function recordedResult(session: UploadSession): Promise<{ fileId: string; versionId: string }> {
     if (session.fileId && session.completionVersionId) {
       return { fileId: session.fileId, versionId: session.completionVersionId };
@@ -1416,6 +1441,10 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       expiresAt: string;
       warnings: string[];
       uploadSessionToken?: string;
+      /** Set only on an idempotent replay; see replayedSessionState. */
+      status?: 'pending' | 'in_progress' | 'completed' | 'aborted' | 'expired';
+      fileId?: string;
+      versionId?: string;
     }> {
       const warnings: string[] = [];
       // The route passes the JSON body through unchanged, so check every field
@@ -1521,6 +1550,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
             totalParts: existing.totalParts,
             expiresAt: existing.expiresAt,
             warnings: [],
+            ...(await replayedSessionState(existing)),
           };
         }
       }

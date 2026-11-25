@@ -1,38 +1,28 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createFileFnClient } from '../index.js';
+import { MemoryDirectory, SharedLockManager, createStorage } from './helpers/offline-fixtures.js';
 
-// OPFS contents persist across page reloads; model that with a module-level map
-// shared by every OPFSStore instance (one per created client).
-const persisted = new Map<string, Record<string, unknown>>();
+// OPFS contents persist across page reloads: one in-memory root and one lock
+// manager are shared by every client created in a test.
+let storage: ReturnType<typeof createStorage>;
+let locks: SharedLockManager;
+const PARTITION = { serviceId: 'svc-notes', principal: { kind: 'user', principalId: 'user-alice' } } as const;
 
-vi.mock('../offline/opfs-store.js', () => ({
-  OPFSStore: class {
-    static isSupported = () => true;
-    async init() {}
-    async stagePendingUpload(upload: Record<string, unknown>) {
-      persisted.set(upload.uploadSessionId as string, structuredClone(upload));
+function persistedText(): string {
+  return storage.root.files().join('\n');
+}
+
+function journals(): string {
+  const out: string[] = [];
+  const walk = (dir: MemoryDirectory) => {
+    for (const [name, entry] of dir.entries) {
+      if (entry instanceof MemoryDirectory) walk(entry);
+      else if (name === 'journal.json') out.push(new TextDecoder().decode(entry.content));
     }
-    async getPendingUpload(id: string) {
-      return persisted.get(id) ?? null;
-    }
-    async getPendingLocalDescriptor(fileId: string) {
-      const upload = [...persisted.values()].find((entry) => entry.fileId === fileId);
-      return upload
-        ? { fileId, uploadSessionId: upload.uploadSessionId, state: 'pending-local', source: { url: `blob:${fileId}` } }
-        : null;
-    }
-    async listPendingUploads() {
-      return [...persisted.keys()];
-    }
-    async deletePendingUpload(id: string) {
-      persisted.delete(id);
-    }
-    async incrementRetryCount(id: string) {
-      const upload = persisted.get(id);
-      if (upload) upload.retryCount = (upload.retryCount as number) + 1;
-    }
-  },
-}));
+  };
+  walk(storage.root);
+  return out.join('\n');
+}
 
 const BASE = 'https://files.example.com/api/files';
 
@@ -53,11 +43,12 @@ describe('offline replay transport', () => {
   });
 
   beforeEach(() => {
-    persisted.clear();
+    storage = createStorage();
+    locks = new SharedLockManager();
     vi.stubGlobal('fetch', globalFetch);
     // Node 21+ has a global navigator; older supported runtimes do not, and a
     // real navigator's onLine is a getter, so give each test its own object.
-    vi.stubGlobal('navigator', {});
+    vi.stubGlobal('navigator', { storage: { getDirectory: async () => storage.root } });
     setOnline(true);
     globalFetch.mockClear();
   });
@@ -74,13 +65,14 @@ describe('offline replay transport', () => {
       fetch: stagingFetch,
       credentials: 'include',
       getAuthHeaders: () => ({ 'x-csrf-token': 'csrf-before-reload' }),
-      offline: { enabled: true },
+      offline: { enabled: true, partition: PARTITION, queue: { coordinator: locks.forTab('before') } },
     });
     beforeReload.uploadFile({ policy: 'p', file: new Blob(['hello'], { type: 'text/plain' }), fileName: 'a.txt', fileId: 'file_00000001' });
-    await vi.waitFor(() => expect(persisted.size).toBe(1));
+    await vi.waitFor(() => expect(persistedText()).toContain('g1.bin'));
     expect(stagingFetch).not.toHaveBeenCalled();
     // Auth material is resolved at replay time and never written to OPFS.
-    expect(JSON.stringify([...persisted.values()])).not.toContain('csrf-before-reload');
+    expect(journals()).not.toContain('csrf-before-reload');
+    locks.closeTab('before');
 
     // Reload: a fresh client with a fresh CSRF token, now online.
     setOnline(true);
@@ -103,12 +95,13 @@ describe('offline replay transport', () => {
       fetch: replayFetch as unknown as typeof fetch,
       credentials: 'include',
       getAuthHeaders: () => ({ 'x-csrf-token': 'csrf-after-reload' }),
-      offline: { enabled: true },
+      offline: { enabled: true, partition: PARTITION, queue: { coordinator: locks.forTab('after') } },
     });
 
     // Touching offline state starts the client's sync loop, which replays the staged upload.
     await afterReload.getPendingLocalDescriptor('file_00000001');
-    await vi.waitFor(() => expect(persisted.size).toBe(0));
+    await vi.waitFor(async () => expect((await afterReload.getOfflineQueue().get('file_00000001'))?.state).toBe('published'));
+    expect(persistedText()).not.toContain('.bin');
 
     expect(globalFetch).not.toHaveBeenCalled();
     expect(stagingFetch).not.toHaveBeenCalled();
@@ -122,6 +115,11 @@ describe('offline replay transport', () => {
       expect(call.headers.get('x-csrf-token')).toBe('csrf-after-reload');
       expect(call.credentials).toBe('include');
     }
+    // The journaled replay key travels in the header, not the body.
+    const init = calls[0];
+    expect(init.headers.get('x-idempotency-key')).toMatch(/^idem_/);
+    expect(journals()).toContain(init.headers.get('x-idempotency-key'));
+    expect(JSON.parse(String(init.body))).not.toHaveProperty('idempotencyKey');
     // The replayed part carries the bytes staged before the reload.
     const partPut = calls.find((c) => c.method === 'PUT');
     expect(await new Response(partPut?.body).text()).toBe('hello');

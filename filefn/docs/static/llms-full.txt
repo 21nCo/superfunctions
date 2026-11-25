@@ -1847,7 +1847,9 @@ The server:
 4. If a row exists with a **different** payload hash → fail with `FILEFN_IDEMPOTENCY_CONFLICT`.
 5. Otherwise → create a new session and store the key + hash.
 
-The window is the upload-session TTL. Re-using a key after the session expires creates a new session.
+A replayed session also reports its `status`. A `completed` one carries the stored `fileId` and `versionId`, so the client confirms the file instead of uploading again; `expired` (past its TTL) and `aborted` are final, and the client starts again under a new key.
+
+Servers before 0.8 read the key only from the header. 0.8 also honors an `idempotencyKey` in the JSON body (what `@filefn/client` 0.4 and earlier sent) for one minor version, with a deprecation warning; a request giving both must give the same value.
 
 Unauthenticated (anonymous) callers get no idempotency: they all share one scope, and only the caller that created a session holds its `uploadSessionToken`, so a retry always creates a fresh session with its own token. The abandoned session expires on its own.
 
@@ -2190,7 +2192,7 @@ import { createFileFnClient } from "@filefn/client";
 const client = createFileFnClient({
   baseUrl: "/filefn",
   getAuthHeaders: async () => ({}),
-  offline: { enabled: true, opfsDir: "filefn-offline" },
+  offline: { enabled: true, partition: { serviceId: "app", principal: { kind: "user", principalId: session.userId } } },
 });
 ```
 
@@ -2210,7 +2212,7 @@ flowchart TD
 
 The check `shouldUseOfflineMode(true)` defaults to `true` — meaning the client *always* stages to OPFS first, even when online. The replay starts immediately, but the OPFS staging is the source of truth until the upload finishes.
 
-You can opt out per call by passing `offline: { enabled: false }` to `createFileFnClient` or by checking `OPFSStore.isSupported()` and falling back to the direct path manually.
+Turn it off with `offline: { enabled: false }`, or check `client.getOfflineQueue().capabilities()` and fall back to the direct path when it is not `durable`.
 
 ## The pending-local descriptor
 
@@ -2238,29 +2240,17 @@ This works for images, PDFs, audio, and video. The client picks a preview behavi
 
 ## OfflineSync
 
-`OfflineSync` is the background pump. It:
-
-- Watches `navigator.onLine`.
-- Walks `OPFSStore.listPending()`.
-- Calls `client.uploadFile` for each pending row, with the original input.
-- Removes the OPFS row on success.
-- Increments `retryCount` on failure and schedules a retry.
-
-You can drive it manually:
+`OfflineSync` drives a client's durable queue: it processes every entry of the client's partition when started and on each `online` event, retrying unconfirmed uploads after `retryDelayMs`. By default the client starts one on its own; with `offline.implicitReplay: false` you own it:
 
 ```ts
-import { OfflineSync, OPFSStore } from "@filefn/client";
-
-const store = new OPFSStore({ rootDir: "filefn-offline" });
-await store.init();
-
-const sync = new OfflineSync({ store, client: { /* uploadFile shim */ } });
-sync.startAutoSync();
-// or
-await sync.syncUpload(uploadSessionId);
+const sync = client.createOfflineSync();
+sync.start();
+// on logout or account switch
+sync.dispose();
+client.dispose();
 ```
 
-Most apps don't need this — `createFileFnClient({ offline: { enabled: true } })` does it.
+Holds, verification and publication hooks, partitions, limits and crash recovery are specified in [Features › Offline](../features/offline). The `OfflineSync({ store, client })` form over a raw `OPFSStore` is deprecated: it is unscoped and does not use the queue's locks or journal.
 
 ## When offline mode is the wrong choice
 
@@ -3824,12 +3814,12 @@ Preprocessing happens **before** the upload starts — the server only sees the 
 Source: https://filefn.com/docs/features/offline
 
 
-OPFS-staged offline uploads, automatic resume on reconnect, and pending-local previews.
+A durable, principal-scoped OPFS queue with holds, verification, publication and idempotent replay.
 
 
 # Offline
 
-See [Core Concepts › Offline](../core-concepts/offline) for the full conceptual overview. This page is the operator / SDK reference.
+See [Core Concepts › Offline](../core-concepts/offline) for the overview. This page is the contract of `@filefn/client` 0.5 and later.
 
 ## Enabling
 
@@ -3839,113 +3829,127 @@ import { createFileFnClient } from "@filefn/client";
 const client = createFileFnClient({
   baseUrl: "/filefn",
   getAuthHeaders,
-  offline: { enabled: true, opfsDir: "filefn-offline" },
+  offline: {
+    enabled: true,
+    // Trusted identifiers from your session, never from user input.
+    partition: { serviceId: "notes", principal: { kind: "user", principalId: session.userId } },
+    // Or a guest: { kind: "guest", namespace: guestNamespaceId }
+    queue: { hooks: { verify, publish } },
+  },
 });
 ```
 
-`offline.enabled` is the only knob. Once on, every `uploadFile(...)` call:
+Offline `uploadFile(...)` stages the file in the queue under `entryId = fileId` and returns a handle whose `done()` resolves once that generation is **published**. Without `partition`, an offline upload throws `FILEFN_OFFLINE_PARTITION_REQUIRED` and nothing is listed or replayed.
 
-1. Stages the file to OPFS at `<opfsDir>/<uploadSessionId>`.
-2. Returns an `UploadHandle` that resolves when sync completes.
-3. Automatically replays the upload when `navigator.onLine` becomes `true`.
+## Partitions
 
-`offline.opfsDir` defaults to `"filefn-offline"`.
+Every queue instance is bound to one partition: a `serviceId` and either a user (`principalId`, optional `tenantId`) or a guest `namespace`. Staging, listing, pending descriptors, replay, cancellation, hooks and cleanup only ever see that partition's entries; each journal also records its binding and is checked on every read. Identifiers that overlap (`a` + `b:c` against `a:b` + `c`, or a user and a guest with the same ID) are distinct partitions.
 
-## Browser support
+On logout or an account switch call `client.dispose()` (or `queue.dispose()`), then create a client for the new principal. A disposed instance rejects new calls with `FILEFN_QUEUE_DISPOSED`, aborts its in-flight uploads and hooks, and never writes their late results. The old principal's pending work stays in storage for that principal's next client, including a second tab still signed in as them.
 
-OPFS is available in all current evergreen browsers (Chrome 102+, Edge 102+, Safari 15.2+, Firefox 111+). On unsupported browsers, the client falls back to direct upload — no error.
+## Locks and fallback
 
-## Quota
+Every journal write, replay claim and cleanup runs under one exclusive `navigator.locks` lock per partition, shared by all tabs of the origin. An entry is processed under its own lock, taken only if free: a second tab gets `{ status: "busy" }`, and when a tab closes the browser releases its locks so another tab resumes from the journal.
 
-OPFS competes for the browser's storage quota. Estimate before staging large content:
+Without Web Locks, pass `queue.coordinator`, an object with the shape of `navigator.locks.request(name, { ifAvailable?, signal? }, callback)` that excludes every cooperating tab. With neither, the queue fails closed: `queue.capabilities()` returns `{ durable: false, reason: "locks-unavailable" }`, `stage` returns `{ status: "refused", reason: "locks-unavailable" }`, other calls throw `FILEFN_QUEUE_LOCKS_UNAVAILABLE`, and staged work stays in storage for later. Without OPFS the reason is `storage-unavailable` (`FILEFN_OFFLINE_UNSUPPORTED` from `uploadFile`).
+
+## Entries, generations and holds
 
 ```ts
-const { quota = 0, usage = 0 } = await navigator.storage.estimate();
-if (quota - usage < file.size) {
-  // skip OPFS, upload directly
-}
+const queue = client.getOfflineQueue();
+const staged = await queue.stage({ entryId: "note-42", policy: "attachments", file, expectedGeneration: 1, hold: true });
+// { status: "staged", entry: { generation: 2, operationId, state: "provisional", ... }, holdId }
+// or { status: "refused", reason: "generation-conflict" | "publication-pending" | "capacity" | ... }
+await queue.release("note-42", 2, staged.holdId);
 ```
 
-The bundled client doesn't do this for you — drop the check in your upload UI.
+- Each `stage` writes a new, immutable **generation** of the entry, with its own `operationId` and replay key. `expectedGeneration` (0 for a new entry) makes it a compare-and-set, so of two tabs staging from the same generation only one advances it.
+- A **hold** belongs to one generation. A held generation is not uploaded further, verified or published. `release(entryId, generation, holdId)` removes only that hold; a hold of an older generation can never release a newer one.
+- A newer generation supersedes an older one: the older one's late upload, verification or publication result is discarded (`{ status: "superseded" }`) and never touches the newer one. Staging is refused (`publication-pending`) while the current generation has an unconfirmed publication.
+
+## Verification and publication
+
+`process(entryId)` (or an `OfflineSync`) moves a generation through `staged → uploading → uploaded → verifying → verified → publishing → published`. Each step is journaled before its request or hook runs.
+
+```ts
+const hooks = {
+  // Return { verified: false, reason } to reject; a throw is retried later.
+  verify: async ({ fileId, versionId, operationId }) => ({ verified: await myBackend.check(fileId, versionId) }),
+  publish: {
+    run: async ({ operationId, fileId, versionId }) => ({ result: await myBackend.link(operationId, fileId, versionId) }),
+    // Either declare run idempotent per operationId, or say whether an earlier run took effect.
+    reconcile: async ({ operationId }) => (await myBackend.linked(operationId)) ? { published: true } : { published: false },
+  },
+};
+```
+
+- `state` is `provisional` until publication of that generation is confirmed, then `published`. A rejected verification (`phase: "rejected"`), a failed upload (`phase: "failed"`) and any ambiguous outcome (`pending: { stage, reason: "ambiguous" }`) stay provisional across reloads, in `list()` and in `whenSettled`.
+- A publication whose outcome is unknown (a throw, or a reload while it ran) is never retried blindly. With `reconcile` the queue asks first; with `idempotent: true` it runs again with the same `operationId`; otherwise it stops at `needs-reconcile` until you call `queue.reconcile(entryId, generation, { published: true, result } | { published: false })`.
+- Without a `verify` hook the server's confirmation of the upload (or, for a replayed completed session, the read-back of the stored file) is the verification; without `publish` a verified generation is published at once.
+- `subscribe(listener)` reports `published` once per confirmed publication from the instance that confirmed it. `whenSettled(entryId, generation)` resolves on publication and rejects with `FILEFN_QUEUE_REJECTED`, `FILEFN_QUEUE_FAILED`, `FILEFN_QUEUE_SUPERSEDED`, `FILEFN_QUEUE_CANCELLED` or `FILEFN_QUEUE_DISPOSED`.
+
+## Replay identity
+
+Each generation's idempotency key is journaled before the first `upload/init` and sent as the `x-idempotency-key` header. A retry, in any tab or after a reload, uses the same key:
+
+- If the server reports the session `completed`, the client reads the stored file back and records its `fileId` and `versionId` without signing any part again.
+- If it reports the session `expired` or `aborted`, the queue journals a fresh key, then starts again with it.
+- A network error or lost response leaves the generation provisional with `pending.reason: "ambiguous"`; the next attempt resolves it with the same key. After `maxUploadAttempts` (default 5) the queue stops trying until `reconcile(entryId, generation)` resets the count.
+
+## Lifecycle and implicit replay
+
+By default offline `uploadFile`, `getPendingLocalDescriptor` and `resolveRenderable({ preferLocal: true })` start a sync of the client's queue. With `offline.implicitReplay: false`, they only stage and read; work advances only through a sync you own:
+
+```ts
+const sync = client.createOfflineSync({ retryDelayMs: 2000 });
+sync.start();    // sync now and on every "online" event
+sync.dispose();  // stop for good; staged work stays
+```
+
+## Limits and cleanup
+
+`queue.limits` sets `maxEntries` (default 500) and `maxBytes` (default 1 GiB) per partition. When a stage would exceed them, the queue first reclaims what is safe, then refuses with `{ status: "refused", reason: "capacity", limit: "entries" | "bytes", usage, limits }`. A browser quota error is the same refusal with `limit: "quota"`; nothing is half-written and pending work is kept.
+
+Reclamation (on demand with `queue.reclaim()`, and before a capacity refusal) removes only: entry directories without a journal (a stage interrupted before it committed), data files the journal no longer names, the data of published generations, and published entries older than `terminalRetentionMs` (default 24 hours; any age under capacity pressure). Provisional entries are never reclaimed; `cancel(entryId, generation)` removes one explicitly.
+
+## Crash recovery
+
+| Interrupted at | After reload |
+| --- | --- |
+| Staging, before the journal write | No entry; the orphaned data is reclaimed. |
+| Upload | `phase: "uploading"`; replayed with the recorded key. |
+| Verification | `phase: "verifying"`; verified again. |
+| Publication | `phase: "publishing"`; reconciled as above, never blindly repeated. |
+| Cleanup after publication | `state: "published"`; the next pass removes the data. |
+
+## Pre-0.5 uploads
+
+Uploads staged by 0.4 and earlier (in `offline.opfsDir`, default `filefn-pending-uploads`) have no owner. They are never listed or replayed automatically. `queue.listLegacyUploads()` shows them, and `queue.migrateLegacyUpload(uploadSessionId, { ownershipVerified: true })` moves one into the current partition as a new entry (refused with `generation-conflict` if an entry with that ID exists; pass `entryId` to choose another); call it only when you have your own evidence that the upload belongs to this principal.
 
 ## Pending-local previews
 
 ```ts
-const renderable = await client.resolveRenderable({
-  fileId,
-  intent: "preview",
-  preferLocal: true,
+const renderable = await client.resolveRenderable({ fileId, intent: "preview", preferLocal: true });
+if (renderable.state === "pending-local") imgElement.src = (renderable.source as { url: string }).url;
+```
+
+The preview comes from the newest provisional generation of that file in the client's partition. Its `versionId` is the generation's `operationId`.
+
+## Testing a consumer
+
+The queue takes its storage root, lock coordinator and uploader as options, so a consumer can run it against deterministic adapters through the public API only:
+
+```ts
+import { OfflineQueue } from "@filefn/client";
+
+const queue = new OfflineQueue({
+  partition: { serviceId: "notes", principal: { kind: "guest", namespace: "guest-test" } },
+  getRoot: async () => inMemoryDirectory,         // the FileSystemDirectoryHandle subset
+  coordinator: inMemoryLocks,                       // navigator.locks-shaped
+  uploader: { upload: async ({ fileId }) => ({ fileId, versionId: "ver_test" }) },
+  hooks: { verify: async () => ({ verified: true }) },
 });
-
-if (renderable.state === "pending-local") {
-  imgElement.src = (renderable.source as { url: string }).url; // blob:...
-}
 ```
-
-`preferLocal: true` checks OPFS first. If the file is staged, you get a `blob:` URL pointing at the local copy.
-
-When the upload completes and processing produces an artifact, the next render call falls back to the artifact URL automatically — your UI just re-renders.
-
-## Cancellation
-
-```ts
-const handle = client.uploadFile({ policy: "public-image", file });
-handle.abort(); // cancels staging or sync
-```
-
-Cancellation:
-
-- Removes the OPFS row.
-- Cancels any in-flight network requests.
-- Rejects the `done()` promise with an `AbortError`.
-
-## Manual sync control
-
-```ts
-import { OfflineSync, OPFSStore } from "@filefn/client";
-
-const store = new OPFSStore({ rootDir: "filefn-offline" });
-await store.init();
-
-const sync = new OfflineSync({
-  store,
-  client: { uploadFile: yourUploadShim },
-});
-
-sync.startAutoSync();         // listen for online events
-await sync.syncUpload(id);    // sync a specific row
-await sync.syncAll();         // sync everything pending
-await sync.cancelUpload(id);  // remove without uploading
-```
-
-Useful for headless / Electron / advanced UIs.
-
-## What's persisted
-
-`PendingUpload`:
-
-```ts
-{
-  uploadSessionId: string;
-  fileId: string;
-  policy: string;
-  idempotencyKey: string;
-  fileName: string;
-  size: number;
-  mimeType: string;
-  fileData: ArrayBuffer; // OPFS reference
-  localSource?: PendingLocalSourceMetadata;
-  metadata?: Record<string, unknown>;
-  createdAt: string;
-  retryCount: number;
-}
-```
-
-No tokens. No absolute paths. The OPFS store is sandboxed to the origin.
-
-## Native parity
-
-The Swift client's `FileFnBackgroundUploader` mirrors OPFS through filesystem-backed snapshots. The shape of the persisted state is intentionally similar so a single mental model spans web and native.
 
 
 ---
@@ -5258,7 +5262,7 @@ export const config = {
 import { createFileFnClient } from "@filefn/client";
 import { useState } from "react";
 
-const client = createFileFnClient({ baseUrl: "/filefn", offline: { enabled: true } });
+const client = createFileFnClient({ baseUrl: "/filefn" });
 
 export function Upload() {
   const [progress, setProgress] = useState(0);
@@ -5369,10 +5373,12 @@ export const DELETE = handler;
 import { createFileFnClient } from "@filefn/client";
 import { browser } from "$app/environment";
 
+// Offline work is scoped to the signed-in user: on sign-out or a user change,
+// call filefnClient.dispose() and create a new client.
 export const filefnClient = browser
   ? createFileFnClient({
       baseUrl: "/filefn",
-      offline: { enabled: true, opfsDir: "filefn-offline" },
+      offline: { enabled: true, partition: { serviceId: "app", principal: { kind: "user", principalId: getSignedInUserId() } } },
     })
   : null;
 ```
@@ -6405,14 +6411,17 @@ export const fileFn = createFileFn({
 // src/lib/filefn.ts
 import { createFileFnClient } from "@filefn/client";
 
-export const filefn = createFileFnClient({
-  baseUrl: "/filefn",
-  getAuthHeaders: async () => ({}),
-  offline: { enabled: true },
-});
+// One client per signed-in user; call dispose() on sign-out.
+export function createFilefnClient(userId: string) {
+  return createFileFnClient({
+    baseUrl: "/filefn",
+    getAuthHeaders: async () => ({}),
+    offline: { enabled: true, partition: { serviceId: "app", principal: { kind: "user", principalId: userId } } },
+  });
+}
 ```
 
-`offline.enabled` activates the OPFS-staged offline pipeline — uploads survive page reloads and reconnect automatically. See [Core Concepts › Offline](../core-concepts/offline).
+`offline.enabled` activates the OPFS-staged offline pipeline, scoped to that user — uploads survive page reloads and reconnect automatically. See [Core Concepts › Offline](../core-concepts/offline).
 
 ## Next steps
 
@@ -7221,7 +7230,7 @@ Goal: a flaky-network-friendly upload that persists across tab reloads and resum
 ```ts
 const client = createFileFnClient({
   baseUrl: "/filefn",
-  offline: { enabled: true, opfsDir: "filefn-offline" },
+  offline: { enabled: true, partition: { serviceId: "app", principal: { kind: "user", principalId: session.userId } } },
 });
 ```
 
@@ -8287,6 +8296,9 @@ filefn follows semver. The `@filefn/server` version is the spine of these notes.
 
 ## Unreleased
 
+- **Breaking (`@filefn/client` 0.5):** offline uploads go to a durable OPFS queue bound to `offline.partition` (a service and a user or guest namespace). Without a partition, an offline `uploadFile` throws `FILEFN_OFFLINE_PARTITION_REQUIRED`. The queue journals each generation's replay key, holds, verification and publication; coordinates tabs with `navigator.locks` (or `offline.queue.coordinator`) and refuses durable work without either; and enforces entry and byte limits. Uploads staged by 0.4 and earlier are no longer replayed automatically: migrate them with `OfflineQueue.migrateLegacyUpload` once you can prove whose they are. Call `client.dispose()` on logout or account switch. See Features › Offline.
+- `@filefn/client` sends the `upload/init` idempotency key in the `x-idempotency-key` header. It used to send it in the body, which the server ignored.
+- `upload/init` also honors an `idempotencyKey` in the JSON body, with a deprecation warning, until the next minor release; a request giving both forms must give the same value. An idempotent replay reports the session's `status`, and a completed session's `fileId` and `versionId`, so a client confirms the stored file instead of uploading again and starts an expired or aborted session again under a new key.
 - Upload init and complete that cannot verify a stored size return `500 FILEFN_STORAGE_STAT_UNAVAILABLE` with the message `Upload size cannot be verified`. A complete whose proxy parts are missing returns `409 FILEFN_UPLOAD_INCOMPLETE` with the message `Upload incomplete`. Neither response names the storage adapter or the upload session.
 - A metric sink passed directly in the `observability` configuration receives upload failures (`filefn.upload` / `failure`, with `labels.reason` of `size_unverified`, `parts_missing`, or `size_mismatch`), quota denials (`filefn.quota` / `denied`), and processing duration (`filefn.processing` / `complete`, with `durationMs`). Those labels are a closed set: no file id, session id, error text, or usage figure.
 - A processing service built on its own with `createProcessingService` never serves an artifact whose parent file row is missing. `getArtifactDownloadUrl` answers `404 FILEFN_NOT_FOUND` (`Artifact not found`) for it with or without a `readChecker`; before, a service without a `readChecker` signed a URL for it. An artifact whose file row exists is served as before. `createFileFn` always configured a `readChecker`, so it already behaved this way. Standalone hosts that create artifact rows without a `files` row must create the file row first.
@@ -9150,7 +9162,7 @@ const client = createFileFnClient({
     "Authorization": `Bearer ${getToken()}`,
   }),
   retryOptions: { maxRetries: 5, baseDelayMs: 500, maxDelayMs: 30_000 },
-  offline: { enabled: true, opfsDir: "filefn-offline" },
+  offline: { enabled: true, partition: { serviceId: "app", principal: { kind: "user", principalId: session.userId } } },
   preprocessing: {
     heic: { enabled: true },
   },

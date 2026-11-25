@@ -20,7 +20,7 @@ const client = createFileFnClient({
     "Authorization": `Bearer ${getToken()}`,
   }),
   retryOptions: { maxRetries: 5, baseDelayMs: 500, maxDelayMs: 30_000 },
-  offline: { enabled: true, opfsDir: "filefn-offline" },
+  offline: { enabled: true, partition: { serviceId: "app", principal: { kind: "user", principalId: session.userId } } },
   preprocessing: {
     heic: { enabled: true },
   },

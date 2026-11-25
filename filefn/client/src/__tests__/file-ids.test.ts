@@ -4,6 +4,7 @@ import { createHttpClient } from '../client.js';
 import { OPFSStore, type PendingUpload } from '../offline/opfs-store.js';
 import { OfflineSync } from '../offline/sync.js';
 import { UploadManager, isValidFileId } from '../upload-manager.js';
+import { SharedLockManager } from './helpers/offline-fixtures.js';
 
 // In-memory OPFS. One root per test, shared by every OPFSStore (and so by every
 // client created in the test), which models OPFS surviving a page reload.
@@ -164,8 +165,18 @@ function envelope(data: unknown): Response {
   });
 }
 
+const locks = new SharedLockManager();
+
 function offlineClient(fetch: typeof globalThis.fetch) {
-  return createFileFnClient({ baseUrl: BASE, fetch, offline: { enabled: true } });
+  return createFileFnClient({
+    baseUrl: BASE,
+    fetch,
+    offline: {
+      enabled: true,
+      partition: { serviceId: 'svc-notes', principal: { kind: 'user', principalId: 'user-alice' } },
+      queue: { coordinator: locks.forTab('tab') },
+    },
+  });
 }
 
 beforeEach(() => {
@@ -217,25 +228,21 @@ describe('explicit file IDs', () => {
     const staging = offlineClient(createServer().fetch);
     const handle = staging.uploadFile({ policy: 'p', file: new Blob(['hello'], { type: 'text/plain' }), fileId });
     expect(handle.fileId).toBe(fileId);
-    await vi.waitFor(() => expect(pendingDirs()).toEqual([handle.uploadSessionId]));
-    expect((await rawMetadata(handle.uploadSessionId)).fileId).toBe(fileId);
+    await vi.waitFor(async () => expect(await staging.getOfflineQueue().list()).toMatchObject([{ entryId: fileId, fileId }]));
+    staging.dispose();
 
-    // Reload while still offline: a fresh store and client read the same record.
-    const reloadedStore = new OPFSStore();
-    expect((await reloadedStore.getPendingUpload(handle.uploadSessionId))?.fileId).toBe(fileId);
-    expect((await reloadedStore.getPendingUploadByFileId(fileId))?.uploadSessionId).toBe(handle.uploadSessionId);
+    // Reload while still offline: a fresh client reads the same entry.
     const reloadedOffline = offlineClient(createServer().fetch);
-    expect(await reloadedOffline.getPendingLocalDescriptor(fileId)).toMatchObject({
-      fileId,
-      uploadSessionId: handle.uploadSessionId,
-    });
+    const [entry] = await reloadedOffline.getOfflineQueue().list();
+    expect(await reloadedOffline.getPendingLocalDescriptor(fileId)).toMatchObject({ fileId, uploadSessionId: entry.operationId });
+    reloadedOffline.dispose();
 
-    // Back online, a fresh client replays the record with the same ID.
+    // Back online, a fresh client replays the entry with the same ID.
     setOnline(true);
     const server = createServer();
     const online = offlineClient(server.fetch);
     await online.getPendingLocalDescriptor(fileId);
-    await vi.waitFor(() => expect(pendingDirs()).toEqual([]));
+    await vi.waitFor(async () => expect((await online.getOfflineQueue().get(fileId))?.state).toBe('published'));
     expect(server.initFileIds).toEqual([fileId]);
   });
 
@@ -289,10 +296,21 @@ describe('legacy pending uploads from @filefn/client 0.2.0', () => {
     await store.incrementRetryCount(sameAsSession);
     expect((await new OPFSStore().getPendingUpload(sameAsSession))?.fileId).toBe(expected[sameAsSession]);
 
+    // A partitioned client never lists or replays these unscoped records on its own.
     const server = createServer();
     const client = offlineClient(server.fetch);
-    await client.getPendingLocalDescriptor(expected[withoutId]);
-    await vi.waitFor(() => expect(pendingDirs()).toEqual([]));
+    expect(await client.getPendingLocalDescriptor(expected[withoutId])).toBeNull();
+    await client.createOfflineSync().syncAll();
+    expect(server.initFileIds).toEqual([]);
+    expect(pendingDirs().sort()).toEqual([sameAsSession, withoutId].sort());
+
+    // Migrated with ownership evidence, each replays with its mapped ID.
+    const queue = client.getOfflineQueue();
+    for (const uploadSessionId of Object.keys(expected)) {
+      expect(await queue.migrateLegacyUpload(uploadSessionId, { ownershipVerified: true })).toMatchObject({ status: 'staged' });
+    }
+    expect(pendingDirs()).toEqual([]);
+    await queue.processAll();
     expect([...server.initFileIds].sort()).toEqual(Object.values(expected).sort());
   });
 

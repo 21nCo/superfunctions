@@ -1,3 +1,4 @@
+import type { OfflineQueueOptions, OfflineQueuePartition } from './offline/queue.js';
 import type {
   HeicPreprocessorOptions,
   PendingLocalSourceMetadata,
@@ -35,6 +36,26 @@ export interface FileFnClientConfig {
   retryOptions?: RetryOptions;
   offline?: {
     enabled: boolean;
+    /**
+     * Trusted service and principal (or guest namespace) the offline queue is
+     * bound to. Required for offline staging; without it offline uploads throw
+     * `FILEFN_OFFLINE_PARTITION_REQUIRED` and nothing is listed or replayed.
+     * Create a new client (and dispose this one) when the principal changes.
+     */
+    partition?: OfflineQueuePartition;
+    /**
+     * Whether offline `uploadFile`, `getPendingLocalDescriptor` and
+     * `resolveRenderable` start a sync of the queue on their own. Defaults to
+     * true. With false, only an `OfflineSync` from `createOfflineSync()` that
+     * you `start()` advances queued work.
+     */
+    implicitReplay?: boolean;
+    /** Queue options: hooks, limits, coordinator, storage root and retention. */
+    queue?: Omit<OfflineQueueOptions, 'partition' | 'uploader' | 'legacyRootDir'>;
+    /**
+     * Directory of unscoped uploads staged by 0.4 and earlier. They are never
+     * replayed automatically; see `OfflineQueue.migrateLegacyUpload`.
+     */
     opfsDir?: string;
   };
   preprocessing?: {
@@ -174,6 +195,14 @@ export interface InitUploadResponse {
   chunkSizeBytes: number;
   totalParts: number;
   expiresAt: string;
+  /**
+   * Set when the idempotency key replayed an existing session (servers 0.8+).
+   * `completed` carries the stored `fileId` and `versionId`; `aborted` and
+   * `expired` are final.
+   */
+  status?: 'pending' | 'in_progress' | 'completed' | 'aborted' | 'expired';
+  fileId?: string;
+  versionId?: string;
 }
 
 export interface UploadStatusResponse {

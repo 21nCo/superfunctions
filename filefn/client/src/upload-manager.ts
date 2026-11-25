@@ -1,5 +1,6 @@
 import type { HttpClient } from "./client.js";
 import type {
+  InitUploadResponse,
   PendingLocalDescriptor,
   UploadInput,
   UploadHandle,
@@ -33,6 +34,14 @@ export interface PreparedUploadInput {
 }
 
 const FILE_ID_MISMATCH_ERROR = 'FILEFN_CLIENT_FILE_ID_MISMATCH';
+/**
+ * The idempotency key replayed a session the server reports as aborted or
+ * expired. Nothing more can be uploaded under that key: start again with a
+ * new one. `details.status` is the reported status.
+ */
+export const UPLOAD_SESSION_ENDED_ERROR = 'FILEFN_UPLOAD_SESSION_ENDED';
+/** A replayed completed session's file could not be read back to confirm it. */
+export const UPLOAD_RECONCILE_FAILED_ERROR = 'FILEFN_UPLOAD_RECONCILE_FAILED';
 
 function createClientError(code: string, message: string, details?: Record<string, unknown>): Error & {
   code: string;
@@ -63,7 +72,7 @@ function currentMimeType(file: File | Blob): string {
   return file.type || 'application/octet-stream';
 }
 
-function derivePendingLocalSource(
+export function derivePendingLocalSource(
   fileName: string,
   mimeType: string,
   size: number,
@@ -294,22 +303,8 @@ export class UploadManager {
     const initResponse = (
       rawInit && typeof rawInit === "object" && "uploadSessionId" in rawInit
         ? rawInit
-        : (
-            rawInit as {
-              data?: {
-                uploadSessionId?: string;
-                totalParts?: number;
-                chunkSizeBytes?: number;
-                uploadSessionToken?: string;
-              };
-            }
-          )?.data
-    ) as {
-      uploadSessionId?: string;
-      totalParts?: number;
-      chunkSizeBytes?: number;
-      uploadSessionToken?: string;
-    };
+        : (rawInit as { data?: Partial<InitUploadResponse> })?.data
+    ) as Partial<InitUploadResponse>;
 
     const uploadSessionId = initResponse?.uploadSessionId;
     if (!uploadSessionId) {
@@ -329,6 +324,24 @@ export class UploadManager {
       handle.uploadSessionId = uploadSessionId;
       handle.uploadSessionToken = this.uploadSessionToken;
       handle.fileId = prepared.fileId;
+    }
+
+    // An idempotent replay reports the session it found.
+    if (initResponse.status === "completed") {
+      return this.reconcileCompletedSession(initResponse, prepared.fileId, signal);
+    }
+    if (initResponse.status === "aborted" || initResponse.status === "expired") {
+      throw createClientError(
+        UPLOAD_SESSION_ENDED_ERROR,
+        `Upload session ${uploadSessionId} is ${initResponse.status}; start again with a new idempotency key`,
+        { uploadSessionId, status: initResponse.status },
+      );
+    }
+    if (initResponse.status === "in_progress") {
+      // Skip the parts the server already recorded.
+      const status = await this.httpClient.getUploadStatus(uploadSessionId, this.uploadSessionToken, signal);
+      this.completedParts = new Set(status.recordedParts || status.uploadedParts || []);
+      this.bytesUploaded = this.calculateUploadedBytes(status);
     }
 
     await this.uploadAllParts(signal);
@@ -351,6 +364,50 @@ export class UploadManager {
     }
 
     return result;
+  }
+
+  /**
+   * A replayed session already completed: read the stored file back and return
+   * the recorded result, without signing or sending any part again.
+   */
+  private async reconcileCompletedSession(
+    initResponse: Partial<InitUploadResponse>,
+    expectedFileId: string,
+    signal: AbortSignal,
+  ): Promise<UploadResult> {
+    const { fileId, versionId } = initResponse;
+    if (!fileId || !versionId) {
+      throw createClientError(UPLOAD_RECONCILE_FAILED_ERROR, 'Completed session did not report its stored file', {
+        uploadSessionId: initResponse.uploadSessionId,
+      });
+    }
+    if (fileId !== expectedFileId) {
+      throw createClientError(
+        FILE_ID_MISMATCH_ERROR,
+        'Server completed upload with a different fileId than the client requested',
+        { expectedFileId, actualFileId: fileId },
+      );
+    }
+    let stored: Record<string, unknown>;
+    try {
+      stored = await this.httpClient.getFile(fileId, signal);
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') throw error;
+      throw Object.assign(
+        createClientError(UPLOAD_RECONCILE_FAILED_ERROR, 'Stored file of a completed session could not be read back', {
+          uploadSessionId: initResponse.uploadSessionId,
+          fileId,
+        }),
+        { cause: error },
+      );
+    }
+    if (stored?.fileId !== fileId) {
+      throw createClientError(UPLOAD_RECONCILE_FAILED_ERROR, 'Stored file read back does not match the completed session', {
+        uploadSessionId: initResponse.uploadSessionId,
+        fileId,
+      });
+    }
+    return { fileId, versionId };
   }
 
   async resumeUpload(

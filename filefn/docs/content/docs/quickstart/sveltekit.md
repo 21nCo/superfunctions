@@ -90,14 +90,17 @@ export const fileFn = createFileFn({
 // src/lib/filefn.ts
 import { createFileFnClient } from "@filefn/client";
 
-export const filefn = createFileFnClient({
-  baseUrl: "/filefn",
-  getAuthHeaders: async () => ({}),
-  offline: { enabled: true },
-});
+// One client per signed-in user; call dispose() on sign-out.
+export function createFilefnClient(userId: string) {
+  return createFileFnClient({
+    baseUrl: "/filefn",
+    getAuthHeaders: async () => ({}),
+    offline: { enabled: true, partition: { serviceId: "app", principal: { kind: "user", principalId: userId } } },
+  });
+}
 ```
 
-`offline.enabled` activates the OPFS-staged offline pipeline — uploads survive page reloads and reconnect automatically. See [Core Concepts › Offline](../core-concepts/offline).
+`offline.enabled` activates the OPFS-staged offline pipeline, scoped to that user — uploads survive page reloads and reconnect automatically. See [Core Concepts › Offline](../core-concepts/offline).
 
 ## Next steps
 

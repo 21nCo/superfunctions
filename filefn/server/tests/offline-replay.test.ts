@@ -1,0 +1,178 @@
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { memoryAdapter } from '@superfunctions/db/adapters/memory';
+import { createLocalStorageAdapter } from '@superfunctions/storage-local';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createDefaultAuthorizer, createFileFn } from '../src/index.js';
+import { BODY_IDEMPOTENCY_KEY_DEPRECATED } from '../src/upload-sessions/routes.js';
+// The real client sources and its queue test doubles, so the test covers what an app runs.
+import { createFileFnClient } from '../../client/src/index.js';
+import { MemoryDirectory, MemoryFile, SharedLockManager, createStorage } from '../../client/src/__tests__/helpers/offline-fixtures.js';
+
+const BASE = 'https://filefn.test';
+const roots: string[] = [];
+
+beforeEach(() => {
+  vi.stubGlobal('navigator', { onLine: true });
+});
+
+afterEach(async () => {
+  vi.unstubAllGlobals();
+  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+});
+
+async function createApp() {
+  const root = await mkdtemp(join(tmpdir(), 'filefn-offline-replay-'));
+  roots.push(root);
+  const database = memoryAdapter();
+  const fileFn = createFileFn({
+    database,
+    storage: createLocalStorageAdapter({ rootDir: root }),
+    authorizer: createDefaultAuthorizer({ db: database }),
+    policies: [{ name: 'doc', contentTypes: ['text/plain'], maxSizeBytes: 1024, visibility: 'private' } as any],
+    auth: {
+      required: true,
+      resolveSession: async (request) => {
+        const user = request.headers.get('x-test-user');
+        return user ? { principalId: user } : null;
+      },
+    },
+  });
+  const requests: Array<{ method: string; path: string; key: string | null }> = [];
+  /** Called after the server handled a request; throw to lose its response. */
+  let afterResponse: ((path: string) => void) | undefined;
+  const fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const request = new Request(input instanceof Request ? input : new URL(String(input), BASE), init);
+    request.headers.set('x-test-user', 'user-owner');
+    const body = init?.body;
+    if (body instanceof Blob && !request.headers.has('content-length')) request.headers.set('content-length', String(body.size));
+    const path = new URL(request.url).pathname;
+    requests.push({ method: request.method, path, key: request.headers.get('x-idempotency-key') });
+    const response = (await fileFn.router.handle(request)) ?? new Response('no route', { status: 404 });
+    afterResponse?.(path);
+    return response;
+  }) as typeof globalThis.fetch;
+  const storage = createStorage();
+  const locks = new SharedLockManager();
+  const client = createFileFnClient({
+    baseUrl: BASE,
+    fetch,
+    retryOptions: { maxRetries: 0 },
+    offline: {
+      enabled: true,
+      partition: { serviceId: 'svc-notes', principal: { kind: 'user', principalId: 'user-owner' } },
+      implicitReplay: false,
+      queue: { coordinator: locks.forTab('tab-1'), getRoot: async () => storage.root },
+    },
+  });
+  const queue = client.getOfflineQueue();
+  const stage = async (fileId: string, idempotencyKey?: string) => {
+    const result = await queue.stage({ policy: 'doc', file: new Blob(['hello'], { type: 'text/plain' }), fileName: 'a.txt', fileId, idempotencyKey });
+    if (result.status !== 'staged') throw new Error('not staged');
+  };
+  const rows = async (model: string) => database.findMany<Record<string, any>>({ model });
+  /** The journaled replay identity, read synchronously from the in-memory OPFS. */
+  const journalKey = () => {
+    const find = (dir: MemoryDirectory): MemoryFile | undefined => {
+      for (const [name, entry] of dir.entries) {
+        if (entry instanceof MemoryFile && name === 'journal.json') return entry;
+        if (entry instanceof MemoryDirectory) {
+          const found = find(entry);
+          if (found) return found;
+        }
+      }
+      return undefined;
+    };
+    const record = JSON.parse(new TextDecoder().decode(find(storage.root)!.content));
+    return record.current.replay as { idempotencyKey: string; retiredKeys: string[] };
+  };
+  return {
+    fileFn, database, client, queue, stage, rows, requests, journalKey, fetch,
+    loseResponse(match: (path: string) => boolean) {
+      afterResponse = (path) => {
+        if (!match(path)) return;
+        afterResponse = undefined;
+        throw new TypeError('fetch failed');
+      };
+    },
+  };
+}
+
+describe('offline replay against the FileFn server', () => {
+  it('reconciles a completed session from the same key to one stored file, without signing a part again', async () => {
+    const app = await createApp();
+    await app.stage('file_00000000replay01', 'test-replay-key-0001');
+    app.loseResponse((path) => path.endsWith('/complete'));
+
+    expect(await app.queue.process('file_00000000replay01')).toMatchObject({ status: 'provisional', reason: 'ambiguous' });
+    expect(await app.queue.process('file_00000000replay01')).toMatchObject({
+      status: 'published',
+      entry: { upload: { fileId: 'file_00000000replay01' } },
+    });
+
+    const inits = app.requests.filter((r) => r.path === '/upload/init');
+    expect(inits.map((r) => r.key)).toEqual(['test-replay-key-0001', 'test-replay-key-0001']);
+    expect(app.requests.filter((r) => r.path.endsWith('/sign'))).toHaveLength(1);
+    // The reconciliation reads the stored file back.
+    expect(app.requests.at(-1)).toMatchObject({ method: 'GET', path: '/file_00000000replay01' });
+    expect(await app.rows('files')).toHaveLength(1);
+    expect(await app.rows('fileVersions')).toHaveLength(1);
+    expect(await app.rows('uploadSessions')).toHaveLength(1);
+  });
+
+  it('accepts the key from the header and, for one more minor version, from the body', async () => {
+    const app = await createApp();
+    const init = (headers: Record<string, string>, body: Record<string, unknown>) =>
+      app.fetch(`${BASE}/upload/init`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...headers },
+        body: JSON.stringify({ policy: 'doc', fileName: 'a.txt', size: 5, mimeType: 'text/plain', fileId: 'file_00000000legacy01', ...body }),
+      }).then(async (response) => ({ status: response.status, json: await response.json() }));
+
+    const legacy = await init({}, { idempotencyKey: 'test-replay-key-0002' });
+    expect(legacy.status).toBe(200);
+    expect(legacy.json.warnings).toContain(BODY_IDEMPOTENCY_KEY_DEPRECATED);
+    const header = await init({ 'x-idempotency-key': 'test-replay-key-0002' }, {});
+    expect(header.json.data.uploadSessionId).toBe(legacy.json.data.uploadSessionId);
+    expect(header.json.data).toMatchObject({ status: 'pending' });
+    expect(header.json.warnings).not.toContain(BODY_IDEMPOTENCY_KEY_DEPRECATED);
+    expect((await init({ 'x-idempotency-key': 'test-replay-key-0002' }, { idempotencyKey: 'test-replay-key-0003' })).status).toBe(400);
+    expect(await app.rows('uploadSessions')).toHaveLength(1);
+  });
+
+  it.each(['expired', 'aborted'] as const)('starts a %s session again under a fresh key journaled before the request', async (ending) => {
+    const app = await createApp();
+    await app.stage('file_00000000ending01', 'test-replay-key-0004');
+    // A first attempt created the session under the key, then the page went away.
+    const session = await app.fileFn.createUploadSession(
+      { policy: 'doc', fileName: 'a.txt', size: 5, mimeType: 'text/plain', fileId: 'file_00000000ending01', idempotencyKey: 'test-replay-key-0004' },
+      { principalId: 'user-owner' },
+    );
+    if (ending === 'aborted') {
+      await app.fileFn.services.uploads.abortSession(session.uploadSessionId, { principalId: 'user-owner' });
+    } else {
+      await app.database.update({
+        model: 'uploadSessions',
+        where: [{ field: 'uploadSessionId', operator: 'eq', value: session.uploadSessionId }],
+        data: { expiresAt: new Date(Date.now() - 1000).toISOString() },
+      });
+    }
+    const journaledAtInit: string[] = [];
+    const original = app.requests.push.bind(app.requests);
+    app.requests.push = (...items) => {
+      for (const item of items) if (item.path === '/upload/init') journaledAtInit.push(app.journalKey().idempotencyKey);
+      return original(...items);
+    };
+
+    expect(await app.queue.process('file_00000000ending01')).toMatchObject({ status: 'published' });
+    const keys = app.requests.filter((r) => r.path === '/upload/init').map((r) => r.key);
+    expect(keys[0]).toBe('test-replay-key-0004');
+    expect(keys).toHaveLength(2);
+    expect(keys[1]).not.toBe(keys[0]);
+    // Each request sent the key the journal held when it went out.
+    expect(journaledAtInit).toEqual(keys);
+    expect(app.journalKey()).toMatchObject({ retiredKeys: ['test-replay-key-0004'] });
+    expect(await app.rows('files')).toHaveLength(1);
+  });
+});
