@@ -1117,6 +1117,12 @@ it("preserves both resource discriminators on inverse predicates", async () => {
   expect(pushed.body.result.data).toEqual([{ id: "legacy-entry" }]);
 
   const linked = { resource: "collection", version: 1, filters: { id: "legacy-target" } };
+  const selections = [
+    ["id", "entries.#"],
+    ["id", "entries.*"],
+    ["id", "entries.*#"],
+    ["id", "entries.id", "entries.label"],
+  ];
   const response = await server.router.handle(new Request("http://localhost/datafn/transact", {
     method: "POST",
     body: JSON.stringify({
@@ -1124,10 +1130,7 @@ it("preserves both resource discriminators on inverse predicates", async () => {
       steps: [
         { query: forward },
         { query: { resource: "task", version: 1, select: ["id", "entries.#"], filters: { id: "legacy-target" } } },
-        { query: { ...linked, select: ["id", "entries.#"] } },
-        { query: { ...linked, select: ["id", "entries.*"] } },
-        { query: { ...linked, select: ["id", "entries.*#"] } },
-        { query: { ...linked, select: ["id", "entries.id", "entries.label"] } },
+        ...selections.map((select) => ({ query: { ...linked, select } })),
       ],
     }),
   }));
@@ -1139,6 +1142,12 @@ it("preserves both resource discriminators on inverse predicates", async () => {
   for (const result of transaction.result.results.slice(3)) {
     expect(result.data[0].entries.map((entry: { label: string }) => entry.label).sort())
       .toEqual(["Legacy entry", "Node entry"]);
+  }
+  expect(classifyQuery({ ...linked, select: selections[1] }, schema)).toBe("PARTIAL_PUSHDOWN");
+  for (const [index, select] of selections.entries()) {
+    const result = await query(server, { ...linked, select });
+    expect(result.status).toBe(200);
+    expect(result.body.result.data).toEqual(transaction.result.results[index + 2].data);
   }
 });
 

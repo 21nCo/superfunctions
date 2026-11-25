@@ -62,6 +62,15 @@ export class DbDataStore implements DataStore {
     );
   }
 
+  private mergeJoinRows(relationKey: string, rows: JoinRow[]): void {
+    const keys = new Map<unknown, JoinRow>();
+    for (const row of [...this.getJoinRows(relationKey), ...rows]) {
+      const key = row.id ?? JSON.stringify([row.from, row.to, row.fromResource, row.toResource]);
+      keys.set(key, row);
+    }
+    this.joinCache.set(relationKey, [...keys.values()]);
+  }
+
   /**
    * `field IN ids` in chunks, so a lookup over every record of a large table
    * stays under a driver's bound-parameter limit (Postgres: 65,535).
@@ -342,19 +351,13 @@ export class DbDataStore implements DataStore {
               "from",
             );
 
-            store.joinCache.set(relationKey, rowsForRelation);
-
-            const relatedIds = [
-              ...new Set(
-                rowsForRelation
-                  .map((r) => (isForward ? r.to : r.from))
-                  .filter(Boolean),
-              ),
-            ];
+            store.mergeJoinRows(relationKey, rowsForRelation);
             const targetEndpoint = isForward ? rel.to : rel.from;
 
             try {
-              await loadRecordsByIds(targetEndpoint, relatedIds);
+              await DbDataStore.loadJoinRecords(
+                store, db, schema, namespace, rowsForRelation, targetEndpoint, fromResource, isForward,
+              );
             } catch (error) {
               logger?.warn("forPushdownResult: many-many related load failed", { error: String(error), operation: "db-store-pushdown" });
               endpointList(targetEndpoint).forEach((resource) => store.mergeRecords(resource, []));
@@ -415,6 +418,32 @@ export class DbDataStore implements DataStore {
     }
     for (const resource of endpointList(endpoint)) {
       if (!store.recordsCache.has(resource)) store.mergeRecords(resource, []);
+    }
+  }
+
+  private static async loadJoinRecords(
+    store: DbDataStore,
+    db: Adapter,
+    schema: DatafnSchema,
+    namespace: string,
+    rows: JoinRow[],
+    endpoint: string | readonly string[],
+    fromResource: string,
+    isForward: boolean,
+  ): Promise<void> {
+    const idsByResource = new Map<string, Set<string>>();
+    for (const row of rows) {
+      const id = isForward ? row.to : row.from;
+      const resource = isForward
+        ? resolvePredicateEndpoint(schema, id, endpoint, row.toResource)
+        : fromResource;
+      if (!id || !resource) continue;
+      const ids = idsByResource.get(resource) ?? new Set();
+      ids.add(id);
+      idsByResource.set(resource, ids);
+    }
+    for (const [resource, ids] of idsByResource) {
+      await DbDataStore.loadEndpointRecordsByIds(store, db, schema, namespace, resource, [...ids]);
     }
   }
 
@@ -495,16 +524,12 @@ export class DbDataStore implements DataStore {
               fromResource,
               "from",
             );
-            store.joinCache.set(relationKey2, rowsForRelation2);
-            const relatedIds2 = [
-              ...new Set(
-                rowsForRelation2.map((r) => (isF2 ? r.to : r.from)).filter(Boolean),
-              ),
-            ];
+            store.mergeJoinRows(relationKey2, rowsForRelation2);
             try {
-              await DbDataStore.loadEndpointRecordsByIds(store, db, schema, namespace, 
+              await DbDataStore.loadJoinRecords(
+                store, db, schema, namespace, rowsForRelation2,
                 relationTargetEndpoint(rel2, secondMatch.direction),
-                relatedIds2,
+                fromResource, isF2,
               );
             } catch (error) {
               logger?.warn("forPushdownResult: nested many-many related load failed", { error: String(error), operation: "db-store-pushdown" });
