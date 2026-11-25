@@ -1060,6 +1060,24 @@ describe("schema index migrations", () => {
     intToString[0].columns[0] = { ...varcharColumn("claim_token", 0, null), dataType: "int", columnType: "int", maxLength: null };
     expect(diffTables([widenTo(192)], intToString, "plugfn")[0].rebuiltIndexes?.map((index) => index.name))
       .toEqual(["plugfn_sync_jobs_claim_token_idx"]);
+    // MODIFY COLUMN keeps an ENUM's own utf8mb4 character set, so ENUM ->
+    // VARCHAR(200) in a latin1 COMPACT table is an 800-byte key part.
+    const enumToString = current("Compact", { tableBytes: 1 });
+    enumToString[0].columns[0] = { ...varcharColumn("claim_token", 0), dataType: "enum", columnType: "enum('a','b')", maxLength: 1, characterSet: "utf8mb4" } as never;
+    expect(() => diffTables([widenTo(200)], enumToString, "plugfn")).toThrow(/claim_token 800 bytes.*ROW_FORMAT=DYNAMIC/);
+    // Unchanged parts keep their physical width: a numeric TINYINT(1) takes 1
+    // byte and a TIMESTAMP 4, so the rebuilt 767 + 1 and 764 + 4 byte keys fit
+    // 4 KiB pages.
+    for (const [type, columnType, maxLength] of [["number", "tinyint(1)", 767], ["date", "timestamp", 764]] as const) {
+      const withFixedPart = current("Dynamic", { innodbPageSize: 4096, columnBytes: 1 });
+      withFixedPart[0].columns[1] = { ...varcharColumn("owner", 0, null), dataType: columnType.replace(/\(.*/, ""), columnType, maxLength: null };
+      withFixedPart[0].indexes[0] = { ...withFixedPart[0].indexes[0], columns: ["claim_token", "owner"], prefixLengths: [null, null] };
+      const schema = widenTo(maxLength, ["claimToken", "owner"]);
+      schema.fields.owner = { type, required: false, fieldName: "owner" } as TableSchema["fields"][string];
+      const [diff] = diffTables([schema], withFixedPart, "plugfn");
+      expect(diff.columnChanges?.map((change) => change.change)).toEqual([`maxLength changed from 64 to ${maxLength}`]);
+      expect(diff.rebuiltIndexes?.map((index) => index.name)).toEqual(["plugfn_sync_jobs_claim_token_idx"]);
+    }
     // An index replaced to cover another column no longer holds the widened one.
     const replaced = diffTables([widenTo(768, ["owner"])], current("Compact"), "plugfn");
     expect(replaced[0].changedIndexes?.map((index) => index.name)).toEqual(["plugfn_sync_jobs_claim_token_idx"]);

@@ -204,8 +204,7 @@ export async function introspectMySQL(
   tablePrefix?: string
 ): Promise<DatabaseTable[]> {
   const db = { query: mysqlQuery(connection) };
-  // Prisma can return integer metadata as bigint.
-  const toNumber = (value: unknown) => (value == null ? null : Number(value));
+  const toNumber = (value: unknown) => (value == null ? null : Number(value)); // Prisma: bigint
   const [[pageSizeRow] = []] = await db.query('SELECT @@innodb_page_size AS page_size', []);
   // Query tables
   const tablesQuery = `

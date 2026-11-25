@@ -34,17 +34,23 @@ export function satisfiesUnboundedMySqlString(dataType: string): boolean {
   return /^(text|mediumtext|longtext)$/i.test(dataType.trim());
 }
 
-/**
- * InnoDB index-key byte limits for an existing table. A key part may take 767
- * bytes on COMPACT/REDUNDANT rows and 3,072 otherwise; the whole key is capped
- * by innodb_page_size (3,072 bytes on 16 KiB pages or more, 1,536 on 8 KiB,
- * 768 on 4 KiB). Missing metadata means MySQL 8's defaults (DYNAMIC, 16 KiB).
- */
+// InnoDB key limits: 767 bytes per part on COMPACT/REDUNDANT rows (else
+// 3,072), and per key 3,072, 1,536 or 768 bytes on 16+, 8 or 4 KiB pages.
+// Missing metadata means MySQL 8's defaults (DYNAMIC, 16 KiB).
 export function mysqlIndexKeyBudget(rowFormat?: string | null, pageSize?: number | null) {
   const innodbPageSize = pageSize || 16_384;
   const total = innodbPageSize >= 16_384 ? 3_072 : innodbPageSize > 4_096 ? 1_536 : 768;
   const rowFormatLimited = /^(compact|redundant)$/i.test(rowFormat ?? '');
   return { innodbPageSize, total, part: Math.min(rowFormatLimited ? 767 : 3_072, total) };
+}
+
+// Key bytes of a fixed-width type such as `tinyint(1)` or `datetime(3)`.
+export function mysqlFixedKeyBytes(sqlType: string): number | undefined {
+  const match = /^(tinyint|bool|boolean|year|smallint|mediumint|int|integer|bigint|date|time|timestamp|datetime)\b(?:\s*\(\s*(\d+)\s*\))?/i.exec(sqlType.trim());
+  if (!match) return undefined;
+  const name = match[1].toLowerCase();
+  const bytes = ({ smallint: 2, mediumint: 3, int: 4, integer: 4, bigint: 8, date: 3, time: 3, timestamp: 4, datetime: 5 } as Record<string, number>)[name] ?? 1;
+  return /^(time|timestamp|datetime)$/.test(name) ? bytes + Math.ceil(Number(match[2] ?? 0) / 2) : bytes;
 }
 
 export function databaseStringLength(input: {

@@ -3,6 +3,7 @@ import type { DatabaseTable } from './introspection.js';
 import {
   databaseStringLength,
   isUnboundedMySqlTextType,
+  mysqlFixedKeyBytes,
   mysqlIndexKeyBudget,
   mysqlVarcharLength,
   satisfiesUnboundedMySqlString,
@@ -464,8 +465,7 @@ export function diffTables(
     const changedIndexNames = new Set(changedIndexes.map((index) => index.name));
     // A width-only VARCHAR widening keeps every full-column index on the
     // column: one MODIFY COLUMN statement rebuilds it in place, so a unique
-    // index never stops enforcing uniqueness during the upgrade. The key
-    // budget check below refuses any such key that would not fit.
+    // index never stops enforcing uniqueness (if the key budget below fits).
     const widenedVarcharColumns = new Set<string>();
     for (const change of columnChanges) {
       const widening = /^maxLength changed from (\d+) to (\d+)$/.exec(change.change);
@@ -522,22 +522,23 @@ export function diffTables(
           .join(', ')}`,
       );
     }
-    // Every index on a changed column is kept through MODIFY COLUMN or
-    // recreated from the schema, so size its final key against the table's
-    // InnoDB budget and refuse before any DDL. String parts take their
-    // declared width (TEXT: the generators' 191-character prefix) in the
-    // character set the emitted column has: its own for string columns, else
-    // the table default (unknown: utf8mb4). Other parts take their fixed width.
+    // Size each final key on a changed column against the InnoDB budget before
+    // any DDL. String parts: declared width (TEXT: the 191-character prefix)
+    // in the character set MODIFY COLUMN keeps, the column's own or else the
+    // table default (unknown: utf8mb4). Other parts: the physical type of an
+    // unchanged column, else the emitted type. Refuse what cannot be sized.
     const budget = mysqlIndexKeyBudget(curTable.rowFormat, curTable.innodbPageSize);
     const keyPartBytes = (column: string): number => {
       const field = Object.entries(reqFieldMap).find(([name, f]) => (f.fieldName ?? name) === column)?.[1];
       const type = field && mapFieldTypeToSQLType(field, 'mysql');
       const current = curColMap.get(column);
-      const charBytes = /char|text/i.test(current?.dataType ?? '')
-        ? current?.characterSetMaxBytes
+      const charBytes = current?.characterSet || current?.characterSetMaxBytes
+        ? current.characterSetMaxBytes
         : curTable.characterSetMaxBytes;
       if (type === 'text') return (field?.maxLength ?? 191) * (charBytes ?? 4);
-      const bytes = ({ integer: 4, bigint: 8, boolean: 1, timestamp: 5 } as Record<string, number>)[type ?? ''];
+      const bytes = mysqlFixedKeyBytes(current && !changedMySqlColumns.has(column)
+        ? current.columnType ?? current.dataType
+        : field && type === 'timestamp' && resolveDateStorageType(field) === 'timestamp' ? 'datetime' : type ?? '');
       if (bytes) return bytes;
       throw new Error(`Cannot generate MySQL column change for ${dbName}: the index key size of ${column} cannot be proven safe`);
     };
@@ -547,11 +548,9 @@ export function diffTables(
       const total = parts.reduce((sum, part) => sum + part.bytes, 0);
       if (total <= budget.total && parts.every((part) => part.bytes <= budget.part)) continue;
       const key = `${index.name} (${parts.map((part) => `${part.column} ${part.bytes} bytes`).join(', ')})`;
-      throw new Error(
-        total > budget.total
+      throw new Error(total > budget.total
           ? `Cannot generate MySQL column change for ${dbName}: the migrated key ${key} would take ${total} bytes, over the ${budget.total}-byte InnoDB key limit for innodb_page_size ${budget.innodbPageSize}. innodb_page_size cannot change on an existing instance; shorten the key's columns in the schema, then generate the migration again.`
-          : `Cannot generate MySQL column change for ${dbName}: its ${curTable.rowFormat} row format limits index key parts to 767 bytes, which the migrated key ${key} would exceed. Convert the table first with ALTER TABLE ${dbName} ROW_FORMAT=DYNAMIC, then generate the migration again.`,
-      );
+          : `Cannot generate MySQL column change for ${dbName}: its ${curTable.rowFormat} row format limits index key parts to 767 bytes, which the migrated key ${key} would exceed. Convert the table first with ALTER TABLE ${dbName} ROW_FORMAT=DYNAMIC, then generate the migration again.`);
     }
     const rebuiltIndexes: NonNullable<TableDiff['rebuiltIndexes']> =
       changedMySqlColumns.size === 0
