@@ -1,0 +1,27 @@
+filefn/docs/package.json
+  s_2dc0d22f2bd206::t_26455252e638a2 46
+filefn/processing/container/package.json
+  s_2dc0d22f2bd206::t_5201e7f1f89764 17
+filefn/processing/package.json
+  s_2dc0d22f2bd206::t_3bf88ac77443dc 3
+filefn/server/package.json
+  s_2dc0d22f2bd206::t_27e2c1913de0f0 51
+package-lock.json
+  s_2dc0d22f2bd206::t_fe27ccba38ef4c 11826,12433,12451,12522
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4c9f576d3337d3170f94f67ee4006bddd0785784",
+  "prompts": {},
+  "sessions": {
+    "s_2dc0d22f2bd206": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "28b4e36f-7687-4467-819b-c84d11b491f4",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
