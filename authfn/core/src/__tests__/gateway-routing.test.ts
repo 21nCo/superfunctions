@@ -19,6 +19,7 @@ import type {
   MultiRegionPluginRuntimeConfig
 } from '../plugin-types.js';
 import { authFnMultiRegionEnvironment } from '../core/regions.js';
+import { AUTHFN_MAX_BODY_BYTES } from '../http/body-limit.js';
 
 const keyring: AuthFnRoutingKeyring = {
   active: {
@@ -28,6 +29,116 @@ const keyring: AuthFnRoutingKeyring = {
 };
 
 describe('AuthFn canonical gateway routing', () => {
+  it('uses one generated request ID for placement events and the response when an inbound ID is rejected', async () => {
+    const requestIds: string[] = [];
+    const directory = createInMemoryAuthFnPlacementDirectory();
+    const gateway = createAuthFnCanonicalGateway<unknown>({
+      publicAuthority: 'https://account.example.com',
+      placementDirectory: {
+        ...directory,
+        async putIfAbsent() {
+          return {
+            inserted: false,
+            existing: { ...placement('person:new', 'us-east-1', 1), state: 'moving' }
+          };
+        }
+      },
+      keyring,
+      resolveIdentity: () => ({ identityKey: 'person:new', allowInitialPlacement: true }),
+      selectInitialRegion: () => 'us-east-1',
+      resolveCell: () => null,
+      dispatch: () => Promise.resolve(new Response()),
+      onEvent: (event) => { requestIds.push(event.requestId); }
+    });
+    const request = identityRequest();
+    request.headers.set('x-request-id', 'invalid request id');
+
+    const response = await gateway.handle(request);
+    expect(response.status).toBe(503);
+    const { requestId } = await response.json();
+    expect(requestId).toMatch(/^req_[0-9a-f]{16}$/);
+    expect(response.headers.get('x-request-id')).toBe(requestId);
+    expect(requestIds).toEqual([requestId, requestId]);
+  });
+
+  it('rejects an oversized body before resolving identity or claiming placement', async () => {
+    const directory = createInMemoryAuthFnPlacementDirectory();
+    let identityLookups = 0;
+    const gateway = createAuthFnCanonicalGateway<unknown>({
+      publicAuthority: 'https://account.example.com',
+      placementDirectory: directory,
+      keyring,
+      resolveIdentity: () => {
+        identityLookups += 1;
+        return { identityKey: 'person:new', allowInitialPlacement: true };
+      },
+      selectInitialRegion: () => 'us-east-1',
+      resolveCell: () => null,
+      dispatch: () => Promise.resolve(new Response())
+    });
+    const request = new Request('https://account.example.com/auth/sign-up/password', {
+      method: 'POST',
+      body: 'a'.repeat(AUTHFN_MAX_BODY_BYTES + 1)
+    });
+
+    expect((await gateway.handle(request)).status).toBe(413);
+    expect(identityLookups).toBe(0);
+    await expect(directory.get('person:new')).resolves.toBeNull();
+  });
+
+  it.each([
+    ['register', 'application/json', 'invalid_client_metadata', 'oauthRegister'],
+    ['device_authorization', 'application/x-www-form-urlencoded', 'invalid_request', 'oauthDeviceAuthorization']
+  ] as const)('preserves the OAuth error for an oversized %s body at gateway ingress', async (path, contentType, code, operation) => {
+    const gateway = createAuthFnCanonicalGateway<unknown>({
+      publicAuthority: 'https://account.example.com',
+      basePath: '/custom-auth',
+      oauthBodyErrorOperations: [operation],
+      placementDirectory: createInMemoryAuthFnPlacementDirectory(),
+      keyring,
+      resolveIdentity: () => { throw new Error('routing should not resolve identity for an oversized body'); },
+      selectInitialRegion: () => 'us-east-1',
+      resolveCell: () => null,
+      dispatch: () => Promise.resolve(new Response())
+    });
+    const request = new Request(`https://account.example.com/custom-auth/oauth/${path}/`, {
+      method: 'POST',
+      headers: { 'content-type': contentType },
+      body: 'a'.repeat(AUTHFN_MAX_BODY_BYTES + 1)
+    });
+
+    const response = await gateway.handle(request);
+    expect(response.status).toBe(400);
+    expect(response.headers.get('cache-control')).toBe('no-store');
+    await expect(response.json()).resolves.toMatchObject({ error: code });
+  });
+
+  it('lets a custom regional route on an OAuth path accept a body within the gateway limit', async () => {
+    const gateway = createAuthFnCanonicalGateway<null>({
+      publicAuthority: 'https://account.example.com',
+      placementDirectory: createInMemoryAuthFnPlacementDirectory([placement('person:ada', 'us-east-1', 1)]),
+      keyring,
+      resolveIdentity: () => ({ identityKey: 'person:ada' }),
+      selectInitialRegion: () => 'us-east-1',
+      resolveCell: () => ({ regionId: 'us-east-1', audience: 'cell:us-east-1', target: null }),
+      async dispatch(_target, request) {
+        return Response.json({ bytes: (await request.arrayBuffer()).byteLength });
+      }
+    });
+    const send = (size: number) => gateway.handle(new Request('https://account.example.com/auth/oauth/device_authorization', {
+      method: 'POST',
+      body: 'a'.repeat(size)
+    }));
+    const response = await send(8 * 1024 + 1);
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ bytes: 8 * 1024 + 1 });
+    const oversized = await send(AUTHFN_MAX_BODY_BYTES + 1);
+    expect(oversized.status).toBe(413);
+    await expect(oversized.json()).resolves.toMatchObject({
+      error: { code: 'AUTHFN_VALIDATION_ERROR' }
+    });
+  });
+
   it('claims placement only for explicitly approved first-use routes', async () => {
     const directory = createInMemoryAuthFnPlacementDirectory();
     const effects: string[] = [];

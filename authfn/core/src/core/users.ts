@@ -167,9 +167,8 @@ export function readSignUpProfile(profile: unknown): Record<string, unknown> {
   // A cheap lower bound first, which stops after visiting about as many
   // values and keys as the limit allows, so an oversized profile is refused
   // without being serialized; only a profile within it is. (A very wide
-  // object may still have its key list built by the engine, and the routes
-  // parse the whole request body; capping the body size is follow-up work,
-  // audit finding AF-12.)
+  // object may still have its key list built by the engine. The auth router
+  // bounds the request body before this runs.)
   if (
     jsonSizeExceeds(profile, AUTHFN_MAX_SIGN_UP_PROFILE_BYTES)
     || new TextEncoder().encode(JSON.stringify(profile)).length > AUTHFN_MAX_SIGN_UP_PROFILE_BYTES
