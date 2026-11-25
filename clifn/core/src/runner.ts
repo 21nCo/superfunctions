@@ -1,5 +1,10 @@
 import type { Diagnostic } from "./diagnostics.js";
-import { createDocumentOutput, type DocumentOutcome, type DocumentOutput } from "./document-output.js";
+import {
+  createDocumentOutput,
+  type DocumentDiagnostics,
+  type DocumentOutcome,
+  type DocumentOutput,
+} from "./document-output.js";
 import { createExec, type ExecService } from "./exec.js";
 import { createOutput, type OutputService } from "./output.js";
 import { createScaffold, type ScaffoldService } from "./scaffold.js";
@@ -16,7 +21,9 @@ export type RunnerDiagnosticsListener = (diagnostics: readonly Diagnostic[]) => 
  * `'document'` prints exactly one result document on stdout (D8), `{"ok":true,"data":...}` or
  * `{"ok":false,"error":{"code","message","details"?}}` with `diagnostics` when there are any, and writes every
  * message as a JSON line to stderr. Sensitive keys in `data`, error `details` and diagnostic `details` print
- * `"[REDACTED]"`; messages print as given. It has no effect in text mode.
+ * `"[REDACTED]"`; messages print as given. Diagnostics are kept as the document prints them, so
+ * `ctx.diagnostics.list()` and `onDiagnostics` receive redacted copies, not the objects given. It has no effect in
+ * text mode.
  */
 export type RunnerJsonStyle = "lines" | "document";
 
@@ -124,21 +131,26 @@ export async function runAction<TOptions>(
       stderr: stderrOption,
     });
 
-  // A result document prints at most `maxDiagnostics`, so document mode keeps no more and records that it dropped some.
-  const maxDiagnostics = document?.maxDiagnostics ?? Number.POSITIVE_INFINITY;
-  let droppedDiagnostics = false;
-  const diagnosticSink: RunnerDiagnosticsSink = {
-    add(input: Diagnostic) {
-      if (diagnostics.length < maxDiagnostics) {
-        diagnostics.push(input);
-      } else {
-        droppedDiagnostics = true;
+  // Document mode keeps each diagnostic as the document prints it, within the document's bounds, never the object
+  // it was given (see `DocumentDiagnostics`).
+  const documentDiagnostics = document?.diagnostics;
+  const diagnosticSink: RunnerDiagnosticsSink = documentDiagnostics
+    ? {
+        add(input: Diagnostic) {
+          documentDiagnostics.add(input);
+        },
+        list() {
+          return documentDiagnostics.list();
+        },
       }
-    },
-    list() {
-      return diagnostics;
-    },
-  };
+    : {
+        add(input: Diagnostic) {
+          diagnostics.push(input);
+        },
+        list() {
+          return diagnostics;
+        },
+      };
 
   const ctx: RunnerContext = {
     cwd,
@@ -173,7 +185,7 @@ export async function runAction<TOptions>(
   };
 
   if (document) {
-    return await runDocumentAction(action, options, ctx, runnerOptions, document, () => droppedDiagnostics);
+    return await runDocumentAction(action, options, ctx, runnerOptions, document);
   }
 
   try {
@@ -217,67 +229,49 @@ function toLength(value: unknown): number {
   return Math.min(Math.trunc(number), Number.MAX_SAFE_INTEGER);
 }
 
-/** What reading the returned diagnostics left out, for the document's warnings. */
-interface ReturnedDiagnosticsReport {
-  /** Entries past what the document can keep, which were not read. */
-  dropped: boolean;
-  /** Entries that could not be read; they are not added to the list `onDiagnostics` receives. */
-  unreadable: number;
-}
-
 /**
- * Adds the diagnostics an action returned, reading at most what the sink can keep: an array's length is read once and
- * only the indices below `room` are read, and an iterable stops at `room` items, so an oversized, sparse or proxied
- * array, or an endless iterable, is cut before its excess is read. Reading them never fails the run: an entry that
- * cannot be read (a throwing index getter) is counted in `report.unreadable` instead of being added, taking its
- * place in `room`, and its siblings are still read; a list whose length, iterator or next step throws, or that is
- * not a list at all, ends there with one such entry. Holes and other values are added as read: the document drops
- * an unusable one with its fixed warning.
+ * Adds the diagnostics an action returned, reading no more than the document can keep: an array's length is read
+ * once and each index is read only while `collector.full()` is false, and an iterable stops at the first item read
+ * after it is full, so an oversized, sparse or proxied array, or an endless iterable of fresh diagnostics, is cut
+ * once the document's bounds are reached (see `DocumentDiagnostics`). Reading them never fails the run: an entry that
+ * cannot be read (a throwing index getter) is counted as unreadable and its siblings are still read; a list whose
+ * length, iterator or next step throws, or that is not a list at all, ends there with one unreadable entry. Holes
+ * and other values that are not diagnostics are dropped by the collector with its fixed warning. Internal: not
+ * exported from the package.
  */
-function addReturnedDiagnostics(
-  returned: unknown,
-  sink: RunnerDiagnosticsSink,
-  room: number,
-  report: ReturnedDiagnosticsReport
-): void {
+export function addReturnedDiagnostics(returned: unknown, collector: DocumentDiagnostics): void {
   if (returned === undefined || returned === null) {
     return;
   }
-  let added = 0;
   try {
     if (Array.isArray(returned)) {
       const length = toLength(Reflect.get(returned, "length"));
-      const count = Math.min(length, room);
-      for (; added < count; added += 1) {
+      for (let index = 0; index < length; index += 1) {
+        if (collector.full()) {
+          collector.drop();
+          return;
+        }
         let diagnostic: unknown;
         try {
-          diagnostic = Reflect.get(returned, String(added));
+          diagnostic = Reflect.get(returned, String(index));
         } catch {
-          report.unreadable += 1;
+          collector.unreadable();
           continue;
         }
-        sink.add(diagnostic as Diagnostic);
-      }
-      if (length > count) {
-        report.dropped = true;
+        collector.add(diagnostic);
       }
       return;
     }
-    for (const diagnostic of returned as Iterable<Diagnostic>) {
-      if (added === room) {
-        report.dropped = true;
+    for (const diagnostic of returned as Iterable<unknown>) {
+      if (collector.full()) {
+        collector.drop();
         break;
       }
-      sink.add(diagnostic);
-      added += 1;
+      collector.add(diagnostic);
     }
   } catch {
     // The list itself could not be read further: one unreadable entry stands for the rest.
-    if (added < room) {
-      report.unreadable += 1;
-    } else {
-      report.dropped = true;
-    }
+    collector.unreadable();
   }
 }
 
@@ -286,16 +280,16 @@ function addReturnedDiagnostics(
  * (diagnostics, then data, then exit code, each once) happens afterwards: a result whose members cannot be read, such
  * as one whose getter throws, prints the fixed CLIFN_RUNNER_FAILED document with exit code 1. The returned
  * diagnostics themselves are read entry by entry, and one that cannot be read is dropped with a warning (see
- * `addReturnedDiagnostics`). `onDiagnostics` is called once, after the diagnostics are read, with only the entries
- * that were read; when it throws after a successful action, its error is the run's failure.
+ * `addReturnedDiagnostics`). `onDiagnostics` is called once, after the diagnostics are read, with the diagnostics the
+ * document kept, as it prints them (see `DocumentDiagnostics.list`); when it throws after a successful action, its
+ * error is the run's failure.
  */
 async function runDocumentAction<TOptions>(
   action: (options: TOptions, ctx: RunnerContext) => Promise<RunnerActionResult> | RunnerActionResult,
   options: TOptions,
   ctx: RunnerContext,
   runnerOptions: RunnerOptions,
-  document: DocumentOutput,
-  droppedDiagnostics: () => boolean
+  document: DocumentOutput
 ): Promise<number> {
   let outcome: DocumentOutcome | undefined;
   let result: RunnerActionResult = undefined;
@@ -306,7 +300,6 @@ async function runDocumentAction<TOptions>(
   }
 
   let readable = true;
-  const report: ReturnedDiagnosticsReport = { dropped: false, unreadable: 0 };
   if (outcome === undefined) {
     let returned: unknown;
     try {
@@ -315,8 +308,7 @@ async function runDocumentAction<TOptions>(
       readable = false;
     }
     if (readable) {
-      const room = Math.max(0, document.maxDiagnostics - ctx.diagnostics.list().length);
-      addReturnedDiagnostics(returned, ctx.diagnostics, room, report);
+      addReturnedDiagnostics(returned, document.diagnostics);
     }
   }
 
@@ -340,8 +332,5 @@ async function runDocumentAction<TOptions>(
   if (!readable || outcome === undefined) {
     return document.failPreparation();
   }
-  return document.finish(outcome, ctx.diagnostics.list(), {
-    dropped: report.dropped || droppedDiagnostics(),
-    unreadable: report.unreadable,
-  });
+  return document.finish(outcome);
 }

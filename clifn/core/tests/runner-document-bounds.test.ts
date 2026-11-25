@@ -10,7 +10,13 @@ import type { Diagnostic } from "../src/diagnostics.js";
 import { createDocumentOutput, MAX_WARNINGS_PER_KIND, type DocumentOutcome } from "../src/document-output.js";
 import { classifyRunnerError } from "../src/errors.js";
 import { createDocumentBudget, createWorkBudget, MAX_NESTING_DEPTH, serializeJsonMember } from "../src/json-value.js";
-import { runAction, type RunnerActionResult, type RunnerContext, type RunnerOptions } from "../src/runner.js";
+import {
+  addReturnedDiagnostics,
+  runAction,
+  type RunnerActionResult,
+  type RunnerContext,
+  type RunnerOptions,
+} from "../src/runner.js";
 
 // CLI-22: the redaction boundary and the bounds of the result document (D8).
 
@@ -45,7 +51,10 @@ function finishWith(maxLength: number, outcome: DocumentOutcome, diagnostics: Di
     stdout: (text) => stdout.push(text),
     stderr: (text) => stderr.push(text),
   });
-  const exitCode = output.finish(outcome, diagnostics);
+  for (const diagnostic of diagnostics) {
+    output.diagnostics.add(diagnostic);
+  }
+  const exitCode = output.finish(outcome);
   return { exitCode, out: stdout.join(""), writes: stdout.length, stderr: stderr.join("") };
 }
 
@@ -327,6 +336,11 @@ function recorded<T extends object>(target: T, log: string[], path = "$"): T {
       log.push(`has ${path}.${String(key)}`);
       return Reflect.has(object, key);
     },
+    // JSON.stringify never asks for a prototype, so neither may the document.
+    getPrototypeOf(object) {
+      log.push(`getPrototypeOf ${path}`);
+      return Reflect.getPrototypeOf(object);
+    },
   });
 }
 
@@ -372,6 +386,18 @@ describe("document serialization follows native JSON.stringify member order", ()
     const result = await runDocument(() => ({ data: { huge } }));
     expect(parseOnlyDocument(result)).toEqual(FAILURE_DOCUMENT);
     expect(reads).toEqual(["toJSON", "length"]);
+  });
+
+  it("prints a proxy whose getPrototypeOf trap throws, as JSON.stringify does, without calling the trap", async () => {
+    const getPrototypeOf = vi.fn(() => {
+      throw new Error("getPrototypeOf was called");
+    });
+    const data = { object: new Proxy({ kept: 1 }, { getPrototypeOf }), list: new Proxy([1, 2], { getPrototypeOf }) };
+    expect(JSON.stringify(data)).toBe('{"object":{"kept":1},"list":[1,2]}');
+    const result = await runDocument(() => ({ data, exitCode: 3 }));
+    expect(result.exitCode).toBe(3);
+    expect(parseOnlyDocument(result)).toEqual({ ok: true, data: { object: { kept: 1 }, list: [1, 2] } });
+    expect(getPrototypeOf).not.toHaveBeenCalled();
   });
 });
 
@@ -636,12 +662,151 @@ describe("document advisory stderr writes", () => {
         return Reflect.get(target, key);
       },
     });
-    const result = finishWith(1_000, { ok: true, data: 1, exitCode: 0 }, diagnostics);
-    // (1000 - ',"diagnostics":[]') / '{"code":"","severity":"","message":""},' = 25 diagnostics at most.
-    expect(reads).toBe(25);
-    expect(result.exitCode).toBe(0);
-    expect((parseOnlyDocument(result) as { data: number }).data).toBe(1);
-    expect(result.stderr).toContain("diagnostics past the first 25 were dropped");
+    const { output, result } = documentWith(1_000);
+    addReturnedDiagnostics(diagnostics, output.diagnostics);
+    const exitCode = output.finish({ ok: true, data: 1, exitCode: 0 });
+    // The text a document could print after its smallest data, 1000 - '{"ok":true,"data":0,"diagnostics":[]}\n' = 962
+    // characters, keeps 21 of these 45-character diagnostics (with their separators) and no index past them is read.
+    expect(reads).toBe(21);
+    expect(exitCode).toBe(0);
+    const document = parseOnlyDocument(result()) as { data: number; diagnostics: Diagnostic[] };
+    expect(document.data).toBe(1);
+    expect(document.diagnostics).toHaveLength(21);
+    expect(result().stderr).toContain("diagnostics past the first 21 were dropped");
+  });
+});
+
+/** A document output with a small limit, written to arrays: `result()` reads what it printed. */
+function documentWith(maxLength: number) {
+  const stdout: string[] = [];
+  const stderr: string[] = [];
+  const output = createDocumentOutput({
+    maxLength,
+    stdout: (text) => stdout.push(text),
+    stderr: (text) => stderr.push(text),
+  });
+  return { output, result: () => ({ out: stdout.join(""), writes: stdout.length, stderr: stderr.join("") }) };
+}
+
+describe("document diagnostics retained by size", () => {
+  /** Fresh diagnostics, each with a new message of `size` characters, counting how many were read. */
+  function freshDiagnostics(size: number, extra: (index: number) => Partial<Diagnostic> = () => ({})) {
+    const counter = { reads: 0 };
+    function* generate(): Generator<Diagnostic> {
+      for (let index = 0; ; index += 1) {
+        counter.reads += 1;
+        yield { code: "D", severity: "info", message: `${index}:${"x".repeat(size)}`, ...extra(index) };
+      }
+    }
+    return { counter, generate };
+  }
+
+  it("stops reading an endless iterable of large fresh diagnostics once their text fills the document", () => {
+    const { counter, generate } = freshDiagnostics(1_000);
+    const { output, result } = documentWith(10_000);
+    addReturnedDiagnostics(generate(), output.diagnostics);
+    // Nine kept ones fill the text; each one then dropped for size costs the work allowance (20,000 units) the text
+    // that was left (about 580), so reading stops far below the 255 empty diagnostics the count allows.
+    expect(counter.reads).toBeGreaterThan(9);
+    expect(counter.reads).toBeLessThan(50);
+    expect(output.diagnostics.full()).toBe(true);
+    expect(output.finish({ ok: true, data: "done", exitCode: 2 })).toBe(2);
+    const document = parseOnlyDocument(result()) as { data: string; diagnostics: Diagnostic[] };
+    expect(document.data).toBe("done");
+    expect(document.diagnostics.length).toBeGreaterThan(5);
+    expect(document.diagnostics[0].message.startsWith("0:x")).toBe(true);
+    expect(result().stderr).toContain(`diagnostics past the first ${counter.reads - 1} were dropped`);
+  });
+
+  it("reads no diagnostic added once the document is full, from the action's sink or a returned list", async () => {
+    const { generate } = freshDiagnostics(1_000);
+    const late = vi.fn(() => "late");
+    const lateDiagnostic = Object.defineProperty({ severity: "info", message: "m" }, "code", { get: late, enumerable: true });
+    const { output } = documentWith(10_000);
+    addReturnedDiagnostics(generate(), output.diagnostics);
+    output.diagnostics.add(lateDiagnostic as Diagnostic);
+    addReturnedDiagnostics([lateDiagnostic], output.diagnostics);
+    expect(late).not.toHaveBeenCalled();
+  });
+
+  it("keeps the text of each diagnostic once, never the object, so later changes to it are not printed", async () => {
+    const details: Record<string, unknown> = { region: "eu" };
+    const diagnostic = { code: "SET", severity: "info" as const, message: "as added", details };
+    const result = await runDocument((_options, ctx) => {
+      ctx.diagnostics.add(diagnostic);
+      diagnostic.message = "changed";
+      details.region = "us";
+      return { data: 1 };
+    });
+    expect(parseOnlyDocument(result)).toEqual({
+      ok: true,
+      data: 1,
+      diagnostics: [{ code: "SET", severity: "info", message: "as added", details: { region: "eu" } }],
+    });
+  });
+
+  it("lists the diagnostics as the document prints them, redacted, once each, with no unusable entry", async () => {
+    const toJSON = vi.fn(() => ({ apiKey: dummyValue("apiKey"), visible: "kept" }));
+    const lists: Array<readonly Diagnostic[]> = [];
+    const result = await runDocument(
+      (_options, ctx) => {
+        ctx.diagnostics.add({ code: "A", severity: "info", message: "a", details: { toJSON } as never });
+        const first = ctx.diagnostics.list();
+        // A listed copy changed by the caller does not change the document.
+        (first[0] as { message: string }).message = "changed by the action";
+        return { data: "ok", exitCode: 7, diagnostics: [undefined, { code: "B", severity: "info", message: "b" }] as never };
+      },
+      { onDiagnostics: (list) => lists.push(list) }
+    );
+    expect(toJSON).toHaveBeenCalledTimes(1);
+    expect(result.exitCode).toBe(7);
+    expect(parseOnlyDocument(result)).toEqual({
+      ok: true,
+      data: "ok",
+      diagnostics: [
+        { code: "A", severity: "info", message: "a", details: { apiKey: "[REDACTED]", visible: "kept" } },
+        { code: "B", severity: "info", message: "b" },
+      ],
+    });
+    expect(lists).toEqual([
+      [
+        { code: "A", severity: "info", message: "changed by the action", details: { apiKey: "[REDACTED]", visible: "kept" } },
+        { code: "B", severity: "info", message: "b" },
+      ],
+    ]);
+    expectNoDummyValue(JSON.stringify(lists) + result.out + result.stderr);
+    expect(result.stderr.trim().split("\n").map((line) => (JSON.parse(line) as { message: string }).message)).toEqual([
+      "diagnostic 1 was dropped from the result document: it could not be redacted or printed",
+    ]);
+  });
+
+  it("bounds the copies it lists by their details text, without changing what the document prints", () => {
+    // 10,000 characters allow 10,000 copy units, 32 per character of details text: 2,000-item details (about 4,000
+    // characters) are never copied, and 100-item details (about 220 characters) are copied once.
+    const listedDetails = (items: number) => {
+      const { output, result } = documentWith(10_000);
+      const list = Array.from({ length: items }, () => 0);
+      for (const code of ["FIRST", "SECOND"]) {
+        output.diagnostics.add({ code, severity: "info", message: "m", details: { list } });
+      }
+      const listed = output.diagnostics.list().map((diagnostic) => diagnostic.details !== undefined);
+      expect(output.finish({ ok: true, data: 1, exitCode: 0 })).toBe(0);
+      const printed = (parseOnlyDocument(result()) as { diagnostics: Diagnostic[] }).diagnostics;
+      // The document prints the details in full either way.
+      expect(printed.map((diagnostic) => diagnostic.details)).toEqual([{ list }, { list }]);
+      return listed;
+    };
+    expect(listedDetails(2_000)).toEqual([false, false]);
+    expect(listedDetails(100)).toEqual([true, false]);
+  });
+
+  it("prints a kept diagnostic without its details when only they no longer fit after the data", () => {
+    const { output, result } = documentWith(2_000);
+    output.diagnostics.add({ code: "D", severity: "info", message: "m", details: { note: "n".repeat(900) } });
+    expect(output.finish({ ok: true, data: "d".repeat(1_500), exitCode: 4 })).toBe(4);
+    expect((parseOnlyDocument(result()) as { diagnostics: Diagnostic[] }).diagnostics).toEqual([
+      { code: "D", severity: "info", message: "m" },
+    ]);
   });
 });
 
@@ -894,6 +1059,49 @@ describe("document error names", () => {
     expect(classifyRunnerError(named())).toEqual({ error: { code: "CLOSED", message: "First" }, exitCode: 7 });
     expect(reads).toBe(1);
   });
+
+  it("classifies the code, message, name and exit code before the details, so a details getter cannot change them", async () => {
+    const reads: string[] = [];
+    const thrown = () => {
+      const error = new Error("");
+      const fields: Record<string, unknown> = { code: "CLOSED", exitCode: 7, name: "Closed" };
+      for (const key of ["code", "exitCode", "name"]) {
+        Object.defineProperty(error, key, {
+          get: () => (reads.push(key), fields[key]),
+        });
+      }
+      Object.defineProperty(error, "details", {
+        get: () => {
+          reads.push("details");
+          // Changes every field the classification read, after it read them.
+          Object.assign(fields, { code: "CHANGED", exitCode: 1, name: "Changed" });
+          return {
+            visible: "kept",
+            toJSON() {
+              Object.assign(fields, { code: "PROJECTED", exitCode: 2, name: "Projected" });
+              return { visible: "kept", token: dummyValue("token") };
+            },
+          };
+        },
+      });
+      return error;
+    };
+    const result = await runDocument(() => {
+      throw thrown();
+    });
+    expect(result.exitCode).toBe(7);
+    expect(parseOnlyDocument(result)).toEqual({
+      ok: false,
+      error: { code: "CLOSED", message: "Closed", details: { visible: "kept", token: "[REDACTED]" } },
+    });
+    expect(reads).toEqual(["code", "exitCode", "name", "details"]);
+    expectNoDummyValue(result.out);
+
+    // JSON lines never read the details: the same classification, from the same reads.
+    reads.length = 0;
+    expect(classifyRunnerError(thrown())).toEqual({ error: { code: "CLOSED", message: "Closed" }, exitCode: 7 });
+    expect(reads).toEqual(["code", "exitCode", "name"]);
+  });
 });
 
 describe("document Buffer projections", () => {
@@ -1132,14 +1340,26 @@ describe("document memory in a constrained heap", () => {
     // Each case prints one line: its name, how many stdout writes it made, its exit code and its stdout.
     const script = String.raw`
       const { runAction } = await import(process.argv[1]);
-      const run = async (name, action) => {
+      const run = async (name, action, extra = {}) => {
         const chunks = [];
         const exitCode = await runAction(action, {}, {
           mode: "json", jsonStyle: "document", color: false,
-          stdout: (text) => chunks.push(text), stderr: () => {},
+          stdout: (text) => chunks.push(text), stderr: () => {}, ...extra,
         });
         process.stdout.write(JSON.stringify({ name, writes: chunks.length, exitCode, out: chunks.join("").slice(0, 400) }) + "\n");
+        // What runs next starts from what is still alive, not from garbage V8 has yet to collect from this case.
+        await new Promise((resolve) => setImmediate(resolve));
+        globalThis.gc();
       };
+      // First, on a fresh heap: these need most of it. 16 MiB, built negative by one shift inside the action, so no
+      // other large bigint (an intermediate power or a negated copy) is alive: a second copy would not fit this heap.
+      await run("bigint-negative", () => ({ data: -1n << (2n ** 27n) }));
+      {
+        // Block-scoped, so its 16 MiB are released before the cases below; one shift, with no intermediate powers.
+        const huge = 1n << (2n ** 27n);
+        await run("bigint-redacted", () => ({ exitCode: 4, data: { visible: "kept", secret: huge } }));
+        await run("bigint", () => ({ data: huge }));
+      }
       let indexReads = 0;
       const countIndex = (key) => { if (typeof key === "string" && /^\d+$/.test(key)) indexReads += 1; };
       await run("sparse", () => ({ data: new Array(120e6) }));
@@ -1204,12 +1424,6 @@ describe("document memory in a constrained heap", () => {
       });
       await run("diagnostics-proxy", () => ({ exitCode: 2, data: "done", diagnostics: many }));
       await run("diagnostic-reads", () => ({ data: diagnosticReads < 2e6 }));
-      // 16 MiB, built negative (an odd power of -2) inside the action, so no other large bigint is alive and the
-      // script makes no negated copy: a second, negated copy would not fit this heap.
-      await run("bigint-negative", () => ({ data: (-2n) ** (2n ** 27n + 1n) }));
-      const huge = 2n ** (2n ** 27n);
-      await run("bigint-redacted", () => ({ exitCode: 4, data: { visible: "kept", secret: huge } }));
-      await run("bigint", () => ({ data: huge }));
       // Thrown messages far larger than this heap, which a code-pattern scan would flatten.
       await run("message", () => {
         throw { message: rope, exitCode: 7 };
@@ -1220,9 +1434,31 @@ describe("document memory in a constrained heap", () => {
       await run("message-code-like", () => {
         throw { message: "CLIFN_" + "X".repeat(2 ** 28), exitCode: 7 };
       });
+      // Fresh diagnostics, each holding new text or details, that the runner would retain if it kept them as given:
+      // an endless generator, a 2e8-item proxy and the action's own sink, with and without a listener that lists them.
+      const fresh = (index) => ({ code: "D", severity: "info", message: index + ":" + "x".repeat(4096) });
+      const endless = function* (make) { for (let index = 0; ; index += 1) yield make(index); };
+      const freshProxy = (make) => new Proxy([], {
+        get: (target, key) => key === "length" ? 2e8 : typeof key === "string" && /^\d+$/.test(key) ? make(Number(key)) : Reflect.get(target, key),
+      });
+      let listed = 0;
+      const listener = { onDiagnostics: (list) => { listed = list.length; } };
+      await run("densify", () => ({ data: "done", exitCode: 2, diagnostics: endless(fresh) }));
+      await run("densify-listed", () => ({ data: "done", exitCode: 2, diagnostics: endless(fresh) }), listener);
+      await run("densify-listed-count", () => ({ data: listed > 0 }));
+      await run("densify-proxy", () => ({ data: "done", exitCode: 2, diagnostics: freshProxy(fresh) }), listener);
+      await run("densify-sink", (_options, ctx) => {
+        for (let index = 0; index < 200_000; index += 1) ctx.diagnostics.add(fresh(index));
+        return { data: "done", exitCode: 2 };
+      }, listener);
+      const freshDetails = (index) => ({ code: "D", severity: "info", message: "m", details: { note: index + "x".repeat(4096), token: "t".repeat(65536) + index } });
+      await run("densify-details", () => ({ data: "done", exitCode: 2, diagnostics: endless(freshDetails) }), listener);
+      // Details whose text is mostly nodes: each "{}" parses to a whole object in a listed copy.
+      const nodes = Array.from({ length: 4096 }, () => ({}));
+      await run("densify-nodes", () => ({ data: "done", exitCode: 2, diagnostics: endless(() => ({ code: "N", severity: "info", message: "m", details: { nodes } })) }), listener);
     `;
     const runnerUrl = pathToFileURL(runnerModule).href;
-    const child = spawnSync(process.execPath, ["--max-old-space-size=32", "--input-type=module", "-e", script, runnerUrl], {
+    const child = spawnSync(process.execPath, ["--max-old-space-size=32", "--expose-gc", "--input-type=module", "-e", script, runnerUrl], {
       encoding: "utf8",
       maxBuffer: 16 * 2 ** 20,
       timeout: 120_000,
@@ -1261,6 +1497,19 @@ describe("document memory in a constrained heap", () => {
     });
     expect(cases.records).toMatchObject({ writes: 1, exitCode: 0 });
     expect(cases.records.out.startsWith('{"ok":true,"data":[{"id":0,"name":"n0"},')).toBe(true);
+    for (const name of ["densify", "densify-listed", "densify-proxy", "densify-sink"]) {
+      expect(cases[name]).toMatchObject({ writes: 1, exitCode: 2 });
+      expect(cases[name].out.startsWith('{"ok":true,"data":"done","diagnostics":[{"code":"D","severity":"info","message":"0:xxx')).toBe(true);
+    }
+    expect(cases["densify-listed-count"].out).toBe('{"ok":true,"data":true}\n');
+    expect(cases["densify-details"]).toMatchObject({ writes: 1, exitCode: 2 });
+    expect(cases["densify-details"].out.startsWith(
+      '{"ok":true,"data":"done","diagnostics":[{"code":"D","severity":"info","message":"m","details":{"note":"0xxx'
+    )).toBe(true);
+    expect(cases["densify-nodes"]).toMatchObject({ writes: 1, exitCode: 2 });
+    expect(cases["densify-nodes"].out.startsWith(
+      '{"ok":true,"data":"done","diagnostics":[{"code":"N","severity":"info","message":"m","details":{"nodes":[{},'
+    )).toBe(true);
     for (const name of ["typed", "bigint"]) {
       expect(cases[name]).toEqual({ name, writes: 1, exitCode: 1, out: failure });
     }

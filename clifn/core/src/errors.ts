@@ -47,11 +47,10 @@ export interface ClassifiedRunnerFailure extends ClassifiedRunnerError {
 interface ThrownFields {
   code?: unknown;
   message?: unknown;
-  details?: unknown;
   exitCode?: unknown;
 }
 
-function readProperty(record: Record<string, unknown>, key: keyof ThrownFields): unknown {
+function readProperty(record: Record<string, unknown>, key: keyof ThrownFields | "details"): unknown {
   try {
     return record[key];
   } catch {
@@ -60,7 +59,7 @@ function readProperty(record: Record<string, unknown>, key: keyof ThrownFields):
   }
 }
 
-function readFields(error: unknown, withDetails: boolean): ThrownFields {
+function readFields(error: unknown): ThrownFields {
   if ((typeof error !== "object" || error === null) && typeof error !== "function") {
     return {};
   }
@@ -69,7 +68,6 @@ function readFields(error: unknown, withDetails: boolean): ThrownFields {
   return {
     code: readProperty(record, "code"),
     message: readProperty(record, "message"),
-    ...(withDetails ? { details: readProperty(record, "details") } : {}),
     exitCode: readProperty(record, "exitCode"),
   };
 }
@@ -134,7 +132,7 @@ function classifyFields(
  */
 export function classifyRunnerError(error: unknown): ClassifiedRunnerError {
   try {
-    return classifyFields(error, readFields(error, false));
+    return classifyFields(error, readFields(error));
   } catch {
     // A throwing getter or proxy on the thrown value must not stop the runner from reporting the failure.
     return { error: { code: RUNNER_FAILED_CODE, message: UNKNOWN_FAILURE_MESSAGE }, exitCode: 1 };
@@ -142,20 +140,27 @@ export function classifyRunnerError(error: unknown): ClassifiedRunnerError {
 }
 
 /**
- * `classifyRunnerError` for a result document (D8): it also reads the thrown value's `details` (after `message` and
- * before `exitCode`, each once) and returns it unchanged; the document decides whether it is usable. A details
- * getter that throws leaves `details` undefined. A message longer than `maxCodeLength`, which could not be printed as
- * a code anyway, is not matched against the message-code pattern, so it is never flattened or scanned here; the
- * document then prints it, or its too-long fallback, as the message. Internal: not exported from the package.
+ * `classifyRunnerError` for a result document (D8): it also reads the thrown value's `details` once and returns it
+ * unchanged; the document decides whether it is usable. The code, message (with its name fallback) and exit code are
+ * read and classified first, so a `details` getter that changes them (or a projection of the details, which runs
+ * later) cannot change what is printed. A details getter that throws leaves `details` undefined. A message longer than
+ * `maxCodeLength`, which could not be printed as a code anyway, is not matched against the message-code pattern, so
+ * it is never flattened or scanned here; the document then prints it, or its too-long fallback, as the message.
+ * Internal: not exported from the package.
  */
 export function classifyRunnerFailure(
   error: unknown,
   maxCodeLength = Number.POSITIVE_INFINITY
 ): ClassifiedRunnerFailure {
+  let classified: ClassifiedRunnerError;
   try {
-    const fields = readFields(error, true);
-    return { ...classifyFields(error, fields, maxCodeLength), details: fields.details };
+    classified = classifyFields(error, readFields(error), maxCodeLength);
   } catch {
     return { error: { code: RUNNER_FAILED_CODE, message: UNKNOWN_FAILURE_MESSAGE }, exitCode: 1, details: undefined };
   }
+  const details =
+    (typeof error === "object" && error !== null) || typeof error === "function"
+      ? readProperty(error as Record<string, unknown>, "details")
+      : undefined;
+  return { ...classified, details };
 }

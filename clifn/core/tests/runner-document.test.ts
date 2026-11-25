@@ -267,8 +267,9 @@ describe("runAction with jsonStyle 'document'", () => {
         { code: "MORE", severity: "info", message: "more" },
       ],
     });
-    // The listener still receives the diagnostics as the action recorded them.
-    expect(seen).toEqual([[{ apiKey: "test-api-key", region: "eu" }, undefined]]);
+    // The listener receives the diagnostics as the document prints them: redacted, and never the objects it was
+    // given, so what a run retains for them stays bounded.
+    expect(seen).toEqual([[{ apiKey: "[REDACTED]", region: "eu" }, undefined]]);
 
     const failure = await runDocument(async (_options, ctx) => {
       ctx.diagnostics.add(diagnostic);
@@ -1405,7 +1406,10 @@ describe("document mode text limit", () => {
       stdout: (text) => stdout.push(text),
       stderr: (text) => stderr.push(text),
     });
-    const exitCode = output.finish(outcome, diagnostics);
+    for (const diagnostic of diagnostics) {
+      output.diagnostics.add(diagnostic);
+    }
+    const exitCode = output.finish(outcome);
     return { exitCode, out: stdout.join(""), writes: stdout.length, stderr: stderr.join("") };
   };
   const warnings = (stderr: string) =>

@@ -336,6 +336,11 @@ class BufferBytes {
 }
 // No toJSON can be found on a stand-in, as none is found on the data array it replaces (see `projectBuffer`).
 Object.setPrototypeOf(BufferBytes.prototype, null);
+/**
+ * The stand-ins created by `projectBuffer`. A node is recognized by membership, which observes nothing of the node:
+ * `instanceof` would run the getPrototypeOf trap of every proxied object or array, which JSON.stringify never calls.
+ */
+const bufferStandIns = new WeakSet<object>();
 
 /**
  * Projects a value whose toJSON is Node's built-in `Buffer.prototype.toJSON`, which copies each of `this.length`
@@ -364,7 +369,9 @@ function projectBuffer(walk: Walk, value: object): object | undefined {
   if (dataToJSON !== undefined && dataToJSON.descriptor === undefined && !isBigIntArray(value)) {
     const projection = Object.create(null) as Record<string, unknown>;
     projection.type = "Buffer";
-    projection.data = new BufferBytes(value, count);
+    const bytes = new BufferBytes(value, count);
+    bufferStandIns.add(bytes);
+    projection.data = bytes;
     return projection;
   }
   if (count * TYPED_ARRAY_INDEX_UNITS > walk.work.unitsLeft) {
@@ -466,8 +473,9 @@ function serializeNode(walk: Walk, node: object, original: unknown, key: string,
   walk.nodes.add(node);
   byKey.set(key, open + 1);
   try {
-    if (node instanceof BufferBytes) {
-      serializeArray(walk, node.bytes, depth + 1, node.length);
+    if (bufferStandIns.has(node)) {
+      const bytes = node as BufferBytes;
+      serializeArray(walk, bytes.bytes, depth + 1, bytes.length);
     } else if (Array.isArray(node)) {
       serializeArray(walk, node, depth + 1);
     } else {

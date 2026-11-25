@@ -33,30 +33,46 @@ export type DocumentOutcome =
   | { ok: true; data: unknown; exitCode: number }
   | { ok: false; error: unknown };
 
+/**
+ * The diagnostics of one result document, kept as the document prints them. `add` reads each member of a diagnostic
+ * once and writes its redacted JSON text at once (details through their own `toJSON`); the runner keeps that text and
+ * a copy parsed from it, never the diagnostic itself, so what a run retains for its diagnostics is bounded by the
+ * document limit however many or however large the diagnostics it is given (see `createDocumentOutput`).
+ */
+export interface DocumentDiagnostics {
+  /** True once no further diagnostic could be kept: the runner stops reading them and reports the rest dropped. */
+  full(): boolean;
+  /**
+   * Keeps `input` when it is a usable diagnostic whose text fits what is left; anything else is dropped with a fixed
+   * warning when the document is printed. Never throws. When `full()`, the input is not read and counts as dropped.
+   */
+  add(input: unknown): void;
+  /** Counts a returned diagnostic that could not be read (one fixed warning each). */
+  unreadable(): void;
+  /** Records that diagnostics were left unread because the document could keep no more (one warning). */
+  drop(): void;
+  /**
+   * The kept diagnostics as the document prints them, each parsed from its redacted text when it is first listed:
+   * code, severity, message, path and details (sensitive keys hold "[REDACTED]", projections already applied). Details
+   * are listed while their copies fit an allowance of about the document's size in bytes; past it, a diagnostic is
+   * listed without them, though the document still prints them. The same array each call.
+   */
+  list(): readonly Diagnostic[];
+}
+
 export interface DocumentOutput {
   readonly service: OutputService;
+  readonly diagnostics: DocumentDiagnostics;
   /**
-   * The most diagnostics one document can print, each at its smallest (`{"code":"","severity":"","message":""}` and
-   * a separator). The runner keeps at most this many and reports the rest as dropped.
+   * Writes the single result document to stdout, with the kept diagnostics that fit after its data or error, and
+   * returns the run's exit code.
    */
-  readonly maxDiagnostics: number;
-  /**
-   * Writes the single result document to stdout and returns the run's exit code. `left.dropped` reports that
-   * diagnostics past `maxDiagnostics` were left out before they were read (one warning on stderr), and
-   * `left.unreadable` counts returned diagnostics that could not be read (one bounded warning each).
-   */
-  finish(outcome: DocumentOutcome, diagnostics: readonly Diagnostic[], left?: DiagnosticsLeftOut): number;
+  finish(outcome: DocumentOutcome): number;
   /**
    * Writes the fixed CLIFN_RUNNER_FAILED document for a result that could not be read, after warning for each
    * collected output call, none of which is printed, and returns exit code 1.
    */
   failPreparation(): number;
-}
-
-/** Diagnostics the runner left out before the document was prepared. */
-export interface DiagnosticsLeftOut {
-  dropped?: boolean;
-  unreadable?: number;
 }
 
 /** Printed instead of an error message whose text does not fit the result document. */
@@ -77,6 +93,13 @@ const DIAGNOSTICS_MEMBER_LENGTH = ',"diagnostics":[]'.length;
 const DETAILS_MEMBER_LENGTH = ',"details":'.length;
 /** The shortest text a printed diagnostic takes, with its separator. */
 const MIN_DIAGNOSTIC_LENGTH = '{"code":"","severity":"","message":""},'.length;
+/**
+ * What each character of a diagnostic's details text costs against the allowance for the copies `list()` returns:
+ * parsed JSON takes up to about 20 bytes for each character it was parsed from (arrays of empty arrays, objects of
+ * distinct shapes), so with an allowance of `limit` units the parsed details take at most about as many bytes as the
+ * document has characters. The rest of a copy (code, severity, message and path) takes about the bytes of its text.
+ */
+const COPY_UNITS_PER_DETAILS_CHAR = 32;
 /**
  * How many warnings of one kind (unused output calls, dropped diagnostics) stderr receives; past it, one more line
  * says the rest were not reported, so the warnings stay bounded however many calls or diagnostics there are.
@@ -108,11 +131,18 @@ function chargeDropped(work: WorkBudget, consumed: number): void {
 /**
  * Charges and returns the JSON text of the string `text`, or throws a RangeError when it does not fit what is left of
  * the text budget; no text is built for a string that does not fit (see `encodeString`). A kept string costs its text;
- * when its segment is dropped later, that text is charged to the work budget (see `chargeDropped`).
+ * when its segment is dropped later, that text is charged to the work budget (see `chargeDropped`). A string rejected
+ * from its length costs the work budget its length, at most `maxCharge` (the document limit), so strings dropped for
+ * size use up the work allowance in proportion to their size, and reading stops when it is spent.
  */
-function chargeString(text: string, budgets: Budgets): string {
-  const encoded = encodeString(text, budgets.text.charsLeft, budgets.work);
+function chargeString(text: string, budgets: Budgets, maxCharge: number): string {
+  const room = budgets.text.charsLeft;
+  const encoded = encodeString(text, room, budgets.work);
   if (encoded === undefined) {
+    if (text.length + 2 > room) {
+      // A string scanned and found too long was charged by the scan (see `encodeString`).
+      chargeDropped(budgets.work, Math.min(text.length, maxCharge));
+    }
     throw new DocumentBudgetExceeded("Value too large for a result document");
   }
   spendText(budgets.text, encoded.length);
@@ -191,15 +221,25 @@ function toDocumentDetails(
   }
 }
 
+/** A diagnostic as the document prints it: `{"code":...` up to its details, and its `,"details":{...}` member. */
+interface PreparedDiagnostic {
+  head: string;
+  details: string | undefined;
+}
+
 /**
- * Writes a diagnostic as the JSON text the document prints. It keeps the members `createDiagnostic` keeps, reading
- * each from the original diagnostic once, without cloning. The code, severity, message and path are strings written
- * directly, never through a prototype or `toJSON`; the details serialize through their own `toJSON` and are kept only
- * when they serialize to an object that fits (see `toDocumentDetails`). Throws when the diagnostic is not an object,
- * its code, severity or message is not a string, its path is neither a string nor undefined, or those members do not
- * fit `budgets`.
+ * Writes a diagnostic as the JSON text the document prints, without its closing brace. It keeps the members
+ * `createDiagnostic` keeps, reading each from the original diagnostic once, without cloning. The code, severity,
+ * message and path are strings written directly, never through a prototype or `toJSON`; the details serialize through
+ * their own `toJSON` and are kept only when they serialize to an object that fits (see `toDocumentDetails`). Throws
+ * when the diagnostic is not an object, its code, severity or message is not a string, its path is neither a string
+ * nor undefined, or those members do not fit `budgets` (see `chargeString` for `maxCharge`).
  */
-function toDocumentDiagnostic(diagnostic: Diagnostic, budgets: Budgets): JsonText {
+function toDocumentDiagnostic(
+  diagnostic: Diagnostic,
+  budgets: Budgets,
+  maxCharge: number
+): { head: JsonText; details?: JsonText } {
   const { code, severity, message, path, details } = diagnostic;
   if (
     typeof code !== "string" ||
@@ -211,19 +251,15 @@ function toDocumentDiagnostic(diagnostic: Diagnostic, budgets: Budgets): JsonTex
   }
   const text = new JsonText();
   spendText(budgets.text, '{"code":,"severity":,"message":}'.length);
-  text.write(`{"code":${chargeString(code, budgets)}`);
-  text.write(`,"severity":${chargeString(severity, budgets)}`);
-  text.write(`,"message":${chargeString(message, budgets)}`);
+  text.write(`{"code":${chargeString(code, budgets, maxCharge)}`);
+  text.write(`,"severity":${chargeString(severity, budgets, maxCharge)}`);
+  text.write(`,"message":${chargeString(message, budgets, maxCharge)}`);
   if (path !== undefined) {
     spendText(budgets.text, ',"path":'.length);
-    text.write(`,"path":${chargeString(path, budgets)}`);
+    text.write(`,"path":${chargeString(path, budgets, maxCharge)}`);
   }
-  const detailsText = toDocumentDetails(details || undefined, budgets, true, true);
-  if (detailsText !== undefined) {
-    text.append(detailsText);
-  }
-  text.write("}");
-  return text;
+  // The closing brace was charged with the frame above; the caller writes it after the details or without them.
+  return { head: text, details: toDocumentDetails(details || undefined, budgets, true, true) };
 }
 
 /**
@@ -366,70 +402,144 @@ export function createDocumentOutput(options: DocumentOutputOptions): DocumentOu
     });
   };
 
-  // A diagnostic that cannot be serialized (not an object, a throwing getter or toJSON in its members, or text longer
-  // than is left of the document's budget) is dropped with a fixed warning on stderr, so it cannot cost the run its
-  // result document. Each diagnostic costs one unit of work before it is read, and at most `maxDiagnostics` are read.
-  // Returns the `,"diagnostics":[...]` member, or undefined when none is kept.
-  const writeDiagnostics = (
-    input: readonly Diagnostic[],
-    { dropped = false, unreadable = 0 }: DiagnosticsLeftOut,
-    budgets: Budgets
-  ): JsonText | undefined => {
-    const segment = segmentOf(budgets.text);
-    segment.charsLeft -= DIAGNOSTICS_MEMBER_LENGTH;
+  // Diagnostics are written when they are added, each read once, under budgets of their own that bound what the run
+  // retains for them: their text (at most what a document could print after its smallest data) and the work that
+  // prints nothing (twice the limit, as for the document); the copies `list()` returns are bounded by their own
+  // allowance (see COPY_UNITS_PER_DETAILS_CHAR). At most `maxDiagnostics` are read. A diagnostic that cannot be
+  // written (not an object, a member that is not a string, a throwing getter or toJSON, or text longer than is left)
+  // is dropped with a fixed warning when the document is printed, so it cannot cost the run its result document.
+  const kept: Budgets = {
+    text: createDocumentBudget(Math.max(0, limit - 1 - SUCCESS_FRAME_LENGTH - "0".length - DIAGNOSTICS_MEMBER_LENGTH)),
+    work: createWorkBudget(limit),
+  };
+  const copyAllowance: WorkBudget = { unitsLeft: limit };
+  // In the order they were added; undefined for one dropped when it was added.
+  const entries: Array<PreparedDiagnostic | undefined> = [];
+  // The copies `list()` returns, parsed from the kept text the first time they are listed; `copied` entries so far.
+  const copies: Diagnostic[] = [];
+  let copied = 0;
+  let unreadableCount = 0;
+  let droppedRest = false;
+  const consumed = () => entries.length + unreadableCount;
+  const full = () =>
+    consumed() >= maxDiagnostics ||
+    kept.work.unitsLeft < 1 ||
+    kept.text.charsLeft < MIN_DIAGNOSTIC_LENGTH;
+
+  const prepare = (input: unknown): PreparedDiagnostic | undefined => {
+    const item = segmentOf(kept.text);
+    try {
+      spendWork(kept.work, 1);
+      // Its separator, then its text.
+      spendText(item, 1);
+      const written = toDocumentDiagnostic(input as Diagnostic, { text: item, work: kept.work }, limit);
+      kept.text.charsLeft = item.charsLeft;
+      return { head: written.head.toString(), details: written.details?.toString() };
+    } catch {
+      chargeDropped(kept.work, kept.text.charsLeft - item.charsLeft);
+      return undefined;
+    }
+  };
+
+  const diagnostics: DocumentDiagnostics = {
+    full,
+    add(input) {
+      if (full()) {
+        droppedRest = true;
+        return;
+      }
+      entries.push(prepare(input));
+    },
+    unreadable() {
+      if (full()) {
+        droppedRest = true;
+        return;
+      }
+      kept.work.unitsLeft -= 1;
+      unreadableCount += 1;
+    },
+    drop() {
+      droppedRest = true;
+    },
+    list() {
+      for (; copied < entries.length; copied += 1) {
+        const entry = entries[copied];
+        if (entry === undefined) {
+          continue;
+        }
+        let details = "";
+        const units = (entry.details?.length ?? 0) * COPY_UNITS_PER_DETAILS_CHAR;
+        if (entry.details !== undefined && units <= copyAllowance.unitsLeft) {
+          copyAllowance.unitsLeft -= units;
+          details = entry.details;
+        }
+        copies.push(JSON.parse(`${entry.head}${details}}`) as Diagnostic);
+      }
+      return copies;
+    },
+  };
+
+  // Writes the `,"diagnostics":[...]` member from the kept text: each diagnostic that fits what the data or error left,
+  // whole, or without its details when only they do not fit. Returns undefined when none is printed.
+  const writeDiagnostics = (budgets: Budgets): JsonText | undefined => {
+    let charsLeft = budgets.text.charsLeft - DIAGNOSTICS_MEMBER_LENGTH;
     const text = new JsonText();
     text.write(',"diagnostics":[');
     const advice = boundedAdvice("further diagnostics were dropped from the result document");
-    // At most `maxDiagnostics` were counted, so this loop is bounded like the one below.
-    for (let index = 0; index < unreadable; index += 1) {
+    // At most `maxDiagnostics` were counted, so these loops are bounded.
+    for (let index = 0; index < unreadableCount; index += 1) {
       advice.add("a returned diagnostic was dropped from the result document: it could not be read");
     }
-    const count = Math.min(input.length, maxDiagnostics);
-    let kept = 0;
-    for (let index = 0; index < count; index += 1) {
-      const item = segmentOf(segment);
-      try {
-        spendWork(budgets.work, 1);
-        // Its separator, then its text.
-        spendText(item, kept > 0 ? 1 : 0);
-        const diagnosticText = toDocumentDiagnostic(input[index], { text: item, work: budgets.work });
-        if (kept > 0) {
-          text.write(",");
+    let printed = 0;
+    entries.forEach((entry, index) => {
+      if (entry !== undefined) {
+        const head = (printed > 0 ? 1 : 0) + entry.head.length + 1;
+        const whole = head + (entry.details?.length ?? 0);
+        if (head <= charsLeft) {
+          if (printed > 0) {
+            text.write(",");
+          }
+          text.write(entry.head);
+          if (entry.details !== undefined && whole <= charsLeft) {
+            text.write(entry.details);
+            charsLeft -= whole;
+          } else {
+            charsLeft -= head;
+          }
+          text.write("}");
+          printed += 1;
+          return;
         }
-        text.append(diagnosticText);
-        segment.charsLeft = item.charsLeft;
-        kept += 1;
-      } catch {
-        chargeDropped(budgets.work, segment.charsLeft - item.charsLeft);
-        advice.add(`diagnostic ${index} was dropped from the result document: it could not be redacted or printed`);
       }
+      advice.add(`diagnostic ${index} was dropped from the result document: it could not be redacted or printed`);
+    });
+    if (droppedRest) {
+      advise(`diagnostics past the first ${consumed()} were dropped: the result document cannot print them all`);
     }
-    if (dropped || input.length > count) {
-      advise(`diagnostics past the first ${maxDiagnostics} were dropped: the result document cannot print them all`);
-    }
-    if (kept === 0 || segment.charsLeft < 0) {
+    if (printed === 0) {
       return undefined;
     }
-    budgets.text.charsLeft = segment.charsLeft;
+    budgets.text.charsLeft = charsLeft;
     text.write("]");
     return text;
   };
 
   return {
     service,
-    maxDiagnostics,
+    diagnostics,
     failPreparation() {
       warnUnused(-1);
       options.stdout(SERIALIZATION_FAILURE_TEXT);
       return 1;
     },
-    finish(outcome, diagnostics, left = {}) {
+    finish(outcome) {
       let text: string | undefined;
       let exitCode = 1;
       // One text budget for the whole document, charged at the exact length of its text: its frame, the data or the
-      // error, then each diagnostic in order, each a segment that is kept whole or dropped whole. The newline is
+      // error, then each kept diagnostic in order, printed whole, without its details, or not at all. The newline is
       // reserved, so a document that fits can always be written with it. A separate work budget of twice as many
-      // units, never given back, bounds everything walked or written to prepare it that does not print (see `WorkBudget`).
+      // units, never given back, bounds everything walked or written for the data or error that does not print (see
+      // `WorkBudget`); the diagnostics were written under budgets of their own when they were added.
       const budgets: Budgets = { text: createDocumentBudget(limit - 1), work: createWorkBudget(limit) };
       try {
         const document = new JsonText();
@@ -455,7 +565,7 @@ export function createDocumentOutput(options: DocumentOutputOptions): DocumentOu
           exitCode = error.exitCode;
         }
 
-        const diagnosticsText = writeDiagnostics(diagnostics, left, budgets);
+        const diagnosticsText = writeDiagnostics(budgets);
         if (diagnosticsText !== undefined) {
           document.append(diagnosticsText);
         }
