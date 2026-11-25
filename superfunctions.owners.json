@@ -264,6 +264,7 @@
     "datafn": "public",
     "filefn": "public",
     "logfn": "public",
+    "memoryfn": "public",
     "plugfn": "public",
     "searchfn": "public",
     "sendfn": "public",
