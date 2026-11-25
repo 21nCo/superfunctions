@@ -1453,9 +1453,14 @@ function normalizeClientMetadata(
       );
     }
   }
+  // A null link is dropped, so callers see an omitted field (string | undefined).
+  const withoutNullLinks: Record<string, unknown> = { ...value };
+  for (const field of ["client_uri", "logo_uri", "tos_uri", "policy_uri"]) {
+    if (withoutNullLinks[field] === null) delete withoutNullLinks[field];
+  }
   try {
     return {
-      ...value,
+      ...(withoutNullLinks as OAuthClientMetadata),
       redirect_uris: Array.isArray(value.redirect_uris)
         ? value.redirect_uris.map((redirect) =>
           normalizeMcpRedirectUri(redirect, redirectPolicy))

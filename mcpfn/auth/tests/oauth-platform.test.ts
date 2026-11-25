@@ -1318,6 +1318,11 @@ describe("McpFn hosted authorization compatibility", () => {
       }),
     }));
     expect(response.status).toBe(201);
+    // Passed on (and echoed) as omitted fields, never as null.
+    const registered = register.mock.calls[0]![0] as Record<string, unknown>;
+    for (const field of ["client_uri", "logo_uri", "tos_uri", "policy_uri"]) expect(registered).not.toHaveProperty(field);
+    const echoed = await response.json() as Record<string, unknown>;
+    for (const field of ["client_uri", "logo_uri", "tos_uri", "policy_uri"]) expect(echoed).not.toHaveProperty(field);
   });
 
   it.each([
