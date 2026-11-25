@@ -338,8 +338,10 @@ jobs:
             echo "Downloaded base_spec $BASE_SPEC"
           elif [ -n "$BASE_SPEC" ]; then
             if [ ! -f "$BASE_SPEC" ]; then load_error "base_spec $BASE_SPEC is not a file in $PWD"; fi
-            if [ "$(wc -c < "$BASE_SPEC")" -gt "$max_bytes" ]; then load_error "base_spec $BASE_SPEC is larger than $max_bytes bytes"; fi
-            head -c "$((max_bytes + 1))" -- "$BASE_SPEC" > "$snapshot"
+            # Reads at most one byte past the limit, so an oversized or unreadable file is a load error, not a copy.
+            if ! head -c "$((max_bytes + 1))" -- "$BASE_SPEC" > "$snapshot" 2> /dev/null; then
+              load_error "Could not read base_spec $BASE_SPEC"
+            fi
             if [ "$(wc -c < "$snapshot")" -gt "$max_bytes" ]; then load_error "base_spec $BASE_SPEC is larger than $max_bytes bytes"; fi
             echo "Copied base_spec $BASE_SPEC"
           else
@@ -592,6 +594,20 @@ jobs:
           code=$?
           apifn check "${args[@]}" --format json --report "$RUNNER_TEMP/apifn-check.json" > /dev/null
           json_code=$?
+          if [ -n "$BASE_SPEC" ]; then
+            # The reports name the base the CLI read, the snapshot; show the caller's base_spec instead.
+            node -e '
+              const fs = require("node:fs");
+              const [snapshot, label, ...files] = process.argv.slice(1);
+              const inJson = (value) => JSON.stringify(value).slice(1, -1);
+              for (const file of files) {
+                let text;
+                try { text = fs.readFileSync(file, "utf8"); } catch { continue; }
+                const json = file.endsWith(".json");
+                fs.writeFileSync(file, text.replaceAll(json ? inJson(snapshot) : snapshot, json ? inJson(label) : label));
+              }
+            ' "$RUNNER_TEMP/apifn-base-spec" "$BASE_SPEC (snapshot taken before the install)" "$RUNNER_TEMP/apifn-check.md" "$RUNNER_TEMP/apifn-check.json" || true
+          fi
           spec="$(node -e 'try { const r = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")); if (typeof r.spec === "string") process.stdout.write(r.spec); } catch {}' "$RUNNER_TEMP/apifn-check.json")"
           spec_state=""
           spec_file=""
