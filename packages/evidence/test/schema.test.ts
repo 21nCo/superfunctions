@@ -49,6 +49,44 @@ describe("exported JSON Schema", () => {
     },
   );
 
+  it("leaves artifact uniqueness to the cross-value checker: no uniqueItems on artifactHashes", () => {
+    // Ajv 8 uniqueItems on object items calls each item's valueOf/toString and
+    // throws when a record gives them as own members; paths are unique by the
+    // checker, which implies unique entries.
+    expect(schemaFile.properties.source.properties.artifactHashes).not.toHaveProperty("uniqueItems");
+    expect(evidenceRecordSchemaV1.properties.source.properties.artifactHashes).not.toHaveProperty("uniqueItems");
+  });
+
+  // With Ajv strict and allErrors (the settings the README's path uses), a
+  // malformed artifact entry is a validation error, never an exception.
+  type WithArtifacts = { source: { artifactHashes: unknown[] } };
+  const artifact = (records.minimal as WithArtifacts).source.artifactHashes[0] as Record<string, unknown>;
+  const other = { path: "reports/other.json", sha256: "b".repeat(64) };
+  it.each([
+    ["own valueOf", [artifact, { ...other, valueOf: 0 }], [1]],
+    ["own toString", [artifact, { ...other, toString: 0 }], [1]],
+    ["own valueOf and toString on every entry", [{ ...artifact, valueOf: 0, toString: "x" }, { ...other, valueOf: null, toString: {} }], [0, 1]],
+    ["own valueOf on a duplicate of the first entry", [artifact, { ...artifact, valueOf: 0 }], [1]],
+    ["own toString on a duplicate of the first entry", [artifact, { ...artifact, toString: 0 }], [1]],
+    ["own hasOwnProperty and constructor", [artifact, { ...other, hasOwnProperty: 0, constructor: 0 }], [1]],
+    ["own __proto__ from JSON", [artifact, JSON.parse(`{"path":"reports/other.json","sha256":"${"b".repeat(64)}","__proto__":0}`)], [1]],
+  ] as const)("Ajv strict allErrors rejects an artifact entry with %s without throwing", (_name, artifactHashes, indexes) => {
+    const record = structuredClone(records.minimal) as WithArtifacts;
+    record.source.artifactHashes = structuredClone(artifactHashes as readonly unknown[]) as unknown[];
+    let accepted: boolean | undefined;
+    expect(() => {
+      accepted = validatePlainSchema(record);
+    }).not.toThrow();
+    expect(accepted).toBe(false);
+    // One additionalProperties error per unknown member, at that entry.
+    const errors = new Set((validatePlainSchema.errors ?? []).map((error) => `${error.instancePath} ${error.keyword}`));
+    expect([...errors].sort()).toEqual(indexes.map((index) => `/source/artifactHashes/${index} additionalProperties`));
+    expect(validateWithSchema(record)).toBe(false);
+    const failures = validateEvidenceRecord(record, cases.options).failures;
+    expect(failures.length).toBeGreaterThan(0);
+    expect(failures.every((failure) => failure.code === "EVIDENCE_MALFORMED" && failure.path?.startsWith("/source/artifactHashes/"))).toBe(true);
+  });
+
   const full = { ...cases.options, expectedCommit: "2".repeat(64) };
   for (const [name, base, options] of [
     ["minimal", records.minimal, cases.options],

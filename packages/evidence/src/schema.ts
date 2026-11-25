@@ -95,7 +95,6 @@ export const evidenceRecordSchemaV1 = deepFreeze({
         "artifactHashes": {
           "type": "array",
           "minItems": 1,
-          "uniqueItems": true,
           "items": {
             "type": "object",
             "additionalProperties": false,

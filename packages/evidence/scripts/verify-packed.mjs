@@ -39,6 +39,7 @@ const crossValueCases = `
 const crossValueCases = [
   [{ ...record, subjectIds: ["__proto__", "__proto__"] }, "/subjectIds/1"],
   [{ ...record, source: { ...record.source, artifactHashes: [...record.source.artifactHashes, { ...record.source.artifactHashes[0], sha256: "${"2".repeat(64)}" }] } }, "/source/artifactHashes/1/path"],
+  [{ ...record, source: { ...record.source, artifactHashes: [...record.source.artifactHashes, { ...record.source.artifactHashes[0] }] } }, "/source/artifactHashes/1/path"],
   [{ ...record, timing: { ...record.timing, startedAt: "2026-11-01T10:00:00.001Z" } }, "/timing/startedAt"],
   [{ ...record, timing: { ...record.timing, startedAt: "2026-03-01T05:29:60+05:30" } }, "/timing/startedAt"],
 ];
@@ -63,6 +64,15 @@ for (const [candidate, path] of crossValueCases) {
   assert.deepEqual(failures, validateEvidenceRecord(candidate, options).failures);
 }
 assert.equal(validateSchema({ ...record, timing: { ...record.timing, startedAt: "2026-02-28T23:59:60Z" } }), false);
+// Ajv strict with allErrors rejects malformed artifact entries without throwing,
+// including own valueOf and toString members on a duplicate entry.
+for (const extra of [{ valueOf: 0 }, { toString: 0 }]) {
+  const candidate = { ...record, source: { ...record.source, artifactHashes: [...record.source.artifactHashes, { ...record.source.artifactHashes[0], ...extra }] } };
+  assert.equal(validateSchema(candidate), false);
+  assert.deepEqual([...new Set(validateSchema.errors.map((error) => error.instancePath + " " + error.keyword))], ["/source/artifactHashes/1 additionalProperties"]);
+  assert.equal(validateEvidenceRecord(candidate, options).failures.length, 2);
+}
+assert.equal("uniqueItems" in schemaFile.properties.source.properties.artifactHashes, false);
 const blocked = validateEvidenceRecord({ ...record, status: "blocked" }, options);
 assert.deepEqual(blocked.failures.map((failure) => failure.code), ["EVIDENCE_NOT_PASSED"]);
 assert.deepEqual(validateEvidenceRecord(undefined, options).failures, [{ code: "EVIDENCE_MISSING" }]);

@@ -96,7 +96,7 @@ The JSON Schema (draft 2020-12, `$id` `urn:superfunctions:evidence-record:v1`) i
 Four rules are beyond the schema. `validateEvidenceRecord` enforces them, and `checkEvidenceCrossValues(record)` checks them on their own, so a consumer that validates with a JSON Schema validator runs it next to the schema:
 
 - Each `subjectIds` item is unique (exact string comparison). The schema says so with `uniqueItems`, but Ajv 8 misses a repeated `"__proto__"` string (for example `subjectIds: ["__proto__", "__proto__"]`) and accepts the record.
-- Each `source.artifactHashes[].path` is unique within the record (exact string comparison).
+- Each `source.artifactHashes[].path` is unique within the record (exact string comparison), which also makes the entries unique. The schema leaves this rule to the checker and has no `uniqueItems` on `artifactHashes`: Ajv 8 compares object items with their `valueOf` and `toString` and throws a `TypeError` when an entry has those as its own members, instead of rejecting the record.
 - `timing.startedAt` is not later than `timing.completedAt`, compared as instants with every fraction digit.
 - A date-time with second 60 is a leap second UTC inserted. The pattern lists the leap-second days at `Z`, `+00:00` and `-00:00`, but cannot apply other offsets.
 
