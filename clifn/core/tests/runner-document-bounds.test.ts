@@ -7,11 +7,15 @@ import { runInNewContext } from "node:vm";
 import ts from "typescript";
 import { afterAll, afterEach, beforeAll, vi } from "vitest";
 import type { Diagnostic } from "../src/diagnostics.js";
-import { createDocumentOutput, MAX_WARNINGS_PER_KIND, type DocumentOutcome } from "../src/document-output.js";
+import {
+  addReturnedDiagnostics,
+  createDocumentOutput,
+  MAX_WARNINGS_PER_KIND,
+  type DocumentOutcome,
+} from "../src/document-output.js";
 import { classifyRunnerError } from "../src/errors.js";
 import { createDocumentBudget, createWorkBudget, MAX_NESTING_DEPTH, serializeJsonMember } from "../src/json-value.js";
 import {
-  addReturnedDiagnostics,
   runAction,
   type RunnerActionResult,
   type RunnerContext,
@@ -622,6 +626,31 @@ describe("document advisory stderr writes", () => {
     expect(parseOnlyDocument(result)).toEqual({ ok: false, error: { code: "CLOSED", message: "closed" } });
   });
 
+  it("keeps the result when formatting a log or spinner line throws, not only its writer", async () => {
+    // An inherited toJSON that throws breaks the JSON line of a message with details, and its fallback too.
+    const leak = ["test", "format", "failure"].join("-");
+    Object.defineProperty(Object.prototype, "toJSON", {
+      configurable: true,
+      value: () => {
+        throw new Error(leak);
+      },
+    });
+    let result: Awaited<ReturnType<typeof runDocument>>;
+    try {
+      result = await runDocument((_options, ctx) => {
+        for (const level of ["debug", "info", "success", "warn", "error"] as const) {
+          ctx.output[level](level, { details: level });
+        }
+        return { data: "done", exitCode: 4 };
+      }, { verbose: true });
+    } finally {
+      delete (Object.prototype as { toJSON?: unknown }).toJSON;
+    }
+    expect(result.exitCode).toBe(4);
+    expect(result.out).toBe('{"ok":true,"data":"done"}\n');
+    expect(result.out + result.stderr).not.toContain(leak);
+  });
+
   it("keeps the result when stderr throws on streamed child output that has no writer of its own", async () => {
     // The forwarder runs in the child's stream listener: a throw escaping it is an uncaught exception, which Vitest
     // reports as an unhandled error that fails the run, and leaves the result document unwritten.
@@ -690,19 +719,30 @@ function documentWith(maxLength: number) {
 }
 
 describe("document diagnostics retained by size", () => {
-  /** Fresh diagnostics, each with a new message of `size` characters, counting how many were read. */
+  /**
+   * A proxied array of 2^32 - 1 fresh diagnostics, each with a new message of `size` characters made when its index is
+   * read, counting how many were read.
+   */
   function freshDiagnostics(size: number, extra: (index: number) => Partial<Diagnostic> = () => ({})) {
     const counter = { reads: 0 };
-    function* generate(): Generator<Diagnostic> {
-      for (let index = 0; ; index += 1) {
-        counter.reads += 1;
-        yield { code: "D", severity: "info", message: `${index}:${"x".repeat(size)}`, ...extra(index) };
-      }
-    }
+    const generate = () =>
+      new Proxy([] as Diagnostic[], {
+        get: (target, key) => {
+          if (key === "length") {
+            return 2 ** 32 - 1;
+          }
+          if (typeof key === "string" && /^\d+$/.test(key)) {
+            counter.reads += 1;
+            const index = Number(key);
+            return { code: "D", severity: "info", message: `${index}:${"x".repeat(size)}`, ...extra(index) };
+          }
+          return Reflect.get(target, key);
+        },
+      });
     return { counter, generate };
   }
 
-  it("stops reading an endless iterable of large fresh diagnostics once their text fills the document", () => {
+  it("stops reading a huge array of large fresh diagnostics once their text fills the document", () => {
     const { counter, generate } = freshDiagnostics(1_000);
     const { output, result } = documentWith(10_000);
     addReturnedDiagnostics(generate(), output.diagnostics);
@@ -716,7 +756,7 @@ describe("document diagnostics retained by size", () => {
     expect(document.data).toBe("done");
     expect(document.diagnostics.length).toBeGreaterThan(5);
     expect(document.diagnostics[0].message.startsWith("0:x")).toBe(true);
-    expect(result().stderr).toContain(`diagnostics past the first ${counter.reads - 1} were dropped`);
+    expect(result().stderr).toContain(`diagnostics past the first ${counter.reads} were dropped`);
   });
 
   it("drops a diagnostic added while another is being read, so it cannot spend a budget the reader gives back", async () => {
@@ -941,13 +981,20 @@ describe("document result reads", () => {
         return Reflect.get(target, key);
       },
     });
-    function* failingIterator(): Generator<Diagnostic> {
-      yield first;
-      throw new Error(leak);
-    }
+    const throwingLength = new Proxy([first], {
+      get: (target, key) => {
+        if (key === "length") {
+          throw new Error(leak);
+        }
+        return Reflect.get(target, key);
+      },
+    });
+    const revoked = Proxy.revocable([first], {});
+    revoked.revoke();
     const cases: Array<[unknown, Diagnostic[]]> = [
       [throwingIndex, [first, last]],
-      [failingIterator(), [first]],
+      [throwingLength, []],
+      [revoked.proxy, []],
       [5, []],
     ];
     for (const [diagnostics, kept] of cases) {
@@ -1264,6 +1311,42 @@ describe("document typed arrays and bigints", () => {
       expect(masked.out).toBe(`${JSON.stringify(FAILURE_DOCUMENT)}\n`);
     }
     expect(keys.mock.calls.some(([value]) => ArrayBuffer.isView(value))).toBe(false);
+  });
+
+  it("converts a bigint with the intrinsic toString, so a replaced one cannot print an unredacted object", () => {
+    const descriptor = Object.getOwnPropertyDescriptor(BigInt.prototype, "toString") as PropertyDescriptor;
+    const replaced = vi.fn(() => ({ token: "test-dummy-token" }));
+    Object.defineProperty(BigInt.prototype, "toString", { ...descriptor, value: replaced });
+    try {
+      const textBox = (value: bigint) => Object.assign(new String(""), { toString: () => value });
+      const data = finishWith(10_000, { ok: true, data: { id: 1n, text: textBox(4n) }, exitCode: 3 });
+      expect(data.exitCode).toBe(3);
+      expect(parseOnlyDocument(data)).toEqual({ ok: true, data: { id: "1", text: "4" } });
+
+      const failure = finishWith(10_000, {
+        ok: false,
+        error: Object.assign(new Error("closed"), { code: "CLOSED", exitCode: 7, details: { id: 2n, text: textBox(5n) } }),
+      });
+      expect(failure.exitCode).toBe(7);
+      expect(parseOnlyDocument(failure)).toEqual({
+        ok: false,
+        error: { code: "CLOSED", message: "closed", details: { id: "2", text: "5" } },
+      });
+
+      const diagnostic = { code: "D", severity: "info", message: "m", details: { id: 3n, text: textBox(6n) } } as Diagnostic;
+      const listed = finishWith(10_000, { ok: true, data: "done", exitCode: 2 }, [diagnostic]);
+      expect(parseOnlyDocument(listed)).toEqual({
+        ok: true,
+        data: "done",
+        diagnostics: [{ code: "D", severity: "info", message: "m", details: { id: "3", text: "6" } }],
+      });
+      for (const result of [data, failure, listed]) {
+        expect(result.out + result.stderr).not.toContain("test-dummy-token");
+      }
+      expect(replaced).not.toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(BigInt.prototype, "toString", descriptor);
+    }
   });
 
   it("never converts a bigint under a redacted key, and rejects an oversized one by bit length", () => {
@@ -1740,6 +1823,47 @@ describe("document work allowance next to printed text", () => {
     expect(over.out).toBe(`${JSON.stringify(FAILURE_DOCUMENT)}\n`);
   });
 
+  it("charges the work for values that print to their own allowance, never to the one for discarded work", () => {
+    // 700 indexes cost 22,400 units to list (TYPED_ARRAY_INDEX_UNITS each), more than the 22,500-unit allowance for
+    // discarded work and listed keys leaves; the text is 5,491 characters of a 10,000 limit.
+    const bytes = Uint8Array.from({ length: 700 }, (_, index) => index % 256);
+    const typed = finishWith(10_000, { ok: true, data: bytes, exitCode: 0 });
+    expect(typed.exitCode).toBe(0);
+    expect(typed.out).toBe(`{"ok":true,"data":${JSON.stringify(bytes)}}\n`);
+
+    // A Number box whose valueOf returns a 1,000-character numeric string, read once per box.
+    const box = () => Object.assign(new Number(0), { valueOf: () => `${" ".repeat(999)}1` });
+    const small = new Uint8Array(200);
+    const shapes: Array<[Record<string, unknown>, Record<string, unknown>]> = [
+      [{ bytes: small, password: new Array(19_000) }, { bytes: JSON.parse(JSON.stringify(small)), password: "[REDACTED]" }],
+      [{ password: new Array(19_000), bytes: small }, { password: "[REDACTED]", bytes: JSON.parse(JSON.stringify(small)) }],
+      [{ password: new Array(20_000), a: box(), b: box(), c: box() }, { password: "[REDACTED]", a: 1, b: 1, c: 1 }],
+      [{ a: box(), b: box(), c: box(), password: new Array(20_000) }, { a: 1, b: 1, c: 1, password: "[REDACTED]" }],
+    ];
+    for (const [value, printed] of shapes) {
+      const data = finishWith(10_000, { ok: true, data: value, exitCode: 3 });
+      expect(data.exitCode).toBe(3);
+      expect(parseOnlyDocument(data)).toEqual({ ok: true, data: printed });
+
+      const failure = finishWith(10_000, {
+        ok: false,
+        error: Object.assign(new Error("closed"), { code: "CLOSED", exitCode: 7, details: value }),
+      });
+      expect(failure.exitCode).toBe(7);
+      expect(parseOnlyDocument(failure)).toEqual({ ok: false, error: { code: "CLOSED", message: "closed", details: printed } });
+
+      const diagnostic = { code: "D", severity: "info", message: "m", details: value } as Diagnostic;
+      const listed = finishWith(10_000, { ok: true, data: "done", exitCode: 2 }, [diagnostic]);
+      expect(listed.exitCode).toBe(2);
+      expect(parseOnlyDocument(listed)).toEqual({
+        ok: true,
+        data: "done",
+        diagnostics: [{ code: "D", severity: "info", message: "m", details: printed }],
+      });
+      expect(listed.stderr).toBe("");
+    }
+  });
+
   it("keeps a mapped failure next to large redacted details within the allowance", () => {
     const details = { visible: "d".repeat(7_000), secret: keyed(19_000) };
     const result = finishWith(10_000, {
@@ -1883,9 +2007,11 @@ describe("document memory in a constrained heap", () => {
         throw { message: "CLIFN_" + "X".repeat(2 ** 28), exitCode: 7 };
       });
       // Fresh diagnostics, each holding new text or details, that the runner would retain if it kept them as given:
-      // an endless generator, a 2e8-item proxy and the action's own sink, with and without a listener that lists them.
+      // a 2^32 - 1-item proxy, a 2e8-item proxy and the action's own sink, with and without a listener that lists them.
       const fresh = (index) => ({ code: "D", severity: "info", message: index + ":" + "x".repeat(4096) });
-      const endless = function* (make) { for (let index = 0; ; index += 1) yield make(index); };
+      const endless = (make) => new Proxy([], {
+        get: (target, key) => key === "length" ? 2 ** 32 - 1 : typeof key === "string" && /^\d+$/.test(key) ? make(Number(key)) : Reflect.get(target, key),
+      });
       const freshProxy = (make) => new Proxy([], {
         get: (target, key) => key === "length" ? 2e8 : typeof key === "string" && /^\d+$/.test(key) ? make(Number(key)) : Reflect.get(target, key),
       });
@@ -1955,6 +2081,14 @@ describe("document memory in a constrained heap", () => {
         await run("string-box-bigint-redacted", () => ({ exitCode: 3, data: { visible: "kept", token: bigText() } }));
       }
       await run("diagnostics-string-box", () => ({ data: "done", exitCode: 2, diagnostics: new String("x".repeat(2 ** 28)) }));
+      // The same boxed rope behind a Proxy that forwards it, binding its methods to the box.
+      await run("diagnostics-string-box-proxy", () => ({
+        data: "done",
+        exitCode: 2,
+        diagnostics: new Proxy(new String("x".repeat(2 ** 28)), {
+          get: (box, key) => { const value = Reflect.get(box, key); return typeof value === "function" ? value.bind(box) : value; },
+        }),
+      }));
     `;
     const runnerUrl = pathToFileURL(runnerModule).href;
     const child = spawnSync(process.execPath, ["--max-old-space-size=32", "--expose-gc", "--input-type=module", "-e", script, runnerUrl], {
@@ -2038,7 +2172,7 @@ describe("document memory in a constrained heap", () => {
       exitCode: 3,
       out: '{"ok":true,"data":{"visible":"kept","token":"[REDACTED]"}}\n',
     });
-    for (const name of ["coerce-diagnostics-length", "diagnostics-string-box"]) {
+    for (const name of ["coerce-diagnostics-length", "diagnostics-string-box", "diagnostics-string-box-proxy"]) {
       expect(cases[name]).toEqual({ name, writes: 1, exitCode: 2, out: '{"ok":true,"data":"done"}\n' });
     }
     for (const name of ["typed", "bigint"]) {
@@ -2175,5 +2309,58 @@ describe("document coercion of lengths and boxed primitives", () => {
       );
     }
     expect(iterated).not.toHaveBeenCalled();
+  });
+
+  it("reads only arrays as returned diagnostics: any other list is one unreadable entry and no iterator is opened", async () => {
+    const iterated = vi.spyOn(String.prototype, Symbol.iterator);
+    const diagnostic = { code: "D", severity: "info", message: "m" } as const;
+    // A Proxy forwarding a String box, binding its methods to the box, as a 'lift' wrapper might.
+    const forwarding = (target: object) =>
+      new Proxy(target, {
+        get: (box, key) => {
+          const value: unknown = Reflect.get(box, key);
+          return typeof value === "function" ? (value as () => unknown).bind(box) : value;
+        },
+      });
+    let opened = 0;
+    const iterable = {
+      [Symbol.iterator]() {
+        opened += 1;
+        return [diagnostic][Symbol.iterator]();
+      },
+    };
+    function* generate(): Generator<Diagnostic> {
+      opened += 1;
+      yield diagnostic;
+    }
+    const returned = [
+      forwarding(new String("abc")),
+      forwarding(runInNewContext('new String("abc")') as object),
+      generate(),
+      iterable,
+      new Set([diagnostic]),
+      { 0: diagnostic, length: 1 },
+      () => [diagnostic],
+    ];
+    for (const diagnostics of returned) {
+      const result = await runDocument(() => ({ data: "done", exitCode: 2, diagnostics: diagnostics as Diagnostic[] }));
+      expect(result.exitCode).toBe(2);
+      expect(parseOnlyDocument(result)).toEqual({ ok: true, data: "done" });
+      expect(result.stderr).toBe(
+        '{"level":"warn","message":"a returned diagnostic was dropped from the result document: it could not be read"}\n'
+      );
+    }
+    expect(iterated).not.toHaveBeenCalled();
+    expect(opened).toBe(0);
+    // An array of any realm, proxied or not, is read by index.
+    for (const diagnostics of [
+      [diagnostic],
+      new Proxy([diagnostic], {}),
+      runInNewContext('[{ code: "D", severity: "info", message: "m" }]') as Diagnostic[],
+    ]) {
+      const result = await runDocument(() => ({ data: "done", exitCode: 2, diagnostics }));
+      expect(parseOnlyDocument(result)).toEqual({ ok: true, data: "done", diagnostics: [diagnostic] });
+      expect(result.stderr).toBe("");
+    }
   });
 });

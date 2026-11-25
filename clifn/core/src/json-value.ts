@@ -42,9 +42,19 @@ export const MIN_OPEN_KEYS = 65_536;
 /**
  * The work units an index of a typed array costs before its keys are listed, printed or not: `Object.keys` creates each
  * index key as a new string (about 32 bytes with its slot) although the array stores its elements outside the heap, so
- * the units bound that allocation. Reading and printing each member is charged as for any other object.
+ * the units bound that allocation. Outside a redacted key they are charged to the allowance for members that print
+ * (see PRINTED_WORK_SHARE), under one to the allowance for work that prints nothing. Reading and printing each member
+ * is charged as for any other object.
  */
 export const TYPED_ARRAY_INDEX_UNITS = 32;
+/**
+ * The work units per character of the text budget allowed for work done for values that print (outside a redacted
+ * key), kept apart from the allowance for work that prints nothing, so printed values never use up the latter: the
+ * TYPED_ARRAY_INDEX_UNITS of each typed array index (a typed array of numbers prints at least 6 characters per index,
+ * so one that fits the text costs at most 32/6 units per character it prints), and each code unit of a numeric string
+ * read by ToNumber (an array length or a Number box's valueOf; at most MAX_NUMERIC_STRING_LENGTH each).
+ */
+export const PRINTED_WORK_SHARE = 6;
 /**
  * The share of the text budget added to the work budget for listed keys whose members print: a printed member costs at
  * least 4 characters, so a document that fits prints at most a quarter of its text budget in keys.
@@ -60,19 +70,27 @@ export interface DocumentBudget {
 }
 
 /**
- * How much work one result document may still do, in units, separate from its text: each own key of each object
- * listed (when it is listed, before any of its members is read, whether the member then prints, is dropped, is skipped
- * as a symbol or non-enumerable key, or is walked under a redacted key), each array item walked under a redacted key,
- * each code unit scanned in a string found too long to print, TYPED_ARRAY_INDEX_UNITS per typed array index (and per
- * item of an array Node's built-in Buffer toJSON must allocate, see `projectBuffer`), and each character of a segment
- * (details or a diagnostic) that was written and then left out. Each unit is charged once and never given back, also
- * when the value it was charged for fails. Printed text is charged to the text budget. The allowance is twice the
- * text budget for work that prints nothing, plus a quarter of it (LISTED_KEYS_SHARE) for the keys of members that
- * print: every printed member costs at least 4 characters (`"":0`), so a document that fits prints at most that many
- * keys, and its discarded work keeps the whole twofold allowance whatever the order of its members.
+ * How much work one result document may still do, in units, separate from its text, in two allowances. Each unit is
+ * charged once and never given back, also when the value it was charged for fails. Printed text is charged to the
+ * text budget.
+ *
+ * `unitsLeft` pays for each own key of each object listed (when it is listed, before any of its members is read,
+ * whether the member then prints, is dropped, is skipped as a symbol or non-enumerable key, or is walked under a
+ * redacted key), and for the work under a redacted key: each array item, TYPED_ARRAY_INDEX_UNITS per typed array
+ * index (and per item of an array Node's built-in Buffer toJSON must allocate, see `projectBuffer`) and each code unit
+ * of a numeric string read; it also pays for each code unit scanned in a string found too long to print, and each
+ * character of a segment (details or a diagnostic) that was written and then left out. It is twice the text budget
+ * for work that prints nothing, plus a quarter of it (LISTED_KEYS_SHARE) for the keys of members that print: every
+ * printed member costs at least 4 characters (`"":0`), so a document that fits prints at most that many keys, and
+ * its discarded work keeps the whole twofold allowance whatever the order of its members.
+ *
+ * `printedUnitsLeft` pays for the same typed array index units and numeric string reads outside a redacted key:
+ * PRINTED_WORK_SHARE units per character of the text budget, so this work stays in proportion to the text the
+ * document may print and never takes from the allowance for work that prints nothing.
  */
 export interface WorkBudget {
   unitsLeft: number;
+  printedUnitsLeft: number;
 }
 
 /**
@@ -91,12 +109,13 @@ export function createDocumentBudget(limit: number = documentLimit()): DocumentB
 
 /**
  * The work budget of a document whose text budget is `limit`: twice as many units as the document has characters for
- * work that prints nothing, plus a quarter as many for the keys of members that print (see `WorkBudget`), its own
- * allowance next to the text. A segment dropped after it was written costs at most its text, so one dropped
- * segment never spends the whole allowance by itself.
+ * work that prints nothing, plus a quarter as many for the keys of members that print, and PRINTED_WORK_SHARE units
+ * per character for the other work done for values that print (see `WorkBudget`), its own allowances next to the
+ * text. A segment dropped after it was written costs at most its text, so one dropped segment never spends the whole
+ * allowance by itself.
  */
 export function createWorkBudget(limit: number = documentLimit()): WorkBudget {
-  return { unitsLeft: 2 * limit + Math.ceil(limit / LISTED_KEYS_SHARE) };
+  return { unitsLeft: 2 * limit + Math.ceil(limit / LISTED_KEYS_SHARE), printedUnitsLeft: PRINTED_WORK_SHARE * limit };
 }
 
 function exceeded(): never {
@@ -112,9 +131,17 @@ export function spendText(budget: DocumentBudget, chars: number): void {
 }
 
 /** Counts `units` of work against the budget, never given back; throws a RangeError when they do not fit. */
-export function spendWork(work: WorkBudget, units: number): void {
+export function spendWork(work: Pick<WorkBudget, "unitsLeft">, units: number): void {
   work.unitsLeft -= units;
   if (work.unitsLeft < 0) {
+    exceeded();
+  }
+}
+
+/** Counts `units` of work done for values that print, never given back; throws a RangeError when they do not fit. */
+function spendPrintedWork(work: WorkBudget, units: number): void {
+  work.printedUnitsLeft -= units;
+  if (work.printedUnitsLeft < 0) {
     exceeded();
   }
 }
@@ -223,6 +250,8 @@ const isRawJSON = (JSON as { isRawJSON?: (value: unknown) => boolean }).isRawJSO
 /** %Array.prototype%, the prototype of the data array `Buffer.prototype.toJSON` creates. */
 const arrayPrototype = Object.getPrototypeOf([]) as object;
 const bigintValueOf = BigInt.prototype.valueOf;
+/** The intrinsic `BigInt.prototype.toString`, so a replaced prototype method never converts a bigint here. */
+const bigintToString = BigInt.prototype.toString;
 /** %TypedArray%.prototype.length: reads the length from the internal slot, for a typed array of any realm. */
 const typedArrayLength = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(Uint8Array.prototype), "length")
   ?.get as () => number;
@@ -251,6 +280,23 @@ interface Walk {
   openKeys: number;
   /** The most keys those lists may hold together when another object on the path is listed. */
   readonly maxOpenKeys: number;
+}
+
+/**
+ * Charges `units` of work done for the value being walked: to the allowance for work that prints nothing under a
+ * redacted key, otherwise to the allowance for values that print (see `WorkBudget`).
+ */
+function spendValueWork(walk: Walk, units: number): void {
+  if (walk.discarding) {
+    spendWork(walk.work, units);
+  } else {
+    spendPrintedWork(walk.work, units);
+  }
+}
+
+/** What is left of the allowance `spendValueWork` charges. */
+function valueWorkLeft(walk: Walk): number {
+  return walk.discarding ? walk.work.unitsLeft : walk.work.printedUnitsLeft;
 }
 
 function emit(walk: Walk, text: string): void {
@@ -324,18 +370,17 @@ function toPrimitive(value: object, hint: "number" | "string"): unknown {
 
 /**
  * ToNumber with its string operand bounded: an object goes through `toPrimitive` once; a string longer than
- * MAX_NUMERIC_STRING_LENGTH throws a DocumentBudgetExceeded before it is read (a shorter one is charged its length to
- * `work`, when given); a bigint or symbol throws a TypeError, as ToNumber does. The result equals the engine's.
+ * MAX_NUMERIC_STRING_LENGTH throws a DocumentBudgetExceeded before it is read (a shorter one is charged its length
+ * through `charge`, when given); a bigint or symbol throws a TypeError, as ToNumber does. The result equals the
+ * engine's.
  */
-function toNumber(value: unknown, work: WorkBudget | undefined): number {
+function toNumber(value: unknown, charge: ((units: number) => void) | undefined): number {
   const primitive = isTracked(value) ? toPrimitive(value, "number") : value;
   if (typeof primitive === "string") {
     if (primitive.length > MAX_NUMERIC_STRING_LENGTH) {
       exceeded();
     }
-    if (work) {
-      spendWork(work, primitive.length);
-    }
+    charge?.(primitive.length);
   } else if (typeof primitive === "bigint" || typeof primitive === "symbol") {
     throw new TypeError("Cannot convert a BigInt or Symbol value to a number");
   }
@@ -345,11 +390,11 @@ function toNumber(value: unknown, work: WorkBudget | undefined): number {
 /**
  * ToLength of a value read once as an array's length, as JSON.stringify and iteration apply it (see `toNumber`). An
  * object length runs its Symbol.toPrimitive, or valueOf then toString, once and in that order; a string longer than
- * MAX_NUMERIC_STRING_LENGTH fails with a DocumentBudgetExceeded before it is read; a bigint or symbol throws a
- * TypeError. Internal: not exported from the package.
+ * MAX_NUMERIC_STRING_LENGTH fails with a DocumentBudgetExceeded before it is read (a shorter one is charged its length
+ * through `charge`, when given); a bigint or symbol throws a TypeError. Internal: not exported from the package.
  */
-export function toLength(value: unknown, work?: WorkBudget): number {
-  const number = toNumber(value, work);
+export function toLength(value: unknown, charge?: (units: number) => void): number {
+  const number = toNumber(value, charge);
   if (Number.isNaN(number) || number <= 0) {
     return 0;
   }
@@ -369,7 +414,7 @@ export function toLength(value: unknown, work?: WorkBudget): number {
  */
 function unbox(walk: Walk, value: object): unknown {
   if (types.isNumberObject(value)) {
-    return toNumber(value, walk.work);
+    return toNumber(value, (units) => spendValueWork(walk, units));
   }
   if (types.isStringObject(value)) {
     const primitive = toPrimitive(value, "string");
@@ -389,7 +434,9 @@ function unbox(walk: Walk, value: object): unknown {
 
 /**
  * Writes a bigint as a string. Under a redacted key it is not converted at all; otherwise its magnitude is checked by
- * bit length first, so no decimal text longer than what is left of the budgets is ever built.
+ * bit length first, so no decimal text longer than what is left of the budgets is ever built. The decimal text comes
+ * from the intrinsic BigInt.prototype.toString captured when this module loaded, so a replaced prototype method runs
+ * no code here and cannot hand the encoder anything but a string.
  */
 function emitBigInt(walk: Walk, value: bigint): void {
   if (walk.discarding) {
@@ -403,7 +450,7 @@ function emitBigInt(walk: Walk, value: bigint): void {
   if (BigInt.asIntN(bits + 1, value) !== value) {
     exceeded();
   }
-  emitString(walk, value.toString());
+  emitString(walk, Reflect.apply(bigintToString, value, []) as string);
 }
 
 /** Writes a primitive's JSON text (bigints as strings); returns false when JSON drops it. */
@@ -474,7 +521,7 @@ const bufferStandIns = new WeakSet<object>();
  *   installed on %Array.prototype% (which the native call's array writes would run, and which also changes arrays
  *   this library builds) is an unsupported environment;
  * - otherwise (a bigint typed array, or an inherited `toJSON` that would receive the array) the native toJSON runs,
- *   after its array is charged at TYPED_ARRAY_INDEX_UNITS of work per item, printed or not.
+ *   after its array is charged at TYPED_ARRAY_INDEX_UNITS of work per item (see `spendValueWork`).
  * Returns undefined when the native toJSON is to run.
  */
 function projectBuffer(walk: Walk, value: object): object | undefined {
@@ -492,10 +539,10 @@ function projectBuffer(walk: Walk, value: object): object | undefined {
     projection.data = bytes;
     return projection;
   }
-  if (count * TYPED_ARRAY_INDEX_UNITS > walk.work.unitsLeft) {
+  if (count * TYPED_ARRAY_INDEX_UNITS > valueWorkLeft(walk)) {
     exceeded();
   }
-  spendWork(walk.work, count * TYPED_ARRAY_INDEX_UNITS);
+  spendValueWork(walk, count * TYPED_ARRAY_INDEX_UNITS);
   return undefined;
 }
 
@@ -622,7 +669,7 @@ function serializeNode(walk: Walk, node: object, original: unknown, key: string,
  * read once; a dropped item prints null. A Buffer's stand-in passes its `length`, which is then not read.
  */
 function serializeArray(walk: Walk, array: object, depth: number, knownLength?: number): void {
-  const length = knownLength ?? toLength(Reflect.get(array, "length"), walk.work);
+  const length = knownLength ?? toLength(Reflect.get(array, "length"), (units) => spendValueWork(walk, units));
   if (walk.discarding ? length > walk.work.unitsLeft : (length === 0 ? 2 : 2 * length + 1) > walk.budget.charsLeft) {
     exceeded();
   }
@@ -643,9 +690,10 @@ function serializeArray(walk: Walk, array: object, depth: number, knownLength?: 
 
 /**
  * Bounds a typed array by its internal length before its keys are listed: each index costs TYPED_ARRAY_INDEX_UNITS of
- * work, printed or not, and outside a redacted key an array of numbers whose members (`"0":0` and a separator, 6n + 1
- * characters) cannot fit the text budget throws. A rejected array is charged nothing. Other objects hold their own
- * keys, so listing them is bounded by the memory the value already takes.
+ * work (from the allowance for values that print outside a redacted key, see `spendValueWork`), and outside a
+ * redacted key an array of numbers whose members (`"0":0` and a separator, 6n + 1 characters) cannot fit the text
+ * budget throws. A rejected array is charged nothing. Other objects hold their own keys, so listing them is bounded by
+ * the memory the value already takes.
  */
 function boundTypedArray(walk: Walk, record: object): void {
   if (!types.isTypedArray(record)) {
@@ -655,12 +703,12 @@ function boundTypedArray(walk: Walk, record: object): void {
   // A bigint member can be dropped by a toJSON, so only arrays of numbers are known to print every index.
   const numbers = !types.isBigInt64Array(record) && !types.isBigUint64Array(record);
   if (
-    length * TYPED_ARRAY_INDEX_UNITS > walk.work.unitsLeft ||
+    length * TYPED_ARRAY_INDEX_UNITS > valueWorkLeft(walk) ||
     (!walk.discarding && numbers && length > 0 && 6 * length + 1 > walk.budget.charsLeft)
   ) {
     exceeded();
   }
-  spendWork(walk.work, length * TYPED_ARRAY_INDEX_UNITS);
+  spendValueWork(walk, length * TYPED_ARRAY_INDEX_UNITS);
 }
 
 /**
@@ -771,7 +819,8 @@ export interface SerializeJsonMemberOptions {
  * - nesting deeper than MAX_NESTING_DEPTH (512) objects and arrays throws a RangeError before the next level is read;
  * - text that cannot fit what is left of `budget`, or work that cannot fit what is left of `work`, throws a
  *   RangeError. Printed text is charged to `budget` only; `work` pays for each own key listed, each array item under
- *   a redacted key and each scan of a string too long to print (see `WorkBudget`). An array checks 2n + 1 characters
+ *   a redacted key and each scan of a string too long to print, and, from its separate allowance for values that
+ *   print outside a redacted key, for typed array indexes and numeric string reads (see `WorkBudget`). An array checks 2n + 1 characters
  *   (n units of work under a redacted key) before its index 0 is read, a typed array checks its internal length
  *   before its keys are listed, a Buffer projected by Node's built-in toJSON is read in place and bounded like an
  *   array by its internal length once its key's redaction is known (a receiver whose length cannot be bounded that

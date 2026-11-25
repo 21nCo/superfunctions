@@ -1,13 +1,11 @@
-import { types } from "node:util";
 import type { Diagnostic } from "./diagnostics.js";
 import {
+  addReturnedDiagnostics,
   createDocumentOutput,
-  type DocumentDiagnostics,
   type DocumentOutcome,
   type DocumentOutput,
 } from "./document-output.js";
 import { createExec, type ExecService } from "./exec.js";
-import { toLength } from "./json-value.js";
 import { createOutput, type OutputService } from "./output.js";
 import { createScaffold, type ScaffoldService } from "./scaffold.js";
 
@@ -226,60 +224,6 @@ export async function runAction<TOptions>(
     }
 
     return 1;
-  }
-}
-
-/**
- * Adds the diagnostics an action returned, reading no more than the document can keep: an array's length is read
- * once and each index is read only while `collector.full()` is false, and an iterable stops at the first item read
- * after it is full, so an oversized, sparse or proxied array, or an endless iterable of fresh diagnostics, is cut
- * once the document's bounds are reached (see `DocumentDiagnostics`). Reading them never fails the run: an entry that
- * cannot be read (a throwing index getter) is counted as unreadable and its siblings are still read; a list whose
- * length, iterator or next step throws, or that is not a list at all, ends there with one unreadable entry; a value
- * that is not an object, or is a String object of any realm (either would iterate as its characters), is one
- * unreadable entry, and no iterator is created for it. An array's length is converted by the bounded ToLength of
- * `json-value.ts`, so a length whose primitive is a numeric string longer than MAX_NUMERIC_STRING_LENGTH makes the
- * list one unreadable entry before the string is read. Holes and other values that are not diagnostics are dropped by
- * the collector with its fixed warning. Internal: not exported from the package.
- */
-export function addReturnedDiagnostics(returned: unknown, collector: DocumentDiagnostics): void {
-  if (returned === undefined || returned === null) {
-    return;
-  }
-  // A String object iterates as its characters too (its iterator flattens the whole string first), in any realm.
-  if ((typeof returned !== "object" && typeof returned !== "function") || types.isStringObject(returned)) {
-    collector.unreadable();
-    return;
-  }
-  try {
-    if (Array.isArray(returned)) {
-      const length = toLength(Reflect.get(returned, "length"));
-      for (let index = 0; index < length; index += 1) {
-        if (collector.full()) {
-          collector.drop();
-          return;
-        }
-        let diagnostic: unknown;
-        try {
-          diagnostic = Reflect.get(returned, String(index));
-        } catch {
-          collector.unreadable();
-          continue;
-        }
-        collector.add(diagnostic);
-      }
-      return;
-    }
-    for (const diagnostic of returned as Iterable<unknown>) {
-      if (collector.full()) {
-        collector.drop();
-        break;
-      }
-      collector.add(diagnostic);
-    }
-  } catch {
-    // The list itself could not be read further: one unreadable entry stands for the rest.
-    collector.unreadable();
   }
 }
 

@@ -11,6 +11,7 @@ import {
   serializeJsonMember,
   spendText,
   spendWork,
+  toLength,
   type DocumentBudget,
   type WorkBudget,
 } from "./json-value.js";
@@ -59,6 +60,51 @@ export interface DocumentDiagnostics {
    * listed without them, though the document still prints them. The same array each call.
    */
   list(): readonly Diagnostic[];
+}
+
+/**
+ * Adds the diagnostics an action returned (declared `readonly Diagnostic[]`), reading no more than the document can
+ * keep. Only an array is read: a value Array.isArray accepts, which sees through proxies and realms. Its length is
+ * read once and converted by the bounded ToLength of `json-value.ts` (a length whose primitive is a numeric string
+ * longer than MAX_NUMERIC_STRING_LENGTH makes the list one unreadable entry before the string is read), and each
+ * index is read once, only while `collector.full()` is false, so an oversized, sparse or proxied array is cut once
+ * the document's bounds are reached (see `DocumentDiagnostics`). Any other value, including a string, a String object
+ * (proxied or not, from any realm), a generator or another iterable, is one unreadable entry with the fixed warning:
+ * no iterator is ever opened, so nothing is iterated as characters or generated without bound. Reading them never
+ * fails the run: an entry that cannot be read (a throwing index getter) is counted as unreadable and its siblings are
+ * still read; a list whose length cannot be read or converted ends there with one unreadable entry. Holes and other
+ * values that are not diagnostics are dropped by the collector with its fixed warning. Internal: this module is not
+ * exported from the package.
+ */
+export function addReturnedDiagnostics(returned: unknown, collector: DocumentDiagnostics): void {
+  if (returned === undefined || returned === null) {
+    return;
+  }
+  try {
+    if (!Array.isArray(returned)) {
+      collector.unreadable();
+      return;
+    }
+    const length = toLength(Reflect.get(returned, "length"));
+    for (let index = 0; index < length; index += 1) {
+      if (collector.full()) {
+        collector.drop();
+        return;
+      }
+      let diagnostic: unknown;
+      try {
+        diagnostic = Reflect.get(returned, String(index));
+      } catch {
+        collector.unreadable();
+        continue;
+      }
+      collector.add(diagnostic);
+    }
+  } catch {
+    // The list itself could not be read (a revoked proxy, or a length that cannot be read or converted): one
+    // unreadable entry stands for the rest.
+    collector.unreadable();
+  }
 }
 
 export interface DocumentOutput {
@@ -369,6 +415,22 @@ export function createDocumentOutput(options: DocumentOutputOptions): DocumentOu
     stdout: logWriter,
     stderr: logWriter,
   });
+  // The whole call is guarded too, not only the writer: formatting a message (such as an inherited toJSON that the
+  // JSON line runs) can throw as well, and still loses only that message.
+  const advisory =
+    (log: (message: string, details?: unknown) => void) =>
+    (...args: [message: string, details?: unknown]): void => {
+      try {
+        log(...args);
+      } catch {
+        // The message is lost; the result document still reports the run.
+      }
+    };
+  const debug = advisory(logs.debug);
+  const info = advisory(logs.info);
+  const success = advisory(logs.success);
+  const warn = advisory(logs.warn);
+  const error = advisory(logs.error);
   // Collected output calls: only the value of the last json() call is kept (it may become the data), with the
   // kinds of the first calls, enough to warn for each unused one up to MAX_WARNINGS_PER_KIND and once for the rest.
   const calls: Array<"json" | "table"> = [];
@@ -388,20 +450,20 @@ export function createDocumentOutput(options: DocumentOutputOptions): DocumentOu
     start() {},
     stop() {},
     succeed(nextMessage) {
-      logs.success(nextMessage || message);
+      success(nextMessage || message);
     },
     fail(nextMessage) {
-      logs.error(nextMessage || message);
+      error(nextMessage || message);
     },
   });
 
   const service: OutputService = {
     mode: "json",
-    debug: logs.debug,
-    info: logs.info,
-    success: logs.success,
-    warn: logs.warn,
-    error: logs.error,
+    debug,
+    info,
+    success,
+    warn,
+    error,
     json(value) {
       lastJson = callCount;
       lastJsonValue = value;
@@ -460,7 +522,7 @@ export function createDocumentOutput(options: DocumentOutputOptions): DocumentOu
     text: createDocumentBudget(Math.max(0, limit - 1 - SUCCESS_FRAME_LENGTH - "0".length - DIAGNOSTICS_MEMBER_LENGTH)),
     work: createWorkBudget(limit),
   };
-  const copyAllowance: WorkBudget = { unitsLeft: limit };
+  const copyAllowance = { unitsLeft: limit };
   // In the order they were added; undefined for one dropped when it was added.
   const entries: Array<PreparedDiagnostic | undefined> = [];
   // The copies `list()` returns, parsed from the kept text the first time they are listed; `copied` entries so far.
