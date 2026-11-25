@@ -26,9 +26,17 @@ describe("transact step classification", () => {
     await server?.close?.();
   });
 
-  async function post(steps: unknown[], atomic = true) {
+  async function post(steps: unknown[], atomic = true, supportsTransactions = true) {
     adapter = memoryAdapter();
     await adapter.initialize?.();
+    if (!supportsTransactions) {
+      adapter.capabilities = { ...adapter.capabilities, transactions: { supported: false } };
+      await adapter.create({
+        model: "txn",
+        data: { id: "txn-seeded", amount: 1 },
+        namespace: "datafn",
+      });
+    }
     const create = vi.spyOn(adapter, "create");
     server = await createDatafnServer({
       allowUnknownResources: true,
@@ -88,8 +96,17 @@ describe("transact step classification", () => {
       { resource: "txn", filters: { amount: { between: [1] } } },
     ], atomic);
 
-    expect(response.status).toBe(atomic ? 400 : 200);
-    const error = atomic ? body.error : body.result.results[1].error;
-    expect(error).toMatchObject({ code: "DFQL_INVALID" });
+    expect(response.status).toBe(200);
+    expect(body.result.results[1].error).toMatchObject({ code: "DFQL_INVALID" });
+    expect(body.result.results[0].rolledBack ?? false).toBe(atomic);
+  });
+
+  it("returns the same step error for a read-only atomic request without transactions", async () => {
+    const { response, body } = await post([
+      { resource: "txn", filters: { amount: { between: [1] } } },
+    ], true, false);
+
+    expect(response.status).toBe(200);
+    expect(body.result.results[0].error).toMatchObject({ code: "DFQL_INVALID" });
   });
 });

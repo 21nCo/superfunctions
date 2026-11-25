@@ -4,7 +4,7 @@
 
 import type { DatafnErrorCode, DatafnSchema, DatafnPlugin } from "../core-types.js";
 import type { Adapter } from "@superfunctions/db";
-import type { IdempotencyStore, MutationResult } from "./idempotency.js";
+import type { IdempotencyStore } from "./idempotency.js";
 import type { DFQLMutation } from "./mutation/dfql.js";
 import type { SequenceStore } from "./sync/sequence-store.js";
 import { executeMutation } from "./mutation/execute.js";
@@ -42,8 +42,6 @@ export interface TransactResult {
     details?: any;
   };
 }
-
-class TransactQueryValidationError extends DatafnExecutionError {}
 
 /**
  * Execute a transaction (sequence of mutations/queries) as an atomic unit
@@ -207,7 +205,7 @@ export async function executeTransaction(
         if (error && typeof error === "object" && "code" in error &&
             (error.code === "DFQL_INVALID" || error.code === "DFQL_UNSUPPORTED") &&
             "message" in error && typeof error.message === "string") {
-          throw new TransactQueryValidationError(error.code, error.message);
+          return { ok: false, error: { code: error.code, message: error.message } };
         }
         throw error;
       }
@@ -290,35 +288,26 @@ export async function executeTransaction(
           );
           results.push(result);
 
-          if (step.mutation) {
-            const mutRes = result as MutationResult;
-            if (!mutRes.ok) {
-              // REL-003: Annotate all prior ok results as rolled back
-              const failedStepIndex = i;
-              for (let j = 0; j < failedStepIndex; j++) {
-                const priorResult = results[j];
-                if (priorResult && typeof priorResult === "object" && priorResult.ok) {
-                  results[j] = {
-                    ok: false,
-                    rolledBack: true,
-                    result: priorResult,
-                  };
-                }
-              }
-              // Rollback by throwing — the transaction callback will abort
-              throw { __transactionFailed: true, stepIndex: failedStepIndex };
+          if (!(result && "ok" in result && result.ok === false)) continue;
+          // REL-003: Annotate all prior ok results as rolled back
+          for (let j = 0; j < i; j++) {
+            const priorResult = results[j];
+            if (priorResult && typeof priorResult === "object" && priorResult.ok) {
+              results[j] = {
+                ok: false,
+                rolledBack: true,
+                result: priorResult,
+              };
             }
           }
+          // Rollback by throwing — the transaction callback will abort
+          throw { __transactionFailed: true, stepIndex: i };
         }
       });
       await reconcilePermissionDirectoryAfterSettlement();
       // If we got here, commit happened — TV-REL-006: no rolledBack field
       return { ok: true, result: { ok: true, results } };
     } catch (error: any) {
-      if (error instanceof TransactQueryValidationError) {
-        await reconcilePermissionDirectoryAfterSettlement();
-        return { ok: false, error: error.toDatafnError() };
-      }
       if (error && error.__transactionFailed) {
         // Unshare invalidates the external directory before deleting the
         // database grant. A rollback restores the database row, so reconcile
@@ -391,13 +380,9 @@ export async function executeTransaction(
       }
       results.push(result);
 
-      if (isAtomic && step.mutation) {
-        const mutRes = result as any;
-        if (mutRes?.ok === false) {
-          // Stop on first failure if atomic (even without rollback support we stop)
-          await drainPrequeuedUnshareTasks();
-          return { ok: true, result: { ok: false, results } };
-        }
+      if (isAtomic && result?.ok === false) {
+        await drainPrequeuedUnshareTasks();
+        return { ok: true, result: { ok: false, results } };
       }
     } catch (e: any) {
       // EXE-003: Include step context in error log
