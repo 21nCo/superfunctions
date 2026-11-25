@@ -1,9 +1,13 @@
 import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, vi } from "vitest";
+import { runInNewContext } from "node:vm";
+import ts from "typescript";
+import { afterAll, afterEach, beforeAll, vi } from "vitest";
 import type { Diagnostic } from "../src/diagnostics.js";
-import { createDocumentOutput, type DocumentOutcome } from "../src/document-output.js";
+import { createDocumentOutput, MAX_WARNINGS_PER_KIND, type DocumentOutcome } from "../src/document-output.js";
 import { MAX_NESTING_DEPTH } from "../src/json-value.js";
 import { runAction, type RunnerActionResult, type RunnerContext, type RunnerOptions } from "../src/runner.js";
 
@@ -452,13 +456,254 @@ describe("document work spent on redacted and dropped values", () => {
   });
 });
 
+describe("document advisory stderr writes", () => {
+  const throwingStderr = () => {
+    throw new Error("stderr closed");
+  };
+
+  async function runWithStderr(action: Action, stderr: (text: string) => void) {
+    const stdout: string[] = [];
+    const exitCode = await runAction(action, {}, {
+      color: false,
+      mode: "json",
+      jsonStyle: "document",
+      stdout: (text) => stdout.push(text),
+      stderr,
+    });
+    return { exitCode, out: stdout.join(""), writes: stdout.length };
+  }
+
+  it("keeps a success and its exit code when stderr throws on the unused-call and dropped-diagnostic warnings", async () => {
+    const result = await runWithStderr((_options, ctx) => {
+      ctx.output.json({ unused: true });
+      ctx.output.table({ rows: [] } as never);
+      ctx.diagnostics.add(undefined as never);
+      return { data: "done", exitCode: 4 };
+    }, throwingStderr);
+    expect(result.exitCode).toBe(4);
+    expect(parseOnlyDocument(result)).toEqual({ ok: true, data: "done" });
+  });
+
+  it("keeps a mapped failure code and exit code when stderr throws on the warnings", async () => {
+    const result = await runWithStderr((_options, ctx) => {
+      ctx.output.json({ unused: true });
+      ctx.diagnostics.add({ code: "BAD", severity: 1 as never, message: "m" });
+      throw Object.assign(new Error("closed"), { code: "CLOSED", exitCode: 7 });
+    }, throwingStderr);
+    expect(result.exitCode).toBe(7);
+    expect(parseOnlyDocument(result)).toEqual({ ok: false, error: { code: "CLOSED", message: "closed" } });
+  });
+
+  it("bounds the warnings for unused calls and dropped diagnostics", async () => {
+    const result = await runDocument((_options, ctx) => {
+      for (let index = 0; index < 50; index += 1) {
+        ctx.output.json(index);
+        ctx.diagnostics.add(undefined as never);
+      }
+      return { data: "done" };
+    });
+    expect(parseOnlyDocument(result)).toEqual({ ok: true, data: "done" });
+    const lines = result.stderr.trim().split("\n").map((line) => (JSON.parse(line) as { message: string }).message);
+    expect(lines).toHaveLength(2 * (MAX_WARNINGS_PER_KIND + 1));
+    expect(lines[MAX_WARNINGS_PER_KIND]).toBe("further output.json() and output.table() calls were not printed either");
+    expect(lines.at(-1)).toBe("further diagnostics were dropped from the result document");
+  });
+
+  it("reads no diagnostic past what the document can print and warns once for the rest", () => {
+    let reads = 0;
+    const diagnostics = new Proxy([] as Diagnostic[], {
+      get: (target, key) => {
+        if (key === "length") {
+          return 2e8;
+        }
+        if (typeof key === "string" && /^\d+$/.test(key)) {
+          reads += 1;
+          return { code: "D", severity: "info", message: "m" };
+        }
+        return Reflect.get(target, key);
+      },
+    });
+    const result = finishWith(1_000, { ok: true, data: 1, exitCode: 0 }, diagnostics);
+    // (1000 - ',"diagnostics":[]') / '{"code":"","severity":"","message":""},' = 25 diagnostics at most.
+    expect(reads).toBe(25);
+    expect(result.exitCode).toBe(0);
+    expect((parseOnlyDocument(result) as { data: number }).data).toBe(1);
+    expect(result.stderr).toContain("diagnostics past the first 25 were dropped");
+  });
+});
+
+describe("document result reads", () => {
+  const leak = ["test", "result", "getter", "text"].join("-");
+
+  it("prints the fixed failure document with exit code 1 when a returned member getter throws", async () => {
+    for (const member of ["data", "exitCode", "diagnostics"] as const) {
+      const listener = vi.fn();
+      const result = await runDocument(
+        () =>
+          Object.defineProperty({ data: "kept", exitCode: 9 }, member, {
+            enumerable: true,
+            get() {
+              throw Object.assign(new Error(leak), { code: "MAPPED", exitCode: 6 });
+            },
+          }) as RunnerActionResult,
+        { onDiagnostics: listener }
+      );
+      expect(result.exitCode).toBe(1);
+      expect(parseOnlyDocument(result)).toEqual(FAILURE_DOCUMENT);
+      expect(result.out + result.stderr).not.toContain(leak);
+      expect(listener).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it("prints the fixed failure document when the returned result is a throwing proxy", async () => {
+    // Awaiting the action reads "then", which settles the action's own promise, so only the result members throw.
+    const result = await runDocument(
+      () =>
+        new Proxy({}, {
+          get(_target, key) {
+            if (key === "then") {
+              return undefined;
+            }
+            throw new Error(leak);
+          },
+        }) as RunnerActionResult
+    );
+    expect(result.exitCode).toBe(1);
+    expect(parseOnlyDocument(result)).toEqual(FAILURE_DOCUMENT);
+    expect(result.out).not.toContain(leak);
+  });
+
+  it("calls a throwing diagnostics listener once and reports its failure after a successful action", async () => {
+    const listener = vi.fn(() => {
+      throw Object.assign(new Error("listener failed"), { code: "LISTENER", exitCode: 5 });
+    });
+    const success = await runDocument(() => ({ data: "kept" }), { onDiagnostics: listener });
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(success.exitCode).toBe(5);
+    expect(parseOnlyDocument(success)).toEqual({ ok: false, error: { code: "LISTENER", message: "listener failed" } });
+
+    listener.mockClear();
+    const failure = await runDocument(
+      () => {
+        throw Object.assign(new Error("action failed"), { code: "ACTION", exitCode: 3 });
+      },
+      { onDiagnostics: listener }
+    );
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(failure.exitCode).toBe(3);
+    expect(parseOnlyDocument(failure)).toEqual({ ok: false, error: { code: "ACTION", message: "action failed" } });
+  });
+
+  it("reads a returned sparse diagnostics array by index up to its length", async () => {
+    const sparse: Diagnostic[] = [];
+    sparse[2] = { code: "LAST", severity: "info", message: "m" };
+    const result = await runDocument(() => ({ data: 1, diagnostics: sparse }));
+    expect(parseOnlyDocument(result)).toEqual({
+      ok: true,
+      data: 1,
+      diagnostics: [{ code: "LAST", severity: "info", message: "m" }],
+    });
+    // The two holes are dropped with a warning each.
+    expect(result.stderr.trim().split("\n")).toHaveLength(2);
+  });
+});
+
+describe("document diagnostic envelope", () => {
+  it("writes the code, severity, message and path directly, unaffected by an inherited toJSON", async () => {
+    const leak = ["test", "inherited", "token"].join("-");
+    const prototype = Object.prototype as { toJSON?: unknown };
+    Object.defineProperty(prototype, "toJSON", {
+      configurable: true,
+      writable: true,
+      value(this: Record<string, unknown>) {
+        return "code" in this ? { leakedToken: leak } : this;
+      },
+    });
+    try {
+      const result = await runDocument((_options, ctx) => {
+        ctx.diagnostics.add({ code: "D", severity: "info", message: "m", path: "p", details: { visible: 1 } });
+        return { data: { code: "projected" } };
+      });
+      expect(result.out).not.toContain(leak);
+      expect(parseOnlyDocument(result)).toEqual({
+        ok: true,
+        data: { leakedToken: "[REDACTED]" },
+        diagnostics: [{ code: "D", severity: "info", message: "m", path: "p", details: { visible: 1 } }],
+      });
+    } finally {
+      delete prototype.toJSON;
+    }
+  });
+});
+
+describe("document typed arrays and bigints", () => {
+  it("prints a small typed array with its own members as JSON.stringify does", () => {
+    const typed = Object.assign(new Uint8Array([1, 2, 3]), { label: "bytes" });
+    const result = finishWith(1_000, { ok: true, data: { typed, big: new BigInt64Array([1n]) }, exitCode: 0 });
+    expect(parseOnlyDocument(result)).toEqual({
+      ok: true,
+      data: { typed: { 0: 1, 1: 2, 2: 3, label: "bytes" }, big: { 0: "1" } },
+    });
+  });
+
+  it("fails an oversized typed array of any realm from its length, before listing its keys, redacted or not", () => {
+    const keys = vi.spyOn(Object, "keys");
+    const values = [new Uint8Array(3e6), runInNewContext("new Float64Array(3e6)") as object];
+    for (const typed of values) {
+      expect(finishWith(200, { ok: true, data: typed, exitCode: 0 }).out).toBe(`${JSON.stringify(FAILURE_DOCUMENT)}\n`);
+      const masked = finishWith(200, { ok: true, data: { visible: 1, password: typed }, exitCode: 0 });
+      expect(masked.out).toBe(`${JSON.stringify(FAILURE_DOCUMENT)}\n`);
+    }
+    expect(keys.mock.calls.some(([value]) => ArrayBuffer.isView(value))).toBe(false);
+  });
+
+  it("never converts a bigint under a redacted key, and rejects an oversized one by bit length", () => {
+    const toString = vi.spyOn(BigInt.prototype, "toString");
+    const huge = 2n ** 200_000n;
+    const masked = finishWith(200, { ok: true, data: { visible: 1, secret: huge }, exitCode: 2 });
+    expect(masked.exitCode).toBe(2);
+    expect(parseOnlyDocument(masked)).toEqual({ ok: true, data: { visible: 1, secret: "[REDACTED]" } });
+    expect(finishWith(200, { ok: true, data: huge, exitCode: 0 }).out).toBe(`${JSON.stringify(FAILURE_DOCUMENT)}\n`);
+    expect(toString).not.toHaveBeenCalled();
+    // A bigint whose text fits prints as a string, as before.
+    expect(parseOnlyDocument(finishWith(200, { ok: true, data: -(2n ** 64n), exitCode: 0 }))).toEqual({
+      ok: true,
+      data: "-18446744073709551616",
+    });
+  });
+});
+
+/**
+ * Transpiles the package sources into a fresh directory and returns its runner module, so the child process runs the
+ * current sources without a prior build.
+ */
+function transpiledRunner(): string {
+  const sources = fileURLToPath(new URL("../src/", import.meta.url));
+  const directory = mkdtempSync(join(tmpdir(), "clifn-core-heap-"));
+  writeFileSync(join(directory, "package.json"), '{"type":"module"}');
+  for (const name of readdirSync(sources).filter((file) => file.endsWith(".ts") && !file.endsWith(".d.ts"))) {
+    const { outputText } = ts.transpileModule(readFileSync(join(sources, name), "utf8"), {
+      compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+    });
+    writeFileSync(join(directory, name.replace(/\.ts$/, ".js")), outputText);
+  }
+  return join(directory, "runner.js");
+}
+
 describe("document memory in a constrained heap", () => {
-  const builtRunner = fileURLToPath(new URL("../dist/runner.js", import.meta.url));
+  let runnerModule = "";
+
+  beforeAll(() => {
+    runnerModule = transpiledRunner();
+  });
+
+  afterAll(() => {
+    if (runnerModule) {
+      rmSync(dirname(runnerModule), { recursive: true, force: true });
+    }
+  });
 
   it("prints one bounded document for every case in a 32 MiB heap", () => {
-    if (!existsSync(builtRunner)) {
-      throw new Error("dist/runner.js is not built; run `npm run build -w @clifn/core` first");
-    }
     // Each case prints one line: its name, how many stdout writes it made, its exit code and its stdout.
     const script = String.raw`
       const { runAction } = await import(process.argv[1]);
@@ -500,8 +745,29 @@ describe("document memory in a constrained heap", () => {
         ],
       }));
       await run("records", () => ({ data: Array.from({ length: 50_000 }, (_, id) => ({ id, name: "n" + id })) }));
+      // 64 MiB outside the heap; listing its keys would create 2^26 strings.
+      const bytes = new Uint8Array(2 ** 26);
+      await run("typed", () => ({ data: bytes }));
+      await run("typed-redacted", () => ({ exitCode: 3, data: { visible: "kept", secret: bytes } }));
+      await run("diagnostics-sparse", () => ({ data: "done", diagnostics: new Array(120e6) }));
+      let diagnosticReads = 0;
+      const many = new Proxy([], {
+        get: (target, key) => {
+          if (key === "length") return 2e8;
+          if (typeof key === "string" && /^\d+$/.test(key)) {
+            diagnosticReads += 1;
+            return { code: "D", severity: "info", message: "m" };
+          }
+          return Reflect.get(target, key);
+        },
+      });
+      await run("diagnostics-proxy", () => ({ exitCode: 2, data: "done", diagnostics: many }));
+      await run("diagnostic-reads", () => ({ data: diagnosticReads < 2e6 }));
+      const huge = 2n ** (2n ** 27n);
+      await run("bigint-redacted", () => ({ exitCode: 4, data: { visible: "kept", secret: huge } }));
+      await run("bigint", () => ({ data: huge }));
     `;
-    const child = spawnSync(process.execPath, ["--max-old-space-size=32", "--input-type=module", "-e", script, builtRunner], {
+    const child = spawnSync(process.execPath, ["--max-old-space-size=32", "--input-type=module", "-e", script, runnerModule], {
       encoding: "utf8",
       maxBuffer: 16 * 2 ** 20,
       timeout: 120_000,
@@ -540,5 +806,19 @@ describe("document memory in a constrained heap", () => {
     });
     expect(cases.records).toMatchObject({ writes: 1, exitCode: 0 });
     expect(cases.records.out.startsWith('{"ok":true,"data":[{"id":0,"name":"n0"},')).toBe(true);
+    for (const name of ["typed", "bigint"]) {
+      expect(cases[name]).toEqual({ name, writes: 1, exitCode: 1, out: failure });
+    }
+    expect(cases["typed-redacted"]).toEqual({ name: "typed-redacted", writes: 1, exitCode: 1, out: failure });
+    expect(cases["bigint-redacted"]).toMatchObject({
+      writes: 1,
+      exitCode: 4,
+      out: '{"ok":true,"data":{"visible":"kept","secret":"[REDACTED]"}}\n',
+    });
+    // Holes are dropped with bounded warnings; the result is kept.
+    expect(cases["diagnostics-sparse"]).toMatchObject({ writes: 1, exitCode: 0, out: '{"ok":true,"data":"done"}\n' });
+    expect(cases["diagnostics-proxy"]).toMatchObject({ writes: 1, exitCode: 2 });
+    expect(cases["diagnostics-proxy"].out.startsWith('{"ok":true,"data":"done","diagnostics":[{"code":"D"')).toBe(true);
+    expect(cases["diagnostic-reads"].out).toBe('{"ok":true,"data":true}\n');
   }, 150_000);
 });

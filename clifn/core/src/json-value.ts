@@ -8,7 +8,9 @@ const REDACTED = '"[REDACTED]"';
  * How many projections of one original member value may be open on the active path at once (see
  * `serializeJsonMember`). A toJSON that keeps returning fresh objects which lead back to the same value (where
  * JSON.stringify recurses until its stack overflows) is marked "[Circular]" in place at the next recurrence; finite
- * chains up to this depth print exactly as JSON.stringify prints them.
+ * chains up to this depth print exactly as JSON.stringify prints them. Once a value has reached the limit, each later
+ * projection of it on the same path (a sibling of the capped branch) is still printed, one level deep: projections of
+ * that value inside it print "[Circular]", so a toJSON that branches back to itself costs linear, not exponential, work.
  */
 export const PROJECTION_REPEAT_LIMIT = 64;
 /**
@@ -18,6 +20,12 @@ export const PROJECTION_REPEAT_LIMIT = 64;
 export const MAX_NESTING_DEPTH = 512;
 /** The share of V8's heap limit one result document may use as text (see `documentLimit`). */
 const HEAP_SHARE = 16;
+/**
+ * The work units an index of a typed array costs before its keys are listed: `Object.keys` creates each index key as a
+ * new string (about 32 bytes with its slot) although the array stores its elements outside the heap, so the units bound
+ * that allocation, not just the walk.
+ */
+export const TYPED_ARRAY_INDEX_UNITS = 32;
 
 /** Thrown when a value's JSON text, or the work to walk it, cannot fit what is left of a document's budget. */
 export class DocumentBudgetExceeded extends RangeError {}
@@ -67,7 +75,8 @@ export function spendText(budget: DocumentBudget, chars: number): void {
   }
 }
 
-function spendWork(work: WorkBudget, units: number): void {
+/** Counts `units` of work against the budget, never given back; throws a RangeError when they do not fit. */
+export function spendWork(work: WorkBudget, units: number): void {
   work.unitsLeft -= units;
   if (work.unitsLeft < 0) {
     exceeded();
@@ -95,7 +104,8 @@ function escapedUnitLength(text: string, index: number, code: number): number {
 
 /**
  * Whether the JSON text of `text` (with its quotes) fits `room`, counted without building it: the scan stops at the
- * first code unit past `room`, and each scanned code unit is charged to `work`.
+ * first code unit past `room`. A scan that finds the text too long charges each scanned code unit to `work`, so dropped
+ * text stays bounded; a text that fits is charged once, at its encoded length, when it is written.
  */
 function escapedFits(text: string, room: number, work: WorkBudget | undefined): boolean {
   let length = 2;
@@ -103,7 +113,7 @@ function escapedFits(text: string, room: number, work: WorkBudget | undefined): 
   for (; index < text.length && length <= room; index += 1) {
     length += escapedUnitLength(text, index, text.charCodeAt(index));
   }
-  if (work) {
+  if (length > room && work) {
     spendWork(work, index);
   }
   return length <= room;
@@ -170,14 +180,21 @@ export class JsonText implements TextSink {
 
 const booleanValueOf = Boolean.prototype.valueOf;
 const bigintValueOf = BigInt.prototype.valueOf;
+/** %TypedArray%.prototype.length: reads the length from the internal slot, for a typed array of any realm. */
+const typedArrayLength = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(Uint8Array.prototype), "length")
+  ?.get as () => number;
+/** log10(2): the decimal digits each bit of a bigint adds. */
+const DIGITS_PER_BIT = Math.log10(2);
 
 interface Walk {
   /** The objects being serialized, as JSON.stringify's stack holds them. */
   readonly nodes: Set<object>;
   /** How many of those objects were produced from each original member value (before its toJSON ran). */
   readonly originals: Map<unknown, number>;
-  /** Originals that reached PROJECTION_REPEAT_LIMIT while still open: any further recurrence of them is marked. */
+  /** Originals that reached PROJECTION_REPEAT_LIMIT while still open (cleared when they close). */
   readonly capped: Set<unknown>;
+  /** Capped originals with a projection being printed one level deep: projections of them inside it are marked. */
+  readonly cappedWalks: Set<unknown>;
   readonly out: TextSink;
   readonly budget: DocumentBudget;
   readonly work: WorkBudget;
@@ -242,6 +259,24 @@ function unbox(value: object): unknown {
   return value;
 }
 
+/**
+ * Writes a bigint as a string. Under a redacted key it is not converted at all; otherwise its magnitude is checked by
+ * bit length first, so no decimal text longer than what is left of the budgets is ever built.
+ */
+function emitBigInt(walk: Walk, value: bigint): void {
+  if (walk.discarding) {
+    return;
+  }
+  const room = Math.min(walk.budget.charsLeft, walk.work.unitsLeft);
+  const magnitude = value < 0n ? -value : value;
+  // A magnitude of at least 2^bits has more than `room` decimal digits, so its text cannot fit.
+  const bits = Math.max(1, Math.ceil(room / DIGITS_PER_BIT) + 1);
+  if (BigInt.asUintN(bits, magnitude) !== magnitude) {
+    exceeded();
+  }
+  emitString(walk, value.toString());
+}
+
 /** Writes a primitive's JSON text (bigints as strings); returns false when JSON drops it. */
 function writePrimitive(walk: Walk, value: unknown): boolean {
   if (typeof value === "string") {
@@ -251,7 +286,7 @@ function writePrimitive(walk: Walk, value: unknown): boolean {
   } else if (value === null || typeof value === "boolean") {
     emit(walk, String(value));
   } else if (typeof value === "bigint") {
-    emitString(walk, value.toString());
+    emitBigInt(walk, value);
   } else {
     return false;
   }
@@ -292,27 +327,39 @@ function serializeProperty(walk: Walk, holder: object, key: string, depth: numbe
   return writePrimitive(walk, value);
 }
 
-/** True when `node` must print as "[Circular]": it is being serialized, or its original recurs past the limit. */
-function isRecurrence(walk: Walk, node: object, original: unknown, open: number): boolean {
+/**
+ * How `node` is printed: "circular" when it is being serialized, its original already has PROJECTION_REPEAT_LIMIT
+ * projections open, or its original is capped and already has a projection printed one level deep on the path;
+ * "capped" when its original is capped and this projection is printed one level deep; "walk" otherwise.
+ */
+function classifyNode(walk: Walk, node: object, original: unknown, open: number): "circular" | "capped" | "walk" {
   if (walk.nodes.has(node)) {
-    return true;
+    return "circular";
   }
-  if (open > 0 && (open >= PROJECTION_REPEAT_LIMIT || walk.capped.has(original))) {
+  if (open === 0) {
+    return "walk";
+  }
+  if (open >= PROJECTION_REPEAT_LIMIT) {
     walk.capped.add(original);
-    return true;
+    return "circular";
   }
-  return false;
+  if (walk.capped.has(original)) {
+    return walk.cappedWalks.has(original) ? "circular" : "capped";
+  }
+  return "walk";
 }
 
 /**
  * Serializes an object or array with `node` on the active path, in one pass. A node already on the path is
  * "[Circular]" (where JSON.stringify throws a TypeError). A node produced from an original value that already has
- * PROJECTION_REPEAT_LIMIT projections open is "[Circular]" in place, and so is every later recurrence of that original
- * while it stays open, so a toJSON that branches back to itself cannot multiply the work.
+ * PROJECTION_REPEAT_LIMIT projections open is "[Circular]" in place, and that original is capped while it stays open:
+ * each later projection of it (such as a finite sibling of the capped branch) is printed, but projections of it nested
+ * inside that one are "[Circular]", so a toJSON that branches back to itself cannot multiply the work.
  */
 function serializeNode(walk: Walk, node: object, original: unknown, depth: number): void {
   const open = walk.originals.get(original) ?? 0;
-  if (isRecurrence(walk, node, original, open)) {
+  const kind = classifyNode(walk, node, original, open);
+  if (kind === "circular") {
     emit(walk, CIRCULAR);
     return;
   }
@@ -321,6 +368,9 @@ function serializeNode(walk: Walk, node: object, original: unknown, depth: numbe
   }
   walk.nodes.add(node);
   walk.originals.set(original, open + 1);
+  if (kind === "capped") {
+    walk.cappedWalks.add(original);
+  }
   try {
     if (Array.isArray(node)) {
       serializeArray(walk, node, depth + 1);
@@ -329,6 +379,9 @@ function serializeNode(walk: Walk, node: object, original: unknown, depth: numbe
     }
   } finally {
     walk.nodes.delete(node);
+    if (kind === "capped") {
+      walk.cappedWalks.delete(original);
+    }
     if (open === 0) {
       walk.originals.delete(original);
       walk.capped.delete(original);
@@ -376,10 +429,31 @@ function discardProperty(walk: Walk, record: object, name: string, depth: number
 }
 
 /**
+ * Bounds a typed array by its internal length before its keys are listed: each index costs TYPED_ARRAY_INDEX_UNITS of
+ * work (under a redacted key too), and outside one, an array of numbers whose members (`"0":0` and a separator, 6n + 1
+ * characters) cannot fit the text budget throws. Other objects hold their own keys, so listing them is bounded by
+ * the memory the value already takes, and they are charged one unit per key once listed.
+ */
+function boundTypedArray(walk: Walk, record: object): void {
+  if (!types.isTypedArray(record)) {
+    return;
+  }
+  const length = Reflect.apply(typedArrayLength, record, []);
+  spendWork(walk.work, length * TYPED_ARRAY_INDEX_UNITS);
+  // A bigint member can be dropped by a toJSON, so only arrays of numbers are known to print every index.
+  const numbers = !types.isBigInt64Array(record) && !types.isBigUint64Array(record);
+  if (!walk.discarding && numbers && length > 0 && 6 * length + 1 > walk.budget.charsLeft) {
+    exceeded();
+  }
+}
+
+/**
  * SerializeJSONObject: own enumerable string keys in order, each read once; dropped members are left out. Each key
- * costs one unit of work before any value is read. A sensitive member that JSON prints is written as "[REDACTED]".
+ * costs one unit of work before any value is read, and a typed array is bounded by its length before its keys are
+ * listed. A sensitive member that JSON prints is written as "[REDACTED]".
  */
 function serializeObject(walk: Walk, record: object, depth: number): void {
+  boundTypedArray(walk, record);
   const names = Object.keys(record);
   spendWork(walk.work, names.length);
   emit(walk, "{");
@@ -427,12 +501,16 @@ export interface SerializeJsonMemberOptions {
  * - bigints become strings;
  * - an object or array that is already being serialized prints "[Circular]" (JSON.stringify throws a TypeError);
  * - a toJSON that keeps returning fresh objects leading back to the same original value prints
- *   PROJECTION_REPEAT_LIMIT (64) nested projections and then "[Circular]" in place, and later recurrences of that
- *   value inside it are marked at once; a finite chain deeper than 64 projections of one value is cut the same way;
+ *   PROJECTION_REPEAT_LIMIT (64) nested projections and then "[Circular]" in place; while that value stays open, a
+ *   later projection of it (a finite sibling of the capped branch) still prints, but projections of it nested inside
+ *   that one print "[Circular]"; a finite chain deeper than 64 projections of one value is cut the same way;
  * - nesting deeper than MAX_NESTING_DEPTH (512) objects and arrays throws a RangeError before the next level is read;
  * - text that cannot fit what is left of `budget`, or a walk that cannot fit what is left of `work`, throws a
- *   RangeError; an array checks 2n + 1 characters (and n units of work) before its index 0 is read, and an object
- *   charges one unit per key before any value is read, so oversized sparse, proxy or generated values fail at once.
+ *   RangeError; an array checks 2n + 1 characters (and n units of work) before its index 0 is read, a typed array
+ *   checks its internal length before its keys are listed, and an object charges one unit per key before any value is
+ *   read, so oversized sparse, proxy, typed or generated values fail at once; a bigint is checked by bit length before
+ *   its decimal text is built, and not converted under a redacted key. A Proxy's own keys are listed by the engine
+ *   (through its ownKeys trap) before they can be charged, so a Proxy is bounded only by the keys its trap returns.
  *
  * With `isSensitive`, every object key below the member that it matches prints "[REDACTED]" when JSON prints the
  * member at all; the key is matched after the holder's toJSON ran, so keys a projection creates are covered too. Its
@@ -455,6 +533,7 @@ export function serializeJsonMember(
     nodes: new Set(),
     originals: new Map(),
     capped: new Set(),
+    cappedWalks: new Set(),
     out,
     budget,
     work,

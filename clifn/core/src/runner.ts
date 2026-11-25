@@ -113,9 +113,16 @@ export async function runAction<TOptions>(
       stderr: runnerOptions.stderr,
     });
 
+  // A result document prints at most `maxDiagnostics`, so document mode keeps no more and records that it dropped some.
+  const maxDiagnostics = document?.maxDiagnostics ?? Number.POSITIVE_INFINITY;
+  let droppedDiagnostics = false;
   const diagnosticSink: RunnerDiagnosticsSink = {
     add(input: Diagnostic) {
-      diagnostics.push(input);
+      if (diagnostics.length < maxDiagnostics) {
+        diagnostics.push(input);
+      } else {
+        droppedDiagnostics = true;
+      }
     },
     list() {
       return diagnostics;
@@ -154,7 +161,7 @@ export async function runAction<TOptions>(
   };
 
   if (document) {
-    return await runDocumentAction(action, options, ctx, runnerOptions, document);
+    return await runDocumentAction(action, options, ctx, runnerOptions, document, () => droppedDiagnostics);
   }
 
   try {
@@ -189,32 +196,100 @@ export async function runAction<TOptions>(
   }
 }
 
+/** ToLength of an array's length, read once: unary plus is ToNumber, so a bigint or symbol throws. */
+function toLength(value: unknown): number {
+  const number = +(value as number);
+  if (Number.isNaN(number) || number <= 0) {
+    return 0;
+  }
+  return Math.min(Math.trunc(number), Number.MAX_SAFE_INTEGER);
+}
+
+/**
+ * Adds the diagnostics an action returned, reading at most what the sink can keep: an array's length is read once and
+ * only the indices below `room` are read, and an iterable stops at `room` items, so an oversized, sparse or proxied
+ * array, or an endless iterable, is cut before its excess is read. Throws what reading them throws.
+ */
+function addReturnedDiagnostics(returned: unknown, sink: RunnerDiagnosticsSink, room: number, onDrop: () => void): void {
+  if (returned === undefined || returned === null) {
+    return;
+  }
+  if (Array.isArray(returned)) {
+    const length = toLength(Reflect.get(returned, "length"));
+    const count = Math.min(length, room);
+    for (let index = 0; index < count; index += 1) {
+      sink.add(Reflect.get(returned, String(index)) as Diagnostic);
+    }
+    if (length > count) {
+      onDrop();
+    }
+    return;
+  }
+  let count = 0;
+  for (const diagnostic of returned as Iterable<Diagnostic>) {
+    if (count === room) {
+      onDrop();
+      break;
+    }
+    sink.add(diagnostic);
+    count += 1;
+  }
+}
+
+/**
+ * The document-mode run (D8). Only the action's own throw (or rejection) is the run's failure. Reading its result
+ * (diagnostics, then data, then exit code, each once) happens afterwards: a result that cannot be read, such as one
+ * whose getter throws, prints the fixed CLIFN_RUNNER_FAILED document with exit code 1. `onDiagnostics` is called once,
+ * after the diagnostics are read; when it throws after a successful action, its error is the run's failure.
+ */
 async function runDocumentAction<TOptions>(
   action: (options: TOptions, ctx: RunnerContext) => Promise<RunnerActionResult> | RunnerActionResult,
   options: TOptions,
   ctx: RunnerContext,
   runnerOptions: RunnerOptions,
-  document: DocumentOutput
+  document: DocumentOutput,
+  droppedDiagnostics: () => boolean
 ): Promise<number> {
-  let outcome: DocumentOutcome;
-
+  let outcome: DocumentOutcome | undefined;
+  let result: RunnerActionResult = undefined;
   try {
-    const result = await action(options, ctx);
-
-    for (const diagnostic of result?.diagnostics ?? []) {
-      ctx.diagnostics.add(diagnostic);
-    }
-
-    runnerOptions.onDiagnostics?.(ctx.diagnostics.list());
-    outcome = { ok: true, data: result?.data, exitCode: normalizeExitCode(result?.exitCode) };
+    result = await action(options, ctx);
   } catch (error) {
-    try {
-      runnerOptions.onDiagnostics?.(ctx.diagnostics.list());
-    } catch {
-      // The document reports the action's failure; a failing listener does not replace it or suppress the document.
-    }
     outcome = { ok: false, error };
   }
 
-  return document.finish(outcome, ctx.diagnostics.list());
+  let readable = true;
+  let dropped = false;
+  if (outcome === undefined) {
+    try {
+      const room = Math.max(0, document.maxDiagnostics - ctx.diagnostics.list().length);
+      addReturnedDiagnostics(result?.diagnostics, ctx.diagnostics, room, () => {
+        dropped = true;
+      });
+    } catch {
+      readable = false;
+    }
+  }
+
+  try {
+    runnerOptions.onDiagnostics?.(ctx.diagnostics.list());
+  } catch (error) {
+    // A failed action keeps its own failure; after a successful one, the listener's failure is the run's.
+    outcome ??= readable ? { ok: false, error } : undefined;
+  }
+
+  if (outcome === undefined && readable) {
+    try {
+      const data = result?.data;
+      const exitCode = result?.exitCode;
+      outcome = { ok: true, data, exitCode: normalizeExitCode(exitCode) };
+    } catch {
+      readable = false;
+    }
+  }
+
+  if (!readable || outcome === undefined) {
+    return document.failPreparation();
+  }
+  return document.finish(outcome, ctx.diagnostics.list(), dropped || droppedDiagnostics());
 }

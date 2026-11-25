@@ -9,6 +9,7 @@ import {
   JsonText,
   serializeJsonMember,
   spendText,
+  spendWork,
   type DocumentBudget,
   type WorkBudget,
 } from "./json-value.js";
@@ -34,8 +35,18 @@ export type DocumentOutcome =
 
 export interface DocumentOutput {
   readonly service: OutputService;
-  /** Writes the single result document to stdout and returns the run's exit code. */
-  finish(outcome: DocumentOutcome, diagnostics: readonly Diagnostic[]): number;
+  /**
+   * The most diagnostics one document can print, each at its smallest (`{"code":"","severity":"","message":""}` and
+   * a separator). The runner keeps at most this many and reports the rest as dropped.
+   */
+  readonly maxDiagnostics: number;
+  /**
+   * Writes the single result document to stdout and returns the run's exit code. `droppedDiagnostics` reports that
+   * diagnostics past `maxDiagnostics` were left out before they were read; it adds one warning on stderr.
+   */
+  finish(outcome: DocumentOutcome, diagnostics: readonly Diagnostic[], droppedDiagnostics?: boolean): number;
+  /** Writes the fixed CLIFN_RUNNER_FAILED document for a result that could not be read, and returns exit code 1. */
+  failPreparation(): number;
 }
 
 interface CollectedCall {
@@ -59,6 +70,13 @@ const FAILURE_FRAME_LENGTH = '{"ok":false,"error":{"code":,"message":}}'.length;
 /** The text `,"diagnostics":[]` adds, and `,"details":` in an error or a diagnostic. */
 const DIAGNOSTICS_MEMBER_LENGTH = ',"diagnostics":[]'.length;
 const DETAILS_MEMBER_LENGTH = ',"details":'.length;
+/** The shortest text a printed diagnostic takes, with its separator. */
+const MIN_DIAGNOSTIC_LENGTH = '{"code":"","severity":"","message":""},'.length;
+/**
+ * How many warnings of one kind (unused output calls, dropped diagnostics) stderr receives; past it, one more line
+ * says the rest were not reported, so the warnings stay bounded however many calls or diagnostics there are.
+ */
+export const MAX_WARNINGS_PER_KIND = 20;
 
 /** The budgets of one document: its text (given back when a segment is dropped) and its work (never given back). */
 interface Budgets {
@@ -69,6 +87,19 @@ interface Budgets {
 /** A copy of the text budget that a segment of the document charges; the caller keeps it only when it keeps the segment. */
 function segmentOf(budget: DocumentBudget): DocumentBudget {
   return { charsLeft: budget.charsLeft };
+}
+
+/**
+ * Charges and returns the JSON text of the string `text`, or throws a RangeError when it does not fit what is left of
+ * the budgets; no text is built for a string that does not fit (see `encodeString`).
+ */
+function chargeString(text: string, budgets: Budgets): string {
+  const encoded = encodeString(text, budgets.text.charsLeft, budgets.work);
+  if (encoded === undefined) {
+    throw new DocumentBudgetExceeded("Value too large for a result document");
+  }
+  spendText(budgets.text, encoded.length);
+  return encoded;
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -138,12 +169,13 @@ function toDocumentDetails(
 
 /**
  * Writes a diagnostic as the JSON text the document prints. It keeps the members `createDiagnostic` keeps, reading
- * each from the original diagnostic once, without cloning, so each value serializes through its own `toJSON`. Its
- * details are kept only when they serialize to an object that fits (see `toDocumentDetails`). Throws when the
- * diagnostic is not an object, its code, severity or message is not a string, its path is neither a string nor
- * undefined, or those members do not fit `budgets`.
+ * each from the original diagnostic once, without cloning. The code, severity, message and path are strings written
+ * directly, never through a prototype or `toJSON`; the details serialize through their own `toJSON` and are kept only
+ * when they serialize to an object that fits (see `toDocumentDetails`). Throws when the diagnostic is not an object,
+ * its code, severity or message is not a string, its path is neither a string nor undefined, or those members do not
+ * fit `budgets`.
  */
-function toDocumentDiagnostic(diagnostic: Diagnostic, index: number, budgets: Budgets): JsonText {
+function toDocumentDiagnostic(diagnostic: Diagnostic, budgets: Budgets): JsonText {
   const { code, severity, message, path, details } = diagnostic;
   if (
     typeof code !== "string" ||
@@ -153,16 +185,16 @@ function toDocumentDiagnostic(diagnostic: Diagnostic, index: number, budgets: Bu
   ) {
     throw new TypeError("diagnostic is not usable");
   }
-  const base =
-    serializeJsonMember(String(index), { code, severity, message, path }, { budget: budgets.text, work: budgets.work })
-      ?.toString() ?? "";
-  if (!base.startsWith("{")) {
-    throw new TypeError("diagnostic did not serialize to an object");
-  }
   const text = new JsonText();
-  // The members without the closing brace, then the details, then the brace.
-  text.write(base.slice(0, -1));
-  const detailsText = toDocumentDetails(details || undefined, budgets, base.length > 2, true);
+  spendText(budgets.text, '{"code":,"severity":,"message":}'.length);
+  text.write(`{"code":${chargeString(code, budgets)}`);
+  text.write(`,"severity":${chargeString(severity, budgets)}`);
+  text.write(`,"message":${chargeString(message, budgets)}`);
+  if (path !== undefined) {
+    spendText(budgets.text, ',"path":'.length);
+    text.write(`,"path":${chargeString(path, budgets)}`);
+  }
+  const detailsText = toDocumentDetails(details || undefined, budgets, true, true);
   if (detailsText !== undefined) {
     text.append(detailsText);
   }
@@ -228,6 +260,8 @@ export function createDocumentOutput(options: DocumentOutputOptions): DocumentOu
     stderr: options.stderr,
   });
   const collected: CollectedCall[] = [];
+  const limit = options.maxLength ?? documentLimit();
+  const maxDiagnostics = Math.max(0, Math.floor((limit - DIAGNOSTICS_MEMBER_LENGTH) / MIN_DIAGNOSTIC_LENGTH));
 
   const spinner = (message: string): Spinner => ({
     start() {},
@@ -256,27 +290,55 @@ export function createDocumentOutput(options: DocumentOutputOptions): DocumentOu
     spinner,
   };
 
+  // Advisory stderr lines: a writer that throws on one cannot change the result document or the exit code.
+  const advise = (message: string) => {
+    try {
+      logs.warn(message);
+    } catch {
+      // The warning is lost; the result document still reports the run.
+    }
+  };
+  // Advises once for each of the first MAX_WARNINGS_PER_KIND items, then once for the rest.
+  const boundedAdvice = (rest: string) => {
+    let count = 0;
+    return {
+      add(message: string) {
+        count += 1;
+        if (count <= MAX_WARNINGS_PER_KIND) {
+          advise(message);
+        } else if (count === MAX_WARNINGS_PER_KIND + 1) {
+          advise(rest);
+        }
+      },
+    };
+  };
+
   const warnUnused = (calls: readonly CollectedCall[]) => {
+    const advice = boundedAdvice("further output.json() and output.table() calls were not printed either");
     for (const { call } of calls) {
-      logs.warn(`output.${call}() was not printed: document mode prints one result document; return the value as data`);
+      advice.add(`output.${call}() was not printed: document mode prints one result document; return the value as data`);
     }
   };
 
   // A diagnostic that cannot be serialized (not an object, a throwing getter or toJSON in its members, or text longer
   // than is left of the document's budget) is dropped with a fixed warning on stderr, so it cannot cost the run its
-  // result document. Returns the `,"diagnostics":[...]` member, or undefined when none is kept.
-  const writeDiagnostics = (input: readonly Diagnostic[], budgets: Budgets): JsonText | undefined => {
+  // result document. Each diagnostic costs one unit of work before it is read, and at most `maxDiagnostics` are read.
+  // Returns the `,"diagnostics":[...]` member, or undefined when none is kept.
+  const writeDiagnostics = (input: readonly Diagnostic[], dropped: boolean, budgets: Budgets): JsonText | undefined => {
     const segment = segmentOf(budgets.text);
     segment.charsLeft -= DIAGNOSTICS_MEMBER_LENGTH;
     const text = new JsonText();
     text.write(',"diagnostics":[');
+    const advice = boundedAdvice("further diagnostics were dropped from the result document");
+    const count = Math.min(input.length, maxDiagnostics);
     let kept = 0;
-    input.forEach((diagnostic, index) => {
+    for (let index = 0; index < count; index += 1) {
       const item = segmentOf(segment);
       try {
+        spendWork(budgets.work, 1);
         // Its separator, then its text.
         spendText(item, kept > 0 ? 1 : 0);
-        const diagnosticText = toDocumentDiagnostic(diagnostic, index, { text: item, work: budgets.work });
+        const diagnosticText = toDocumentDiagnostic(input[index], { text: item, work: budgets.work });
         if (kept > 0) {
           text.write(",");
         }
@@ -284,9 +346,12 @@ export function createDocumentOutput(options: DocumentOutputOptions): DocumentOu
         segment.charsLeft = item.charsLeft;
         kept += 1;
       } catch {
-        logs.warn(`diagnostic ${index} was dropped from the result document: it could not be redacted or printed`);
+        advice.add(`diagnostic ${index} was dropped from the result document: it could not be redacted or printed`);
       }
-    });
+    }
+    if (dropped || input.length > count) {
+      advise(`diagnostics past the first ${maxDiagnostics} were dropped: the result document cannot print them all`);
+    }
     if (kept === 0 || segment.charsLeft < 0) {
       return undefined;
     }
@@ -297,14 +362,18 @@ export function createDocumentOutput(options: DocumentOutputOptions): DocumentOu
 
   return {
     service,
-    finish(outcome, diagnostics) {
+    maxDiagnostics,
+    failPreparation() {
+      options.stdout(SERIALIZATION_FAILURE_TEXT);
+      return 1;
+    },
+    finish(outcome, diagnostics, droppedDiagnostics = false) {
       let text: string | undefined;
       let exitCode = 1;
       // One text budget for the whole document, charged at the exact length of its text: its frame, the data or the
       // error, then each diagnostic in order, each a segment that is kept whole or dropped whole. The newline is
       // reserved, so a document that fits can always be written with it. One work budget, never given back, bounds
       // everything walked to prepare it, kept or not.
-      const limit = options.maxLength ?? documentLimit();
       const budgets: Budgets = { text: createDocumentBudget(limit - 1), work: createWorkBudget(limit) };
       try {
         const document = new JsonText();
@@ -331,7 +400,7 @@ export function createDocumentOutput(options: DocumentOutputOptions): DocumentOu
           exitCode = error.exitCode;
         }
 
-        const diagnosticsText = writeDiagnostics(diagnostics, budgets);
+        const diagnosticsText = writeDiagnostics(diagnostics, droppedDiagnostics, budgets);
         if (diagnosticsText !== undefined) {
           document.append(diagnosticsText);
         }
