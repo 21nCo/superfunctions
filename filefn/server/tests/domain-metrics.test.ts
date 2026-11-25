@@ -253,9 +253,7 @@ describe('domain metrics (N-04)', () => {
           name: 'noop',
           supportedMimeTypes: ['text/plain'],
           async process() {
-            return success ? { success: true, artifacts: [] } : {
-              success: false, artifacts: [], error: 'test processor failed',
-            };
+            return { success, artifacts: [] };
           },
         }],
       },

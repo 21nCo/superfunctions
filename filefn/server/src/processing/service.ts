@@ -1800,9 +1800,7 @@ export function createProcessingService(config: ProcessingServiceConfig) {
       for (const processor of applicableProcessors) {
         const run = await executeProcessor(processor, input, getData);
         if (!run.result) {
-          if (run.error) {
-            processingErrors.push(`${processor.name}: ${run.error}`);
-          }
+          processingErrors.push(`${processor.name}: ${run.error || 'processor reported failure'}`);
           continue;
         }
         const writes = emptyWrites();
