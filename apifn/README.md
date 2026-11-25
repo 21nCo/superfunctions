@@ -149,12 +149,18 @@ run the CLI commands in [Non-GitHub CI](#non-github-ci).
 - Builds a markdown summary and posts/updates a PR comment (optional)
 - Enforces non-zero exits for validation failures, breaking changes, and test failures
 
+Bundle split OpenAPI specs before passing them to `spec_path`. Validation resolves
+internal `#/` references and rejects file and remote references by default.
+The workflow runs collection tests with scripts and host environment interpolation
+disabled. For trusted collections that need either, run `apifn test` in a separate
+step with `--allow-scripts` or repeatable `--allow-env <name>` flags as needed.
+
 ### Inputs
 
 - `spec_path` (required): Repo-relative OpenAPI path (e.g. `.apifn/openapi.yml`)
 - `collection_dir` (required): Repo-relative OpenCollection directory (e.g. `.apifn/collection`)
 - `environment` (optional, default `development`): Collection environment
-- `cli_version` (optional, default `0.1.2`): Assertion against the `@apifn/cli` version pinned by the selected workflow revision. The default is static in the workflow file and must stay equal to that revision's lockfile pin. Omit it to use the default, or set it from the same ref in the [workflow's CLI lockfile](../.github/apifn-cli-install/package-lock.json). External callers do not need the lockfile locally—the workflow sparse-checks it out from `job.workflow_repository` at `job.workflow_sha`.
+- `cli_version` (optional, default `0.1.2`): Assertion against the `@apifn/cli` version pinned by the selected workflow revision. The default in the workflow file must match that revision's [CLI lockfile](../.github/apifn-cli-install/package-lock.json). The workflow uses the local lockfile when the caller checkout matches the workflow repository and commit. For other callers it fetches the lockfile from the workflow revision.
 - `base_branch` (optional, default `main`): Branch used to fetch baseline spec
 - `fail_on_breaking` (optional, default `true`): Whether breaking diff exits non-zero
 - `post_pr_comment` (optional, default `true`): Whether to post/update PR summary comment
