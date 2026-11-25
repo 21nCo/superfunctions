@@ -45,17 +45,13 @@ struct EmbeddedWebView: UIViewRepresentable {
     final class Coordinator: NSObject, WKNavigationDelegate {
         var allowedURL: URL?
 
-        static func webOrigin(of url: URL) -> URL? {
+        static func webOrigin(of url: URL) -> (scheme: String, host: String, port: Int)? {
             guard let scheme = url.scheme?.lowercased(),
                   scheme == "http" || scheme == "https",
                   let host = url.host?.lowercased(), !host.isEmpty else {
                 return nil
             }
-            var origin = URLComponents()
-            origin.scheme = scheme
-            origin.host = host
-            origin.port = url.port ?? (scheme == "https" ? 443 : 80)
-            return origin.url
+            return (scheme, host, url.port ?? (scheme == "https" ? 443 : 80))
         }
 
         private func allows(_ url: URL?) -> Bool {
@@ -63,8 +59,9 @@ struct EmbeddedWebView: UIViewRepresentable {
             if allowedURL.isFileURL {
                 return url.isFileURL && url.standardizedFileURL.path == allowedURL.standardizedFileURL.path
             }
-            guard let allowedOrigin = Self.webOrigin(of: allowedURL) else { return false }
-            return Self.webOrigin(of: url) == allowedOrigin
+            guard let allowedOrigin = Self.webOrigin(of: allowedURL),
+                  let candidateOrigin = Self.webOrigin(of: url) else { return false }
+            return candidateOrigin == allowedOrigin
         }
 
         func webView(

@@ -11,7 +11,7 @@ import {
 import { workbenchComponents, type ComponentSlug } from './component-inventory.js';
 import type { WorkbenchRoute } from './routes.js';
 import { catalogThemeStyle } from './catalog-theme.js';
-import { CATALOG_ACCESSIBILITY } from './catalog-accessibility.generated.js';
+import catalogAccessibility from './catalog-accessibility.generated.json' with { type: 'json' };
 import {
   catalogDemoChildren,
   catalogDemoFixtureIds,
@@ -1297,9 +1297,10 @@ function catalogAccessibilitySummary(slug: string): {
   focus: string;
   wcag: string;
 } {
-  const entry = CATALOG_ACCESSIBILITY[slug as keyof typeof CATALOG_ACCESSIBILITY];
+  const { primitives, rulesByProfile } = catalogAccessibility;
+  const entry = primitives[slug as keyof typeof primitives];
   if (!entry) throw new Error(`Missing canonical accessibility contract for ${slug}.`);
-  const rules = entry.rules;
+  const rules = rulesByProfile[entry.profile as keyof typeof rulesByProfile];
   return {
     nativeSemantics: rules.nativeSemantics,
     keyboard: rules.keyboard.keys.join(', '),

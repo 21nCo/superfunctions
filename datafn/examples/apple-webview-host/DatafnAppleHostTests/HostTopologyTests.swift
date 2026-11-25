@@ -2,6 +2,18 @@ import XCTest
 @testable import DatafnAppleHost
 
 final class HostTopologyTests: XCTestCase {
+    func testWebOriginPreservesIPv6AndNormalizesDefaultPorts() throws {
+        let origin = try XCTUnwrap(EmbeddedWebView.Coordinator.webOrigin(of: URL(string: "http://[::1]")!))
+        let sameOrigin = try XCTUnwrap(EmbeddedWebView.Coordinator.webOrigin(of: URL(string: "http://[::1]:80/detail")!))
+        let otherPort = try XCTUnwrap(EmbeddedWebView.Coordinator.webOrigin(of: URL(string: "http://[::1]:4173")!))
+        let otherScheme = try XCTUnwrap(EmbeddedWebView.Coordinator.webOrigin(of: URL(string: "https://[::1]:80")!))
+
+        XCTAssertEqual(origin.port, 80)
+        XCTAssertTrue(origin == sameOrigin)
+        XCTAssertFalse(origin == otherPort)
+        XCTAssertFalse(origin == otherScheme)
+    }
+
     func testTopologyMatrixMatchesOwnershipRules() throws {
         let options = makeOptions()
 

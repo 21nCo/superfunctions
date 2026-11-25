@@ -70,6 +70,7 @@ export async function serverSetupCommand(
   // Write script to temp file
   const localDirectory = mkdtempSync(join(tmpdir(), 'hostfn-setup-'));
   const scriptPath = join(localDirectory, 'hostfn-setup.sh');
+  const quotedScriptPath = `'${scriptPath.replace(/'/g, "'\\''")}'`;
   writeFileSync(scriptPath, setupScript, { mode: 0o700, flag: 'wx' });
   
   spinner.succeed('Setup script generated');
@@ -91,7 +92,7 @@ export async function serverSetupCommand(
     Logger.info('Setup script saved at: ' + scriptPath);
     Logger.br();
     Logger.info('Run manually with:');
-    Logger.command(`scp ${scriptPath} ${host}:~/hostfn-setup.sh`);
+    Logger.command(`scp ${quotedScriptPath} ${host}:~/hostfn-setup.sh`);
     Logger.command(`ssh ${host} 'bash ~/hostfn-setup.sh'`);
     return;
   }
@@ -206,7 +207,7 @@ export async function serverSetupCommand(
     Logger.br();
     Logger.info('Setup script saved at: ' + scriptPath);
     Logger.info('You can try running it manually:');
-    Logger.command(`scp ${scriptPath} ${host}:~/hostfn-setup.sh`);
+    Logger.command(`scp ${quotedScriptPath} ${host}:~/hostfn-setup.sh`);
     Logger.command(`ssh ${host} 'bash ~/hostfn-setup.sh'`);
     process.exitCode = 1;
   } finally {

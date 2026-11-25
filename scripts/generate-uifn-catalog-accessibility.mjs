@@ -10,26 +10,23 @@ const outputPath = path.join(
   "examples",
   "shared",
   "src",
-  "catalog-accessibility.generated.ts"
+  "catalog-accessibility.generated.json"
 );
 const catalog = JSON.parse(fs.readFileSync(catalogPath, "utf8"));
 const rulesByProfile = new Map();
 const accessibilityEntries = catalog.primitives.map(({ id, accessibility }) => {
   const { profile, primitiveNotes, rules } = accessibility;
-  const serialized = JSON.stringify(rules);
-  if (rulesByProfile.has(profile) && rulesByProfile.get(profile) !== serialized) {
+  const existing = rulesByProfile.get(profile);
+  if (existing && JSON.stringify(existing) !== JSON.stringify(rules)) {
     throw new Error(`Accessibility profile ${profile} has conflicting rules for ${id}`);
   }
-  rulesByProfile.set(profile, serialized);
-  return `  ${JSON.stringify(id)}: { profile: ${JSON.stringify(profile)}, primitiveNotes: ${JSON.stringify(primitiveNotes)}, rules: PROFILE_RULES[${JSON.stringify(profile)}] },`;
+  rulesByProfile.set(profile, rules);
+  return [id, { profile, primitiveNotes }];
 });
-const profileEntries = Array.from(rulesByProfile, ([profile, rules]) => {
-  const object = JSON.stringify(JSON.parse(rules), null, 2).replaceAll("\n", "\n  ");
-  return `  ${JSON.stringify(profile)}: ${object},`;
-});
-const output = `// Generated from uifn/catalog/generated/catalog.json. Do not edit by hand.\n` +
-  `const PROFILE_RULES = {\n${profileEntries.join("\n")}\n} as const;\n\n` +
-  `export const CATALOG_ACCESSIBILITY = {\n${accessibilityEntries.join("\n")}\n} as const;\n`;
+const output = `${JSON.stringify({
+  rulesByProfile: Object.fromEntries(rulesByProfile),
+  primitives: Object.fromEntries(accessibilityEntries),
+}, null, 2)}\n`;
 
 if (!fs.existsSync(outputPath) || fs.readFileSync(outputPath, "utf8") !== output) {
   fs.writeFileSync(outputPath, output);
