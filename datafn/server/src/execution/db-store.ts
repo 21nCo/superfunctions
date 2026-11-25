@@ -18,6 +18,7 @@ import {
   relationTargetEndpoint,
   resolveEndpointResource,
   resourceNameFromId,
+  type DatafnRelationMatch,
 } from "@datafn/core";
 import type { DatafnLogger } from "../logger.js";
 import type { DatafnRelationSchema, DatafnSchema } from "../core-types.js";
@@ -394,7 +395,8 @@ export class DbDataStore implements DataStore {
   ): Promise<void> {
     const fk = relationForeignKey(relation);
     const endpoint = relation.type === "many-one" ? relation.to : relation.from;
-    const resolveTarget = isPolymorphicForeignKey(relation) || store.requireVisibleRelatedRecords
+    const resolveTarget = isPolymorphicForeignKey(relation) ||
+      DbDataStore.requiresRelatedVisibility(schema, endpoint, store.requireVisibleRelatedRecords)
       ? foreignKeyTargetResolver(schema, relation, ownerResource)
       : undefined;
     const targets = records.map(resolveTarget ?? ((record) => {
@@ -446,10 +448,25 @@ export class DbDataStore implements DataStore {
     await DbDataStore.loadQualifiedRecords(store, db, namespace, targets);
   }
 
-  /** Whether loadNestedSelectRelations loads this second-level relation. */
-  private static nestedPassLoads(match: { relation: any; direction: string }): boolean {
-    const type = match.relation.type;
-    return type === "many-many" || type === "one-many" || type === "many-one";
+  private static nestedPassLoads(
+    match: DatafnRelationMatch,
+    schema: DatafnSchema,
+    terminalBare: boolean,
+    requireVisible: boolean,
+  ): boolean {
+    const { relation, direction } = match;
+    if (relation.type !== "many-many" && relation.type !== "one-many" && relation.type !== "many-one") return false;
+    return !terminalBare || DbDataStore.requiresRelatedVisibility(
+      schema, relationTargetEndpoint(relation, direction), requireVisible,
+    );
+  }
+
+  private static requiresRelatedVisibility(
+    schema: DatafnSchema,
+    endpoint: string | readonly string[],
+    requireVisible: boolean,
+  ): boolean {
+    return requireVisible || endpointList(endpoint).some((resource) => isPrivateShareableResource(schema, resource));
   }
 
   /**
@@ -475,11 +492,12 @@ export class DbDataStore implements DataStore {
       if (!firstMatch) continue;
 
       let intermediateResources = endpointList(relationTargetEndpoint(firstMatch.relation, firstMatch.direction));
-      for (const relationName of nestedSegments) {
+      for (const [index, relationName] of nestedSegments.entries()) {
+        const terminalBare = index === nestedSegments.length - 1;
         const nextResources = new Set<string>();
         for (const intermediateResource of intermediateResources) {
           const match = findRelationMatch(schema, intermediateResource, relationName);
-          if (!match || !DbDataStore.nestedPassLoads(match)) continue;
+          if (!match || !DbDataStore.nestedPassLoads(match, schema, terminalBare, store.requireVisibleRelatedRecords)) continue;
           const relation = match.relation;
           const isForward = match.direction === "forward";
           for (const resource of endpointList(relationTargetEndpoint(relation, match.direction))) {
@@ -762,7 +780,7 @@ export class DbDataStore implements DataStore {
                   // A nested projection the nested pass loads from the
                   // first-level records (see loadNestedSelectRelations below)
                   // is left to it; any other is discovered here.
-                  if (DbDataStore.nestedPassLoads(nestedMatch)) continue;
+                  if (DbDataStore.nestedPassLoads(nestedMatch, schema, parts.length === 2, !allowUnknownResources)) continue;
                   addRelationLoad(nestedRel, targetResource, nestedRelation);
                 }
               }
@@ -1032,7 +1050,7 @@ export class DbDataStore implements DataStore {
             }
           } else if ((rel as any).type === "one-many" && !isForward) {
             // Inverse one-many: primary has FK pointing to secondary (one side)
-            const fkField = store.requireVisibleRelatedRecords
+            const fkField = DbDataStore.requiresRelatedVisibility(schema, rel.from, store.requireVisibleRelatedRecords)
               ? relationForeignKey(rel)
               : rel.fkField || rel.foreignKey || rel.relation || `${secondaryResource}Id`;
             const fkValues = [

@@ -20,7 +20,7 @@ import {
 } from "@datafn/core";
 import type { DataStore } from "../store.js";
 import { getReadableRelationFields, isPrivateShareableResource } from "../../validation/authz.js";
-import { getForeignKeyRelatedRecords, hasPredicateField, isPolymorphicForeignKey, resolvePredicateEndpoint } from "./filters.js";
+import { foreignKeyTargetResolver, getForeignKeyRelatedRecords, hasPredicateField, isPolymorphicForeignKey, resolvePredicateEndpoint } from "./filters.js";
 
 export type { SelectToken } from "@datafn/core";
 
@@ -658,8 +658,13 @@ function getRelationIds(
   const relation = match.relation;
   const isForward = match.direction === "forward";
 
-  if (store.requireVisibleRelatedRecords && relationReturnsSingleRecord(match)) {
-    return getForeignKeyRelatedRecords(record, match, store, resource, schema)[0]?.record.id ?? null;
+  if (relationReturnsSingleRecord(match)) {
+    const target = foreignKeyTargetResolver(schema, relation, resource)(record);
+    if (!target) return null;
+    if (store.requireVisibleRelatedRecords || isPrivateShareableResource(schema, target.resource)) {
+      return store.getRecord(target.resource, target.id) ? target.id : null;
+    }
+    return target.id;
   }
 
   if (isPolymorphicForeignKey(relation) && !relationReturnsSingleRecord(match)) {
@@ -667,11 +672,6 @@ function getRelationIds(
   }
 
   if (relation.type === "many-one") {
-    if (isForward) {
-      const fkField = relationFkFieldForManyOne(relation);
-      const relatedId = record[fkField] as string | undefined;
-      return relatedId || null;
-    }
     const fkField = relationFkFieldForManyOne(relation);
     const records = endpointList(relation.from).flatMap((targetResource) =>
       store.findRecords(targetResource, fkField, record.id),
@@ -685,10 +685,6 @@ function getRelationIds(
   }
 
   if (relation.type === "one-many") {
-    if (!isForward) {
-      const fkField = relation.fkField || relation.foreignKey || `${relation.inverse}Id`;
-      return (record[fkField] as string | undefined) || null;
-    }
     const fkField = relation.fkField || relation.foreignKey || `${relation.inverse}Id`;
     const relatedRecords = endpointList(relation.to).flatMap((targetResource) =>
       store.findRecords(targetResource, fkField, record.id),

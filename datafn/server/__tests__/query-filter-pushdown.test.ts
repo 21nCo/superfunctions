@@ -1191,16 +1191,23 @@ it("excludes related projections without a policy unless the server allows unkno
   }
 });
 
-it("loads legacy and nested FK ID projections in strict mode", async () => {
+it.each([false, true])("checks nested FK visibility with allowUnknownResources=%s", async (allowUnknownResources) => {
   const schema: DatafnSchema = {
     ...SCHEMA,
-    resources: SCHEMA.resources.map((resource) => ({ ...resource, permissions: { read: { fields: ["label"] } } })),
+    resources: SCHEMA.resources.map<DatafnSchema["resources"][number]>((resource) => ({
+      ...resource,
+      permissions: { read: { fields: ["label"] } },
+      ...(allowUnknownResources && resource.name === "objective" ? {
+        capabilities: ["audit", { shareable: { levels: ["viewer", "editor", "owner"], default: "private" } }],
+      } : {}),
+    })),
     relations: [...(SCHEMA.relations ?? []), {
       type: "one-many",
       from: "collection",
       to: "task",
       relation: "members",
       inverse: "folder",
+      ...(allowUnknownResources ? { fkField: "folderId" } : {}),
     }, {
       type: "many-one",
       from: "collection",
@@ -1215,7 +1222,7 @@ it("loads legacy and nested FK ID projections in strict mode", async () => {
       fkField: "planId",
     }],
   };
-  const { db, server } = await createServer({ schema, allowUnknownResources: false });
+  const { db, server } = await createServer({ schema, allowUnknownResources });
   try {
     const seed = (model: string, data: Json) => db.create({ model, namespace: "datafn", data });
     await seed("collection", { id: "collection:folder", shelfId: "node:shelf" });
@@ -1227,7 +1234,8 @@ it("loads legacy and nested FK ID projections in strict mode", async () => {
     await expectQueryAndTransactData(server, { ...member, select: ["id", "folder.shelf"] },
       [{ id: "task:member", folder: { id: "collection:folder", shelf: "node:shelf" } }]);
     await expectQueryAndTransactData(server, { ...member, select: ["id", "folder.shelf.plan"] }, [{
-      id: "task:member", folder: { id: "collection:folder", shelf: { id: "node:shelf", plan: "objective:goal" } },
+      id: "task:member",
+      folder: { id: "collection:folder", shelf: { id: "node:shelf", plan: allowUnknownResources ? null : "objective:goal" } },
     }]);
   } finally {
     await server.close();
