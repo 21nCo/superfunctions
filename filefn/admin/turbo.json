@@ -1,0 +1,15 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "extends": ["//"],
+  "tasks": {
+    "build": {
+      "dependsOn": ["^build", "@superfunctions/files#build"]
+    },
+    "typecheck": {
+      "dependsOn": ["^build", "@superfunctions/files#build"]
+    },
+    "test": {
+      "dependsOn": ["^build", "@superfunctions/files#build"]
+    }
+  }
+}
