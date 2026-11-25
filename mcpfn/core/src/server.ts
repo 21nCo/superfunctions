@@ -1381,6 +1381,11 @@ export class McpFnServer<TContext = undefined> {
       let acceptedId: string | undefined;
       let setupPending = true;
       let setupTimedOut = false;
+      let reportSetupTimeout: (() => void) | undefined;
+      const timeoutResponse = () => jsonRpcErrorResponse(408, -32000, "Session initialization timed out");
+      const setupDeadline = new Promise<Response>((resolve) => {
+        reportSetupTimeout = () => resolve(timeoutResponse());
+      });
       let disposed = false;
       let closing: Promise<void> | undefined;
       let lastActivity = performance.now();
@@ -1425,6 +1430,7 @@ export class McpFnServer<TContext = undefined> {
         if (!closing && idleTimeRemaining() <= 0) {
           setupTimedOut = setupPending;
           expire();
+          if (setupTimedOut) reportSetupTimeout?.();
         }
         return Boolean(closing);
       };
@@ -1478,49 +1484,55 @@ export class McpFnServer<TContext = undefined> {
 
       const setupStopped = () => {
         if (request.signal.aborted) return clientClosedResponse();
-        if (setupTimedOut) return jsonRpcErrorResponse(408, -32000, "Session initialization timed out");
+        if (setupTimedOut) return timeoutResponse();
         return serverClosed();
       };
-      request.signal.addEventListener("abort", expire, { once: true });
-      try {
-        if (request.signal.aborted) {
-          await close().catch(() => undefined);
-          return clientClosedResponse();
-        }
-        scheduleExpiry();
-        if (closing) return setupStopped();
-        await configureRequestServer?.(requestServer);
-        if (closing) return setupStopped();
-        await requestServer.connect(transport);
-        const onClose = transport.onclose;
-        transport.onclose = () => {
-          try {
-            onClose?.();
-          } finally {
-            expire();
+      // Stop waiting for setup at the deadline. If a host hook is still
+      // running, its completion and cleanup continue to hold the slot.
+      const initialize = async () => {
+        request.signal.addEventListener("abort", expire, { once: true });
+        try {
+          if (request.signal.aborted) {
+            await close().catch(() => undefined);
+            return clientClosedResponse();
           }
-        };
-        if (closing) return setupStopped();
-        const sdkRequest = requestWithInterruptibleBody(request, handleOptions, stopBody.signal);
-        const response = await respondUntilClosed(
-          () => transport.handleRequest(sdkRequest, handleOptions),
-          stopResponses,
-          setupStopped,
-        );
-        if (closing) {
-          await response.body?.cancel().catch(() => undefined);
-          return setupStopped();
+          scheduleExpiry();
+          if (closing) return setupStopped();
+          await configureRequestServer?.(requestServer);
+          if (closing) return setupStopped();
+          await requestServer.connect(transport);
+          const onClose = transport.onclose;
+          transport.onclose = () => {
+            try {
+              onClose?.();
+            } finally {
+              expire();
+            }
+          };
+          if (closing) return setupStopped();
+          const sdkRequest = requestWithInterruptibleBody(request, handleOptions, stopBody.signal);
+          const response = await respondUntilClosed(
+            () => transport.handleRequest(sdkRequest, handleOptions),
+            stopResponses,
+            setupStopped,
+          );
+          if (closing) {
+            await response.body?.cancel().catch(() => undefined);
+            return setupStopped();
+          }
+          if (acceptedId !== undefined && response.ok) return response;
+          return await releaseAfterResponse(response, close);
+        } catch (error) {
+          await close().catch(() => undefined);
+          throw error;
+        } finally {
+          request.signal.removeEventListener("abort", expire);
+          setupPending = false;
+          reportSetupTimeout = undefined;
+          releaseSlot();
         }
-        if (acceptedId !== undefined && response.ok) return response;
-        return await releaseAfterResponse(response, close);
-      } catch (error) {
-        await close().catch(() => undefined);
-        throw error;
-      } finally {
-        request.signal.removeEventListener("abort", expire);
-        setupPending = false;
-        releaseSlot();
-      }
+      };
+      return Promise.race([initialize(), setupDeadline]);
     };
   }
 

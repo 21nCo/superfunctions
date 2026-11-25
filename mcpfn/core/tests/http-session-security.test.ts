@@ -410,6 +410,31 @@ describe("createWebStandardHandler session limits and expiry (MCP-SEC-04)", () =
     expect((await initialize()).status).toBe(200);
   });
 
+  it.each(["configuration", "acceptance"])("answers 408 while the host %s hook is still pending", async (stage) => {
+    vi.useFakeTimers();
+    let markEntered!: () => void;
+    let release!: () => void;
+    const entered = new Promise<void>((resolve) => { markEntered = resolve; });
+    const hold = new Promise<void>((resolve) => { release = resolve; });
+    const wait = async () => { markEntered(); await hold; };
+    const onClosed = vi.fn();
+    const { initialize } = await setup({
+      maxSessions: 1,
+      sessionIdleTimeoutMs: 100,
+      ...(stage === "configuration" ? { configureRequestServer: wait } : { onsessioninitialized: wait }),
+      onsessionclosed: onClosed,
+    });
+    const pending = initialize();
+    await entered;
+    await vi.advanceTimersByTimeAsync(100);
+    expect((await pending).status).toBe(408);
+    expect((await initialize()).status).toBe(503);
+    release();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(onClosed).toHaveBeenCalledTimes(stage === "acceptance" ? 1 : 0);
+    expect((await initialize()).status).toBe(200);
+  });
+
   it("rejects an oversized declared body without reading or canceling the upload", async () => {
     const { handler } = await setup({ maxRequestBodySize: 512 });
     const pull = vi.fn();
