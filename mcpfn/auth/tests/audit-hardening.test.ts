@@ -100,7 +100,22 @@ describe("AuthFn provider adapter (MCP-SEC-05)", () => {
       clock: () => now,
       provider: { authenticateBearer: async () => session({ expiresAt: new Date(now + 800) }) },
     });
-    expect((await call(handler)).status).toBe(200);
+    const response = await call(handler);
+    expect(response.status).toBe(200);
+    expect((await response.json()).expiresAt * 1_000).toBeGreaterThanOrEqual(now + 800);
+  });
+
+  it("does not run authorization hooks for an expired mapped principal", async () => {
+    const now = Date.UTC(2026, 10, 25);
+    const authorize = vi.fn(async () => true);
+    const handler = createAuthProviderMcpHandler(echoAuthInfo, {
+      resource,
+      clock: () => now,
+      provider: { authenticateBearer: async () => session(), authorize },
+      map: () => ({ subject: "user-1", clientId: "client-1", scopes: [], resourceIds: [resource], expiresAt: now / 1_000 - 1 }),
+    });
+    expect((await call(handler)).status).toBe(401);
+    expect(authorize).not.toHaveBeenCalled();
   });
 
   it("rechecks expiry after asynchronous mapping", async () => {

@@ -135,6 +135,8 @@ export function createMcpFnAuthProviderAdapter<TSession extends McpFnAuthSession
         ? await withRequestClone(request, (mapRequest) =>
           options.map!(session, mapRequest))
         : defaultPrincipal(session);
+      // Fail fast, before authorization hooks run for an expired principal.
+      if (expired()) return null;
       let audienceVerified = false;
       if (options.provider.authorize) {
         if (!(await options.provider.authorize(session, audience))) return null;
@@ -281,7 +283,9 @@ function defaultPrincipal(session: McpFnAuthSessionLike): McpFnPrincipal {
     scopes: [...(session.scopes ?? [])],
     resourceIds: [...(session.resourceIds ?? [])],
     ...(session.expiresAt
-      ? { expiresAt: Math.floor(session.expiresAt.getTime() / 1_000) }
+      // Rounded up: authInfo never reports a credential as expired while the
+      // session it came from is still valid.
+      ? { expiresAt: Math.ceil(session.expiresAt.getTime() / 1_000) }
       : {}),
     ...(session.subject.tenantId ? { tenantId: session.subject.tenantId } : {}),
     ...(session.subject.regionId ? { regionId: session.subject.regionId } : {}),
