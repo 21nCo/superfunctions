@@ -7,7 +7,7 @@ description: Map CliFn subpaths to their public functions, types, and errors.
 
 | Subpath | Main exports | Detail |
 | --- | --- | --- |
-| `/runner` | `runAction`, `RunnerOptions`, `RunnerContext`, `RunnerActionResult` | Normalized action execution and exit code |
+| `/runner` | `runAction`, `RunnerOptions`, `RunnerJsonStyle`, `RunnerContext`, `RunnerActionResult` | Normalized action execution and exit code; one redacted JSON result document with `jsonStyle: 'document'` |
 | `/output` | `createOutput`, `OutputOptions`, `OutputService`, `OutputTable`, `Spinner` | Text and JSON output, tables, spinners |
 | `/diagnostics` | `createDiagnostic`, `sortDiagnostics`, `redactDiagnostics`, `formatDiagnosticsText`, `formatDiagnosticsJson`, `Diagnostic` | Stable report formatting and redaction |
 | `/config-loader` | `defineConfig`, `loadConfig`, `ConfigLoaderOptions`, `LoadedConfig`, `ConfigLoaderError` | Discover and load TS/JS/MJS/CJS/JSON config |

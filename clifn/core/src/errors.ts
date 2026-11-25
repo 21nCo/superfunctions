@@ -37,9 +37,15 @@ function readExitCode(value: unknown): number {
   return typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 125 ? value : 1;
 }
 
+/** A classified error with the thrown value's `details`, read in the same pass as its other fields. */
+export interface ClassifiedRunnerFailure extends ClassifiedRunnerError {
+  details: unknown;
+}
+
 interface ThrownFields {
   code?: unknown;
   message?: unknown;
+  details?: unknown;
   exitCode?: unknown;
 }
 
@@ -52,15 +58,16 @@ function readProperty(record: Record<string, unknown>, key: keyof ThrownFields):
   }
 }
 
-function readFields(error: unknown): ThrownFields {
+function readFields(error: unknown, withDetails: boolean): ThrownFields {
   if ((typeof error !== "object" || error === null) && typeof error !== "function") {
     return {};
   }
-  // Each property is read once, so a getter on the thrown value runs at most once.
+  // Each property is read once, in this order, so a getter on the thrown value runs at most once.
   const record = error as Record<string, unknown>;
   return {
     code: readProperty(record, "code"),
     message: readProperty(record, "message"),
+    ...(withDetails ? { details: readProperty(record, "details") } : {}),
     exitCode: readProperty(record, "exitCode"),
   };
 }
@@ -111,9 +118,23 @@ function classifyFields(error: unknown, fields: ThrownFields): ClassifiedRunnerE
  */
 export function classifyRunnerError(error: unknown): ClassifiedRunnerError {
   try {
-    return classifyFields(error, readFields(error));
+    return classifyFields(error, readFields(error, false));
   } catch {
     // A throwing getter or proxy on the thrown value must not stop the runner from reporting the failure.
     return { error: { code: RUNNER_FAILED_CODE, message: UNKNOWN_FAILURE_MESSAGE }, exitCode: 1 };
+  }
+}
+
+/**
+ * `classifyRunnerError` for a result document (D8): it also reads the thrown value's `details` (after `message` and
+ * before `exitCode`, each once) and returns it unchanged; the document decides whether it is usable. A details
+ * getter that throws leaves `details` undefined. Internal: not exported from the package.
+ */
+export function classifyRunnerFailure(error: unknown): ClassifiedRunnerFailure {
+  try {
+    const fields = readFields(error, true);
+    return { ...classifyFields(error, fields), details: fields.details };
+  } catch {
+    return { error: { code: RUNNER_FAILED_CODE, message: UNKNOWN_FAILURE_MESSAGE }, exitCode: 1, details: undefined };
   }
 }

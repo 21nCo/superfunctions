@@ -102,12 +102,13 @@ export interface ResolveRunnerOptionsContext {
 
 export type ResolvedRunnerOptions = Required<
   Pick<RunnerOptions, "mode" | "color" | "stderrColor" | "quiet" | "verbose" | "nonInteractive">
->;
+> &
+  Pick<RunnerOptions, "jsonStyle">;
 
 /**
- * Turns parsed global flags and the terminal rules (D9) into runner options: `--json` selects `mode: 'json'` (JSON
- * lines), `--yes`/`--non-interactive` or a non-interactive terminal sets `nonInteractive`, and `--color`/`--no-color`
- * override the colour rules. Colour is set per stream: `stderrColor` (errors and the spinner)
+ * Turns parsed global flags and the terminal rules (D9) into runner options: `--json` selects `mode: 'json'` with
+ * `jsonStyle: 'document'`, `--yes`/`--non-interactive` or a non-interactive terminal sets `nonInteractive`, and
+ * `--color`/`--no-color` override the colour rules. Colour is set per stream: `stderrColor` (errors and the spinner)
  * follows the rules, while `color` (text-mode `debug`, `info`, `success` and `warn` on stdout) also needs stdout to be
  * a TTY, so a piped stdout never gets ANSI escapes unless `--color` or `FORCE_COLOR` asks for them while a terminal
  * stderr keeps its colour. Parser-agnostic: pass the flags your parser produced.
@@ -138,6 +139,7 @@ export function resolveRunnerOptions(
 
   return {
     mode: json ? "json" : "text",
+    ...(json ? { jsonStyle: "document" as const } : {}),
     color,
     stderrColor,
     quiet: flags.quiet === true,
