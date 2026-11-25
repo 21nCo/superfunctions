@@ -1,6 +1,6 @@
 {
   "name": "@clifn/core",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Reusable CLI primitives runtime for the Superfunctions ecosystem",
   "type": "module",
   "main": "./dist/index.js",
@@ -65,6 +65,10 @@
     "./paths": {
       "types": "./dist/paths.d.ts",
       "import": "./dist/paths.js"
+    },
+    "./terminal": {
+      "types": "./dist/terminal.d.ts",
+      "import": "./dist/terminal.js"
     }
   },
   "engines": {
@@ -93,6 +97,7 @@
     "credentials",
     "config",
     "paths",
+    "terminal",
     "stdio"
   ],
   "author": "21n",

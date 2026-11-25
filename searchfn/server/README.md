@@ -24,6 +24,7 @@ await adapter.initialize?.({
 const searchfn = await createSearchFnServer({
   adapter,
   basePath: "/searchfn",
+  allowUnauthenticated: true, // This example calls the router in-process.
 });
 
 const response = await searchfn.router.handle(
@@ -67,22 +68,25 @@ or
 
 ## Configuration
 
-```ts
-type SearchFnServerConfig<TContext> = {
-  adapter: SearchAdapter;
-  basePath?: string;
-  limits?: Partial<ServerLimits>;
-  authorize?: (
-    ctx: TContext,
-    action: "status" | "index" | "search" | "searchAll" | "remove" | "clear",
-    payload: unknown,
-  ) => Promise<boolean> | boolean;
-  logger?: SearchFnLogger;
-};
-```
+| Option | Purpose |
+| --- | --- |
+| `adapter` | Required search adapter. |
+| `basePath` | URL prefix for the SearchFn routes. Defaults to `/searchfn`. |
+| `limits` | Overrides for request size, query length, search fan-out and indexing batch caps. |
+| `authorize` | Policy callback for each action and its effective resource names. |
+| `context` | Request context factory. Required when a policy expects fields beyond the standard router context. |
+| `allowUnauthenticated` | Explicit opt-in to run without an authorization policy. |
+| `observability` | Structured logs and events. |
 
 ### Notes
 
-- `authorize(...)` runs before each handler and receives the parsed JSON payload when applicable.
+- Server creation requires an `authorize` callback or `allowUnauthenticated: true`. Use the explicit opt-in for in-process callers, local demos, or deployments with an upstream authorization policy covering every operation.
+- `authorize(...)` receives the context, action, parsed payload snapshot, original request, and validated list of resource names. Read headers from `request` and body fields from `payload`. Only a return value of `true` permits the operation.
+- The application `context` is passed to `authorize`. Router middleware and custom routes receive the standard HTTP router context.
+- Send `Content-Type: application/json` on POSTs. Use `resource` for single-resource routes and `resources` for `search-all`. An authorized `search-all` requires a non-empty resource list.
 - `limits` controls payload size, query length, search fan-out, and indexing batch caps.
 - `close()` delegates to `adapter.dispose()` when the adapter implements it.
+
+### Upgrading to 0.2.0
+
+Update `SearchFnServer<TContext>` annotations to `SearchFnServer`. Supply a `context` factory when an authorization policy needs application fields such as identity or permissions. Factory-free policies can use the standard router context fields, including `query` and `url`.

@@ -17,6 +17,17 @@ export {
   type RunnerOptions,
 } from "./runner.js";
 export {
+  resolveRunnerOptions,
+  resolveTerminal,
+  type ResolvedRunnerOptions,
+  type ResolveRunnerOptionsContext,
+  type ResolveTerminalOptions,
+  type RunnerFlags,
+  type TerminalState,
+  type TerminalStream,
+  type TerminalStreams,
+} from "./terminal.js";
+export {
   ConfigLoaderError,
   defineConfig,
   loadConfig,
@@ -96,4 +107,11 @@ export {
 } from "./client.js";
 export { ui } from "./ui.js";
 export { readJsonStdin, writeJsonStdout, InvalidJsonStdinError } from "./stdio.js";
-export { createPrompt, prompt, PromptInputError, type PromptApi } from "./prompt.js";
+export {
+  createPrompt,
+  prompt,
+  PromptInputError,
+  type PromptApi,
+  type PromptErrorCode,
+  type PromptOptions,
+} from "./prompt.js";

@@ -8,6 +8,7 @@ export type SearchFnErrorCode =
   | "LIMIT_EXCEEDED"
   | "DFQL_ABORTED"
   | "DFQL_UNSUPPORTED"
+  | "UNSUPPORTED_MEDIA_TYPE"
   | "FORBIDDEN"
   | "INTERNAL";
 
@@ -43,6 +44,7 @@ const STATUS_MAP: Record<SearchFnErrorCode, number> = {
   LIMIT_EXCEEDED: 400,
   DFQL_ABORTED: 499,
   DFQL_UNSUPPORTED: 400,
+  UNSUPPORTED_MEDIA_TYPE: 415,
   FORBIDDEN: 403,
   INTERNAL: 500,
 };
@@ -80,6 +82,14 @@ export function mapAdapterErrorToResponse(
   return errorResponse("INTERNAL", fallbackMessage);
 }
 
+const mediaTypeWord = "[!#$%&'*+.^_`|~0-9a-z-]+";
+const mediaTypeQuotedString = String.raw`"(?:[\t\x20-\x21\x23-\x5b\x5d-\x7e\x80-\xff]|\\[\t\x20-\x7e\x80-\xff])*"`;
+// RFC 9110 §5.6.6 allows a semicolon followed by an empty parameter.
+const jsonContentType = new RegExp(
+  String.raw`^application/json(?:[ \t]*;(?:[ \t]*${mediaTypeWord}=(?:${mediaTypeWord}|${mediaTypeQuotedString}))?)*[ \t]*$`,
+  "i",
+);
+
 /**
  * Safely parse JSON body from a Request.
  */
@@ -87,6 +97,13 @@ export async function parseJsonBody(
   req: Request,
   maxPayloadBytes?: number,
 ): Promise<{ ok: true; data: unknown } | { ok: false; response: Response }> {
+  if (!jsonContentType.test(req.headers.get("content-type") ?? "")) {
+    return {
+      ok: false,
+      response: errorResponse("UNSUPPORTED_MEDIA_TYPE", "Content-Type must be application/json"),
+    };
+  }
+
   try {
     const lengthHeader = req.headers.get("content-length");
     if (maxPayloadBytes && lengthHeader) {

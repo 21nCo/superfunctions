@@ -18,8 +18,13 @@ Without limits, a single malicious or buggy client can exhaust server memory by 
 
 ## Configuring
 
+Define `authorizeSearchRequest` in your application using the [authorization guide](/docs/documentation/security/request-authz).
+
 ```typescript
+import { authorizeSearchRequest } from "./search-authorization.js";
+
 const sf = await createSearchFnServer({
+  authorize: authorizeSearchRequest,
   adapter,
   limits: {
     maxQueryLength: 500,
@@ -49,7 +54,7 @@ If you need different limits per endpoint, run two SearchFn servers:
 const userSf = await createSearchFnServer({
   adapter,
   basePath: "/searchfn",
-  limits: { maxLimit: 50, maxIndexBatch: 0 }, // read-only for users
+  limits: { maxLimit: 50 },
   authorize: async (ctx, action) => action === "search" || action === "searchAll",
 });
 
@@ -84,7 +89,7 @@ Clients should treat this as a non-retryable client error — retrying won't hel
 
 ## HTTP framework limits
 
-SearchFn's `maxPayloadBytes` is checked **after** the request body has been read. To stop attacks before the body is read, configure your HTTP framework's body limit at the same value or slightly higher:
+SearchFn checks `maxPayloadBytes` while streaming the request body. Configure your HTTP framework's body limit too if it buffers requests before handing them to SearchFn:
 
 - Express: `express.json({ limit: "2mb" })`
 - Fastify: `Fastify({ bodyLimit: 2 * 1024 * 1024 })`
@@ -92,7 +97,7 @@ SearchFn's `maxPayloadBytes` is checked **after** the request body has been read
 
 ## Rate limiting
 
-Limits cap individual request size, not request rate. For per-user rate limits, use the `authorize` callback:
+For per-user rate limits on requests that pass parsing and resource validation, use the `authorize` callback:
 
 ```typescript
 import { Ratelimit } from "@upstash/ratelimit";
@@ -100,15 +105,16 @@ import { Ratelimit } from "@upstash/ratelimit";
 const indexLimiter = new Ratelimit({ redis, limiter: Ratelimit.slidingWindow(10, "1 m") });
 const searchLimiter = new Ratelimit({ redis, limiter: Ratelimit.slidingWindow(120, "1 m") });
 
-async function authorize(ctx, action) {
-  const userId = ctx.user?.id ?? ctx.ip;
+async function authorize(_ctx, action, _payload, request, resources) {
+  const session = await getSession(request);
+  if (!session || !(await passesAuth(session, action, resources))) return false;
   const limiter = action === "index" ? indexLimiter : searchLimiter;
-  const { success } = await limiter.limit(userId);
-  return success && passesAuth(ctx, action);
+  const { success } = await limiter.limit(session.user.id);
+  return success;
 }
 ```
 
-Rate-limit denials look like authorization failures (`FORBIDDEN`) — surface this as 429 if you want HTTP semantics correct.
+The callback returns `FORBIDDEN` on denial. Use a limiter before `router.handle` to count every request and return HTTP `429` when the limit is reached.
 
 ## See also
 

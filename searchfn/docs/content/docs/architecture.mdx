@@ -186,7 +186,7 @@ The server wraps all responses in a canonical envelope:
 ### External backends (Postgres / Meilisearch / ES)
 
 1. **Validation** — client or server validates the request shape and limits.
-2. **Authorization** — server checks the `authorize` callback (if configured).
+2. **Authorization** — the server checks the `authorize` callback unless the application explicitly opts into `allowUnauthenticated` mode.
 3. **Delegation** — the request is translated into the backend's native API.
 4. **Response** — backend results are mapped back to SearchFn's response format.
 

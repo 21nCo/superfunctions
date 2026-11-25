@@ -19,6 +19,7 @@ import { PostgresAdapter } from "@searchfn/adapter-postgres";
 
 const adapter = new PostgresAdapter({ connectionString: process.env.SEARCH_DB_URL! });
 const sf = await createSearchFnServer({
+  allowUnauthenticated: true, // Local demo only.
   adapter,
   basePath: "/searchfn",
 });

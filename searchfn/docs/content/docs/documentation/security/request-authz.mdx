@@ -3,14 +3,16 @@ title: Request Authorization
 description: The authorize callback — how to write one, how to test it.
 ---
 
-`createSearchFnServer` accepts an `authorize` callback that's invoked before every action. It receives the request context, the action name, and the request payload:
+`createSearchFnServer` requires an `authorize` callback or an explicit `allowUnauthenticated: true` opt-in. Reserve the opt-in for local demos or deployments where an upstream service authorizes every operation. The callback receives the context, action, parsed payload, original request, and validated resource names.
+
+Define `authorizeSearchRequest` in your application using one of the policies below.
 
 ```typescript
+import { authorizeSearchRequest } from "./search-authorization.js";
+
 const sf = await createSearchFnServer({
   adapter,
-  authorize: async (ctx, action, payload) => {
-    // return boolean
-  },
+  authorize: authorizeSearchRequest,
 });
 ```
 
@@ -30,8 +32,8 @@ When `authorize` returns `false`, the server responds with a `FORBIDDEN` envelop
 ## Worked example: role-based
 
 ```typescript
-async function authorize(ctx, action, payload) {
-  const session = await getSession(ctx.request);
+async function authorize(_ctx, action, _payload, request) {
+  const session = await getSession(request);
   if (!session) return action === "status";
 
   switch (action) {
@@ -52,12 +54,10 @@ async function authorize(ctx, action, payload) {
 ## Worked example: per-resource ACL
 
 ```typescript
-async function authorize(ctx, action, payload) {
-  const session = await getSession(ctx.request);
+async function authorize(_ctx, action, _payload, request, resources) {
+  const session = await getSession(request);
   if (!session) return false;
-
-  const resource = (payload as { resource?: string }).resource;
-  const resources = (payload as { resources?: string[] }).resources ?? (resource ? [resource] : []);
+  if (action === "status") return false;
 
   for (const r of resources) {
     if (!(await userCanAccess(session.user, r, action))) return false;
@@ -66,7 +66,7 @@ async function authorize(ctx, action, payload) {
 }
 ```
 
-This handles both single-resource (`search`, `index`, etc.) and multi-resource (`searchAll`).
+The same policy checks every effective target for single-resource operations and `searchAll`. With authorization configured, `/search-all` requires a non-empty list of `resources`. Single-resource routes accept `resource`. The server rejects requests containing a scope field that the route does not use.
 
 ## Worked example: rate limiting
 
@@ -78,8 +78,8 @@ const limiter = new Ratelimit({
   limiter: Ratelimit.slidingWindow(60, "1 m"), // 60 req/min per user
 });
 
-async function authorize(ctx, action, payload) {
-  const session = await getSession(ctx.request);
+async function authorize(_ctx, action, _payload, request) {
+  const session = await getSession(request);
   if (!session) return false;
 
   const { success } = await limiter.limit(session.user.id);
@@ -89,26 +89,25 @@ async function authorize(ctx, action, payload) {
 }
 ```
 
-`authorize` is a flexible enough hook to be the only auth/limit layer if you want it to be.
+This limiter counts requests that pass body parsing and resource validation. Apply a request-wide limiter before `router.handle` to also count rejected requests.
 
-## ctx contents
+## Request and context
 
 ```typescript
-interface AuthorizeCtx {
-  request: Request;            // The original Request object
-  ip?: string;                 // Source IP, if your framework provides it
-  headers: Headers;            // Request headers
-  user?: unknown;              // Whatever you populated upstream
-  requestId?: string;
-}
+const sf = await createSearchFnServer({
+  adapter,
+  context: async (request) => ({ session: await getSession(request) }),
+  authorize: (ctx, action) => action === "status" || ctx.session?.user.role === "admin",
+});
 ```
 
-Anything that runs before SearchFn (auth middleware, CORS, etc.) can populate `ctx.user` for the callback to read.
+The optional `context` factory runs before the policy and can load verified identity from request headers or cookies. Its result is passed directly to the policy as `ctx`. The router's middleware and custom routes receive the route parameters, parsed URL and query parameters from the HTTP router. Without a factory, the policy also receives this router context. Read POST body fields from `payload` because the server has already read the request body. `status` receives `null` and an empty resource list.
 
 ## Failure modes
 
 - **`authorize` returns `false`** → `FORBIDDEN` (403).
-- **`authorize` throws** → the `authorization.error` event is logged, then `INTERNAL` (500). The original error doesn't leak.
+- **`context` or `authorize` throws** → the server logs `authorization.error`, emits `searchfn.authorization.failed`, and returns `FORBIDDEN` (403). The response and event omit the underlying error details.
+- **A POST uses a non-JSON media type** → `UNSUPPORTED_MEDIA_TYPE` (415) before authorization. Send `Content-Type: application/json`.
 
 Treat `authorize` like any other async function — handle your own errors.
 
@@ -124,12 +123,11 @@ const sf = await createSearchFnServer({
   authorize: async (ctx, action) => action === "search",
 });
 
-const res = await sf.router.handle({
+const res = await sf.router.handle(new Request("http://test/searchfn/index", {
   method: "POST",
-  url: "http://test/searchfn/index",
-  headers: new Headers({ "content-type": "application/json" }),
-  body: JSON.stringify({ resource: "x", documents: [] }),
-});
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({ resource: "docs", documents: [{ id: "doc-1", fields: { title: "Sample" } }] }),
+}));
 expect(res.status).toBe(403);
 ```
 
@@ -138,19 +136,15 @@ Inject the request directly into `router.handle` — no HTTP server needed.
 ## What to log on denial
 
 ```typescript
-logger: {
-  warn: (msg, ctx) => {
-    if (msg === "authorization.denied") {
-      audit({
-        userId: ctx.userId ?? "anonymous",
-        action: ctx.action,
-        resource: ctx.resource,
-        ip: ctx.ip,
-        at: Date.now(),
-      });
-    }
+observability: {
+  logger: {
+    warn: (message, context) => {
+      if (message === "authorization.denied") {
+        audit({ operation: context?.operation, adapter: context?.adapter, at: Date.now() });
+      }
+    },
   },
-}
+},
 ```
 
 Patterns like "100 denied search requests from one IP in 1 minute" are signals for a security alert.

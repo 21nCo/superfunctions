@@ -23,6 +23,7 @@ New additive subpaths are exported for the generic CLI-builder surface:
 - `@clifn/core/exec`
 - `@clifn/core/scaffold`
 - `@clifn/core/paths`
+- `@clifn/core/terminal`
 
 ## Install
 
@@ -244,6 +245,7 @@ Consumer ownership stays explicit:
 - `prompt.multiSelect`
 - `prompt.text`
 - `prompt.confirm`
+- `createPrompt({ ask?, output?, nonInteractive? })`: with `nonInteractive: true` every prompt throws `PromptInputError` with code `CLIFN_PROMPT_NON_INTERACTIVE`; an options object that names `output` or `nonInteractive` writes questions to `output`, else stderr. `createPrompt()`, `createPrompt({ ask })` and `prompt` keep writing to stdout.
 
 ### New shared CLI-builder modules
 
@@ -275,6 +277,9 @@ These module entrypoints are the generic surface that repository CLIs can share:
   - app names match `^[a-z0-9][a-z0-9._-]{0,63}$`, else `InvalidAppNameError` (`CLIFN_INVALID_APP_NAME`); on Windows (`platform: "win32"`, and the stores on Windows) a name also cannot end with `.` (Windows drops it, so `tool.` would share `tool`'s directories) or be a device name (`con`, `prn`, `aux`, `nul`, `com0`-`com9`, `lpt0`-`lpt9`), with or without an extension (`nul.txt`)
   - `ensureAppDir(dir)` creates a missing directory with mode `0o700` on POSIX and resolves to `dir`; concurrent calls on one path both resolve
   - symlinks or directories that another program plants under these paths are not defended against yet
+- `@clifn/core/terminal`
+  - `resolveTerminal({ env?, stdin?, stdout?, stderr?, json? })` -> `{ color, interactive, ci }`: a non-empty `NO_COLOR` disables colour; `FORCE_COLOR` `0`/`false` disables and `1`/`2`/`3`/`true` enables it; `TERM=dumb` disables it; otherwise colour follows whether stderr is a TTY. `ci` is `CI` set to anything but empty, `0` or `false`; `interactive` needs TTY stdin and stderr, no CI and no JSON
+  - `resolveRunnerOptions({ json?, quiet?, verbose?, color?, yes?, nonInteractive? }, { env?, streams? })` -> runner options (`mode`, `'json'` for JSON lines with `json`; `color`, `stderrColor`, `quiet`, `verbose`, `nonInteractive`) from the flags your parser produced; `color: true`/`false` overrides the rules and `'auto'` uses them; `stderrColor` (errors, spinner) follows the rules and, in text mode, `color` (`info`, `success` and `warn` on stdout) also needs a TTY stdout unless `FORCE_COLOR` enables it (commander and cac give a lone `--no-color` a default of `true`, so pass `color: opts.color === false ? false : 'auto'`)
 
 ## Adoption boundary
 

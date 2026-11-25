@@ -27,6 +27,7 @@ import { MemoryAdapter } from "@searchfn/adapter-memory";
 
 const adapter = new MemoryAdapter();
 const sf = await createSearchFnServer({
+  allowUnauthenticated: true, // Local demo only.
   adapter,
   basePath: "/searchfn",
 });
@@ -40,10 +41,10 @@ await adapter.initialize({
 const app = new Hono();
 
 app.all("/searchfn/*", (c) => sf.router.handle(c.req.raw));
-serve({ fetch: app.fetch, port: 3000 });
+serve({ fetch: app.fetch, port: 3000, hostname: "127.0.0.1" });
 ```
 
-The router consumes a Web `Request` and returns a Web `Response`; Hono exposes its incoming request as `c.req.raw`. This example starts a Node server explicitly. On Bun, use `Bun.serve({ fetch: app.fetch, port: 3000 })` instead of the Node server adapter.
+The router consumes a Web `Request` and returns a Web `Response`. Hono exposes its incoming request as `c.req.raw`. On Bun, use `Bun.serve({ fetch: app.fetch, port: 3000, hostname: "127.0.0.1" })`.
 
 ## 3. Run
 
@@ -92,7 +93,7 @@ const adapter = new PostgresAdapter({
 await adapter.initialize({
   resources: [{ name: "articles", searchFields: ["title", "body"] }],
 });
-const sf = await createSearchFnServer({ adapter, basePath: "/searchfn" });
+const sf = await createSearchFnServer({ adapter, basePath: "/searchfn", allowUnauthenticated: true });
 ```
 
 Initialize the same adapter instance passed to the server, before accepting requests. Keep the Hono routes and server startup from above. See the [Postgres adapter](/docs/reference/adapters/postgres) for provisioning details.

@@ -55,6 +55,7 @@ describe("parser canaries", () => {
       "src/index.ts",
       "src/output.ts",
       "src/runner.ts",
+      "src/terminal.ts",
     ];
 
     const contents = await Promise.all(
