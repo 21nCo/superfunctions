@@ -1,0 +1,21 @@
+scripts/turbo-cache-merge.mjs
+  s_a7c71f7114c740::t_a44258f1d6d1b4 309-310,312
+scripts/turbo-cache-merge.test.mjs
+  s_a7c71f7114c740::t_87c786f8f5480e 17,314-316,416-418,421,423
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "092335efcc6c23ae87019358050bf9c4b9ad9807",
+  "prompts": {},
+  "sessions": {
+    "s_a7c71f7114c740": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1966cf45-8f38-40d7-894c-b43d7718cf7b",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
