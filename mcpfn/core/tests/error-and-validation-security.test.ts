@@ -172,7 +172,7 @@ describe("withheld errors outside tool handlers (MCP-SEC-08)", () => {
     expect(error).toMatchObject({ code: ErrorCode.InvalidParams, data: { field: "uri" } });
   });
 
-  it("keeps a named subclass of an McpError from another copy of the SDK", async () => {
+  it("withholds a renamed subclass of another SDK copy's McpError (fail closed)", async () => {
     // Stand-in for the application's own SDK copy, which this bundle cannot instanceof.
     // Built through a property so the class keeps the name "McpError" (a
     // local class declaration would be renamed to avoid the imported one).
@@ -194,22 +194,24 @@ describe("withheld errors outside tool handlers (MCP-SEC-08)", () => {
     const registry = new McpFnRegistry().registerResource({ uri: "file:///report", name: "report", read: async () => { throw new ResourceInputError(); } });
     const client = await connect(registry);
     const error = await client.readResource({ uri: "file:///report" }).then(() => undefined, (failure: unknown) => failure);
-    expect(error).toMatchObject({ code: ErrorCode.InvalidParams, data: { field: "uri" } });
+    expect(error).toMatchObject({ code: ErrorCode.InternalError, data: { errorId: expect.any(String) } });
   });
 
-  it("recognises a foreign McpError by its message format, not its class name", async () => {
-    // As a minified SDK build would produce: renamed classes, null constructor.
-    class a extends Error {
-      constructor(readonly code: number, message: string, readonly data?: unknown) {
-        super(`MCP error ${code}: ${message}`);
-        this.name = "x";
-      }
+  it("withholds a renamed McpError lookalike and a non-string message", async () => {
+    const onError = vi.fn();
+    const lookalike = Object.assign(new Error(`MCP error ${ErrorCode.InvalidParams}: upstream db.internal`), { code: ErrorCode.InvalidParams, data: { host: "db.internal" } });
+    const structured = Object.assign(new Error("x"), { code: 7 });
+    Object.defineProperty(structured, "message", { value: { detail: "db.internal" } });
+    let next: Error = lookalike;
+    const registry = new McpFnRegistry().registerResource({ uri: "file:///report", name: "report", read: async () => { throw next; } });
+    const client = await connect(registry, { onError });
+    for (const thrown of [lookalike, structured]) {
+      next = thrown;
+      const error = await client.readResource({ uri: "file:///report" }).then(() => undefined, (failure: unknown) => failure);
+      expect(JSON.stringify(error)).not.toContain("db.internal");
     }
-    Object.defineProperty(a.prototype, "constructor", { value: null });
-    const registry = new McpFnRegistry().registerResource({ uri: "file:///report", name: "report", read: async () => { throw new a(ErrorCode.InvalidParams, "Bad resource", { field: "uri" }); } });
-    const client = await connect(registry);
-    const error = await client.readResource({ uri: "file:///report" }).then(() => undefined, (failure: unknown) => failure);
-    expect(error).toMatchObject({ code: ErrorCode.InvalidParams, data: { field: "uri" } });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(onError.mock.calls.map(([input]) => input.error)).toEqual([lookalike, structured]);
   });
 
   it("withholds numeric-coded errors that are not McpErrors", async () => {

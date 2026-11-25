@@ -78,11 +78,13 @@ export function isMcpErrorLike(error: unknown): error is Error & { code: number 
   if (error instanceof McpError) return true;
   if (!(error instanceof Error)) return false;
   const code = (error as { code?: unknown }).code;
-  if (typeof code !== "number" || !Number.isSafeInteger(code)) return false;
-  // Every SDK McpError (any copy, subclass or minified build) formats its
-  // message as "MCP error <code>: ...", so this identifies one without
-  // relying on class identity or names.
-  return error.message.startsWith(`MCP error ${code}:`);
+  const message: unknown = error.message;
+  // Another SDK copy's McpError: its name and the "MCP error <code>:" message
+  // the SDK constructor writes. A renamed subclass (or a minified build) is
+  // withheld; throw McpFnError, or set exposeErrors, to return its text.
+  return error.name === "McpError" &&
+    typeof code === "number" && Number.isSafeInteger(code) &&
+    typeof message === "string" && message.startsWith(`MCP error ${code}:`);
 }
 
 /**

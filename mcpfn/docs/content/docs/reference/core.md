@@ -115,7 +115,7 @@ details: { errorId } }`; resource, prompt, completion and subscription handlers
 answer such errors with a JSON-RPC `InternalError` carrying the same `errorId`.
 This covers errors from context factories, visibility hooks and task creation
 as well. The original error goes to the server's `onError({ error, errorId,
-method, tool })` sink, which is not awaited. `exposeErrors: true` restores verbatim error text. Argument validation
+method, tool })` sink, which is not awaited. An `McpError` from another copy of the SDK (such as the application's own) is recognised by its `McpError` name and `MCP error <code>:` message; a renamed subclass of it is withheld, so throw `McpFnError` for domain errors that must reach the client. `exposeErrors: true` restores verbatim error text. Argument validation
 stops at the first failure where the schema allows it: a large array whose
 `items` fail stops at the first bad item, while a failing `anyOf` or `oneOf`
 still reports each branch and, on `@cfworker/json-schema`, a tuple with

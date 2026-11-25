@@ -719,7 +719,13 @@ export class McpFnServer<TContext = undefined> {
     tool?: string,
     options: { plainObjects?: boolean } = {},
   ): Promise<string | undefined> {
-    if (this.serverOptions.exposeErrors === true || isMcpFnClientSafeError(error, options)) return undefined;
+    let safe = false;
+    try {
+      safe = this.serverOptions.exposeErrors === true || isMcpFnClientSafeError(error, options);
+    } catch {
+      // An error the classifier cannot inspect is withheld.
+    }
+    if (safe) return undefined;
     const errorId = randomUUID();
     const sink = this.serverOptions.onError;
     // Observational: not awaited, so a slow sink cannot hold up the response,
