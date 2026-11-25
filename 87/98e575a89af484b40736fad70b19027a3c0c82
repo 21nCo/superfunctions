@@ -1,0 +1,26 @@
+authfn/password/src/index.ts
+  s_c280b963c188e0::t_c1b1d1f31dd0ea 15-16,239-249,259-260,264-265,280-287
+authfn/core/src/__tests__/audit-contained.test.ts
+  s_c280b963c188e0::t_c1b1d1f31dd0ea 235-249,347,354-355,377
+authfn/core/src/core/passwords.ts
+  s_c280b963c188e0::t_c1b1d1f31dd0ea 294-297
+authfn/core/src/http/body-limit.ts
+  s_c280b963c188e0::t_c1b1d1f31dd0ea 17-20,44,62-63
+  s_c280b963c188e0::t_1c4053fb463124 64-65
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8798e575a89af484b40736fad70b19027a3c0c82",
+  "prompts": {},
+  "sessions": {
+    "s_c280b963c188e0": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a212a2-8eeb-7a81-bbb7-27bfab9b3126",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
