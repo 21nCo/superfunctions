@@ -1596,14 +1596,14 @@ export async function executeMutation(
     await queuePermissionDirectorySync(db, true);
   }
 
-  // DATA-41: outside a caller's transaction, create the revisions table
-  // before the write (inside /transact the route creates it beforehand).
-  if (!insideTransaction) {
-    await changeTracking.ensureRevisionsReady();
-  }
-
   let result: MutationResult;
   try {
+    // DATA-41: outside a caller's transaction, create the revisions table
+    // before the write (inside /transact the route creates it beforehand).
+    // A failure here releases a permission-directory task leased above.
+    if (!insideTransaction) {
+      await changeTracking.ensureRevisionsReady();
+    }
     result = await executeMutationCore(
       mutation,
       db,

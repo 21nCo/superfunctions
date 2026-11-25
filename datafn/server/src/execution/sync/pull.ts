@@ -6,7 +6,7 @@ import type { DatafnErrorCode, DatafnSchema } from "../../core-types.js";
 import type { Adapter } from "@superfunctions/db";
 import type { SequenceStore } from "./sequence-store.js";
 import { ChangeTrackingService, type ChangeEntry } from "./change-tracking.js";
-import { issuesRevisions, wireChange } from "../revisions.js";
+import { issuesRevisions, isRevisionCertified, wireChange, withoutUncertifiedRevision } from "../revisions.js";
 import { readRowRevision, withoutRowRevision } from "@datafn/core";
 import { isPrivateShareableResource, resolveAccessLevel } from "../../validation/authz.js";
 import {
@@ -884,7 +884,12 @@ async function executePullGlobalCursor(
         resource: synthetic.resource,
         id: synthetic.id,
         op: synthetic.op,
-        record: synthetic.record,
+        // DATA-41: a visibility row recorded no revision, so a stored `$rev`
+        // on a resource that issues revisions is not sent as one.
+        record:
+          synthetic.record && issuesRevisions(schema, synthetic.resource)
+            ? withoutUncertifiedRevision(synthetic.record)
+            : synthetic.record,
         reason: synthetic.reason,
       });
     }
@@ -921,8 +926,10 @@ async function executePullGlobalCursor(
  * the last has the highest, the combined row is that last complete row, and
  * no change's stored id differs from the entry's (trimmed) id. serverSeq
  * order is not commit order, so otherwise the entry goes without a revision.
- * Called only for resources that issue revisions, so a resource's own `$rev`
- * field is never touched.
+ * A part's `$rev` counts only when the server paired it with that part's
+ * change (a legacy stored `$rev` value never does). Called only for
+ * resources that issue revisions, so a resource's own `$rev` field is never
+ * touched.
  */
 function certifyCoalesced(
   combined: Record<string, unknown>,
@@ -930,11 +937,11 @@ function certifyCoalesced(
   parts: ReadonlyArray<Record<string, unknown>>,
 ): Record<string, unknown> {
   const last = parts[parts.length - 1];
-  const lastRev = readRowRevision(last);
+  const lastRev = isRevisionCertified(last) ? readRowRevision(last) : undefined;
   const certified =
     lastRev !== undefined &&
     parts.every((part) => {
-      const rev = readRowRevision(part);
+      const rev = isRevisionCertified(part) ? readRowRevision(part) : undefined;
       return (
         part.id === id &&
         rev !== undefined &&
@@ -1177,6 +1184,9 @@ async function executePullCanonical(
         deleted[synthetic.resource] = [];
       }
       if (synthetic.op === "upsert" && synthetic.record) {
+        // DATA-41: a visibility row is not a change that recorded a
+        // revision, so it carries none (certifyCoalesced strips any stored
+        // `$rev`; non-issuing resources keep it as application data).
         records[synthetic.resource].push(synthetic.record);
       } else if (synthetic.op === "delete") {
         deleted[synthetic.resource].push(synthetic.id);

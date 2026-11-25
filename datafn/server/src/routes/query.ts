@@ -30,11 +30,9 @@ import {
 } from "../validation/authz.js";
 import {
   REVISION_FIELD,
-  SnapshotReadFailedError,
-  ensureRevisionsTable,
-  guardSnapshotReads,
+  isRevisionCertified,
   issuesRevisions,
-  readWithRevisions,
+  readWithRevisionsOrPlain,
 } from "../execution/revisions.js";
 import { runBounded } from "./query/batch-executor.js";
 import { executeSingleQuery, relationQuerySelectTokens } from "./query/execute.js";
@@ -949,45 +947,37 @@ export function createQueryHandler(
                 // DATA-41: the query itself runs inside the revision snapshot
                 // and returns its stored rows unprojected (as clone returns
                 // them), so each row it selected is paired with the revision
-                // read in that same snapshot. A row that gets no revision (an
-                // unreadable field, a tombstone, no verified pairing) is
-                // returned as the plain query projects it. A query with any
-                // failed read inside the snapshot (thrown, or swallowed by a
-                // push-down or in-memory fallback, which on PostgreSQL aborts
-                // the transaction) is run again outside it, without revisions.
+                // read in that same snapshot. A row the server did not pair
+                // with a revision (an unreadable field, a tombstone, no
+                // verified pairing, or a stored legacy `$rev` value) is
+                // returned as the plain query projects it, without `$rev`.
+                // If revision setup or any read inside the snapshot fails
+                // (thrown, or swallowed by a push-down or in-memory fallback,
+                // which on PostgreSQL aborts the transaction), the query is
+                // run again outside it, without revisions.
                 const readable = (row: Record<string, unknown>) =>
                   canReadEveryField(validatedSchema, resourceName, row);
                 const select = Array.isArray(query.select) ? (query.select as string[]) : undefined;
-                return ensureRevisionsTable(db).then(async () => {
-                  let snapshotRead = false;
-                  let result: unknown;
-                  try {
-                    result = await readWithRevisions(
-                      db,
-                      namespace,
-                      resourceName,
-                      async (readDb) => {
-                        if (readDb === db) return run(readDb, false);
-                        snapshotRead = true;
-                        // A read error the query swallowed or fell back from
-                        // (an aborted PostgreSQL snapshot reads as empty)
-                        // leaves the snapshot too.
-                        const guarded = guardSnapshotReads(readDb);
-                        const snapshotResult = await run(guarded.db, false);
-                        if (guarded.failed()) throw new SnapshotReadFailedError();
-                        return snapshotResult;
-                      },
-                      rowsOf,
-                      readable,
-                    );
-                  } catch (error) {
-                    if (!snapshotRead) throw error;
+                let plain = false;
+                return readWithRevisionsOrPlain(
+                  db,
+                  namespace,
+                  resourceName,
+                  (readDb) => run(readDb, false),
+                  () => {
+                    plain = true;
                     return run(db);
-                  }
+                  },
+                  rowsOf,
+                  readable,
+                ).then((result) => {
+                  if (plain) return result;
                   const rows = rowsOf(result);
                   rows?.forEach((row, index) => {
-                    if (!(REVISION_FIELD in row)) {
-                      rows[index] = projectFieldsPushdown(row, resourceName, validatedSchema, select, undefined);
+                    if (!isRevisionCertified(row)) {
+                      const projected = projectFieldsPushdown(row, resourceName, validatedSchema, select, undefined);
+                      delete projected[REVISION_FIELD];
+                      rows[index] = projected;
                     }
                   });
                   return result;

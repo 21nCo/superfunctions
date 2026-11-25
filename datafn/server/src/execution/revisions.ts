@@ -26,6 +26,30 @@ const MAX_BUMP_ATTEMPTS = 10;
 /** Ids per `IN` list: D1 binds at most 100 parameters per statement. */
 export const READ_CHUNK = 90;
 
+/**
+ * DATA-41: rows whose `$rev` the server paired with them (a snapshot read or
+ * a change that recorded its revision). A `$rev` on any other row of a
+ * resource that issues revisions is a stored legacy value, never a revision.
+ */
+const certifiedRows = new WeakSet<object>();
+
+function certify<T extends Record<string, unknown>>(row: T): T {
+  certifiedRows.add(row);
+  return row;
+}
+
+/** Whether `row`'s `$rev` was paired with it by the server. */
+export function isRevisionCertified(row: Record<string, unknown>): boolean {
+  return certifiedRows.has(row);
+}
+
+/** `row` without a `$rev` the server did not pair with it. */
+export function withoutUncertifiedRevision(row: Record<string, unknown>): Record<string, unknown> {
+  if (!(REVISION_FIELD in row) || certifiedRows.has(row)) return row;
+  const { [REVISION_FIELD]: _legacy, ...rest } = row;
+  return rest;
+}
+
 export interface DatafnRevisionsConfig {
   /**
    * Issue revisions to clients and record them on change rows. Turn this on
@@ -241,7 +265,7 @@ function attachRead(
     const stored = revisions.get(row.id) ?? { rev: 0, deleted: false };
     if (stored.deleted) return;
     // A copy: some adapters return their stored row objects.
-    rows[index] = { ...row, [REVISION_FIELD]: stored.rev };
+    rows[index] = certify({ ...row, [REVISION_FIELD]: stored.rev });
   });
 }
 
@@ -358,6 +382,45 @@ export async function readWithRevisions<T>(
   }
 }
 
+/**
+ * DATA-41: reads with `read` and pairs revisions (see `readWithRevisions`),
+ * but revisions are optional metadata: if creating `__datafn_revisions`, the
+ * snapshot, the revision read or any read inside the snapshot (thrown, or
+ * swallowed by a query fallback) fails, the rows are read again with `plain`
+ * outside it and returned without revisions. Only a failure of that plain
+ * read reaches the caller, as it would without revisions.
+ */
+export async function readWithRevisionsOrPlain<T>(
+  db: Adapter,
+  namespace: string,
+  resource: string,
+  read: (readDb: Adapter) => Promise<T>,
+  plain: () => Promise<T>,
+  rowsOf: (result: T) => Array<Record<string, unknown>> | undefined,
+  readable: (row: Record<string, unknown>) => boolean = () => true,
+): Promise<T> {
+  let result: T;
+  try {
+    await ensureRevisionsTable(db);
+    result = await readWithRevisions(
+      db,
+      namespace,
+      resource,
+      async (readDb) => {
+        const guarded = guardSnapshotReads(readDb);
+        const out = await read(guarded.db);
+        if (guarded.failed()) throw new SnapshotReadFailedError();
+        return out;
+      },
+      rowsOf,
+      readable,
+    );
+  } catch {
+    return plain();
+  }
+  return result;
+}
+
 type WriteEntry = {
   resource: string;
   id: string;
@@ -448,18 +511,23 @@ export function wireChange(
   resource: string,
   change: { op: string; record: Record<string, unknown> | null; rev?: number },
 ): { record: Record<string, unknown> | null; rev?: number } {
-  const rev = change.rev !== undefined && issuesRevisions(schema, resource) ? change.rev : undefined;
+  const issuing = issuesRevisions(schema, resource);
+  const rev = change.rev !== undefined && issuing ? change.rev : undefined;
   const revField = rev !== undefined ? { rev } : {};
+  // On a resource that issues revisions, a `$rev` stored in a change's record
+  // (an application value from before the resource dropped its own `$rev`
+  // field) is never sent as one.
+  const record = issuing && change.record ? withoutUncertifiedRevision(change.record) : change.record;
   // A change row that recorded a revision holds the stored row, server
   // fields included, so its unreadable fields are withheld even after
   // revisions are turned off (or the resource gains its own `$rev` field).
-  if (change.rev === undefined || !change.record) return { record: change.record, ...revField };
-  if (!canReadEveryField(schema, resource, change.record)) {
-    return { record: withoutUnreadableFields(schema, resource, change.record), ...revField };
+  if (change.rev === undefined || !record) return { record, ...revField };
+  if (!canReadEveryField(schema, resource, record)) {
+    return { record: withoutUnreadableFields(schema, resource, record), ...revField };
   }
-  if (rev === undefined) return { record: change.record };
+  if (rev === undefined) return { record };
   const complete = change.op !== "delete" && (change.op !== "merge" || isKvResource(resource));
-  return { record: complete ? { ...change.record, [REVISION_FIELD]: rev } : change.record, rev };
+  return { record: complete ? certify({ ...record, [REVISION_FIELD]: rev }) : record, rev };
 }
 
 /** The revision the last of `entries` for one record raised, if any. */

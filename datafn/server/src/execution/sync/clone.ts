@@ -7,7 +7,7 @@ import { getJoinStoreKey, getRelationJoinTableName } from "@datafn/core";
 import type { Adapter, WhereClause } from "@superfunctions/db";
 import type { SequenceStore } from "./sequence-store.js";
 import { ChangeTrackingService } from "./change-tracking.js";
-import { ensureRevisionsTable, issuesRevisions, readWithRevisions } from "../revisions.js";
+import { issuesRevisions, readWithRevisionsOrPlain, withoutUncertifiedRevision } from "../revisions.js";
 import type { DatafnLogger } from "../../logger.js";
 import {
   isNamespaceOwnerActor,
@@ -181,15 +181,18 @@ export async function executeClone(
 
   /**
    * DATA-41: reads a table's rows and, when revisions are on, their revisions
-   * in one snapshot, attaching each row's revision as `$rev`.
+   * in one snapshot, attaching each row's revision as `$rev`. Revisions are
+   * optional: if their setup or read fails, the rows are read again without
+   * them, so only a failure of the row read reaches the catch below. A stored
+   * `$rev` the server did not pair with its row is not returned.
    */
   const readCloneRows = async (
     table: string,
     read: (readDb: Adapter) => Promise<Array<Record<string, unknown>>>,
   ): Promise<Array<Record<string, unknown>>> => {
     if (!issuesRevisions(schema, table)) return read(db);
-    await ensureRevisionsTable(db);
-    return readWithRevisions(db, namespace, table, read, (rows) => rows);
+    const rows = await readWithRevisionsOrPlain(db, namespace, table, read, () => read(db), (r) => r);
+    return rows.map(withoutUncertifiedRevision);
   };
 
   // Handle paginated clone if page parameter is provided

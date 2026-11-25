@@ -6,7 +6,15 @@ import { memoryAdapter } from "@superfunctions/db/adapters";
 import type { Adapter } from "@superfunctions/db";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createDatafnServer } from "../src/server.js";
-import { READ_CHUNK, bumpRevision, ensureRevisionsTable, readRevisions, readWithRevisions } from "../src/execution/revisions.js";
+import {
+  READ_CHUNK,
+  bumpRevision,
+  configureRevisions,
+  ensureRevisionsTable,
+  readRevisions,
+  readWithRevisions,
+} from "../src/execution/revisions.js";
+import { executeClone } from "../src/execution/sync/clone.js";
 import { ChangeTrackingService } from "../src/execution/sync/change-tracking.js";
 import { INTERNAL_TABLE_SCHEMAS } from "../src/execution/internal-tables.js";
 import { resolveNamespaceStoragePlan } from "../src/namespace-storage.js";
@@ -65,10 +73,10 @@ const schema = {
   ],
 } as any;
 
-async function serve(options: { enabled?: boolean; database?: Adapter } = {}) {
+async function serve(options: { enabled?: boolean; database?: Adapter; schema?: unknown } = {}) {
   const database = options.database ?? memoryAdapter();
   const server = await createDatafnServer({
-    schema,
+    schema: (options.schema ?? schema) as any,
     database,
     allowUnknownResources: true,
     ...(options.enabled === false ? {} : { revisions: { enabled: true } }),
@@ -1399,5 +1407,159 @@ describe("DATA-41 revisions: push revision map keys (round 7)", () => {
     expect(result.body.ok).toBe(true);
     expect(Object.prototype.hasOwnProperty.call(result.body.result.revisions, "__proto__")).toBe(true);
     expect(result.body.result.revisions["__proto__"]).toMatchObject({ resource: "task", id: "task:proto", rev: 1 });
+  });
+});
+
+/** An adapter whose revision storage fails as `mode` says; rows read normally. */
+function failingRevisions(database: Adapter, mode: "ddl" | "read"): Adapter {
+  const internal = new Proxy(database.internal, {
+    get(target, property, receiver) {
+      const value = Reflect.get(target, property, receiver);
+      if (typeof value !== "function") return value;
+      return (table: string, ...rest: unknown[]) => {
+        if (table === "__datafn_revisions") {
+          if (mode === "ddl" && property === "ensureTable") throw new Error("permission denied to create table");
+          if (mode === "read" && property === "findMany") throw new Error("revision read failed");
+        }
+        return (value as (...args: unknown[]) => unknown).call(target, table, ...rest);
+      };
+    },
+  });
+  return new Proxy(database, {
+    get(target, property, receiver) {
+      if (property === "internal") return internal;
+      return Reflect.get(target, property, receiver);
+    },
+  });
+}
+
+describe("DATA-41 revisions: clone without revision storage (round 8)", () => {
+  for (const mode of ["ddl", "read"] as const) {
+    it(`returns the rows without $rev and a real cursor when the revision ${mode === "ddl" ? "table cannot be created" : "read fails"}`, async () => {
+      const database = memoryAdapter();
+      const { push } = await serve({ database });
+      for (const id of ["task:1", "task:2", "task:3"]) {
+        expect((await push({ resource: "task", operation: "insert", id, record: { title: id } })).body.ok).toBe(true);
+      }
+      configureRevisions(schema, { enabled: true });
+      const db = failingRevisions(database, mode);
+      const ids = (rows: Array<Record<string, unknown>>) => rows.map((row) => row.id);
+
+      // Explicit page.
+      const page = await executeClone(
+        { clientId: "client:b", tables: ["task"], page: { table: "task", limit: 2 } } as any,
+        schema,
+        db,
+        NS,
+      );
+      expect(page.ok).toBe(true);
+      expect(ids(page.data.task)).toEqual(["task:1", "task:2"]);
+      expect(page.next).not.toBeNull();
+      for (const row of page.data.task) expect(row).not.toHaveProperty("$rev");
+
+      // Auto-paginated (more rows than the clone cap).
+      const capped = await executeClone({ clientId: "client:b", tables: ["task"] } as any, schema, db, NS, undefined, 2);
+      expect(capped.ok).toBe(true);
+      expect(capped.paginated).toBe(true);
+      expect(ids(capped.data.task)).toEqual(["task:1", "task:2"]);
+      for (const row of capped.data.task) expect(row).not.toHaveProperty("$rev");
+
+      // Full clone.
+      const full = await executeClone({ clientId: "client:b", tables: ["task"] } as any, schema, db, NS);
+      expect(full.ok).toBe(true);
+      expect(ids(full.data.task)).toEqual(["task:1", "task:2", "task:3"]);
+      expect(full.cursors.task).not.toBe("0");
+      for (const row of full.data.task) expect(row).not.toHaveProperty("$rev");
+
+      // With working revision storage the same clone pairs every row.
+      const paired = await executeClone({ clientId: "client:b", tables: ["task"] } as any, schema, database, NS);
+      expect(paired.data.task.map((row) => row.$rev)).toEqual([1, 1, 1]);
+    });
+  }
+});
+
+describe("DATA-41 revisions: versioned query without revision storage (round 8)", () => {
+  for (const mode of ["ddl", "read"] as const) {
+    it(`returns the projected rows without $rev when the revision ${mode === "ddl" ? "table cannot be created" : "read fails"}`, async () => {
+      const database = memoryAdapter();
+      const { push } = await serve({ database });
+      await push({ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } });
+      const reader = await serve({ database: failingRevisions(database, mode) });
+      const query = await reader.send("query", { resource: "task", version: 1, withRevisions: true });
+      expect(query.status).toBe(200);
+      expect(query.body.result.data).toEqual([expect.objectContaining({ id: "task:1", title: "a" })]);
+      expect(query.body.result.data[0]).not.toHaveProperty("$rev");
+    });
+  }
+});
+
+describe("DATA-41 revisions: legacy $rev values are never revisions (round 8)", () => {
+  // The resource once declared its own `$rev` field and a field it later
+  // dropped, with revisions off; it now issues revisions under a read policy
+  // for `title`.
+  const before = {
+    resources: [
+      {
+        name: "evolving",
+        version: 1,
+        fields: [
+          { name: "title", type: "string" as const, required: false },
+          { name: "$rev", type: "number" as const, required: false },
+          { name: "secretNote", type: "string" as const, required: false },
+        ],
+      },
+    ],
+    relations: [],
+  };
+  const after = {
+    resources: [
+      {
+        name: "evolving",
+        version: 1,
+        fields: [{ name: "title", type: "string" as const, required: false }],
+        permissions: { read: { fields: ["title"] }, write: { fields: ["title"] } },
+      },
+    ],
+    relations: [],
+  };
+
+  async function evolve() {
+    const database = memoryAdapter();
+    const old = await serve({ database, schema: before, enabled: false });
+    const insert = await old.push({ resource: "evolving", operation: "insert", id: "evolving:1", record: { title: "t", $rev: 7, secretNote: "s" } });
+    expect(insert.body.ok).toBe(true);
+    const merge = await old.push({ resource: "evolving", operation: "merge", id: "evolving:1", record: { $rev: 8 } });
+    expect(merge.body.ok).toBe(true);
+    return serve({ database, schema: after });
+  }
+
+  it("projects a versioned row whose stored $rev the server did not pair, so no legacy $rev or hidden field leaks", async () => {
+    const current = await evolve();
+    const query = await current.send("query", { resource: "evolving", version: 1, withRevisions: true });
+    expect(query.status).toBe(200);
+    expect(query.body.result.data).toEqual([{ id: "evolving:1", title: "t" }]);
+  });
+
+  it("sends no legacy $rev from changes written before the resource issued revisions, on both pull formats and clone", async () => {
+    const current = await evolve();
+    const canonical = await current.send("pull", { clientId: "client:b", cursors: { evolving: "0" } });
+    expect(canonical.body.ok).toBe(true);
+    for (const bucket of ["records", "merged"] as const) {
+      for (const row of canonical.body.result[bucket].evolving ?? []) expect(row).not.toHaveProperty("$rev");
+    }
+    expect(canonical.body.result.records.evolving).toHaveLength(1);
+    const global = await current.send("pull", { clientId: "client:b", cursor: "0" });
+    expect(global.body.ok).toBe(true);
+    const changes = global.body.result.changes as Json[];
+    expect(changes.length).toBeGreaterThan(0);
+    for (const change of changes) {
+      expect(change).not.toHaveProperty("rev");
+      expect(change.record ?? {}).not.toHaveProperty("$rev");
+    }
+    const clone = await current.send("clone", { clientId: "client:b", tables: ["evolving"] });
+    expect(clone.body.result.data.evolving).toHaveLength(1);
+    // Clone pairs the row with the server's revision (bumped by both writes
+    // while revisions were off), never the stored application value 8.
+    expect(clone.body.result.data.evolving[0].$rev).toBe(2);
   });
 });
