@@ -1,0 +1,51 @@
+packages/evidence/README.md
+  s_83fa589146e8c6::t_08d5ed399d3d6c 94
+packages/evidence/scripts/verify-packed.mjs
+  s_83fa589146e8c6::t_95e223f1e9fd72 178-179,181
+packages/evidence/src/cross-values.ts
+  s_83fa589146e8c6::t_4ca418bc1fbd47 3,28-30,32-42,44-45,47-56,58-59
+packages/evidence/src/datetime.ts
+  s_83fa589146e8c6::t_d64ec120962b57 14-15,120,166-169,172,186,206-207
+packages/evidence/src/json.ts
+  s_83fa589146e8c6::t_059f6fb5554021 15
+packages/evidence/src/validate.ts
+  s_83fa589146e8c6::t_75d847ef4e6af2 282-283,299-315
+packages/evidence/test/fixtures.ts
+  s_83fa589146e8c6::t_28c799b29b88da 13-14,27,46,49,52-53,57,59,62,65,69,73-74,78,91,95
+packages/evidence/test/fixtures/cases.json
+  s_533f37de0bc5b0::t_9b37d8a60fae43 9,54-57
+packages/evidence/test/reference.ts
+  s_83fa589146e8c6::t_ff66dd87a09eee 46-47,54-58,81-94,105,125,163
+packages/evidence/test/schema.test.ts
+  s_83fa589146e8c6::t_ebebcea9b24f26 18-35
+packages/evidence/test/validate.test.ts
+  s_83fa589146e8c6::t_21af465a1578fb 78-80
+packages/evidence/schema/evidence-record.v1.json
+  s_83fa589146e8c6::t_f4f57077bc8e5d 5,25-29,44-53,88-89,93-94
+packages/evidence/src/schema.ts
+  s_83fa589146e8c6::t_23acf3163a3a3f 17,74-84,119-141,233-236,240-241,247-250
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fa313d2a440589e8157f922d387f4903cbeec5be",
+  "prompts": {},
+  "sessions": {
+    "s_533f37de0bc5b0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1d29bc56-19ce-4155-99d2-820126a823b6",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_83fa589146e8c6": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21253-9943-7ef0-8aad-8a89b106fa79",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
