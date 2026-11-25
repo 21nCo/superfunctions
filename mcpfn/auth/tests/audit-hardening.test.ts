@@ -142,6 +142,20 @@ describe("AuthFn provider adapter (MCP-SEC-05)", () => {
     }
   });
 
+  it("does not accept the normalized form of a configured resource that normalization changes", async () => {
+    const configured = "https://MCP.example.com/mcp";
+    const handler = createAuthProviderMcpHandler(echoAuthInfo, {
+      resource: configured,
+      provider: { authenticateBearer: async () => session({ resourceIds: ["https://mcp.example.com/mcp"] }) },
+    });
+    expect((await handler(new Request(resource, { headers: { authorization: "Bearer test-access-token" } }))).status).toBe(401);
+    const exact = createAuthProviderMcpHandler(echoAuthInfo, {
+      resource: configured,
+      provider: { authenticateBearer: async () => session({ resourceIds: [configured] }) },
+    });
+    expect((await exact(new Request(resource, { headers: { authorization: "Bearer test-access-token" } }))).status).toBe(200);
+  });
+
   it("refuses a credential that expires while required scopes are resolved", async () => {
     let now = Date.UTC(2026, 10, 25);
     const handler = createAuthProviderMcpHandler(echoAuthInfo, {

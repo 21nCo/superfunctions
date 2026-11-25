@@ -106,8 +106,8 @@ export function createMcpFnAuthProviderAdapter<TSession extends McpFnAuthSession
   const normalized = new URL(options.resource.toString());
   normalized.hash = "";
   // Kept as strings so nothing outside can change the expected audience.
-  // Resource IDs are compared as identifiers (exactly), against the configured
-  // value or its normalized form, never by normalizing the session's IDs.
+  // Resource IDs are compared as identifiers: exactly the configured string,
+  // as AuthFn registers and verifies them (no URL normalization either side).
   const audience = normalized.toString();
   const configuredResource = options.resource.toString();
   return {
@@ -145,7 +145,7 @@ export function createMcpFnAuthProviderAdapter<TSession extends McpFnAuthSession
       if (options.provider.authorize) {
         if (!(await options.provider.authorize(session, audience))) return null;
         audienceVerified = true;
-      } else if (principal.resourceIds.some((id) => id === configuredResource || id === audience)) {
+      } else if (principal.resourceIds.includes(configuredResource)) {
         audienceVerified = true;
       } else if (options.allowUnboundCredentials !== true || principal.resourceIds.length > 0) {
         // The opt-in covers credentials with no binding at all; one bound to

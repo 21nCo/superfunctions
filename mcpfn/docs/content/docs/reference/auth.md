@@ -110,8 +110,8 @@ required. A bearer-specific provider can implement
 containing only that exact Bearer token. An AuthProvider's `authorize()` hook
 receives the normalized MCP resource URL before trusted context is created.
 Without that hook, the principal's `resourceIds` must contain the resource,
-compared exactly as an identifier (the configured `resource` string, or its
-form without a fragment; the default mapping copies `resourceIds` from the
+compared exactly as an identifier (the configured `resource` string as given;
+the default mapping copies `resourceIds` from the
 session, and a custom `map()` must return them); otherwise the credential is
 refused. Expiry is checked again right before the MCP handler runs, and a
 non-finite `expiresAt` counts as expired. `allowUnboundCredentials: true` accepts
