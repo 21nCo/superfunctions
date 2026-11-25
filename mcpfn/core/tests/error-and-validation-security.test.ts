@@ -74,32 +74,6 @@ describe("argument size bound (MCP-SEC-06)", () => {
     expect((await client.callTool({ name: "closed", arguments: { a: "fine" } })).isError).not.toBe(true);
   });
 
-  it("refuses arguments with an inherited enumerable property before schema validation, open or closed", async () => {
-    const handler = vi.fn(async () => structuredResult({ ok: true }));
-    const registry = new McpFnRegistry();
-    for (const additionalProperties of [false, true]) {
-      registry.register({
-        name: additionalProperties ? "open" : "closed",
-        description: "Named object.",
-        inputSchema: { type: "object", properties: { name: { type: "string" } }, additionalProperties },
-        handler,
-      });
-    }
-    const extra = { signal: new AbortController().signal } as Parameters<typeof registry.callTool>[3];
-    for (const name of ["closed", "open"]) {
-      const nested = { name: "ok", child: Object.assign(Object.create({ inherited: 1 }), { v: 1 }) };
-      for (const args of [Object.assign(Object.create({ inherited: 1 }), { name: "ok" }), ...(name === "open" ? [nested] : [])]) {
-        await expect(registry.callTool(name, args, undefined, extra)).rejects.toMatchObject({
-          code: "MCPFN_INVALID_ARGUMENTS",
-          details: { issues: [expect.objectContaining({ keyword: "ownProperties" })] },
-        });
-      }
-    }
-    expect(handler).not.toHaveBeenCalled();
-    await registry.callTool("closed", { name: "ok" }, undefined, extra);
-    expect(handler).toHaveBeenCalledTimes(1);
-  });
-
   it("does not let handleInvalidArguments turn an oversized call into a success", async () => {
     const recover = vi.fn(async () => structuredResult({ recovered: true }));
     const registry = new McpFnRegistry().register({

@@ -14,7 +14,7 @@ function convert(name: string, options: Partial<Parameters<typeof fromOpenAPI>[1
   return fromOpenAPI(fixture(name), { executor: recordingExecutor(), allowMutations: true, ...options });
 }
 
-const PROTO_PROPERTY = "property __proto__ cannot be declared or required: the validators do not read that name alike";
+const PROTO_PROPERTY = "property __proto__ cannot be declared or required: the validators do not read the names every object inherits alike";
 const OVERLAP = "anyOf/oneOf members that can overlap, not, if/then/else or a dependency";
 const REQUIRED_ELSEWHERE = "a required list of another schema for the same object";
 
@@ -449,7 +449,7 @@ describe("fromOpenAPI skip reasons", () => {
 
   it("skips a parameter named __proto__, required or optional, which the validators do not read alike, and keeps ordinary names", () => {
     const { tools, skipped } = convert("skip-prototype-parameter-name");
-    const reason = "query parameter __proto__ cannot be declared: the validators do not read that property name alike";
+    const reason = "query parameter __proto__ cannot be declared: the validators do not read the names every object inherits alike";
     expect(skips({ tools, skipped } as Result)).toEqual([
       ["listItems", "unsupported-parameter-name", reason],
       ["listRequired", "unsupported-parameter-name", reason],
@@ -1315,6 +1315,29 @@ describe("fromOpenAPI bounded and dialect-aware conversion", () => {
         });
       }
     }
+  });
+
+  it("skips a schema or parameter naming any property every object inherits, as under @cfworker/json-schema", () => {
+    const result = fromOpenAPI({
+      openapi: "3.0.3",
+      paths: {
+        "/a": { post: { operationId: "declared", requestBody: body({ type: "object", properties: { toString: { type: "string" } } }), responses: ok } },
+        "/b": { post: { operationId: "required", requestBody: body({ type: "object", required: ["constructor"] }), responses: ok } },
+        "/c": { post: { operationId: "dependency", requestBody: body({ type: "object", dependencies: { valueOf: { required: ["x"] } } }), responses: ok } },
+        "/d": { get: { operationId: "parameter", parameters: [{ name: "isPrototypeOf", in: "query", schema: { type: "string" } }], responses: ok } },
+        "/e": { get: { operationId: "output", responses: json({ type: "object", properties: { hasOwnProperty: { type: "string" } } }) } },
+        "/f": { post: { operationId: "plain", requestBody: body({ type: "object", required: ["ToString"], properties: { ToString: { type: "string" } } }), responses: ok } },
+      },
+    }, options());
+    const reason = (name: string) => PROTO_PROPERTY.replace("__proto__", name);
+    expect(skips(result)).toEqual([
+      ["declared", "unsupported-property-name", reason("toString")],
+      ["required", "unsupported-property-name", reason("constructor")],
+      ["dependency", "unsupported-property-name", reason("valueOf")],
+      ["parameter", "unsupported-parameter-name", "query parameter isPrototypeOf cannot be declared: the validators do not read the names every object inherits alike"],
+      ["output", "unsupported-property-name", reason("hasOwnProperty")],
+    ]);
+    expect(result.tools.map(({ name }) => name)).toEqual(["plain"]);
   });
 
   it("keeps schema-less JSON bodies, large document arrays and unrelated deep reference chains out of the way", () => {

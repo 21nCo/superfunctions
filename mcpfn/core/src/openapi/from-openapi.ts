@@ -15,6 +15,7 @@ import {
   documentItems,
   isDefaultDialect,
   isObject,
+  isPrototypeName,
   NodeBudget,
   OpenApiSkip,
   parseComponentRef,
@@ -946,12 +947,12 @@ class OperationConverter {
       throw new OpenApiSkip("invalid-operation", `parameter ${name} has unknown location ${JSON.stringify(location)}`);
     }
     if (location === "header" && isForbiddenHeader(name)) return undefined;
-    // The validators disagree on a "__proto__" property: Ajv leaves it out of
-    // a closed group, @cfworker/json-schema reads own properties only.
-    if (name === "__proto__") {
+    // A name every object inherits becomes a group property the validators
+    // do not read alike (`isPrototypeName`).
+    if (isPrototypeName(name)) {
       throw new OpenApiSkip(
         "unsupported-parameter-name",
-        `${location} parameter ${name} cannot be declared: the validators do not read that property name alike`,
+        `${location} parameter ${name} cannot be declared: the validators do not read the names every object inherits alike`,
       );
     }
     if (raw.schema === undefined) {

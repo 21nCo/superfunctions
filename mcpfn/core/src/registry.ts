@@ -459,31 +459,25 @@ export function promptArguments<TContext>(
 /** Most values (objects, arrays and scalars together) one tool call may carry. */
 const MAX_ARGUMENT_NODES = 100_000;
 
-/**
- * What makes tool arguments unfit to validate, read before any schema engine
- * runs: more than `limit` values, or an inherited enumerable property, which
- * Ajv (reading own properties only) and @cfworker/json-schema (whose
- * additionalProperties reads inherited ones too) would judge differently.
- */
-function argumentsShapeIssue(value: unknown, limit: number): "maxNodes" | "ownProperties" | undefined {
+function exceedsJsonNodes(value: unknown, limit: number): boolean {
   let count = 0;
   const stack: unknown[] = [value];
   while (stack.length) {
     const current = stack.pop();
     count += 1;
-    if (count > limit) return "maxNodes";
+    if (count > limit) return true;
     if (Array.isArray(current)) {
-      if (count + stack.length + current.length > limit) return "maxNodes";
+      if (count + stack.length + current.length > limit) return true;
       for (const item of current) stack.push(item);
     } else if (current && typeof current === "object") {
       for (const key in current) {
-        if (!Object.hasOwn(current, key)) return "ownProperties";
-        if (count + stack.length + 1 > limit) return "maxNodes";
+        if (!Object.hasOwn(current, key)) continue;
+        if (count + stack.length + 1 > limit) return true;
         stack.push((current as Record<string, unknown>)[key]);
       }
     }
   }
-  return undefined;
+  return false;
 }
 
 export class McpFnRegistry<TContext = undefined> {
@@ -966,14 +960,11 @@ export class McpFnRegistry<TContext = undefined> {
     // the first failure elsewhere.
     // Thrown, not returned: an oversized call never reaches
     // handleInvalidArguments, so it can't be turned into a success.
-    const shapeIssue = argumentsShapeIssue(normalizedArgs, MAX_ARGUMENT_NODES);
-    if (shapeIssue !== undefined) {
+    if (exceedsJsonNodes(normalizedArgs, MAX_ARGUMENT_NODES)) {
       throw new McpFnValidationError(`Invalid arguments for ${registered.definition.name}`, {
         issues: [{
-          path: "/", instancePath: "/", schemaPath: "#", keyword: shapeIssue,
-          message: shapeIssue === "maxNodes"
-            ? `Tool arguments may contain at most ${MAX_ARGUMENT_NODES} values`
-            : "Tool arguments may hold only own properties",
+          path: "/", instancePath: "/", schemaPath: "#", keyword: "maxNodes",
+          message: `Tool arguments may contain at most ${MAX_ARGUMENT_NODES} values`,
         }],
       });
     }

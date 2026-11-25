@@ -164,12 +164,14 @@ for (const { operation, code, reason } of skipped) {
   arrays of primitives; `application/json` and `*+json` bodies; OpenAPI 3.0
   `nullable`, which adds `null` to an explicit `type` only (an `enum` keeps
   excluding `null` unless it lists it). Anything else is listed in `skipped` with a code and reason:
-  external or URL references, `cookie` parameters, a parameter named
-  `__proto__` (`unsupported-parameter-name`) and a schema that declares or
-  requires a property named `__proto__`, in a body or a response
-  (`unsupported-property-name`), under either engine, since Ajv leaves that
-  name out of `properties` and @cfworker/json-schema reads own properties
-  only, non-default styles,
+  external or URL references, `cookie` parameters, a parameter named after
+  a property every object inherits (`__proto__`, `toString`, `constructor`,
+  ...; `unsupported-parameter-name`) and a schema that declares, requires or
+  lists such a name in a dependency, in a body or a response
+  (`unsupported-property-name`), under either engine, since Ajv reads those
+  names through the prototype (and leaves a `__proto__` key of `properties`
+  out) while @cfworker/json-schema reads own properties only,
+  non-default styles,
   object-valued or mixed parameters, bodies without a JSON media type, a
   `$ref` cycle that returns to the same value without descending into a
   property or item, and the 2019-09/2020-12 keywords `prefixItems`,
@@ -218,10 +220,9 @@ for (const { operation, code, reason } of skipped) {
   example `required` in one member and `properties` in another). A pattern
   is matched against required names only when it has no groups,
   alternation, backreferences or lookaround and at most one quantifier,
-  with the matching charged; any other pattern forces nothing. Every
-  required name is an own property: both engines check own properties only
-  (Ajv with `ownProperties`, @cfworker/json-schema from 4.1.6, which mcpFn
-  requires). A child a
+  with the matching charged; any other pattern forces nothing. A required
+  name must be an own property (mcpFn requires @cfworker/json-schema
+  `^4.1.6`, which reads own properties only). A child a
   call can leave out or avoid (an optional body or property, an
   `anyOf`/`oneOf` branch) never stacks, since a shallow valid input exists,
   and a chain of required children from the input that never ends, which

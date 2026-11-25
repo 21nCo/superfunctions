@@ -320,9 +320,21 @@ function surveyValues(root: unknown, keys: WeakMap<object, readonly string[]>): 
   return count;
 }
 
-/** Why a schema property named "__proto__" is refused (`refusePrototypeName`). */
-export const PROTOTYPE_PROPERTY_REASON =
-  "property __proto__ cannot be declared or required: the validators do not read that name alike";
+/**
+ * Whether `name` is a property every object inherits (`__proto__`,
+ * `toString`, `constructor`, ...). Ajv reads such a name through the
+ * prototype in `properties`, `required` and `dependencies`, and leaves a
+ * "__proto__" key of `properties` out; @cfworker/json-schema (4.1.6 and
+ * later) reads own properties only. Neither engine judges it as the other does.
+ */
+export function isPrototypeName(name: unknown): boolean {
+  return typeof name === "string" && Object.hasOwn(Object.prototype, name);
+}
+
+/** Why a schema naming an inherited property is refused (`checkNameList`). */
+export function prototypePropertyReason(name: string): string {
+  return `property ${name} cannot be declared or required: the validators do not read the names every object inherits alike`;
+}
 
 /**
  * A document array, read only when it holds exactly its indices: its length
@@ -509,8 +521,8 @@ export class SchemaConverter {
   private readonly projections = new Map<DirectionalKeyword, WeakMap<object, AccessConflict | null>>();
   /** Schema objects whose conversion failed for a reason of their own, by mode, for the whole call. */
   private readonly failures = new Map<SchemaMode, WeakMap<object, OpenApiSkip>>();
-  /** The property-name lists already read, with whether they name "__proto__" (`checkNameList`). */
-  private readonly readRequired = new WeakMap<object, boolean>();
+  /** The property-name lists and maps already read, with the inherited name they hold, if any (`checkNameList`). */
+  private readonly readNames = new WeakMap<object, string | null>();
   private budget: NodeBudget;
 
   constructor(
@@ -985,10 +997,10 @@ export class SchemaConverter {
       // 2020-12 (OpenAPI 3.1) defines no `dependencies`: it annotates only.
       if (keyword === this.ignoredKeyword()) continue;
       if (keyword === "dependencies" && isObject(value)) {
-        this.checkDependencies(value);
+        this.checkNameList(value, true);
         dependencies = { ...dependencies, ...this.convertDependencies(value, mode, refs) };
       } else if (keyword === "dependentRequired" && isObject(value)) {
-        this.checkDependencies(value);
+        this.checkNameList(value, true);
         dependencies = { ...value, ...dependencies };
       } else if (keyword === "$defs") {
         // Draft-07 has no $defs, so Ajv would not refuse a malformed one.
@@ -1005,36 +1017,32 @@ export class SchemaConverter {
   }
 
   /**
-   * The validators disagree on a property named "__proto__": Ajv leaves that
-   * key of `properties` out and finds Object.prototype for it in `required`,
-   * while @cfworker/json-schema reads own properties only. A schema that
-   * declares or requires it is refused under either engine.
+   * Refuse a list of property names (`required`, a property dependency) or a
+   * map keyed by them (`properties`, `dependencies`, `dependentRequired`)
+   * that names a property every object inherits (`isPrototypeName`). Each
+   * document list or map is read once per call, whatever refers to it, so
+   * the reading stays within the document's size.
    */
-  private refusePrototypeName(): never {
-    throw new OpenApiSkip("unsupported-property-name", PROTOTYPE_PROPERTY_REASON);
+  private checkNameList(names: unknown[] | JsonObject, dependencyLists = false): void {
+    const found = this.inheritedName(names, dependencyLists);
+    if (found !== null) throw new OpenApiSkip("unsupported-property-name", prototypePropertyReason(found));
   }
 
-  /**
-   * Refuse a list of property names (`required`, a property dependency) that
-   * names "__proto__". Each document array is read once per call, so the
-   * reading stays within the document's size.
-   */
-  private checkNameList(list: unknown[]): void {
-    let prototype = this.readRequired.get(list);
-    if (prototype === undefined) {
-      prototype = documentItems(list).includes("__proto__");
-      this.readRequired.set(list, prototype);
+  /** The first inherited name `names` holds (with the lists a dependency map holds), remembered for the call. */
+  private inheritedName(names: unknown[] | JsonObject, dependencyLists: boolean): string | null {
+    let found = this.readNames.get(names);
+    if (found !== undefined) return found;
+    const read = Array.isArray(names) ? documentItems(names) : this.budget.ownKeys(names);
+    found = (read.find(isPrototypeName) as string | undefined) ?? null;
+    if (found === null && dependencyLists && !Array.isArray(names)) {
+      for (const key of read as readonly string[]) {
+        const item = names[key];
+        found = Array.isArray(item) ? this.inheritedName(item, false) : null;
+        if (found !== null) break;
+      }
     }
-    if (prototype) this.refusePrototypeName();
-  }
-
-  /** Refuse a dependency map keyed or listing "__proto__" (`dependencies`, `dependentRequired`). */
-  private checkDependencies(value: JsonObject): void {
-    if (Object.hasOwn(value, "__proto__")) this.refusePrototypeName();
-    for (const key of this.budget.ownKeys(value)) {
-      const item = value[key];
-      if (Array.isArray(item)) this.checkNameList(item);
-    }
+    this.readNames.set(names, found);
+    return found;
   }
 
   private convertEntry(
@@ -1045,7 +1053,7 @@ export class SchemaConverter {
     refs: Set<string>,
   ): [string, unknown] | undefined {
     if (SCHEMA_MAP_KEYWORDS.has(keyword) && isObject(value)) {
-      if (keyword === "properties" && Object.hasOwn(value, "__proto__")) this.refusePrototypeName();
+      if (keyword === "properties") this.checkNameList(value);
       return [keyword, this.convertMap(value, mode, refs)];
     }
     if ((SCHEMA_ARRAY_KEYWORDS.has(keyword) || keyword === "items") && Array.isArray(value)) {
@@ -2195,7 +2203,7 @@ function forEachInPlace(schema: JsonObject, visit: (member: unknown) => void, al
  * demand of it together: the names any of them `required`, the JSON types all
  * of their `type`s allow (undefined when none has one), and the largest
  * `minItems` and `minProperties`. `required` and `names` hold the names every
- * accepted object owns (the validators check own properties only): those a
+ * accepted object owns (@cfworker/json-schema reads own properties only): those a
  * `required` list names, and every name the closed objects
  * (`additionalProperties: false`, no patterns) all declare and no member
  * declares `false`, when `minProperties` leaves none of them out. Members
