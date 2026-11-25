@@ -532,6 +532,19 @@ describe("fromOpenAPI under @cfworker/json-schema", () => {
     expect(result.tools.map(({ name }) => name)).toEqual(["plainBody"]);
     const validate = createSchemaCompiler("cfworker").compile(tool(result.tools, "plainBody").inputSchema);
     expect([validate({ body: { proto: {} } }), validate({ body: {} })]).toEqual([true, false]);
+    // A wide allOf beside the name is converted within the document budget, never scanned for it apart.
+    const allOf = Array.from({ length: 20_000 }, (_, index) => ({ required: [`p${index % 10}`] }));
+    const started = performance.now();
+    const wide = fromOpenAPI(JSON.parse(JSON.stringify({
+      openapi: "3.1.0",
+      paths: {
+        "/wide": { post: { operationId: "wideProto", requestBody: { required: true, content: { "application/json": { schema: { type: "object", allOf, properties: { PROTO: { type: "string" } } } } } }, responses: { "204": { description: "Done" } } } },
+        "/flat": { post: { operationId: "wideFlat", requestBody: { required: true, content: { "application/json": { schema: { type: "object", allOf } } } }, responses: { "204": { description: "Done" } } } },
+      },
+    }).replaceAll("PROTO", "__proto__")) as Record<string, unknown>, { executor: recordingExecutor(), allowMutations: true });
+    expect(performance.now() - started).toBeLessThan(2_000);
+    expect(verdicts(wide).map(([operationId, code]) => [operationId, code])).toEqual([["wideProto", "unsupported-property-name"]]);
+    expect(wide.tools.map(({ name }) => name)).toEqual(["wideFlat"]);
   });
 
   it("skips a __proto__ parameter, required or optional, as under Ajv", () => {
