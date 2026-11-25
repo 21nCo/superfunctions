@@ -1602,32 +1602,48 @@ describe("document Buffer projections", () => {
 });
 
 describe("document sensitive-key matching", () => {
-  it("never matches the key of a member JSON drops, or of one whose key does not fit", () => {
-    const isSensitive = vi.fn((key: string) => key === "token");
+  it("matches each listed key once, before its member is read, dropped members included", () => {
+    const calls: string[] = [];
+    const isSensitive = (key: string) => (calls.push(`match ${key.slice(0, 8)}`), key === "token");
     const long = "x".repeat(5_000);
-    const shared = { [long]: undefined, fn: () => 1, token: "dummy", kept: 1 };
-    const text = serializeJsonMember("data", [shared, shared], { isSensitive });
+    const shared = { [long]: undefined, fn: () => 1, token: "test-dummy-token", kept: 1 };
+    const logged = new Proxy(shared, {
+      get: (target, key, receiver) => (calls.push(`get ${String(key).slice(0, 8)}`), Reflect.get(target, key, receiver)),
+    });
+    const text = serializeJsonMember("data", [logged, logged], { isSensitive });
     expect(String(text)).toBe('[{"token":"[REDACTED]","kept":1},{"token":"[REDACTED]","kept":1}]');
-    expect(isSensitive.mock.calls.map(([key]) => key)).toEqual(["token", "kept", "token", "kept"]);
+    const row = ["get toJSON", "match xxxxxxxx", "get xxxxxxxx", "match fn", "get fn", "match token", "get token"];
+    expect(calls).toEqual([...row, "match kept", "get kept", ...row, "match kept", "get kept"]);
+    // The reads themselves are those of JSON.stringify, in its order.
+    const reads = calls.filter((call) => call.startsWith("get "));
+    calls.length = 0;
+    JSON.stringify([logged, logged]);
+    expect(reads).toEqual(calls);
 
-    isSensitive.mockClear();
+    // A key whose member cannot print is still matched (its listing paid for it), and the member then fails.
+    calls.length = 0;
     expect(() =>
       serializeJsonMember("data", { [long]: 1 }, { budget: createDocumentBudget(100), isSensitive })
     ).toThrow(RangeError);
-    expect(isSensitive).not.toHaveBeenCalled();
+    expect(calls).toEqual(["match xxxxxxxx"]);
   });
 
-  it("charges each dropped member one unit of work, so dropped keys stay bounded", () => {
+  it("charges each listed key 1 + floor(length / 64) units, so long dropped keys stay bounded", () => {
     const shared = { ["x".repeat(5_000)]: undefined };
-    const rows = Array.from({ length: 2_000 }, () => shared);
-    // Each row prints "{}" and costs one unit for its dropped member: 2,000 units of a 22,500 allowance.
-    const fits = finishWith(10_000, { ok: true, data: rows, exitCode: 2 });
+    const rows = (count: number) => Array.from({ length: count }, () => shared);
+    // Each row prints "{}" and costs 1 + 78 units for its dropped key: 250 rows take 19,750 of a 22,500 allowance.
+    const fits = finishWith(10_000, { ok: true, data: rows(250), exitCode: 2 });
     expect(fits.exitCode).toBe(2);
-    expect(fits.out).toBe(`${JSON.stringify({ ok: true, data: rows })}\n`);
-    // 1,000 rows of 25 dropped members print 3,001 characters but cost 25,000 units, past the allowance.
+    expect(fits.out).toBe(`${JSON.stringify({ ok: true, data: rows(250) })}\n`);
+    // 300 rows print 901 characters but cost 23,700 units, past the allowance.
+    expect(finishWith(10_000, { ok: true, data: rows(300), exitCode: 2 }).out).toBe(
+      `${JSON.stringify(FAILURE_DOCUMENT)}\n`
+    );
+    // Short dropped keys cost one unit each.
     const dropped = Object.fromEntries(Array.from({ length: 25 }, (_, index) => [`k${index}`, undefined]));
-    const many = Array.from({ length: 1_000 }, () => dropped);
-    expect(finishWith(10_000, { ok: true, data: many, exitCode: 2 }).out).toBe(`${JSON.stringify(FAILURE_DOCUMENT)}\n`);
+    expect(finishWith(10_000, { ok: true, data: Array.from({ length: 1_000 }, () => dropped), exitCode: 2 }).out).toBe(
+      `${JSON.stringify(FAILURE_DOCUMENT)}\n`
+    );
   });
 });
 
@@ -1983,26 +1999,204 @@ describe("document work allowance next to printed text", () => {
   });
 });
 
-describe("document key matching during projection", () => {
-  it("matches a key when its projection first charges work, and never matches a dropped member's key otherwise", () => {
-    const box = () => Object.assign(new Number(0), { valueOf: () => `${" ".repeat(999)}1` });
-    const longKey = `${"x".repeat(100)}token`;
-    const isSensitive = vi.fn((key: string) => key.includes("token"));
-    const budget = createDocumentBudget(10_000);
-    const work = createWorkBudget(10_000);
-    const before = { ...work };
-    const text = serializeJsonMember(
-      "data",
-      { [`${"y".repeat(100)}token`]: undefined, [longKey]: box(), visible: box() },
-      { budget, work, isSensitive }
+describe("document work accounts", () => {
+  // CLI-22 architecture reset: each member's redaction is decided once, before its value is read, and every charge goes
+  // through one table of (kind, redaction) -> allowance.
+  const LIMIT = 10_000;
+  // The masked sibling: its key and 19,000 items, 2L minus a margin of 1,000, which leaves 3,499 of the 22,500 units
+  // for work that prints nothing (2L + L/4), so visible work misfiled to that allowance makes the document fail.
+  const MASKED = 19_000;
+  const box = () => Object.assign(new Number(0), { valueOf: () => `${" ".repeat(999)}1` });
+  const keys = (count: number, length: number, value: unknown = 1) =>
+    Object.fromEntries(Array.from({ length: count }, (_, index) => [String(index).padStart(length, "k"), value]));
+  const bufferLike = (count: number) =>
+    Object.assign(new BigInt64Array(count), { toJSON: Buffer.prototype.toJSON }) as unknown as object;
+  const bufferPrinted = (count: number) => ({ type: "Buffer", data: Array.from({ length: count }, () => "0") });
+  const typedPrinted = (count: number) => Object.fromEntries(Array.from({ length: count }, (_, index) => [index, 0]));
+
+  // Each kind of charge: a visible value whose work, misfiled to the allowance for work that prints nothing, would
+  // pass the margin; one under a redacted key within the margin; and one under a redacted key past it.
+  const kinds: Array<{
+    kind: string;
+    visible: () => unknown;
+    printed: unknown;
+    redacted: () => unknown;
+    over: () => unknown;
+  }> = [
+    // 100 keys of 70 characters cost 2 units each (key matching), from the listing share: 200 units.
+    { kind: "long key", visible: () => keys(100, 70), printed: keys(100, 70), redacted: () => keys(100, 130), over: () => keys(1_300, 130) },
+    // Short keys cost one unit each.
+    { kind: "short key", visible: () => keys(500, 3), printed: keys(500, 3), redacted: () => keys(500, 3), over: () => keys(4_000, 3) },
+    // 700 typed-array indexes cost 22,400 units from the allowance for values that print (native text 5,491).
+    { kind: "typed-array index", visible: () => new Uint8Array(700), printed: typedPrinted(700), redacted: () => new Uint8Array(20), over: () => new Uint8Array(120) },
+    // Node's built-in Buffer toJSON on a bigint typed array copies 150 items: 4,800 units.
+    { kind: "native Buffer copy", visible: () => bufferLike(150), printed: bufferPrinted(150), redacted: () => bufferLike(20), over: () => bufferLike(120) },
+    // A Number box whose valueOf is a 1,000-character numeric string: 1,000 units each.
+    { kind: "numeric string", visible: () => [box(), box(), box(), box(), box()], printed: [1, 1, 1, 1, 1], redacted: () => [box()], over: () => [box(), box(), box(), box()] },
+    // Array items are charged as work only under a redacted key.
+    { kind: "array item", visible: () => new Array(2_000).fill(0), printed: new Array(2_000).fill(0), redacted: () => new Array(400), over: () => new Array(4_000) },
+    // A bigint that fits is checked without work.
+    { kind: "bigint check", visible: () => 10n ** 300n, printed: (10n ** 300n).toString(), redacted: () => 10n ** 300n, over: () => new Array(4_000) },
+  ];
+
+  type Placement = "visible" | "redacted" | "over" | "dropped";
+  const member = (entry: (typeof kinds)[number], placement: Placement) => {
+    switch (placement) {
+      case "visible":
+        return { value: { v: entry.visible() }, printed: { v: entry.printed } };
+      case "redacted":
+        return { value: { token: entry.redacted() }, printed: { token: "[REDACTED]" } };
+      case "over":
+        return { value: { token: entry.over() }, printed: undefined };
+      case "dropped":
+        // The value is projected (its getter and toJSON run), then JSON drops the member: only its key is charged.
+        return { value: { v: { toJSON: () => (entry.visible(), undefined) } }, printed: {} };
+    }
+  };
+
+  const cases = kinds.flatMap((entry) =>
+    (["visible", "redacted", "over", "dropped"] as const).flatMap((placement) =>
+      [true, false].map((maskedFirst) => ({ entry, placement, maskedFirst }))
+    )
+  );
+
+  it.each(cases)("$entry.kind, $placement, masked sibling first: $maskedFirst", ({ entry, placement, maskedFirst }) => {
+    const { value: own, printed } = member(entry, placement);
+    const masked = { password: new Array(MASKED) };
+    const value = maskedFirst ? { ...masked, ...own } : { ...own, ...masked };
+    const expected =
+      printed === undefined
+        ? undefined
+        : maskedFirst
+          ? { password: "[REDACTED]", ...printed }
+          : { ...printed, password: "[REDACTED]" };
+
+    const data = finishWith(LIMIT, { ok: true, data: value, exitCode: 3 });
+    if (expected === undefined) {
+      expect(data.exitCode).toBe(1);
+      expect(data.out).toBe(`${JSON.stringify(FAILURE_DOCUMENT)}\n`);
+    } else {
+      expect(data.exitCode).toBe(3);
+      expect(parseOnlyDocument(data)).toEqual({ ok: true, data: expected });
+    }
+
+    const failure = finishWith(LIMIT, {
+      ok: false,
+      error: Object.assign(new Error("closed"), { code: "CLOSED", exitCode: 7, details: value }),
+    });
+    expect(failure.exitCode).toBe(7);
+    expect(parseOnlyDocument(failure)).toEqual({
+      ok: false,
+      error: { code: "CLOSED", message: "closed", ...(expected === undefined ? {} : { details: expected }) },
+    });
+
+    const diagnostic = { code: "D", severity: "info", message: "m", details: value } as Diagnostic;
+    const listed = finishWith(LIMIT, { ok: true, data: "done", exitCode: 2 }, [diagnostic]);
+    expect(listed.exitCode).toBe(2);
+    expect(parseOnlyDocument(listed)).toEqual({
+      ok: true,
+      data: "done",
+      diagnostics: [
+        { code: "D", severity: "info", message: "m", ...(expected === undefined ? {} : { details: expected }) },
+      ],
+    });
+  });
+
+  it("charges each kind of work to the allowance its redaction selects, matching each key before its value is read", () => {
+    const calls: string[] = [];
+    const isSensitive = (key: string) => (calls.push(`match ${key.slice(0, 6)}`), key === "token");
+    const measure = (value: unknown, limit = LIMIT) => {
+      const work = createWorkBudget(limit);
+      const before = { ...work };
+      calls.length = 0;
+      let threw = false;
+      try {
+        serializeJsonMember("data", value, { budget: createDocumentBudget(limit), work, isSensitive });
+      } catch {
+        threw = true;
+      }
+      return {
+        threw,
+        discarded: before.unitsLeft - work.unitsLeft,
+        printed: before.printedUnitsLeft - work.printedUnitsLeft,
+      };
+    };
+    const withGetter = (record: object, label: string, value: unknown) =>
+      Object.defineProperty(record, label, {
+        enumerable: true,
+        get: () => (calls.push(`get ${label}`), value),
+      });
+
+    // Keys: 1 + floor(length / 64) units each, when listed, printed or not.
+    expect(measure({ a: 1 })).toEqual({ threw: false, discarded: 1, printed: 0 });
+    expect(measure({ ["k".repeat(130)]: 1 })).toEqual({ threw: false, discarded: 3, printed: 0 });
+    expect(measure({ ["k".repeat(130)]: undefined, [Symbol("s")]: 1 })).toEqual({ threw: false, discarded: 4, printed: 0 });
+    // Typed-array indexes: 32 units each, plus their listed keys.
+    expect(measure({ v: new Uint8Array(3) })).toEqual({ threw: false, discarded: 1 + 3, printed: 96 });
+    expect(measure({ token: new Uint8Array(3) })).toEqual({ threw: false, discarded: 1 + 96 + 3, printed: 0 });
+    // Node's Buffer toJSON on a bigint typed array: 32 units per item it copies, then its two keys (and, redacted, items).
+    expect(measure({ v: bufferLike(2) })).toEqual({ threw: false, discarded: 1 + 2, printed: 64 });
+    expect(measure({ token: bufferLike(2) })).toEqual({ threw: false, discarded: 1 + 64 + 2 + 2, printed: 0 });
+    // Numeric strings: one unit per code unit read.
+    expect(measure({ v: box() })).toEqual({ threw: false, discarded: 1, printed: 1_000 });
+    expect(measure({ token: box() })).toEqual({ threw: false, discarded: 1 + 1_000, printed: 0 });
+    // Array items: text outside a redacted key, one unit each under one.
+    expect(measure({ v: [1, 2, 3] })).toEqual({ threw: false, discarded: 1, printed: 0 });
+    expect(measure({ token: [1, 2, 3] })).toEqual({ threw: false, discarded: 1 + 3, printed: 0 });
+    // A string scanned and found too long: each scanned code unit. `{"v":` leaves 45 characters, and each newline
+    // prints as 2, so the scan stops after 22 code units.
+    expect(measure({ v: "\n".repeat(30) }, 50)).toEqual({ threw: true, discarded: 1 + 22, printed: 0 });
+    // A bigint too long for the 45 characters left: the text left, when the check fails...
+    expect(measure({ v: 10n ** 100n }, 50)).toEqual({ threw: true, discarded: 1 + 45, printed: 0 });
+    // ...and its decimal text when only the conversion shows it does not fit (2^150 has 46 digits).
+    expect(measure({ v: 2n ** 150n }, 50)).toEqual({ threw: true, discarded: 1 + 46, printed: 0 });
+    // Under a redacted key a bigint is never checked or converted.
+    expect(measure({ token: 10n ** 100n }, 50)).toEqual({ threw: false, discarded: 1, printed: 0 });
+
+    // Each key is matched before its member's getter or toJSON runs.
+    const value = withGetter(
+      withGetter({}, "token", { toJSON: (key: string) => (calls.push(`toJSON ${key}`), box()) }),
+      "v",
+      { toJSON: (key: string) => (calls.push(`toJSON ${key}`), box()) }
     );
-    expect(JSON.parse(String(text))).toEqual({ [longKey]: "[REDACTED]", visible: 1 });
-    // The dropped member's key is never matched; the redacted key is matched once, before its box is read.
-    expect(isSensitive.mock.calls).toEqual([[longKey], ["visible"]]);
-    // 3 listed keys, the long key's scan and the redacted box's 1,000-character read, all from the discarded allowance;
-    // only the visible box is charged to the allowance for values that print.
-    expect(before.unitsLeft - work.unitsLeft).toBe(3 + longKey.length + 1_000);
-    expect(before.printedUnitsLeft - work.printedUnitsLeft).toBe(1_000);
+    expect(measure(value)).toEqual({ threw: false, discarded: 2 + 1_000, printed: 1_000 });
+    expect(calls).toEqual(["match token", "get token", "toJSON token", "match v", "get v", "toJSON v"]);
+  });
+
+  it("prints long visible keys next to a masked walk in either order (round-12 longkey)", () => {
+    for (const maskedFirst of [true, false]) {
+      // 100 keys of 70 characters (2 units each) whose Number boxes read a one-character numeric string.
+      const visible = keys(100, 70, Object.assign(new Number(0), { valueOf: () => "1" }));
+      const masked = { password: new Array(MASKED) };
+      const data = maskedFirst ? { ...masked, ...visible } : { ...visible, ...masked };
+      const result = finishWith(LIMIT, { ok: true, data, exitCode: 3 });
+      expect(result.exitCode).toBe(3);
+      expect((parseOnlyDocument(result).data as Record<string, unknown>).password).toBe("[REDACTED]");
+      expect(Object.keys(parseOnlyDocument(result).data as object)).toHaveLength(101);
+    }
+  });
+
+  it("stops reading diagnostics that share an oversized bigint once its failed checks spend the allowance", () => {
+    for (const limit of [10_000, 100_000]) {
+      // A bigint far longer than the limit: each failed check is charged the text left (about the limit), so only the
+      // first few diagnostics are written (without their details) and reading stops, whatever their count.
+      const big = BigInt(`0x${"5".repeat(limit)}`);
+      const stdout: string[] = [];
+      const stderr: string[] = [];
+      const output = createDocumentOutput({
+        maxLength: limit,
+        stdout: (text) => stdout.push(text),
+        stderr: (text) => stderr.push(text),
+      });
+      let added = 0;
+      for (; added < 10_000 && !output.diagnostics.full(); added += 1) {
+        output.diagnostics.add({ code: "D", severity: "info", message: "m", details: { n: big } });
+      }
+      expect(added).toBe(3);
+      expect(output.finish({ ok: true, data: "done", exitCode: 3 })).toBe(3);
+      const document = JSON.parse(stdout.join("")) as { diagnostics: Array<Record<string, unknown>> };
+      expect(document.diagnostics).toEqual(Array.from({ length: 3 }, () => ({ code: "D", severity: "info", message: "m" })));
+    }
   });
 });
 

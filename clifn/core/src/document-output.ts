@@ -3,6 +3,7 @@ import type { Diagnostic } from "./diagnostics.js";
 import { classifyRunnerFailure, RUNNER_FAILED_CODE, type RunnerErrorPayload } from "./errors.js";
 import {
   createDocumentBudget,
+  chargeWork,
   createWorkBudget,
   DocumentBudgetExceeded,
   documentLimit,
@@ -10,8 +11,8 @@ import {
   JsonText,
   serializeJsonMember,
   spendText,
-  spendWork,
   toLength,
+  workLeft,
   type DocumentBudget,
   type WorkBudget,
 } from "./json-value.js";
@@ -174,7 +175,7 @@ function segmentOf(budget: DocumentBudget): DocumentBudget {
  * the text budget gives them back, the work budget keeps them, so the next charge fails once the work is spent.
  */
 function chargeDropped(work: WorkBudget, consumed: number): void {
-  work.unitsLeft -= Math.max(0, consumed);
+  chargeWork(work, "dropped", Math.max(0, consumed), false, "record");
 }
 
 /**
@@ -190,7 +191,7 @@ function chargeString(text: string, budgets: Budgets, maxCharge: number): string
   if (encoded === undefined) {
     if (text.length + 2 > room) {
       // A string scanned and found too long was charged by the scan (see `encodeString`).
-      chargeDropped(budgets.work, Math.min(text.length, maxCharge));
+      chargeWork(budgets.work, "rejected", Math.min(text.length, maxCharge), false, "record");
     }
     throw new DocumentBudgetExceeded("Value too large for a result document");
   }
@@ -522,7 +523,8 @@ export function createDocumentOutput(options: DocumentOutputOptions): DocumentOu
     text: createDocumentBudget(Math.max(0, limit - 1 - SUCCESS_FRAME_LENGTH - "0".length - DIAGNOSTICS_MEMBER_LENGTH)),
     work: createWorkBudget(limit),
   };
-  const copyAllowance = { unitsLeft: limit };
+  // Not a work allowance: the units the copies `list()` parses may use (see COPY_UNITS_PER_DETAILS_CHAR).
+  let copyUnitsLeft = limit;
   // In the order they were added; undefined for one dropped when it was added.
   const entries: Array<PreparedDiagnostic | undefined> = [];
   // The copies `list()` returns, parsed from the kept text the first time they are listed; `copied` entries so far.
@@ -536,7 +538,7 @@ export function createDocumentOutput(options: DocumentOutputOptions): DocumentOu
   const consumed = () => entries.length + unreadableCount;
   const full = () =>
     consumed() >= maxDiagnostics ||
-    kept.work.unitsLeft < 1 ||
+    workLeft(kept.work, "entry") < 1 ||
     kept.text.charsLeft < MIN_DIAGNOSTIC_LENGTH;
 
   const prepare = (input: unknown): PreparedDiagnostic | undefined => {
@@ -545,7 +547,7 @@ export function createDocumentOutput(options: DocumentOutputOptions): DocumentOu
     // so an add from its getter or toJSON could not be charged to the same budget: it is dropped (see `add`).
     preparing = true;
     try {
-      spendWork(kept.work, 1);
+      chargeWork(kept.work, "entry", 1);
       // Its separator, then its text.
       spendText(item, 1);
       const written = toDocumentDiagnostic(input as Diagnostic, { text: item, work: kept.work }, limit);
@@ -564,7 +566,7 @@ export function createDocumentOutput(options: DocumentOutputOptions): DocumentOu
     add(input) {
       if (preparing) {
         // Never read: dropped with a fixed warning; one unit of work, so a getter that keeps adding stops the reading.
-        kept.work.unitsLeft -= 1;
+        chargeWork(kept.work, "entry", 1, false, "record");
         reentrantCount += 1;
         return;
       }
@@ -579,7 +581,7 @@ export function createDocumentOutput(options: DocumentOutputOptions): DocumentOu
         droppedRest = true;
         return;
       }
-      kept.work.unitsLeft -= 1;
+      chargeWork(kept.work, "entry", 1, false, "record");
       unreadableCount += 1;
     },
     drop() {
@@ -593,8 +595,8 @@ export function createDocumentOutput(options: DocumentOutputOptions): DocumentOu
         }
         let details = "";
         const units = (entry.details?.length ?? 0) * COPY_UNITS_PER_DETAILS_CHAR;
-        if (entry.details !== undefined && units <= copyAllowance.unitsLeft) {
-          copyAllowance.unitsLeft -= units;
+        if (entry.details !== undefined && units <= copyUnitsLeft) {
+          copyUnitsLeft -= units;
           details = entry.details;
         }
         copies.push(JSON.parse(`${entry.head}${details}}`) as Diagnostic);

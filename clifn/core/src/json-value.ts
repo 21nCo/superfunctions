@@ -42,22 +42,23 @@ export const MIN_OPEN_KEYS = 65_536;
 /**
  * The work units an index of a typed array costs before its keys are listed, printed or not: `Object.keys` creates each
  * index key as a new string (about 32 bytes with its slot) although the array stores its elements outside the heap, so
- * the units bound that allocation. Outside a redacted key they are charged to the allowance for members that print
- * (see PRINTED_WORK_SHARE), under one to the allowance for work that prints nothing. Reading and printing each member
+ * the units bound that allocation. They are WorkKind `value`: outside a redacted key charged to the allowance for
+ * values that print (see PRINTED_WORK_SHARE), under one to the allowance for work that prints nothing. Reading and printing each member
  * is charged as for any other object.
  */
 export const TYPED_ARRAY_INDEX_UNITS = 32;
 /**
- * The work units per character of the text budget allowed for work done for values that print (outside a redacted
- * key), kept apart from the allowance for work that prints nothing, so printed values never use up the latter: the
+ * The work units per character of the text budget allowed for WorkKind `value` outside a redacted key (work done for
+ * values that print), kept apart from the allowance for work that prints nothing, so printed values never use up the latter: the
  * TYPED_ARRAY_INDEX_UNITS of each typed array index (a typed array of numbers prints at least 6 characters per index,
  * so one that fits the text costs at most 32/6 units per character it prints), and each code unit of a numeric string
  * read by ToNumber (an array length or a Number box's valueOf; at most MAX_NUMERIC_STRING_LENGTH each).
  */
 export const PRINTED_WORK_SHARE = 6;
 /**
- * The share of the text budget added to the work budget for listed keys whose members print: a printed member costs at
- * least 4 characters, so a document that fits prints at most a quarter of its text budget in keys.
+ * The share of the text budget added to the work budget for listed keys whose members print: a printed member with a
+ * key of length n costs at least n + 4 characters and is charged 1 + floor(n / KEY_MATCH_UNIT) units, at most a
+ * quarter of them, so the keys of a document that fits never take more than this share.
  */
 const LISTED_KEYS_SHARE = 4;
 
@@ -72,25 +73,107 @@ export interface DocumentBudget {
 /**
  * How much work one result document may still do, in units, separate from its text, in two allowances. Each unit is
  * charged once and never given back, also when the value it was charged for fails. Printed text is charged to the
- * text budget.
+ * text budget. Only `chargeWork` (through WORK_ACCOUNTS) and `createWorkBudget` change these allowances.
  *
- * `unitsLeft` pays for each own key of each object listed (when it is listed, before any of its members is read,
- * whether the member then prints, is dropped, is skipped as a symbol or non-enumerable key, or is walked under a
- * redacted key), and for the work under a redacted key: each array item, TYPED_ARRAY_INDEX_UNITS per typed array
- * index (and per item of an array Node's built-in Buffer toJSON must allocate, see `projectBuffer`) and each code unit
- * of a numeric string read; it also pays for each code unit scanned in a string found too long to print, and each
- * character of a segment (details or a diagnostic) that was written and then left out. It is twice the text budget
- * for work that prints nothing, plus a quarter of it (LISTED_KEYS_SHARE) for the keys of members that print: every
- * printed member costs at least 4 characters (`"":0`), so a document that fits prints at most that many keys, and
- * its discarded work keeps the whole twofold allowance whatever the order of its members.
+ * `unitsLeft` pays for work that prints nothing, twice the text budget, plus a quarter of it (LISTED_KEYS_SHARE) for
+ * the keys of members that print: every printed member costs at least its key's length plus 4 characters (`"":0`),
+ * so a document that fits spends at most that share on its printed keys (see WorkKind "key"), and its work that prints
+ * nothing keeps the whole twofold allowance whatever the order of its members.
  *
- * `printedUnitsLeft` pays for the same typed array index units and numeric string reads outside a redacted key:
- * PRINTED_WORK_SHARE units per character of the text budget, so this work stays in proportion to the text the
- * document may print and never takes from the allowance for work that prints nothing.
+ * `printedUnitsLeft` pays for the work of projecting values that print (WorkKind "value" outside a redacted key):
+ * PRINTED_WORK_SHARE units per character of the text budget, so this work stays in proportion to the text the document
+ * may print and never takes from the allowance for work that prints nothing.
  */
 export interface WorkBudget {
   unitsLeft: number;
   printedUnitsLeft: number;
+}
+
+/**
+ * What a unit of work pays for. The allowance it is charged to depends only on the kind and on whether the walk is
+ * inside a member under a redacted key (WORK_ACCOUNTS):
+ *
+ * | kind       | what is charged                                                    | visible            | redacted    |
+ * | ---------- | ------------------------------------------------------------------ | ------------------ | ----------- |
+ * | `key`      | each listed own key, 1 + floor(length / KEY_MATCH_UNIT) (symbol 1) | `unitsLeft`        | `unitsLeft` |
+ * | `value`    | TYPED_ARRAY_INDEX_UNITS per typed-array index or Buffer item the   | `printedUnitsLeft` | `unitsLeft` |
+ * |            | native toJSON copies; each code unit of a numeric string read      |                    |             |
+ * | `item`     | each array item walked                                             | (text)             | `unitsLeft` |
+ * | `rejected` | a string scanned and found too long; a bigint too long to print    | `unitsLeft`        | `unitsLeft` |
+ * | `dropped`  | each character of a segment (details, diagnostic) written, then    | `unitsLeft`        | `unitsLeft` |
+ * |            | left out                                                           |                    |             |
+ * | `entry`    | each diagnostic read, added or found unreadable                    | `unitsLeft`        | `unitsLeft` |
+ *
+ * An array item outside a redacted key is not charged as work: it prints at least one character and a separator,
+ * charged as text.
+ *
+ * Every operation whose cost grows with the size of a caller's value is bounded before it runs or charged:
+ * - [[OwnPropertyKeys]] (Reflect.ownKeys): the engine builds the list before it can be counted (a Proxy's from its
+ *   trap), as JSON.stringify does; it is then charged as `key`, before any descriptor is read, and the lists open on
+ *   the path are bounded together (OPEN_KEYS_SHARE).
+ *   A typed array's list is bounded by its internal length first (`value`).
+ * - matching a key against `isSensitive`: once per listed member, paid by its `key` charge.
+ * - ToNumber of a string (an array length, a Number box): at most MAX_NUMERIC_STRING_LENGTH code units, charged as
+ *   `value` before it is converted.
+ * - the escape scan of a string that could only fit without escapes (`escapedFits`): a string found too long is
+ *   charged as `rejected` for the code units scanned; one that fits is charged as text.
+ * - JSON.stringify of a string: only once it is known to fit the text left, charged as text.
+ * - the bigint magnitude check: a comparison with a constant below 2^MAX_SMALL_BIGINT_BITS, otherwise BigInt.asIntN
+ *   at the width of the text left, whose cost depends on that width, not on the value's size; a value found too long
+ *   is charged as `rejected` for the text left.
+ * - String(bigint): only once the check passed, at most a few characters past the text left; a conversion that does
+ *   not fit is charged as `rejected` for its length.
+ * - a segment written and then left out: charged as `dropped` for the text it wrote.
+ */
+export type WorkKind = "key" | "value" | "item" | "rejected" | "dropped" | "entry";
+
+type WorkAccount = "unitsLeft" | "printedUnitsLeft";
+
+/** The allowance each kind of work is charged to: outside a redacted key, then under one (see `WorkKind`). */
+const WORK_ACCOUNTS: Readonly<Record<WorkKind, readonly [visible: WorkAccount | undefined, redacted: WorkAccount]>> = {
+  key: ["unitsLeft", "unitsLeft"],
+  value: ["printedUnitsLeft", "unitsLeft"],
+  item: [undefined, "unitsLeft"],
+  rejected: ["unitsLeft", "unitsLeft"],
+  dropped: ["unitsLeft", "unitsLeft"],
+  entry: ["unitsLeft", "unitsLeft"],
+};
+
+/**
+ * How a charge treats an allowance it does not fit: `spend` (work already done or under way) charges it and then
+ * throws, so the charge stays; `fit` (work about to start) throws before charging anything; `record` (a segment
+ * already left out) charges it without throwing, so the next charge fails.
+ */
+export type WorkPolicy = "spend" | "fit" | "record";
+
+/**
+ * Charges `units` of work of `kind` to the allowance WORK_ACCOUNTS selects for it, outside a redacted key or under one
+ * (`redacted`). The only place a charge is made.
+ */
+export function chargeWork(
+  work: WorkBudget,
+  kind: WorkKind,
+  units: number,
+  redacted = false,
+  policy: WorkPolicy = "spend"
+): void {
+  const account = WORK_ACCOUNTS[kind][redacted ? 1 : 0];
+  if (account === undefined) {
+    return;
+  }
+  if (policy === "fit" && units > work[account]) {
+    exceeded();
+  }
+  work[account] -= units;
+  if (policy === "spend" && work[account] < 0) {
+    exceeded();
+  }
+}
+
+/** What is left of the allowance `chargeWork` charges for `kind` (Infinity where it charges nothing). */
+export function workLeft(work: WorkBudget, kind: WorkKind, redacted = false): number {
+  const account = WORK_ACCOUNTS[kind][redacted ? 1 : 0];
+  return account === undefined ? Number.POSITIVE_INFINITY : work[account];
 }
 
 /**
@@ -134,22 +217,6 @@ export function spendText(budget: DocumentBudget, chars: number): void {
   budget.charsLeft -= chars;
 }
 
-/** Counts `units` of work against the budget, never given back; throws a RangeError when they do not fit. */
-export function spendWork(work: Pick<WorkBudget, "unitsLeft">, units: number): void {
-  work.unitsLeft -= units;
-  if (work.unitsLeft < 0) {
-    exceeded();
-  }
-}
-
-/** Counts `units` of work done for values that print, never given back; throws a RangeError when they do not fit. */
-function spendPrintedWork(work: WorkBudget, units: number): void {
-  work.printedUnitsLeft -= units;
-  if (work.printedUnitsLeft < 0) {
-    exceeded();
-  }
-}
-
 /** The JSON escape length of the code unit at `index` of `text` (a lone surrogate prints as `\uXXXX`). */
 function escapedUnitLength(text: string, index: number, code: number): number {
   if (code === 0x22 || code === 0x5c || code === 0x08 || code === 0x0c || code === 0x0a || code === 0x0d || code === 0x09) {
@@ -181,7 +248,7 @@ function escapedFits(text: string, room: number, work: WorkBudget | undefined): 
     length += escapedUnitLength(text, index, text.charCodeAt(index));
   }
   if (length > room && work) {
-    spendWork(work, index);
+    chargeWork(work, "rejected", index);
   }
   return length <= room;
 }
@@ -259,6 +326,7 @@ const isRawJSON = (JSON as { isRawJSON?: (value: unknown) => boolean }).isRawJSO
 /** %Array.prototype%, the prototype of the data array `Buffer.prototype.toJSON` creates. */
 const arrayPrototype = Object.getPrototypeOf([]) as object;
 const bigintValueOf = BigInt.prototype.valueOf;
+const bigintAsIntN = BigInt.asIntN;
 /** %TypedArray%.prototype.length: reads the length from the internal slot, for a typed array of any realm. */
 const typedArrayLength = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(Uint8Array.prototype), "length")
   ?.get as () => number;
@@ -279,74 +347,27 @@ interface Walk {
   /** Which object keys print "[REDACTED]" instead of their value, or undefined for none. */
   readonly isSensitive: ((key: string) => boolean) | undefined;
   /**
-   * True while a redacted value is walked: no text is written or charged; each array item costs one unit of work and
-   * each object member was charged when its key was listed.
+   * True while a member under a redacted key is walked, from before its value is read: no text is written or charged,
+   * and its work is charged to the allowances WORK_ACCOUNTS selects for redacted work.
    */
   discarding: boolean;
   /** How many keys the key lists of the objects open on the active path hold together (see OPEN_KEYS_SHARE). */
   openKeys: number;
   /** The most keys those lists may hold together when another object on the path is listed. */
   readonly maxOpenKeys: number;
-  /** The object member whose own value is being projected, while its key's redaction is not known yet. */
-  projecting: MemberKey | undefined;
-}
-
-/** An object member outside a redacted value, and its key's redaction once it is decided. */
-interface MemberKey {
-  readonly name: string;
-  redacted?: boolean;
 }
 
 /**
- * The longest key matched against `isSensitive` before its member is known to print at no further charge. A longer
- * key matched then is charged its length to the work budget, so matching keys never scans more than a constant per
- * charge in work that prints nothing (a printed key is also charged as text when it is written).
+ * The key length matching against `isSensitive` costs one more unit of work for: each listed string key is charged
+ * 1 + floor(length / KEY_MATCH_UNIT) units when its object is listed, which pays for matching it once. A printed member
+ * prints at least its key's length plus 4 characters, so with any unit of at least 4 the keys of a document that fits
+ * stay within the LISTED_KEYS_SHARE of the work budget.
  */
-const FREE_KEY_MATCH_LENGTH = 64;
+const KEY_MATCH_UNIT = 64;
 
-/**
- * Decides the redaction of the member being projected, the first time its projection charges work, so that work is
- * charged to the allowance its key selects: under a redacted key, the one for work that prints nothing. Matching runs
- * no code. A key whose JSON text cannot fit what is left of the text budget is not matched: if its member prints,
- * writing the key fails the value anyway.
- */
-function resolveRedaction(walk: Walk): void {
-  const member = walk.projecting;
-  if (member === undefined) {
-    return;
-  }
-  walk.projecting = undefined;
-  const { name } = member;
-  if (name.length + 2 > walk.budget.charsLeft) {
-    member.redacted = false;
-    return;
-  }
-  if (name.length > FREE_KEY_MATCH_LENGTH) {
-    spendWork(walk.work, name.length);
-  }
-  member.redacted = walk.isSensitive?.(name) === true;
-  if (member.redacted) {
-    walk.discarding = true;
-  }
-}
-
-/**
- * Charges `units` of work done for the value being walked: to the allowance for work that prints nothing under a
- * redacted key, otherwise to the allowance for values that print (see `WorkBudget`).
- */
-function spendValueWork(walk: Walk, units: number): void {
-  resolveRedaction(walk);
-  if (walk.discarding) {
-    spendWork(walk.work, units);
-  } else {
-    spendPrintedWork(walk.work, units);
-  }
-}
-
-/** What is left of the allowance `spendValueWork` charges. */
-function valueWorkLeft(walk: Walk): number {
-  resolveRedaction(walk);
-  return walk.discarding ? walk.work.unitsLeft : walk.work.printedUnitsLeft;
+/** Charges `units` of work of `kind` for the value being walked, to the allowance its redaction selects. */
+function charge(walk: Walk, kind: WorkKind, units: number, policy?: WorkPolicy): void {
+  chargeWork(walk.work, kind, units, walk.discarding, policy);
 }
 
 function emit(walk: Walk, text: string): void {
@@ -467,7 +488,7 @@ export function toLength(value: unknown, charge?: (units: number) => void): numb
  */
 function unbox(walk: Walk, value: object): unknown {
   if (types.isNumberObject(value)) {
-    return toNumber(value, (units) => spendValueWork(walk, units));
+    return toNumber(value, (units) => charge(walk, "value", units));
   }
   if (types.isStringObject(value)) {
     const primitive = toPrimitive(value, "string");
@@ -486,25 +507,34 @@ function unbox(walk: Walk, value: object): unknown {
 }
 
 /**
- * Writes a bigint as a string. Under a redacted key it is not converted at all; otherwise its magnitude is checked by
- * bit length first, so no decimal text longer than what is left of the budgets is ever built. The decimal text comes
+ * Writes a bigint as a string. Under a redacted key it is not converted at all; otherwise its magnitude is checked
+ * against the text left first, so no decimal text much longer than what is left is ever built. The decimal text comes
  * from the ToString abstract operation of the primitive (`String(value)`), which never reads BigInt.prototype, so a
  * replaced `toString`, even one installed before this module loaded, runs no code here and cannot hand the encoder
- * anything but a string.
+ * anything but a string. A value found too long, by the check or once converted, is charged as WorkKind `rejected`
+ * (the text left for the check, the decimal text for the conversion), so a shared oversized bigint written again and
+ * again stops once the allowance for work that prints nothing is spent.
  */
 function emitBigInt(walk: Walk, value: bigint): void {
   if (walk.discarding) {
     return;
   }
   const room = walk.budget.charsLeft;
-  // A magnitude of at least 2^bits has more than `room` decimal digits, so its text cannot fit. The check needs no
-  // copy of the value: asIntN keeps `value` unchanged only when -2^bits <= value < 2^bits, for either sign, and its
-  // result is at most `bits` bits long.
+  // A magnitude of at least 2^bits has more than `room` decimal digits, so its text cannot fit. asIntN keeps `value`
+  // unchanged only when -2^bits <= value < 2^bits, for either sign; its result is at most `bits` bits long and is
+  // built from the value's low `bits` bits only, so the check costs at most the width of the text left, whatever the
+  // size of the value (and V8 returns a shorter value itself, unread).
   const bits = Math.max(1, Math.ceil(room / DIGITS_PER_BIT) + 1);
-  if (BigInt.asIntN(bits + 1, value) !== value) {
+  if (bigintAsIntN(bits + 1, value) !== value) {
+    charge(walk, "rejected", Math.max(1, room));
     exceeded();
   }
-  emitString(walk, String(value));
+  const text = String(value);
+  if (text.length + 2 > room) {
+    charge(walk, "rejected", text.length);
+    exceeded();
+  }
+  emit(walk, `"${text}"`);
 }
 
 /** Writes a primitive's JSON text (bigints as strings); returns false when JSON drops it. */
@@ -569,13 +599,13 @@ const bufferStandIns = new WeakSet<object>();
  * - when the data array would find no `toJSON` (checked on %Array.prototype% and its chain, without running code)
  *   and holds numbers, the projection is an object with the same members whose `data` is a stand-in read from the
  *   buffer in place: it prints exactly what the native array prints, is bounded like any array before its first item
- *   (2n + 1 characters printed, n units of work under a redacted key, decided once the member's key is matched), and
+ *   (2n + 1 characters printed, n units of work under a redacted key), and
  *   allocates nothing in proportion to n. Reading a typed array's items runs no code, so the output is that of
  *   the native call, which runs no user code either unless %Array.prototype% itself is changed: an index accessor
  *   installed on %Array.prototype% (which the native call's array writes would run, and which also changes arrays
  *   this library builds) is an unsupported environment;
  * - otherwise (a bigint typed array, or an inherited `toJSON` that would receive the array) the native toJSON runs,
- *   after its array is charged at TYPED_ARRAY_INDEX_UNITS of work per item (see `spendValueWork`).
+ *   after its array is charged at TYPED_ARRAY_INDEX_UNITS of work per item (WorkKind `value`).
  * Returns undefined when the native toJSON is to run.
  */
 function projectBuffer(walk: Walk, value: object): object | undefined {
@@ -593,10 +623,7 @@ function projectBuffer(walk: Walk, value: object): object | undefined {
     projection.data = bytes;
     return projection;
   }
-  if (count * TYPED_ARRAY_INDEX_UNITS > valueWorkLeft(walk)) {
-    exceeded();
-  }
-  spendValueWork(walk, count * TYPED_ARRAY_INDEX_UNITS);
+  charge(walk, "value", count * TYPED_ARRAY_INDEX_UNITS, "fit");
   return undefined;
 }
 
@@ -640,52 +667,40 @@ function writeValue(walk: Walk, value: unknown, original: unknown, key: string, 
 
 /**
  * SerializeJSONProperty: reads and projects `holder[key]` once, then, when JSON prints it, calls `writeKey` (which
- * writes an object member's key) and writes the value. Below an object member outside a redacted value, a value whose
- * key `isSensitive` matches prints "[REDACTED]" and is still walked in order, so its getters and toJSON run as in
- * JSON.stringify, but no text is built for it: it costs one unit of work, and so does every value in it (each object
- * member when its key is listed, each array item when it is read). The work its own projection does (a Number box's
- * numeric string, the array Node's built-in Buffer toJSON allocates) is charged to the allowance its key's redaction
- * selects, decided when that work is first charged (see `resolveRedaction`); a key that projection charges nothing for
- * is matched after it is written, so the match never scans more than was printed. Returns false when JSON drops the
- * member; its key is then not written, and not matched unless its projection charged work.
+ * writes an object member's key) and writes the value. A member under a redacted key (`redacted`, decided by the caller
+ * before the member is read) prints "[REDACTED]" and is still walked in order, so its getters and toJSON run as in
+ * JSON.stringify, but no text is built for it: the whole member, its own projection included, is walked with
+ * `walk.discarding` set, so all of its work is charged to the allowances WORK_ACCOUNTS selects for redacted work.
+ * Returns false when JSON drops the member; its key is then not written.
  */
 function serializeProperty(
   walk: Walk,
   holder: object,
   key: string,
   depth: number,
-  writeKey?: () => void
+  writeKey?: () => void,
+  redacted = false
 ): boolean {
   const outer = walk.discarding;
-  const member: MemberKey | undefined =
-    writeKey !== undefined && !outer && walk.isSensitive !== undefined ? { name: key } : undefined;
-  walk.projecting = member;
-  let projected: { original: unknown; value: unknown };
+  walk.discarding = outer || redacted;
   try {
-    projected = project(walk, holder, key);
-  } finally {
-    walk.projecting = undefined;
-    walk.discarding = outer;
-  }
-  const { original, value } = projected;
-  if (isDropped(value)) {
-    return false;
-  }
-  writeKey?.();
-  const redacted = member !== undefined && (member.redacted ?? walk.isSensitive?.(key) === true);
-  if (!redacted) {
+    const { original, value } = project(walk, holder, key);
+    if (isDropped(value)) {
+      return false;
+    }
+    if (redacted) {
+      walk.discarding = outer;
+      writeKey?.();
+      emit(walk, REDACTED);
+      walk.discarding = true;
+    } else {
+      writeKey?.();
+    }
     writeValue(walk, value, original, key, depth);
     return true;
-  }
-  emit(walk, REDACTED);
-  walk.discarding = true;
-  try {
-    // The member itself was charged when its key was listed.
-    writeValue(walk, value, original, key, depth);
   } finally {
     walk.discarding = outer;
   }
-  return true;
 }
 
 /**
@@ -740,8 +755,8 @@ function serializeNode(walk: Walk, node: object, original: unknown, key: string,
  * read once; a dropped item prints null. A Buffer's stand-in passes its `length`, which is then not read.
  */
 function serializeArray(walk: Walk, array: object, depth: number, knownLength?: number): void {
-  const length = knownLength ?? toLength(Reflect.get(array, "length"), (units) => spendValueWork(walk, units));
-  if (walk.discarding ? length > walk.work.unitsLeft : (length === 0 ? 2 : 2 * length + 1) > walk.budget.charsLeft) {
+  const length = knownLength ?? toLength(Reflect.get(array, "length"), (units) => charge(walk, "value", units));
+  if (walk.discarding ? length > workLeft(walk.work, "item", true) : (length === 0 ? 2 : 2 * length + 1) > walk.budget.charsLeft) {
     exceeded();
   }
   emit(walk, "[");
@@ -749,9 +764,7 @@ function serializeArray(walk: Walk, array: object, depth: number, knownLength?: 
     if (index > 0) {
       emit(walk, ",");
     }
-    if (walk.discarding) {
-      spendWork(walk.work, 1);
-    }
+    charge(walk, "item", 1);
     if (!serializeProperty(walk, array, String(index), depth)) {
       emit(walk, "null");
     }
@@ -761,7 +774,7 @@ function serializeArray(walk: Walk, array: object, depth: number, knownLength?: 
 
 /**
  * Bounds a typed array by its internal length before its keys are listed: each index costs TYPED_ARRAY_INDEX_UNITS of
- * work (from the allowance for values that print outside a redacted key, see `spendValueWork`), and outside a
+ * work (WorkKind `value`), and outside a
  * redacted key an array of numbers whose members (`"0":0` and a separator, 6n + 1 characters) cannot fit the text
  * budget throws. A rejected array is charged nothing. Other objects hold their own keys, so listing them is bounded by
  * the memory the value already takes.
@@ -773,25 +786,23 @@ function boundTypedArray(walk: Walk, record: object): void {
   const length = Reflect.apply(typedArrayLength, record, []);
   // A bigint member can be dropped by a toJSON, so only arrays of numbers are known to print every index.
   const numbers = !types.isBigInt64Array(record) && !types.isBigUint64Array(record);
-  if (
-    length * TYPED_ARRAY_INDEX_UNITS > valueWorkLeft(walk) ||
-    (!walk.discarding && numbers && length > 0 && 6 * length + 1 > walk.budget.charsLeft)
-  ) {
+  if (!walk.discarding && numbers && length > 0 && 6 * length + 1 > walk.budget.charsLeft) {
     exceeded();
   }
-  spendValueWork(walk, length * TYPED_ARRAY_INDEX_UNITS);
+  charge(walk, "value", length * TYPED_ARRAY_INDEX_UNITS, "fit");
 }
 
 /**
  * EnumerableOwnProperties: [[OwnPropertyKeys]] once, then [[GetOwnProperty]] for each string key, as JSON.stringify
- * runs them. Every key listed costs one unit of work at once, never given back, before any descriptor is read: a list
- * longer than the work left throws, and listing the same object again and again stops once the allowance is spent,
- * also when its members then fail. That unit also pays for the member it lists, printed, dropped, skipped (a symbol, a
- * non-enumerable or vanished key) or walked under a redacted key. Only one list of the object's keys is held: for an
- * object that is not a Proxy, which runs no code to report its descriptors, the enumerable string keys are kept in
- * place in the list [[OwnPropertyKeys]] returned. When the lists the objects open on the path hold together already
- * pass the bound of OPEN_KEYS_SHARE, it throws before [[OwnPropertyKeys]] runs; when they would pass it with this
- * object's list, it throws once that list is charged, before any descriptor is read.
+ * runs them. The listed keys are charged at once as WorkKind `key` (1 + floor(length / KEY_MATCH_UNIT) units for a
+ * string key, 1 for a symbol), never given back, before any descriptor is read: a list longer than the work left
+ * throws, and listing the same object again and again stops once the allowance is spent, also when its members then
+ * fail. That charge also pays for matching the key against `isSensitive` and for the member it lists, printed,
+ * dropped, skipped (a symbol, a non-enumerable or vanished key) or walked under a redacted key. Only one list of the
+ * object's keys is held: for an object that is not a Proxy, which runs no code to report its descriptors, the
+ * enumerable string keys are kept in place in the list [[OwnPropertyKeys]] returned. When the lists the objects open
+ * on the path hold together already pass the bound of OPEN_KEYS_SHARE, it throws before [[OwnPropertyKeys]] runs;
+ * when they would pass it with this object's list, it throws once that list is charged, before any descriptor is read.
  */
 function enumerableKeys(walk: Walk, record: object): string[] {
   if (walk.openKeys > walk.maxOpenKeys) {
@@ -799,7 +810,13 @@ function enumerableKeys(walk: Walk, record: object): string[] {
     exceeded();
   }
   const keys = Reflect.ownKeys(record);
-  spendWork(walk.work, keys.length);
+  let units = keys.length;
+  for (const key of keys) {
+    if (typeof key === "string") {
+      units += Math.floor(key.length / KEY_MATCH_UNIT);
+    }
+  }
+  charge(walk, "key", units);
   if (walk.openKeys + keys.length > walk.maxOpenKeys) {
     // With the lists its ancestors hold, this one passes the bound: no descriptor is read, and the charge stays.
     exceeded();
@@ -823,11 +840,11 @@ function enumerableKeys(walk: Walk, record: object): string[] {
 }
 
 /**
- * SerializeJSONObject: own enumerable string keys in order (see `enumerableKeys`, which charges each listed key one
- * unit of work), each read once; dropped members are left out. A member that prints is charged as text (its key is
- * matched against `isSensitive` once it is written, or when its projection first charges work, see
- * `serializeProperty`); a member JSON drops prints nothing, its key not written. A typed array is bounded by its length
- * before its keys are listed. A sensitive member that JSON prints is written as "[REDACTED]".
+ * SerializeJSONObject: own enumerable string keys in order (see `enumerableKeys`, which charges the listed keys as
+ * WorkKind `key`), each read once; dropped members are left out. Each key is matched against `isSensitive` once, before
+ * its member is read (see `serializeMembers`). A member that prints is charged as text; a member JSON drops prints
+ * nothing, its key not written. A typed array is bounded by its length before its keys are listed. A sensitive member
+ * that JSON prints is written as "[REDACTED]".
  */
 function serializeObject(walk: Walk, record: object, depth: number): void {
   boundTypedArray(walk, record);
@@ -844,6 +861,9 @@ function serializeMembers(walk: Walk, record: object, names: readonly string[], 
   emit(walk, "{");
   let members = 0;
   for (const name of names) {
+    // Matched once, before the member is read: its key was charged for it when it was listed, and matching runs no
+    // caller code. Below a redacted key nothing is matched, as nothing below it prints.
+    const redacted = !walk.discarding && walk.isSensitive?.(name) === true;
     serializeProperty(walk, record, name, depth, () => {
       if (walk.discarding) {
         return;
@@ -854,7 +874,7 @@ function serializeMembers(walk: Walk, record: object, names: readonly string[], 
       emitString(walk, name);
       emit(walk, ":");
       members += 1;
-    });
+    }, redacted);
   }
   emit(walk, "}");
 }
@@ -888,27 +908,26 @@ export interface SerializeJsonMemberOptions {
  *   redacted key) or the nesting limit;
  * - nesting deeper than MAX_NESTING_DEPTH (512) objects and arrays throws a RangeError before the next level is read;
  * - text that cannot fit what is left of `budget`, or work that cannot fit what is left of `work`, throws a
- *   RangeError. Printed text is charged to `budget` only; `work` pays for each own key listed, each array item under
- *   a redacted key and each scan of a string too long to print, and, from its separate allowance for values that
- *   print outside a redacted key, for typed array indexes and numeric string reads (see `WorkBudget`). An array checks 2n + 1 characters
+ *   RangeError. Printed text is charged to `budget` only; `work` is charged through `chargeWork`, by the kind of
+ *   work and the member's redaction (see `WorkKind`). An array checks 2n + 1 characters
  *   (n units of work under a redacted key) before its index 0 is read, a typed array checks its internal length
  *   before its keys are listed, a Buffer projected by Node's built-in toJSON is read in place and bounded like an
- *   array by its internal length once its key's redaction is known (a receiver whose length cannot be bounded that
+ *   array by its internal length (a receiver whose length cannot be bounded that
  *   way fails, see `projectBuffer`), an object with more own keys than the work left fails before any descriptor or
  *   value is read, and the key lists of the objects open on the path may hold a quarter of the text budget (in keys,
  *   at least MIN_OPEN_KEYS) together, so an object whose list would take them past that bound fails before any of
  *   its descriptors is read (see OPEN_KEYS_SHARE); so oversized sparse, proxy, typed, Buffer, hidden-key or generated values fail at
  *   once, and an object listed again and again stops once its keys have spent the work allowance; a bigint is
- *   checked by bit length before its decimal text is built, and not converted under a redacted key. The engine
+ *   checked against the text left before its decimal text is built, and not converted under a redacted key. The engine
  *   builds an object's own key list before it can be counted (a Proxy's from what its ownKeys trap returns, or from
  *   its target when it has no such trap), as JSON.stringify does; only that one list is held.
  *
  * With `isSensitive`, every object key below the member that it matches prints "[REDACTED]" when JSON prints the
- * member at all; the key is matched after the holder's toJSON ran, so keys a projection creates are covered too, and
- * no later than the work of projecting the member's own value is first charged (no code runs to match it), so that
- * work is charged to the allowance for work that prints nothing. Its value is still walked in order, so its getters and toJSON run as
- * in JSON.stringify, but no text is built for it: it charges `budget` only for its key and the placeholder, and its
- * walk is charged to `work`, one unit per value (see `WorkBudget`).
+ * member at all. Each listed key is matched once, after the holder's toJSON ran (so keys a projection creates are
+ * covered too) and before the member's value is read (matching runs no caller code, and was charged with the listing).
+ * A matched member's value is still walked in order, so its getters and toJSON run as in JSON.stringify, but no text
+ * is built for it: it charges `budget` only for its key and the placeholder, and all of its work, its own projection
+ * included, is charged as redacted work (see `WorkKind`).
  *
  * Returns undefined when JSON drops the member (undefined, a function, a symbol, or a `toJSON` that returns one).
  * Throws what JSON.stringify throws, such as a throwing getter or `toJSON`, or a Number box whose `valueOf` returns a
@@ -932,7 +951,6 @@ export function serializeJsonMember(
     discarding: false,
     openKeys: 0,
     maxOpenKeys: Math.max(MIN_OPEN_KEYS, Math.floor(Math.max(0, budget.charsLeft) / OPEN_KEYS_SHARE)),
-    projecting: undefined,
   };
   return serializeProperty(walk, holder, key, 0) ? out : undefined;
 }
