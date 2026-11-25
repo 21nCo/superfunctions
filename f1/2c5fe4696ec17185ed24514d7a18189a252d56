@@ -1,0 +1,32 @@
+datafn/server/src/validation/authz.ts
+  s_09f19affbc7889::t_8f41a1bb638c8f 228-234,287-292
+datafn/server/src/routes/query/execute.ts
+  s_09f19affbc7889::t_013a37c3c0c1d3 26
+datafn/server/src/plugins/public-links.ts
+  s_09f19affbc7889::t_303dc0ba32af2b 94
+datafn/server/__tests__/predicate-authz.test.ts
+  s_09f19affbc7889::t_73aff36ad9fda1 229-241
+datafn/server/src/routes/query.ts
+  s_09f19affbc7889::t_9b471fcbe18192 66,98,232,237-241,283-285,293,436,791
+datafn/server/__tests__/query-principal-freshness.test.ts
+  s_09f19affbc7889::t_24e7267ec81517 5,40-41,48,50,55-56,109-110,112-118
+  s_09f19affbc7889::t_ce4e8c1404e633 42-47
+datafn/server/__tests__/public-link-resolve-limits.test.ts
+  s_09f19affbc7889::t_fe684af277126f 131,137,186-188
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f12c5fe4696ec17185ed24514d7a18189a252d56",
+  "prompts": {},
+  "sessions": {
+    "s_09f19affbc7889": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a211b0-71ed-7282-8a24-bcadc7fcc607",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
