@@ -14,8 +14,7 @@ function convert(name: string, options: Partial<Parameters<typeof fromOpenAPI>[1
   return fromOpenAPI(fixture(name), { executor: recordingExecutor(), allowMutations: true, ...options });
 }
 
-const PROTO_PROPERTY =
-  "property __proto__ cannot be declared: Ajv ignores it in properties and @cfworker/json-schema reads the inherited Object.prototype";
+const PROTO_PROPERTY = "property __proto__ cannot be declared: Ajv ignores it in properties";
 const OVERLAP = "anyOf/oneOf members that can overlap, not, if/then/else or a dependency";
 const REQUIRED_ELSEWHERE = "a required list of another schema for the same object";
 

@@ -167,9 +167,10 @@ for (const { operation, code, reason } of skipped) {
   external or URL references, `cookie` parameters, a parameter named
   `__proto__` under Ajv (which leaves that name out of a closed group) or an
   optional one under @cfworker/json-schema, a schema property named
-  `__proto__` in a body or response (`unsupported-property-name`: Ajv ignores
-  it in `properties`, and @cfworker/json-schema finds the inherited
-  Object.prototype when it is absent), non-default styles,
+  `__proto__` in a body or response under Ajv (which ignores it in
+  `properties`) or, under @cfworker/json-schema (which reads the inherited
+  Object.prototype when it is absent), one that is optional or admits an
+  object (`unsupported-property-name`), non-default styles,
   object-valued or mixed parameters, bodies without a JSON media type, a
   `$ref` cycle that returns to the same value without descending into a
   property or item, and the 2019-09/2020-12 keywords `prefixItems`,
@@ -218,7 +219,8 @@ for (const { operation, code, reason } of skipped) {
   alternation, backreferences or lookaround and at most one quantifier,
   with the matching charged; any other pattern forces nothing, and neither
   does a required name every object inherits, such as `toString`, which
-  @cfworker/json-schema finds without an own property. A child a
+  @cfworker/json-schema finds without an own property, unless a declared
+  `properties` entry of the same conjunction makes it an own one. A child a
   call can leave out or avoid (an optional body or property, an
   `anyOf`/`oneOf` branch) never stacks, since a shallow valid input exists,
   and a chain of required children from the input that never ends, which

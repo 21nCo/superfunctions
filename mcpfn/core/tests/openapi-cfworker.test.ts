@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { McpFnValidationError } from "../src/errors.js";
 import { fromOpenAPI } from "../src/openapi/index.js";
 import { McpFnRegistry } from "../src/registry.js";
+import { OpenApiSkip, SchemaConverter } from "../src/openapi/schema.js";
 import { createSchemaCompiler } from "../src/validation.js";
 import { expectArguments, fixture, recordingExecutor, requestExtra, tool } from "./openapi-helpers.js";
 
@@ -243,7 +244,7 @@ describe("fromOpenAPI under @cfworker/json-schema", () => {
     ]);
   }, 60_000);
 
-  it("refuses every holder of a shared schema whose reuse check the budget cannot pay for, so a valid later tool fits", () => {
+  it("skips every holder of a shared schema whose reuse check the budget cannot pay for, holding no copies for it, so a valid later tool fits", () => {
     const names = Array.from({ length: 2_000 }, (_, index) => `n${index}`);
     const wide = { type: "object", required: names, patternProperties: Object.fromEntries(names.map((name) => [`^p${name}$`, { type: "string" }])) };
     const paths: Record<string, unknown> = {};
@@ -256,6 +257,41 @@ describe("fromOpenAPI under @cfworker/json-schema", () => {
     expect(result.skipped).toHaveLength(800);
     expect(new Set(result.skipped.map(({ code }) => code))).toEqual(new Set(["schema-too-large"]));
   }, 60_000);
+
+  it("fails only the tool whose first reuse check the document budget refuses, and checks again once there is more room", () => {
+    const shared = json({ $ref: "#/components/schemas/Shared" });
+    const query = (values: number) => [{ name: "q", in: "query", schema: { type: "integer", enum: Array.from({ length: values }, (_, index) => index) } }];
+    const document = {
+      openapi: "3.1.0",
+      paths: {
+        "/a": { get: { operationId: "a", responses: shared } },
+        // b's larger input leaves less room for the check than c's.
+        "/b": { get: { operationId: "b", parameters: query(60), responses: shared } },
+        "/c": { get: { operationId: "c", parameters: query(1), responses: shared } },
+      },
+      components: { schemas: { Shared: { type: "object", required: ["id"], properties: { id: { type: "string" }, tags: { type: "array", items: { type: "string" } } } } } },
+    };
+    // The first measurement is b's reuse check: the document budget has no room for it then.
+    const frames = SchemaConverter.prototype.frames;
+    let calls = 0;
+    const spy = vi.spyOn(SchemaConverter.prototype, "frames").mockImplementation(function (this: SchemaConverter, ...args: Parameters<typeof frames>) {
+      calls += 1;
+      if (calls === 1) throw new OpenApiSkip("schema-too-large", "the document's schemas expand in total to more than 1 nodes", true);
+      return frames.apply(this, args);
+    });
+    let result: ReturnType<typeof fromOpenAPI>;
+    try {
+      result = fromOpenAPI(document, { executor: recordingExecutor() });
+    } finally {
+      spy.mockRestore();
+    }
+    // The earlier holder keeps its verdict, and c checks again with the room b's larger input gave back.
+    expect(result.tools.map(({ name }) => name)).toEqual(["a", "c"]);
+    expect(result.skipped.map(({ operation, code, reason }) => [operation.operationId, code, reason])).toEqual([
+      ["b", "schema-too-large", "the document's schemas expand in total to more than 1 nodes"],
+    ]);
+    expect(result.registry.has("a") && result.registry.has("c")).toBe(true);
+  });
 
   it("matches required names against simple patterns, alone or across allOf members, and never runs patterns with groups", () => {
     const string = { type: "string" };
@@ -423,6 +459,10 @@ describe("fromOpenAPI under @cfworker/json-schema", () => {
       // `toString` is found on every object without an own property, so nothing is visited.
       Inherited: { anyOf: [{ type: "object", required: ["toString"], additionalProperties: { $ref: "#/components/schemas/Inherited" } }] },
       Pattern: { type: "object", required: ["toString"], patternProperties: { "^to": { $ref: "#/components/schemas/Pattern" } } },
+      // A declared `toString` in another allOf member makes it an own property, and the
+      // closed member's `minProperties` forces `next` for the other member's recursion.
+      Owned: { type: "object", allOf: [{ required: ["toString"] }, { properties: { toString: { type: "object" } } }, { patternProperties: { "^toString$": { $ref: "#/components/schemas/Owned" } } }] },
+      ClosedAllOf: { type: "object", minProperties: 1, allOf: [{ additionalProperties: false, properties: { next: true } }, { properties: { next: { $ref: "#/components/schemas/ClosedAllOf" } } }] },
     };
     const post = (operationId: string, content: Record<string, unknown>) => ({
       post: { operationId, requestBody: { required: true, content }, responses: { "204": { description: "Done" } } },
@@ -439,12 +479,16 @@ describe("fromOpenAPI under @cfworker/json-schema", () => {
           "/open": post("openMin", { "application/json": ref("O0") }),
           "/inherited": { ...post("inherited", { "application/json": ref("Inherited") }), get: { operationId: "inheritedOutput", responses: json({ $ref: "#/components/schemas/Inherited" }) } },
           "/pattern": post("inheritedPattern", { "application/json": ref("Pattern") }),
+          "/owned": { ...post("ownedInherited", { "application/json": ref("Owned") }), get: { operationId: "ownedInheritedOutput", responses: json({ $ref: "#/components/schemas/Owned" }) } },
+          "/closed-all-of": post("closedAllOf", { "application/json": ref("ClosedAllOf") }),
         },
         components: { schemas },
       },
       { executor: recordingExecutor(), allowMutations: true },
     );
-    expect(verdicts(result)).toEqual([tooDeep("closedMin"), tooDeep("closedMinOutput")]);
+    expect(verdicts(result)).toEqual([
+      tooDeep("closedAllOf"), tooDeep("closedMin"), tooDeep("closedMinOutput"), tooDeep("ownedInherited"), tooDeep("ownedInheritedOutput"),
+    ]);
     expect(result.tools.map(({ name, operation }) => [name, operation.requestBody?.contentType])).toEqual([
       ["closedMinFallback", "application/example+json"],
       ["closedChoice", "application/json"],
@@ -458,6 +502,28 @@ describe("fromOpenAPI under @cfworker/json-schema", () => {
       .toEqual([true, true, true, true]);
     expect(createSchemaCompiler("cfworker").compile(tool(result.tools, "inheritedOutput").outputSchema!)({})).toBe(true);
   }, 120_000);
+
+  it("registers a required __proto__ body or response property that admits no object, which this engine checks as an own property", async () => {
+    const executor = recordingExecutor();
+    const schema = { type: "object", required: ["PROTO"], additionalProperties: false, properties: { PROTO: { type: "string" } } };
+    const document = JSON.parse(JSON.stringify({
+      openapi: "3.1.0",
+      paths: {
+        "/in": { post: { operationId: "protoBody", requestBody: { required: true, content: { "application/json": { schema } } }, responses: { "204": { description: "Done" } } } },
+        "/out": { get: { operationId: "protoOutput", responses: json(schema) } },
+      },
+    }).replaceAll("PROTO", "__proto__")) as Record<string, unknown>;
+    const result = fromOpenAPI(document, { executor, allowMutations: true });
+    expect(result.skipped).toEqual([]);
+    const args = JSON.parse('{"body":{"__proto__":"ok"}}') as Record<string, unknown>;
+    await result.registry.callTool("protoBody", args, undefined, requestExtra());
+    expect(executor.calls.map((call) => call.args)).toEqual([args]);
+    for (const invalid of ['{"body":{}}', '{"body":{"__proto__":1}}']) {
+      await expect(result.registry.callTool("protoBody", JSON.parse(invalid), undefined, requestExtra())).rejects.toMatchObject({ code: "MCPFN_INVALID_ARGUMENTS" });
+    }
+    const output = createSchemaCompiler("cfworker").compile(tool(result.tools, "protoOutput").outputSchema!);
+    expect([output(JSON.parse('{"__proto__":"ok"}')), output({}), output(JSON.parse('{"__proto__":1}'))]).toEqual([true, false, false]);
+  });
 
   it("skips a body, nested or response property named __proto__, which this engine reads from Object.prototype when absent", () => {
     const result = fromOpenAPI(fixture("skip-prototype-property-name"), { executor: recordingExecutor(), allowMutations: true });

@@ -305,6 +305,8 @@ class OperationConverter {
   private readonly reserved = new WeakMap<object, number>();
   /** Shared tool schemas compiled once, at their first reuse, before reuses are charged. */
   private readonly reuseChecked = new WeakSet<object>();
+  /** Shared schemas whose reuse check the document budget refused, with the room it had then. */
+  private readonly exhausted = new WeakMap<object, { room: number; error: OpenApiSkip }>();
   /** Shared tool schemas that check found the registry would refuse, with why: every tool holding one is skipped, the first included. */
   private readonly refused = new WeakMap<object, OpenApiSkip>();
   /**
@@ -336,6 +338,7 @@ class OperationConverter {
       isObject(this.components.schemas) ? this.components.schemas : {},
       NodeBudget.forDocument(document),
       version === "3.1" && dialect !== undefined && !isDefaultDialect(dialect) ? JSON.stringify(dialect) : undefined,
+      () => (this.compiler ??= createSchemaCompiler()).engine,
     );
   }
 
@@ -620,13 +623,23 @@ class OperationConverter {
       // compiled once, at its first reuse, to know. Its first holder's
       // reservation is given back now, and every holder gets its verdict.
       if (!this.reuseChecked.has(known)) {
+        // A check the document budget refused fails the same way until released reservations make more room.
+        const stale = this.exhausted.get(known);
+        if (stale !== undefined && this.schemas.room() <= stale.room) throw stale.error;
+        const room = this.schemas.room();
         let skip: OpenApiSkip | undefined;
         try {
           const failure = this.compileFailure(known, () => this.framesOf(known));
           if (failure !== null) skip = invalidSkip(failure, kind);
         } catch (error) {
-          // A check the budget cannot pay for refuses the schema the same way.
+          // A check the document budget has no room for fails this tool only:
+          // earlier holders keep their verdict, and a later reuse checks again
+          // once released reservations make room. Any other skip refuses the schema.
           if (!(error instanceof OpenApiSkip)) throw error;
+          if (!rememberable(error)) {
+            this.exhausted.set(known, { room, error });
+            throw error;
+          }
           skip = error;
         }
         this.reuseChecked.add(known);
