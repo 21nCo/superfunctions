@@ -594,10 +594,11 @@ jobs:
           code=$?
           apifn check "${args[@]}" --format json --report "$RUNNER_TEMP/apifn-check.json" > /dev/null
           json_code=$?
-          if [ -n "$BASE_SPEC" ]; then
-            # The reports name the base the CLI read, the snapshot; show the caller's base_spec instead. Only the JSON
-            # base.ref is changed, and the Markdown text the CLI rendered from it, escaped as the CLI escapes it (one
-            # line, markup and pipes escaped); the label is literal data.
+          if [ -n "$BASE_SPEC" ] && ! [[ "$BASE_SPEC" =~ ^[Hh][Tt][Tt][Pp][Ss]?:// ]]; then
+            # The reports name the base the CLI read, the snapshot; show the caller's local base_spec instead (an
+            # HTTP(S) base_spec keeps the snapshot name, so no URL credential reaches the reports). Only the JSON
+            # base.ref and the Markdown Base row change, escaped as the CLI escapes it (one line, markup and pipes
+            # escaped); the label is literal data.
             node -e '
               const fs = require("node:fs");
               const [snapshot, label, md, json] = process.argv.slice(1);
@@ -610,7 +611,12 @@ jobs:
                 }
               } catch {}
               try {
-                fs.writeFileSync(md, fs.readFileSync(md, "utf8").replaceAll(mdText(snapshot), () => mdText(label)));
+                const lines = fs.readFileSync(md, "utf8").split("\n");
+                const row = lines.findIndex((line) => line.startsWith("| Base | "));
+                if (row !== -1) {
+                  lines[row] = lines[row].replaceAll(mdText(snapshot), () => mdText(label));
+                  fs.writeFileSync(md, lines.join("\n"));
+                }
               } catch {}
             ' "$RUNNER_TEMP/apifn-base-spec" "$BASE_SPEC (snapshot taken before the install)" "$RUNNER_TEMP/apifn-check.md" "$RUNNER_TEMP/apifn-check.json" || true
           fi
