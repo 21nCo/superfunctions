@@ -59,7 +59,12 @@ struct EmbeddedWebView: UIViewRepresentable {
             let literal = host.hasPrefix("[") && host.hasSuffix("]") ? String(host.dropFirst().dropLast()) : host
             var address = in6_addr()
             guard inet_pton(AF_INET6, literal, &address) == 1 else {
-                return normalizedIPv4(host) ?? host
+                // Assign the decoded host as a component so Foundation applies IDNA without parsing it as an authority.
+                var components = URLComponents()
+                components.scheme = "https"
+                components.host = host
+                let asciiHost = components.url?.host?.lowercased() ?? host
+                return normalizedIPv4(asciiHost) ?? asciiHost
             }
             let bufferSize = socklen_t(INET6_ADDRSTRLEN)
             var buffer = [CChar](repeating: 0, count: Int(bufferSize))

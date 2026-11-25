@@ -16,11 +16,23 @@ final class HostTopologyTests: XCTestCase {
 
     func testWebOriginCanonicalizesIPv4Aliases() throws {
         let origin = try XCTUnwrap(EmbeddedWebView.Coordinator.webOrigin(of: URL(string: "http://127.0.0.1:4173")!))
-        for alias in ["127.1", "0177.0.0.1", "0x7f.1", "127.0x.0.1", "127.0.0.1."] {
+        let aliases = [
+            "127.1", "0177.0.0.1", "0x7f.1", "127.0x.0.1", "127.0.0.1.",
+            "%EF%BC%91%EF%BC%92%EF%BC%97.%EF%BC%91",
+        ]
+        for alias in aliases {
             let url = try XCTUnwrap(URL(string: "http://\(alias):4173/detail"))
             let candidate = try XCTUnwrap(EmbeddedWebView.Coordinator.webOrigin(of: url))
             XCTAssertTrue(origin == candidate, alias)
         }
+    }
+
+    func testWebOriginMatchesEncodedAndPunycodeDomains() throws {
+        let encoded = try XCTUnwrap(URL(string: "http://%62%C3%BCcher.example/"))
+        let punycode = try XCTUnwrap(URL(string: "http://xn--bcher-kva.example:80/detail"))
+        let first = try XCTUnwrap(EmbeddedWebView.Coordinator.webOrigin(of: encoded))
+        let second = try XCTUnwrap(EmbeddedWebView.Coordinator.webOrigin(of: punycode))
+        XCTAssertTrue(first == second)
     }
 
     func testTopologyMatrixMatchesOwnershipRules() throws {
