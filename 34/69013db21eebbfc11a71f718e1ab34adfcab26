@@ -1,0 +1,21 @@
+apifn/cli/__tests__/check-command.test.ts
+  s_622febfeaa8fea::t_d613dbef0d67bb 1110-1111,2990-2991,3033,3035-3046,3050,3078-3079,3081,3084-3090,3093-3097,3100,3103-3104,3106,3109-3126,3129-3130,3138-3154
+apifn/cli/src/commands/check-publish.ts
+  s_622febfeaa8fea::t_6fe22ec6b24694 9-11,134,136-138,142-147,149-153,155,157,159-165,167,169,171,180-183,191-196,251
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3469013db21eebbfc11a71f718e1ab34adfcab26",
+  "prompts": {},
+  "sessions": {
+    "s_622febfeaa8fea": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "80e568be-04f9-493a-b8dd-acb8ebf228a0",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

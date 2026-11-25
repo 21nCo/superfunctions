@@ -1,0 +1,31 @@
+authfn/docs/content/docs/admin/index.md
+  s_146214bd86c56c::t_987d54e8acdd62 106,160-163
+authfn/docs/content/docs/recipes/admin-tool.md
+  s_146214bd86c56c::t_c7a17fa2066017 10-13
+authfn/docs/static/llms-full.txt
+  s_c9744ab56ca249::t_cdaa35516161e1 1129,1183-1186,8347-8350
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0b9497d8621ff5a63578429af639a5290bae91b3",
+  "prompts": {},
+  "sessions": {
+    "s_146214bd86c56c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a20e96-213f-7f50-9f2a-a77e45d9a937",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_c9744ab56ca249": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "69ace260-095c-4644-9506-c0952ee3b5cb",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

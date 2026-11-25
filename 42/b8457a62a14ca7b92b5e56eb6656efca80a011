@@ -1,0 +1,64 @@
+billfn/core/src/types.ts
+  s_0d7e11293d5a4e::t_fc7baff90ba845 679-684,686-703,959-963
+  s_0d7e11293d5a4e::t_631b4b61c79f1a 964-970
+billfn/core/src/helpers.ts
+  s_0d7e11293d5a4e::t_6c6cf443eab7a1 2
+  s_0d7e11293d5a4e::t_541ee5d66abe92 101-111,114,117-118,125-129
+  s_0d7e11293d5a4e::t_2e2a9b78d49836 130-131
+billfn/core/package.json
+  s_0d7e11293d5a4e::t_220f35bea96fd2 3
+billfn/provider-dodo/package.json
+  s_0d7e11293d5a4e::t_220f35bea96fd2 3,36
+billfn/provider-apple/package.json
+  s_0d7e11293d5a4e::t_220f35bea96fd2 3,36
+billfn/docs/content/docs/reference/errors-and-defaults.mdx
+  s_0d7e11293d5a4e::t_25c54daa4768f5 14-15
+billfn/core/src/router.ts
+  s_0d7e11293d5a4e::t_3da931bb920cf5 6-7,79-87,134,146,175,203,224,248,271,294-303,326,349
+  s_0d7e11293d5a4e::t_d55a0194f1cdc0 8-12
+billfn/docs/content/docs/clients/typescript.mdx
+  s_0d7e11293d5a4e::t_3642e142213341 44-46
+  s_0d7e11293d5a4e::t_92ec2c1990a79a 78
+  s_0d7e11293d5a4e::t_f1d829ad88461d 47
+billfn/core/src/__tests__/router-subject-refund.test.ts
+  s_0d7e11293d5a4e::t_4e371e0b0372fc 1-239
+billfn/svelte/package.json
+  s_0d7e11293d5a4e::t_220f35bea96fd2 3,35-36,40-41
+billfn/core/src/__tests__/checkout-price.test.ts
+  s_0d7e11293d5a4e::t_c40a6985be810e 139-141
+billfn/docs/content/docs/server/setup.mdx
+  s_0d7e11293d5a4e::t_92ec2c1990a79a 22-27,76-77,79-80,93-132
+  s_0d7e11293d5a4e::t_9e7be2ce9b392e 133
+billfn/docs/content/docs/getting-started.mdx
+  s_0d7e11293d5a4e::t_92ec2c1990a79a 150
+billfn/docs/content/docs/troubleshooting.mdx
+  s_0d7e11293d5a4e::t_3642e142213341 44-56
+billfn/docs/package.json
+  s_0d7e11293d5a4e::t_220f35bea96fd2 31-33
+billfn/client/package.json
+  s_0d7e11293d5a4e::t_220f35bea96fd2 3,36
+billfn/admin/package.json
+  s_0d7e11293d5a4e::t_220f35bea96fd2 3,43
+billfn/docs/content/docs/server/routes.mdx
+  s_0d7e11293d5a4e::t_92ec2c1990a79a 22,33
+billfn/core/test/workers/worker.ts
+  s_0d7e11293d5a4e::t_7da68e901280a4 149-150
+package-lock.json
+  s_0d7e11293d5a4e::t_672d27dc002a81 4184,4187,4201,4204,4225,4325-4327,5268,5271,5291,5294,5316,5319-5320,5327-5328
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "42b8457a62a14ca7b92b5e56eb6656efca80a011",
+  "prompts": {},
+  "sessions": {
+    "s_0d7e11293d5a4e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "97ac12a3-1bf1-4732-a6f3-ece8c28b207e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

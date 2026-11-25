@@ -1,0 +1,39 @@
+flowfn/python/flowfn/adapters/postgres.py
+  s_51ccf41e931667::t_8c1e1a01df1532 290-294,308,313,325,356,363-365,368
+flowfn/python/flowfn/adapters/redis.py
+  s_51ccf41e931667::t_bce638a1cc98dd 16,24-42,135-153,281-285,314,348,355-357,360,386
+flowfn/python/flowfn/adapters/stream_lease.py
+  s_51ccf41e931667::t_f73f5cc0c5641d 63-97
+flowfn/python/tests/test_durable_adapters.py
+  s_51ccf41e931667::t_1f8df067f9af97 87
+flowfn/python/tests/test_durable_stream_ownership.py
+  s_51ccf41e931667::t_5b5dec59bd2d77 95
+flowfn/python/tests/test_lease_expiry_observer.py
+  s_51ccf41e931667::t_69f18cab58a271 146
+flowfn/python/tests/test_lease_reply_scheduling.py
+  s_51ccf41e931667::t_d69385fb120aad 112,193
+flowfn/python/tests/test_manual_stream_receipt_expiry.py
+  s_51ccf41e931667::t_e78ba9edf4ac4b 1-36
+flowfn/python/tests/test_postgres_partitions.py
+  s_51ccf41e931667::t_5342df8addd926 296
+flowfn/python/tests/test_redis_partitions.py
+  s_51ccf41e931667::t_105b9cd70fd683 485,505
+flowfn/python/tests/test_redis_workflow_commit.py
+  s_51ccf41e931667::t_e436dda45ec7b1 1-49
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "79e9b197f98ef7aa70d0348a82a984eb63093b8d",
+  "prompts": {},
+  "sessions": {
+    "s_51ccf41e931667": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_51ccf41e931667",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

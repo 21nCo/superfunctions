@@ -1,0 +1,59 @@
+mcpfn/core/package.json
+  s_c5b27aca5b5fd8::t_49ae5e71fd1265 17,25-26,28,35
+mcpfn/core/README.md
+  s_c5b27aca5b5fd8::t_40d0a58c8ecd21 170,211-216,226-241
+mcpfn/core/scripts/packed-runtime-acceptance.mjs
+  s_c5b27aca5b5fd8::t_c74dd62f66221a 1-75
+mcpfn/core/scripts/verify-bundled-zod.mjs
+  s_c5b27aca5b5fd8::t_25339d2744b229 1-28
+mcpfn/core/src/client-profiles.ts
+  s_c5b27aca5b5fd8::t_e23c74b22abe38 1,9,204,249-250,278-279,281-282,333-334,362,412-429,436-447,449-450,565,591-596,598,601-606,613,616-618,620-633,635,639,645,648-670,680,690
+mcpfn/core/src/declaration.ts
+  s_c5b27aca5b5fd8::t_02aed19d3b0e73 46-49
+mcpfn/core/src/manifest.ts
+  s_c5b27aca5b5fd8::t_38ed06a8f8e9db 150,230-234,350,380-387,404-427
+mcpfn/core/src/registry.ts
+  s_c5b27aca5b5fd8::t_a7b3a7eb887e6d 123-135,460-473,561-562,591,659,764-765
+mcpfn/core/src/schema-uri.ts
+  s_c5b27aca5b5fd8::t_7e3e3402f7cd13 1-30
+mcpfn/core/src/server.ts
+  s_c5b27aca5b5fd8::t_d7642f757062e1 436-437,442,463,694,721,729,877-878,901-902,919-920,924-935,947-967,970-977,980-981,984-985,988-989,992-993
+mcpfn/core/src/types.ts
+  s_c5b27aca5b5fd8::t_1f86f2218a9087 52-56,60-63,65,69,71,73-74
+mcpfn/core/src/validation.ts
+  s_c5b27aca5b5fd8::t_5bf3d1100df870 1,59,151,159-170,299,667,669-674,677-682,686,688-692,695,698-701,705-710
+mcpfn/core/tests/client-profiles.test.ts
+  s_c5b27aca5b5fd8::t_73cfeb30db61b8 3,27-52,693,1008-1011,1081-1108,1177-1254
+mcpfn/core/tests/declaration.test.ts
+  s_c5b27aca5b5fd8::t_284e603a0f0665 7-16,78-96
+mcpfn/core/tests/manifest-diff.test.ts
+  s_c5b27aca5b5fd8::t_1132dff971b0af 115-117
+mcpfn/core/tests/schema-uri.test.ts
+  s_c5b27aca5b5fd8::t_7a7c0172d06a97 1-78
+mcpfn/core/tests/server.test.ts
+  s_c5b27aca5b5fd8::t_9fe73d91157fbc 2,4,148-166,769-893
+mcpfn/core/tsup.config.ts
+  s_c5b27aca5b5fd8::t_cf5ab1436af175 1-2,5-7,21-25
+mcpfn/examples/conformance-http-server.ts
+  s_c5b27aca5b5fd8::t_c61e9589824654 388-390
+package-lock.json
+  s_c5b27aca5b5fd8::t_b6944ab68c150b 19005-19006,19008,19015,19022-19025,19027,19443-19451,43546-43548
+package.json
+  s_c5b27aca5b5fd8::t_216fb8eb6b3d2f 172
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8f5d8117dfdae99755a0f4358e348bc67f5a775d",
+  "prompts": {},
+  "sessions": {
+    "s_c5b27aca5b5fd8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "281d426c-bee7-4566-807d-faf6a0a0d361",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

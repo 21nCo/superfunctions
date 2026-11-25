@@ -1,0 +1,31 @@
+filefn/client/src/__tests__/transport.test.ts
+  s_b841cebdcfad95::t_25ce4b45ffaca3 14,33,241-253
+filefn/client/src/client.ts
+  s_b841cebdcfad95::t_bb6d5e9976d351 250-252,255,260,262-264,267-270,556,560-564,568,575
+filefn/server/src/authz/authorizer.ts
+  s_b841cebdcfad95::t_f93bc2465cdfb3 120-121,123
+filefn/server/src/index.ts
+  s_b841cebdcfad95::t_2e6f71df958931 392-394,396-397,419,494,666-691
+filefn/server/src/rate-limit-key.ts
+  s_b841cebdcfad95::t_91390770d0f227 10-15,22,25
+filefn/server/src/upload-sessions/service.ts
+  s_b841cebdcfad95::t_6dd7a60c3e0dba 161-163,165,526,918,1115-1121,1129,1163,1170-1174,1178-1179,1190-1191,1204,1210
+filefn/server/tests/hardening.test.ts
+  s_b841cebdcfad95::t_bd7c3ac7ea9c19 61-82,104-108,134-159,161-162,165-167
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a4d0212078d5cd675f1116f51d2eae4f849a02d7",
+  "prompts": {},
+  "sessions": {
+    "s_b841cebdcfad95": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "436f4738-d86e-44e1-82bc-c432f9aaabf3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

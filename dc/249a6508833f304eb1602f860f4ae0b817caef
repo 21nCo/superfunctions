@@ -1,0 +1,23 @@
+cachefn/typescript/__tests__/fence-rollback.test.ts
+  s_70fe6280a3ea20::t_d373b7ffc4f748 388-437
+cachefn/typescript/src/memoization/compatible.ts
+  s_70fe6280a3ea20::t_96eb154cf17c92 58-59
+cachefn/typescript/src/memoization/memoize.ts
+  s_70fe6280a3ea20::t_4d48444e2f719f 88-95,103,106-108,128-131,181-182
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "dc249a6508833f304eb1602f860f4ae0b817caef",
+  "prompts": {},
+  "sessions": {
+    "s_70fe6280a3ea20": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "487a7816-4bec-4acd-9f07-16af73337d8c",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

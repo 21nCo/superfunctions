@@ -1,0 +1,23 @@
+mcpfn/auth/tests/bundled-sdk-version.test.ts
+  s_1eb217f2cbe12c::t_7a8eb3ff8d7605 89-91,148-167,170-174,177,188,190,196,203-211
+mcpfn/core/tests/bundled-sdk-version.test.ts
+  s_1eb217f2cbe12c::t_6e902f9928081d 122-124,188-207,211-212,214,218-219,222,233,235,241,248-256,264,268,271-275,316,324
+scripts/verify-mcpfn-bundled-sdk.mjs
+  s_1eb217f2cbe12c::t_6916ec4368618a 67-77,79-88,91-93,97-99,101-102,117-119,122-127,132,138,142-144,146-147,149,151,154,161,167,170,173-174,178-182,186-187,193,196-207,209-213,217,231-232,234-240
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "bdf8e7331d775a1cce849f147cf93c26566f788d",
+  "prompts": {},
+  "sessions": {
+    "s_1eb217f2cbe12c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2b2155d1-b0bb-4e5e-bb89-8414e78e1489",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

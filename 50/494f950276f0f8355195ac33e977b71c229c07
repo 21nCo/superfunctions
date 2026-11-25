@@ -1,0 +1,27 @@
+mcpfn/core/README.md
+  s_b996deaa3d01f1::t_644980ced24a45 113-120
+mcpfn/core/src/openapi/schema.ts
+  s_b996deaa3d01f1::t_b2cd6df47697f0 519-522,650-662,666,675,684-716,904-912
+mcpfn/core/tests/fixtures/openapi/README.md
+  s_b996deaa3d01f1::t_1f62f454e90f42 25-29
+mcpfn/core/tests/fixtures/openapi/skip-access-flag-oneof-nested.json
+  s_b996deaa3d01f1::t_dbbb3a852737a7 1-556
+mcpfn/core/tests/openapi-forms.test.ts
+  s_b996deaa3d01f1::t_405e7910fcad31 546-567
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "50494f950276f0f8355195ac33e977b71c229c07",
+  "prompts": {},
+  "sessions": {
+    "s_b996deaa3d01f1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c40e7b19-3313-4542-ad8e-39c9c4c912f1",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,63 @@
+apifn/cli/src/commands/diff.ts
+  s_fb251cc0a0945b::t_df7d3382a71b1f 41-42
+apifn/README.md
+  s_fb251cc0a0945b::t_86d3563565ccdb 37,39
+apifn/cli/README.md
+  s_fb251cc0a0945b::t_a5b97cbf550371 19,110-145
+apifn/cli/__tests__/__snapshots__/check-command.test.ts.snap
+  s_fb251cc0a0945b::t_eeebb14d2ce77f 1-92
+apifn/cli/__tests__/check-command.test.ts
+  s_fb251cc0a0945b::t_88661f8029f50a 1-436
+apifn/cli/__tests__/fixtures/check/base-zero/apifn.config.ts
+  s_fb251cc0a0945b::t_a51be3e42b8811 1-5
+apifn/cli/__tests__/fixtures/check/base/apifn.config.ts
+  s_fb251cc0a0945b::t_cdd5a87a4142a0 1-4
+apifn/cli/__tests__/fixtures/check/base/router.ts
+  s_fb251cc0a0945b::t_d851fdfec01d8b 1-29
+apifn/cli/__tests__/fixtures/check/breaking-major/apifn.config.ts
+  s_fb251cc0a0945b::t_9d0b0414ebffda 1-4
+apifn/cli/__tests__/fixtures/check/breaking-major/router.ts
+  s_fb251cc0a0945b::t_c9898132eb0ac9 1-18
+apifn/cli/__tests__/fixtures/check/breaking-zero-minor/apifn.config.ts
+  s_fb251cc0a0945b::t_19108a0511e2c5 1-5
+apifn/cli/__tests__/fixtures/check/breaking/apifn.config.ts
+  s_fb251cc0a0945b::t_6e6a1d7a65c31c 1-4
+apifn/cli/__tests__/fixtures/check/breaking/router.ts
+  s_fb251cc0a0945b::t_7286d45a8bbabe 1-18
+apifn/cli/__tests__/fixtures/check/compatible/apifn.config.ts
+  s_fb251cc0a0945b::t_1540ec95e83859 1-4
+apifn/cli/__tests__/fixtures/check/compatible/router.ts
+  s_fb251cc0a0945b::t_0146f9cf1e49ba 1-40
+apifn/cli/__tests__/fixtures/check/invalid/apifn.config.ts
+  s_fb251cc0a0945b::t_147af463530a86 1-4
+apifn/cli/__tests__/fixtures/check/invalid/router.ts
+  s_fb251cc0a0945b::t_e523da6349c085 1-29
+apifn/cli/__tests__/fixtures/check/non-semver/apifn.config.ts
+  s_fb251cc0a0945b::t_509916bd3708df 1-5
+apifn/cli/package.json
+  s_fb251cc0a0945b::t_1b52212fca8087 3
+apifn/cli/src/commands/check.ts
+  s_fb251cc0a0945b::t_466145664f0ff6 1-595
+apifn/cli/src/commands/generate.ts
+  s_fb251cc0a0945b::t_0cf7968282e2bf 5,10-30,32,34,41,54-71,74,76,79
+apifn/cli/src/index.ts
+  s_fb251cc0a0945b::t_e5ca17608ade4f 10,298-370,522
+package-lock.json
+  s_fb251cc0a0945b::t_ab2517a4fdcb5b 110
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fd1a6fa59949fefed34df1f03afece4f23ac300a",
+  "prompts": {},
+  "sessions": {
+    "s_fb251cc0a0945b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2c054bd7-19ac-430b-a68f-f4e5ef84e77e",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

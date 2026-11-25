@@ -1,0 +1,19 @@
+apifn/cli/README.md
+  s_8733810f81ac74::t_8fefdd6d58339a 131-137
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "acf877432c4ea5dd50afc7f8acf8f217a037491a",
+  "prompts": {},
+  "sessions": {
+    "s_8733810f81ac74": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "de14e21a-fb12-4ae6-94b9-a3051920fa29",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

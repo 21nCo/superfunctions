@@ -1,0 +1,19 @@
+billfn/docs/content/docs/providers/apple.mdx
+  s_ad3a3856a87c81::t_df74e3da23b5ea 35
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "bb77411076867081931b6b3d0e17038071bf20b1",
+  "prompts": {},
+  "sessions": {
+    "s_ad3a3856a87c81": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a2126c-2a4d-7b03-aaf0-909847a5e9c7",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

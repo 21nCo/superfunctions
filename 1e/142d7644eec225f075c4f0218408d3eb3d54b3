@@ -1,0 +1,23 @@
+langfn/typescript/src/models/responses/response.ts
+  s_f058f999ab46b7::t_234716ddb5f366 376-388,397
+langfn/typescript/src/models/responses/stream.ts
+  s_f058f999ab46b7::t_b74b7731ad7d84 1,12,24-48,54,56,61-62,64,73-80,98-100,256-262,265,270-375,378-385,392-396,398-413,415-423,459-464,481-482,517-522,524-534,549-563,598,602-603,658-669
+langfn/typescript/tests/responses-mapping.test.ts
+  s_f058f999ab46b7::t_67b8d3243e495a 125-130,134-163,855-968
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1e142d7644eec225f075c4f0218408d3eb3d54b3",
+  "prompts": {},
+  "sessions": {
+    "s_f058f999ab46b7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fb025346-b9a2-48b2-b8e1-3df0ee912478",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

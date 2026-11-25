@@ -1,0 +1,21 @@
+authfn/client/src/__tests__/regional-client.test.ts
+  s_e5ac07859c1bc9::t_0c3cf72ea746d9 361-418
+authfn/client/src/regional-client.ts
+  s_e5ac07859c1bc9::t_934b19509cd31f 62,65-67,96,114,116-118,159,336-339,341-353
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "504051fcdd9cc8b82ce8650f5b0224987a46bb52",
+  "prompts": {},
+  "sessions": {
+    "s_e5ac07859c1bc9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5142ca70-a18b-4d6e-8f19-4855393dcdd0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

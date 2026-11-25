@@ -1,0 +1,25 @@
+apifn/contracts/package.json
+  s_8ba0bbbc56fe4c::t_af50aae75a81fb 62
+apifn/sdk/package.json
+  s_8ba0bbbc56fe4c::t_80895a0e5697d7 48
+release-packages.json
+  s_8ba0bbbc56fe4c::t_90f94a6408f9c0 4,9
+superfunctions.owners.json
+  s_8ba0bbbc56fe4c::t_4e6590d9357b8a 61,66
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "848a64a2bfdec3910481bf74de580e0f99508369",
+  "prompts": {},
+  "sessions": {
+    "s_8ba0bbbc56fe4c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a1267872-f15f-41e1-a1d6-c79f348ccb4b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

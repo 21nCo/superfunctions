@@ -1,0 +1,53 @@
+package.json
+  s_bb1759b0f8876a::t_e5f4334b487bd6 222
+testfn/typescript/src/core/test-runner.ts
+  s_bb1759b0f8876a::t_7693b1fcdfbb87 132
+testfn/typescript/src/integrations/node-reporter.ts
+  s_bb1759b0f8876a::t_0a52d75ec2d5b9 5-6,8-12,25,28
+testfn/typescript/src/integrations/playwright-adapter.ts
+  s_bb1759b0f8876a::t_6fd9c38fc2a31d 2,8-9,52-71,82-86,100-105,148-149,157-164
+testfn/typescript/src/integrations/process.ts
+  s_bb1759b0f8876a::t_1633d9eb6a9f55 90-93
+testfn/typescript/src/reporters/json-reporter.ts
+  s_bb1759b0f8876a::t_d0551176a453f2 5,21,24-25,28-39
+testfn/typescript/src/storage/backends.ts
+  s_bb1759b0f8876a::t_76bde300db934e 212-216
+testfn/typescript/src/storage/indexeddb-manager.ts
+  s_bb1759b0f8876a::t_345beba8a26a7f 221-225,228-255
+testfn/typescript/src/types.ts
+  s_bb1759b0f8876a::t_813caf1d4c2ad3 217-221,288-289
+testfn/typescript/tests/lifecycle-contract.test.ts
+  s_bb1759b0f8876a::t_caa27a13b1b979 8-9,184-222
+testfn/typescript/tests/storage.test.ts
+  s_bb1759b0f8876a::t_1f76f79f932222 8,73-117
+package-lock.json
+  s_bb1759b0f8876a::t_016017fe2e239c 76618-76620
+testfn/admin/src/capability.ts
+  s_bb1759b0f8876a::t_b8cc097ce21d51 605
+testfn/typescript/README.md
+  s_bb1759b0f8876a::t_c48847c3891e5e 87-89,111,113,159,162-163,207,209,211,213
+testfn/typescript/src/integrations/puppeteer-adapter.ts
+  s_bb1759b0f8876a::t_81fe4848f00792 9,23,25-30
+testfn/typescript/tests/adapters.test.ts
+  s_bb1759b0f8876a::t_996cba767a0813 4-7,86-166
+testfn/typescript/tests/framework-failure-contract.test.ts
+  s_bb1759b0f8876a::t_a7819adff2c44e 5-9,83-107
+testfn/typescript/tests/process-lifecycle.test.ts
+  s_bb1759b0f8876a::t_61c89719f13e84 75-89
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ef2e0940689c9f1cc1ad355dee61fb6e5d8bbe88",
+  "prompts": {},
+  "sessions": {
+    "s_bb1759b0f8876a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7e925e6e-108b-4258-8047-2963a6a4c375",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

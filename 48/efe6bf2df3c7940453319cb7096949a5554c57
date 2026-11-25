@@ -1,0 +1,59 @@
+cifn/typescript/control-plane/scripts/verify-remote-execution.mjs
+  s_1eb217f2cbe12c::t_4556a5803987a4 130
+cifn/typescript/control-plane/src/api/routes.ts
+  s_1eb217f2cbe12c::t_a656417d702626 67-68,391
+cifn/typescript/control-plane/src/dispatch/prepare.ts
+  s_1eb217f2cbe12c::t_c0a14cf4d73618 39,42,65,67
+cifn/typescript/control-plane/src/dispatch/publisher.test.ts
+  s_1eb217f2cbe12c::t_1e14b0fe25bf1a 4,39,42,48-51,58-99
+cifn/typescript/control-plane/src/dispatch/publisher.ts
+  s_1eb217f2cbe12c::t_6cd9a7fe0e1065 24-30,37-46
+cifn/typescript/control-plane/src/index.ts
+  s_1eb217f2cbe12c::t_43743921444dd0 78
+cifn/typescript/control-plane/src/integrations/flowfn.ts
+  s_1eb217f2cbe12c::t_7d850c92429229 1-2,6-7
+cifn/typescript/control-plane/src/integrations/types.ts
+  s_1eb217f2cbe12c::t_f9d46943bfb6a1 9-10
+cifn/typescript/control-plane/src/queue/flowfn-client.ts
+  s_1eb217f2cbe12c::t_5b92a7921f8587 17-18,29-36,39-45,61-70,75-78,80,83,88-89,93-95,97,99-100,102
+cifn/typescript/control-plane/src/secrets/expression.ts
+  s_1eb217f2cbe12c::t_eeade59f5a4618 25,28,34,37
+cifn/typescript/control-plane/src/secrets/redact.ts
+  s_1eb217f2cbe12c::t_38b69fffdd8437 3,5-9,12-16,19-20,24-27,29,32,34-35,39-41,43,45,51-52,55-71
+cifn/typescript/control-plane/src/store/database-store.test.ts
+  s_1eb217f2cbe12c::t_5c08bb14b55c3e 242,1276-1333
+cifn/typescript/control-plane/src/store/database-store.ts
+  s_1eb217f2cbe12c::t_2f59abb246be3c 6,421-435,662-666,794
+cifn/typescript/control-plane/src/triggers/triggers.test.ts
+  s_1eb217f2cbe12c::t_ac54b51626bd4d 499,507-509,514,521-539
+cifn/typescript/runner/src/claim-journal.ts
+  s_1eb217f2cbe12c::t_13de218214ab0b 14-15,60-65,67-68
+cifn/typescript/runner/src/log-spool.ts
+  s_1eb217f2cbe12c::t_fec4dfdeb3fe52 86,112-113,144,151-159,208
+cifn/typescript/runner/src/remote-runner.test.ts
+  s_1eb217f2cbe12c::t_ef37230d3f44ec 700-750
+cifn/typescript/runner/src/remote-runner.ts
+  s_1eb217f2cbe12c::t_e1c84df6da6a72 56-57,152-160,384-389
+cifn/typescript/runner/src/runner.ts
+  s_1eb217f2cbe12c::t_60eff003b62e3f 168
+cifn/typescript/runner/src/secrets-steps.test.ts
+  s_1eb217f2cbe12c::t_2a6ff94445dca9 18,92,110,112,114-135
+cifn/typescript/runner/src/spool-retirement-race.test.ts
+  s_1eb217f2cbe12c::t_7f46ced4a4fafd 1-58
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "48efe6bf2df3c7940453319cb7096949a5554c57",
+  "prompts": {},
+  "sessions": {
+    "s_1eb217f2cbe12c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2b2155d1-b0bb-4e5e-bb89-8414e78e1489",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

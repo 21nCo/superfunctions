@@ -1,0 +1,21 @@
+filefn/processing/src/content-sniff.ts
+  s_b841cebdcfad95::t_f905ebbc7fb011 48-51,54
+filefn/processing/tests/processing.test.ts
+  s_b841cebdcfad95::t_4c6ece6555709c 576-577
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "37cf978af0733ff459d26d18922f18f6c7e488b6",
+  "prompts": {},
+  "sessions": {
+    "s_b841cebdcfad95": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "436f4738-d86e-44e1-82bc-c432f9aaabf3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

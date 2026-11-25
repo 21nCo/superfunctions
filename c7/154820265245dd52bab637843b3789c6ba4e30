@@ -1,0 +1,21 @@
+clifn/core/src/json-value.ts
+  s_124319b903d839::t_203eb7dcc356c2 48-50,53-62,65-73,75,79-81,83-106,108-140,142-153,155-175,177-188,192-202,205-212
+clifn/core/tests/runner-document.test.ts
+  s_124319b903d839::t_32e7f50b5efb47 708,713-716,721-724,778-863,982
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c7154820265245dd52bab637843b3789c6ba4e30",
+  "prompts": {},
+  "sessions": {
+    "s_124319b903d839": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "459fa815-0e7a-4823-b25b-3c85bd3d320a",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

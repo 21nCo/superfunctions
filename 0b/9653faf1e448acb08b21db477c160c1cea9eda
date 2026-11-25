@@ -1,0 +1,21 @@
+flowfn/python/flowfn/workflow/workflow.py
+  s_e31859fe8dfbca::t_807b231d8f52c3 518-520,522-528
+flowfn/python/tests/test_workflow_lifecycle.py
+  s_e31859fe8dfbca::t_9f4715aacb2b23 172-230
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0b9653faf1e448acb08b21db477c160c1cea9eda",
+  "prompts": {},
+  "sessions": {
+    "s_e31859fe8dfbca": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_e31859fe8dfbca",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

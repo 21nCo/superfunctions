@@ -1,0 +1,41 @@
+contentfn/server/src/__tests__/review-regressions.test.ts
+  s_eca7c403f9ecad::t_7344ebcc9afbf5 23-44,399-478
+contentfn/server/src/query/cursor.ts
+  s_0d85e5b70dc887::t_c5fa9942588da3 12-14
+contentfn/server/src/storage/migrate.ts
+  s_0d85e5b70dc887::t_0184ef6522c5e8 46-48
+contentfn/server/src/storage/revisions.ts
+  s_0d85e5b70dc887::t_9184d68c34ea4c 63,86,93-96,103-109,111,113,115,125-126,132,138
+contentfn/server/README.md
+  s_eca7c403f9ecad::t_26050abb87bbdd 62-73,78-88,108-109
+contentfn/server/src/__tests__/history-index.test.ts
+  s_eca7c403f9ecad::t_0fcb51b931fc01 72-74,78,80
+contentfn/server/src/__tests__/history-keyset.test.ts
+  s_eca7c403f9ecad::t_f54e3bc02dd799 94,114-117
+contentfn/server/src/__tests__/webhooks.sqlite.test.ts
+  s_eca7c403f9ecad::t_d696531f0338a8 31
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0d8e58987c35392523cde10486fd5d211dcff3b1",
+  "prompts": {},
+  "sessions": {
+    "s_0d85e5b70dc887": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "37e3656b-fb3d-4769-b9a9-5d99c965fb6b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_eca7c403f9ecad": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0e41ef6c-f7d9-4b3e-918e-49bb6fa4bfb6",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

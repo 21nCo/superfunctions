@@ -1,0 +1,21 @@
+flowfn/python/flowfn/core/telemetry.py
+  s_19abec75182420::t_30a0191555d6c3 10-11,114-124,142-147
+flowfn/python/tests/test_observed_partitions.py
+  s_19abec75182420::t_ce886c9468b1ab 1-97
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "60e81ad6e77c6cda51cbec6617bedf5e9dd00fb4",
+  "prompts": {},
+  "sessions": {
+    "s_19abec75182420": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d61a7abd-8c27-4e7c-ba23-13d43e2da322",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

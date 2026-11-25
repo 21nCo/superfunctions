@@ -1,0 +1,25 @@
+watchfn/python/tests/test_synthetics.py
+  s_d7f02404f77a17::t_68a4d652864343 167-185
+watchfn/python/watchfn/synthetics/reports.py
+  s_d7f02404f77a17::t_94abdbfe0662d7 15,19-20,24-28
+watchfn/typescript/src/synthetics/reports.ts
+  s_d7f02404f77a17::t_538aaa1b228dc1 18-25,30
+watchfn/typescript/tests/synthetics-native.test.ts
+  s_d7f02404f77a17::t_a8ddbcc25141da 79-92
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9f059b4a615ef0b68fd4ed0a141ba45caa968cb3",
+  "prompts": {},
+  "sessions": {
+    "s_d7f02404f77a17": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_d7f02404f77a17",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

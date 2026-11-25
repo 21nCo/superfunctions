@@ -1,0 +1,39 @@
+apifn/cli/__tests__/check-command.test.ts
+  s_ee209e791cba34::t_362ae5daa8ab1b 6-7,23-32,439-574
+apifn/cli/README.md
+  s_11f4a1ea2b232a::t_4b8088101b594b 123,137-138
+apifn/cli/src/commands/check.ts
+  s_666180e3d05c4d::t_50a8569e176b82 87,219-223,228-230,238-239,241,479-555,566,574-579
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2184b3ef6c240009a5695992b768e17200abe980",
+  "prompts": {},
+  "sessions": {
+    "s_11f4a1ea2b232a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "52513379-8d87-425a-aae8-9fec93cf0240",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_666180e3d05c4d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1fc5e-1463-7290-aeb7-a65bd7d53e70",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_ee209e791cba34": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1fe34-505a-7d91-87df-7cac65dc64d3",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,25 @@
+authfn/docs/content/docs/plugins/native-handoff.md
+  s_e5ac07859c1bc9::t_7e556673909ba7 95
+authfn/docs/static/llms-full.txt
+  s_e5ac07859c1bc9::t_a06a226c9791bb 6299
+authfn/swift/Sources/AuthFnWebViewBridgeHost/AuthFnWebViewBridgeHost.swift
+  s_e5ac07859c1bc9::t_c1fa29af8c83c0 79-84,86-90,121-125,161-186,188-196,199-223
+authfn/swift/Tests/AuthFnWebViewBridgeHostTests/AuthFnWebViewBridgeHostTests.swift
+  s_e5ac07859c1bc9::t_108b9dde5a3822 89-114
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fdaf49972676244ba4eadbb72c59f17b29405c6e",
+  "prompts": {},
+  "sessions": {
+    "s_e5ac07859c1bc9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5142ca70-a18b-4d6e-8f19-4855393dcdd0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

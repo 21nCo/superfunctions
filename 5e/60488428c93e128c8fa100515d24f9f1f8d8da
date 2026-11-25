@@ -1,0 +1,37 @@
+flowfn/python/flowfn/adapters/redis.py
+  s_0a04203b192b02::t_c0c06188ec845d 282-283,308-325,327-329,331,339
+flowfn/python/flowfn/workflow/workflow.py
+  s_0a04203b192b02::t_c8e855cc69a3de 334-335,357,384,413,429-433,436
+flowfn/python/tests/test_redis_reclaim_window.py
+  s_0a04203b192b02::t_cca93609957040 1-63
+flowfn/python/tests/test_workflow_owner_fence.py
+  s_0a04203b192b02::t_24c2010431624c 164-195
+flowfn/typescript/src/adapters/redis.test.ts
+  s_0a04203b192b02::t_8dd31080088b54 205-223
+flowfn/typescript/src/adapters/redis.ts
+  s_0a04203b192b02::t_eeaad4e0c03a82 624-626,730-750,753-755,757,766
+flowfn/typescript/src/core/durable-scheduler.ts
+  s_0a04203b192b02::t_25ddb7cfe7168a 13-14,76,82,93-96,109
+flowfn/typescript/src/core/scheduler-generation.test.ts
+  s_0a04203b192b02::t_6b015a991b5301 1-25
+flowfn/typescript/src/workflow/expired-owner.test.ts
+  s_0a04203b192b02::t_a98b09c12bdf9b 26-53
+flowfn/typescript/src/workflow/workflow.ts
+  s_0a04203b192b02::t_0a297da2415618 354-356,695-697,770-771,773
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5e60488428c93e128c8fa100515d24f9f1f8d8da",
+  "prompts": {},
+  "sessions": {
+    "s_0a04203b192b02": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_0a04203b192b02",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

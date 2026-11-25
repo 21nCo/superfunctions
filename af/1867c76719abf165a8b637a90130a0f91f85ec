@@ -1,0 +1,34 @@
+authfn/docs/content/docs/core-concepts/rate-limiting.md
+  s_e5ac07859c1bc9::t_6222cf47c67a4d 35
+authfn/python/authfn/plugins/email_otp.py
+  s_e5ac07859c1bc9::t_6222cf47c67a4d 462-468,486-499
+  s_e5ac07859c1bc9::t_ae0fb1ce8b7791 500-501
+authfn/python/tests/test_otp.py
+  s_e5ac07859c1bc9::t_e612c82b9f0f6a 369-404
+authfn/docs/static/llms-full.txt
+  s_ee209e791cba34::t_32cb75362cbc0d 3128
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "af1867c76719abf165a8b637a90130a0f91f85ec",
+  "prompts": {},
+  "sessions": {
+    "s_e5ac07859c1bc9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5142ca70-a18b-4d6e-8f19-4855393dcdd0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_ee209e791cba34": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1fe34-505a-7d91-87df-7cac65dc64d3",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

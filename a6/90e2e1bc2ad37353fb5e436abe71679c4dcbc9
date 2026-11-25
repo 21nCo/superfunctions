@@ -1,0 +1,36 @@
+apifn/core/package.json
+  s_83fa589146e8c6::t_7e1491a97ddb8e 20-29
+apifn/core/src/openapi/validate.ts
+  s_83fa589146e8c6::t_0f9531b095c0b6 152-153
+  s_83fa589146e8c6::t_7c0528a7650e72 171-172,175,182-183,185
+  s_83fa589146e8c6::t_8630fa12342adb 61,69,123,148,154,156,164
+  s_83fa589146e8c6::t_99a1a0990542b8 149,158-160,162,167-169,184
+  s_83fa589146e8c6::t_1152048192cd02 2,26-40,55-58,62-68,90-95,97-101,103,111-112,115,119-121,124-147,150-151,155,157,163,165-166,170,173-174,176-178,186-248,251-252,255-256,296-298,300,306
+apifn/core/README.md
+  s_83fa589146e8c6::t_91009c9e07f706 89
+apifn/cli/README.md
+  s_83fa589146e8c6::t_92f24cc047b786 234-235
+apifn/core/__tests__/openapi-validate.test.ts
+  s_83fa589146e8c6::t_5282442ffaa786 101-114,248-277,280,283-285,293-294,297,307,317,321
+apifn/cli/src/commands/check-compare.ts
+  s_83fa589146e8c6::t_17f6298558c0ac 7
+  s_83fa589146e8c6::t_6bd8325d25fe10 8-9
+apifn/core/tsup.config.ts
+  s_83fa589146e8c6::t_f9a29cd7d4c809 9
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a690e2e1bc2ad37353fb5e436abe71679c4dcbc9",
+  "prompts": {},
+  "sessions": {
+    "s_83fa589146e8c6": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21253-9943-7ef0-8aad-8a89b106fa79",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

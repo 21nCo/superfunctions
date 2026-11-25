@@ -1,0 +1,27 @@
+filefn/server/tests/upload-size-security.test.ts
+  s_b841cebdcfad95::t_79773091836d58 1-164
+filefn/server/src/__tests__/idempotency-complete.test.ts
+  s_b841cebdcfad95::t_05304223a110f4 135-136
+filefn/server/src/__tests__/upload-size-validate.test.ts
+  s_b841cebdcfad95::t_caeec8bb678317 13-14,22,48-49,66-68
+filefn/server/src/errors.ts
+  s_b841cebdcfad95::t_98b9040f50cd4f 43,230-238
+filefn/server/src/upload-sessions/service.ts
+  s_b841cebdcfad95::t_ffc8a2a7fa2079 338-345,1539-1545,1601-1605,1621-1622,1652-1653,1656-1662,1664,1980-1993
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e449c5b6e402e7b25e7da13ed6ce19ee11c6350f",
+  "prompts": {},
+  "sessions": {
+    "s_b841cebdcfad95": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "436f4738-d86e-44e1-82bc-c432f9aaabf3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

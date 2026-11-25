@@ -1,0 +1,39 @@
+authfn/core/src/core/conditional-update.ts
+  s_e5ac07859c1bc9::t_e4e9293400fa68 1-56
+authfn/core/src/__tests__/two-factor.test.ts
+  s_e5ac07859c1bc9::t_ce55a7ca407e51 5,169-174,625-626,628-646,712-718,746-753,755-890,892,895-930
+authfn/core/src/core/two-factor.ts
+  s_e5ac07859c1bc9::t_1390cc2049f7b2 26,45-47,212-214,331-339,341-374,397,427,506-522,528,530-545,549,553-558,561-564,568,572-573,576-587,589,595,600-602,612-614,620-634,641-645,653-680,684-685,690,693-694,704,706-707,709-724,754-761,764-766
+authfn/core/src/schema.ts
+  s_e5ac07859c1bc9::t_593d1b33ccc561 6
+authfn/docs/content/docs/plugins/two-factor.md
+  s_e5ac07859c1bc9::t_bc52bed0179c96 45-46,65,101-107
+authfn/docs/content/docs/reference/schema.md
+  s_e5ac07859c1bc9::t_a663847c032ca0 134
+authfn/docs/static/llms-full.txt
+  s_e5ac07859c1bc9::t_224d52854133a7 7147-7148,7167,7203-7209,10626
+authfn/python/authfn/plugins/two_factor.py
+  s_e5ac07859c1bc9::t_039530385d36ce 54,69-79,409
+authfn/python/tests/test_two_factor.py
+  s_e5ac07859c1bc9::t_c51005698ebed9 310-371
+authfn/two-factor/src/index.ts
+  s_e5ac07859c1bc9::t_bf6a9b96d3b32c 14-15,36-39
+packages/cli/src/__tests__/authfn-schema-discovery.test.ts
+  s_e5ac07859c1bc9::t_77cdc70251dc53 159
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9365dfb599acec909b50ed57e568679dc7f8d795",
+  "prompts": {},
+  "sessions": {
+    "s_e5ac07859c1bc9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5142ca70-a18b-4d6e-8f19-4855393dcdd0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,27 @@
+README.md
+  s_9cdb8293a15f7e::t_9c2d08fd31e7a8 75-78
+scripts/assert-release-ci.mjs
+  s_9cdb8293a15f7e::t_0a06b120d6578a 15-16,33-34,38,76-81,100-101
+scripts/assert-release-ci.test.mjs
+  s_9cdb8293a15f7e::t_9aff4c87a85671 172-173,208-211,234,236-237,239-246
+scripts/owners.mjs
+  s_9cdb8293a15f7e::t_39102394655dbe 127-128
+scripts/owners.test.mjs
+  s_9cdb8293a15f7e::t_399d44c49dacc9 134-135
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a22cb68f09a58f624fc0faf7710562aee1faced3",
+  "prompts": {},
+  "sessions": {
+    "s_9cdb8293a15f7e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "00ce3d8c-5e7b-4f5b-ac68-bc27884d6698",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,45 @@
+watchfn/python/watchfn/alerts/alert_manager.py
+  s_f058f999ab46b7::t_879019051eefcc 98-100,110
+watchfn/python/watchfn/alerts/observations.py
+  s_f058f999ab46b7::t_7d23b8ad93ccbd 200-201,223-224,236-238
+watchfn/python/watchfn/integrations/logfn.py
+  s_f058f999ab46b7::t_b51e1b1dc16550 204-205
+watchfn/python/watchfn/query.py
+  s_f058f999ab46b7::t_b1dfddc94a376a 419-426,440-442,444
+watchfn/python/tests/test_bounded_scan.py
+  s_f058f999ab46b7::t_b0fadd6eb38c83 201-226
+watchfn/python/tests/test_log_integration.py
+  s_f058f999ab46b7::t_0554845bcb9b35 42-56
+watchfn/python/tests/test_stored_alerts.py
+  s_f058f999ab46b7::t_4c5775eae0dd47 212-230
+watchfn/typescript/src/core/watch-fn.ts
+  s_f058f999ab46b7::t_02a9a171b42101 180-183
+watchfn/typescript/src/http/handlers.ts
+  s_f058f999ab46b7::t_2a67272b34d013 3,83
+watchfn/typescript/src/integrations/botfn/provider.ts
+  s_f058f999ab46b7::t_55c142fbb7356b 10-16,21
+watchfn/typescript/src/integrations/botfn/store.ts
+  s_f058f999ab46b7::t_ff7735d6f0638b 62-69,71,73-75,77-85,92-107
+watchfn/typescript/src/query/logs.ts
+  s_f058f999ab46b7::t_e652b7e57d88e2 25-26
+watchfn/typescript/tests/integrations/botfn.test.ts
+  s_f058f999ab46b7::t_c8f34b3be8e244 65-81,105-127
+watchfn/typescript/tests/logfn-integration.test.ts
+  s_f058f999ab46b7::t_85db5e880615e0 24-40
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "66ba37dff52a48a807a6b795c180b5626e918394",
+  "prompts": {},
+  "sessions": {
+    "s_f058f999ab46b7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fb025346-b9a2-48b2-b8e1-3df0ee912478",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

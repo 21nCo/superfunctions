@@ -1,0 +1,21 @@
+searchfn/adapter-contracts/__tests__/redaction-hardening.test.ts
+  s_19abec75182420::t_a4869733f53f2b 69-123,69-71,74-123
+searchfn/adapter-contracts/src/redaction.ts
+  s_19abec75182420::t_d5f21313310292 13-18,20,23,26-49,58-59,65,113,152,168
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "dc2e793ded3b43bce95345d4239267bd7b5e40a1",
+  "prompts": {},
+  "sessions": {
+    "s_19abec75182420": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d61a7abd-8c27-4e7c-ba23-13d43e2da322",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

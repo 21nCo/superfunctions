@@ -1,0 +1,49 @@
+langfn/README.md
+  s_b996deaa3d01f1::t_7d7216d5fa66cd 5,12
+langfn/typescript/README.md
+  s_b996deaa3d01f1::t_10a77c844f7b29 5,10
+langfn/typescript/package.json
+  s_b996deaa3d01f1::t_081ff30d6a81a3 3,104
+langfn/typescript/src/http/routes.ts
+  s_b996deaa3d01f1::t_90b39c8396dd10 43
+langfn/typescript/src/mcp/client.ts
+  s_b996deaa3d01f1::t_1624496b64ac72 9
+langfn/typescript/src/mcp/server.ts
+  s_b996deaa3d01f1::t_103722bae9914b 115
+langfn/typescript/tests/http-routes.test.ts
+  s_b996deaa3d01f1::t_9db5b913301573 17
+langfn/typescript/tests/package-contract.test.ts
+  s_b996deaa3d01f1::t_9ffa63c4b0b635 19,48-49,57-58
+langfn/typescript/tests/release-gate.test.ts
+  s_b996deaa3d01f1::t_0af0677b90c8cb 200
+mcpfn/core/src/openapi/from-openapi.ts
+  s_b996deaa3d01f1::t_da971df3b066fd 506,669-673,683-687,696,698-722,1090-1093,1097,1130-1144
+mcpfn/core/src/openapi/schema.ts
+  s_b996deaa3d01f1::t_483d1ec1b0f371 58-60,68,264-265,677-680,719-722,726-727,731-732,736,739,741,743,745,748-749,752-755,757,759,762,775-777,781,785,1478-1484
+mcpfn/core/tests/openapi-forms.test.ts
+  s_b996deaa3d01f1::t_21854242255f0d 2025-2152
+memoryfn/typescript/package.json
+  s_b996deaa3d01f1::t_af0c2c7aefc09b 3,45
+package-lock.json
+  s_b996deaa3d01f1::t_15c16b91e75b99 15833,15836,15854-15869,16106-16121,25026,25028,25060-25075,25516-25531,59211,59214,59224-59731,65448
+packages/admin/package.json
+  s_b996deaa3d01f1::t_5e99a6b2a42f0c 3,31
+superconsole/package.json
+  s_b996deaa3d01f1::t_5f32083acee118 28
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d36460e2cbde0b5338151be5af39c7328c350c1a",
+  "prompts": {},
+  "sessions": {
+    "s_b996deaa3d01f1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c40e7b19-3313-4542-ad8e-39c9c4c912f1",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

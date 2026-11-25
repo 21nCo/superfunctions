@@ -1,0 +1,115 @@
+filefn/admin/src/__tests__/admin.test.ts
+  s_b841cebdcfad95::t_ca42ace7e8cf84 455-468
+filefn/admin/src/domain-service.ts
+  s_b841cebdcfad95::t_c9de5eb403681f 25-41,268-274
+filefn/docs/content/api/filefn.json
+  s_b841cebdcfad95::t_c6739e28f47b54 1907,1909-1910,2404-2405,2408-2410,2413-2415,2418-2421,2430-2431
+filefn/docs/content/docs/core-concepts/artifacts.md
+  s_b841cebdcfad95::t_bc647ff6f3c817 75
+filefn/docs/content/docs/core-concepts/errors.md
+  s_b841cebdcfad95::t_6248d466e8fe20 51
+filefn/docs/content/docs/core-concepts/grants.md
+  s_b841cebdcfad95::t_94b921fd643e49 66
+filefn/docs/content/docs/core-concepts/security.md
+  s_b841cebdcfad95::t_f3e1268037ce42 65-68
+filefn/docs/content/docs/core-concepts/share-links.md
+  s_b841cebdcfad95::t_ef3243474daaf7 30,44,91,93
+filefn/docs/content/docs/core-concepts/upload-sessions.md
+  s_b841cebdcfad95::t_e4a3bbd0c1d45f 40-49
+filefn/docs/content/docs/features/grants.md
+  s_b841cebdcfad95::t_eee4da118f961d 53-57
+filefn/docs/content/docs/features/share-links.md
+  s_b841cebdcfad95::t_d16ff8e1b76bc1 12-27,65
+filefn/docs/content/docs/quickstart/express.md
+  s_b841cebdcfad95::t_d8f102906d7667 53-55
+filefn/docs/content/docs/recipes/signed-share-links.md
+  s_b841cebdcfad95::t_be036b4a92a263 15,29,41
+filefn/docs/content/docs/reference/errors.md
+  s_b841cebdcfad95::t_206e6c8266095f 85
+filefn/docs/static/llms-full.txt
+  s_b841cebdcfad95::t_e21716993b873d 1409,1581,1781,2710-2713,2789,2803,2850,2852,2978-2987,3657-3661,4362-4377,4415,5746-5748,7310,7324,7336,8562
+filefn/python/filefn/server/authz/grant_expiry.py
+  s_b841cebdcfad95::t_786105a67faf65 1-55
+filefn/python/filefn/server/authz/grants_service.py
+  s_b841cebdcfad95::t_5006fab1e2a77a 9,24-38,42-43,52,73-76,78-87,92-94,99
+filefn/python/filefn/server/core.py
+  s_b841cebdcfad95::t_dc33980c5a9752 47-54,83,284
+filefn/python/filefn/server/errors.py
+  s_b841cebdcfad95::t_8622ad8286f6d2 48
+filefn/python/filefn/server/files/service.py
+  s_b841cebdcfad95::t_fad587f1232109 9,141
+filefn/python/filefn/server/processing/service.py
+  s_b841cebdcfad95::t_c17e7223aba24e 9,147
+filefn/python/filefn/server/routed_storage.py
+  s_b841cebdcfad95::t_80a9f6b78fde99 62-69
+filefn/python/filefn/server/shares/service.py
+  s_b841cebdcfad95::t_95e9f20c906947 1,5,10,25-41,62-63,75-134,161-198,201-203,205-207,209,223-233,246,282,303-367,374-383,404,422-427
+filefn/python/tests/test_core.py
+  s_b841cebdcfad95::t_4ebd4a583271c1 80-126
+filefn/python/tests/test_downloads.py
+  s_b841cebdcfad95::t_99fec73e937b16 824-1065,1101-1128
+filefn/server/contracts/filefn-client-v1.openapi.json
+  s_b841cebdcfad95::t_4ff789b599b3ae 1907,1909-1910,2404-2405,2408-2410,2413-2415,2418-2421,2430-2431
+filefn/server/src/__tests__/artifact-authz.test.ts
+  s_b841cebdcfad95::t_4851e46b69f461 9
+filefn/server/src/__tests__/shares.test.ts
+  s_b841cebdcfad95::t_818132f0cee54f 9,259-265,269,273-279
+filefn/server/src/authz/authorizer.ts
+  s_b841cebdcfad95::t_2319d461296b39 2
+filefn/server/src/authz/grant-expiry.ts
+  s_b841cebdcfad95::t_6b136883454540 1-61
+filefn/server/src/authz/grants.routes.ts
+  s_b841cebdcfad95::t_4195b7e61587cc 5,44
+filefn/server/src/authz/grants.service.ts
+  s_b841cebdcfad95::t_4fbdb5576f09e8 7,13-35,51,77-80,83-96,101-108
+filefn/server/src/client-contract.ts
+  s_b841cebdcfad95::t_f0f9e91691d36e 540-541,744-756,758-762
+filefn/server/src/errors.ts
+  s_b841cebdcfad95::t_cc6d2f03ada07b 51,61-62,359-370
+filefn/server/src/files/service.ts
+  s_b841cebdcfad95::t_d9c115c3b4865d 20
+filefn/server/src/http-body.ts
+  s_b841cebdcfad95::t_993b46142a1f3e 1-77
+filefn/server/src/index.ts
+  s_b841cebdcfad95::t_c20c73d76a55d5 21,66-78,320,334,369,569
+filefn/server/src/policies.routes.ts
+  s_b841cebdcfad95::t_39c2af9f4a68d8 2-3,15-16,20,25-32
+filefn/server/src/processing/routes.ts
+  s_b841cebdcfad95::t_584f600b279816 8,254
+filefn/server/src/processing/service.ts
+  s_b841cebdcfad95::t_d491ae0e0d3201 20
+filefn/server/src/shares/routes.ts
+  s_b841cebdcfad95::t_dd661a46f6f6bc 4,7,75,109,134
+filefn/server/src/shares/service.ts
+  s_b841cebdcfad95::t_8232d2416224f3 9,38-49,68-88,92-144,176-177,184-288,295,301,337-348,356-358,380-425,428-429,448-450,452-473
+filefn/server/src/upload-sessions/input.ts
+  s_b841cebdcfad95::t_0239f961f2be4c 1-349
+filefn/server/src/upload-sessions/routes.ts
+  s_b841cebdcfad95::t_2603c394195224 6,56
+filefn/server/src/upload-sessions/service.ts
+  s_b841cebdcfad95::t_96973025624d99 20,201-209,216,220-226,1333-1380,1394,1579
+filefn/server/tests/local-storage-harness.ts
+  s_b841cebdcfad95::t_e10215cd446d09 1-46
+filefn/server/tests/sharing-security.test.ts
+  s_b841cebdcfad95::t_7782685f336ee1 1-674
+filefn/server/tests/storage-key-security.test.ts
+  s_b841cebdcfad95::t_ceb1f480efdf62 1,3,5-6,19-20,22,29-34,98-99,106
+filefn/server/tests/upload-input-security.test.ts
+  s_b841cebdcfad95::t_045e521915d6ea 1-412
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "155c4cb71cf2b01d97f290af717d737e8092216e",
+  "prompts": {},
+  "sessions": {
+    "s_b841cebdcfad95": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "436f4738-d86e-44e1-82bc-c432f9aaabf3",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

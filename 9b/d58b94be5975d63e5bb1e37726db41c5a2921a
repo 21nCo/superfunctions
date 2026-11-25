@@ -1,0 +1,26 @@
+billfn/provider-apple/src/__tests__/sandbox-and-billing-retry.test.ts
+  s_0d7e11293d5a4e::t_b5414b14cc60e5 89-91,95-98,109-126
+  s_0d7e11293d5a4e::t_7f91609de1321e 127
+billfn/provider-apple/src/index.ts
+  s_0d7e11293d5a4e::t_b5414b14cc60e5 215-219,1020-1024,1026-1027
+  s_0d7e11293d5a4e::t_badc85eda87ab1 1025
+  s_0d7e11293d5a4e::t_7925776ba44def 1028-1029
+billfn/docs/content/docs/providers/apple.mdx
+  s_0d7e11293d5a4e::t_b0d4b54aab3d72 40
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9bd58b94be5975d63e5bb1e37726db41c5a2921a",
+  "prompts": {},
+  "sessions": {
+    "s_0d7e11293d5a4e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "97ac12a3-1bf1-4732-a6f3-ece8c28b207e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

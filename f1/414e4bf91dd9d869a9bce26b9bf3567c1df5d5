@@ -1,0 +1,53 @@
+flowfn/admin/README.md
+  s_7bf22060f44a0e::t_1c44935c810976 24-42
+flowfn/admin/src/__tests__/admin.test.ts
+  s_7bf22060f44a0e::t_4065b9f459c9b3 932-973,993,1017-1047
+flowfn/admin/src/domain-service.ts
+  s_7bf22060f44a0e::t_27ca9a772cf03a 82-83,344,360-361,368-370,373-380,404,407,418-424,464-467,473-476
+flowfn/python/flowfn/adapters/memory.py
+  s_7bf22060f44a0e::t_fb8528535a9375 12
+flowfn/python/flowfn/adapters/native_queues.py
+  s_7bf22060f44a0e::t_331714d13830ff 12-13
+flowfn/python/flowfn/adapters/postgres_queues.py
+  s_7bf22060f44a0e::t_d2c1b918140fc8 8,11
+flowfn/python/flowfn/queue/dlq.py
+  s_7bf22060f44a0e::t_23b54bd0818aae 10,76-81
+flowfn/python/flowfn/queue/types.py
+  s_7bf22060f44a0e::t_e89b31bf2b12b0 3-4,67-76
+flowfn/python/tests/dlq_dedup_contract.py
+  s_7bf22060f44a0e::t_c7ec3c3ec8d338 43-45,48
+flowfn/typescript/docs/queue-ownership.md
+  s_7bf22060f44a0e::t_212c993a1ea9aa 19-30
+flowfn/typescript/src/adapters/base.ts
+  s_7bf22060f44a0e::t_627e66d083ab39 46-47,50-55
+flowfn/typescript/src/adapters/memory.ts
+  s_7bf22060f44a0e::t_1c90ed515aca2f 23-24
+flowfn/typescript/src/adapters/postgres/index.ts
+  s_7bf22060f44a0e::t_9ea4ec87118ad9 26-29
+flowfn/typescript/src/adapters/redis.ts
+  s_7bf22060f44a0e::t_f264b22c89434a 319-322
+flowfn/typescript/src/queue/dlq.ts
+  s_7bf22060f44a0e::t_aa12c864060214 69-71,80-81,137-149,195,265,273-288
+flowfn/typescript/src/queue/queue.ts
+  s_7bf22060f44a0e::t_54c992ff3caf53 212-213
+flowfn/typescript/src/queue/types.ts
+  s_7bf22060f44a0e::t_388b7acdcad9fc 13-14
+flowfn/typescript/tests/dlq.test.ts
+  s_7bf22060f44a0e::t_dff956dfbc16dc 247-253,273-283
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f1414e4bf91dd9d869a9bce26b9bf3567c1df5d5",
+  "prompts": {},
+  "sessions": {
+    "s_7bf22060f44a0e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b8a69ea3-df7e-4989-88c4-f94f8c1a9f65",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

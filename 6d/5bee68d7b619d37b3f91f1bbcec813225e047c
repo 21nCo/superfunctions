@@ -1,0 +1,21 @@
+memoryfn/admin/package.json
+  s_326c90f370b5d2::t_df7f73e8489c62 36-37
+package-lock.json
+  s_326c90f370b5d2::t_3e11b31883c57c 23934-23935
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6d5bee68d7b619d37b3f91f1bbcec813225e047c",
+  "prompts": {},
+  "sessions": {
+    "s_326c90f370b5d2": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21124-a83e-7641-a8a7-9795baa64e3b",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

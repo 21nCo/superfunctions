@@ -1,0 +1,23 @@
+mcpfn/core/src/server.ts
+  s_c8d3e62c4e5cbc::t_15e0603eb59d9a 22-25,964,969,971-972,977-978,980-981,985-993,995-996,1000,1009-1010,1012-1015,1017-1030,1032-1033,1035,1037,1040-1041,1043,1045-1046,1048-1066,1102,1105,1112-1116,1122-1125,1138-1139,1141,1144,1150,1153-1160,1170,1172-1176
+mcpfn/core/tests/http-session-security.test.ts
+  s_c8d3e62c4e5cbc::t_0f9de26ee87668 193-216
+mcpfn/docs/static/llms-full.txt
+  s_c8d3e62c4e5cbc::t_6fe47327c21d4f 108,877-882
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "edf519b9399c3ba370e857f7317590d5ade1755e",
+  "prompts": {},
+  "sessions": {
+    "s_c8d3e62c4e5cbc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "81c58342-6481-4e86-8c66-8c52736f9b64",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

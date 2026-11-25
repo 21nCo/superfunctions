@@ -1,0 +1,19 @@
+mcpfn/core/README.md
+  s_2675c50b910c4b::t_cb01b0a2ae758a 184-189,193-199
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6de22bbfb4baa0b765ef99f12403ee24b6522f78",
+  "prompts": {},
+  "sessions": {
+    "s_2675c50b910c4b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "db000f89-2f1c-46bc-bc7d-ef417c704901",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

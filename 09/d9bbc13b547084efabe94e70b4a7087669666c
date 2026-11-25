@@ -1,0 +1,33 @@
+authfn/docs/static/llms-full.txt
+  s_8fec6d2164e3b8::t_a600648ce6b120 1031-1038,1047,1096-1097,1129,1176-1190,8342-8346,8400,8402-8404,8419-8423
+authfn/docs/content/docs/admin/index.md
+  s_8fec6d2164e3b8::t_e7d2cc11a67129 8-15,24,73-74,106,153-167
+authfn/docs/content/docs/recipes/admin-tool.md
+  s_8fec6d2164e3b8::t_fb603e4a5427d4 8-12,66,68-70,85-89
+authfn/social-oauth/vitest.config.ts
+  s_8fec6d2164e3b8::t_71035499faee6f 1-7
+authfn/ts-sdk/src/social-oauth/index.ts
+  s_8fec6d2164e3b8::t_7f37a6734faeab 1-578
+authfn/ts-sdk/src/social-oauth/provider-map.ts
+  s_8fec6d2164e3b8::t_1e7848b708ff81 1-36
+authfn/ts-sdk/src/social-oauth/types.ts
+  s_8fec6d2164e3b8::t_459a9ebf36a655 1-239
+authfn/ts-sdk/tests/social-oauth.test.ts
+  s_8fec6d2164e3b8::t_37b5f5741cfb82 1-371
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "09d9bbc13b547084efabe94e70b4a7087669666c",
+  "prompts": {},
+  "sessions": {
+    "s_8fec6d2164e3b8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "56163360-7637-45e6-92bd-1f9b778b28b9",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

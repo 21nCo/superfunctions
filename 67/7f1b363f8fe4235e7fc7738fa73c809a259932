@@ -1,0 +1,19 @@
+mcpfn/core/src/openapi/schema.ts
+  s_492d9dce425b68::t_8b3181b4ca280f 1040
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "677f1b363f8fe4235e7fc7738fa73c809a259932",
+  "prompts": {},
+  "sessions": {
+    "s_492d9dce425b68": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "64164321-c736-4f27-a23f-4ae3e4daa9ac",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

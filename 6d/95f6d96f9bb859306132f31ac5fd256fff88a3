@@ -1,0 +1,30 @@
+datafn/server/__tests__/security-audit-identity.test.ts
+  s_df6686278ce1d2::t_f4f870dec99346 525-564
+datafn/server/src/execution/mutation/__tests__/share-spv2.test.ts
+  s_df6686278ce1d2::t_aa080b658c081c 2047,2132,2228
+datafn/server/src/execution/idempotency-db.ts
+  s_df6686278ce1d2::t_8b370b4a97cdfb 156
+datafn/server/src/execution/idempotency.ts
+  s_df6686278ce1d2::t_8b370b4a97cdfb 1-2,64-68,76-79
+datafn/server/src/execution/sync/__tests__/push-capabilities.test.ts
+  s_df6686278ce1d2::t_aa080b658c081c 358,370,395,585,597,1470,1482
+datafn/server/src/server.ts
+  s_df6686278ce1d2::t_aa080b658c081c 1817-1820,1824
+  s_df6686278ce1d2::t_8b370b4a97cdfb 1833-1834
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6d95f6d96f9bb859306132f31ac5fd256fff88a3",
+  "prompts": {},
+  "sessions": {
+    "s_df6686278ce1d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e9c490bb-690e-4bdf-82c6-aea2b9d5fd51",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

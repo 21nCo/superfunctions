@@ -1,0 +1,25 @@
+authfn/core/src/__tests__/otp.test.ts
+  s_e5ac07859c1bc9::t_84dcd9b40a03a6 1466-1477
+authfn/core/src/core/verifications.ts
+  s_e5ac07859c1bc9::t_4361ce192ebc9f 648-655,659,1250
+authfn/docs/content/docs/plugins/email-otp.md
+  s_e5ac07859c1bc9::t_b6dd8142dd3721 57
+authfn/docs/static/llms-full.txt
+  s_e5ac07859c1bc9::t_4495479d5220b0 5764
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a2f3a39fdc63c71a3f70e8ccd846640d373103ba",
+  "prompts": {},
+  "sessions": {
+    "s_e5ac07859c1bc9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5142ca70-a18b-4d6e-8f19-4855393dcdd0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

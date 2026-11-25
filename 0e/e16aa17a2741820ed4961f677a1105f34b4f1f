@@ -1,0 +1,21 @@
+billfn/docs/package.json
+  s_19abec75182420::t_ebba648a7ea0c8 36
+package-lock.json
+  s_19abec75182420::t_6f051e3ee57a4e 5061
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0ee16aa17a2741820ed4961f677a1105f34b4f1f",
+  "prompts": {},
+  "sessions": {
+    "s_19abec75182420": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d61a7abd-8c27-4e7c-ba23-13d43e2da322",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

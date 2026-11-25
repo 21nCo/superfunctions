@@ -1,0 +1,41 @@
+langfn/README.md
+  s_1eb217f2cbe12c::t_39bda3fe7c3cc4 5
+langfn/typescript/README.md
+  s_1eb217f2cbe12c::t_ed4cb53ea0b0e0 5
+langfn/typescript/src/mcp/client.ts
+  s_1eb217f2cbe12c::t_add29ea3afeadb 9
+langfn/typescript/src/mcp/server.ts
+  s_1eb217f2cbe12c::t_9a89318dcf9793 115
+langfn/typescript/tests/package-contract.test.ts
+  s_1eb217f2cbe12c::t_ec784991d8d833 50-54,62
+mcpfn/core/src/openapi/from-openapi.ts
+  s_1eb217f2cbe12c::t_5f36507be102c6 93-99,247-250,273,358-361,365,371-405,442-445,448,460,464,467,470,473-483,485-502,505-506,508,590,697-698,700,702-705,713-714,719-735
+mcpfn/core/src/openapi/index.ts
+  s_1eb217f2cbe12c::t_bff130f987c7d4 7
+mcpfn/core/src/openapi/schema.ts
+  s_1eb217f2cbe12c::t_bd0da90ba94ded 89-92,96,99-103,116-118,349,351,444-446,449-452,518-519,630-635,642-644,647-648,650,656-660,664-677,681,683-685,692-694,702,811-812,814-820,824-827,866,886-890,892,1146-1149,1151-1167
+mcpfn/core/src/openapi/types.ts
+  s_1eb217f2cbe12c::t_f754746be2b24c 190-191,194-201
+mcpfn/core/tests/openapi-catalog.test.ts
+  s_1eb217f2cbe12c::t_284582bc825364 128-132
+mcpfn/core/tests/openapi-forms.test.ts
+  s_1eb217f2cbe12c::t_9e18adc96edd11 569-573,1623-1816
+mcpfn/core/tests/types/openapi-document.ts
+  s_1eb217f2cbe12c::t_e3a092f854780a 89-102
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "00ef497b1071d49f7d4e5a4c37bce3ee59b40dd4",
+  "prompts": {},
+  "sessions": {
+    "s_1eb217f2cbe12c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2b2155d1-b0bb-4e5e-bb89-8414e78e1489",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

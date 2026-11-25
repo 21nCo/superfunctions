@@ -1,0 +1,29 @@
+authfn/core/src/__tests__/account-lifecycle-security.test.ts
+  s_e5ac07859c1bc9::t_3264109b57ed77 279-297
+authfn/core/src/core/verifications.ts
+  s_e5ac07859c1bc9::t_dd8446b46e8b47 22,76-82,382,384-388
+authfn/email-otp/src/index.ts
+  s_e5ac07859c1bc9::t_4cc5e139afde5d 109,116-117
+authfn/swift/Sources/AuthFnClient/AuthFnClient.swift
+  s_e5ac07859c1bc9::t_7d68ea7873ea00 93-96,121,124-129,131-138,142
+authfn/docs/content/docs/plugins/email-otp.md
+  s_e5ac07859c1bc9::t_98211241ad8c2b 153
+authfn/docs/static/llms-full.txt
+  s_e5ac07859c1bc9::t_9a078a208aef6f 5859
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "960e9be8756bf86f92925c746b292c68164aec74",
+  "prompts": {},
+  "sessions": {
+    "s_e5ac07859c1bc9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5142ca70-a18b-4d6e-8f19-4855393dcdd0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

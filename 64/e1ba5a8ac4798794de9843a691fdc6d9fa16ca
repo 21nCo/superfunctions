@@ -1,0 +1,105 @@
+langfn/typescript/package.json
+  s_19abec75182420::t_20bb3f77b27a8b 3,104
+mcpfn/cli/package.json
+  s_19abec75182420::t_4a7a5addc426c7 3,27-30
+mcpfn/client/package.json
+  s_19abec75182420::t_3731ad11477fef 3,28
+mcpfn/core/README.md
+  s_19abec75182420::t_8c019cf3352487 66-122
+mcpfn/core/package.json
+  s_19abec75182420::t_f0b95ba6544772 3,13-16
+mcpfn/core/src/openapi/from-openapi.ts
+  s_19abec75182420::t_1f78be7a0a7d6b 1-758
+mcpfn/core/src/openapi/index.ts
+  s_19abec75182420::t_f324a8a5a36cb3 1-19
+mcpfn/core/src/openapi/schema.ts
+  s_19abec75182420::t_4c6707527ca82a 1-377
+mcpfn/core/src/openapi/types.ts
+  s_19abec75182420::t_4e7a486dfb4756 1-154
+mcpfn/core/tests/fixtures/openapi/README.md
+  s_19abec75182420::t_cbcdd05d047576 1-44
+mcpfn/core/tests/fixtures/openapi/apifn-from-router.json
+  s_19abec75182420::t_1e6175341a0b23 1-249
+mcpfn/core/tests/fixtures/openapi/form-body-json.json
+  s_19abec75182420::t_595b71684fd75c 1-43
+mcpfn/core/tests/fixtures/openapi/form-body-plus-json.json
+  s_19abec75182420::t_21cd8719f47582 1-46
+mcpfn/core/tests/fixtures/openapi/form-dropped-keywords.json
+  s_19abec75182420::t_f78d9f63e166c1 1-63
+mcpfn/core/tests/fixtures/openapi/form-local-refs.json
+  s_19abec75182420::t_3db8732d26c8b6 1-95
+mcpfn/core/tests/fixtures/openapi/form-nullable-3.0.json
+  s_19abec75182420::t_d7a55c292ea816 1-69
+mcpfn/core/tests/fixtures/openapi/form-openapi-3.0.json
+  s_19abec75182420::t_416ae7a705a99b 1-51
+mcpfn/core/tests/fixtures/openapi/form-openapi-3.1.json
+  s_19abec75182420::t_e60b842383e5b0 1-71
+mcpfn/core/tests/fixtures/openapi/form-output-schema.json
+  s_19abec75182420::t_ddac7ff208bc1f 1-131
+mcpfn/core/tests/fixtures/openapi/form-parameter-override.json
+  s_19abec75182420::t_aa133a2c18354f 1-55
+mcpfn/core/tests/fixtures/openapi/form-parameter-styles.json
+  s_19abec75182420::t_d7cc9ccf4f9146 1-81
+mcpfn/core/tests/fixtures/openapi/form-read-only.json
+  s_19abec75182420::t_ddccc9424abb36 1-70
+mcpfn/core/tests/fixtures/openapi/form-recursive-refs.json
+  s_19abec75182420::t_9f983ba6204133 1-68
+mcpfn/core/tests/fixtures/openapi/skip-2020-12-keywords.json
+  s_19abec75182420::t_9638da778ac31f 1-132
+mcpfn/core/tests/fixtures/openapi/skip-cookie-parameter.json
+  s_19abec75182420::t_bcf9001bbbf17a 1-28
+mcpfn/core/tests/fixtures/openapi/skip-external-ref.json
+  s_19abec75182420::t_4c9f3b5cb9b7c6 1-26
+mcpfn/core/tests/fixtures/openapi/skip-non-json-body.json
+  s_19abec75182420::t_9665abb6250f45 1-30
+mcpfn/core/tests/fixtures/openapi/skip-object-query-parameter.json
+  s_19abec75182420::t_a797e2da77ff63 1-40
+mcpfn/core/tests/fixtures/openapi/skip-parameter-styles.json
+  s_19abec75182420::t_8c655bdd8d50d7 1-131
+mcpfn/core/tests/fixtures/openapi/skip-swagger-2.0.json
+  s_19abec75182420::t_d4794a523633ee 1-18
+mcpfn/core/tests/fixtures/openapi/skip-url-ref.json
+  s_19abec75182420::t_cc5833c9095e33 1-24
+mcpfn/core/tests/openapi-catalog.test.ts
+  s_19abec75182420::t_62fc6dfbfda09b 1-381
+mcpfn/core/tests/openapi-forms.test.ts
+  s_19abec75182420::t_fcbe9432f9a819 1-435
+mcpfn/core/tests/openapi-helpers.ts
+  s_19abec75182420::t_d1dc9dbfdb33b5 1-58
+mcpfn/core/tsconfig.json
+  s_19abec75182420::t_85af5233ae459f 15-16
+mcpfn/core/tsup.config.ts
+  s_19abec75182420::t_0d571b77062a68 9,27-29
+mcpfn/core/vitest.config.ts
+  s_19abec75182420::t_d090825de24daf 1,5-10
+mcpfn/datafn/package.json
+  s_19abec75182420::t_e14a5af5067d62 3,26,30
+mcpfn/inspector/package.json
+  s_19abec75182420::t_1f367edf5247b0 3,24-25,30
+mcpfn/testing/package.json
+  s_19abec75182420::t_3305db67ebc13d 3,34-35
+memoryfn/typescript/package.json
+  s_19abec75182420::t_fd49dc62a79d6f 3,45
+package-lock.json
+  s_19abec75182420::t_24d02b5f46ef67 15833,15836,18106,18110-18113,18552,18559,19002,19455,19460,19463,19915,19918-19919,19924,20367,20371-20372,24994,24996,59147,59150,64875-64876
+packages/admin/package.json
+  s_19abec75182420::t_d6e8669578ed2a 3,31
+superconsole/package.json
+  s_19abec75182420::t_9bb19fab8492ae 27-28
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "64e1ba5a8ac4798794de9843a691fdc6d9fa16ca",
+  "prompts": {},
+  "sessions": {
+    "s_19abec75182420": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d61a7abd-8c27-4e7c-ba23-13d43e2da322",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

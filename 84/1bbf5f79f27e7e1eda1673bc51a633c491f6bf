@@ -1,0 +1,31 @@
+authfn/python/CHANGELOG.md
+  s_bea213b582e915::t_0daa74ba4212f5 11
+authfn/python/authfn/plugins/social_oauth.py
+  s_e5ac07859c1bc9::t_41ecc13a1ce681 281-292,302-305,347-350,628-632,642,746,845
+authfn/python/tests/test_social_oauth.py
+  s_e5ac07859c1bc9::t_5f07f86c23ca7f 110-123,956-991
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "841bbf5f79f27e7e1eda1673bc51a633c491f6bf",
+  "prompts": {},
+  "sessions": {
+    "s_bea213b582e915": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1fe6e-e383-7280-ac6b-1bd546006129",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_e5ac07859c1bc9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5142ca70-a18b-4d6e-8f19-4855393dcdd0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

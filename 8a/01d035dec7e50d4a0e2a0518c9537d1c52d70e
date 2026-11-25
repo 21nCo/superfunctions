@@ -1,0 +1,23 @@
+memoryfn/docs/content/docs/storage.md
+  s_3b7ffdae337f69::t_7bb2c7fc205ad1 31
+memoryfn/docs/static/llms-full.txt
+  s_3b7ffdae337f69::t_1ca95f6cb0d9f2 509
+memoryfn/typescript/src/storage/adapter.ts
+  s_3b7ffdae337f69::t_a6eb4f0badf740 80-83
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8a01d035dec7e50d4a0e2a0518c9537d1c52d70e",
+  "prompts": {},
+  "sessions": {
+    "s_3b7ffdae337f69": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "13c7e944-15d1-4421-9eb4-c991d75b96d8",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

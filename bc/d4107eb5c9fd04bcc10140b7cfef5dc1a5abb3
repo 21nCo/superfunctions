@@ -1,0 +1,41 @@
+datafn/server/__tests__/workflow-action-pins.test.ts
+  s_1731e39e38ef67::t_b69e37f680a3c6 1-68
+.github/workflows/ci.yml
+  s_0f77ac2ff026da::t_983d0f4c947843 62
+.github/workflows/publish-python.yml
+  s_0f77ac2ff026da::t_c584b4a421f9e0 77
+.github/workflows/publish-tag.yml
+  s_ee025abfcc6d50::t_dceb26082de624 52
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "bcd4107eb5c9fd04bcc10140b7cfef5dc1a5abb3",
+  "prompts": {},
+  "sessions": {
+    "s_0f77ac2ff026da": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a2113c-c300-7182-9292-bf4c81191c63",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_1731e39e38ef67": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01a21142-2eb2-76c2-8264-b11730b7c224",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_ee025abfcc6d50": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "44b77d02-eb0d-440c-9830-00ecd45011c8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

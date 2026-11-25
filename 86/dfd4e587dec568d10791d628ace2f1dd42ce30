@@ -1,0 +1,43 @@
+cifn/typescript/control-plane/src/dispatch/prepare.ts
+  s_1eb217f2cbe12c::t_a82bbba5663708 4,64-67
+cifn/typescript/control-plane/src/dispatch/publisher.test.ts
+  s_1eb217f2cbe12c::t_53deb6311846e0 80-91
+cifn/typescript/control-plane/src/dispatch/publisher.ts
+  s_1eb217f2cbe12c::t_a082e5b9e867a0 65-68
+cifn/typescript/control-plane/src/queue/flowfn-client.ts
+  s_1eb217f2cbe12c::t_61dab0fa66cf6d 66-70
+cifn/typescript/control-plane/src/secrets/redact.ts
+  s_1eb217f2cbe12c::t_f20370c8ab6f34 3-5,8-10,21
+cifn/typescript/control-plane/src/store/database-store.ts
+  s_1eb217f2cbe12c::t_fffba562d59e99 422-426
+cifn/typescript/control-plane/src/triggers/triggers.test.ts
+  s_1eb217f2cbe12c::t_973869562b6974 509-518
+cifn/typescript/runner/src/log-spool.ts
+  s_1eb217f2cbe12c::t_b66eb5fbd77694 75,80-85
+cifn/typescript/runner/src/remote-checkout.test.ts
+  s_1eb217f2cbe12c::t_6b639e637052bc 7,64-65
+cifn/typescript/runner/src/remote-runner.test.ts
+  s_1eb217f2cbe12c::t_1b4efaa91629e8 6,658-699
+cifn/typescript/runner/src/remote-runner.ts
+  s_1eb217f2cbe12c::t_23f90345d997a4 44,74-76,210-214,222-225
+cifn/typescript/runner/src/runner.ts
+  s_1eb217f2cbe12c::t_e44b5873037933 7,10,34-36,41-47
+cifn/typescript/runner/src/secrets-steps.test.ts
+  s_1eb217f2cbe12c::t_905113b323a323 103-106
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "86dfd4e587dec568d10791d628ace2f1dd42ce30",
+  "prompts": {},
+  "sessions": {
+    "s_1eb217f2cbe12c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2b2155d1-b0bb-4e5e-bb89-8414e78e1489",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

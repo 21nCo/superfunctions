@@ -1,0 +1,41 @@
+authfn/core/src/__tests__/two-factor.test.ts
+  s_e5ac07859c1bc9::t_c273b345e88486 959,982-983,988-991
+authfn/core/src/core/two-factor.ts
+  s_e5ac07859c1bc9::t_815804b245c0fa 389-391
+authfn/core/src/types.ts
+  s_e5ac07859c1bc9::t_15a9bd551b7b09 177-181,183
+authfn/docs/content/docs/plugins/two-factor.md
+  s_58dfec4cd40d44::t_62b1db74f66084 105,107
+authfn/docs/static/llms-full.txt
+  s_58dfec4cd40d44::t_561ed9946f2268 7207,7209
+authfn/python/authfn/authfn.py
+  s_e5ac07859c1bc9::t_6c00c39eaff0e0 97-101
+authfn/python/authfn/plugins/two_factor.py
+  s_e5ac07859c1bc9::t_53acd88743b3e2 351-352,449,593,598-604
+authfn/python/tests/test_two_factor.py
+  s_e5ac07859c1bc9::t_dafe41eec5f302 530-549
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3009e3913bc6dd5192e2407ea483cbcb76dd1191",
+  "prompts": {},
+  "sessions": {
+    "s_58dfec4cd40d44": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1fc4f-b428-7522-a08b-659d8a8f31b6",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_e5ac07859c1bc9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5142ca70-a18b-4d6e-8f19-4855393dcdd0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

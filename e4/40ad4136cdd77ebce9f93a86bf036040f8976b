@@ -1,0 +1,27 @@
+authfn/client/src/client.ts
+  s_c2d6ef2e96fafa::t_5938ac7ceb03f2 5-6,9-11
+authfn/client/src/regional-client.ts
+  s_c2d6ef2e96fafa::t_a6f666c3974566 9,19,22,25,181,240
+authfn/client/src/types.ts
+  s_c2d6ef2e96fafa::t_fa6e6f054c36f5 338-342
+authfn/core/src/__tests__/security-hardening.test.ts
+  s_c2d6ef2e96fafa::t_33cfbd4ba5626c 545-548
+authfn/social-oauth/src/index.ts
+  s_c2d6ef2e96fafa::t_c194973ac1f465 2515,2518
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e440ad4136cdd77ebce9f93a86bf036040f8976b",
+  "prompts": {},
+  "sessions": {
+    "s_c2d6ef2e96fafa": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "06fe544c-d9eb-46b8-b581-824711a616bb",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

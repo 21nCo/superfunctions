@@ -1,0 +1,20 @@
+datafn/server/src/execution/sync/__tests__/push-capabilities.test.ts
+  s_f18df82a896877::t_ed1e2fe38652f7 1477-1478,1480-1487,1489-1494
+  s_f18df82a896877::t_28a7fd05d7bdff 1488
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d9da5c3deedc3d46f3c14c72189857201114db93",
+  "prompts": {},
+  "sessions": {
+    "s_f18df82a896877": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "34b8cb5e-0b73-4388-8bd0-7e93d063a3ee",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

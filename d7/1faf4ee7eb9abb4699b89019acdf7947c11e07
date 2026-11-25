@@ -1,0 +1,21 @@
+memoryfn/typescript/src/extraction/facts.ts
+  s_09b1b1df90bcd0::t_3c7c54e54a6c53 48,90
+memoryfn/typescript/tests/documents.test.ts
+  s_09b1b1df90bcd0::t_1d0706df4faa63 671-673
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d71faf4ee7eb9abb4699b89019acdf7947c11e07",
+  "prompts": {},
+  "sessions": {
+    "s_09b1b1df90bcd0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_09b1b1df90bcd0",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

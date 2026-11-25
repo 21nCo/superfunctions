@@ -1,0 +1,21 @@
+filefn/examples/full-demo/server/.gitignore
+  s_3d4270cc698e42::t_66a378660dfef0 1-2
+filefn/examples/full-demo/server/demo-upload.test.mjs
+  s_3d4270cc698e42::t_7eafdde3996967 1-69
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c9b1f8191d4f73e87c0fece5a4d4f37d9b2accf6",
+  "prompts": {},
+  "sessions": {
+    "s_3d4270cc698e42": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01a21141-4855-7812-90bc-c0aa5abbd34e",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

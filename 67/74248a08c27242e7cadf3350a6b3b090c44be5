@@ -1,0 +1,53 @@
+filefn/processing/src/processors/pdf-preview.ts
+  s_b841cebdcfad95::t_9c3cb8c8861b72 3,47,87-90
+filefn/processing/src/content-sniff.ts
+  s_b841cebdcfad95::t_a112f02641d0ff 1-76
+filefn/processing/src/processors/audio.ts
+  s_b841cebdcfad95::t_4f47ffb1ce3ea2 8,71-74
+filefn/processing/container/tests/main.test.ts
+  s_b841cebdcfad95::t_81fd90cee7158d 16,75
+filefn/processing/src/providers/tesseract-ocr.ts
+  s_b841cebdcfad95::t_437fc163848f42 2,8
+filefn/processing/src/providers/audio-command.ts
+  s_b841cebdcfad95::t_5a3d78e39225b8 172-173,205-206
+filefn/processing/src/providers/video-command.ts
+  s_b841cebdcfad95::t_de08b3347fba16 90-91,149-152,185-188
+filefn/processing/src/processors/thumbnail.ts
+  s_b841cebdcfad95::t_55b8ab6dbf2fe4 3,34-37,45,89
+filefn/processing/src/processors/video.ts
+  s_b841cebdcfad95::t_cd0c747c131460 8,68-71,73
+filefn/processing/src/processors/image-transform.ts
+  s_b841cebdcfad95::t_dd5f017d566302 3,67-70,86,130
+filefn/processing/container/tests/config.test.ts
+  s_b841cebdcfad95::t_ae8154deb2ad97 10,17,78-85
+filefn/processing/container/src/config.ts
+  s_b841cebdcfad95::t_9d01dc4d0b6825 96-108,111
+filefn/processing/tests/processing.test.ts
+  s_b841cebdcfad95::t_8154249f0afbf0 4,13,483-551
+filefn/processing/tests/video-audio.test.ts
+  s_b841cebdcfad95::t_998ef904680cba 15-16,18,89-90
+filefn/processing/container/README.md
+  s_b841cebdcfad95::t_342865ac8e25d2 50-51,151-152
+filefn/docs/static/llms-full.txt
+  s_b841cebdcfad95::t_67165dc9ce1b61 7157
+filefn/processing/src/processors/ocr.ts
+  s_b841cebdcfad95::t_2881208279332b 4,72-75
+filefn/docs/content/docs/recipes/processing-container.md
+  s_b841cebdcfad95::t_7e5e4b6e15498e 24
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6774248a08c27242e7cadf3350a6b3b090c44be5",
+  "prompts": {},
+  "sessions": {
+    "s_b841cebdcfad95": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "436f4738-d86e-44e1-82bc-c432f9aaabf3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

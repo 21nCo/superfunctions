@@ -1,0 +1,19 @@
+apifn/core/scripts/verify-packed-consumer.mjs
+  s_ff2fdb8b324086::t_f40b917bab0fad 14-17,19,60-96,340
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "761f50d22ce5150eabfa81f9c3a02cb7d30211c0",
+  "prompts": {},
+  "sessions": {
+    "s_ff2fdb8b324086": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_ff2fdb8b324086",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

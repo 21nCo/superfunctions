@@ -1,0 +1,37 @@
+cachefn/typescript/README.md
+  s_7f3920e25b21dc::t_8be0b5474fc262 13,400-452
+cachefn/typescript/__tests__/llm-cached-model.test.ts
+  s_7f3920e25b21dc::t_4e0caf7637298a 1-436
+cachefn/typescript/package.json
+  s_7f3920e25b21dc::t_b85c294a0b5c50 30-39,86-88,109-110,115-117,133
+cachefn/typescript/scripts/packed-consumer.mjs
+  s_7f3920e25b21dc::t_58f78bf4544d24 151-190
+cachefn/typescript/src/llm/cached-model.ts
+  s_7f3920e25b21dc::t_275b0240db9a0b 1-440
+cachefn/typescript/src/llm/canonical.ts
+  s_7f3920e25b21dc::t_fc51db73b4c54f 1-101
+cachefn/typescript/src/llm/index.ts
+  s_7f3920e25b21dc::t_a7abbf069d3caf 1-24
+cachefn/typescript/tsup.config.ts
+  s_7f3920e25b21dc::t_fd181b240a25fb 4
+cachefn/typescript/type-tests/llm.ts
+  s_7f3920e25b21dc::t_4558515cea689d 1-16
+package-lock.json
+  s_7f3920e25b21dc::t_c402ffca31e2f5 18552,18558-18559,18564-18566
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3b8df2b206b4c3d91faf75790df39903f6b8616a",
+  "prompts": {},
+  "sessions": {
+    "s_7f3920e25b21dc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_7f3920e25b21dc",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

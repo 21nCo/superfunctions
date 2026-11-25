@@ -1,0 +1,39 @@
+authfn/password/src/index.ts
+  s_e5ac07859c1bc9::t_33d67fbfe98ab1 42-44,57
+authfn/core/src/__tests__/sqlite/migrations/0000_authfn_sqlite.sql
+  s_e5ac07859c1bc9::t_e3e56be2fbddf5 30
+authfn/core/src/__tests__/otp.test.ts
+  s_e5ac07859c1bc9::t_22c91d3108c23d 18,1446-1511
+  s_e5ac07859c1bc9::t_019a49feadff2d 1512
+authfn/docs/content/docs/reference/schema.md
+  s_e5ac07859c1bc9::t_85a21ed6bc441f 70-71
+authfn/email-otp/src/index.ts
+  s_e5ac07859c1bc9::t_33d67fbfe98ab1 62-66
+  s_e5ac07859c1bc9::t_e3e56be2fbddf5 67
+authfn/core/src/core/verifications.ts
+  s_e5ac07859c1bc9::t_22c91d3108c23d 568,597-598
+  s_e5ac07859c1bc9::t_33d67fbfe98ab1 621-622,626-634,648-652,872-881
+authfn/docs/static/llms-full.txt
+  s_e5ac07859c1bc9::t_85a21ed6bc441f 5764,5806,10557
+  s_e5ac07859c1bc9::t_a3db45d45d7652 10558
+authfn/core/src/__tests__/sqlite/generated/authfn-schema.ts
+  s_e5ac07859c1bc9::t_e3e56be2fbddf5 103
+authfn/docs/content/docs/plugins/email-otp.md
+  s_e5ac07859c1bc9::t_dd68a8a270c460 57,99
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "66954d63c1399eb14941de0996596aba1e3a578a",
+  "prompts": {},
+  "sessions": {
+    "s_e5ac07859c1bc9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5142ca70-a18b-4d6e-8f19-4855393dcdd0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,39 @@
+reviewfn/testing/test/coordinator.test.ts
+  s_b841cebdcfad95::t_4df863c7fbe3b4 2,128-141
+reviewfn/testing/test/panel-coordinator.test.ts
+  s_b841cebdcfad95::t_bbcfc4fbda17b0 11,235,246,249-269
+reviewfn/core/src/coordinator.ts
+  s_b841cebdcfad95::t_8cbd961260e5e4 316-317,319-320
+reviewfn/core/src/panel/coordinator.ts
+  s_b841cebdcfad95::t_7d223d409dad03 173-175,201-202,403-404,409-411,421,515-517,531
+reviewfn/core/src/panel/validate.ts
+  s_b841cebdcfad95::t_6494f6bf87adf3 253,255-261,298,314,462
+reviewfn/core/test/panel.test.ts
+  s_b841cebdcfad95::t_b85caf867a161c 655-657,668-669,747-752
+reviewfn/docs/content/docs/reference/panel-report-schema.md
+  s_b841cebdcfad95::t_3843bd078b01e5 18,32
+reviewfn/docs/content/docs/reference/panel.md
+  s_b841cebdcfad95::t_04ff5ce9a8cd27 50
+reviewfn/docs/panel-report-schema.md
+  s_b841cebdcfad95::t_ea5d5b8dd733f3 15,29
+reviewfn/docs/panel.md
+  s_b841cebdcfad95::t_3be3024f6ca6f8 47
+reviewfn/docs/static/llms-full.txt
+  s_b841cebdcfad95::t_1291ce91f84629 224,238,366
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "bdc274fcd9d698e216c612a4e80831299ac01024",
+  "prompts": {},
+  "sessions": {
+    "s_b841cebdcfad95": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "436f4738-d86e-44e1-82bc-c432f9aaabf3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,19 @@
+apifn/README.md
+  s_21054d91e94f7a::t_9f9f3f9b35c425 39-42
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8be3ee29e59c589b9508ee8091e74664e03f2df3",
+  "prompts": {},
+  "sessions": {
+    "s_21054d91e94f7a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f4270183-6afc-46c4-802d-8e816d5f4d39",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

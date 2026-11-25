@@ -1,0 +1,33 @@
+authfn/client/src/regional-client.ts
+  s_e5ac07859c1bc9::t_59b22a0e4d13e7 133-137
+authfn/core/src/__tests__/password.test.ts
+  s_e5ac07859c1bc9::t_ce990e91c80076 555-574
+authfn/core/src/core/passwords.ts
+  s_e5ac07859c1bc9::t_dff2dd0134fe5f 67-80,307-309,318,322-346,353,357,525-549
+authfn/python/authfn/http.py
+  s_e5ac07859c1bc9::t_6871a53f2247ad 1166-1167
+authfn/python/authfn/plugins/multi_region.py
+  s_e5ac07859c1bc9::t_f4193fa1f5338d 207-208,210,213,219-220,223-224,226,228-229
+authfn/python/tests/test_multi_region.py
+  s_e5ac07859c1bc9::t_dc3e84295c2ab8 238
+authfn/docs/content/docs/plugins/password.md
+  s_e5ac07859c1bc9::t_ad74f0f9f8a704 73,75-76
+authfn/docs/static/llms-full.txt
+  s_e5ac07859c1bc9::t_998ce5e4dee5dd 6409,6411-6412
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "45a078ca31687ded6cc94cb6a2acd755dfbc3899",
+  "prompts": {},
+  "sessions": {
+    "s_e5ac07859c1bc9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5142ca70-a18b-4d6e-8f19-4855393dcdd0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

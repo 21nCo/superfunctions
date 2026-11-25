@@ -1,0 +1,19 @@
+authfn/python/tests/test_otp.py
+  s_e5ac07859c1bc9::t_84a509197f9aed 7,407-416,418-422,425-427
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "12839365061a3023c7376875cdece1761c10b4c5",
+  "prompts": {},
+  "sessions": {
+    "s_e5ac07859c1bc9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5142ca70-a18b-4d6e-8f19-4855393dcdd0",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

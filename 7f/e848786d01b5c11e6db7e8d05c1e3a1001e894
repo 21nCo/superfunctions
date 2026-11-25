@@ -1,0 +1,139 @@
+billfn/admin/package.json
+  s_b841cebdcfad95::t_f50b5d0ce4cc2d 3,43
+billfn/admin/src/__tests__/admin.test.ts
+  s_b841cebdcfad95::t_16b1d6ffb4d0ea 523-570
+billfn/admin/src/domain-service.ts
+  s_b841cebdcfad95::t_eb97bc379bf6b6 367-380
+billfn/admin/src/index.ts
+  s_b841cebdcfad95::t_84d4e2ce918bd3 553-566
+billfn/client/package.json
+  s_b841cebdcfad95::t_8439cf46a65a1b 3,36
+billfn/core/package.json
+  s_b841cebdcfad95::t_a339ba39d772f6 3
+billfn/core/src/__tests__/checkout-price.test.ts
+  s_b841cebdcfad95::t_ae603244a28732 139-141
+billfn/core/src/__tests__/router-subject-refund.test.ts
+  s_b841cebdcfad95::t_929c3a78245ff7 1-378
+billfn/core/src/helpers.ts
+  s_b841cebdcfad95::t_1311cf0a02a94b 2,101-111,114,117-118,125-131
+billfn/core/src/index.ts
+  s_b841cebdcfad95::t_cee49d3ccbcacd 39
+billfn/core/src/router.ts
+  s_b841cebdcfad95::t_7de86d8c9af81e 6-12,79-87,134,146,175,203,224,248,271,294-305,320,343
+billfn/core/src/service.ts
+  s_b841cebdcfad95::t_7d5a4dadcc9a6b 71,73,279-315,1128-1131,1133-1148,1154,1161-1193,1200-1202,1213-1215
+billfn/core/src/types.ts
+  s_b841cebdcfad95::t_a9ec3eb333f591 533-537,684-689,691-708,964-989
+billfn/core/test/workers/worker.ts
+  s_b841cebdcfad95::t_ec5c8967c7d76b 149-150
+billfn/docs/content/docs/clients/typescript.mdx
+  s_b841cebdcfad95::t_b1dd34e7918f5a 44-65,96
+billfn/docs/content/docs/getting-started.mdx
+  s_b841cebdcfad95::t_8855cfcfb201dd 150
+billfn/docs/content/docs/providers/apple.mdx
+  s_b841cebdcfad95::t_a351d2840e3891 73
+billfn/docs/content/docs/reference/errors-and-defaults.mdx
+  s_b841cebdcfad95::t_94afa4d0945173 14-15
+billfn/docs/content/docs/server/routes.mdx
+  s_b841cebdcfad95::t_fd0fd90d98a6d1 22,33
+billfn/docs/content/docs/server/setup.mdx
+  s_b841cebdcfad95::t_2a43aa6bd1a924 22-27,46,76-77,79-86,99-169
+billfn/docs/content/docs/troubleshooting.mdx
+  s_b841cebdcfad95::t_af0506a419c5af 44-57
+billfn/docs/package.json
+  s_b841cebdcfad95::t_eec71b4774b52a 31-33
+billfn/provider-apple/package.json
+  s_b841cebdcfad95::t_afea0a6832cf88 3,36
+billfn/provider-apple/src/__tests__/provider-builtins.test.ts
+  s_b841cebdcfad95::t_5746c682effade 266-298
+billfn/provider-apple/src/index.ts
+  s_b841cebdcfad95::t_bc8e86e9e560b5 297-304
+billfn/provider-dodo/package.json
+  s_b841cebdcfad95::t_1cf87c7ab2c73b 3,36
+billfn/provider-dodo/src/__tests__/contract.test.ts
+  s_b841cebdcfad95::t_2f5d3d43c71c53 820-857
+billfn/provider-dodo/src/index.ts
+  s_b841cebdcfad95::t_9d618ece301184 1180-1186
+billfn/svelte/package.json
+  s_b841cebdcfad95::t_11ddf631f1bcd0 3,35-36,40-41
+filefn/docs/content/docs/core-concepts/idempotency.md
+  s_b841cebdcfad95::t_9e2f18be5614e8 31-32
+filefn/docs/content/docs/core-concepts/security.md
+  s_b841cebdcfad95::t_b0ae2c2302d853 15,46-56
+filefn/docs/content/docs/core-concepts/upload-sessions.md
+  s_b841cebdcfad95::t_15d470187666da 84
+filefn/docs/content/docs/frameworks/hono.md
+  s_b841cebdcfad95::t_ca2e8299bbbd43 63-64
+filefn/docs/content/docs/frameworks/sveltekit.md
+  s_b841cebdcfad95::t_e78ce4ce87d823 27-28
+filefn/docs/content/docs/quickstart/bun.md
+  s_b841cebdcfad95::t_443c671210453d 49-50
+filefn/docs/content/docs/quickstart/express.md
+  s_b841cebdcfad95::t_09c8b83bba7aaa 105-106
+filefn/docs/content/docs/quickstart/nextjs.md
+  s_b841cebdcfad95::t_85cf77e89086ec 41-42
+filefn/docs/content/docs/quickstart/sveltekit.md
+  s_b841cebdcfad95::t_804d687f014b60 40-41
+filefn/docs/static/llms-full.txt
+  s_b841cebdcfad95::t_78033f8467fe49 1848-1849,2657,2688-2698,3014,5005-5006,5236-5237,5647-5648,5770-5771,6148-6149,6240-6241
+filefn/python/filefn/server/authz/grants_service.py
+  s_b841cebdcfad95::t_b1a4d4d6da9815 9,44
+filefn/python/filefn/server/authz/ownership.py
+  s_b841cebdcfad95::t_893bf05f288628 1-22
+filefn/python/filefn/server/errors.py
+  s_b841cebdcfad95::t_32b2b6b00655e8 50,166-168
+filefn/python/filefn/server/files/service.py
+  s_b841cebdcfad95::t_588aa4a74e64e4 9,28,35,38,230-237
+filefn/python/filefn/server/processing/service.py
+  s_b841cebdcfad95::t_42bb0125b2ab27 9,338
+filefn/python/filefn/server/shares/service.py
+  s_b841cebdcfad95::t_53e16ed23d96e7 9,78
+filefn/python/filefn/server/upload_sessions/service.py
+  s_b841cebdcfad95::t_caeef5bdbf17df 3,10,73-82,148-152,222-231,234,237-260,267,328-338,377-378,707-718,720-761,763-764,781-785
+filefn/python/tests/test_downloads.py
+  s_b841cebdcfad95::t_48b46ce191b255 822-858
+filefn/python/tests/test_upload_flow.py
+  s_b841cebdcfad95::t_93c837e2ecfdbc 425-427,441,451-452,455-467,787-894
+filefn/server/src/__tests__/client-file-ids.test.ts
+  s_b841cebdcfad95::t_128ddff68265f9 291-303
+filefn/server/src/__tests__/idempotency-complete.test.ts
+  s_b841cebdcfad95::t_5140cbcf9966e6 182,196-198,200-201
+filefn/server/src/__tests__/upload-sessions.test.ts
+  s_b841cebdcfad95::t_db843c808b22af 501,513,515-516
+filefn/server/src/__tests__/upload-size-validate.test.ts
+  s_b841cebdcfad95::t_97ebfe9be5bc4f 32,49-51
+filefn/server/src/authz/authorizer.ts
+  s_b841cebdcfad95::t_ccdc41f07ce5e2 4,153
+filefn/server/src/authz/grants.service.ts
+  s_b841cebdcfad95::t_7ed59aa5ab18ae 7,38
+filefn/server/src/authz/ownership.ts
+  s_b841cebdcfad95::t_b80b4efaa75a6b 1-22
+filefn/server/src/files/service.ts
+  s_b841cebdcfad95::t_dd59a3d09b9a23 20,153,158,161
+filefn/server/src/processing/service.ts
+  s_b841cebdcfad95::t_d1007d1a8c94f5 20,656,758
+filefn/server/src/shares/service.ts
+  s_b841cebdcfad95::t_0153105db739da 9,81,84
+filefn/server/src/upload-sessions/service.ts
+  s_b841cebdcfad95::t_da16059a5f18f2 21,223-231,1337-1338,1340,1382-1394,1396,1399-1422,1594-1597
+filefn/server/tests/anonymous-isolation.test.ts
+  s_b841cebdcfad95::t_f60defa105e1f7 1-196
+package-lock.json
+  s_b841cebdcfad95::t_e1a4e159db2364 4184,4187,4201,4204,4225,4325-4327,5268,5271,5291,5294,5316,5319-5320,5327-5328
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7fe848786d01b5c11e6db7e8d05c1e3a1001e894",
+  "prompts": {},
+  "sessions": {
+    "s_b841cebdcfad95": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "436f4738-d86e-44e1-82bc-c432f9aaabf3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

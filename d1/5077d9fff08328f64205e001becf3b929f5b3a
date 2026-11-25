@@ -1,0 +1,39 @@
+clifn/core/CHANGELOG.md
+  s_db17e32d2efb29::t_fcab517ea48b2c 7
+clifn/core/README.md
+  s_db17e32d2efb29::t_73f9295745e84b 220
+clifn/docs/content/docs/reference/core-readme.md
+  s_db17e32d2efb29::t_4dbd0ec64ac459 223
+clifn/docs/static/llms-full.txt
+  s_db17e32d2efb29::t_20085eb8142884 531
+clifn/core/src/app-dirs.ts
+  s_93bd51f3bb6fef::t_fba11fd5dc0586 39-52,63
+clifn/core/src/store-options.ts
+  s_93bd51f3bb6fef::t_b3190e4d4e5c40 2,30-31,33-36,45-46,56-59
+clifn/core/tests/app-stores.test.ts
+  s_93bd51f3bb6fef::t_4a44ebd0246981 7,407-432
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d15077d9fff08328f64205e001becf3b929f5b3a",
+  "prompts": {},
+  "sessions": {
+    "s_93bd51f3bb6fef": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a0803a03-3b80-41a5-b620-107bcde07066",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_db17e32d2efb29": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a2003b-dc5d-7b90-a3f8-3373760a3af7",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,35 @@
+.github/workflows/publish-tag.yml
+  s_b996deaa3d01f1::t_7a640e3a346660 75-76,78-83
+README.md
+  s_b996deaa3d01f1::t_69fb68f917cc09 66-76
+scripts/assert-release-ci.mjs
+  s_b996deaa3d01f1::t_29ab6254053d8b 7-12,14,22-23,28,42,47-48,53-58,62-66,69-73,93-98,106,114,163-164
+scripts/assert-release-ci.test.mjs
+  s_b996deaa3d01f1::t_716937cb791794 2-3,18,21,24,27,53,85,88,90,93-95,108-113,123,143-161,166,192-194,229-239
+scripts/assert-release-owner.mjs
+  s_b996deaa3d01f1::t_838a23f8fe7112 10,133-134
+scripts/assert-release-owner.test.mjs
+  s_b996deaa3d01f1::t_9d2c6fcd25f9a9 3,144-153
+scripts/owners.mjs
+  s_b996deaa3d01f1::t_86bb72174430be 14-15,97-100,115-116,118-119
+scripts/owners.test.mjs
+  s_b996deaa3d01f1::t_65b1930311011c 127,137-138,140-145,147-148
+scripts/release-gate-workflows.test.mjs
+  s_b996deaa3d01f1::t_6557930d395959 5-7,78-85,94,119,135-188
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "789efdd894418aa5bd7a096866e8ad595970bf33",
+  "prompts": {},
+  "sessions": {
+    "s_b996deaa3d01f1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c40e7b19-3313-4542-ad8e-39c9c4c912f1",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

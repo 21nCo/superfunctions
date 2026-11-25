@@ -1,0 +1,25 @@
+secfn/keys/src/__tests__/helpers.ts
+  s_15e198251fb3fa::t_82d9fbc7f098b5 53-60,67-72,79-80,83-90
+secfn/keys/src/__tests__/key-ring.test.ts
+  s_15e198251fb3fa::t_a6d11c2da0db21 5,109,114,118-120
+secfn/keys/src/__tests__/signer.test.ts
+  s_15e198251fb3fa::t_0357544988486c 4,46-47,52,60-62
+secfn/keys/src/encoding.ts
+  s_15e198251fb3fa::t_ef3f4017ed871b 66-104,108-109,114
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4194c814d44c641b3f5932b79c4be9acaa38217c",
+  "prompts": {},
+  "sessions": {
+    "s_15e198251fb3fa": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_15e198251fb3fa",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

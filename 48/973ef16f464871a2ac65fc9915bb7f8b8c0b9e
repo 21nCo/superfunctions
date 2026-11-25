@@ -1,0 +1,44 @@
+apifn/admin/package.json
+  s_83fa589146e8c6::t_7fa3925076b084 47
+apifn/cli/__tests__/test-command.test.ts
+  s_83fa589146e8c6::t_86afa2e1df6481 208
+  s_83fa589146e8c6::t_d427fda5d10b33 201-207,209-247
+apifn/cli/README.md
+  s_83fa589146e8c6::t_ad24b378bd89ee 103-104
+apifn/collections/src/types.ts
+  s_83fa589146e8c6::t_c6ec44a3796285 167-170
+apifn/collections/README.md
+  s_83fa589146e8c6::t_d427fda5d10b33 131-132,192,198-199,228,232
+apifn/cli/package.json
+  s_83fa589146e8c6::t_7fa3925076b084 3,26
+apifn/collections/src/variables.ts
+  s_83fa589146e8c6::t_c6ec44a3796285 43,66
+apifn/collections/__tests__/runner.test.ts
+  s_83fa589146e8c6::t_0be6b89758bf46 155,228,241-288,536
+apifn/collections/package.json
+  s_83fa589146e8c6::t_7fa3925076b084 3
+apifn/cli/src/commands/test.ts
+  s_83fa589146e8c6::t_c6ec44a3796285 53-56,138-139,145-148
+apifn/collections/src/runner/runner.ts
+  s_83fa589146e8c6::t_c6ec44a3796285 502,512-521
+apifn/cli/src/index.ts
+  s_83fa589146e8c6::t_c6ec44a3796285 205-206,225-226,261-262
+package-lock.json
+  s_83fa589146e8c6::t_22dbbd79852512 99,110,113,137
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "48973ef16f464871a2ac65fc9915bb7f8b8c0b9e",
+  "prompts": {},
+  "sessions": {
+    "s_83fa589146e8c6": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21253-9943-7ef0-8aad-8a89b106fa79",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,89 @@
+.github/workflows/ci.yml
+  s_31adf62e8db81f::t_051b9ce9f94a3c 82-94
+apifn/admin/turbo.json
+  s_31adf62e8db81f::t_4080d3562ddbb7 1-36
+apifn/core/turbo.json
+  s_31adf62e8db81f::t_f243e3912c3699 5-7,10-16
+authfn/core/turbo.json
+  s_31adf62e8db81f::t_247bd5dedf9a17 1-51
+authfn/examples/shared/turbo.json
+  s_31adf62e8db81f::t_baa570f352638c 1-22
+authfn/oauth-provider/turbo.json
+  s_31adf62e8db81f::t_c6762b5af272b7 1-18
+billfn/core/turbo.json
+  s_31adf62e8db81f::t_d31ba7a8518e3e 1-18
+billfn/swift-bridge/turbo.json
+  s_31adf62e8db81f::t_c694d04772f578 1-18
+datafn/client/turbo.json
+  s_31adf62e8db81f::t_3e1778441c265e 5-12,22-23
+datafn/server/turbo.json
+  s_31adf62e8db81f::t_eee75f6f480b0e 1-36
+datafn/swift-bridge/turbo.json
+  s_31adf62e8db81f::t_94a90a3d2d7a98 1-18
+extfn/vite/turbo.json
+  s_31adf62e8db81f::t_53567dd49369d0 1-18
+filefn/server/turbo.json
+  s_31adf62e8db81f::t_0510608965d063 1-22
+langfn/typescript/turbo.json
+  s_31adf62e8db81f::t_06afdc4618546c 5-12,14-28
+logfn/typescript/turbo.json
+  s_31adf62e8db81f::t_20c6f72480ad3c 5-13,15-31
+mcpfn/cli/turbo.json
+  s_31adf62e8db81f::t_c3df9dd45f0e03 1-24
+mcpfn/inspector/turbo.json
+  s_31adf62e8db81f::t_c1c1ce615085aa 1-24
+mcpfn/testing/turbo.json
+  s_31adf62e8db81f::t_0bc9d06c6c1d38 1-24
+mdfn/examples/react/turbo.json
+  s_31adf62e8db81f::t_cfad266b6b4ba4 1-22
+mdfn/examples/solid/turbo.json
+  s_31adf62e8db81f::t_477d247d8067ae 1-22
+mdfn/examples/svelte/turbo.json
+  s_31adf62e8db81f::t_48abeed90304ad 1-22
+memoryfn/typescript/turbo.json
+  s_31adf62e8db81f::t_8c1fb369523385 1-30
+packages/cli/turbo.json
+  s_31adf62e8db81f::t_6dbc3417fa343f 1-48
+plugfn/core/turbo.json
+  s_31adf62e8db81f::t_6fec9d0dc17652 1-24
+scripts/turbo-inputs-guard.mjs
+  s_31adf62e8db81f::t_46908949d84dc5 1-616
+scripts/turbo-inputs-guard.test.mjs
+  s_31adf62e8db81f::t_5b3f42905cf8b9 1-274
+turbo.json
+  s_31adf62e8db81f::t_a93a34072e354b 65-101
+uifn/catalogs/react/turbo.json
+  s_31adf62e8db81f::t_60816cb16ed0d0 1-12
+uifn/catalogs/solid/turbo.json
+  s_31adf62e8db81f::t_18d376bdf981b0 1-12
+uifn/catalogs/svelte/turbo.json
+  s_31adf62e8db81f::t_af2dc77dd72402 1-12
+uifn/core/turbo.json
+  s_31adf62e8db81f::t_158e9d8ca52978 1-30
+uifn/react/turbo.json
+  s_31adf62e8db81f::t_ed9e719085c40e 1-33
+uifn/registry/turbo.json
+  s_31adf62e8db81f::t_c721487f52529e 1-24
+uifn/solid/turbo.json
+  s_31adf62e8db81f::t_9e285f7ac15e50 1-33
+uifn/svelte/turbo.json
+  s_31adf62e8db81f::t_54c879e334bb09 1-33
+uifn/tokens/turbo.json
+  s_31adf62e8db81f::t_c6677d4cdf944b 1-24
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f35ffbc2bf864bc612c9f21a36b89029af441afe",
+  "prompts": {},
+  "sessions": {
+    "s_31adf62e8db81f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4fdace15-6e28-4e3b-a169-f33838035535",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

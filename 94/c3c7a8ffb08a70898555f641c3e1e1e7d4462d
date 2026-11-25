@@ -1,0 +1,27 @@
+billfn/core/src/__tests__/http-surface.test.ts
+  s_0d7e11293d5a4e::t_e9cf38e72cfbb0 105-125,142,266-283
+billfn/core/src/http.ts
+  s_0d7e11293d5a4e::t_0dfe8d17c8c3e8 36-41,58-60,62-65,68,84
+billfn/core/src/ingress.ts
+  s_0d7e11293d5a4e::t_0ec1e8485aca93 255,258-262
+billfn/core/src/router.ts
+  s_0d7e11293d5a4e::t_1e0bfc1ac5ebff 53,56-58,74-78
+billfn/docs/content/docs/server/routes.mdx
+  s_0d7e11293d5a4e::t_a72cff422145c9 79
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "94c3c7a8ffb08a70898555f641c3e1e1e7d4462d",
+  "prompts": {},
+  "sessions": {
+    "s_0d7e11293d5a4e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "97ac12a3-1bf1-4732-a6f3-ece8c28b207e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

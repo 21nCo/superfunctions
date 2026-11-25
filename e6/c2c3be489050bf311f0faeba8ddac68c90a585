@@ -1,0 +1,57 @@
+secfn/keys/src/__tests__/signer.test.ts
+  s_2dbcc31cbf09bc::t_a8b48c08893847 1-130
+secfn/keys/src/index.ts
+  s_2dbcc31cbf09bc::t_dae9755b9aa34c 1-20
+package-lock.json
+  s_2dbcc31cbf09bc::t_3094b03f3d48dc 59,35079-35082,63927-63951
+secfn/keys/src/__tests__/helpers.ts
+  s_2dbcc31cbf09bc::t_44abcea5631987 1-51
+secfn/keys/README.md
+  s_2dbcc31cbf09bc::t_89f2631bed6d05 1-65,1-50,52-65
+secfn/keys/vitest.workerd.config.ts
+  s_2dbcc31cbf09bc::t_9fddb722d6ad48 1-22
+secfn/keys/src/signer.ts
+  s_2dbcc31cbf09bc::t_009741cc0f2f60 1-180,1-39,41-48,55-180
+secfn/keys/src/key-ring.ts
+  s_2dbcc31cbf09bc::t_43101be5b40e9e 1-237
+secfn/keys/src/__tests__/key-ring.test.ts
+  s_2dbcc31cbf09bc::t_8e8ce8a082b73e 1-389
+release-packages.json
+  s_2dbcc31cbf09bc::t_b93091a18548f2 193
+secfn/keys/vitest.config.ts
+  s_2dbcc31cbf09bc::t_cc29b6829cf48c 1-10
+secfn/keys/src/jwk.ts
+  s_2dbcc31cbf09bc::t_dd4fe8bc9d8a5a 1-101
+secfn/keys/src/__tests__/workerd/key-ring.workerd.test.ts
+  s_2dbcc31cbf09bc::t_4cc8d1d3c85e6b 1-61
+superfunctions.owners.json
+  s_2dbcc31cbf09bc::t_15906b7fb38d4c 190
+secfn/keys/tsconfig.json
+  s_2dbcc31cbf09bc::t_602280797a0875 1-21
+secfn/keys/package.json
+  s_2dbcc31cbf09bc::t_fa95c90d6abc66 1-60
+package.json
+  s_2dbcc31cbf09bc::t_c01111e8421cdf 54
+secfn/keys/src/errors.ts
+  s_2dbcc31cbf09bc::t_26bca49a855439 1-51
+secfn/keys/src/encoding.ts
+  s_2dbcc31cbf09bc::t_531d5472d12867 1-49
+secfn/keys/tsconfig.build.json
+  s_2dbcc31cbf09bc::t_bd77859f29aa77 1-14
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e6c2c3be489050bf311f0faeba8ddac68c90a585",
+  "prompts": {},
+  "sessions": {
+    "s_2dbcc31cbf09bc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_2dbcc31cbf09bc",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

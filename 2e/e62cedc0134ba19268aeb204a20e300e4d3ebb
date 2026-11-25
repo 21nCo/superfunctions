@@ -1,0 +1,21 @@
+filefn/docs/content/docs/core-concepts/share-links.md
+  s_0d7e11293d5a4e::t_2424163194a06a 93
+filefn/docs/static/llms-full.txt
+  s_0d7e11293d5a4e::t_e45fee8d10d0ee 2852
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2ee62cedc0134ba19268aeb204a20e300e4d3ebb",
+  "prompts": {},
+  "sessions": {
+    "s_0d7e11293d5a4e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "97ac12a3-1bf1-4732-a6f3-ece8c28b207e",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

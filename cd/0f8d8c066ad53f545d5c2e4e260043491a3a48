@@ -1,0 +1,25 @@
+sendfn/python/sendfn/email/aws_ses.py
+  s_8b6ede6b28daf3::t_26f8c365a0f808 21-36,290-292,351-353
+sendfn/python/tests/test_aws_ses_lifecycle.py
+  s_8b6ede6b28daf3::t_78331e8abc7def 8,350-391
+sendfn/typescript/src/email/aws-ses-adapter.ts
+  s_8b6ede6b28daf3::t_cbcc3d9059d468 59-71,188,269
+sendfn/typescript/tests/aws-ses-lifecycle.test.ts
+  s_8b6ede6b28daf3::t_02fad6f03d591a 37-57
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "cd0f8d8c066ad53f545d5c2e4e260043491a3a48",
+  "prompts": {},
+  "sessions": {
+    "s_8b6ede6b28daf3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_8b6ede6b28daf3",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

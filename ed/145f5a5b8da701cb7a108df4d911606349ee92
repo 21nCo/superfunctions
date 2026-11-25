@@ -1,0 +1,27 @@
+flowfn/admin/src/__tests__/admin.test.ts
+  s_a0e8a40aba29df::t_c6451d9ec061e0 643-644,668-704,711-716
+flowfn/typescript/src/adapters/base.ts
+  s_a0e8a40aba29df::t_59e2bc27a0f242 40-42
+flowfn/typescript/src/adapters/memory.ts
+  s_a0e8a40aba29df::t_9aec130815473c 21-22
+flowfn/typescript/src/adapters/postgres/index.ts
+  s_a0e8a40aba29df::t_94cfb705366480 26-27
+flowfn/typescript/src/adapters/redis.ts
+  s_a0e8a40aba29df::t_b2200386f9e8fb 318-319
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ed145f5a5b8da701cb7a108df4d911606349ee92",
+  "prompts": {},
+  "sessions": {
+    "s_a0e8a40aba29df": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_a0e8a40aba29df",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
