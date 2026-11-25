@@ -344,6 +344,19 @@ describe("validateOpenAPI", () => {
     expect(result.document?.components?.schemas?.Value).toEqual({ type: "integer" });
   });
 
+  it("can select a child of a directly self-referencing preloaded schema", async () => {
+    const uri = "https://example.invalid/types.json";
+    const contents = JSON.stringify({
+      Self: { $ref: "#/Self", $defs: { Part: { type: "integer" } } },
+    });
+    const doc = documentWithReference(uri + "#/Self/$defs/Part");
+    const result = await validateAndDereferenceOpenAPI(doc, {
+      externalReferences: new Map([[uri, contents]]),
+    });
+    expect(result.errors).toEqual([]);
+    expect(result.document?.components?.schemas?.Value).toEqual({ type: "integer" });
+  });
+
   it("dereferences literal data used as a schema through an intermediate alias", async () => {
     const doc = documentWithReference("#/components/schemas/Alias/default");
     const literal = { $ref: "#/components/schemas/Leaf" };

@@ -194,6 +194,7 @@ function prepareReferences(document: OpenAPIDocument, externalReferences?: Reado
           // Both pointer spellings can reach this same alias.
           aliasTargets.set(value, target);
         }
+        if (target.value === value) break;
         for (const [key, sibling] of Object.entries(value)) {
           if (key !== "$ref" && !overrides.has(key)) {
             overrides.set(key, { value: sibling, source });
