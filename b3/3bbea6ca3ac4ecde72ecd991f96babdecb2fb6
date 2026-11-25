@@ -1,0 +1,203 @@
+apifn/README.md
+  s_533f37de0bc5b0::t_46eb0e395b58ca 24-36
+apifn/admin/package.json
+  s_533f37de0bc5b0::t_c4f8bc7d5ef58d 3,41,47
+apifn/cli/README.md
+  s_533f37de0bc5b0::t_e73613c8a5a5b8 103-104
+apifn/cli/__tests__/test-command.test.ts
+  s_533f37de0bc5b0::t_8d487c7daa2724 201-266
+apifn/cli/package.json
+  s_533f37de0bc5b0::t_33e778f76ba9f4 3,26-31
+apifn/cli/src/commands/test.ts
+  s_533f37de0bc5b0::t_57a141f3c11ce3 53-56,138-139,145-148
+apifn/cli/src/index.ts
+  s_533f37de0bc5b0::t_2854ddacf6d69f 2,42-72,237-238,279-282,284-285,554-564,568-574,591
+apifn/collections/README.md
+  s_533f37de0bc5b0::t_c0f84588651718 121,132-133,193,199-200,229,233
+apifn/collections/__tests__/runner.test.ts
+  s_533f37de0bc5b0::t_ac5f169c68cc06 155,228,241-327,575
+apifn/collections/package.json
+  s_533f37de0bc5b0::t_1b64b4bbf3a9f8 3,23
+apifn/collections/src/index.ts
+  s_533f37de0bc5b0::t_e24a46574de524 43-44
+apifn/collections/src/runner/runner.ts
+  s_533f37de0bc5b0::t_4740167f6eb55e 51-52,249,263,505,515-530,557-558,576,596-597,614
+apifn/collections/src/types.ts
+  s_533f37de0bc5b0::t_2f5703475ac75c 145-146,169-172
+apifn/collections/src/variables.ts
+  s_533f37de0bc5b0::t_285d76bf7e537a 43,66
+apifn/contracts/package.json
+  s_533f37de0bc5b0::t_8e6da9680f79ad 3,43
+apifn/core/README.md
+  s_533f37de0bc5b0::t_31508e9264dc47 232-234
+apifn/core/__tests__/testfn-adapter.test.ts
+  s_533f37de0bc5b0::t_44abbcd0e9ca91 11,18,28,56,60,83-88,92,94,99-100,120-229
+apifn/core/package.json
+  s_533f37de0bc5b0::t_8006312f194f03 3
+apifn/core/src/integrations/testfn.ts
+  s_533f37de0bc5b0::t_7944a6db173c71 14,18,21-59,63-66,122-130,141-144,166,169-177,179-205,213-219,223-224,259,272
+apifn/docsfn/package.json
+  s_533f37de0bc5b0::t_b079d48e108abb 3,32-34
+apifn/mock/package.json
+  s_533f37de0bc5b0::t_82a412954db2db 3,23
+apifn/react/package.json
+  s_533f37de0bc5b0::t_256267c80eb16a 3,22
+apifn/sdk/package.json
+  s_533f37de0bc5b0::t_a07be0e79cfa06 3,32
+apifn/sdk/src/version.ts
+  s_533f37de0bc5b0::t_e663444815e549 3
+apifn/snippets/package.json
+  s_533f37de0bc5b0::t_b6870214693e0e 3,23
+apifn/svelte/package.json
+  s_533f37de0bc5b0::t_8e45256171a65d 3,50
+datafn/SECURITY.md
+  s_533f37de0bc5b0::t_0303657c242d78 9,12-25,32,35,64,66,68-70,78,239,394-395,427
+datafn/admin/package.json
+  s_533f37de0bc5b0::t_6c1b067d0260cf 41
+datafn/cli/package.json
+  s_533f37de0bc5b0::t_ffdf5fe6adc397 30-31
+datafn/client/__tests__/cloneUp-null-columns.test.ts
+  s_533f37de0bc5b0::t_58cc26a82259f2 51-56
+datafn/client/__tests__/cloneUp-server.test.ts
+  s_533f37de0bc5b0::t_40eb4cc304d214 60
+datafn/docs/content/docs/documentation/server/authorization.mdx
+  s_533f37de0bc5b0::t_1157dc6b98237e 189,195
+datafn/docs/content/docs/documentation/sync/conflict-resolution.mdx
+  s_533f37de0bc5b0::t_21174e67ab38f5 12,24,29-39,43
+datafn/docs/content/docs/recipes/offline-conflicts.mdx
+  s_533f37de0bc5b0::t_a571ced7ec691b 12,14,20,25-35,37,40-45,55
+datafn/docs/content/docs/reference/changelog.mdx
+  s_533f37de0bc5b0::t_d19f67a0b296e3 21-27
+datafn/extfn/package.json
+  s_533f37de0bc5b0::t_a380e0c5a85699 34-35
+datafn/server/__tests__/dfql-pagination-count.test.ts
+  s_533f37de0bc5b0::t_82f2ec7b36e871 27
+datafn/server/__tests__/dfql-select.test.ts
+  s_533f37de0bc5b0::t_dddd54fcd3eb1f 19
+datafn/server/__tests__/driver-error-redaction.test.ts
+  s_533f37de0bc5b0::t_013dfb9e27b9df 1-264
+datafn/server/__tests__/plugins-integration.test.ts
+  s_533f37de0bc5b0::t_0e40c200797424 255
+datafn/server/__tests__/plugins.test.ts
+  s_533f37de0bc5b0::t_94acbdab8fae6a 108
+datafn/server/__tests__/predicate-authz.test.ts
+  s_533f37de0bc5b0::t_06e4c63de0edbf 1-337
+datafn/server/__tests__/public-link-resolve-limits.test.ts
+  s_533f37de0bc5b0::t_8f90635488415d 1-345
+datafn/server/__tests__/query-filter-pushdown.test.ts
+  s_533f37de0bc5b0::t_14ab12433176be 122,153-154,177-193,1011-1018,1022-1023,1037-1445
+datafn/server/__tests__/query-principal-freshness.test.ts
+  s_533f37de0bc5b0::t_ed0360a7967d33 1-203
+datafn/server/__tests__/query-validation.test.ts
+  s_533f37de0bc5b0::t_5f5bc11bbc0ccd 142,164,190,291
+datafn/server/__tests__/release-manifest-pins.test.ts
+  s_533f37de0bc5b0::t_54bf31962aa87e 1-90
+datafn/server/__tests__/reliability-critical.test.ts
+  s_533f37de0bc5b0::t_98629ab72e77fb 164,225
+datafn/server/__tests__/request-check-coverage.test.ts
+  s_533f37de0bc5b0::t_5de6da187aba8e 1-82
+datafn/server/__tests__/security.test.ts
+  s_533f37de0bc5b0::t_245e660a086583 889
+datafn/server/__tests__/sync.test.ts
+  s_533f37de0bc5b0::t_47d2ba846c5cf8 17
+datafn/server/__tests__/transact-step-classification.test.ts
+  s_533f37de0bc5b0::t_eff1ac055e38a4 1-112
+datafn/server/__tests__/validation-medium.test.ts
+  s_533f37de0bc5b0::t_efc9501b147dc2 63,105,133,162,192,229,260,291
+datafn/server/__tests__/workflow-action-pins.test.ts
+  s_533f37de0bc5b0::t_bb5c8b5d6f8f82 1-68
+datafn/server/package.json
+  s_533f37de0bc5b0::t_d2ea3ebbb2681f 65
+datafn/server/src/execution/__tests__/completeness.test.ts
+  s_533f37de0bc5b0::t_ee02ddb801b2a8 29
+datafn/server/src/execution/db-store.ts
+  s_533f37de0bc5b0::t_1bbe07e3cc958b 21,24,26,32,47-48,69-77,110,112-116,223,225,238,267,277,315,347,351-353,382,387,390,392-393,395-422,424-425,430-468,472-473,480,484,487-488,493-553,555-558,560-561,563-566,568-571,573-574,576-582,584-589,593-594,707,711,736-742,782,878,925-926,928-938,940,942-950,953,955-958,960-963,1017,1030,1036,1042-1044,1094
+datafn/server/src/execution/migration/__tests__/spv2-migration.test.ts
+  s_533f37de0bc5b0::t_2a8a8d46f7502a 91
+datafn/server/src/execution/migration/ancestor-state.ts
+  s_533f37de0bc5b0::t_76d522e1f3bcc7 10,43,48-49
+datafn/server/src/execution/mutation/__tests__/ancestor-inactive-system-field.test.ts
+  s_533f37de0bc5b0::t_86db4c958d9145 83
+datafn/server/src/execution/mutation/__tests__/replace.test.ts
+  s_533f37de0bc5b0::t_c613fe9ce24640 59
+datafn/server/src/execution/mutation/__tests__/share-spv2.test.ts
+  s_533f37de0bc5b0::t_9801b1a6e47f0f 106,2905
+datafn/server/src/execution/mutation/execute.ts
+  s_533f37de0bc5b0::t_a54e47b605e38b 310,464,901,919,955,976,1435-1439,1444,1557-1561,1566
+datafn/server/src/execution/mutation/relations.ts
+  s_533f37de0bc5b0::t_924b2868b6834d 24,112-113,878,897,916,1029,1050,1074
+datafn/server/src/execution/query/execute.ts
+  s_533f37de0bc5b0::t_797738033fab54 33,40,264-274
+datafn/server/src/execution/query/filter-plan.ts
+  s_533f37de0bc5b0::t_1a867dcc2c39c0 40,45,96,348-349,568,598,601,608,636,644,670-671,673,686-688,692-695,700-706,708-712,716
+datafn/server/src/execution/query/filters.ts
+  s_533f37de0bc5b0::t_daf0b371eff26f 9,13-14,19,21,23-55,69-105,116,118,125,132,146,158-162,164-165,167-222,226-228,230-231,236-245,248-250,252-258,264,268-269,278-279,286-287,294-295
+datafn/server/src/execution/query/planner.ts
+  s_533f37de0bc5b0::t_bb92244c7eb74f 526,529
+datafn/server/src/execution/query/pushdown.ts
+  s_533f37de0bc5b0::t_465edb27d8018a 228-229,237,241-243,270,279,294,330,386
+datafn/server/src/execution/query/select.ts
+  s_533f37de0bc5b0::t_08fdd2dbdc4400 22-24,172,174-175,249-250,269,273-286,304,321,336,343-348,356,365,371-376,399,417,434,446,455,467,469,496,550,562-583,587-646,653,661-665,667-674,683,783-789,802-813,836,839,842
+datafn/server/src/execution/relations/foreign-key.ts
+  s_533f37de0bc5b0::t_4715c6c2638e97 1-17
+datafn/server/src/execution/store.ts
+  s_533f37de0bc5b0::t_fb2d20bb66a167 12-14
+datafn/server/src/execution/sync/__tests__/offline-execution-order.test.ts
+  s_533f37de0bc5b0::t_8d9cf9aee94ce5 1-110
+datafn/server/src/execution/transact.ts
+  s_83fa589146e8c6::t_1f53626da4617d 7,12,60,142,147,200,203-214,294-305,308-309,343,350,388-390,401-403,406
+datafn/server/src/http/middleware.ts
+  s_533f37de0bc5b0::t_8896243534b8f9 23-30,32-33,35,39,44-46,48-49,51-67,80-101
+datafn/server/src/multi-region-routing.ts
+  s_533f37de0bc5b0::t_0bb3640b4b5636 1661,1718-1720
+datafn/server/src/plugins/public-links.ts
+  s_533f37de0bc5b0::t_006b95df22fdd4 2,10,31-103,187,345,391,393-411
+datafn/server/src/routes/__tests__/execution-errors.test.ts
+  s_533f37de0bc5b0::t_7bb5cd1887715a 46,85,130,168,207
+datafn/server/src/routes/mutation.ts
+  s_533f37de0bc5b0::t_4a9868ce45acf8 145
+datafn/server/src/routes/query.ts
+  s_533f37de0bc5b0::t_11a907445fc434 33,70,197,249,331,336-340,382-384,391-392,404,534-535,545,605,778,870-873,890-893,943,966,997
+datafn/server/src/routes/query/execute.ts
+  s_533f37de0bc5b0::t_6effee07af48fd 26,49,83,136-137,162,172,174,205,207,219,238-239,298,356
+datafn/server/src/routes/sync.ts
+  s_533f37de0bc5b0::t_a4d56dc92f5836 399,431
+datafn/server/src/routes/transact.ts
+  s_533f37de0bc5b0::t_d6742fa776211a 11,72-84,86-102,104-105,107-109,111,119-123,147-149,171
+datafn/server/src/server.ts
+  s_533f37de0bc5b0::t_6d250209f262b5 51,69-73,176,538-539,1200-1202,1272-1275,1277,1287-1290,1292,1586-1599,1703-1704,1714,1717-1719,1721-1724,1733-1738,1811-1825
+datafn/server/src/validation/__tests__/validation.test.ts
+  s_533f37de0bc5b0::t_ca3491df3ca81d 75,104,135,161,182,208,234,260,299,327,357,385,413,445,476,509,541,581,611,639,670,702,729,763,797,822,847,870,894,917,941,965,988,1027,1054,1084,1107,1133,1157,1180,1203,1254
+datafn/server/src/validation/authz.ts
+  s_533f37de0bc5b0::t_da9b175a7e94c1 31,54,184-198,317-332,346-348,423-424,479-480,541-649,656,659-660,662,676-677,688-700,702-706,725,749-768,770
+datafn/server/turbo.json
+  s_533f37de0bc5b0::t_03c3eeb4773ce3 28-37
+datafn/svelte/package.json
+  s_533f37de0bc5b0::t_8060760cbf6545 22
+datafn/swift-bridge/package.json
+  s_533f37de0bc5b0::t_aa118dcad97d97 26-27
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b33bbea6ca3ac4ecde72ecd991f96babdecb2fb6",
+  "prompts": {},
+  "sessions": {
+    "s_533f37de0bc5b0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1d29bc56-19ce-4155-99d2-820126a823b6",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_83fa589146e8c6": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21253-9943-7ef0-8aad-8a89b106fa79",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
