@@ -181,18 +181,22 @@ for (const { operation, code, reason } of skipped) {
   `dependencies` keyword is ignored, since 2020-12 defines none. One budget bounds all of one call's work: once
   its conversions and copies have produced 1,000,000 nodes plus 64 per value
   of the document, every schema converted after that is skipped
-  (`schema-too-large`). Each tool's copy of the referenced component schemas
-  it holds is charged node by node as it is made (again for each catalog
-  entry that copies a shared one), and so are a copy made to check a schema
-  and each walk of a closure's references; a copy that fails is charged only
-  for what it copied. No schema has a size or depth limit of its own: a schema that
+  (`schema-too-large`). Each tool schema copy (its root, literals included,
+  and the component schemas it holds) is charged node by node as it is made,
+  and so are a copy made to check a schema and each walk of a closure's
+  references; a copy that fails is charged only for what it copied. Each
+  tool's catalog entry copies its schemas again: that copy is charged in
+  document order and given back when the tool does not register. No schema has a size or depth limit of its own: a schema that
   repeats objects the document shares between positions into more than four
   times the values they hold is skipped (`schema-too-large`), and a schema
   nested or referencing too deeply for the converter or the registry's
-  validator to compile (a stack overflow) is skipped the same way; under
-  @cfworker/json-schema, which follows references only while validating, a
-  schema is also validated once to find out. Near the
-  validator's own limit, that verdict is the validator's. A schema compiled
+  validator to compile (a stack overflow) is skipped the same way. Under
+  @cfworker/json-schema, which follows references only while validating, the
+  frames one value can stack are read from the schema itself (at every
+  position: parameters, bodies, properties and items) and compared with
+  how deep the engine validates on the call's stack, measured once per call
+  with the engine. Near the validator's own limit, that verdict is the
+  validator's. A schema compiled
   only to be checked (a `HEAD` or non-object response, or one with
   properties to leave out) is compiled once per distinct schema. A Swagger
   2.0 document throws.
