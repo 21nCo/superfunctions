@@ -355,20 +355,20 @@ function page<T>(
   };
 }
 
-function rejectSdkOrigin(
+function sdkOriginError(
   request: Request,
   options: Pick<NonNullable<ConstructorParameters<typeof WebStandardStreamableHTTPServerTransport>[0]>,
     "enableDnsRebindingProtection" | "allowedHosts" | "allowedOrigins">,
-): Response | undefined {
+): string | undefined {
   if (!options.enableDnsRebindingProtection) return undefined;
   // Match the SDK's opt-in header checks, including its empty-list semantics.
   const host = request.headers.get("host");
   if (options.allowedHosts?.length && (!host || !options.allowedHosts.includes(host))) {
-    return jsonRpcErrorResponse(403, -32000, `Invalid Host header: ${host}`);
+    return `Invalid Host header: ${host}`;
   }
   const origin = request.headers.get("origin");
   if (options.allowedOrigins?.length && origin && !options.allowedOrigins.includes(origin)) {
-    return jsonRpcErrorResponse(403, -32000, `Invalid Origin header: ${origin}`);
+    return `Invalid Origin header: ${origin}`;
   }
 }
 
@@ -1270,7 +1270,7 @@ export class McpFnServer<TContext = undefined> {
       principal: string | undefined;
       transport: WebStandardStreamableHTTPServerTransport;
       stopResponses: Set<() => void>;
-      touch: () => boolean;
+      touch: (refresh: boolean) => boolean;
     }
     const sessions = new Map<string, Session>();
     // Pending initialization and cleanup both count toward capacity.
@@ -1289,7 +1289,8 @@ export class McpFnServer<TContext = undefined> {
       const sessionId = request.headers.get("mcp-session-id");
       if (sessionId) {
         const session = sessions.get(sessionId);
-        if (!session || session.principal !== principal || !session.touch()) return sessionNotFound();
+        if (!session || session.principal !== principal) return sessionNotFound();
+        if (!session.touch(!sdkOriginError(request, transportOptions))) return sessionNotFound();
         const respond = () => session.transport.handleRequest(request, handleOptions);
         // DELETE itself initiates closure and must receive its own response.
         return request.method === "DELETE"
@@ -1303,8 +1304,8 @@ export class McpFnServer<TContext = undefined> {
       }
       if (forPrincipal >= maxSessionsPerPrincipal || admitted.size >= maxSessions) {
         // At capacity there's no new SDK transport to run the delegated check.
-        const rejectDelegated = rejectSdkOrigin(request, transportOptions);
-        if (rejectDelegated) return rejectDelegated;
+        const headerError = sdkOriginError(request, transportOptions);
+        if (headerError) return jsonRpcErrorResponse(403, -32000, headerError);
         return forPrincipal >= maxSessionsPerPrincipal
           ? jsonRpcErrorResponse(429, -32000, "Too many sessions for this principal")
           : jsonRpcErrorResponse(503, -32000, "Too many sessions for this HTTP handler");
@@ -1313,6 +1314,7 @@ export class McpFnServer<TContext = undefined> {
       // Reserve before any initialization work can yield.
       const requestServer = new McpFnServer(this.serverOptions);
       const stopResponses = new Set<() => void>();
+      const stopBody = new AbortController();
       let claimedId: string | undefined;
       let acceptedId: string | undefined;
       let setupPending = true;
@@ -1349,6 +1351,7 @@ export class McpFnServer<TContext = undefined> {
             releaseSlot();
           }
         });
+        stopBody.abort();
         // Before acceptance, let the ongoing setup or host callback unwind.
         if (acceptedId !== undefined) for (const stop of stopResponses) stop();
         return closing;
@@ -1391,14 +1394,16 @@ export class McpFnServer<TContext = undefined> {
         principal,
         transport,
         stopResponses,
-        touch: () => {
+        touch: (refresh) => {
           if (idleTimeRemaining() <= 0) {
             expire();
             return false;
           }
-          lastActivity = performance.now();
-          clearTimeout(timer);
-          scheduleExpiry();
+          if (refresh) {
+            lastActivity = performance.now();
+            clearTimeout(timer);
+            scheduleExpiry();
+          }
           return !closing;
         },
       };
@@ -1406,7 +1411,9 @@ export class McpFnServer<TContext = undefined> {
       this.requestServers.add(requestServer);
       this.httpSessionClosers.set(requestServer, close);
 
+      request.signal.addEventListener("abort", expire, { once: true });
       try {
+        request.signal.throwIfAborted();
         await configureRequestServer?.(requestServer);
         if (closing) return serverClosed();
         await requestServer.connect(transport);
@@ -1419,8 +1426,21 @@ export class McpFnServer<TContext = undefined> {
           }
         };
         if (closing) return serverClosed();
+        // Let the SDK enforce its body-size limit while making its stream read
+        // interruptible on shutdown or when the HTTP client disconnects.
+        const body = request.body;
+        const sdkRequest = request.method === "POST" && body && !body.locked && !request.bodyUsed &&
+          handleOptions?.parsedBody === undefined
+          ? new Request(request.url, {
+              method: request.method,
+              headers: request.headers,
+              signal: request.signal,
+              body: body.pipeThrough(new TransformStream(), { signal: stopBody.signal }),
+              duplex: "half",
+            } as RequestInit)
+          : request;
         const response = await respondUntilClosed(
-          () => transport.handleRequest(request, handleOptions),
+          () => transport.handleRequest(sdkRequest, handleOptions),
           stopResponses,
           serverClosed,
         );
@@ -1434,6 +1454,8 @@ export class McpFnServer<TContext = undefined> {
         await close().catch(() => undefined);
         throw error;
       } finally {
+        request.signal.removeEventListener("abort", expire);
+        stopBody.abort();
         setupPending = false;
         releaseSlot();
       }

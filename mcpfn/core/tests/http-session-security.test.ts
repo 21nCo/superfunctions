@@ -326,29 +326,28 @@ describe("createWebStandardHandler session binding (MCP-SEC-03)", () => {
     expect((await call(sessionId!, from("https://issuer-one.example"))).status).toBe(200);
   });
 
-  it("answers 503 when close() runs while the initialize body is still being read", async () => {
-    const { handler, server } = await setup();
-    let push!: (chunk: Uint8Array) => void;
-    let finish!: () => void;
-    const body = new ReadableStream<Uint8Array>({
-      start(controller) {
-        push = (chunk) => controller.enqueue(chunk);
-        finish = () => controller.close();
-      },
-    });
+  it.each(["server shutdown", "client abort"])("cancels a pending initialize body on %s", async (reason) => {
+    const { handler, initialize, server } = await setup({ maxSessions: 1 });
+    const abort = new AbortController();
+    let markRead!: () => void;
+    const reading = new Promise<void>((resolve) => { markRead = resolve; });
+    const cancel = vi.fn();
+    const body = new ReadableStream<Uint8Array>({ pull: () => markRead(), cancel }, { highWaterMark: 0 });
     const pending = handler(new Request("http://127.0.0.1:8080/mcp", {
       method: "POST",
       headers: { accept: "application/json, text/event-stream", "content-type": "application/json" },
       body,
+      signal: abort.signal,
       duplex: "half",
     } as RequestInit));
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    await server.close();
-    push(new TextEncoder().encode(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "c", version: "1" } } })));
-    finish();
+    await reading;
+    if (reason === "server shutdown") await server.close();
+    else abort.abort();
     const response = await pending;
+    expect(cancel).toHaveBeenCalledTimes(1);
     expect(response.status).toBe(503);
     expect(response.headers.get("mcp-session-id")).toBeNull();
+    expect((await initialize()).status).toBe(200);
   });
 
   it("uses a host-supplied principal key", async () => {
@@ -491,6 +490,24 @@ describe("createWebStandardHandler session limits and expiry (MCP-SEC-04)", () =
     expect((await initialize()).status).toBe(200);
     expect((await initialize(undefined, { origin: "https://other.example" })).status).toBe(403);
     expect((await initialize(undefined, { origin: "https://app.example" })).status).toBe(503);
+  });
+
+  it("does not refresh sessions on rejected SDK Origins", async () => {
+    vi.useFakeTimers();
+    const { initialize, post, call } = await setup({
+      sessionIdleTimeoutMs: 100,
+      enableDnsRebindingProtection: true,
+      allowedOrigins: ["https://app.example"],
+    });
+    const { sessionId } = await initialize();
+    await vi.advanceTimersByTimeAsync(99);
+    const rejected = await post({ jsonrpc: "2.0", id: 2, method: "ping" }, {
+      sessionId: sessionId!,
+      headers: { origin: "https://other.example" },
+    });
+    expect(rejected.status).toBe(403);
+    await vi.advanceTimersByTimeAsync(1);
+    expect((await call(sessionId!)).status).toBe(404);
   });
 
   it("allows the expiry hook to close the parent server", async () => {
