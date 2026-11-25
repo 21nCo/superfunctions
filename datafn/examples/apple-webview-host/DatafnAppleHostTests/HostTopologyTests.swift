@@ -4,7 +4,7 @@ import XCTest
 final class HostTopologyTests: XCTestCase {
     func testWebOriginPreservesIPv6AndNormalizesDefaultPorts() throws {
         let origin = try XCTUnwrap(EmbeddedWebView.Coordinator.webOrigin(of: URL(string: "http://[::1]")!))
-        let sameOrigin = try XCTUnwrap(EmbeddedWebView.Coordinator.webOrigin(of: URL(string: "http://[::1]:80/detail")!))
+        let sameOrigin = try XCTUnwrap(EmbeddedWebView.Coordinator.webOrigin(of: URL(string: "http://[0:0:0:0:0:0:0:1]:80/detail")!))
         let otherPort = try XCTUnwrap(EmbeddedWebView.Coordinator.webOrigin(of: URL(string: "http://[::1]:4173")!))
         let otherScheme = try XCTUnwrap(EmbeddedWebView.Coordinator.webOrigin(of: URL(string: "https://[::1]:80")!))
 

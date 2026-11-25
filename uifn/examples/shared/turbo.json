@@ -7,7 +7,7 @@
         "$TURBO_DEFAULT$",
         "$TURBO_ROOT$/uifn/catalog/generated/catalog.json"
       ],
-      "outputs": ["dist/**", "src/catalog-accessibility.generated.json"]
+      "outputs": ["dist/**", "src/catalog-accessibility.generated.ts"]
     }
   }
 }

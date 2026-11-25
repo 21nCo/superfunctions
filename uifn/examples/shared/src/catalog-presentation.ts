@@ -11,7 +11,7 @@ import {
 import { workbenchComponents, type ComponentSlug } from './component-inventory.js';
 import type { WorkbenchRoute } from './routes.js';
 import { catalogThemeStyle } from './catalog-theme.js';
-import catalogAccessibility from './catalog-accessibility.generated.json' with { type: 'json' };
+import { catalogAccessibilityJson } from './catalog-accessibility.generated.js';
 import {
   catalogDemoChildren,
   catalogDemoFixtureIds,
@@ -27,6 +27,16 @@ import {
 } from './component-demo.js';
 
 export type CatalogFramework = 'react' | 'svelte' | 'solid';
+
+const catalogAccessibility = JSON.parse(catalogAccessibilityJson) as {
+  primitives: Record<string, { profile: string }>;
+  rulesByProfile: Record<string, {
+    nativeSemantics: string;
+    keyboard: { keys: string[] };
+    focus: string[];
+    wcag: string[];
+  }>;
+};
 
 const frameworkLabels: Record<CatalogFramework, string> = {
   react: 'React + Next.js',
@@ -1298,9 +1308,9 @@ function catalogAccessibilitySummary(slug: string): {
   wcag: string;
 } {
   const { primitives, rulesByProfile } = catalogAccessibility;
-  const entry = primitives[slug as keyof typeof primitives];
+  const entry = primitives[slug];
   if (!entry) throw new Error(`Missing canonical accessibility contract for ${slug}.`);
-  const rules = rulesByProfile[entry.profile as keyof typeof rulesByProfile];
+  const rules = rulesByProfile[entry.profile];
   return {
     nativeSemantics: rules.nativeSemantics,
     keyboard: rules.keyboard.keys.join(', '),

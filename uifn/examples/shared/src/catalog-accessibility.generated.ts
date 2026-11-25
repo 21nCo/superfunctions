@@ -1,3 +1,5 @@
+// Generated from uifn/catalog/generated/catalog.json. Do not edit by hand.
+export const catalogAccessibilityJson: string = `
 {
   "rulesByProfile": {
     "disclosure": {
@@ -966,7 +968,7 @@
     "breadcrumb": {
       "profile": "static-foundation",
       "primitiveNotes": [
-        "The root is a labelled navigation landmark and the current page uses aria-current=\"page\".",
+        "The root is a labelled navigation landmark and the current page uses aria-current=\\"page\\".",
         "Separators are decorative and hidden from assistive technology."
       ]
     },
@@ -1011,3 +1013,4 @@
     }
   }
 }
+`;

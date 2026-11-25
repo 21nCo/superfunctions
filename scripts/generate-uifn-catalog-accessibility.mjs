@@ -10,7 +10,7 @@ const outputPath = path.join(
   "examples",
   "shared",
   "src",
-  "catalog-accessibility.generated.json"
+  "catalog-accessibility.generated.ts"
 );
 const catalog = JSON.parse(fs.readFileSync(catalogPath, "utf8"));
 const rulesByProfile = new Map();
@@ -23,10 +23,15 @@ const accessibilityEntries = catalog.primitives.map(({ id, accessibility }) => {
   rulesByProfile.set(profile, rules);
   return [id, { profile, primitiveNotes }];
 });
-const output = `${JSON.stringify({
+const payload = JSON.stringify({
   rulesByProfile: Object.fromEntries(rulesByProfile),
   primitives: Object.fromEntries(accessibilityEntries),
-}, null, 2)}\n`;
+}, null, 2)
+  .replaceAll("\\", "\\\\")
+  .replaceAll("`", "\\`")
+  .replaceAll("${", "\\${");
+const output = `// Generated from uifn/catalog/generated/catalog.json. Do not edit by hand.\n` +
+  `export const catalogAccessibilityJson: string = \`\n${payload}\n\`;\n`;
 
 if (!fs.existsSync(outputPath) || fs.readFileSync(outputPath, "utf8") !== output) {
   fs.writeFileSync(outputPath, output);

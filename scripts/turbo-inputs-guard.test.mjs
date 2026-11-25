@@ -777,9 +777,9 @@ test("every root <package>#<task> entry keeps the generic task's dependencies an
   }
 });
 
-// A cache hit of @uifn/examples-shared#build restores the data its prebuild hook generates from the catalog, which the
+// A cache hit of @uifn/examples-shared#build restores the source its prebuild hook generates from the catalog, which the
 // workbenches bundle from shared/src, not only dist.
-test("the examples-shared build caches the catalog accessibility data its prebuild generates", () => {
+test("the examples-shared build caches the catalog accessibility source its prebuild generates", () => {
   const output = execFileSync(process.execPath, [turboBin, "run", "build", "--dry=json", "--filter=@uifn/examples-shared"], {
     cwd: copyRoot,
     encoding: "utf8",
@@ -789,6 +789,6 @@ test("the examples-shared build caches the catalog accessibility data its prebui
   });
   const task = JSON.parse(output).tasks.find((entry) => entry.taskId === "@uifn/examples-shared#build");
   assert.ok(task, "turbo --dry=json reports @uifn/examples-shared#build");
-  assert.deepEqual(task.resolvedTaskDefinition.outputs, ["dist/**", "src/catalog-accessibility.generated.json"]);
+  assert.deepEqual(task.resolvedTaskDefinition.outputs, ["dist/**", "src/catalog-accessibility.generated.ts"]);
   assert.deepEqual(task.resolvedTaskDefinition.dependsOn, ["^build"]);
 });

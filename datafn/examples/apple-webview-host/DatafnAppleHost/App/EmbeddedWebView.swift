@@ -1,4 +1,5 @@
 import DatafnWebViewBridgeHost
+import Darwin
 import SwiftUI
 import WebKit
 
@@ -51,13 +52,24 @@ struct EmbeddedWebView: UIViewRepresentable {
                   let host = url.host?.lowercased(), !host.isEmpty else {
                 return nil
             }
-            return (scheme, host, url.port ?? (scheme == "https" ? 443 : 80))
+            return (scheme, normalizedHost(host), url.port ?? (scheme == "https" ? 443 : 80))
+        }
+
+        private static func normalizedHost(_ host: String) -> String {
+            let literal = host.hasPrefix("[") && host.hasSuffix("]") ? String(host.dropFirst().dropLast()) : host
+            var address = in6_addr()
+            guard inet_pton(AF_INET6, literal, &address) == 1 else { return host }
+            let bufferSize = socklen_t(INET6_ADDRSTRLEN)
+            var buffer = [CChar](repeating: 0, count: Int(bufferSize))
+            guard inet_ntop(AF_INET6, &address, &buffer, bufferSize) != nil else { return host }
+            return String(decoding: buffer.prefix { $0 != 0 }.map(UInt8.init(bitPattern:)), as: UTF8.self)
         }
 
         private func allows(_ url: URL?) -> Bool {
             guard let allowedURL, let url else { return false }
             if allowedURL.isFileURL {
-                return url.isFileURL && url.standardizedFileURL.path == allowedURL.standardizedFileURL.path
+                return url.isFileURL && url.host == allowedURL.host
+                    && url.standardizedFileURL.path == allowedURL.standardizedFileURL.path
             }
             guard let allowedOrigin = Self.webOrigin(of: allowedURL),
                   let candidateOrigin = Self.webOrigin(of: url) else { return false }
