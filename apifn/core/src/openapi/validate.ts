@@ -1,5 +1,7 @@
 import SwaggerParser from "@apidevtools/swagger-parser";
+import { parse as parseYaml } from "yaml";
 import type { OpenAPIDocument, ValidationError } from "../types.js";
+import { openAPIReferenceContext, type OpenAPIReferenceMode } from "./reference-context.js";
 
 export interface OpenAPIValidationOptions {
   /**
@@ -11,17 +13,37 @@ export interface OpenAPIValidationOptions {
 
 const EXTERNAL_REF_ERROR = "External OpenAPI $ref requires an explicit allowlist entry";
 
-function assertLocalReferences(document: OpenAPIDocument): void {
-  const seen = new WeakSet<object>();
-  const pending: unknown[] = [document];
+function assertReferencePolicy(document: unknown, allowExternal: boolean): void {
+  const { childMode, entryMode, arrayItemMode, isMap } = openAPIReferenceContext;
+  const seen = new WeakMap<object, Set<OpenAPIReferenceMode>>();
+  const pending: Array<{ value: unknown; mode: OpenAPIReferenceMode }> = [{ value: document, mode: "node" }];
   while (pending.length) {
-    const value = pending.pop();
-    if (typeof value !== "object" || value === null || seen.has(value)) continue;
-    seen.add(value);
-    if ("$ref" in value && typeof value.$ref === "string" && value.$ref && !value.$ref.startsWith("#")) {
-      throw new Error(EXTERNAL_REF_ERROR);
+    const { value, mode } = pending.pop()!;
+    if (typeof value !== "object" || value === null) continue;
+    const modes = seen.get(value) ?? new Set<OpenAPIReferenceMode>();
+    if (modes.has(mode)) continue;
+    modes.add(mode);
+    seen.set(value, modes);
+
+    if ("$ref" in value && typeof value.$ref === "string" && value.$ref) {
+      const ref = value.$ref;
+      if (!ref.startsWith("#")) {
+        // The parser scans even literal data for external references.
+        if (!allowExternal) throw new Error(EXTERNAL_REF_ERROR);
+      } else if (mode !== "literal" && !isMap(mode) && ref !== "#" && !ref.startsWith("#/")) {
+        throw new Error("OpenAPI $ref fragments must be JSON pointers");
+      }
     }
-    for (const child of Object.values(value)) pending.push(child);
+    if (Array.isArray(value)) {
+      for (const child of value) pending.push({ value: child, mode: arrayItemMode(mode) });
+      continue;
+    }
+    for (const [key, child] of Object.entries(value)) {
+      const nextMode = mode === "literal" || mode === "example"
+        ? "literal"
+        : entryMode(mode, key, child) ?? childMode(key, child);
+      pending.push({ value: child, mode: nextMode });
+    }
   }
 }
 
@@ -61,11 +83,11 @@ export async function validateAndDereferenceOpenAPI(
   document: OpenAPIDocument,
   options?: OpenAPIValidationOptions
 ): Promise<{ document: OpenAPIDocument; errors: [] } | { document: null; errors: ValidationError[] }> {
-  let deniedReference = false;
+  let resolverError: unknown;
   try {
     const copy = structuredClone(document);
     const externalReferences = options?.externalReferences;
-    if (!externalReferences?.size) assertLocalReferences(copy);
+    assertReferencePolicy(copy, Boolean(externalReferences?.size));
     const validated = await SwaggerParser.validate(copy as never, {
       resolve: {
         external: Boolean(externalReferences?.size),
@@ -75,15 +97,20 @@ export async function validateAndDereferenceOpenAPI(
           canRead: true,
           read({ url }: { url: string }): string {
             const contents = externalReferences?.get(url);
-            if (contents !== undefined) return contents;
-            deniedReference = true;
-            throw new Error(EXTERNAL_REF_ERROR);
+            try {
+              if (contents === undefined) throw new Error(EXTERNAL_REF_ERROR);
+              assertReferencePolicy(parseYaml(contents), true);
+              return contents;
+            } catch (error) {
+              resolverError = error;
+              throw error;
+            }
           },
         },
       },
     });
     return { document: validated as unknown as OpenAPIDocument, errors: [] };
   } catch (error) {
-    return { document: null, errors: toValidationErrors(deniedReference ? new Error(EXTERNAL_REF_ERROR) : error) };
+    return { document: null, errors: toValidationErrors(resolverError ?? error) };
   }
 }

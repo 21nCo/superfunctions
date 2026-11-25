@@ -105,7 +105,7 @@ export class ApifnTestAdapter extends BaseAdapter {
 
                 visitRequests(collection, (item, suite) => {
                     testCases.push({
-                        id: this.generateTestId(dir, item.name, suite),
+                        id: this.generateTestId(dir, item.path),
                         file: dir,
                         name: item.name,
                         suite,
@@ -147,19 +147,36 @@ export class ApifnTestAdapter extends BaseAdapter {
         };
 
         for (const [dir, testsInCollection] of collectionsToRun.entries()) {
+            const completedCases = new Set<TestCase>();
             try {
                 const collection = await readCollection(dir);
-                const casesByName = new Map<string, TestCase[]>();
-                for (const test of testsInCollection) {
-                    const sameName = casesByName.get(test.name) ?? [];
-                    sameName.push(test);
-                    casesByName.set(test.name, sameName);
-                }
+                const requestsByName = new Map<string, Array<{ path: string; suite: string; id: string }>>();
                 const casesByPath = new Map<string, TestCase[]>();
                 visitRequests(collection, (item, suite) => {
-                    const matched = casesByName.get(item.name)?.filter((test) => !test.suite || test.suite === suite);
-                    if (matched?.length) casesByPath.set(item.path, matched);
+                    const matches = requestsByName.get(item.name) ?? [];
+                    matches.push({ path: item.path, suite, id: this.generateTestId(dir, item.path) });
+                    requestsByName.set(item.name, matches);
                 });
+
+                for (const test of testsInCollection) {
+                    const matches = requestsByName.get(test.name)?.filter((request) => !test.suite || test.suite === request.suite) ?? [];
+                    const chosen = matches.find((request) => request.id === test.id) ??
+                        (matches.length === 1 ? matches[0] : undefined);
+                    if (chosen) {
+                        const known = casesByPath.get(chosen.path) ?? [];
+                        known.push(test);
+                        casesByPath.set(chosen.path, known);
+                    } else if (matches.length > 1) {
+                        completedCases.add(test);
+                        results.push({
+                            id: test.id,
+                            status: "failed",
+                            duration: 0,
+                            error: { message: "Multiple collection requests match this test. Discover the tests again to select a request by path." },
+                        });
+                        updateProgress(test);
+                    }
+                }
 
                 const runOptions = {
                     // Default to the first environment or a dummy one if none exists
@@ -173,10 +190,11 @@ export class ApifnTestAdapter extends BaseAdapter {
                     processEnv: this.collectionOptions.processEnv,
                     includePaths: [...casesByPath.keys()],
                 };
-                const report: RunReport = await runCollection(collection, runOptions);
+                const report: RunReport = casesByPath.size
+                    ? await runCollection(collection, runOptions)
+                    : { results: [] };
 
                 // Map collection results to testfn TestResults
-                const completedCases = new Set<TestCase>();
                 for (const reqRes of report.results) {
                     for (const tc of casesByPath.get(reqRes.path) ?? []) {
                         completedCases.add(tc);
@@ -227,6 +245,7 @@ export class ApifnTestAdapter extends BaseAdapter {
             } catch (err) {
                 // Collection load or execution failure applies error to all tests in it
                 for (const tc of testsInCollection) {
+                    if (completedCases.has(tc)) continue;
                     results.push({
                         id: tc.id,
                         status: "failed",

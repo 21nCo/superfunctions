@@ -48,10 +48,7 @@ function readCollectionTrustOptions(argv: string[]): { allowScripts: boolean; al
     const separator = token.indexOf("=");
     const name = separator < 0 ? token : token.slice(0, separator);
     if (name === "--allow-scripts" || name === "--allowScripts") {
-      const next = argv[index + 1];
-      if (separator >= 0 || (next && (/^(true|false|on|off|yes|no)$/i.test(next) || Number.isFinite(Number(next))))) {
-        throw new Error("--allow-scripts takes no value");
-      }
+      if (separator >= 0) throw new Error("--allow-scripts takes no value");
       allowScripts = true;
     } else if (name === "--no-allow-scripts" || name === "--no-allowScripts") {
       if (separator >= 0) throw new Error("--no-allow-scripts takes no value");
@@ -275,10 +272,13 @@ export async function runCli(
           ? (reporterValue as R)
           : "console";
 
-        if (cli.args.length > 1) throw new Error("apifn test takes at most one collection directory");
+        const trailing = cli.options["--"] as string[];
+        if (cli.args.length + trailing.length > 1) {
+          throw new Error("apifn test takes at most one collection directory");
+        }
         const result = await runTestCommand({
           ...readCollectionTrustOptions(argv),
-          collectionDir,
+          collectionDir: collectionDir ?? trailing[0],
           env: options.env,
           bail: options.bail,
           parallel: options.parallel,

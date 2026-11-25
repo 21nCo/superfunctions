@@ -223,6 +223,7 @@ describe("apifn test command — CLI-004, CLI-011, RUN-009", () => {
         expect(JSON.parse(stdout).results[0].assertions).toEqual([
             { name: "script executed", passed: true },
         ]);
+        expect(await runCli(["test", "--allow-scripts", "--reporter", "silent", "--", dir])).toBe(0);
     });
 
     it("forwards only process environment variables named by --allow-env", async () => {

@@ -53,11 +53,11 @@ describe("ApifnTestAdapter", () => {
       info: { name: "Orders API" },
       environments: {},
       items: [
-        { kind: "request", name: "List Orders" },
+        { kind: "request", name: "List Orders", path: "list.yml" },
         {
           kind: "folder",
           name: "Auth",
-          children: [{ kind: "request", name: "Login" }],
+          children: [{ kind: "request", name: "Login", path: "auth/login.yml" }],
         },
       ],
     });
@@ -151,5 +151,36 @@ describe("ApifnTestAdapter", () => {
     mocks.trustOptions = false;
     await expect(new ApifnTestAdapter().run([], {})).rejects.toThrow("@apifn/collections 0.0.5 or later");
     expect(mocks.runCollection).not.toHaveBeenCalled();
+  });
+
+  it("distinguishes requests with the same display name and refuses ambiguous legacy selections", async () => {
+    workdir = realpathSync(mkdtempSync(path.join(tmpdir(), "apifn-testfn-adapter-")));
+    writeFileSync(path.join(workdir, "opencollection.yml"), "name: Orders API\n");
+    mocks.readCollection.mockResolvedValue({
+      info: { name: "Orders API" },
+      environments: { default: {} },
+      items: [
+        { kind: "request", name: "List Orders", path: "plain.yml" },
+        { kind: "request", name: "List Orders", path: "scripted.yml" },
+      ],
+    });
+    const adapter = new ApifnTestAdapter();
+    const tests = await adapter.discover([workdir.replaceAll("\\", "/")]);
+    expect(tests).toHaveLength(2);
+    expect(tests[0]?.id).not.toBe(tests[1]?.id);
+    mocks.runCollection.mockResolvedValue({
+      results: [{ path: "plain.yml", status: "passed", duration: 1, assertions: [] }],
+    });
+    await expect(adapter.run([tests[0]!], {})).resolves.toEqual([
+      expect.objectContaining({ id: tests[0]!.id, status: "passed" }),
+    ]);
+    expect(mocks.runCollection).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({
+      includePaths: ["plain.yml"],
+    }));
+
+    await expect(adapter.run([{ ...tests[0]!, id: "legacy-id" }], {})).resolves.toEqual([
+      expect.objectContaining({ id: "legacy-id", status: "failed" }),
+    ]);
+    expect(mocks.runCollection).toHaveBeenCalledTimes(1);
   });
 });

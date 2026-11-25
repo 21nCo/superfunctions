@@ -76,6 +76,16 @@ describe("validateOpenAPI", () => {
     })).resolves.toEqual([]);
   });
 
+  it("refuses a named reference fragment regardless of unrelated allowlist entries", async () => {
+    const doc = documentWithReference("#missing");
+    const options = { externalReferences: new Map([["https://example.invalid/unused.json", "{}"]]) };
+    for (const validationOptions of [undefined, options]) {
+      await expect(validateOpenAPI(doc, validationOptions)).resolves.toEqual([
+        { path: "openapi", message: expect.stringContaining("JSON pointers"), severity: "error" },
+      ]);
+    }
+  });
+
   it("uses preloaded allowlist entries and rejects unlisted transitive references", async () => {
     const ref = "https://example.invalid/preloaded.json";
     const doc = documentWithReference(ref);
@@ -84,6 +94,11 @@ describe("validateOpenAPI", () => {
     expect(result.errors).toEqual([]);
     expect(result.document?.components?.schemas?.Value).toEqual({ type: "integer" });
     expect(doc.components.schemas.Value).toEqual({ $ref: ref });
+
+    externalReferences.set(ref, '{"$ref":"#missing"}');
+    await expect(validateOpenAPI(doc, { externalReferences })).resolves.toEqual([
+      { path: "openapi", message: expect.stringContaining("JSON pointers"), severity: "error" },
+    ]);
 
     externalReferences.set(ref, '{"$ref":"another-example.json"}');
     await expect(validateOpenAPI(doc, { externalReferences })).resolves.toEqual([
