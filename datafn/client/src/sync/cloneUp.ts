@@ -21,7 +21,6 @@ import {
   type ReferenceField,
 } from "./cloneUp/order.js";
 import { batchMutations } from "./cloneUp/batch.js";
-import { applyPullResult, schemaRevisionResources } from "./apply.js";
 import {
   decryptPullResultForE2ee,
   encryptMutationPayloadForE2ee,
@@ -623,15 +622,13 @@ export async function cloneUp(
       const changes: any[] = decryptedPullResult?.changes ?? [];
       const nextCursor: string | null = decryptedPullResult?.nextCursor ?? null;
 
-      // DATA-41: rows carrying `$rev` are installed with their revision (or
-      // stored without it); `$rev` never becomes a record field.
-      await applyPullResult(storage, {
-        ok: true,
-        changes: changes.filter((change) =>
-          (change.op === "upsert" && change.record) || change.op === "delete"
-        ),
-        nextCursor: null,
-      }, { revisionResources: schemaRevisionResources(schema) });
+      for (const change of changes) {
+        if (change.op === "upsert" && change.record) {
+          await storage.upsertRecord(change.resource, change.record);
+        } else if (change.op === "delete") {
+          await storage.deleteRecord(change.resource, change.id);
+        }
+      }
 
       if (nextCursor !== null) {
         await setCursorMonotonically(storage, nextCursor);

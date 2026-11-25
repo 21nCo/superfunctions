@@ -13,11 +13,7 @@ import {
   validateHydrationState,
   validateTransition,
   validateCursor,
-  blocksRevisionInstall,
-  mutationTouchesRecord,
-  revisionKey,
 } from "./shared.js";
-import type { DatafnRevisionEntry, DatafnRevisionInstallOptions, DatafnRevisionInstallResult, DatafnRevisionReadOptions } from "../storage.js";
 
 function validateMutation(mutation: any): void {
   if (!mutation.clientId) throw new Error("Missing clientId in mutation");
@@ -29,14 +25,7 @@ function isInternalCursorKey(resource: string): boolean {
 }
 
 export class MemoryStorageAdapter implements DatafnStorageAdapter {
-  readonly capabilities = { atomicMergeIfMissing: true, reportsMergeOutcome: true, revisions: true } as const;
-  /** DATA-41: server revision of each record's stored state, by revisionKey. */
-  private revisions = new Map<string, number>();
-  /** DATA-41: write stamp of each record's last write, by revisionKey. */
-  private writeStamps = new Map<string, number>();
-  private writeStamp = 0;
-  /** DATA-41: the write stamp of the last clearAll; an install started before it is refused. */
-  private resetStamp = 0;
+  readonly capabilities = { atomicMergeIfMissing: true, reportsMergeOutcome: true } as const;
   private records = new Map<string, Map<string, Record<string, unknown>>>();
   private joinRows = new Map<string, Map<string, Record<string, unknown>>>();
   private cursors = new Map<string, string>();
@@ -73,17 +62,7 @@ export class MemoryStorageAdapter implements DatafnStorageAdapter {
   ): Promise<Record<string, unknown> | null> {
     this.validateTableName(resource);
     const table = this.records.get(resource);
-    const record = table?.get(id);
-    return record ? this.exposed(resource, record) : null;
-  }
-
-  /**
-   * DATA-41: a stored row as a reader gets it. A row paired with a revision
-   * is copied, so a caller changing the returned row (or a nested value in
-   * it) cannot change the state stored under that revision.
-   */
-  private exposed(resource: string, record: Record<string, unknown>): Record<string, unknown> {
-    return this.revisions.has(revisionKey(resource, record.id as string)) ? cloneRecord(record) : record;
+    return table?.get(id) || null;
   }
 
   async listRecords(resource: string): Promise<Record<string, unknown>[]> {
@@ -96,7 +75,7 @@ export class MemoryStorageAdapter implements DatafnStorageAdapter {
       const idA = (a.id as string) || "";
       const idB = (b.id as string) || "";
       return idA < idB ? -1 : idA > idB ? 1 : 0;
-    }).map((record) => this.exposed(resource, record));
+    });
   }
 
   async upsertRecord(
@@ -110,7 +89,6 @@ export class MemoryStorageAdapter implements DatafnStorageAdapter {
     const id = record.id as string;
     if (!id) throw new Error("Record missing id");
     this.records.get(resource)!.set(id, record);
-    this.markWritten(resource, id);
   }
 
   async deleteRecord(resource: string, id: string): Promise<void> {
@@ -119,71 +97,6 @@ export class MemoryStorageAdapter implements DatafnStorageAdapter {
     if (table) {
       table.delete(id);
     }
-    this.markWritten(resource, id);
-  }
-
-  /** DATA-41: a record write: the next write stamp, and the revision (none for a local or partial write). */
-  private markWritten(resource: string, id: string, rev?: number): void {
-    const key = revisionKey(resource, id);
-    this.writeStamps.set(key, ++this.writeStamp);
-    if (rev === undefined) this.revisions.delete(key);
-    else this.revisions.set(key, rev);
-  }
-
-  async revisionWriteStamp(): Promise<number> {
-    return this.writeStamp;
-  }
-
-  async getRecordWithRevision(
-    resource: string,
-    id: string,
-    options?: DatafnRevisionReadOptions,
-  ): Promise<{ record: Record<string, unknown> | null; rev: number | undefined }> {
-    this.validateTableName(resource);
-    const pending = this.changelog.some((entry) => mutationTouchesRecord(entry.mutation, resource, id, options?.propagatingResources));
-    return {
-      // A copy: a caller changing the returned row must not change the
-      // state stored under its revision.
-      record: cloneRecord(this.records.get(resource)?.get(id) ?? null),
-      rev: pending ? undefined : this.revisions.get(revisionKey(resource, id)),
-    };
-  }
-
-  async putRecordsWithRevisions(
-    resource: string,
-    entries: ReadonlyArray<DatafnRevisionEntry>,
-    options?: DatafnRevisionInstallOptions,
-  ): Promise<DatafnRevisionInstallResult> {
-    this.validateTableName(resource);
-    let table = this.records.get(resource);
-    if (!table) {
-      table = new Map();
-      this.records.set(resource, table);
-    }
-    const pending = [
-      ...(options?.unlessPending ? this.changelog.map((entry) => entry.mutation) : []),
-      ...(options?.pendingMutations ?? []),
-    ];
-    const installed: string[] = [];
-    const current: string[] = [];
-    for (const { id, record, rev } of entries) {
-      if (!id) throw new Error("Record missing id");
-      // Never an older revision over a newer one; the same revision is the
-      // state already stored.
-      const known = this.revisions.get(revisionKey(resource, id));
-      if (known !== undefined && rev <= known) {
-        current.push(id);
-        continue;
-      }
-      // A storage reset counts as a write of every record.
-      const written = Math.max(this.writeStamps.get(revisionKey(resource, id)) ?? 0, this.resetStamp);
-      if (blocksRevisionInstall(written, options?.writtenSince, pending, resource, id, options?.propagatingResources)) continue;
-      if (record) table.set(id, { ...cloneRecord(record), id });
-      else table.delete(id);
-      this.markWritten(resource, id, rev);
-      installed.push(id);
-    }
-    return { installed, current };
   }
 
   /**
@@ -214,7 +127,6 @@ export class MemoryStorageAdapter implements DatafnStorageAdapter {
     
     merged.id = id;
     table.set(id, merged);
-    this.markWritten(resource, id);
     try {
       options?.onResolved?.({ created: !existing });
     } catch {
@@ -358,8 +270,7 @@ export class MemoryStorageAdapter implements DatafnStorageAdapter {
         const idA = (a.id as string) || "";
         const idB = (b.id as string) || "";
         return idA < idB ? -1 : idA > idB ? 1 : 0;
-      })
-      .map((record) => this.exposed(resource, record));
+      });
   }
 
   // --- Sync State ---
@@ -466,12 +377,6 @@ export class MemoryStorageAdapter implements DatafnStorageAdapter {
 
   async clearAll(): Promise<void> {
     this.records.clear();
-    this.revisions.clear();
-    this.writeStamps.clear();
-    // The stamp stays monotonic across the reset, so an install whose request
-    // started before it (a push ack, a versioned read) cannot restore a
-    // cleared record.
-    this.resetStamp = ++this.writeStamp;
     this.joinRows.clear();
     this.cursors.clear();
     this.hydration.clear();
@@ -488,8 +393,4 @@ export class MemoryStorageAdapter implements DatafnStorageAdapter {
     // Memory adapter is always healthy (no external dependencies)
     return { ok: true, issues: [] };
   }
-}
-
-function cloneRecord<T extends Record<string, unknown> | null>(record: T): T {
-  return record === null ? record : (structuredClone(record) as T);
 }

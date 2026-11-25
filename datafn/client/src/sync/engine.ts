@@ -16,24 +16,14 @@ import type { DatafnStorageAdapter } from "../storage.js";
 import type { DatafnRemoteAdapter, DatafnSyncConfig } from "../client.js";
 import type { EventBus } from "../events/bus.js";
 import type { DatafnFieldSchema, DatafnSchema, DatafnPlugin, SearchProvider } from "@datafn/core";
-import {
-  enumerateJoinStoreKeys,
-  getJoinStoreKey,
-  getRelationKeyName,
-  readRowRevision,
-  withoutRowRevision,
-  type DatafnPushRevision,
-} from "@datafn/core";
+import { enumerateJoinStoreKeys, getJoinStoreKey, getRelationKeyName } from "@datafn/core";
 import {
   applyCloneResult,
   applyPullResult,
-  installServerRevisions,
-  schemaRevisionResources,
   setCursorMonotonically,
   GLOBAL_CURSOR_KEY,
   type CloneResult,
   type PullResult,
-  type RevisionResources,
 } from "./apply.js";
 import { runBeforeSync, runAfterSync } from "../plugins/run-hooks.js";
 import {
@@ -138,8 +128,6 @@ type PushSyncResult = {
   cursor?: string;
   cursorBefore?: string;
   cursors?: Record<string, string>;
-  /** DATA-41: per applied mutation id, the record's revision and post-write row. */
-  revisions?: Record<string, DatafnPushRevision>;
 };
 
 function isRecordMutationOperation(operation: unknown): operation is RecordMutationOperation {
@@ -1038,8 +1026,6 @@ export class SyncEngine {
               )
             : [];
           await applyCloneResult(this.storage, result, {
-            revisionResources: this.revisionResources,
-            pendingMutations: this.pendingLocalMutations,
             markReady: continuations.length === 0,
             // A clone may restart a table an earlier pass left incomplete;
             // keep that pass's older cursor so a pull replays its gap.
@@ -1244,8 +1230,6 @@ export class SyncEngine {
         // Pages are read at different server sequences and a pass may resume
         // an interrupted one, so the stored cursor stays at the earliest.
         await applyCloneResult(this.storage, cloneResult, {
-          revisionResources: this.revisionResources,
-          pendingMutations: this.pendingLocalMutations,
           markReady: false,
           keepEarliestCursor: true,
         });
@@ -1585,10 +1569,7 @@ export class SyncEngine {
             );
             this.pullAfterClone = true;
           }
-          const applying = applyPullResult(this.storage, lastResult, {
-            revisionResources: this.revisionResources,
-            pendingMutations: this.pendingLocalMutations,
-          });
+          const applying = applyPullResult(this.storage, lastResult);
           const applied = applying.then(
             () => undefined,
             () => undefined,
@@ -1875,99 +1856,6 @@ export class SyncEngine {
   /**
    * Process pending changelog entries
    */
-  /**
-   * DATA-41: `$rev` on rows of a resource is revision metadata unless the
-   * resource has its own field named `$rev`.
-   */
-  private readonly revisionResources: RevisionResources = Object.defineProperty(
-    (resource: string): boolean => schemaRevisionResources(this.schema)(resource),
-    "propagatingResources",
-    { get: () => schemaRevisionResources(this.schema).propagatingResources },
-  );
-
-  /**
-   * DATA-41: local mutations applied to storage but not yet in the
-   * changelog (debounced). Set by the client.
-   */
-  pendingLocalMutations: () => readonly unknown[] = () => [];
-
-  /**
-   * DATA-41: installs each applied mutation's post-write row (or tombstone)
-   * with the revision the row itself carries as `$rev`, unless the record
-   * was written locally after the push started (`writtenSince`) or a pending
-   * local change touches it. Installed records are re-indexed and live
-   * queries refreshed.
-   *
-   * Only the final push attempt's rows are installed. The server settles
-   * the rows of one request against every later write of that request,
-   * side effects included (cascade, setNull, inherited inactive state), but
-   * a later attempt (a compaction replay) may change or delete a record an
-   * earlier attempt returned without returning it, so an earlier attempt's
-   * row could be older than the acknowledged state. Its record's revision
-   * stays unknown until a pull or versioned read delivers it.
-   */
-  private async applyPushRevisions(pushResults: PushSyncResult[], writtenSince: number | undefined): Promise<void> {
-    const installed: Record<string, string[]> = {};
-    // Several mutations of one push may write one record: only its latest
-    // post-write row is installed.
-    const latest = new Map<string, DatafnPushRevision>();
-    for (const pushResult of pushResults.slice(-1)) {
-      for (const revision of Object.values(pushResult.revisions ?? {})) {
-        const key = JSON.stringify([revision.resource, revision.id]);
-        const seen = latest.get(key);
-        if (!seen || revision.rev > seen.rev) latest.set(key, revision);
-      }
-    }
-    for (const revision of latest.values()) {
-      try {
-        let record: Record<string, unknown> | null = null;
-        let rev = revision.deleted ? revision.rev : readRowRevision(revision.record);
-        if (!revision.deleted && revision.record) {
-          const decrypted = (await decryptPullResultForE2ee(this.schema, this.e2ee, {
-            ok: true,
-            records: { [revision.resource]: [withoutRowRevision(revision.record)] },
-            deleted: {},
-            cursors: {},
-          })) as { records: Record<string, Array<Record<string, unknown>>> };
-          record = decrypted.records[revision.resource]?.[0] ?? null;
-          if (!record) rev = undefined;
-        }
-        if (rev === undefined) continue;
-        const { installed: ids } = await installServerRevisions(
-          this.storage,
-          revision.resource,
-          [{ id: revision.id, record, rev }],
-          { revisionResources: this.revisionResources, pendingMutations: this.pendingLocalMutations, writtenSince },
-        );
-        if (ids.length > 0) (installed[revision.resource] ??= []).push(...ids);
-      } catch (error) {
-        // The mutation is acknowledged; without its row the revision just
-        // stays unknown.
-        console.warn("[datafn] Could not store a push revision", error);
-      }
-    }
-    await this.afterRevisionInstall(installed);
-  }
-
-  /**
-   * DATA-41: re-indexes records installed with their revisions and refreshes
-   * the live queries over their resources.
-   */
-  async afterRevisionInstall(installed: Record<string, string[]>): Promise<void> {
-    const resources = Object.keys(installed).filter((resource) => installed[resource].length > 0);
-    if (resources.length === 0) return;
-    if (this.searchProvider) {
-      for (const resource of resources) {
-        await indexStoredRecords(this.searchProvider, this.storage, resource, installed[resource]);
-      }
-    }
-    this.eventBus.emit({
-      type: "sync_applied",
-      timestampMs: this.getTimestamp(),
-      context: { phase: "revisions", resources: resources.sort() },
-    });
-  }
-
   async processPush() {
     if (this.inFlight) {
       this.pushRerunRequested = true;
@@ -2033,9 +1921,7 @@ export class SyncEngine {
       let mutations = compacted.mutations;
       const batchThroughSeq = batchPending[batchPending.length - 1].seq;
 
-      // 2. Push with retries. DATA-41: a record written locally after this
-      // stamp keeps its newer state over the push's post-write row.
-      const revisionStamp = await this.storage.revisionWriteStamp?.();
+      // 2. Push with retries
       let pushResult = await this.pushWithRetries(mutations, batchClientId);
       const pushResults: PushSyncResult[] = pushResult ? [pushResult] : [];
 
@@ -2134,10 +2020,6 @@ export class SyncEngine {
 
         // 3. Ack applied entries and terminal non-retryable failures
         await this.storage.changelogAck({ throughSeq });
-
-        // 3b. DATA-41: install each applied mutation's post-write row with its
-        // revision, now that acknowledged entries no longer count as pending.
-        await this.applyPushRevisions(pushResults, revisionStamp);
 
         // 3a. Advance per-table cursors from push response (FIX-B)
         // This prevents the client from re-fetching its own changes on the next pull.

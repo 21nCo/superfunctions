@@ -544,92 +544,85 @@ export async function executeMutation(
 
       const state = await storage.getHydrationState(mutation.resource);
       if (state === "ready") {
-        // DATA-41: pending from before its optimistic write, so a revision
-        // install racing it never overwrites the local edit.
-        const releaseApplying = debouncerMap.markApplying(enrichedMutation);
-        try {
-          await validateOfflineMutation(storage, schema, enrichedMutation);
-          await applyOptimisticMutationToStorage(
-            storage,
-            schema,
-            enrichedMutation,
-            getTimestamp(),
-            clientId,
-          );
-          await tryUpdateSearchIndex(searchProvider, storage, enrichedMutation);
+        await validateOfflineMutation(storage, schema, enrichedMutation);
+        await applyOptimisticMutationToStorage(
+          storage,
+          schema,
+          enrichedMutation,
+          getTimestamp(),
+          clientId,
+        );
+        await tryUpdateSearchIndex(searchProvider, storage, enrichedMutation);
 
-          // Coalesced merges emit one event under the pending mutation's id;
-          // it reports a creation when any of them created the record.
-          if (enrichedMutation.operation === "merge") {
-            const created = takeMergeCreated(storage, clientId, mutationId);
-            const pendingId = debouncerMap.pendingMutationId(debounceKey);
-            const earlier =
-              pendingId !== undefined && pendingId !== mutationId
-                ? takeMergeCreated(storage, clientId, pendingId)
-                : false;
-            const combined =
-              created === true || earlier === true
-                ? true
-                : created === false && earlier === false
-                  ? false
-                  : undefined;
-            if (combined !== undefined) {
-              rememberMergeCreated(storage, clientId, pendingId ?? mutationId, combined);
-            }
+        // Coalesced merges emit one event under the pending mutation's id;
+        // it reports a creation when any of them created the record.
+        if (enrichedMutation.operation === "merge") {
+          const created = takeMergeCreated(storage, clientId, mutationId);
+          const pendingId = debouncerMap.pendingMutationId(debounceKey);
+          const earlier =
+            pendingId !== undefined && pendingId !== mutationId
+              ? takeMergeCreated(storage, clientId, pendingId)
+              : false;
+          const combined =
+            created === true || earlier === true
+              ? true
+              : created === false && earlier === false
+                ? false
+                : undefined;
+          if (combined !== undefined) {
+            rememberMergeCreated(storage, clientId, pendingId ?? mutationId, combined);
           }
-
-          debouncerMap.set(
-            debounceKey,
-            enrichedMutation,
-            debounceMs,
-            async (debouncedMutation) => {
-              try {
-                // Append to changelog (AUD-001: with timestamp enrichment)
-                await storage.changelogAppend({
-                  clientId: debouncedMutation.clientId as string,
-                  mutationId: debouncedMutation.mutationId as string,
-                  mutation: debouncedMutation,
-                  timestampMs: getTimestamp(),
-                  timestamp: new Date().toISOString(),
-                });
-
-                // Emit mutation_applied event
-                emitMutationEvents(
-                  eventBus,
-                  getTimestamp,
-                  debouncedMutation,
-                  { ok: true, mutationId: debouncedMutation.mutationId },
-                  storage,
-                  clientId,
-                );
-
-                // Scheduling push is best-effort once the durable local write succeeded.
-                await schedulePushFailSoft(schedulePush);
-              } catch (err) {
-                // If changelog append fails, emit rejection event
-                const errorContext = {
-                  code: "INTERNAL",
-                  message: "Failed to append to changelog",
-                  path: "$",
-                };
-                eventBus.emit({
-                  type: "mutation_rejected",
-                  resource: debouncedMutation.resource as string,
-                  ids: [debouncedMutation.id as string],
-                  mutationId: debouncedMutation.mutationId as string,
-                  clientId: debouncedMutation.clientId as string,
-                  timestampMs: getTimestamp(),
-                  action: debouncedMutation.operation as string,
-                  context: errorContext,
-                } as any);
-                // Don't re-throw - we've emitted the rejection event
-                // and the debouncer promise will be rejected anyway
-              }
-            },
-          );
-        } finally {
-          releaseApplying();
         }
+
+        debouncerMap.set(
+          debounceKey,
+          enrichedMutation,
+          debounceMs,
+          async (debouncedMutation) => {
+            try {
+              // Append to changelog (AUD-001: with timestamp enrichment)
+              await storage.changelogAppend({
+                clientId: debouncedMutation.clientId as string,
+                mutationId: debouncedMutation.mutationId as string,
+                mutation: debouncedMutation,
+                timestampMs: getTimestamp(),
+                timestamp: new Date().toISOString(),
+              });
+
+              // Emit mutation_applied event
+              emitMutationEvents(
+                eventBus,
+                getTimestamp,
+                debouncedMutation,
+                { ok: true, mutationId: debouncedMutation.mutationId },
+                storage,
+                clientId,
+              );
+
+              // Scheduling push is best-effort once the durable local write succeeded.
+              await schedulePushFailSoft(schedulePush);
+            } catch (err) {
+              // If changelog append fails, emit rejection event
+              const errorContext = {
+                code: "INTERNAL",
+                message: "Failed to append to changelog",
+                path: "$",
+              };
+              eventBus.emit({
+                type: "mutation_rejected",
+                resource: debouncedMutation.resource as string,
+                ids: [debouncedMutation.id as string],
+                mutationId: debouncedMutation.mutationId as string,
+                clientId: debouncedMutation.clientId as string,
+                timestampMs: getTimestamp(),
+                action: debouncedMutation.operation as string,
+                context: errorContext,
+              } as any);
+              // Don't re-throw - we've emitted the rejection event
+              // and the debouncer promise will be rejected anyway
+            }
+          },
+        );
 
         return {
           ok: true,

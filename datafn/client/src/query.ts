@@ -44,80 +44,8 @@ import { runBeforeQuery, runAfterQuery } from "./plugins/run-hooks.js";
 import { parseDateFields, parseQueryResultDates, serializeDateFields } from "./codecs/date.js";
 import {
   assertRemoteQueryAllowedForE2ee,
-  decryptQueryRowsForE2ee,
   type DatafnE2eeConfig,
 } from "./e2ee.js";
-import { readRowRevision, withoutRowRevision } from "@datafn/core";
-import { installServerRevisions, schemaRevisionResources } from "./sync/apply.js";
-
-function isVersionedQuery(query: unknown): query is Record<string, unknown> {
-  return typeof query === "object" && query !== null && !Array.isArray(query) &&
-    (query as Record<string, unknown>).withRevisions === true;
-}
-
-/**
- * DATA-41: whether a versioned query's rows are complete rows of its own
- * resource, as the server issues revisions only for those. A relation
- * traversal returns another resource's rows (whose own fields may include an
- * application `$rev`), and a projection, grouping, aggregation, temporal or
- * shared-with-me query returns no complete row of this namespace, so none of
- * them is installed.
- */
-function installsVersionedRows(query: Record<string, unknown>): boolean {
-  if (query.relation !== undefined || query.temporal !== undefined) return false;
-  if (query.groupBy !== undefined || query.aggregations !== undefined || hasTemporalGrouping(query)) return false;
-  const select = query.select;
-  if (select !== undefined && !(Array.isArray(select) && select.length === 1 && select[0] === "*")) return false;
-  if (Array.isArray(query.omit) ? query.omit.length > 0 : query.omit !== undefined) return false;
-  const metadata = query.metadata as Record<string, unknown> | undefined;
-  return metadata?.accessMode === undefined || metadata.accessMode === "namespace";
-}
-
-/** DATA-41: client hooks for installing a versioned query's rows. */
-export type VersionedQueryHooks = {
-  /** Local mutations applied to storage but not yet in the changelog (debounced). */
-  pendingMutations?: () => readonly unknown[];
-  /** Called with the records installed per resource (re-index, refresh live queries). */
-  onInstalled?: (installed: Record<string, string[]>) => Promise<void>;
-};
-
-/**
- * DATA-41: decrypts a versioned query's rows and, on a storage-backed client
- * whose table is hydrated, installs each row with its revision unless the
- * record was written locally after the query started (`writtenSince`) or a
- * pending local change touches it. The rows returned are the server's rows
- * with their `$rev`.
- */
-async function finishVersionedQueryResult(
-  query: unknown,
-  result: unknown,
-  storage: DatafnStorageAdapter | undefined,
-  schema: DatafnSchema | undefined,
-  e2ee: DatafnE2eeConfig | undefined,
-  writtenSince: number | undefined,
-  hooks: VersionedQueryHooks | undefined,
-): Promise<unknown> {
-  if (!isVersionedQuery(query) || typeof query.resource !== "string" || !schema) return result;
-  const rows = (result as { data?: unknown } | null)?.data;
-  if (!Array.isArray(rows)) return result;
-  const resource = query.resource;
-  const decrypted = await decryptQueryRowsForE2ee(schema, e2ee, resource, rows as Array<Record<string, unknown>>);
-  if (installsVersionedRows(query) && storage && (await storage.getHydrationState(resource)) === "ready") {
-    const entries = decrypted.flatMap((row) => {
-      const rev = readRowRevision(row);
-      return rev !== undefined && typeof row.id === "string"
-        ? [{ id: row.id, record: withoutRowRevision(row), rev }]
-        : [];
-    });
-    const { installed } = await installServerRevisions(storage, resource, entries, {
-      revisionResources: schemaRevisionResources(schema),
-      pendingMutations: hooks?.pendingMutations,
-      writtenSince,
-    });
-    if (installed.length > 0) await hooks?.onInstalled?.({ [resource]: installed });
-  }
-  return { ...(result as Record<string, unknown>), data: decrypted };
-}
 
 type QueryMetadata = {
   includeTrashed?: boolean;
@@ -1557,7 +1485,6 @@ export async function executeQuery<T = unknown>(
   temporal?: DatafnTemporalConfig,
   e2ee?: DatafnE2eeConfig,
   observeQuery?: (query: unknown) => void,
-  versionedQueryHooks?: VersionedQueryHooks,
 ): Promise<T | T[]> {
   // Run beforeQuery hooks (fail-closed)
   const transformedQuery = schema
@@ -1579,32 +1506,6 @@ export async function executeQuery<T = unknown>(
     assertRemoteQueryAllowedForE2ee(e2ee, normalizedQuery);
     return remote.query(normalizedQuery);
   };
-
-  // DATA-41: a versioned query always reads the server, also on a hydrated
-  // storage-backed client, and returns the server's rows with their `$rev`.
-  const queries = Array.isArray(normalizedQuery) ? normalizedQuery : [normalizedQuery];
-  if (queries.some(isVersionedQuery)) {
-    // A record written locally after this stamp keeps its newer state.
-    const writtenSince = await storage?.revisionWriteStamp?.();
-    const response = await runRemoteQuery();
-    const raw = unwrapRemoteSuccess<unknown>(response);
-    const rawResults = Array.isArray(normalizedQuery) ? (raw as unknown[]) : [raw];
-    const finished = await Promise.all(
-      queries.map(async (entry, i) => {
-        const done = await finishVersionedQueryResult(
-          entry, rawResults[i], storage, schema, e2ee, writtenSince, versionedQueryHooks,
-        );
-        const resource = (entry as { resource?: unknown } | null)?.resource;
-        return schema && typeof resource === "string"
-          ? parseQueryResultDates(schema, resource, done)
-          : done;
-      }),
-    );
-    const result = (Array.isArray(normalizedQuery) ? finished : finished[0]) as T | T[];
-    return schema
-      ? (runAfterQuery(plugins, schema, normalizedQuery, result) as Promise<T | T[]>)
-      : result;
-  }
 
   const emptyResult = resolveEmptyQueryResult(normalizedQuery);
   if (emptyResult) {

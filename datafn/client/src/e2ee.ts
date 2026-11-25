@@ -366,69 +366,6 @@ export async function decryptPullResultForE2ee(
   };
 }
 
-const VERSIONED_ID_QUERY_KEYS = new Set(["resource", "version", "withRevisions", "filters", "limit", "metadata"]);
-
-/**
- * DATA-41: the one remote query shape allowed on an E2EE resource: a
- * `withRevisions` query that selects records only by id (equality or a list
- * of ids), with no other filter, sort, search, projection or cursor.
- */
-const VERSIONED_ID_QUERY_METADATA_KEYS = new Set(["includeTrashed", "includeArchived", "includeAncestorInactive"]);
-
-export function isVersionedIdQuery(query: unknown): boolean {
-  if (!isRecordObject(query) || query.withRevisions !== true) return false;
-  for (const [key, value] of Object.entries(query)) {
-    if (value !== undefined && !VERSIONED_ID_QUERY_KEYS.has(key)) return false;
-  }
-  // Every value is checked, not only the key names: the query is sent as is,
-  // so a value of an unexpected type (an object-valued limit, free-form
-  // metadata) could carry plaintext.
-  if (typeof query.resource !== "string") return false;
-  if (query.version !== undefined && !(typeof query.version === "number" && Number.isInteger(query.version))) {
-    return false;
-  }
-  if (query.limit !== undefined && !(typeof query.limit === "number" && Number.isInteger(query.limit) && query.limit > 0)) {
-    return false;
-  }
-  if (query.metadata !== undefined) {
-    if (!isRecordObject(query.metadata)) return false;
-    for (const [key, value] of Object.entries(query.metadata)) {
-      if (value !== undefined && (!VERSIONED_ID_QUERY_METADATA_KEYS.has(key) || typeof value !== "boolean")) return false;
-    }
-  }
-  const filters = query.filters;
-  if (!isRecordObject(filters)) return false;
-  const keys = Object.keys(filters);
-  if (keys.length !== 1 || keys[0] !== "id") return false;
-  const condition = filters.id;
-  if (typeof condition === "string") return true;
-  if (!isRecordObject(condition)) return false;
-  const operators = Object.keys(condition);
-  if (operators.length !== 1) return false;
-  const value = condition[operators[0]];
-  switch (operators[0]) {
-    case "eq":
-    case "$eq":
-      return typeof value === "string";
-    case "in":
-    case "$in":
-      return Array.isArray(value) && value.length > 0 && value.every((id) => typeof id === "string");
-    default:
-      return false;
-  }
-}
-
-/** DATA-41: decrypts the rows of a versioned query result on an E2EE resource. */
-export async function decryptQueryRowsForE2ee(
-  schema: DatafnSchema,
-  e2ee: DatafnE2eeConfig | undefined,
-  resource: string,
-  rows: Array<Record<string, unknown>>,
-): Promise<Array<Record<string, unknown>>> {
-  if (!isE2eeEnabled(e2ee)) return rows;
-  return Promise.all(rows.map((row) => decryptRecordFields(schema, e2ee, resource, row)));
-}
-
 export function assertRemoteQueryAllowedForE2ee(
   e2ee: DatafnE2eeConfig | undefined,
   query: unknown,
@@ -438,8 +375,7 @@ export function assertRemoteQueryAllowedForE2ee(
   const hasDataResource = entries.some((entry) => {
     if (!isRecordObject(entry)) return true;
     const resource = typeof entry.resource === "string" ? entry.resource : undefined;
-    // DATA-41: a versioned read by id sends no plaintext operand.
-    return !isE2eePlaintextResource(resource) && !isVersionedIdQuery(entry);
+    return !isE2eePlaintextResource(resource);
   });
   if (!hasDataResource) return;
   throw createClientError(

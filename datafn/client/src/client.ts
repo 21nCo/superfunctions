@@ -12,7 +12,6 @@ import type {
   SearchProvider,
   DatafnTemporalConfig,
   DatafnTemporalClause,
-  DatafnServerCapabilities,
 } from "@datafn/core";
 import {
   validateSchema,
@@ -48,7 +47,6 @@ import {
   type DatafnHttpTransportOptions,
 } from "./transport/http.js";
 import { SyncEngine } from "./sync/engine.js";
-import { inheritsInactiveParents } from "./sync/apply.js";
 import { createKvApi, type DatafnKvApi, KV_RESOURCE_NAME } from "./kv.js";
 import {
   buildSearchIndexFingerprint,
@@ -65,7 +63,6 @@ import {
   TIMEZONE_CHANGE_RESOURCE_NAME,
 } from "@datafn/core";
 import { ExtensionSubscriptionManager } from "./extension/subscriptionManager.js";
-import { mutationTouchesRecord } from "./adapters/shared.js";
 import { DebouncerMap } from "./debounce.js";
 import {
   exportData,
@@ -108,39 +105,6 @@ export type ResourceNames<S extends DatafnSchema> =
           ? Name
           : never
         : never;
-
-const OBSERVED_REMOTE_METHODS = new Set([
-  "query", "mutation", "transact", "seed", "clone", "pull", "push", "reconcile", "search",
-]);
-
-/**
- * DATA-41: forwards every call to `remote` and reports the `capabilities`
- * each response envelope announces.
- */
-function observeServerCapabilities<T extends object>(
-  remote: T,
-  onCapabilities: (capabilities: DatafnServerCapabilities) => void,
-): T {
-  return new Proxy(remote, {
-    get(target, prop, receiver) {
-      const value = Reflect.get(target, prop, receiver);
-      if (typeof value !== "function") return value;
-      if (typeof prop !== "string" || !OBSERVED_REMOTE_METHODS.has(prop)) return value.bind(target);
-      return async (...args: unknown[]) => {
-        const response = await value.apply(target, args);
-        // A response without capabilities (e.g. from a route or proxy that
-        // does not announce them) leaves the latest announcement in place.
-        const capabilities = response && typeof response === "object"
-          ? (response as { capabilities?: unknown }).capabilities
-          : undefined;
-        if (capabilities && typeof capabilities === "object") {
-          onCapabilities(capabilities as DatafnServerCapabilities);
-        }
-        return response;
-      };
-    },
-  });
-}
 
 export interface DatafnRemoteAdapter {
   query(q: unknown): Promise<unknown>;
@@ -540,20 +504,6 @@ export type DatafnClient<S extends DatafnSchema> = {
   ): DatafnSignal<Record<string, Record<string, unknown>>>;
   /** Static signal for intentionally empty or disabled reactive queries. */
   emptySignal<TValue>(value: TValue): DatafnSignal<TValue>;
-  /**
-   * DATA-41: a stored record and the server revision of exactly that state,
-   * from one storage read. `rev` is undefined when unknown (a local change,
-   * a partial update, no revision from the server, or a storage adapter
-   * without revisions); read with a `withRevisions: true` query first.
-   */
-  getWithRevision(
-    resource: string,
-    id: string,
-  ): Promise<{ record: Record<string, unknown> | null; rev: number | undefined }>;
-  /** DATA-41: the stored record's revision alone, for display or diagnostics. */
-  getRevision(resource: string, id: string): Promise<number | undefined>;
-  /** DATA-41: capabilities announced by the server's latest response. */
-  serverCapabilities(): DatafnServerCapabilities;
   /**
    * Switch to a different configuration context (auth, sync mode, or storage).
    * Destroys the current underlying client and recreates it with merged config.
@@ -1288,15 +1238,6 @@ function _buildRawClient<S extends DatafnSchema>(
     };
   }
 
-  // DATA-41: remember the capabilities the server announces on its responses.
-  let latestServerCapabilities: DatafnServerCapabilities = {};
-  remote = observeServerCapabilities(remote, (capabilities) => {
-    latestServerCapabilities = capabilities;
-  });
-
-  // Create debouncer for mutation debouncing (DEB-001)
-  const debouncerMap = new DebouncerMap();
-
   // Create SyncEngine (for offline push)
   let syncEngine: SyncEngine | undefined;
   if (
@@ -1317,8 +1258,6 @@ function _buildRawClient<S extends DatafnSchema>(
       config.searchIndexVersion,
       config.e2ee,
     );
-    // DATA-41: debounced writes count as pending for revision installs.
-    syncEngine.pendingLocalMutations = () => debouncerMap.pendingMutations();
   }
 
   const schedulePush: MutationPushScheduler | undefined = nativeSyncController
@@ -1621,6 +1560,8 @@ function _buildRawClient<S extends DatafnSchema>(
     );
   };
 
+  // Create debouncer for mutation debouncing (DEB-001)
+  const debouncerMap = new DebouncerMap();
 
   // Create cross-tab relay if enabled (TAB-001)
   let crossTabRelay: CrossTabRelay | undefined;
@@ -1661,20 +1602,6 @@ function _buildRawClient<S extends DatafnSchema>(
       config.temporal,
       config.e2ee,
       observeQuery,
-      {
-        pendingMutations: () => debouncerMap.pendingMutations(),
-        onInstalled: async (installed) => {
-          if (syncEngine) {
-            await syncEngine.afterRevisionInstall(installed);
-            return;
-          }
-          eventBus.emit({
-            type: "sync_applied",
-            timestampMs: getTimestamp(),
-            context: { phase: "revisions", resources: Object.keys(installed).sort() },
-          });
-        },
-      },
     );
   };
 
@@ -1682,30 +1609,6 @@ function _buildRawClient<S extends DatafnSchema>(
   // We cast to any initially because the mapped types are handled by Proxy
   const client: any = {
     table: null as any, // Will be set below
-
-    async getWithRevision(resource: string, id: string) {
-      guardDestroyed();
-      await awaitNativeBridgeReady();
-      await storageValidationPromise; // STORAGE-INIT-001: fail fast if stores are missing
-      const storage = resolvedStorage;
-      if (storage?.capabilities?.revisions === true && storage.getRecordWithRevision) {
-        const propagatingResources = inheritsInactiveParents(schema);
-        const stored = await storage.getRecordWithRevision(resource, id, { propagatingResources });
-        // A debounced local write not yet logged also makes it unknown.
-        const debounced = debouncerMap.pendingMutations()
-          .some((mutation) => mutationTouchesRecord(mutation, resource, id, propagatingResources));
-        return debounced ? { record: stored.record, rev: undefined } : stored;
-      }
-      return { record: storage ? await storage.getRecord(resource, id) : null, rev: undefined };
-    },
-
-    async getRevision(resource: string, id: string) {
-      return (await client.getWithRevision(resource, id)).rev as number | undefined;
-    },
-
-    serverCapabilities(): DatafnServerCapabilities {
-      return { revisions: latestServerCapabilities.revisions === true };
-    },
 
     /**
      * Execute a query (CLIENT-QUERY-001, CLIENT-OFFLINE-QUERY-001)

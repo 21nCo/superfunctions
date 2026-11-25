@@ -221,15 +221,6 @@ function applyOptimisticPatch(currentValue: any, event: any): any | null {
   if (!mutationIds || !Array.isArray(mutationIds) || mutationIds.length === 0) {
     return null;
   }
-
-  // DATA-41: a row carrying `$rev` is exactly the server state at that
-  // revision, so it is never patched with local fields; the signal refreshes.
-  const rows: unknown[] = Array.isArray(currentValue)
-    ? currentValue
-    : Array.isArray(currentValue?.data) ? currentValue.data : [];
-  if (rows.some((row: any) => row && mutationIds.includes(row.id) && "$rev" in row)) {
-    return null;
-  }
   
   // Handle result with data array (standard query result format)
   if (currentValue && Array.isArray(currentValue.data)) {
@@ -863,9 +854,7 @@ function createQuerySignal<T>(
     if (event.type === "sync_applied") {
       const ctx = (event as any).context;
       const phase = ctx?.phase;
-      // DATA-41: "revisions" installs server rows from push results and
-      // versioned queries.
-      if (phase === "clone" || phase === "pull" || phase === "revisions") {
+      if (phase === "clone" || phase === "pull") {
         const affectedResources: string[] = ctx?.resources ?? [];
         // Only refresh when specific resources that overlap with this signal's footprint
         // changed.  Removing the "length === 0" broadcast avoids refreshing all signals

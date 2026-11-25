@@ -45,62 +45,6 @@ export interface DatafnStorageAdapterCapabilities {
    * adapters that set this.
    */
   readonly reportsMergeOutcome?: boolean;
-  /**
-   * DATA-41: the adapter stores each record's server revision with it
-   * (`getRecordWithRevision`, `putRecordsWithRevisions`,
-   * `revisionWriteStamp`), and every other record write (`upsertRecord`,
-   * `upsertRecords`, `mergeRecord`, `deleteRecord`) clears that record's
-   * revision and raises its write stamp in the same write.
-   */
-  readonly revisions?: boolean;
-}
-
-/** DATA-41: a complete server row (null for a delete tombstone) and its revision. */
-export interface DatafnRevisionEntry {
-  id: string;
-  record: Record<string, unknown> | null;
-  rev: number;
-}
-
-/** DATA-41: which records a revision install must leave alone. */
-export interface DatafnRevisionInstallOptions {
-  /** Skip records a pending changelog entry may change. */
-  unlessPending?: boolean;
-  /** Skip records written after this write stamp (`revisionWriteStamp`). */
-  writtenSince?: number;
-  /** Also skip records these not yet logged local mutations (debounced writes) may change. */
-  pendingMutations?: ReadonlyArray<unknown>;
-  /**
-   * Resources whose writes may change other records' inherited inactive
-   * state (parents of `inheritsInactive` relations): a pending write to one
-   * counts as touching every record.
-   */
-  propagatingResources?: ReadonlyArray<string>;
-}
-
-/** DATA-41: options for reading a record with its revision. */
-export interface DatafnRevisionReadOptions {
-  /** See DatafnRevisionInstallOptions.propagatingResources. */
-  propagatingResources?: ReadonlyArray<string>;
-}
-
-/**
- * DATA-41: the outcome of a revision install. `installed` lists the records
- * written with their revisions; `current` lists the records whose stored
- * revision is already equal to or newer than the entry's, which keep their
- * stored row and revision (the caller must not write the older row). Every
- * other entry was refused because a local change protects the record.
- */
-export interface DatafnRevisionInstallResult {
-  installed: string[];
-  current: string[];
-}
-
-/** DATA-41: a record (null when deleted or absent) and its revision, read together. */
-export interface DatafnStoredRevision {
-  record: Record<string, unknown> | null;
-  /** The server revision of exactly `record`, or undefined when unknown. */
-  rev: number | undefined;
 }
 
 export interface DatafnStorageAdapter {
@@ -148,32 +92,6 @@ export interface DatafnStorageAdapter {
       onResolved?: (outcome: { created: boolean }) => void;
     },
   ): Promise<Record<string, unknown>>;
-
-  /**
-   * DATA-41 (adapters with `capabilities.revisions`): reads a record and its
-   * revision in one storage read. The revision is undefined while a pending
-   * changelog entry may change the record.
-   */
-  getRecordWithRevision?(resource: string, id: string, options?: DatafnRevisionReadOptions): Promise<DatafnStoredRevision>;
-  /**
-   * DATA-41 (adapters with `capabilities.revisions`): the current write
-   * stamp. Every record write after this call (by any client sharing the
-   * storage) gets a higher stamp, so a request can install its rows with
-   * `writtenSince` and never overwrite a newer local state.
-   */
-  revisionWriteStamp?(): Promise<number>;
-  /**
-   * DATA-41 (adapters with `capabilities.revisions`): installs complete
-   * server rows (or, where `record` is null, delete tombstones) together with
-   * their revisions in one storage write. It never replaces a known revision
-   * with an equal or older one (reported as `current`), and skips each record
-   * `options` say must not be overwritten.
-   */
-  putRecordsWithRevisions?(
-    resource: string,
-    entries: ReadonlyArray<DatafnRevisionEntry>,
-    options?: DatafnRevisionInstallOptions,
-  ): Promise<DatafnRevisionInstallResult>;
 
   // Join rows (many-many)
   listJoinRows(relationKey: string): Promise<Array<Record<string, unknown>>>;

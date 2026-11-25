@@ -182,8 +182,6 @@ class DatafnSyncStatusController {
     }
 
     if (event.type === "sync_applied") {
-      // DATA-41: a revision install refreshes data; it is not a sync step.
-      if ((event.context as { phase?: unknown } | undefined)?.phase === "revisions") return;
       this.update({
         status: this.resolveOnline() ? "ready" : "offline",
         phase: null,
