@@ -752,10 +752,13 @@ export class McpFnServer<TContext = undefined> {
       const method = option.shape?.method?.value;
       if (typeof method === "string") schemas.set(method, option as never);
     }
-    const validated = (handler: Handler): Handler => async (request, extra) => {
-      // Methods outside the MCP client request schema (custom methods a host
-      // registers) are left to the SDK's own validation for them.
-      const schema = schemas.get(request.method);
+    // The handlers installed at construction (McpFn's and the SDK's), which
+    // parse with exactly these MCP schemas.
+    const installed = new Map(original);
+    const validated = (handler: Handler, stored: Handler): Handler => async (request, extra) => {
+      // Custom methods, and built-in methods whose handler the host replaced
+      // through `protocol`, are left to the schema registered with them.
+      const schema = installed.get(request.method) === stored ? schemas.get(request.method) : undefined;
       if (!schema) return handler(request, extra);
       const parsed = schema.safeParse(request);
       if (!parsed.success) {
@@ -769,7 +772,7 @@ export class McpFnServer<TContext = undefined> {
     protocol._requestHandlers = Object.assign(handlers, {
       get(method: string) {
         const handler = Map.prototype.get.call(handlers, method) as Handler | undefined;
-        return handler && validated(wrap(handler));
+        return handler && validated(wrap(handler), handler);
       },
     });
     let fallback = protocol.fallbackRequestHandler;

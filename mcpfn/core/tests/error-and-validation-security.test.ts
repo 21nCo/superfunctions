@@ -407,6 +407,25 @@ describe("withheld errors outside tool handlers (MCP-SEC-08)", () => {
       .resolves.toEqual({ value: "hi" });
   });
 
+  it("leaves a replaced built-in handler to its own schema", async () => {
+    const { z } = await import("zod");
+    const server = createMcpFnServer({
+      info: { name: "security", version: "1.0.0" },
+      registry: new McpFnRegistry().registerResource({ uri: "file:///report", name: "report", read: async () => ({ contents: [] }) }),
+    });
+    const ReadWithDefault = z.object({ method: z.literal("resources/read"), params: z.object({ uri: z.string().default("file:///default") }) });
+    server.protocol.setRequestHandler(ReadWithDefault as never, ((request: { params: { uri: string } }) =>
+      ({ contents: [{ uri: request.params.uri, text: "replaced" }] })) as never);
+    const client = new Client({ name: "client", version: "1.0.0" }, { capabilities: {} });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    closeables.push(client, server);
+    const { ReadResourceResultSchema } = await import("@modelcontextprotocol/sdk/types.js");
+    await expect(client.request({ method: "resources/read", params: {} } as never, ReadResourceResultSchema))
+      .resolves.toMatchObject({ contents: [{ uri: "file:///default", text: "replaced" }] });
+  });
+
   it("answers without waiting for a slow onError sink", async () => {
     const client = await connect(
       new McpFnRegistry().register({ name: "fail", description: "Fails.", inputSchema: { type: "object" }, handler: async () => { throw systemError(); } }),
