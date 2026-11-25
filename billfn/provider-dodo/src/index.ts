@@ -129,7 +129,7 @@ export function createDodoProvider(config: DodoProviderConfig): BillFnProviderAd
   });
   /** A subscription PATCH whose non-2xx answer fails the operation; a 2xx answer commits it whatever its body. */
   const patchSubscription = async (providerSubscriptionId: string, body: Record<string, unknown>) => {
-    const response = await sendDodoMutation(
+    const response = await sendDodoRequest(
       fetchImpl,
       dodoUrl(baseUrl, ['subscriptions', providerSubscriptionId]),
       patchInit(body)
@@ -335,7 +335,7 @@ export function createDodoProvider(config: DodoProviderConfig): BillFnProviderAd
         });
       }
 
-      const attempted = await sendDodoMutation(
+      const attempted = await sendDodoRequest(
         fetchImpl,
         dodoUrl(baseUrl, ['subscriptions', providerSubscriptionId, 'change-plan']),
         {
@@ -426,7 +426,7 @@ export function createDodoProvider(config: DodoProviderConfig): BillFnProviderAd
 
       // Dodo resumes a paused subscription with `status: active` sent alone, and a scheduled cancel by clearing it.
       const paused = input.subscription.status === 'paused';
-      const attempted = await sendDodoMutation(
+      const attempted = await sendDodoRequest(
         fetchImpl,
         dodoUrl(baseUrl, ['subscriptions', providerSubscriptionId]),
         patchInit(paused ? { status: 'active' } : { cancel_at_next_billing_date: false })
@@ -521,7 +521,7 @@ export function createDodoProvider(config: DodoProviderConfig): BillFnProviderAd
         Object.assign(refundBody, { items: allocateDodoPartialRefund(input.amount, lineItems, currency), currency });
       }
 
-      const response = await sendDodoMutation(fetchImpl, dodoUrl(baseUrl, ['refunds']), {
+      const response = await sendDodoRequest(fetchImpl, dodoUrl(baseUrl, ['refunds']), {
         method: 'POST',
         headers: createHeaders(config.apiKey),
         body: JSON.stringify(refundBody)
@@ -871,207 +871,94 @@ function dodoProductMatches(
       );
 }
 
-const PROVIDER_HTTP_DEADLINE_ERROR = 'ProviderHttpDeadlineError';
-
-interface HttpDeadline {
-  signal: AbortSignal;
-  /** Rejects when the deadline passes. It stays pending when the call finishes in time. */
-  expired: Promise<never>;
-  stop(): void;
-}
-
-function startHttpDeadline(ms: number): HttpDeadline {
-  const controller = new AbortController();
-  let rejectExpired: (error: Error) => void = () => {};
-  const expired = new Promise<never>((_, reject) => {
-    rejectExpired = reject;
-  });
-  // The race handles this rejection. The catch covers a deadline that fires after the race has settled.
-  void expired.catch(() => undefined);
-  const timer = setTimeout(() => {
-    const error = new Error('provider http deadline');
-    error.name = PROVIDER_HTTP_DEADLINE_ERROR;
-    controller.abort(error);
-    rejectExpired(error);
-  }, ms);
-  return {
-    signal: controller.signal,
-    expired,
-    stop() {
-      clearTimeout(timer);
-    }
-  };
-}
-
-function isDeadlineError(error: unknown): error is Error {
-  return error instanceof Error && error.name === PROVIDER_HTTP_DEADLINE_ERROR;
-}
-
-/** True when this call's own deadline aborted it, even if fetch rejected with its own abort error. */
-function deadlineReached(deadline: HttpDeadline, error: unknown): boolean {
-  if (isDeadlineError(error)) {
-    return true;
-  }
-  return deadline.signal.aborted && isDeadlineError(deadline.signal.reason);
-}
-
-function withAbortSignal(init: RequestInit, signal: AbortSignal): RequestInit {
-  if (init.signal === undefined || init.signal === null || init.signal === signal) {
-    return { ...init, signal };
-  }
-  const merged = new AbortController();
-  const forward = (source: AbortSignal) => {
-    if (source.aborted) {
-      if (!merged.signal.aborted) {
-        merged.abort(source.reason);
-      }
-      return;
-    }
-    source.addEventListener(
-      'abort',
-      () => {
-        if (!merged.signal.aborted) {
-          merged.abort(source.reason);
-        }
-      },
-      { once: true }
-    );
-  };
-  forward(init.signal);
-  forward(signal);
-  return { ...init, signal: merged.signal };
-}
-
-/** A read missed the deadline. Retrying it does not repeat a change. */
-function dodoReadDeadlineError(): never {
-  throw createBillFnError({
-    code: 'BILLFN_PROVIDER_ERROR',
-    message: 'Dodo did not answer before the deadline; the read can be retried',
-    retryable: true
-  });
-}
-
-/**
- * A change got no answer before the deadline. Dodo may already have applied it, so this is not a read that a
- * retry can safely repeat.
- */
-function dodoMutationDeadlineError(): never {
-  throw createBillFnError({
-    code: 'BILLFN_PROVIDER_ERROR',
-    message: 'Dodo did not answer before the deadline; whether the change was applied is unknown',
-    retryable: false
-  });
-}
-
-async function fetchWithinDeadline(
-  fetchImpl: typeof fetch,
-  url: string,
-  init: RequestInit,
-  deadline: HttpDeadline
-): Promise<Response> {
-  try {
-    return await Promise.race([fetchImpl(url, withAbortSignal(init, deadline.signal)), deadline.expired]);
-  } catch (error) {
-    if (deadlineReached(deadline, error)) {
-      const reason = deadline.signal.reason;
-      throw isDeadlineError(reason) ? reason : error;
-    }
-    throw error;
-  }
-}
-
-async function readBodyWithinDeadline(response: Response, deadline: HttpDeadline): Promise<string> {
-  try {
-    return await Promise.race([response.text(), deadline.expired]);
-  } catch (error) {
-    if (deadlineReached(deadline, error)) {
-      const reason = deadline.signal.reason;
-      throw isDeadlineError(reason) ? reason : error;
-    }
-    throw error;
-  }
-}
-
 function isMutatingMethod(method: string | undefined): boolean {
   const normalized = (method ?? 'GET').toUpperCase();
   return normalized !== 'GET' && normalized !== 'HEAD';
 }
 
-async function requestJson(fetchImpl: typeof fetch, url: string, init: RequestInit) {
-  const deadline = startHttpDeadline(DODO_PROVIDER_HTTP_DEADLINE_MS);
-  const mutating = isMutatingMethod(init.method);
+function dodoDeadlineError(mutating: boolean) {
+  return createBillFnError({
+    code: 'BILLFN_PROVIDER_ERROR',
+    message: mutating
+      ? 'Dodo did not answer before the deadline; whether the change was applied is unknown'
+      : 'Dodo did not answer before the deadline; the read can be retried',
+    retryable: !mutating
+  });
+}
+
+async function fetchDodoText(
+  fetchImpl: typeof fetch,
+  url: string,
+  init: Omit<RequestInit, 'signal'>,
+  tolerateBodyErrors = false
+): Promise<{ response: Response; raw: string; bodyError?: string }> {
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expired = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      const error = new Error('Dodo HTTP deadline');
+      reject(error);
+      controller.abort(error);
+    }, DODO_PROVIDER_HTTP_DEADLINE_MS);
+  });
+  let response: Response | undefined;
   try {
-    let response: Response;
-    try {
-      response = await fetchWithinDeadline(fetchImpl, url, init, deadline);
-    } catch (error) {
-      if (deadlineReached(deadline, error)) {
-        return mutating ? dodoMutationDeadlineError() : dodoReadDeadlineError();
+    const request = async () => {
+      const fetched = await fetchImpl(url, { ...init, signal: controller.signal });
+      controller.signal.throwIfAborted();
+      response = fetched;
+      return { response: fetched, raw: await fetched.text() };
+    };
+    return await Promise.race([request(), expired]);
+  } catch (error) {
+    if (controller.signal.aborted) {
+      if (!response) {
+        throw dodoDeadlineError(isMutatingMethod(init.method));
       }
-      throw error;
+      const bodyError = response.ok && isMutatingMethod(init.method)
+        ? 'Dodo accepted the change but the response body did not arrive before the deadline'
+        : 'Dodo response body did not arrive before the deadline';
+      return { response, raw: '', bodyError };
     }
-    let raw: string;
-    try {
-      raw = await readBodyWithinDeadline(response, deadline);
-    } catch (error) {
-      if (deadlineReached(deadline, error)) {
-        return mutating ? dodoMutationDeadlineError() : dodoReadDeadlineError();
-      }
-      throw error;
+    if (response && tolerateBodyErrors) {
+      return { response, raw: '', bodyError: describeError(error) };
     }
-    if (!response.ok) {
-      throw createBillFnError({
-        code: 'BILLFN_PROVIDER_ERROR',
-        message: `Dodo request failed with status ${response.status}`,
-        details: {
-          status: response.status,
-          body: raw
-        }
-      });
-    }
-    return raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+    throw error;
   } finally {
-    deadline.stop();
+    clearTimeout(timer);
   }
 }
 
-async function tryRequestJson(fetchImpl: typeof fetch, url: string, init: RequestInit) {
-  const deadline = startHttpDeadline(DODO_PROVIDER_HTTP_DEADLINE_MS);
-  try {
-    let response: Response;
-    try {
-      response = await fetchWithinDeadline(fetchImpl, url, init, deadline);
-    } catch (error) {
-      if (deadlineReached(deadline, error)) {
-        dodoReadDeadlineError();
-      }
-      throw error;
-    }
-    let raw: string;
-    try {
-      raw = await readBodyWithinDeadline(response, deadline);
-    } catch (error) {
-      if (deadlineReached(deadline, error)) {
-        dodoReadDeadlineError();
-      }
-      throw error;
-    }
-    if (!response.ok) {
-      return {
-        ok: false as const,
-        error: {
-          status: response.status,
-          body: raw
-        }
-      };
-    }
-    return {
-      ok: true as const,
-      data: raw ? (JSON.parse(raw) as Record<string, unknown>) : {}
-    };
-  } finally {
-    deadline.stop();
+async function requestJson(fetchImpl: typeof fetch, url: string, init: RequestInit) {
+  const result = await tryRequestJson(fetchImpl, url, init);
+  if (!result.ok) {
+    throw createBillFnError({
+      code: 'BILLFN_PROVIDER_ERROR',
+      message: `Dodo request failed with status ${result.error.status}`,
+      details: result.error
+    });
   }
+  return result.data;
+}
+
+async function tryRequestJson(fetchImpl: typeof fetch, url: string, init: RequestInit) {
+  const { response, raw, bodyError } = await fetchDodoText(fetchImpl, url, init);
+  if (!response.ok) {
+    return { ok: false as const, error: { status: response.status, body: raw } };
+  }
+  if (bodyError) {
+    if (!isMutatingMethod(init.method)) {
+      throw dodoDeadlineError(false);
+    }
+    // Checkout creation succeeded, but the response body is needed to return its session.
+    throw createBillFnError({
+      code: 'BILLFN_PROVIDER_ERROR',
+      message: 'Dodo created the checkout but its session details did not arrive before the deadline',
+      details: { status: response.status },
+      retryable: false
+    });
+  }
+  return { ok: true as const, data: raw ? (JSON.parse(raw) as Record<string, unknown>) : {} };
 }
 
 type DodoRequestError = { status: number; body: string };
@@ -1084,46 +971,16 @@ function describeError(error: unknown): string {
 }
 
 /**
- * Sends a request that changes Dodo state. A transport failure rejects (the outcome is unknown) and a non-2xx
- * status is returned as an error; after a 2xx status the change is committed, so an unreadable body never fails it.
- * The deadline covers the body read. Missing the deadline before any status is the unknown outcome; missing it
- * after a success status stays committed, the same as any other unreadable body.
+ * Sends a Dodo mutation or a read after a committed mutation. The status is authoritative even if reading
+ * the body fails. A successful mutation can proceed without decoded state.
  */
-async function sendDodoMutation(fetchImpl: typeof fetch, url: string, init: RequestInit): Promise<DodoMutationResponse> {
-  const deadline = startHttpDeadline(DODO_PROVIDER_HTTP_DEADLINE_MS);
-  try {
-    let response: Response;
-    try {
-      response = await fetchWithinDeadline(fetchImpl, url, init, deadline);
-    } catch (error) {
-      if (deadlineReached(deadline, error)) {
-        dodoMutationDeadlineError();
-      }
-      throw error;
-    }
-    return await readCommittedMutation(response, deadline);
-  } finally {
-    deadline.stop();
-  }
-}
-
-/** The committed or failed result of a mutation whose status line has already arrived. */
-async function readCommittedMutation(response: Response, deadline: HttpDeadline): Promise<DodoMutationResponse> {
-  let raw: string;
-  try {
-    raw = await readBodyWithinDeadline(response, deadline);
-  } catch (error) {
-    if (!response.ok) {
-      return { ok: false, error: { status: response.status, body: '' } };
-    }
-    // The status already accepted the change. A missing body, deadline included, does not undo it.
-    const bodyError = deadlineReached(deadline, error)
-      ? 'Dodo accepted the change but the response body did not arrive before the deadline'
-      : describeError(error);
-    return { ok: true, data: undefined, bodyError };
-  }
+async function sendDodoRequest(fetchImpl: typeof fetch, url: string, init: RequestInit): Promise<DodoMutationResponse> {
+  const { response, raw, bodyError } = await fetchDodoText(fetchImpl, url, init, true);
   if (!response.ok) {
     return { ok: false, error: { status: response.status, body: raw } };
+  }
+  if (bodyError) {
+    return { ok: true, data: undefined, bodyError };
   }
   if (!raw) {
     return { ok: true, data: undefined };
@@ -1138,7 +995,7 @@ async function readCommittedMutation(response: Response, deadline: HttpDeadline)
 /** A request made after a committed change: every failure, a transport one included, is returned, never thrown. */
 async function sendDodoFollowUp(fetchImpl: typeof fetch, url: string, init: RequestInit): Promise<DodoMutationResponse> {
   try {
-    return await sendDodoMutation(fetchImpl, url, init);
+    return await sendDodoRequest(fetchImpl, url, init);
   } catch (error) {
     return { ok: false, error: { status: 0, body: describeError(error) } };
   }

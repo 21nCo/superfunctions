@@ -32,7 +32,7 @@ const apple = createAppleProvider({
 
 With `bundleId` and `appStoreServerApiKey`, the adapter signs its own App Store Server API tokens (ES256, reused until shortly before they expire) and verifies App Store Server Notifications itself. Both run on WebCrypto, so they work on Workers. `environment` defaults to `"production"`.
 
-StoreKit reads and Advanced Commerce calls, including the response body, must finish within 30 seconds. A read that misses the deadline fails with a retryable provider error. An Advanced Commerce change that gets no response, or whose body does not arrive, fails with a non-retryable provider error: the change may already have been applied, so it is not retried as a failed read.
+StoreKit reads and Advanced Commerce calls have 30 seconds to receive the response and read its body. A StoreKit read that misses the deadline returns a retryable provider error. If an Advanced Commerce call receives a rejection status before the deadline, BillFn reports that status even if the body stalls. If no status arrives or the success body stalls, BillFn returns a non-retryable provider error because Apple may already have applied the change.
 
 ## Sandbox Purchases
 

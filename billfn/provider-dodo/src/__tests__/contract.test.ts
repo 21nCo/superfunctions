@@ -256,6 +256,28 @@ describe('createCheckout -> POST /checkouts', () => {
       provider(api.fetchMock).createCheckout?.({ checkoutSessionId: 'chk_123', billingAccount, plan, price: monthPrice })
     ).rejects.toMatchObject({ code: 'BILLFN_PROVIDER_ERROR' });
   });
+
+  it.each([
+    [201, 'Dodo created the checkout but its session details did not arrive before the deadline', false],
+    [401, 'Dodo request failed with status 401', true]
+  ])('reports checkout HTTP %i when the body stalls', async (status, message, retryable) => {
+    vi.useFakeTimers();
+    try {
+      const fetchMock = vi.fn(async () => new Response(new ReadableStream(), { status })) as typeof fetch;
+      const pending = provider(fetchMock).createCheckout?.({ checkoutSessionId: 'chk_123', billingAccount, plan, price: monthPrice });
+      await Promise.all([
+        expect(pending).rejects.toMatchObject({
+          code: 'BILLFN_PROVIDER_ERROR',
+          message,
+          retryable,
+          details: { status }
+        }),
+        vi.advanceTimersByTimeAsync(DODO_PROVIDER_HTTP_DEADLINE_MS)
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe('verifyCheckout -> GET /checkouts/{id}, /payments/{id}, /subscriptions/{id}', () => {
@@ -672,6 +694,34 @@ describe('changeSubscription -> POST /subscriptions/{id}/change-plan', () => {
 
     expect(result?.operationStatus).toBe('applied');
     expect(result?.billingState).toStrictEqual(storedState);
+  });
+
+  it.each([
+    [
+      'headers',
+      () => new Promise<Response>(() => {}),
+      { subscriptionReadError: { status: 0, body: expect.stringContaining('read can be retried') } }
+    ],
+    [
+      'body',
+      async () => new Response(new ReadableStream()),
+      { subscription: { bodyError: 'Dodo response body did not arrive before the deadline' } }
+    ]
+  ])('keeps a plan change applied when the follow-up read stalls before its %s', async (_label, answerRead, raw) => {
+    vi.useFakeTimers();
+    try {
+      const fetchMock = vi.fn(async (_input: string | URL | Request, init?: RequestInit) =>
+        init?.method === 'POST' ? Response.json(recorded.changePlan.response) : answerRead()
+      ) as typeof fetch;
+      const pending = provider(fetchMock).changeSubscription?.({ ...changeInput(), subscription: storedSubscription() });
+      await Promise.all([
+        expect(pending).resolves.toMatchObject({ operationStatus: 'applied', billingState: storedState, raw }),
+        vi.advanceTimersByTimeAsync(DODO_PROVIDER_HTTP_DEADLINE_MS)
+      ]);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('gives no state for a next-renewal change whose follow-up read fails, since nothing changes now', async () => {
@@ -1122,6 +1172,26 @@ describe('restorePurchases and importSubscription', () => {
       providerSubscriptionId: SUBSCRIPTION_ID,
       currentPeriodEnd: '2026-12-17T09:01:00Z'
     });
+  });
+
+  it.each([404, 400, 422])('preserves import HTTP %i when the error body stalls', async (status) => {
+    vi.useFakeTimers();
+    try {
+      const fetchMock = vi.fn(async () => new Response(new ReadableStream(), { status })) as typeof fetch;
+      const pending = provider(fetchMock).importSubscription?.({ providerReference: SUBSCRIPTION_ID, billingAccount, plan });
+      await Promise.all([
+        status === 404
+          ? expect(pending).resolves.toBeNull()
+          : expect(pending).rejects.toMatchObject({
+            code: 'BILLFN_VALIDATION_ERROR',
+            retryable: false,
+            details: { status }
+          }),
+        vi.advanceTimersByTimeAsync(DODO_PROVIDER_HTTP_DEADLINE_MS)
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

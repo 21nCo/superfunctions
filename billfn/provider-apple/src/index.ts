@@ -653,118 +653,47 @@ async function requestJson(fetchImpl: typeof fetch, url: string, token: string, 
   return raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
 }
 
-const PROVIDER_HTTP_DEADLINE_ERROR = 'ProviderHttpDeadlineError';
-
-interface HttpDeadline {
-  signal: AbortSignal;
-  expired: Promise<never>;
-  stop(): void;
-}
-
-function startHttpDeadline(ms: number): HttpDeadline {
-  const controller = new AbortController();
-  let rejectExpired: (error: Error) => void = () => {};
-  const expired = new Promise<never>((_, reject) => {
-    rejectExpired = reject;
-  });
-  void expired.catch(() => undefined);
-  const timer = setTimeout(() => {
-    const error = new Error('provider http deadline');
-    error.name = PROVIDER_HTTP_DEADLINE_ERROR;
-    controller.abort(error);
-    rejectExpired(error);
-  }, ms);
-  return {
-    signal: controller.signal,
-    expired,
-    stop() {
-      clearTimeout(timer);
-    }
-  };
-}
-
-function isDeadlineError(error: unknown): error is Error {
-  return error instanceof Error && error.name === PROVIDER_HTTP_DEADLINE_ERROR;
-}
-
-function deadlineReached(deadline: HttpDeadline, error: unknown): boolean {
-  if (isDeadlineError(error)) {
-    return true;
-  }
-  return deadline.signal.aborted && isDeadlineError(deadline.signal.reason);
-}
-
-function withAbortSignal(init: RequestInit, signal: AbortSignal): RequestInit {
-  if (init.signal === undefined || init.signal === null || init.signal === signal) {
-    return { ...init, signal };
-  }
-  const merged = new AbortController();
-  const forward = (source: AbortSignal) => {
-    if (source.aborted) {
-      if (!merged.signal.aborted) {
-        merged.abort(source.reason);
-      }
-      return;
-    }
-    source.addEventListener(
-      'abort',
-      () => {
-        if (!merged.signal.aborted) {
-          merged.abort(source.reason);
-        }
-      },
-      { once: true }
-    );
-  };
-  forward(init.signal);
-  forward(signal);
-  return { ...init, signal: merged.signal };
-}
-
-/**
- * A missed deadline on a StoreKit read can be retried. The same miss on an Advanced Commerce change cannot: Apple
- * may already have applied it, and BillFn has no committed-result record for that call.
- */
-function appleDeadlineError(kind: 'read' | 'mutation'): never {
-  throw createBillFnError({
-    code: 'BILLFN_PROVIDER_ERROR',
-    message:
-      kind === 'mutation'
-        ? 'Apple did not answer before the deadline; whether the change was applied is unknown'
-        : 'Apple did not answer before the deadline; the read can be retried',
-    retryable: kind === 'read'
-  });
-}
-
 /** Fetches one Apple response and reads its body, under one deadline for both. */
 async function fetchProviderText(
   fetchImpl: typeof fetch,
   url: string,
-  init: RequestInit,
+  init: Omit<RequestInit, 'signal'>,
   kind: 'read' | 'mutation'
 ): Promise<{ response: Response; raw: string }> {
-  const deadline = startHttpDeadline(APPLE_PROVIDER_HTTP_DEADLINE_MS);
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expired = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      const error = new Error('Apple HTTP deadline');
+      reject(error);
+      controller.abort(error);
+    }, APPLE_PROVIDER_HTTP_DEADLINE_MS);
+  });
+  let response: Response | undefined;
   try {
-    let response: Response;
-    try {
-      response = await Promise.race([fetchImpl(url, withAbortSignal(init, deadline.signal)), deadline.expired]);
-    } catch (error) {
-      if (deadlineReached(deadline, error)) {
-        appleDeadlineError(kind);
-      }
+    const request = async () => {
+      const fetched = await fetchImpl(url, { ...init, signal: controller.signal });
+      controller.signal.throwIfAborted();
+      response = fetched;
+      return { response: fetched, raw: await fetched.text() };
+    };
+    return await Promise.race([request(), expired]);
+  } catch (error) {
+    if (!controller.signal.aborted) {
       throw error;
     }
-    try {
-      const raw = await Promise.race([response.text(), deadline.expired]);
-      return { response, raw };
-    } catch (error) {
-      if (deadlineReached(deadline, error)) {
-        appleDeadlineError(kind);
-      }
-      throw error;
+    if (kind === 'mutation' && response && !response.ok) {
+      return { response, raw: '' };
     }
+    throw createBillFnError({
+      code: 'BILLFN_PROVIDER_ERROR',
+      message: kind === 'mutation'
+        ? 'Apple did not answer before the deadline; whether the change was applied is unknown'
+        : 'Apple did not answer before the deadline; the read can be retried',
+      retryable: kind === 'read'
+    });
   } finally {
-    deadline.stop();
+    clearTimeout(timer);
   }
 }
 

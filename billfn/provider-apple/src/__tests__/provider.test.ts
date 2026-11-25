@@ -860,6 +860,24 @@ describe('provider HTTP deadlines', () => {
     }
   });
 
+  it('reports an Advanced Commerce rejection when the error body stalls', async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchMock = vi.fn(async () => new Response(new ReadableStream(), { status: 401 })) as typeof fetch;
+      const pending = apple(fetchMock).refundCharge?.({ providerChargeId: 'txn_1', reason: 'customer_request' });
+      await Promise.all([
+        expect(pending).rejects.toMatchObject({
+          code: 'BILLFN_PROVIDER_ERROR',
+          message: 'Apple Advanced Commerce request failed with status 401',
+          details: { status: 401, body: '' }
+        }),
+        vi.advanceTimersByTimeAsync(APPLE_PROVIDER_HTTP_DEADLINE_MS)
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('treats a stalled StoreKit read body as a retryable failure', async () => {
     vi.useFakeTimers();
     try {
