@@ -208,7 +208,12 @@ function defaultSessionPrincipal(input: { authInfo: AuthInfo | undefined }): str
   // Subjects and client IDs are unique per issuer: include the verifier's
   // issuer when it reports one (extra.issuer), for servers trusting several.
   const issuer = typeof authInfo.extra?.issuer === "string" ? authInfo.extra.issuer : null;
-  if (typeof subject === "string" && subject) return JSON.stringify(["subject", issuer, subject, authInfo.clientId ?? null]);
+  // One actor may hold credentials in several tenants (extra.tenantId, as the
+  // AuthFn provider adapter reports it): a session stays in its tenant.
+  const tenant = typeof authInfo.extra?.tenantId === "string" ? authInfo.extra.tenantId : null;
+  if (typeof subject === "string" && subject) {
+    return JSON.stringify(["subject", issuer, tenant, subject, authInfo.clientId ?? null]);
+  }
   // Without a verified subject, users of one OAuth client are told apart only
   // by their token: bind the session to it (a refreshed token then needs a new
   // session). Verifiers should set extra.subject.

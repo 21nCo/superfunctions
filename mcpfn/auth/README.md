@@ -16,6 +16,10 @@ const fetch = createOAuthResourceServerHandler(mcp, {
 });
 ```
 
+The verifier's `AuthInfo` must carry an `expiresAt` in the future and a
+`resource` equal to the configured resource. Tokens without `expiresAt` are
+refused unless `allowTokensWithoutExpiry: true` is set.
+
 Enterprise-managed authorization helpers advertise the stable ID-JAG grant profile in authorization-server metadata and build the request metadata used by supporting clients.
 
 ## Client provider
@@ -25,6 +29,19 @@ Enterprise-managed authorization helpers advertise the stable ID-JAG grant profi
 metadata before opening a browser, correlates callback state, stores PKCE and
 tokens in memory unless an encrypted store is supplied, classifies token
 exchange/refresh/revocation diagnostics, and redacts credentials.
+Stored tokens and client information keep the `issuer` the MCP SDK records,
+so refresh tokens and client secrets are only presented to that authorization
+server during OAuth. The access token itself is sent to the MCP server the
+provider is used with, so give each MCP resource its own credential store (or
+encrypted-store namespace). Tokens saved without an
+`issuer` (by an earlier version) are returned without their refresh token, so
+the client authorizes again when the access token expires, and confidential
+client information (with a `client_secret`) saved without an `issuer` is not
+returned, so the client registers again; neither secret is presented to
+whichever authorization server an MCP server names. Store pre-registered
+confidential clients with their `issuer`. Callback `state` is checked by this provider's
+`validateAuthorizationState()`; a plain SDK provider without that method gets
+PKCE protection only.
 
 ```ts
 const provider = createMcpFnOAuthClientProvider({
@@ -88,7 +105,21 @@ required. A bearer-specific provider can implement
 `authenticateBearer(token, request)` directly; a standard AuthFn
 `authenticate(request)` provider is invoked with a credential-isolated request
 containing only that exact Bearer token. An AuthProvider's `authorize()` hook
-receives the normalized MCP resource URL before trusted context is created. `auth-diagnose` and
+receives the normalized MCP resource URL before trusted context is created.
+Without that hook, the principal's `resourceIds` must contain the resource,
+compared exactly as an identifier (the configured `resource`, which must be
+given in its normalized form, the identifier `createProtectedResourceMetadata`
+advertises, such as a lowercase host; any other spelling throws unless the
+provider has an `authorize()` hook;
+the default mapping copies `resourceIds` from the
+session, and a custom `map()` must return them); otherwise the credential is
+refused. Expiry is checked again right before the MCP handler runs, and a
+non-finite `expiresAt` counts as expired. `allowUnboundCredentials: true` accepts
+credentials with no `resourceIds` at all (without setting `authInfo.resource`);
+a credential bound to other resources is always refused. Sessions
+past their `expiresAt` (or a mapped principal's) are refused. The default
+mapping sets `authInfo.clientId` to the session's `metadata.clientId`, or else
+`<actorType>:<actorId>`; it never uses the session ID. `auth-diagnose` and
 `diagnoseMcpAuthorization()` perform read-only discovery without browser or
 credential actions.
 

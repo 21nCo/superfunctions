@@ -29,6 +29,11 @@ export interface McpFnOAuthResourceServerOptions
   verifier: OAuthTokenVerifier;
   requiredScopes?: string[] | ((request: Request) => string[] | Promise<string[]>);
   clock?: () => number;
+  /**
+   * Accept tokens whose verified `AuthInfo` has no `expiresAt`. Off by
+   * default: such a token would never expire at this server.
+   */
+  allowTokensWithoutExpiry?: boolean;
 }
 
 export type McpFnWebStandardHandler = (
@@ -167,8 +172,16 @@ export function createOAuthResourceServerHandler(
         description: "The access token is invalid",
       });
     }
-    const now = Math.floor((options.clock?.() ?? Date.now()) / 1_000);
-    if (authInfo.expiresAt !== undefined && authInfo.expiresAt <= now) {
+    // Unfloored epoch seconds: expiresAt may be fractional.
+    const now = (options.clock?.() ?? Date.now()) / 1_000;
+    if (authInfo.expiresAt === undefined && options.allowTokensWithoutExpiry !== true) {
+      return bearerChallengeResponse(401, metadataUrl, {
+        error: "invalid_token",
+        description: "The access token has no expiry",
+      });
+    }
+    // A non-finite deadline (Infinity, NaN) counts as expired.
+    if (authInfo.expiresAt !== undefined && !(Number.isFinite(authInfo.expiresAt) && authInfo.expiresAt > now)) {
       return bearerChallengeResponse(401, metadataUrl, {
         error: "invalid_token",
         description: "The access token has expired",
@@ -194,6 +207,15 @@ export function createOAuthResourceServerHandler(
       }
     } else {
       requiredScopes = options.requiredScopes ?? [];
+    }
+    // Scope resolution may have awaited: refuse a token that expired
+    // meanwhile, before judging its scopes.
+    if (authInfo.expiresAt !== undefined &&
+        !(authInfo.expiresAt > (options.clock?.() ?? Date.now()) / 1_000)) {
+      return bearerChallengeResponse(401, metadataUrl, {
+        error: "invalid_token",
+        description: "The access token has expired",
+      });
     }
     const grantedScopes = new Set(authInfo.scopes);
     const missingScopes = requiredScopes.filter((scope) => !grantedScopes.has(scope));
