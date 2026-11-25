@@ -1,0 +1,29 @@
+uifn/dom/vite.config.ts
+  s_0d7e11293d5a4e::t_82af323d05c533 4,11-12
+uifn/version-bump-inputs.json
+  s_36a6ad77cdfedf::t_a3364fb10120d6 10-11
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7fea4596c6691d02d97eacc8384d174779788364",
+  "prompts": {},
+  "sessions": {
+    "s_0d7e11293d5a4e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "97ac12a3-1bf1-4732-a6f3-ece8c28b207e",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_36a6ad77cdfedf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a20f9a-9e4d-7133-b4f2-ae6e363505f8",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
