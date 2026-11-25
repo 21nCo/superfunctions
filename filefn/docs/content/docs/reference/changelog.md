@@ -11,6 +11,7 @@ filefn follows semver. The `@filefn/server` version is the spine of these notes.
 
 - Upload init and complete that cannot verify a stored size return `500 FILEFN_STORAGE_STAT_UNAVAILABLE` with the message `Upload size cannot be verified`. A complete whose proxy parts are missing returns `409 FILEFN_UPLOAD_INCOMPLETE` with the message `Upload incomplete`. Neither response names the storage adapter or the upload session.
 - A metric sink passed directly in the `observability` configuration receives upload failures (`filefn.upload` / `failure`, with `labels.reason` of `size_unverified`, `parts_missing`, or `size_mismatch`), quota denials (`filefn.quota` / `denied`), and processing duration (`filefn.processing` / `complete`, with `durationMs`). Those labels are a closed set: no file id, session id, error text, or usage figure.
+- A processing service built on its own with `createProcessingService` never serves an artifact whose parent file row is missing. `getArtifactDownloadUrl` answers `404 FILEFN_NOT_FOUND` (`Artifact not found`) for it with or without a `readChecker`; before, a service without a `readChecker` signed a URL for it. An artifact whose file row exists is served as before. `createFileFn` always configured a `readChecker`, so it already behaved this way. Standalone hosts that create artifact rows without a `files` row must create the file row first.
 
 ## 0.7.0 — security
 

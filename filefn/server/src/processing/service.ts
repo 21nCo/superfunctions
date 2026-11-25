@@ -2178,13 +2178,13 @@ export function createProcessingService(config: ProcessingServiceConfig) {
         where: [{ field: 'fileId', operator: 'eq', value: artifact.fileId }],
         namespace,
       });
-      if (file) {
-        await requireReadableFile(file.fileId, ctx);
-      } else if (readChecker) {
-        // No parent file to authorize against: fail closed.
+      if (!file) {
+        // An orphaned artifact has no parent file to authorize against: fail
+        // closed in every configuration, with or without a readChecker.
         throw errors.notFound('Artifact');
       }
-      const artifactStorageTarget = getArtifactStorageTarget(file ?? { policy: '' });
+      await requireReadableFile(file.fileId, ctx);
+      const artifactStorageTarget = getArtifactStorageTarget(file);
 
       if (getStorageCapabilities(storage, artifactStorageTarget).signedDownloadUrls && storage.signDownloadUrl) {
         const result = await storage.signDownloadUrl({

@@ -1,6 +1,6 @@
 {
   "name": "@filefn/docs",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "private": true,
   "type": "module",
   "scripts": {
@@ -43,8 +43,8 @@
     "@datafn/client": "0.1.10",
     "@datafn/core": "0.1.3",
     "@filefn/client": "0.4.0",
-    "@filefn/processing": "0.4.0",
-    "@filefn/server": "0.7.1",
+    "@filefn/processing": "0.4.1",
+    "@filefn/server": "0.7.2",
     "@superfunctions/db": "0.3.4",
     "@superfunctions/storage-r2": "0.3.0",
     "authfn": "0.10.0"
