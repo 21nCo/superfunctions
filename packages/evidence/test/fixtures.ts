@@ -126,7 +126,17 @@ function compareUtc(a: UtcTime, b: UtcTime): number {
 export function crossValueFailures(record: Json): string[] {
   if (typeof record !== "object" || record === null) return [];
   const failures: string[] = [];
-  const { source, timing, expiresAt } = record as Record<string, Json>;
+  const { subjectIds, source, timing, expiresAt } = record as Record<string, Json>;
+  // Ajv 8's scalar uniqueItems indexes items in a plain object, so it misses a
+  // repeated "__proto__"; compare subject IDs by exact string instead.
+  if (Array.isArray(subjectIds)) {
+    const seen = new Set<string>();
+    subjectIds.forEach((subjectId: Json, index) => {
+      if (typeof subjectId !== "string") return;
+      if (seen.has(subjectId)) failures.push(`/subjectIds/${index}`);
+      seen.add(subjectId);
+    });
+  }
   const artifactHashes = (source as Record<string, Json> | null)?.artifactHashes;
   if (Array.isArray(artifactHashes)) {
     const seen = new Set<unknown>();

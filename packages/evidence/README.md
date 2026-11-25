@@ -87,13 +87,12 @@ A leap second (second 60) is accepted only where UTC can insert one: at 23:59:60
 
 The JSON Schema (draft 2020-12, `$id` `urn:superfunctions:evidence-record:v1`) is exported as `evidenceRecordSchemaV1` (frozen) and as the file `@superfunctions/evidence/schema/evidence-record.v1.json`. The schema checks date-times with a pattern rather than `format`, so validators reject malformed dates and days a month does not have (such as 30 February, or 29 February 2100) without a format plugin.
 
-The plain schema cannot express three rules, which `validateEvidenceRecord` enforces. A consumer that validates with a JSON Schema validator must check them next to the schema, as this package's schema agreement tests do:
+`validateEvidenceRecord` enforces four rules that a JSON Schema validator may miss or the plain schema cannot express. A consumer that validates with a JSON Schema validator must check them next to the schema, as this package's schema agreement tests do:
 
+- Each `subjectIds` item is unique (exact string comparison). The schema says so with `uniqueItems`, but Ajv 8 misses a repeated `"__proto__"` string (for example `subjectIds: ["__proto__", "__proto__"]`) and accepts the record.
 - Each `source.artifactHashes[].path` is unique within the record (exact string comparison).
 - `timing.startedAt` is not later than `timing.completedAt`, compared as instants with every fraction digit.
 - A date-time with second 60 at a nonzero offset falls at 23:59:60 UTC on the last day of a month. The pattern enforces this at `Z`, `+00:00` and `-00:00`, but cannot apply other offsets.
-
-Ajv 8 misses a repeated `"__proto__"` string in `uniqueItems` (for example `subjectIds: ["__proto__", "__proto__"]`) and accepts the record. That is an Ajv defect; the schema is correct, and `validateEvidenceRecord` rejects the duplicate.
 
 ## Not in this version
 

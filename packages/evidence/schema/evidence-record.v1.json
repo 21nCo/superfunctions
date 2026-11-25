@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:superfunctions:evidence-record:v1",
   "title": "Superfunctions evidence record v1",
-  "description": "A source-bound evidence record. Dates are RFC 3339 date-times with an offset. validateEvidenceRecord also enforces three rules this schema cannot express: unique artifactHashes[].path values, startedAt <= completedAt, and a leap second at a nonzero offset falling at 23:59:60 UTC on the last day of a month.",
+  "description": "A source-bound evidence record. Dates are RFC 3339 date-times with an offset. validateEvidenceRecord also enforces four rules a JSON Schema validator may miss or this schema cannot express: unique subjectIds by exact string (Ajv 8 uniqueItems misses a repeated \"__proto__\"), unique artifactHashes[].path values, startedAt <= completedAt, and a leap second at a nonzero offset falling at 23:59:60 UTC on the last day of a month.",
   "type": "object",
   "additionalProperties": false,
   "required": ["schemaVersion", "recordId", "evidenceClass", "subjectIds", "status", "source", "environment", "timing", "expiresAt"],
