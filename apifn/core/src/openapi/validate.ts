@@ -13,20 +13,34 @@ export interface OpenAPIValidationOptions {
 
 const EXTERNAL_REF_ERROR = "External OpenAPI $ref requires an explicit allowlist entry";
 
-function assertReferencePolicy(
-  document: unknown,
+function applyReferencePolicy<T>(
+  document: T,
   { allowExternal, normalizePointers }: { allowExternal: boolean; normalizePointers: boolean }
-): void {
+): T {
   const { childMode, entryMode, arrayItemMode, isMap } = openAPIReferenceContext;
-  const seen = new WeakMap<object, Set<OpenAPIReferenceMode>>();
-  const pending: Array<{ value: unknown; mode: OpenAPIReferenceMode }> = [{ value: document, mode: "node" }];
+  const seen = new WeakMap<object, Map<OpenAPIReferenceMode, object>>();
+  const pending: Array<{ value: object; copy: object; mode: OpenAPIReferenceMode }> = [];
+
+  function enqueue(value: unknown, mode: OpenAPIReferenceMode): unknown {
+    if (typeof value !== "object" || value === null) return value;
+    const contexts = seen.get(value) ?? new Map<OpenAPIReferenceMode, object>();
+    const existing = contexts.get(mode);
+    if (existing) return existing;
+
+    // YAML aliases can share a value between a schema and literal example data.
+    const prototype = Object.getPrototypeOf(value);
+    const copy = normalizePointers && (Array.isArray(value) || prototype === Object.prototype || prototype === null)
+      ? (Array.isArray(value) ? [...value] : { ...value })
+      : value;
+    contexts.set(mode, copy);
+    seen.set(value, contexts);
+    pending.push({ value, copy, mode });
+    return copy;
+  }
+
+  const root = enqueue(document, "node");
   while (pending.length) {
-    const { value, mode } = pending.pop()!;
-    if (typeof value !== "object" || value === null) continue;
-    const modes = seen.get(value) ?? new Set<OpenAPIReferenceMode>();
-    if (modes.has(mode)) continue;
-    modes.add(mode);
-    seen.set(value, modes);
+    const { value, copy, mode } = pending.pop()!;
 
     if ("$ref" in value && typeof value.$ref === "string" && value.$ref) {
       const ref = value.$ref;
@@ -36,23 +50,25 @@ function assertReferencePolicy(
       } else if (mode !== "literal" && !isMap(mode) && ref !== "#" && !ref.startsWith("#/")) {
         if (normalizePointers && /^#%2f/i.test(ref)) {
           const pointer = decodeURIComponent(ref.slice(1));
-          value.$ref = "#" + pointer.split("/").map(encodeURIComponent).join("/");
+          Reflect.set(copy, "$ref", "#" + pointer.split("/").map(encodeURIComponent).join("/"));
         } else {
           throw new Error("OpenAPI $ref fragments must be slash-delimited JSON pointers");
         }
       }
     }
-    if (Array.isArray(value)) {
-      for (const child of value) pending.push({ value: child, mode: arrayItemMode(mode) });
-      continue;
-    }
+    const items = Array.isArray(value);
     for (const [key, child] of Object.entries(value)) {
-      const nextMode = mode === "literal" || mode === "example"
+      const nextMode = items
+        ? arrayItemMode(mode)
+        : mode === "literal" || mode === "example"
         ? "literal"
         : entryMode(mode, key, child) ?? childMode(key, child);
-      pending.push({ value: child, mode: nextMode });
+      if (normalizePointers && key === "$ref" && typeof child === "string") continue;
+      const childCopy = enqueue(child, nextMode);
+      if (normalizePointers) Reflect.set(copy, key, childCopy);
     }
   }
+  return root as T;
 }
 
 function toValidationErrors(error: unknown): ValidationError[] {
@@ -93,10 +109,9 @@ export async function validateAndDereferenceOpenAPI(
 ): Promise<{ document: OpenAPIDocument; errors: [] } | { document: null; errors: ValidationError[] }> {
   let deniedReference = false;
   try {
-    const copy = structuredClone(document);
     const externalReferences = options?.externalReferences;
     const allowExternal = Boolean(externalReferences?.size);
-    assertReferencePolicy(copy, { allowExternal, normalizePointers: true });
+    const copy = applyReferencePolicy(structuredClone(document), { allowExternal, normalizePointers: true });
     const validated = await SwaggerParser.validate(copy as never, {
       resolve: {
         external: allowExternal,
@@ -115,7 +130,7 @@ export async function validateAndDereferenceOpenAPI(
     });
     // A preloaded document may be a map of schemas. Check the referenced
     // subtrees in the context where they appear after dereferencing.
-    if (allowExternal) assertReferencePolicy(validated, { allowExternal: false, normalizePointers: false });
+    if (allowExternal) applyReferencePolicy(validated, { allowExternal: false, normalizePointers: false });
     return { document: validated as unknown as OpenAPIDocument, errors: [] };
   } catch (error) {
     return { document: null, errors: toValidationErrors(deniedReference ? new Error(EXTERNAL_REF_ERROR) : error) };

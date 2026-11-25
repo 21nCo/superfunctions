@@ -79,6 +79,32 @@ describe("validateOpenAPI", () => {
     })).resolves.toEqual([]);
   });
 
+  it("keeps aliased example data separate from schema pointer normalization", async () => {
+    const encoded = "#%2Fcomponents%2Fschemas%2FShared";
+    const sharedNode = { type: "object", properties: { value: { $ref: encoded } } };
+    const doc = {
+      openapi: "3.1.0" as const,
+      info: { title: "Example API", version: "1.0.0" },
+      paths: {},
+      components: {
+        schemas: {
+          Shared: { type: "string" },
+          Container: sharedNode,
+          ExampleCarrier: { type: "object", examples: [sharedNode] },
+        },
+      },
+    };
+    const result = await validateAndDereferenceOpenAPI(doc);
+    expect(result.errors).toEqual([]);
+    expect(result.document?.components?.schemas?.Container).toMatchObject({
+      properties: { value: { type: "string" } },
+    });
+    expect(result.document?.components?.schemas?.ExampleCarrier).toMatchObject({
+      examples: [{ properties: { value: { $ref: encoded } } }],
+    });
+    expect(doc.components.schemas.Container.properties.value).toEqual({ $ref: encoded });
+  });
+
   it("refuses a named reference fragment regardless of unrelated allowlist entries", async () => {
     const doc = documentWithReference("#missing");
     const options = { externalReferences: new Map([["https://example.invalid/unused.json", "{}"]]) };
