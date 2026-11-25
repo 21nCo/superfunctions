@@ -1,0 +1,21 @@
+apifn/README.md
+  s_a53647f7f9b276::t_91a3d50e8cc453 152-157,163
+.github/workflows/apifn-api-check.yml
+  s_a53647f7f9b276::t_91a3d50e8cc453 118,128-133,146,149,151-152,259-260,275
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5200dacaf56ac052cb53b9d0e252fd3b41c599cc",
+  "prompts": {},
+  "sessions": {
+    "s_a53647f7f9b276": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a2139d-87fd-7710-98a5-0525e984c6d4",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

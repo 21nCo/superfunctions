@@ -1,0 +1,19 @@
+plugfn/examples/example-01/backend/src/db/generated/plugfn-schema.ts
+  s_e887ca62405fee::t_ef4c1411d1642c 7,96,102,346
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "25ed541259c1eac76cd3b0df1f5bb7960b143f2e",
+  "prompts": {},
+  "sessions": {
+    "s_e887ca62405fee": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "efa55f0d-54f0-42a5-930c-2cdd05127666",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
