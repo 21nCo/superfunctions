@@ -47,7 +47,9 @@ function readCollectionTrustOptions(argv: string[]): { allowScripts: boolean; al
     const token = argv[index];
     const separator = token.indexOf("=");
     const name = separator < 0 ? token : token.slice(0, separator);
-    if (name === "--allow-scripts" || name === "--allowScripts") {
+    if (/^--(?:no-)?allow(?:-scripts|-env|Scripts|Env)\./.test(name)) {
+      throw new Error("Collection trust options do not accept nested values");
+    } else if (name === "--allow-scripts" || name === "--allowScripts") {
       if (separator >= 0) throw new Error("--allow-scripts takes no value");
       allowScripts = true;
     } else if (name === "--no-allow-scripts" || name === "--no-allowScripts") {
@@ -277,7 +279,7 @@ export async function runCli(
           throw new Error("apifn test takes at most one collection directory");
         }
         const result = await runTestCommand({
-          ...readCollectionTrustOptions(argv),
+          ...trustOptions,
           collectionDir: collectionDir ?? trailing[0],
           env: options.env,
           bail: options.bail,
@@ -548,6 +550,16 @@ export async function runCli(
 
   cli.help();
   cli.version(version);
+
+  let trustOptions: ReturnType<typeof readCollectionTrustOptions>;
+  try {
+    trustOptions = readCollectionTrustOptions(argv);
+  } catch (error) {
+    createOutput({ writeStdout: runOptions.stdout, writeStderr: runOptions.stderr, color: false }).error(
+      error instanceof Error ? error.message : String(error)
+    );
+    return 2;
+  }
 
   // `apifn check` reads its own arguments first: cac would print help (exit 0) for a malformed
   // check invocation that also names --help, instead of the usage error (exit 2).

@@ -185,13 +185,18 @@ export class ApifnTestAdapter extends BaseAdapter {
                         const known = casesByPath.get(selectedPath) ?? [];
                         known.push(test);
                         casesByPath.set(selectedPath, known);
-                    } else if (matches.length > 1) {
+                    } else {
                         completedCases.add(test);
+                        const ambiguous = matches.length > 1;
                         results.push({
                             id: test.id,
-                            status: "failed",
+                            status: ambiguous ? "failed" : "skipped",
                             duration: 0,
-                            error: { message: "Multiple collection requests match this test. Discover the tests again to select a request by path." },
+                            error: {
+                                message: ambiguous
+                                    ? "Multiple collection requests match this test. Discover the tests again to select a request by path."
+                                    : "Test not found in collection",
+                            },
                         });
                         updateProgress(test);
                     }

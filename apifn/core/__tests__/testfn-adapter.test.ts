@@ -153,6 +153,26 @@ describe("ApifnTestAdapter", () => {
     expect(mocks.runCollection).not.toHaveBeenCalled();
   });
 
+  it("skips a deleted request even when another request in the batch fails preflight", async () => {
+    mocks.readCollection.mockResolvedValue({
+      info: { name: "Orders API" },
+      environments: { default: {} },
+      items: [{ kind: "request", name: "List Orders", path: "list.yml" }],
+    });
+    mocks.runCollection.mockRejectedValueOnce(new Error("Collection scripts are disabled"));
+    const file = "/tmp/work/orders";
+    const results = await new ApifnTestAdapter().run([
+      { id: "deleted", file, name: "Deleted Request" },
+      { id: "current", file, name: "List Orders" },
+    ], {});
+    expect(results).toEqual([
+      expect.objectContaining({ id: "deleted", status: "skipped" }),
+      expect.objectContaining({
+        id: "current", status: "failed", error: expect.objectContaining({ message: "Collection scripts are disabled" }),
+      }),
+    ]);
+  });
+
   it("distinguishes requests with the same display name and refuses ambiguous legacy selections", async () => {
     workdir = realpathSync(mkdtempSync(path.join(tmpdir(), "apifn-testfn-adapter-")));
     writeFileSync(path.join(workdir, "opencollection.yml"), "name: Orders API\n");

@@ -226,6 +226,18 @@ describe("apifn test command — CLI-004, CLI-011, RUN-009", () => {
         expect(await runCli(["test", "--allow-scripts", "--reporter", "silent", "--", dir])).toBe(0);
     });
 
+    it.each([
+        ["--allow-scripts.value=false"],
+        ["--allow-env=APIFN_TEST_PATH", "--allow-env.APIFN_TEST_PATH=1"],
+    ])("rejects nested collection trust options (%s)", async (...trustArgs) => {
+        let stderr = "";
+        const code = await runCli(["test", passDir, "--reporter", "silent", ...trustArgs], {
+            stderr: (line) => { stderr += line; },
+        });
+        expect(code).toBe(2);
+        expect(stderr).toContain("Collection trust options do not accept nested values");
+    });
+
     it("forwards only process environment variables named by --allow-env", async () => {
         const dir = await createPassingCollection(`http://127.0.0.1:${PASS_PORT}`);
         const request = path.join(dir, "health.yml");
