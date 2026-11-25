@@ -9,7 +9,7 @@ import { afterAll, afterEach, beforeAll, vi } from "vitest";
 import type { Diagnostic } from "../src/diagnostics.js";
 import { createDocumentOutput, MAX_WARNINGS_PER_KIND, type DocumentOutcome } from "../src/document-output.js";
 import { classifyRunnerError } from "../src/errors.js";
-import { createDocumentBudget, MAX_NESTING_DEPTH, serializeJsonMember } from "../src/json-value.js";
+import { createDocumentBudget, createWorkBudget, MAX_NESTING_DEPTH, serializeJsonMember } from "../src/json-value.js";
 import { runAction, type RunnerActionResult, type RunnerContext, type RunnerOptions } from "../src/runner.js";
 
 // CLI-22: the redaction boundary and the bounds of the result document (D8).
@@ -722,23 +722,71 @@ describe("document result reads", () => {
       yield first;
       throw new Error(leak);
     }
-    const cases: Array<[unknown, Diagnostic[], number]> = [
-      [throwingIndex, [first, last], 1],
-      [failingIterator(), [first], 1],
-      [5, [], 0],
+    const cases: Array<[unknown, Diagnostic[]]> = [
+      [throwingIndex, [first, last]],
+      [failingIterator(), [first]],
+      [5, []],
     ];
-    for (const [diagnostics, kept, droppedIndex] of cases) {
-      const listener = vi.fn();
+    for (const [diagnostics, kept] of cases) {
+      // A listener that relies on its readonly Diagnostic[] type: an unreadable entry never reaches it.
+      const codes: string[][] = [];
+      const listener = vi.fn((list: readonly Diagnostic[]) => {
+        codes.push(list.map((diagnostic) => diagnostic.code));
+      });
       const result = await runDocument(
         () => ({ data: "ok", exitCode: 7, diagnostics: diagnostics as Diagnostic[] }),
         { onDiagnostics: listener }
       );
       expect(result.exitCode).toBe(7);
       expect(parseOnlyDocument(result)).toEqual({ ok: true, data: "ok", ...(kept.length > 0 ? { diagnostics: kept } : {}) });
-      expect(result.stderr).toContain(`diagnostic ${droppedIndex} was dropped from the result document`);
+      expect(result.stderr.trim().split("\n")).toEqual([
+        JSON.stringify({
+          level: "warn",
+          message: "a returned diagnostic was dropped from the result document: it could not be read",
+        }),
+      ]);
       expect(result.out + result.stderr).not.toContain(leak);
       expect(listener).toHaveBeenCalledTimes(1);
+      expect(codes).toEqual([kept.map((diagnostic) => diagnostic.code)]);
     }
+  });
+
+  it("warns for collected output calls when the result cannot be read either", async () => {
+    const result = await runDocument((_options, ctx) => {
+      ctx.output.json({ collected: true });
+      return Object.defineProperty({}, "data", {
+        get() {
+          throw new Error("data getter failed");
+        },
+      }) as RunnerActionResult;
+    });
+    expect(result.exitCode).toBe(1);
+    expect(parseOnlyDocument(result)).toEqual(FAILURE_DOCUMENT);
+    expect(result.stderr).toContain("output.json() was not printed");
+  });
+
+  it("reads the stderr writer and a command's stream options once", async () => {
+    const reads: string[] = [];
+    const counted = <T extends object>(target: T, name: string, key: keyof T & string): T => {
+      const value = target[key];
+      return Object.defineProperty(target, key, {
+        enumerable: true,
+        get: () => (reads.push(`${name}.${key}`), value),
+      });
+    };
+    const lines = counted({ mode: "json" as const, stdout: () => {}, stderr: () => {} }, "runner", "stderr");
+    await runAction(() => ({ data: 1 }), {}, lines);
+    expect(reads).toEqual(["runner.stderr"]);
+
+    reads.length = 0;
+    const childScript = 'process.stdout.write("child-out");';
+    const result = await runDocument(async (_options, ctx) => {
+      const options = counted(counted({ streamOutput: true, stdout: () => {} }, "exec", "streamOutput"), "exec", "stdout");
+      const run = await ctx.exec.command(process.execPath, ["-e", childScript], options);
+      return { data: run.stdout };
+    });
+    expect(parseOnlyDocument(result)).toEqual({ ok: true, data: "child-out" });
+    expect(reads).toEqual(["exec.streamOutput", "exec.stdout"]);
   });
 
   it("reads a returned sparse diagnostics array by index up to its length", async () => {
@@ -856,33 +904,100 @@ describe("document Buffer projections", () => {
     expect(result.out).toBe(`${JSON.stringify({ ok: true, data: { bytes, token: "[REDACTED]" } })}\n`);
   });
 
-  it("bounds the built-in Buffer toJSON by the buffer's length before it copies the bytes, redacted or not", () => {
-    let lengthReads = 0;
-    // Buffer.prototype.toJSON reads `this.length` before it allocates its array; the bound reads the internal length.
-    const counted = () => {
-      const buffer = Buffer.alloc(100_000);
-      Object.defineProperty(buffer, "length", {
-        get: () => {
-          lengthReads += 1;
-          return 100_000;
-        },
-      });
-      return buffer;
-    };
-    const visible = finishWith(2_000, { ok: true, data: { bytes: counted() }, exitCode: 3 });
-    expect(visible.out).toBe(`${JSON.stringify(FAILURE_DOCUMENT)}\n`);
-    const masked = finishWith(2_000, { ok: true, data: { visible: "kept", token: counted() }, exitCode: 3 });
-    expect(masked.out).toBe(`${JSON.stringify(FAILURE_DOCUMENT)}\n`);
+  it("prints Buffers, views and an inherited data toJSON exactly as JSON.stringify does", () => {
+    const backing = Buffer.from([0, 1, 127, 128, 255, 9]);
+    const floats = Object.setPrototypeOf(new Float64Array([1.5, Number.NaN, -0]), Buffer.prototype) as Float64Array;
+    const values = { empty: Buffer.alloc(0), view: backing.subarray(2, 5), floats, list: [backing] };
+    expect(String(serializeJsonMember("data", values))).toBe(JSON.stringify(values));
+
+    // A toJSON the data array inherits receives the real array, so the native projection runs.
+    const arrayPrototype = Array.prototype as { toJSON?: unknown };
+    Object.defineProperty(arrayPrototype, "toJSON", {
+      configurable: true,
+      writable: true,
+      value(this: unknown[]) {
+        return `items:${this.length}`;
+      },
+    });
+    try {
+      const inherited = { bytes: Buffer.from([1, 2, 3]) };
+      expect(String(serializeJsonMember("data", inherited))).toBe(JSON.stringify(inherited));
+    } finally {
+      delete arrayPrototype.toJSON;
+    }
+  });
+
+  it("charges a Buffer under a sensitive key only its placeholder, at any depth, in data, details and diagnostics", () => {
+    // 1,500 bytes print at least 3,001 characters, more than a 2,000 limit, but walking them masked costs 1,500 units
+    // of the 4,000-unit work allowance: masked, they cost only the placeholder, as an Array(1500) does.
+    const bytes = () => Buffer.alloc(1_500);
+    for (const token of [bytes(), { inner: bytes() }, new Array(1_500)]) {
+      const data = finishWith(2_000, { ok: true, data: { visible: "kept", token }, exitCode: 3 });
+      expect(data.exitCode).toBe(3);
+      expect(parseOnlyDocument(data)).toEqual({ ok: true, data: { visible: "kept", token: "[REDACTED]" } });
+    }
     const details = finishWith(2_000, {
       ok: false,
       error: Object.assign(new Error("closed"), {
         code: "CLOSED",
         exitCode: 7,
-        details: { visible: "kept", token: counted() },
+        details: { visible: "kept", token: bytes() },
       }),
     });
     expect(details.exitCode).toBe(7);
-    expect(parseOnlyDocument(details)).toEqual({ ok: false, error: { code: "CLOSED", message: "closed" } });
+    expect(parseOnlyDocument(details)).toEqual({
+      ok: false,
+      error: { code: "CLOSED", message: "closed", details: { visible: "kept", token: "[REDACTED]" } },
+    });
+    const diagnosticOutput = finishWith(2_000, { ok: true, data: "done", exitCode: 4 }, [
+      { code: "D", severity: "info", message: "m", details: { visible: "kept", token: bytes() } },
+    ]);
+    expect(diagnosticOutput.exitCode).toBe(4);
+    expect(parseOnlyDocument(diagnosticOutput)).toEqual({
+      ok: true,
+      data: "done",
+      diagnostics: [{ code: "D", severity: "info", message: "m", details: { visible: "kept", token: "[REDACTED]" } }],
+    });
+
+    // Visible, the same bytes cannot fit the text budget and fail before their first byte is read.
+    const visible = finishWith(2_000, { ok: true, data: { visible: "kept", bytes: bytes() }, exitCode: 3 });
+    expect(visible.out).toBe(`${JSON.stringify(FAILURE_DOCUMENT)}\n`);
+  });
+
+  it("never runs the built-in Buffer toJSON on a receiver whose length it cannot bound", () => {
+    let lengthReads = 0;
+    const countedLength = {
+      get: () => {
+        lengthReads += 1;
+        return 2 ** 26;
+      },
+    };
+    // Buffer.prototype.toJSON reads `this.length`; each of these would hand it a length other than the internal one.
+    const receivers = () => [
+      Object.defineProperty(Buffer.alloc(1), "length", countedLength),
+      Object.defineProperty(Buffer.alloc(1), "length", { value: 2 ** 26 }),
+      new Proxy(Buffer.alloc(1), {}),
+      Object.defineProperty({ toJSON: Buffer.prototype.toJSON }, "length", countedLength),
+    ];
+    for (const receiver of receivers()) {
+      for (const data of [{ bytes: receiver }, { visible: "kept", token: receiver }]) {
+        const result = finishWith(2_000, { ok: true, data, exitCode: 3 });
+        expect(result.exitCode).toBe(1);
+        expect(result.out).toBe(`${JSON.stringify(FAILURE_DOCUMENT)}\n`);
+      }
+    }
+    for (const receiver of receivers()) {
+      const details = finishWith(2_000, {
+        ok: false,
+        error: Object.assign(new Error("closed"), {
+          code: "CLOSED",
+          exitCode: 7,
+          details: { visible: "kept", token: receiver },
+        }),
+      });
+      expect(details.exitCode).toBe(7);
+      expect(parseOnlyDocument(details)).toEqual({ ok: false, error: { code: "CLOSED", message: "closed" } });
+    }
     expect(lengthReads).toBe(0);
   });
 });
@@ -914,6 +1029,43 @@ describe("document sensitive-key matching", () => {
     const dropped = Object.fromEntries(Array.from({ length: 25 }, (_, index) => [`k${index}`, undefined]));
     const many = Array.from({ length: 1_000 }, () => dropped);
     expect(finishWith(10_000, { ok: true, data: many, exitCode: 2 }).out).toBe(`${JSON.stringify(FAILURE_DOCUMENT)}\n`);
+  });
+});
+
+describe("document keys JSON skips", () => {
+  it("lists keys as JSON.stringify does and charges each symbol or non-enumerable key one unit of work", () => {
+    const record: Record<string | symbol, unknown> = { b: 2 };
+    Object.defineProperty(record, "hidden", { value: "not printed", enumerable: false });
+    record[Symbol("s")] = "not printed";
+    record.a = 1;
+    const reads: string[] = [];
+    const proxied = new Proxy(record, {
+      ownKeys: (target) => (reads.push("ownKeys"), Reflect.ownKeys(target)),
+      getOwnPropertyDescriptor: (target, key) => (reads.push(`describe ${String(key)}`), Reflect.getOwnPropertyDescriptor(target, key)),
+      get: (target, key) => (reads.push(`get ${String(key)}`), Reflect.get(target, key)),
+    });
+    const native = JSON.stringify({ record, proxied });
+    const nativeReads = [...reads];
+    reads.length = 0;
+    const work = createWorkBudget(100);
+    expect(String(serializeJsonMember("data", { record, proxied }, { work }))).toBe(native);
+    expect(reads).toEqual(nativeReads);
+    // Two skipped keys in each of the two objects.
+    expect(work.unitsLeft).toBe(196);
+  });
+
+  it("fails an object referenced many times whose hidden keys outrun the work allowance", () => {
+    const hidden: object = {};
+    for (let index = 0; index < 5_000; index += 1) {
+      Object.defineProperty(hidden, `h${index}`, { value: index, enumerable: false });
+    }
+    // Each reference prints "{}" but sweeps 5,000 keys JSON skips: the fourth sweep is past the 20,000-unit allowance.
+    const few = finishWith(10_000, { ok: true, data: [hidden, hidden, hidden], exitCode: 2 });
+    expect(few.exitCode).toBe(2);
+    expect(parseOnlyDocument(few)).toEqual({ ok: true, data: [{}, {}, {}] });
+    const many = finishWith(10_000, { ok: true, data: Array.from({ length: 100 }, () => hidden), exitCode: 2 });
+    expect(many.exitCode).toBe(1);
+    expect(many.out).toBe(`${JSON.stringify(FAILURE_DOCUMENT)}\n`);
   });
 });
 
@@ -1029,6 +1181,15 @@ describe("document memory in a constrained heap", () => {
       await run("buffer-details", () => {
         throw Object.assign(new Error("closed"), { code: "CLOSED", exitCode: 7, details: { visible: "kept", token: buffer } });
       });
+      // Under a redacted ancestor, a Buffer the work allowance can walk (1.9 times the document limit): its built-in
+      // toJSON would allocate an array of 8 or more bytes per byte, past this heap.
+      const limit = Math.floor((await import("node:v8")).getHeapStatistics().heap_size_limit / 16);
+      const walkable = Buffer.alloc(Math.floor(1.9 * limit));
+      await run("buffer-nested-redacted", () => ({ exitCode: 3, data: { visible: "kept", token: { b: walkable } } }));
+      // A one-byte Buffer whose own length tells the built-in toJSON to copy 2^26 items.
+      const shadowed = () => Object.defineProperty(Buffer.alloc(1), "length", { value: 2 ** 26 });
+      await run("buffer-shadowed", () => ({ exitCode: 3, data: { visible: "kept", bytes: shadowed() } }));
+      await run("buffer-shadowed-redacted", () => ({ exitCode: 3, data: { visible: "kept", token: shadowed() } }));
       await run("diagnostics-sparse", () => ({ data: "done", diagnostics: new Array(120e6) }));
       let diagnosticReads = 0;
       const many = new Proxy([], {
@@ -1112,6 +1273,14 @@ describe("document memory in a constrained heap", () => {
       exitCode: 7,
       out: '{"ok":false,"error":{"code":"CLOSED","message":"closed"}}\n',
     });
+    expect(cases["buffer-nested-redacted"]).toMatchObject({
+      writes: 1,
+      exitCode: 3,
+      out: '{"ok":true,"data":{"visible":"kept","token":"[REDACTED]"}}\n',
+    });
+    for (const name of ["buffer-shadowed", "buffer-shadowed-redacted"]) {
+      expect(cases[name]).toEqual({ name, writes: 1, exitCode: 1, out: failure });
+    }
     expect(cases["bigint-redacted"]).toMatchObject({
       writes: 1,
       exitCode: 4,

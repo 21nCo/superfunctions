@@ -40,8 +40,9 @@ export interface DocumentBudget {
 
 /**
  * How much work that prints nothing one result document may still do, in units, separate from its text: each value
- * walked under a redacted key, each object member JSON drops, each code unit scanned in a string found too long to
- * print, TYPED_ARRAY_INDEX_UNITS per typed array index, and each character of a segment (details or a diagnostic) that
+ * walked under a redacted key, each object member JSON drops, each own key JSON skips (a symbol or a non-enumerable
+ * key), each code unit scanned in a string found too long to print, TYPED_ARRAY_INDEX_UNITS per typed array index
+ * (and per item of an array Node's built-in Buffer toJSON must allocate, see `projectBuffer`), and each character of a segment (details or a diagnostic) that
  * was written and then left out. Each unit is charged once and never given back. Printed text is charged to the text
  * budget only, so a document that fits prints next to discarded work within this allowance.
  */
@@ -188,8 +189,10 @@ export class JsonText implements TextSink {
 }
 
 const booleanValueOf = Boolean.prototype.valueOf;
-/** Node's built-in `Buffer.prototype.toJSON`, which copies every byte into a new array (see `boundBufferProjection`). */
+/** Node's built-in `Buffer.prototype.toJSON`, which copies every byte into a new array (see `projectBuffer`). */
 const bufferToJSON = Buffer.prototype.toJSON;
+/** %Array.prototype%, the prototype of the data array `Buffer.prototype.toJSON` creates. */
+const arrayPrototype = Object.getPrototypeOf([]) as object;
 const bigintValueOf = BigInt.prototype.valueOf;
 /** %TypedArray%.prototype.length: reads the length from the internal slot, for a typed array of any realm. */
 const typedArrayLength = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(Uint8Array.prototype), "length")
@@ -304,19 +307,75 @@ function writePrimitive(walk: Walk, value: unknown): boolean {
 }
 
 /**
- * Bounds Node's built-in `Buffer.prototype.toJSON` before it runs: it copies each byte of `this` into a new array of
- * `this.length` items, so a typed array's internal length is checked first against what printing (or, under a
- * redacted key, walking) that array would cost. The array prints at least 2n + 1 characters, and each of its items
- * costs one unit of work when discarded. A toJSON a caller supplies is the caller's own work and is not bounded here.
+ * Looks `name` up along the prototype chain of `start` without running any code: an own data or accessor descriptor
+ * where it is found, `{}` when the chain has no such property, and undefined when a Proxy on the chain would observe
+ * the lookup.
  */
-function boundBufferProjection(walk: Walk, value: object, toJSON: unknown): void {
-  if (toJSON !== bufferToJSON || !types.isTypedArray(value)) {
-    return;
+function quietLookup(start: object, name: PropertyKey): { descriptor?: PropertyDescriptor } | undefined {
+  for (let current: object | null = start; current !== null; current = Reflect.getPrototypeOf(current)) {
+    if (types.isProxy(current)) {
+      return undefined;
+    }
+    const descriptor = Reflect.getOwnPropertyDescriptor(current, name);
+    if (descriptor !== undefined) {
+      return { descriptor };
+    }
   }
-  const length = Reflect.apply(typedArrayLength, value, []);
-  if (walk.discarding ? length > walk.work.unitsLeft : 2 * length + 1 > walk.budget.charsLeft) {
+  return {};
+}
+
+/**
+ * Stands in for the data array that Node's built-in `Buffer.prototype.toJSON` would build: the bytes are read in place,
+ * index by index, when the array is serialized, so nothing proportional to the buffer's length is allocated.
+ */
+class BufferBytes {
+  constructor(
+    readonly bytes: object,
+    readonly length: number
+  ) {}
+}
+// No toJSON can be found on a stand-in, as none is found on the data array it replaces (see `projectBuffer`).
+Object.setPrototypeOf(BufferBytes.prototype, null);
+
+/**
+ * Projects a value whose toJSON is Node's built-in `Buffer.prototype.toJSON`, which copies each of `this.length`
+ * items of `this` into a new array and returns `{ type: "Buffer", data }`. Before anything is allocated:
+ * - the length it would read must be the internal length of a typed array: `this` is a typed array (not a Proxy) and
+ *   its `length` resolves, through a chain without a Proxy, to the built-in getter. Any other receiver (a Proxy, an
+ *   object that is not a typed array, a shadowed `length`) cannot be bounded without reading its length a second
+ *   time, so it fails with a RangeError;
+ * - when the data array would find no `toJSON` (checked on %Array.prototype% and its chain, without running code)
+ *   and holds numbers, the projection is an object with the same members whose `data` is a stand-in read from the
+ *   buffer in place: it prints exactly what the native array prints, is bounded like any array before its first item
+ *   (2n + 1 characters printed, n units of work under a redacted key, decided once the member's key is matched), and
+ *   allocates nothing in proportion to n. Reading a typed array's items runs no code, so the output and every
+ *   observable step are those of the native call;
+ * - otherwise (a bigint typed array, or an inherited `toJSON` that would receive the array) the native toJSON runs,
+ *   after its array is charged at TYPED_ARRAY_INDEX_UNITS of work per item, printed or not.
+ * Returns undefined when the native toJSON is to run.
+ */
+function projectBuffer(walk: Walk, value: object): object | undefined {
+  const length = types.isTypedArray(value) ? quietLookup(value, "length") : undefined;
+  if (length?.descriptor?.get !== typedArrayLength) {
     exceeded();
   }
+  const count = Reflect.apply(typedArrayLength, value, []);
+  const dataToJSON = quietLookup(arrayPrototype, "toJSON");
+  if (dataToJSON !== undefined && dataToJSON.descriptor === undefined && !isBigIntArray(value)) {
+    const projection = Object.create(null) as Record<string, unknown>;
+    projection.type = "Buffer";
+    projection.data = new BufferBytes(value, count);
+    return projection;
+  }
+  if (count * TYPED_ARRAY_INDEX_UNITS > walk.work.unitsLeft) {
+    exceeded();
+  }
+  spendWork(walk.work, count * TYPED_ARRAY_INDEX_UNITS);
+  return undefined;
+}
+
+function isBigIntArray(value: object): boolean {
+  return types.isBigInt64Array(value) || types.isBigUint64Array(value);
 }
 
 /** The first steps of SerializeJSONProperty: reads `holder[key]` once, applies its toJSON and unboxes the result. */
@@ -326,10 +385,8 @@ function project(walk: Walk, holder: object, key: string): { original: unknown; 
   if (isTracked(value) || typeof value === "bigint") {
     const toJSON: unknown = (value as { toJSON?: unknown }).toJSON;
     if (typeof toJSON === "function") {
-      if (isTracked(value)) {
-        boundBufferProjection(walk, value, toJSON);
-      }
-      value = Reflect.apply(toJSON, value, [key]);
+      const standIn = toJSON === bufferToJSON && isTracked(value) ? projectBuffer(walk, value) : undefined;
+      value = standIn ?? Reflect.apply(toJSON, value, [key]);
     }
   }
   return { original, value: typeof value === "object" && value !== null ? unbox(value) : value };
@@ -409,7 +466,9 @@ function serializeNode(walk: Walk, node: object, original: unknown, key: string,
   walk.nodes.add(node);
   byKey.set(key, open + 1);
   try {
-    if (Array.isArray(node)) {
+    if (node instanceof BufferBytes) {
+      serializeArray(walk, node.bytes, depth + 1, node.length);
+    } else if (Array.isArray(node)) {
       serializeArray(walk, node, depth + 1);
     } else {
       serializeObject(walk, node, depth + 1);
@@ -431,10 +490,10 @@ function serializeNode(walk: Walk, node: object, original: unknown, key: string,
  * SerializeJSONArray: the length is converted once. Every index prints at least one character and a separator, so an
  * array whose brackets, separators and one character per item (2n + 1) cannot fit the text budget, or, under a
  * redacted key, whose items (one unit each) cannot fit the work budget, throws before any index is read. Each index is
- * read once; a dropped item prints null.
+ * read once; a dropped item prints null. A Buffer's stand-in passes its `length`, which is then not read.
  */
-function serializeArray(walk: Walk, array: object, depth: number): void {
-  const length = toLength(Reflect.get(array, "length"));
+function serializeArray(walk: Walk, array: object, depth: number, knownLength?: number): void {
+  const length = knownLength ?? toLength(Reflect.get(array, "length"));
   if (walk.discarding ? length > walk.work.unitsLeft : (length === 0 ? 2 : 2 * length + 1) > walk.budget.charsLeft) {
     exceeded();
   }
@@ -473,18 +532,43 @@ function boundTypedArray(walk: Walk, record: object): void {
 }
 
 /**
- * SerializeJSONObject: own enumerable string keys in order, each read once; dropped members are left out. A member
- * that prints is charged as text (its key is written before it is matched against `isSensitive`, so the match never
- * scans more than was printed) and a member JSON drops costs one unit of work, its key neither written nor matched.
- * An object with more keys than both budgets could pay for throws before any value is read, and a typed array is
- * bounded by its length before its keys are listed. A sensitive member that JSON prints is written as "[REDACTED]".
+ * EnumerableOwnProperties: [[OwnPropertyKeys]] once, then [[GetOwnProperty]] for each string key, as JSON.stringify
+ * runs them. A list longer than both budgets could pay for throws before any descriptor is read, and each key that
+ * prints nothing at this step (a symbol, a non-enumerable or vanished key) costs one unit of work, so sweeping keys
+ * JSON skips is bounded by the work allowance. An ordinary object runs no code to list its keys, so its enumerable
+ * keys are taken from `Object.keys`, which sweeps the same list.
+ */
+function enumerableKeys(walk: Walk, record: object): string[] {
+  const keys = Reflect.ownKeys(record);
+  if (keys.length > walk.work.unitsLeft + (walk.discarding ? 0 : walk.budget.charsLeft)) {
+    exceeded();
+  }
+  if (!types.isProxy(record)) {
+    const names = Object.keys(record);
+    spendWork(walk.work, keys.length - names.length);
+    return names;
+  }
+  const names: string[] = [];
+  for (const key of keys) {
+    if (typeof key === "string" && Reflect.getOwnPropertyDescriptor(record, key)?.enumerable === true) {
+      names.push(key);
+    } else {
+      spendWork(walk.work, 1);
+    }
+  }
+  return names;
+}
+
+/**
+ * SerializeJSONObject: own enumerable string keys in order (see `enumerableKeys`), each read once; dropped members
+ * are left out. A member that prints is charged as text (its key is written before it is matched against
+ * `isSensitive`, so the match never scans more than was printed) and a member JSON drops costs one unit of work, its
+ * key neither written nor matched. A typed array is bounded by its length before its keys are listed. A sensitive
+ * member that JSON prints is written as "[REDACTED]".
  */
 function serializeObject(walk: Walk, record: object, depth: number): void {
   boundTypedArray(walk, record);
-  const names = Object.keys(record);
-  if (names.length > walk.work.unitsLeft + (walk.discarding ? 0 : walk.budget.charsLeft)) {
-    exceeded();
-  }
+  const names = enumerableKeys(walk, record);
   emit(walk, "{");
   let members = 0;
   for (const name of names) {
@@ -540,12 +624,13 @@ export interface SerializeJsonMemberOptions {
  *   throws a RangeError. Printed text is charged to `budget` only; `work` pays for each value under a redacted key,
  *   each dropped object member and each scan of a string too long to print (see `WorkBudget`). An array checks
  *   2n + 1 characters (n units of work under a redacted key) before its index 0 is read, a typed array checks its
- *   internal length before its keys are listed, Node's built-in Buffer toJSON is checked by the buffer's internal
- *   length before it copies the bytes, and an object with more keys than both budgets could pay for fails before any
- *   value is read, so oversized sparse, proxy, typed, Buffer or generated values fail at once; a bigint is checked by
- *   bit length before its decimal text is built, and not converted under a redacted key. A Proxy's own keys are listed
- *   by the engine (through its ownKeys trap) before they can be charged, so a Proxy is bounded only by the keys its
- *   trap returns.
+ *   internal length before its keys are listed, a Buffer projected by Node's built-in toJSON is read in place
+ *   and bounded like an array by its internal length once its key's redaction is known (a receiver whose length
+ *   cannot be bounded that way fails, see `projectBuffer`), an object with more own keys than both budgets could pay
+ *   for fails before any descriptor or value is read, and each key JSON skips costs a unit of work, so oversized
+ *   sparse, proxy, typed, Buffer, hidden-key or generated values fail at once; a bigint is checked by bit length
+ *   before its decimal text is built, and not converted under a redacted key. A Proxy's own keys are listed by its
+ *   ownKeys trap, so the list it returns exists before it can be charged.
  *
  * With `isSensitive`, every object key below the member that it matches prints "[REDACTED]" when JSON prints the
  * member at all; the key is matched after the holder's toJSON ran, so keys a projection creates are covered too, and

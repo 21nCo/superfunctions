@@ -41,12 +41,22 @@ export interface DocumentOutput {
    */
   readonly maxDiagnostics: number;
   /**
-   * Writes the single result document to stdout and returns the run's exit code. `droppedDiagnostics` reports that
-   * diagnostics past `maxDiagnostics` were left out before they were read; it adds one warning on stderr.
+   * Writes the single result document to stdout and returns the run's exit code. `left.dropped` reports that
+   * diagnostics past `maxDiagnostics` were left out before they were read (one warning on stderr), and
+   * `left.unreadable` counts returned diagnostics that could not be read (one bounded warning each).
    */
-  finish(outcome: DocumentOutcome, diagnostics: readonly Diagnostic[], droppedDiagnostics?: boolean): number;
-  /** Writes the fixed CLIFN_RUNNER_FAILED document for a result that could not be read, and returns exit code 1. */
+  finish(outcome: DocumentOutcome, diagnostics: readonly Diagnostic[], left?: DiagnosticsLeftOut): number;
+  /**
+   * Writes the fixed CLIFN_RUNNER_FAILED document for a result that could not be read, after warning for each
+   * collected output call, none of which is printed, and returns exit code 1.
+   */
   failPreparation(): number;
+}
+
+/** Diagnostics the runner left out before the document was prepared. */
+export interface DiagnosticsLeftOut {
+  dropped?: boolean;
+  unreadable?: number;
 }
 
 /** Printed instead of an error message whose text does not fit the result document. */
@@ -360,12 +370,20 @@ export function createDocumentOutput(options: DocumentOutputOptions): DocumentOu
   // than is left of the document's budget) is dropped with a fixed warning on stderr, so it cannot cost the run its
   // result document. Each diagnostic costs one unit of work before it is read, and at most `maxDiagnostics` are read.
   // Returns the `,"diagnostics":[...]` member, or undefined when none is kept.
-  const writeDiagnostics = (input: readonly Diagnostic[], dropped: boolean, budgets: Budgets): JsonText | undefined => {
+  const writeDiagnostics = (
+    input: readonly Diagnostic[],
+    { dropped = false, unreadable = 0 }: DiagnosticsLeftOut,
+    budgets: Budgets
+  ): JsonText | undefined => {
     const segment = segmentOf(budgets.text);
     segment.charsLeft -= DIAGNOSTICS_MEMBER_LENGTH;
     const text = new JsonText();
     text.write(',"diagnostics":[');
     const advice = boundedAdvice("further diagnostics were dropped from the result document");
+    // At most `maxDiagnostics` were counted, so this loop is bounded like the one below.
+    for (let index = 0; index < unreadable; index += 1) {
+      advice.add("a returned diagnostic was dropped from the result document: it could not be read");
+    }
     const count = Math.min(input.length, maxDiagnostics);
     let kept = 0;
     for (let index = 0; index < count; index += 1) {
@@ -401,10 +419,11 @@ export function createDocumentOutput(options: DocumentOutputOptions): DocumentOu
     service,
     maxDiagnostics,
     failPreparation() {
+      warnUnused(-1);
       options.stdout(SERIALIZATION_FAILURE_TEXT);
       return 1;
     },
-    finish(outcome, diagnostics, droppedDiagnostics = false) {
+    finish(outcome, diagnostics, left = {}) {
       let text: string | undefined;
       let exitCode = 1;
       // One text budget for the whole document, charged at the exact length of its text: its frame, the data or the
@@ -436,7 +455,7 @@ export function createDocumentOutput(options: DocumentOutputOptions): DocumentOu
           exitCode = error.exitCode;
         }
 
-        const diagnosticsText = writeDiagnostics(diagnostics, droppedDiagnostics, budgets);
+        const diagnosticsText = writeDiagnostics(diagnostics, left, budgets);
         if (diagnosticsText !== undefined) {
           document.append(diagnosticsText);
         }
