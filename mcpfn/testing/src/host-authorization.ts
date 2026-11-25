@@ -800,7 +800,7 @@ function registrationEligibility(
     return {
       eligibility: "ineligible",
       scopeRejection: client.source === "client-metadata-document" &&
-        fetchedDocumentAccepted(client, registration, supportedMethods),
+        fetchedDocumentAccepted(registration, supportedMethods),
     };
   }
   return { eligibility: method, scopeRejection: false };
@@ -811,12 +811,11 @@ function registrationEligibility(
  * (draft, section 5): token_endpoint_auth_methods_supported, when present,
  * must be a nonempty list of strings that includes any declared method, and
  * none is selected whenever the list offers it. Undefined
- * when the declarations are malformed or inconsistent (refused).
+ * when the declarations are malformed or inconsistent (refused). Written from
+ * the draft rather than imported from @mcpfn/auth, so the harness judges
+ * any server, @mcpfn/auth included, against the specification.
  */
-function fetchedAuthMethod(
-  _client: McpFnNormalizedClientRegistration,
-  registration: McpFnHostedRegistrationFixture,
-): string | undefined {
+function fetchedAuthMethod(registration: McpFnHostedRegistrationFixture): string | undefined {
   const metadata = registration.metadata as Record<string, unknown>;
   const supported = metadata.token_endpoint_auth_methods_supported;
   if (
@@ -844,11 +843,10 @@ function fetchedAuthMethod(
  * be `none`, and the target must support `none`.
  */
 function fetchedDocumentAccepted(
-  client: McpFnNormalizedClientRegistration,
   registration: McpFnHostedRegistrationFixture,
   supported: readonly string[] | undefined,
 ): boolean {
-  return fetchedAuthMethod(client, registration) === "none" && (!supported || supported.includes("none"));
+  return fetchedAuthMethod(registration) === "none" && (!supported || supported.includes("none"));
 }
 
 /**
@@ -866,7 +864,7 @@ function authMethodEligibility(
   // stored from a fetched resolution, so the two paths must agree.
   const stored = !supported || supported.includes(client.tokenEndpointAuthMethod);
   if (client.source !== "client-metadata-document") return stored ? "eligible" : "ineligible";
-  const fetched = fetchedDocumentAccepted(client, registration, supported);
+  const fetched = fetchedDocumentAccepted(registration, supported);
   if (stored && fetched) return "eligible";
   return stored || fetched ? "indeterminate" : "ineligible";
 }
