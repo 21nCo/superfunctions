@@ -3,7 +3,7 @@ import { McpFnValidationError } from "../src/errors.js";
 import { fromOpenAPI } from "../src/openapi/index.js";
 import { McpFnRegistry } from "../src/registry.js";
 import { createSchemaCompiler } from "../src/validation.js";
-import { expectArguments, recordingExecutor, requestExtra, tool } from "./openapi-helpers.js";
+import { expectArguments, fixture, recordingExecutor, requestExtra, tool } from "./openapi-helpers.js";
 
 // The edge runtime's engine: every compiler mcpFn creates without naming one is @cfworker/json-schema.
 vi.mock("../src/validation.js", async (importOriginal) => {
@@ -412,6 +412,62 @@ describe("fromOpenAPI under @cfworker/json-schema", () => {
     // Ajv decides by its compile, and the recursive integer form compiles there too.
     expectArguments(tool(result.tools, "integerAllOf").inputSchema, { valid: [{ body: 1 }, { body: { next: 2 } }], invalid: [{ body: 1.5 }, { body: {} }] });
   }, 120_000);
+
+  it("stacks every declared property of a closed object minProperties forces, and not names every object inherits", () => {
+    const closed = (next: unknown) => ({ type: "object", additionalProperties: false, minProperties: 1, properties: { next } });
+    const schemas = {
+      ...chain("C", 2_500, closed),
+      // A second declared name or an open object lets a valid value leave `next` out.
+      ...chain("D", 2_500, (next) => ({ type: "object", additionalProperties: false, minProperties: 1, properties: { next, v: { type: "integer" } } })),
+      ...chain("O", 2_500, (next) => ({ type: "object", minProperties: 1, properties: { next } })),
+      // `toString` is found on every object without an own property, so nothing is visited.
+      Inherited: { anyOf: [{ type: "object", required: ["toString"], additionalProperties: { $ref: "#/components/schemas/Inherited" } }] },
+      Pattern: { type: "object", required: ["toString"], patternProperties: { "^to": { $ref: "#/components/schemas/Pattern" } } },
+    };
+    const post = (operationId: string, content: Record<string, unknown>) => ({
+      post: { operationId, requestBody: { required: true, content }, responses: { "204": { description: "Done" } } },
+    });
+    const ref = (name: string) => ({ schema: { $ref: `#/components/schemas/${name}` } });
+    const result = fromOpenAPI(
+      {
+        openapi: "3.1.0",
+        paths: {
+          "/closed": post("closedMin", { "application/json": ref("C0") }),
+          "/fallback": post("closedMinFallback", { "application/json": ref("C0"), "application/example+json": { schema: { type: "string" } } }),
+          "/out": { get: { operationId: "closedMinOutput", responses: json({ $ref: "#/components/schemas/C0" }) } },
+          "/choice": post("closedChoice", { "application/json": ref("D0") }),
+          "/open": post("openMin", { "application/json": ref("O0") }),
+          "/inherited": { ...post("inherited", { "application/json": ref("Inherited") }), get: { operationId: "inheritedOutput", responses: json({ $ref: "#/components/schemas/Inherited" }) } },
+          "/pattern": post("inheritedPattern", { "application/json": ref("Pattern") }),
+        },
+        components: { schemas },
+      },
+      { executor: recordingExecutor(), allowMutations: true },
+    );
+    expect(verdicts(result)).toEqual([tooDeep("closedMin"), tooDeep("closedMinOutput")]);
+    expect(result.tools.map(({ name, operation }) => [name, operation.requestBody?.contentType])).toEqual([
+      ["closedMinFallback", "application/example+json"],
+      ["closedChoice", "application/json"],
+      ["openMin", "application/json"],
+      ["inherited", "application/json"],
+      ["inheritedOutput", undefined],
+      ["inheritedPattern", "application/json"],
+    ]);
+    const validate = (name: string) => createSchemaCompiler("cfworker").compile(tool(result.tools, name).inputSchema);
+    expect([validate("closedChoice")({ body: { v: 1 } }), validate("openMin")({ body: { x: 1 } }), validate("inherited")({ body: {} }), validate("inheritedPattern")({ body: {} })])
+      .toEqual([true, true, true, true]);
+    expect(createSchemaCompiler("cfworker").compile(tool(result.tools, "inheritedOutput").outputSchema!)({})).toBe(true);
+  }, 120_000);
+
+  it("skips a body, nested or response property named __proto__, which this engine reads from Object.prototype when absent", () => {
+    const result = fromOpenAPI(fixture("skip-prototype-property-name"), { executor: recordingExecutor(), allowMutations: true });
+    expect(verdicts(result).map(([operationId, code]) => [operationId, code])).toEqual([
+      ["protoBody", "unsupported-property-name"], ["protoNested", "unsupported-property-name"], ["protoOutput", "unsupported-property-name"],
+    ]);
+    expect(result.tools.map(({ name }) => name)).toEqual(["plainBody"]);
+    const validate = createSchemaCompiler("cfworker").compile(tool(result.tools, "plainBody").inputSchema);
+    expect([validate({ body: { proto: {} } }), validate({ body: {} })]).toEqual([true, false]);
+  });
 
   it("registers a __proto__ query parameter, which this engine validates as an own property, and delivers it", async () => {
     const executor = recordingExecutor();

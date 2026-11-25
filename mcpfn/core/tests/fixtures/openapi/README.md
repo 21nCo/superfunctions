@@ -10,6 +10,9 @@
   through a property, which stays supported.
   `skip-prototype-parameter-name.json` also keeps a parameter with an
   ordinary name, which stays supported.
+  `skip-prototype-property-name.json` declares a `__proto__` property in a
+  body, a nested component and a response, and keeps a body with an
+  ordinary name, which stays supported.
 - `skip-access-flag-*.json` cover the readOnly (input) and writeOnly (output)
   projection rule. A flagged property is left out only along a plain chain
   (`properties`, one `items` schema, a schema `additionalProperties`,

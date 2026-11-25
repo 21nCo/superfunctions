@@ -14,6 +14,8 @@ function convert(name: string, options: Partial<Parameters<typeof fromOpenAPI>[1
   return fromOpenAPI(fixture(name), { executor: recordingExecutor(), allowMutations: true, ...options });
 }
 
+const PROTO_PROPERTY =
+  "property __proto__ cannot be declared: Ajv ignores it in properties and @cfworker/json-schema reads the inherited Object.prototype";
 const OVERLAP = "anyOf/oneOf members that can overlap, not, if/then/else or a dependency";
 const REQUIRED_ELSEWHERE = "a required list of another schema for the same object";
 
@@ -404,6 +406,43 @@ describe("fromOpenAPI skip reasons", () => {
     expect(skipped).toHaveLength(1);
     expect(skipped[0]).toMatchObject({ operation: { operationId }, code });
     expect(skipped[0]!.reason).toMatch(reason);
+  });
+
+  it("skips a body, nested or response property named __proto__, which Ajv ignores in properties, and keeps ordinary names", () => {
+    const { tools, skipped } = convert("skip-prototype-property-name");
+    expect(skips({ tools, skipped } as Result)).toEqual([
+      ["protoBody", "unsupported-property-name", PROTO_PROPERTY],
+      ["protoNested", "unsupported-property-name", `${PROTO_PROPERTY} (in #/components/schemas/Holder)`],
+      ["protoOutput", "unsupported-property-name", PROTO_PROPERTY],
+    ]);
+    expect(tools.map(({ name }) => name)).toEqual(["plainBody"]);
+    expectArguments(tool(tools, "plainBody").inputSchema, {
+      valid: [{ body: { proto: {} } }, { body: { proto: {}, name: "x" } }],
+      invalid: [{ body: {} }, { body: { name: "x" } }],
+    });
+  });
+
+  it("retries a closure the document budget refused once released reservations make room for it", () => {
+    let refusals = 0;
+    for (let reserved = 1; reserved <= 40; reserved += 1) {
+      const total = new NodeBudget(40, undefined, "the document's schemas expand in total");
+      const converter = new SchemaConverter("3.1", { A: { type: "object", properties: { b: { type: "string" } } } }, total);
+      total.chargeNodes(reserved);
+      let refused: unknown;
+      try {
+        converter.checkDefinitions(["A"], "input");
+      } catch (error) {
+        refused = error;
+      }
+      total.release(reserved);
+      if (refused === undefined) continue;
+      refusals += 1;
+      expect(refused).toMatchObject({ code: "schema-too-large", message: "the document's schemas expand in total to more than 40 nodes" });
+      // The work done stays charged; the closure itself is walked again, not remembered as refused.
+      expect(() => converter.checkDefinitions(["A"], "input")).not.toThrow();
+      expect(refused).toMatchObject({ exhausted: true });
+    }
+    expect(refusals).toBeGreaterThan(1);
   });
 
   it("skips a parameter named __proto__, which Ajv leaves out of a closed group, and keeps ordinary names", () => {
@@ -1237,7 +1276,7 @@ describe("fromOpenAPI bounded and dialect-aware conversion", () => {
     }
   });
 
-  it("skips a flagged __proto__ property, which validators do not read from properties", () => {
+  it("skips a flagged __proto__ property like any other __proto__ property, which validators do not read from properties", () => {
     const result = fromOpenAPI(
       JSON.parse(
         JSON.stringify({
@@ -1251,8 +1290,8 @@ describe("fromOpenAPI bounded and dialect-aware conversion", () => {
       options(),
     );
     expect(skips(result)).toEqual([
-      ["protoInput", "unsupported-access-flag", constrained("__proto__", "the validators, which ignore it in properties")],
-      ["protoOutput", "unsupported-access-flag", constrained("__proto__", "the validators, which ignore it in properties", "writeOnly")],
+      ["protoInput", "unsupported-property-name", PROTO_PROPERTY],
+      ["protoOutput", "unsupported-property-name", PROTO_PROPERTY],
     ]);
   });
 

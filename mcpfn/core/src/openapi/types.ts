@@ -94,6 +94,7 @@ export type OpenApiSkipCode =
   | "unsupported-parameter-style"
   | "unsupported-parameter-schema"
   | "unsupported-parameter-name"
+  | "unsupported-property-name"
   | "parameter-content"
   | "missing-path-parameter"
   | "non-json-body"

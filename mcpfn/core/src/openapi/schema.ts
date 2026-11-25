@@ -6,10 +6,17 @@ export class OpenApiSkip extends Error {
   constructor(
     readonly code: OpenApiSkipCode,
     message: string,
+    /** Refused only because the call's document budget had no room left: never remembered, as released reservations may make room. */
+    readonly exhausted = false,
   ) {
     super(message);
     this.name = "OpenApiSkip";
   }
+}
+
+/** Whether a failure may be remembered for later operations: anything but a refusal of the document budget. */
+export function rememberable(error: OpenApiSkip): boolean {
+  return !error.exhausted;
 }
 
 export type OpenApiVersion = "3.0" | "3.1";
@@ -149,6 +156,7 @@ export const CONTEXT_FREE_FAILURES: ReadonlySet<OpenApiSkipCode> = new Set<OpenA
   "external-ref",
   "unsupported-ref",
   "unsupported-component-name",
+  "unsupported-property-name",
 ]);
 
 export class NodeBudget {
@@ -224,7 +232,7 @@ export class NodeBudget {
   chargeNodes(count: number): void {
     if (count === 0) return;
     if (this.produced + count > this.limit) {
-      throw new OpenApiSkip("schema-too-large", `${this.subject} to more than ${this.limit} nodes`);
+      throw new OpenApiSkip("schema-too-large", `${this.subject} to more than ${this.limit} nodes`, this.total === undefined);
     }
     this.total?.chargeNodes(count);
     this.produced += count;
@@ -242,7 +250,7 @@ export class NodeBudget {
     this.produced += 1;
     if (typeof value === "object" && value !== null) this.source(value);
     if (this.produced > this.limit) {
-      throw new OpenApiSkip("schema-too-large", `${this.subject} to more than ${this.limit} nodes`);
+      throw new OpenApiSkip("schema-too-large", `${this.subject} to more than ${this.limit} nodes`, this.total === undefined);
     }
     // The call's total counts nodes only; each region checks its own sharing.
     if (this.subject === REGION && this.produced > SHARING_FACTOR * this.sourceValues + SHARING_ALLOWANCE) {
@@ -986,6 +994,16 @@ export class SchemaConverter {
     refs: Set<string>,
   ): [string, unknown] | undefined {
     if (SCHEMA_MAP_KEYWORDS.has(keyword) && isObject(value)) {
+      // Ajv leaves a "__proto__" key of properties out, and
+      // @cfworker/json-schema reads the inherited Object.prototype for it
+      // when the value has no such own property, `required` included: no
+      // engine checks it as written, in a body or a response alike.
+      if (keyword === "properties" && Object.hasOwn(value, "__proto__")) {
+        throw new OpenApiSkip(
+          "unsupported-property-name",
+          "property __proto__ cannot be declared: Ajv ignores it in properties and @cfworker/json-schema reads the inherited Object.prototype",
+        );
+      }
       return [keyword, this.convertMap(value, mode, refs)];
     }
     if ((SCHEMA_ARRAY_KEYWORDS.has(keyword) || keyword === "items") && Array.isArray(value)) {
@@ -1568,6 +1586,8 @@ export class SchemaConverter {
         entry = { schema, refs, inPlace: new Map([...links].filter(([key]) => refs.has(key))), ownFrames: own };
       } catch (error) {
         if (!(error instanceof OpenApiSkip)) throw error;
+        // Converted again by a later operation: its work is charged again.
+        if (!rememberable(error)) throw error;
         entry = {
           error: new OpenApiSkip(error.code, `${error.message} (in #/components/schemas/${name})`),
         };
@@ -1605,6 +1625,8 @@ export class SchemaConverter {
         known = {};
       } catch (error) {
         if (!(error instanceof OpenApiSkip)) throw error;
+        // The work done is charged; a later operation may find room for the walk.
+        if (!rememberable(error)) throw error;
         known = { error };
       }
       this.closures.set(key, known);
@@ -2129,7 +2151,8 @@ function forEachInPlace(schema: JsonObject, visit: (member: unknown) => void, al
  * What a schema and its inline `allOf` members, applied to the same value,
  * demand of it together: the names any of them `required`, the JSON types all
  * of their `type`s allow (undefined when none has one), and the largest
- * `minItems`. Members behind a `$ref` are not read. `nodes` counts the walk.
+ * `minItems` and `minProperties`. Members behind a `$ref` are not read.
+ * `nodes` counts the walk.
  */
 interface Conjunction {
   required: string[];
@@ -2139,6 +2162,7 @@ interface Conjunction {
   /** The kinds the schema and its inline `allOf` members admit, which select the branches taken (`takenBranches`). */
   selectors: Set<ValueKind> | undefined;
   minItems: number;
+  minProperties: number;
   nodes: number;
 }
 
@@ -2146,11 +2170,15 @@ interface Conjunction {
 const POSITION_CHARGE_BATCH = 1024;
 
 /** A conjunction that demands nothing: every child value starts its own chain. */
-const UNFORCED: Conjunction = { required: [], names: new Set(), types: undefined, selectors: undefined, minItems: 0, nodes: 0 };
+const UNFORCED: Conjunction = {
+  required: [], names: new Set(), types: undefined, selectors: undefined, minItems: 0, minProperties: 0, nodes: 0,
+};
 
 function conjunction(schema: JsonObject): Conjunction {
   const names = new Set<string>();
-  const result: Conjunction = { required: [], names, types: undefined, selectors: undefined, minItems: 0, nodes: 0 };
+  const result: Conjunction = {
+    required: [], names, types: undefined, selectors: undefined, minItems: 0, minProperties: 0, nodes: 0,
+  };
   const inline: unknown[] = [schema];
   while (inline.length > 0) {
     const node = inline.pop();
@@ -2174,6 +2202,7 @@ function conjunction(schema: JsonObject): Conjunction {
     }
     if (node.type !== undefined) result.types = narrowed(result.types, node.type);
     if (typeof node.minItems === "number") result.minItems = Math.max(result.minItems, node.minItems);
+    if (typeof node.minProperties === "number") result.minProperties = Math.max(result.minProperties, node.minProperties);
     result.nodes += arrayOf(node.anyOf).length + arrayOf(node.oneOf).length;
     for (const member of [...arrayOf(node.allOf), ...takenBranches(node, result.selectors)]) pending.push(member);
   }
@@ -2185,8 +2214,12 @@ function conjunction(schema: JsonObject): Conjunction {
  * items, ...) of the instance `schema` validates, each with whether every
  * value `schema` accepts has that child: a property `required` lists (its
  * `properties` entry and the `patternProperties` matching it, else
- * `additionalProperties`) when only objects are accepted, and items up to
- * `minItems` when only arrays are. `whole` is what `schema` with the `allOf`
+ * `additionalProperties`) when only objects are accepted, every declared
+ * property of a closed object (`additionalProperties: false`, no patterns)
+ * whose `minProperties` leaves none of them out, and items up to `minItems`
+ * when only arrays are. A required name every object inherits (`toString`)
+ * satisfies @cfworker/json-schema's `required` without an own property, so it
+ * forces no `patternProperties` or `additionalProperties` child. `whole` is what `schema` with the `allOf`
  * members it belongs to demands of the value (`conjunction`).
  */
 function forEachChild(
@@ -2209,6 +2242,7 @@ function forEachChild(
   const expressions = new Map<string, RegExp | undefined>();
   for (const name of required) {
     const declared = Object.hasOwn(properties, name);
+    if (!declared && name in Object.prototype) continue;
     // Matching patterns apply beside `properties`; `additionalProperties` only
     // without either. A pattern validators cannot read forces nothing.
     let matched = false;
@@ -2223,7 +2257,12 @@ function forEachChild(
     }
     if (!declared && !matched && readable) forcedAdditional = true;
   }
-  for (const [name, member] of objectEntries(schema.properties)) visit(member, object && whole.names.has(name));
+  const declared = objectEntries(schema.properties);
+  // Own keys of a closed object are declared names: `minProperties` of them
+  // must all be present when there are no more than that.
+  const closed = schema.additionalProperties === false && patterns.length === 0;
+  const allPresent = object && closed && declared.length > 0 && whole.minProperties >= declared.length;
+  for (const [name, member] of declared) visit(member, allPresent || (object && whole.names.has(name)));
   for (const [pattern, member] of patterns) visit(member, forcedPatterns.has(pattern));
   visit(schema.additionalProperties, forcedAdditional);
   visit(schema.propertyNames, false);

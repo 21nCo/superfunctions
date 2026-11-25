@@ -18,6 +18,7 @@ import {
   NodeBudget,
   OpenApiSkip,
   parseComponentRef,
+  rememberable,
   SchemaConverter,
   TOO_DEEP,
   type OpenApiVersion,
@@ -648,7 +649,8 @@ class OperationConverter {
       this.shared.set(key, result && deepFreeze(result));
       return result;
     } catch (error) {
-      if (error instanceof OpenApiSkip) this.shared.set(key, error);
+      // A refusal of the document budget alone is not remembered: a later tool may find room.
+      if (error instanceof OpenApiSkip && rememberable(error)) this.shared.set(key, error);
       throw error;
     }
   }
