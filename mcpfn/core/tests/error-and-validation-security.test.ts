@@ -367,6 +367,31 @@ describe("withheld errors outside tool handlers (MCP-SEC-08)", () => {
     expect(onError).toHaveBeenCalledOnce();
   });
 
+  it("withholds schema errors from the task store behind the SDK's task handlers", async () => {
+    const onError = vi.fn();
+    const { z } = await import("zod");
+    const { InMemoryTaskStore } = await import("@modelcontextprotocol/sdk/experimental/tasks/stores/in-memory.js");
+    const { GetTaskResultSchema } = await import("@modelcontextprotocol/sdk/types.js");
+    const store = new InMemoryTaskStore();
+    store.getTask = async () => z.object({ internalTaskColumn: z.string() }).parse({ internalTaskColumn: 1 }) as never;
+    const registry = new McpFnRegistry().register({
+      name: "slow",
+      description: "Task tool.",
+      inputSchema: { type: "object" },
+      execution: { taskSupport: "required" },
+      handler: async () => structuredResult({ ok: true }),
+      taskHandler: { createTask: vi.fn(), getTask: vi.fn(), getTaskResult: vi.fn() } as never,
+    });
+    const client = await connect(registry, { taskStore: store, onError });
+    const error = await client.request({ method: "tasks/get", params: { taskId: "task-1" } }, GetTaskResultSchema)
+      .then(() => undefined, (failure: unknown) => failure);
+    expect(JSON.stringify(error)).not.toContain("internalTaskColumn");
+    expect(String((error as Error).message)).not.toContain("internalTaskColumn");
+    expect(error).toMatchObject({ code: ErrorCode.InternalError });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(onError).toHaveBeenCalledOnce();
+  });
+
   it("answers without waiting for a slow onError sink", async () => {
     const client = await connect(
       new McpFnRegistry().register({ name: "fail", description: "Fails.", inputSchema: { type: "object" }, handler: async () => { throw systemError(); } }),

@@ -12,6 +12,7 @@ import type { RequestOptions } from "@modelcontextprotocol/sdk/shared/protocol.j
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import {
   CallToolRequestSchema,
+  ClientRequestSchema,
   CompleteRequestSchema,
   CreateMessageResultSchema,
   CreateMessageResultWithToolsSchema,
@@ -164,11 +165,6 @@ export function resolveMcpFnServerCapabilities<TContext>(
     };
   }
   return mergeCapabilities(registryCapabilities, additionalCapabilities);
-}
-
-/** Carries an error thrown by one of McpFn's request handlers. */
-class HandlerFailure {
-  constructor(readonly error: unknown) {}
 }
 
 function requestSchemaIssues(error: unknown): Array<{ path: string; message: string }> | undefined {
@@ -348,17 +344,8 @@ export class McpFnServer<TContext = undefined> {
   }
 
   private installHandlers(): void {
-    // Tag errors thrown by McpFn's handlers (see withheldProtocolErrors).
-    const register = ((schema: unknown, handler: (request: unknown, extra: unknown) => Promise<unknown>) =>
-      this.protocol.setRequestHandler(schema as never, (async (request: unknown, extra: unknown) => {
-        try {
-          return await handler(request, extra);
-        } catch (error) {
-          throw new HandlerFailure(error);
-        }
-      }) as never)) as typeof this.protocol.setRequestHandler;
     if (this.capabilities.tools) {
-      register(
+      this.protocol.setRequestHandler(
         ListToolsRequestSchema,
         async (request, extra) => {
           const tools = this.registry.listTools();
@@ -388,7 +375,7 @@ export class McpFnServer<TContext = undefined> {
           };
         },
       );
-      register(
+      this.protocol.setRequestHandler(
         CallToolRequestSchema,
         async (request, extra) => {
           const context = await this.contextFactory(extra);
@@ -587,7 +574,7 @@ export class McpFnServer<TContext = undefined> {
     }
 
     if (this.capabilities.resources) {
-      register(
+      this.protocol.setRequestHandler(
         ListResourcesRequestSchema,
         async (request, extra) => {
           const context = await this.contextFactory(extra);
@@ -603,7 +590,7 @@ export class McpFnServer<TContext = undefined> {
           };
         },
       );
-      register(
+      this.protocol.setRequestHandler(
         ListResourceTemplatesRequestSchema,
         async (request) => {
           const result = page(
@@ -617,7 +604,7 @@ export class McpFnServer<TContext = undefined> {
           };
         },
       );
-      register(
+      this.protocol.setRequestHandler(
         ReadResourceRequestSchema,
         async (request, extra) => {
           const context = await this.contextFactory(extra);
@@ -626,7 +613,7 @@ export class McpFnServer<TContext = undefined> {
         },
       );
       if (this.capabilities.resources.subscribe) {
-        register(
+        this.protocol.setRequestHandler(
           SubscribeRequestSchema,
           async (request, extra) => {
             const uri = request.params.uri;
@@ -665,7 +652,7 @@ export class McpFnServer<TContext = undefined> {
             }
           },
         );
-        register(
+        this.protocol.setRequestHandler(
           UnsubscribeRequestSchema,
           async (request, extra) => {
             // Stop delivery first: a client that asked to unsubscribe gets no
@@ -688,7 +675,7 @@ export class McpFnServer<TContext = undefined> {
     }
 
     if (this.capabilities.prompts) {
-      register(
+      this.protocol.setRequestHandler(
         ListPromptsRequestSchema,
         async (request) => {
           const result = page(
@@ -702,7 +689,7 @@ export class McpFnServer<TContext = undefined> {
           };
         },
       );
-      register(
+      this.protocol.setRequestHandler(
         GetPromptRequestSchema,
         async (request, extra) => {
           const context = await this.contextFactory(extra);
@@ -718,7 +705,7 @@ export class McpFnServer<TContext = undefined> {
     }
 
     if (this.capabilities.completions) {
-      register(
+      this.protocol.setRequestHandler(
         CompleteRequestSchema,
         async (request, extra) => {
           const context = await this.contextFactory(extra);
@@ -755,12 +742,30 @@ export class McpFnServer<TContext = undefined> {
     const original = protocol._requestHandlers;
     if (!(original instanceof Map)) return;
     const wrap = (handler: Handler): Handler => (request, extra) =>
-      this.withheldProtocolErrors(request.method, () => handler(request, extra), true);
+      this.withheldProtocolErrors(request.method, () => handler(request, extra));
+    // Malformed client params are the client's mistake: answer InvalidParams
+    // before any handler runs. Every error after that point, schema errors
+    // thrown by handlers or the task store included, is withheld.
+    // The client request schema for each method, for precise issue paths.
+    const schemas = new Map<string, { safeParse(value: unknown): { success: boolean; error?: unknown } }>();
+    for (const option of (ClientRequestSchema as unknown as { options: Array<{ shape: { method: { value?: unknown } } }> }).options) {
+      const method = option.shape?.method?.value;
+      if (typeof method === "string") schemas.set(method, option as never);
+    }
+    const validated = (handler: Handler): Handler => async (request, extra) => {
+      const parsed = (schemas.get(request.method) ?? ClientRequestSchema).safeParse(request);
+      if (!parsed.success) {
+        throw new McpError(ErrorCode.InvalidParams, "Invalid request parameters", {
+          issues: requestSchemaIssues(parsed.error) ?? [],
+        });
+      }
+      return handler(request, extra);
+    };
     const handlers = new Map(original);
     protocol._requestHandlers = Object.assign(handlers, {
       get(method: string) {
         const handler = Map.prototype.get.call(handlers, method) as Handler | undefined;
-        return handler && wrap(handler);
+        return handler && validated(wrap(handler));
       },
     });
     let fallback = protocol.fallbackRequestHandler;
@@ -797,25 +802,10 @@ export class McpFnServer<TContext = undefined> {
   }
 
   /** Run a protocol handler, withholding unexpected error text. */
-  private async withheldProtocolErrors<T>(
-    method: string,
-    run: () => Promise<T>,
-    // Only the outermost wrapper, around the SDK's request parsing, may
-    // treat a schema error as invalid client params.
-    requestParsing = false,
-  ): Promise<T> {
+  private async withheldProtocolErrors<T>(method: string, run: () => Promise<T>): Promise<T> {
     try {
       return await run();
-    } catch (caught) {
-      // Errors from McpFn's own handlers arrive wrapped, so a schema error
-      // the application throws there stays on the withheld path.
-      const fromHandler = caught instanceof HandlerFailure;
-      const error = fromHandler ? caught.error : caught;
-      // An unwrapped schema error comes from the SDK validating the request
-      // params before any handler ran: the client's mistake, so answer
-      // InvalidParams with bounded paths and messages only.
-      const invalidParams = fromHandler || !requestParsing ? undefined : requestSchemaIssues(error);
-      if (invalidParams) throw new McpError(ErrorCode.InvalidParams, "Invalid request parameters", { issues: invalidParams });
+    } catch (error) {
       const errorId = await this.reportWithheldError(error, method, undefined, { plainObjects: false });
       if (errorId === undefined) throw error;
       throw new McpError(ErrorCode.InternalError, "Internal error", { errorId });
