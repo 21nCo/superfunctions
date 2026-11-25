@@ -18,8 +18,19 @@ interface AssertionResult { passed: boolean; name: string;[key: string]: any; }
 interface RequestResult { name: string; status: "passed" | "failed" | "error" | "skipped"; duration: number; assertions: AssertionResult[]; error?: string; statusCode?: number;[key: string]: any; }
 interface RunReport { results: RequestResult[];[key: string]: any; }
 
+export interface ApifnTestAdapterOptions {
+    /** Execute scripts from trusted collections. Defaults to false. */
+    allowScripts?: boolean;
+    /** Explicit values for collection templates that use {{process.env.NAME}}. */
+    processEnv?: NodeJS.ProcessEnv;
+}
+
 export class ApifnTestAdapter extends BaseAdapter {
     name = "apifn";
+
+    constructor(private readonly collectionOptions: ApifnTestAdapterOptions = {}) {
+        super();
+    }
 
     supports(framework: string): boolean {
         return framework.toLowerCase() === "apifn";
@@ -143,6 +154,8 @@ export class ApifnTestAdapter extends BaseAdapter {
                     timeout: options.timeout,
                     retries: options.retries,
                     overrides: options.env,
+                    allowScripts: this.collectionOptions.allowScripts === true,
+                    processEnv: this.collectionOptions.processEnv,
                 });
 
                 // Map collection results to testfn TestResults

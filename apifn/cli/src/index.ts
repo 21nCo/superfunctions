@@ -1,4 +1,5 @@
 import { cac } from "cac";
+import { version } from "../package.json";
 import { DEFAULT_CONFIG_PATH, defineConfig, loadConfig } from "./config.js";
 import { runInitCommand } from "./commands/init.js";
 import { runGenerateCommand } from "./commands/generate.js";
@@ -36,6 +37,36 @@ function toArray(value: string | string[] | undefined): string[] | undefined {
     return undefined;
   }
   return Array.isArray(value) ? value : [value];
+}
+
+// cac coerces numeric option values and treats some boolean assignments as true.
+function readCollectionTrustOptions(argv: string[]): { allowScripts: boolean; allowEnv: string[] } {
+  let allowScripts = false;
+  const allowEnv: string[] = [];
+  for (let index = 0; index < argv.length && argv[index] !== "--"; index += 1) {
+    const token = argv[index];
+    const separator = token.indexOf("=");
+    const name = separator < 0 ? token : token.slice(0, separator);
+    if (name === "--allow-scripts" || name === "--allowScripts") {
+      const next = argv[index + 1];
+      if (separator >= 0 || (next && (/^(true|false|on|off|yes|no)$/i.test(next) || Number.isFinite(Number(next))))) {
+        throw new Error("--allow-scripts takes no value");
+      }
+      allowScripts = true;
+    } else if (name === "--no-allow-scripts" || name === "--no-allowScripts") {
+      if (separator >= 0) throw new Error("--no-allow-scripts takes no value");
+      allowScripts = false;
+    } else if (name === "--allow-env" || name === "--allowEnv") {
+      const variableName = separator < 0 ? argv[++index] : token.slice(separator + 1);
+      if (!variableName || variableName.startsWith("-") || variableName.includes("=") || variableName.includes("\0")) {
+        throw new Error("--allow-env requires an environment variable name");
+      }
+      allowEnv.push(variableName);
+    } else if (name === "--no-allow-env" || name === "--no-allowEnv") {
+      throw new Error("--allow-env accepts only explicit environment variable names");
+    }
+  }
+  return { allowScripts, allowEnv };
 }
 
 export async function runCli(
@@ -222,8 +253,6 @@ export async function runCli(
           retries?: string;
           delay?: string;
           envVar?: string | string[];
-          allowEnv?: string | string[];
-          allowScripts?: boolean;
           dotenv?: string;
           redactHeader?: string | string[];
           output?: string;
@@ -247,6 +276,7 @@ export async function runCli(
           : "console";
 
         const result = await runTestCommand({
+          ...readCollectionTrustOptions(argv),
           collectionDir,
           env: options.env,
           bail: options.bail,
@@ -258,8 +288,6 @@ export async function runCli(
           retries: options.retries ? Number(options.retries) : undefined,
           delay: options.delay ? Number(options.delay) : undefined,
           envVar: toArray(options.envVar),
-          allowEnv: toArray(options.allowEnv),
-          allowScripts: options.allowScripts,
           dotenv: options.dotenv,
           redactHeader: toArray(options.redactHeader),
           outputPath: options.output,
@@ -518,7 +546,7 @@ export async function runCli(
     });
 
   cli.help();
-  cli.version("0.1.0");
+  cli.version(version);
 
   // `apifn check` reads its own arguments first: cac would print help (exit 0) for a malformed
   // check invocation that also names --help, instead of the usage error (exit 2).
@@ -539,8 +567,7 @@ export async function runCli(
     cli.parse(["node", "apifn", ...cacArgv], { run: false });
     await cli.runMatchedCommand();
   } catch (error) {
-    // `apifn check` reserves exit 1 for a failed contract check: a usage error exits 2.
-    const usageExit = cli.matchedCommandName === "check" ? 2 : 1;
+    const usageExit = cli.matchedCommandName === "check" || cli.matchedCommandName === "test" ? 2 : 1;
     const message = error instanceof Error ? error.message : String(error);
     const output = createOutput({
       writeStdout: runOptions.stdout,

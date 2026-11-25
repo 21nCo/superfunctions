@@ -286,6 +286,45 @@ describe("runCollection", () => {
     }
   );
 
+  it.each([false, true])("keeps the approved request and script selection after callbacks (parallel=%s)", async (parallel) => {
+    const collection = makeCollection();
+    const [first, second] = collection.items[0]!.children!;
+    second.request!.runtime = { scripts: [{ type: "tests", code: "throw new Error('unexpected script')" }] };
+    const exclude = ["Second", "Third"];
+    const send = vi.fn(async (_request: HttpClientRequest) => response());
+
+    const report = await runCollection(collection, {
+      environment: "development",
+      parallel,
+      exclude,
+      httpClient: { send },
+      reporter: {
+        onStart() {
+          exclude.length = 0;
+          first.request!.runtime = {
+            scripts: [{ type: "pre-request", code: 'req.headers["x-unexpected-script"] = "yes";' }],
+          };
+        },
+      },
+    });
+
+    expect(report.summary).toMatchObject({ passed: 1, skipped: 2 });
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0]?.[0].headers).not.toHaveProperty("x-unexpected-script");
+  });
+
+  it("rejects non-array script declarations before sending requests", async () => {
+    const collection = makeCollection();
+    const request = collection.items[0]!.children![1]!.request!;
+    request.runtime = { scripts: {} } as unknown as NonNullable<typeof request.runtime>;
+    const send = vi.fn(async () => response());
+    await expect(runCollection(collection, {
+      environment: "development",
+      httpClient: { send },
+    })).rejects.toThrow("Expected an array of collection scripts");
+    expect(send).not.toHaveBeenCalled();
+  });
+
   it("caps captured response bodies by UTF-8 byte length", async () => {
     const collection = makeCollection();
     collection.items[0]!.children = [collection.items[0]!.children![0]!];

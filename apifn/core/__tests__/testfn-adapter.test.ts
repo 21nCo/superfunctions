@@ -109,5 +109,23 @@ describe("ApifnTestAdapter", () => {
     expect(results[2]).toMatchObject({ id: "t3", status: "failed", duration: 33 });
     expect(results[2]?.error?.message).toContain("socket hang up");
     expect(results[3]).toMatchObject({ id: "t4", status: "skipped", duration: 0 });
+    expect(mocks.runCollection).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      allowScripts: false,
+      processEnv: undefined,
+    }));
+  });
+
+  it("forwards explicit collection trust and environment values", async () => {
+    const processEnv = { API_TEST_VALUE: "allowed-value" };
+    const adapter = new ApifnTestAdapter({ allowScripts: true, processEnv });
+    mocks.readCollection.mockResolvedValue({ environments: { default: {} } });
+    mocks.runCollection.mockResolvedValue({ results: [] });
+
+    await adapter.run([{ id: "t1", file: "/tmp/work/orders", name: "List Orders", suite: "Orders API" }], {});
+
+    expect(mocks.runCollection).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      allowScripts: true,
+      processEnv,
+    }));
   });
 });

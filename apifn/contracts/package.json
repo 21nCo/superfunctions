@@ -40,7 +40,7 @@
     "verify:packed:registry": "node scripts/verify-packed-consumer.mjs --registry-core"
   },
   "dependencies": {
-    "@apifn/core": "0.1.0",
+    "@apifn/core": "0.1.1",
     "yaml": "^2.8.1"
   },
   "devDependencies": {

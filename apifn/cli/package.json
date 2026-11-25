@@ -25,7 +25,7 @@
   "dependencies": {
     "@apifn/collections": "0.0.5",
     "@apifn/contracts": "0.1.0",
-    "@apifn/core": "0.1.0",
+    "@apifn/core": "0.1.1",
     "@apifn/mock": "0.0.4",
     "@apifn/sdk": "0.1.0",
     "@apifn/snippets": "0.0.5",

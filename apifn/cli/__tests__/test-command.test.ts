@@ -215,7 +215,8 @@ describe("apifn test command — CLI-004, CLI-011, RUN-009", () => {
         expect(stderr).toContain("--allow-scripts");
 
         let stdout = "";
-        expect(await runCli([...args, "--allow-scripts"], {
+        expect(await runCli([...args, "--allow-scripts=0"], { stderr: () => {} })).toBe(2);
+        expect(await runCli([...args, "--allow-scripts", "--allow-scripts"], {
             stdout: (line) => { stdout += line; },
         })).toBe(0);
         expect(JSON.parse(stdout).results[0].assertions).toEqual([
@@ -227,8 +228,10 @@ describe("apifn test command — CLI-004, CLI-011, RUN-009", () => {
         const dir = await createPassingCollection(`http://127.0.0.1:${PASS_PORT}`);
         const request = path.join(dir, "health.yml");
         const yaml = await readFile(request, "utf8");
-        await writeFile(request, yaml.replace("/health", "/{{process.env.APIFN_TEST_PATH}}"));
+        await writeFile(request, yaml.replace("/health", "/{{process.env.APIFN_TEST_PATH}}/{{process.env.01}}"));
         vi.stubEnv("APIFN_TEST_PATH", "allowed-path");
+        vi.stubEnv("01", "literal-name");
+        vi.stubEnv("1", "different-name");
         try {
             const args = ["test", dir, "--reporter", "json"];
             let stderr = "";
@@ -236,10 +239,10 @@ describe("apifn test command — CLI-004, CLI-011, RUN-009", () => {
             expect(stderr).toContain("Environment variable APIFN_TEST_PATH is not set");
 
             let stdout = "";
-            expect(await runCli([...args, "--allow-env", "APIFN_TEST_PATH"], {
+            expect(await runCli([...args, "--allow-env", "APIFN_TEST_PATH", "--allow-env=01"], {
                 stdout: (line) => { stdout += line; },
             })).toBe(0);
-            expect(JSON.parse(stdout).results[0].url).toContain("/allowed-path");
+            expect(JSON.parse(stdout).results[0].url).toContain("/allowed-path/literal-name");
         } finally {
             vi.unstubAllEnvs();
         }

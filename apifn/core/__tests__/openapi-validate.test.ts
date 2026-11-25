@@ -1,4 +1,13 @@
-import { validateOpenAPI } from "../src/index.js";
+import { validateAndDereferenceOpenAPI, validateOpenAPI } from "../src/index.js";
+
+function documentWithReference(ref: string) {
+  return {
+    openapi: "3.1.0" as const,
+    info: { title: "Example API", version: "1.0.0" },
+    paths: {},
+    components: { schemas: { Shared: { type: "string" }, Value: { $ref: ref } } },
+  };
+}
 
 describe("validateOpenAPI", () => {
   it("TV-OPENAPI-012: valid document returns empty errors", async () => {
@@ -32,5 +41,41 @@ describe("validateOpenAPI", () => {
     expect(errors[0]?.path).toBeTruthy();
     expect(errors[0]?.message).toBeTruthy();
     expect(errors[0]?.severity).toBe("error");
+  });
+
+  it.each(["file:///example-schema.json", "https://example.invalid/schema.json"])(
+    "refuses an external reference to %s by default",
+    async (ref) => {
+      const doc = documentWithReference(ref);
+      const snapshot = structuredClone(doc);
+      await expect(validateOpenAPI(doc)).resolves.toEqual([
+        { path: "openapi", message: expect.stringContaining("explicit allowlist"), severity: "error" },
+      ]);
+      expect(doc).toEqual(snapshot);
+    }
+  );
+
+  it("resolves a local JSON pointer without changing the caller's document", async () => {
+    const doc = documentWithReference("#/components/schemas/Shared");
+    const snapshot = structuredClone(doc);
+    const result = await validateAndDereferenceOpenAPI(doc);
+    expect(result.errors).toEqual([]);
+    expect(result.document?.components?.schemas?.Value).toEqual({ type: "string" });
+    expect(doc).toEqual(snapshot);
+  });
+
+  it("uses preloaded allowlist entries and rejects unlisted transitive references", async () => {
+    const ref = "https://example.invalid/preloaded.json";
+    const doc = documentWithReference(ref);
+    const externalReferences = new Map([[ref, '{"type":"integer"}']]);
+    const result = await validateAndDereferenceOpenAPI(doc, { externalReferences });
+    expect(result.errors).toEqual([]);
+    expect(result.document?.components?.schemas?.Value).toEqual({ type: "integer" });
+    expect(doc.components.schemas.Value).toEqual({ $ref: ref });
+
+    externalReferences.set(ref, '{"$ref":"another-example.json"}');
+    await expect(validateOpenAPI(doc, { externalReferences })).resolves.toEqual([
+      { path: "openapi", message: expect.stringContaining("explicit allowlist"), severity: "error" },
+    ]);
   });
 });

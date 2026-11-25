@@ -105,4 +105,23 @@ describe("@apifn/admin", () => {
       baseUrl: "https://operator:secret@example.test/api",
     }, context("project"))).rejects.toMatchObject({ code: "invalid_argument" });
   });
+
+  it("rejects external references when registering or comparing specs", async () => {
+    const adapter = createApiFnAdminAdapter(createApiFnOperatorService({
+      store: new MemoryApiFnOperatorStore(),
+    }));
+    const ctx = context("project");
+    const external = {
+      ...document,
+      components: { schemas: { External: { $ref: "https://example.invalid/schema.json" } } },
+    };
+    await expect(adapter.execute("apifn.specs.register", { id: "external", name: "External", document: external }, ctx))
+      .rejects.toMatchObject({ code: "invalid_argument" });
+    await expect(adapter.execute("apifn.specs.get", { id: "external" }, ctx))
+      .rejects.toMatchObject({ code: "not_found" });
+
+    await adapter.execute("apifn.specs.register", { id: "tasks", name: "Tasks", document }, ctx);
+    await expect(adapter.execute("apifn.specs.compare", { id: "tasks", candidate: external }, ctx))
+      .rejects.toMatchObject({ code: "invalid_argument" });
+  });
 });
