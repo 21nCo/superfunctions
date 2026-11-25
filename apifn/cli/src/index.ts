@@ -47,8 +47,10 @@ function readCollectionTrustOptions(argv: string[]): { allowScripts: boolean; al
     const token = argv[index];
     const separator = token.indexOf("=");
     const name = separator < 0 ? token : token.slice(0, separator);
-    if (/^--(?:no-)?allow(?:-scripts|-env|Scripts|Env)\./.test(name)) {
-      throw new Error("Collection trust options do not accept nested values");
+    // CAC interprets nested keys and accepts negation with any number of dashes.
+    const trustFlag = /^(-+)(?:no-)?allow(?:-scripts|-env|Scripts|Env)(\.|$)/.exec(name);
+    if (trustFlag && (trustFlag[1] !== "--" || trustFlag[2] === ".")) {
+      throw new Error(`Invalid collection trust option '${name}'`);
     } else if (name === "--allow-scripts" || name === "--allowScripts") {
       if (separator >= 0) throw new Error("--allow-scripts takes no value");
       allowScripts = true;

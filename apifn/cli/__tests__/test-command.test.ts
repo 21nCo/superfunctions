@@ -217,6 +217,8 @@ describe("apifn test command — CLI-004, CLI-011, RUN-009", () => {
         let stdout = "";
         expect(await runCli([...args, "--allow-scripts=0"], { stderr: () => {} })).toBe(2);
         expect(await runCli([...args, "--allow-scripts", "disabled"], { stderr: () => {} })).toBe(2);
+        expect(await runCli([...args, "--allow-scripts", "---no-allow-scripts"], { stderr: () => {} })).toBe(2);
+        expect(await runCli([...args, "--allow-scripts", "-no-allow-scripts"], { stderr: () => {} })).toBe(2);
         expect(await runCli(["test", "--allow-scripts", ...args.slice(1), "--allow-scripts"], {
             stdout: (line) => { stdout += line; },
         })).toBe(0);
@@ -235,7 +237,7 @@ describe("apifn test command — CLI-004, CLI-011, RUN-009", () => {
             stderr: (line) => { stderr += line; },
         });
         expect(code).toBe(2);
-        expect(stderr).toContain("Collection trust options do not accept nested values");
+        expect(stderr).toContain("Invalid collection trust option");
     });
 
     it("forwards only process environment variables named by --allow-env", async () => {
