@@ -1,0 +1,33 @@
+packages/evidence/README.md
+  s_0ad30dbb652d59::t_3afcedcade79aa 82,86
+packages/evidence/schema/evidence-record.v1.json
+  s_0ad30dbb652d59::t_964f2cbef2a7f5 5,79,81
+packages/evidence/scripts/verify-packed.mjs
+  s_0ad30dbb652d59::t_99af0b47713db8 85-86
+packages/evidence/src/datetime.ts
+  s_0ad30dbb652d59::t_55abf8c399c108 3-9,13,15-33,54-104,113-160
+packages/evidence/src/schema.ts
+  s_0ad30dbb652d59::t_e8555516286a03 17,209,211
+packages/evidence/src/validate.ts
+  s_0ad30dbb652d59::t_76dac1bcbc408a 1-2,22,32-33,115,225,260-265,270,300-304,327-328,330-332,334-335
+packages/evidence/test/fixtures/cases.json
+  s_0ad30dbb652d59::t_26e7605a390193 11-19,60-66,68-69,78-83
+packages/evidence/test/validate.test.ts
+  s_0ad30dbb652d59::t_9384f12329e58f 137-150
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "84c94b01945557ee2db45ca3e4d638c8a4ce98c8",
+  "prompts": {},
+  "sessions": {
+    "s_0ad30dbb652d59": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_0ad30dbb652d59",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
