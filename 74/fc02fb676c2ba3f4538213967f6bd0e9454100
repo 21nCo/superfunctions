@@ -1,0 +1,27 @@
+flowfn/typescript/src/adapters/base.ts
+  s_9c877c51ef66ac::t_2a9bdd1411e0d6 119-123,125
+flowfn/typescript/src/adapters/postgres/index.ts
+  s_9c877c51ef66ac::t_30fc2e043264ac 401,403-410
+flowfn/typescript/src/adapters/postgres/transactional-enqueue.test.ts
+  s_9c877c51ef66ac::t_9da13f771a9a92 802,850-889,932-934
+flowfn/typescript/src/queue/queue.ts
+  s_9c877c51ef66ac::t_1c58a03c052716 251-252,254,285-293,298-303,305-316,323-327,334-337
+flowfn/typescript/src/queue/transactional-enqueue.test.ts
+  s_9c877c51ef66ac::t_9f914a1c65fb69 75
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "74fc02fb676c2ba3f4538213967f6bd0e9454100",
+  "prompts": {},
+  "sessions": {
+    "s_9c877c51ef66ac": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_9c877c51ef66ac",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

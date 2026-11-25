@@ -1,0 +1,25 @@
+testfn/typescript/README.md
+  s_3454b4b338cf86::t_7a99350ebb62f4 210
+testfn/typescript/src/integrations/process.ts
+  s_3454b4b338cf86::t_9b9479ec3a5084 202-206
+testfn/typescript/tests/framework-failure-contract.test.ts
+  s_3454b4b338cf86::t_4dce00d93378eb 265-267,269,315
+testfn/typescript/tests/process-lifecycle.test.ts
+  s_3454b4b338cf86::t_5a5b3e3281c4a7 70-100,109,111,114,117-118,121
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0149cd59e7f76b7afc6483b892e353c3ba0b4d2b",
+  "prompts": {},
+  "sessions": {
+    "s_3454b4b338cf86": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f11be451-d757-4523-a635-899d76978e38",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

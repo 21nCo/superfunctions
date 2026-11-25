@@ -1,0 +1,19 @@
+clifn/core/src/runner.ts
+  s_4feee1d05963af::t_da820b15c3375e 18-19
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a615cb2097fd19d2ffac08e331249367f84fc150",
+  "prompts": {},
+  "sessions": {
+    "s_4feee1d05963af": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21294-6581-7703-9503-119b1327bd51",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,22 @@
+datafn/examples/apple-webview-host/DatafnAppleHost/App/EmbeddedWebView.swift
+  s_545bb079978e5a::t_342cf97f0aaba9 60-63,66,70-95
+  s_545bb079978e5a::t_16206d1037f085 96-97
+datafn/examples/apple-webview-host/DatafnAppleHostTests/HostTopologyTests.swift
+  s_545bb079978e5a::t_342cf97f0aaba9 19
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "69376c00f395447a0a8df08bc0d64d699c87ccb2",
+  "prompts": {},
+  "sessions": {
+    "s_545bb079978e5a": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a2144f-8f2a-7690-8b1a-e7858b67a889",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

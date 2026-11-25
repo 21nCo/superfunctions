@@ -1,0 +1,19 @@
+plugfn/core/tests/policy/provider-policy-service.test.ts
+  s_e887ca62405fee::t_1e56afb8ff4a0a 8,10
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "dbba0d920f7e78f90b2f5e39b4567b7d8b7fc152",
+  "prompts": {},
+  "sessions": {
+    "s_e887ca62405fee": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "efa55f0d-54f0-42a5-930c-2cdd05127666",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

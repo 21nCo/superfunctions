@@ -1,0 +1,25 @@
+contentfn/SPEC.md
+  s_e0ceffa6d96d19::t_8332b13ab0c818 481-482,487
+contentfn/server/src/__tests__/review-regressions.test.ts
+  s_e0ceffa6d96d19::t_0637b3aacc2f37 283-335
+contentfn/server/src/storage/docs.ts
+  s_e0ceffa6d96d19::t_bd5f23cabf1427 227,245-255
+contentfn/server/src/storage/publish.ts
+  s_e0ceffa6d96d19::t_242685e74eabad 182-191
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7b1cd53d83b13a871e3269be66b336bda51d00ae",
+  "prompts": {},
+  "sessions": {
+    "s_e0ceffa6d96d19": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9d0c4ef8-b2a7-4351-9e3b-45235a884aa1",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

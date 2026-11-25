@@ -1,0 +1,39 @@
+package-lock.json
+  s_da0cee7450cbc6::t_527f61bcee8f78 127599-127600,127602-127605,127626-127627,127629,127637-127642,127646-127648,127676-127849,128322-128333,128354-128359,128399-128407,128418-128511,128525-128535,128592-128609,128622-128643,128686-128712,128742-128810
+testfn/contracts/standard-webhooks-vectors.json
+  s_da0cee7450cbc6::t_32fc1dd361112e 1-28
+testfn/scripts/packed-consumer.mjs
+  s_da0cee7450cbc6::t_e2ddd50762d7aa 39-48,89-90,134-137,159-172
+testfn/typescript/README.md
+  s_da0cee7450cbc6::t_d803272503f56c 186-212
+testfn/typescript/package.json
+  s_da0cee7450cbc6::t_92fcfe34567321 36-39,101-104,124-132,154-160
+testfn/typescript/src/fixtures/billfn/deliver.ts
+  s_da0cee7450cbc6::t_a7ba0ead9a1991 1-87
+testfn/typescript/src/fixtures/billfn/dodo.ts
+  s_da0cee7450cbc6::t_d6acacce4c61f9 1-348
+testfn/typescript/src/fixtures/billfn/index.ts
+  s_da0cee7450cbc6::t_63b51b78ecfbd6 1-33
+testfn/typescript/src/fixtures/billfn/standard-webhooks.ts
+  s_da0cee7450cbc6::t_3388cf15b3fd06 1-93
+testfn/typescript/tests/billfn-fixture.test.ts
+  s_da0cee7450cbc6::t_944182ba563dc1 1-455
+testfn/typescript/tests/standard-webhooks-vectors.test.ts
+  s_da0cee7450cbc6::t_740d2440dab45d 1-156
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "525ea39bb1223e7e1ac982fffebd824c5e9623ef",
+  "prompts": {},
+  "sessions": {
+    "s_da0cee7450cbc6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_da0cee7450cbc6",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,33 @@
+clifn/core/CHANGELOG.md
+  s_be9042fcbce7c7::t_ae9cc9185fc0d5 8-9
+clifn/core/README.md
+  s_be9042fcbce7c7::t_223a98fe43988c 265
+clifn/core/src/document-output.ts
+  s_be9042fcbce7c7::t_466ffe42aced4a 76-79,90-97,100-101,104,143-145,154,166,177-180,225-227,229-231,385,412-413
+clifn/core/src/errors.ts
+  s_be9042fcbce7c7::t_3236ba9369680a 89-92
+clifn/core/src/json-value.ts
+  s_be9042fcbce7c7::t_9fd9ae178010a4 1,15-16,27-29,42-46,66-70,191-192,230,279,306-321,323,329-331,338-351,353-357,359-365,369-374,377-383,385,432-434,438,455-457,476-480,485-487,491-493,495-505,514,536-537,539-548,551-554
+clifn/core/tests/runner-document-bounds.test.ts
+  s_be9042fcbce7c7::t_8e0a3a3719fb62 11-12,470,480,484,496-502,505,823-948,1025-1031,1107-1114
+clifn/docs/content/docs/reference/core-readme.md
+  s_be9042fcbce7c7::t_a4f008351d63d5 268
+clifn/docs/static/llms-full.txt
+  s_be9042fcbce7c7::t_199623db48e777 576
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d02024de5543b503911929541e06a44588f08a31",
+  "prompts": {},
+  "sessions": {
+    "s_be9042fcbce7c7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "32245a30-df58-49ad-a62e-3042c2809922",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

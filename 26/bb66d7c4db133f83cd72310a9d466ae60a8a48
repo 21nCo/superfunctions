@@ -1,0 +1,27 @@
+contentfn/server/src/__tests__/pr-review-regressions.test.ts
+  s_c65146c5e078f3::t_7bb5f16fa1e5ec 385-389,392-394,409-412,414,420-422
+contentfn/server/src/__tests__/schedules-readiness.test.ts
+  s_c65146c5e078f3::t_3849d9800d1e9c 18
+contentfn/server/src/http/validateInput.ts
+  s_c65146c5e078f3::t_2b14ed28229baa 23-25
+contentfn/server/src/server.ts
+  s_c65146c5e078f3::t_e7118f1038d772 270
+contentfn/server/src/storage/publish.ts
+  s_c65146c5e078f3::t_81ef905c6b70d2 167-168
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "26bb66d7c4db133f83cd72310a9d466ae60a8a48",
+  "prompts": {},
+  "sessions": {
+    "s_c65146c5e078f3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_c65146c5e078f3",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

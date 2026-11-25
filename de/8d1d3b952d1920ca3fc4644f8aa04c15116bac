@@ -1,0 +1,29 @@
+contentfn/SPEC.md
+  s_6f47f10186b913::t_5f737bc08d9fcd 487,495-496
+contentfn/server/src/__tests__/review-regressions.test.ts
+  s_6f47f10186b913::t_53d03e6d3b1ecc 943-1044
+contentfn/server/src/server.ts
+  s_6f47f10186b913::t_af917d07da9fc6 217,220-221,231-232
+contentfn/server/src/storage/datasets.ts
+  s_6f47f10186b913::t_7cf6adac70d522 16-17,105-107
+contentfn/server/src/storage/docs.ts
+  s_6f47f10186b913::t_fddfedc4e17d32 263-275
+contentfn/server/src/storage/publish.ts
+  s_6f47f10186b913::t_16236c5d670ee6 185,190-200
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "de8d1d3b952d1920ca3fc4644f8aa04c15116bac",
+  "prompts": {},
+  "sessions": {
+    "s_6f47f10186b913": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_6f47f10186b913",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,19 @@
+langfn/typescript/src/mcp/server.ts
+  s_c8d3e62c4e5cbc::t_8bd1b59e89f962 111,113,119-121
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5c0b51048ec25dbb3b617fc302d0f08d3f88640f",
+  "prompts": {},
+  "sessions": {
+    "s_c8d3e62c4e5cbc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "81c58342-6481-4e86-8c66-8c52736f9b64",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

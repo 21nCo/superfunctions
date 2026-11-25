@@ -1,0 +1,21 @@
+billfn/provider-dodo/src/__tests__/contract.test.ts
+  s_b841cebdcfad95::t_3e2678ef02a1f5 833-845
+billfn/provider-dodo/src/index.ts
+  s_b841cebdcfad95::t_39c08dab7a869f 1180
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4095b6e593c962598f9f1f2c14821781961cbb19",
+  "prompts": {},
+  "sessions": {
+    "s_b841cebdcfad95": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "436f4738-d86e-44e1-82bc-c432f9aaabf3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

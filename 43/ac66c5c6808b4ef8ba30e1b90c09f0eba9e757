@@ -1,0 +1,19 @@
+.github/workflows/ci.yml
+  s_021c702b05c3d7::t_611ace454f3c8f 220-225,288-290,292,299,311-312,388-389,391,398,410-411
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "43ac66c5c6808b4ef8ba30e1b90c09f0eba9e757",
+  "prompts": {},
+  "sessions": {
+    "s_021c702b05c3d7": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a20e94-df74-7e10-8727-71de3d23b6b5",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

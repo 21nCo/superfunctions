@@ -1,0 +1,23 @@
+testfn/typescript/README.md
+  s_c8b82bbd79fd05::t_7c1ccfd6bb0735 231,234-235,238-239
+testfn/typescript/src/fixtures/mailfn/memory.ts
+  s_c8b82bbd79fd05::t_15b33940fd202a 172-223,235-243,338-339,342,347-348,374-378,384-389,394,414-417,485-489,495,523,546-549,557-561,563,565,568,632-640,732-734,752-753,756,765,767,783,785
+testfn/typescript/tests/mailfn-fixture.test.ts
+  s_c8b82bbd79fd05::t_434378abb797b7 691-693,702-737,739-741,848-926
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "35445c4015dd04121c7c594cc410fcfdaba8c965",
+  "prompts": {},
+  "sessions": {
+    "s_c8b82bbd79fd05": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_c8b82bbd79fd05",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,31 @@
+clifn/core/CHANGELOG.md
+  s_c49017b64d6e64::t_402a18e2fadaf9 9
+clifn/core/README.md
+  s_c49017b64d6e64::t_9838023401048c 265
+clifn/core/src/document-output.ts
+  s_c49017b64d6e64::t_99c47d0a4cc14d 422-424,434-436,447-448,455-460,507-509
+clifn/core/src/json-value.ts
+  s_c49017b64d6e64::t_2eb369aa480332 26-34,227-230,560-561,564-567,598-606,665-667,698-699
+clifn/core/tests/runner-document-bounds.test.ts
+  s_c49017b64d6e64::t_a2d0713b9d0039 721-777,1337-1401,1581-1603,1658-1665
+clifn/docs/content/docs/reference/core-readme.md
+  s_c49017b64d6e64::t_fde7e0ab9f7acb 268
+clifn/docs/static/llms-full.txt
+  s_c49017b64d6e64::t_ef85c76467eeee 576
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1537d938ba24da473a3d8213f0a84e4a081988a7",
+  "prompts": {},
+  "sessions": {
+    "s_c49017b64d6e64": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ed50b017-468d-4599-9d0a-01185e7790b7",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

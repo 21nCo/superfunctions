@@ -1,0 +1,35 @@
+packages/evidence/test/node.test.ts
+  s_e1f383ba856a11::t_6c2fb69f0c576a 185-193
+packages/evidence/README.md
+  s_00881b8dc2ee6c::t_47ba8ff0cd0a8b 66
+packages/evidence/package.json
+  s_00881b8dc2ee6c::t_25994ff2c6d3ed 31
+packages/evidence/src/node.ts
+  s_00881b8dc2ee6c::t_a3e035d86dc195 3-4,157-162,172
+packages/evidence/tsconfig.neutral.json
+  s_00881b8dc2ee6c::t_d3c12498618f2d 1-8
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "40b9d8d5a8df4882a63b4740723b63be69f31f10",
+  "prompts": {},
+  "sessions": {
+    "s_00881b8dc2ee6c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7eddc318-ae89-489a-8715-17e726b556a8",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_e1f383ba856a11": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21394-03e7-76c0-b642-8061aee93d9d",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,31 @@
+billfn/provider-apple/src/__tests__/sandbox-and-billing-retry.test.ts
+  s_0d7e11293d5a4e::t_77bb03566fa781 90,94-96,100-104,108-112,114-117,119-121,123-124,126,129-132,135-139,142-143,145,147-148,151-154,156
+billfn/provider-apple/src/index.ts
+  s_0d7e11293d5a4e::t_62066b223d2d94 211-220,223,229-235,470-471,477,529-536,542-543,546-548,550
+billfn/docs/content/docs/providers/apple.mdx
+  s_b841cebdcfad95::t_ebf1c39f4379d2 39-41
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d6d98b317eb8024b7e1b582f2b63fd2035959a0d",
+  "prompts": {},
+  "sessions": {
+    "s_0d7e11293d5a4e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "97ac12a3-1bf1-4732-a6f3-ece8c28b207e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_b841cebdcfad95": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "436f4738-d86e-44e1-82bc-c432f9aaabf3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

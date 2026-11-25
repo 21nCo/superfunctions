@@ -1,0 +1,35 @@
+contentfn/README.md
+  s_17e0c4f374bb47::t_be7fb74b2cb5e5 139-141,183-197
+contentfn/server/src/__tests__/pr-review-regressions.test.ts
+  s_17e0c4f374bb47::t_46bc67e53f7de0 1-189
+contentfn/server/src/index.ts
+  s_17e0c4f374bb47::t_8f561c8ca18930 50-51
+contentfn/server/src/realtime/sse.ts
+  s_17e0c4f374bb47::t_8c0ef76bf8b6e5 8-11,24-28,138-161,169,214-215,218-222,224
+contentfn/server/src/server.ts
+  s_17e0c4f374bb47::t_9200a567613a4c 256-261
+contentfn/server/src/storage/docs.ts
+  s_17e0c4f374bb47::t_b034557c556aa5 219-221
+contentfn/server/src/storage/documentIdentityBackfill.ts
+  s_17e0c4f374bb47::t_5866cc71515a02 1-46
+contentfn/server/src/storage/webhookQueue.ts
+  s_17e0c4f374bb47::t_915125c56b4cd6 67-69,78,106,112,121
+contentfn/server/src/webhooks/deliver.ts
+  s_17e0c4f374bb47::t_6eed31cc2c9c1a 144-145,149,155,160,166
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7afa39b7959cc645bfc185566a5431bbed802d0e",
+  "prompts": {},
+  "sessions": {
+    "s_17e0c4f374bb47": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_17e0c4f374bb47",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

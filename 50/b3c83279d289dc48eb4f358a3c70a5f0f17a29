@@ -1,0 +1,71 @@
+cifn/README.md
+  s_1eb217f2cbe12c::t_5477021fd17e0e 291-293
+cifn/typescript/control-plane/src/api/routes.ts
+  s_1eb217f2cbe12c::t_bcfdf49b5b2e54 19,68,389-390
+cifn/typescript/control-plane/src/dispatch/prepare.ts
+  s_1eb217f2cbe12c::t_48783a63386b54 4,56,62-64
+cifn/typescript/control-plane/src/dispatch/publisher.test.ts
+  s_1eb217f2cbe12c::t_99d091da9446f7 1-80
+cifn/typescript/control-plane/src/dispatch/publisher.ts
+  s_1eb217f2cbe12c::t_239ee05fb08334 21-34,40-43,47-48,50,52-61,63,67,80-84
+cifn/typescript/control-plane/src/execution/owned-process.ts
+  s_1eb217f2cbe12c::t_1126345432a0b6 19-23
+cifn/typescript/control-plane/src/index.ts
+  s_1eb217f2cbe12c::t_de8d177c3f5bfa 33,78
+cifn/typescript/control-plane/src/pipeline/git-checkout.ts
+  s_1eb217f2cbe12c::t_56840b4e0c90da 59-63
+cifn/typescript/control-plane/src/queue/flowfn-client.ts
+  s_1eb217f2cbe12c::t_ce6d6fb3f44a5e 29-33,41-68
+cifn/typescript/control-plane/src/secrets/redact.ts
+  s_1eb217f2cbe12c::t_f0b45f6c91883c 1-38,41
+cifn/typescript/control-plane/src/store/database-store.test.ts
+  s_1eb217f2cbe12c::t_77f0d0cee92394 434-474,1237-1268
+cifn/typescript/control-plane/src/store/database-store.ts
+  s_1eb217f2cbe12c::t_516b4d77b03c2c 25,31-38,172,184-187,191-194,350,413-442,504-509,517,522,526-531,556,558,647-648
+cifn/typescript/control-plane/src/triggers/triggers.test.ts
+  s_1eb217f2cbe12c::t_0189bcf1a6e402 6,476-503
+cifn/typescript/runner/src/claim-journal.ts
+  s_1eb217f2cbe12c::t_8da24bc4621c4b 13-22,28,30,32-39,47-48,67-75,88-90,94
+cifn/typescript/runner/src/docker-engine.test.ts
+  s_1eb217f2cbe12c::t_12d14c0c2c9295 79-95
+cifn/typescript/runner/src/docker-engine.ts
+  s_1eb217f2cbe12c::t_906779ec6a62a5 136-137,139-140,165,167-173,177-184,187-190
+cifn/typescript/runner/src/log-spool.test.ts
+  s_1eb217f2cbe12c::t_d6505bd6b9b586 16,37,121
+cifn/typescript/runner/src/log-spool.ts
+  s_1eb217f2cbe12c::t_bf8318a1ececd9 7,47,104,109-111,143-144
+cifn/typescript/runner/src/owned-docker-executor.test.ts
+  s_1eb217f2cbe12c::t_fca73eeacc76ed 69-71,147,154,159-162
+cifn/typescript/runner/src/owned-docker-executor.ts
+  s_1eb217f2cbe12c::t_0d80c600a1991a 9,236,268,274,432-442
+cifn/typescript/runner/src/owned-docker-job.ts
+  s_1eb217f2cbe12c::t_a9462ffba14aa0 34-35,244,256,259
+cifn/typescript/runner/src/remote-checkout.test.ts
+  s_1eb217f2cbe12c::t_5b474302dd4c4f 54-63,120-121
+cifn/typescript/runner/src/remote-runner.test.ts
+  s_1eb217f2cbe12c::t_c12708e45ab653 1,74-75,211-227,432-470,559-639
+cifn/typescript/runner/src/remote-runner.ts
+  s_1eb217f2cbe12c::t_fd60c70540f432 8,20,42,95,105,113,118-145,159,161,181-192,194,307
+cifn/typescript/runner/src/runner.ts
+  s_1eb217f2cbe12c::t_cd0d1a9e38dd0a 2,14,151,305-306,313-318,661-668
+cifn/typescript/runner/src/secrets-steps.test.ts
+  s_1eb217f2cbe12c::t_8a2b741721d223 18,101-112
+cifn/typescript/runner/src/step-journal.ts
+  s_1eb217f2cbe12c::t_efae6208152ec5 1,42
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "50b3c83279d289dc48eb4f358a3c70a5f0f17a29",
+  "prompts": {},
+  "sessions": {
+    "s_1eb217f2cbe12c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2b2155d1-b0bb-4e5e-bb89-8414e78e1489",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

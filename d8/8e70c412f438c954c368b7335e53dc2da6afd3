@@ -7,7 +7,7 @@ turbo.json
 scripts/ci-plan.mjs
   s_3b7ffdae337f69::t_3419b85b2fa421 45
 scripts/notify-next-sync-workflow.test.mjs
-  s_3b7ffdae337f69::t_0b3034549eca33 1-206
+  s_3b7ffdae337f69::t_0b3034549eca33 1-206,1-137,139-163,168-175,179-206
 ---
 {
   "schema_version": "authorship/3.0.0",

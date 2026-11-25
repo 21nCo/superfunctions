@@ -1,0 +1,41 @@
+cifn/typescript/control-plane/src/api/routes.ts
+  s_b996deaa3d01f1::t_f58a86e218bc2b 19,380
+cifn/typescript/control-plane/src/dispatch/prepare.ts
+  s_b996deaa3d01f1::t_82ab4563f3924e 4,50-51
+cifn/typescript/control-plane/src/dispatch/publisher.ts
+  s_b996deaa3d01f1::t_55d09430e32c24 2,33,59
+cifn/typescript/control-plane/src/index.ts
+  s_b996deaa3d01f1::t_34e40a86990fc2 33
+cifn/typescript/control-plane/src/queue/flowfn-client.ts
+  s_b996deaa3d01f1::t_ab5cfb1cffc0fd 109-117
+cifn/typescript/control-plane/src/secrets/redact.ts
+  s_b996deaa3d01f1::t_b024fe5201455a 59-60,84-85
+cifn/typescript/control-plane/src/store/database-store.test.ts
+  s_b996deaa3d01f1::t_4e152ea5a5595c 8,1289-1294
+cifn/typescript/control-plane/src/triggers/triggers.test.ts
+  s_b996deaa3d01f1::t_bf59796720fdd7 6,522-536
+cifn/typescript/runner/src/log-spool.test.ts
+  s_b996deaa3d01f1::t_2753c3128e8cd2 5,7,185-199
+cifn/typescript/runner/src/log-spool.ts
+  s_b996deaa3d01f1::t_f9bfb5634ebbf3 104-131,201
+cifn/typescript/runner/src/runner.ts
+  s_b996deaa3d01f1::t_1741f657035699 15,166
+cifn/typescript/runner/src/secrets-steps.test.ts
+  s_b996deaa3d01f1::t_026f122ebfeada 144-153
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ace2a1d06a15cc7c7a3680cd39d78b0afcbbf10c",
+  "prompts": {},
+  "sessions": {
+    "s_b996deaa3d01f1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c40e7b19-3313-4542-ad8e-39c9c4c912f1",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

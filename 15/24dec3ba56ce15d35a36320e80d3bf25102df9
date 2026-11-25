@@ -1,0 +1,21 @@
+watchfn/python/tests/test_traces.py
+  s_8d400c858cd154::t_f823eb11dec291 165-182
+watchfn/python/watchfn/trace/tracer.py
+  s_8d400c858cd154::t_84511f338e649e 11,133-147,179,183,188,200,204,209
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1524dec3ba56ce15d35a36320e80d3bf25102df9",
+  "prompts": {},
+  "sessions": {
+    "s_8d400c858cd154": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_8d400c858cd154",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

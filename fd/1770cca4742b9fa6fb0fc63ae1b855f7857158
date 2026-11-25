@@ -1,0 +1,27 @@
+cachefn/typescript/README.md
+  s_0e6a457ae17aad::t_c756ce129f85d8 667-670
+cachefn/typescript/__tests__/fence-rollback.test.ts
+  s_0e6a457ae17aad::t_6e1f2274b12425 7,304-387
+cachefn/typescript/src/core/cache.ts
+  s_0e6a457ae17aad::t_82f2c1c5f16be6 62-63,326,500,512,528-529,533,544,551-560
+cachefn/typescript/src/memoization/compatible.ts
+  s_0e6a457ae17aad::t_6cbab208789ca5 3,11,14,31-38,46-47,52,55,57-58,60-61,64-65
+cachefn/typescript/src/memoization/memoize.ts
+  s_0e6a457ae17aad::t_4e9cdfc2f35b03 53-59,61-63,65-67,69,75,83,86,91-92,96,104,112,115-151,161,167,171,174,180
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fd1770cca4742b9fa6fb0fc63ae1b855f7857158",
+  "prompts": {},
+  "sessions": {
+    "s_0e6a457ae17aad": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_0e6a457ae17aad",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

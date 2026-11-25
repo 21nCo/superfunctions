@@ -1,0 +1,33 @@
+watchfn/typescript/src/business/goals.ts
+  s_6902d2472dae1a::t_b3dd1682512fe3 4,30,32-36
+watchfn/typescript/src/business/stored-funnels.ts
+  s_6902d2472dae1a::t_a8cec27031c758 9,86-90
+watchfn/typescript/src/logs/patterns.ts
+  s_6902d2472dae1a::t_bcdb1cde267f18 6,92-94
+watchfn/typescript/src/query/query-engine.ts
+  s_6902d2472dae1a::t_afb5183697cf63 44-59
+watchfn/typescript/src/storage/bounded-scan.ts
+  s_6902d2472dae1a::t_d3d2d68328b68b 1-42
+watchfn/typescript/src/synthetics/reports.ts
+  s_6902d2472dae1a::t_1883ebbe432831 4,27-32
+watchfn/typescript/tests/storage/bounded-scan.test.ts
+  s_6902d2472dae1a::t_af99a65a7bd6b8 1-60
+watchfn/typescript/tests/stored-funnels.test.ts
+  s_6902d2472dae1a::t_29493884bb4f7c 81-82
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b93c961fc03dee3211518a67f8f6f6e607edbffe",
+  "prompts": {},
+  "sessions": {
+    "s_6902d2472dae1a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_6902d2472dae1a",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

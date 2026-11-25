@@ -7,11 +7,11 @@ package-lock.json
 secfn/keys/src/__tests__/helpers.ts
   s_2dbcc31cbf09bc::t_44abcea5631987 1-51
 secfn/keys/README.md
-  s_2dbcc31cbf09bc::t_89f2631bed6d05 1-65
+  s_2dbcc31cbf09bc::t_89f2631bed6d05 1-65,1-50,52-65
 secfn/keys/vitest.workerd.config.ts
   s_2dbcc31cbf09bc::t_9fddb722d6ad48 1-22
 secfn/keys/src/signer.ts
-  s_2dbcc31cbf09bc::t_009741cc0f2f60 1-180
+  s_2dbcc31cbf09bc::t_009741cc0f2f60 1-180,1-39,41-48,55-180
 secfn/keys/src/key-ring.ts
   s_2dbcc31cbf09bc::t_43101be5b40e9e 1-237
 secfn/keys/src/__tests__/key-ring.test.ts

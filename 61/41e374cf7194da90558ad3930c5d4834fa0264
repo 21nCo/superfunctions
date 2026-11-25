@@ -1,0 +1,59 @@
+cifn/README.md
+  s_cc077dac27afc1::t_49fa6e5fd1d552 98-106
+cifn/typescript/control-plane/src/queue/flowfn-client.ts
+  s_cc077dac27afc1::t_8f9e1f648834c3 75-98
+cifn/typescript/control-plane/src/store/database-store.test.ts
+  s_a73d63befc8730::t_964ec4181a342a 1309-1319
+cifn/typescript/control-plane/src/store/store.ts
+  s_cc077dac27afc1::t_a2045d7a36198a 31-36
+cifn/typescript/control-plane/src/triggers/triggers.test.ts
+  s_ae93a251dbd776::t_f03d51644d3060 530-531,533,542-555,561
+cifn/typescript/runner/src/log-spool.test.ts
+  s_cc077dac27afc1::t_dad89073d79cdb 431-485
+cifn/typescript/runner/src/remote-runner.test.ts
+  s_cc077dac27afc1::t_1e53d4354de245 6,959,964-967,970,972-991
+cifn/typescript/runner/src/remote-runner.ts
+  s_cc077dac27afc1::t_54a0b164313320 116-124,380,385,420,431-450
+cifn/typescript/runner/src/runner.ts
+  s_cc077dac27afc1::t_6b553f8f4355de 16,193-195,197-198
+cifn/typescript/runner/src/spool-retirement-race.test.ts
+  s_cc077dac27afc1::t_fd4232ceca497c 9,16-18,25,62-78
+cifn/typescript/control-plane/src/api/routes.ts
+  s_cc077dac27afc1::t_4b6fcb3e8ec941 19,73-74
+cifn/typescript/runner/src/claim-journal.ts
+  s_cc077dac27afc1::t_7525e89bf88f00 1,49-59,110-113,159-160,164-165,168-178,180-184,187-196,198-199,201,204-205
+cifn/typescript/runner/src/runner.test.ts
+  s_cc077dac27afc1::t_0845c6b9559743 1023-1039
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6141e374cf7194da90558ad3930c5d4834fa0264",
+  "prompts": {},
+  "sessions": {
+    "s_a73d63befc8730": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8a5a3e20-00a5-452a-9cc9-69b8f877d3eb",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_ae93a251dbd776": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1fe75-02b0-78a0-a8f9-d49c36ec6cdc",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_cc077dac27afc1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0b5b9beb-64e9-471f-91d1-401a95835f6f",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

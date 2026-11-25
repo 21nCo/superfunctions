@@ -1,0 +1,21 @@
+billfn/provider-apple/src/__tests__/sandbox-and-billing-retry.test.ts
+  s_021c702b05c3d7::t_a5a3122f005c4f 307
+billfn/provider-apple/src/index.ts
+  s_021c702b05c3d7::t_014572b58bb1b8 1084-1086
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "81362f0becba6652afaaffe5eff09c8ad327efe3",
+  "prompts": {},
+  "sessions": {
+    "s_021c702b05c3d7": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a20e94-df74-7e10-8727-71de3d23b6b5",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

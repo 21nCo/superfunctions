@@ -1,0 +1,31 @@
+testfn/typescript/README.md
+  s_c5586b9faaeb6a::t_279a4208f8a06d 214,267
+testfn/typescript/src/storage/test-storage.ts
+  s_c5586b9faaeb6a::t_2d931ef52ae2a8 119-124,183-185
+testfn/typescript/tests/storage.test.ts
+  s_84f8bde90f7679::t_26b674250e8dc6 272,343-405
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "cb2f404f71622f3c731d4131d7838c4824941377",
+  "prompts": {},
+  "sessions": {
+    "s_84f8bde90f7679": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "96b2a0d9-407c-457b-b5c9-af8fa48b62e0",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_c5586b9faaeb6a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "981b62b3-c91d-4e11-9ccd-b5d76d44739b",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,21 @@
+watchfn/python/tests/test_trace_context.py
+  s_3c866fde80adbc::t_9f0dcd1aef6ac4 103-125
+watchfn/python/watchfn/trace/context_propagation.py
+  s_3c866fde80adbc::t_a72129b6085d71 77-85,88-91,93
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c72aa54dc65adc56d9317358f7e78b106ef7be31",
+  "prompts": {},
+  "sessions": {
+    "s_3c866fde80adbc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_3c866fde80adbc",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

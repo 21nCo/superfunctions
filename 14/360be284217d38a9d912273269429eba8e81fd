@@ -1,0 +1,19 @@
+mcpfn/testing/tests/host-authorization.test.ts
+  s_c8d3e62c4e5cbc::t_e8fecf102aacab 1258-1263,1273,1323-1324,1327,1380,1382,1442
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "14360be284217d38a9d912273269429eba8e81fd",
+  "prompts": {},
+  "sessions": {
+    "s_c8d3e62c4e5cbc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "81c58342-6481-4e86-8c66-8c52736f9b64",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

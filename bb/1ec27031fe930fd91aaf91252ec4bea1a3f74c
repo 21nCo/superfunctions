@@ -1,0 +1,29 @@
+billfn/provider-dodo/src/__tests__/contract.test.ts
+  s_0d7e11293d5a4e::t_6e39691038eeed 883-897
+billfn/core/src/service.ts
+  s_0d7e11293d5a4e::t_e027dcdcb71294 882-947,1210-1211,1247,1318,1334-1349,1363,1370,1645-1674,1680-1681,1693,4285-4297,4302,4341,4346-4358,4361-4365
+billfn/core/src/__tests__/refund-idempotency.test.ts
+  s_0d7e11293d5a4e::t_1acb21100ac961 338-417
+billfn/provider-dodo/src/index.ts
+  s_0d7e11293d5a4e::t_872feadccbbc37 1459-1464
+billfn/admin/src/domain-service.ts
+  s_0d7e11293d5a4e::t_872feadccbbc37 64-66,68,70
+billfn/docs/content/docs/server/setup.mdx
+  s_0d7e11293d5a4e::t_5ef0e011bf7731 170,172-178
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "bb1ec27031fe930fd91aaf91252ec4bea1a3f74c",
+  "prompts": {},
+  "sessions": {
+    "s_0d7e11293d5a4e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "97ac12a3-1bf1-4732-a6f3-ece8c28b207e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

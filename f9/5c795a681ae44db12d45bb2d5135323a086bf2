@@ -1,0 +1,35 @@
+cifn/typescript/control-plane/src/api/routes.ts
+  s_b996deaa3d01f1::t_32484cf7fef734 19,66
+cifn/typescript/control-plane/src/queue/flowfn-client.ts
+  s_b996deaa3d01f1::t_e327542f526c3f 47-63
+cifn/typescript/control-plane/src/secrets/redact.ts
+  s_b996deaa3d01f1::t_bc13cdd29265f7 3,5-6,15-17,29,41,45-50,54-65,70-71,73-74,76-82,87-91,93-94
+cifn/typescript/control-plane/src/store/database-store.test.ts
+  s_b996deaa3d01f1::t_332c265895fa48 1276-1289
+cifn/typescript/control-plane/src/store/database-store.ts
+  s_b996deaa3d01f1::t_b73fb50276e7d8 794
+cifn/typescript/runner/src/claim-journal.ts
+  s_b996deaa3d01f1::t_25c048950732ca 16-17
+cifn/typescript/runner/src/remote-runner.test.ts
+  s_b996deaa3d01f1::t_d2a793b95d2dba 751-781
+cifn/typescript/runner/src/remote-runner.ts
+  s_b996deaa3d01f1::t_c9e0b9b150af65 156-158,206-215
+cifn/typescript/runner/src/secrets-steps.test.ts
+  s_b996deaa3d01f1::t_6e94ad7993a801 128-149
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f95c795a681ae44db12d45bb2d5135323a086bf2",
+  "prompts": {},
+  "sessions": {
+    "s_b996deaa3d01f1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c40e7b19-3313-4542-ad8e-39c9c4c912f1",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

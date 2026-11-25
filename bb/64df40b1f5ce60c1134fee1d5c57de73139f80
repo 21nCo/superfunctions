@@ -1,0 +1,42 @@
+billfn/provider-dodo/src/index.ts
+  s_0d7e11293d5a4e::t_0a74c9d54bd85c 507-523,532-534,538,547,1455-1467
+  s_0d7e11293d5a4e::t_f999deb0976248 1468-1469
+billfn/core/src/__tests__/refund-idempotency.test.ts
+  s_0d7e11293d5a4e::t_ffa0e9fefbaa38 34,36-51,78,86,92,221-281,284-339
+  s_0d7e11293d5a4e::t_6a032103a9ac79 33,35,93-96,282-283
+billfn/core/src/service.ts
+  s_0d7e11293d5a4e::t_a31a2b375e3c55 1149-1243,1290-1292,1294-1295,1307,1321-1322,1334-1336,1341-1346,1348,1350,4235-4236,4239-4245,4264-4311,4313-4316,4321-4322,4334,4337,4349,4352-4354,4358,4361,4367-4381,4384,4386-4390,4392,4397,4400,4405-4413,4416-4424,4427,4429,4433-4448,4452-4455,4457,4462-4463
+  s_0d7e11293d5a4e::t_800471c4ad9ad9 74-75,1615-1648
+  s_0d7e11293d5a4e::t_752f1e33121ce1 73
+  s_0d7e11293d5a4e::t_3af55a794df5b2 1649
+billfn/provider-dodo/src/__tests__/contract.test.ts
+  s_0d7e11293d5a4e::t_31c727ffcdca91 869-894
+  s_0d7e11293d5a4e::t_02153d23cca6ce 868
+billfn/core/src/index.ts
+  s_0d7e11293d5a4e::t_800471c4ad9ad9 56-58
+billfn/admin/src/domain-service.ts
+  s_0d7e11293d5a4e::t_52688dc4194075 63-75,381,390
+billfn/core/src/types.ts
+  s_0d7e11293d5a4e::t_800471c4ad9ad9 1001-1010,1289-1296
+  s_0d7e11293d5a4e::t_001135cfe3af6d 1297
+billfn/core/src/router.ts
+  s_0d7e11293d5a4e::t_800471c4ad9ad9 304-306
+billfn/docs/content/docs/server/setup.mdx
+  s_0d7e11293d5a4e::t_249847fd7013b0 168,170-174
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "bb64df40b1f5ce60c1134fee1d5c57de73139f80",
+  "prompts": {},
+  "sessions": {
+    "s_0d7e11293d5a4e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "97ac12a3-1bf1-4732-a6f3-ece8c28b207e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

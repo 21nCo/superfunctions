@@ -1,0 +1,47 @@
+filefn/server/tests/processing.integration.test.ts
+  s_a53647f7f9b276::t_7a8be88ed4aa79 343-348,372
+filefn/server/tests/processing.ocr.integration.test.ts
+  s_a53647f7f9b276::t_b9aff2b2b79bd9 516-521,540
+filefn/server/tests/processing.video-audio.integration.test.ts
+  s_a53647f7f9b276::t_cf46b8b7c94ce0 777-785,821-822
+filefn/server/tests/read-path-security.test.ts
+  s_a53647f7f9b276::t_92b0c6e86987cd 373-392
+filefn/server/src/processing/service.ts
+  s_a53647f7f9b276::t_864ce01223064c 2181-2183,2186-2187
+filefn/docs/content/docs/reference/changelog.md
+  s_9e2b3bac90acaa::t_d6e1389b9ff3e1 14
+filefn/docs/package.json
+  s_9e2b3bac90acaa::t_c34689497256cd 3,47
+filefn/docs/static/llms-full.txt
+  s_9e2b3bac90acaa::t_c3afab6aaaa1a8 8292
+filefn/processing/container/package.json
+  s_9e2b3bac90acaa::t_c82c45c4dbd950 3,18
+filefn/server/package.json
+  s_9e2b3bac90acaa::t_91bb6ee8eb7a1a 3
+package-lock.json
+  s_9e2b3bac90acaa::t_3ca40b89c61893 11808,11827,12448,12452,12510
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a2ad192c1c3fbaf21df57fa97407bd8adb56d925",
+  "prompts": {},
+  "sessions": {
+    "s_9e2b3bac90acaa": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5286a5b0-573a-4dff-b8dd-91b1c2ffd33d",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_a53647f7f9b276": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a2139d-87fd-7710-98a5-0525e984c6d4",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

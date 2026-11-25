@@ -1,0 +1,41 @@
+cachefn/typescript/README.md
+  s_7bb5dce107c7cc::t_1d2b5708b91277 88-92,373-375
+cachefn/typescript/__tests__/auto-local-storage.test.ts
+  s_7bb5dce107c7cc::t_5714aca26c916a 86-107,161-181
+cachefn/typescript/__tests__/factory-convenience.test.ts
+  s_7bb5dce107c7cc::t_4e93ff60b71de1 47,65-101
+cachefn/typescript/__tests__/indexeddb-storage.test.ts
+  s_7bb5dce107c7cc::t_903138697d0b30 76-94
+cachefn/typescript/__tests__/memoize.test.ts
+  s_7bb5dce107c7cc::t_ac45643715d7bc 75-77,82-113
+cachefn/typescript/src/core/types.ts
+  s_7bb5dce107c7cc::t_cd28710ecac1c5 162-166
+cachefn/typescript/src/memoization/compatible.ts
+  s_7bb5dce107c7cc::t_729696b6ff8fa2 3,12-13,27-32,35,42-45
+cachefn/typescript/src/memoization/memoize.ts
+  s_7bb5dce107c7cc::t_c4738bc6c5672c 1-2,7,19-52,59,61-62,71-76,78,82-83
+cachefn/typescript/src/storage/indexeddb-storage.ts
+  s_7bb5dce107c7cc::t_eb63e2bbaccacb 59,63,97-126,128,133,143,217-220,263-264,268-269
+cachefn/typescript/src/storage/local-storage.ts
+  s_7bb5dce107c7cc::t_93c71890fbb733 36,40,43-50,66
+cachefn/typescript/type-tests/memoize.ts
+  s_7bb5dce107c7cc::t_a20dc22f1f5171 18
+package-lock.json
+  s_7bb5dce107c7cc::t_6e01992aee1939 76673-76675
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "10b05d7821ad27020f9ba73f0ad75e0b63e89cf7",
+  "prompts": {},
+  "sessions": {
+    "s_7bb5dce107c7cc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_7bb5dce107c7cc",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

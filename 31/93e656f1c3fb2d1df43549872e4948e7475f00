@@ -1,0 +1,21 @@
+contentfn/server/src/__tests__/pr-review-regressions.test.ts
+  s_0fcec8939eb95b::t_a9357f5d606b25 9-11,268-308
+contentfn/server/src/realtime/sse.ts
+  s_0fcec8939eb95b::t_4bf8195127d70d 10,164-165,174,176-178,188-189,199,206,271-272
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3193e656f1c3fb2d1df43549872e4948e7475f00",
+  "prompts": {},
+  "sessions": {
+    "s_0fcec8939eb95b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_0fcec8939eb95b",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,49 @@
+flowfn/python/flowfn/core/flow.py
+  s_3535554ff2938a::t_d8fa1b4682844a 43-44,193-202,205-223
+flowfn/python/flowfn/queue/dlq.py
+  s_3535554ff2938a::t_990ac72246242f 58-62,67
+flowfn/python/flowfn/workflow/workflow.py
+  s_3535554ff2938a::t_a3f021e8df2e4a 119,149,515-517,520,530,535
+flowfn/python/tests/test_dlq_recovery.py
+  s_3535554ff2938a::t_19eda6b16e533b 85-105
+flowfn/python/tests/test_flow_shutdown.py
+  s_3535554ff2938a::t_9b98a6edd38ebf 132-134,166-197
+flowfn/python/tests/test_workflow_close_ownership.py
+  s_3535554ff2938a::t_6230c58097bc34 56-59
+flowfn/python/tests/test_workflow_lifecycle.py
+  s_3535554ff2938a::t_bdb0bdb38f656a 127-171
+flowfn/typescript/src/adapters/postgres/index.ts
+  s_3535554ff2938a::t_6ff9266608e5b2 173-177,179
+flowfn/typescript/src/adapters/postgres/postgres.test.ts
+  s_3535554ff2938a::t_10985c868c8db1 679-690
+flowfn/typescript/src/core/durable-scheduler.ts
+  s_3535554ff2938a::t_db4c6db72af97d 167-187
+flowfn/typescript/src/core/scheduler-completion.test.ts
+  s_3535554ff2938a::t_7e32ab8aee7dbf 1-64
+flowfn/typescript/src/core/shutdown.test.ts
+  s_3535554ff2938a::t_20aef4886865ab 40,55-59
+flowfn/typescript/src/queue/worker-pool.test.ts
+  s_3535554ff2938a::t_48a7d210679ca9 25-55
+flowfn/typescript/src/queue/worker-pool.ts
+  s_3535554ff2938a::t_123d31a64847a0 5,29,52-53,64-69,108
+flowfn/typescript/src/workflow/shutdown-resume.test.ts
+  s_3535554ff2938a::t_bc49dd321f993e 1-45
+flowfn/typescript/src/workflow/workflow.ts
+  s_3535554ff2938a::t_7bdea31d45d8ea 212-213,333,342,602,618-620,671-675,677,679,1231-1232,1236
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4323161df16670ff34fc7cfb97b9c68ca112a66e",
+  "prompts": {},
+  "sessions": {
+    "s_3535554ff2938a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_3535554ff2938a",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

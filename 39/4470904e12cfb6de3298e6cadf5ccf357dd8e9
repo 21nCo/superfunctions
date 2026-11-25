@@ -1,0 +1,23 @@
+cifn/README.md
+  s_b996deaa3d01f1::t_7c66ff3c494e41 289-293
+cifn/typescript/control-plane/src/store/database-schema.ts
+  s_b996deaa3d01f1::t_d2ae00535d09b2 14,31-32
+cifn/typescript/control-plane/src/store/database-store.test.ts
+  s_b996deaa3d01f1::t_f72e9597ba180b 434-469
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "394470904e12cfb6de3298e6cadf5ccf357dd8e9",
+  "prompts": {},
+  "sessions": {
+    "s_b996deaa3d01f1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c40e7b19-3313-4542-ad8e-39c9c4c912f1",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,23 @@
+cachefn/typescript/__tests__/llm-cached-model.test.ts
+  s_0632d15ff4b386::t_d6be6d021884ee 295
+cachefn/typescript/__tests__/llm-stream.test.ts
+  s_0632d15ff4b386::t_91b22e03dc0d6c 532-540
+cachefn/typescript/src/llm/cached-model.ts
+  s_0632d15ff4b386::t_c992b2494d188d 207
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "98ece509e530d7d109936be2019246155133d595",
+  "prompts": {},
+  "sessions": {
+    "s_0632d15ff4b386": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e5bbe310-34b2-4eda-8c5b-af3a0f8f707d",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

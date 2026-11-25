@@ -1,0 +1,47 @@
+flowfn/typescript/README.md
+  s_124319b903d839::t_7266cf716368e5 87-111
+flowfn/typescript/docs/API.md
+  s_124319b903d839::t_64d3102860de86 409-412
+flowfn/typescript/scripts/idle-wakeup-measure.mjs
+  s_124319b903d839::t_77373e75f61cff 34,36,44,49,87-88
+flowfn/typescript/src/adapters/postgres/notifications.test.ts
+  s_b731d9e005b41a::t_3da24a5e74fce7 9-13,18-22,35,125-176
+flowfn/typescript/src/adapters/postgres/notifications.ts
+  s_b731d9e005b41a::t_09252016937ac9 58-72,86-88
+flowfn/typescript/src/adapters/postgres/schema.ts
+  s_b731d9e005b41a::t_26879394160401 42-45
+flowfn/typescript/src/adapters/postgres/index.ts
+  s_b731d9e005b41a::t_e810c2e3e6cf17 187-195,226-235,237,251,258-259,282,334,884-889
+flowfn/typescript/src/adapters/postgres/wakeup.test.ts
+  s_b731d9e005b41a::t_799a177290b472 23,27,29,112-168
+flowfn/typescript/src/queue/idle-wakeup.test.ts
+  s_b731d9e005b41a::t_c041caf3d006d0 208-288,301-312,415-439
+flowfn/typescript/src/queue/queue.ts
+  s_b731d9e005b41a::t_1f38fa4d41c1e2 58,67-68,112-113,119-122,290,293-310,348-374,379,392-393,416,420,425-430,440-449,519,777,799-801,872,874-877,892,905,908-915,933,1013,1023,1025,1027,1145,1147,1191-1193,1242,1304
+flowfn/typescript/src/queue/types.ts
+  s_b731d9e005b41a::t_f334cce6ae160c 179-180
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "75c8442b439cb378d24fbb77c572c051fc1a1503",
+  "prompts": {},
+  "sessions": {
+    "s_124319b903d839": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "459fa815-0e7a-4823-b25b-3c85bd3d320a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_b731d9e005b41a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "35f58510-17b5-46b8-a268-6b49b5f9edb4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

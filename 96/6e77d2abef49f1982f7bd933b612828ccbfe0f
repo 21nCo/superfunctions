@@ -1,0 +1,25 @@
+watchfn/python/tests/test_synthetics.py
+  s_01f09ea93f6a41::t_6a786eefaf99e3 118-146,209,227
+watchfn/python/watchfn/storage/database.py
+  s_01f09ea93f6a41::t_7f6863d57be391 147,151-152,160-161,164-174,189-195
+watchfn/python/watchfn/storage/memory_storage.py
+  s_01f09ea93f6a41::t_4e793880355849 47,50
+watchfn/python/watchfn/synthetics/reports.py
+  s_01f09ea93f6a41::t_6f1d4141a7aa11 20-31
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "966e77d2abef49f1982f7bd933b612828ccbfe0f",
+  "prompts": {},
+  "sessions": {
+    "s_01f09ea93f6a41": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_01f09ea93f6a41",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

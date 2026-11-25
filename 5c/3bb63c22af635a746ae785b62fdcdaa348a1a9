@@ -1,0 +1,19 @@
+memoryfn/python/uv.lock
+  s_dd6a80fe879207::t_525a7cb1d26a56 1-982
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5c3bb63c22af635a746ae785b62fdcdaa348a1a9",
+  "prompts": {},
+  "sessions": {
+    "s_dd6a80fe879207": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "301d7eb8-818d-4c34-8e66-4fd4e8909e93",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

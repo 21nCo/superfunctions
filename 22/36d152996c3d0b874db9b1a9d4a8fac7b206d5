@@ -1,0 +1,25 @@
+testfn/.conduct/process-ownership-readiness.md
+  s_6aa5114303d838::t_90e5ccbc3b72a9 13-19,23-27
+testfn/typescript/README.md
+  s_6aa5114303d838::t_f5d43db1bc5a38 210
+testfn/typescript/src/integrations/process.ts
+  s_6aa5114303d838::t_1d4065c756edf5 5,242-247,249-250,253,256-257,259-262
+testfn/typescript/tests/process-lifecycle.test.ts
+  s_6aa5114303d838::t_942c5408b51d0a 266-288
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2236d152996c3d0b874db9b1a9d4a8fac7b206d5",
+  "prompts": {},
+  "sessions": {
+    "s_6aa5114303d838": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "18c11447-7466-48c5-9260-efee41cd11b0",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,25 @@
+cmsfn/server/src/__tests__/contentfn-response.test.ts
+  s_390e68c6d3909c::t_bd117a8e4a595e 65-82
+cmsfn/server/src/__tests__/publish-upstream-bounds.test.ts
+  s_390e68c6d3909c::t_237db48117dbd3 1-103
+cmsfn/server/src/http/publish.ts
+  s_390e68c6d3909c::t_9bbe76787713e8 13,22-28,67,116
+cmsfn/server/src/publish/contentfnClient.ts
+  s_390e68c6d3909c::t_51705371fe6415 30
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fbc047310c02e61bf3ade78efbc78e16223d8a44",
+  "prompts": {},
+  "sessions": {
+    "s_390e68c6d3909c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_390e68c6d3909c",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
