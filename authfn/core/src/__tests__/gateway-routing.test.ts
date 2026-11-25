@@ -86,6 +86,32 @@ describe('AuthFn canonical gateway routing', () => {
     await expect(directory.get('person:new')).resolves.toBeNull();
   });
 
+  it.each([
+    ['register', 'application/json', AUTHFN_MAX_BODY_BYTES, 'invalid_client_metadata'],
+    ['device_authorization', 'application/x-www-form-urlencoded', 8 * 1024, 'invalid_request']
+  ] as const)('preserves the OAuth error for an oversized %s body at gateway ingress', async (path, contentType, limit, code) => {
+    const gateway = createAuthFnCanonicalGateway<unknown>({
+      publicAuthority: 'https://account.example.com',
+      basePath: '/custom-auth',
+      placementDirectory: createInMemoryAuthFnPlacementDirectory(),
+      keyring,
+      resolveIdentity: () => { throw new Error('routing should not resolve identity for an oversized body'); },
+      selectInitialRegion: () => 'us-east-1',
+      resolveCell: () => null,
+      dispatch: () => Promise.resolve(new Response())
+    });
+    const request = new Request(`https://account.example.com/custom-auth/oauth/${path}/`, {
+      method: 'POST',
+      headers: { 'content-type': contentType },
+      body: 'a'.repeat(limit + 1)
+    });
+
+    const response = await gateway.handle(request);
+    expect(response.status).toBe(400);
+    expect(response.headers.get('cache-control')).toBe('no-store');
+    await expect(response.json()).resolves.toMatchObject({ error: code });
+  });
+
   it('claims placement only for explicitly approved first-use routes', async () => {
     const directory = createInMemoryAuthFnPlacementDirectory();
     const effects: string[] = [];

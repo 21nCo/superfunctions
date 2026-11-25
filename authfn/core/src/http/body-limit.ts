@@ -4,12 +4,36 @@ import { AuthFnError, AuthFnPayloadTooLargeError } from '../core/errors.js';
 export const AUTHFN_MAX_BODY_BYTES = 64 * 1024;
 const AUTHFN_BODY_READ_TIMEOUT_MS = 5_000;
 
+/** The released OAuth provider's routes with protocol-specific body readers. */
+export function getOAuthBodyPolicy(path: string) {
+  if (path === '/oauth/register') {
+    return {
+      operationId: 'oauthRegister',
+      maxBytes: AUTHFN_MAX_BODY_BYTES,
+      errorCode: 'invalid_client_metadata',
+      sizeError: 'Request body must be a JSON object of at most 64 KB'
+    };
+  }
+  if (path === '/oauth/device_authorization') {
+    return {
+      operationId: 'oauthDeviceAuthorization',
+      maxBytes: 8 * 1024,
+      errorCode: 'invalid_request',
+      sizeError: 'Request body must be at most 8 KB'
+    };
+  }
+  return undefined;
+}
+
 /** Checks a clone so hosts and handlers keep the original Request and its native body readers. */
-export async function assertAuthRequestBodyLimit(request: Request): Promise<void> {
+export async function assertAuthRequestBodyLimit(
+  request: Request,
+  maxBytes = AUTHFN_MAX_BODY_BYTES
+): Promise<void> {
   const length = request.headers.get('content-length');
-  if (length !== null && Number(length) > AUTHFN_MAX_BODY_BYTES) {
+  if (length !== null && Number(length) > maxBytes) {
     cancel(request.body);
-    throw new AuthFnPayloadTooLargeError(AUTHFN_MAX_BODY_BYTES);
+    throw new AuthFnPayloadTooLargeError(maxBytes);
   }
 
   if (!request.body || request.bodyUsed) return;
@@ -30,9 +54,9 @@ export async function assertAuthRequestBodyLimit(request: Request): Promise<void
       const { done, value } = await reader.read();
       if (done) return;
       size += value.byteLength;
-      if (size > AUTHFN_MAX_BODY_BYTES) {
+      if (size > maxBytes) {
         cancelBothBranches();
-        throw new AuthFnPayloadTooLargeError(AUTHFN_MAX_BODY_BYTES);
+        throw new AuthFnPayloadTooLargeError(maxBytes);
       }
     }
   }

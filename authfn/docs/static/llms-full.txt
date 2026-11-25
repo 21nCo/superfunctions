@@ -2103,9 +2103,9 @@ The first-party SDKs throw a typed `AuthFnError` (Node), `AuthFnError` (Swift), 
 
 ## Request IDs
 
-Every response carries a `requestId`. Every observability event carries the same `requestId`. Every server log line that authfn emits is prefixed with the `requestId`. This is the canonical correlation key.
+Every response carries a `requestId`. Every observability event for that request carries the same `requestId`, and the value is cached for the life of the request. The id in the JSON body matches the `X-Request-Id` response header.
 
-If you want to honor an inbound `X-Request-Id` header (e.g. from your gateway), authfn does so transparently: the inbound header value is reused across every event and response. Otherwise the kernel generates a [ULID](https://github.com/ulid/spec) and uses that.
+An inbound `X-Request-Id` is reused when it is 1–128 characters and each character is printable ASCII without spaces (character codes 0x21–0x7E). A missing header, a longer value, whitespace, or any other character is discarded. Authfn then generates an id of the form `req_` plus 16 hex characters.
 
 ## Streaming and binary responses
 
@@ -6418,7 +6418,7 @@ authApp.createServer({
 | Option | Stage | Default | Notes |
 | --- | --- | --- | --- |
 | `compromisedPasswordChecker` | factory | `undefined` | A function that checks the password against breach data (e.g. HIBP). Called on sign-up and reset. Throws `AuthFnValidationError` if compromised. |
-| `requireEmailVerifiedForSignIn` | factory | `false` | If `true`, sign-in fails with `AUTHFN_EMAIL_NOT_VERIFIED` until the user verifies their email. |
+| `requireEmailVerifiedForSignIn` | factory | `false` | If `true`, sign-in returns `AUTHFN_EMAIL_NOT_VERIFIED` only after the password matches. A wrong password or a missing account returns `AUTHFN_INVALID_CREDENTIALS` with no account id. |
 | `pluginRuntime.password.otp.delivery` | runtime | required for reset | Per-flow OTP delivery for password resets. |
 | `pluginRuntime.password.otp.challengeTtlSeconds` | runtime | `600` (10 min) | TTL for password-reset OTPs. |
 | `pluginRuntime.password.otp.maxAttempts` | runtime | `5` | Maximum verification attempts per challenge. |
@@ -6429,11 +6429,15 @@ authApp.createServer({
 | Method | Path | Operation ID | Notes |
 | --- | --- | --- | --- |
 | `POST` | `/auth/sign-up/password` | `signUpWithPassword` | Create a user and issue a session. Body: `{ email, password, profile?, sessionMode? }`. `profile` must be a JSON object of at most 4 KB; it becomes the user's `metadata` (see [Sign-up profile](#sign-up-profile)). |
-| `POST` | `/auth/sign-in/password` | `signInWithPassword` | Sign in. May respond with `AUTHFN_2FA_REQUIRED` if 2FA is enrolled. |
+| `POST` | `/auth/sign-in/password` | `signInWithPassword` | Sign in. May respond with `AUTHFN_2FA_REQUIRED` if 2FA is enrolled. An unknown account, an account with no password set, and a wrong password all return the same `AUTHFN_INVALID_CREDENTIALS` error. |
 | `POST` | `/auth/password/reset/start` | `startPasswordReset` | Send a password-reset OTP. Always returns `200 OK` regardless of email existence (anti-enumeration). |
 | `POST` | `/auth/password/reset/complete` | `completePasswordReset` | Verify the OTP, set a new password and revoke every existing session of the user. |
 
 All routes return the standard envelope. See [API reference](../api) for full schemas.
+
+Password endpoints accept request bodies up to 64 KiB. A larger body, including one streamed without `Content-Length`, is rejected with HTTP 413 before the route runs. If the body takes longer than five seconds to arrive, the response is HTTP 408. Both errors use `AUTHFN_VALIDATION_ERROR`. A password longer than 1024 UTF-8 bytes is rejected with HTTP 400 before any password hashing.
+
+Users with an existing password over 1024 UTF-8 bytes must reset it. Deployments without password-reset delivery need to arrange an operator-assisted reset for those accounts.
 
 ## Schema
 
@@ -6443,7 +6447,7 @@ All routes return the standard envelope. See [API reference](../api) for full sc
 
 ## Hashing
 
-Passwords are hashed with **argon2id** with vetted parameters (the kernel uses a default cost suitable for modern hardware; you can override via the plugin's `passwordHashing` config if needed).
+The TypeScript kernel uses **scrypt** with N=16384, r=8, p=1, a 16-byte salt and a 64-byte digest. New passwords must be at least 12 characters and at most 1024 UTF-8 bytes. Sign-in applies the byte limit and verifies the stored hash at that fixed cost. On Node.js, the derivation runs off the event loop. Each runtime allows up to four active operations and sixteen waiting operations. A full queue returns a retryable `AUTHFN_RATE_LIMITED` response.
 
 ## Sign-up flow
 
@@ -6527,8 +6531,8 @@ The `profile` sent to `/sign-up/password` (and to `/otp/verify` with purpose `si
 | --- | --- |
 | `AUTHFN_VALIDATION_ERROR` | Missing email/password, password fails policy, or `compromisedPasswordChecker` returned `compromised: true`. |
 | `AUTHFN_CONFLICT` | Email already in use (and account linking didn't apply). |
-| `AUTHFN_INVALID_CREDENTIALS` | Sign-in: wrong email or password. |
-| `AUTHFN_EMAIL_NOT_VERIFIED` | Sign-in blocked because `requireEmailVerifiedForSignIn` is on. |
+| `AUTHFN_INVALID_CREDENTIALS` | Sign-in: unknown account, account with no password set, or wrong password. |
+| `AUTHFN_EMAIL_NOT_VERIFIED` | Sign-in blocked because `requireEmailVerifiedForSignIn` is on and the password matched. |
 | `AUTHFN_2FA_REQUIRED` | Sign-in succeeded for primary; 2FA challenge needs to complete. |
 | `AUTHFN_REGION_MISMATCH` | Multi-region: this email lives in another region. |
 | `AUTHFN_OTP_INVALID` / `AUTHFN_OTP_EXPIRED` / `AUTHFN_OTP_REPLAYED` | Password reset OTP failures. |
@@ -10007,6 +10011,14 @@ The Node kernel package is **`authfn`**. Plugin packages (`@authfn/password`, `@
 
 The Python kernel keeps a package changelog at `authfn/python/CHANGELOG.md`.
 
+## Unreleased
+
+- AuthFn's TypeScript router and canonical gateway reject bodies over 64 KiB with HTTP 413, including streams without `Content-Length`. Bodies that take more than five seconds to arrive return HTTP 408. OAuth client registration and device authorization keep their endpoint-specific body limits and OAuth error responses.
+- Passwords longer than 1024 UTF-8 bytes are rejected before scrypt. Node.js runs scrypt off the event loop at the existing cost. Password hashing and verification share a limit of four active and sixteen queued operations. Requests above that limit receive a retryable HTTP 429.
+- Existing passwords above the byte limit need to be reset before the user can sign in again.
+- Password sign-in returns `AUTHFN_EMAIL_NOT_VERIFIED` only after the password matches. An unknown account, an account with no password set, and a wrong password all perform one scrypt derivation and return `AUTHFN_INVALID_CREDENTIALS` with no account id.
+- An inbound `X-Request-Id` is reused only when it is 1–128 printable ASCII characters with no spaces. Any other value is replaced with a generated id in both success and error envelopes. The id is cached on the request.
+
 ## Release cadence
 
 Packages are released independently. The version of `authfn` is the canonical Node kernel version. The client, Svelte, Python, and Swift SDKs track the kernel's wire format (envelopes, error codes), not its TypeScript surface — so they release on a slower cadence.
@@ -10287,13 +10299,13 @@ Examples:
 
 ## Status codes
 
-The envelope shape is the same for `2xx` (success) and `4xx`/`5xx` (error). The HTTP status mirrors `error.code`'s mapped status — so `AUTHFN_VALIDATION_ERROR` is `400`, `AUTHFN_UNAUTHENTICATED` is `401`, `AUTHFN_RATE_LIMITED` is `429`, and so on. See [errors](./errors).
+The envelope shape is the same for `2xx` (success) and `4xx`/`5xx` (error). `AUTHFN_VALIDATION_ERROR` normally uses HTTP 400. Request body checks can return 408 when a body times out or 413 when it exceeds 64 KiB. `AUTHFN_UNAUTHENTICATED` uses 401 and `AUTHFN_RATE_LIMITED` uses 429. See [errors](./errors).
 
 ## Headers
 
 | Header | Meaning |
 | --- | --- |
-| `X-Request-Id` | Mirrors `requestId` in the body. Useful for log correlation. |
+| `X-Request-Id` | Mirrors `requestId` in the body. An inbound value is kept only when it is 1–128 printable ASCII characters with no spaces; otherwise authfn generates one. |
 | `X-Authfn-Region` | Region id that handled the request (multi-region only). |
 | `Set-Cookie: authfn_session=...; ...` | Set after a successful sign-in or refresh. |
 | `Set-Cookie: authfn_csrf=...` | Companion CSRF cookie. |

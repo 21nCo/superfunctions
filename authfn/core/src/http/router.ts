@@ -18,7 +18,7 @@ import { createAuthFnRateLimitMiddleware } from '../core/rate-limit.js';
 import { createAuthFnCellPlacementMiddleware } from '../core/gateway-routing.js';
 import { getMultiRegionPluginConfig } from '../core/regions.js';
 import { findUserById } from '../core/users.js';
-import { assertAuthRequestBodyLimit } from './body-limit.js';
+import { assertAuthRequestBodyLimit, getOAuthBodyPolicy } from './body-limit.js';
 import { jsonError, jsonSuccess } from './envelopes.js';
 
 export function createAuthFnRouter(
@@ -31,11 +31,8 @@ export function createAuthFnRouter(
     if (route?.method !== 'POST') return false;
     // These OAuth routes already bound their reads and return protocol errors.
     // Use their existing operation IDs so released plugins keep that behavior.
-    const operation = route.meta?.openapi?.operationId;
-    return (
-      (operation === 'oauthRegister' && route.path === '/oauth/register')
-      || (operation === 'oauthDeviceAuthorization' && route.path === '/oauth/device_authorization')
-    );
+    const policy = getOAuthBodyPolicy(route.path);
+    return policy !== undefined && route.meta?.openapi?.operationId === policy.operationId;
   }
   const rateLimitMiddleware = createAuthFnRateLimitMiddleware(config, hasRouteBodyLimit);
   const multiRegionConfig = getMultiRegionPluginConfig(config);
