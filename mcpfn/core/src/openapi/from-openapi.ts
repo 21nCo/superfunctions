@@ -948,8 +948,11 @@ class OperationConverter {
     }
     if (location === "header" && isForbiddenHeader(name)) return undefined;
     // A name every object inherits becomes a group property the validators
-    // do not read alike (`isPrototypeName`).
-    if (isPrototypeName(name)) {
+    // read alike only when it is required with a typed schema, which rejects
+    // the inherited value Ajv reads when it is absent; never "__proto__".
+    const schema = raw.schema;
+    const alike = name !== "__proto__" && raw.required === true && isObject(schema) && schema.type !== undefined;
+    if (isPrototypeName(name) && !alike) {
       throw new OpenApiSkip(
         "unsupported-parameter-name",
         `${location} parameter ${name} cannot be declared: the validators do not read the names every object inherits alike`,

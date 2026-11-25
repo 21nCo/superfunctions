@@ -534,7 +534,7 @@ describe("fromOpenAPI under @cfworker/json-schema", () => {
     expect(wide.tools.map(({ name }) => name)).toEqual(["wideFlat"]);
   });
 
-  it("skips a schema or parameter naming a property every object inherits, which Ajv reads through the prototype and this engine does not", () => {
+  it("skips a schema or parameter naming a property every object inherits unless it is required with a type, which Ajv reads through the prototype and this engine does not", async () => {
     const named = (schema: unknown, parameter = "q") => fromOpenAPI({
       openapi: "3.1.0",
       paths: {
@@ -562,6 +562,26 @@ describe("fromOpenAPI under @cfworker/json-schema", () => {
     expect(verdicts(parameter)).toEqual([["listItems", "unsupported-parameter-name", "query parameter hasOwnProperty cannot be declared: the validators do not read the names every object inherits alike"]]);
     // Another spelling is an ordinary name.
     expect(named({ type: "object", required: ["ToString"], properties: { ToString: { type: "string" } } }, "Constructor").skipped).toEqual([]);
+    // Required with a typed schema, the name is judged alike: the type rejects the inherited value Ajv reads.
+    const executor = recordingExecutor();
+    const typed = fromOpenAPI({
+      openapi: "3.1.0",
+      paths: {
+        "/items": {
+          post: { operationId: "named", requestBody: { required: true, content: { "application/json": { schema: { type: "object", required: ["constructor"], properties: { constructor: { type: "string" } } } } } }, responses: { "204": { description: "Done" } } },
+          get: { operationId: "listItems", parameters: [{ name: "toString", in: "query", required: true, schema: { type: "string" } }], responses: { "200": { description: "OK" } } },
+        },
+      },
+    }, { executor, allowMutations: true });
+    expect(typed.skipped).toEqual([]);
+    for (const engine of ["ajv", "cfworker"] as const) {
+      const body = createSchemaCompiler(engine).compile(tool(typed.tools, "named").inputSchema);
+      const query = createSchemaCompiler(engine).compile(tool(typed.tools, "listItems").inputSchema);
+      expect([body({ body: { constructor: "ok" } }), body({ body: {} }), body({ body: { constructor: 1 } })]).toEqual([true, false, false]);
+      expect([query({ query: { toString: "ok" } }), query({ query: {} }), query({})]).toEqual([true, false, false]);
+    }
+    await typed.registry.callTool("named", { body: { constructor: "ok" } }, undefined, requestExtra());
+    expect(executor.calls.map((call) => call.args)).toEqual([{ body: { constructor: "ok" } }]);
   });
 
   it("skips a __proto__ parameter, required or optional, as under Ajv", () => {

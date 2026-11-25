@@ -1315,23 +1315,26 @@ describe("fromOpenAPI bounded and dialect-aware conversion", () => {
         });
       }
     }
-    // One wide map shared by every operation is read once, not once per operation.
-    const shared: Record<string, string[]> = {};
-    for (let index = 0; index < 9_600; index += 1) shared[`p${index}`] = [index === 9_599 ? "__proto__" : `q${index}`];
-    const paths: Record<string, unknown> = {};
-    for (let index = 0; index < 9_600; index += 1) {
-      paths[`/op${index}`] = { post: { operationId: `op${index}`, requestBody: body({ type: "object", dependentRequired: shared }), responses: ok } };
+    // One wide map shared by every operation is read once, not once per operation,
+    // whether its last list names __proto__ or is malformed (sparse).
+    for (const last of [["__proto__"], new Array<string>(2)]) {
+      const shared: Record<string, string[]> = {};
+      for (let index = 0; index < 9_600; index += 1) shared[`p${index}`] = index === 9_599 ? last : [`q${index}`];
+      const paths: Record<string, unknown> = {};
+      for (let index = 0; index < 9_600; index += 1) {
+        paths[`/op${index}`] = { post: { operationId: `op${index}`, requestBody: body({ type: "object", dependentRequired: shared }), responses: ok } };
+      }
+      paths["/plain"] = { post: { operationId: "plainDependency", requestBody: body({ type: "object", dependentRequired: { flag: ["name"] } }), responses: ok } };
+      const started = performance.now();
+      const wide = fromOpenAPI({ openapi: "3.1.0", paths }, options());
+      expect(performance.now() - started).toBeLessThan(2_000);
+      expect(new Set(wide.skipped.map(({ code }) => code))).toEqual(new Set([last.length === 1 ? "unsupported-property-name" : "invalid-schema"]));
+      expect(wide.skipped).toHaveLength(9_600);
+      expect(wide.tools.map(({ name }) => name)).toEqual(["plainDependency"]);
     }
-    paths["/plain"] = { post: { operationId: "plainDependency", requestBody: body({ type: "object", dependentRequired: { flag: ["name"] } }), responses: ok } };
-    const started = performance.now();
-    const wide = fromOpenAPI({ openapi: "3.1.0", paths }, options());
-    expect(performance.now() - started).toBeLessThan(2_000);
-    expect(new Set(wide.skipped.map(({ code }) => code))).toEqual(new Set(["unsupported-property-name"]));
-    expect(wide.skipped).toHaveLength(9_600);
-    expect(wide.tools.map(({ name }) => name)).toEqual(["plainDependency"]);
   });
 
-  it("skips a schema or parameter naming any property every object inherits, as under @cfworker/json-schema", () => {
+  it("skips a schema or parameter naming any property every object inherits unless required with a type in the same object, as under @cfworker/json-schema", () => {
     const result = fromOpenAPI({
       openapi: "3.0.3",
       paths: {
@@ -1341,6 +1344,11 @@ describe("fromOpenAPI bounded and dialect-aware conversion", () => {
         "/d": { get: { operationId: "parameter", parameters: [{ name: "isPrototypeOf", in: "query", schema: { type: "string" } }], responses: ok } },
         "/e": { get: { operationId: "output", responses: json({ type: "object", properties: { hasOwnProperty: { type: "string" } } }) } },
         "/f": { post: { operationId: "plain", requestBody: body({ type: "object", required: ["ToString"], properties: { ToString: { type: "string" } } }), responses: ok } },
+        // Required with a type in the same object, the engines judge it alike.
+        "/g": { post: { operationId: "typed", requestBody: body({ type: "object", required: ["constructor"], properties: { constructor: { type: "string" } } }), responses: ok } },
+        // Split across allOf members, it is not read together.
+        "/h": { post: { operationId: "split", requestBody: body({ type: "object", allOf: [{ required: ["constructor"] }, { properties: { constructor: { type: "string" } } }] }), responses: ok } },
+        "/i": { post: { operationId: "untyped", requestBody: body({ type: "object", required: ["constructor"], properties: { constructor: {} } }), responses: ok } },
       },
     }, options());
     const reason = (name: string) => PROTO_PROPERTY.replace("__proto__", name);
@@ -1350,8 +1358,22 @@ describe("fromOpenAPI bounded and dialect-aware conversion", () => {
       ["dependency", "unsupported-property-name", reason("valueOf")],
       ["parameter", "unsupported-parameter-name", "query parameter isPrototypeOf cannot be declared: the validators do not read the names every object inherits alike"],
       ["output", "unsupported-property-name", reason("hasOwnProperty")],
+      ["split", "unsupported-property-name", reason("constructor")],
+      ["untyped", "unsupported-property-name", reason("constructor")],
     ]);
-    expect(result.tools.map(({ name }) => name)).toEqual(["plain"]);
+    expect(result.tools.map(({ name }) => name)).toEqual(["plain", "typed"]);
+    expectArguments(tool(result.tools, "typed").inputSchema, { valid: [{ body: { constructor: "ok" } }], invalid: [{ body: {} }, { body: { constructor: 1 } }] });
+    // One map read as properties and then as a dependency is checked in each role, in either order.
+    const names = { flag: ["__proto__"] };
+    for (const order of [["keys", "dependency"], ["dependency", "keys"]]) {
+      const shared = fromOpenAPI({
+        openapi: "3.1.0",
+        paths: Object.fromEntries(order.map((role) => [`/${role}`, {
+          post: { operationId: role, requestBody: body(role === "keys" ? { type: "object", properties: names } : { type: "object", dependentRequired: names }), responses: ok },
+        }])),
+      }, options());
+      expect(shared.skipped.map(({ operation, code }) => [operation.operationId, code]).sort()).toEqual([["dependency", "unsupported-property-name"], ["keys", "invalid-schema"]]);
+    }
   });
 
   it("keeps schema-less JSON bodies, large document arrays and unrelated deep reference chains out of the way", () => {

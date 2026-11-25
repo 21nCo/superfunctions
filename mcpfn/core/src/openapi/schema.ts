@@ -331,7 +331,12 @@ export function isPrototypeName(name: unknown): boolean {
   return typeof name === "string" && Object.hasOwn(Object.prototype, name);
 }
 
-/** Why a schema naming an inherited property is refused (`checkNameList`). */
+/** What a read of inherited names covers: a name list, a map's keys, or a dependency map's keys and lists. */
+type NameRole = "list" | "keys" | "dependencies";
+
+const NO_NAMES: ReadonlySet<string> = new Set();
+
+/** Why a schema naming an inherited property is refused (`checkInheritedNames`). */
 export function prototypePropertyReason(name: string): string {
   return `property ${name} cannot be declared or required: the validators do not read the names every object inherits alike`;
 }
@@ -521,8 +526,12 @@ export class SchemaConverter {
   private readonly projections = new Map<DirectionalKeyword, WeakMap<object, AccessConflict | null>>();
   /** Schema objects whose conversion failed for a reason of their own, by mode, for the whole call. */
   private readonly failures = new Map<SchemaMode, WeakMap<object, OpenApiSkip>>();
-  /** The property-name lists and maps already read, with the inherited name they hold, if any (`checkNameList`). */
-  private readonly readNames = new WeakMap<object, string | null>();
+  /**
+   * The inherited names (`isPrototypeName`) a name list, the keys of a map or
+   * a dependency map holds, or the failure reading it gave, by role, for the
+   * call (`namesIn`).
+   */
+  private readonly inheritedNames = new Map<NameRole, WeakMap<object, ReadonlySet<string> | OpenApiSkip>>();
   private budget: NodeBudget;
 
   constructor(
@@ -987,6 +996,7 @@ export class SchemaConverter {
   }
 
   private convertKeywords(schema: JsonObject, mode: SchemaMode, refs: Set<string>): McpFnJsonSchema {
+    this.checkInheritedNames(schema);
     const entries: Array<[string, unknown]> = [];
     let dependencies: JsonObject | undefined;
     let defs: JsonObject | undefined;
@@ -997,10 +1007,10 @@ export class SchemaConverter {
       // 2020-12 (OpenAPI 3.1) defines no `dependencies`: it annotates only.
       if (keyword === this.ignoredKeyword()) continue;
       if (keyword === "dependencies" && isObject(value)) {
-        this.checkNameList(value, true);
+        this.checkDependencyNames(value);
         dependencies = { ...dependencies, ...this.convertDependencies(value, mode, refs) };
       } else if (keyword === "dependentRequired" && isObject(value)) {
-        this.checkNameList(value, true);
+        this.checkDependencyNames(value);
         dependencies = { ...value, ...dependencies };
       } else if (keyword === "$defs") {
         // Draft-07 has no $defs, so Ajv would not refuse a malformed one.
@@ -1017,31 +1027,52 @@ export class SchemaConverter {
   }
 
   /**
-   * Refuse a list of property names (`required`, a property dependency) or a
-   * map keyed by them (`properties`, `dependencies`, `dependentRequired`)
-   * that names a property every object inherits (`isPrototypeName`). Each
-   * document list or map is read once per call, whatever refers to it, so
-   * the reading stays within the document's size.
+   * Refuse a schema object whose `properties` or `required` names a property
+   * every object inherits, unless both engines judge it alike: the same
+   * object requires it and gives it a `properties` entry with a `type`, which
+   * rejects the inherited value Ajv reads when it is absent. "__proto__" is
+   * refused always: Ajv leaves that key of `properties` out.
    */
-  private checkNameList(names: unknown[] | JsonObject, dependencyLists = false): void {
-    const found = this.inheritedName(names, dependencyLists);
-    if (found !== null) throw new OpenApiSkip("unsupported-property-name", prototypePropertyReason(found));
+  private checkInheritedNames(schema: JsonObject): void {
+    const properties = isObject(schema.properties) ? schema.properties : undefined;
+    const declared = properties ? this.namesIn(properties, "keys") : NO_NAMES;
+    const required = Array.isArray(schema.required) ? this.namesIn(schema.required, "list") : NO_NAMES;
+    for (const name of [...declared, ...required]) {
+      const property = declared.has(name) ? properties![name] : undefined;
+      const alike = name !== "__proto__" && required.has(name) && isObject(property) && property.type !== undefined;
+      if (!alike) throw new OpenApiSkip("unsupported-property-name", prototypePropertyReason(name));
+    }
   }
 
-  /** The first inherited name `names` holds (with the lists a dependency map holds), remembered for the call. */
-  private inheritedName(names: unknown[] | JsonObject, dependencyLists: boolean): string | null {
-    let found = this.readNames.get(names);
-    if (found !== undefined) return found;
-    const read = Array.isArray(names) ? documentItems(names) : this.budget.ownKeys(names);
-    found = (read.find(isPrototypeName) as string | undefined) ?? null;
-    if (found === null && dependencyLists && !Array.isArray(names)) {
-      for (const key of read as readonly string[]) {
-        const item = names[key];
-        found = Array.isArray(item) ? this.inheritedName(item, false) : null;
-        if (found !== null) break;
+  /** Refuse a dependency map that names an inherited property, as a key or in a list: the engines read it differently. */
+  private checkDependencyNames(value: JsonObject): void {
+    const [name] = this.namesIn(value, "dependencies");
+    if (name !== undefined) throw new OpenApiSkip("unsupported-property-name", prototypePropertyReason(name));
+  }
+
+  /**
+   * The inherited names `value` holds in its role, read once per call
+   * whatever refers to it (a failure too), so the reading stays within the
+   * document's size.
+   */
+  private namesIn(value: unknown[] | JsonObject, role: NameRole): ReadonlySet<string> {
+    const memo = memoFor(this.inheritedNames, role);
+    const known = memo.get(value);
+    if (known instanceof OpenApiSkip) throw known;
+    if (known) return known;
+    const found = new Set<string>();
+    try {
+      const names = Array.isArray(value) ? documentItems(value) : this.budget.ownKeys(value);
+      for (const name of names) {
+        if (isPrototypeName(name)) found.add(name as string);
+        const list = role === "dependencies" ? (value as JsonObject)[name as string] : undefined;
+        if (Array.isArray(list)) for (const listed of this.namesIn(list, "list")) found.add(listed);
       }
+    } catch (error) {
+      if (error instanceof OpenApiSkip) memo.set(value, error);
+      throw error;
     }
-    this.readNames.set(names, found);
+    memo.set(value, found);
     return found;
   }
 
@@ -1053,7 +1084,6 @@ export class SchemaConverter {
     refs: Set<string>,
   ): [string, unknown] | undefined {
     if (SCHEMA_MAP_KEYWORDS.has(keyword) && isObject(value)) {
-      if (keyword === "properties") this.checkNameList(value);
       return [keyword, this.convertMap(value, mode, refs)];
     }
     if ((SCHEMA_ARRAY_KEYWORDS.has(keyword) || keyword === "items") && Array.isArray(value)) {
@@ -1063,7 +1093,6 @@ export class SchemaConverter {
       for (const item of value) converted.push(this.convert(item, mode, refs));
       return [keyword, converted];
     }
-    if (keyword === "required" && Array.isArray(value)) this.checkNameList(value);
     if (keyword === "items") return [keyword, this.convert(value, mode, refs)];
     if (SCHEMA_KEYWORDS.has(keyword)) return [keyword, this.convert(value, mode, refs)];
     if ((keyword === "exclusiveMinimum" || keyword === "exclusiveMaximum") && typeof value === "boolean") {
