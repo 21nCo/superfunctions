@@ -406,6 +406,36 @@ describe("fromOpenAPI skip reasons", () => {
     expect(skipped[0]!.reason).toMatch(reason);
   });
 
+  it("skips a parameter named __proto__, which neither validator can list in a closed group, and keeps ordinary names", () => {
+    const { tools, skipped } = convert("skip-prototype-parameter-name");
+    expect(skips({ tools, skipped } as Result)).toEqual([[
+      "listItems",
+      "unsupported-parameter-name",
+      "query parameter __proto__ cannot be declared in a closed group: the validators ignore that property name",
+    ]]);
+    const plain = tool(tools, "listPlain");
+    expect(plain.inputSchema.properties).toEqual({
+      query: { type: "object", properties: { proto: { type: "string" } }, additionalProperties: false },
+    });
+    expectArguments(plain.inputSchema, { valid: [{}, { query: { proto: "x" } }], invalid: [{ query: { other: "x" } }] });
+    for (const [location, name] of [["path", "__proto__"], ["header", "__PROTO__"]] as const) {
+      const result = fromOpenAPI({
+        openapi: "3.1.0",
+        paths: {
+          [location === "path" ? "/items/{__proto__}" : "/items"]: {
+            get: {
+              operationId: "getItem",
+              parameters: [{ name, in: location, required: location === "path", schema: { type: "string" } }],
+              responses: { "200": { description: "OK" } },
+            },
+          },
+        },
+      }, { executor: recordingExecutor() });
+      expect(result.tools).toEqual([]);
+      expect(result.skipped).toEqual([expect.objectContaining({ code: "unsupported-parameter-name" })]);
+    }
+  });
+
   it("skips each non-default parameter style", () => {
     const { tools, skipped } = convert("skip-parameter-styles");
     expect(tools).toEqual([]);
@@ -1626,6 +1656,77 @@ describe("fromOpenAPI bounded and dialect-aware conversion", () => {
     expect(performance.now() - started).toBeLessThan(1000);
     expect(result.skipped).toEqual([]);
     expect(registered(result)).toEqual([["unclosed", false], ["variables", false]]);
+  });
+
+  it("follows each parameter, request body and response alias chain once per call, with the diagnostics of a fresh walk", () => {
+    const length = 3_000;
+    const parameters: Record<string, unknown> = { [`p${length}`]: { name: "q", in: "query", schema: { type: "string" } } };
+    for (let index = 0; index < length; index += 1) parameters[`p${index}`] = { $ref: `#/components/parameters/p${index + 1}` };
+    const paths: Record<string, unknown> = Object.fromEntries(Array.from({ length: 3_000 }, (_, index) => [
+      `/a${index}`, { get: { operationId: `a${index}`, parameters: [{ $ref: "#/components/parameters/p0" }], responses: ok } },
+    ]));
+    // A prefix reaching a cycle names the cycle's first link; a walk starting on the cycle names itself.
+    Object.assign(parameters, {
+      x0: { $ref: "#/components/parameters/x1" }, x1: { $ref: "#/components/parameters/c0" },
+      c0: { $ref: "#/components/parameters/c1" }, c1: { $ref: "#/components/parameters/c2" }, c2: { $ref: "#/components/parameters/c0" },
+      m0: { $ref: "#/components/parameters/m1" }, m1: { $ref: "#/components/parameters/gone" },
+    });
+    for (const name of ["x0", "x1", "c1", "c2", "c0", "x0", "m0", "m1"]) {
+      paths[`/${name}-${Object.keys(paths).length}`] = { get: { operationId: `ref_${name}`, parameters: [{ $ref: `#/components/parameters/${name}` }], responses: ok } };
+    }
+    const started = performance.now();
+    const result = fromOpenAPI({ openapi: "3.1.0", paths, components: { parameters } }, options());
+    expect(performance.now() - started).toBeLessThan(5_000);
+    expect(result.tools).toHaveLength(3_000);
+    expect(tool(result.tools, "a2999").inputSchema.properties).toEqual({
+      query: { type: "object", properties: { q: { type: "string" } }, additionalProperties: false },
+    });
+    expect(skips(result)).toEqual([
+      ["ref_x0", "unresolved-ref", "reference cycle through #/components/parameters/c0"],
+      ["ref_x1", "unresolved-ref", "reference cycle through #/components/parameters/c0"],
+      ["ref_c1", "unresolved-ref", "reference cycle through #/components/parameters/c1"],
+      ["ref_c2", "unresolved-ref", "reference cycle through #/components/parameters/c2"],
+      ["ref_c0", "unresolved-ref", "reference cycle through #/components/parameters/c0"],
+      ["ref_x0", "unresolved-ref", "reference cycle through #/components/parameters/c0"],
+      ["ref_m0", "unresolved-ref", "reference #/components/parameters/gone has no target"],
+      ["ref_m1", "unresolved-ref", "reference #/components/parameters/gone has no target"],
+    ]);
+  });
+
+  it("charges every closure walk for the edges it queues, so wrappers sharing a wide hub with an invalid child stop once the total is spent", () => {
+    const width = 20_000;
+    const wrappers = 600;
+    const schemas: Record<string, unknown> = { Bad: { prefixItems: [{ type: "string" }] } };
+    const properties: Record<string, unknown> = { c0: { $ref: "#/components/schemas/Bad" } };
+    for (let index = 1; index <= width; index += 1) {
+      schemas[`C${index}`] = { type: "string" };
+      properties[`c${index}`] = { $ref: `#/components/schemas/C${index}` };
+    }
+    schemas.Hub = { type: "object", properties };
+    const paths: Record<string, unknown> = {};
+    for (let index = 0; index < wrappers; index += 1) {
+      schemas[`W${index}`] = { type: "object", properties: { hub: { $ref: "#/components/schemas/Hub" } } };
+      paths[`/w${index}`] = { get: { operationId: `w${index}`, responses: { "200": { description: "OK", content: { "application/json": { schema: { $ref: `#/components/schemas/W${index}` } } } } } } };
+    }
+    const result = fromOpenAPI({ openapi: "3.1.0", paths, components: { schemas } }, options());
+    const codes = result.skipped.map((entry) => entry.code);
+    expect(codes).toHaveLength(wrappers);
+    const spent = codes.indexOf("schema-too-large");
+    expect(spent).toBeGreaterThan(0);
+    expect(new Set(codes.slice(0, spent))).toEqual(new Set(["unsupported-schema-keyword"]));
+    expect(new Set(codes.slice(spent))).toEqual(new Set(["schema-too-large"]));
+  });
+
+  it("removes flagged names from a long required list in order, with one lookup per name", () => {
+    const names = Array.from({ length: 500 }, (_, index) => `n${index}`);
+    const properties = Object.fromEntries(names.map((name, index) => [name, index % 2 === 0 ? { type: "string", readOnly: true } : { type: "string" }]));
+    const result = fromOpenAPI({
+      openapi: "3.1.0",
+      paths: { "/r": { post: { operationId: "r", requestBody: { required: true, content: { "application/json": { schema: { type: "object", properties, required: names } } } }, responses: ok } } },
+    }, options());
+    expect(skips(result)).toEqual([]);
+    const body = (tool(result.tools, "r").inputSchema.properties as Record<string, { required?: string[] }>).body!;
+    expect(body.required).toEqual(names.filter((_, index) => index % 2 === 1));
   });
 });
 

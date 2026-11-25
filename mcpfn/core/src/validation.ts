@@ -74,15 +74,18 @@ function createAjv(): Ajv {
     code: { optimize: false },
   });
   // Ajv's fail-fast allOf nests an if per member, which can overflow while
-  // compiling a wide schema. Emit sibling guards with the same short circuit.
+  // compiling a wide schema. Emit sibling guards with the same short circuit,
+  // and, like Ajv, emit nothing for a member that is always valid.
   ajv.removeKeyword("allOf").addKeyword({
     keyword: "allOf",
     schemaType: "array",
     before: "if",
     code(cxt) {
-      const { gen, schema } = cxt;
+      const { gen, schema, it } = cxt;
+      const rules = it.self.RULES.all;
       const valid = gen.var("validAllOf", true);
       for (let index = 0; index < schema.length; index++) {
+        if (isAlwaysValidMember(schema[index], rules)) continue;
         gen.if(valid, () => {
           cxt.subschema({ keyword: "allOf", schemaProp: index }, valid);
         });
@@ -94,6 +97,16 @@ function createAjv(): Ajv {
   // The runtime contract is stable; erase only that duplicate-package type identity.
   addFormats(ajv as never);
   return ajv;
+}
+
+/** Ajv's `alwaysValidSchema` rule: `true`, or an object with no keyword Ajv evaluates. */
+function isAlwaysValidMember(member: unknown, rules: Record<string, unknown>): boolean {
+  if (typeof member === "boolean") return member;
+  if (member === null || typeof member !== "object") return false;
+  for (const key in member) {
+    if (Object.hasOwn(rules, key) && rules[key]) return false;
+  }
+  return true;
 }
 
 function mapAjvErrors(errors: ErrorObject[] | null | undefined): SchemaIssue[] {

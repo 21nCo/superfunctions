@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import Ajv from "ajv";
+import { describe, expect, it, vi } from "vitest";
 
 import { createSchemaCompiler, formatMcpFnSchemaIssues, validateSchemaCollection } from "../src/validation.js";
 
@@ -16,6 +17,28 @@ describe("schema validation engines", () => {
     expect(validate.errors).toEqual([expect.objectContaining({ schemaPath: "#/allOf/0/properties/value/type" })]);
     expect(validate({ value: "x" })).toBe(false);
     expect(validate.errors).toEqual([expect.objectContaining({ schemaPath: "#/allOf/3000/properties/value/minLength" })]);
+  });
+
+  it("emits no Ajv code for always-valid allOf members and keeps fail-fast for the others", () => {
+    const compile = vi.spyOn(Ajv.prototype, "compile");
+    try {
+      const annotations = Array.from({ length: 3_000 }, (_, index) => ({ description: `note ${index}` }));
+      const validate = createSchemaCompiler("ajv").compile({
+        type: "object",
+        allOf: [...annotations, true, {}, { properties: { value: { type: "string" } } }, { required: ["value"] }],
+      });
+      const generated = String(compile.mock.results[0]?.value);
+      expect(generated.length).toBeLessThan(5_000);
+      expect(generated).not.toContain("allOf/0");
+
+      expect(validate({ value: "ok" })).toBe(true);
+      expect(validate({ value: 0 })).toBe(false);
+      expect(validate.errors).toEqual([expect.objectContaining({ schemaPath: "#/allOf/3002/properties/value/type" })]);
+      expect(validate({})).toBe(false);
+      expect(validate.errors).toEqual([expect.objectContaining({ schemaPath: "#/allOf/3003/required" })]);
+    } finally {
+      compile.mockRestore();
+    }
   });
 
   it.each(["ajv", "cfworker"] as const)("reports structural property names with %s", engine => {

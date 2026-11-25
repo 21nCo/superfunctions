@@ -68,6 +68,11 @@ const FORBIDDEN_HEADERS = new Set([
   "content-type",
 ]);
 
+function entryObject(value: unknown, kind: string): JsonObject {
+  if (!isObject(value)) throw new OpenApiSkip("invalid-operation", `a ${kind} entry is not an object`);
+  return value;
+}
+
 function isForbiddenHeader(name: string): boolean {
   const lower = name.toLowerCase();
   return FORBIDDEN_HEADERS.has(lower) || lower.startsWith("proxy-");
@@ -360,26 +365,52 @@ class OperationConverter {
   /** The operations holding a reservation made with each tool schema. */
   private readonly holdersOf = new WeakMap<object, Holder[]>();
 
+  /**
+   * The outcome of following each component's `$ref` chain, per kind: every
+   * link is decoded once per call, however many operations share the chain.
+   */
+  private readonly resolved = new Map<string, JsonObject | OpenApiSkip>();
+
   /** Follow a `$ref` chain to a parameter, request body or response object. */
   resolve(value: unknown, kind: "parameters" | "requestBodies" | "responses"): JsonObject {
-    let current = value;
-    const seen = new Set<string>();
-    while (isObject(current) && "$ref" in current) {
-      const name = parseComponentRef(current.$ref, kind);
-      if (seen.has(name)) {
-        throw new OpenApiSkip("unresolved-ref", `reference cycle through #/components/${kind}/${name}`);
+    if (!isObject(value) || !("$ref" in value)) return entryObject(value, kind);
+    const visited = new Map<string, number>();
+    let current: unknown = value;
+    let outcome: JsonObject | OpenApiSkip | undefined;
+    let cycleStart = -1;
+    try {
+      while (isObject(current) && "$ref" in current) {
+        const name = parseComponentRef(current.$ref, kind);
+        outcome = this.resolved.get(`${kind}/${name}`);
+        if (outcome !== undefined) break;
+        if (visited.has(name)) {
+          cycleStart = visited.get(name)!;
+          break;
+        }
+        visited.set(name, visited.size);
+        const section = this.components[kind];
+        if (!isObject(section) || !Object.hasOwn(section, name)) {
+          throw new OpenApiSkip("unresolved-ref", `reference #/components/${kind}/${name} has no target`);
+        }
+        current = section[name];
       }
-      seen.add(name);
-      const section = this.components[kind];
-      if (!isObject(section) || !Object.hasOwn(section, name)) {
-        throw new OpenApiSkip("unresolved-ref", `reference #/components/${kind}/${name} has no target`);
-      }
-      current = section[name];
+      if (outcome === undefined && cycleStart < 0) outcome = entryObject(current, kind);
+    } catch (error) {
+      if (!(error instanceof OpenApiSkip)) throw error;
+      outcome = error;
     }
-    if (!isObject(current)) {
-      throw new OpenApiSkip("invalid-operation", `a ${kind} entry is not an object`);
-    }
-    return current;
+    // Each name on the chain shares its outcome, except that a name on a
+    // cycle reports the cycle through itself, as a walk starting there would.
+    const names = [...visited.keys()];
+    outcome ??= new OpenApiSkip("unresolved-ref", `reference cycle through #/components/${kind}/${names[cycleStart]}`);
+    names.forEach((name, index) => {
+      this.resolved.set(`${kind}/${name}`, cycleStart >= 0 && index >= cycleStart
+        ? new OpenApiSkip("unresolved-ref", `reference cycle through #/components/${kind}/${name}`)
+        : outcome);
+    });
+    const result = names.length > 0 ? this.resolved.get(`${kind}/${names[0]}`)! : outcome;
+    if (result instanceof OpenApiSkip) throw new OpenApiSkip(result.code, result.message);
+    return result;
   }
 
   operation(
@@ -877,6 +908,14 @@ class OperationConverter {
       throw new OpenApiSkip("invalid-operation", `parameter ${name} has unknown location ${JSON.stringify(location)}`);
     }
     if (location === "header" && isForbiddenHeader(name)) return undefined;
+    // Validators ignore a "__proto__" key of properties, so the closed group
+    // would list the parameter and still reject every call that supplies it.
+    if (name === "__proto__" || (location === "header" && name.toLowerCase() === "__proto__")) {
+      throw new OpenApiSkip(
+        "unsupported-parameter-name",
+        `${location} parameter ${name} cannot be declared in a closed group: the validators ignore that property name`,
+      );
+    }
     if (raw.schema === undefined) {
       throw new OpenApiSkip(
         "parameter-content",

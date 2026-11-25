@@ -1036,7 +1036,8 @@ export class SchemaConverter {
     }
     converted.properties = properties as McpFnJsonSchema["properties"];
     if (Array.isArray(converted.required)) {
-      converted.required = documentItems(converted.required).filter((name) => !flagged.includes(name as string));
+      const removed = new Set<unknown>(flagged);
+      converted.required = documentItems(converted.required).filter((name) => !removed.has(name));
       if ((converted.required as unknown[]).length === 0) delete converted.required;
     }
   }
@@ -1635,11 +1636,15 @@ export class SchemaConverter {
       if (seen.has(key)) continue;
       seen.add(key);
       const entry = this.convertedComponent(key, mode);
+      // A failing closure is walked again by every root reaching it: each
+      // entry and its edges are charged before they are queued, so a wide
+      // shared hub costs every walk that reaches it, and none once the
+      // call's total is spent.
       if (entry.error) {
-        // A failing closure is walked again by every root reaching it: each walk is charged.
-        this.total.chargeNodes(seen.size);
+        this.total.chargeNodes(1);
         throw entry.error;
       }
+      this.total.chargeNodes(1 + entry.refs!.size);
       for (const next of entry.refs!) if (!seen.has(next) && !checked.has(next)) queue.push(next);
     }
     for (const key of seen) checked.add(key);
@@ -1677,28 +1682,28 @@ export class SchemaConverter {
    * converted `root` refers to a checked closure, from the schema alone,
    * never from a sample value. At every position a value can take, the
    * subschemas and references applied there in place count, followed to
-   * their end. A child value every valid instance must have (`forcedChild`)
-   * stacks on its parent's frames; any other child value starts its own
-   * chain, as its depth is the instance's own. A chain of forced children
-   * that never ends has no finite valid instance and is infinitely deep.
-   * Each component is walked once per call, and a root once per tool
-   * schema, each walk charged to the call's total. A root a call may leave
-   * out (`required` false) forces nothing of its own. A schema only checked
+   * their end, each child value from its own first frame. Child values
+   * every accepted value of the root must have (required properties, items
+   * up to `minItems`, by the `type`, `required` and `minItems` of the schema
+   * and its `allOf` members) form the root's own chain, which stacks on its
+   * parent's frames: no valid value is shallower. Any other child value
+   * (optional, or in a branch a value can avoid) is one a caller can leave
+   * out, so its chain never stacks. A chain of forced children that never
+   * ends has no finite valid instance and is infinitely deep. Each
+   * component is walked once per call, and a root once per tool schema,
+   * each walk charged to the call's total. A root a call may leave out
+   * (`required` false) forces nothing of its own. A schema only checked
    * (`plain`) is measured in place: no value is validated against it.
    */
   frames(root: McpFnJsonSchema | boolean, mode: SchemaMode, required = true): number {
-    const stacked = mode !== "plain";
-    const own = this.positions(root, mode, stacked && required);
+    const own = this.positions(root, mode, mode !== "plain" && required);
     const reach = memoMap(this.reachFrames, mode, () => new Map<string, number>());
-    const local = (positions: Positions) => (stacked ? this.localFrames(positions, mode) : positions.frames);
-    // Only the root's own chain is taken by every value: a chain elsewhere
-    // that never ends means no valid value has that child, not that none fits.
-    let most = local(own);
+    let most = Math.max(own.frames, own.forcedFrames);
     for (const [name, frame] of own.forced) most = Math.max(most, frame + this.forcedFrames(name, mode));
     for (const name of own.refs) {
       const below = settleGraph(name, (key) => this.componentPositions(key, mode).refs, reach, (component, deeper) => {
         let frames = deeper;
-        for (const key of component) frames = Math.max(frames, local(this.componentPositions(key, mode)));
+        for (const key of component) frames = Math.max(frames, this.componentPositions(key, mode).frames);
         return frames;
       });
       most = Math.max(most, below);
@@ -1723,16 +1728,6 @@ export class SchemaConverter {
     return known;
   }
 
-  /** The most frames at the positions of one walked schema, with the finite forced chains its references continue. */
-  private localFrames(own: Positions, mode: SchemaMode): number {
-    let most = own.frames;
-    for (const [name, frame] of own.carried) {
-      const forced = this.forcedFrames(name, mode);
-      if (Number.isFinite(forced)) most = Math.max(most, frame + forced);
-    }
-    return most;
-  }
-
   /**
    * The frames every valid value of component `name` stacks from the frame
    * of a reference to it: its forced chain, continued through the components
@@ -1752,16 +1747,16 @@ export class SchemaConverter {
   }
 
   /**
-   * One schema's positions: the most frames at any of them (`frames`), and
-   * on the chain of the schema's own value (`forcedFrames`), the definitions
-   * it applies anywhere (`refs`), and those applied where every valid value
-   * must satisfy them, with the frame they are applied at: on the schema's
-   * own chain (`forced`) or on any chain (`carried`). In place, `allOf`
-   * members and references must be satisfied; `anyOf`, `oneOf`, `not`,
-   * conditions and dependencies need not.
+   * One schema's positions: the most frames at any of them, each child
+   * value counted from its own first frame (`frames`), and on the chain of
+   * the schema's own value stacked through its forced children
+   * (`forcedFrames`), the definitions it applies anywhere (`refs`), and
+   * those applied on its own chain, with the frame they are applied at
+   * (`forced`). In place, `allOf` members and references must be satisfied;
+   * `anyOf`, `oneOf`, `not`, conditions and dependencies need not.
    */
   private positions(schema: unknown, mode: SchemaMode, required = true): Positions {
-    const result: Positions = { frames: 0, forcedFrames: 0, refs: new Set(), forced: new Map(), carried: new Map() };
+    const result: Positions = { frames: 0, forcedFrames: 0, refs: new Set(), forced: new Map() };
     // Charged as the walk goes, so it stops before work the budget cannot cover.
     let visited = 0;
     const flush = () => {
@@ -1769,23 +1764,24 @@ export class SchemaConverter {
       visited = 0;
       this.total.chargeNodes(count);
     };
-    const visit = (node: unknown, frame: number, own: boolean, must: boolean, whole?: Conjunction): void => {
+    // `frame` stacks along the own chain; `local` counts from the child value's first frame.
+    const visit = (node: unknown, frame: number, local: number, own: boolean, must: boolean, whole?: Conjunction): void => {
       if (node === undefined) return;
       visited += 1;
       if (visited >= POSITION_CHARGE_BATCH) flush();
-      let reached = frame;
+      let reached = local;
+      let stacked = frame;
       if (isObject(node) && typeof node.$ref === "string" && node.$ref.startsWith(DEFINITION_REF)) {
         const name = node.$ref.slice(DEFINITION_REF.length);
         result.refs.add(name);
         // Within a checked closure no in-place chain is a cycle.
-        reached = frame + Math.max(0, this.inPlaceDepth(name, mode));
-        if (must) {
-          addFrame(result.carried, name, frame);
-          if (own) addFrame(result.forced, name, frame);
-        }
+        const depth = Math.max(0, this.inPlaceDepth(name, mode));
+        reached = local + depth;
+        stacked = frame + depth;
+        if (own && must) addFrame(result.forced, name, frame);
       }
       result.frames = Math.max(result.frames, reached);
-      if (own) result.forcedFrames = Math.max(result.forcedFrames, reached);
+      if (own) result.forcedFrames = Math.max(result.forcedFrames, stacked);
       if (!isObject(node)) return;
       // `allOf` members validate the same value: a child one member declares is
       // forced by `required`, `type` or `minItems` in another.
@@ -1795,16 +1791,16 @@ export class SchemaConverter {
         visited += whole.nodes;
         if (visited >= POSITION_CHARGE_BATCH) flush();
       }
-      for (const member of arrayOf(node.allOf)) visit(member, frame + 1, own, must, whole);
-      forEachInPlace(node, (member) => visit(member, frame + 1, own, false), false);
+      for (const member of arrayOf(node.allOf)) visit(member, frame + 1, local + 1, own, must, whole);
+      forEachInPlace(node, (member) => visit(member, frame + 1, local + 1, own, false), false);
       forEachChild(
         node,
-        (member, forced) => (forced && must ? visit(member, frame + 1, own, true) : visit(member, 1, false, true)),
+        (member, forced) => (forced && own && must ? visit(member, frame + 1, 1, true, true) : visit(member, 1, 1, false, false)),
         (pairs) => this.total.chargeNodes(pairs),
         whole,
       );
     };
-    visit(schema, 1, required, true);
+    visit(schema, 1, 1, required, true);
     flush();
     return result;
   }
@@ -2129,7 +2125,8 @@ function forEachInPlace(schema: JsonObject, visit: (member: unknown) => void, al
 interface Conjunction {
   required: string[];
   names: Set<string>;
-  types: Set<string> | undefined;
+  /** The kinds of value its `type`s admit (`number` admits integers). */
+  types: Set<ValueKind> | undefined;
   minItems: number;
   nodes: number;
 }
@@ -2158,8 +2155,8 @@ function conjunction(schema: JsonObject): Conjunction {
     }
     if (node.type !== undefined) {
       const listed = typeof node.type === "string" ? [node.type] : arrayOf(node.type);
-      const own = new Set(listed.filter((type): type is string => typeof type === "string"));
-      result.types = result.types === undefined ? own : new Set([...result.types].filter((type) => own.has(type)));
+      const own = new Set(listed.flatMap((type) => kindsOfType(type)));
+      result.types = result.types === undefined ? own : new Set([...result.types].filter((kind) => own.has(kind)));
     }
     if (typeof node.minItems === "number") result.minItems = Math.max(result.minItems, node.minItems);
     for (const member of arrayOf(node.allOf)) pending.push(member);
@@ -2226,7 +2223,7 @@ function forEachChild(
 }
 
 /** Whether a conjunction accepts only values of JSON type `type` by its `type`s. */
-function onlyType(whole: Conjunction, type: string): boolean {
+function onlyType(whole: Conjunction, type: ValueKind): boolean {
   return whole.types !== undefined && whole.types.size === 1 && whole.types.has(type);
 }
 
@@ -2300,7 +2297,6 @@ interface Positions {
   forcedFrames: number;
   refs: Set<string>;
   forced: Map<string, number>;
-  carried: Map<string, number>;
 }
 
 /** A stack overflow (the converter's or a validator's) means schemas or references nest too deeply. */

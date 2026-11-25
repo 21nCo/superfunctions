@@ -93,6 +93,7 @@ export type OpenApiSkipCode =
   | "cookie-parameter"
   | "unsupported-parameter-style"
   | "unsupported-parameter-schema"
+  | "unsupported-parameter-name"
   | "parameter-content"
   | "missing-path-parameter"
   | "non-json-body"

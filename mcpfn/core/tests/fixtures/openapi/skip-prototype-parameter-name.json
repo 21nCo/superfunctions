@@ -1,0 +1,47 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "fixture",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/items": {
+      "get": {
+        "operationId": "listItems",
+        "parameters": [
+          {
+            "name": "__proto__",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/plain": {
+      "get": {
+        "operationId": "listPlain",
+        "parameters": [
+          {
+            "name": "proto",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    }
+  }
+}

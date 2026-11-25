@@ -349,4 +349,50 @@ describe("fromOpenAPI under @cfworker/json-schema", () => {
     expectArguments(tool(result.tools, "bypassable").inputSchema, { valid: [{ body: null }] });
     expectArguments(tool(result.tools, "projected").inputSchema, { valid: [{ body: {} }] });
   }, 60_000);
+
+  it("stacks only the chain every valid input takes: optional bodies and properties, avoidable branches and integer-admitting types start again", () => {
+    const schemas = {
+      ...chain("R", 2_500, required),
+      // number admits integers, so `1` is a valid value and `next` is not forced.
+      Num: { allOf: [{ type: ["object", "number"] }, { type: ["object", "integer"] }], required: ["next"], properties: { next: { $ref: "#/components/schemas/Num" } } },
+      Branch: { anyOf: [{ type: "string" }, { $ref: "#/components/schemas/R0" }] },
+      Holder: { type: "object", properties: { deep: { $ref: "#/components/schemas/R0" } } },
+    };
+    const post = (operationId: string, bodyRequired: boolean, content: Record<string, unknown>) => ({
+      post: { operationId, requestBody: { required: bodyRequired, content }, responses: { "204": { description: "Done" } } },
+    });
+    const ref = (name: string) => ({ schema: { $ref: `#/components/schemas/${name}` } });
+    const result = fromOpenAPI(
+      {
+        openapi: "3.1.0",
+        paths: {
+          "/sole": post("optionalSole", false, { "application/json": ref("R0") }),
+          "/media": post("optionalMedia", false, { "application/json": ref("R0"), "application/example+json": { schema: { type: "string" } } }),
+          "/num": post("integerAllOf", true, { "application/json": ref("Num") }),
+          "/branch": post("shallowBranch", true, { "application/json": ref("Branch") }),
+          "/holder": post("optionalProperty", true, { "application/json": ref("Holder") }),
+          "/required": post("requiredChain", true, { "application/json": ref("R0") }),
+        },
+        components: { schemas },
+      },
+      { executor: recordingExecutor(), allowMutations: true },
+    );
+    expect(verdicts(result)).toEqual([tooDeep("requiredChain")]);
+    expect(result.tools.map(({ name, operation }) => [name, operation.requestBody?.contentType])).toEqual([
+      ["optionalSole", "application/json"],
+      ["optionalMedia", "application/json"],
+      ["integerAllOf", "application/json"],
+      ["shallowBranch", "application/json"],
+      ["optionalProperty", "application/json"],
+    ]);
+    for (const name of ["optionalSole", "optionalMedia", "integerAllOf", "shallowBranch", "optionalProperty"]) {
+      expect(result.registry.has(name)).toBe(true);
+    }
+    const validate = (name: string) => createSchemaCompiler("cfworker").compile(tool(result.tools, name).inputSchema);
+    expect([validate("optionalSole")({}), validate("optionalMedia")({}), validate("optionalMedia")({ body: "x" })]).toEqual([true, true, false]);
+    expect([validate("integerAllOf")({ body: 1 }), validate("integerAllOf")({ body: 1.5 }), validate("integerAllOf")({ body: {} })]).toEqual([true, false, false]);
+    expect([validate("shallowBranch")({ body: "x" }), validate("optionalProperty")({ body: {} })]).toEqual([true, true]);
+    // Ajv decides by its compile, and the recursive integer form compiles there too.
+    expectArguments(tool(result.tools, "integerAllOf").inputSchema, { valid: [{ body: 1 }, { body: { next: 2 } }], invalid: [{ body: 1.5 }, { body: {} }] });
+  }, 120_000);
 });
