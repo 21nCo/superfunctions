@@ -68,23 +68,15 @@ or
 
 ## Configuration
 
-```ts
-type SearchFnServerConfig<TContext> = {
-  adapter: SearchAdapter;
-  basePath?: string;
-  limits?: Partial<ServerLimits>;
-  allowUnauthenticated?: boolean;
-  context?: (request: Request) => TContext | Promise<TContext>;
-  authorize?: (
-    ctx: TContext,
-    action: "status" | "index" | "search" | "searchAll" | "remove" | "clear",
-    payload: unknown,
-    request: Request,
-    resources: readonly string[],
-  ) => Promise<boolean> | boolean;
-  observability?: ObservabilityInput<SearchFnEvent>;
-};
-```
+| Option | Purpose |
+| --- | --- |
+| `adapter` | Required search adapter. |
+| `basePath` | URL prefix for the SearchFn routes. Defaults to `/searchfn`. |
+| `limits` | Overrides for request size, query length, search fan-out and indexing batch caps. |
+| `authorize` | Policy callback for each action and its effective resource names. |
+| `context` | Request context factory. Required when a policy expects fields beyond the standard router context. |
+| `allowUnauthenticated` | Explicit opt-in to run without an authorization policy. |
+| `observability` | Structured logs and events. |
 
 ### Notes
 
