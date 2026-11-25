@@ -4,12 +4,12 @@
 //
 // Times keep every fraction digit, so comparisons are exact at any precision,
 // and every step is linear in the length of the fraction. A leap second
-// (second 60) is accepted only where UTC can insert one: at 23:59:60 UTC, after
-// the offset is applied, on the last day of a month. The package keeps no table
-// of the leap seconds that actually happened. A leap second sorts after second
-// 59 of its minute and before the next minute's second 0. Elapsed time counts on
-// the POSIX scale, where second 60 is the same second as the next minute's
-// second 0.
+// (second 60) is accepted only where UTC inserted one: at 23:59:60 UTC, after
+// the offset is applied, on a day in LEAP_SECOND_DAYS. A leap second sorts
+// after second 59 of its minute and before the next minute's second 0, and
+// elapsed time counts it as the real second it is.
+
+import { LEAP_SECOND_DAYS } from "./leap-seconds.js";
 
 const DATE_TIME =
   /^([0-9]{4})-([0-9]{2})-([0-9]{2})[Tt]([0-9]{2}):([0-9]{2}):([0-9]{2})(?:\.([0-9]+))?(?:[Zz]|([+-])([0-9]{2}):([0-9]{2}))$/;
@@ -67,6 +67,13 @@ function civilFromDays(days: number): [number, number, number] {
   return [yearOfEra + era * 400 + (month <= 2 ? 1 : 0), month, day];
 }
 
+/** The UTC minutes (23:59 on a day in LEAP_SECOND_DAYS) that end with second 60, oldest first. */
+const LEAP_MINUTES: readonly bigint[] = LEAP_SECOND_DAYS.map((day) => {
+  const [year, month, date] = day.split("-").map(Number) as [number, number, number];
+  return BigInt((daysFromCivil(year, month, date) + 1) * 1440 - 1);
+});
+const LEAP_MINUTE_SET: ReadonlySet<bigint> = new Set(LEAP_MINUTES);
+
 function pow10(exponent: number): bigint {
   return 10n ** BigInt(exponent);
 }
@@ -86,6 +93,28 @@ function decimalOf(value: number): Decimal {
   return scale >= 0 ? { value: digits, scale } : { value: digits * pow10(-scale), scale: 0 };
 }
 
+/**
+ * The exact value of a finite number's binary64 representation, such as
+ * 0.299999999999999988897769753748434595763683319091796875 for 0.3: a
+ * mantissa times a power of two, which always has a finite decimal expansion.
+ */
+function exactDecimalOf(value: number): Decimal {
+  const view = new DataView(new ArrayBuffer(8));
+  view.setFloat64(0, value);
+  const high = view.getUint32(0);
+  const biased = (high >>> 20) & 0x7ff;
+  let mantissa = (BigInt(high & 0xfffff) << 32n) | BigInt(view.getUint32(4));
+  let exponent = biased === 0 ? -1074 : biased - 1075;
+  if (biased !== 0) mantissa |= 1n << 52n;
+  while (exponent < 0 && mantissa !== 0n && (mantissa & 1n) === 0n) {
+    mantissa >>= 1n;
+    exponent += 1;
+  }
+  const sign = high >>> 31 === 1 ? -1n : 1n;
+  // m * 2^-k = m * 5^k / 10^k
+  return exponent >= 0 ? { value: sign * (mantissa << BigInt(exponent)), scale: 0 } : { value: sign * mantissa * 5n ** BigInt(-exponent), scale: -exponent };
+}
+
 /** Drops trailing zeros by scanning from the end, so a long fraction costs linear time. */
 function trimFraction(digits: string): string {
   let end = digits.length;
@@ -93,10 +122,33 @@ function trimFraction(digits: string): string {
   return digits.slice(0, end);
 }
 
-/** True when a UTC minute is 23:59 on the last day of a month, the only minute UTC can end with second 60. */
-function isLeapSecondMinute(minutes: number): boolean {
-  const next = minutes + 1;
-  return next % 1440 === 0 && civilFromDays(next / 1440)[2] === 1;
+/** The number of leap seconds inserted before a UTC minute starts. */
+function leapSecondsBefore(minute: bigint): bigint {
+  let count = 0n;
+  for (const leap of LEAP_MINUTES) {
+    if (leap >= minute) break;
+    count += 1n;
+  }
+  return count;
+}
+
+/** Whole seconds since 1970-01-01T00:00:00Z counting every leap second, so a leap second is one second after 23:59:59. */
+function elapsedSeconds(minute: bigint, second: number): bigint {
+  return minute * 60n + BigInt(second) + leapSecondsBefore(minute);
+}
+
+/** The UTC minute and second of a whole number of elapsed seconds, the inverse of elapsedSeconds. */
+function fromElapsedSeconds(elapsed: bigint): { minute: bigint; second: number } {
+  let leaps = 0n;
+  for (const leap of LEAP_MINUTES) {
+    const leapSecond = leap * 60n + 60n + leaps;
+    if (elapsed === leapSecond) return { minute: leap, second: 60 };
+    if (elapsed < leapSecond) break;
+    leaps += 1n;
+  }
+  const posix = elapsed - leaps;
+  const minute = floorDiv(posix, 60n);
+  return { minute, second: Number(posix - minute * 60n) };
 }
 
 function fromScaledSeconds(total: bigint, scale: number): Instant {
@@ -106,8 +158,8 @@ function fromScaledSeconds(total: bigint, scale: number): Instant {
   return { minute, second: Number(rest / unit), fraction: scale === 0 ? "" : trimFraction((rest % unit).toString().padStart(scale, "0")) };
 }
 
-/** The instant of an RFC 3339 date-time with an offset, or undefined when the value is not one. */
-export function parseRfc3339(value: unknown): Instant | undefined {
+/** The parts of an RFC 3339 date-time with an offset on a real calendar day, before the leap-second check. */
+function parseParts(value: unknown): Instant | undefined {
   if (typeof value !== "string") return undefined;
   const match = DATE_TIME.exec(value);
   if (!match) return undefined;
@@ -119,13 +171,28 @@ export function parseRfc3339(value: unknown): Instant | undefined {
   if (hour > 23 || minute > 59 || second > 60 || offsetHour > 23 || offsetMinute > 59) return undefined;
   const offset = (sign === "-" ? -1 : 1) * (offsetHour * 60 + offsetMinute);
   const minutes = daysFromCivil(year, month, day) * 1440 + hour * 60 + minute - offset;
-  if (second === 60 && !isLeapSecondMinute(minutes)) return undefined;
   return { minute: BigInt(minutes), second, fraction: trimFraction(match[7] ?? "") };
 }
 
-/** The instant of a finite number of epoch milliseconds, keeping any fraction of a millisecond. */
+/** The instant of an RFC 3339 date-time with an offset, or undefined when the value is not one or names a leap second UTC did not insert. */
+export function parseRfc3339(value: unknown): Instant | undefined {
+  const parts = parseParts(value);
+  return parts === undefined || (parts.second === 60 && !LEAP_MINUTE_SET.has(parts.minute)) ? undefined : parts;
+}
+
+/** True when a value is an RFC 3339 date-time with an offset in every respect except that its second 60 is not a leap second UTC inserted. */
+export function isUninsertedLeapSecond(value: unknown): boolean {
+  const parts = parseParts(value);
+  return parts !== undefined && parts.second === 60 && !LEAP_MINUTE_SET.has(parts.minute);
+}
+
+/**
+ * The instant of a finite number of epoch milliseconds on the POSIX scale
+ * (never second 60), at the exact value of the number's binary64
+ * representation, any magnitude.
+ */
 export function fromEpochMilliseconds(milliseconds: number): Instant {
-  const { value, scale } = decimalOf(milliseconds);
+  const { value, scale } = exactDecimalOf(milliseconds);
   return fromScaledSeconds(value, scale + 3);
 }
 
@@ -140,23 +207,22 @@ export function compareInstants(a: Instant, b: Instant): number {
 }
 
 /**
- * The instant a number of hours after another on the POSIX scale (second 60
- * counts as the next minute's second 0), exactly for the decimal JavaScript
- * prints for the hours. The hours only reach the first duration-scale fraction
- * digits, so the digits past them are carried over unchanged and the cost is
- * linear in the length of the fraction.
+ * The instant a number of hours after another in elapsed time: every leap
+ * second inside the interval counts as a second, exactly for the decimal
+ * JavaScript prints for the hours. The hours only reach the first
+ * duration-scale fraction digits, so the digits past them are carried over
+ * unchanged and the cost is linear in the length of the fraction.
  */
 export function addHours(instant: Instant, hours: number): Instant {
   const duration = decimalOf(hours);
   const scale = duration.scale;
+  const unit = pow10(scale);
   const head = instant.fraction.slice(0, scale).padEnd(scale, "0");
   const tail = instant.fraction.slice(scale);
-  const total = (instant.minute * 60n + BigInt(instant.second)) * pow10(scale) + BigInt(head || "0") + duration.value * 3600n;
-  const unit = pow10(scale);
-  const minute = floorDiv(total, 60n * unit);
-  const rest = total - minute * 60n * unit;
-  const digits = scale === 0 ? "" : (rest % unit).toString().padStart(scale, "0");
-  return { minute, second: Number(rest / unit), fraction: trimFraction(digits + tail) };
+  const total = elapsedSeconds(instant.minute, instant.second) * unit + BigInt(head || "0") + duration.value * 3600n;
+  const whole = floorDiv(total, unit);
+  const digits = scale === 0 ? "" : (total - whole * unit).toString().padStart(scale, "0");
+  return { ...fromElapsedSeconds(whole), fraction: trimFraction(digits + tail) };
 }
 
 function pad(value: number, length: number): string {

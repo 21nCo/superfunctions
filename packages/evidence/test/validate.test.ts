@@ -114,12 +114,13 @@ describe("options", () => {
     ["now missing", { ...options, now: undefined }, ["now"]],
     ["now NaN", { ...options, now: Number.NaN }, ["now"]],
     ["now Infinity", { ...options, now: Number.POSITIVE_INFINITY }, ["now"]],
-    ["now beyond the Date range", { ...options, now: 8.64e15 + 1 }, ["now"]],
     ["now an invalid Date", { ...options, now: new Date("not a date") }, ["now"]],
     ["now without an offset", { ...options, now: "2026-11-01T12:00:00" }, ["now"]],
     ["now not a date-time", { ...options, now: "yesterday" }, ["now"]],
     ["now a leap second outside 23:59 UTC", { ...options, now: "2026-11-01T12:00:60Z" }, ["now"]],
     ["now a leap second at an offset that is not 23:59 UTC", { ...options, now: "2016-12-31T23:59:60+01:00" }, ["now"]],
+    ["now a leap second on a month end UTC did not insert one", { ...options, now: "2026-02-28T23:59:60Z" }, ["now"]],
+    ["now a leap second at +05:30 on a month end UTC did not insert one", { ...options, now: "2026-03-01T05:29:60+05:30" }, ["now"]],
     ["now a plain object", { ...options, now: {} }, ["now"]],
     ["now an object claiming to be a Date", { ...options, now: { [Symbol.toStringTag]: "Date", getTime: () => 0 } }, ["now"]],
     ["expiryPolicy missing", { ...options, expiryPolicy: undefined }, ["expiryPolicy"]],
@@ -192,6 +193,40 @@ describe("options", () => {
     const noon = Date.parse("2026-11-01T12:00:00Z");
     const inFuture = (now: number) => validateEvidenceRecord(record, { ...options, now }).failures.some((failure) => failure.code === "EVIDENCE_COMPLETED_IN_FUTURE");
     expect([noon + 0.4, noon + 0.5, noon + 0.6].map(inFuture)).toEqual([true, false, false]);
+  });
+
+  it("compares a numeric now at the exact value of its binary64 representation, not its printed decimal", () => {
+    // 0.3 is 0.29999999999999998889... in binary64, so a record completed at
+    // 0.0003 s after the epoch is in the future and one expiring then is not
+    // yet expired.
+    const exact = "1970-01-01T00:00:00.000299999999999999988897769753748434595763683319091796875Z";
+    const record = structuredClone(records.minimal) as object;
+    setAt(record, "/timing/startedAt", "1970-01-01T00:00:00Z");
+    setAt(record, "/timing/completedAt", "1970-01-01T00:00:00.0003Z");
+    setAt(record, "/expiresAt", "1970-01-01T01:00:00Z");
+    expect(validateEvidenceRecord(record, { ...options, now: 0.3 }).failures).toEqual([
+      { code: "EVIDENCE_COMPLETED_IN_FUTURE", path: "/timing/completedAt", detail: { now: exact } },
+    ]);
+    setAt(record, "/timing/completedAt", "1970-01-01T00:00:00.0002Z");
+    setAt(record, "/expiresAt", "1970-01-01T00:00:00.0003Z");
+    expect(validateEvidenceRecord(record, { ...options, now: 0.3 })).toEqual({ ok: true, failures: [] });
+
+    // noon + 0.4 is noon + 0.39990234375 ms at this magnitude.
+    const noon = Date.parse("2026-11-01T12:00:00Z");
+    const near = structuredClone(records.minimal) as object;
+    setAt(near, "/timing/completedAt", "2026-11-01T12:00:00.00039995Z");
+    expect(summary(validateEvidenceRecord(near, { ...options, now: noon + 0.4 }))).toEqual([{ code: "EVIDENCE_COMPLETED_IN_FUTURE", path: "/timing/completedAt" }]);
+    setAt(near, "/timing/completedAt", "2026-11-01T12:00:00.00039990234375Z");
+    expect(validateEvidenceRecord(near, { ...options, now: noon + 0.4 })).toEqual({ ok: true, failures: [] });
+  });
+
+  it("accepts any finite numeric now, beyond the range a Date can hold", () => {
+    expect(validateEvidenceRecord(records.minimal, { ...options, now: 8.64e15 + 1 }).failures).toEqual([{ code: "EVIDENCE_EXPIRED", path: "/expiresAt" }]);
+    expect(validateEvidenceRecord(records.minimal, { ...options, now: -8.64e15 - 1 }).failures).toEqual([
+      { code: "EVIDENCE_COMPLETED_IN_FUTURE", path: "/timing/completedAt" },
+    ]);
+    expect(summary(validateEvidenceRecord(records.minimal, { ...options, now: Number.MAX_VALUE }))).toEqual([{ code: "EVIDENCE_EXPIRED", path: "/expiresAt" }]);
+    expect(summary(validateEvidenceRecord(records.minimal, { ...options, now: Number.MIN_VALUE }))).toEqual([{ code: "EVIDENCE_COMPLETED_IN_FUTURE", path: "/timing/completedAt" }]);
   });
 
   it("accepts an empty expiry policy, so every class is outside it", () => {

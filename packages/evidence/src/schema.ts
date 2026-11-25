@@ -14,7 +14,7 @@ export const evidenceRecordSchemaV1 = deepFreeze({
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:superfunctions:evidence-record:v1",
   "title": "Superfunctions evidence record v1",
-  "description": "A source-bound evidence record. Dates are RFC 3339 date-times with an offset. validateEvidenceRecord also enforces four rules a JSON Schema validator may miss or this schema cannot express: unique subjectIds by exact string (Ajv 8 uniqueItems misses a repeated \"__proto__\"), unique artifactHashes[].path values, startedAt <= completedAt, and a leap second at a nonzero offset falling at 23:59:60 UTC on the last day of a month.",
+  "description": "A source-bound evidence record. Dates are RFC 3339 date-times with an offset. Four rules are beyond this schema; checkEvidenceCrossValues checks them next to it, and validateEvidenceRecord enforces them: unique subjectIds by exact string (Ajv 8 uniqueItems misses a repeated \"__proto__\"), unique artifactHashes[].path values, startedAt <= completedAt, and a leap second at a nonzero offset falling on a leap second UTC inserted.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -206,9 +206,9 @@ export const evidenceRecordSchemaV1 = deepFreeze({
       "pattern": "^[0-9a-f]{64}$"
     },
     "dateTime": {
-      "description": "An RFC 3339 date-time with a Z or numeric offset on a real proleptic Gregorian calendar day. A leap second (second 60) is accepted only at 23:59:60 UTC on the last day of a month. The pattern enforces that at Z, +00:00 and -00:00; at any other offset it accepts second 60 in any minute, and validateEvidenceRecord applies the offset and enforces it.",
+      "description": "An RFC 3339 date-time with a Z or numeric offset on a real proleptic Gregorian calendar day. A leap second (second 60) is accepted only where UTC inserted one: 23:59:60 UTC on a day in IANA's leap-seconds.list (tzdb 2026f, complete until 2027-06-28). The pattern lists those days at Z, +00:00 and -00:00; at any other offset it accepts second 60 in any minute, and checkEvidenceCrossValues and validateEvidenceRecord apply the offset and enforce it.",
       "type": "string",
-      "pattern": "^(?:(?:[0-9]{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12][0-9]|3[01])|(?:0[469]|11)-(?:0[1-9]|[12][0-9]|30)|02-(?:0[1-9]|1[0-9]|2[0-8]))|(?:[0-9]{2}(?:0[48]|[2468][048]|[13579][26])|(?:0[048]|[2468][048]|[13579][26])00)-02-29)[Tt](?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\\.[0-9]+)?(?:[Zz]|[+-](?:[01][0-9]|2[0-3]):[0-5][0-9])|(?:[0-9]{4}-(?:(?:0[13578]|1[02])-31|(?:0[469]|11)-30)|(?!(?:[0-9]{2}(?:0[48]|[2468][048]|[13579][26])|(?:0[048]|[2468][048]|[13579][26])00)-)[0-9]{4}-02-28|(?:[0-9]{2}(?:0[48]|[2468][048]|[13579][26])|(?:0[048]|[2468][048]|[13579][26])00)-02-29)[Tt]23:59:60(?:\\.[0-9]+)?(?:[Zz]|[+-]00:00)|(?:[0-9]{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12][0-9]|3[01])|(?:0[469]|11)-(?:0[1-9]|[12][0-9]|30)|02-(?:0[1-9]|1[0-9]|2[0-8]))|(?:[0-9]{2}(?:0[48]|[2468][048]|[13579][26])|(?:0[048]|[2468][048]|[13579][26])00)-02-29)[Tt](?:[01][0-9]|2[0-3]):[0-5][0-9]:60(?:\\.[0-9]+)?[+-](?!00:00)(?:[01][0-9]|2[0-3]):[0-5][0-9])$"
+      "pattern": "^(?:(?:[0-9]{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12][0-9]|3[01])|(?:0[469]|11)-(?:0[1-9]|[12][0-9]|30)|02-(?:0[1-9]|1[0-9]|2[0-8]))|(?:[0-9]{2}(?:0[48]|[2468][048]|[13579][26])|(?:0[048]|[2468][048]|[13579][26])00)-02-29)[Tt](?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\\.[0-9]+)?(?:[Zz]|[+-](?:[01][0-9]|2[0-3]):[0-5][0-9])|(?:1972-06-30|1972-12-31|1973-12-31|1974-12-31|1975-12-31|1976-12-31|1977-12-31|1978-12-31|1979-12-31|1981-06-30|1982-06-30|1983-06-30|1985-06-30|1987-12-31|1989-12-31|1990-12-31|1992-06-30|1993-06-30|1994-06-30|1995-12-31|1997-06-30|1998-12-31|2005-12-31|2008-12-31|2012-06-30|2015-06-30|2016-12-31)[Tt]23:59:60(?:\\.[0-9]+)?(?:[Zz]|[+-]00:00)|(?:[0-9]{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12][0-9]|3[01])|(?:0[469]|11)-(?:0[1-9]|[12][0-9]|30)|02-(?:0[1-9]|1[0-9]|2[0-8]))|(?:[0-9]{2}(?:0[48]|[2468][048]|[13579][26])|(?:0[048]|[2468][048]|[13579][26])00)-02-29)[Tt](?:[01][0-9]|2[0-3]):[0-5][0-9]:60(?:\\.[0-9]+)?[+-](?!00:00)(?:[01][0-9]|2[0-3]):[0-5][0-9])$"
     }
   }
 } as const);

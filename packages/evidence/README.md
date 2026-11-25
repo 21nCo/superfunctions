@@ -1,8 +1,8 @@
 # @superfunctions/evidence
 
-Source-bound evidence records: a JSON format that says which work was checked, at which commit, with which artifacts and environment, with what outcome and until when the result counts. The package exports the record format v1 JSON Schema, its TypeScript types and `validateEvidenceRecord`, which checks a record against the commit it must come from, the evaluation time and an expiry policy.
+Source-bound evidence records: a JSON format that says which work was checked, at which commit, with which artifacts and environment, with what outcome and until when the result counts. The package exports the record format v1 JSON Schema, its TypeScript types, `validateEvidenceRecord`, which checks a record against the commit it must come from, the evaluation time and an expiry policy, and `checkEvidenceCrossValues`, which checks the rules the JSON Schema cannot express.
 
-It has no runtime dependencies and uses no Node built-ins, so the same validator runs in Node, browsers and workers.
+It has no runtime dependencies and uses no Node built-ins, so the same validator and checker run in Node, browsers and workers.
 
 ```sh
 npm install @superfunctions/evidence
@@ -30,7 +30,7 @@ Invalid options or a missing record return that one failure. Otherwise every che
 
 | Code | When | `path` | `detail` |
 | --- | --- | --- | --- |
-| `EVIDENCE_OPTIONS_INVALID` | `expectedCommit` is not 40 or 64 lowercase hex characters, `now` is not a valid `Date`, epoch milliseconds or RFC 3339 date-time with an offset, or `expiryPolicy` is not an object whose values are positive finite hours | | `invalid`: the option names |
+| `EVIDENCE_OPTIONS_INVALID` | `expectedCommit` is not 40 or 64 lowercase hex characters, `now` is not a valid `Date`, a finite number of epoch milliseconds or an RFC 3339 date-time with an offset, or `expiryPolicy` is not an object whose values are positive finite hours | | `invalid`: the option names |
 | `EVIDENCE_MISSING` | The record is `undefined`, `null`, an array or not an object | | |
 | `EVIDENCE_MISSING_FIELD` | A required member is absent | the member | |
 | `EVIDENCE_MALFORMED` | A member breaks the format, including unknown members and `schemaVersion` other than 1 | the member | `expected` |
@@ -42,7 +42,7 @@ Invalid options or a missing record return that one failure. Otherwise every che
 | `EVIDENCE_DIRTY` | `source.dirty` is true | `/source/dirty` | |
 | `EVIDENCE_NOT_PASSED` | `status` is `failed`, `blocked`, `skipped` or `not-applicable` | `/status` | `status` |
 
-The list is exported as `EVIDENCE_FAILURE_CODES`.
+The list is exported as `EVIDENCE_FAILURE_CODES`. `detail.now` and `detail.maximumExpiresAt` are RFC 3339 UTC date-times with at least millisecond digits; they are left out when the instant falls outside the years 0000 to 9999 in UTC, which RFC 3339 cannot write.
 
 ## Record format v1
 
@@ -79,20 +79,36 @@ Every member is required unless marked optional. Unknown members are rejected at
 - `expiresAt`: an RFC 3339 date-time with an offset.
 - `supersedes` (optional): a record ID, or null.
 
-Date-times take a `Z` or numeric offset and an optional fraction of a second, on a real proleptic Gregorian calendar day; `T` and `Z` may be lowercase, as RFC 3339 allows. Times compare exactly, with every fraction digit, including a `now` given as an RFC 3339 string, and parsing stays linear in the length of the fraction. A `Date` or epoch-milliseconds `now` is taken as the decimal JavaScript prints for its milliseconds, the same way as policy hours, so `0.1` milliseconds is exactly 100 microseconds.
+Date-times take a `Z` or numeric offset and an optional fraction of a second, on a real proleptic Gregorian calendar day; `T` and `Z` may be lowercase, as RFC 3339 allows. Times compare exactly, with every fraction digit, including a `now` given as an RFC 3339 string, and parsing stays linear in the length of the fraction. A numeric `now` (or a `Date`'s time value) is epoch milliseconds on the POSIX scale, taken at the exact value of its binary64 representation: `0.3` is 0.299999999999999988897769753748434595763683319091796875 milliseconds. Any finite number is accepted, even beyond the range a `Date` can hold. Policy hours are configuration written in decimal, so they are taken as the decimal JavaScript prints for them: `0.1` hours is exactly 6 minutes.
 
-A leap second (second 60) is accepted only where UTC can insert one: at 23:59:60 UTC, after applying the offset, on the last day of a month, so `2016-12-31T23:59:60Z` and `2017-01-01T00:59:60.5+01:00` are valid and `2026-11-01T10:00:60Z` or `2016-12-31T23:59:60+01:00` is `EVIDENCE_MALFORMED` (or `EVIDENCE_OPTIONS_INVALID` as `now`). The package keeps no table of the leap seconds that actually happened. A leap second sorts after second 59 of its minute and before the next minute's second 0. The policy cutoff is `completedAt` plus the class's hours on the POSIX time scale: a `completedAt` in second 60 counts as the next minute's second 0, a leap second inside the interval is not counted as an extra second, and the hours are taken as the decimal JavaScript prints for them (so `0.1` is exactly 6 minutes). An `expiresAt` at or before the cutoff, in the ordering above, passes; a later one fails with `EVIDENCE_EXPIRY_EXCEEDS_POLICY`, and `detail.maximumExpiresAt` is that cutoff, so it never shows second 60. For example, with a 1-hour policy and `completedAt` `2016-12-31T23:00:00Z` the cutoff is `2017-01-01T00:00:00Z`, so `expiresAt` `2016-12-31T23:59:60.5Z` passes; with `completedAt` `2016-12-31T23:59:60Z` the cutoff is `2017-01-01T01:00:00Z`.
+### Leap seconds
+
+A leap second (second 60) is valid only where UTC inserted one: at 23:59:60 UTC, after applying the offset, on one of the 27 days in IANA's `leap-seconds.list` (tzdb 2026f, complete until 2027-06-28; the last is 2016-12-31). So `2016-12-31T23:59:60Z` and `2017-01-01T00:59:60.5+01:00` are valid, while `2026-02-28T23:59:60Z`, `2016-12-31T23:59:60+01:00` and `2026-11-01T10:00:60Z` are `EVIDENCE_MALFORMED` (or `EVIDENCE_OPTIONS_INVALID` as `now`). A leap second the IERS announces after the list expires needs a new release of this package.
+
+A leap second sorts after second 59 of its minute and before the next minute's second 0. Policy hours are elapsed time: the cutoff is `completedAt` plus the hours, counting each inserted second inside the interval as a second, and `detail.maximumExpiresAt` is that cutoff, which can be second 60. For example, with a 1-hour policy and `completedAt` `2016-12-31T23:00:00Z` the cutoff is `2016-12-31T23:59:60Z`, so `expiresAt` `2017-01-01T00:00:00Z` fails with `EVIDENCE_EXPIRY_EXCEEDS_POLICY`; with `completedAt` `2016-12-31T23:59:60Z` the cutoff is `2017-01-01T00:59:59Z`. A numeric or `Date` `now` is a POSIX time, which has no second 60.
+
+The package's test suite compares these results with the pinned IANA file and records every expected and actual value in `test/reference/leap-second-comparison.json` in the repository.
 
 ## JSON Schema
 
 The JSON Schema (draft 2020-12, `$id` `urn:superfunctions:evidence-record:v1`) is exported as `evidenceRecordSchemaV1` (frozen) and as the file `@superfunctions/evidence/schema/evidence-record.v1.json`. The schema checks date-times with a pattern rather than `format`, so validators reject malformed dates and days a month does not have (such as 30 February, or 29 February 2100) without a format plugin.
 
-`validateEvidenceRecord` enforces four rules that a JSON Schema validator may miss or the plain schema cannot express. A consumer that validates with a JSON Schema validator must check them next to the schema, as this package's schema agreement tests do:
+Four rules are beyond the schema. `validateEvidenceRecord` enforces them, and `checkEvidenceCrossValues(record)` checks them on their own, so a consumer that validates with a JSON Schema validator runs it next to the schema:
 
 - Each `subjectIds` item is unique (exact string comparison). The schema says so with `uniqueItems`, but Ajv 8 misses a repeated `"__proto__"` string (for example `subjectIds: ["__proto__", "__proto__"]`) and accepts the record.
 - Each `source.artifactHashes[].path` is unique within the record (exact string comparison).
 - `timing.startedAt` is not later than `timing.completedAt`, compared as instants with every fraction digit.
-- A date-time with second 60 at a nonzero offset falls at 23:59:60 UTC on the last day of a month. The pattern enforces this at `Z`, `+00:00` and `-00:00`, but cannot apply other offsets.
+- A date-time with second 60 is a leap second UTC inserted. The pattern lists the leap-second days at `Z`, `+00:00` and `-00:00`, but cannot apply other offsets.
+
+```ts
+import Ajv2020 from "ajv/dist/2020.js";
+import { checkEvidenceCrossValues, evidenceRecordSchemaV1 } from "@superfunctions/evidence";
+
+const validateSchema = new Ajv2020({ strict: true }).compile(evidenceRecordSchemaV1);
+const valid = validateSchema(record) && checkEvidenceCrossValues(record).length === 0;
+```
+
+`checkEvidenceCrossValues` returns `EVIDENCE_MALFORMED` failures with the same `path` and `detail` as `validateEvidenceRecord`, or an empty list. It skips members of the wrong type, which the schema reports, and never throws for plain JSON values.
 
 ## Not in this version
 

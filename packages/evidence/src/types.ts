@@ -61,9 +61,9 @@ export type EvidenceExpiryPolicy = Readonly<Record<string, number>>;
 export interface ValidateEvidenceRecordOptions {
   /** The commit the record must come from: 40 or 64 lowercase hex characters. */
   expectedCommit: string;
-  /** The evaluation time: a `Date`, epoch milliseconds or an RFC 3339 date-time with an offset. */
+  /** The evaluation time: a `Date`, a finite number of epoch milliseconds (taken at its exact binary64 value) or an RFC 3339 date-time with an offset. */
   now: Date | number | string;
-  /** Positive finite hours per evidence class. */
+  /** Positive finite hours of elapsed time per evidence class, counting inserted leap seconds. */
   expiryPolicy: EvidenceExpiryPolicy;
 }
 

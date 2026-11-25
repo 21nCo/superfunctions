@@ -3,15 +3,17 @@
 // consumer outside the repository, imports it and its JSON Schema subpath in
 // Node, type-checks a typed consumer, and bundles the `.` entry for the
 // browser with esbuild (platform=browser, Node built-ins refused), then runs
-// that bundle in a bare VM context with no Node globals. Builds the package
-// first, so it never checks a missing or stale dist. `--keep` keeps the temp
-// directory.
+// that bundle in a bare VM context with no Node globals. The Node and browser
+// consumers also run checkEvidenceCrossValues, and the Node consumer runs Ajv
+// on the installed schema file together with it, as the README documents.
+// Builds the package first, so it never checks a missing or stale dist.
+// `--keep` keeps the temp directory.
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { builtinModules, createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { runInNewContext } from "node:vm";
 
 const packageDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -30,35 +32,67 @@ function run(command, args, cwd) {
 const record = JSON.parse(readFileSync(path.join(packageDir, "test/fixtures/records/minimal.json"), "utf8"));
 const options = { expectedCommit: record.source.commit, now: "2026-11-01T12:00:00Z", expiryPolicy: { "unit-test": 24 } };
 
+const ajvEntry = pathToFileURL(require.resolve("ajv/dist/2020.js")).href;
+
+// Records only the cross-value checker (not the plain schema) rejects.
+const crossValueCases = `
+const crossValueCases = [
+  [{ ...record, subjectIds: ["__proto__", "__proto__"] }, "/subjectIds/1"],
+  [{ ...record, source: { ...record.source, artifactHashes: [...record.source.artifactHashes, { ...record.source.artifactHashes[0], sha256: "${"2".repeat(64)}" }] } }, "/source/artifactHashes/1/path"],
+  [{ ...record, timing: { ...record.timing, startedAt: "2026-11-01T10:00:00.001Z" } }, "/timing/startedAt"],
+  [{ ...record, timing: { ...record.timing, startedAt: "2026-03-01T05:29:60+05:30" } }, "/timing/startedAt"],
+];
+`;
+
 const esmConsumer = `
 import assert from "node:assert/strict";
-import { EVIDENCE_FAILURE_CODES, evidenceRecordSchemaV1, validateEvidenceRecord } from "${name}";
+import { EVIDENCE_FAILURE_CODES, checkEvidenceCrossValues, evidenceRecordSchemaV1, validateEvidenceRecord } from "${name}";
 import schemaFile from "${name}/schema/evidence-record.v1.json" with { type: "json" };
+import Ajv2020 from "${ajvEntry}";
 const record = ${JSON.stringify(record)};
 const options = ${JSON.stringify(options)};
 assert.deepEqual(validateEvidenceRecord(record, options), { ok: true, failures: [] });
+${crossValueCases}
+const validateSchema = new (Ajv2020.default ?? Ajv2020)({ strict: true, allErrors: true }).compile(schemaFile);
+assert.equal(validateSchema(record), true);
+assert.deepEqual(checkEvidenceCrossValues(record), []);
+for (const [candidate, path] of crossValueCases) {
+  assert.equal(validateSchema(candidate), true, path);
+  const failures = checkEvidenceCrossValues(candidate);
+  assert.deepEqual(failures.map((failure) => [failure.code, failure.path]), [["EVIDENCE_MALFORMED", path]]);
+  assert.deepEqual(failures, validateEvidenceRecord(candidate, options).failures);
+}
+assert.equal(validateSchema({ ...record, timing: { ...record.timing, startedAt: "2026-02-28T23:59:60Z" } }), false);
 const blocked = validateEvidenceRecord({ ...record, status: "blocked" }, options);
 assert.deepEqual(blocked.failures.map((failure) => failure.code), ["EVIDENCE_NOT_PASSED"]);
 assert.deepEqual(validateEvidenceRecord(undefined, options).failures, [{ code: "EVIDENCE_MISSING" }]);
 assert.equal(EVIDENCE_FAILURE_CODES.length, 11);
 assert.deepEqual(evidenceRecordSchemaV1, schemaFile);
 assert.equal(schemaFile.$id, "urn:superfunctions:evidence-record:v1");
-console.log(JSON.stringify({ consumer: "esm", ok: true }));
+console.log(JSON.stringify({ consumer: "esm", ok: true, crossValueCases: crossValueCases.length }));
 `;
 
 const typedConsumer = `
-import { validateEvidenceRecord, type EvidenceFailureCode, type EvidenceRecordV1, type ValidateEvidenceRecordOptions } from "${name}";
+import { checkEvidenceCrossValues, validateEvidenceRecord, type EvidenceFailure, type EvidenceFailureCode, type EvidenceRecordV1, type ValidateEvidenceRecordOptions } from "${name}";
 declare const record: EvidenceRecordV1;
 const options: ValidateEvidenceRecordOptions = { expectedCommit: "${options.expectedCommit}", now: new Date(), expiryPolicy: { "unit-test": 24 } };
 const result = validateEvidenceRecord(record, options);
 export const codes: EvidenceFailureCode[] = result.failures.map((failure) => failure.code);
 export const ok: boolean = result.ok;
+export const crossValues: EvidenceFailure[] = checkEvidenceCrossValues(record);
 `;
 
 const browserConsumer = `
-import { evidenceRecordSchemaV1, validateEvidenceRecord } from "${name}";
+import { checkEvidenceCrossValues, evidenceRecordSchemaV1, validateEvidenceRecord } from "${name}";
 const record = ${JSON.stringify(record)};
-globalThis.__evidence = { schemaId: evidenceRecordSchemaV1.$id, result: validateEvidenceRecord(record, ${JSON.stringify(options)}) };
+${crossValueCases}
+globalThis.__evidence = {
+  schemaId: evidenceRecordSchemaV1.$id,
+  result: validateEvidenceRecord(record, ${JSON.stringify(options)}),
+  crossValues: checkEvidenceCrossValues(record),
+  crossValuePaths: crossValueCases.map(([candidate]) => checkEvidenceCrossValues(candidate).map((failure) => failure.path).join(",")),
+  expectedPaths: crossValueCases.map(([, path]) => path),
+};
 `;
 
 // Created just before the try, so the finally always removes it.
@@ -134,7 +168,8 @@ try {
   const sandbox = {};
   runInNewContext(bundle, sandbox);
   const evidence = sandbox.__evidence;
-  if (evidence?.schemaId !== "urn:superfunctions:evidence-record:v1" || evidence?.result?.ok !== true) {
+  const crossValuesOk = evidence?.crossValues?.length === 0 && JSON.stringify(evidence?.crossValuePaths) === JSON.stringify(evidence?.expectedPaths);
+  if (evidence?.schemaId !== "urn:superfunctions:evidence-record:v1" || evidence?.result?.ok !== true || !crossValuesOk) {
     throw new Error(`browser bundle did not validate the record: ${JSON.stringify(evidence)}`);
   }
   console.log(`browser bundle: ${bundle.length} bytes from ${inputs.join(", ")}; ran in a bare context`);

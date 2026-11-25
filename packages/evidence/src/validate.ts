@@ -1,5 +1,7 @@
-import { addHours, compareInstants, formatInstant, fromEpochMilliseconds, parseRfc3339 } from "./datetime.js";
+import { addHours, compareInstants, formatInstant, fromEpochMilliseconds, isUninsertedLeapSecond, parseRfc3339 } from "./datetime.js";
 import type { Instant } from "./datetime.js";
+import { EXPECTED, codePoints, has, isObject, isRelativePosixPath, isSubjectId, pointer } from "./json.js";
+import type { JsonObject } from "./json.js";
 import type {
   EvidenceFailure,
   EvidenceFailureCode,
@@ -12,10 +14,6 @@ const COMMIT = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 const SHA256 = /^[0-9a-f]{64}$/;
 const RECORD_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]*$/;
 const STATUSES: ReadonlySet<string> = new Set<EvidenceStatus>(["passed", "failed", "blocked", "skipped", "not-applicable"]);
-/** The largest absolute epoch-milliseconds value a Date can hold. */
-const MAX_TIME = 8.64e15;
-
-type JsonObject = Record<string, unknown>;
 
 interface Settings {
   expectedCommit: string;
@@ -31,26 +29,6 @@ interface Facts {
   dirty?: boolean;
   completedAt?: Instant;
   expiresAt?: Instant;
-}
-
-function isObject(value: unknown): value is JsonObject {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-/** A member counts as present when it is an own property whose value is not undefined. */
-function has(value: JsonObject, key: string): boolean {
-  return Object.hasOwn(value, key) && value[key] !== undefined;
-}
-
-function pointer(base: string, key: string | number): string {
-  return `${base}/${String(key).replace(/~/g, "~0").replace(/\//g, "~1")}`;
-}
-
-/** Length in Unicode code points, as JSON Schema's minLength and maxLength count. */
-function codePoints(value: string): number {
-  let count = 0;
-  for (const _ of value) count += 1;
-  return count;
 }
 
 class Failures {
@@ -115,7 +93,7 @@ function readNullableString(failures: Failures, value: JsonObject, base: string,
 function readDateTime(failures: Failures, value: JsonObject, base: string, key: string): Instant | undefined {
   if (!has(value, key)) return undefined;
   const time = parseRfc3339(value[key]);
-  if (time === undefined) failures.malformed(pointer(base, key), "an RFC 3339 date-time with an offset");
+  if (time === undefined) failures.malformed(pointer(base, key), isUninsertedLeapSecond(value[key]) ? EXPECTED.insertedLeapSecond : EXPECTED.dateTime);
   return time;
 }
 
@@ -144,16 +122,10 @@ function checkSubjectIds(failures: Failures, record: JsonObject): void {
   const seen = new Set<string>();
   subjectIds.forEach((subjectId: unknown, index) => {
     const path = pointer("/subjectIds", index);
-    if (typeof subjectId !== "string" || subjectId.length === 0 || codePoints(subjectId) > 200) failures.malformed(path, "a non-empty string of at most 200 characters");
-    else if (seen.has(subjectId)) failures.malformed(path, "a unique subject ID");
+    if (!isSubjectId(subjectId)) failures.malformed(path, "a non-empty string of at most 200 characters");
+    else if (seen.has(subjectId)) failures.malformed(path, EXPECTED.uniqueSubjectId);
     else seen.add(subjectId);
   });
-}
-
-/** True when a path is relative POSIX with no empty value, leading slash, . or .. segment, backslash or NUL. */
-function isRelativePosixPath(path: string): boolean {
-  if (path.length === 0 || path.startsWith("/") || path.includes("\\") || path.includes("\u0000")) return false;
-  return path.split("/").every((segment) => segment !== "." && segment !== "..");
 }
 
 function checkArtifactHashes(failures: Failures, source: JsonObject): void {
@@ -174,7 +146,7 @@ function checkArtifactHashes(failures: Failures, source: JsonObject): void {
     const path = readString(failures, entry, base, "path", { expected: "a relative POSIX path" });
     if (path !== undefined) {
       if (!isRelativePosixPath(path)) failures.malformed(pointer(base, "path"), "a relative POSIX path without . or .. segments, backslashes or NUL");
-      else if (paths.has(path)) failures.malformed(pointer(base, "path"), "a path no other artifact hash uses");
+      else if (paths.has(path)) failures.malformed(pointer(base, "path"), EXPECTED.uniqueArtifactPath);
       else paths.add(path);
     }
     readString(failures, entry, base, "sha256", SHA256_RULE);
@@ -223,7 +195,7 @@ function checkTiming(failures: Failures, record: JsonObject, facts: Facts): void
   const startedAt = readDateTime(failures, timing, "/timing", "startedAt");
   facts.completedAt = readDateTime(failures, timing, "/timing", "completedAt");
   if (startedAt !== undefined && facts.completedAt !== undefined && compareInstants(startedAt, facts.completedAt) > 0) {
-    failures.malformed("/timing/startedAt", "not later than completedAt");
+    failures.malformed("/timing/startedAt", EXPECTED.startedNotAfterCompleted);
   }
   if (has(timing, "durationMs")) {
     const durationMs = timing.durationMs;
@@ -257,8 +229,9 @@ function checkRecord(failures: Failures, record: JsonObject): Facts {
   return facts;
 }
 
+/** Any finite number of epoch milliseconds, at its exact binary64 value; an invalid Date's NaN is not one. */
 function fromMilliseconds(value: number): Instant | undefined {
-  return Number.isFinite(value) && Math.abs(value) <= MAX_TIME ? fromEpochMilliseconds(value) : undefined;
+  return Number.isFinite(value) ? fromEpochMilliseconds(value) : undefined;
 }
 
 function readNow(value: unknown): Instant | undefined {

@@ -1,7 +1,12 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { evidenceRecordSchemaV1, validateEvidenceRecord } from "../src/index.js";
-import { STRUCTURAL_CODES, cases, crossValueFailures, materialize, pointers, records, removeAt, schemaErrors, setAt, validatePlainSchema, validateWithSchema } from "./fixtures.js";
+import { checkEvidenceCrossValues, evidenceRecordSchemaV1, validateEvidenceRecord } from "../src/index.js";
+import type { EvidenceFailure } from "../src/index.js";
+import { STRUCTURAL_CODES, cases, materialize, pointers, records, removeAt, schemaErrors, setAt, validatePlainSchema, validateWithSchema } from "./fixtures.js";
+
+function sorted(failures: EvidenceFailure[]): EvidenceFailure[] {
+  return [...failures].sort((a, b) => `${a.code} ${a.path}`.localeCompare(`${b.code} ${b.path}`));
+}
 
 const schemaFile = JSON.parse(readFileSync(new URL("../schema/evidence-record.v1.json", import.meta.url), "utf8"));
 
@@ -21,18 +26,28 @@ describe("exported JSON Schema", () => {
   });
 
   it.each(cases.invalid.map((entry) => [entry.name, entry] as const))("agrees on the invalid case: %s", (_name, entry) => {
-    const { record } = materialize(entry);
+    const { record, options } = materialize(entry);
     expect(validateWithSchema(record), schemaErrors(record)).toBe(entry.schema === "accept");
     // Every structural failure is rejected; every other failure is beyond structure.
     const structural = entry.expected.some((failure) => STRUCTURAL_CODES.has(failure.code));
     expect(structural).toBe(entry.schema === "reject");
-    // Only a case with a schemaNote relies on a cross-value check: the plain
-    // schema accepts it, and the check reports the validator's failure path.
+    // Only a case with a schemaNote relies on the cross-value checker: the
+    // plain schema accepts it, and the checker reports exactly the validator's
+    // failures, detail included.
     expect(validatePlainSchema(record), schemaErrors(record)).toBe(entry.schema === "accept" || entry.schemaNote !== undefined);
     if (entry.schemaNote !== undefined) {
-      expect(crossValueFailures(record)).toEqual(entry.expected.map((failure) => failure.path));
+      expect(sorted(checkEvidenceCrossValues(record))).toEqual(sorted(validateEvidenceRecord(record, options).failures));
     }
   });
+
+  it.each([...cases.valid, ...cases.invalid].map((entry) => [entry.name, entry] as const))(
+    "has the cross-value checker report only failures the validator reports, identically: %s",
+    (_name, entry) => {
+      const { record, options } = materialize(entry);
+      const validator = validateEvidenceRecord(record, options).failures;
+      for (const failure of checkEvidenceCrossValues(record)) expect(validator).toContainEqual(failure);
+    },
+  );
 
   const full = { ...cases.options, expectedCommit: "2".repeat(64) };
   for (const [name, base, options] of [
