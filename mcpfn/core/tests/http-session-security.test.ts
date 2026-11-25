@@ -106,6 +106,24 @@ describe("createWebStandardHandler session binding (MCP-SEC-03)", () => {
     expect((await call(sessionId!)).status).toBe(200);
   });
 
+  it("tells apart subjectless users of one OAuth client by their token", async () => {
+    const { initialize, call } = await setup();
+    const tokenOf = (token: string): AuthInfo => ({ token, clientId: "shared-public-client", scopes: [] });
+    const { sessionId } = await initialize(tokenOf("test-token-alice"));
+    expect((await call(sessionId!, tokenOf("test-token-bob"))).status).toBe(404);
+    expect((await call(sessionId!, tokenOf("test-token-alice"))).status).toBe(200);
+  });
+
+  it("does not create a session for an initialization that started before close()", async () => {
+    let open!: () => void;
+    const hold = new Promise<void>((resolve) => { open = resolve; });
+    const { initialize, server } = await setup({ sessionPrincipal: async () => { await hold; return undefined; } });
+    const pending = initialize();
+    await server.close();
+    open();
+    expect((await pending).status).toBe(503);
+  });
+
   it("uses a host-supplied principal key", async () => {
     const { initialize, call } = await setup({
       sessionPrincipal: ({ request }) => request.headers.get("x-tenant") ?? undefined,
@@ -139,6 +157,20 @@ describe("createWebStandardHandler Origin policy (MCP-SEC-07)", () => {
     expect((await initialize(undefined, { origin: "http://127.0.0.1:9999" })).status).toBe(403);
     expect((await initialize(undefined, { origin: "https://other.example" })).status).toBe(403);
     expect((await initialize(undefined, { origin: "null" })).status).toBe(403);
+  });
+
+  it("compares loopback origins with default ports normalised", async () => {
+    const registry = new McpFnRegistry();
+    const server = createMcpFnServer({ info: { name: "stateless", version: "1.0.0" }, registry });
+    closeables.push(server);
+    const handler = await server.createWebStandardHandler({ enableJsonResponse: true });
+    const send = (url: string, host: string, origin: string) => handler(new Request(url, {
+      method: "POST",
+      headers: { accept: "application/json, text/event-stream", "content-type": "application/json", host, origin },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "ping" }),
+    }));
+    expect((await send("https://localhost/mcp", "localhost:443", "https://localhost")).status).not.toBe(403);
+    expect((await send("https://localhost/mcp", "localhost", "http://localhost")).status).toBe(403);
   });
 
   it("applies to stateless handlers too", async () => {

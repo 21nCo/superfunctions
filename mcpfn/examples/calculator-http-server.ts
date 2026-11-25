@@ -6,7 +6,7 @@ import createCalculatorServer from "./calculator-server.js";
 const MAX_BODY_BYTES = 1_048_576;
 
 /** The request body, or undefined once it exceeds MAX_BODY_BYTES (the rest is discarded). */
-function readBody(request: IncomingMessage): Promise<Buffer | undefined> {
+function readBody(request: IncomingMessage): Promise<ReturnType<typeof Buffer.concat> | undefined> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     let size = 0;

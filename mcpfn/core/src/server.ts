@@ -8,6 +8,8 @@ import type {
   TaskMessageQueue,
   TaskStore,
 } from "@modelcontextprotocol/sdk/experimental/tasks/interfaces.js";
+import { createHash } from "node:crypto";
+
 import type { AuthInfo } from "@modelcontextprotocol/sdk/server/auth/types.js";
 import type { RequestOptions } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
@@ -119,8 +121,9 @@ export type McpFnWebStandardHandlerOptions<TContext> = ConstructorParameters<
    * session is created and on every later request that names it; a request
    * from a different principal gets the same 404 as an unknown session.
    * Defaults to the authenticated subject (`authInfo.extra.subject`) and
-   * client ID from `handleOptions.authInfo`, or no principal when the request
-   * carries no `authInfo`. Must not read the request body.
+   * client ID from `handleOptions.authInfo`; without a subject, the access
+   * token itself (so a refreshed token needs a new session); no principal
+   * when the request carries no `authInfo`. Must not read the request body.
    */
   sessionPrincipal?: (input: {
     authInfo: AuthInfo | undefined;
@@ -132,7 +135,11 @@ function defaultSessionPrincipal(input: { authInfo: AuthInfo | undefined }): str
   const authInfo = input.authInfo;
   if (!authInfo) return undefined;
   const subject = authInfo.extra?.subject;
-  return JSON.stringify([typeof subject === "string" ? subject : null, authInfo.clientId ?? null]);
+  if (typeof subject === "string" && subject) return JSON.stringify(["subject", subject, authInfo.clientId ?? null]);
+  // Without a verified subject, users of one OAuth client are told apart only
+  // by their token: bind the session to it (a refreshed token then needs a new
+  // session). Verifiers should set extra.subject.
+  return JSON.stringify(["token", createHash("sha256").update(authInfo.token).digest("hex")]);
 }
 
 function isLoopbackHostname(hostname: string): boolean {
@@ -154,15 +161,15 @@ function originAllowed(
     return false;
   }
   if (parsed.origin !== origin || !isLoopbackHostname(parsed.hostname)) return false;
-  let host = request.headers.get("host");
-  if (host === null) {
-    try {
-      host = new URL(request.url).host;
-    } catch {
-      return false;
-    }
+  // The request's own origin: its scheme with the Host it was sent to,
+  // normalised the same way (default ports dropped, case folded).
+  try {
+    const url = new URL(request.url);
+    const host = request.headers.get("host") ?? url.host;
+    return new URL(`${url.protocol}//${host}`).origin === parsed.origin;
+  } catch {
+    return false;
   }
-  return parsed.host === host.toLowerCase();
 }
 
 function jsonRpcErrorResponse(status: number, code: number, message: string): Response {
@@ -304,6 +311,9 @@ export class McpFnServer<TContext = undefined> {
   // record its subscription: the later unsubscribe wins.
   private readonly pendingResourceSubscriptions = new Map<string, Set<symbol>>();
   private connected = false;
+  // Increases on every close(), so a request that started before a close
+  // cannot create a session after it.
+  private closeGeneration = 0;
 
   constructor(options: McpFnServerOptions<TContext>) {
     this.serverOptions = { ...options };
@@ -947,10 +957,14 @@ export class McpFnServer<TContext = undefined> {
     return async (request: Request, handleOptions?: HandleRequestOptions) => {
       const refused = rejectOrigin(request);
       if (refused) return refused;
+      const generation = this.closeGeneration;
       const principal = await sessionPrincipal({
         authInfo: handleOptions?.authInfo,
         request,
       });
+      if (generation !== this.closeGeneration) {
+        return jsonRpcErrorResponse(503, -32000, "Server closed");
+      }
       const sessionId = request.headers.get("mcp-session-id");
       if (sessionId) {
         const session = sessions.get(sessionId);
@@ -1164,6 +1178,7 @@ export class McpFnServer<TContext = undefined> {
   }
 
   async close(): Promise<void> {
+    this.closeGeneration += 1;
     const requestServers = [...this.requestServers];
     this.requestServers.clear();
     await Promise.all(requestServers.map((server) => server.close()));

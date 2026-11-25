@@ -189,7 +189,7 @@ HTTP 403 unless `allowedOrigins` lists it or it is a loopback origin equal to th
 request's `Host` (`originPolicy: "off"` disables this; setting
 `enableDnsRebindingProtection` hands Host and Origin checks to the SDK
 transport). A session belongs to the principal that created it
-(`sessionPrincipal`, by default the `authInfo` subject and client ID); a request
+(`sessionPrincipal`, by default the `authInfo.extra.subject` and client ID, or the token itself when the verifier sets no subject, so set `extra.subject` for sessions to outlive token refresh); a request
 from another principal, including GET and DELETE, gets the same 404 as an
 unknown session.
 
