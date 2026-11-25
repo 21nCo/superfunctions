@@ -1366,7 +1366,9 @@ async function resolveClient(
       if (error instanceof McpFnHostedAuthorizationError) return null;
       throw error;
     }
-    return registration;
+    return registration.source === "dynamic" || registration.source === "client-metadata-document"
+      ? withoutUnsafeLinks(registration)
+      : registration;
   }
   if (!options.clientMetadataDocuments?.enabled) return null;
   let clientUrl: URL;
@@ -1384,9 +1386,13 @@ async function resolveClient(
       "Client ID Metadata Document client_id must equal its URL",
     );
   }
-  // A metadata document is public, so it cannot carry a shared secret. An
-  // omitted method means client_secret_basic (RFC 7591) and is refused too.
-  const documentAuthMethod = (record as OAuthClientMetadata).token_endpoint_auth_method ?? "client_secret_basic";
+  // A metadata document is public, so it cannot carry a shared secret. Per
+  // the Client ID Metadata Document draft (section 5), RFC 7591's default does
+  // not apply: an omitted method means none, or comes from
+  // token_endpoint_auth_methods_supported when the document lists it.
+  const supportedMethods = (record as { token_endpoint_auth_methods_supported?: unknown }).token_endpoint_auth_methods_supported;
+  const documentAuthMethod = (record as OAuthClientMetadata).token_endpoint_auth_method ??
+    (Array.isArray(supportedMethods) && !supportedMethods.includes("none") ? String(supportedMethods[0]) : "none");
   if (documentAuthMethod !== "none") {
     throw new McpFnHostedAuthorizationError(
       "invalid_client_metadata",
@@ -1425,6 +1431,35 @@ async function runBeforeClientResolution(
   }
 }
 
+const CLIENT_LINK_FIELDS = ["client_uri", "logo_uri", "tos_uri", "policy_uri"] as const;
+
+/**
+ * An absolute https:// URL without credentials. "https:host" would also
+ * parse, but a consent page would resolve it against its own origin.
+ */
+function isSafeClientLink(uri: unknown): boolean {
+  if (typeof uri !== "string" || !/^https:\/\//i.test(uri)) return false;
+  try {
+    const parsed = new URL(uri);
+    return parsed.protocol === "https:" && !parsed.username && !parsed.password;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Stored self-registered clients may predate the link checks: drop any link
+ * field that fails them rather than pass it to the host's consent handler.
+ */
+function withoutUnsafeLinks(registration: McpFnNormalizedClientRegistration): McpFnNormalizedClientRegistration {
+  const metadata = registration.metadata as Record<string, unknown>;
+  const unsafe = CLIENT_LINK_FIELDS.filter((field) => metadata[field] !== undefined && !isSafeClientLink(metadata[field]));
+  if (unsafe.length === 0) return registration;
+  const cleaned = { ...metadata };
+  for (const field of unsafe) delete cleaned[field];
+  return { ...registration, metadata: cleaned as typeof registration.metadata };
+}
+
 function normalizeClientMetadata(
   value: OAuthClientMetadata,
   redirectPolicy?: McpFnRedirectPolicy,
@@ -1433,20 +1468,11 @@ function normalizeClientMetadata(
     throw new McpFnHostedAuthorizationError("invalid_client_metadata", "Client metadata must be an object");
   }
   // Consent pages may render these links; accept only absolute https URLs.
-  for (const field of ["client_uri", "logo_uri", "tos_uri", "policy_uri"] as const) {
+  for (const field of CLIENT_LINK_FIELDS) {
     const uri = (value as Record<string, unknown>)[field];
     // Some clients write unset optional fields as null: nothing to render.
     if (uri === undefined || uri === null) continue;
-    let parsed: URL | undefined;
-    try {
-      parsed = typeof uri === "string" ? new URL(uri) : undefined;
-    } catch {
-      parsed = undefined;
-    }
-    // An explicit https:// authority: "https:host" would also parse, but a
-    // consent page would resolve it against its own origin.
-    if (!parsed || parsed.protocol !== "https:" || parsed.username || parsed.password ||
-        !/^https:\/\//i.test(uri as string)) {
+    if (!isSafeClientLink(uri)) {
       throw new McpFnHostedAuthorizationError(
         "invalid_client_metadata",
         `${field} must be an https URL`,
@@ -1455,7 +1481,7 @@ function normalizeClientMetadata(
   }
   // A null link is dropped, so callers see an omitted field (string | undefined).
   const withoutNullLinks: Record<string, unknown> = { ...value };
-  for (const field of ["client_uri", "logo_uri", "tos_uri", "policy_uri"]) {
+  for (const field of CLIENT_LINK_FIELDS) {
     if (withoutNullLinks[field] === null) delete withoutNullLinks[field];
   }
   try {

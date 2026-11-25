@@ -1064,21 +1064,21 @@ describe("unvetted-client authorization rejections", () => {
           redirect(LOOPBACK, RUNTIME_PORT)(fixture);
           Object.assign(fixture.registration.metadata, { token_endpoint_auth_method: method });
         };
-        // Stored registration: the server defaults the method to none. A
-        // fetched document without a method is always refused (it would be
-        // client_secret_basic, and a public document must use none). The
-        // harness cannot tell the two apart, so a post-match page is
-        // indeterminate whenever the stored path could succeed.
+        // Without a method, a stored registration and a fetched document
+        // both use none (Client ID Metadata Document draft, section 5): the
+        // fixture is eligible wherever none is supported.
         for (const declared of [["none"], ["none", "client_secret_basic"]]) {
           const [stored] = await runAgainstMcpFn([METADATA_DOCUMENT], undefined, withoutMethod, undefined, {
             tokenEndpointAuthMethods: declared,
           });
-          expect(stored).toMatchObject({ status: "failed", error: INDETERMINATE });
+          expect(stored).toMatchObject({ status: "passed" });
         }
-        // Fetched document: the server defaults the method to
-        // client_secret_basic, which this target does not support.
+        // A fetched document whose supported-methods list leaves out none
+        // defaults to the first listed method, which a public document may
+        // not use.
         const fixture = rejectionFixture(METADATA_DOCUMENT);
         withoutMethod(fixture);
+        Object.assign(fixture.registration.metadata, { token_endpoint_auth_methods_supported: ["client_secret_basic"] });
         fixture.expected.errorCode = "invalid_client_metadata";
         const handler = createMcpAuthorizationCompatibilityHandler({
           issuer,
@@ -1130,16 +1130,26 @@ describe("unvetted-client authorization rejections", () => {
         expect(unsupportedScope).toMatchObject({ status: "passed", errorCode: "invalid_scope" });
         withoutMethod(fixture);
         delete fixture.registration.metadata.scope;
+        delete fixture.registration.metadata.token_endpoint_auth_methods_supported;
         fixture.expected.errorCode = "invalid_target";
-        // The stored path supports none: a callback is indeterminate, since
-        // the fetched path never accepts a document without a method.
+        // Both paths use none: with none supported, the registration is
+        // eligible and a callback carrying the expected error passes.
         for (const declared of [["none"], ["none", "client_secret_basic"], undefined]) {
           const [callback] = await runHostedAuthorizationRegression(
             { ...callbackTarget(), tokenEndpointAuthMethods: declared },
             [fixture],
           );
-          expect(callback).toMatchObject({ status: "failed", error: INDETERMINATE });
+          expect(callback).toMatchObject({ status: "passed", errorCode: "invalid_target" });
         }
+        // A declared client_secret_basic document can only be stored, never
+        // fetched: with both methods supported, a callback is indeterminate.
+        fixture.registration.metadata.token_endpoint_auth_method = "client_secret_basic";
+        const [storedOnly] = await runHostedAuthorizationRegression(
+          { ...callbackTarget(), tokenEndpointAuthMethods: ["none", "client_secret_basic"] },
+          [fixture],
+        );
+        expect(storedOnly).toMatchObject({ status: "failed", error: INDETERMINATE });
+        withoutMethod(fixture);
         // Neither path can accept it: the registration is ineligible.
         for (const declared of [["client_secret_basic"], ["client_secret_post"]]) {
           const [neither] = await runHostedAuthorizationRegression(
@@ -1245,7 +1255,12 @@ describe("unvetted-client authorization rejections", () => {
       it("accepts invalid_scope only when the fetched document's method passed", async () => {
         const fixture = rejectionFixture(METADATA_DOCUMENT);
         redirect(LOOPBACK, RUNTIME_PORT)(fixture);
-        Object.assign(fixture.registration.metadata, { scope: "mcp:admin" });
+        // Without a method, a document listing only client_secret_basic would
+        // be fetched with that method, which a public document may not use.
+        Object.assign(fixture.registration.metadata, {
+          scope: "mcp:admin",
+          token_endpoint_auth_methods_supported: ["client_secret_basic"],
+        });
         delete fixture.registration.metadata.token_endpoint_auth_method;
         delete fixture.expected.errorCode;
         const rejectWith = (error: string, tokenEndpointAuthMethods: string[]) => ({
@@ -1255,8 +1270,7 @@ describe("unvetted-client authorization rejections", () => {
           prepareRegistration: async () => {},
           request: async () => Response.json({ error }, { status: 400 }),
         });
-        // Fetched without a method, the document would use client_secret_basic,
-        // which a public document may not: it is refused before its scope.
+        // Fetched, the document is refused on its method before its scope.
         const [basic] = await runHostedAuthorizationRegression(
           rejectWith("invalid_scope", ["client_secret_basic"]),
           [fixture],
@@ -1306,10 +1320,11 @@ describe("unvetted-client authorization rejections", () => {
       });
 
       it("never accepts a post-match response for an indeterminate metadata document", async () => {
-        for (const declared of [["none"], ["none", "client_secret_basic"]]) {
+        // A client_secret_basic document can be stored but never fetched.
+        for (const declared of [["client_secret_basic"], ["none", "client_secret_basic"]]) {
           const fixture = rejectionFixture(METADATA_DOCUMENT);
           redirect(LOOPBACK, RUNTIME_PORT)(fixture);
-          delete fixture.registration.metadata.token_endpoint_auth_method;
+          fixture.registration.metadata.token_endpoint_auth_method = "client_secret_basic";
           delete fixture.expected.errorCode;
           const respondWith = (render: () => Response) => ({
             issuer,
@@ -1362,8 +1377,9 @@ describe("unvetted-client authorization rejections", () => {
       function notEligible(requested: string, expected?: string) {
         const ineligible = rejectionFixture(DYNAMIC);
         ineligible.registration.metadata.response_types = ["token"];
+        // Storable with client_secret_basic, never fetchable.
         const indeterminate = rejectionFixture(METADATA_DOCUMENT);
-        delete indeterminate.registration.metadata.token_endpoint_auth_method;
+        indeterminate.registration.metadata.token_endpoint_auth_method = "client_secret_basic";
         for (const fixture of [ineligible, indeterminate]) {
           redirect(LOOPBACK, requested)(fixture);
           if (expected) fixture.expected.errorCode = expected;
@@ -1423,7 +1439,7 @@ describe("unvetted-client authorization rejections", () => {
         });
         const target = {
           issuer,
-          tokenEndpointAuthMethods: ["none"],
+          tokenEndpointAuthMethods: ["none", "client_secret_basic"],
           async prepareRegistration(fixture: McpFnHostedAuthorizationCase["registration"]) {
             registrations.set(fixture.clientId, normalizeMcpClientRegistration(fixture));
           },
@@ -1467,7 +1483,7 @@ describe("unvetted-client authorization rejections", () => {
         const recorder = evidenceRecorder();
         const validating = {
           issuer,
-          tokenEndpointAuthMethods: ["none"],
+          tokenEndpointAuthMethods: ["none", "client_secret_basic"],
           prepareRegistration: async () => {},
           request: (request: Request) => recorder.call(
             async () => Response.json({ error: "invalid_request" }, { status: 400 }),
@@ -1490,7 +1506,7 @@ describe("unvetted-client authorization rejections", () => {
           for (const reported of [evidence(1, false), undefined]) {
             const target = {
               issuer,
-              tokenEndpointAuthMethods: ["none"],
+              tokenEndpointAuthMethods: ["none", "client_secret_basic"],
               prepareRegistration: async () => {},
               request: async () => Response.json({ error: code }, { status: 400 }),
               authorizationEvidence: () => reported,
@@ -1509,7 +1525,7 @@ describe("unvetted-client authorization rejections", () => {
       it("never lets a response without client resolution permit a post-match response", async () => {
         const fixtures = [...notEligible(RUNTIME_PORT)];
         for (const reported of [evidence(0, false), evidence(0, true)]) {
-          const unresolved = { tokenEndpointAuthMethods: ["none"], authorizationEvidence: () => reported };
+          const unresolved = { tokenEndpointAuthMethods: ["none", "client_secret_basic"], authorizationEvidence: () => reported };
           const page = {
             issuer,
             ...unresolved,

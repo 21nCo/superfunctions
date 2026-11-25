@@ -1239,7 +1239,13 @@ describe("McpFn hosted authorization compatibility", () => {
     expect(authorize).not.toHaveBeenCalled();
   });
 
-  it("defaults omitted Client ID Metadata Document auth methods to basic", async () => {
+  // Client ID Metadata Document draft, section 5: RFC 7591's default does not
+  // apply; an omitted method is none, or follows the supported-methods list.
+  it.each([
+    ["omits the method", {}, 200],
+    ["lists only none as supported", { token_endpoint_auth_methods_supported: ["none"] }, 200],
+    ["lists only client_secret_basic as supported", { token_endpoint_auth_methods_supported: ["client_secret_basic"] }, 400],
+  ] as const)("decides a Client ID Metadata Document that %s", async (_label, extra, status) => {
     const clientId = "https://clients.example.com/client.json";
     const authorize = vi.fn(async () => Response.json({ ok: true }));
     const compatibility = createMcpAuthorizationCompatibilityHandler({
@@ -1249,26 +1255,54 @@ describe("McpFn hosted authorization compatibility", () => {
       tokenAuthority: {
         exchangeAuthorizationCode: async () => ({ access_token: "opaque", token_type: "Bearer" }),
       },
+      allowedResources: [resource],
       clientMetadataDocuments: {
         enabled: true,
         allow: async () => true,
         fetch: async () => Response.json({
           client_id: clientId,
           redirect_uris: ["https://client.example.com/callback"],
+          ...extra,
         }),
       },
     });
-
     const response = await compatibility(new Request(authorizationUrl(
       clientId,
       "https://client.example.com/callback",
     )));
+    expect(response.status).toBe(status);
+    if (status === 400) {
+      await expect(response.json()).resolves.toMatchObject({ error: "invalid_client_metadata" });
+      expect(authorize).not.toHaveBeenCalled();
+    } else {
+      expect(authorize).toHaveBeenCalledOnce();
+    }
+  });
 
-    expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toMatchObject({
-      error: "invalid_client_metadata",
+  it("drops unsafe links from a stored self-registered client before authorization", async () => {
+    const authorize = vi.fn(async () => Response.json({ ok: true }));
+    const stored = normalizeMcpClientRegistration({
+      clientId: "legacy-client",
+      source: "dynamic",
+      metadata: {
+        redirect_uris: ["https://client.example.com/callback"],
+        token_endpoint_auth_method: "none",
+        logo_uri: "javascript:alert(1)",
+        tos_uri: "https://client.example.com/terms",
+      } as never,
     });
-    expect(authorize).not.toHaveBeenCalled();
+    const compatibility = createMcpAuthorizationCompatibilityHandler({
+      issuer,
+      clients: { resolve: async (id) => id === "legacy-client" ? stored : null },
+      authorize,
+      tokenAuthority: { exchangeAuthorizationCode: async () => ({ access_token: "opaque", token_type: "Bearer" }) },
+      allowedResources: [resource],
+    });
+    const response = await compatibility(new Request(authorizationUrl("legacy-client", "https://client.example.com/callback")));
+    expect(response.status).toBe(200);
+    const input = (authorize.mock.calls as unknown as Array<[{ client: { metadata: Record<string, unknown> } }]>)[0]![0];
+    expect(input.client.metadata).not.toHaveProperty("logo_uri");
+    expect(input.client.metadata.tos_uri).toBe("https://client.example.com/terms");
   });
 
   // MCP-21 audit, MCP-SEC-09 and MCP-SEC-10.

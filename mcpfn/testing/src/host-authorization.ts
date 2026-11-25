@@ -85,8 +85,8 @@ export interface McpFnHostedAuthorizationTargetAdapter {
    * code callback. An omitted method is `none`. A client-metadata-document
    * fixture may be stored by the target (its method must be supported) or
    * fetched by the server, which accepts only public documents: method `none`
-   * (an omitted method counts as `client_secret_basic`) with `none`
-   * supported. The harness assumes the target refuses fetched documents with
+   * (an omitted method counts as `none`, per the Client ID Metadata Document
+   * draft) with `none` supported. The harness assumes the target refuses fetched documents with
    * any other method, as @mcpfn/auth does. The fixture is eligible when both
    * paths accept it, ineligible when neither does, and indeterminate when only
    * one does, in which case a post-match response fails. When omitted, the
@@ -812,15 +812,18 @@ function fetchedAuthMethod(
   registration: McpFnHostedRegistrationFixture,
 ): string {
   const declared: unknown = registration.metadata.token_endpoint_auth_method;
-  return declared === undefined || declared === null
-    ? "client_secret_basic"
-    : client.tokenEndpointAuthMethod;
+  if (declared !== undefined && declared !== null) return client.tokenEndpointAuthMethod;
+  // Client ID Metadata Document draft, section 5: without a method, none,
+  // unless the document's supported-methods list leaves none out.
+  const supported: unknown = (registration.metadata as { token_endpoint_auth_methods_supported?: unknown })
+    .token_endpoint_auth_methods_supported;
+  return Array.isArray(supported) && !supported.includes("none") ? String(supported[0]) : "none";
 }
 
 /**
  * Whether the server accepts the fixture as a Client ID Metadata Document it
- * fetches: such a document is public, so its method (client_secret_basic
- * when omitted) must be `none`, and the target must support `none`.
+ * fetches: such a document is public, so its method (none when omitted) must
+ * be `none`, and the target must support `none`.
  */
 function fetchedDocumentAccepted(
   client: McpFnNormalizedClientRegistration,
