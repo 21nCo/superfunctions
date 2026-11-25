@@ -509,8 +509,8 @@ export class SchemaConverter {
   private readonly projections = new Map<DirectionalKeyword, WeakMap<object, AccessConflict | null>>();
   /** Schema objects whose conversion failed for a reason of their own, by mode, for the whole call. */
   private readonly failures = new Map<SchemaMode, WeakMap<object, OpenApiSkip>>();
-  /** The `required` arrays already read for a "__proto__" name (`refusePrototypeName`). */
-  private readonly readRequired = new WeakSet<object>();
+  /** The `required` arrays already read, with whether they name "__proto__" (`refusePrototypeName`). */
+  private readonly readRequired = new WeakMap<object, boolean>();
   private budget: NodeBudget;
 
   constructor(
@@ -1031,9 +1031,13 @@ export class SchemaConverter {
       return [keyword, converted];
     }
     // Each document array is read once per call, so the reading stays within the document's size.
-    if (keyword === "required" && Array.isArray(value) && !this.readRequired.has(value)) {
-      if (documentItems(value).includes("__proto__")) this.refusePrototypeName();
-      this.readRequired.add(value);
+    if (keyword === "required" && Array.isArray(value)) {
+      let prototype = this.readRequired.get(value);
+      if (prototype === undefined) {
+        prototype = documentItems(value).includes("__proto__");
+        this.readRequired.set(value, prototype);
+      }
+      if (prototype) this.refusePrototypeName();
     }
     if (keyword === "items") return [keyword, this.convert(value, mode, refs)];
     if (SCHEMA_KEYWORDS.has(keyword)) return [keyword, this.convert(value, mode, refs)];

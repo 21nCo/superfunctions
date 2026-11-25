@@ -219,8 +219,9 @@ for (const { operation, code, reason } of skipped) {
   is matched against required names only when it has no groups,
   alternation, backreferences or lookaround and at most one quantifier,
   with the matching charged; any other pattern forces nothing. Every
-  required name is an own property, as @cfworker/json-schema 4.1.6 and later
-  check (mcpFn requires `^4.1.6`). A child a
+  required name is an own property: both engines check own properties only
+  (Ajv with `ownProperties`, @cfworker/json-schema from 4.1.6, which mcpFn
+  requires). A child a
   call can leave out or avoid (an optional body or property, an
   `anyOf`/`oneOf` branch) never stacks, since a shallow valid input exists,
   and a chain of required children from the input that never ends, which
