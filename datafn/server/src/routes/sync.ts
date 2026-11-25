@@ -396,7 +396,7 @@ export function createPushHandler(
             error: firstError,
           });
           // VAL-009: In production (debug: false), strip field/schema details from messages
-          const debug = handlerOpts?.debug ?? true;
+          const debug = handlerOpts?.debug ?? false;
           const message = debug ? firstError.message : "Validation error";
           return errorResponse(
             {
@@ -428,6 +428,7 @@ export function createPushHandler(
             const authzResult = validateMutationAuthz(mut, validatedSchema, {
               allowUnknownResources: handlerOpts?.allowUnknownResources,
               debug: handlerOpts?.debug,
+              evaluateGuard: false, // Sync push validates guards but does not evaluate them.
             });
             if (!authzResult.ok) {
               return errorResponse({

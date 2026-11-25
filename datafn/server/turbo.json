@@ -25,6 +25,16 @@
     "test": {
       "inputs": [
         "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/.github/workflows/ci.yml",
+        "$TURBO_ROOT$/.github/workflows/publish-python.yml",
+        "$TURBO_ROOT$/.github/workflows/publish-tag.yml",
+        "$TURBO_ROOT$/datafn/admin/package.json",
+        "$TURBO_ROOT$/datafn/cli/package.json",
+        "$TURBO_ROOT$/datafn/client/package.json",
+        "$TURBO_ROOT$/datafn/core/package.json",
+        "$TURBO_ROOT$/datafn/extfn/package.json",
+        "$TURBO_ROOT$/datafn/svelte/package.json",
+        "$TURBO_ROOT$/datafn/swift-bridge/package.json",
         "$TURBO_ROOT$/datafn/docs/content/docs/**",
         "$TURBO_ROOT$/datafn/python/tests/**",
         "!$TURBO_ROOT$/datafn/python/tests/**/__pycache__/**",

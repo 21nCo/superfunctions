@@ -139,7 +139,7 @@ describe("/datafn/query validation", () => {
   });
 
   it("TV-QUERY-002: unknown resource returns DFQL_UNKNOWN_RESOURCE", async () => {
-    const server = await createDatafnServer({ allowUnknownResources: true,
+    const server = await createDatafnServer({ allowUnknownResources: true, debug: true,
       schema: fixtureF1Schema,
       limits: { maxLimit: 2 },
     });
@@ -161,7 +161,7 @@ describe("/datafn/query validation", () => {
   });
 
   it("TV-QUERY-002: unknown field in filters returns DFQL_UNKNOWN_FIELD", async () => {
-    const server = await createDatafnServer({ allowUnknownResources: true,
+    const server = await createDatafnServer({ allowUnknownResources: true, debug: true,
       schema: fixtureF1Schema,
       limits: { maxLimit: 2 },
     });
@@ -187,7 +187,7 @@ describe("/datafn/query validation", () => {
   });
 
   it("TV-QUERY-002: unknown relation in select returns DFQL_UNKNOWN_RELATION", async () => {
-    const server = await createDatafnServer({ allowUnknownResources: true,
+    const server = await createDatafnServer({ allowUnknownResources: true, debug: true,
       schema: fixtureF1Schema,
       limits: { maxLimit: 2 },
     });
@@ -288,7 +288,7 @@ describe("/datafn/query validation", () => {
   });
 
   it("enforces limit against maxLimit", async () => {
-    const server = await createDatafnServer({ allowUnknownResources: true,
+    const server = await createDatafnServer({ allowUnknownResources: true, debug: true,
       schema: fixtureF1Schema,
       limits: { maxLimit: 2 },
     });

@@ -14,6 +14,7 @@ describe("/datafn/sync endpoints (Phase 04)", () => {
   // Helper to create server with fixture F1
   async function createF1Server(db: any) {
     return await createDatafnServer({ allowUnknownResources: true,
+      debug: true,
       schema: fixtureF1Schema,
       limits: { maxLimit: 100 },
       database: db,

@@ -9,7 +9,7 @@ Two clients write to the same row before either has pushed. When their mutations
 
 ## Default: last-writer-wins (LWW)
 
-The default policy is **last writer by server timestamp**. When two mutations target the same row, the server applies them in `serverSeq` order — the later one wins, the earlier one is silently overwritten.
+The default policy is last successful write. For resources with the `timestamps` capability, the server stamps its own `updatedAt` when it applies each write. When two unguarded updates both succeed, both are acknowledged and the last write applied determines the stored value, regardless of client timestamps. Concurrent requests can finish in a different order from arrival.
 
 This is the right answer for:
 
@@ -21,25 +21,30 @@ For most fields, you don't need anything else.
 
 ## Optimistic concurrency: version guards
 
-For fields where you want to **refuse** the second writer instead of silently losing data, use `if` guards on the mutation:
+Use an `if` guard to reject a mutation when the stored row has already changed at the time of the check. Send the guarded write directly to `/datafn/mutation` or as a mutation step in `/datafn/transact`. A hydrated client's `mutate` call writes to the local changelog and syncs through `/datafn/push`, which skips guard evaluation.
 
 ```typescript
 const task = await client.table("tasks").get(taskId);
 
-await client.table("tasks").mutate({
-  operation: "merge",
-  id: taskId,
-  record: { title: newTitle },
-  if: { updatedAt: { $eq: task.updatedAt } },
+await fetch("/datafn/mutation", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    resource: "tasks",
+    version: 1,
+    operation: "merge",
+    id: taskId,
+    record: { title: newTitle },
+    if: { updatedAt: { $eq: task.updatedAt } },
+  }),
 });
 ```
 
-The server evaluates the guard atomically with the write. If `updatedAt` has changed since `task` was loaded, the mutation fails with `CONFLICT`. The losing client is informed; the user can retry, merge, or discard.
+If the predicate fails at the time of the check, the server returns `CONFLICT` without applying that write. When the adapter supports transactions, the guard read and write run in one transaction. Under read-committed isolation, concurrent guards can both read the old row before either write commits and both writes can succeed. Adapters without transactions check the guard separately from the write. An atomic `transact` with mutations on such an adapter returns `DFQL_UNSUPPORTED` before steps run.
 
 Use guards for:
 
 - Singular fields where data loss matters: title, body, name
-- Counter fields where you can't tolerate a missed increment
 - Permission lists, tag sets, settings
 
 ## Explicit merge (server-side hook)

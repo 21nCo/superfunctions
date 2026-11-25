@@ -26,7 +26,7 @@ describe("Phase 15 Completeness", () => {
 
   beforeEach(async () => {
     db = memoryAdapter({ namespace: { enabled: true, prefix: "datafn" } });
-    server = await createDatafnServer({ allowUnknownResources: true,
+    server = await createDatafnServer({ allowUnknownResources: true, debug: true,
       schema,
       database: db,
       limits: { maxPayloadBytes: 1024 * 1024, maxLimit: 100 },

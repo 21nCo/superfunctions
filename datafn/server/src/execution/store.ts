@@ -9,6 +9,9 @@ export interface JoinRow {
 }
 
 export interface DataStore {
+  /** Require a visible related record when projecting relationship references. */
+  readonly requireVisibleRelatedRecords?: boolean;
+
   /**
    * Get all records for a resource, sorted by id
    */

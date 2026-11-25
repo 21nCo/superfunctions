@@ -16,6 +16,7 @@ describe("DFQL select extensions (Phase 11)", () => {
     await db.initialize();
 
     return await createDatafnServer({ allowUnknownResources: true,
+      debug: true,
       schema: fixtureDfqlSchema,
       limits: { maxLimit: 100 },
       database: db,

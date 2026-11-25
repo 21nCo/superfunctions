@@ -6,22 +6,33 @@ This document describes the security architecture of DataFn, covering all layers
 
 ## Overview
 
-DataFn enforces security through multiple independent layers that run in sequence. A request must pass **every** layer to reach the database. If any layer rejects, the request is terminated immediately with the appropriate error code.
+DataFn enforces security through independent checks. A check that is enabled rejects the request immediately. Not every check runs on every route, and several are off unless the server config turns them on.
 
 ```text
-Request → Rate Limiting → Payload Limits → JSON Parsing → Request Authorization → Schema Validation → Field-Level Authorization → Execution
-```
+Core data routes (/datafn/query, /mutation, /transact, /push, …):
+  Rate limiting (only if rateLimit.enabled)
+  → streaming payload limit
+  → JSON parsing
+  → request authorization
+  → schema validation
+  → field-level authorization
+  → execution
 
-Each layer is described below in the order it executes.
+Plugin routes (for example /datafn/public-links/resolve):
+  These do not pass through the core withAuth chain, so they do not run the authorize callback.
+  When rateLimit.enabled is set, they use that same limiter, keyed by the route path.
+  Without placement, the public-link resolve stream is bounded before it is exposed to middleware.
+  With placement, the placement runtime applies its own streaming cap before namespace resolution.
+```
 
 ---
 
 ## Layer 1: Rate Limiting
 
-**When:** Before JSON parsing or any authorization.
+**When:** Core routes run the limiter before parsing the body. Plugin routes run it after route middleware. Public-link resolve with placement runs it before the namespace lookup. The limiter runs only when `rateLimit.enabled` is true.
 **Config:** `createDatafnServer({ rateLimit: { ... } })`
 
-Rate limiting is the first check and runs before any body parsing or auth logic. This protects the server from request floods regardless of whether the requests are valid.
+On core data routes the limiter runs before JSON parsing and the `authorize` callback. Plugin routes use the same limiter when it is enabled. They stay callable with their own credentials (a public-link token is not an owner session). The default max and window apply to every endpoint string, including a plugin path, unless `endpoints` overrides that string.
 
 ```typescript
 const server = await createDatafnServer({
@@ -50,12 +61,13 @@ const server = await createDatafnServer({
 
 ## Layer 2: Payload Size Limits
 
-**When:** After rate limiting, before JSON parsing.
+**When:** Core data routes check the size after rate limiting and before JSON parsing. Without placement, the public-link resolve stream is capped as it is read. With placement, the route uses the placement streaming cap. Failures during context creation follow the router's context error path.
 **Config:** `createDatafnServer({ limits: { maxPayloadBytes: 1_048_576 } })`
+**Default:** `maxPayloadBytes` is 5,242,880 when unset.
 
-Two-phase enforcement:
-1. **Fast reject** via `Content-Length` header — no body read needed.
-2. **Actual body measurement** via `Buffer.byteLength(body, 'utf8')` for requests without `Content-Length` — correctly measures multi-byte characters.
+Enforcement:
+1. **Fast reject** via `Content-Length` when that header is present and over the limit. The body is not read.
+2. **Streaming measurement** when `Content-Length` is absent or under the limit. The server counts bytes as they arrive and cancels the stream once the total exceeds the limit. It does not buffer the rest of an over-limit body.
 
 **Response on rejection:** `413 Payload Too Large` with code `LIMIT_EXCEEDED`
 
@@ -63,7 +75,7 @@ Two-phase enforcement:
 
 ## Layer 3: JSON Parsing
 
-**When:** After payload limits, before authorization.
+**When:** On core data routes, after payload limits and before the `authorize` callback. Plugin routes parse their own bodies and do not use this ordering.
 **Purpose:** Ensures the body is valid JSON before any auth logic runs.
 
 This ordering is deliberate: if the body is malformed JSON, the server returns `400 DFQL_INVALID` — never `403 FORBIDDEN`. This prevents information leakage about whether an auth token is valid when the request itself is syntactically invalid.
@@ -224,7 +236,7 @@ const server = await createDatafnServer({
 
 ### Error Disclosure Control (VAL-009)
 
-In production (`debug: false` or `NODE_ENV=production`), error messages are generic — they do not reveal field names, schema structure, or resource names. In development, messages include full details for easier debugging.
+Detailed validation and authorization messages are off unless `debug: true`. `NODE_ENV` does not turn them on. Unexpected database and transaction failures always return a generic client message; the driver text is written to the error log only.
 
 ---
 
@@ -379,8 +391,8 @@ const server = await createDatafnServer({
     getNamespace: (ctx) => ctx.session.tenantId,
   },
 
-  // Error disclosure control
-  debug: process.env.NODE_ENV !== "production",
+  // Error disclosure control. Off unless set. NODE_ENV does not enable it.
+  debug: false,
 
   // Deny-by-default for resources without permissions policy
   allowUnknownResources: false,  // default
@@ -412,7 +424,7 @@ const server = await createDatafnServer({
 - [ ] Define `permissions` on every resource in your schema (deny-by-default enforced)
 - [ ] Set `allowUnknownResources: false` (the default — do not override in production)
 - [ ] Configure `namespaceProvider` for namespace isolation in multi-tenant deployments
-- [ ] Set `debug: false` or rely on `NODE_ENV=production` to suppress field-level error details
+- [ ] Leave `debug` unset (or `false`) so clients do not receive field-level error details. Set `debug: true` only on a server you intend to debug.
 - [ ] Set `limits.maxPayloadBytes` to prevent oversized request bodies
 - [ ] Enable rate limiting with appropriate per-endpoint limits
 - [ ] Configure data retention to prevent unbounded internal table growth
