@@ -108,13 +108,17 @@ export class MCPServer {
     // Tracked before the await so close() during it still closes the server;
     // dropped again if the options fail validation.
     this.activeServers.add(server);
+    let handler: Awaited<ReturnType<McpFnServer["createWebStandardHandler"]>>;
     try {
-      return await server.createWebStandardHandler(options);
+      handler = await server.createWebStandardHandler(options);
     } catch (error) {
       this.activeServers.delete(server);
       await server.close().catch(() => undefined);
       throw error;
     }
+    // close() ran meanwhile and already closed the server: no live handler.
+    if (!this.activeServers.has(server)) throw new Error("MCPServer was closed");
+    return handler;
   }
 
   async close(): Promise<void> {
