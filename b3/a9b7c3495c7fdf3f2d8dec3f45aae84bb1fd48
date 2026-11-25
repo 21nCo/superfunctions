@@ -1,0 +1,31 @@
+.github/workflows/apifn-api-check.yml
+  s_13f35ef098767b::t_564bd2e34fb10b 27,72,124,169,186-187,193-200,203,207-208,213-214,218-219,230,233-237,284-285,292-294,302,306,316-319,344-347,366-369,390-393,427-428,431,433,443-504,507-508,533-544,551-553,570,572,585,587,607,609,633,635,657,660-672,678,681-682,694-715,748-751,790-801,806-810,859-871,874-952,958,961-962,973-976,978,999-1000,1003-1005,1007-1009,1011
+apifn/README.md
+  s_851394e91f4e05::t_c897128e2f10d0 146-153,156,159-160,191,198
+apifn/examples/ci-cd/github-actions.yml
+  s_851394e91f4e05::t_bcc15791dc997e 7-9
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b3a9b7c3495c7fdf3f2d8dec3f45aae84bb1fd48",
+  "prompts": {},
+  "sessions": {
+    "s_13f35ef098767b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a2145f-9b5c-73f0-9133-4a95f3393b53",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_851394e91f4e05": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "57b8d2d0-c5fd-4f83-adb5-3a31d2da9320",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

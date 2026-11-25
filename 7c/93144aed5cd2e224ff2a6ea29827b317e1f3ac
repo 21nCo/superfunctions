@@ -1,0 +1,31 @@
+.github/workflows/apifn-api-check.yml
+  s_52aac795e73b3c::t_3161a2d6e10baf 62,96,99,159,213-215,218-231,254-258,328-331,348-353,355-359,370-372,400,456,460,466-467,476,499-500,563-577,580-581,584-589,597,605-606,609-612,637-646,661,669-676,678-693
+apifn/README.md
+  s_52aac795e73b3c::t_dc749178d0955a 148-150,162,184,195-196
+apifn/cli/__tests__/fixtures/check-smoke/compatible/router.ts
+  s_800f120c5f7f2f::t_53615c538c7a9d 2-4
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7c93144aed5cd2e224ff2a6ea29827b317e1f3ac",
+  "prompts": {},
+  "sessions": {
+    "s_52aac795e73b3c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21416-bce2-7d83-b799-161f4cb661ed",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_800f120c5f7f2f": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21405-3226-7ce2-b461-536d579b41bb",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
