@@ -2594,6 +2594,7 @@ describe("document memory in a constrained heap", () => {
     // on Node 20 and 22, 128 MiB on Node 26, 224 MiB on Node 24), so it cannot size what lives in the old generation.
     const jsonValueUrl = pathToFileURL(join(dirname(runnerModule), "json-value.js")).href;
     // argv: the module, then a NODE_OPTIONS to set before importing it (for child processes only: it sets no limit).
+    // Each worker reports its document limit; none is given the parent's flags unless its options inherit them.
     const probe = String.raw`
       if (process.argv[2]) process.env.NODE_OPTIONS = process.argv[2];
       const { documentLimit } = await import(process.argv[1]);
@@ -2601,18 +2602,24 @@ describe("document memory in a constrained heap", () => {
       const { getHeapStatistics } = await import("node:v8");
       const { Worker } = await import("node:worker_threads");
       const heap = Math.min(constants.MAX_STRING_LENGTH, Math.floor(getHeapStatistics().heap_size_limit / 16));
-      // A worker that asks for a 24 MiB old generation, without the parent's flags; a process flag can override it.
-      const worker = await new Promise((resolve, reject) => {
+      const inWorker = (options) => new Promise((resolve, reject) => {
         const thread = new Worker(
-          "import(" + JSON.stringify(process.argv[1]) + ").then(({ documentLimit }) => " +
-            "require('node:worker_threads').parentPort.postMessage(documentLimit()))",
-          { eval: true, execArgv: [], env: {}, resourceLimits: { maxOldGenerationSizeMb: 24 } }
+          // Without require: a worker that inherits the process flags also inherits --input-type=module.
+          "Promise.all([import(" + JSON.stringify(process.argv[1]) + "), import('node:worker_threads')])" +
+            ".then(([{ documentLimit }, { parentPort }]) => parentPort.postMessage(documentLimit()))",
+          { eval: true, ...options }
         );
         thread.once("message", resolve);
         thread.once("error", reject);
       });
-      process.stdout.write(JSON.stringify({ limit: documentLimit(), heap, worker }));
+      const hidden = await inWorker({ execArgv: [], env: {} });
+      const asked = await inWorker({ execArgv: [], env: {}, resourceLimits: { maxOldGenerationSizeMb: 24 } });
+      // Inheriting the process flags: under the semi-space case below (a 44 MiB heap limit, 32 old and 12 young) these
+      // add up to the heap limit, though both are overridden.
+      const coincident = await inWorker({ resourceLimits: { maxOldGenerationSizeMb: 38, maxYoungGenerationSizeMb: 6 } });
+      process.stdout.write(JSON.stringify({ limit: documentLimit(), heap, hidden, asked, coincident }));
     `;
+    type Limits = { limit: number; heap: number; hidden: number; asked: number; coincident: number };
     const limitWith = (execArgv: string[], nodeOptions?: string, laterNodeOptions = "") => {
       const env: NodeJS.ProcessEnv = { ...process.env };
       delete env.NODE_OPTIONS;
@@ -2625,56 +2632,79 @@ describe("document memory in a constrained heap", () => {
         { encoding: "utf8", env, timeout: 60_000 }
       );
       expect(child.stderr).toBe("");
-      return JSON.parse(child.stdout) as { limit: number; heap: number; worker: number };
+      return JSON.parse(child.stdout) as Limits;
     };
     const MiB = 2 ** 20;
-    // The command line's flag, also signed; a worker's reported generations size it only when they add up to its heap
-    // limit, so one whose 24 MiB request a process flag overrode (with its young generation too) is not sized from them.
-    expect(limitWith(["--max-old-space-size=32"])).toMatchObject({ limit: (32 * MiB) / 16 });
-    expect(limitWith(["--max-old-space-size=+32"]).limit).toBe((32 * MiB) / 16);
-    const overridden = limitWith(["--max-old-space-size=32", "--max-semi-space-size=4"]);
-    expect(overridden.limit).toBe((32 * MiB) / 16);
-    expect(overridden.worker).toBe(overridden.heap);
-    expect(limitWith([], "--max-old-space-size=48").limit).toBe((48 * MiB) / 16);
-    // V8 rounds a custom semi-space up to a power of two, so the rest is still a young generation's size.
-    expect(limitWith(["--max-old-space-size=32", "--max-semi-space-size=5"]).limit).toBe((32 * MiB) / 16);
-    // Quoted as Node accepts it in NODE_OPTIONS.
-    expect(limitWith([], '"--max-old-space-size=48"').limit).toBe((48 * MiB) / 16);
-    // The command line takes precedence over NODE_OPTIONS, in either spelling.
-    expect(limitWith(["--max_old_space_size=40"], "--max-old-space-size=48").limit).toBe((40 * MiB) / 16);
-    // Without one, V8's default old generation is most of its heap limit, which is used as before; a worker's own
-    // request sizes it.
+    const of = (mib: number) => (mib * MiB) / 16;
+    // The command line's flag in each spelling V8 accepts; a worker that cannot see it (execArgv [] and env {}) is
+    // sized by the young generation Node gave it, not by its heap limit, and so is one asking for its own old generation.
+    for (const flag of ["--max-old-space-size=32", "--max-old-space-size=+32", "-max-old-space-size=32", "--max_old_space_size=32"]) {
+      expect(limitWith([flag])).toMatchObject({ limit: of(32), hidden: of(32), asked: of(32) });
+    }
+    // Worker sizes that add up to the heap limit while process flags override both are not taken: 32 MiB, not 38.
+    expect(limitWith(["--max-old-space-size=32", "--max-semi-space-size=4"])).toMatchObject({ limit: of(32), coincident: of(32) });
+    // V8 rounds a custom semi-space up to a power of two.
+    expect(limitWith(["--max-old-space-size=32", "--max-semi-space-size=5"]).limit).toBe(of(32));
+    // NODE_OPTIONS, plain or quoted: the heap limit less the largest default young generation below it.
+    expect(limitWith([], "--max-old-space-size=48")).toMatchObject({ limit: of(48), hidden: of(48) });
+    expect(limitWith([], '"--max-old-space-size=32"').limit).toBe(of(32));
+    // A NODE_OPTIONS changed before the module loads (for child processes) cannot raise the limit: 32 MiB, not 56.
+    expect(limitWith([], "--max-old-space-size=32", "--max-old-space-size=56").limit).toBe(of(32));
+    // The command line takes precedence over NODE_OPTIONS.
+    expect(limitWith(["--max_old_space_size=40"], "--max-old-space-size=48").limit).toBe(of(40));
+    // Without a flag: V8's default old generation, at most 192 MiB (the largest default young generation) below the
+    // heap limit, whatever a NODE_OPTIONS set later says; a worker's own request sizes it.
     const unflagged = limitWith([]);
-    expect(unflagged).toMatchObject({ limit: unflagged.heap, worker: (24 * MiB) / 16 });
-    // A NODE_OPTIONS set while the process runs (for its child processes) did not size this heap.
-    expect(limitWith([], undefined, "--max-old-space-size=4").limit).toBe(unflagged.heap);
+    expect(unflagged.limit).toBeLessThanOrEqual(unflagged.heap);
+    expect(unflagged.limit).toBeGreaterThanOrEqual(unflagged.heap - of(192));
+    expect(unflagged.asked).toBe(of(24));
+    expect(limitWith([], undefined, "--max-old-space-size=4").limit).toBe(unflagged.limit);
   }, 60_000);
 
   it("keeps the diagnostics of an endless returned list compact in a 32 MiB old generation", () => {
-    // Alone on a fresh heap: the most diagnostics a document can hold, each the shortest a diagnostic prints.
-    const script = String.raw`
-      const { runAction } = await import(process.argv[1]);
+    // One run on a fresh heap, as the body of an async function of (moduleUrl, kind): the most diagnostics a document
+    // can hold, each the shortest a diagnostic prints, or data that fits the document or does not.
+    const run = String.raw`
+      const { runAction } = await import(moduleUrl);
       const chunks = [];
       let droppedRest = false;
       const many = new Proxy([], {
         get: (target, key) =>
           key === "length" ? 2e8 : typeof key === "string" && /^\d+$/.test(key) ? { code: "D", severity: "info", message: "m" } : Reflect.get(target, key),
       });
+      const rows = (count) => ({ rows: Array.from({ length: count }, (_, index) => "row-" + index) });
+      const action =
+        kind === "diagnostics" ? () => ({ exitCode: 2, data: "done", diagnostics: many })
+        : kind === "data-fits" ? () => ({ data: rows(100_000) })
+        : () => ({ data: rows(400_000) });
       let listed = 0;
-      const exitCode = await runAction(() => ({ exitCode: 2, data: "done", diagnostics: many }), {}, {
+      const exitCode = await runAction(action, {}, {
         mode: "json", jsonStyle: "document", color: false,
         stdout: (text) => chunks.push(text),
         stderr: (text) => { droppedRest ||= text.includes("diagnostics past the first"); },
         onDiagnostics: (list) => { listed = list.length; },
       });
       const out = chunks.join("");
-      const printed = JSON.parse(out).diagnostics.length;
-      process.stdout.write(JSON.stringify({
-        writes: chunks.length, exitCode, droppedRest, listedAll: listed === printed, start: out.slice(0, 60), end: out.slice(-4),
-      }));
+      const printed = JSON.parse(out).diagnostics?.length ?? 0;
+      return { writes: chunks.length, exitCode, droppedRest, listedAll: listed === printed, start: out.slice(0, 60), end: out.slice(-4) };
     `;
-    // The flag on the command line, and quoted in NODE_OPTIONS.
-    for (const [execArgv, nodeOptions] of [[["--max-old-space-size=32"], undefined], [[], '"--max-old-space-size=32"']] as const) {
+    const onMainThread = String.raw`
+      const [moduleUrl, kind] = process.argv.slice(1);
+      process.stdout.write(JSON.stringify(await (async () => { ${run} })()));
+    `;
+    // A worker that cannot see the parent's flags: execArgv [] and env {}.
+    const inWorker = String.raw`
+      const { Worker } = await import("node:worker_threads");
+      const code = "const { parentPort, workerData } = require('node:worker_threads');" +
+        "(async ([moduleUrl, kind]) => { " + ${JSON.stringify(run)} + " })(workerData).then((result) => parentPort.postMessage(result));";
+      const result = await new Promise((resolve, reject) => {
+        const thread = new Worker(code, { eval: true, execArgv: [], env: {}, workerData: process.argv.slice(1) });
+        thread.once("message", resolve);
+        thread.once("error", reject);
+      });
+      process.stdout.write(JSON.stringify(result));
+    `;
+    const runWith = (script: string, kind: string, execArgv: readonly string[], nodeOptions?: string) => {
       const env: NodeJS.ProcessEnv = { ...process.env };
       delete env.NODE_OPTIONS;
       if (nodeOptions !== undefined) {
@@ -2682,21 +2712,44 @@ describe("document memory in a constrained heap", () => {
       }
       const child = spawnSync(
         process.execPath,
-        [...execArgv, "--input-type=module", "-e", script, pathToFileURL(runnerModule).href],
+        [...execArgv, "--input-type=module", "-e", script, pathToFileURL(runnerModule).href, kind],
         { encoding: "utf8", env, timeout: 120_000 }
       );
       expect(child.stderr).toBe("");
       expect(child.status).toBe(0);
-      expect(JSON.parse(child.stdout)).toEqual({
-        writes: 1,
-        exitCode: 2,
-        droppedRest: true,
-        listedAll: true,
-        start: '{"ok":true,"data":"done","diagnostics":[{"code":"D","severit',
-        end: "}]}\n",
-      });
-    }
-  }, 150_000);
+      return JSON.parse(child.stdout) as unknown;
+    };
+    const diagnostics = {
+      writes: 1,
+      exitCode: 2,
+      droppedRest: true,
+      listedAll: true,
+      start: '{"ok":true,"data":"done","diagnostics":[{"code":"D","severit',
+      end: "}]}\n",
+    };
+    const flag = ["--max-old-space-size=32"];
+    // The flag on the command line, quoted in NODE_OPTIONS, and hidden from a worker of a flagged process.
+    expect(runWith(onMainThread, "diagnostics", flag)).toEqual(diagnostics);
+    expect(runWith(onMainThread, "diagnostics", [], '"--max-old-space-size=32"')).toEqual(diagnostics);
+    expect(runWith(inWorker, "diagnostics", flag)).toEqual(diagnostics);
+    // That worker prints data that fits, and the fixed failure for data that does not, without running out of memory.
+    expect(runWith(inWorker, "data-fits", flag)).toEqual({
+      writes: 1,
+      exitCode: 0,
+      droppedRest: false,
+      listedAll: true,
+      start: '{"ok":true,"data":{"rows":["row-0","row-1","row-2","row-3","',
+      end: ']}}\n',
+    });
+    expect(runWith(inWorker, "data-too-long", flag)).toEqual({
+      writes: 1,
+      exitCode: 1,
+      droppedRest: false,
+      listedAll: true,
+      start: '{"ok":false,"error":{"code":"CLIFN_RUNNER_FAILED","message":',
+      end: '"}}\n',
+    });
+  }, 300_000);
 });
 
 describe("document coercion of lengths and boxed primitives", () => {
