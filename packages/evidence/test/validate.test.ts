@@ -141,23 +141,43 @@ describe("options", () => {
     }
   });
 
-  it("compares a fraction of about 100000 digits exactly and in linear time", () => {
-    // A trailing-zero trim that backtracks would take minutes on these.
-    const tiny = `${"0".repeat(99_999)}1`;
+  it("compares fractions of about 400000 digits exactly, in linear time, on the policy path too", () => {
+    // A trailing-zero trim that backtracks, or policy arithmetic that scales the
+    // whole fraction into a bigint, would take seconds or more on these.
+    const zeros = "0".repeat(399_999);
+    const tiny = `${zeros}1`;
     const record = structuredClone(records.minimal) as object;
     setAt(record, "/timing/completedAt", `2026-11-01T10:00:00.${tiny}Z`);
     setAt(record, "/expiresAt", `2026-11-02T10:00:00.${tiny}Z`);
-    const started = performance.now();
-    expect(validateEvidenceRecord(record, { ...options, now: `2026-11-01T10:00:00.${tiny}Z` })).toEqual({ ok: true, failures: [] });
-    expect(summary(validateEvidenceRecord(record, { ...options, now: `2026-11-01T10:00:00.${tiny}1Z` }))).toEqual([]);
-    expect(summary(validateEvidenceRecord(record, { ...options, now: `2026-11-01T10:00:00.${"0".repeat(99_999)}0Z` }))).toEqual([
-      { code: "EVIDENCE_COMPLETED_IN_FUTURE", path: "/timing/completedAt" },
-    ]);
-    setAt(record, "/expiresAt", `2026-11-02T10:00:00.${"0".repeat(99_999)}2Z`);
-    expect(summary(validateEvidenceRecord(record, { ...options, now: `2026-11-01T10:00:00.${tiny}Z` }))).toEqual([
-      { code: "EVIDENCE_EXPIRY_EXCEEDS_POLICY", path: "/expiresAt" },
-    ]);
-    expect(performance.now() - started).toBeLessThan(500);
+    const atLimit = structuredClone(record);
+    const overLimit = structuredClone(record);
+    setAt(overLimit, "/expiresAt", `2026-11-02T10:00:00.${zeros}2Z`);
+    const withoutPolicy = { ...options, now: `2026-11-01T10:00:00.${tiny}Z`, expiryPolicy: { other: 24 } };
+    const timed = (run: () => void): number => {
+      const started = performance.now();
+      run();
+      return performance.now() - started;
+    };
+
+    const policyMs = timed(() => {
+      expect(validateEvidenceRecord(atLimit, { ...options, now: `2026-11-01T10:00:00.${tiny}Z` })).toEqual({ ok: true, failures: [] });
+      expect(summary(validateEvidenceRecord(atLimit, { ...options, now: `2026-11-01T10:00:00.${tiny}1Z` }))).toEqual([]);
+      expect(summary(validateEvidenceRecord(atLimit, { ...options, now: `2026-11-01T10:00:00.${zeros}0Z` }))).toEqual([
+        { code: "EVIDENCE_COMPLETED_IN_FUTURE", path: "/timing/completedAt" },
+      ]);
+      const over = validateEvidenceRecord(overLimit, { ...options, now: `2026-11-01T10:00:00.${tiny}Z` });
+      expect(summary(over)).toEqual([{ code: "EVIDENCE_EXPIRY_EXCEEDS_POLICY", path: "/expiresAt" }]);
+      expect(over.failures[0]?.detail).toEqual({ maximumExpiresAt: `2026-11-02T10:00:00.${tiny}Z`, policyHours: 24 });
+    });
+    const noPolicyMs = timed(() => {
+      for (const entry of [atLimit, atLimit, atLimit, overLimit]) {
+        expect(summary(validateEvidenceRecord(entry, withoutPolicy))).toEqual([{ code: "EVIDENCE_CLASS_NOT_IN_POLICY", path: "/evidenceClass" }]);
+      }
+    });
+    expect(policyMs).toBeLessThan(1000);
+    // The policy path does the same linear work as the rest of validation, so
+    // it stays within a small factor of the path that skips it.
+    expect(policyMs).toBeLessThan(noPolicyMs * 4 + 40);
   });
 
   it("accepts a leap second as now", () => {

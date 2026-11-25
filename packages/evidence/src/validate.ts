@@ -1,4 +1,4 @@
-import { addHours, compareInstants, exceedsHours, formatInstant, fromEpochMilliseconds, parseRfc3339 } from "./datetime.js";
+import { addHours, compareInstants, formatInstant, fromEpochMilliseconds, parseRfc3339 } from "./datetime.js";
 import type { Instant } from "./datetime.js";
 import type {
   EvidenceFailure,
@@ -327,8 +327,9 @@ export function validateEvidenceRecord(record: unknown, options: ValidateEvidenc
   if (facts.expiresAt !== undefined && compareInstants(facts.expiresAt, now) <= 0) {
     failures.add("EVIDENCE_EXPIRED", "/expiresAt", nowDetail(now));
   }
-  if (facts.expiresAt !== undefined && facts.completedAt !== undefined && policyHours !== undefined && exceedsHours(facts.completedAt, facts.expiresAt, policyHours)) {
-    const maximumExpiresAt = formatInstant(addHours(facts.completedAt, policyHours));
+  const maximum = facts.completedAt !== undefined && policyHours !== undefined ? addHours(facts.completedAt, policyHours) : undefined;
+  if (facts.expiresAt !== undefined && maximum !== undefined && compareInstants(facts.expiresAt, maximum) > 0) {
+    const maximumExpiresAt = formatInstant(maximum);
     failures.add("EVIDENCE_EXPIRY_EXCEEDS_POLICY", "/expiresAt", maximumExpiresAt === undefined ? { policyHours } : { maximumExpiresAt, policyHours });
   }
   if (facts.completedAt !== undefined && compareInstants(facts.completedAt, now) > 0) {

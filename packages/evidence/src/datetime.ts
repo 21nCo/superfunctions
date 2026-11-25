@@ -99,12 +99,6 @@ function isLeapSecondMinute(minutes: number): boolean {
   return next % 1440 === 0 && civilFromDays(next / 1440)[2] === 1;
 }
 
-/** Seconds since the epoch on the POSIX scale, times 10^scale (scale must cover the fraction). */
-function scaledSeconds(instant: Instant, scale: number): bigint {
-  const whole = (instant.minute * 60n + BigInt(instant.second)) * pow10(scale);
-  return whole + BigInt(instant.fraction.padEnd(scale, "0") || "0");
-}
-
 function fromScaledSeconds(total: bigint, scale: number): Instant {
   const unit = pow10(scale);
   const minute = floorDiv(total, 60n * unit);
@@ -145,18 +139,24 @@ export function compareInstants(a: Instant, b: Instant): number {
   return left === right ? 0 : left < right ? -1 : 1;
 }
 
-/** The instant a number of hours after another, exactly for the decimal JavaScript prints for the hours. */
+/**
+ * The instant a number of hours after another on the POSIX scale (second 60
+ * counts as the next minute's second 0), exactly for the decimal JavaScript
+ * prints for the hours. The hours only reach the first duration-scale fraction
+ * digits, so the digits past them are carried over unchanged and the cost is
+ * linear in the length of the fraction.
+ */
 export function addHours(instant: Instant, hours: number): Instant {
   const duration = decimalOf(hours);
-  const scale = Math.max(instant.fraction.length, duration.scale);
-  return fromScaledSeconds(scaledSeconds(instant, scale) + duration.value * 3600n * pow10(scale - duration.scale), scale);
-}
-
-/** True when b is later than a plus a number of hours, both on the POSIX scale. */
-export function exceedsHours(a: Instant, b: Instant, hours: number): boolean {
-  const duration = decimalOf(hours);
-  const scale = Math.max(a.fraction.length, b.fraction.length, duration.scale);
-  return scaledSeconds(b, scale) - scaledSeconds(a, scale) > duration.value * 3600n * pow10(scale - duration.scale);
+  const scale = duration.scale;
+  const head = instant.fraction.slice(0, scale).padEnd(scale, "0");
+  const tail = instant.fraction.slice(scale);
+  const total = (instant.minute * 60n + BigInt(instant.second)) * pow10(scale) + BigInt(head || "0") + duration.value * 3600n;
+  const unit = pow10(scale);
+  const minute = floorDiv(total, 60n * unit);
+  const rest = total - minute * 60n * unit;
+  const digits = scale === 0 ? "" : (rest % unit).toString().padStart(scale, "0");
+  return { minute, second: Number(rest / unit), fraction: trimFraction(digits + tail) };
 }
 
 function pad(value: number, length: number): string {

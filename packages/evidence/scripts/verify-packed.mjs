@@ -62,8 +62,9 @@ globalThis.__evidence = { schemaId: evidenceRecordSchemaV1.$id, result: validate
 `;
 
 // Created just before the try, so the finally always removes it.
-const workdir = realpathSync(mkdtempSync(path.join(tmpdir(), "evidence-packed-")));
+const tempdir = mkdtempSync(path.join(tmpdir(), "evidence-packed-"));
 try {
+  const workdir = realpathSync(tempdir);
   run("npm", ["run", "build"], packageDir);
   const packed = JSON.parse(run("npm", ["pack", "--json", "--pack-destination", workdir], packageDir));
   const tarball = path.join(workdir, packed[0].filename);
@@ -139,5 +140,5 @@ try {
   console.log(`browser bundle: ${bundle.length} bytes from ${inputs.join(", ")}; ran in a bare context`);
   console.log(`PACKED_CONSUMER_OK ${packed[0].filename} in ${consumer}`);
 } finally {
-  if (!keep) rmSync(workdir, { recursive: true, force: true });
+  if (!keep) rmSync(tempdir, { recursive: true, force: true });
 }
