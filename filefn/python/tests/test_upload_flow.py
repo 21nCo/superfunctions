@@ -543,6 +543,31 @@ async def test_proxy_part_recording_idempotency_conflict_and_complete_idempotenc
 
 
 @pytest.mark.asyncio
+async def test_proxy_part_retry_checks_stored_bytes_for_legacy_etags() -> None:
+    db = FakeDB()
+    service = _make_service(db=db)
+    session = await service.create_session(
+        CreateSessionInput(policy="user-avatar", fileName="proxy.png", size=3, mimeType="image/png"),
+        _ctx(),
+    )
+    session_id = session["uploadSessionId"]
+    await service.record_proxy_part(session_id, 1, b"abc", _ctx())
+    legacy_etag = "01234567" * 4
+    await db.update(
+        model="uploadParts",
+        where=[{"field": "uploadSessionId", "operator": "eq", "value": session_id}],
+        data={"etag": legacy_etag},
+        namespace="filefn",
+    )
+
+    retry = await service.record_proxy_part(session_id, 1, b"abc", _ctx())
+    assert retry == {"etag": legacy_etag, "size": 3, "recorded": True}
+    with pytest.raises(Exception) as conflict:
+        await service.record_proxy_part(session_id, 1, b"xyz", _ctx())
+    assert getattr(conflict.value, "code", "") == "FILEFN_PART_CONFLICT"
+
+
+@pytest.mark.asyncio
 async def test_complete_session_validates_uploaded_size_matches_declared_size() -> None:
     service = _make_service()
     session = await service.create_session(

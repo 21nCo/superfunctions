@@ -804,7 +804,6 @@ class UploadSessionService:
         if session.uploadMode != "proxy":
             raise errors.no_supported_upload_mode()
 
-        etag = hashlib.md5(data).hexdigest()
         if session.status in ("aborted", "refused"):
             raise errors.upload_aborted()
         if session.status == "completed":
@@ -817,6 +816,7 @@ class UploadSessionService:
         if len(data) > part_limit:
             raise errors.part_too_large(part_number, part_limit)
 
+        etag = f"proxy-sha256-{hashlib.sha256(data).hexdigest()}"
         existing = await self.db.find_one(
             model="uploadParts",
             where=[
@@ -826,8 +826,15 @@ class UploadSessionService:
             namespace=self.namespace,
         )
         if existing:
-            if existing.get("etag") == etag and existing.get("size") == len(data):
-                return {"etag": etag, "size": len(data), "recorded": True}
+            stored_etag = existing.get("etag")
+            if existing.get("size") == len(data):
+                if stored_etag == etag:
+                    return {"etag": etag, "size": len(data), "recorded": True}
+                if isinstance(stored_etag, str) and re.fullmatch(r"[a-f0-9]{32}", stored_etag):
+                    # Older proxy parts used MD5. Compare bytes to preserve exact
+                    # retries without treating a weak digest as proof of equality.
+                    if await self._proxy_part_matches(session, part_number, data):
+                        return {"etag": stored_etag, "size": len(data), "recorded": True}
             raise errors.part_conflict(upload_session_id, part_number)
 
         part_key = self._proxy_part_key(session, part_number)
@@ -842,6 +849,20 @@ class UploadSessionService:
         await self.complete_part(upload_session_id, part_number, etag, len(data), ctx)
 
         return {"etag": etag, "size": len(data), "recorded": True}
+
+    async def _proxy_part_matches(self, session: UploadSessionRecord, part_number: int, data: bytes) -> bool:
+        policy = self.policies.get(session.policy)
+        stream = await self.storage.open_download_stream(
+            key=self._proxy_part_key(session, part_number), target=resolve_storage_target(policy)
+        )
+        incoming = memoryview(data)
+        offset = 0
+        matches = True
+        async for chunk in stream:
+            end = offset + len(chunk)
+            matches = matches and incoming[offset:end] == chunk
+            offset = end
+        return matches and offset == len(incoming)
 
     async def _finalize_proxy_upload(self, session: UploadSessionRecord, parts: List[Dict[str, Any]]) -> None:
         policy = self.policies.get(session.policy)

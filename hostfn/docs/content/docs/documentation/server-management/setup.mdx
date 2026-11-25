@@ -68,7 +68,7 @@ The setup process follows these steps:
 
 1. **Script generation** -- HostFn generates a Bash setup script tailored to your options (Node.js version, port, Redis, etc.)
 2. **Confirmation prompt** -- You are asked whether to execute the script on the server now
-3. **Upload and execute** -- The script is uploaded to `/tmp/hostfn-setup.sh` on the server and executed over SSH
+3. **Upload and execute** -- The script is uploaded to a private temporary directory on the server and executed over SSH
 4. **Streaming output** -- All output is streamed to your terminal in real time so you can follow progress
 
 If your `hostfn.config.json` file exists, the command reads the `runtime` field from it. Otherwise, it defaults to Node.js.
@@ -78,10 +78,10 @@ If your `hostfn.config.json` file exists, the command reads the `runtime` field 
 If you choose **not** to execute immediately, the script is saved to a local temporary file. HostFn shows you the commands to upload and run it manually:
 
 ```
-Setup script saved at: /tmp/hostfn-setup.sh
+Setup script saved at: /tmp/hostfn-setup-abc123/hostfn-setup.sh
 
 Run manually with:
-$ scp /tmp/hostfn-setup.sh ubuntu@my-server.com:~/hostfn-setup.sh
+$ scp /tmp/hostfn-setup-abc123/hostfn-setup.sh ubuntu@my-server.com:~/hostfn-setup.sh
 $ ssh ubuntu@my-server.com 'bash ~/hostfn-setup.sh'
 ```
 
@@ -184,18 +184,18 @@ The generated script performs work in numbered phases:
 
 8. **Firewall** -- If UFW is available, opens ports 22 (SSH), 80 (HTTP), and 443 (HTTPS), then enables the firewall.
 
-All output is logged to `/tmp/hostfn-setup.log` on the server. If setup fails, HostFn downloads the last 50 lines of this log and displays them in your terminal.
+HostFn logs all output in the private setup directory on the server. If setup fails, HostFn downloads the log and displays its last 50 lines in your terminal.
 
 ## Error Handling
 
 If the setup fails partway through:
 
 - The exit code and relevant log output are displayed in your terminal
-- The full log remains on the server at `/tmp/hostfn-setup.log`
-- You can inspect it manually:
+- The full log remains in that run's private directory on the server
+- HostFn prints a command to inspect the log with its actual path, for example:
 
 ```bash
-ssh ubuntu@my-server.com 'cat /tmp/hostfn-setup.log'
+ssh ubuntu@my-server.com 'cat /tmp/hostfn-setup.abc12345/hostfn-setup.log'
 ```
 
 If the SSH connection itself fails, the script is still saved locally so you can transfer and run it manually.

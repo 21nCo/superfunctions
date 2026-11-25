@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { createRouter, type Router } from '@superfunctions/http';
 import {
   AuthFnExampleError,
@@ -81,7 +82,7 @@ export class FakeOAuthProvider {
 
   issueAuthorizationCode(providerId: FakeOAuthProviderId, redirectUri: string): string {
     assertExampleLocalUrl(redirectUri);
-    const code = `fake_code_${Math.random().toString(36).slice(2, 10)}`;
+    const code = `fake_code_${randomUUID()}`;
     this.#authorizationCodes.set(code, {
       providerId,
       profile: this.getProfile(providerId),
@@ -112,7 +113,7 @@ export class FakeOAuthProvider {
 
     this.#authorizationCodes.delete(code);
 
-    const accessToken = `fake_token_${Math.random().toString(36).slice(2, 10)}`;
+    const accessToken = `fake_token_${randomUUID()}`;
     this.#accessTokens.set(accessToken, {
       providerId,
       profile: record.profile

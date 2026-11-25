@@ -9,6 +9,7 @@ import { toExpress } from '@superfunctions/http-express';
 import { apiRouter } from '../shared-router';
 
 const app = express();
+app.disable('x-powered-by');
 const PORT = 3001;
 
 // Body parsing middleware

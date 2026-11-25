@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync } from 'fs';
+import { mkdtempSync, readFileSync, rmdirSync, unlinkSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import ora from 'ora';
@@ -6,7 +6,7 @@ import inquirer from 'inquirer';
 import { Logger } from '../../utils/logger.js';
 import { ConfigLoader } from '../../config/loader.js';
 import { RuntimeRegistry } from '../../runtimes/registry.js';
-import { createSSHConnection } from '../../core/ssh.js';
+import { createSSHConnection, type SSHConnection } from '../../core/ssh.js';
 import { validateSSHConnection, validatePort, validateNodeVersion } from '../../utils/validation.js';
 
 interface SetupOptions {
@@ -68,8 +68,9 @@ export async function serverSetupCommand(
   });
 
   // Write script to temp file
-  const scriptPath = join(tmpdir(), 'hostfn-setup.sh');
-  writeFileSync(scriptPath, setupScript, { mode: 0o755 });
+  const localDirectory = mkdtempSync(join(tmpdir(), 'hostfn-setup-'));
+  const scriptPath = join(localDirectory, 'hostfn-setup.sh');
+  writeFileSync(scriptPath, setupScript, { mode: 0o700, flag: 'wx' });
   
   spinner.succeed('Setup script generated');
 
@@ -100,36 +101,52 @@ export async function serverSetupCommand(
   Logger.br();
 
   const connectSpinner = ora('Connecting to server...').start();
+  const setupExecOptions = { skipNvmSetup: true };
+  let ssh: SSHConnection | undefined;
+  let remoteDirectory: string | undefined;
+  let completed = false;
 
   try {
     // Connect to server
-    const ssh = await createSSHConnection(host, {
+    ssh = await createSSHConnection(host, {
       password: options.password,
     });
 
     connectSpinner.succeed('Connected to server');
 
+    const temp = await ssh.exec('mktemp -d /tmp/hostfn-setup.XXXXXXXX', setupExecOptions);
+    const directory = temp.stdout.trim();
+    if (temp.exitCode !== 0 || !/^\/tmp\/hostfn-setup\.[A-Za-z0-9]{8}$/.test(directory)) {
+      throw new Error('Could not create a private setup directory on the server');
+    }
+    remoteDirectory = directory;
+    const remoteScriptPath = `${remoteDirectory}/hostfn-setup.sh`;
+    const remoteLogPath = `${remoteDirectory}/hostfn-setup.log`;
+
     // Upload setup script
     const uploadSpinner = ora('Uploading setup script...').start();
-    await ssh.uploadFile(scriptPath, '/tmp/hostfn-setup.sh');
+    try {
+      await ssh.uploadFile(scriptPath, remoteScriptPath);
+    } catch (error) {
+      uploadSpinner.fail('Setup script upload failed');
+      throw error;
+    }
     uploadSpinner.succeed('Setup script uploaded');
-
-    // Make script executable
-    await ssh.exec('chmod +x /tmp/hostfn-setup.sh');
 
     // Execute setup script with streaming output
     Logger.br();
     Logger.info('Executing setup (this may take several minutes)...');
     Logger.br();
 
-    const result = await ssh.exec('bash /tmp/hostfn-setup.sh', {
+    const result = await ssh.exec(`HOSTFN_SETUP_LOG=${remoteLogPath} bash ${remoteScriptPath}`, {
       streaming: true,
-      skipNvmSetup: true, // Setup script installs nvm, so skip the nvm check
+      ...setupExecOptions,
     });
 
     Logger.br();
 
     if (result.exitCode === 0) {
+      completed = true;
       Logger.success('Server setup completed successfully!');
       Logger.br();
       Logger.info('Your server is ready for deployments.');
@@ -149,8 +166,8 @@ export async function serverSetupCommand(
       
       // Try to download the log file from the server
       try {
-        const localLogPath = join(tmpdir(), `hostfn-setup-error-${Date.now()}.log`);
-        await ssh.downloadFile('/tmp/hostfn-setup.log', localLogPath);
+        const localLogPath = join(localDirectory, 'hostfn-setup-error.log');
+        await ssh.downloadFile(remoteLogPath, localLogPath);
         Logger.info('Setup log downloaded to: ' + localLogPath);
         Logger.br();
         
@@ -178,15 +195,10 @@ export async function serverSetupCommand(
       
       Logger.br();
       Logger.info('To inspect the full log on the server, run:');
-      Logger.command(`ssh ${host} 'cat /tmp/hostfn-setup.log'`);
+      Logger.command(`ssh ${host} 'cat ${remoteLogPath}'`);
       
-      process.exit(1);
+      process.exitCode = 1;
     }
-
-    // Cleanup
-    await ssh.exec('rm /tmp/hostfn-setup.sh').catch(() => {});
-    ssh.disconnect();
-
   } catch (error) {
     connectSpinner.fail('Setup failed');
     Logger.error(error instanceof Error ? error.message : String(error));
@@ -195,6 +207,22 @@ export async function serverSetupCommand(
     Logger.info('You can try running it manually:');
     Logger.command(`scp ${scriptPath} ${host}:~/hostfn-setup.sh`);
     Logger.command(`ssh ${host} 'bash ~/hostfn-setup.sh'`);
-    process.exit(1);
+    process.exitCode = 1;
+  } finally {
+    if (ssh && remoteDirectory) {
+      const cleanup = completed
+        ? `rm -f ${remoteDirectory}/hostfn-setup.sh ${remoteDirectory}/hostfn-setup.log && rmdir ${remoteDirectory}`
+        : `rm -f ${remoteDirectory}/hostfn-setup.sh`;
+      await ssh.exec(cleanup, setupExecOptions).catch(() => {});
+    }
+    ssh?.disconnect();
+    if (completed) {
+      try {
+        unlinkSync(scriptPath);
+        rmdirSync(localDirectory);
+      } catch (error) {
+        Logger.warn(`Could not remove local setup files: ${String(error)}`);
+      }
+    }
   }
 }
