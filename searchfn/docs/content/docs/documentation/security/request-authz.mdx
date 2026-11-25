@@ -5,7 +5,11 @@ description: The authorize callback — how to write one, how to test it.
 
 `createSearchFnServer` requires an `authorize` callback or an explicit `allowUnauthenticated: true` opt-in. Reserve the opt-in for local demos or deployments where an upstream service authorizes every operation. The callback receives the context, action, parsed payload, original request, and validated resource names.
 
+Define `authorizeSearchRequest` in your application using one of the policies below.
+
 ```typescript
+import { authorizeSearchRequest } from "./search-authorization.js";
+
 const sf = await createSearchFnServer({
   adapter,
   authorize: authorizeSearchRequest,

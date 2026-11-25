@@ -1292,7 +1292,11 @@ class DualAdapter implements SearchAdapter {
 
 Wire it in:
 
+Define `authorizeSearchRequest` in your application using the [authorization guide](/docs/documentation/security/request-authz).
+
 ```typescript
+import { authorizeSearchRequest } from "./search-authorization.js";
+
 const adapter = new DualAdapter(oldAdapter, newAdapter);
 const sf = await createSearchFnServer({
   authorize: authorizeSearchRequest,
@@ -2486,7 +2490,10 @@ The package ships with prebuilt WASM artifacts in `dist/`. You don't need Rust i
 
 ## Use as an adapter
 
+Define `authorizeSearchRequest` in your application using the [authorization guide](/docs/documentation/security/request-authz).
+
 ```typescript
+import { authorizeSearchRequest } from "./search-authorization.js";
 import { createSearchFnServer } from "@searchfn/server";
 import { WasmCoreAdapter } from "@searchfn/core-wasm";
 
@@ -5195,7 +5202,11 @@ Without limits, a single malicious or buggy client can exhaust server memory by 
 
 ## Configuring
 
+Define `authorizeSearchRequest` in your application using the [authorization guide](/docs/documentation/security/request-authz).
+
 ```typescript
+import { authorizeSearchRequest } from "./search-authorization.js";
+
 const sf = await createSearchFnServer({
   authorize: authorizeSearchRequest,
   adapter,
@@ -5403,7 +5414,11 @@ Description: The authorize callback — how to write one, how to test it.
 
 `createSearchFnServer` requires an `authorize` callback or an explicit `allowUnauthenticated: true` opt-in. Reserve the opt-in for local demos or deployments where an upstream service authorizes every operation. The callback receives the context, action, parsed payload, original request, and validated resource names.
 
+Define `authorizeSearchRequest` in your application using one of the policies below.
+
 ```typescript
+import { authorizeSearchRequest } from "./search-authorization.js";
+
 const sf = await createSearchFnServer({
   adapter,
   authorize: authorizeSearchRequest,
@@ -5594,7 +5609,10 @@ logger.info("request.start", {
 
 For these you have to extend the redactor:
 
+Define `authorizeSearchRequest` in your application using the [authorization guide](/docs/documentation/security/request-authz).
+
 ```typescript
+import { authorizeSearchRequest } from "./search-authorization.js";
 import { createRedactor } from "@searchfn/server";
 
 const customRedactor = createRedactor({
@@ -6082,7 +6100,11 @@ Description: Structured logging, health checks, and failure classification for S
 
 Pass `observability.logger` to `createSearchFnServer` to receive structured log events for every operation:
 
+Define `authorizeSearchRequest` in your application using the [authorization guide](/docs/documentation/security/request-authz).
+
 ```typescript
+import { authorizeSearchRequest } from "./search-authorization.js";
+
 const server = await createSearchFnServer({
   authorize: authorizeSearchRequest,
   adapter,
@@ -6244,7 +6266,10 @@ Description: Deploy SearchFn in production with proper configuration, limits, an
 4. **Create the server** — use `createSearchFnServer()` to expose search over HTTP.
 5. **Mount the router** — attach the server router to your HTTP framework using a `@superfunctions/http` adapter.
 
+Define `authorizeSearchRequest` in your application using the [authorization guide](/docs/documentation/security/request-authz).
+
 ```typescript
+import { authorizeSearchRequest } from "./search-authorization.js";
 import { createSearchFnServer } from "@searchfn/server";
 import { PostgresAdapter } from "@searchfn/adapter-postgres";
 
@@ -10544,7 +10569,11 @@ SearchFn emits structured events from two surfaces: the TypeScript server's `log
 
 Pass `observability.logger` to `createSearchFnServer`:
 
+Define `authorizeSearchRequest` in your application using the [authorization guide](/docs/documentation/security/request-authz).
+
 ```typescript
+import { authorizeSearchRequest } from "./search-authorization.js";
+
 const sf = await createSearchFnServer({
   authorize: authorizeSearchRequest,
   adapter,
@@ -10695,7 +10724,10 @@ Description: Expose SearchFn as an HTTP API with authorization, logging, and sec
 
 Use `createSearchFnServer()` to wrap any adapter behind HTTP endpoints.
 
+Define `authorizeSearchRequest` in your application using the [authorization guide](/docs/documentation/security/request-authz).
+
 ```typescript
+import { authorizeSearchRequest } from "./search-authorization.js";
 import { createSearchFnServer } from "@searchfn/server";
 import { PostgresAdapter } from "@searchfn/adapter-postgres";
 

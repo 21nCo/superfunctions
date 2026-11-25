@@ -18,7 +18,11 @@ Without limits, a single malicious or buggy client can exhaust server memory by 
 
 ## Configuring
 
+Define `authorizeSearchRequest` in your application using the [authorization guide](/docs/documentation/security/request-authz).
+
 ```typescript
+import { authorizeSearchRequest } from "./search-authorization.js";
+
 const sf = await createSearchFnServer({
   authorize: authorizeSearchRequest,
   adapter,

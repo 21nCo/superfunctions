@@ -7,7 +7,10 @@ description: Expose SearchFn as an HTTP API with authorization, logging, and sec
 
 Use `createSearchFnServer()` to wrap any adapter behind HTTP endpoints.
 
+Define `authorizeSearchRequest` in your application using the [authorization guide](/docs/documentation/security/request-authz).
+
 ```typescript
+import { authorizeSearchRequest } from "./search-authorization.js";
 import { createSearchFnServer } from "@searchfn/server";
 import { PostgresAdapter } from "@searchfn/adapter-postgres";
 

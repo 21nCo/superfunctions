@@ -93,6 +93,23 @@ function toErrorLogContext(error: unknown): Record<string, unknown> {
   };
 }
 
+/** Copy a parsed JSON object without recursing through caller-controlled nesting. */
+function snapshotPayload(body: Record<string, unknown>): Record<string, unknown> {
+  const snapshot = { ...body };
+  const pending: object[] = [snapshot];
+  let container: object | undefined;
+  while ((container = pending.pop()) !== undefined) {
+    for (const [key, value] of Object.entries(container)) {
+      if (value !== null && typeof value === "object") {
+        const child = Array.isArray(value) ? [...value] : { ...value };
+        Reflect.set(container, key, child);
+        pending.push(child);
+      }
+    }
+  }
+  return snapshot;
+}
+
 export async function createSearchFnServer<TContext extends ServerContext = ServerContext>(
   config: SearchFnServerConfig<TContext>,
 ): Promise<SearchFnServer<TContext>> {
@@ -186,7 +203,7 @@ export async function createSearchFnServer<TContext extends ServerContext = Serv
         try {
           const policyContext = context ? await context(req) : ctx;
           // Give the policy its own snapshot so it cannot change what the adapter executes.
-          const payload = action === "status" ? null : structuredClone(body);
+          const payload = action === "status" ? null : snapshotPayload(body);
           const allowed = await authorize(policyContext, action, payload, req, [...resources]);
           if (allowed !== true) {
             logger?.warn("authorization.denied", redactContext(logCtx));

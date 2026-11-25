@@ -169,6 +169,22 @@ describe("SearchFn authorization", () => {
     expect(response.status).toBe(200);
   });
 
+  it("passes deeply nested JSON fields to the policy within the payload limit", async () => {
+    const adapter = testAdapter();
+    const authorize = vi.fn(() => true);
+    const server = await createSearchFnServer({ adapter, authorize });
+    const depth = 12_000;
+    const request = new Request("https://test.example/searchfn/clear", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: `{"resource":"docs","details":${"[".repeat(depth)}null${"]".repeat(depth)}}`,
+    });
+
+    expect((await server.router.handle(request)).status).toBe(200);
+    expect(authorize).toHaveBeenCalledOnce();
+    expect(adapter.clear).toHaveBeenCalledOnce();
+  });
+
   it("keeps the validated adapter input independent of policy edits", async () => {
     const adapter = testAdapter();
     const server = await createSearchFnServer({

@@ -9,7 +9,11 @@ SearchFn emits structured events from two surfaces: the TypeScript server's `log
 
 Pass `observability.logger` to `createSearchFnServer`:
 
+Define `authorizeSearchRequest` in your application using the [authorization guide](/docs/documentation/security/request-authz).
+
 ```typescript
+import { authorizeSearchRequest } from "./search-authorization.js";
+
 const sf = await createSearchFnServer({
   authorize: authorizeSearchRequest,
   adapter,

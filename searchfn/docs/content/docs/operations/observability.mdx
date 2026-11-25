@@ -7,7 +7,11 @@ description: Structured logging, health checks, and failure classification for S
 
 Pass `observability.logger` to `createSearchFnServer` to receive structured log events for every operation:
 
+Define `authorizeSearchRequest` in your application using the [authorization guide](/docs/documentation/security/request-authz).
+
 ```typescript
+import { authorizeSearchRequest } from "./search-authorization.js";
+
 const server = await createSearchFnServer({
   authorize: authorizeSearchRequest,
   adapter,

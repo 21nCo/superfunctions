@@ -13,7 +13,10 @@ The package ships with prebuilt WASM artifacts in `dist/`. You don't need Rust i
 
 ## Use as an adapter
 
+Define `authorizeSearchRequest` in your application using the [authorization guide](/docs/documentation/security/request-authz).
+
 ```typescript
+import { authorizeSearchRequest } from "./search-authorization.js";
 import { createSearchFnServer } from "@searchfn/server";
 import { WasmCoreAdapter } from "@searchfn/core-wasm";
 
