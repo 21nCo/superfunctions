@@ -7,8 +7,8 @@
 // run summary, the cache directory's files and a drift snapshot (changed tracked and untracked unignored files, each
 // with a content hash); `--baseline` records the same before any task runs. Before saving, the merge deletes every
 // entry that first appeared during a step whose snapshot changed outside the declared outputs of the tasks that step
-// ran (cache MISS in its own summary; a replayed task restores only its archived outputs), every entry of a step
-// without a readable summary, listing or snapshot, and every entry no step recorded.
+// ran (cache MISS in its own summary) and outside the archived outputs of the tasks it replayed (HIT, compared by
+// content), every entry of a step without a readable summary, listing or snapshot, and every entry no step recorded.
 // Drift only warns: the cache never changes a job's result.
 //
 // Merge. Runs that must verify every task (pushes, the nightly run, manual runs) replay nothing, yet the entry they
@@ -29,6 +29,7 @@ import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import * as zlib from "node:zlib";
 
 // The task hash an entry file is named after, or null for any other file. Turbo's task hashes are 16 hex digits.
 const ENTRY_FILE = /^([0-9a-f]{16})(?:\.tar\.zst|-meta\.json)$/;
@@ -179,7 +180,65 @@ function contentHash(full) {
   let content = "directory";
   if (stat.isSymbolicLink()) content = `link:${fs.readlinkSync(full)}`;
   else if (stat.isFile()) content = fs.readFileSync(full);
+  return sha256(content);
+}
+
+function sha256(content) {
   return createHash("sha256").update(content).digest("hex");
+}
+
+// One tar header's fields: its entry type, size, name and link target ("ustar" headers may split the name).
+function tarHeader(header) {
+  const field = (start, end) => header.toString("utf8", start, end).replace(/\0[\s\S]*$/, "");
+  const prefix = field(257, 263) === "ustar" ? field(345, 500) : "";
+  const name = field(0, 100);
+  return {
+    type: field(156, 157) || "0",
+    size: Number.parseInt(field(124, 136).trim() || "0", 8),
+    name: prefix ? `${prefix}/${name}` : name,
+    link: field(157, 257),
+  };
+}
+
+// The files of an uncompressed Turbo cache archive (a GNU or ustar tar with repository-relative paths), each mapped to
+// the hash driftSnapshot gives the same content. Directories are skipped; another entry type is an error.
+export function archivedContents(tar) {
+  const contents = new Map();
+  const long = {}; // GNU long name (L) and long link target (K) entries apply to the next entry
+  for (let offset = 0; offset + 512 <= tar.length && tar[offset] !== 0; ) {
+    const header = tarHeader(tar.subarray(offset, offset + 512));
+    const data = tar.subarray(offset + 512, offset + 512 + header.size);
+    offset += 512 + Math.ceil(header.size / 512) * 512;
+    if (header.type === "L" || header.type === "K") {
+      long[header.type] = data.toString("utf8").replace(/\0[\s\S]*$/, "");
+      continue;
+    }
+    const name = long.L ?? header.name;
+    if (header.type === "0") contents.set(name, sha256(data));
+    else if (header.type === "2") contents.set(name, sha256(`link:${long.K ?? header.link}`));
+    else if (header.type !== "5") throw new Error(`unsupported tar entry ${JSON.stringify(header.type)} for ${name}`);
+    delete long.L;
+    delete long.K;
+  }
+  return contents;
+}
+
+// A function giving the content hash of `file` in the cache archive of task `hash` in cacheDir, or undefined when the
+// archive does not hold it or cannot be read. Each archive is read once.
+export function archiveReader(cacheDir) {
+  const archives = new Map();
+  return (hash, file) => {
+    if (!archives.has(hash)) {
+      let contents = new Map();
+      try {
+        contents = archivedContents(zlib.zstdDecompressSync(fs.readFileSync(path.join(cacheDir, `${hash}.tar.zst`))));
+      } catch {
+        // Not readable (or no zstd in this Node): the archive restores nothing this check can rely on.
+      }
+      archives.set(hash, contents);
+    }
+    return archives.get(hash).get(file);
+  };
 }
 
 // The files of the Git checkout at `cwd` that differ from HEAD (changed, deleted or staged) and the untracked files
@@ -231,27 +290,33 @@ export function readRecords(stepsDir) {
 }
 
 // Why a step's new entries cannot be saved ({ reason, drift }), or null: its record has no readable summary or no
-// snapshot to compare with `previous`, or a file changed during the step that no task the step ran (cache MISS in its
-// own summary) declares as an output. A replayed task (HIT), whether in this step or an earlier one, restores its
-// archived outputs, not what another task of the step wrote over them, so its declarations excuse nothing.
-function stepTaint(step, previous) {
+// snapshot to compare with `previous`, or a file changed during the step that replaying the step would not restore.
+// A file a task the step ran (cache MISS in its own summary) declares as an output is restored. A task the step
+// replayed (HIT) restores only its archived outputs, so a file it declares counts only when the content now equals the
+// archived one (`archived(hash, file)`): its own restore, not another task writing over it.
+function stepTaint(step, previous, archived) {
   if (!Array.isArray(step.tasks)) return { reason: "no readable Turbo run summary", drift: [] };
   if (!step.snapshot || !previous) return { reason: "no drift snapshot", drift: [] };
-  let isOutput;
+  let ran;
+  let replayed;
   try {
-    isOutput = declaredOutputMatcher(step.tasks.filter((task) => task.cacheStatus === "MISS"));
+    ran = declaredOutputMatcher(step.tasks.filter((task) => task.cacheStatus === "MISS"));
+    replayed = step.tasks.filter((task) => task.cacheStatus === "HIT");
+    replayed = replayed.map((task) => ({ hash: task.hash, declares: declaredOutputMatcher([task]) }));
   } catch (error) {
     return { reason: error.message, drift: [] };
   }
+  const restored = (file) =>
+    ran(file) || replayed.some(({ hash, declares }) => declares(file) && archived(hash, file) === step.snapshot[file]);
   const files = new Set([...Object.keys(previous), ...Object.keys(step.snapshot)]);
-  const drift = [...files].filter((file) => previous[file] !== step.snapshot[file] && !isOutput(file));
+  const drift = [...files].filter((file) => previous[file] !== step.snapshot[file] && !restored(file));
   if (drift.length === 0) return null;
   return { reason: "files changed outside the declared outputs", drift: drift.sort(byCodeUnit) };
 }
 
 // The hashes of the entries to delete, from the step records in order (baseline first) and the cache directory's files
-// now, plus a report of each tainted step.
-export function taintedEntries(records, finalListing) {
+// now, plus a report of each tainted step. `archived` reads the cache archives (see archiveReader).
+export function taintedEntries(records, finalListing, archived = () => undefined) {
   const [baseline, ...steps] = records;
   if (!baseline?.baseline || !Array.isArray(baseline.listing) || !baseline.snapshot) {
     throw new Error("the first step record is not a complete baseline");
@@ -272,7 +337,7 @@ export function taintedEntries(records, finalListing) {
       snapshot = null;
       continue;
     }
-    const found = carried ? { reason: carried, drift: [] } : stepTaint(step, snapshot);
+    const found = carried ? { reason: carried, drift: [] } : stepTaint(step, snapshot, archived);
     if (found) taint(step.listing.filter((file) => !listing.has(file)), { step: step.name, ...found });
     listing = new Set(step.listing);
     snapshot = step.snapshot ?? null;
@@ -387,7 +452,7 @@ function main() {
   const records = readRecords(stepsDir);
   const currentHashes = new Set(readSummaryTasks(fs.readFileSync(dryRun, "utf8"), "dry run").map((task) => task.hash));
   for (const record of records) for (const task of record.tasks ?? []) currentHashes.add(task.hash);
-  const { tainted, reports } = taintedEntries(records, filesIn(cacheDir));
+  const { tainted, reports } = taintedEntries(records, filesIn(cacheDir), archiveReader(cacheDir));
   for (const { step, reason, drift, entries } of reports) {
     console.log(`::warning title=Turbo cache not saved for ${step}::${reason}; dropping ${entries} new entries`);
     for (const file of drift) {

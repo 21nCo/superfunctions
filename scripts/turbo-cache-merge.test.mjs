@@ -1,12 +1,24 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { zstdCompressSync } from "node:zlib";
 
 import {
+  archivedContents,
+  archiveReader,
   byCodeUnit,
   declaredOutputMatcher,
   driftSnapshot,
@@ -289,6 +301,16 @@ test("only files a task the step ran declares as an output are not drift", () =>
     assert.deepEqual([...tainted], [TYPECHECK], JSON.stringify(tasks));
     assert.deepEqual(reports, [report]);
   }
+  // A build the step replayed restoring its own archived output over a stale committed copy is not drift, so the entry
+  // of a task the step ran is kept; a content other than the archived one, or no readable archive, is drift.
+  const restoredBuild = { ...buildTask, cacheStatus: "HIT" };
+  const fresh = { taskId: "app#build", hash: NEW, directory: "app", cacheStatus: "MISS" };
+  const restoring = [baseline(files(BUILD)), step("build", files(BUILD, NEW), snapshot, [restoredBuild, fresh])];
+  const archive = (contents) => (hash, file) => (hash === BUILD ? contents[file] : undefined);
+  assert.deepEqual([...taintedEntries(restoring, files(BUILD, NEW), archive(snapshot)).tainted], []);
+  for (const contents of [rewritten, {}]) {
+    assert.deepEqual([...taintedEntries(restoring, files(BUILD, NEW), archive(contents)).tainted], [NEW]);
+  }
   // A file the build declares, written while the build ran in this step, is not drift.
   const ranAgain = [baseline(), built, step("typecheck", files(BUILD, TYPECHECK), rewritten, [buildTask, typecheck])];
   assert.deepEqual([...taintedEntries(ranAgain, files(BUILD, TYPECHECK)).tainted], []);
@@ -349,6 +371,54 @@ function freshCheckout() {
   git(root, ...identity, "commit", "--quiet", "-m", "init");
   return root;
 }
+
+// One tar entry as Turbo's GNU tar archives write it (or a ustar one with a name prefix).
+function tarEntry(name, { type = "0", data = "", link = "", magic = "ustar  ", prefix = "" } = {}) {
+  const header = Buffer.alloc(512);
+  header.write(name, 0);
+  header.write(Buffer.byteLength(data).toString(8).padStart(11, "0"), 124);
+  header.write(type, 156);
+  header.write(link, 157);
+  header.write(magic, 257);
+  header.write(prefix, 345);
+  const body = Buffer.alloc(Math.ceil(Buffer.byteLength(data) / 512) * 512);
+  body.write(data);
+  return Buffer.concat([header, body]);
+}
+
+test("a cache archive's files hash as the drift snapshot hashes the same files, read once per archive", () => {
+  const root = freshCheckout();
+  const long = `pkg/${"x".repeat(120)}.ts`;
+  writeFileSync(path.join(root, "pkg", "generated.txt"), "generated from v2\n");
+  writeFileSync(path.join(root, long), "long");
+  symlinkSync("template.txt", path.join(root, "pkg", "link"));
+  writeFileSync(path.join(root, "pkg", "split.txt"), "split");
+  const tar = Buffer.concat([
+    tarEntry("pkg/dist/", { type: "5" }),
+    tarEntry("pkg/generated.txt", { data: "generated from v2\n" }),
+    tarEntry("././@LongLink", { type: "L", data: `${long}\0` }),
+    tarEntry(long.slice(0, 99), { data: "long" }),
+    tarEntry("pkg/link", { type: "2", link: "template.txt" }),
+    tarEntry("split.txt", { magic: "ustar\u000000", prefix: "pkg", data: "split" }),
+    Buffer.alloc(1024),
+  ]);
+  const snapshot = driftSnapshot(root);
+  const contents = archivedContents(tar);
+  assert.deepEqual([...contents.keys()].sort(byCodeUnit), Object.keys(snapshot).sort(byCodeUnit));
+  for (const [file, hash] of contents) assert.equal(hash, snapshot[file], file);
+  assert.throws(() => archivedContents(tarEntry("pkg/fifo", { type: "6" })), /unsupported tar entry "6"/);
+
+  const { cacheDir } = freshDirs();
+  mkdirSync(cacheDir);
+  writeFileSync(path.join(cacheDir, `${BUILD}.tar.zst`), zstdCompressSync(tar));
+  writeFileSync(path.join(cacheDir, `${NEW}.tar.zst`), "not zstd");
+  const archived = archiveReader(cacheDir);
+  assert.equal(archived(BUILD, "pkg/generated.txt"), snapshot["pkg/generated.txt"]);
+  rmSync(path.join(cacheDir, `${BUILD}.tar.zst`));
+  assert.equal(archived(BUILD, long), snapshot[long], "an archive is read once");
+  assert.equal(archived(NEW, "pkg/generated.txt"), undefined, "an unreadable archive restores nothing");
+  assert.equal(archived(KEPT, "pkg/generated.txt"), undefined, "a missing archive restores nothing");
+});
 
 test("the drift snapshot hashes changed and deleted tracked files and untracked files that are not ignored", () => {
   const root = freshCheckout();
