@@ -632,6 +632,10 @@ function getRelationIds(
   const relation = match.relation;
   const isForward = match.direction === "forward";
 
+  if (store.requireVisibleRelatedRecords && relationReturnsSingleRecord(match)) {
+    return getForeignKeyRelatedRecords(record, match, store, resource, schema)[0]?.record.id ?? null;
+  }
+
   if (isPolymorphicForeignKey(relation) && !relationReturnsSingleRecord(match)) {
     return expandQualifiedRecords(record, match, schema, store, resource, metadata)?.map(({ record }) => record.id);
   }
@@ -650,6 +654,9 @@ function getRelationIds(
   }
 
   if (relation.type === "many-many") {
+    if (store.requireVisibleRelatedRecords) {
+      return expandManyManyRecords(record, match, schema, store, resource, metadata).map(({ record }) => record.id);
+    }
     const sortedJoins = sortJoinRows(getManyManyRows(record, match, resource, schema, store), relation);
     return sortedJoins.map((j) => (isForward ? j.to : j.from));
   }
@@ -813,7 +820,7 @@ function getJoinRows(
   visibleOnly: boolean,
 ): unknown[] {
   const relation = match.relation;
-  const sorted = visibleOnly
+  const sorted = visibleOnly || store.requireVisibleRelatedRecords
     ? expandManyManyRecords(record, match, schema, store, resource).map(({ join }) => join)
     : sortJoinRows(getManyManyRows(record, match, resource, schema, store), relation);
 

@@ -43,6 +43,8 @@ export class DbDataStore implements DataStore {
   private recordsCache: Map<string, Record<string, unknown>[]> = new Map();
   private joinCache: Map<string, JoinRow[]> = new Map();
 
+  constructor(readonly requireVisibleRelatedRecords = false) {}
+
   private mergeRecords(resource: string, rows: Record<string, unknown>[]): void {
     if (rows.length === 0) {
       if (!this.recordsCache.has(resource)) this.recordsCache.set(resource, []);
@@ -219,7 +221,7 @@ export class DbDataStore implements DataStore {
     actorId?: string,
     allowUnknownResources = true,
   ): Promise<DbDataStore> {
-    const store = new DbDataStore();
+    const store = new DbDataStore(!allowUnknownResources);
 
     // 1. Pre-populate primary resource — no DB fetch
     store.recordsCache.set(primaryResource, primaryRecords);
@@ -858,7 +860,7 @@ export class DbDataStore implements DataStore {
     }
     // === Targeted secondary loading (INMEM-001, INMEM-002, INMEM-003, INMEM-004) ===
 
-    const store = new DbDataStore();
+    const store = new DbDataStore(!allowUnknownResources);
 
     // Step 1: Load primary resource with SCALE-004 pre-filter
     try {

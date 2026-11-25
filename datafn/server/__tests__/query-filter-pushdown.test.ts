@@ -1184,8 +1184,44 @@ it("excludes related projections without a policy unless the server allows unkno
     await expectQueryAndTransactData(server, {
       resource: "task", filters: { id: "task:linked" }, select: ["id", "relatedItem.*"],
     }, [{ id: "task:linked", relatedItem: allowUnknownResources ? { id: "legacy-item", label: "Goal" } : null }]);
+    await expectQueryAndTransactData(server, {
+      resource: "task", filters: { id: "task:linked" }, select: ["id", "relatedItem"],
+    }, [{ id: "task:linked", relatedItem: allowUnknownResources ? "legacy-item" : null }]);
     await server.close();
   }
+});
+
+it("checks visibility before projecting inverse join IDs and metadata", async () => {
+  const schema: DatafnSchema = {
+    ...SCHEMA,
+    resources: SCHEMA.resources.map((resource) => (resource.name === "collection"
+      ? { ...resource, permissions: { read: { fields: ["label"] } } }
+      : resource)),
+    relations: [...(SCHEMA.relations ?? []), {
+      type: "many-many",
+      from: ["objective", "collection"],
+      to: "collection",
+      relation: "destinations",
+      inverse: "origins",
+      joinTable: "test_connections",
+      metadata: [{ name: "linkType", type: "string" }],
+    }],
+  };
+  const { db, server } = await createServer({ schema, allowUnknownResources: false });
+  const createJoin = (data: Json) => db.create({ model: "test_connections", namespace: "datafn", data });
+  await createJoin({
+    id: "test-visible-join", from: "collection:work", fromResource: "collection",
+    to: "collection:home", linkType: "direct",
+  });
+  await createJoin({
+    id: "test-unreadable-join", from: "objective:goal", fromResource: "objective",
+    to: "collection:home", linkType: "reference",
+  });
+  const anchor = { resource: "collection", filters: { id: "collection:home" } };
+  await expectQueryAndTransactData(server, { ...anchor, select: ["id", "origins"] },
+    [{ id: "collection:home", origins: ["collection:work"] }]);
+  await expectQueryAndTransactData(server, { ...anchor, select: ["id", "origins.#"] },
+    [{ id: "collection:home", origins: [{ from: "collection:work", to: "collection:home", linkType: "direct" }] }]);
 });
 
 it("preserves both resource discriminators on inverse predicates", async () => {
