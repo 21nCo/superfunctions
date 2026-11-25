@@ -1,0 +1,29 @@
+reviewfn/core/src/process.ts
+  s_b52b8c1b7f4522::t_9317080b7e4780 5,17,39,54,72
+reviewfn/core/test/process.test.ts
+  s_b52b8c1b7f4522::t_0ef1a2536f4574 44-56
+reviewfn/harness-cli/src/adapter.ts
+  s_b52b8c1b7f4522::t_1c88c6e8d1bb67 364-366,750,856,966,968,1222-1224,1257,1261-1262,1299,1301
+reviewfn/harness-cli/test/adapter.test.ts
+  s_b52b8c1b7f4522::t_be413fceea1fa8 1042,1048,1064-1088
+reviewfn/harness-cli/test/fixtures/fake-cli.mjs
+  s_b52b8c1b7f4522::t_85f396f06475a3 9,29-33
+reviewfn/harness-cli/test/panel.test.ts
+  s_b52b8c1b7f4522::t_6aee7b35220f79 126-135
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "af4e80308d2e0237c30d31713d72e013eb550d8d",
+  "prompts": {},
+  "sessions": {
+    "s_b52b8c1b7f4522": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a7618df4-bf22-4edd-ab8f-5c9972f5b3d0",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
