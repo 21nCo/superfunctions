@@ -1,7 +1,7 @@
 {
   "name": "@superfunctions/evidence",
-  "version": "0.1.0",
-  "description": "Source-bound evidence records: the record format v1 JSON Schema, its types and a runtime-neutral validator",
+  "version": "0.2.0",
+  "description": "Source-bound evidence records: the record format v1 JSON Schema, its types, a runtime-neutral validator and a Node verifier that re-hashes artifacts",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -10,6 +10,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./node": {
+      "types": "./dist/node.d.ts",
+      "default": "./dist/node.js"
     },
     "./schema/evidence-record.v1.json": "./schema/evidence-record.v1.json",
     "./package.json": "./package.json"
@@ -24,7 +28,7 @@
     "test": "vitest run && node scripts/verify-packed.mjs",
     "test:watch": "vitest --watch",
     "lint": "tsc --noEmit -p tsconfig.check.json",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.check.json",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.neutral.json && tsc --noEmit -p tsconfig.check.json",
     "clean": "rm -rf dist",
     "verify:packed": "node scripts/verify-packed.mjs"
   },
