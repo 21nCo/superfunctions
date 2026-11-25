@@ -981,6 +981,7 @@ export class McpFnServer<TContext = undefined> {
 
       const requestServer = new McpFnServer(this.serverOptions);
       let initializedSessionId: string | undefined;
+      let closedDuringInitialization = false;
       let released = false;
       let transport: WebStandardStreamableHTTPServerTransport;
       const release = async () => {
@@ -993,18 +994,23 @@ export class McpFnServer<TContext = undefined> {
       transport = new WebStandardStreamableHTTPServerTransport({
         ...transportOptions,
         onsessioninitialized: async (id) => {
-          // close() ran while this request was being set up: no session.
-          if (generation !== this.closeGeneration) throw new Error("Server closed");
-          const hostHook = Boolean(transportOptions.onsessioninitialized);
-          // Always yields, so a close() queued meanwhile is seen below; the
-          // hook is called as a method to keep its receiver.
-          await transportOptions.onsessioninitialized?.(id);
+          // close() ran while this request was being set up: no session, and
+          // the client gets a retryable 503 (see below), not the SDK's 400.
           if (generation !== this.closeGeneration) {
+            closedDuringInitialization = true;
+            throw new Error("Server closed");
+          }
+          const hostHook = Boolean(options.onsessioninitialized);
+          // Always yields, so a close() queued meanwhile is seen below. The
+          // host's hooks are called on the host's own options object.
+          await options.onsessioninitialized?.(id);
+          if (generation !== this.closeGeneration) {
+            closedDuringInitialization = true;
             // Only a session the host's onsessioninitialized accepted gets
             // its onsessionclosed.
             if (hostHook) {
               try {
-                await transportOptions.onsessionclosed?.(id);
+                await options.onsessionclosed?.(id);
               } catch {
                 // Best effort for a session that never went live.
               }
@@ -1017,7 +1023,7 @@ export class McpFnServer<TContext = undefined> {
         onsessionclosed: async (id) => {
           sessions.delete(id);
           try {
-            await transportOptions.onsessionclosed?.(id);
+            await options.onsessionclosed?.(id);
           } finally {
             await release();
           }
@@ -1029,6 +1035,11 @@ export class McpFnServer<TContext = undefined> {
         await configureRequestServer?.(requestServer);
         await requestServer.connect(transport);
         const response = await transport.handleRequest(request, handleOptions);
+        if (closedDuringInitialization) {
+          await response.body?.cancel().catch(() => undefined);
+          await release();
+          return jsonRpcErrorResponse(503, -32000, "Server closed");
+        }
         if (initializedSessionId) return response;
         return releaseAfterResponse(response, release);
       } catch (error) {

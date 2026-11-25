@@ -137,20 +137,32 @@ describe("createWebStandardHandler session binding (MCP-SEC-03)", () => {
     await server.close();
     open();
     const result = await pending;
-    expect(result.status).not.toBe(200);
+    expect(result.status).toBe(503);
     expect(closed).toEqual(["session-1"]);
     expect((await call("session-1")).status).not.toBe(200);
   });
 
   it("calls onsessioninitialized as a method of the options", async () => {
-    const options = {
-      label: "kept",
-      seen: [] as string[],
-      onsessioninitialized(this: { label: string; seen: string[] }) { this.seen.push(this.label); },
-    };
-    const { initialize } = await setup(options as never);
-    expect((await initialize()).status).toBe(200);
-    expect(options.seen).toEqual(["kept"]);
+    class HostOptions {
+      enableJsonResponse = true;
+      sessionIdGenerator = () => "session-x";
+      receivers: unknown[] = [];
+      onsessioninitialized() { this.receivers.push(this); }
+    }
+    const options = new HostOptions();
+    const registry = new McpFnRegistry();
+    const server = createMcpFnServer({ info: { name: "receiver", version: "1.0.0" }, registry });
+    closeables.push(server);
+    const handler = await server.createWebStandardHandler(options as never);
+    const response = await handler(new Request("http://127.0.0.1:8080/mcp", {
+      method: "POST",
+      headers: { accept: "application/json, text/event-stream", "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "c", version: "1" } } }),
+    }));
+    await response.text();
+    expect(response.status).toBe(200);
+    expect(options.receivers).toEqual([options]);
+    expect(options.receivers[0]).toBe(options);
   });
 
   it("uses a host-supplied principal key", async () => {
