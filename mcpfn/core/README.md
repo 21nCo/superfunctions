@@ -165,7 +165,8 @@ for (const { operation, code, reason } of skipped) {
   `nullable`, which adds `null` to an explicit `type` only (an `enum` keeps
   excluding `null` unless it lists it). Anything else is listed in `skipped` with a code and reason:
   external or URL references, `cookie` parameters, a parameter named
-  `__proto__` (the validators ignore that property name), non-default styles,
+  `__proto__` under Ajv (which leaves that name out of a closed group) or an
+  optional one under @cfworker/json-schema, non-default styles,
   object-valued or mixed parameters, bodies without a JSON media type, a
   `$ref` cycle that returns to the same value without descending into a
   property or item, and the 2019-09/2020-12 keywords `prefixItems`,

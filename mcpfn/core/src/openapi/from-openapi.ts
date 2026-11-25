@@ -934,12 +934,15 @@ class OperationConverter {
     if (location === "header" && isForbiddenHeader(name)) return undefined;
     // Ajv leaves a "__proto__" key of properties out of a closed group, so it
     // would list the parameter and still reject every call that supplies it.
-    // @cfworker/json-schema validates that own property like any other.
+    // @cfworker/json-schema validates that own property, but when it is left
+    // out reads the inherited Object.prototype instead: only a required one works.
     this.compiler ??= createSchemaCompiler();
-    if (name === "__proto__" && this.compiler.engine === "ajv") {
+    if (name === "__proto__" && (this.compiler.engine === "ajv" || raw.required !== true)) {
       throw new OpenApiSkip(
         "unsupported-parameter-name",
-        `${location} parameter ${name} cannot be declared in a closed group: Ajv ignores that property name`,
+        this.compiler.engine === "ajv"
+          ? `${location} parameter ${name} cannot be declared in a closed group: Ajv ignores that property name`
+          : `optional ${location} parameter ${name} cannot be left out: the validator reads the inherited Object.prototype`,
       );
     }
     if (raw.schema === undefined) {

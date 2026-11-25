@@ -426,5 +426,13 @@ describe("fromOpenAPI under @cfworker/json-schema", () => {
     expect(Object.hasOwn((executor.calls[0]!.args as { query: object }).query, "__proto__")).toBe(true);
     await expect(result.registry.callTool("listItems", JSON.parse('{"query":{"__proto__":1}}'), undefined, requestExtra()))
       .rejects.toMatchObject({ code: "MCPFN_INVALID_ARGUMENTS" });
+    // Left out, the validator would read the inherited Object.prototype: an optional one is skipped.
+    const optional = fromOpenAPI({
+      openapi: "3.1.0",
+      paths: { "/items": { get: { operationId: "listItems", parameters: [{ name: "__proto__", in: "query", schema: { type: "string" } }, { name: "q", in: "query", schema: { type: "string" } }], responses: { "200": { description: "OK" } } } } },
+    }, { executor: recordingExecutor() });
+    expect(verdicts(optional)).toEqual([[
+      "listItems", "unsupported-parameter-name", "optional query parameter __proto__ cannot be left out: the validator reads the inherited Object.prototype",
+    ]]);
   });
 });
