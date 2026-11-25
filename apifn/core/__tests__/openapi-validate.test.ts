@@ -301,7 +301,7 @@ describe("validateOpenAPI", () => {
       { path: "openapi", message: expect.stringContaining("explicit allowlist"), severity: "error" },
     ]);
 
-    externalReferences.set(directory.startsWith("/") ? directory : "/" + directory, JSON.stringify({
+    externalReferences.set(directory, JSON.stringify({
       components: { schemas: { Shared: { type: "integer" } } },
     }));
     const result = await validateAndDereferenceOpenAPI(doc, { externalReferences });
@@ -317,6 +317,30 @@ describe("validateOpenAPI", () => {
       const result = await validateAndDereferenceOpenAPI(documentWithReference("./types.json"), { externalReferences });
       expect(result.errors).toEqual([]);
       expect(result.document?.components?.schemas?.Value).toEqual({ type: "integer" });
+    } finally {
+      cwd.mockRestore();
+    }
+  });
+
+  it.each(["./shared.yaml", "C:\\project\\shared.yaml"])("accepts a native Windows path key for %s", async (ref) => {
+    const cwd = vi.spyOn(process, "cwd").mockReturnValue("C:\\project");
+    try {
+      const externalReferences = new Map([["C:\\project\\shared.yaml", "type: integer"]]);
+      const result = await validateAndDereferenceOpenAPI(documentWithReference(ref), { externalReferences });
+      expect(result.errors).toEqual([]);
+      expect(result.document?.components?.schemas?.Value).toEqual({ type: "integer" });
+    } finally {
+      cwd.mockRestore();
+    }
+  });
+
+  it("keeps an encoded backslash distinct from a Windows path separator", async () => {
+    const cwd = vi.spyOn(process, "cwd").mockReturnValue("C:\\project");
+    try {
+      const externalReferences = new Map([["C:\\project\\nested\\value.yaml", "type: integer"]]);
+      await expect(validateOpenAPI(documentWithReference("./nested%5Cvalue.yaml"), { externalReferences })).resolves.toEqual([
+        { path: "openapi", message: expect.stringContaining("explicit allowlist"), severity: "error" },
+      ]);
     } finally {
       cwd.mockRestore();
     }

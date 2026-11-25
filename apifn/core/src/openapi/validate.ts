@@ -6,8 +6,8 @@ import { openAPIReferenceContext, type OpenAPIReferenceMode } from "./reference-
 export interface OpenAPIValidationOptions {
   /**
    * Preloaded JSON or YAML for external documents, keyed by the resolved URI or
-   * absolute file path, without a fragment. Escape literal `%` and `?` in
-   * path keys as `%25` and `%3F`. Within preloaded documents, use slash-delimited
+   * absolute file path, without a fragment. Escape literal `%`, `?`, and `\\`
+   * within path segments as `%25`, `%3F`, and `%5C`. Within preloaded documents, use slash-delimited
    * `#/` pointers. Validation never reads files or URLs.
    */
   externalReferences?: ReadonlyMap<string, string>;
@@ -32,6 +32,7 @@ interface ReferenceDocument {
 interface DocumentLocation {
   url: URL;
   isPath: boolean;
+  isWindowsPath: boolean;
 }
 
 interface ReferenceTarget {
@@ -69,33 +70,45 @@ function encodePointer(tokens: string[]): string {
   ).join("");
 }
 
+const LOCAL_PATH_ORIGIN = "https://apifn-local-path.invalid";
+const WINDOWS_DRIVE_PATH = /^[a-z]:\//i;
+
 function workingDirectoryLocation(): DocumentLocation {
   const cwd = typeof process !== "undefined" && process.cwd ? process.cwd().replaceAll("\\", "/") : "/";
   const path = (cwd.startsWith("/") ? cwd : "/" + cwd).replace(/\/$/, "") + "/";
-  const url = new URL("https://apifn-local-path.invalid");
+  const url = new URL(LOCAL_PATH_ORIGIN);
   url.pathname = path.split("/").map(encodeURIComponent).join("/");
-  return { url, isPath: true };
+  return { url, isPath: true, isWindowsPath: WINDOWS_DRIVE_PATH.test(cwd) };
 }
 
 function absolutePathKey(pathname: string): string {
   // Decode filesystem names without letting a segment become a path separator
   // or a query. Escape percent signs so literal "%3F" and "?" cannot collide.
   return pathname.split("/").map((segment) =>
-    decodeFragment(segment).replaceAll("%", "%25").replaceAll("?", "%3F").replaceAll("/", "%2F")
+    decodeFragment(segment).replaceAll("%", "%25").replaceAll("?", "%3F").replaceAll("/", "%2F").replaceAll("\\", "%5C")
   ).join("/");
 }
 
 function resolveDocumentURI(base: DocumentLocation, ref: string) {
   const normalized = ref.replaceAll("\\", "/");
-  const url = new URL(normalized, base.url);
+  const windowsDrive = WINDOWS_DRIVE_PATH.test(normalized);
+  const url = windowsDrive ? new URL("/" + normalized, LOCAL_PATH_ORIGIN) : new URL(normalized, base.url);
   const absolute = /^(?:[a-z][a-z0-9+.-]*:|\/\/)/i.test(normalized.trimStart());
   const fragment = url.hash.slice(1);
   url.hash = "";
-  const isPath = base.isPath && !absolute && url.origin === base.url.origin;
+  const isPath = windowsDrive || (base.isPath && !absolute && url.origin === base.url.origin);
   const queryStart = url.href.indexOf("?");
   const query = queryStart < 0 ? "" : url.href.slice(queryStart);
-  const uri = isPath ? absolutePathKey(url.pathname) + query : url.href;
-  return { uri, fragment, location: { url, isPath } };
+  const pathname = isPath ? absolutePathKey(url.pathname) : undefined;
+  const uri = pathname === undefined ? url.href : pathname + query;
+  const pathWithoutLeadingSlash = pathname?.slice(1);
+  const isWindowsPath = pathWithoutLeadingSlash !== undefined && (windowsDrive || base.isWindowsPath) &&
+    WINDOWS_DRIVE_PATH.test(pathWithoutLeadingSlash);
+  const windowsPath = isWindowsPath ? pathWithoutLeadingSlash : undefined;
+  const keys = windowsPath === undefined
+    ? [uri]
+    : [windowsPath + query, windowsPath.replaceAll("/", "\\") + query];
+  return { uri: keys[0], fragment, keys, location: { url, isPath, isWindowsPath } };
 }
 
 const EXAMPLE_FIELDS = new Set(["value", "externalValue", "summary", "description"]);
@@ -156,10 +169,10 @@ function prepareReferences(document: OpenAPIDocument, externalReferences?: Reado
     if (ref.startsWith("#")) return { source, fragment: ref.slice(1) };
     if (!externalReferences?.size) throw new Error(EXTERNAL_REF_ERROR);
 
-    const { uri: key, fragment, location: targetLocation } = resolveDocumentURI(source.location, ref);
+    const { uri: key, fragment, keys, location: targetLocation } = resolveDocumentURI(source.location, ref);
     let external = supplied.get(key);
     if (!external) {
-      const contents = externalReferences.get(key);
+      const contents = keys.map((candidate) => externalReferences.get(candidate)).find((value) => value !== undefined);
       if (contents === undefined) throw new Error(EXTERNAL_REF_ERROR);
       const parsed = parseDocument(contents);
       if (parsed.errors.length) throw new Error(parsed.errors[0].message);
