@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import { access, lstat, mkdtemp, realpath, stat } from "node:fs/promises";
@@ -252,13 +253,21 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
     if (pinned !== undefined && state.harnessVersion !== pinned) return state.finish("failed", `The CLI reported version ${String(state.harnessVersion)}, not the pinned ${pinned}, so the review was not run.`);
     let directory: string | undefined;
     let created: string | undefined;
+    const identities = new Map<string, string>();
     try {
       directory = await mkdtemp(path.join(tmpdir(), "reviewfn-cli-"));
       created = await identity(directory);
-      return await this.attempts({ ...prepared, executable, key, directory, identities: new Map([[directory, created]]) });
+      identities.set(directory, created);
+      return await this.attempts({ ...prepared, executable, key, directory, identities });
     } finally {
-      // Removed from inside itself (DIRECTORY_HELPER); anything that took its place, a link or not, is left alone.
-      if (directory !== undefined && created !== undefined) await inDirectory(undefined, directory, { op: "remove", expect: created, name: path.basename(directory) }).catch(() => undefined);
+      // Removed from inside itself (DIRECTORY_HELPER), entering only the attempt directories the adapter created; anything
+      // that took the place of one, a link or not, is left alone. The removal is awaited only while the run has time
+      // left, so a result already decided is never held past the deadline or a cancellation by it.
+      if (directory !== undefined && created !== undefined) {
+        const removal = inDirectory(directory, { op: "remove", expect: created, name: path.basename(directory), attempts: [...identities.values()] }).catch(() => undefined);
+        const ended = AbortSignal.any([AbortSignal.timeout(Math.max(0, prepared.deadline - Date.now())), ...(input.signal ? [input.signal] : [])]);
+        if (!ended.aborted) await Promise.race([removal, new Promise(resolve => ended.addEventListener("abort", resolve, { once: true }))]);
+      }
     }
   }
 
@@ -321,17 +330,17 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
     // ended, holding its schema, its prompt (written only when the CLI is given its path) and its output path, which is
     // therefore absent when it starts. Nothing an earlier attempt left (a link, a rewritten schema, a planted answer) is
     // ever followed, shown to or read for a later one.
-    let files: { promptFile: string; schemaFile: string; outputFile: string };
-    try { files = await attemptFiles(run, attempt, prompt); }
+    let made: Awaited<ReturnType<typeof attemptFiles>>;
+    try { made = await attemptFiles(run, attempt, prompt); }
     catch (error) { return lapsed(run, before) ?? state.finish("failed", `The CLI attempt's files could not be created: ${message(error)}`); }
+    const { helper, ...files } = made;
     const { outputFile } = files;
     // Just before the spawn (Node cannot exec an open file), the executable must still be the one whose version was read,
     // in directories that are still the adapter's; the deadline is read after that and the file writes, so neither can
     // extend it.
     const refused = await this.refusal(run, path.dirname(outputFile), before, `The CLI executable changed after its version was read, so it was refused ${before}.`);
-    if (refused) return refused;
     const remaining = run.deadline - Date.now();
-    if (remaining <= 0) return state.finish("timed_out", `The CLI exceeded its configured bound ${before}.`);
+    if (refused || remaining <= 0) { helper.close(); return refused ?? state.finish("timed_out", `The CLI exceeded its configured bound ${before}.`); }
     const args = cliArguments(profile.argv, { ...files, workspace: input.workspace, model: input.configuration.inference.model });
     state.push("started", { attempt, promptVia: profile.promptVia, outputVia: profile.outputVia, sandbox: profile.capabilities.sandbox });
     // The output file, whatever outputVia is (a profile may pass {outputFile} with stdout-last-json), is measured while the
@@ -352,19 +361,20 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
       // a run that served another model is void whether it then completed, failed, hung or overran its bounds.
       const unreported = reporter ? await reportStderrModel(run, reporter, result.stderr) : undefined;
       if (unreported) return unreported;
-      const outcome = await this.judge(run, attempt, outputFile, result, watch.overrun());
+      const outcome = await this.judge(run, attempt, outputFile, result, watch.overrun(), helper);
       state.chargeMeasured(watch.peak());
       return outcome;
     } finally {
       reporter?.dispose();
+      helper.close();
     }
   }
 
   /** The attempt's outcome once its process ended: its answer read, then its terminal outcome or the answer judged. */
-  private async judge(run: AttemptContext, attempt: number, outputFile: string, result: CommandResult, fileOverrun: string | undefined): Promise<SlotHarnessOutput | Rejection> {
+  private async judge(run: AttemptContext, attempt: number, outputFile: string, result: CommandResult, fileOverrun: string | undefined, helper: DirectoryHelper): Promise<SlotHarnessOutput | Rejection> {
     // An answer is read only from the directories the adapter created, never through a link that replaced one.
     let replaced = !await intact(run, path.dirname(outputFile));
-    const output = replaced ? { error: DIRECTORY_REPLACED } : await readAnswer(run, outputFile, result.stdout);
+    const output = replaced ? { error: DIRECTORY_REPLACED } : await readAnswer(run, outputFile, result.stdout, helper);
     replaced ||= "error" in output && output.error === DIRECTORY_REPLACED;
     const terminal = lapsed(run, "before its answer was judged") ?? terminalOutcome(run, attempt, result, output, fileOverrun);
     if (terminal) return terminal;
@@ -460,8 +470,9 @@ export class CliHarnessAdapter implements PanelHarnessAdapter {
 
   private secrets(config: ReviewFnConfig, environment: NodeJS.ProcessEnv): string[] {
     const credential = config.inference.credentialEnv ? this.environment[config.inference.credentialEnv] : undefined;
-    // The credential, and every allowlisted value whose name marks it as a secret.
-    return collectSecrets(environment, credential ? [credential] : []);
+    // The credential, whatever its length (core drops values under 4 characters), and every allowlisted value whose name
+    // marks it as a secret.
+    return [...new Set([...(credential ? [credential] : []), ...collectSecrets(environment)])];
   }
 }
 
@@ -500,32 +511,39 @@ async function intact(run: AttemptContext, attemptDirectory?: string): Promise<b
   return true;
 }
 
-/** A new directory for one attempt, created exclusively inside the run directory itself, with its schema and prompt files. */
-async function attemptFiles(run: AttemptContext, attempt: number, prompt: string): Promise<{ promptFile: string; schemaFile: string; outputFile: string }> {
+/**
+ * A new directory for one attempt, created exclusively inside the run directory itself, with its schema and prompt files,
+ * by the attempt's helper, which stays in it to read the answer (the caller closes it).
+ */
+async function attemptFiles(run: AttemptContext, attempt: number, prompt: string): Promise<{ promptFile: string; schemaFile: string; outputFile: string; helper: DirectoryHelper }> {
   if (!await intact(run)) throw new Error("the run directory was replaced");
   const files = [["schema.json", run.schemaText], ...(run.profile.promptVia === "file" || run.profile.argv.includes("{promptFile}") ? [["prompt.md", prompt]] : [])];
-  const made = await inDirectory(run, run.directory, { op: "attempt", expect: run.identities.get(run.directory), prefix: `attempt-${attempt}-`, files });
-  if (typeof made.error === "string") throw new Error(made.error === "EREPLACED" ? "the run or attempt directory was replaced" : made.error);
+  const helper = directoryHelper(run.directory);
+  const made = await helper.request({ op: "attempt", expect: run.identities.get(run.directory), prefix: `attempt-${attempt}-`, files }, Math.max(1, run.deadline - Date.now()), run.input.signal);
+  if (typeof made.error === "string") { helper.close(); throw new Error(made.error === "EREPLACED" ? "the run or attempt directory was replaced" : made.error); }
   const directory = path.join(run.directory, String(made.name));
   run.identities.set(directory, String(made.identity));
-  return { promptFile: path.join(directory, "prompt.md"), schemaFile: path.join(directory, "schema.json"), outputFile: path.join(directory, "output.json") };
+  return { promptFile: path.join(directory, "prompt.md"), schemaFile: path.join(directory, "schema.json"), outputFile: path.join(directory, "output.json"), helper };
 }
 
 /**
  * The adapter's operations on its own directories, in a Node process whose working directory, bound to the directory
  * itself (Node has no openat), must have the recorded dev/ino; every name resolves from it, so a path swapped for a link
- * after a check is never followed. An attempt directory found holding entries once entered is refused; `remove` enters a
- * child, and removes a name, only while it is the directory just read, and stops at the first mismatch.
+ * after a check is never followed. It serves one JSON request per stdin line, in order. A new attempt directory is
+ * refused, before anything is written to it, unless the name just created is the directory entered, a child of the run
+ * directory, and empty; it is then the helper's working directory, from which `read` takes the answer only while the
+ * attempt's name is still that directory. `remove` enters only the run directory's recorded attempt directories (and
+ * everything inside them), removes a name only while it is the directory just read, and stops at the first mismatch.
  */
 const DIRECTORY_HELPER = String.raw`
 const fs = require("node:fs");
 const id = name => { const found = fs.lstatSync(name, { bigint: true }); return found.dev + ":" + found.ino; };
 const fail = () => { throw Object.assign(new Error("replaced"), { code: "EREPLACED" }); };
-const wipe = self => {
+const wipe = (self, only) => {
   for (const name of fs.readdirSync(".")) {
     const entry = fs.lstatSync(name, { bigint: true, throwIfNoEntry: false }), own = entry && entry.dev + ":" + entry.ino;
     if (entry && !entry.isDirectory()) try { fs.unlinkSync(name); } catch (error) { if (error.code !== "ENOENT") throw error; }
-    if (!entry?.isDirectory()) continue;
+    if (!entry?.isDirectory() || only && !only.includes(own)) continue;
     process.chdir(name);
     if (id(".") !== own) fail();
     wipe(own);
@@ -534,35 +552,75 @@ const wipe = self => {
     fs.rmdirSync(name);
   }
 };
-let reply = {};
-try {
-  const request = JSON.parse(fs.readFileSync(0, "utf8"));
+const serve = request => {
   if (id(".") !== request.expect) fail();
   if (request.op === "attempt") {
     const name = fs.mkdtempSync(request.prefix); process.chdir(name);
-    if (id("..") !== request.expect || fs.readdirSync(".").length > 0) fail();
+    if (id("..") !== request.expect || id("../" + name) !== id(".") || fs.readdirSync(".").length > 0) fail();
     for (const [file, text] of request.files) fs.writeFileSync(file, text, { mode: 0o600, flag: "wx" });
-    reply = { name, identity: id(".") };
-  } else if (request.op === "read") {
+    return { name, identity: id(".") };
+  }
+  if (request.op === "read") {
+    if (id("../" + request.name) !== request.expect) fail();
     const fd = fs.openSync("output.json", fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0) | (fs.constants.O_NONBLOCK ?? 0));
     const found = fs.fstatSync(fd);
     const buffer = Buffer.alloc(found.isFile() && found.size <= request.max ? request.max + 1 : 0);
     let length = 0; for (let count = -1; count !== 0 && length < buffer.length; length += count) count = fs.readSync(fd, buffer, length, buffer.length - length, null);
-    reply = { file: found.isFile(), size: found.size, data: buffer.subarray(0, length).toString("base64") };
-  } else {
-    wipe(request.expect); process.chdir("..");
-    if (id(request.name) === request.expect) fs.rmdirSync(request.name); else fail();
+    return { file: found.isFile(), size: found.size, data: buffer.subarray(0, length).toString("base64") };
   }
-} catch (error) { reply = { error: error.code ?? String(error.message) }; }
-process.stdout.write(JSON.stringify(reply));
+  wipe(request.expect, request.attempts); process.chdir("..");
+  if (id(request.name) === request.expect) fs.rmdirSync(request.name); else fail();
+  return {};
+};
+let input = "";
+process.stdin.setEncoding("utf8").on("data", chunk => {
+  for (input += chunk; input.includes("\n"); input = input.slice(input.indexOf("\n") + 1)) {
+    let reply; try { reply = serve(JSON.parse(input.slice(0, input.indexOf("\n")))); } catch (error) { reply = { error: error.code ?? String(error.message) }; }
+    process.stdout.write(JSON.stringify(reply) + "\n");
+  }
+});
 `;
 
-/** A DIRECTORY_HELPER request run in `directory`, bounded by the run's deadline and signal, or (reads after exit, cleanup) a minute. */
-async function inDirectory(run: Prepared | undefined, directory: string, request: Record<string, unknown>, maxOutputBytes = 4_096): Promise<Record<string, unknown>> {
-  const timeoutMs = run ? Math.max(1, run.deadline - Date.now()) : 60_000;
-  const result = await runProcessGroup(process.execPath, ["-e", DIRECTORY_HELPER], { cwd: directory, env: {}, timeoutMs, maxOutputBytes, signal: run?.input.signal, stdin: JSON.stringify(request) });
+/** A one-off DIRECTORY_HELPER request run in `directory` (the run directory's removal), bounded by a minute. */
+async function inDirectory(directory: string, request: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const result = await runProcessGroup(process.execPath, ["-e", DIRECTORY_HELPER], { cwd: directory, env: {}, timeoutMs: 60_000, maxOutputBytes: 4_096, stdin: `${JSON.stringify(request)}\n` });
   try { return JSON.parse(result.stdout) as Record<string, unknown>; }
-  catch { return { error: result.timedOut || result.canceled ? "the directory operation was stopped" : `the directory operation failed: ${result.stderr.slice(0, 200)}` }; }
+  catch { return { error: result.timedOut ? "the directory operation was stopped" : `the directory operation failed: ${result.stderr.slice(0, 200)}` }; }
+}
+
+interface DirectoryHelper { request: (request: Record<string, unknown>, timeoutMs: number, signal?: AbortSignal) => Promise<Record<string, unknown>>; close: () => void }
+
+/**
+ * A DIRECTORY_HELPER kept running in `directory` for an attempt's requests, each answered in turn or, once its bound
+ * passes or `signal` aborts, by stopping the helper. A helper that cannot be started there counts as a replaced directory.
+ */
+function directoryHelper(directory: string): DirectoryHelper {
+  const child = spawn(process.execPath, ["-e", DIRECTORY_HELPER], { cwd: directory, env: {}, stdio: ["pipe", "pipe", "ignore"] });
+  let pending: ((reply: Record<string, unknown>) => void) | undefined;
+  let gone: Record<string, unknown> | undefined;
+  let buffered = "";
+  const answer = (reply: Record<string, unknown>) => { const resolve = pending; pending = undefined; resolve?.(reply); };
+  child.once("error", () => answer(gone = { error: "EREPLACED" }));
+  child.once("close", () => answer(gone ??= { error: "the directory operation was stopped" }));
+  child.stdin.on("error", () => { /* the helper is gone; its close answers */ });
+  child.stdout.setEncoding("utf8").on("data", (chunk: string) => {
+    buffered += chunk;
+    if (!buffered.includes("\n")) return;
+    try { answer(JSON.parse(buffered.slice(0, buffered.indexOf("\n"))) as Record<string, unknown>); } catch { answer({ error: "the directory operation failed" }); }
+    buffered = "";
+  });
+  const stop = () => child.kill("SIGKILL");
+  return {
+    request: (request, timeoutMs, signal) => new Promise(resolve => {
+      if (gone) { resolve(gone); return; }
+      const timer = setTimeout(stop, timeoutMs);
+      pending = reply => { clearTimeout(timer); signal?.removeEventListener("abort", stop); resolve(reply); };
+      if (signal?.aborted) stop();
+      else signal?.addEventListener("abort", stop, { once: true });
+      child.stdin.write(`${JSON.stringify(request)}\n`);
+    }),
+    close: () => { child.stdin.end(); stop(); },
+  };
 }
 
 const SHORT_ESCAPES: Record<string, string> = { '"': '"', "\\": "\\", "/": "/", b: "\b", f: "\f", n: "\n", r: "\r", t: "\t" };
@@ -574,8 +632,9 @@ interface EscapeLevel { text: string; at: Uint32Array; to: Uint32Array }
 /**
  * `text` with every secret redacted as written and under up to MAX_ESCAPE_DEPTH levels of JSON string escaping (short
  * escapes, or `\uXXXX` in either hex case): the escapes are decoded one level at a time, each in linear time and memory,
- * keeping only where each escape sat, and every occurrence at any level marks its whole original span, overlapping
- * spans merged, so a shorter secret never leaves part of a longer one. A line still escaped past that depth is redacted whole.
+ * keeping only where each escape sat, and every occurrence at any level, overlapping ones included, marks its whole
+ * original span, overlapping spans merged, so a shorter secret never leaves part of a longer one. A line still escaped
+ * past that depth is redacted whole.
  */
 function redact(text: string, secrets: readonly string[]): string {
   const values = secrets.filter(secret => secret.length > 0);
@@ -586,7 +645,7 @@ function redact(text: string, secrets: readonly string[]): string {
   const levels: EscapeLevel[] = [];
   for (let current = text; values.length > 0;) {
     for (const value of values) {
-      for (let at = current.indexOf(value); at !== -1; at = current.indexOf(value, at + value.length)) cover(original(levels, at), original(levels, at + value.length));
+      for (let at = current.indexOf(value); at !== -1; at = current.indexOf(value, at + 1)) cover(original(levels, at), original(levels, at + value.length));
     }
     const next = current.includes("\\") ? unescapeLevel(current) : undefined;
     if (next === undefined) break;
@@ -761,8 +820,8 @@ parentPort.once("message", text => {
 });`)}`);
 
 /** The attempt's answer as the CLI wrote it, with its `json-path` model report read. */
-async function readAnswer(run: AttemptContext, outputFile: string, stdout: string): Promise<OutputRead> {
-  const output = run.profile.outputVia === "file" ? await readOutputFile(run, outputFile, run.state.remainingOutputBytes()) : stdoutObject(stdout);
+async function readAnswer(run: AttemptContext, outputFile: string, stdout: string, helper: DirectoryHelper): Promise<OutputRead> {
+  const output = run.profile.outputVia === "file" ? await readOutputFile(run, helper, outputFile, run.state.remainingOutputBytes()) : stdoutObject(stdout);
   if ("text" in output && output.text !== undefined) run.state.recordOutputFile(output.text);
   if ("value" in output && run.profile.modelReport.startsWith("json-path:")) run.state.note(valueAtPath(output.value, run.profile.modelReport.slice("json-path:".length)));
   return output;
@@ -855,12 +914,16 @@ function serialized(value: unknown): string | undefined {
   try { return JSON.stringify(value); } catch { return undefined; }
 }
 /**
- * The output file, read in the attempt directory the adapter created (never through a link that replaced it), without
- * following a link, within the remaining output budget, as exactly one JSON object.
+ * The output file, read by the attempt's helper inside the attempt directory the adapter created (never through a link
+ * that replaced it, nor while its name holds anything else), without following a link, within the remaining output
+ * budget, as exactly one JSON object. The helper already runs, so the read needs no new process; it is bounded by the
+ * run's remaining time plus MODEL_REPORT_TIMEOUT_MS but not by the caller's signal, so the model a file reports is read
+ * even once the run was canceled or timed out.
  */
-async function readOutputFile(run: AttemptContext, file: string, maxBytes: number): Promise<OutputRead> {
+async function readOutputFile(run: AttemptContext, helper: DirectoryHelper, file: string, maxBytes: number): Promise<OutputRead> {
   const max = Math.max(0, maxBytes);
-  const read: Record<string, unknown> = await inDirectory(undefined, path.dirname(file), { op: "read", expect: run.identities.get(path.dirname(file)), max }, 2 * max + 4_096).catch((error: unknown) => ({ error: message(error) }));
+  const directory = path.dirname(file);
+  const read = await helper.request({ op: "read", expect: run.identities.get(directory), name: path.basename(directory), max }, Math.max(0, run.deadline - Date.now()) + MODEL_REPORT_TIMEOUT_MS);
   if (typeof read.error === "string") return { error: read.error === "ENOENT" ? "The CLI wrote no output file." : read.error === "EREPLACED" ? DIRECTORY_REPLACED : `The output file could not be opened: ${read.error}` };
   if (read.file !== true) return { error: "The output file is not a regular file." };
   if (Number(read.size) > max) return { overrun: `The CLI output file (${Number(read.size)} bytes) exceeded the remaining ${max}-byte output budget.` };
@@ -1146,11 +1209,16 @@ class RunState {
 
   public constructor(private readonly model: string, private readonly profile: HarnessProfile, private readonly secrets: readonly string[], private readonly maxOutputBytes: number) {}
 
+  /**
+   * A stream the runner cut (at its time or byte bound, or on cancellation) may end inside a secret whose rest it dropped,
+   * so its unterminated last line is withheld from the transcript.
+   */
   public record(result: CommandResult): void {
     this.reported = undefined;
     this.fileBytes = 0;
     this.rawBytes += Buffer.byteLength(result.stdout) + Buffer.byteLength(result.stderr);
-    this.transcript.push(redact(`${result.stdout}\n${result.stderr}`, this.secrets));
+    const kept = (text: string) => !(result.timedOut || result.canceled) || text === "" || text.endsWith("\n") ? text : `${text.slice(0, text.lastIndexOf("\n") + 1)}[WITHHELD: the stream was cut]`;
+    this.transcript.push(redact(`${kept(result.stdout)}\n${kept(result.stderr)}`, this.secrets));
   }
 
   public recordOutputFile(text: string): void {

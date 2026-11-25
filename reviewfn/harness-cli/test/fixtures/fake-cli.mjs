@@ -1,10 +1,11 @@
 // A stand-in agent CLI. It echoes what it received, writes its answer to a file or stdout, and misbehaves on command.
 // Usage: fake-cli.mjs --state <dir> [--answer valid|invalid|invalid-once|not-json] [--prompt <file>] [--out <file>]
 //   [--model-json <model>] [--model-stderr <model>] [--exit <code>] [--stderr <text>] [--hang 1] [--flood 1]
-//   [--enforce-schema <file>] [--extra-json <object>] [--mixed <bytes>] [--version] [any other --flag value]
+//   [--enforce-schema <file>] [--extra-json <object>] [--mixed <bytes>] [--linger 1] [--version] [any other --flag value]
 // --enforce-schema drops every top-level property the schema file does not declare, as a schema-enforcing CLI would.
 // --flood keeps appending to the output file, printing nothing on stdout. --extra-json merges an object into a valid answer.
 // --mixed writes <bytes> to stdout and <bytes> to the output file, then hangs.
+// --linger keeps running after the answer is written.
 import { spawn } from "node:child_process";
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -50,4 +51,5 @@ if (options.mixed !== undefined) {
   if (options.out !== undefined) writeFileSync(options.out, answer);
   else process.stdout.write(`Thinking...\n{"type":"progress","step":1}\n${JSON.stringify(valid).slice(0, 5)}\n${answer}\ndone\n`);
   process.exitCode = Number(options.exit ?? 0);
+  if (options.linger !== undefined) setInterval(() => {}, 1_000);
 }

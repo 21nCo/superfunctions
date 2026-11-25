@@ -54,10 +54,10 @@ class FlaggingHarness extends CliHarnessAdapter {
   }
 }
 
-function coordinator(harness: CliHarnessAdapter = new CliHarnessAdapter({ environment })): PanelCoordinator {
+function coordinator(harness: CliHarnessAdapter = new CliHarnessAdapter({ environment }), abortGraceMs = 100): PanelCoordinator {
   return new PanelCoordinator({
     sourceControl: new FakeSourceControlAdapter({ baseCommit: base, headCommit: head, changedPaths: ["src/index.ts"] }), contexts: [new FakeContextAdapter("fixture", manifest)],
-    execution: new FakeExecutionAdapter(), artifacts: new MemoryArtifactStore(), harnesses: [harness], harnessContractVersions: { cli: "1" }, workspaceRoot, abortGraceMs: 100, environment,
+    execution: new FakeExecutionAdapter(), artifacts: new MemoryArtifactStore(), harnesses: [harness], harnessContractVersions: { cli: "1" }, workspaceRoot, abortGraceMs, environment,
   });
 }
 
@@ -98,6 +98,14 @@ describe("generic CLI slots in the panel", () => {
     expect(result.validation).toMatchObject({ valid: true });
     for (const run of result.report.slotRuns) expect(run).toMatchObject({ terminal: "void", voidReasons: ["model_mismatch"], identity: { model: "model-x" } });
   }, 120_000);
+
+  it("voids a slot whose CLI wrote a file answer reporting another model and then hung, within a short abort grace", async () => {
+    const lingering: HarnessProfile = { ...await profile("lingering", "json-path:model", ["--out", "{outputFile}", "--model-json", "model-x", "--linger", "1"]), outputVia: "file" };
+    const panelPolicy: PanelPolicy = { version: 1, slots: [slot("lingering", "lingering", "model-r")], quorum: { stage1: 1, stage2: 0 }, requirementsSlot: null, incremental: "full", profiles: { lingering } };
+    const policy = { ...DEFAULT_POLICY, limits: { ...DEFAULT_POLICY.limits, harnessTimeoutMs: 2_000 } };
+    const result = await coordinator(undefined, 50).run({ root: repo, base, head, config, policy, panelPolicy });
+    expect(result.report.slotRuns[0]).toMatchObject({ terminal: "void", voidReasons: ["model_mismatch"], identity: { model: "model-x" } });
+  }, 60_000);
 
   it.each(["completed", "failed", "timed_out", "canceled"] as const)("voids a %s slot whose harness reported a mismatch that its recorded model hides", async terminal => {
     const panelPolicy: PanelPolicy = { version: 1, slots: [slot("flagged", "flagged", "model-r")], quorum: { stage1: 1, stage2: 0 }, requirementsSlot: null, incremental: "full", profiles: { flagged: await profile("flagged", "json-path:model") } };
