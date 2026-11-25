@@ -256,13 +256,13 @@ function createPasswordRoutes(
             twoFactorConfig
           );
           if (challenge) {
-            await checkCredentialAfterWrite(() =>
+            const discardChallenge = () =>
               ctx.config.database.delete({
                 model: 'two_factor_challenges',
                 where: [{ field: 'id', operator: 'eq', value: challenge.challenge.id }],
-                namespace: ctx.config.namespace ?? 'authfn'
-              })
-            );
+                namespace: ctx.namespace
+              });
+            await checkCredentialAfterWrite(discardChallenge);
             await emitAuthEvent(ctx.config, {
               type: 'authfn.2fa.challenged',
               requestId: eventRequestId(request),
@@ -274,6 +274,7 @@ function createPasswordRoutes(
                 primaryMethod: 'password'
               }
             });
+            await checkCredentialAfterWrite(discardChallenge);
             throw createPendingTwoFactorResponse(challenge.challenge);
           }
         }
@@ -290,6 +291,7 @@ function createPasswordRoutes(
           primaryEmail: result.user.primaryEmail,
           methods: ['password']
         });
+        await checkCredentialAfterWrite(() => revokeSessionById(ctx.config, issued.session.id));
         const response = buildSessionResponse(issued, body.sessionMode);
 
         return jsonSuccess(request, response.data, {

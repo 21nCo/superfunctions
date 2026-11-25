@@ -335,7 +335,7 @@ describe('authfn contained audit fixes', () => {
     });
   });
 
-  it('discards a sign-in session if a reset finishes before session creation', async () => {
+  it.each(['beforeSessionIssue', 'afterSessionIssue'] as const)('discards a sign-in session if a reset finishes during %s', async (hook) => {
     const email = 'ada@example.com';
     const delivery = createDeliveryRecorder();
     const config = passwordConfig(memoryAdapter({ debug: false }));
@@ -345,14 +345,18 @@ describe('authfn contained audit fixes', () => {
     const ready = new Promise<void>((resolve) => { sessionReady = resolve; });
     const waitForReset = new Promise<void>((resolve) => { allowSession = resolve; });
     const afterSessionIssue = vi.fn();
+    const pauseForReset = async () => {
+      sessionReady();
+      await waitForReset;
+    };
     const auth = createTestServer({
       ...config,
       hooks: {
-        async beforeSessionIssue() {
-          sessionReady();
-          await waitForReset;
-        },
-        afterSessionIssue
+        beforeSessionIssue: hook === 'beforeSessionIssue' ? pauseForReset : undefined,
+        async afterSessionIssue() {
+          afterSessionIssue();
+          if (hook === 'afterSessionIssue') await pauseForReset();
+        }
       },
       pluginRuntime: { password: { otp: { delivery: delivery.provider } } }
     });
@@ -374,7 +378,7 @@ describe('authfn contained audit fixes', () => {
     const rejected = await signIn;
     expect(rejected.status).toBe(401);
     expect(rejected.headers.has('set-cookie')).toBe(false);
-    expect(afterSessionIssue).not.toHaveBeenCalled();
+    expect(afterSessionIssue).toHaveBeenCalledTimes(hook === 'afterSessionIssue' ? 1 : 0);
     const sessions = await config.database.findMany<{ revokedAt: Date | null }>({
       model: 'sessions',
       where: [{ field: 'userId', operator: 'eq', value: signedUp.user.id }],

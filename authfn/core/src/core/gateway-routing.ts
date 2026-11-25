@@ -83,6 +83,8 @@ export interface AuthFnCanonicalGatewayOptions<TTarget> {
     request: Request,
     classification: AuthFnRouteClassification
   ) => Promise<Response> | Response;
+  /** OAuth provider operations served by the regional cells, for ingress error formatting. */
+  oauthBodyErrorOperations?: readonly ('oauthRegister' | 'oauthDeviceAuthorization')[];
   assertionTtlSeconds?: number;
   placementCacheTtlMs?: number;
   /** Maximum identities retained by the in-process placement cache. */
@@ -276,6 +278,7 @@ export function createAuthFnCanonicalGateway<TTarget>(
   validateKeyring(options.keyring);
   const publicAuthority = normalizeAuthority(options.publicAuthority);
   const basePath = normalizeBasePath(options.basePath ?? '/auth');
+  const oauthBodyErrorOperations = new Set<string>(options.oauthBodyErrorOperations);
   const now = options.now ?? (() => new Date());
   const assertionTtlSeconds = options.assertionTtlSeconds ?? 20;
   const placementCacheTtlMs = options.placementCacheTtlMs ?? 5_000;
@@ -473,7 +476,7 @@ export function createAuthFnCanonicalGateway<TTarget>(
       }
       const classification = classifyAuthFnRoute(request, basePath);
       try {
-        const bodyError = await checkGatewayBody(request, url.pathname, basePath);
+        const bodyError = await checkGatewayBody(request, url.pathname, basePath, oauthBodyErrorOperations);
         if (bodyError) return bodyError;
         const sanitizedRequest = stripClientRoutingHeaders(request);
         sanitizedRequest.headers.set('x-request-id', resolveRequestId(request));
@@ -519,7 +522,12 @@ export function createAuthFnCanonicalGateway<TTarget>(
   };
 }
 
-async function checkGatewayBody(request: Request, pathname: string, basePath: string): Promise<Response | undefined> {
+async function checkGatewayBody(
+  request: Request,
+  pathname: string,
+  basePath: string,
+  oauthBodyErrorOperations: ReadonlySet<string>
+): Promise<Response | undefined> {
   try {
     // The gateway has no route table. Admit bodies against the global limit
     // and let the matched regional endpoint enforce its own smaller limit.
@@ -528,7 +536,10 @@ async function checkGatewayBody(request: Request, pathname: string, basePath: st
     const path = stripBasePath(pathname, basePath).replace(/\/$/, '');
     const insideBase = basePath === '/' || pathname.startsWith(`${basePath}/`);
     const oauth = insideBase && request.method === 'POST' ? getOAuthBodyPolicy(path) : undefined;
-    if (!oauth || !(error instanceof AuthFnError) || (error.status !== 408 && error.status !== 413)) {
+    if (
+      !oauth || !oauthBodyErrorOperations.has(oauth.operationId)
+      || !(error instanceof AuthFnError) || (error.status !== 408 && error.status !== 413)
+    ) {
       throw error;
     }
     return Response.json({

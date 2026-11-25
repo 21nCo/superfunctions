@@ -87,12 +87,13 @@ describe('AuthFn canonical gateway routing', () => {
   });
 
   it.each([
-    ['register', 'application/json', 'invalid_client_metadata'],
-    ['device_authorization', 'application/x-www-form-urlencoded', 'invalid_request']
-  ] as const)('preserves the OAuth error for an oversized %s body at gateway ingress', async (path, contentType, code) => {
+    ['register', 'application/json', 'invalid_client_metadata', 'oauthRegister'],
+    ['device_authorization', 'application/x-www-form-urlencoded', 'invalid_request', 'oauthDeviceAuthorization']
+  ] as const)('preserves the OAuth error for an oversized %s body at gateway ingress', async (path, contentType, code, operation) => {
     const gateway = createAuthFnCanonicalGateway<unknown>({
       publicAuthority: 'https://account.example.com',
       basePath: '/custom-auth',
+      oauthBodyErrorOperations: [operation],
       placementDirectory: createInMemoryAuthFnPlacementDirectory(),
       keyring,
       resolveIdentity: () => { throw new Error('routing should not resolve identity for an oversized body'); },
@@ -124,12 +125,18 @@ describe('AuthFn canonical gateway routing', () => {
         return Response.json({ bytes: (await request.arrayBuffer()).byteLength });
       }
     });
-    const response = await gateway.handle(new Request('https://account.example.com/auth/oauth/device_authorization', {
+    const send = (size: number) => gateway.handle(new Request('https://account.example.com/auth/oauth/device_authorization', {
       method: 'POST',
-      body: 'a'.repeat(8 * 1024 + 1)
+      body: 'a'.repeat(size)
     }));
+    const response = await send(8 * 1024 + 1);
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ bytes: 8 * 1024 + 1 });
+    const oversized = await send(AUTHFN_MAX_BODY_BYTES + 1);
+    expect(oversized.status).toBe(413);
+    await expect(oversized.json()).resolves.toMatchObject({
+      error: { code: 'AUTHFN_VALIDATION_ERROR' }
+    });
   });
 
   it('claims placement only for explicitly approved first-use routes', async () => {
