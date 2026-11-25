@@ -345,7 +345,7 @@ function compileRelationFilter(
   if (quantifier === "$none" && foreignKeyOnPrimary(match)) return null;
   // FK membership alone cannot distinguish polymorphic records that share an ID.
   if (relation.type === "many-one" && endpointList(relation.to).length > 1) return null;
-  if (relation.type === "one-many" && endpointList(relation.from).length > 1) return null;
+  if (relation.type === "one-many" && (relation.fkField || relation.foreignKey) && endpointList(relation.from).length > 1) return null;
 
   const targets = new Map<string, Conjunct[]>();
   for (const target of endpointList(relationTargetEndpoint(match.relation, match.direction))) {

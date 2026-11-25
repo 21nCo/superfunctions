@@ -1039,6 +1039,7 @@ it("uses the same declared endpoint for legacy IDs in query and transact", async
       to: "task",
       relation: "containedTasks",
       inverse: "container",
+      fkField: "container",
     }],
   };
   const { db, server } = await createServer({ schema });

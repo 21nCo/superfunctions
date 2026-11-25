@@ -14,7 +14,6 @@ import {
   findRelationMatch,
   getRelationJoinTableName,
   relationFkFieldForManyOne,
-  relationFkFieldForOneMany,
   relationKeyFor,
   relationTargetEndpoint,
   resolveEndpointResource,
@@ -1048,15 +1047,13 @@ export class DbDataStore implements DataStore {
             }
           } else if ((rel as any).type === "one-many" && isForward) {
             // FK on secondary records pointing to primary
-            const fkField = relationFkFieldForOneMany(rel);
+            const fkField = rel.fkField || rel.foreignKey || rel.inverse || `${query.resource}Id`;
             if (primaryIds.length > 0) {
               records = await DbDataStore.findManyByIds(db, secondaryResource, fkField, primaryIds, namespace);
             }
           } else if ((rel as any).type === "one-many" && !isForward) {
             // Inverse one-many: primary has FK pointing to secondary (one side)
-            const fkField = endpointList(rel.from).length > 1
-              ? relationFkFieldForOneMany(rel)
-              : rel.fkField || rel.foreignKey || rel.relation || `${secondaryResource}Id`;
+            const fkField = rel.fkField || rel.foreignKey || rel.relation || `${secondaryResource}Id`;
             const fkValues = [
               ...new Set(
                 primaryRecords

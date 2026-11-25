@@ -16,7 +16,6 @@ import {
   relationKeyFor,
   relationTargetEndpoint,
   relationFkFieldForManyOne,
-  relationFkFieldForOneMany,
   resolveCapabilities,
   resolveEndpointResource,
 } from "@datafn/core";
@@ -188,13 +187,12 @@ function getRelatedRecords(
   };
   if (relation.type === "many-one" || relation.type === "one-many") {
     const manyOne = relation.type === "many-one";
+    const configuredFk = relation.fkField || relation.foreignKey;
     const fkEndpoint = manyOne ? relation.to : relation.from;
-    const polymorphicFk = endpointList(fkEndpoint).length > 1;
+    const polymorphicFk = Boolean(manyOne || configuredFk) && endpointList(fkEndpoint).length > 1;
     const fk = manyOne
       ? relationFkFieldForManyOne(relation)
-      : polymorphicFk
-        ? relationFkFieldForOneMany(relation)
-        : relation.fkField || relation.foreignKey || `${relation.inverse}Id`;
+      : configuredFk || `${relation.inverse}Id`;
     const fkResourceField = (ownerResource: string): string | undefined => {
       if (!polymorphicFk) return undefined;
       return getRelationFkFieldsForResource(schema as DatafnSchema, ownerResource)

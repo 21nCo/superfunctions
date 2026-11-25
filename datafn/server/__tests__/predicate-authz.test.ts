@@ -201,7 +201,7 @@ describe("predicate field authorization", () => {
     expect(result.body.result.data).toEqual([{ id: "per_1" }]);
   });
 
-  it("checks read access to a generated foreign key named like an inverse relation", async () => {
+  it("checks read access to an implicit foreign key named like an inverse relation", async () => {
     const [, employers] = schema.resources;
     const harness = await createHarness({
       ...schema,
@@ -212,6 +212,7 @@ describe("predicate field authorization", () => {
         to: "people",
         relation: "workers",
         inverse: "workplace",
+        fkField: "workplace",
       }],
     }, { workplace: "emp_1", workplaceResource: "employers" });
     server = harness.server;
