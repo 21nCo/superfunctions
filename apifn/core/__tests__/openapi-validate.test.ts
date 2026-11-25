@@ -258,6 +258,19 @@ describe("validateOpenAPI", () => {
     expect(result.document?.components?.schemas?.Copied).toEqual({ type: "integer" });
   });
 
+  it("checks string references in name maps before attaching temporary copies", async () => {
+    const doc = {
+      ...documentWithReference("#/x-schemas/Chosen"),
+      "x-schemas": { Chosen: { type: "integer" } },
+    };
+    Object.assign(doc.components.schemas, {
+      WithProperties: { type: "object", properties: { $ref: "#/x-apifn-reference-copies/0" } },
+    });
+    await expect(validateOpenAPI(doc)).resolves.toEqual([
+      expect.objectContaining({ message: "OpenAPI $ref target does not exist", severity: "error" }),
+    ]);
+  });
+
   it("refuses a named reference fragment regardless of unrelated allowlist entries", async () => {
     const doc = documentWithReference("#missing");
     const options = { externalReferences: new Map([["https://example.invalid/unused.json", "{}"]]) };
@@ -327,6 +340,33 @@ describe("validateOpenAPI", () => {
     try {
       const externalReferences = new Map([["C:\\project\\shared.yaml", "type: integer"]]);
       const result = await validateAndDereferenceOpenAPI(documentWithReference(ref), { externalReferences });
+      expect(result.errors).toEqual([]);
+      expect(result.document?.components?.schemas?.Value).toEqual({ type: "integer" });
+    } finally {
+      cwd.mockRestore();
+    }
+  });
+
+  it.each(["\\shared.yaml", "../../shared.yaml"])("keeps the Windows drive when resolving %s", async (ref) => {
+    const cwd = vi.spyOn(process, "cwd").mockReturnValue("C:\\project");
+    try {
+      const externalReferences = new Map([["C:\\shared.yaml", "type: integer"], ["/shared.yaml", "type: string"]]);
+      const result = await validateAndDereferenceOpenAPI(documentWithReference(ref), { externalReferences });
+      expect(result.errors).toEqual([]);
+      expect(result.document?.components?.schemas?.Value).toEqual({ type: "integer" });
+    } finally {
+      cwd.mockRestore();
+    }
+  });
+
+  it("preserves a backslash inside a POSIX working directory segment", async () => {
+    const cwd = vi.spyOn(process, "cwd").mockReturnValue("/virtual/project\\branch");
+    try {
+      const externalReferences = new Map([
+        ["/virtual/project/branch/shared.yaml", "type: string"],
+        ["/virtual/project%5Cbranch/shared.yaml", "type: integer"],
+      ]);
+      const result = await validateAndDereferenceOpenAPI(documentWithReference("./shared.yaml"), { externalReferences });
       expect(result.errors).toEqual([]);
       expect(result.document?.components?.schemas?.Value).toEqual({ type: "integer" });
     } finally {

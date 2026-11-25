@@ -71,14 +71,21 @@ function encodePointer(tokens: string[]): string {
 }
 
 const LOCAL_PATH_ORIGIN = "https://apifn-local-path.invalid";
-const WINDOWS_DRIVE_PATH = /^[a-z]:\//i;
+const WINDOWS_DRIVE_PATH = /^[a-z]:[\\/]/i;
 
 function workingDirectoryLocation(): DocumentLocation {
-  const cwd = typeof process !== "undefined" && process.cwd ? process.cwd().replaceAll("\\", "/") : "/";
+  const cwd = typeof process !== "undefined" && process.cwd ? process.cwd() : "/";
+  const isWindowsPath = WINDOWS_DRIVE_PATH.test(cwd);
+  if (isWindowsPath) {
+    const [drive, ...segments] = cwd.replaceAll("\\", "/").split("/");
+    const directory = segments.map(encodeURIComponent).join("/").replace(/\/$/, "");
+    const url = new URL("file:///" + drive + "/" + (directory ? directory + "/" : ""));
+    return { url, isPath: true, isWindowsPath };
+  }
   const path = (cwd.startsWith("/") ? cwd : "/" + cwd).replace(/\/$/, "") + "/";
   const url = new URL(LOCAL_PATH_ORIGIN);
   url.pathname = path.split("/").map(encodeURIComponent).join("/");
-  return { url, isPath: true, isWindowsPath: WINDOWS_DRIVE_PATH.test(cwd) };
+  return { url, isPath: true, isWindowsPath };
 }
 
 function absolutePathKey(pathname: string): string {
@@ -92,7 +99,7 @@ function absolutePathKey(pathname: string): string {
 function resolveDocumentURI(base: DocumentLocation, ref: string) {
   const normalized = ref.replaceAll("\\", "/");
   const windowsDrive = WINDOWS_DRIVE_PATH.test(normalized);
-  const url = windowsDrive ? new URL("/" + normalized, LOCAL_PATH_ORIGIN) : new URL(normalized, base.url);
+  const url = windowsDrive ? new URL("file:///" + normalized) : new URL(normalized, base.url);
   const absolute = /^(?:[a-z][a-z0-9+.-]*:|\/\/)/i.test(normalized.trimStart());
   const fragment = url.hash.slice(1);
   url.hash = "";
@@ -198,7 +205,7 @@ function prepareReferences(document: OpenAPIDocument, externalReferences?: Reado
       const chain = new Set(aliases);
       const overrides = new Map<string, { value: unknown; source: ReferenceDocument }>();
       while (typeof value === "object" && value !== null && mode !== "literal" &&
-          !openAPIReferenceContext.isMap(mode) && "$ref" in value && typeof value.$ref === "string" && value.$ref) {
+          "$ref" in value && typeof value.$ref === "string" && value.$ref) {
         // A reference can point into its own siblings. Following a cycle
         // through other aliases cannot provide a concrete object to traverse.
         if (chain.has(value)) {
@@ -312,7 +319,7 @@ function prepareReferences(document: OpenAPIDocument, externalReferences?: Reado
       if (mode === "literal") {
         literalReferences.set(copy, value.$ref);
         Reflect.deleteProperty(copy, "$ref");
-      } else if (value.$ref && !openAPIReferenceContext.isMap(mode)) {
+      } else if (value.$ref) {
         Reflect.set(copy, "$ref", rewriteReference(value.$ref, source, mode));
       }
     }
