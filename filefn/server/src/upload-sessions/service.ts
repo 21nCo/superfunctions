@@ -709,6 +709,11 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
     return errors.storageStatUnavailable();
   }
 
+  function missingProxyPart(requestId: string | undefined, uploadSessionId: string): errors.FileFnError {
+    warnUploadFailure('Recorded upload parts are missing in storage', requestId, uploadSessionId);
+    return errors.uploadIncomplete();
+  }
+
   // Whether every recorded proxy part is still in storage. A failed stat
   // without a not-found signal is retryable and says nothing about the part.
   async function proxyPartsPresent(
@@ -2237,6 +2242,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
           if (!storage.openUploadStream || !storage.openDownloadStream) {
               throw new Error('Storage adapter does not support streaming required for proxy upload completion');
           }
+          const openDownloadStream = storage.openDownloadStream.bind(storage);
 
           // The part objects stay until the session is completed, so every
           // holder of the session finds them.
@@ -2244,8 +2250,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
           if (!(await proxyPartsPresent(session, sortedParts, policyStorageTarget, ctx.requestId))) {
             // Never open (and so truncate) an object without every part.
             // The public error names neither the session nor the part keys.
-            warnUploadFailure('Recorded upload parts are missing in storage', ctx.requestId, uploadSessionId);
-            throw errors.uploadIncomplete();
+            throw missingProxyPart(ctx.requestId, uploadSessionId);
           } else {
             if (!(await holdsClaim(uploadSessionId, claim))) return lostClaimResult(uploadSessionId);
             stitchedKey = attemptKey;
@@ -2256,15 +2261,23 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
             });
 
             const writer = writeStream.getWriter();
+            const readPart = async <T>(read: () => Promise<T>): Promise<T> => {
+              try {
+                return await read();
+              } catch (error) {
+                if (isMissingStorageObject(error)) throw missingProxyPart(ctx.requestId, uploadSessionId);
+                throw error;
+              }
+            };
             try {
                 for (const part of sortedParts) {
                     const partKey = proxyPartKey(session.storageKey, part.partNumber);
-                    const readStream = await storage.openDownloadStream({ key: partKey, target: policyStorageTarget });
+                    const readStream = await readPart(() => openDownloadStream({ key: partKey, target: policyStorageTarget }));
                     const reader = readStream.getReader();
 
                     try {
                         while (true) {
-                            const { done, value } = await reader.read();
+                            const { done, value } = await readPart(() => reader.read());
                             if (done) break;
                             await writer.write(value);
                         }

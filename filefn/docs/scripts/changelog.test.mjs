@@ -33,6 +33,7 @@ test('changelog lists versions, guest ownership, and the releases page', () => {
   assert.ok(security, '0.7.0 section');
   assert.match(security, /principal `anonymous`/);
   assert.match(security, /owns nothing/);
+  assert.match(security, /Signed-in owners can manage grants for their own files over HTTP/);
   assert.match(security, /revokedAt/);
   assert.match(security, /filePermissions/);
   assert.match(security, /resolveSession/);

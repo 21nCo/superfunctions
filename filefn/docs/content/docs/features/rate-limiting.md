@@ -45,11 +45,11 @@ With `rateLimit.limits`, each category is limited only when you configure it. Th
 | --- | --- |
 | `uploadInit` | `POST /upload/init` |
 | `uploadSign` | `POST /upload/:id/parts/:n/sign` |
-| `uploadComplete` | recording a part and `POST /upload/:id/complete` |
+| `uploadComplete` | Uploading or recording a part and `POST /upload/:id/complete` |
 | `download` | file download |
 | `shareDownload` | downloading through a share link |
 | `shareCreate` | creating a share link |
-| `artifactDownload` | artifact download |
+| `artifactDownload` | Listing artifacts, requesting an artifact URL, or downloading an artifact |
 | `list` | listing files |
 | `processing` | `POST /:fileId/process` |
 | `grantCreate` | creating a grant |

@@ -2,7 +2,9 @@ import { mkdtemp, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { memoryAdapter } from '@superfunctions/db/adapters/memory';
+import { createNotFoundError } from '@superfunctions/storage/internal/errors';
 import { createLocalStorageAdapter } from '@superfunctions/storage-local';
+import type { ObservationMetric } from '@superfunctions/observability';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createFileFn, type FileFnConfig } from '../src/index.js';
 
@@ -94,6 +96,46 @@ describe('stable upload errors (N-06)', () => {
       message: 'Upload incomplete',
     });
     assertNoAdapterLeak(JSON.stringify(body), uploadSessionId);
+  });
+
+  it.each(['open', 'read'])('returns upload incomplete for a missing source part during stitch %s', async (stage) => {
+    const storage = createLocalStorageAdapter({ rootDir });
+    const open = storage.openDownloadStream!.bind(storage);
+    let missing = true;
+    storage.openDownloadStream = async (input) => {
+      if (missing && input.key.endsWith('.part1')) {
+        const error = createNotFoundError('test source part unavailable');
+        if (stage === 'open') throw error;
+        return new ReadableStream({ start(controller) { controller.error(error); } });
+      }
+      return open(input);
+    };
+    const metrics: ObservationMetric[] = [];
+    const fileFn = makeFileFn({ storage, observability: { metrics: (metric) => { metrics.push(metric); } } });
+    const init = await fileFn.router.handle(new Request('http://localhost/upload/init', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ policy: 'docs', fileName: 'a.txt', size: 1, mimeType: 'text/plain' }),
+    }));
+    expect(init!.status).toBe(200);
+    const created = await init!.json() as { data: { uploadSessionId: string; uploadSessionToken: string } };
+    const url = `http://localhost/upload/${created.data.uploadSessionId}`;
+    const headers = { 'x-upload-session-token': created.data.uploadSessionToken };
+    const part = await fileFn.router.handle(new Request(`${url}/parts/1`, { method: 'PUT', headers, body: 'x' }));
+    expect(part!.status).toBe(200);
+
+    const complete = () => fileFn.router.handle(new Request(`${url}/complete`, { method: 'POST', headers }));
+    const rejected = await complete();
+    expect(rejected!.status).toBe(409);
+    expect(await rejected!.json()).toMatchObject({
+      error: { code: 'FILEFN_UPLOAD_INCOMPLETE', message: 'Upload incomplete' },
+    });
+    expect(metrics.filter((metric) => metric.kind === 'filefn.upload')).toMatchObject([
+      { operation: 'failure', labels: { reason: 'parts_missing' } },
+    ]);
+
+    missing = false;
+    expect((await complete())!.status).toBe(200);
   });
 
   it.each(['part', 'output'])('returns a retryable error when stat fails for the %s', async (target) => {

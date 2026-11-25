@@ -1656,7 +1656,7 @@ export function createProcessingService(config: ProcessingServiceConfig) {
       versionId: input.versionId,
       artifactsCreated,
     });
-    recordProcessingDuration(metrics, Date.now() - startedAt);
+    recordProcessingDuration(metrics, Date.now() - startedAt, true);
     // Recorded only after the event, so a delivery that fails before this
     // point leaves the job to notify on its next delivery.
     try {
@@ -1821,7 +1821,7 @@ export function createProcessingService(config: ProcessingServiceConfig) {
         versionId: input.versionId,
         artifactsCreated,
       });
-      recordProcessingDuration(metrics, Date.now() - startedAt);
+      recordProcessingDuration(metrics, Date.now() - startedAt, processingErrors.length === 0);
 
       return { artifactsCreated, errors: processingErrors };
     },

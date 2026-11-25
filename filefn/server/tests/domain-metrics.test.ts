@@ -239,7 +239,7 @@ describe('domain metrics (N-04)', () => {
     expect(observed).not.toContain('filefn.upload');
   });
 
-  it('records processing duration when a run completes', async () => {
+  it.each([true, false])('records duration and outcome when a run completes (success=%s)', async (success) => {
     const pending: Promise<unknown>[] = [];
     const { fileFn, metrics } = makeFileFn({
       runtime: {
@@ -253,7 +253,9 @@ describe('domain metrics (N-04)', () => {
           name: 'noop',
           supportedMimeTypes: ['text/plain'],
           async process() {
-            return { success: true, artifacts: [] };
+            return success ? { success: true, artifacts: [] } : {
+              success: false, artifacts: [], error: 'test processor failed',
+            };
           },
         }],
       },
@@ -271,7 +273,7 @@ describe('domain metrics (N-04)', () => {
 
     const durations = ofKind(metrics, 'filefn.processing', 'complete');
     expect(durations).toHaveLength(1);
-    expect(durations[0]).toMatchObject({ ok: true });
+    expect(durations[0]).toMatchObject({ ok: success });
     expect(typeof durations[0]?.durationMs).toBe('number');
     expect(durations[0]!.durationMs).toBeGreaterThanOrEqual(0);
     expect(JSON.stringify(durations[0])).not.toMatch(/file_|ver_|uploadSession/);

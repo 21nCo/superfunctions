@@ -45,7 +45,7 @@ const fileFn = createFileFn({
 });
 ```
 
-`rateLimiter` (alone) applies the same limit to every route. `rateLimit.limits` (per-category) is the recommended path.
+The standalone `rateLimiter` applies to upload init, signing, part uploads, completion, and file downloads. Use `rateLimit.limits` for per-category caps.
 
 ## Categories
 
@@ -53,12 +53,16 @@ const fileFn = createFileFn({
 | --- | --- |
 | `uploadInit` | `POST /upload/init` |
 | `uploadSign` | `POST /upload/:id/parts/:n/sign` |
-| `uploadComplete` | `POST /upload/:id/parts/:n/complete`, `POST /upload/:id/complete`, `POST /upload/:id/abort` |
+| `uploadComplete` | `PUT /upload/:id/parts/:n`, `POST /upload/:id/parts/:n/complete`, `POST /upload/:id/complete` |
 | `download` | `GET /:fileId/download`, `GET /:fileId/versions/:versionId/download`, `GET /proxy/files/:fileId/download` |
 | `shareDownload` | `GET /share-links/:token/download`, `GET /proxy/share-links/:token/download` |
-| `artifactDownload` | `GET /:fileId/artifacts/:artifactId/download` |
+| `shareCreate` | `POST /:fileId/share-links` |
+| `artifactDownload` | List artifacts, get an artifact download URL, and download through the artifact proxy |
+| `list` | `GET /` |
+| `processing` | `POST /:fileId/process` |
+| `grantCreate` | `POST /:fileId/permissions` |
 
-Routes not in any category (read-only file metadata, listing, render-descriptor) aren't rate-limited by filefn. Apply your framework's middleware on top if you want a global cap.
+Apply your framework's middleware to cap routes such as file metadata, render descriptors, and upload aborts.
 
 ## Algorithms
 

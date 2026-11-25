@@ -102,7 +102,7 @@ Pass a metric sink directly in the `observability` configuration object to recei
 | --- | --- | --- |
 | `filefn.upload` | `failure` | An upload fails because storage stat is unavailable (`size_unverified`), parts are missing (`parts_missing`), or the stored size does not match (`size_mismatch`). `labels.reason` is that value. `ok` is false. |
 | `filefn.quota` | `denied` | A quota check refuses the upload. `ok` is false. |
-| `filefn.processing` | `complete` | A processing run reaches `processing.completed`. `durationMs` is the elapsed processing time. `ok` is true. |
+| `filefn.processing` | `complete` | A processing run reaches `processing.completed`. `durationMs` is the elapsed processing time. `ok` is false if the run reported processing or artifact errors. |
 
 ```ts
 const fileFn = createFileFn({

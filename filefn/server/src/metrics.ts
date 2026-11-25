@@ -104,11 +104,11 @@ export function recordQuotaDenial(metrics: FileFnMetrics | undefined): void {
 }
 
 /** Wall time of one processing run that reached `processing.completed`. */
-export function recordProcessingDuration(metrics: FileFnMetrics | undefined, durationMs: number): void {
+export function recordProcessingDuration(metrics: FileFnMetrics | undefined, durationMs: number, ok: boolean): void {
   void record(metrics, {
     kind: 'filefn.processing',
     operation: 'complete',
-    ok: true,
+    ok,
     durationMs: Math.max(0, durationMs),
   }, true);
 }
