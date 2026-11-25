@@ -348,6 +348,20 @@ describe("withheld errors outside tool handlers (MCP-SEC-08)", () => {
     expect(onError).not.toHaveBeenCalled();
   });
 
+  it("answers malformed tools/call params with InvalidParams", async () => {
+    const onError = vi.fn();
+    const registry = new McpFnRegistry().register({ name: "t", description: "T.", inputSchema: { type: "object" }, handler: async () => structuredResult({ ok: true }) });
+    const client = await connect(registry, { onError });
+    const { CallToolResultSchema } = await import("@modelcontextprotocol/sdk/types.js");
+    for (const params of [{ name: 42 }, { name: "t", arguments: [1] }]) {
+      const error = await client.request({ method: "tools/call", params } as never, CallToolResultSchema)
+        .then(() => undefined, (failure: unknown) => failure);
+      expect(error).toMatchObject({ code: ErrorCode.InvalidParams });
+    }
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(onError).not.toHaveBeenCalled();
+  });
+
   it("withholds schema errors that handlers throw", async () => {
     const onError = vi.fn();
     const { z } = await import("zod");
