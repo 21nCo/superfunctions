@@ -221,8 +221,21 @@ export class McpFnOAuthClientProvider implements OAuthClientProvider {
     return value;
   }
 
-  clientInformation(): Promise<OAuthClientInformationMixed | undefined> {
-    return this.store.getClientInformation();
+  async clientInformation(): Promise<OAuthClientInformationMixed | undefined> {
+    const information = await this.store.getClientInformation();
+    // Client information saved before the MCP SDK recorded the authorization
+    // server's issuer cannot prove where its client secret belongs: the SDK
+    // would present it to whichever server an MCP server names first. Drop
+    // such a confidential registration so the client registers again; store
+    // pre-registered confidential clients with their `issuer`.
+    if (
+      information &&
+      typeof (information as { client_secret?: unknown }).client_secret === "string" &&
+      typeof (information as { issuer?: unknown }).issuer !== "string"
+    ) {
+      return undefined;
+    }
+    return information;
   }
 
   async saveClientInformation(value: OAuthClientInformationMixed): Promise<void> {

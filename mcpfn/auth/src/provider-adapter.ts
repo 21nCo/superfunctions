@@ -83,8 +83,9 @@ export interface McpFnAuthProviderAdapterOptions<TSession extends McpFnAuthSessi
    * Audience check. When the provider implements `authorize`, it decides
    * whether the session may use `resource`. Otherwise the principal's
    * `resourceIds` must contain `resource`. Set this to true only when every
-   * credential the provider accepts is meant for this server: the check is
-   * then skipped and `authInfo.resource` is left unset.
+   * credential without any `resourceIds` is meant for this server: such
+   * credentials are then accepted without `authInfo.resource`. A credential
+   * bound to other resources is refused either way.
    */
   allowUnboundCredentials?: boolean;
   /** Current time in milliseconds, for expiry checks. Defaults to Date.now. */
@@ -102,8 +103,10 @@ export interface McpFnAuthProviderAdapter<TSession extends McpFnAuthSessionLike>
 export function createMcpFnAuthProviderAdapter<TSession extends McpFnAuthSessionLike>(
   options: McpFnAuthProviderAdapterOptions<TSession>,
 ): McpFnAuthProviderAdapter<TSession> {
-  const resource = new URL(options.resource.toString());
-  resource.hash = "";
+  const normalized = new URL(options.resource.toString());
+  normalized.hash = "";
+  // Kept as a string so nothing outside can change the expected audience.
+  const audience = normalized.toString();
   return {
     async authenticate(request) {
       const bearer = readBearerToken(request);
@@ -118,29 +121,40 @@ export function createMcpFnAuthProviderAdapter<TSession extends McpFnAuthSession
           credentials: "omit",
         }));
       if (!session) return null;
-      const now = options.clock?.() ?? Date.now();
-      if (session.expiresAt !== undefined && !(session.expiresAt.getTime() > now)) return null;
-      const principal = options.map
+      const expired = () => {
+        const now = options.clock?.() ?? Date.now();
+        if (session.expiresAt !== undefined && !(session.expiresAt.getTime() > now)) return true;
+        // A custom mapping's expiry (whole seconds) is checked as given; the
+        // default mapping's comes from session.expiresAt, checked exactly above.
+        const mappedExpiry = options.map ? principal?.expiresAt : undefined;
+        return mappedExpiry !== undefined && !(mappedExpiry * 1_000 > now);
+      };
+      let principal: McpFnPrincipal | undefined;
+      if (expired()) return null;
+      principal = options.map
         ? await withRequestClone(request, (mapRequest) =>
           options.map!(session, mapRequest))
         : defaultPrincipal(session);
-      if (principal.expiresAt !== undefined && !(principal.expiresAt * 1_000 > now)) return null;
       let audienceVerified = false;
       if (options.provider.authorize) {
-        if (!(await options.provider.authorize(session, resource.toString()))) return null;
+        if (!(await options.provider.authorize(session, audience))) return null;
         audienceVerified = true;
-      } else if (principal.resourceIds.some((id) => sameResource(id, resource))) {
+      } else if (principal.resourceIds.some((id) => sameResource(id, audience))) {
         audienceVerified = true;
-      } else if (options.allowUnboundCredentials !== true) {
+      } else if (options.allowUnboundCredentials !== true || principal.resourceIds.length > 0) {
+        // The opt-in covers credentials with no binding at all; one bound to
+        // another resource is always refused.
         return null;
       }
       if (
         options.authorize &&
         !(await withRequestClone(request, (authorizeRequest) =>
-          options.authorize!({ principal, request: authorizeRequest })))
+          options.authorize!({ principal: principal!, request: authorizeRequest })))
       ) {
         return null;
       }
+      // Checked again after the asynchronous steps above.
+      if (expired()) return null;
       return {
         session,
         principal,
@@ -149,7 +163,8 @@ export function createMcpFnAuthProviderAdapter<TSession extends McpFnAuthSession
           clientId: principal.clientId,
           scopes: [...principal.scopes],
           ...(principal.expiresAt !== undefined ? { expiresAt: principal.expiresAt } : {}),
-          ...(audienceVerified ? { resource } : {}),
+          // A fresh URL each time: a handler changing it cannot move the audience.
+          ...(audienceVerified ? { resource: new URL(audience) } : {}),
           extra: {
             ...principal.extra,
             subject: principal.subject,
@@ -164,11 +179,11 @@ export function createMcpFnAuthProviderAdapter<TSession extends McpFnAuthSession
   };
 }
 
-function sameResource(candidate: string, resource: URL): boolean {
+function sameResource(candidate: string, audience: string): boolean {
   try {
     const parsed = new URL(candidate);
     parsed.hash = "";
-    return parsed.toString() === resource.toString();
+    return parsed.toString() === audience;
   } catch {
     return false;
   }

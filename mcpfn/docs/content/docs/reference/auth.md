@@ -35,9 +35,11 @@ exchange/refresh/revocation diagnostics, and redacts credentials.
 Stored tokens and client information keep the `issuer` the MCP SDK records,
 so they are only sent to that authorization server. Tokens saved without an
 `issuer` (by an earlier version) are returned without their refresh token, so
-the client authorizes again when the access token expires instead of
-presenting the refresh token to whichever authorization server an MCP server
-names. Callback `state` is checked by this provider's
+the client authorizes again when the access token expires, and confidential
+client information (with a `client_secret`) saved without an `issuer` is not
+returned, so the client registers again; neither secret is presented to
+whichever authorization server an MCP server names. Store pre-registered
+confidential clients with their `issuer`. Callback `state` is checked by this provider's
 `validateAuthorizationState()`; a plain SDK provider without that method gets
 PKCE protection only.
 
@@ -106,7 +108,8 @@ containing only that exact Bearer token. An AuthProvider's `authorize()` hook
 receives the normalized MCP resource URL before trusted context is created.
 Without that hook, the session's `resourceIds` must contain the resource URL;
 otherwise the credential is refused. `allowUnboundCredentials: true` accepts
-credentials with no binding, and then `authInfo.resource` is not set. Sessions
+credentials with no `resourceIds` at all (without setting `authInfo.resource`);
+a credential bound to other resources is always refused. Sessions
 past their `expiresAt` (or a mapped principal's) are refused. The default
 mapping sets `authInfo.clientId` to the session's `metadata.clientId`, or else
 `<actorType>:<actorId>`; it never uses the session ID. `auth-diagnose` and
