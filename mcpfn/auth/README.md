@@ -77,10 +77,10 @@ McpFn disables automatic redirects, reapplies that policy at every redirect,
 streams responses through a byte cap, and applies a ten-second deadline by
 default. `maxBytes`, `timeoutMs`, and `maxRedirects` can tighten those bounds.
 A Client ID Metadata Document must contain a `client_id` equal to its URL, be
-served as `application/json`, and use `token_endpoint_auth_method` `none` or
-`private_key_jwt` (an omitted method means `client_secret_basic` and is
-refused). Registrations and documents whose `client_uri`, `logo_uri`,
-`tos_uri` or `policy_uri` is not an absolute `https:` URL are refused with
+served with a single `application/json` media type, and use
+`token_endpoint_auth_method` `none` (an omitted method means
+`client_secret_basic` and is refused). Registrations and documents whose `client_uri`, `logo_uri`,
+`tos_uri` or `policy_uri` is not an absolute `https://` URL are refused with
 `invalid_client_metadata`. The `allow` policy sees only the URL: reject
 private, loopback and link-local hosts there.
 

@@ -794,7 +794,7 @@ function registrationEligibility(
     return {
       eligibility: "ineligible",
       scopeRejection: client.source === "client-metadata-document" &&
-        (!supportedMethods || supportedMethods.includes(fetchedAuthMethod(client, registration))),
+        fetchedDocumentAccepted(client, registration, supportedMethods),
     };
   }
   return { eligibility: method, scopeRejection: false };
@@ -811,30 +811,35 @@ function fetchedAuthMethod(
     : client.tokenEndpointAuthMethod;
 }
 
-/** Server defaults for a Client ID Metadata Document without a method. */
-const METADATA_DOCUMENT_DEFAULT_AUTH_METHODS = ["none", "client_secret_basic"] as const;
+/**
+ * Whether the server accepts the fixture as a Client ID Metadata Document it
+ * fetches: such a document is public, so its method (client_secret_basic
+ * when omitted) must be `none`, and the target must support `none`.
+ */
+function fetchedDocumentAccepted(
+  client: McpFnNormalizedClientRegistration,
+  registration: McpFnHostedRegistrationFixture,
+  supported: readonly string[] | undefined,
+): boolean {
+  return fetchedAuthMethod(client, registration) === "none" && (!supported || supported.includes("none"));
+}
 
 /**
- * A stored registration without a method is `none`; the server defaults a
- * Client ID Metadata Document it fetches to `client_secret_basic`. The
- * harness cannot tell which path the target takes for a
- * client-metadata-document fixture without a method, so the result is
- * indeterminate when the target supports only one of the two defaults.
+ * A client-metadata-document fixture is either stored by the target (its
+ * method, `none` when omitted, must be supported) or fetched by the server
+ * (see fetchedDocumentAccepted). The harness cannot tell which path the
+ * target takes, so the result is indeterminate when the two disagree.
  */
 function authMethodEligibility(
   client: McpFnNormalizedClientRegistration,
   registration: McpFnHostedRegistrationFixture,
   supported: readonly string[] | undefined,
 ): RegistrationEligibility {
-  if (!supported) return "eligible";
-  const declared: unknown = registration.metadata.token_endpoint_auth_method;
-  if (client.source === "client-metadata-document" && (declared === undefined || declared === null)) {
-    const defaults = METADATA_DOCUMENT_DEFAULT_AUTH_METHODS
-      .filter((method) => supported.includes(method)).length;
-    if (defaults === METADATA_DOCUMENT_DEFAULT_AUTH_METHODS.length) return "eligible";
-    return defaults === 0 ? "ineligible" : "indeterminate";
-  }
-  return supported.includes(client.tokenEndpointAuthMethod) ? "eligible" : "ineligible";
+  const stored = !supported || supported.includes(client.tokenEndpointAuthMethod);
+  if (client.source !== "client-metadata-document") return stored ? "eligible" : "ineligible";
+  const fetched = fetchedDocumentAccepted(client, registration, supported);
+  if (stored && fetched) return "eligible";
+  return stored || fetched ? "indeterminate" : "ineligible";
 }
 
 function isUnvettedErrorPage(

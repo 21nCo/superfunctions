@@ -1387,10 +1387,10 @@ async function resolveClient(
   // A metadata document is public, so it cannot carry a shared secret. An
   // omitted method means client_secret_basic (RFC 7591) and is refused too.
   const documentAuthMethod = (record as OAuthClientMetadata).token_endpoint_auth_method ?? "client_secret_basic";
-  if (documentAuthMethod !== "none" && documentAuthMethod !== "private_key_jwt") {
+  if (documentAuthMethod !== "none") {
     throw new McpFnHostedAuthorizationError(
       "invalid_client_metadata",
-      "Client ID Metadata Document clients must use token_endpoint_auth_method none or private_key_jwt",
+      "Client ID Metadata Document clients must use token_endpoint_auth_method none",
     );
   }
   const registration = normalizeMcpClientRegistration({
@@ -1442,7 +1442,10 @@ function normalizeClientMetadata(
     } catch {
       parsed = undefined;
     }
-    if (!parsed || parsed.protocol !== "https:" || parsed.username || parsed.password) {
+    // An explicit https:// authority: "https:host" would also parse, but a
+    // consent page would resolve it against its own origin.
+    if (!parsed || parsed.protocol !== "https:" || parsed.username || parsed.password ||
+        !/^https:\/\//i.test(uri as string)) {
       throw new McpFnHostedAuthorizationError(
         "invalid_client_metadata",
         `${field} must be an https URL`,
@@ -1587,7 +1590,10 @@ async function assertClientMetadataResponse(response: Response): Promise<void> {
       "Client ID Metadata Document could not be loaded",
     );
   }
-  const mediaType = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
+  const contentType = response.headers.get("content-type") ?? "";
+  // Exactly one media type (combined duplicate headers contain a comma),
+  // whose essence is application/json; parameters are allowed.
+  const mediaType = contentType.includes(",") ? undefined : contentType.split(";", 1)[0]?.trim().toLowerCase();
   if (mediaType !== "application/json") {
     await response.body?.cancel().catch(() => undefined);
     throw new McpFnHostedAuthorizationError(

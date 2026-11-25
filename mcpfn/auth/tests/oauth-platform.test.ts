@@ -1276,6 +1276,7 @@ describe("McpFn hosted authorization compatibility", () => {
     ["javascript:alert(1)"],
     ["http://client.example.com/logo.png"],
     ["https://user:pass@client.example.com/"],
+    ["https:terms.example.test"],
     [42],
   ])("rejects a dynamic registration whose logo_uri is %j", async (logoUri) => {
     const register = vi.fn();
@@ -1303,6 +1304,8 @@ describe("McpFn hosted authorization compatibility", () => {
     ["without client_id", { redirect_uris: ["https://client.example.com/callback"], token_endpoint_auth_method: "none" }, "application/json"],
     ["with a secret auth method", { client_id: "https://clients.example.com/client.json", redirect_uris: ["https://client.example.com/callback"], token_endpoint_auth_method: "client_secret_post" }, "application/json"],
     ["served as another media type", { client_id: "https://clients.example.com/client.json", redirect_uris: ["https://client.example.com/callback"], token_endpoint_auth_method: "none" }, "text/plain; note=application/json"],
+    ["served with conflicting media types", { client_id: "https://clients.example.com/client.json", redirect_uris: ["https://client.example.com/callback"], token_endpoint_auth_method: "none" }, "application/json; charset=utf-8, text/plain"],
+    ["using private_key_jwt", { client_id: "https://clients.example.com/client.json", redirect_uris: ["https://client.example.com/callback"], token_endpoint_auth_method: "private_key_jwt" }, "application/json"],
   ])("rejects a Client ID Metadata Document %s", async (_label, document, contentType) => {
     const clientId = "https://clients.example.com/client.json";
     const authorize = vi.fn(async () => Response.json({ ok: true }));

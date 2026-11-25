@@ -410,7 +410,15 @@ export async function runAuthenticatedOfficialConformance(
       url: conformance.url,
       headers: lease.credential.headers,
     });
-    result = redactRemoteCredential(lease.credential, await runConformance({ ...conformance, stdio: "pipe", url: proxy.url }, value => String(redactRemoteCredential(lease.credential, value))), { preserveKeys: true });
+    // The proxy URL's path token is a credential too: keep it out of the
+    // captured output. (It is visible in the runner's arguments while the
+    // proxy runs, to processes allowed to inspect them.)
+    const pathToken = new URL(proxy.url).pathname.split("/")[1] ?? "";
+    const redact = (value: string) => {
+      const text = String(redactRemoteCredential(lease.credential, value));
+      return pathToken ? text.split(pathToken).join("[redacted-proxy-path]") : text;
+    };
+    result = redactRemoteCredential(lease.credential, await runConformance({ ...conformance, stdio: "pipe", url: proxy.url }, redact), { preserveKeys: true });
   } catch (error) {
     operationFailure = safeFailure(error);
   }
