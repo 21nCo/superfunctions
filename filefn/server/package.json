@@ -1,6 +1,6 @@
 {
   "name": "@filefn/server",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "description": "FileFn server SDK for file upload/download handling",
   "type": "module",
   "main": "./dist/index.js",
