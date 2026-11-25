@@ -179,103 +179,126 @@ export function workLeft(work: WorkBudget, kind: WorkKind, redacted = false): nu
 
 const MIB = 2 ** 20;
 /**
- * The largest young generation a supported Node version gives an isolate by default: three 64 MiB semi-spaces on
- * Node 24 (three 16 MiB ones on Node 20 and 22, three 32 MiB ones on Node 26).
+ * The semi-space V8 gives an isolate by default on a machine with 16 GiB or more, by V8 version (measured with
+ * `--max-old-space-size=32`: 48 MiB of young generation on Node 20 and 22, 192 MiB on Node 24, 96 MiB on Node 26), in
+ * MiB. Another version is assumed to use the largest of them; a machine with less memory uses less, never more.
  */
-const MAX_DEFAULT_YOUNG_GENERATION = 192 * MIB;
+const DEFAULT_SEMI_SPACE_MB: Readonly<Record<string, number>> = { "11.3": 16, "12.4": 16, "13.6": 64, "14.6": 32 };
+const LARGEST_DEFAULT_SEMI_SPACE_MB = 64;
 const OLD_SPACE_FLAG = /^--?max[-_]old[-_]space[-_]size=\+?(\d+)$/;
-const SEMI_SPACE_FLAG = /(?:^|[\s"])--?max[-_]semi[-_]space[-_]size=\+?(\d+)(?=$|[\s"])/g;
-/** NODE_OPTIONS as this module read it when it loaded (the process can change it later, for its child processes). */
+const SEMI_SPACE_FLAG = /^--?max[-_]semi[-_]space[-_]size=\+?(\d+)$/;
+/**
+ * NODE_OPTIONS as this module read it when it loaded: Node read it at startup and no API reports that value, and a
+ * change made afterwards (for child processes) did not size this heap, so it is never read again.
+ */
 const startupNodeOptions = process.env.NODE_OPTIONS ?? "";
 
-/** The last `--max-old-space-size` among `options` (the command line, which V8 reads last), in bytes. */
-function oldSpaceFlag(options: readonly string[]): number | undefined {
+/** Splits NODE_OPTIONS as Node does: on spaces, with double quotes grouping and a backslash escaping inside them. */
+function nodeOptionsTokens(options: string): string[] {
+  const tokens: string[] = [];
+  let token = "";
+  let quoted = false;
+  for (let index = 0; index < options.length; index += 1) {
+    const char = options[index];
+    if (quoted && char === "\\" && index + 1 < options.length) {
+      index += 1;
+      token += options[index];
+    } else if (char === '"') {
+      quoted = !quoted;
+    } else if (char === " " && !quoted) {
+      tokens.push(token);
+      token = "";
+    } else {
+      token += char;
+    }
+  }
+  tokens.push(token);
+  return tokens;
+}
+
+/** The last value of the size flag `flag` among `options` (V8 takes the last), in MiB. */
+function sizeFlag(options: readonly string[], flag: RegExp): number | undefined {
   let size: number | undefined;
   for (const option of options) {
-    const match = OLD_SPACE_FLAG.exec(option);
+    const match = flag.exec(option);
     if (match) {
-      size = Number(match[1]) * MIB;
+      size = Number(match[1]);
     }
   }
   return size;
 }
 
-/** The young generation V8 builds from semi-spaces of `semiSpaceMb`: rounded up to a power of two, three of them. */
+/** The young generation V8 builds from semi-spaces of `semiSpaceMb`: three of them, rounded up to a power of two. */
 function youngGeneration(semiSpaceMb: number): number {
-  let semiSpace = MIB;
+  let semiSpace = MIB / 2;
   while (semiSpace < semiSpaceMb * MIB) {
     semiSpace *= 2;
   }
   return 3 * semiSpace;
 }
 
-/**
- * The largest young generation a `--max-semi-space-size` this isolate can see could give it, from the command line,
- * NODE_OPTIONS as read at load or NODE_OPTIONS now (0 without one). Only ever used to assume a larger young generation.
- */
-function semiSpaceFlagYoungGeneration(): number {
-  let young = 0;
-  for (const options of [process.execArgv.join(" "), startupNodeOptions, process.env.NODE_OPTIONS ?? ""]) {
-    for (const match of options.matchAll(SEMI_SPACE_FLAG)) {
-      young = Math.max(young, youngGeneration(Number(match[1])));
-    }
-  }
-  return young;
-}
-
 /** Whether `bytes` is a size V8 gives a young generation: three semi-spaces of a power of two (half a MiB or more). */
 function isYoungGenerationSize(bytes: number): boolean {
-  for (let semiSpace = MIB / 2; 3 * semiSpace <= bytes; semiSpace *= 2) {
-    if (3 * semiSpace === bytes) {
-      return true;
-    }
-  }
-  return false;
+  return bytes >= youngGeneration(0) && youngGeneration(bytes / 3 / MIB) === bytes;
 }
 
-/** The largest young generation size (see `isYoungGenerationSize`) up to `cap` and below `heapLimit`, else 0. */
-function largestYoungGenerationBelow(heapLimit: number, cap: number): number {
-  let young = 0;
-  for (let semiSpace = MIB / 2; 3 * semiSpace <= cap && 3 * semiSpace < heapLimit; semiSpace *= 2) {
-    young = 3 * semiSpace;
+/** The heap limit less the largest young generation size up to `young` that is below it (all of it, when it fits). */
+function lessYoungGeneration(heapLimit: number, young: number): number {
+  let largest = 0;
+  for (let size = youngGeneration(0); size <= young && size < heapLimit; size *= 2) {
+    largest = size;
   }
-  return young;
+  return heapLimit - largest;
 }
 
 /**
  * The bytes of V8's heap a document may be sized from: never more than its old generation, where the document text,
  * its one joined copy and the diagnostics a run keeps live. V8 reports only `heap_size_limit`, which adds the young
- * generation (with `--max-old-space-size=32`: 80 MiB on Node 20 and 22, 128 MiB on Node 26, 224 MiB on Node 24), and
- * the flags that sized this heap may not be visible (a worker started with `execArgv: []` under a flagged process, or
- * a NODE_OPTIONS the process changed before this module loaded), so the old generation is the heap limit less the
- * largest young generation this isolate can have:
- * - in a worker, the young generation Node configured it with (`resourceLimits` reports the one it asked for or Node's
- *   default; process flags override the old generation, not this), rounded up as V8 rounds it;
- * - on the main thread, the command line's `--max-old-space-size` when the rest of the heap limit is a young
- *   generation's size (V8 reads the command line after NODE_OPTIONS, so it is the one that applied); otherwise the
- *   largest young generation any supported Node version gives by default (`MAX_DEFAULT_YOUNG_GENERATION`) that is below
- *   the heap limit, which is exact for a small old generation and at most 192 MiB below a large one.
- * A `--max-semi-space-size` the isolate can see (command line, NODE_OPTIONS) only raises the young generation assumed.
- * NODE_OPTIONS is never trusted to give a larger old generation, since the process may have changed it. Read once.
+ * generation, and the flags that sized this heap may be out of sight (a worker started with `execArgv: []` under a
+ * flagged process, a NODE_OPTIONS changed before this module loaded), so it is the heap limit less a young generation
+ * at least as large as this isolate's: the command line's `--max-semi-space-size`'s (V8 reads the command line after
+ * NODE_OPTIONS), or else the larger of the one Node configured it with (in a worker, the size `resourceLimits` reports
+ * it asked for or Node's default, which process flags other than a semi-space size do not change; on the main thread,
+ * this V8 version's default) and a NODE_OPTIONS `--max-semi-space-size`'s. Exact sizes come first: on the main thread
+ * the command line's `--max-old-space-size` when the rest of the heap limit is a young generation's size, and on
+ * either NODE_OPTIONS' when it and the young generation the flags leave add up to the heap limit, so a NODE_OPTIONS
+ * changed before load cannot raise it. When a worker's heap limit shows process flags overrode its own sizes, a
+ * visible `--max-old-space-size` (command line or NODE_OPTIONS) also caps it, in case a hidden flag changed its young
+ * generation. A `--max-semi-space-size` hidden from a worker with no visible `--max-old-space-size` (`execArgv: []`
+ * and `env: {}`) is not accounted for. Read once.
  */
 function oldGenerationLimit(): number {
   const heapLimit = getHeapStatistics().heap_size_limit;
-  const flaggedYoung = semiSpaceFlagYoungGeneration();
-  if (isMainThread) {
-    const old = oldSpaceFlag(process.execArgv);
-    if (old !== undefined && old > 0 && old < heapLimit && isYoungGenerationSize(heapLimit - old)) {
-      return old;
-    }
-  } else {
-    const requested = resourceLimits.maxYoungGenerationSizeMb;
-    if (typeof requested === "number" && requested > 0) {
-      const young = Math.max(youngGeneration(requested / 3), flaggedYoung);
-      if (young < heapLimit) {
-        return heapLimit - young;
-      }
+  const commandLine = process.execArgv;
+  const nodeOptions = nodeOptionsTokens(startupNodeOptions);
+  const [commandOld, commandSemi] = [sizeFlag(commandLine, OLD_SPACE_FLAG), sizeFlag(commandLine, SEMI_SPACE_FLAG)];
+  const [optionsOld, optionsSemi] = [sizeFlag(nodeOptions, OLD_SPACE_FLAG), sizeFlag(nodeOptions, SEMI_SPACE_FLAG)];
+  const [major, minor] = process.versions.v8.split(".");
+  const defaultYoung = youngGeneration(DEFAULT_SEMI_SPACE_MB[`${major}.${minor}`] ?? LARGEST_DEFAULT_SEMI_SPACE_MB);
+  const optionsYoung = optionsSemi === undefined ? 0 : youngGeneration(optionsSemi);
+  const requested = resourceLimits.maxYoungGenerationSizeMb;
+  const own = !isMainThread && typeof requested === "number" && requested > 0 ? youngGeneration(requested / 3) : defaultYoung;
+  if (isMainThread && commandOld !== undefined && commandOld * MIB < heapLimit && isYoungGenerationSize(heapLimit - commandOld * MIB)) {
+    return commandOld * MIB;
+  }
+  // NODE_OPTIONS' old generation, when it and the young generation the flags leave add up to the heap limit.
+  let flagsLeave = own;
+  if (commandSemi !== undefined) {
+    flagsLeave = youngGeneration(commandSemi);
+  } else if (optionsSemi !== undefined) {
+    flagsLeave = optionsYoung;
+  }
+  if (commandOld === undefined && optionsOld !== undefined && optionsOld * MIB + flagsLeave === heapLimit) {
+    return optionsOld * MIB;
+  }
+  let old = lessYoungGeneration(heapLimit, commandSemi === undefined ? Math.max(own, optionsYoung) : flagsLeave);
+  const requestedOld = resourceLimits.maxOldGenerationSizeMb;
+  if (!isMainThread && (typeof requestedOld !== "number" || requestedOld * MIB + own !== heapLimit)) {
+    for (const flag of [commandOld, optionsOld]) {
+      old = flag === undefined || flag <= 0 ? old : Math.min(old, flag * MIB);
     }
   }
-  return heapLimit - largestYoungGenerationBelow(heapLimit, Math.max(MAX_DEFAULT_YOUNG_GENERATION, flaggedYoung));
+  return old;
 }
 
 let oldGenerationBytes: number | undefined;
