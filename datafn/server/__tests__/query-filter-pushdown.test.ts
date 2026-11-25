@@ -1132,6 +1132,13 @@ it("uses the same declared endpoint for legacy IDs in query and transact", async
     expect(standalone.body.result.data[0]).toMatchObject(expected);
     expect(transaction.result.results[0].data).toEqual(standalone.body.result.data);
   }
+
+  const relatedQuery = { resource: "task", relation: "relatedItem", id: "task:explicit", select: ["*"] };
+  for (const request of [relatedQuery, withForcedInMemory(relatedQuery)]) {
+    const result = await query(server, request);
+    expect(result.status).toBe(200);
+    expect(result.body.result.data).toEqual([{ id: "legacy-item", label: "Goal" }]);
+  }
 });
 
 it("projects an inverse FK row under its actual owner's field policy", async () => {
@@ -1187,6 +1194,9 @@ it("excludes related projections without a policy unless the server allows unkno
     await expectQueryAndTransactData(server, {
       resource: "task", filters: { id: "task:linked" }, select: ["id", "relatedItem"],
     }, [{ id: "task:linked", relatedItem: allowUnknownResources ? "legacy-item" : null }]);
+    const dedicated = await query(server, { resource: "task", relation: "relatedItem", id: "task:linked", select: ["*"] });
+    expect(dedicated.status).toBe(200);
+    expect(dedicated.body.result.data).toEqual(allowUnknownResources ? [{ id: "legacy-item", label: "Goal" }] : []);
     await server.close();
   }
 });

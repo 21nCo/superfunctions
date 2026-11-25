@@ -133,7 +133,8 @@ async function executeRelationQuery(
     logger,
     timer,
     multiRegionRuntime,
-    { allowUnknownResources },
+    // Keep the anchor's stored keys through hydration of the related records.
+    { allowUnknownResources, projectRecords: false },
   );
   const anchorData =
     anchorResult &&
@@ -201,9 +202,9 @@ export async function executeSingleQuery(
   logger?: DatafnLogger,
   timer?: ExecutionTimer | null,
   multiRegionRuntime?: DatafnMultiRegionRuntimeConfig | null,
-  options: { timezoneNamespace?: string; allowUnknownResources?: boolean } = {},
+  options: { timezoneNamespace?: string; allowUnknownResources?: boolean; projectRecords?: boolean } = {},
 ): Promise<unknown> {
-  const { timezoneNamespace = namespace, allowUnknownResources = true } = options;
+  const { timezoneNamespace = namespace, allowUnknownResources = true, projectRecords = true } = options;
   if (typeof query.relation === "string" && typeof query.id === "string") {
     return executeRelationQuery(
       query,
@@ -234,7 +235,7 @@ export async function executeSingleQuery(
   if (strategy === "FULL_PUSHDOWN" || strategy === "PARTIAL_PUSHDOWN") {
     try {
       return strategy === "FULL_PUSHDOWN"
-        ? await executePushdownQuery(query as any, schema, db, namespace, actorId, allowUnknownResources)
+        ? await executePushdownQuery(query as any, schema, db, namespace, actorId, allowUnknownResources, projectRecords)
         : await executePartialPushdownQuery(query as any, schema, db, namespace, actorId, allowUnknownResources);
     } catch (error) {
       // A relation filter matched too many records to push down; evaluate
@@ -352,7 +353,7 @@ export async function executeSingleQuery(
     );
   }
 
-  return executeQuery(query as any, schema, store, temporalPlan.config);
+  return executeQuery(query as any, schema, store, temporalPlan.config, projectRecords);
 }
 
 /**

@@ -226,6 +226,7 @@ export async function executePushdownQuery(
   namespace: string,
   actorId?: string,
   allowUnknownResources = true,
+  projectRecords = true,
 ): Promise<QueryResult> {
   const { records, nextCursor, count } = await pushdownCore(
     query,
@@ -237,15 +238,9 @@ export async function executePushdownQuery(
   );
 
   // Simple field projection (no relation expansion)
-  const data = records.map((record) =>
-    projectFieldsPushdown(
-      record,
-      query.resource,
-      schema,
-      query.select,
-      query.omit,
-    ),
-  );
+  const data = projectRecords
+    ? records.map((record) => projectFieldsPushdown(record, query.resource, schema, query.select, query.omit))
+    : records;
 
   return { data, count, nextCursor };
 }
