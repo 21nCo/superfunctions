@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:superfunctions:evidence-record:v1",
+  "title": "Superfunctions evidence record v1",
+  "description": "A source-bound evidence record. Dates are RFC 3339 date-times with an offset. validateEvidenceRecord also enforces what JSON Schema cannot express: unique artifactHashes[].path values, real calendar dates and startedAt <= completedAt.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "recordId", "evidenceClass", "subjectIds", "status", "source", "environment", "timing", "expiresAt"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "recordId": { "$ref": "#/$defs/recordId" },
+    "evidenceClass": { "type": "string", "minLength": 1, "maxLength": 100 },
+    "subjectIds": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1, "maxLength": 200 }
+    },
+    "status": { "enum": ["passed", "failed", "blocked", "skipped", "not-applicable"] },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["commit", "dirty", "lockfileSha256", "artifactHashes"],
+      "properties": {
+        "commit": { "type": "string", "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$" },
+        "dirty": { "type": "boolean" },
+        "dirtyReason": { "type": ["string", "null"] },
+        "lockfileSha256": { "oneOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null" }] },
+        "artifactHashes": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "sha256"],
+            "properties": {
+              "path": {
+                "description": "A relative POSIX path: not empty, no leading slash, no . or .. segment, no backslash and no NUL. Paths are unique within a record.",
+                "type": "string",
+                "pattern": "^(?!/)(?![\\s\\S]*\\\\)(?![\\s\\S]*\\u0000)(?!(?:[\\s\\S]*/)?\\.{1,2}(?:/|$))[\\s\\S]+$"
+              },
+              "sha256": { "$ref": "#/$defs/sha256" },
+              "format": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["os", "arch", "runtime", "tools"],
+      "properties": {
+        "os": { "type": "string", "minLength": 1 },
+        "arch": { "type": "string", "minLength": 1 },
+        "runtime": { "type": "string", "minLength": 1 },
+        "tools": { "type": "object", "additionalProperties": { "type": "string" } },
+        "attributes": { "type": "object", "additionalProperties": { "type": ["string", "null"] } }
+      }
+    },
+    "timing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["startedAt", "completedAt", "durationMs"],
+      "properties": {
+        "startedAt": { "$ref": "#/$defs/dateTime" },
+        "completedAt": { "$ref": "#/$defs/dateTime" },
+        "durationMs": { "type": "number", "minimum": 0 }
+      }
+    },
+    "expiresAt": { "$ref": "#/$defs/dateTime" },
+    "supersedes": { "oneOf": [{ "$ref": "#/$defs/recordId" }, { "type": "null" }] }
+  },
+  "$defs": {
+    "recordId": { "type": "string", "minLength": 1, "maxLength": 200, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$" },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "dateTime": {
+      "description": "An RFC 3339 date-time with a Z or numeric offset. Leap seconds (second 60) are not accepted.",
+      "type": "string",
+      "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])[Tt]([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](\\.[0-9]+)?([Zz]|[+-]([01][0-9]|2[0-3]):[0-5][0-9])$"
+    }
+  }
+}

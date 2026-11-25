@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "recordId": "A11Y-001:browser-run.2",
+  "evidenceClass": "browser-run",
+  "subjectIds": ["A11Y-001", "SET-25"],
+  "status": "passed",
+  "source": {
+    "commit": "2222222222222222222222222222222222222222222222222222222222222222",
+    "dirty": false,
+    "dirtyReason": null,
+    "lockfileSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "artifactHashes": [
+      { "path": "catchfn/events.ndjson", "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "format": "catchfn.evidence-event/v1" },
+      { "path": "screenshots/..hidden/a...png", "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" }
+    ]
+  },
+  "environment": {
+    "os": "darwin",
+    "arch": "arm64",
+    "runtime": "node 22.13.0",
+    "tools": { "playwright": "1.49.0", "vitest": "3.2.4" },
+    "attributes": { "browser": "chromium 131", "framework": null }
+  },
+  "timing": { "startedAt": "2026-11-01T11:00:00.250+02:00", "completedAt": "2026-11-01T11:30:00.750+02:00", "durationMs": 1800500.5 },
+  "expiresAt": "2026-11-08T09:30:00.750Z",
+  "supersedes": "A11Y-001:browser-run.1"
+}
