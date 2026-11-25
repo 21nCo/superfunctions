@@ -232,6 +232,29 @@ export function withoutUnreadableFields(
 }
 
 /**
+ * DATA-41: a copy of `row` without the declared schema fields of the
+ * resource that its read policy withholds. Keys the schema does not declare
+ * (aggregation aliases, a resource's own declared `$rev` is declared and kept
+ * when readable) are returned unchanged.
+ */
+export function withoutHiddenDeclaredFields(
+  schema: DatafnSchema,
+  resourceName: string,
+  row: Record<string, unknown>,
+): Record<string, unknown> {
+  const resource = getResourceSchema(schema, resourceName);
+  if (!resource || !resolvePermissions(schema, resource)) return row;
+  const declared = new Set(resourceFieldNames(resource));
+  const hidden = Object.keys(row).filter(
+    (field) => declared.has(field) && !canReadField(schema, resource, field),
+  );
+  if (hidden.length === 0) return row;
+  const copy = { ...row };
+  for (const field of hidden) delete copy[field];
+  return copy;
+}
+
+/**
  * A relation of `resource` whose foreign key is stored on `resource` under
  * the relation's own name (e.g. a many-one `parent` with fkField "parent").
  */

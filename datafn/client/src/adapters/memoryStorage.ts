@@ -35,6 +35,8 @@ export class MemoryStorageAdapter implements DatafnStorageAdapter {
   /** DATA-41: write stamp of each record's last write, by revisionKey. */
   private writeStamps = new Map<string, number>();
   private writeStamp = 0;
+  /** DATA-41: the write stamp of the last clearAll; an install started before it is refused. */
+  private resetStamp = 0;
   private records = new Map<string, Map<string, Record<string, unknown>>>();
   private joinRows = new Map<string, Map<string, Record<string, unknown>>>();
   private cursors = new Map<string, string>();
@@ -130,7 +132,9 @@ export class MemoryStorageAdapter implements DatafnStorageAdapter {
     this.validateTableName(resource);
     const pending = this.changelog.some((entry) => mutationTouchesRecord(entry.mutation, resource, id, options?.propagatingResources));
     return {
-      record: this.records.get(resource)?.get(id) ?? null,
+      // A copy: a caller changing the returned row must not change the
+      // state stored under its revision.
+      record: cloneRecord(this.records.get(resource)?.get(id) ?? null),
       rev: pending ? undefined : this.revisions.get(revisionKey(resource, id)),
     };
   }
@@ -161,9 +165,10 @@ export class MemoryStorageAdapter implements DatafnStorageAdapter {
         current.push(id);
         continue;
       }
-      const written = this.writeStamps.get(revisionKey(resource, id)) ?? 0;
+      // A storage reset counts as a write of every record.
+      const written = Math.max(this.writeStamps.get(revisionKey(resource, id)) ?? 0, this.resetStamp);
       if (blocksRevisionInstall(written, options?.writtenSince, pending, resource, id, options?.propagatingResources)) continue;
-      if (record) table.set(id, { ...record, id });
+      if (record) table.set(id, { ...cloneRecord(record), id });
       else table.delete(id);
       this.markWritten(resource, id, rev);
       installed.push(id);
@@ -452,6 +457,10 @@ export class MemoryStorageAdapter implements DatafnStorageAdapter {
     this.records.clear();
     this.revisions.clear();
     this.writeStamps.clear();
+    // The stamp stays monotonic across the reset, so an install whose request
+    // started before it (a push ack, a versioned read) cannot restore a
+    // cleared record.
+    this.resetStamp = ++this.writeStamp;
     this.joinRows.clear();
     this.cursors.clear();
     this.hydration.clear();
@@ -468,4 +477,8 @@ export class MemoryStorageAdapter implements DatafnStorageAdapter {
     // Memory adapter is always healthy (no external dependencies)
     return { ok: true, issues: [] };
   }
+}
+
+function cloneRecord<T extends Record<string, unknown> | null>(record: T): T {
+  return record === null ? record : (structuredClone(record) as T);
 }

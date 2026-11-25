@@ -20,11 +20,14 @@ afterEach(async () => {
   }
 });
 
-async function start() {
-  const sqlite = new Database(":memory:");
+async function start(
+  existing?: Database.Database,
+  wrap: (adapter: ReturnType<typeof drizzleAdapter>) => ReturnType<typeof drizzleAdapter> = (adapter) => adapter,
+) {
+  const sqlite = existing ?? new Database(":memory:");
   // A fresh database: only the resource tables exist, no DataFn internal table.
-  for (const statement of createTableStatements(resourceTables)) sqlite.exec(statement);
-  const adapter = drizzleAdapter({ db: drizzle(sqlite, { schema: drizzleSchema }), dialect: "sqlite" });
+  if (!existing) for (const statement of createTableStatements(resourceTables)) sqlite.exec(statement);
+  const adapter = wrap(drizzleAdapter({ db: drizzle(sqlite, { schema: drizzleSchema }), dialect: "sqlite" }));
   expect(adapter.capabilities?.transactions?.supported).toBe(false);
   const server = await createDatafnServer({
     schema: conformanceSchema,
@@ -101,5 +104,39 @@ describe("DATA-41 revisions on Drizzle SQLite (no transactions)", () => {
     expect(refused.body.error).toMatchObject({ code: "DFQL_UNSUPPORTED" });
     const tables = sqlite.prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = '__datafn_revisions'`).all();
     expect(tables).toEqual([]);
+  });
+
+  it("adds the rev column to an upgraded change table even where an unqualified quoted name reads as a string", async () => {
+    const first = await start();
+    expect((await first.call("push", { clientId: "c1", mutations: [insert("task:a", "m1")] })).status).toBe(200);
+    // The change table as an earlier release created it: no rev column.
+    first.sqlite.exec(`ALTER TABLE "__datafn_changes" DROP COLUMN "rev"`);
+    // SQLite built with double-quoted string literals answers an unqualified
+    // SELECT "rev" with the string 'rev' instead of failing on the column.
+    const lax = (adapter: ReturnType<typeof drizzleAdapter>) => {
+      const rawSql = adapter.rawSql!;
+      return Object.assign(Object.create(Object.getPrototypeOf(adapter)), adapter, {
+        rawSql: {
+          dialect: rawSql.dialect,
+          execute: rawSql.execute.bind(rawSql),
+          query: (sql: string, params?: any) =>
+            /SELECT\s+"rev"\s+FROM\s+"__datafn_changes"/i.test(sql) ? Promise.resolve([]) : rawSql.query(sql, params),
+        },
+      });
+    };
+    const second = await start(first.sqlite, lax);
+    const merged = await second.call("push", {
+      clientId: "c1",
+      mutations: [{ resource: "task", version: 1, operation: "merge", id: "task:a", clientId: "c1", mutationId: "m2", record: { title: "Bravo" } }],
+    });
+    expect(merged.status).toBe(200);
+    expect(merged.body.result.ok).toBe(true);
+    const columns = first.sqlite.prepare(`PRAGMA table_info("__datafn_changes")`).all() as Array<{ name: string }>;
+    expect(columns.map((column) => column.name)).toContain("rev");
+    const rows = first.sqlite.prepare(`SELECT record_id, op, rev FROM "__datafn_changes" ORDER BY server_seq`).all();
+    expect(rows).toEqual([
+      { record_id: "task:a", op: "insert", rev: null },
+      { record_id: "task:a", op: "merge", rev: 2 },
+    ]);
   });
 });

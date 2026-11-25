@@ -701,16 +701,52 @@ describe("DATA-41 revisions: complete rows only", () => {
     expect(row).toMatchObject({ id: "task:1", projectId: "project:1", $rev: 1 });
   });
 
-  it("returns a versioned query of a read-restricted resource exactly as without the flag, with no $rev", async () => {
+  it("returns no hidden field and no $rev from a versioned query of a read-restricted resource", async () => {
     const { send, push } = await serve();
     await push({ resource: "secretive", operation: "insert", id: "secretive:1", record: { title: "t", hidden: "h" } });
     for (const select of [undefined, ["*"]]) {
       const shape = { resource: "secretive", version: 1, ...(select ? { select } : {}) };
-      const plain = await send("query", shape);
       const query = await send("query", { ...shape, withRevisions: true });
-      expect(query.body.result.data).toEqual(plain.body.result.data);
-      expect(query.body.result.data[0]).toMatchObject({ id: "secretive:1", title: "t" });
-      expect(query.body.result.data[0]).not.toHaveProperty("$rev");
+      expect(query.status).toBe(200);
+      const [row] = query.body.result.data;
+      expect(row).toMatchObject({ id: "secretive:1", title: "t" });
+      expect(row).not.toHaveProperty("hidden");
+      expect(row).not.toHaveProperty("$rev");
+    }
+  });
+
+  it("returns the query's own row without $rev when the stored row changed between selection and re-read", async () => {
+    const database = memoryAdapter();
+    let between: (() => Promise<void>) | undefined;
+    const racing = {
+      ...database,
+      findMany: async (args: any) => {
+        // The versioned re-read by id: another writer commits first.
+        if (between && args.model === "task" && args.where?.some((w: any) => w.field === "id" && w.operator === "in")) {
+          const run = between;
+          between = undefined;
+          await run();
+        }
+        return database.findMany(args);
+      },
+    } as Adapter;
+    const { send, push } = await serve({ database: racing });
+    await push({ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } });
+    await push({ resource: "task", operation: "insert", id: "task:2", record: { title: "b" } });
+    for (const change of [
+      { operation: "merge", record: { title: "changed" } },
+      { operation: "trash" },
+    ]) {
+      await push({ resource: "task", operation: "replace", id: "task:1", record: { title: "a" } });
+      between = async () => {
+        await push({ resource: "task", id: "task:1", ...change });
+      };
+      const query = await send("query", { resource: "task", version: 1, withRevisions: true, filters: { title: { eq: "a" } } });
+      expect(query.status).toBe(200);
+      const [row] = query.body.result.data;
+      expect(row).toMatchObject({ id: "task:1", title: "a" });
+      expect(row).not.toHaveProperty("$rev");
+      expect(row).not.toHaveProperty("trashedAt");
     }
   });
 
@@ -789,7 +825,10 @@ describe("DATA-41 revisions: complete rows only", () => {
 });
 
 describe("DATA-41 revisions: SQL without raw SQL access", () => {
-  it("records no rev on change rows of a SQL table it cannot verify, and the write still succeeds", async () => {
+  it.each([
+    ["a probe of the missing column fails", false],
+    ["the driver accepts a filter on any column name", true],
+  ])("records no rev on change rows of a SQL table it cannot verify (%s), and the write still succeeds", async (_label, lax) => {
     const database = memoryAdapter();
     const prismaLike = {
       ...database,
@@ -798,7 +837,7 @@ describe("DATA-41 revisions: SQL without raw SQL access", () => {
         get: (target, property, receiver) => {
           if (property === "findMany") {
             return async (table: string, where: Array<{ field: string }>, opts?: unknown) => {
-              if (table === "__datafn_changes" && where.some((clause) => clause.field === "rev")) {
+              if (!lax && table === "__datafn_changes" && where.some((clause) => clause.field === "rev")) {
                 throw new Error('column "rev" does not exist');
               }
               return (target as any).findMany(table, where, opts);

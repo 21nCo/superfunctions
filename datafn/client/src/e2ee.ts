@@ -373,10 +373,28 @@ const VERSIONED_ID_QUERY_KEYS = new Set(["resource", "version", "withRevisions",
  * `withRevisions` query that selects records only by id (equality or a list
  * of ids), with no other filter, sort, search, projection or cursor.
  */
+const VERSIONED_ID_QUERY_METADATA_KEYS = new Set(["includeTrashed", "includeArchived", "includeAncestorInactive"]);
+
 export function isVersionedIdQuery(query: unknown): boolean {
   if (!isRecordObject(query) || query.withRevisions !== true) return false;
   for (const [key, value] of Object.entries(query)) {
     if (value !== undefined && !VERSIONED_ID_QUERY_KEYS.has(key)) return false;
+  }
+  // Every value is checked, not only the key names: the query is sent as is,
+  // so a value of an unexpected type (an object-valued limit, free-form
+  // metadata) could carry plaintext.
+  if (typeof query.resource !== "string") return false;
+  if (query.version !== undefined && !(typeof query.version === "number" && Number.isInteger(query.version))) {
+    return false;
+  }
+  if (query.limit !== undefined && !(typeof query.limit === "number" && Number.isInteger(query.limit) && query.limit > 0)) {
+    return false;
+  }
+  if (query.metadata !== undefined) {
+    if (!isRecordObject(query.metadata)) return false;
+    for (const [key, value] of Object.entries(query.metadata)) {
+      if (value !== undefined && (!VERSIONED_ID_QUERY_METADATA_KEYS.has(key) || typeof value !== "boolean")) return false;
+    }
   }
   const filters = query.filters;
   if (!isRecordObject(filters)) return false;

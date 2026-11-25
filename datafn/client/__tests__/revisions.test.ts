@@ -897,3 +897,160 @@ describe("DATA-41 client revisions: round 3", () => {
     });
   }
 });
+
+describe("DATA-41 client revisions: round 4", () => {
+  const provider: DatafnE2eeProvider = {
+    keyRef: "test-key",
+    async encrypt({ plaintext, resource, id, field }) {
+      return { __datafnE2ee: 1, alg: "AES-GCM", keyRef: "test-key", iv: `${resource}:${id}:${field}`, data: JSON.stringify([...plaintext]) } as any;
+    },
+    async decrypt({ envelope }) {
+      return new Uint8Array(JSON.parse((envelope as any).data));
+    },
+  };
+
+  for (const kind of ["memory", "indexeddb"] as const) {
+    it(`restores nothing from a push acknowledgement that arrives after a storage reset (${kind})`, async () => {
+      const server = await startServer();
+      await serverPush(server, "seed", [{ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } }]);
+      const storage = kind === "memory"
+        ? new MemoryStorageAdapter(["task"])
+        : new IndexedDbStorageAdapter(`revisions_reset_${Math.random()}`, ["task"], schema as any);
+      await engineFor(server, storage).cloneNow();
+      // The reset happens while the push is in flight (a sign-out).
+      const pusher = new SyncEngine(storage, delayedTransport(server, "push", () => storage.clearAll()) as any,
+        new EventBus(), "client:a", schema, { offlinability: true } as any);
+      await storage.mergeRecord("task", "task:1", { title: "b" });
+      await appendLocal(storage as MemoryStorageAdapter, { resource: "task", operation: "merge", id: "task:1", record: { title: "b" } });
+      await pusher.processPush();
+
+      expect(await storage.getRecord("task", "task:1")).toBeNull();
+      expect(await storage.getRecordWithRevision!("task", "task:1")).toEqual({ record: null, rev: undefined });
+      await storage.close();
+    });
+  }
+
+  it("keeps an IndexedDB database at the version ceiling, its records and queued mutations, when revisions start", async () => {
+    const dbName = `revisions_ceiling_${Math.random()}`;
+    const first = new IndexedDbStorageAdapter(dbName, ["task"], schema as any);
+    await first.upsertRecord("task", { id: "task:1", title: "kept" });
+    await first.changelogAppend({
+      clientId: "client:a",
+      mutationId: "queued-1",
+      timestampMs: Date.now(),
+      mutation: { version: 1, clientId: "client:a", mutationId: "queued-1", resource: "task", operation: "merge", id: "task:1", record: { title: "kept" } },
+    } as any);
+    await first.close();
+    // The database reached the supported version ceiling without a revisions store.
+    await new Promise<void>((resolve, reject) => {
+      const request = indexedDB.open(dbName, 1000);
+      request.onsuccess = () => { request.result.close(); resolve(); };
+      request.onerror = () => reject(request.error);
+    });
+
+    const storage = new IndexedDbStorageAdapter(dbName, ["task"], schema as any);
+    // A push against a server without revisions still takes a write stamp.
+    const server = await startServer(false);
+    await engineFor(server, storage).processPush();
+
+    expect(await storage.getRecord("task", "task:1")).toMatchObject({ id: "task:1", title: "kept" });
+    expect(await storage.revisionWriteStamp()).toBe(-1);
+    expect(await storage.putRecordsWithRevisions("task", [{ id: "task:1", record: { id: "task:1", title: "server" }, rev: 2 }]))
+      .toEqual({ installed: [], current: [] });
+    expect(await storage.getRecord("task", "task:1")).toMatchObject({ title: "kept" });
+    await storage.close();
+  });
+
+  it("refuses an E2EE versioned id query whose other values are not plain scalars, before sending it", async () => {
+    const server = await startServer();
+    const requests: string[] = [];
+    const client = createDatafnClient({
+      schema,
+      clientId: "client:e2ee-shape",
+      e2ee: { enabled: true, provider },
+      sync: { remote: "http://datafn.test/datafn", http: { fetch: async (i: any, init?: any) => {
+        const request = new Request(i, init);
+        requests.push(`${new URL(request.url).pathname} ${await request.clone().text()}`);
+        return server.router.handle(request);
+      } } },
+    });
+    for (const extra of [
+      { limit: { plaintext: "secret title" } },
+      { limit: "secret title" },
+      { version: { plaintext: "secret title" } },
+    ]) {
+      await expect(client.query({ resource: "task", version: 1, withRevisions: true, filters: { id: "task:1" }, ...extra } as any))
+        .rejects.toMatchObject({ code: "DFQL_UNSUPPORTED" });
+    }
+    expect(requests.join("\n")).not.toContain("secret title");
+    expect(requests).toEqual([]);
+  });
+
+  it("gives a hydrated E2EE client a known revision through a versioned id read, none while a local change is pending, and decrypted push rows", async () => {
+    const server = await startServer();
+    const wire: string[] = [];
+    const fetchVia = async (i: any, init?: any) => {
+      const request = new Request(i, init);
+      const sent = await request.clone().text();
+      const response = await server.router.handle(request);
+      wire.push(`${new URL(request.url).pathname} ${sent} => ${await response.clone().text()}`);
+      return response;
+    };
+    const writer = createDatafnClient({
+      schema, clientId: "client:writer", e2ee: { enabled: true, provider },
+      sync: { remote: "http://datafn.test/datafn", http: { fetch: fetchVia } },
+    });
+    await writer.mutate({ resource: "task", version: 1, operation: "insert", id: "task:1", record: { title: "first secret", notes: "n" } });
+    await writer.mutate({ resource: "task", version: 1, operation: "insert", id: "task:2", record: { title: "second secret" } });
+
+    const storage = new MemoryStorageAdapter(["task"]);
+    const client = createDatafnClient({
+      schema, clientId: "client:reader", storage, e2ee: { enabled: true, provider },
+      sync: { offlinability: true, remote: "http://datafn.test/datafn", http: { fetch: fetchVia } },
+    } as any);
+    await client.sync.cloneNow();
+    expect(await client.getWithRevision("task", "task:1")).toEqual({
+      record: expect.objectContaining({ title: "first secret" }), rev: 1,
+    });
+
+    // (1) A partial merge pulled from the server leaves the revision unknown;
+    // a versioned id read then gives the decrypted row with its revision.
+    await writer.mutate({ resource: "task", version: 1, operation: "merge", id: "task:1", record: { title: "merged secret" } });
+    await client.sync.pullNow();
+    expect(await client.getWithRevision("task", "task:1")).toEqual({
+      record: expect.objectContaining({ title: "merged secret" }), rev: undefined,
+    });
+    await client.query({ resource: "task", version: 1, withRevisions: true, filters: { id: "task:1" } });
+    expect(await client.getWithRevision("task", "task:1")).toEqual({
+      record: expect.objectContaining({ id: "task:1", title: "merged secret", notes: "n" }), rev: 2,
+    });
+
+    // (2) A pending local change keeps that record's revision unknown.
+    await appendLocal(storage, { resource: "task", operation: "merge", id: "task:2", record: { title: "local secret" } });
+    await storage.mergeRecord("task", "task:2", { title: "local secret" });
+    await client.query({ resource: "task", version: 1, withRevisions: true, filters: { id: { $in: ["task:1", "task:2"] } } });
+    expect(await client.getWithRevision("task", "task:2")).toEqual({
+      record: expect.objectContaining({ title: "local secret" }), rev: undefined,
+    });
+
+    // (3) Pushed: the post-write row carries $rev beside the ciphertext and is installed decrypted.
+    const engine = new SyncEngine(storage, transport(server, []) as any, new EventBus(), "client:a", schema,
+      { offlinability: true } as any, undefined, undefined, undefined, undefined, { enabled: true, provider });
+    wire.length = 0;
+    const pushTransport = new DefaultHttpTransport("http://datafn.test/datafn", { fetch: fetchVia });
+    (engine as any).remote = pushTransport;
+    await engine.processPush();
+    const push = wire.find((line) => line.startsWith("/datafn/push "))!;
+    expect(push).toBeDefined();
+    expect(push).not.toContain("local secret");
+    const response = JSON.parse(push.slice(push.indexOf(" => ") + 4));
+    const [result] = Object.values(response.result.revisions) as any[];
+    expect(result.record.$rev).toBe(2);
+    expect(result.record.title).toMatchObject({ __datafnE2ee: 1 });
+    expect(JSON.stringify(result.record.title)).not.toContain("rev");
+    expect(await client.getWithRevision("task", "task:2")).toEqual({
+      record: expect.objectContaining({ id: "task:2", title: "local secret" }), rev: 2,
+    });
+    client.sync.stop();
+  });
+});

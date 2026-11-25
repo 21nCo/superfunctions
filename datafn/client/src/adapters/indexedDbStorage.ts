@@ -44,7 +44,7 @@ function stampWrites(revisions: IDBObjectStore, entries: ReadonlyArray<{ key: st
   const counter = revisions.get(WRITE_STAMP_KEY);
   counter.onsuccess = () => {
     const w = (Number(counter.result?.w) || 0) + 1;
-    revisions.put({ key: WRITE_STAMP_KEY, w });
+    revisions.put({ ...(counter.result ?? {}), key: WRITE_STAMP_KEY, w });
     for (const { key, rev } of entries) revisions.put(rev === undefined ? { key, w } : { key, w, rev });
   };
 }
@@ -532,6 +532,12 @@ export class IndexedDbStorageAdapter implements DatafnStorageAdapter {
     if ((!this.schema && storeName !== REVISIONS_STORE) || !this.isExpectedStore(storeName)) {
       return db;
     }
+    // DATA-41: the revisions store is optional bookkeeping. At the version
+    // ceiling it is not added (adding it would recreate the database and
+    // erase records and queued mutations): revisions stay unknown.
+    if (storeName === REVISIONS_STORE && db.version + 1 > MAX_IDB_VERSION) {
+      return db;
+    }
 
     const nextVersion = db.version + 1;
     db.close();
@@ -788,14 +794,15 @@ export class IndexedDbStorageAdapter implements DatafnStorageAdapter {
             current.push(id);
             return;
           }
-          const written = Number(prior?.w) || 0;
+          // A storage reset counts as a write of every record.
+          const written = Math.max(Number(prior?.w) || 0, Number(counter.result?.reset) || 0);
           if (blocksRevisionInstall(written, options?.writtenSince, pending, resource, id, options?.propagatingResources)) return;
           if (record) store.put(record);
           else store.delete(id);
           revisions!.put({ key, w, rev });
           installed.push(id);
         });
-        revisions!.put({ key: WRITE_STAMP_KEY, w });
+        revisions!.put({ ...(counter.result ?? {}), key: WRITE_STAMP_KEY, w });
       };
       tx.oncomplete = () => resolve({ installed, current });
       tx.onerror = () => reject(tx.error);
@@ -1162,10 +1169,20 @@ export class IndexedDbStorageAdapter implements DatafnStorageAdapter {
       
       for (const storeName of storeNames) {
         const store = transaction.objectStore(storeName);
+        // DATA-41: the write stamp stays monotonic across the reset and
+        // records it, so an install whose request started before the reset
+        // (a push ack, a versioned read) cannot restore a cleared record.
+        const counter = storeName === REVISIONS_STORE ? store.get(WRITE_STAMP_KEY) : null;
         clearPromises.push(
           new Promise((resolveStore, rejectStore) => {
             const request = store.clear();
-            request.onsuccess = () => resolveStore();
+            request.onsuccess = () => {
+              if (counter) {
+                const w = (Number(counter.result?.w) || 0) + 1;
+                store.put({ key: WRITE_STAMP_KEY, w, reset: w });
+              }
+              resolveStore();
+            };
             request.onerror = () => rejectStore(request.error);
           })
         );

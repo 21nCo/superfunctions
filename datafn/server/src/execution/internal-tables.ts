@@ -127,41 +127,65 @@ export function ensureChangesRevColumn(adapter: Adapter): Promise<boolean> {
   return ready;
 }
 
+/** A filter on a column name no table has, to tell a real probe from a lax one. */
+const ABSENT_COLUMN = "__datafn_absent_column_probe";
+
 async function addChangesRevColumn(adapter: Adapter): Promise<boolean> {
   const rawSql = adapter.rawSql;
   if (!rawSql) {
     // Stores without a fixed schema (memory, KV) keep any column.
     if (adapter.capabilities?.schema?.constraints !== true) return true;
     // A SQL database reached without raw SQL (Prisma) cannot be altered
-    // here: change rows carry `rev` only if the table already has it.
-    try {
-      await adapter.internal.findMany("__datafn_changes", [{ field: "rev", op: "eq", value: -1 }], { limit: 1 });
-      return true;
-    } catch {
-      return false;
-    }
+    // here: change rows carry `rev` only if the table already has it. A probe
+    // is trusted only when the same probe on a column that cannot exist
+    // fails (a driver that reads an unknown quoted name as a string literal
+    // accepts both), otherwise no change row records `rev`.
+    const probe = async (field: string) => {
+      try {
+        await adapter.internal.findMany("__datafn_changes", [{ field, op: "eq", value: -1 }], { limit: 1 });
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    if (await probe(ABSENT_COLUMN)) return false;
+    return probe("rev");
   }
+  // Read the column from the catalog: an unqualified `SELECT "rev"` succeeds
+  // on SQLite builds that read unknown double-quoted names as strings.
+  const hasColumn = async () => changesTableHasRev(rawSql);
+  if (await hasColumn()) return true;
   if (rawSql.dialect === "postgres") {
+    // Only when the catalog lacks the column, so a role without ownership of
+    // an upgraded table, and every later start, never needs the ALTER lock.
     await rawSql.execute('ALTER TABLE "__datafn_changes" ADD COLUMN IF NOT EXISTS "rev" integer');
     return true;
   }
-  // SQLite and MySQL have no ADD COLUMN IF NOT EXISTS: probe the column
-  // first, and after a failed ALTER (another worker added it meanwhile, or a
-  // driver that wraps the duplicate-column error) probe again.
+  // SQLite and MySQL have no ADD COLUMN IF NOT EXISTS: after a failed ALTER
+  // (another worker added it meanwhile, or a driver that wraps the
+  // duplicate-column error) read the catalog again.
   const quote = rawSql.dialect === "mysql" ? "`" : '"';
-  const hasColumn = async () => {
-    try {
-      await rawSql.query(`SELECT ${quote}rev${quote} FROM ${quote}__datafn_changes${quote} LIMIT 0`);
-      return true;
-    } catch {
-      return false;
-    }
-  };
-  if (await hasColumn()) return true;
   try {
     await rawSql.execute(`ALTER TABLE ${quote}__datafn_changes${quote} ADD COLUMN ${quote}rev${quote} integer`);
   } catch (error) {
     if (!(await hasColumn())) throw error;
   }
   return true;
+}
+
+async function changesTableHasRev(rawSql: NonNullable<Adapter["rawSql"]>): Promise<boolean> {
+  if (rawSql.dialect === "sqlite") {
+    const columns = await rawSql.query('PRAGMA table_info("__datafn_changes")');
+    return columns.some((column) => column.name === "rev");
+  }
+  if (rawSql.dialect === "postgres") {
+    const rows = await rawSql.query(
+      "SELECT 1 AS present FROM pg_attribute WHERE attrelid = to_regclass('\"__datafn_changes\"') AND attname = 'rev' AND NOT attisdropped",
+    );
+    return rows.length > 0;
+  }
+  const rows = await rawSql.query(
+    "SELECT 1 AS present FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = '__datafn_changes' AND column_name = 'rev'",
+  );
+  return rows.length > 0;
 }
