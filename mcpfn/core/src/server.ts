@@ -12,6 +12,7 @@ import type { RequestOptions } from "@modelcontextprotocol/sdk/shared/protocol.j
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import {
   CallToolRequestSchema,
+  ClientRequestSchema,
   CompleteRequestSchema,
   CreateMessageResultSchema,
   CreateMessageResultWithToolsSchema,
@@ -42,7 +43,9 @@ import {
   type McpFnClientProfilesOptions,
   type McpFnResolvedClientProfile,
 } from "./client-profiles.js";
-import { errorResult, jsonSafe, McpFnError, McpFnClientProfileError, McpFnValidationError, McpFnOutputValidationError } from "./errors.js";
+import { randomUUID } from "node:crypto";
+
+import { errorResult, isMcpFnClientSafeError, jsonSafe, McpFnError, McpFnClientProfileError, McpFnValidationError, McpFnOutputValidationError } from "./errors.js";
 import { assertMcpAppContracts } from "./apps.js";
 import { createManifest, type CreateManifestOptions } from "./manifest.js";
 import type { McpFnRegistry } from "./registry.js";
@@ -82,6 +85,32 @@ export interface McpFnServerOptions<TContext> extends CreateManifestOptions {
   clientProfiles?: McpFnClientProfilesOptions<TContext>;
   /** Maximum entries returned by each list request. Defaults to 100. */
   pageSize?: number;
+  /**
+   * Receives each error whose text McpFn withheld from the client: a tool
+   * error other than `McpFnError`, `McpError` or a thrown plain
+   * `{ code, message }` object, or such an error from a resource, prompt,
+   * completion or subscription handler. The client sees a generic message
+   * with the same `errorId`. The sink is not awaited and its failures are
+   * ignored.
+   */
+  onError?: (input: {
+    error: unknown;
+    errorId: string;
+    method: string;
+    tool?: string;
+  }) => void | Promise<void>;
+  /**
+   * Return every thrown error's message, code and details to the client, as
+   * McpFn did before. Off by default: unexpected errors (database, filesystem,
+   * upstream HTTP) can carry paths, queries or secrets.
+   */
+  exposeErrors?: boolean;
+  /**
+   * Most resource subscriptions one client (one HTTP session or one directly
+   * connected transport) may hold. Further `resources/subscribe` requests
+   * fail with InvalidRequest. Defaults to 1000.
+   */
+  maxResourceSubscriptions?: number;
   additionalCapabilities?: ServerCapabilities;
   taskStore?: TaskStore;
   taskMessageQueue?: TaskMessageQueue;
@@ -136,6 +165,25 @@ export function resolveMcpFnServerCapabilities<TContext>(
     };
   }
   return mergeCapabilities(registryCapabilities, additionalCapabilities);
+}
+
+function requestSchemaIssues(error: unknown): Array<{ path: string; message: string }> | undefined {
+  try {
+    // Zod 3 names it "ZodError", Zod 4 (used by the SDK) "$ZodError".
+    if (!(error instanceof Error) || (error.name !== "ZodError" && error.name !== "$ZodError")) return undefined;
+    const issues = (error as { issues?: unknown }).issues;
+    if (!Array.isArray(issues)) return undefined;
+    return issues.slice(0, 100).map((issue: { path?: unknown; message?: unknown }) => ({
+      path: Array.isArray(issue?.path) ? issue.path.map(String).join("/").slice(0, 256) : "",
+      message: typeof issue?.message === "string" ? issue.message.slice(0, 256) : "Invalid value",
+    }));
+  } catch {
+    return undefined;
+  }
+}
+
+function withheldToolError(errorId: string | undefined): { verbatim: boolean; errorId?: string } {
+  return errorId === undefined ? { verbatim: true } : { verbatim: false, errorId };
 }
 
 function page<T>(
@@ -224,6 +272,7 @@ export class McpFnServer<TContext = undefined> {
   private readonly clientProfiles?: McpFnClientProfilesOptions<TContext>;
   private readonly manifestOptions: CreateManifestOptions;
   private readonly pageSize: number;
+  private readonly maxResourceSubscriptions: number;
   private readonly serverOptions: McpFnServerOptions<TContext>;
   private readonly requestServers = new Set<McpFnServer<TContext>>();
   // Resource URIs this server's client subscribed to through a successful
@@ -250,6 +299,10 @@ export class McpFnServer<TContext = undefined> {
     this.pageSize = options.pageSize ?? 100;
     if (!Number.isInteger(this.pageSize) || this.pageSize < 1) {
       throw new Error("McpFn pageSize must be a positive integer");
+    }
+    this.maxResourceSubscriptions = options.maxResourceSubscriptions ?? 1_000;
+    if (!Number.isSafeInteger(this.maxResourceSubscriptions) || this.maxResourceSubscriptions < 1) {
+      throw new Error("McpFn maxResourceSubscriptions must be a positive integer");
     }
     const hasTaskTools = Boolean(this.registry.capabilities().tasks);
     if (hasTaskTools && !options.taskStore) {
@@ -287,6 +340,7 @@ export class McpFnServer<TContext = undefined> {
       ],
     });
     this.installHandlers();
+    this.withholdHandlerErrors();
   }
 
   private installHandlers(): void {
@@ -532,6 +586,9 @@ export class McpFnServer<TContext = undefined> {
               includeStructuredContent: !this.registry.hasOutputSchema(
                 request.params.name,
               ),
+              // Classified once, before the sink sees the error: a sink that
+              // changes it cannot turn a withheld error into a returned one.
+              ...withheldToolError(await this.reportWithheldError(lifecycleError, "tools/call", request.params.name)),
             });
           }
         },
@@ -544,7 +601,8 @@ export class McpFnServer<TContext = undefined> {
         async (request, extra) => {
           const context = await this.contextFactory(extra);
           const result = page(
-            await this.registry.listResources(context, extra),
+            await this.withheldProtocolErrors("resources/list", () =>
+              this.registry.listResources(context, extra)),
             request.params?.cursor,
             this.pageSize,
           );
@@ -572,7 +630,8 @@ export class McpFnServer<TContext = undefined> {
         ReadResourceRequestSchema,
         async (request, extra) => {
           const context = await this.contextFactory(extra);
-          return this.registry.readResource(request.params.uri, context, extra);
+          return this.withheldProtocolErrors("resources/read", () =>
+            this.registry.readResource(request.params.uri, context, extra));
         },
       );
       if (this.capabilities.resources.subscribe) {
@@ -588,8 +647,21 @@ export class McpFnServer<TContext = undefined> {
             }
             pending.add(token);
             try {
+              // Count each URI once, whether subscribed, pending or both,
+              // without copying either set.
+              let held = this.resourceSubscriptions.size;
+              if (!this.resourceSubscriptions.has(uri)) {
+                for (const pendingUri of this.pendingResourceSubscriptions.keys()) {
+                  if (!this.resourceSubscriptions.has(pendingUri)) held += 1;
+                  if (held > this.maxResourceSubscriptions) break;
+                }
+              }
+              if (!this.resourceSubscriptions.has(uri) && held > this.maxResourceSubscriptions) {
+                throw new McpError(ErrorCode.InvalidRequest, "Too many resource subscriptions");
+              }
               const context = await this.contextFactory(extra);
-              await this.registry.changeSubscription(uri, true, context, extra);
+              await this.withheldProtocolErrors("resources/subscribe", () =>
+                this.registry.changeSubscription(uri, true, context, extra));
               // Record it only if no unsubscribe or close() ran since it began.
               if (this.pendingResourceSubscriptions.get(uri)?.has(token)) {
                 this.resourceSubscriptions.add(uri);
@@ -611,12 +683,13 @@ export class McpFnServer<TContext = undefined> {
             this.pendingResourceSubscriptions.delete(request.params.uri);
             this.resourceSubscriptions.delete(request.params.uri);
             const context = await this.contextFactory(extra);
-            await this.registry.changeSubscription(
-              request.params.uri,
-              false,
-              context,
-              extra,
-            );
+            await this.withheldProtocolErrors("resources/unsubscribe", () =>
+              this.registry.changeSubscription(
+                request.params.uri,
+                false,
+                context,
+                extra,
+              ));
             return {};
           },
         );
@@ -642,12 +715,13 @@ export class McpFnServer<TContext = undefined> {
         GetPromptRequestSchema,
         async (request, extra) => {
           const context = await this.contextFactory(extra);
-          return this.registry.getPrompt(
-            request.params.name,
-            request.params.arguments,
-            context,
-            extra,
-          );
+          return this.withheldProtocolErrors("prompts/get", () =>
+            this.registry.getPrompt(
+              request.params.name,
+              request.params.arguments,
+              context,
+              extra,
+            ));
         },
       );
     }
@@ -657,15 +731,124 @@ export class McpFnServer<TContext = undefined> {
         CompleteRequestSchema,
         async (request, extra) => {
           const context = await this.contextFactory(extra);
-          return this.registry.complete(
-            request.params.ref,
-            request.params.argument,
-            request.params.context?.arguments,
-            context,
-            extra,
-          );
+          return this.withheldProtocolErrors("completion/complete", () =>
+            this.registry.complete(
+              request.params.ref,
+              request.params.argument,
+              request.params.context?.arguments,
+              context,
+              extra,
+            ));
         },
       );
+    }
+  }
+
+  // Every request handler withholds unexpected error text: McpFn's own
+  // (context factories, visibility hooks, task creation, registry handlers)
+  // and the SDK's (such as tasks/get and tasks/result reading the task
+  // store). The SDK looks handlers up in its request-handler map, so wrap
+  // each lookup, the fallback handler included. McpFnError and McpError pass
+  // through unchanged.
+  private withholdHandlerErrors(): void {
+    type Handler = (request: { method: string }, extra: unknown) => Promise<unknown>;
+    const protocol = this.protocol as unknown as {
+      _requestHandlers?: Map<string, Handler>;
+      fallbackRequestHandler?: Handler;
+    };
+    const original = protocol._requestHandlers;
+    // Fail loudly rather than serve unwithheld error text if an SDK upgrade
+    // changes how handlers are stored.
+    if (!(original instanceof Map)) {
+      throw new McpFnError(
+        "MCPFN_UNSUPPORTED_SDK",
+        "McpFn cannot install error withholding on this MCP SDK version (no request-handler map)",
+      );
+    }
+    const wrap = (handler: Handler): Handler => (request, extra) =>
+      this.withheldProtocolErrors(request.method, () => handler(request, extra));
+    // Malformed client params are the client's mistake: answer InvalidParams
+    // before any handler runs. Every error after that point, schema errors
+    // thrown by handlers or the task store included, is withheld.
+    // The client request schema for each method, for precise issue paths.
+    const schemas = new Map<string, { safeParse(value: unknown): { success: boolean; error?: unknown } }>();
+    for (const option of (ClientRequestSchema as unknown as { options: Array<{ shape: { method: { value?: unknown } } }> }).options) {
+      const method = option.shape?.method?.value;
+      // tools/call too: its schema types arguments as a record of unknown
+      // values, so this pass is shallow; the registry bounds their size.
+      if (typeof method === "string") schemas.set(method, option as never);
+    }
+    // The handlers installed at construction (McpFn's and the SDK's), which
+    // parse with exactly these MCP schemas.
+    const installed = new Map(original);
+    const validated = (handler: Handler, stored: Handler): Handler => async (request, extra) => {
+      // Custom methods, and built-in methods whose handler the host replaced
+      // through `protocol`, are validated by the SDK with the schema
+      // registered with them. Their parse failures can't be told apart from
+      // handler errors here, so they are withheld too (fail closed).
+      const schema = installed.get(request.method) === stored ? schemas.get(request.method) : undefined;
+      if (!schema) return handler(request, extra);
+      const parsed = schema.safeParse(request);
+      if (!parsed.success) {
+        throw new McpError(ErrorCode.InvalidParams, "Invalid request parameters", {
+          issues: requestSchemaIssues(parsed.error) ?? [],
+        });
+      }
+      return handler(request, extra);
+    };
+    const handlers = new Map(original);
+    protocol._requestHandlers = Object.assign(handlers, {
+      get(method: string) {
+        const handler = Map.prototype.get.call(handlers, method) as Handler | undefined;
+        return handler && validated(wrap(handler), handler);
+      },
+    });
+    let fallback = protocol.fallbackRequestHandler;
+    Object.defineProperty(protocol, "fallbackRequestHandler", {
+      configurable: true,
+      get: () => fallback && wrap(fallback),
+      set: (value: Handler | undefined) => { fallback = value; },
+    });
+  }
+
+  /**
+   * Report an error whose text the client will not see, and return the
+   * correlation ID shown instead. Returns undefined for errors that are
+   * returned as they are.
+   */
+  private async reportWithheldError(
+    error: unknown,
+    method: string,
+    tool?: string,
+    options: { plainObjects?: boolean } = {},
+  ): Promise<string | undefined> {
+    let safe = false;
+    try {
+      safe = this.serverOptions.exposeErrors === true || isMcpFnClientSafeError(error, options);
+    } catch {
+      // An error the classifier cannot inspect is withheld.
+    }
+    if (safe) return undefined;
+    const errorId = randomUUID();
+    const sink = this.serverOptions.onError;
+    // Observational: not awaited, so a slow sink cannot hold up the response,
+    // and its failure cannot change it.
+    if (sink) {
+      void Promise.resolve()
+        .then(() => sink({ error, errorId, method, ...(tool === undefined ? {} : { tool }) }))
+        .catch(() => undefined);
+    }
+    return errorId;
+  }
+
+  /** Run a protocol handler, withholding unexpected error text. */
+  private async withheldProtocolErrors<T>(method: string, run: () => Promise<T>): Promise<T> {
+    try {
+      return await run();
+    } catch (error) {
+      const errorId = await this.reportWithheldError(error, method, undefined, { plainObjects: false });
+      if (errorId === undefined) throw error;
+      throw new McpError(ErrorCode.InternalError, "Internal error", { errorId });
     }
   }
 
