@@ -489,7 +489,7 @@ function authorizeRelationFilter(
   // A stored field can shadow a relation in a dot-path. A declared FK can
   // also expose its association through a quantifier. Check source and target.
   const hasSourceField = resource.fields.some((field) => field.name === head);
-  if (policy && (hasSourceField || (!quantifier && fkNamed)) && !canReadField(schema, resource, head)) {
+  if (policy && (hasSourceField || fkNamed) && !canReadField(schema, resource, head)) {
     return {
       ok: false,
       code: "FORBIDDEN",

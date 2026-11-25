@@ -991,20 +991,19 @@ describe("filter on a field named like its many-one relation (node.parent)", () 
     // Other relations are unaffected.
     const childNodes = await query(denied.server, { resource: "node", filters: { label: "Alpha" }, select: ["id", "childNodes"] });
     expect(childNodes.status).toBe(200);
-    // A scalar filter on it needs read access too, declared or not.
-    for (const [schema, undeclared] of [
-      [withPolicy(["id", "label"]), false],
-      [{ ...withPolicy(["id", "label"]), resources: withPolicy(["id", "label"]).resources.map((r) =>
-        r.name === "node" ? { ...r, fields: r.fields.filter((f) => f.name !== "parent") } : r) } as DatafnSchema, true],
-    ] as const) {
+    // Both scalar and quantified predicates need read access to the key.
+    const policy = withPolicy(["id", "label"]);
+    const withoutDeclaration = {
+      ...policy,
+      resources: policy.resources.map((r) =>
+        r.name === "node" ? { ...r, fields: r.fields.filter((f) => f.name !== "parent") } : r),
+    };
+    for (const schema of [policy, withoutDeclaration]) {
       const { server } = await createServer({ schema });
       const res = await query(server, { resource: "node", filters: { parent: "node:1" }, select: ["id"], count: true });
       expect(res.status, JSON.stringify(res.body)).toBe(403);
-      if (undeclared) {
-        // Quantifier objects remain relation filters.
-        const quantified = await query(server, { resource: "node", filters: { parent: { $any: { label: "Alpha" } } }, select: ["id"] });
-        expect(quantified.status, JSON.stringify(quantified.body)).toBe(200);
-      }
+      const quantified = await query(server, { resource: "node", filters: { parent: { $any: { label: "Alpha" } } }, select: ["id"] });
+      expect(quantified.status, JSON.stringify(quantified.body)).toBe(403);
     }
     const allowed = await createServer({ schema: withPolicy(["id", "label", "parent"]) });
     const res = await query(allowed.server, { resource: "node", filters: { label: "Echo" }, select: ["id", "parent.*"] });
@@ -1016,6 +1015,41 @@ describe("filter on a field named like its many-one relation (node.parent)", () 
     expect(classifyQuery({ resource: "objective", select: ["*", "parent.*"] }, SCHEMA)).toBe("IN_MEMORY");
     expect(classifyQuery({ resource: "node", select: ["*", "parent.*"] }, SCHEMA)).toBe("PARTIAL_PUSHDOWN");
   });
+});
+
+it("uses the same declared endpoint for legacy IDs in query and transact", async () => {
+  const schema: DatafnSchema = {
+    ...SCHEMA,
+    relations: [...(SCHEMA.relations ?? []), {
+      type: "many-one",
+      from: "task",
+      to: ["node", "objective"],
+      relation: "relatedItem",
+      inverse: "relatedTasks",
+      fkField: "itemId",
+    }],
+  };
+  const { db, server } = await createServer({ schema });
+  await db.create({ model: "objective", namespace: "datafn", data: { id: "legacy-item", label: "Goal" } });
+  await db.create({ model: "task", namespace: "datafn", data: { id: "task:legacy", itemId: "legacy-item" } });
+  await db.create({ model: "task", namespace: "datafn", data: { id: "task:qualified", itemId: "objective:goal" } });
+  const body = {
+    resource: "task",
+    version: 1,
+    select: ["id"],
+    filters: { relatedItem: { $any: { label: "Goal" } } },
+  };
+
+  const pushed = await query(server, body);
+  const response = await server.router.handle(new Request("http://localhost/datafn/transact", {
+    method: "POST",
+    body: JSON.stringify({ atomic: false, steps: [{ query: body }] }),
+  }));
+  const transaction = await response.json();
+  expect(pushed.status).toBe(200);
+  expect(response.status).toBe(200);
+  expect(pushed.body.result.data).toEqual([{ id: "task:qualified" }]);
+  expect(transaction.result.results[0].data).toEqual(pushed.body.result.data);
 });
 
 describe("relation expansion by name for in-memory queries", () => {

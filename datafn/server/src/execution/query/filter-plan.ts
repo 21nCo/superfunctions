@@ -27,7 +27,6 @@ import {
   endpointList,
   evaluateFilter as coreEvaluateFilter,
   findRelationMatch,
-  firstEndpoint,
   getCapabilityFields,
   getRelationJoinTableName,
   relationFkFieldForManyOne,
@@ -35,7 +34,6 @@ import {
   resolveCapabilities,
   normalizeFilterOps,
   resolveEndpointResource,
-  resourceNameFromId,
 } from "@datafn/core";
 import type { DatafnSchema } from "../../core-types.js";
 import {
@@ -43,6 +41,7 @@ import {
   isPrivateShareableResource,
   resolveAccessLevel,
 } from "../../validation/authz.js";
+import { resolvePredicateEndpoint } from "./filters.js";
 import { MAX_PUSHDOWN_IN_VALUES } from "./planner.js";
 
 /** Most disjoint WHERE lists one filter may expand to (one per OR-group combination). */
@@ -505,19 +504,6 @@ function relationForeignKey(match: RelationMatch): string {
     : relation.fkField || relation.foreignKey || `${relation.inverse}Id`;
 }
 
-/** Resource of a related record id, resolved like the in-memory evaluator does. */
-function relatedResourceFor(
-  schema: DatafnSchema,
-  id: unknown,
-  endpoint: string | readonly string[],
-): string {
-  return (
-    resolveEndpointResource(endpoint as any, id, schema as any) ??
-    resourceNameFromId(id) ??
-    firstEndpoint(endpoint as any)
-  );
-}
-
 async function filterVisibleRows(
   rows: Record<string, unknown>[],
   resource: string,
@@ -658,7 +644,7 @@ async function resolveRelationConjunct(
       const ids = new Set<unknown>();
       for (const [resource, rows] of matching) {
         for (const row of rows) {
-          if (relatedResourceFor(schema, row.id, targetEndpoint) === resource) ids.add(row.id);
+          if (resolvePredicateEndpoint(schema, row.id, targetEndpoint) === resource) ids.add(row.id);
         }
       }
       if (ids.size === 0) return "empty";
@@ -686,10 +672,12 @@ async function resolveRelationConjunct(
   const relatedIds = new Set<unknown>();
   for (const [resource, rows] of matching) {
     for (const row of rows) {
-      if (relatedResourceFor(schema, row.id, targetEndpoint) === resource) relatedIds.add(row.id);
+      if (!isForward || resolvePredicateEndpoint(schema, row.id, targetEndpoint) === resource) {
+        relatedIds.add(row.id);
+      }
     }
   }
-  const links: Array<{ relatedId: unknown; primaryId: unknown }> = [];
+  const links: Array<{ resource: string; relatedId: unknown; primaryId: unknown }> = [];
   if (relatedIds.size > 0) {
     const fromResources = isForward ? [primaryResource] : endpointList(relation.from);
     const matchColumn = isForward
@@ -705,24 +693,31 @@ async function resolveRelationConjunct(
         const relatedId = isForward ? row.to : row.from;
         const primaryId = isForward ? row.from : row.to;
         if (relatedIds.has(relatedId) && primaryId !== null && primaryId !== undefined) {
-          links.push({ relatedId, primaryId });
+          const resource = isForward
+            ? resolvePredicateEndpoint(schema, relatedId, targetEndpoint)
+            : fromResource;
+          links.push({ resource, relatedId, primaryId });
         }
       }
     }
   }
-  const linkedIds = new Set(links.map((link) => link.relatedId));
-  const visibleIds = new Set<unknown>();
+  const linkedIds = new Map<string, Set<unknown>>();
+  for (const { resource, relatedId } of links) {
+    const ids = linkedIds.get(resource) ?? new Set();
+    ids.add(relatedId);
+    linkedIds.set(resource, ids);
+  }
+  const visibleIds = new Map<string, Set<unknown>>();
   for (const [resource, rows] of matching) {
-    // Only rows of the resource the id resolves to: another target resource
-    // can hold a record with the same id whose visibility must not count.
-    const linked = rows.filter(
-      (row) => linkedIds.has(row.id) && relatedResourceFor(schema, row.id, targetEndpoint) === resource,
-    );
-    for (const row of await filterVisibleRows(linked, resource, schema, ctx)) visibleIds.add(row.id);
+    const ids = linkedIds.get(resource);
+    if (!ids) continue;
+    const linked = rows.filter((row) => ids.has(row.id));
+    const visible = await filterVisibleRows(linked, resource, schema, ctx);
+    visibleIds.set(resource, new Set(visible.map((row) => row.id)));
   }
   const primaryIds = new Set<unknown>();
   for (const link of links) {
-    if (visibleIds.has(link.relatedId)) primaryIds.add(link.primaryId);
+    if (visibleIds.get(link.resource)?.has(link.relatedId)) primaryIds.add(link.primaryId);
   }
   return idClause(primaryIds);
 }

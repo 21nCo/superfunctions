@@ -8,6 +8,7 @@ import {
   endpointList,
   evaluateFilter as coreEvaluateFilter,
   findRelationMatch,
+  firstEndpoint,
   getCapabilityFields,
   getRelationFkFieldsForResource,
   OP_REMAP,
@@ -153,6 +154,15 @@ function findRelation(schema: any, resourceName: string, relationName: string) {
 
 type RelatedRecord = { resource: string; record: Record<string, unknown> };
 
+/** Unqualified legacy IDs use the first declared endpoint in both query strategies. */
+export function resolvePredicateEndpoint(
+  schema: FilterSchema,
+  id: unknown,
+  endpoint: string | readonly string[],
+): string {
+  return resolveEndpointResource(endpoint, id, schema) ?? firstEndpoint(endpoint);
+}
+
 function getRelatedRecords(
   record: Record<string, unknown>,
   rel: NonNullable<ReturnType<typeof findRelationMatch>>,
@@ -166,15 +176,9 @@ function getRelatedRecords(
   const targetEndpoint = relationTargetEndpoint(relation, direction);
   const findById = (id: unknown, endpoint = targetEndpoint): RelatedRecord[] => {
     if (typeof id !== "string" || !id) return [];
-    const identified = resolveEndpointResource(endpoint, id, schema);
-    const candidates = identified ? [identified] : endpointList(endpoint);
-    const matches = candidates.flatMap((resource) => {
-      const found = store.getRecord(resource, id);
-      return found ? [{ resource, record: found }] : [];
-    });
-    // Legacy IDs can lack a usable prefix. Limit lookups to declared endpoints
-    // and require a unique match before following the relation.
-    return matches.length === 1 ? matches : [];
+    const resource = resolvePredicateEndpoint(schema, id, endpoint);
+    const found = resource ? store.getRecord(resource, id) : null;
+    return found ? [{ resource, record: found }] : [];
   };
   const findByForeignKey = (fk: string): RelatedRecord[] =>
     endpointList(targetEndpoint).flatMap((resource) =>
