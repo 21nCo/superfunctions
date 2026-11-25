@@ -1,0 +1,29 @@
+packages/cli/src/__tests__/plugfn-schema-migration.test.ts
+  s_545bb079978e5a::t_e8fa61a84c4c55 248,252,275-281,284-287,291
+packages/cli/src/__tests__/schema-index-migrations.test.ts
+  s_545bb079978e5a::t_d80cbc55495e3b 952,954-959,961-973,976,993-994,996,999,1001-1009
+packages/cli/src/commands/generate.ts
+  s_545bb079978e5a::t_a763c41cc85cf8 176
+packages/cli/src/utils/adapter-helper.ts
+  s_545bb079978e5a::t_d945b62fbd5119 140-142,145,147
+packages/cli/src/utils/introspection.ts
+  s_545bb079978e5a::t_c729181db0a1da 185,188-189
+packages/cli/src/utils/schema-diff.ts
+  s_545bb079978e5a::t_120266d8d7aada 533-540,542
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "399bb70ff36d4648cfe4cb3481b5a595b8289958",
+  "prompts": {},
+  "sessions": {
+    "s_545bb079978e5a": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a2144f-8f2a-7690-8b1a-e7858b67a889",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
