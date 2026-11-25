@@ -563,10 +563,17 @@ class OperationConverter {
       // compiled once, at its first reuse, to know. Its first holder's
       // reservation is given back now, and every holder gets its verdict.
       if (!this.reuseChecked.has(known)) {
+        let skip: OpenApiSkip | undefined;
+        try {
+          const failure = this.compileFailure(known, () => this.framesOf(known));
+          if (failure !== null) skip = invalidSkip(failure, kind);
+        } catch (error) {
+          // A check the budget cannot pay for refuses the schema the same way.
+          if (!(error instanceof OpenApiSkip)) throw error;
+          skip = error;
+        }
         this.reuseChecked.add(known);
-        const failure = this.compileFailure(known, () => this.framesOf(known));
-        if (failure !== null) {
-          const skip = invalidSkip(failure, kind);
+        if (skip !== undefined) {
           this.shared.set(key, skip);
           this.refused.set(known, skip);
           // Every operation already holding it will be skipped: all it reserved goes back now.
@@ -765,6 +772,7 @@ class OperationConverter {
     definitions: Record<string, unknown>,
     mode: "plain" | "input" | "output",
     required = true,
+    enclosed = false,
   ): string | null {
     if (!isObject(root)) return null;
     const budget = this.schemas.copyBudget();
@@ -772,7 +780,7 @@ class OperationConverter {
     const copy = treeCopy(root, budget, values);
     // Definitions with the same names differ between modes. The key holds
     // the whole copy, so it covers the wrapper built from it below.
-    const key = contentKey(`compile:${mode}:${required}`, copy, values, definitions);
+    const key = contentKey(`compile:${mode}:${required}:${enclosed}`, copy, values, definitions);
     let failure = key === undefined ? undefined : this.verdicts.get(key);
     if (failure === undefined) {
       // The generated definitions go on a wrapper, as in a tool schema, so
@@ -783,7 +791,8 @@ class OperationConverter {
       // only checked (`plain`) is measured in place, as a compiler reads it.
       failure = this.compileFailure(
         wrapped ? { type: "object", properties: { value: copy }, definitions: treeCopy(definitions, budget) } : copy,
-        () => this.schemas.frames(root, mode, required),
+        // A required body stacks on the tool input's own frame, as when it registers.
+        () => this.schemas.frames(root, mode, required) + (enclosed && required ? 1 : 0),
       );
       if (key !== undefined) this.verdicts.set(key, failure);
     }
@@ -812,7 +821,7 @@ class OperationConverter {
     const verdicts = this.bodyVerdicts[required ? 1 : 0];
     let verdict = isObject(schema) ? verdicts.get(schema) : undefined;
     if (verdict === undefined) {
-      verdict = this.compileVerdict(converted, this.schemas.definitions(refs, "input"), "input", required);
+      verdict = this.compileVerdict(converted, this.schemas.definitions(refs, "input"), "input", required, true);
       if (isObject(schema)) verdicts.set(schema, verdict);
     }
     throwIfInvalid(verdict, "request body");

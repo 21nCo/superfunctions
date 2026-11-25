@@ -1201,7 +1201,7 @@ export class McpFnRegistry<TContext = undefined> {
   }
 }
 
-/** A JavaScript engine's stack overflow ("Maximum call stack size exceeded"); no other error. */
+/** A V8 or JavaScriptCore stack overflow ("Maximum call stack size exceeded."); no other error. */
 function isStackOverflow(error: unknown): boolean {
-  return error instanceof RangeError && /call stack/i.test(error.message);
+  return error instanceof RangeError && /^Maximum call stack size exceeded\.?$/.test(error.message);
 }

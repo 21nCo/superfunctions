@@ -217,7 +217,11 @@ describe("fromOpenAPI under @cfworker/json-schema", () => {
           "/sole": post("optionalSole", false, { "application/json": { schema: loop } }),
           "/media": post("optionalMedia", false, { "application/json": { schema: loop }, "application/example+json": { schema: { type: "string" } } }),
           "/required": post("requiredMedia", true, { "application/json": { schema: loop }, "application/example+json": { schema: { type: "string" } } }),
-          "/wide": post("wide", true, { "application/json": { schema: { type: "object", required: names, allOf: members } } }),
+          "/wide": {
+            ...post("wide", true, { "application/json": { schema: { type: "object", required: names, allOf: members } } }),
+            // A response only checked is measured in place: its required names are never scanned.
+            head: { operationId: "wideHead", responses: json({ type: "object", required: names, allOf: members }) },
+          },
           "/ok": post("ok", true, { "application/json": { schema: { type: "object" } } }),
         },
         components: { schemas: { Loop: { type: "object", required: ["next"], properties: { next: loop } } } },
@@ -229,12 +233,27 @@ describe("fromOpenAPI under @cfworker/json-schema", () => {
       ["optionalSole", "application/json"],
       ["optionalMedia", "application/json"],
       ["requiredMedia", "application/example+json"],
+      ["wideHead", undefined],
       ["ok", "application/json"],
     ]);
     // 2,000 members each reading 2,000 required names are charged before the scan.
     expect(result.skipped.map(({ operation, code, reason }) => [operation.operationId, code, reason])).toEqual([
       ["wide", "schema-too-large", expect.stringMatching(/^the document's schemas expand in total to more than \d+ nodes$/)],
     ]);
+  }, 60_000);
+
+  it("refuses every holder of a shared schema whose reuse check the budget cannot pay for, so a valid later tool fits", () => {
+    const names = Array.from({ length: 2_000 }, (_, index) => `n${index}`);
+    const wide = { type: "object", required: names, patternProperties: Object.fromEntries(names.map((name) => [`^p${name}$`, { type: "string" }])) };
+    const paths: Record<string, unknown> = {};
+    for (let index = 0; index < 800; index += 1) paths[`/wide${index}`] = { get: { operationId: `wide${index}`, responses: json({ $ref: "#/components/schemas/Wide" }) } };
+    const literal = Array.from({ length: 3_000 }, (_, index) => ({ k: index }));
+    paths["/ok"] = { get: { operationId: "ok", responses: json({ type: "object", properties: { a: { type: "string" }, d: { type: "array", default: literal } } }) } };
+    const result = fromOpenAPI({ openapi: "3.1.0", paths, components: { schemas: { Wide: wide } } }, { executor: recordingExecutor() });
+    expect(result.tools.map(({ name }) => name)).toEqual(["ok"]);
+    expect(result.registry.has("ok")).toBe(true);
+    expect(result.skipped).toHaveLength(800);
+    expect(new Set(result.skipped.map(({ code }) => code))).toEqual(new Set(["schema-too-large"]));
   }, 60_000);
 
   it("reports a value too deep for the validator's stack as invalid arguments and rethrows any other validator error", async () => {
@@ -258,6 +277,8 @@ describe("fromOpenAPI under @cfworker/json-schema", () => {
     });
     const getter = { get next(): unknown { throw new RangeError("Invalid array length"); } };
     await expect(plain.callTool("plain", { a: getter }, undefined, requestExtra())).rejects.toThrow(new RangeError("Invalid array length"));
+    const named = { get next(): unknown { throw new RangeError("call stack configuration is invalid"); } };
+    await expect(plain.callTool("plain", { a: named }, undefined, requestExtra())).rejects.toThrow(new RangeError("call stack configuration is invalid"));
     expect(handler).toHaveBeenCalledTimes(1);
   });
 

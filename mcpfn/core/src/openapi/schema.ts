@@ -1783,7 +1783,8 @@ export class SchemaConverter {
       // `allOf` members validate the same value: a child one member declares is
       // forced by `required`, `type` or `minItems` in another.
       if (whole === undefined) {
-        whole = conjunction(node);
+        // A schema only checked (`plain`) forces no child: it is measured in place.
+        whole = mode === "plain" ? UNFORCED : conjunction(node);
         visited += whole.nodes;
       }
       for (const member of arrayOf(node.allOf)) visit(member, frame + 1, own, must, whole);
@@ -2124,6 +2125,9 @@ interface Conjunction {
   minItems: number;
   nodes: number;
 }
+
+/** A conjunction that demands nothing: every child value starts its own chain. */
+const UNFORCED: Conjunction = { required: [], names: new Set(), types: undefined, minItems: 0, nodes: 0 };
 
 function conjunction(schema: JsonObject): Conjunction {
   const names = new Set<string>();
