@@ -357,6 +357,13 @@ describe("validateOpenAPI", () => {
     ]);
   });
 
+  it("reports the schema when an unlisted reference shares an object with literal data", async () => {
+    const doc = documentWithReference("https://example.invalid/types.yaml");
+    await expect(validateOpenAPI({ ...doc, "x-sample": doc.components.schemas.Value })).resolves.toEqual([
+      { path: "components.schemas.Value.$ref", message: expect.stringContaining("explicit allowlist"), severity: "error" },
+    ]);
+  });
+
   it.each([
     { directory: "/virtual/C#/service", ref: "./types.json", key: "/virtual/C#/service/types.json" },
     { directory: "C:\\project", ref: "./shared.yaml", key: "C:\\project\\shared.yaml" },

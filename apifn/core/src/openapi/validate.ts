@@ -65,19 +65,27 @@ class ReferencePreparationError extends Error {
 }
 
 function referencePath(document: OpenAPIDocument, referrer: object): string {
-  const seen = new WeakSet<object>();
-  const pending: Array<{ value: object; path?: ReferencePath }> = [{ value: document }];
+  const seen = new WeakMap<object, Set<OpenAPIReferenceMode>>();
+  const pending: Array<{ value: object; mode: OpenAPIReferenceMode; path?: ReferencePath }> = [
+    { value: document, mode: "node" },
+  ];
   while (pending.length) {
-    const { value, path } = pending.pop()!;
+    const { value, mode, path } = pending.pop()!;
+    // YAML aliases can share an object between a reference and a literal payload.
+    if (mode === "literal") continue;
     if (value === referrer) {
       const segments = ["$ref"];
       for (let cursor = path; cursor; cursor = cursor.parent) segments.push(cursor.key);
       return segments.reverse().join(".");
     }
-    if (seen.has(value)) continue;
-    seen.add(value);
+    const contexts = seen.get(value) ?? new Set<OpenAPIReferenceMode>();
+    if (contexts.has(mode)) continue;
+    contexts.add(mode);
+    seen.set(value, contexts);
     for (const [key, child] of Object.entries(value)) {
-      if (typeof child === "object" && child !== null) pending.push({ value: child, path: { key, parent: path } });
+      if (typeof child === "object" && child !== null) {
+        pending.push({ value: child, mode: referenceChildMode(value, mode, key, child), path: { key, parent: path } });
+      }
     }
   }
   return "openapi";
