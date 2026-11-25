@@ -56,7 +56,7 @@ type PolicyContextFactory<TContext> = (request: Request) => Promise<TContext> | 
 interface PolicyContextOptions<TContext> {
   /** Load the authorization policy's per-request identity and other context. */
   context?: PolicyContextFactory<TContext>;
-  authorize?: Authorize<TContext>;
+  authorize?: Authorize<Awaited<TContext>>;
 }
 
 type FactoryPolicyOptions<TContext> = PolicyContextOptions<TContext> & {
@@ -64,7 +64,7 @@ type FactoryPolicyOptions<TContext> = PolicyContextOptions<TContext> & {
 };
 
 export type SearchFnServerConfig<TContext = RouterPolicyContext> = SearchFnServerOptions & (
-  RouterPolicyContext extends TContext ? PolicyContextOptions<TContext> : FactoryPolicyOptions<TContext>
+  RouterPolicyContext extends Awaited<TContext> ? PolicyContextOptions<TContext> : FactoryPolicyOptions<TContext>
 );
 
 export interface SearchFnServer {

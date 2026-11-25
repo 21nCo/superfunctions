@@ -147,6 +147,21 @@ describe("SearchFn authorization", () => {
     expect((await server.router.handle(post("clear", { resource: "docs" }))).status).toBe(403);
   });
 
+  it("types the policy with the resolved context of an async factory", async () => {
+    const identity = { userId: "test-user" };
+    const context = async () => identity;
+    const config: SearchFnServerConfig<ReturnType<typeof context>> = {
+      adapter: testAdapter(),
+      context,
+      authorize: (ctx) => {
+        expectTypeOf(ctx).toEqualTypeOf<typeof identity>();
+        return ctx === identity;
+      },
+    };
+    const server = await createSearchFnServer(config);
+    expect((await server.router.handle(post("clear", { resource: "docs" }))).status).toBe(200);
+  });
+
   it("accepts factory-free policies typed with standard router fields", async () => {
     const server = await createSearchFnServer({
       adapter: testAdapter(),
