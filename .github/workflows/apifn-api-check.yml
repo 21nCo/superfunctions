@@ -305,8 +305,9 @@ jobs:
       # neither run can be pointed at another base. A base branch is pinned to its commit from the remote-tracking ref
       # only (a tag or branch named origin/<base_branch> cannot stand in for it); the checkout fetched every branch, so
       # the token is used only when that ref is missing, and then only through this command's environment. A base_spec
-      # (an HTTP(S) download, bounded, or a local file resolved against working_directory) is copied to a snapshot
-      # outside the checkout, and both check runs read that snapshot.
+      # (an HTTP(S) download or a local file resolved against working_directory, each at most 32 MiB as the CLI reads
+      # it) is copied to a snapshot outside the checkout, and both check runs read that snapshot. A base_spec that
+      # cannot be loaded is a baseline load error the check step reports (exit 2), as the CLI would, not a failed step.
       - name: Pin base
         id: fetch_base
         if: ${{ !contains(steps.*.outcome, 'failure') && inputs.router_path != '' }}
@@ -321,20 +322,25 @@ jobs:
         run: |
           set -euo pipefail
           snapshot="$RUNNER_TEMP/apifn-base-spec"
+          max_bytes=33554432
           rm -f "$snapshot"
+          load_error() {
+            rm -f "$snapshot"
+            echo "error=${1//$'\n'/ }" >> "$GITHUB_OUTPUT"
+            echo "::error::$1"
+            exit 0
+          }
           if [[ "$BASE_SPEC" =~ ^[Hh][Tt][Tt][Pp][Ss]?:// ]]; then
-            if ! curl --fail --silent --show-error --location --max-time 30 --max-filesize 33554432 --proto =http,https --proto-redir =http,https \
+            if ! curl --fail --silent --show-error --location --max-time 30 --max-filesize "$max_bytes" --proto =http,https --proto-redir =http,https \
               --output "$snapshot" -- "$BASE_SPEC"; then
-              echo "::error::Could not download base_spec $BASE_SPEC"
-              exit 1
+              load_error "Could not download base_spec $BASE_SPEC"
             fi
             echo "Downloaded base_spec $BASE_SPEC"
           elif [ -n "$BASE_SPEC" ]; then
-            if [ ! -f "$BASE_SPEC" ]; then
-              echo "::error::base_spec $BASE_SPEC is not a file in $PWD"
-              exit 1
-            fi
-            cp -- "$BASE_SPEC" "$snapshot"
+            if [ ! -f "$BASE_SPEC" ]; then load_error "base_spec $BASE_SPEC is not a file in $PWD"; fi
+            if [ "$(wc -c < "$BASE_SPEC")" -gt "$max_bytes" ]; then load_error "base_spec $BASE_SPEC is larger than $max_bytes bytes"; fi
+            head -c "$((max_bytes + 1))" -- "$BASE_SPEC" > "$snapshot"
+            if [ "$(wc -c < "$snapshot")" -gt "$max_bytes" ]; then load_error "base_spec $BASE_SPEC is larger than $max_bytes bytes"; fi
             echo "Copied base_spec $BASE_SPEC"
           else
             ref="refs/remotes/origin/${BASE_BRANCH}"
@@ -497,6 +503,7 @@ jobs:
           SPEC_PATH: ${{ inputs.spec_path }}
           BASE_SPEC: ${{ inputs.base_spec }}
           BASE_SHA: ${{ steps.fetch_base.outputs.sha }}
+          BASE_SPEC_ERROR: ${{ steps.fetch_base.outputs.error }}
           CHECKOUT_COMMIT: ${{ steps.caller_checkout.outputs.commit }}
           ALLOW_BREAKING: ${{ inputs.allow_breaking }}
           # Prints "committed", "missing" or "changed", then the reason, for the spec (argv 3) relative to the physical
@@ -570,6 +577,11 @@ jobs:
           args=("$ROUTER_PATH")
           if [ -n "$CONFIG_PATH" ]; then args+=(--config "$CONFIG_PATH"); fi
           if [ -n "$SPEC_PATH" ]; then args+=(--spec "$SPEC_PATH"); fi
+          if [ -n "$BASE_SPEC_ERROR" ]; then
+            echo "::error::Failed to load base spec: $BASE_SPEC_ERROR"
+            printf 'exit_code=2\njson_exit_code=2\nspec_state=\n' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           if [ -n "$BASE_SPEC" ]; then
             args+=(--base-spec "$RUNNER_TEMP/apifn-base-spec")
           else
@@ -1080,13 +1092,14 @@ jobs:
         # The evaluate job wrote the job summary.
         # The comment only mirrors the job summary, so a post that fails, even before its script starts, does not
         # decide the job; the next step does.
-        if: (inputs.post_pr_comment == true || inputs.post_pr_comment == 'true') && github.event.pull_request.number && github.event.pull_request.head.repo.full_name == github.repository
+        # An evaluate job that did not complete posts nothing, so an interrupted older run cannot replace the report
+        # of a newer commit; the next step fails the check.
+        if: needs.evaluate.result == 'success' && (inputs.post_pr_comment == true || inputs.post_pr_comment == 'true') && github.event.pull_request.number && github.event.pull_request.head.repo.full_name == github.repository
         continue-on-error: true
         timeout-minutes: 5
         uses: actions/github-script@v7
         env:
           APIFN_COMMENT: ${{ needs.evaluate.outputs.comment }}
-          EVALUATE_RESULT: ${{ needs.evaluate.result }}
         with:
           script: |
             const { owner, repo } = context.repo;
@@ -1098,10 +1111,9 @@ jobs:
             const marker = '<!-- apifn-ci-report -->';
             const runUrl = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
             // The evaluate job bounded the report to 60000 UTF-8 bytes and kept the marker.
-            const evaluated = process.env.EVALUATE_RESULT === 'success';
-            const body = evaluated && process.env.APIFN_COMMENT
+            const body = process.env.APIFN_COMMENT
               ? process.env.APIFN_COMMENT
-              : `${marker}\n## ApiFn API check: **ERROR**\n\nThe evaluate job ${evaluated ? 'produced no report' : `did not complete (${process.env.EVALUATE_RESULT || 'unknown'})`}; see the [run](${runUrl}).\n`;
+              : `${marker}\n## ApiFn API check: **ERROR**\n\nThe evaluate job produced no report; see the [run](${runUrl}).\n`;
 
             // A failed post is a warning.
             try {
