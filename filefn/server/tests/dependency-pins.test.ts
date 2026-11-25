@@ -11,16 +11,16 @@ const workspaceInstall = existsSync(join(repoRoot, 'node_modules'));
 
 describe('server dependency pins (F-20)', () => {
   it.each([
-    ['@superfunctions/db', 'packages/db'],
-    ['@superfunctions/middleware', 'packages/middleware'],
-    ['@filefn/processing', 'filefn/processing'],
-  ])('resolves %s at the version in %s', (name, workspace) => {
+    ['@superfunctions/db', 'dependencies', 'packages/db'],
+    ['@superfunctions/middleware', 'dependencies', 'packages/middleware'],
+    ['@filefn/processing', 'devDependencies', 'filefn/processing'],
+  ])('resolves %s from %s at the version in %s', (name, section, workspace) => {
     const server = JSON.parse(readFileSync(join(serverDir, 'package.json'), 'utf8'));
     const expected = JSON.parse(readFileSync(join(repoRoot, workspace, 'package.json'), 'utf8'));
     const entry = realpathSync(serverRequire.resolve(name));
     const installed = JSON.parse(readFileSync(join(dirname(entry), '../package.json'), 'utf8'));
 
-    expect(server.dependencies[name] ?? server.devDependencies[name]).toBe(expected.version);
+    expect(server[section]?.[name]).toBe(expected.version);
     expect(installed.name).toBe(name);
     expect(installed.version).toBe(expected.version);
     // Tagged publishing installs registry packages without building the workspace.
