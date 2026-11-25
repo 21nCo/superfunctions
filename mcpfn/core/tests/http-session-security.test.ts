@@ -1,4 +1,5 @@
 import type { AuthInfo } from "@modelcontextprotocol/sdk/server/auth/types.js";
+import { InitializeRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -22,7 +23,7 @@ function authInfo(subject: string, clientId = "client-a"): AuthInfo {
   return { token: "test-access-token", clientId, scopes: [], extra: { subject } };
 }
 
-let gate: Promise<void> | undefined;
+let gate: (() => Promise<void>) | undefined;
 
 async function setup(options: McpFnWebStandardHandlerOptions<undefined> = {}) {
   const registry = new McpFnRegistry().register({
@@ -30,7 +31,7 @@ async function setup(options: McpFnWebStandardHandlerOptions<undefined> = {}) {
     description: "Echo a value.",
     inputSchema: { type: "object", properties: { value: { type: "string" } }, required: ["value"] },
     handler: async ({ value }) => {
-      await gate;
+      await gate?.();
       return structuredResult({ value });
     },
   });
@@ -59,8 +60,8 @@ async function setup(options: McpFnWebStandardHandlerOptions<undefined> = {}) {
       jsonrpc: "2.0", id: 1, method: "initialize",
       params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "client", version: "1.0.0" } },
     }, { auth, headers });
-    await response.text();
-    return { status: response.status, sessionId: response.headers.get("mcp-session-id") };
+    const text = await response.text();
+    return { status: response.status, sessionId: response.headers.get("mcp-session-id"), text };
   };
   const call = async (sessionId: string, auth?: AuthInfo) => {
     const response = await post(
@@ -125,20 +126,22 @@ describe("createWebStandardHandler session binding (MCP-SEC-03)", () => {
   });
 
   it("does not create a session when close() runs while the host accepts it", async () => {
+    let markEntered!: () => void;
     let open!: () => void;
+    const entered = new Promise<void>((resolve) => { markEntered = resolve; });
     const hold = new Promise<void>((resolve) => { open = resolve; });
     const closed: string[] = [];
     const { initialize, call, server } = await setup({
-      onsessioninitialized: () => hold,
+      onsessioninitialized: () => { markEntered(); return hold; },
       onsessionclosed: (id) => { closed.push(id); },
     });
     const pending = initialize();
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await entered;
     await server.close();
-    open();
     const result = await pending;
     expect(result.status).toBe(503);
-    expect(closed).toEqual(["session-1"]);
+    open();
+    await vi.waitFor(() => expect(closed).toEqual(["session-1"]));
     expect((await call("session-1")).status).not.toBe(200);
   });
 
@@ -317,6 +320,36 @@ describe("createWebStandardHandler session binding (MCP-SEC-03)", () => {
     await resumed.body?.cancel();
   });
 
+  it("refuses replay after a new session reuses an expired session's public ID", async () => {
+    vi.useFakeTimers();
+    const streamIds = new Map<string, string>();
+    const eventStore = {
+      async storeEvent(streamId: string) {
+        const id = `event-${streamIds.size + 1}`;
+        streamIds.set(id, streamId);
+        return id;
+      },
+      async getStreamIdForEventId(id: string) { return streamIds.get(id); },
+      replayEventsAfter: vi.fn(async (id: string) => streamIds.get(id) ?? ""),
+    };
+    const { handler, initialize } = await setup({
+      enableJsonResponse: false, eventStore, sessionIdleTimeoutMs: 100,
+      sessionIdGenerator: () => "test-reused-id",
+    });
+    const first = await initialize(authInfo("alice"));
+    const cursor = first.text.match(/^id: (.+)$/m)?.[1];
+    expect(cursor).toBeDefined();
+    await vi.advanceTimersByTimeAsync(100);
+    const next = await initialize(authInfo("bob"));
+    expect(next.sessionId).toBe(first.sessionId);
+    const replay = await handler(new Request("http://127.0.0.1:8080/mcp", {
+      method: "GET",
+      headers: { accept: "text/event-stream", "mcp-session-id": next.sessionId!, "mcp-protocol-version": "2025-11-25", "last-event-id": cursor! },
+    }), { authInfo: authInfo("bob") });
+    expect(replay.status).toBe(400);
+    expect(eventStore.replayEventsAfter).not.toHaveBeenCalled();
+  });
+
   it("keeps subjectless tokens from different issuers apart", async () => {
     const { initialize, call } = await setup();
     const from = (issuer: string): AuthInfo => ({ token: "test-shared-token-text", clientId: "client-a", scopes: [], extra: { issuer } });
@@ -325,29 +358,33 @@ describe("createWebStandardHandler session binding (MCP-SEC-03)", () => {
     expect((await call(sessionId!, from("https://issuer-one.example"))).status).toBe(200);
   });
 
-  it("answers 503 when close() runs while the initialize body is still being read", async () => {
-    const { handler, server } = await setup();
-    let push!: (chunk: Uint8Array) => void;
-    let finish!: () => void;
-    const body = new ReadableStream<Uint8Array>({
-      start(controller) {
-        push = (chunk) => controller.enqueue(chunk);
-        finish = () => controller.close();
-      },
-    });
+  it.each([["server shutdown", 503], ["client abort", 499], ["setup timeout", 408]])("interrupts a pending initialize body on %s", async (reason, status) => {
+    vi.useFakeTimers();
+    const { handler, initialize, server } = await setup({ maxSessions: 1, sessionIdleTimeoutMs: 100 });
+    const abort = new AbortController();
+    let markRead!: () => void;
+    const reading = new Promise<void>((resolve) => { markRead = resolve; });
+    const cancel = vi.fn();
+    const body = new ReadableStream<Uint8Array>({ pull: () => markRead(), cancel }, { highWaterMark: 0 });
     const pending = handler(new Request("http://127.0.0.1:8080/mcp", {
       method: "POST",
       headers: { accept: "application/json, text/event-stream", "content-type": "application/json" },
       body,
+      signal: abort.signal,
       duplex: "half",
     } as RequestInit));
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    await server.close();
-    push(new TextEncoder().encode(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "c", version: "1" } } })));
-    finish();
+    await reading;
+    if (reason === "server shutdown") await server.close();
+    else if (reason === "client abort") abort.abort();
+    else await vi.advanceTimersByTimeAsync(100);
     const response = await pending;
-    expect(response.status).toBe(503);
+    expect(cancel).toHaveBeenCalledTimes(reason === "client abort" ? 1 : 0);
+    expect(body.locked).toBe(false);
+    expect(response.status).toBe(status);
+    if (status === 408) expect(await response.text()).toContain("Session initialization timed out");
     expect(response.headers.get("mcp-session-id")).toBeNull();
+    await vi.advanceTimersByTimeAsync(0);
+    expect((await initialize()).status).toBe(200);
   });
 
   it("uses a host-supplied principal key", async () => {
@@ -356,6 +393,317 @@ describe("createWebStandardHandler session binding (MCP-SEC-03)", () => {
     });
     const { sessionId } = await initialize(undefined, { "x-tenant": "tenant-a" });
     expect((await call(sessionId!)).status).toBe(404);
+  });
+});
+
+describe("createWebStandardHandler session limits and expiry (MCP-SEC-04)", () => {
+  it("refuses excess sessions per principal, with a shared anonymous allowance", async () => {
+    const { initialize, call } = await setup({ maxSessionsPerPrincipal: 1 });
+    const alice = authInfo("alice");
+    const first = await initialize(alice);
+    const refused = await initialize(alice);
+    expect(refused).toMatchObject({ status: 429, sessionId: null, text: expect.stringContaining("Too many sessions for this principal") });
+    expect((await initialize(authInfo("bob"))).status).toBe(200);
+    expect((await initialize()).status).toBe(200);
+    expect((await initialize()).status).toBe(429);
+    expect((await call(first.sessionId!, alice)).status).toBe(200);
+  });
+
+  it("reserves capacity for concurrent initialization and frees it on DELETE", async () => {
+    let markEntered!: () => void;
+    let accept!: () => void;
+    const entered = new Promise<void>((resolve) => { markEntered = resolve; });
+    const accepted = new Promise<void>((resolve) => { accept = resolve; });
+    const { handler, initialize, call } = await setup({
+      maxSessions: 1,
+      onsessioninitialized: async () => { markEntered(); await accepted; },
+    });
+    const alice = authInfo("alice");
+    const pending = initialize(alice);
+    await entered;
+    const refused = await initialize(authInfo("bob"));
+    expect(refused).toMatchObject({ status: 503, sessionId: null, text: expect.stringContaining("Too many sessions for this HTTP handler") });
+    accept();
+    const first = await pending;
+    expect((await call(first.sessionId!, alice)).status).toBe(200);
+    const deleted = await handler(new Request("http://127.0.0.1:8080/mcp", {
+      method: "DELETE",
+      headers: { "mcp-session-id": first.sessionId!, "mcp-protocol-version": "2025-11-25" },
+    }), { authInfo: alice });
+    expect(deleted.status).toBe(200);
+    expect((await initialize(authInfo("bob"))).status).toBe(200);
+  });
+
+  it("releases the slot when the host refuses initialization", async () => {
+    const { initialize } = await setup({
+      maxSessions: 1,
+      onsessioninitialized: (id) => { if (id === "session-1") throw new Error("Test refusal"); },
+    });
+    expect((await initialize()).status).toBe(400);
+    expect((await initialize()).status).toBe(200);
+  });
+
+  it("returns a failed SSE setup response while the host cleanup is still pending", async () => {
+    vi.useFakeTimers();
+    let release!: () => void;
+    const cleanup = new Promise<void>((resolve) => { release = resolve; });
+    let events = 0;
+    const onClosed = vi.fn(() => cleanup);
+    const { initialize } = await setup({
+      enableJsonResponse: false,
+      maxSessions: 1,
+      onsessionclosed: onClosed,
+      eventStore: {
+        async storeEvent() {
+          if (++events === 1) throw new Error("Test priming error");
+          return `event-${events}`;
+        },
+        async replayEventsAfter() { return ""; },
+      },
+    });
+    expect((await initialize()).status).toBe(400);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(onClosed).toHaveBeenCalledExactlyOnceWith("session-1");
+    expect((await initialize()).status).toBe(503);
+    release();
+    await vi.advanceTimersByTimeAsync(0);
+    expect((await initialize()).status).toBe(200);
+  });
+
+  it.each(["configuration", "acceptance"])("answers 408 while the host %s hook is still pending", async (stage) => {
+    vi.useFakeTimers();
+    let markEntered!: () => void;
+    let release!: () => void;
+    const entered = new Promise<void>((resolve) => { markEntered = resolve; });
+    const hold = new Promise<void>((resolve) => { release = resolve; });
+    const wait = async () => { markEntered(); await hold; };
+    const onClosed = vi.fn();
+    const { initialize } = await setup({
+      maxSessions: 1,
+      sessionIdleTimeoutMs: 100,
+      ...(stage === "configuration" ? { configureRequestServer: wait } : { onsessioninitialized: wait }),
+      onsessionclosed: onClosed,
+    });
+    const pending = initialize();
+    await entered;
+    await vi.advanceTimersByTimeAsync(100);
+    expect((await pending).status).toBe(408);
+    expect((await initialize()).status).toBe(503);
+    release();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(onClosed).toHaveBeenCalledTimes(stage === "acceptance" ? 1 : 0);
+    expect((await initialize()).status).toBe(200);
+  });
+
+  it("keeps the original setup deadline through host acceptance and SSE priming", async () => {
+    vi.useFakeTimers();
+    let markAccepted!: () => void;
+    let accept!: () => void;
+    let startPriming!: () => void;
+    let finishPriming!: () => void;
+    const accepting = new Promise<void>((resolve) => { markAccepted = resolve; });
+    const acceptHook = new Promise<void>((resolve) => { accept = resolve; });
+    const priming = new Promise<void>((resolve) => { startPriming = resolve; });
+    const primingWrite = new Promise<void>((resolve) => { finishPriming = resolve; });
+    let events = 0;
+    const { initialize, call } = await setup({
+      enableJsonResponse: false,
+      maxSessions: 1,
+      sessionIdleTimeoutMs: 100,
+      onsessioninitialized: () => { markAccepted(); return acceptHook; },
+      eventStore: {
+        async storeEvent() {
+          const id = `event-${++events}`;
+          if (events === 1) { startPriming(); await primingWrite; }
+          return id;
+        },
+        async replayEventsAfter() { return ""; },
+      },
+    });
+    const pending = initialize();
+    await accepting;
+    await vi.advanceTimersByTimeAsync(90);
+    accept();
+    await priming;
+    expect((await call("session-1")).status).toBe(200);
+    await vi.advanceTimersByTimeAsync(10);
+    expect((await pending).status).toBe(408);
+    expect((await initialize()).status).toBe(503);
+    finishPriming();
+    await vi.advanceTimersByTimeAsync(0);
+    expect((await initialize()).status).toBe(200);
+  });
+
+  it("rejects an oversized declared body without reading or canceling the upload", async () => {
+    const { handler } = await setup({ maxRequestBodySize: 512 });
+    const pull = vi.fn();
+    const cancel = vi.fn();
+    const body = new ReadableStream<Uint8Array>({ pull, cancel }, { highWaterMark: 0 });
+    const response = await handler(new Request("http://127.0.0.1:8080/mcp", {
+      method: "POST",
+      headers: { accept: "application/json, text/event-stream", "content-type": "application/json", "content-length": "513" },
+      body,
+      duplex: "half",
+    } as RequestInit));
+    expect(response.status).toBe(413);
+    expect(pull).not.toHaveBeenCalled();
+    expect(cancel).not.toHaveBeenCalled();
+    expect(body.locked).toBe(false);
+  });
+
+  it("delivers a protocol initialization error and expires its accepted session", async () => {
+    vi.useFakeTimers();
+    let attempts = 0;
+    const onClosed = vi.fn();
+    const { initialize, call } = await setup({
+      enableJsonResponse: false,
+      maxSessions: 1,
+      sessionIdleTimeoutMs: 100,
+      onsessionclosed: onClosed,
+      configureRequestServer: (child) => {
+        if (++attempts === 1) child.protocol.setRequestHandler(InitializeRequestSchema, () => {
+          throw new Error("Test initialization error");
+        });
+      },
+    });
+    const failed = await initialize();
+    expect(failed.text).toContain('"error":{"code":-32603');
+    await vi.advanceTimersByTimeAsync(100);
+    expect((await call(failed.sessionId!)).status).toBe(404);
+    expect(onClosed).toHaveBeenCalledExactlyOnceWith(failed.sessionId);
+    expect((await initialize()).status).toBe(200);
+  });
+
+  it("expires and disposes idle sessions without waiting for another request", async () => {
+    vi.useFakeTimers();
+    const onClosed = vi.fn();
+    const protocolClosed = vi.fn();
+    const { initialize, call } = await setup({
+      maxSessions: 1,
+      sessionIdleTimeoutMs: 100,
+      onsessionclosed: onClosed,
+      configureRequestServer: (child) => { child.protocol.onclose = protocolClosed; },
+    });
+    const { sessionId } = await initialize();
+    await vi.advanceTimersByTimeAsync(99);
+    expect((await call(sessionId!)).status).toBe(200);
+    await vi.advanceTimersByTimeAsync(99);
+    expect(onClosed).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(onClosed).toHaveBeenCalledExactlyOnceWith(sessionId);
+    expect(protocolClosed).toHaveBeenCalledTimes(1);
+    expect((await call(sessionId!)).status).toBe(404);
+    expect((await initialize()).status).toBe(200);
+  });
+
+  it("expires a session while a stand-alone SSE stream is open", async () => {
+    vi.useFakeTimers();
+    const onClosed = vi.fn();
+    const { handler, initialize } = await setup({ sessionIdleTimeoutMs: 100, onsessionclosed: onClosed });
+    const { sessionId } = await initialize();
+    const stream = await handler(new Request("http://127.0.0.1:8080/mcp", {
+      headers: { accept: "text/event-stream", "mcp-session-id": sessionId!, "mcp-protocol-version": "2025-11-25" },
+    }));
+    expect(stream.status).toBe(200);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(onClosed).toHaveBeenCalledExactlyOnceWith(sessionId);
+    expect(await stream.text()).toBe("");
+  });
+
+  it("expires and settles a pending JSON request", async () => {
+    vi.useFakeTimers();
+    let enter!: () => void;
+    let release!: () => void;
+    const entered = new Promise<void>((resolve) => { enter = resolve; });
+    const hold = new Promise<void>((resolve) => { release = resolve; });
+    const { initialize, call } = await setup({ sessionIdleTimeoutMs: 100 });
+    const { sessionId } = await initialize();
+    gate = async () => { enter(); await hold; };
+    const pending = call(sessionId!);
+    await entered;
+    await vi.advanceTimersByTimeAsync(100);
+    expect((await pending).status).toBe(404);
+    release();
+  });
+
+  it.each(["idle expiry", "client abort"])("interrupts a named POST upload on %s", async (reason) => {
+    vi.useFakeTimers();
+    const { handler, initialize, call } = await setup({ sessionIdleTimeoutMs: 100 });
+    const { sessionId } = await initialize();
+    const abort = new AbortController();
+    let markRead!: () => void;
+    const reading = new Promise<void>((resolve) => { markRead = resolve; });
+    const cancel = vi.fn();
+    const body = new ReadableStream<Uint8Array>({ pull: () => markRead(), cancel }, { highWaterMark: 0 });
+    const pending = handler(new Request("http://127.0.0.1:8080/mcp", {
+      method: "POST",
+      headers: {
+        accept: "application/json, text/event-stream",
+        "content-type": "application/json",
+        "mcp-session-id": sessionId!,
+        "mcp-protocol-version": "2025-11-25",
+      },
+      body,
+      signal: abort.signal,
+      duplex: "half",
+    } as RequestInit));
+    await reading;
+    if (reason === "idle expiry") await vi.advanceTimersByTimeAsync(100);
+    else abort.abort();
+    expect((await pending).status).toBe(reason === "idle expiry" ? 404 : 499);
+    expect(body.locked).toBe(false);
+    expect(cancel).toHaveBeenCalledTimes(reason === "idle expiry" ? 0 : 1);
+    if (reason === "client abort") expect((await call(sessionId!)).status).toBe(200);
+  });
+
+  it("rejects an unlisted SDK Origin at capacity", async () => {
+    const { initialize } = await setup({
+      maxSessions: 1,
+      enableDnsRebindingProtection: true,
+      allowedOrigins: ["https://app.example"],
+    });
+    expect((await initialize()).status).toBe(200);
+    expect((await initialize(undefined, { origin: "https://other.example" })).status).toBe(403);
+    expect((await initialize(undefined, { origin: "https://app.example" })).status).toBe(503);
+  });
+
+  it("does not refresh sessions on rejected SDK Origins", async () => {
+    vi.useFakeTimers();
+    const { initialize, post, call } = await setup({
+      sessionIdleTimeoutMs: 100,
+      enableDnsRebindingProtection: true,
+      allowedOrigins: ["https://app.example"],
+    });
+    const { sessionId } = await initialize();
+    await vi.advanceTimersByTimeAsync(99);
+    const rejected = await post({ jsonrpc: "2.0", id: 2, method: "ping" }, {
+      sessionId: sessionId!,
+      headers: { origin: "https://other.example" },
+    });
+    expect(rejected.status).toBe(403);
+    await vi.advanceTimersByTimeAsync(1);
+    expect((await call(sessionId!)).status).toBe(404);
+  });
+
+  it("allows the expiry hook to close the parent server", async () => {
+    vi.useFakeTimers();
+    const onClosed = vi.fn(async () => { await server.close(); });
+    const { initialize, server } = await setup({ maxSessions: 1, sessionIdleTimeoutMs: 100, onsessionclosed: onClosed });
+    await initialize();
+    await vi.advanceTimersByTimeAsync(100);
+    expect(onClosed).toHaveBeenCalledTimes(1);
+    expect((await initialize()).status).toBe(200);
+  });
+
+  it("closes the parent transport when a session cleanup hook throws", async () => {
+    const dispose = vi.fn();
+    const { initialize, server } = await setup({
+      onsessionclosed: () => { throw new Error("Test cleanup error"); },
+    });
+    await server.connect({ start: async () => {}, send: async () => {}, close: async () => { dispose(); } });
+    await initialize();
+    await server.close();
+    expect(dispose).toHaveBeenCalledTimes(1);
   });
 });
 

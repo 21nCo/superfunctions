@@ -160,23 +160,33 @@ export type McpFnWebStandardHandlerOptions<TContext> = ConstructorParameters<
     authInfo: AuthInfo | undefined;
     request: Request;
   }) => string | undefined | Promise<string | undefined>;
+  /** Maximum stateful HTTP sessions per handler. Defaults to 1,000. At capacity, new sessions receive HTTP 503. */
+  maxSessions?: number;
+  /** Maximum sessions per principal per handler. Defaults to 100. Anonymous sessions share one allowance. At capacity, new sessions receive HTTP 429. */
+  maxSessionsPerPrincipal?: number;
+  /** Milliseconds before setup or inactivity times out. Defaults to 30 minutes. */
+  sessionIdleTimeoutMs?: number;
 };
 
+function validateSessionLimit(name: string, value: number): void {
+  if (!Number.isSafeInteger(value) || value < 1) {
+    throw new McpFnError("MCPFN_INVALID_OPTIONS", `${name} must be a positive safe integer`);
+  }
+}
+
 /**
- * An event store view whose stream IDs are prefixed with one session's ID, and
- * which refuses to replay events stored for any other session.
+ * An event store view that refuses to replay events from any other session.
  */
-function sessionScopedEventStore(base: EventStore, sessionId: () => string | undefined): EventStore {
-  // Header-safe (event IDs often embed the stream ID and travel back in
-  // Last-Event-ID): a hex digest of the session ID and a dot.
-  const prefix = () => `${createHash("sha256").update(sessionId() ?? "").digest("hex").slice(0, 32)}.`;
+function sessionScopedEventStore(base: EventStore, storeEvent: EventStore["storeEvent"]): EventStore {
+  // A header-safe namespace independent of a host-supplied session ID, which
+  // may be reused after a session closes while old events still exist.
+  const prefix = `${randomUUID().replaceAll("-", "")}.`;
   const unscoped = (streamId: string | undefined) => {
-    const own = prefix();
-    return streamId !== undefined && streamId.startsWith(own) ? streamId.slice(own.length) : undefined;
+    return streamId?.startsWith(prefix) ? streamId.slice(prefix.length) : undefined;
   };
   const foreign = () => new Error("Event ID does not belong to this session");
   return {
-    storeEvent: (streamId, message) => base.storeEvent(prefix() + streamId, message),
+    storeEvent: (streamId, message) => storeEvent(prefix + streamId, message),
     ...(base.getStreamIdForEventId
       ? { getStreamIdForEventId: async (eventId: string) => unscoped(await base.getStreamIdForEventId!(eventId)) }
       : {}),
@@ -343,6 +353,113 @@ function page<T>(
   };
 }
 
+function sdkOriginError(
+  request: Request,
+  options: Pick<NonNullable<ConstructorParameters<typeof WebStandardStreamableHTTPServerTransport>[0]>,
+    "enableDnsRebindingProtection" | "allowedHosts" | "allowedOrigins">,
+): string | undefined {
+  if (!options.enableDnsRebindingProtection) return undefined;
+  // Match the SDK's opt-in header checks, including its empty-list semantics.
+  const host = request.headers.get("host");
+  if (options.allowedHosts?.length && (!host || !options.allowedHosts.includes(host))) {
+    return `Invalid Host header: ${host}`;
+  }
+  const origin = request.headers.get("origin");
+  if (options.allowedOrigins?.length && origin && !options.allowedOrigins.includes(origin)) {
+    return `Invalid Origin header: ${origin}`;
+  }
+}
+
+async function respondUntilClosed(
+  respond: (stopBody: AbortSignal) => Promise<Response>,
+  stopResponses: Set<() => void>,
+  onClosed: () => Response,
+  signal?: AbortSignal,
+): Promise<Response> {
+  // The SDK can leave pending JSON responses unresolved when it closes.
+  if (signal?.aborted) return clientClosedResponse();
+  const stopBody = new AbortController();
+  let stopped = false;
+  let stop!: () => void;
+  const closed = new Promise<undefined>((resolve) => {
+    stop = () => {
+      stopped = true;
+      stopBody.abort();
+      resolve(undefined);
+    };
+    stopResponses.add(stop);
+  });
+  signal?.addEventListener("abort", stop, { once: true });
+  try {
+    const pending = respond(stopBody.signal).then(async (response) => {
+      if (!stopped) return response;
+      await response.body?.cancel().catch(() => undefined);
+    });
+    const response = await Promise.race([pending, closed]);
+    if (stopped) await response?.body?.cancel().catch(() => undefined);
+    if (signal?.aborted) return clientClosedResponse();
+    return !stopped && response ? response : onClosed();
+  } finally {
+    signal?.removeEventListener("abort", stop);
+    stopResponses.delete(stop);
+  }
+}
+
+function clientClosedResponse(): Response {
+  return jsonRpcErrorResponse(499, -32000, "Client closed the request");
+}
+
+function requestWithInterruptibleBody(
+  request: Request,
+  options: HandleRequestOptions | undefined,
+  signal: AbortSignal,
+): Request {
+  const body = request.body;
+  if (request.method !== "POST" || !body || body.locked || request.bodyUsed || options?.parsedBody !== undefined) {
+    return request;
+  }
+  return new Request(request.url, {
+    method: request.method,
+    headers: request.headers,
+    signal: request.signal,
+    body: interruptibleRequestBody(body, signal, request.signal),
+    duplex: "half",
+  } as RequestInit);
+}
+
+function interruptibleRequestBody(
+  body: ReadableStream<Uint8Array>,
+  signal: AbortSignal,
+  client: AbortSignal,
+): ReadableStream<Uint8Array> {
+  // Avoid pulling or locking the client body if the SDK rejects its headers.
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      signal.throwIfAborted();
+      const reader = body.getReader();
+      const abort = () => {
+        controller.error(signal.reason);
+        if (client.aborted) {
+          void reader.cancel(signal.reason).catch(() => undefined);
+        } else {
+          // Interrupt the read but leave the socket open for the HTTP response.
+          reader.releaseLock();
+        }
+      };
+      signal.addEventListener("abort", abort, { once: true });
+      try {
+        const chunk = await reader.read();
+        if (signal.aborted) return;
+        if (chunk.done) controller.close();
+        else controller.enqueue(chunk.value);
+      } finally {
+        signal.removeEventListener("abort", abort);
+        reader.releaseLock();
+      }
+    },
+  }, { highWaterMark: 0 });
+}
+
 async function releaseAfterResponse(
   response: Response,
   release: () => Promise<void>,
@@ -401,6 +518,7 @@ export class McpFnServer<TContext = undefined> {
   private readonly maxResourceSubscriptions: number;
   private readonly serverOptions: McpFnServerOptions<TContext>;
   private readonly requestServers = new Set<McpFnServer<TContext>>();
+  private readonly httpSessionClosers = new Map<McpFnServer<TContext>, () => Promise<void>>();
   // Resource URIs this server's client subscribed to through a successful
   // resources/subscribe request. Each HTTP session has its own server, so this
   // is the session's subscription set; it is dropped when the session closes.
@@ -1137,6 +1255,9 @@ export class McpFnServer<TContext = undefined> {
       configureRequestServer,
       originPolicy = "reject-unlisted",
       sessionPrincipal = defaultSessionPrincipal,
+      maxSessions = 1_000,
+      maxSessionsPerPrincipal = 100,
+      sessionIdleTimeoutMs = 30 * 60 * 1_000,
       onsessioninitialized: onSessionInitialized,
       onsessionclosed: onSessionClosed,
       ...transportOptions
@@ -1196,110 +1317,242 @@ export class McpFnServer<TContext = undefined> {
       };
     }
 
-    const sessions = new Map<
-      string,
-      {
-        server: McpFnServer<TContext>;
-        transport: WebStandardStreamableHTTPServerTransport;
-        /** The principal that created the session. */
-        principal: string | undefined;
-      }
-    >();
+    validateSessionLimit("maxSessions", maxSessions);
+    validateSessionLimit("maxSessionsPerPrincipal", maxSessionsPerPrincipal);
+    validateSessionLimit("sessionIdleTimeoutMs", sessionIdleTimeoutMs);
+
+    interface Session {
+      principal: string | undefined;
+      transport: WebStandardStreamableHTTPServerTransport;
+      stopResponses: Set<() => void>;
+      touch: (refresh: boolean) => boolean;
+    }
+    const sessions = new Map<string, Session>();
+    // Pending initialization and cleanup both count toward capacity.
+    const admitted = new Set<Session>();
+    const claimedIds = new Set<string>();
+    const sessionNotFound = () => jsonRpcErrorResponse(404, -32001, "Session not found");
+    const serverClosed = () => jsonRpcErrorResponse(503, -32000, "Server closed");
+
     return async (request: Request, handleOptions?: HandleRequestOptions) => {
       const refused = rejectOrigin(request);
       if (refused) return refused;
       const generation = this.closeGeneration;
-      const principal = await sessionPrincipal({
-        authInfo: handleOptions?.authInfo,
-        request,
-      });
-      if (generation !== this.closeGeneration) {
-        return jsonRpcErrorResponse(503, -32000, "Server closed");
-      }
+      const principal = await sessionPrincipal({ authInfo: handleOptions?.authInfo, request });
+      if (generation !== this.closeGeneration) return serverClosed();
+
       const sessionId = request.headers.get("mcp-session-id");
       if (sessionId) {
         const session = sessions.get(sessionId);
-        // Another principal's session answers exactly like an unknown one.
-        if (!session || session.principal !== principal) {
-          return jsonRpcErrorResponse(404, -32001, "Session not found");
-        }
-        return session.transport.handleRequest(request, handleOptions);
+        if (!session || session.principal !== principal) return sessionNotFound();
+        const refresh = !request.signal.aborted && !sdkOriginError(request, transportOptions);
+        if (!session.touch(refresh)) return sessionNotFound();
+        // DELETE itself initiates closure and must receive its own response.
+        return request.method === "DELETE"
+          ? session.transport.handleRequest(request, handleOptions)
+          : respondUntilClosed(
+              (signal) => session.transport.handleRequest(requestWithInterruptibleBody(request, handleOptions, signal), handleOptions),
+              session.stopResponses,
+              sessionNotFound,
+              request.signal,
+            );
       }
 
+      let forPrincipal = 0;
+      for (const session of admitted) {
+        if (session.principal === principal) forPrincipal += 1;
+      }
+      if (forPrincipal >= maxSessionsPerPrincipal || admitted.size >= maxSessions) {
+        // At capacity there's no new SDK transport to run the delegated check.
+        const headerError = sdkOriginError(request, transportOptions);
+        if (headerError) return jsonRpcErrorResponse(403, -32000, headerError);
+        return forPrincipal >= maxSessionsPerPrincipal
+          ? jsonRpcErrorResponse(429, -32000, "Too many sessions for this principal")
+          : jsonRpcErrorResponse(503, -32000, "Too many sessions for this HTTP handler");
+      }
+
+      // Reserve before any initialization work can yield.
       const requestServer = new McpFnServer(this.serverOptions);
-      let initializedSessionId: string | undefined;
-      let closedDuringInitialization = false;
-      let released = false;
-      let transport: WebStandardStreamableHTTPServerTransport;
-      const release = async () => {
-        if (released) return;
-        released = true;
-        if (initializedSessionId) sessions.delete(initializedSessionId);
-        this.requestServers.delete(requestServer);
-        await requestServer.close();
+      const stopResponses = new Set<() => void>();
+      const stopBody = new AbortController();
+      let claimedId: string | undefined;
+      let acceptedId: string | undefined;
+      let setupPending = true;
+      let setupTimedOut = false;
+      let setupWrites = 0;
+      const setupStopped = () => {
+        if (request.signal.aborted) return clientClosedResponse();
+        if (setupTimedOut) return jsonRpcErrorResponse(408, -32000, "Session initialization timed out");
+        return serverClosed();
       };
-      transport = new WebStandardStreamableHTTPServerTransport({
-        ...transportOptions,
-        // One event store serves every session: scope its streams to this
-        // session so Last-Event-ID resumption cannot replay another's events.
-        ...(transportOptions.eventStore
-          ? { eventStore: sessionScopedEventStore(transportOptions.eventStore, () => transport.sessionId) }
-          : {}),
-        onsessioninitialized: async (id) => {
-          // close() ran while this request was being set up: no session, and
-          // the client gets a retryable 503 (see below), not the SDK's 400.
-          if (generation !== this.closeGeneration) {
-            closedDuringInitialization = true;
-            throw new Error("Server closed");
-          }
-          const hostHook = Boolean(onSessionInitialized);
-          // Always yields, so a close() queued meanwhile is seen below. The
-          // host's hooks are called on the host's own options object.
-          await onSessionInitialized?.call(options, id);
-          if (generation !== this.closeGeneration) {
-            closedDuringInitialization = true;
-            // Only a session the host's onsessioninitialized accepted gets
-            // its onsessionclosed.
-            if (hostHook) {
-              try {
-                await onSessionClosed?.call(options, id);
-              } catch {
-                // Best effort for a session that never went live.
-              }
-            }
-            throw new Error("Server closed");
-          }
-          initializedSessionId = id;
-          sessions.set(id, { server: requestServer, transport, principal });
-        },
-        onsessionclosed: async (id) => {
-          sessions.delete(id);
-          try {
-            await onSessionClosed?.call(options, id);
-          } finally {
-            await release();
-          }
-        },
+      let reportSetupStop: (() => void) | undefined;
+      const setupInterrupted = new Promise<Response>((resolve) => {
+        reportSetupStop = () => resolve(setupStopped());
       });
-      this.requestServers.add(requestServer);
-
-      try {
-        await configureRequestServer?.(requestServer);
-        await requestServer.connect(transport);
-        const response = await transport.handleRequest(request, handleOptions);
-        // close() can also land while the SDK reads the body, before it calls
-        // onsessioninitialized (it then answers 404): answer 503 either way.
-        if (closedDuringInitialization || (!initializedSessionId && generation !== this.closeGeneration)) {
-          await response.body?.cancel().catch(() => undefined);
-          await release();
-          return jsonRpcErrorResponse(503, -32000, "Server closed");
+      let disposed = false;
+      let closing: Promise<void> | undefined;
+      let lastActivity = performance.now();
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const notifyClosed = async () => {
+        const id = acceptedId;
+        acceptedId = undefined;
+        if (id !== undefined) await onSessionClosed?.call(options, id);
+      };
+      const releaseSlot = () => {
+        if (!disposed || setupPending || setupWrites !== 0) return;
+        admitted.delete(session);
+        if (claimedId !== undefined) claimedIds.delete(claimedId);
+      };
+      const close = () => {
+        if (closing) return closing;
+        clearTimeout(timer);
+        if (acceptedId !== undefined) sessions.delete(acceptedId);
+        this.httpSessionClosers.delete(requestServer);
+        this.requestServers.delete(requestServer);
+        // Detach before calling host code so it can safely close the parent.
+        closing = Promise.resolve().then(async () => {
+          try {
+            try {
+              await requestServer.close();
+            } finally {
+              await notifyClosed();
+            }
+          } finally {
+            disposed = true;
+            releaseSlot();
+          }
+        });
+        stopBody.abort();
+        // Before acceptance, let the ongoing setup or host callback unwind.
+        if (acceptedId !== undefined) for (const stop of stopResponses) stop();
+        return closing;
+      };
+      const stopSession = () => {
+        if (closing) return closing;
+        const result = close();
+        if (setupPending) reportSetupStop?.();
+        return result;
+      };
+      const idleTimeRemaining = () => sessionIdleTimeoutMs - (performance.now() - lastActivity);
+      const expire = () => { void stopSession().catch(() => undefined); };
+      const expireIfIdle = () => {
+        if (!closing && idleTimeRemaining() <= 0) {
+          setupTimedOut = setupPending;
+          expire();
         }
-        if (initializedSessionId) return response;
-        return releaseAfterResponse(response, release);
-      } catch (error) {
-        await release();
-        throw error;
-      }
+        return Boolean(closing);
+      };
+      const scheduleExpiry = () => {
+        if (expireIfIdle()) return;
+        // Node clamps larger delays to a millisecond.
+        timer = setTimeout(scheduleExpiry, Math.min(idleTimeRemaining(), 2 ** 31 - 1));
+        timer.unref?.();
+      };
+      const eventStore = transportOptions.eventStore;
+      const scopedStore = eventStore && sessionScopedEventStore(eventStore, async (streamId, message) => {
+        if (closing) throw new Error("Session closed");
+        if (!setupPending) return eventStore.storeEvent(streamId, message);
+        // The SDK can leave an event-store write running after setup times out.
+        setupWrites += 1;
+        try {
+          return await eventStore.storeEvent(streamId, message);
+        } finally {
+          setupWrites -= 1;
+          releaseSlot();
+        }
+      });
+      const transport = new WebStandardStreamableHTTPServerTransport({
+        ...transportOptions,
+        ...(scopedStore ? { eventStore: scopedStore } : {}),
+        onsessioninitialized: async (id) => {
+          if (expireIfIdle()) throw new Error("Session setup closed");
+          if (claimedIds.has(id)) throw new Error("Session ID is already in use");
+          claimedIds.add(id);
+          claimedId = id;
+          await onSessionInitialized?.call(options, id);
+          const stopped = expireIfIdle();
+          acceptedId = id;
+          if (stopped) {
+            await notifyClosed().catch(() => undefined);
+            throw new Error("Session setup closed");
+          }
+          sessions.set(id, session);
+        },
+        onsessionclosed: stopSession,
+      });
+      const session: Session = {
+        principal,
+        transport,
+        stopResponses,
+        touch: (refresh) => {
+          if (expireIfIdle()) return false;
+          if (refresh && !setupPending) {
+            lastActivity = performance.now();
+            clearTimeout(timer);
+            scheduleExpiry();
+          }
+          return !closing;
+        },
+      };
+      admitted.add(session);
+      this.requestServers.add(requestServer);
+      this.httpSessionClosers.set(requestServer, stopSession);
+
+      // Report an interrupted setup promptly. Pending host hooks retain their
+      // capacity until their work and cleanup finish.
+      const initialize = async () => {
+        request.signal.addEventListener("abort", expire, { once: true });
+        try {
+          if (request.signal.aborted) {
+            await close().catch(() => undefined);
+            return clientClosedResponse();
+          }
+          scheduleExpiry();
+          if (closing) return setupStopped();
+          await configureRequestServer?.(requestServer);
+          if (closing) return setupStopped();
+          await requestServer.connect(transport);
+          const onClose = transport.onclose;
+          transport.onclose = () => {
+            try {
+              onClose?.();
+            } finally {
+              expire();
+            }
+          };
+          if (closing) return setupStopped();
+          const sdkRequest = requestWithInterruptibleBody(request, handleOptions, stopBody.signal);
+          const response = await respondUntilClosed(
+            () => transport.handleRequest(sdkRequest, handleOptions),
+            stopResponses,
+            setupStopped,
+          );
+          if (expireIfIdle()) {
+            await response.body?.cancel().catch(() => undefined);
+            return setupStopped();
+          }
+          if (!response.ok) {
+            void close().catch(() => undefined);
+            return response;
+          }
+          if (acceptedId !== undefined) {
+            lastActivity = performance.now();
+            clearTimeout(timer);
+            scheduleExpiry();
+            return response;
+          }
+          return await releaseAfterResponse(response, close);
+        } catch (error) {
+          void close().catch(() => undefined);
+          throw error;
+        } finally {
+          request.signal.removeEventListener("abort", expire);
+          setupPending = false;
+          reportSetupStop = undefined;
+          releaseSlot();
+        }
+      };
+      return Promise.race([initialize(), setupInterrupted]);
     };
   }
 
@@ -1467,7 +1720,10 @@ export class McpFnServer<TContext = undefined> {
     this.closeGeneration += 1;
     const requestServers = [...this.requestServers];
     this.requestServers.clear();
-    await Promise.all(requestServers.map((server) => server.close()));
+    await Promise.all(requestServers.map((server) => {
+      const closeSession = this.httpSessionClosers.get(server);
+      return closeSession ? closeSession().catch(() => undefined) : server.close();
+    }));
     this.pendingResourceSubscriptions.clear();
     this.resourceSubscriptions.clear();
     await this.protocol.close();
