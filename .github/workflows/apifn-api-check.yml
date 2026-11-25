@@ -19,7 +19,7 @@ on:
       cli_version:
         description: Must match the @apifn/cli version pinned by this workflow revision; the default matches
         required: false
-        default: "0.0.2"
+        default: "0.1.2"
         type: string
       start_mock_server:
         description: Start apifn mock for workflow self-tests before running the collection
@@ -69,7 +69,7 @@ on:
       cli_version:
         description: Must match the @apifn/cli version pinned by this workflow revision; the default matches
         required: false
-        default: "0.0.2"
+        default: "0.1.2"
         type: string
       start_mock_server:
         description: Start apifn mock for workflow self-tests before running the collection
@@ -115,6 +115,7 @@ jobs:
 
     steps:
       - name: Checkout
+        id: caller_checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
@@ -124,8 +125,12 @@ jobs:
         with:
           node-version: "20"
 
-      - name: Fetch CLI lockfile for external callers
-        if: hashFiles('.github/apifn-cli-install/package-lock.json') == ''
+      - name: Fetch CLI lockfile from the workflow revision
+        id: workflow_lockfile
+        if: >-
+          github.repository != job.workflow_repository ||
+          steps.caller_checkout.outputs.commit != job.workflow_sha ||
+          hashFiles('.github/apifn-cli-install/package-lock.json') == ''
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: ${{ job.workflow_repository }}
@@ -138,12 +143,13 @@ jobs:
         shell: bash
         env:
           APIFN_CLI_VERSION: ${{ inputs.cli_version }}
+          WORKFLOW_LOCKFILE_FETCHED: ${{ steps.workflow_lockfile.outcome == 'success' }}
         run: |
           set -euo pipefail
-          if [ -f .github/apifn-cli-install/package-lock.json ]; then
-            LOCK_DIR=".github/apifn-cli-install"
-          else
+          if [ "$WORKFLOW_LOCKFILE_FETCHED" == "true" ]; then
             LOCK_DIR=".apifn-cli-lock/.github/apifn-cli-install"
+          else
+            LOCK_DIR=".github/apifn-cli-install"
           fi
           npm ci --ignore-scripts --prefix "$LOCK_DIR"
           BIN_DIR="$PWD/$LOCK_DIR/node_modules/.bin"
@@ -250,6 +256,8 @@ jobs:
       - name: Build markdown summary
         id: summary
         shell: bash
+        env:
+          TEST_EXIT_CODE: ${{ steps.test.outputs.exit_code }}
         run: |
           node <<'JS'
           const fs = require('node:fs');
@@ -264,7 +272,7 @@ jobs:
 
           const validateStatus = validate.ok ? 'PASS' : 'FAIL';
           const diffStatus = diff.hasBreakingChanges ? 'BREAKING' : 'OK';
-          const testStatus = (test.summary.failed || test.summary.errors) ? 'FAIL' : 'PASS';
+          const testStatus = (process.env.TEST_EXIT_CODE !== '0' || test.summary.failed || test.summary.errors) ? 'FAIL' : 'PASS';
 
           const lines = [
             '<!-- apifn-ci-report -->',
