@@ -117,49 +117,55 @@ describe("createWebStandardHandler session binding (MCP-SEC-03)", () => {
 });
 
 describe("createWebStandardHandler session limits (MCP-SEC-04)", () => {
-  it("keeps at most maxSessions, closing the least recently used", async () => {
+  it("refuses new sessions beyond maxSessions without closing existing ones", async () => {
     const { initialize, call } = await setup({ maxSessions: 2 });
     const first = await initialize();
     const second = await initialize();
+    expect((await initialize()).status).toBe(503);
     expect((await call(first.sessionId!)).status).toBe(200);
-    const third = await initialize();
-    expect(third.status).toBe(200);
-    expect((await call(second.sessionId!)).status).toBe(404);
-    expect((await call(first.sessionId!)).status).toBe(200);
-    expect((await call(third.sessionId!)).status).toBe(200);
+    expect((await call(second.sessionId!)).status).toBe(200);
   });
 
   it("does not grow without bound under repeated initialize", async () => {
     const { initialize, call } = await setup({ maxSessions: 3 });
+    const statuses: number[] = [];
     const ids: string[] = [];
-    for (let index = 0; index < 20; index += 1) ids.push((await initialize()).sessionId!);
-    const alive = [];
-    for (const id of ids) if ((await call(id)).status === 200) alive.push(id);
-    expect(alive).toEqual(ids.slice(-3));
+    for (let index = 0; index < 20; index += 1) {
+      const result = await initialize();
+      statuses.push(result.status);
+      if (result.status === 200) ids.push(result.sessionId!);
+    }
+    expect(ids).toHaveLength(3);
+    expect(statuses.filter((status) => status === 503)).toHaveLength(17);
+    for (const id of ids) expect((await call(id)).status).toBe(200);
   });
 
   it("caps sessions per principal without touching other principals", async () => {
     const { initialize, call } = await setup({ maxSessionsPerPrincipal: 2 });
     const bob = await initialize(authInfo("bob"));
-    const alice = [
-      await initialize(authInfo("alice")),
-      await initialize(authInfo("alice")),
-      await initialize(authInfo("alice")),
-    ];
-    expect((await call(alice[0]!.sessionId!, authInfo("alice"))).status).toBe(404);
-    expect((await call(alice[1]!.sessionId!, authInfo("alice"))).status).toBe(200);
-    expect((await call(alice[2]!.sessionId!, authInfo("alice"))).status).toBe(200);
+    const alice = [await initialize(authInfo("alice")), await initialize(authInfo("alice"))];
+    expect((await initialize(authInfo("alice"))).status).toBe(429);
+    for (const session of alice) expect((await call(session.sessionId!, authInfo("alice"))).status).toBe(200);
     expect((await call(bob.sessionId!, authInfo("bob"))).status).toBe(200);
   });
 
-  it("closes sessions idle longer than sessionIdleTimeoutMs", async () => {
+  it("closes sessions idle longer than sessionIdleTimeoutMs, freeing their slot", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
-    const { initialize, call } = await setup({ sessionIdleTimeoutMs: 60_000 });
+    const closed: string[] = [];
+    const { initialize, call } = await setup({
+      maxSessions: 2,
+      sessionIdleTimeoutMs: 60_000,
+      onsessionclosed: (id) => { closed.push(id); },
+    });
     const idle = await initialize();
     const busy = await initialize();
+    expect((await initialize()).status).toBe(503);
     vi.advanceTimersByTime(45_000);
     expect((await call(busy.sessionId!)).status).toBe(200);
     vi.advanceTimersByTime(30_000);
+    const replacement = await initialize();
+    expect(replacement.status).toBe(200);
+    expect(closed).toEqual([idle.sessionId]);
     expect((await call(idle.sessionId!)).status).toBe(404);
     expect((await call(busy.sessionId!)).status).toBe(200);
   });
@@ -171,47 +177,33 @@ describe("createWebStandardHandler session limits (MCP-SEC-04)", () => {
   });
 
   it("does not exceed maxSessions under concurrent initialization", async () => {
-    const { initialize } = await setup({ maxSessions: 1 });
-    const results = await Promise.all([initialize(), initialize(authInfo("bob"))]);
-    expect(results.map(({ status }) => status).sort()).toEqual([200, 503]);
-  });
-
-  it("never evicts a session with a request in progress", async () => {
-    const { initialize, call } = await setup({ maxSessions: 1 });
-    const busy = await initialize();
+    let hold: Promise<void> | undefined;
     let open!: () => void;
-    gate = new Promise((resolve) => { open = resolve; });
-    const pending = call(busy.sessionId!);
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    expect((await initialize()).status).toBe(503);
+    hold = new Promise((resolve) => { open = resolve; });
+    const { initialize } = await setup({ maxSessions: 1, onsessioninitialized: () => hold });
+    const first = initialize();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    hold = undefined;
+    const second = await initialize(authInfo("bob"));
     open();
-    const answered = await pending;
-    expect(answered.status).toBe(200);
-    expect(answered.text).toContain("hi");
+    expect([(await first).status, second.status]).toEqual([200, 503]);
   });
 
-  it("does not evict sessions for requests that never initialize", async () => {
-    const { handler, post, initialize, call } = await setup({ maxSessions: 1 });
-    const kept = await initialize();
+  it("does not take a slot for requests that never initialize", async () => {
+    const { handler, post, initialize } = await setup({ maxSessions: 1 });
     expect((await handler(new Request("http://127.0.0.1:8080/mcp", { method: "PUT" }))).status).toBe(405);
     expect((await post({ jsonrpc: "2.0", id: 9, method: "tools/list" })).status).toBe(400);
-    expect((await call(kept.sessionId!)).status).toBe(200);
+    expect((await initialize()).status).toBe(200);
   });
 
   it("keeps a host principal key apart from anonymous sessions", async () => {
-    const { initialize, post } = await setup({
+    const { initialize } = await setup({
       maxSessionsPerPrincipal: 1,
       // A key spelled like an internal anonymous marker.
       sessionPrincipal: ({ request }) => request.headers.has("x-principal") ? "\u0000anonymous" : undefined,
     });
-    const headers = { "x-principal": "yes" };
-    const named = await initialize(undefined, headers);
+    expect((await initialize(undefined, { "x-principal": "yes" })).status).toBe(200);
     expect((await initialize()).status).toBe(200);
-    const response = await post(
-      { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "echo", arguments: { value: "hi" } } },
-      { sessionId: named.sessionId!, headers },
-    );
-    expect(response.status).toBe(200);
   });
 
   it("does not keep a session whose onsessioninitialized hook failed", async () => {
@@ -222,128 +214,21 @@ describe("createWebStandardHandler session limits (MCP-SEC-04)", () => {
         if (fail) throw new Error("host refused");
       },
     });
-    const refused = await initialize();
-    expect(refused.status).toBeGreaterThanOrEqual(400);
+    expect((await initialize()).status).toBeGreaterThanOrEqual(400);
     fail = false;
     const accepted = await initialize();
     expect(accepted.status).toBe(200);
     expect((await call(accepted.sessionId!)).status).toBe(200);
   });
 
-  it("does not evict a session to make room for an initialization the host rejects", async () => {
-    let fail = false;
-    const { initialize, call } = await setup({
-      maxSessions: 1,
-      onsessioninitialized: () => {
-        if (fail) throw new Error("host refused");
-      },
-    });
-    const kept = await initialize();
-    fail = true;
-    expect((await initialize()).status).toBeGreaterThanOrEqual(400);
-    expect((await call(kept.sessionId!)).status).toBe(200);
-  });
-
-  it("lets concurrent replacements each take a different idle session", async () => {
-    let hold: Promise<void> | undefined;
-    const { initialize } = await setup({
-      maxSessions: 2,
-      onsessioninitialized: () => hold,
-    });
-    await initialize();
-    await initialize();
-    let open!: () => void;
-    hold = new Promise((resolve) => { open = resolve; });
-    const first = initialize();
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    hold = undefined;
-    const second = await initialize();
-    open();
-    expect([(await first).status, second.status]).toEqual([200, 200]);
-  });
-
-  it("does not publish a session whose initialization outlived server.close()", async () => {
-    let open!: () => void;
-    const hold = new Promise<void>((resolve) => { open = resolve; });
-    const { initialize, call, server } = await setup({ onsessioninitialized: () => hold });
-    const pending = initialize();
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    await server.close();
-    open();
-    const result = await pending;
-    expect(result.status).not.toBe(200);
-    if (result.sessionId) expect((await call(result.sessionId)).status).toBe(404);
-  });
-
-  it("never lets concurrent replacements exceed maxSessions", async () => {
-    let hold: Promise<void> | undefined;
-    const { initialize, call } = await setup({
-      maxSessions: 3,
-      maxSessionsPerPrincipal: 3,
-      onsessioninitialized: () => hold,
-    });
-    const existing = [await initialize(authInfo("alice")), await initialize(authInfo("alice")), await initialize(authInfo("alice"))];
-    let open!: () => void;
-    hold = new Promise((resolve) => { open = resolve; });
-    const replacements = [initialize(authInfo("alice")), initialize(authInfo("alice"))];
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    hold = undefined;
-    const other = await initialize(authInfo("bob"));
-    open();
-    const results = [...await Promise.all(replacements), other];
-    let alive = 0;
-    for (const { sessionId } of existing) if ((await call(sessionId!, authInfo("alice"))).status === 200) alive += 1;
-    for (const result of results) {
-      if (result.status !== 200) continue;
-      const owner = result === other ? "bob" : "alice";
-      if ((await call(result.sessionId!, authInfo(owner))).status === 200) alive += 1;
-    }
-    expect(alive).toBeLessThanOrEqual(3);
-  });
-
-  it("runs onsessionclosed when shutdown stops an accepted initialization", async () => {
-    let open!: () => void;
-    const hold = new Promise<void>((resolve) => { open = resolve; });
-    const closed: string[] = [];
-    const { initialize, server } = await setup({
-      onsessioninitialized: () => hold,
-      onsessionclosed: (id) => { closed.push(id); },
-    });
-    const pending = initialize();
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    await server.close();
-    open();
-    await pending;
-    expect(closed).toEqual(["session-1"]);
-  });
-
-  it("does not count a deleted victim as already making room", async () => {
-    let hold: Promise<void> | undefined;
-    const { handler, initialize, call } = await setup({ maxSessions: 1, onsessioninitialized: () => hold });
-    const victim = await initialize();
-    let open!: () => void;
-    hold = new Promise((resolve) => { open = resolve; });
-    const replacement = initialize();
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    hold = undefined;
-    await handler(new Request("http://127.0.0.1:8080/mcp", {
-      method: "DELETE",
-      headers: { "mcp-session-id": victim.sessionId!, "mcp-protocol-version": "2025-11-25" },
-    }));
-    const other = await initialize();
-    open();
-    const results = [await replacement, other].filter(({ status }) => status === 200);
-    let alive = 0;
-    for (const { sessionId } of results) if ((await call(sessionId!)).status === 200) alive += 1;
-    expect(alive).toBeLessThanOrEqual(1);
-  });
-
-  it("does not evict a session when the SDK fails the replacement's initialization", async () => {
+  it("frees the slot of a session whose initialization the SDK failed", async () => {
     let down = false;
     let stored = 0;
-    const { initialize, post } = await setup({
+    const closed: string[] = [];
+    const { initialize } = await setup({
       maxSessions: 1,
       enableJsonResponse: false,
+      onsessionclosed: (id) => { closed.push(id); },
       eventStore: {
         storeEvent: async () => {
           if (down) throw new Error("event store down");
@@ -352,40 +237,47 @@ describe("createWebStandardHandler session limits (MCP-SEC-04)", () => {
         replayEventsAfter: async () => "stream",
       } as never,
     });
-    const kept = await initialize();
-    expect(kept.status).toBe(200);
     down = true;
-    expect((await initialize()).status).not.toBe(200);
+    const failed = await initialize();
+    expect(failed.status).not.toBe(200);
+    expect(closed).toHaveLength(1);
     down = false;
-    const response = await post({ jsonrpc: "2.0", id: 7, method: "ping" }, { sessionId: kept.sessionId! });
-    await response.text();
-    expect(response.status).toBe(200);
+    expect((await initialize()).status).toBe(200);
+  });
+
+  it("does not publish a session whose initialization outlived server.close(), and cleans it up", async () => {
+    let open!: () => void;
+    const hold = new Promise<void>((resolve) => { open = resolve; });
+    const closed: string[] = [];
+    const { initialize, call, server } = await setup({
+      onsessioninitialized: () => hold,
+      onsessionclosed: (id) => { closed.push(id); },
+    });
+    const pending = initialize();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    await server.close();
+    open();
+    const result = await pending;
+    expect(result.status).not.toBe(200);
+    expect(closed).toEqual(["session-1"]);
+    if (result.sessionId) expect((await call(result.sessionId)).status).toBe(404);
+  });
+
+  it("runs onsessionclosed once for sessions closed with their server", async () => {
+    const closed: string[] = [];
+    const { initialize, server } = await setup({ onsessionclosed: (id) => { closed.push(id); } });
+    await initialize();
+    await initialize();
+    await server.close();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(closed.sort()).toEqual(["session-1", "session-2"]);
   });
 
   it("lets sessions without a principal share one per-principal allowance", async () => {
-    const { initialize, call } = await setup({ maxSessionsPerPrincipal: 2 });
-    const first = await initialize();
+    const { initialize } = await setup({ maxSessionsPerPrincipal: 2 });
     await initialize();
     await initialize();
-    expect((await call(first.sessionId!)).status).toBe(404);
-  });
-
-  it("runs onsessionclosed for expired and evicted sessions", async () => {
-    vi.useFakeTimers({ toFake: ["Date"] });
-    const closed: string[] = [];
-    const { initialize } = await setup({
-      maxSessions: 2,
-      sessionIdleTimeoutMs: 60_000,
-      onsessionclosed: (id) => { closed.push(id); },
-    });
-    const first = await initialize();
-    await initialize();
-    const third = await initialize();
-    expect(closed).toEqual([first.sessionId]);
-    vi.advanceTimersByTime(61_000);
-    await initialize();
-    expect(closed).toContain(third.sessionId);
-    expect(closed).toHaveLength(3);
+    expect((await initialize()).status).toBe(429);
   });
 
   it.each([

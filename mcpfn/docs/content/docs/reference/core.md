@@ -184,11 +184,11 @@ transport). A session belongs to the principal that created it
 (`sessionPrincipal`, by default the `authInfo` subject and client ID); a request
 from another principal gets the same 404 as an unknown session. Sessions are
 limited (`maxSessions`, default 1000; `maxSessionsPerPrincipal`, default 100,
-with sessions that have no principal sharing one allowance). A new session
-closes the least recently used idle session to make room, and is refused
-(HTTP 503, or 429 for the per-principal limit) when every candidate is busy.
-Sessions are closed after `sessionIdleTimeoutMs` (default 30 minutes) without a
-request or open stream. Expiry and eviction run `onsessionclosed` like DELETE.
+with sessions that have no principal sharing one allowance): a new session over
+a limit is refused with HTTP 503 (429 for the per-principal limit), and
+existing sessions are never closed to make room. Sessions are closed after
+`sessionIdleTimeoutMs` (default 30 minutes) without a request or open stream,
+which frees their slot. Expiry runs `onsessionclosed` like DELETE.
 
 ## Cloudflare Workers and edge runtimes
 
