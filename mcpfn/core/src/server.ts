@@ -919,6 +919,17 @@ export class McpFnServer<TContext = undefined> {
       checkOrigin && !originAllowed(request, transportOptions.allowedOrigins)
         ? jsonRpcErrorResponse(403, -32000, "Origin not allowed")
         : undefined;
+    // The SDK transport still runs the host's hooks in stateless mode (for
+    // example onsessionclosed on DELETE), with the captured callbacks.
+    const statelessTransportOptions = {
+      ...transportOptions,
+      ...(onSessionInitialized
+        ? { onsessioninitialized: (id: string) => onSessionInitialized.call(options, id) }
+        : {}),
+      ...(onSessionClosed
+        ? { onsessionclosed: (id: string) => onSessionClosed.call(options, id) }
+        : {}),
+    };
     if (!transportOptions.sessionIdGenerator) {
       if (this.clientProfiles?.profiles.some((profile) => profile.requiresReportedClient !== false)) {
         throw new McpFnClientProfileError("MCPFN_PROFILE_REQUIRES_SESSION", "Client profiles require sessionIdGenerator to retain initialize metadata; stateless-independent profiles must declare requiresReportedClient: false");
@@ -928,7 +939,7 @@ export class McpFnServer<TContext = undefined> {
         if (refused) return refused;
         const requestServer = new McpFnServer(this.serverOptions);
         const transport = new WebStandardStreamableHTTPServerTransport(
-          transportOptions,
+          statelessTransportOptions,
         );
         this.requestServers.add(requestServer);
         let released = false;

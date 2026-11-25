@@ -165,6 +165,17 @@ describe("createWebStandardHandler session binding (MCP-SEC-03)", () => {
     expect(options.receivers[0]).toBe(options);
   });
 
+  it("still runs onsessionclosed for a stateless DELETE", async () => {
+    const closed: unknown[] = [];
+    const server = createMcpFnServer({ info: { name: "stateless", version: "1.0.0" }, registry: new McpFnRegistry() });
+    closeables.push(server);
+    const options = { enableJsonResponse: true, onsessionclosed(this: unknown, id: string) { closed.push([this, id]); } };
+    const handler = await server.createWebStandardHandler(options as never);
+    await handler(new Request("http://127.0.0.1:8080/mcp", { method: "DELETE", headers: { "mcp-protocol-version": "2025-11-25" } }));
+    expect(closed).toHaveLength(1);
+    expect((closed[0] as unknown[])[0]).toBe(options);
+  });
+
   it("uses a host-supplied principal key", async () => {
     const { initialize, call } = await setup({
       sessionPrincipal: ({ request }) => request.headers.get("x-tenant") ?? undefined,
