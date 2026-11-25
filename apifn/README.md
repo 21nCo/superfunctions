@@ -143,12 +143,21 @@ run the CLI commands in [Non-GitHub CI](#non-github-ci).
 
 ### What it does
 
+The workflow has two jobs. `evaluate` checks out and runs everything below with a read-only token (`contents: read`),
+because the caller's install scripts, router and config run there. `api-check` holds the only token that can write to
+the pull request: it checks out, installs and imports nothing, posts the comment from `evaluate`'s report and applies
+the gate `evaluate` decided. Require `<caller job> / api-check` as the status check. A step of `evaluate` that fails
+before the check runs (invalid inputs, the install, the CLI build) is reported as an error in the summary and the
+comment and fails `api-check` whatever `enforce_gates` says. `api-check` runs only after `evaluate` finishes, so it is
+skipped when `evaluate` is cancelled or loses its runner; rerun the workflow then.
+
 With `router_path`:
 
-- Checks out the caller without keeping the token in `.git/config`, because the install scripts, router and config of the caller run in this job
+- Checks out the caller without keeping the token in `.git/config`
 - Runs `npm ci` in `working_directory` (when it has a `package.json`), because the router imports the caller's packages. The job fails when the install changes checked-out files or adds untracked ones outside `node_modules` (for example a `prepare` script regenerating the spec), because `apifn check` must read the committed router and spec
 - Runs `apifn check <router_path> --base origin/<base_branch> --format markdown --report …` and the same check with `--format json --report …` (`--base-spec` instead when `base_spec` is set; an HTTP(S) `base_spec` is downloaded once for both runs); both reports are written to `$RUNNER_TEMP`, not the checkout, so output the router or config prints while loading does not affect them
-- After both runs, requires the spec the report names to be the file committed at `HEAD` (a spec missing from both is reported as drift). A spec that the install, the router or the config created or changed, including a gitignored one, makes the check report an error and the verdict `fail`
+- After both runs, requires the spec the report names to be the file committed at `HEAD`, reached only through symlinks committed at `HEAD` with the same targets (a spec missing from both is reported as drift). A spec or symlink that the install, the router or the config created or changed, including a gitignored one, makes the check report an error and the verdict `fail`
+- Fails an uncovered breaking change unless `allow_breaking` is true, even when the caller's apifn config sets `diff.failOnBreaking: false`
 - Uses the Markdown report as the job summary and PR comment when both runs agree (exit code, verdict, drift and breaking changes); otherwise the summary reports an error and the verdict is `fail`
 
 Without `router_path`:
@@ -179,14 +188,14 @@ with the [direct CLI commands](#non-github-ci). Pass `--allow-scripts` or repeat
 - `config_path` (optional): apifn config file for `apifn check`, relative to `working_directory`; empty finds `apifn.config.ts`, `.js` or `.mjs` there
 - `working_directory` (optional, default `.`): Repo-relative directory of the caller's package; with `router_path`, `npm ci` and `apifn check` run there
 - `base_spec` (optional, `router_path` only): Base spec file (relative to `working_directory`) or HTTP(S) URL, instead of the spec committed at `origin/<base_branch>`
-- `allow_breaking` (optional, default `false`, `router_path` only): Report breaking changes the contract version does not cover without failing (`--allow-breaking`). `diff.failOnBreaking: false` in the caller's apifn config has the same effect (verdict `warn`) whatever this input says, so a required check also depends on that config
+- `allow_breaking` (optional, default `false`, `router_path` only): Report breaking changes the contract version does not cover without failing (`--allow-breaking`, verdict `warn`). Only this input allows them: with `allow_breaking: false` the workflow fails an uncovered breaking change even when the caller's apifn config sets `diff.failOnBreaking: false` (which alone makes `apifn check` report it as a warning)
 - `cli_source` (optional, default `npm`): `npm` installs the CLI from the workflow revision's lockfile; `workspace` builds `@apifn/cli` from the checked-out repository and is allowed only in `21nCo/superfunctions` (the job fails in any other repository)
 - `enforce_gates` (optional, default `true`): Fail the job when a gate fails. `false` only reports, through the summary, comment and outputs; keep the default for a required check
 - `collection_dir` (optional): Repo-relative OpenCollection directory (e.g. `.apifn/collection`); empty skips the collection tests
 - `start_mock_server` (optional, default `false`): Serve `spec_path` with `apifn mock` on `mock_port` while the collection runs, for workflow self-tests; needs `spec_path` (relative to `working_directory` with `router_path`). A mock that does not start fails the tests
 - `environment` (optional, default `development`): Collection environment
 - `cli_version` (optional, default `0.1.2`): Assertion against the `@apifn/cli` version pinned by the selected workflow revision (`cli_source: npm`). The default in the workflow file must match that revision's [CLI lockfile](../.github/apifn-cli-install/package-lock.json). The workflow uses the local lockfile when the caller checkout matches the workflow repository and commit. For other callers it fetches the lockfile from the workflow revision.
-- `base_branch` (optional, default `main`): Branch whose committed spec is the base
+- `base_branch` (optional, default `main`): Branch whose committed spec is the base; a branch name (`git check-ref-format --branch`), not a revision such as `dev~1`
 - `fail_on_breaking` (optional, default `true`, without `router_path`): Whether a breaking diff exits non-zero
 - `post_pr_comment` (optional, default `true`): Whether to post/update PR summary comment
 - `called_as_reusable_workflow` (optional, default `true`): Do not set it. It tells the job it was called, so it runs for every caller; setting it to `false` skips the check outside `21nCo/superfunctions`.
