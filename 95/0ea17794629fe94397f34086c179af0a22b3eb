@@ -1,0 +1,27 @@
+billfn/provider-dodo/src/__tests__/contract.test.ts
+  s_ad3a3856a87c81::t_b48ea0ebbc135d 1122
+billfn/provider-apple/src/index.ts
+  s_ad3a3856a87c81::t_7544a7cc48a3d3 596
+  s_ad3a3856a87c81::t_62c8a9ba3e7c1a 296,345,611,620,661,685-687,692-694
+billfn/docs/content/docs/providers/apple.mdx
+  s_ad3a3856a87c81::t_62c8a9ba3e7c1a 35
+billfn/provider-apple/src/__tests__/provider.test.ts
+  s_ad3a3856a87c81::t_b48ea0ebbc135d 836
+  s_ad3a3856a87c81::t_62c8a9ba3e7c1a 842-880
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "950ea17794629fe94397f34086c179af0a22b3eb",
+  "prompts": {},
+  "sessions": {
+    "s_ad3a3856a87c81": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a2126c-2a4d-7b03-aaf0-909847a5e9c7",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
