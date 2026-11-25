@@ -1,6 +1,7 @@
 import { Buffer, constants } from "node:buffer";
 import { types } from "node:util";
 import { getHeapStatistics } from "node:v8";
+import { resourceLimits } from "node:worker_threads";
 
 const CIRCULAR = '"[Circular]"';
 const REDACTED = '"[REDACTED]"';
@@ -21,7 +22,7 @@ export const PROJECTION_REPEAT_LIMIT = 64;
  * level is read, where JSON.stringify would exhaust the stack.
  */
 export const MAX_NESTING_DEPTH = 512;
-/** The share of V8's heap limit one result document may use as text (see `documentLimit`). */
+/** The share of V8's old-generation limit one result document may use as text (see `documentLimit`). */
 const HEAP_SHARE = 16;
 /**
  * The share of the text budget, in keys, that the key lists of the objects open on the active path may hold together
@@ -177,12 +178,42 @@ export function workLeft(work: WorkBudget, kind: WorkKind, redacted = false): nu
 }
 
 /**
+ * The bytes of V8's heap a document may be sized from: its old generation, where the document text, its one joined
+ * copy and the diagnostics a run keeps live. V8's `heap_size_limit` adds the young generation, whose size depends on
+ * the Node version and the machine, not on the old generation (with `--max-old-space-size=32`, 80 MiB on Node 20 and
+ * 22, 128 MiB on Node 26, 224 MiB on Node 24), and V8 does not report the old generation's limit on its own. So the
+ * old-generation size a process was given (a worker's `resourceLimits.maxOldGenerationSizeMb`, or the last
+ * `--max-old-space-size` on the command line, which takes precedence over `NODE_OPTIONS`) is used when it is smaller,
+ * and the heap limit otherwise (V8's default old generation, sized from the machine's memory, is most of it).
+ * Read once: neither changes while the process runs.
+ */
+function oldGenerationLimit(): number {
+  const heapLimit = getHeapStatistics().heap_size_limit;
+  const workerLimit = resourceLimits.maxOldGenerationSizeMb;
+  if (typeof workerLimit === "number" && workerLimit > 0) {
+    return Math.min(heapLimit, workerLimit * 2 ** 20);
+  }
+  let flagged: number | undefined;
+  for (const option of [...(process.env.NODE_OPTIONS ?? "").split(/\s+/), ...process.execArgv]) {
+    const match = /^--max[-_]old[-_]space[-_]size=(\d+)$/.exec(option);
+    if (match) {
+      flagged = Number(match[1]) * 2 ** 20;
+    }
+  }
+  return flagged !== undefined && flagged > 0 ? Math.min(heapLimit, flagged) : heapLimit;
+}
+
+let oldGenerationBytes: number | undefined;
+
+/**
  * The longest result document, in characters including its newline: the smaller of the engine's maximum string
- * length (where `JSON.stringify` itself throws) and a sixteenth of V8's heap limit, so the document text and the one
- * copy that joins it fit the heap the process runs with.
+ * length (where `JSON.stringify` itself throws) and a sixteenth of V8's old-generation limit (see
+ * `oldGenerationLimit`), so the document text, the one copy that joins it and the diagnostics a run keeps fit the
+ * heap the process runs with, whatever young generation its Node version adds.
  */
 export function documentLimit(): number {
-  return Math.min(constants.MAX_STRING_LENGTH, Math.floor(getHeapStatistics().heap_size_limit / HEAP_SHARE));
+  oldGenerationBytes ??= oldGenerationLimit();
+  return Math.min(constants.MAX_STRING_LENGTH, Math.floor(oldGenerationBytes / HEAP_SHARE));
 }
 
 /** A document budget of `limit` characters, `documentLimit()` by default (tests pass a smaller one). */

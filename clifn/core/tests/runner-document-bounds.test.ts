@@ -2279,11 +2279,14 @@ describe("document memory in a constrained heap", () => {
       const { runAction } = await import(process.argv[1]);
       const run = async (name, action, extra = {}) => {
         const chunks = [];
+        let droppedRest = false;
         const exitCode = await runAction(action, {}, {
           mode: "json", jsonStyle: "document", color: false,
-          stdout: (text) => chunks.push(text), stderr: () => {}, ...extra,
+          stdout: (text) => chunks.push(text),
+          stderr: (text) => { droppedRest ||= text.includes("diagnostics past the first"); },
+          ...extra,
         });
-        process.stdout.write(JSON.stringify({ name, writes: chunks.length, exitCode, out: chunks.join("").slice(0, 400) }) + "\n");
+        process.stdout.write(JSON.stringify({ name, writes: chunks.length, exitCode, droppedRest, out: chunks.join("").slice(0, 400) }) + "\n");
         // What runs next starts from what is still alive, not from garbage V8 has yet to collect from this case.
         await new Promise((resolve) => setImmediate(resolve));
         globalThis.gc();
@@ -2340,7 +2343,8 @@ describe("document memory in a constrained heap", () => {
       });
       // Under a redacted ancestor, a Buffer the work allowance can walk (1.9 times the document limit): its built-in
       // toJSON would allocate an array of 8 or more bytes per byte, past this heap.
-      const limit = Math.floor((await import("node:v8")).getHeapStatistics().heap_size_limit / 16);
+      const { documentLimit } = await import(new URL("./json-value.js", process.argv[1]).href);
+      const limit = documentLimit();
       const walkable = Buffer.alloc(Math.floor(1.9 * limit));
       await run("buffer-nested-redacted", () => ({ exitCode: 3, data: { visible: "kept", token: { b: walkable } } }));
       // A one-byte Buffer whose own length tells the built-in toJSON to copy 2^26 items.
@@ -2410,8 +2414,12 @@ describe("document memory in a constrained heap", () => {
       // A returned string far larger than this heap, which iterating would read character by character.
       await run("diagnostics-string", () => ({ data: "done", exitCode: 2, diagnostics: "x".repeat(2 ** 26) }));
       // An ordinary object with 500,000 indexed elements: the one key list the engine builds for it nearly fills this
-      // heap (about 16 MiB of index strings), so no second list may be held next to it.
-      const indexed = () => { const x = {}; for (let i = 0; i < 500_000; i += 1) x[i] = 0; return x; };
+      // heap (about 16 MiB of index strings), so no second list may be held next to it. From Node 24 the engine
+      // itself cannot list 500,000 in this heap (a bare Reflect.ownKeys aborts on Node 26, and 400,000 after the cases
+      // above), so it gets 300,000 there: the case still checks the bounded document, and Node 20 and 22 keep the
+      // check that no second list is held.
+      const indexedCount = Number(process.versions.node.split(".")[0]) >= 24 ? 300_000 : 500_000;
+      const indexed = () => { const x = {}; for (let i = 0; i < indexedCount; i += 1) x[i] = 0; return x; };
       await run("indexed", () => ({ exitCode: 3, data: { visible: "kept", x: indexed() } }));
       await run("indexed-redacted", () => ({ exitCode: 3, data: { visible: "kept", token: indexed() } }));
       // Proxies returning one shared list of 100,000 keys at every level: no level holds the list itself.
@@ -2467,8 +2475,8 @@ describe("document memory in a constrained heap", () => {
       child.stdout
         .trim()
         .split("\n")
-        .map((line) => JSON.parse(line) as { name: string; writes: number; exitCode: number; out: string })
-        .map((entry) => [entry.name, entry])
+        .map((line) => JSON.parse(line) as { name: string; writes: number; exitCode: number; droppedRest: boolean; out: string })
+        .map(({ droppedRest, ...entry }) => [entry.name, { ...entry, ...(droppedRest ? { droppedRest } : {}) }])
     );
     const failure = `${JSON.stringify(FAILURE_DOCUMENT)}\n`;
     for (const name of ["sparse", "proxy", "generated"]) {
@@ -2567,7 +2575,7 @@ describe("document memory in a constrained heap", () => {
     });
     // Holes are dropped with bounded warnings; the result is kept.
     expect(cases["diagnostics-sparse"]).toMatchObject({ writes: 1, exitCode: 0, out: '{"ok":true,"data":"done"}\n' });
-    expect(cases["diagnostics-proxy"]).toMatchObject({ writes: 1, exitCode: 2 });
+    expect(cases["diagnostics-proxy"]).toMatchObject({ writes: 1, exitCode: 2, droppedRest: true });
     expect(cases["diagnostics-proxy"].out.startsWith('{"ok":true,"data":"done","diagnostics":[{"code":"D"')).toBe(true);
     expect(cases["diagnostic-reads"].out).toBe('{"ok":true,"data":true}\n');
     expect(cases["bigint-negative"]).toEqual({ name: "bigint-negative", writes: 1, exitCode: 1, out: failure });
@@ -2579,6 +2587,87 @@ describe("document memory in a constrained heap", () => {
     expect(cases.message).toMatchObject(tooLong("CLIFN_RUNNER_FAILED"));
     expect(cases["message-coded"]).toMatchObject(tooLong("BIG"));
     expect(cases["message-code-like"]).toMatchObject(tooLong("CLIFN_RUNNER_FAILED"));
+  }, 150_000);
+
+  it("sizes the document from the old generation the process was given, not the young generation V8 adds", () => {
+    // heap_size_limit adds a young generation that depends on the Node version (with --max-old-space-size=32: 80 MiB
+    // on Node 20 and 22, 128 MiB on Node 26, 224 MiB on Node 24), so it cannot size what lives in the old generation.
+    const jsonValueUrl = pathToFileURL(join(dirname(runnerModule), "json-value.js")).href;
+    const probe = String.raw`
+      const { documentLimit } = await import(process.argv[1]);
+      const { constants } = await import("node:buffer");
+      const { getHeapStatistics } = await import("node:v8");
+      const { Worker } = await import("node:worker_threads");
+      const heap = Math.min(constants.MAX_STRING_LENGTH, Math.floor(getHeapStatistics().heap_size_limit / 16));
+      const worker = await new Promise((resolve, reject) => {
+        // A CommonJS worker without the parent's flags: only its resourceLimits set its old generation.
+        const thread = new Worker(
+          "import(" + JSON.stringify(process.argv[1]) + ").then(({ documentLimit }) => " +
+            "require('node:worker_threads').parentPort.postMessage(documentLimit()))",
+          { eval: true, execArgv: [], resourceLimits: { maxOldGenerationSizeMb: 24 } }
+        );
+        thread.once("message", resolve);
+        thread.once("error", reject);
+      });
+      process.stdout.write(JSON.stringify({ limit: documentLimit(), heap, worker }));
+    `;
+    const limitWith = (execArgv: string[], nodeOptions?: string) => {
+      const env: NodeJS.ProcessEnv = { ...process.env };
+      delete env.NODE_OPTIONS;
+      if (nodeOptions !== undefined) {
+        env.NODE_OPTIONS = nodeOptions;
+      }
+      const child = spawnSync(process.execPath, [...execArgv, "--input-type=module", "-e", probe, jsonValueUrl], {
+        encoding: "utf8",
+        env,
+        timeout: 60_000,
+      });
+      expect(child.stderr).toBe("");
+      return JSON.parse(child.stdout) as { limit: number; heap: number; worker: number };
+    };
+    const MiB = 2 ** 20;
+    expect(limitWith(["--max-old-space-size=32"])).toMatchObject({ limit: (32 * MiB) / 16, worker: (24 * MiB) / 16 });
+    expect(limitWith([], "--max-old-space-size=48").limit).toBe((48 * MiB) / 16);
+    // The command line takes precedence over NODE_OPTIONS, in either spelling.
+    expect(limitWith(["--max_old_space_size=40"], "--max-old-space-size=48").limit).toBe((40 * MiB) / 16);
+    // Without one, V8's default old generation is most of its heap limit, which is used as before.
+    const unflagged = limitWith([]);
+    expect(unflagged.limit).toBe(unflagged.heap);
+  }, 60_000);
+
+  it("keeps the diagnostics of an endless returned list compact in a 32 MiB old generation", () => {
+    // Alone on a fresh heap: the most diagnostics a document can hold, each the shortest a diagnostic prints.
+    const script = String.raw`
+      const { runAction } = await import(process.argv[1]);
+      const chunks = [];
+      let droppedRest = false;
+      const many = new Proxy([], {
+        get: (target, key) =>
+          key === "length" ? 2e8 : typeof key === "string" && /^\d+$/.test(key) ? { code: "D", severity: "info", message: "m" } : Reflect.get(target, key),
+      });
+      const exitCode = await runAction(() => ({ exitCode: 2, data: "done", diagnostics: many }), {}, {
+        mode: "json", jsonStyle: "document", color: false,
+        stdout: (text) => chunks.push(text),
+        stderr: (text) => { droppedRest ||= text.includes("diagnostics past the first"); },
+      });
+      const out = chunks.join("");
+      JSON.parse(out);
+      process.stdout.write(JSON.stringify({ writes: chunks.length, exitCode, droppedRest, start: out.slice(0, 60), end: out.slice(-4) }));
+    `;
+    const child = spawnSync(
+      process.execPath,
+      ["--max-old-space-size=32", "--input-type=module", "-e", script, pathToFileURL(runnerModule).href],
+      { encoding: "utf8", timeout: 120_000 }
+    );
+    expect(child.stderr).toBe("");
+    expect(child.status).toBe(0);
+    expect(JSON.parse(child.stdout)).toEqual({
+      writes: 1,
+      exitCode: 2,
+      droppedRest: true,
+      start: '{"ok":true,"data":"done","diagnostics":[{"code":"D","severit',
+      end: "}]}\n",
+    });
   }, 150_000);
 });
 

@@ -301,12 +301,6 @@ function toDocumentDetails(
   }
 }
 
-/** A diagnostic as the document prints it: `{"code":...` up to its details, and its `,"details":{...}` member. */
-interface PreparedDiagnostic {
-  head: string;
-  details: string | undefined;
-}
-
 /**
  * Writes a diagnostic as the JSON text the document prints, without its closing brace. It keeps the members
  * `createDiagnostic` keeps, reading each from the original diagnostic once, without cloning. The code, severity,
@@ -525,8 +519,14 @@ export function createDocumentOutput(options: DocumentOutputOptions): DocumentOu
   };
   // Not a work allowance: the units the copies `list()` parses may use (see COPY_UNITS_PER_DETAILS_CHAR).
   let copyUnitsLeft = limit;
-  // In the order they were added; undefined for one dropped when it was added.
-  const entries: Array<PreparedDiagnostic | undefined> = [];
+  // Each diagnostic kept, in the order they were added, as the document prints it without its closing brace: one
+  // flat string of its `{"code":...` head followed by its `,"details":{...}` member, if any (undefined for one dropped
+  // when it was added), and in `headLengths` the length of that head. So what the run retains per diagnostic is its
+  // text, one string header and two array slots, a fixed overhead below its at least MIN_DIAGNOSTIC_LENGTH characters,
+  // never an object or a second string for its details; with at most `maxDiagnostics` of them, the whole is bounded
+  // by a small multiple of the limit, which is sized from the old generation where they live (see `documentLimit`).
+  const entries: Array<string | undefined> = [];
+  const headLengths: number[] = [];
   // The copies `list()` returns, parsed from the kept text the first time they are listed; `copied` entries so far.
   const copies: Diagnostic[] = [];
   let copied = 0;
@@ -541,7 +541,7 @@ export function createDocumentOutput(options: DocumentOutputOptions): DocumentOu
     workLeft(kept.work, "entry") < 1 ||
     kept.text.charsLeft < MIN_DIAGNOSTIC_LENGTH;
 
-  const prepare = (input: unknown): PreparedDiagnostic | undefined => {
+  const prepare = (input: unknown): void => {
     const item = segmentOf(kept.text);
     // While a diagnostic is written its text is charged to `item`, a copy of the budget kept only when it succeeds,
     // so an add from its getter or toJSON could not be charged to the same budget: it is dropped (see `add`).
@@ -552,10 +552,21 @@ export function createDocumentOutput(options: DocumentOutputOptions): DocumentOu
       spendText(item, 1);
       const written = toDocumentDiagnostic(input as Diagnostic, { text: item, work: kept.work }, limit);
       kept.text.charsLeft = item.charsLeft;
-      return { head: written.head.toString(), details: written.details?.toString() };
+      const head = written.head.toString();
+      let text = head;
+      if (written.details !== undefined) {
+        // Joined into one new flat string, so neither the head nor the details text is retained apart from it.
+        const whole = new JsonText();
+        whole.write(head);
+        whole.append(written.details);
+        text = whole.toString();
+      }
+      entries.push(text);
+      headLengths.push(head.length);
     } catch {
       chargeDropped(kept.work, kept.text.charsLeft - item.charsLeft);
-      return undefined;
+      entries.push(undefined);
+      headLengths.push(0);
     } finally {
       preparing = false;
     }
@@ -574,7 +585,7 @@ export function createDocumentOutput(options: DocumentOutputOptions): DocumentOu
         droppedRest = true;
         return;
       }
-      entries.push(prepare(input));
+      prepare(input);
     },
     unreadable() {
       if (full()) {
@@ -593,13 +604,17 @@ export function createDocumentOutput(options: DocumentOutputOptions): DocumentOu
         if (entry === undefined) {
           continue;
         }
-        let details = "";
-        const units = (entry.details?.length ?? 0) * COPY_UNITS_PER_DETAILS_CHAR;
-        if (entry.details !== undefined && units <= copyUnitsLeft) {
-          copyUnitsLeft -= units;
-          details = entry.details;
+        const headLength = headLengths[copied];
+        let source = entry;
+        if (entry.length > headLength) {
+          const units = (entry.length - headLength) * COPY_UNITS_PER_DETAILS_CHAR;
+          if (units <= copyUnitsLeft) {
+            copyUnitsLeft -= units;
+          } else {
+            source = entry.slice(0, headLength);
+          }
         }
-        copies.push(JSON.parse(`${entry.head}${details}}`) as Diagnostic);
+        copies.push(JSON.parse(`${source}}`) as Diagnostic);
       }
       return copies;
     },
@@ -617,17 +632,18 @@ export function createDocumentOutput(options: DocumentOutputOptions): DocumentOu
     entries.forEach((entry, index) => {
       printed[index] = false;
       if (entry !== undefined) {
-        const head = (count > 0 ? 1 : 0) + entry.head.length + 1;
-        const whole = head + (entry.details?.length ?? 0);
+        const separator = count > 0 ? 1 : 0;
+        const head = separator + headLengths[index] + 1;
+        const whole = separator + entry.length + 1;
         if (head <= charsLeft) {
           if (count > 0) {
             text.write(",");
           }
-          text.write(entry.head);
-          if (entry.details !== undefined && whole <= charsLeft) {
-            text.write(entry.details);
+          if (whole <= charsLeft) {
+            text.write(entry);
             charsLeft -= whole;
           } else {
+            text.write(entry.slice(0, headLengths[index]));
             charsLeft -= head;
           }
           text.write("}");
