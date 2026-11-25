@@ -231,7 +231,7 @@ function htreeChildren(
  */
 const _fkOmitCache = new WeakMap<DatafnSchema, Map<string, Set<string>>>();
 
-export function getFkFieldsToOmit(schema: DatafnSchema, targetResource: string): Set<string> {
+function getFkFieldsToOmit(schema: DatafnSchema, targetResource: string): Set<string> {
   let perSchema = _fkOmitCache.get(schema);
   if (!perSchema) {
     perSchema = new Map();

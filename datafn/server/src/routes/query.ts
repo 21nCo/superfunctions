@@ -28,7 +28,12 @@ import {
   resolveAccessLevel,
   validateQueryAuthz,
 } from "../validation/authz.js";
-import { ensureRevisionsTable, issuesRevisions, readStoredRows, readWithRevisions } from "../execution/revisions.js";
+import {
+  REVISION_FIELD,
+  ensureRevisionsTable,
+  issuesRevisions,
+  readWithRevisions,
+} from "../execution/revisions.js";
 import { runBounded } from "./query/batch-executor.js";
 import { executeSingleQuery, relationQuerySelectTokens } from "./query/execute.js";
 import { validateQueryBody } from "./query/validate.js";
@@ -39,8 +44,8 @@ import {
   canonicalizePrincipalFromLegacyUserId,
   getSpv2MigrationRuntimeConfig,
 } from "../execution/migration/spv2.js";
-import { hasTemporalGrouping, readRowRevision } from "@datafn/core";
-import { getFkFieldsToOmit } from "../execution/query/select.js";
+import { hasTemporalGrouping } from "@datafn/core";
+import { projectFieldsPushdown } from "../execution/query/pushdown.js";
 import {
   getDatafnMultiRegionRuntimeConfig,
   queryDatafnPermissionGrants,
@@ -90,82 +95,6 @@ function isVersionedQuery(query: Record<string, unknown>, schema: DatafnSchema):
   return !query.groupBy && !query.aggregations && !hasTemporalGrouping(query);
 }
 
-/** DATA-41: every field name a DFQL filter tree refers to. */
-function referencedFilterFields(filters: unknown, into = new Set<string>()): Set<string> {
-  if (Array.isArray(filters)) {
-    for (const item of filters) referencedFilterFields(item, into);
-  } else if (filters && typeof filters === "object") {
-    for (const [key, value] of Object.entries(filters as Record<string, unknown>)) {
-      if (key === "$and" || key === "$or" || key === "$not") referencedFilterFields(value, into);
-      else if (!key.startsWith("$")) into.add(key);
-    }
-  }
-  return into;
-}
-
-function comparable(value: unknown): unknown {
-  if (value instanceof Date) return value.toISOString();
-  if (typeof value === "boolean") return value ? 1 : 0;
-  if (value === undefined) return null;
-  return value;
-}
-
-function sameValue(left: unknown, right: unknown): boolean {
-  const a = comparable(left);
-  const b = comparable(right);
-  if (a === b) return true;
-  if (typeof a === "object" && typeof b === "object" && a !== null && b !== null) {
-    return JSON.stringify(a) === JSON.stringify(b);
-  }
-  if (typeof a === "string" && typeof b === "object" && b !== null) return a === JSON.stringify(b);
-  if (typeof b === "string" && typeof a === "object" && a !== null) return b === JSON.stringify(a);
-  return false;
-}
-
-/**
- * DATA-41: whether the complete stored row re-read for a versioned query is
- * still the row the query selected and authorized. It must equal the query's
- * row on every field the query returned; a field the query's strategy left
- * out may differ only when it is a forward many-one foreign key that the
- * query did not filter on, directly or through a relation. A row changed,
- * trashed or no longer matching the filter between the two reads fails, and
- * keeps the query's row without a revision.
- */
-function storedRowMatchesSelection(
-  schema: DatafnSchema,
-  resource: string,
-  selected: Record<string, unknown>,
-  stored: Record<string, unknown>,
-  filterFields: Set<string>,
-): boolean {
-  for (const [field, value] of Object.entries(selected)) {
-    if (field === "$rev" || field === "__ns") continue;
-    if (!sameValue(value, stored[field])) return false;
-  }
-  // Fields a query strategy may leave out: forward many-one foreign keys
-  // (unless filtered on), unset values, and undeclared server columns other
-  // than lifecycle state (a row trashed or archived between the reads fails).
-  const omittable = getFkFieldsToOmit(schema, resource);
-  const declared = new Set(schema.resources.find((r) => r.name === resource)?.fields.map((f) => f.name) ?? []);
-  // A filter through a relation (`project.name`, `{ project: {...} }`)
-  // depends on the foreign keys, which the query's row may not show.
-  const relationFiltered = [...filterFields].some(
-    (key) => key.includes(".") || (key !== "id" && !declared.has(key) && !LIFECYCLE_FIELDS.has(key)),
-  );
-  for (const [field, value] of Object.entries(stored)) {
-    if (field === "$rev" || field === "__ns" || field in selected) continue;
-    // A field the selection depends on but the query's row does not show
-    // cannot be compared, so the stored row may not match the selection.
-    if (filterFields.has(field) || (relationFiltered && omittable.has(field))) return false;
-    if (value === null || value === undefined) continue;
-    if (omittable.has(field)) continue;
-    if (!declared.has(field) && !LIFECYCLE_FIELDS.has(field)) continue;
-    return false;
-  }
-  return true;
-}
-
-const LIFECYCLE_FIELDS = new Set(["trashedAt", "trashedBy", "isArchived", "isAncestorInactive"]);
 
 export function createQueryHandler(
   validatedSchema: DatafnSchema,
@@ -984,7 +913,7 @@ export function createQueryHandler(
                   queryWithMetadata as any,
                   validatedSchema,
                 );
-                const run = (readDb: Adapter) => executeSingleQuery(
+                const run = (readDb: Adapter, projectRecords = true) => executeSingleQuery(
                   queryWithAutoFilters as unknown as Record<string, unknown>,
                   validatedSchema,
                   readDb,
@@ -994,7 +923,7 @@ export function createQueryHandler(
                   logger,
                   timer,
                   multiRegionRuntime,
-                  { allowUnknownResources: handlerOpts?.allowUnknownResources === true },
+                  { allowUnknownResources: handlerOpts?.allowUnknownResources === true, projectRecords },
                 );
                 const rowsOf = (result: unknown) => {
                   const rows = (result as { data?: unknown })?.data;
@@ -1015,42 +944,40 @@ export function createQueryHandler(
                     return result;
                   });
                 }
-                // DATA-41: the query selects the rows (outside any snapshot
-                // transaction, so its own error recovery keeps working on
-                // PostgreSQL). Each selected row is then returned as the
-                // complete stored row (as clone returns it, whatever the
-                // query strategy projected) with its revision, both read in
-                // one snapshot, when the caller may read every field of that
-                // stored row and the stored row is still the row the query
-                // selected (see storedRowMatchesSelection); otherwise the
-                // query's own row is returned without one.
+                // DATA-41: the query itself runs inside the revision snapshot
+                // and returns its stored rows unprojected (as clone returns
+                // them), so each row it selected is paired with the revision
+                // read in that same snapshot. A row that gets no revision (an
+                // unreadable field, a tombstone, no verified pairing) is
+                // returned as the plain query projects it. A query that fails
+                // inside the snapshot (a PostgreSQL push-down fallback aborts
+                // the transaction) is run again outside it, without revisions.
+                const readable = (row: Record<string, unknown>) =>
+                  canReadEveryField(validatedSchema, resourceName, row);
+                const select = Array.isArray(query.select) ? (query.select as string[]) : undefined;
                 return ensureRevisionsTable(db).then(async () => {
-                  const result = await run(db);
+                  let snapshotRead = false;
+                  let result: unknown;
+                  try {
+                    result = await readWithRevisions(
+                      db,
+                      namespace,
+                      resourceName,
+                      (readDb) => {
+                        if (readDb !== db) snapshotRead = true;
+                        return run(readDb, false);
+                      },
+                      rowsOf,
+                      readable,
+                    );
+                  } catch (error) {
+                    if (!snapshotRead) throw error;
+                    return run(db);
+                  }
                   const rows = rowsOf(result);
-                  if (!rows || rows.length === 0) return result;
-                  const ids = rows.map((row) => row.id).filter((id): id is string => typeof id === "string");
-                  const readable = (row: Record<string, unknown>) =>
-                    canReadEveryField(validatedSchema, resourceName, row);
-                  const pairs = await readWithRevisions(
-                    db,
-                    namespace,
-                    resourceName,
-                    async (readDb) =>
-                      [...(await readStoredRows(readDb, namespace, resourceName, ids)).values()].map((row) => ({ ...row })),
-                    (stored) => stored,
-                    readable,
-                  );
-                  const byId = new Map(pairs.map((row) => [row.id, row]));
-                  const filterFields = referencedFilterFields(query.filters);
-                  rows.forEach((row, index) => {
-                    const whole = typeof row.id === "string" ? byId.get(row.id) : undefined;
-                    if (
-                      whole &&
-                      readRowRevision(whole) !== undefined &&
-                      readable(whole) &&
-                      storedRowMatchesSelection(validatedSchema, resourceName, row, whole, filterFields)
-                    ) {
-                      rows[index] = whole;
+                  rows?.forEach((row, index) => {
+                    if (!(REVISION_FIELD in row)) {
+                      rows[index] = projectFieldsPushdown(row, resourceName, validatedSchema, select, undefined);
                     }
                   });
                   return result;

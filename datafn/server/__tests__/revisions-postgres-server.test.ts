@@ -11,6 +11,7 @@ import type { Adapter } from "@superfunctions/db";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { bumpRevision, ensureRevisionsTable, readRevisions, readWithRevisions } from "../src/execution/revisions.js";
 import { ChangeTrackingService } from "../src/execution/sync/change-tracking.js";
+import { createDatafnServer } from "../src/server.js";
 
 const url = process.env.DATAFN_TEST_POSTGRES_URL;
 const run = `${process.pid}_${Date.now()}`;
@@ -111,5 +112,178 @@ describe.skipIf(!url)("DATA-41 revisions on a PostgreSQL server", { timeout: 60_
 
     expect(rows).toEqual([{ id, title: "before", $rev: 1 }]);
     expect((await readRevisions(adapter, namespace, taskTable, [id])).get(id)?.rev).toBe(2);
+  });
+});
+
+/**
+ * DATA-41: a versioned query runs inside a REPEATABLE READ snapshot, so a
+ * write another connection commits while the query runs never pairs a
+ * returned row with the revision of another state. Runs in a fresh database
+ * on the server named by DATAFN_TEST_POSTGRES_URL.
+ */
+describe.skipIf(!url)("DATA-41 versioned query on a PostgreSQL server", { timeout: 120_000 }, () => {
+  const database = `data41_query_${run}`;
+  const schema = {
+    resources: [
+      { name: "project", version: 1, fields: [{ name: "name", type: "string", required: false }] },
+      {
+        name: "task",
+        version: 1,
+        capabilities: ["trash"],
+        fields: [
+          { name: "title", type: "string", required: false },
+          { name: "projectId", type: "string", required: false },
+        ],
+      },
+    ],
+    relations: [{ from: "task", to: "project", type: "many-one", relation: "project", fkField: "projectId" }],
+  } as any;
+  let admin: pg.Pool;
+  const instances: Array<Kysely<any>> = [];
+
+  const connect = () => {
+    const target = new URL(url!);
+    target.pathname = `/${database}`;
+    const instance = new Kysely<any>({
+      dialect: new PostgresDialect({ pool: new pg.Pool({ connectionString: target.toString(), max: 4 }) }),
+    });
+    instances.push(instance);
+    return kyselyAdapter({ db: instance, dialect: "postgres", schema: { project: "project", task: "task" } }) as Adapter;
+  };
+
+  const serve = async (adapterForServer: Adapter) => {
+    const server = await createDatafnServer({
+      schema,
+      database: adapterForServer,
+      allowUnknownResources: true,
+      revisions: { enabled: true },
+    } as any);
+    let seq = 0;
+    const send = async (route: string, body: unknown) => {
+      const res = await server.router.handle(
+        new Request(`http://localhost/datafn/${route}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        }),
+      );
+      return { status: res.status, body: (await res.json()) as Record<string, any> };
+    };
+    const push = async (mutation: Record<string, unknown>) => {
+      seq += 1;
+      return send("push", {
+        clientId: "client:w",
+        mutations: [{ version: 1, clientId: "client:w", mutationId: `w${Date.now()}-${seq}`, ...mutation }],
+      });
+    };
+    return { send, push };
+  };
+
+  beforeAll(async () => {
+    admin = new pg.Pool({ connectionString: url, max: 1 });
+    await admin.query(`CREATE DATABASE "${database}"`);
+    const setup = connect();
+    await setup.rawSql!.execute(`CREATE TABLE "project" (id text, "__ns" text, name text, PRIMARY KEY (id, "__ns"))`);
+    await setup.rawSql!.execute(
+      `CREATE TABLE "task" (id text, "__ns" text, title text, "projectId" text, "trashedAt" bigint, "trashedBy" text, PRIMARY KEY (id, "__ns"))`,
+    );
+  });
+
+  afterAll(async () => {
+    for (const instance of instances) await instance.destroy();
+    await admin?.query(`DROP DATABASE IF EXISTS "${database}"`);
+    await admin?.end();
+  });
+
+  it("returns each row with the revision of exactly that row while another connection writes", async () => {
+    // The writer has its own pool, so its writes commit on another session.
+    const writer = await serve(connect());
+    const readerAdapter = connect();
+    let inject: (() => Promise<void>) | undefined;
+    // Commits the injected write right after the query's first read of task
+    // rows inside its snapshot transaction.
+    const reader = await serve(
+      new Proxy(readerAdapter, {
+        get(target, property, receiver) {
+          if (property !== "transaction") return Reflect.get(target, property, receiver);
+          return (fn: (tx: Adapter) => Promise<unknown>) =>
+            target.transaction((tx) =>
+              fn(
+                new Proxy(tx as Adapter, {
+                  get(txTarget, txProperty, txReceiver) {
+                    if (txProperty !== "findMany") return Reflect.get(txTarget, txProperty, txReceiver);
+                    return async (args: any) => {
+                      const rows = await (txTarget as Adapter).findMany(args);
+                      if (inject && args.model === "task") {
+                        const write = inject;
+                        inject = undefined;
+                        await write();
+                      }
+                      return rows;
+                    };
+                  },
+                }),
+              ),
+            );
+        },
+      }),
+    );
+    await writer.push({ resource: "project", operation: "insert", id: "project:1", record: { name: "P" } });
+    await writer.push({ resource: "project", operation: "insert", id: "project:2", record: { name: "Q" } });
+
+    const states = new Map<number, Record<string, unknown>>();
+    const record = async () => {
+      const [row] = await readerAdapter.findMany({
+        model: "task",
+        where: [{ field: "id", operator: "eq", value: "task:1" }],
+        namespace: "datafn",
+      });
+      const rev = (await readRevisions(readerAdapter, "datafn", "task", ["task:1"])).get("task:1")!.rev;
+      const { __ns: _namespace, ...state } = row as Record<string, unknown>;
+      states.set(rev, JSON.parse(JSON.stringify(state)));
+    };
+    const writes = [
+      { operation: "merge", record: { title: "changed" } },
+      { operation: "trash" },
+      { operation: "unrelate", relations: { project: "project:1" } },
+      { operation: "relate", relations: { project: "project:2" } },
+      { operation: "merge", record: { title: "0-first" } },
+    ];
+    const queries = [
+      { filters: { title: { eq: "a" } } },
+      { filters: { projectId: { eq: "project:1" }, title: { not_ilike: "z" } } },
+      { filters: { "project.name": { eq: "P" } } },
+      { sort: ["title"], limit: 1 },
+    ];
+    let paired = 0;
+    for (const write of writes) {
+      for (const shape of queries) {
+        const reset = await writer.push({
+          resource: "task",
+          operation: "replace",
+          id: "task:1",
+          record: { title: "a", projectId: "project:1" },
+        });
+        expect(reset.status).toBe(200);
+        await writer.push({ resource: "task", operation: "insert", id: "task:0", record: { title: "b" } });
+        await record();
+        inject = async () => {
+          const written = await writer.push({ resource: "task", id: "task:1", ...write });
+          expect(written.body.result.ok).toBe(true);
+          await record();
+        };
+        const query = await reader.send("query", { resource: "task", version: 1, withRevisions: true, ...shape });
+        expect(query.status).toBe(200);
+        expect(inject).toBeUndefined();
+        for (const row of query.body.result.data.filter((r: Record<string, unknown>) => r.id === "task:1")) {
+          if (row.$rev === undefined) continue;
+          const { $rev, ...state } = row;
+          expect(state).toEqual(states.get($rev));
+          paired += 1;
+        }
+      }
+    }
+    // The snapshot pairs rows here (the pre-write state with its revision).
+    expect(paired).toBeGreaterThan(0);
   });
 });

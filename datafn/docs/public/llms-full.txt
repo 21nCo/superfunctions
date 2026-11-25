@@ -15581,13 +15581,13 @@ const server = await createDatafnServer({
 
 ## Debug Mode
 
-In debug mode (the default in non-production environments), authorization errors include the resource name and a hint:
+Detailed authorization errors are returned only when the server is created with `debug: true`. The default is off in every environment. `NODE_ENV` does not turn them on. With `debug: true`, authorization errors include the resource name and a hint:
 
 ```
 No authorization policy found for resource 'tasks'. Define a policy or use allowUnknownResources: true to allow.
 ```
 
-In production (`debug: false`), the same error produces a generic message:
+With `debug` unset or `false`, the same error produces a generic message:
 
 ```
 Authorization denied
@@ -18104,7 +18104,7 @@ Two clients write to the same row before either has pushed. When their mutations
 
 ## Default: last-writer-wins (LWW)
 
-The default policy is **last writer by server timestamp**. When two mutations target the same row, the server applies them in `serverSeq` order — the later one wins, the earlier one is silently overwritten.
+The default policy is last successful write. For resources with the `timestamps` capability, the server stamps its own `updatedAt` when it applies each write. When two unguarded updates both succeed, both are acknowledged and the last write applied determines the stored value, regardless of client timestamps. Concurrent requests can finish in a different order from arrival.
 
 This is the right answer for:
 
@@ -18116,25 +18116,30 @@ For most fields, you don't need anything else.
 
 ## Optimistic concurrency: version guards
 
-For fields where you want to **refuse** the second writer instead of silently losing data, use `if` guards on the mutation:
+Use an `if` guard to reject a mutation when the stored row has already changed at the time of the check. Send the guarded write directly to `/datafn/mutation` or as a mutation step in `/datafn/transact`. A hydrated client's `mutate` call writes to the local changelog and syncs through `/datafn/push`, which skips guard evaluation.
 
 ```typescript
 const task = await client.table("tasks").get(taskId);
 
-await client.table("tasks").mutate({
-  operation: "merge",
-  id: taskId,
-  record: { title: newTitle },
-  if: { updatedAt: { $eq: task.updatedAt } },
+await fetch("/datafn/mutation", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    resource: "tasks",
+    version: 1,
+    operation: "merge",
+    id: taskId,
+    record: { title: newTitle },
+    if: { updatedAt: { $eq: task.updatedAt } },
+  }),
 });
 ```
 
-The server evaluates the guard atomically with the write. If `updatedAt` has changed since `task` was loaded, the mutation fails with `CONFLICT`. The losing client is informed; the user can retry, merge, or discard.
+If the predicate fails at the time of the check, the server returns `CONFLICT` without applying that write. When the adapter supports transactions, the guard read and write run in one transaction. Under read-committed isolation, concurrent guards can both read the old row before either write commits and both writes can succeed. Adapters without transactions check the guard separately from the write. An atomic `transact` with mutations on such an adapter returns `DFQL_UNSUPPORTED` before steps run.
 
 Use guards for:
 
 - Singular fields where data loss matters: title, body, name
-- Counter fields where you can't tolerate a missed increment
 - Permission lists, tag sets, settings
 
 ## Explicit merge (server-side hook)
@@ -19178,9 +19183,9 @@ Revisions are row metadata, never part of a record's fields, so E2EE record encr
 
 Rows and their revisions are read in one snapshot only where DataFn can verify one: a `REPEATABLE READ` transaction on PostgreSQL, or SQLite. On another database with transactions (MySQL, or a SQL database reached without raw SQL access such as Prisma), where a write and its revision commit together, the revisions are read before and after the returned rows, and a row gets `$rev` only when both reads agree, so no write to it committed in between. Without transactions (D1, Drizzle SQLite), a write and its revision are separate statements, so no read can establish the pair: clone and versioned queries return rows without `$rev` there, and the client learns revisions from pull and push. Revision lookups bind at most 90 ids per statement (D1 allows 100).
 
-A push result carries the record's complete row after the write (read in the write's transaction) only when the caller's read policy covers every field of the resource, the caller can still access the record (checked again in the write's transaction for a shareable resource), and no later mutation of the same push changed the record again (directly, or through a cascade, `setNull` or inherited-inactive update); otherwise it carries `rev` alone. The client pairs the row only with the `$rev` on the row. A deduplicated replay carries the stored `rev` without a row. A versioned query returns each selected row as the complete stored row (as clone returns it, whatever fields the query strategy would have projected) with `$rev`, only for rows of its own resource that the caller may read in full: not for a relation traversal, a projection (`select`, `omit`), grouping, aggregation or a temporal clause. A query that does not qualify, including any query of a resource whose read policy withholds fields and any `sharedWithMe` query (its rows belong to other namespaces), returns its rows with no `$rev` and without the declared fields the read policy withholds (other keys, such as aggregation aliases, are kept); a selected row whose stored row has a column the caller may not read also gets no `$rev`. The selecting query runs first, outside the snapshot, and the stored rows and their revisions are then read together. A stored row replaces the query's row only when it is still the row the query selected: equal on every field the query returned, and differing elsewhere only in a forward many-one foreign key the query did not filter on, directly or through a relation such as `project.name` (never in trash or archive state, nor in a filtered field the query's row does not show). Otherwise the query's own row is returned without `$rev`.
+A push result carries the record's complete row after the write (read in the write's transaction) only when the caller's read policy covers every field of the resource, the caller can still access the record (checked again in the write's transaction for a shareable resource), and no later mutation of the same push changed the record again (directly, or through a cascade, `setNull` or inherited-inactive update); otherwise it carries `rev` alone. The client pairs the row only with the `$rev` on the row. A deduplicated replay carries the stored `rev` without a row. A versioned query returns its rows with `$rev` only for rows of its own resource that the caller may read in full: not for a relation traversal, a projection (`select`, `omit`), grouping, aggregation or a temporal clause. A query that does not qualify, including any query of a resource whose read policy withholds fields and any `sharedWithMe` query (its rows belong to other namespaces), returns its rows with no `$rev` and without the declared fields the read policy withholds (other keys, such as aggregation aliases, are kept); a row with a column the caller may not read also gets no `$rev`. A qualifying query runs inside the revision snapshot described above and returns its own rows as stored (as clone returns them, foreign keys included, on every query strategy), so filters, sorting, pagination, trash and archive state and row-level access are decided on the same state as the revision. A row that gets no revision is returned as the plain query projects it. If the query fails inside the snapshot (on PostgreSQL a push-down fallback aborts the transaction), it runs again outside it and returns no revisions.
 
-Only a write's last change row for a record carries the revision, and when it writes a whole record (insert, replace, or any KV write) it records the stored row after the write, defaults and server fields included. A partial change (a merge, or a whole row followed by an inherited-inactive update in the same write) carries the revision on the change but never as `$rev` on a row, so the client leaves the revision unknown. On a resource whose read policy withholds fields (or a stored row with a column the policy does not list), revisioned pull rows have those fields removed and carry no `$rev`, also after revisions are turned off again. A per-table pull orders a record's changes by commit only when it knows the order: every change in the response belongs to a write that recorded a revision (sequence numbers are reserved before a write, so they do not give commit order). Then the record's last whole row or delete by revision replaces its earlier changes, and only the patches committed after it follow; a record re-created by a merge after its delete is listed as a whole-row replacement with the merge's fields (without `$rev`) instead of a delete. Otherwise (revisions off, change rows from before enablement, or a write whose last change is on the next page) every change is delivered in its bucket as before, and clients apply rows, then patches, then deletes. Change rows written before revisions were enabled carry no revision, so a pull returns none for them. DataFn checks for the `rev` column in the database catalog (`PRAGMA table_info` on SQLite and D1, `pg_attribute` on PostgreSQL, `information_schema` on MySQL) and adds it only when it is missing. On a SQL database reached without raw SQL access, DataFn cannot add the `rev` column to an existing `__datafn_changes` table; change rows then record a revision only if a probe shows the column exists (a driver that accepts a filter on any column name counts as unverified, so no revision is recorded).
+Only a write's last change row for a record carries the revision, and when it writes a whole record (insert, replace, or any KV write) it records the stored row after the write, defaults and server fields included. A partial change (a merge, or a whole row followed by an inherited-inactive update in the same write) carries the revision on the change but never as `$rev` on a row, so the client leaves the revision unknown. On a resource whose read policy withholds fields (or a stored row with a column the policy does not list), revisioned pull rows have those fields removed and carry no `$rev`, also after revisions are turned off again. A pull returns the same changes, in the same buckets and order, as without revisions; revisions are only added to them. Sequence numbers are reserved before a write, so they do not give commit order, and a pull never reorders or drops changes on that basis. A per-table pull combines several rows (or KV writes) of one id as before; the combined entry keeps `$rev` only when every combined change carried one, the last has the highest, and the combined row is that last row. `deletedRevisions` lists a tombstone revision only when every delete of the id in the response recorded one. The client applies the page as before (rows, then patches, then deletes) and then pairs a record with a revision only when every change of that record in the page carried one, and the change with the highest revision is a complete `$rev` row (or a delete with its tombstone revision) and is the last one applied; otherwise it clears the record's revision. Change rows written before revisions were enabled carry no revision, so a pull returns none for them. DataFn checks for the `rev` column in the database catalog (`PRAGMA table_info` on SQLite and D1, `pg_attribute` on PostgreSQL, `information_schema` on MySQL) and adds it only when it is missing. On a SQL database reached without raw SQL access, DataFn cannot add the `rev` column to an existing `__datafn_changes` table; change rows then record a revision only if a probe shows the column exists (a driver that accepts a filter on any column name counts as unverified, so no revision is recorded).
 
 A resource with its own field named `$rev` keeps that field as application data and gets no revisions.
 
@@ -22754,31 +22759,42 @@ When two clients edit the same row offline and reconnect at different times, you
 
 ## Last-writer-wins (default)
 
-Most fields don't need conflict resolution. The default is **last-writer-wins by server timestamp**: when push delivers two competing edits, the one with the later `updatedAt` wins. The earlier edit is silently dropped.
+Most fields don't need conflict resolution. Successful unguarded writes apply in server execution order. For resources with the `timestamps` capability, the server stamps `updatedAt` when it applies a write. It does not compare the client's `updatedAt` or any other client clock. If two unguarded updates both succeed, the later one in that execution order is the stored value, and both writes are acknowledged. Concurrent requests can finish in an order that differs from the order they arrived.
 
-This is correct for status toggles, single-value fields, and any field where the meaningful state is "the most recent value the user intended".
+This is the right default for status toggles, single-value fields, and any field where the meaningful state is the value from the write the server applied last.
 
 No configuration needed.
 
 ## Version guards (optimistic concurrency)
 
-For fields where you want the second writer to **fail** instead of silently overwrite, use `if` guards.
+Use an `if` guard to reject a write when the stored value has already changed at the time of the check. The example calls `/datafn/mutation` directly because a hydrated client's `mutate` call queues the write for `/datafn/push`.
 
 ```typescript
 const task = await client.table("tasks").get(taskId);
 
-await client.table("tasks").mutate({
-  operation: "merge",
-  id: taskId,
-  record: { title: newTitle },
-  if: { updatedAt: { $eq: task.updatedAt } },
+const response = await fetch("/datafn/mutation", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    resource: "tasks",
+    version: 1,
+    operation: "merge",
+    id: taskId,
+    record: { title: newTitle },
+    if: { updatedAt: { $eq: task.updatedAt } },
+  }),
 });
+const env = await response.json();
 ```
 
-The server checks the guard atomically with the write. If `updatedAt` has changed since `task` was loaded, the mutation fails with `CONFLICT`. Catch and prompt the user:
+Guard support depends on the endpoint:
+
+- `/datafn/mutation` and mutation steps in `/datafn/transact` evaluate `if` against the stored row. A guard that fails at the time of the read returns `CONFLICT` without applying the write. On a transactional adapter the check and write share a transaction. Under read-committed isolation two transactions can both read the old version and succeed. On a nontransactional adapter the check and write are separate, and atomic `transact` with mutations returns `DFQL_UNSUPPORTED` before any step runs.
+- `/datafn/push` validates `if` and applies writes in server execution order without evaluating the guard.
+
+Prompt the user when the direct mutation reports `CONFLICT`.
 
 ```typescript
-const env = await client.table("tasks").mutate({ /* …with guard… */ });
 if (!env.ok && env.error.code === "CONFLICT") {
   const fresh = await client.table("tasks").get(taskId);
   if (await confirm("Someone else edited this. Use their version?")) return; // discard local
@@ -22786,7 +22802,7 @@ if (!env.ok && env.error.code === "CONFLICT") {
 }
 ```
 
-This pattern is correct for important singular fields: a price, a name, a permissions list.
+Use this pattern to detect committed changes to individual fields such as a title or name.
 
 ## Explicit merge (per-field policy)
 
@@ -23896,6 +23912,13 @@ DataFn follows [semver](https://semver.org/): until 1.0 minor versions may inclu
 - Versioned namespace storage contract: `DATAFN_NAMESPACE_STORAGE_MANIFEST` in `@datafn/core` and `resolveNamespaceStoragePlan` / `inspectPostgresNamespaceStorage` / `drainNamespaceStorage` in `@datafn/server`. This is the supported integration point for tenant copy, checksum, cleanup, write fencing, outbox drain, backup, and physical-ownership checks.
 
 **Bug fixes**
+
+- Private shareable queries resolve principal membership and hierarchy for the current request. Revoking a membership or a hierarchy edge is visible on the next read.
+- Query filters and mutation `if` guards follow the same read policy as `select`, including relation dot-paths and `$any` / `$all` / `$none` filters. A field the caller cannot read is `403`, not a predicate.
+- A transact step is classified once for schema validation, authorization, and execution. A bare mutation whose `id` is not a string is rejected the same way as the wrapped form, and that step does not run.
+- Unexpected database and transaction failures return `Internal error` or `Transaction failed`. The driver text stays in the error log. Detailed validation messages require `debug: true`; `NODE_ENV` no longer turns them on.
+- `POST /datafn/public-links/resolve` rejects an over-limit body that has no `Content-Length`, including when placement is not configured. When rate limiting is enabled, plugin routes use that limiter. A public-link token still resolves without an owner session.
+- Unguarded sync writes apply in server execution order. The offline conflict recipe no longer says the later client `updatedAt` wins. Push still accepts `if` and does not evaluate it.
 
 - `@datafn/server` 0.2.3: a `merge` on the built-in `kv` resource (what `kv.merge` sends) merges the patch into the stored value at the top level instead of replacing it, so a partial merge no longer erases the record's other keys on the server or, after a pull, on any device. The read and write are atomic per record: a row lock inside a database transaction, or, on an adapter without transactions that reports updates matching no row (Drizzle SQLite and Cloudflare D1), a write conditional on the value it merged from, retried after a concurrent change; a merge that still cannot settle writes nothing and returns a retryable `INTERNAL` error on `/mutation` and `/push`. A custom adapter with neither transactions nor `strictUpdateNotFound` rejects a merge into an existing `kv` record with a non-retryable `DFQL_UNSUPPORTED` before writing. Also, every change to a `kv` record (set, merge or delete) records the record's stored state after its write, so the record's latest change matches what the server stores, within one push and across concurrent requests. `kv.set` still replaces the value, and merges on other resources are unchanged. `@datafn/client` 0.1.4 adds the matching two-device regression tests. The fix first ships in `@datafn/server` 0.2.3 with `@datafn/client`, `@datafn/cli` and `@datafn/swift-bridge` 0.1.4; versions `@datafn/server` 0.2.2 and `@datafn/client`, `@datafn/cli` and `@datafn/swift-bridge` 0.1.3 were never published.
 - `@datafn/server`: an atomic `transact` with mutation steps on an adapter without transactions (Drizzle on SQLite or Cloudflare D1) now returns `DFQL_UNSUPPORTED` before writing anything. It previously ran the steps one by one, so a failed step left earlier steps applied. See [Cloudflare Workers: D1 behavior and limits](/docs/documentation/deploy/cloudflare-workers#d1-behavior-and-limits).

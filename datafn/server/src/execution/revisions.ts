@@ -203,28 +203,6 @@ export async function readRevisions(
   return result;
 }
 
-/** DATA-41: the complete stored rows of `ids`, read on `db`. */
-export async function readStoredRows(
-  db: Adapter,
-  namespace: string,
-  resource: string,
-  ids: readonly string[],
-): Promise<Map<string, Record<string, unknown>>> {
-  const result = new Map<string, Record<string, unknown>>();
-  const unique = [...new Set(ids)];
-  for (let i = 0; i < unique.length; i += READ_CHUNK) {
-    const rows = await db.findMany<Record<string, unknown>>({
-      model: resource,
-      where: [{ field: "id", operator: "in", value: unique.slice(i, i + READ_CHUNK) }],
-      namespace,
-    });
-    for (const row of rows) {
-      if (typeof row.id === "string") result.set(row.id, row);
-    }
-  }
-  return result;
-}
-
 function transactionsUsable(db: Adapter): boolean {
   return db.capabilities?.transactions?.supported !== false && typeof db.transaction === "function";
 }

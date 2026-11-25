@@ -7,7 +7,7 @@ import type { Adapter } from "@superfunctions/db";
 import type { SequenceStore } from "./sequence-store.js";
 import { ChangeTrackingService, type ChangeEntry } from "./change-tracking.js";
 import { issuesRevisions, wireChange } from "../revisions.js";
-import { DATAFN_REVISION_FIELD, withoutRowRevision } from "@datafn/core";
+import { readRowRevision, withoutRowRevision } from "@datafn/core";
 import { isPrivateShareableResource, resolveAccessLevel } from "../../validation/authz.js";
 import {
   canonicalizeActorPrincipal,
@@ -914,57 +914,26 @@ async function executePullGlobalCursor(
   };
 }
 
-/** DATA-41: one change of a record as canonical pull collects it. */
-type CanonicalRecordEntry = {
-  /** A complete row, a partial patch or a delete. */
-  kind: "row" | "patch" | "delete";
-  bucket: "records" | "merged" | "deleted";
-  row?: Record<string, unknown>;
-  /** The record's revision after this change, when the change recorded one. */
-  rev?: number;
-};
-
 /**
- * DATA-41: orders one record's changes for the canonical buckets, which
- * clients apply as rows, then patches, then deletes.
- *
- * serverSeq order is not commit order (a push reserves its sequences before
- * it writes), so changes are reordered only when commit order is known: every
- * change belongs to a write that recorded a revision. A write records `rev`
- * on its last change of the record, so the changes before it take that
- * revision. The last complete row or delete in revision order then
- * supersedes everything before it, and the patches after it follow. A
- * record re-created by patches after a delete gets their combined fields as a
- * whole-row replacement (without `$rev`), so the delete is not applied after
- * them. Without a known order (revisions off, legacy changes, or a write whose
- * last change is on a later page) every change goes to its bucket in
- * sequence order, as before DATA-41.
+ * DATA-41: a coalesced canonical entry (several changes of one id combined in
+ * serverSeq order, as before DATA-41) keeps `$rev` only when every combined
+ * change carried one, the last has the highest, and the combined row is that
+ * last complete row. serverSeq order is not commit order, so otherwise the
+ * entry goes without a revision.
  */
-function placeRecordChanges(entries: CanonicalRecordEntry[]): CanonicalRecordEntry[] {
-  const ordered: Array<{ entry: CanonicalRecordEntry; rev: number; index: number }> = [];
-  let pending: CanonicalRecordEntry[] = [];
-  for (const entry of entries) {
-    pending.push(entry);
-    if (entry.rev === undefined) continue;
-    for (const member of pending) ordered.push({ entry: member, rev: entry.rev, index: ordered.length });
-    pending = [];
-  }
-  if (pending.length > 0) return entries;
-  ordered.sort((a, b) => a.rev - b.rev || a.index - b.index);
-  let base = -1;
-  for (let i = ordered.length - 1; i >= 0; i -= 1) {
-    if (ordered[i].entry.kind !== "patch") {
-      base = i;
-      break;
-    }
-  }
-  if (base < 0) return ordered.map(({ entry }) => entry);
-  const after = ordered.slice(base + 1).map(({ entry }) => entry);
-  const head = ordered[base].entry;
-  if (head.kind !== "delete" || after.length === 0) return [head, ...after];
-  const row: Record<string, unknown> = {};
-  for (const patch of after) Object.assign(row, withoutRowRevision(patch.row ?? {}));
-  return [{ kind: "row", bucket: "records", row }];
+function certifyCoalesced(
+  combined: Record<string, unknown>,
+  parts: ReadonlyArray<Record<string, unknown>>,
+): Record<string, unknown> {
+  const last = parts[parts.length - 1];
+  const lastRev = readRowRevision(last);
+  const certified =
+    lastRev !== undefined &&
+    parts.every((part) => {
+      const rev = readRowRevision(part);
+      return rev !== undefined && rev <= lastRev && Object.keys(part).every((key) => key in last);
+    });
+  return certified ? combined : withoutRowRevision(combined);
 }
 
 async function executePullCanonical(
@@ -1040,17 +1009,9 @@ async function executePullCanonical(
     wireChange(schema, resource, change).record!;
   const revisionOf = (resource: string, change: ChangeEntry): number | undefined =>
     change.rev !== undefined && issuesRevisions(schema, resource) ? change.rev : undefined;
-  const isRevisionRow = (resource: string, row: Record<string, unknown>) =>
-    DATAFN_REVISION_FIELD in row && issuesRevisions(schema, resource);
-  // DATA-41: a record's changes, collected in serverSeq order and placed in
-  // the buckets afterwards (see placeRecordChanges).
-  const recordChanges = new Map<string, { resource: string; id: string; entries: CanonicalRecordEntry[] }>();
-  const collect = (resource: string, id: string, entry: CanonicalRecordEntry) => {
-    const key = `${resource}\u0000${id}`;
-    let slot = recordChanges.get(key);
-    if (!slot) recordChanges.set(key, (slot = { resource, id, entries: [] }));
-    slot.entries.push(entry);
-  };
+  // DATA-41: ids with a delete that recorded no revision get no tombstone
+  // revision in this page.
+  const unrevisionedDeletes = new Set<string>();
   const joins: Record<string, { upsert: Array<Record<string, unknown>>; delete: Array<{ from: string; to: string }> }> = Object.create(null);
   const cursors: Record<string, string> = Object.create(null);
 
@@ -1126,14 +1087,10 @@ async function executePullCanonical(
           continue;
         }
       }
-      const row = withRev(resource, change);
-      // DATA-41: a merge carrying `$rev` is the complete row (a KV write).
-      collect(resource, change.id, {
-        kind: isRevisionRow(resource, row) ? "row" : "patch",
-        bucket: "merged",
-        row,
-        rev: revisionOf(resource, change),
-      });
+      if (!merged[resource]) {
+        merged[resource] = [];
+      }
+      merged[resource].push(withRev(resource, change));
       continue;
     }
 
@@ -1151,34 +1108,26 @@ async function executePullCanonical(
           continue;
         }
       }
-      collect(resource, change.id, {
-        kind: "row",
-        bucket: "records",
-        row: withRev(resource, change),
-        rev: revisionOf(resource, change),
-      });
+      records[resource].push(withRev(resource, change));
       continue;
     }
 
     if (change.op === "delete") {
-      collect(resource, change.id, { kind: "delete", bucket: "deleted", rev: revisionOf(resource, change) });
-    }
-  }
-
-  for (const { resource, id, entries } of recordChanges.values()) {
-    for (const placed of placeRecordChanges(entries)) {
-      if (placed.kind === "delete") {
-        (deleted[resource] ??= []).push(id);
-        if (placed.rev !== undefined) {
-          const revisions = (deletedRevisions[resource] ??= Object.create(null) as Record<string, number>);
-          revisions[id] = Math.max(revisions[id] ?? 0, placed.rev);
-        }
-      } else if (placed.bucket === "records") {
-        (records[resource] ??= []).push(placed.row!);
+      deleted[resource].push(change.id);
+      // DATA-41: the tombstone revision, kept only when every delete of the
+      // id in this page recorded one.
+      const rev = revisionOf(resource, change);
+      if (rev === undefined) {
+        unrevisionedDeletes.add(`${resource}\u0000${change.id}`);
       } else {
-        (merged[resource] ??= []).push(placed.row!);
+        const revisions = (deletedRevisions[resource] ??= Object.create(null) as Record<string, number>);
+        revisions[change.id] = Math.max(revisions[change.id] ?? 0, rev);
       }
     }
+  }
+  for (const key of unrevisionedDeletes) {
+    const [resource, id] = key.split("\u0000");
+    if (deletedRevisions[resource]) delete deletedRevisions[resource][id];
   }
 
   let actorFeed: ActorFeedEntry[] | undefined;
@@ -1236,12 +1185,17 @@ async function executePullCanonical(
 
   for (const resource of Object.keys(records)) {
     const byId = new Map<string, Record<string, unknown>>();
+    const coalesced = new Map<string, Array<Record<string, unknown>>>();
     for (const record of records[resource]) {
       const id = normalizeNonEmptyString(record.id);
       if (!id) {
         continue;
       }
       byId.set(id, { ...record, id });
+      coalesced.set(id, [...(coalesced.get(id) ?? []), record]);
+    }
+    for (const [id, parts] of coalesced) {
+      if (parts.length > 1) byId.set(id, certifyCoalesced(byId.get(id)!, parts));
     }
     records[resource] = Array.from(byId.values()).sort((a, b) =>
       String(a.id).localeCompare(String(b.id)),
@@ -1250,18 +1204,18 @@ async function executePullCanonical(
 
   for (const resource of Object.keys(merged)) {
     const byId = new Map<string, Record<string, unknown>>();
+    const coalesced = new Map<string, Array<Record<string, unknown>>>();
     for (const record of merged[resource]) {
       const id = normalizeNonEmptyString(record.id);
       if (!id) {
         continue;
       }
       const existing = byId.get(id) ?? { id };
-      // DATA-41: a complete row (carrying `$rev`) replaces the earlier
-      // entries; a patch merged over them drops an earlier `$rev`, which
-      // belongs to an older state.
-      byId.set(id, isRevisionRow(resource, record)
-        ? { ...record, id }
-        : { ...(isRevisionRow(resource, existing) ? withoutRowRevision(existing) : existing), ...record, id });
+      byId.set(id, { ...existing, ...record, id });
+      coalesced.set(id, [...(coalesced.get(id) ?? []), record]);
+    }
+    for (const [id, parts] of coalesced) {
+      if (parts.length > 1) byId.set(id, certifyCoalesced(byId.get(id)!, parts));
     }
     merged[resource] = Array.from(byId.values()).sort((a, b) =>
       String(a.id).localeCompare(String(b.id)),

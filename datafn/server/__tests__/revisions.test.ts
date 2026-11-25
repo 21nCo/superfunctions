@@ -325,19 +325,19 @@ describe("DATA-41 revisions: canonical pull follows commit order", () => {
     }
   }
 
-  it("leaves a record re-created by a merge after its delete, without the older tombstone", async () => {
+  it("delivers a delete and a later re-creating merge as base pull does, the patch without a revision", async () => {
     const { send, push } = await serve();
     await push({ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } });
     await push({ resource: "task", operation: "delete", id: "task:1" });
     const recreated = await push({ resource: "task", operation: "merge", id: "task:1", record: { title: "again" } });
     expect(recreated.body.result.revisions[recreated.mutationId].rev).toBe(3);
     const pull = await send("pull", { clientId: "client:c", cursors: { task: "0" } });
-    expect(pull.body.result.deleted.task).toEqual([]);
-    expect(pull.body.result.deletedRevisions).toBeUndefined();
-    const cache = new Map<string, Json>([["task:1", { id: "task:1", title: "stale", projectId: "project:old" }]]);
-    applyCanonical(cache, pull.body.result);
-    // The re-created record has only the merge's fields, and no revision.
-    expect(cache.get("task:1")).toEqual({ id: "task:1", title: "again" });
+    // Every change is delivered in its base bucket; nothing is reordered or
+    // dropped. The patch carries no revision, so a client pairs none.
+    expect(pull.body.result.records.task).toEqual([expect.objectContaining({ id: "task:1", title: "a", $rev: 1 })]);
+    expect(pull.body.result.merged.task).toEqual([{ id: "task:1", title: "again" }]);
+    expect(pull.body.result.deleted.task).toEqual(["task:1"]);
+    expect(pull.body.result.deletedRevisions).toEqual({ task: { "task:1": 2 } });
   });
 });
 
@@ -364,8 +364,10 @@ describe("DATA-41 revisions: wire format", () => {
 
     await push({ resource: "task", operation: "merge", id: "task:1", record: { title: "m" } });
     const pull = await send("pull", { clientId: "client:b", cursors: { task: "0" } });
-    // task:2's delete (revision 2) supersedes its insert (revision 1).
-    expect(pull.body.result.records.task).toEqual([expect.objectContaining({ id: "task:1", $rev: 1 })]);
+    expect(pull.body.result.records.task).toEqual([
+      expect.objectContaining({ id: "task:1", $rev: 1 }),
+      expect.objectContaining({ id: "task:2", $rev: 1 }),
+    ]);
     expect(pull.body.result.deleted.task).toEqual(["task:2"]);
     // A partial patch never carries a revision: clients pair one only with a
     // complete row.
@@ -823,77 +825,117 @@ describe("DATA-41 revisions: complete rows only", () => {
     }
   });
 
-  it("returns the query's own row without $rev when the stored row changed between selection and re-read", async () => {
-    const database = memoryAdapter();
-    let between: (() => Promise<void>) | undefined;
-    const racing = {
-      ...database,
-      findMany: async (args: any) => {
-        // The versioned re-read by id: another writer commits first.
-        if (between && args.model === "task" && args.where?.some((w: any) => w.field === "id" && w.operator === "in")) {
-          const run = between;
-          between = undefined;
-          await run();
-        }
-        return database.findMany(args);
-      },
-    } as Adapter;
-    const { send, push } = await serve({ database: racing });
-    await push({ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } });
-    await push({ resource: "task", operation: "insert", id: "task:2", record: { title: "b" } });
-    for (const change of [
-      { operation: "merge", record: { title: "changed" } },
-      { operation: "trash" },
+  it("returns each versioned row exactly as clone returns it, on every query strategy", async () => {
+    const { send, push } = await serve();
+    await push({ resource: "project", operation: "insert", id: "project:1", record: { name: "P" } });
+    await push({ resource: "task", operation: "insert", id: "task:1", record: { title: "a", projectId: "project:1" } });
+    await push({ resource: "task", operation: "merge", id: "task:1", record: { title: "b" } });
+    const clone = await send("clone", { clientId: "client:b", tables: ["task"] });
+    const [cloned] = clone.body.result.data.task;
+    expect(cloned).toMatchObject({ id: "task:1", projectId: "project:1", $rev: 2 });
+    for (const filters of [
+      undefined, // push-down
+      { title: { not_ilike: "z" } }, // in memory
+      { "project.name": { eq: "P" } }, // through a relation
+      { id: { in: Array.from({ length: 150 }, (_, i) => (i === 0 ? "task:1" : `task:none-${i}`)) } },
     ]) {
-      await push({ resource: "task", operation: "replace", id: "task:1", record: { title: "a" } });
-      between = async () => {
-        await push({ resource: "task", id: "task:1", ...change });
-      };
-      const query = await send("query", { resource: "task", version: 1, withRevisions: true, filters: { title: { eq: "a" } } });
+      const query = await send("query", { resource: "task", version: 1, withRevisions: true, ...(filters ? { filters } : {}) });
       expect(query.status).toBe(200);
-      const [row] = query.body.result.data;
-      expect(row).toMatchObject({ id: "task:1", title: "a" });
-      expect(row).not.toHaveProperty("$rev");
-      expect(row).not.toHaveProperty("trashedAt");
+      expect(query.body.result.data).toEqual([cloned]);
     }
   });
 
-  it("returns no $rev when a foreign key the selection depends on changes between selection and re-read", async () => {
+  it("reruns a versioned query that fails inside the PostgreSQL snapshot outside it, without revisions", async () => {
     const database = memoryAdapter();
-    let between: (() => Promise<void>) | undefined;
+    const { push } = await serve({ database });
+    await push({ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } });
+    // A PostgreSQL adapter whose snapshot transaction aborts on the query's
+    // read, as a push-down fallback does inside a transaction.
+    const rawSql = { dialect: "postgres", execute: async () => undefined, query: async () => [] };
+    let snapshots = 0;
+    const postgresLike = {
+      ...database,
+      rawSql,
+      transaction: async (fn: (tx: Adapter) => Promise<unknown>) => {
+        snapshots += 1;
+        return fn({
+          ...database,
+          rawSql,
+          findMany: async (args: any) => {
+            if (args.model === "task") throw new Error("current transaction is aborted");
+            return database.findMany(args);
+          },
+        } as Adapter);
+      },
+    } as unknown as Adapter;
+    const reader = await serve({ database: postgresLike });
+    const query = await reader.send("query", { resource: "task", version: 1, withRevisions: true });
+    expect(snapshots).toBeGreaterThan(0);
+    expect(query.status).toBe(200);
+    expect(query.body.result.data).toEqual([expect.objectContaining({ id: "task:1", title: "a" })]);
+    expect(query.body.result.data[0]).not.toHaveProperty("$rev");
+  });
+
+  it("never pairs a versioned row with a revision of another state when a write commits during the query", async () => {
+    const database = memoryAdapter();
+    let inject: { call: number; write: () => Promise<unknown> } | undefined;
+    let calls = 0;
     const racing = {
       ...database,
       findMany: async (args: any) => {
-        if (between && args.model === "task" && args.where?.some((w: any) => w.field === "id" && w.operator === "in")) {
-          const run = between;
-          between = undefined;
-          await run();
+        if (inject && args.model === "task") {
+          if (calls++ === inject.call) {
+            const { write } = inject;
+            inject = undefined;
+            const rows = await database.findMany(args);
+            await write();
+            return rows;
+          }
         }
         return database.findMany(args);
       },
     } as Adapter;
-    const { send, push } = await serve({ database: racing });
+    const { send, push, rev } = await serve({ database: racing });
     await push({ resource: "project", operation: "insert", id: "project:1", record: { name: "P" } });
     await push({ resource: "project", operation: "insert", id: "project:2", record: { name: "Q" } });
-    // not_ilike runs the in-memory strategy, whose rows leave out projectId.
-    const cases: Array<[Json, Json]> = [
-      [{ projectId: { eq: "project:1" } }, { operation: "unrelate", relations: { project: "project:1" } }],
-      [{ "project.name": { eq: "P" } }, { operation: "relate", relations: { project: "project:2" } }],
+    // Each state a revision belongs to, keyed by revision.
+    const states = new Map<number, Json>();
+    const record = async () => {
+      const stored = (await database.findOne({ model: "task", where: [{ field: "id", operator: "eq", value: "task:1" }], namespace: NS })) as Json;
+      states.set((await rev("task", "task:1"))!.rev, { ...stored });
+    };
+    const writes: Json[] = [
+      { operation: "merge", record: { title: "changed" } },
+      { operation: "trash" },
+      { operation: "unrelate", relations: { project: "project:1" } },
+      { operation: "relate", relations: { project: "project:2" } },
     ];
-    for (const [filter, change] of cases) {
-      await push({ resource: "task", operation: "replace", id: "task:1", record: { title: "a", projectId: "project:1" } });
-      between = async () => {
-        expect((await push({ resource: "task", id: "task:1", ...change })).body.result.ok).toBe(true);
-      };
-      const query = await send("query", {
-        resource: "task", version: 1, withRevisions: true, filters: { ...filter, title: { not_ilike: "z" } },
-      });
-      expect(query.status).toBe(200);
-      expect(between).toBeUndefined();
-      const [row] = query.body.result.data;
-      expect(row).toMatchObject({ id: "task:1", title: "a" });
-      expect(row).not.toHaveProperty("$rev");
-      expect(row.projectId ?? "project:1").toBe("project:1");
+    const queries: Json[] = [
+      { filters: { title: { eq: "a" } } },
+      { filters: { projectId: { eq: "project:1" }, title: { not_ilike: "z" } } },
+      { filters: { "project.name": { eq: "P" } } },
+      { sort: ["title"], limit: 1 },
+    ];
+    for (const write of writes) {
+      for (const shape of queries) {
+        for (const call of [0, 1]) {
+          await push({ resource: "task", operation: "replace", id: "task:1", record: { title: "a", projectId: "project:1" } });
+          await record();
+          calls = 0;
+          inject = { call, write: async () => {
+            await push({ resource: "task", id: "task:1", ...write });
+            await record();
+          } };
+          const query = await send("query", { resource: "task", version: 1, withRevisions: true, ...shape });
+          expect(query.status).toBe(200);
+          inject = undefined;
+          for (const row of query.body.result.data) {
+            if (row.$rev === undefined) continue;
+            const { $rev, ...state } = row;
+            expect(state).toEqual(JSON.parse(JSON.stringify(states.get($rev))));
+          }
+        }
+      }
     }
   });
 
@@ -1032,15 +1074,15 @@ describe("DATA-41 revisions: complete rows only", () => {
     expect(changes[1].record).not.toHaveProperty("$rev");
   });
 
-  it("leaves a delete then re-insert in one canonical pull as the re-inserted row", async () => {
+  it("delivers a delete then re-insert in one canonical pull as base pull does, each with its own revision", async () => {
     const { send, push } = await serve();
     await push({ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } });
     await push({ resource: "task", operation: "delete", id: "task:1" });
     await push({ resource: "task", operation: "insert", id: "task:1", record: { title: "again" } });
     const pull = await send("pull", { clientId: "client:b", cursors: { task: "0" } });
     expect(pull.body.result.records.task).toEqual([expect.objectContaining({ id: "task:1", title: "again", $rev: 3 })]);
-    expect(pull.body.result.deleted.task ?? []).not.toContain("task:1");
-    expect(pull.body.result.deletedRevisions?.task?.["task:1"]).toBeUndefined();
+    expect(pull.body.result.deleted.task).toEqual(["task:1"]);
+    expect(pull.body.result.deletedRevisions).toEqual({ task: { "task:1": 2 } });
   });
 
   it("returns no post-write row for a record a later mutation of the same push changed", async () => {
@@ -1176,14 +1218,14 @@ describe("DATA-41 revisions: round 3", () => {
     expect(last).not.toHaveProperty("$rev");
   });
 
-  it("keeps a KV record that a complete KV write recreates after its delete in one per-table pull", async () => {
+  it("delivers a KV delete and a later complete KV write as base pull does, each with its own revision", async () => {
     const { push, send } = await serve();
     await push({ resource: "kv", operation: "merge", id: "kv:prefs", record: { value: { a: 1 } } });
     await push({ resource: "kv", operation: "delete", id: "kv:prefs" });
     await push({ resource: "kv", operation: "merge", id: "kv:prefs", record: { value: { b: 2 } } });
     const pull = await send("pull", { clientId: "client:b", cursors: { kv: "0" } });
-    expect(pull.body.result.deleted.kv ?? []).not.toContain("kv:prefs");
-    expect(pull.body.result.deletedRevisions?.kv?.["kv:prefs"]).toBeUndefined();
+    expect(pull.body.result.deleted.kv).toEqual(["kv:prefs"]);
+    expect(pull.body.result.deletedRevisions).toEqual({ kv: { "kv:prefs": 2 } });
     const rows = [...(pull.body.result.records.kv ?? []), ...(pull.body.result.merged?.kv ?? [])]
       .filter((row: Json) => row.id === "kv:prefs");
     expect(rows[rows.length - 1]).toMatchObject({ value: { b: 2 }, $rev: 3 });
