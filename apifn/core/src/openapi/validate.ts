@@ -288,7 +288,7 @@ function prepareReferences(document: OpenAPIDocument, externalReferences?: Reado
       // Follow aliases before looking up remaining tokens, keeping siblings
       // that Swagger Parser gives precedence over the referenced object.
       const chain = new Set(aliases);
-      const overrides = new Map<string, Omit<ReferenceTarget, "mode">>();
+      const overrides = new Map<string, ReferenceTarget>();
       while (typeof value === "object" && value !== null && mode !== "literal" &&
           "$ref" in value && typeof value.$ref === "string" && value.$ref) {
         // A reference can point into its own siblings. Following a cycle
@@ -316,10 +316,12 @@ function prepareReferences(document: OpenAPIDocument, externalReferences?: Reado
         if (target.value === value) break;
         for (const [key, sibling] of Object.entries(value)) {
           if (key !== "$ref" && !overrides.has(key)) {
-            overrides.set(key, { value: sibling, source, path, importSite });
+            overrides.set(key, { value: sibling, mode: referenceChildMode(value, mode, key, sibling), source, path, importSite });
           }
         }
-        if (mode === "node" && target.mode === "example") mode = "example";
+        // A generic alias inherits the target's context. Literal values can
+        // also be selected by a schema pointer, so retain that caller context.
+        if (mode === "node" && target.mode !== "literal") mode = target.mode;
         const aliasSite = source === root ? { path } : importSite;
         source = target.source;
         importSite = source === root ? undefined : target.importSite ?? aliasSite;
@@ -357,7 +359,7 @@ function prepareReferences(document: OpenAPIDocument, externalReferences?: Reado
         importSite = sibling.importSite;
       }
       path = { key, parent: sibling ? sibling.path : path };
-      mode = referenceChildMode(parent, mode, key, child);
+      mode = sibling?.mode ?? referenceChildMode(parent, mode, key, child);
       value = child;
     }
     return { tokens: matched, target: { value, mode, source, path, importSite } };

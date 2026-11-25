@@ -307,19 +307,23 @@ describe("validateOpenAPI", () => {
   });
 
   it("treats a document-relative URI as external even when it names the current directory", async () => {
-    const directory = process.cwd().replaceAll("\\", "/").replace(/\/$/, "") + "/";
-    const doc = documentWithReference("./#/components/schemas/Shared");
-    const externalReferences = new Map([["https://example.invalid/unused.json", "{}"]]);
-    await expect(validateOpenAPI(doc, { externalReferences })).resolves.toEqual([
-      { path: "components.schemas.Value.$ref", message: expect.stringContaining("explicit allowlist"), severity: "error" },
-    ]);
+    const cwd = vi.spyOn(process, "cwd").mockReturnValue("/virtual/project");
+    try {
+      const doc = documentWithReference("./#/components/schemas/Shared");
+      const externalReferences = new Map([["https://example.invalid/unused.json", "{}"]]);
+      await expect(validateOpenAPI(doc, { externalReferences })).resolves.toEqual([
+        { path: "components.schemas.Value.$ref", message: expect.stringContaining("explicit allowlist"), severity: "error" },
+      ]);
 
-    externalReferences.set(directory, JSON.stringify({
-      components: { schemas: { Shared: { type: "integer" } } },
-    }));
-    const result = await validateAndDereferenceOpenAPI(doc, { externalReferences });
-    expect(result.errors).toEqual([]);
-    expect(result.document?.components?.schemas?.Value).toEqual({ type: "integer" });
+      externalReferences.set("/virtual/project/", JSON.stringify({
+        components: { schemas: { Shared: { type: "integer" } } },
+      }));
+      const result = await validateAndDereferenceOpenAPI(doc, { externalReferences });
+      expect(result.errors).toEqual([]);
+      expect(result.document?.components?.schemas?.Value).toEqual({ type: "integer" });
+    } finally {
+      cwd.mockRestore();
+    }
   });
 
   it.each([
@@ -582,6 +586,34 @@ describe("validateOpenAPI", () => {
     });
     expect(result.errors).toEqual([]);
     expect(result.document?.components?.examples?.Sample).toEqual({ value: { $ref: pointer } });
+  });
+
+  it("keeps inherited Link Object request body values literal through an alias", async () => {
+    const uri = "https://example.invalid/links.json";
+    const requestBody = { $ref: "literal-example.yaml", schema: { type: "integer" } };
+    const reference = { $ref: "#/components/links/Target" };
+    const contents = {
+      Alias: reference,
+      Override: { ...reference, requestBody },
+      components: { links: { Target: { requestBody } } },
+    };
+    const externalReferences = new Map([[uri, JSON.stringify(contents)]]);
+    const doc = documentWithReference(uri + "#/Alias/requestBody/schema");
+    Object.assign(doc.components.schemas, {
+      Direct: { $ref: uri + "#/components/links/Target/requestBody/schema" },
+    });
+
+    const result = await validateAndDereferenceOpenAPI(doc, { externalReferences });
+    expect(result.errors).toEqual([]);
+    expect(result.document?.components?.schemas).toMatchObject({
+      Value: { type: "integer" },
+      Direct: { type: "integer" },
+    });
+    await expect(validateOpenAPI(
+      documentWithReference(uri + "#/Override/requestBody/schema"), { externalReferences },
+    )).resolves.toEqual([
+      { path: "components.schemas.Value.$ref", message: expect.stringContaining("explicit allowlist"), severity: "error" },
+    ]);
   });
 
   it.each([false, true])("keeps preloaded Example Object payload refs literal (alias=%s)", async (useAlias) => {
