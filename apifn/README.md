@@ -146,12 +146,13 @@ run the CLI commands in [Non-GitHub CI](#non-github-ci).
 The workflow has two jobs. `evaluate` checks out and runs everything below with a read-only token (`contents: read`),
 because the caller's install scripts, router and config run there. `api-check` holds the only token that can write to
 the pull request: it checks out, installs and imports nothing, posts the comment from `evaluate`'s report and applies
-the gate `evaluate` decided. Require both `<caller job> / evaluate` and `<caller job> / api-check` as status checks.
+the gate `evaluate` decided. Requiring `<caller job> / api-check` as a status check is enough; existing callers keep
+that check name.
 Every step of `evaluate` continues on error and has a timeout, so a step that fails before the check runs (invalid
 inputs, the install, the CLI build) is reported as an error in the summary and the comment and fails `api-check`
-whatever `enforce_gates` says. `api-check` runs only after `evaluate` succeeds, so it is skipped when `evaluate` is
-cancelled, times out or loses its runner; a skipped check passes branch protection, but the failed `evaluate` check
-blocks the merge. Rerun the workflow then.
+whatever `enforce_gates` says. `api-check` runs whatever `evaluate`'s result, so when `evaluate` is cancelled, times
+out or loses its runner, `api-check` fails (the outputs report `verdict=fail`) instead of being skipped. Rerun the
+workflow then.
 
 The guards below protect against caller code that is not adversarial: install scripts and router or config imports
 that generate or rewrite files. Code in the pull request runs in `evaluate` and could forge its result; the job split
@@ -161,7 +162,7 @@ With `router_path`:
 
 - Checks out the caller without keeping the token in `.git/config`
 - Runs `npm ci` in `working_directory` (when it has a `package.json`), because the router imports the caller's packages. The job fails when the install changes checked-out files or adds untracked ones outside `node_modules` (for example a `prepare` script regenerating the spec), because `apifn check` must read the committed router and spec
-- Runs `apifn check <router_path> --base <commit of origin/base_branch> --format markdown --report …` and the same check with `--format json --report …` (`--base-spec` instead when `base_spec` is set; an HTTP(S) `base_spec` is downloaded once for both runs, at most 32 MiB). The base commit is resolved from the remote-tracking ref `refs/remotes/origin/<base_branch>` before any caller code runs. Both reports are written to `$RUNNER_TEMP`, not the checkout, so output the router or config prints while loading does not affect them
+- Runs `apifn check <router_path> --base <commit of origin/base_branch> --format markdown --report …` and the same check with `--format json --report …` (`--base-spec` instead when `base_spec` is set). The base is pinned right after the checkout, before any caller code runs (the workspace CLI build, `npm ci`, the router and config imports): the base commit is resolved from the remote-tracking ref `refs/remotes/origin/<base_branch>`, and a `base_spec` is copied to a snapshot in `$RUNNER_TEMP` (an HTTP(S) URL downloaded, at most 32 MiB; a local path resolved against `working_directory`) that both runs read. Both reports are written to `$RUNNER_TEMP`, not the checkout, so output the router or config prints while loading does not affect them
 - After both runs, requires `HEAD` to still be the checked-out commit, and the spec the CLI opened (`spec_path` as given, or the config default) to be the file committed at that commit, reached only through symlinks committed there with the same targets (a spec missing from both is reported as drift). A spec or symlink that the install, the router or the config created or changed, including a gitignored one, makes the check report an error and the verdict `fail`
 - Fails an uncovered breaking change unless `allow_breaking` is true, even when the caller's apifn config sets `diff.failOnBreaking: false`
 - Uses the Markdown report as the job summary and PR comment when both runs agree (exit code, verdict, drift and breaking changes); otherwise the summary reports an error and the verdict is `fail`

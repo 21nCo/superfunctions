@@ -123,6 +123,13 @@ export const REUSABLE_CALL_INPUT = "called_as_reusable_workflow";
  */
 export const REUSABLE_WORKFLOW_GUARD = `${REPOSITORY_GUARD} || inputs.${REUSABLE_CALL_INPUT} == true`;
 
+/**
+ * The same guard for a reusable workflow's job that must run whatever the result of the jobs it needs (so a failed or
+ * cancelled job it depends on fails it instead of skipping it, and a skipped required check never passes). always() is
+ * joined by `&&` to the parenthesised guard, so the job runs exactly when the guard holds; no other status form counts.
+ */
+export const REUSABLE_WORKFLOW_GUARD_ALWAYS = `always() && (${REUSABLE_WORKFLOW_GUARD})`;
+
 /** Index of the first YAML comment (`#` at the start or after whitespace, outside an expression string) or -1. */
 function commentAt(text) {
   let quoted = false;
@@ -345,10 +352,10 @@ function callsSharedWorkflowLocally(uses) {
 
 /**
  * Errors for one workflow file. Outside the shared list every job must carry the repository guard in its `if:`; a job
- * of a reusable workflow may carry REUSABLE_WORKFLOW_GUARD instead when reusableGuardError accepts the workflow. On the
- * shared list every job with a job-level `uses:` must carry the guard unless it calls another shared workflow by its
- * local `./.github/workflows/<shared>.yml` path (an allow-list), so no reusable workflow runs on next through a shared
- * caller. An `if:` with a `${{ }}` that does not wrap its whole value never counts as guarded.
+ * of a reusable workflow may carry REUSABLE_WORKFLOW_GUARD or REUSABLE_WORKFLOW_GUARD_ALWAYS instead when
+ * reusableGuardError accepts the workflow. On the shared list every job with a job-level `uses:` must carry the guard
+ * unless it calls another shared workflow by its local `./.github/workflows/<shared>.yml` path (an allow-list), so no
+ * reusable workflow runs on next through a shared caller. An `if:` with a `${{ }}` that does not wrap its whole value never counts as guarded.
  * Workflows are read line by line (block style, as every workflow here is written); a layout or key the reader does
  * not model fails closed.
  */
@@ -360,7 +367,8 @@ export function workflowGuardErrors(file, source) {
   const errors = [];
   for (const { name, condition, uses } of read.jobs) {
     if (condition !== undefined && hasRepositoryGuard(condition)) continue;
-    if (condition !== undefined && normalizeCondition(condition) === REUSABLE_WORKFLOW_GUARD) {
+    const normalized = condition === undefined ? null : normalizeCondition(condition);
+    if (normalized === REUSABLE_WORKFLOW_GUARD || normalized === REUSABLE_WORKFLOW_GUARD_ALWAYS) {
       const reason = reusableGuardError(source);
       if (reason !== null) errors.push(`${file}: job "${name}" carries the reusable-workflow guard, but ${reason}`);
       continue;

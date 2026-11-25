@@ -181,23 +181,22 @@ on:
         default: true
         type: boolean
 
-# Callers must grant at least these scopes. A reusable workflow cannot
-# elevate GITHUB_TOKEN; a caller with pull-requests: read causes
-# startup_failure before any job runs. Each job narrows them: evaluate
-# (the caller's code) gets contents: read, api-check pull-requests: write.
+# Callers must grant at least contents: read and pull-requests: write. A
+# reusable workflow cannot elevate GITHUB_TOKEN; a caller with
+# pull-requests: read causes startup_failure before any job runs. Each job
+# sets its own: evaluate (the caller's code) gets contents: read, api-check
+# pull-requests: write.
 permissions:
   contents: read
-  pull-requests: write
 
 jobs:
   # Runs the caller's code (npm ci lifecycle scripts, the workspace build, the router and config imports) with a
   # read-only token. The api-check job below posts the comment and applies the gates; only it can write to the pull
   # request, and it checks out, installs and imports nothing.
   # Every step continues on error and the later steps run only while none failed (steps.*.outcome), so a failed step
-  # still reaches the summary and the gate decision, and the api-check job (which runs only after this job succeeds:
-  # scripts/verify-owners.mjs allows no status function in these jobs' if) reports it. Every step has a timeout and
+  # still reaches the summary and the gate decision, and the api-check job reports it. Every step has a timeout and
   # their sum stays below the job's (360 minutes), so a hung install or router import fails its step rather than the
-  # job. The summary cannot fail on a report's shape; if it fails anyway, the gate decision reports it as a failure.
+  # job; if this job still fails as a whole (a lost runner, a cancellation), api-check runs anyway and fails. The summary cannot fail on a report's shape; if it fails anyway, the gate decision reports it as a failure.
   #
   # Threat model: the drift, base and install guards protect against caller code that is not adversarial (lifecycle
   # scripts, router or config imports that generate or rewrite files). Hostile code in the pull request runs in this
@@ -251,6 +250,10 @@ jobs:
               spec_path) value="$SPEC_PATH" ;;
               base_spec) value="$BASE_SPEC" ;;
               collection_dir) value="$COLLECTION_DIR" ;;
+              *)
+                echo "::error::unknown path input $name"
+                exit 1
+                ;;
             esac
             if [[ "$value" == -* ]]; then
               echo "::error::$name must not start with '-', got '$value'"
@@ -296,6 +299,56 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: ${{ inputs.router_path == '' }}
+
+      # Pins the base before any caller code runs (the workspace CLI build, npm ci, the router and config imports), so
+      # neither run can be pointed at another base. A base branch is pinned to its commit from the remote-tracking ref
+      # only (a tag or branch named origin/<base_branch> cannot stand in for it); the checkout fetched every branch, so
+      # the token is used only when that ref is missing, and then only through this command's environment. A base_spec
+      # (an HTTP(S) download, bounded, or a local file resolved against working_directory) is copied to a snapshot
+      # outside the checkout, and both check runs read that snapshot.
+      - name: Pin base
+        id: fetch_base
+        if: ${{ !contains(steps.*.outcome, 'failure') && inputs.router_path != '' }}
+        continue-on-error: true
+        timeout-minutes: 10
+        shell: bash
+        working-directory: ${{ inputs.working_directory }}
+        env:
+          BASE_BRANCH: ${{ inputs.base_branch }}
+          BASE_SPEC: ${{ inputs.base_spec }}
+          FETCH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          snapshot="$RUNNER_TEMP/apifn-base-spec"
+          rm -f "$snapshot"
+          if [[ "$BASE_SPEC" =~ ^[Hh][Tt][Tt][Pp][Ss]?:// ]]; then
+            if ! curl --fail --silent --show-error --location --max-time 30 --max-filesize 33554432 --proto =http,https --proto-redir =http,https \
+              --output "$snapshot" -- "$BASE_SPEC"; then
+              echo "::error::Could not download base_spec $BASE_SPEC"
+              exit 1
+            fi
+            echo "Downloaded base_spec $BASE_SPEC"
+          elif [ -n "$BASE_SPEC" ]; then
+            if [ ! -f "$BASE_SPEC" ]; then
+              echo "::error::base_spec $BASE_SPEC is not a file in $PWD"
+              exit 1
+            fi
+            cp -- "$BASE_SPEC" "$snapshot"
+            echo "Copied base_spec $BASE_SPEC"
+          else
+            ref="refs/remotes/origin/${BASE_BRANCH}"
+            if git rev-parse --verify --quiet "${ref}^{commit}" > /dev/null; then
+              echo "origin/${BASE_BRANCH} was fetched by the checkout."
+            else
+              auth="$(printf 'x-access-token:%s' "$FETCH_TOKEN" | base64 -w0)"
+              echo "::add-mask::$auth"
+              GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="http.${GITHUB_SERVER_URL}/.extraheader" GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth" \
+                git fetch --no-tags origin "+refs/heads/${BASE_BRANCH}:${ref}"
+            fi
+            sha="$(git rev-parse --verify "${ref}^{commit}")"
+            echo "Base origin/${BASE_BRANCH} is $sha"
+            echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Setup Node
         id: setup_node
@@ -371,34 +424,6 @@ jobs:
           echo "Built @apifn/cli@$(node -p "require('./apifn/cli/package.json').version") from the workspace"
           "$BIN_DIR/apifn" --version
 
-      # Runs before any caller code. The checkout fetched every branch, so the token is used only when the base ref is
-      # missing, and then only through this command's environment. The base commit is pinned here, from the
-      # remote-tracking ref only (a tag or branch named origin/<base_branch> cannot stand in for it), and both check
-      # runs diff against that commit.
-      - name: Fetch base branch
-        id: fetch_base
-        if: ${{ !contains(steps.*.outcome, 'failure') && inputs.router_path != '' && inputs.base_spec == '' }}
-        continue-on-error: true
-        timeout-minutes: 10
-        shell: bash
-        env:
-          BASE_BRANCH: ${{ inputs.base_branch }}
-          FETCH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          ref="refs/remotes/origin/${BASE_BRANCH}"
-          if git rev-parse --verify --quiet "${ref}^{commit}" > /dev/null; then
-            echo "origin/${BASE_BRANCH} was fetched by the checkout."
-          else
-            auth="$(printf 'x-access-token:%s' "$FETCH_TOKEN" | base64 -w0)"
-            echo "::add-mask::$auth"
-            GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="http.${GITHUB_SERVER_URL}/.extraheader" GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth" \
-              git fetch --no-tags origin "+refs/heads/${BASE_BRANCH}:${ref}"
-          fi
-          sha="$(git rev-parse --verify "${ref}^{commit}")"
-          echo "Base origin/${BASE_BRANCH} is $sha"
-          echo "sha=$sha" >> "$GITHUB_OUTPUT"
-
       # The router module imports the caller's packages, so they are installed first. npm ci runs the caller's
       # lifecycle scripts; apifn check reads the spec and router from the working tree, so an install that changes
       # tracked files or adds untracked ones (a prepare script regenerating the spec) fails closed instead of
@@ -437,7 +462,9 @@ jobs:
             git -C "$GITHUB_WORKSPACE" diff --binary "$CHECKOUT_COMMIT" "${outside_node_modules[@]}"
           }
           before="$(tree_state | sha256sum)"
-          npm ci
+          # Lifecycle scripts stay on: the caller's router imports packages that may need them (API-4 runs the caller's
+          # npm ci). They run in this read-only job, and the tree and HEAD checks around them fail closed.
+          npm ci # NOSONAR githubactions:S6505 reviewed: the caller's install scripts are required here
           if [ "$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)" != "$CHECKOUT_COMMIT" ]; then
             echo "::error::npm ci in $PWD moved HEAD away from the checked-out commit $CHECKOUT_COMMIT; apifn check must read the committed router and spec."
             exit 1
@@ -450,9 +477,9 @@ jobs:
 
       # Markdown for the summary and PR comment, JSON for the outputs. Both reports are written outside the checkout by
       # --report, so output the caller's router or config prints while loading cannot corrupt them; the summary step
-      # cross-checks the two runs (exit codes, verdict, drift, breaking) and reports an error when they disagree. An
-      # HTTP(S) base_spec is downloaded once and a base branch is pinned to the commit Fetch base branch resolved, so
-      # both runs diff against the same document. After both runs HEAD must still be the checked-out commit, and the
+      # cross-checks the two runs (exit codes, verdict, drift, breaking) and reports an error when they disagree. Both
+      # runs diff against the base Pin base fixed before any caller code ran: the base_spec snapshot or the base
+      # branch commit. After both runs HEAD must still be the checked-out commit, and the
       # spec the CLI opened (spec_path as given, or the config default the report names), with every symlink on its
       # path, must be committed at that commit (spec_state committed, or missing at both), so a spec generated or
       # rewritten by the install, the router or the config cannot hide drift.
@@ -538,20 +565,12 @@ jobs:
           set +e
           top="$(git rev-parse --show-toplevel)"
           base_dir="$(pwd -P)"
-          rm -f "$RUNNER_TEMP/apifn-check.md" "$RUNNER_TEMP/apifn-check.json" "$RUNNER_TEMP/apifn-base-spec"
+          rm -f "$RUNNER_TEMP/apifn-check.md" "$RUNNER_TEMP/apifn-check.json"
           args=("$ROUTER_PATH")
           if [ -n "$CONFIG_PATH" ]; then args+=(--config "$CONFIG_PATH"); fi
           if [ -n "$SPEC_PATH" ]; then args+=(--spec "$SPEC_PATH"); fi
-          if [[ "$BASE_SPEC" =~ ^[Hh][Tt][Tt][Pp][Ss]?:// ]]; then
-            if ! curl --fail --silent --show-error --location --max-time 30 --max-filesize 33554432 --proto =http,https --proto-redir =http,https \
-              --output "$RUNNER_TEMP/apifn-base-spec" -- "$BASE_SPEC"; then
-              echo "::error::Could not download base_spec $BASE_SPEC"
-              printf 'exit_code=2\njson_exit_code=2\nspec_state=\n' >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
+          if [ -n "$BASE_SPEC" ]; then
             args+=(--base-spec "$RUNNER_TEMP/apifn-base-spec")
-          elif [ -n "$BASE_SPEC" ]; then
-            args+=(--base-spec "$BASE_SPEC")
           else
             args+=(--base "$BASE_SHA")
           fi
@@ -714,11 +733,11 @@ jobs:
             ${{
             steps.inputs.outcome == 'failure' && 'Check inputs' ||
             steps.caller_checkout.outcome == 'failure' && 'Checkout' ||
+            steps.fetch_base.outcome == 'failure' && 'Pin base' ||
             steps.setup_node.outcome == 'failure' && 'Setup Node' ||
             steps.workflow_lockfile.outcome == 'failure' && 'Fetch CLI lockfile from the workflow revision' ||
             steps.install_cli.outcome == 'failure' && 'Install ApiFn CLI' ||
             steps.build_cli.outcome == 'failure' && 'Build ApiFn CLI from the workspace' ||
-            steps.fetch_base.outcome == 'failure' && 'Fetch base branch' ||
             steps.install_caller.outcome == 'failure' && 'Install caller dependencies' ||
             steps.base_spec.outcome == 'failure' && 'Resolve base spec from base branch' ||
             '' }}
@@ -1039,16 +1058,19 @@ jobs:
   # timeout, so every failure before or during the check is reported there. A skipped job passes branch protection,
   # so callers require both "<caller job> / evaluate" and "<caller job> / api-check" (apifn/README.md).
   # This is the only job whose token can write to the pull request; it checks out, installs and imports nothing.
+  # It runs whatever the evaluate job's result (always()), so an evaluate job that fails as a whole (a lost runner, its
+  # timeout, a cancellation) fails this required check instead of skipping it, and a skip never passes branch
+  # protection. The guard is the evaluate job's, so both run or both skip (scripts/verify-owners.mjs).
   api-check:
+    if: always() && (github.repository == '21nCo/superfunctions' || inputs.called_as_reusable_workflow == true)
     needs: evaluate
-    if: github.repository == '21nCo/superfunctions' || inputs.called_as_reusable_workflow == true
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write
     outputs:
-      verdict: ${{ needs.evaluate.outputs.verdict || 'fail' }}
-      drift: ${{ needs.evaluate.outputs.drift }}
-      breaking: ${{ needs.evaluate.outputs.breaking }}
+      verdict: ${{ needs.evaluate.result == 'success' && needs.evaluate.outputs.verdict || 'fail' }}
+      drift: ${{ needs.evaluate.result == 'success' && needs.evaluate.outputs.drift || '' }}
+      breaking: ${{ needs.evaluate.result == 'success' && needs.evaluate.outputs.breaking || '' }}
 
     steps:
       - name: Post/Update PR comment
@@ -1065,6 +1087,7 @@ jobs:
         uses: actions/github-script@v7
         env:
           APIFN_COMMENT: ${{ needs.evaluate.outputs.comment }}
+          EVALUATE_RESULT: ${{ needs.evaluate.result }}
         with:
           script: |
             const { owner, repo } = context.repo;
@@ -1076,9 +1099,10 @@ jobs:
             const marker = '<!-- apifn-ci-report -->';
             const runUrl = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
             // The evaluate job bounded the report to 60000 UTF-8 bytes and kept the marker.
-            const body = process.env.APIFN_COMMENT
+            const evaluated = process.env.EVALUATE_RESULT === 'success';
+            const body = evaluated && process.env.APIFN_COMMENT
               ? process.env.APIFN_COMMENT
-              : `${marker}\n## ApiFn API check: **ERROR**\n\nThe evaluate job produced no report; see the [run](${runUrl}).\n`;
+              : `${marker}\n## ApiFn API check: **ERROR**\n\nThe evaluate job ${evaluated ? 'produced no report' : `did not complete (${process.env.EVALUATE_RESULT || 'unknown'})`}; see the [run](${runUrl}).\n`;
 
             // A failed post is a warning.
             try {
@@ -1102,10 +1126,15 @@ jobs:
         timeout-minutes: 2
         shell: bash
         env:
+          EVALUATE_RESULT: ${{ needs.evaluate.result }}
           GATE_CODE: ${{ needs.evaluate.outputs.gate_code }}
           VERDICT: ${{ needs.evaluate.outputs.verdict }}
         run: |
           set -euo pipefail
+          if [ "$EVALUATE_RESULT" != "success" ]; then
+            echo "::error::The evaluate job did not complete (result: ${EVALUATE_RESULT:-unknown}); the API check fails closed. See its log."
+            exit 1
+          fi
           if ! [[ "$GATE_CODE" =~ ^[0-9]+$ ]]; then
             echo "::error::The evaluate job reported no gate result (verdict=${VERDICT:-none}); see its log."
             exit 1

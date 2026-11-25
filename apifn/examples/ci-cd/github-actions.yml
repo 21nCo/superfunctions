@@ -6,8 +6,8 @@ on:
 # Minimum caller permissions. The reusable workflow declares both and cannot elevate the caller token, so a caller
 # without pull-requests: write fails at startup even with post_pr_comment: false. Only its api-check job, which runs
 # none of this repository's code, gets pull-requests: write; the evaluate job that runs the router gets contents: read.
-# Require both "api-check / evaluate" and "api-check / api-check" as status checks: api-check is skipped (and a
-# skipped check passes) when evaluate is cancelled, times out or loses its runner, and evaluate then fails.
+# Require "api-check / api-check" as a status check: it fails, rather than being skipped, when evaluate fails, is
+# cancelled, times out or loses its runner.
 permissions:
   contents: read
   pull-requests: write
