@@ -3,7 +3,9 @@ import type { DatabaseTable } from './introspection.js';
 import {
   databaseStringLength,
   isUnboundedMySqlTextType,
+  MYSQL_MAX_SAFE_INDEXED_VARCHAR_LENGTH,
   mysqlVarcharLength,
+  satisfiesUnboundedMySqlString,
 } from './mysql-types.js';
 
 /**
@@ -377,7 +379,11 @@ export function diffTables(
         // Check for type changes
         // Map FieldSchema types to SQL types for comparison
         const expectedType = mapFieldTypeToSQLType(fieldSchema, curCol.dialect);
-        const actualType = normalizeColumnType(curCol.dataType);
+        // MySQL stores BOOLEAN as TINYINT(1) and reports that column type.
+        const actualType =
+          curCol.dialect === 'mysql' && /^tinyint\s*\(\s*1\s*\)$/i.test(curCol.columnType?.trim() ?? '')
+            ? 'boolean'
+            : normalizeColumnType(curCol.dataType);
 
         if (expectedType !== actualType) {
           changes.push(`type changed from ${actualType} to ${expectedType}`);
@@ -394,7 +400,9 @@ export function diffTables(
             legacyTargetLength === desiredLength &&
             isUnboundedMySqlTextType(curCol.dataType) &&
             desiredLength !== null;
-          if (actualLength !== desiredLength && !preserveLegacyText) {
+          const unboundedTextMatches =
+            desiredLength === null && satisfiesUnboundedMySqlString(curCol.dataType);
+          if (actualLength !== desiredLength && !preserveLegacyText && !unboundedTextMatches) {
             changes.push(
               `maxLength changed from ${actualLength ?? 'unbounded'} to ${desiredLength ?? 'unbounded'}`,
             );
@@ -450,6 +458,39 @@ export function diffTables(
         .map((change) => change.column),
     );
     const changedIndexNames = new Set(changedIndexes.map((index) => index.name));
+    // A width-only VARCHAR widening keeps every full-column index on the
+    // column: one MODIFY COLUMN statement rebuilds it in place, so a unique
+    // index never stops enforcing uniqueness during the upgrade.
+    const widenedVarcharLengths = new Map<string, number>();
+    for (const change of columnChanges) {
+      const widening = /^maxLength changed from (\d+) to (\d+)$/.exec(change.change);
+      if (
+        widening &&
+        /^varchar$/i.test(change.current?.dataType.trim() ?? '') &&
+        Number(widening[2]) >= Number(widening[1])
+      ) {
+        widenedVarcharLengths.set(change.column, Number(widening[2]));
+      }
+    }
+    const keepsIndexThroughWidening = (index: DatabaseTable['indexes'][number]) => {
+      const indexType = index.indexType?.toUpperCase();
+      if (indexType && indexType !== 'BTREE') return false;
+      let keyChars = 0;
+      for (const [position, column] of index.columns.entries()) {
+        if (index.prefixLengths?.[position] != null) return false;
+        const currentColumn = curColMap.get(column);
+        if (!currentColumn || !/^(?:var)?char$/i.test(currentColumn.dataType.trim())) {
+          return false;
+        }
+        if (changedMySqlColumns.has(column) && !widenedVarcharLengths.has(column)) {
+          return false;
+        }
+        const length = widenedVarcharLengths.get(column) ?? databaseStringLength(currentColumn);
+        if (length === null) return false;
+        keyChars += length;
+      }
+      return keyChars <= MYSQL_MAX_SAFE_INDEXED_VARCHAR_LENGTH;
+    };
     const unpreservedIndexDependencies = curTable.indexes.filter((index) =>
       index.columns.some((column) => changedMySqlColumns.has(column)) &&
       (
@@ -495,7 +536,8 @@ export function diffTables(
             );
             if (
               !currentIndex ||
-              !currentIndex.columns.some((column) => changedMySqlColumns.has(column))
+              !currentIndex.columns.some((column) => changedMySqlColumns.has(column)) ||
+              keepsIndexThroughWidening(currentIndex)
             ) return [];
 
             const currentTextColumns = currentIndex.columns.filter((column) => {

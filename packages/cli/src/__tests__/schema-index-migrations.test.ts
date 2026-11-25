@@ -901,6 +901,141 @@ describe("schema index migrations", () => {
     expect(kysely.indexOf(create)).toBeGreaterThan(kysely.indexOf(alter));
   });
 
+  it("widens a MySQL VARCHAR in place without dropping its full-column unique index", () => {
+    const widened = {
+      ...syncJobs,
+      fields: {
+        ...syncJobs.fields,
+        claimToken: { ...syncJobs.fields.claimToken, maxLength: 128 },
+      },
+    } as unknown as TableSchema;
+    const diffs = diffTables([widened], [{
+      name: "plugfn_sync_jobs",
+      columns: [{
+        dialect: "mysql",
+        tableName: "plugfn_sync_jobs",
+        columnName: "claim_token",
+        dataType: "varchar",
+        columnType: "varchar(64)",
+        maxLength: 64,
+        isNullable: true,
+        defaultValue: null,
+        isPrimaryKey: false,
+        isUnique: false,
+      }],
+      indexes: [{
+        name: "plugfn_sync_jobs_claim_token_idx",
+        tableName: "plugfn_sync_jobs",
+        columns: ["claim_token"],
+        prefixLengths: [null],
+        indexType: "BTREE",
+        isUnique: true,
+      }],
+      constraints: [],
+    }], "plugfn");
+
+    expect(diffs[0].columnChanges?.map((change) => change.change))
+      .toEqual(["maxLength changed from 64 to 128"]);
+    expect(diffs[0].rebuiltIndexes).toEqual([]);
+    const plan = createMigrationPlan("plugfn", 5, 6, diffs);
+    for (const content of [
+      generateDrizzleMigration(plan, [widened], "mysql").content,
+      generatePrismaMigration(plan, [widened], "mysql").content,
+      generateKyselyMigration(plan, [widened], "mysql").content.split("export async function down")[0],
+    ]) {
+      expect(content).toContain("MODIFY COLUMN claim_token VARCHAR(128) NULL");
+      expect(content).not.toMatch(/DROP INDEX|dropIndex|CREATE (?:UNIQUE )?INDEX|createIndex/);
+    }
+  });
+
+  it("rebuilds widened MySQL indexes with prefixed or over-budget keys", () => {
+    const varcharColumn = (columnName: string, length: number) => ({
+      dialect: "mysql" as const,
+      tableName: "plugfn_sync_jobs",
+      columnName,
+      dataType: "varchar",
+      columnType: `varchar(${length})`,
+      maxLength: length,
+      isNullable: true,
+      defaultValue: null,
+      isPrimaryKey: false,
+      isUnique: false,
+    });
+    const widened = {
+      ...syncJobs,
+      fields: {
+        ...syncJobs.fields,
+        claimToken: { ...syncJobs.fields.claimToken, maxLength: 400 },
+        owner: { type: "string", required: false, fieldName: "owner", maxLength: 400 },
+      },
+      indexes: [{ name: "claim_owner_idx", fields: ["claimToken", "owner"], unique: false }],
+    } as unknown as TableSchema;
+    const currentIndex = {
+      name: "claim_owner_idx",
+      tableName: "plugfn_sync_jobs",
+      columns: ["claim_token", "owner"],
+      indexType: "BTREE",
+      isUnique: false,
+    };
+
+    // 400 + 400 characters exceeds the 768-character utf8mb4 key budget.
+    const overBudget = diffTables([widened], [{
+      name: "plugfn_sync_jobs",
+      columns: [varcharColumn("claim_token", 64), varcharColumn("owner", 400)],
+      indexes: [{ ...currentIndex, prefixLengths: [null, null] }],
+      constraints: [],
+    }], "plugfn");
+    expect(overBudget[0].rebuiltIndexes?.map((index) => index.name)).toEqual(["claim_owner_idx"]);
+
+    const prefixed = diffTables([widened], [{
+      name: "plugfn_sync_jobs",
+      columns: [varcharColumn("claim_token", 64), varcharColumn("owner", 100)],
+      indexes: [{ ...currentIndex, prefixLengths: [32, null] }],
+      constraints: [],
+    }], "plugfn");
+    expect(prefixed[0].rebuiltIndexes?.map((index) => index.name)).toEqual(["claim_owner_idx"]);
+  });
+
+  it("matches introspected MySQL TEXT and TINYINT(1) to unbounded strings and booleans", () => {
+    const table = {
+      modelName: "syncJobs",
+      fields: {
+        id: { type: "string", required: true, fieldName: "id" },
+        note: { type: "string", required: false, fieldName: "note" },
+        cached: { type: "boolean", required: false, fieldName: "cached" },
+      },
+    } as unknown as TableSchema;
+    const column = (columnName: string, dataType: string, columnType: string, maxLength: number | null) => ({
+      dialect: "mysql" as const,
+      tableName: "plugfn_sync_jobs",
+      columnName,
+      dataType,
+      columnType,
+      maxLength,
+      isNullable: columnName !== "id",
+      defaultValue: null,
+      isPrimaryKey: columnName === "id",
+      isUnique: false,
+    });
+    const current = (note: ReturnType<typeof column>) => [{
+      name: "plugfn_sync_jobs",
+      columns: [
+        column("id", "text", "text", 65535),
+        note,
+        column("cached", "tinyint", "tinyint(1)", null),
+      ],
+      indexes: [],
+      constraints: [],
+    }];
+
+    expect(diffTables([table], current(column("note", "text", "text", 65535)), "plugfn")).toEqual([]);
+    expect(diffTables([table], current(column("note", "longtext", "longtext", 4294967295)), "plugfn"))
+      .toEqual([]);
+    expect(diffTables([table], current(column("note", "tinytext", "tinytext", 255)), "plugfn")[0]
+      .columnChanges?.map((change) => [change.column, change.change]))
+      .toEqual([["note", "maxLength changed from 255 to unbounded"]]);
+  });
+
   it("refuses MySQL type changes with undeclared or primary index dependencies", () => {
     const unbounded = {
       ...syncJobs,
@@ -1100,6 +1235,15 @@ describe("schema index migrations", () => {
       }],
     };
 
+    // Converting claim_token to TEXT changes the key, so the index is rebuilt.
+    const textComposite = {
+      ...widenedComposite,
+      fields: {
+        ...widenedComposite.fields,
+        claimToken: { type: "string", required: false, fieldName: "claim_token" },
+      },
+    } as unknown as TableSchema;
+
     for (const constraint of [{
       name: "sync_jobs_owner_fk",
       type: "FOREIGN KEY" as const,
@@ -1115,12 +1259,18 @@ describe("schema index migrations", () => {
       referencedTable: "plugfn_sync_jobs",
       referencedColumns: ["owner_id"],
     }]) {
-      expect(() => diffTables([widenedComposite], [{
+      expect(() => diffTables([textComposite], [{
         ...currentTable,
         constraints: [constraint],
       }], "plugfn")).toThrow(
         /foreign-key supporting indexes.*plugfn_sync_jobs_owner_claim_idx/,
       );
+      // A VARCHAR widening keeps the index in place, so the foreign key never
+      // loses its supporting index.
+      expect(diffTables([widenedComposite], [{
+        ...currentTable,
+        constraints: [constraint],
+      }], "plugfn")[0].rebuiltIndexes).toEqual([]);
     }
   });
 

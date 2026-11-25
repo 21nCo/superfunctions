@@ -26,6 +26,14 @@ export function isUnboundedMySqlTextType(dataType: string): boolean {
   return /^(tinytext|text|mediumtext|longtext)$/i.test(dataType.trim());
 }
 
+// MySQL reports TEXT as 65,535 (and MEDIUMTEXT/LONGTEXT as larger) in
+// CHARACTER_MAXIMUM_LENGTH. Generators create TEXT for strings without a
+// maxLength, so these types already satisfy an unbounded schema string.
+// TINYTEXT is narrower than TEXT and still needs a migration.
+export function satisfiesUnboundedMySqlString(dataType: string): boolean {
+  return /^(text|mediumtext|longtext)$/i.test(dataType.trim());
+}
+
 export function databaseStringLength(input: {
   dataType: string;
   maxLength?: number | null;

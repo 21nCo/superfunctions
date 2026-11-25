@@ -4,14 +4,17 @@ import { createPendingMigration } from '../commands/generate.js';
 import type { DatabaseColumn, DatabaseTable } from '../utils/introspection.js';
 import { getSchema, PLUGFN_SCHEMA_VERSION } from '../../../../plugfn/core/src/schema.js';
 
-// The last schema version whose plugfn_sync_jobs.claim_token was VARCHAR(64).
+// The last schema version whose plugfn_sync_jobs.claim_token was VARCHAR(64)
+// on dev. next shipped the same version with VARCHAR(768).
 const V7_SCHEMA_VERSION = 7;
-const V7_CLAIM_TOKEN_LENGTH = 64;
+const DEV_V7_CLAIM_TOKEN_LENGTH = 64;
+const NEXT_V7_CLAIM_TOKEN_LENGTH = 768;
+// information_schema.COLUMNS.CHARACTER_MAXIMUM_LENGTH for a MySQL TEXT column.
+const MYSQL_TEXT_REPORTED_LENGTH = 65_535;
+// Key prefix the generators use when indexing a TEXT column.
+const MYSQL_TEXT_INDEX_PREFIX = 191;
 
-// Unbounded strings are modelled as TEXT with no reported length so the snapshot
-// matches the schema everywhere except claim_token. Introspected MySQL TEXT
-// reports 65535, which the diff flags on plugfn's unbounded TEXT keys for any
-// plugfn version step; that pre-existing gap is not part of this change.
+/** A column as introspectMySQL reports it from information_schema. */
 function mysqlColumn(tableName: string, columnName: string, field: FieldSchema): DatabaseColumn {
   const base = {
     dialect: 'mysql' as const,
@@ -20,12 +23,12 @@ function mysqlColumn(tableName: string, columnName: string, field: FieldSchema):
     isNullable: !field.required,
     defaultValue: null,
     isPrimaryKey: columnName === 'id',
-    isUnique: columnName === 'id',
+    isUnique: false,
   };
   switch (field.type) {
     case 'string':
       return field.maxLength === undefined
-        ? { ...base, dataType: 'text', columnType: 'text', maxLength: null }
+        ? { ...base, dataType: 'text', columnType: 'text', maxLength: MYSQL_TEXT_REPORTED_LENGTH }
         : {
             ...base,
             dataType: 'varchar',
@@ -37,7 +40,7 @@ function mysqlColumn(tableName: string, columnName: string, field: FieldSchema):
     case 'bigint':
       return { ...base, dataType: 'bigint', columnType: 'bigint', maxLength: null };
     case 'boolean':
-      return { ...base, dataType: 'boolean', columnType: 'boolean', maxLength: null };
+      return { ...base, dataType: 'tinyint', columnType: 'tinyint(1)', maxLength: null };
     case 'json':
       return { ...base, dataType: 'json', columnType: 'json', maxLength: null };
     default:
@@ -47,58 +50,71 @@ function mysqlColumn(tableName: string, columnName: string, field: FieldSchema):
 
 /**
  * A MySQL database migrated to plugfn schema v7: every table, column and index
- * of the current schema, except that claim_token still has its v7 width.
+ * of the current schema, with plugfn_sync_jobs.claim_token at the given width.
+ * TEXT key parts carry the prefix length MySQL reports in STATISTICS.SUB_PART.
  */
-function mysqlV7Snapshot(tables: TableSchema[]): DatabaseTable[] {
+function mysqlV7Snapshot(tables: TableSchema[], claimTokenLength: number): DatabaseTable[] {
   return tables.map((table) => {
     const columns = Object.entries(table.fields).map(([name, field]) => {
       const columnName = field.fieldName ?? name;
       const v7Field =
         table.modelName === 'plugfn_sync_jobs' && columnName === 'claim_token'
-          ? { ...field, maxLength: V7_CLAIM_TOKEN_LENGTH }
+          ? { ...field, maxLength: claimTokenLength }
           : field;
       return mysqlColumn(table.modelName, columnName, v7Field);
     });
-    const indexes = (table.indexes ?? []).map((index) => ({
-      name: index.name,
+    const prefixFor = (column: string) =>
+      columns.find((candidate) => candidate.columnName === column)?.dataType === 'text'
+        ? MYSQL_TEXT_INDEX_PREFIX
+        : null;
+    const indexes = [
+      { name: 'PRIMARY', columns: ['id'], isUnique: true },
+      ...(table.indexes ?? []).map((index) => ({
+        name: index.name,
+        columns: index.fields.map((fieldName) => table.fields[fieldName]?.fieldName ?? fieldName),
+        isUnique: index.unique === true,
+      })),
+    ].map((index) => ({
+      ...index,
       tableName: table.modelName,
-      columns: index.fields.map((fieldName) => table.fields[fieldName]?.fieldName ?? fieldName),
-      isUnique: index.unique === true,
+      indexType: 'BTREE',
+      prefixLengths: index.columns.map(prefixFor),
     }));
-    return {
-      name: table.modelName,
-      columns,
-      indexes: [
-        { name: 'PRIMARY', tableName: table.modelName, columns: ['id'], isUnique: true },
-        ...indexes,
-      ],
-      constraints: [
-        { name: 'PRIMARY', type: 'PRIMARY KEY' as const, tableName: table.modelName, columns: ['id'] },
-      ],
-    };
+    return { name: table.modelName, schema: 'app', columns, indexes, constraints: [] };
   });
+}
+
+/** The executable part of an up migration, without comments. */
+function upStatements(adapterType: 'drizzle' | 'kysely' | 'prisma', content: string): string {
+  const up = adapterType === 'kysely' ? content.slice(0, content.indexOf('export async function down')) : content;
+  return up
+    .split('\n')
+    .filter((line) => !line.trim().startsWith('--'))
+    .join('\n');
 }
 
 describe('plugfn schema v8 migration', () => {
   const schema = getSchema();
   const library = { libraryName: 'plugfn', namespace: 'plugfn', version: schema.version, tables: schema.schemas };
+  const adapterTypes = ['drizzle', 'kysely', 'prisma'] as const;
 
-  it('widens claim_token on an installed v7 MySQL database instead of reporting it up to date', () => {
+  it('widens a dev v7 claim_token in place, keeping its unique index and unchanged TEXT columns', () => {
     expect(PLUGFN_SCHEMA_VERSION).toBeGreaterThan(V7_SCHEMA_VERSION);
 
-    for (const adapterType of ['drizzle', 'kysely'] as const) {
+    for (const adapterType of adapterTypes) {
       const pending = createPendingMigration({
         adapterType,
         dialect: 'mysql',
         library,
         currentVersion: V7_SCHEMA_VERSION,
-        currentTables: mysqlV7Snapshot(schema.schemas),
+        currentTables: mysqlV7Snapshot(schema.schemas, DEV_V7_CLAIM_TOKEN_LENGTH),
       });
 
       expect(pending).not.toBeNull();
-      // Only claim_token changes: no table is created or dropped, no column is
-      // added or removed, and the unique claim-token index is rebuilt with the
-      // same columns around the widening, so existing rows are kept.
+      // TEXT columns reported as 65535 match their unbounded schema strings, so
+      // only claim_token changes. Its unique index is not dropped: MySQL keeps a
+      // full-column index through a VARCHAR widening, so uniqueness is enforced
+      // for the whole upgrade.
       expect(pending!.tableDiffs).toEqual([
         {
           tableName: 'plugfn_sync_jobs',
@@ -108,44 +124,42 @@ describe('plugfn schema v8 migration', () => {
           columnChanges: [
             expect.objectContaining({
               column: 'claim_token',
-              change: 'maxLength changed from 64 to 768',
+              change: `maxLength changed from ${DEV_V7_CLAIM_TOKEN_LENGTH} to ${NEXT_V7_CLAIM_TOKEN_LENGTH}`,
             }),
           ],
           missingIndexes: [],
           changedIndexes: [],
-          rebuiltIndexes: [
-            expect.objectContaining({
-              name: 'idx_plugfn_sync_jobs_claim_token',
-              current: expect.objectContaining({ columns: ['claim_token'], unique: true }),
-              required: { columns: ['claim_token'], unique: true },
-            }),
-          ],
+          rebuiltIndexes: [],
         },
       ]);
 
-      // The up migration drops the claim-token index, widens the column,
-      // recreates the same unique index and only then records the new version.
-      const content = pending!.migrationFile.content;
-      const upMigration = adapterType === 'kysely'
-        ? content.slice(0, content.indexOf('export async function down'))
-        : content;
-      const statements = adapterType === 'kysely'
-        ? [
-            "dropIndex('idx_plugfn_sync_jobs_claim_token').on('plugfn_sync_jobs')",
-            'ALTER TABLE plugfn_sync_jobs MODIFY COLUMN claim_token VARCHAR(768) NULL',
-            'CREATE UNIQUE INDEX idx_plugfn_sync_jobs_claim_token ON plugfn_sync_jobs (claim_token)',
-            `version: ${PLUGFN_SCHEMA_VERSION},`,
-          ]
-        : [
-            'DROP INDEX idx_plugfn_sync_jobs_claim_token ON plugfn_sync_jobs',
-            'ALTER TABLE plugfn_sync_jobs MODIFY COLUMN claim_token VARCHAR(768) NULL',
-            'CREATE UNIQUE INDEX idx_plugfn_sync_jobs_claim_token ON plugfn_sync_jobs (claim_token)',
-            `UPDATE _superfunctions_schema_versions SET version = ${PLUGFN_SCHEMA_VERSION}`,
-          ];
-      const positions = statements.map((statement) => upMigration.indexOf(statement));
-      expect(positions.every((position) => position >= 0), content).toBe(true);
-      expect([...positions].sort((a, b) => a - b)).toEqual(positions);
-      expect(content).not.toMatch(/DROP TABLE|CREATE TABLE|DROP COLUMN/i);
+      const up = upStatements(adapterType, pending!.migrationFile.content);
+      expect(up, adapterType).toContain(
+        `ALTER TABLE plugfn_sync_jobs MODIFY COLUMN claim_token VARCHAR(${NEXT_V7_CLAIM_TOKEN_LENGTH}) NULL`,
+      );
+      expect(up.match(/MODIFY COLUMN/g), adapterType).toHaveLength(1);
+      expect(up, adapterType).not.toMatch(/DROP TABLE|CREATE TABLE|DROP COLUMN|ADD COLUMN|dropIndex|INDEX/i);
+      expect(up.indexOf('MODIFY COLUMN')).toBeLessThan(
+        up.search(new RegExp(`version\\s*[:=]\\s*${PLUGFN_SCHEMA_VERSION}\\b`)),
+      );
+    }
+  });
+
+  it('only records the new version on a next v7 database whose claim_token is already widened', () => {
+    for (const adapterType of adapterTypes) {
+      const pending = createPendingMigration({
+        adapterType,
+        dialect: 'mysql',
+        library,
+        currentVersion: V7_SCHEMA_VERSION,
+        currentTables: mysqlV7Snapshot(schema.schemas, NEXT_V7_CLAIM_TOKEN_LENGTH),
+      });
+
+      expect(pending).not.toBeNull();
+      expect(pending!.tableDiffs).toEqual([]);
+      const up = upStatements(adapterType, pending!.migrationFile.content);
+      expect(up, adapterType).not.toMatch(/ALTER TABLE|MODIFY COLUMN|INDEX|dropIndex|CREATE TABLE|DROP TABLE/i);
+      expect(up, adapterType).toMatch(new RegExp(`version\\s*[:=]\\s*${PLUGFN_SCHEMA_VERSION}\\b`));
     }
   });
 
@@ -156,7 +170,7 @@ describe('plugfn schema v8 migration', () => {
         dialect: 'mysql',
         library,
         currentVersion: PLUGFN_SCHEMA_VERSION,
-        currentTables: mysqlV7Snapshot(schema.schemas),
+        currentTables: mysqlV7Snapshot(schema.schemas, NEXT_V7_CLAIM_TOKEN_LENGTH),
       }),
     ).toBeNull();
   });

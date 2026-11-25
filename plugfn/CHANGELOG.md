@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Schema version 8 widens `plugfn_sync_jobs.claim_token` from 64 to 768 characters. Databases at version 7 get a migration from `superfunctions generate`; on MySQL it rebuilds the unique `idx_plugfn_sync_jobs_claim_token` index around the column change and keeps existing rows.
+- Schema version 8 widens `plugfn_sync_jobs.claim_token` from 64 to 768 characters. Databases at version 7 get a migration from `superfunctions generate`; on MySQL it widens the column with one `MODIFY COLUMN` that keeps existing rows and the unique `idx_plugfn_sync_jobs_claim_token` index. A version 7 database whose column is already 768 characters only records the new version.
 - Added Conduct v0.3 provider contract docs for Linear, GitHub, and ClickUp.
 - Documented the new ClickUp provider guide with public actions and verified webhook triggers.
 - Provider builds, type checks, and unit tests now resolve the installed `plugfn` public entry point instead of building or aliasing a sibling checkout. Provider lifecycle tests also use the public entry point and declare their schema-converter test dependency.
