@@ -1,0 +1,23 @@
+filefn/server/src/processing/service.ts
+  s_20e59dd6c64205::t_87218e5b3a7d20 1803
+filefn/server/tests/domain-metrics.test.ts
+  s_20e59dd6c64205::t_87218e5b3a7d20 256
+.github/workflows/filefn-processing-container.yml
+  s_20e59dd6c64205::t_87218e5b3a7d20 13-14,28-29
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8f863d7fc70414d0d0929cc3f1fbe5654969c263",
+  "prompts": {},
+  "sessions": {
+    "s_20e59dd6c64205": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a211b0-8c37-7b63-8f91-222b058dcfea",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
