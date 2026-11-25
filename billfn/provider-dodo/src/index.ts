@@ -160,11 +160,16 @@ export function createDodoProvider(config: DodoProviderConfig): BillFnProviderAd
     },
     async createCheckout(input: BillFnCreateCheckoutInput) {
       // Dodo's checkout sessions replace the deprecated payment-link creation of POST /payments and /subscriptions.
-      const response = await requestJson(fetchImpl, dodoUrl(baseUrl, ['checkouts']), {
-        method: 'POST',
-        headers: createHeaders(config.apiKey),
-        body: JSON.stringify(createDodoCheckoutSessionBody(input))
-      });
+      const response = await requestJson(
+        fetchImpl,
+        dodoUrl(baseUrl, ['checkouts']),
+        {
+          method: 'POST',
+          headers: createHeaders(config.apiKey),
+          body: JSON.stringify(createDodoCheckoutSessionBody(input))
+        },
+        'Dodo created the checkout but its session details did not arrive before the deadline'
+      );
       const sessionId = readString(response, ['session_id']);
       if (!sessionId) {
         throw createBillFnError({
@@ -929,8 +934,8 @@ async function fetchDodoText(
   }
 }
 
-async function requestJson(fetchImpl: typeof fetch, url: string, init: RequestInit) {
-  const result = await tryRequestJson(fetchImpl, url, init);
+async function requestJson(fetchImpl: typeof fetch, url: string, init: RequestInit, acceptedBodyDeadlineMessage?: string) {
+  const result = await tryRequestJson(fetchImpl, url, init, acceptedBodyDeadlineMessage);
   if (!result.ok) {
     throw createBillFnError({
       code: 'BILLFN_PROVIDER_ERROR',
@@ -941,7 +946,7 @@ async function requestJson(fetchImpl: typeof fetch, url: string, init: RequestIn
   return result.data;
 }
 
-async function tryRequestJson(fetchImpl: typeof fetch, url: string, init: RequestInit) {
+async function tryRequestJson(fetchImpl: typeof fetch, url: string, init: RequestInit, acceptedBodyDeadlineMessage?: string) {
   const { response, raw, bodyError } = await fetchDodoText(fetchImpl, url, init);
   if (!response.ok) {
     return { ok: false as const, error: { status: response.status, body: raw } };
@@ -950,10 +955,9 @@ async function tryRequestJson(fetchImpl: typeof fetch, url: string, init: Reques
     if (!isMutatingMethod(init.method)) {
       throw dodoDeadlineError(false);
     }
-    // Checkout creation succeeded, but the response body is needed to return its session.
     throw createBillFnError({
       code: 'BILLFN_PROVIDER_ERROR',
-      message: 'Dodo created the checkout but its session details did not arrive before the deadline',
+      message: acceptedBodyDeadlineMessage ?? bodyError,
       details: { status: response.status },
       retryable: false
     });
