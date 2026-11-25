@@ -154,6 +154,10 @@ export class MemoryStorageAdapter implements DatafnStorageAdapter {
       if (!id) throw new Error("Record missing id");
       const written = this.writeStamps.get(revisionKey(resource, id)) ?? 0;
       if (blocksRevisionInstall(written, options?.writtenSince, pending, resource, id)) continue;
+      // Never an older revision over a newer one; the same revision is the
+      // state already stored.
+      const known = this.revisions.get(revisionKey(resource, id));
+      if (known !== undefined && rev <= known) continue;
       if (record) table.set(id, { ...record, id });
       else table.delete(id);
       this.markWritten(resource, id, rev);

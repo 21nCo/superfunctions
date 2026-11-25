@@ -1263,7 +1263,14 @@ export async function executeMutation(
       mutation.mutationId,
     );
     if (cached && !isRetryableMutationResult(cached)) {
-      return { ...cached, deduped: true };
+      // DATA-41: a stored revision is issued only while the current server
+      // and resource issue revisions.
+      const { rev, ...replayed } = cached as MutationResult;
+      return {
+        ...replayed,
+        ...(rev !== undefined && issuesRevisions(schema, mutation.resource) ? { rev } : {}),
+        deduped: true,
+      };
     }
   }
 

@@ -279,7 +279,9 @@ describe("DATA-41 revisions: wire format", () => {
       expect.objectContaining({ id: "task:1", $rev: 1 }),
       expect.objectContaining({ id: "task:2", $rev: 1 }),
     ]);
-    expect(pull.body.result.merged.task).toEqual([expect.objectContaining({ id: "task:1", $rev: 2 })]);
+    // A partial patch never carries a revision: clients pair one only with a
+    // complete row.
+    expect(pull.body.result.merged.task).toEqual([{ id: "task:1", title: "m" }]);
     expect(pull.body.result.deletedRevisions).toEqual({ task: { "task:2": 2 } });
 
     const query = await send("query", { resource: "task", version: 1, withRevisions: true });
@@ -612,5 +614,236 @@ describe("DATA-41 revisions: reads", () => {
     const denied = await call("query", { resource: "task", version: 1 });
     expect(denied.ok).toBe(false);
     expect(denied.capabilities).toEqual({ revisions: true });
+  });
+});
+
+describe("DATA-41 revisions: retries, rollbacks and replays", () => {
+  it("completes every record's bump when change tracking retries after a bump failed part-way", async () => {
+    const database = memoryAdapter();
+    let revisionUpdates = 0;
+    let failAt = 0;
+    const flaky = {
+      ...database,
+      capabilities: { ...database.capabilities, transactions: { supported: false, nested: false } },
+      internal: new Proxy(database.internal, {
+        get: (target, property, receiver) =>
+          property === "update"
+            ? async (table: string, where: unknown, data: unknown) => {
+                if (table === "__datafn_revisions" && ++revisionUpdates === failAt) {
+                  throw new Error("transient adapter error");
+                }
+                return (target as any).update(table, where, data);
+              }
+            : Reflect.get(target, property, receiver),
+      }),
+    } as Adapter;
+    const { send, rev } = await serve({ database: flaky });
+    const mutate = (mutation: Json) =>
+      send("mutation", { version: 1, clientId: "c", ...mutation });
+    await mutate({ resource: "task", operation: "insert", id: "task:1", record: { title: "a" }, mutationId: "i1" });
+    await mutate({ resource: "comment", operation: "insert", id: "comment:1", record: { body: "x", taskId: "task:1" }, mutationId: "i2" });
+    await mutate({ resource: "comment", operation: "insert", id: "comment:2", record: { body: "y", taskId: "task:1" }, mutationId: "i3" });
+
+    // The delete bumps three records; the second bump fails once.
+    revisionUpdates = 0;
+    failAt = 2;
+    const deleted = await mutate({ resource: "task", operation: "delete", id: "task:1", mutationId: "d1" });
+    expect(deleted.body.result.ok).toBe(true);
+    expect(await rev("task", "task:1")).toEqual({ rev: 2, deleted: true });
+    expect(await rev("comment", "comment:1")).toEqual({ rev: 2, deleted: true });
+    expect(await rev("comment", "comment:2")).toEqual({ rev: 2, deleted: true });
+    expect(deleted.body.result.rev).toBe(2);
+  });
+
+  it("returns no revision for a step of a rolled-back transaction", async () => {
+    const { send, rev } = await serve();
+    await send("mutation", { resource: "task", version: 1, operation: "insert", id: "task:1", record: { title: "a" }, clientId: "c", mutationId: "i1" });
+    const transact = await send("transact", {
+      atomic: true,
+      steps: [
+        { mutation: { resource: "task", version: 1, operation: "merge", id: "task:1", record: { title: "t" }, clientId: "c", mutationId: "tx-1" } },
+        // Inserting an existing id fails, which rolls back the first step.
+        { mutation: { resource: "task", version: 1, operation: "insert", id: "task:1", record: { title: "x" }, clientId: "c", mutationId: "tx-2" } },
+      ],
+    });
+    const results = transact.body.result.results;
+    expect(results[0]).toMatchObject({ ok: false, rolledBack: true });
+    expect(results[0].result).not.toHaveProperty("rev");
+    expect((await rev("task", "task:1"))!.rev).toBe(1);
+  });
+
+  it("replays a stored direct mutation result without its revision once revisions are off", async () => {
+    const database = memoryAdapter();
+    const on = await serve({ database });
+    const first = await on.send("mutation", {
+      resource: "task", version: 1, operation: "insert", id: "task:1", record: { title: "a" }, clientId: "c", mutationId: "once",
+    });
+    expect(first.body.result.rev).toBe(1);
+    const off = await serve({ database, enabled: false });
+    const replay = await off.send("mutation", {
+      resource: "task", version: 1, operation: "insert", id: "task:1", record: { title: "a" }, clientId: "c", mutationId: "once",
+    });
+    expect(replay.body.result.deduped).toBe(true);
+    expect(replay.body.result).not.toHaveProperty("rev");
+  });
+});
+
+describe("DATA-41 revisions: complete rows only", () => {
+  it("returns the complete stored row with $rev from a versioned query the in-memory strategy runs", async () => {
+    const { send, push } = await serve();
+    await push({ resource: "project", operation: "insert", id: "project:1", record: { name: "P" } });
+    await push({ resource: "task", operation: "insert", id: "task:1", record: { title: "a", projectId: "project:1" } });
+    const query = await send("query", {
+      resource: "task", version: 1, withRevisions: true, filters: { title: { not_ilike: "z" } },
+    });
+    expect(query.status).toBe(200);
+    const [row] = query.body.result.data;
+    expect(row).toMatchObject({ id: "task:1", projectId: "project:1", $rev: 1 });
+  });
+
+  it("withholds hidden fields and $rev from a versioned query of a populated hidden field", async () => {
+    const { send, push } = await serve();
+    await push({ resource: "secretive", operation: "insert", id: "secretive:1", record: { title: "t", hidden: "h" } });
+    for (const select of [undefined, ["*"]]) {
+      const query = await send("query", { resource: "secretive", version: 1, withRevisions: true, ...(select ? { select } : {}) });
+      expect(query.body.result.data[0]).toMatchObject({ id: "secretive:1", title: "t" });
+      expect(query.body.result.data[0]).not.toHaveProperty("hidden");
+      expect(query.body.result.data[0]).not.toHaveProperty("$rev");
+    }
+  });
+
+  it("withholds unreadable stored fields from revisioned pull rows, on both pull formats", async () => {
+    const base = memoryAdapter();
+    const withDefault = (adapter: Adapter): Adapter => ({
+      ...adapter,
+      create: (args: any) =>
+        adapter.create(args.model === "secretive" ? { ...args, data: { hidden: "db-secret", ...args.data } } : args),
+      transaction: (callback: any) => adapter.transaction((tx: Adapter) => callback(withDefault(tx))),
+    }) as Adapter;
+    const { send, push } = await serve({ database: withDefault(base) });
+    await push({ resource: "secretive", operation: "insert", id: "secretive:1", record: { title: "t" } });
+    const canonical = await send("pull", { clientId: "client:b", cursors: { secretive: "0" } });
+    expect(canonical.body.result.records.secretive).toEqual([{ id: "secretive:1", title: "t" }]);
+    const global = await send("pull", { clientId: "client:b", cursor: "0" });
+    const change = global.body.result.changes.find((entry: Json) => entry.id === "secretive:1");
+    expect(change).toMatchObject({ rev: 1, record: { id: "secretive:1", title: "t" } });
+    expect(JSON.stringify(global.body.result)).not.toContain("db-secret");
+    expect(change.record).not.toHaveProperty("$rev");
+  });
+
+  it("marks complete rows with $rev on a global-cursor pull and gives partial patches rev only", async () => {
+    const { send, push } = await serve();
+    await push({ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } });
+    await push({ resource: "task", operation: "merge", id: "task:1", record: { title: "b" } });
+    const pull = await send("pull", { clientId: "client:b", cursor: "0" });
+    const changes = pull.body.result.changes.filter((entry: Json) => entry.id === "task:1");
+    expect(changes).toHaveLength(2);
+    expect(changes[0]).toMatchObject({ rev: 1, record: { id: "task:1", title: "a", $rev: 1 } });
+    expect(changes[1]).toMatchObject({ rev: 2, record: { title: "b" } });
+    expect(changes[1].record).not.toHaveProperty("$rev");
+  });
+
+  it("leaves a delete then re-insert in one canonical pull as the re-inserted row", async () => {
+    const { send, push } = await serve();
+    await push({ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } });
+    await push({ resource: "task", operation: "delete", id: "task:1" });
+    await push({ resource: "task", operation: "insert", id: "task:1", record: { title: "again" } });
+    const pull = await send("pull", { clientId: "client:b", cursors: { task: "0" } });
+    expect(pull.body.result.records.task).toEqual([expect.objectContaining({ id: "task:1", title: "again", $rev: 3 })]);
+    expect(pull.body.result.deleted.task ?? []).not.toContain("task:1");
+    expect(pull.body.result.deletedRevisions?.task?.["task:1"]).toBeUndefined();
+  });
+
+  it("returns no post-write row for a record a later mutation of the same push changed", async () => {
+    const { send, push, rev } = await serve();
+    await push({ resource: "project", operation: "insert", id: "project:1", record: { name: "P" } });
+    await push({ resource: "task", operation: "insert", id: "task:1", record: { title: "a", projectId: "project:1" } });
+    await push({ resource: "comment", operation: "insert", id: "comment:1", record: { body: "x", taskId: "task:1" } });
+    const batch = (mutations: Json[]) =>
+      send("push", { clientId: "client:a", mutations: mutations.map((m) => ({ version: 1, clientId: "client:a", ...m })) });
+
+    const cascade = await batch([
+      { mutationId: "b1", resource: "comment", operation: "merge", id: "comment:1", record: { body: "y" } },
+      { mutationId: "b2", resource: "project", operation: "insert", id: "project:2", record: { name: "Q" } },
+    ]);
+    // Nothing later in this push changed the comment: its row is returned.
+    expect(cascade.body.result.revisions.b1.record).toMatchObject({ id: "comment:1", body: "y", $rev: 2 });
+
+    const setNull = await batch([
+      { mutationId: "c1", resource: "task", operation: "merge", id: "task:1", record: { title: "m" } },
+      { mutationId: "c2", resource: "project", operation: "delete", id: "project:1" },
+    ]);
+    expect(setNull.body.result.revisions.c1).toEqual({ resource: "task", id: "task:1", rev: 2 });
+
+    // A merge of the child, then a cascade delete of its parent.
+    const cascaded = await batch([
+      { mutationId: "d1", resource: "comment", operation: "merge", id: "comment:1", record: { body: "z" } },
+      { mutationId: "d2", resource: "task", operation: "delete", id: "task:1" },
+    ]);
+    expect(cascaded.body.result.revisions.d1).toEqual({ resource: "comment", id: "comment:1", rev: 3 });
+    expect((await rev("comment", "comment:1"))).toEqual({ rev: 4, deleted: true });
+    expect(cascaded.body.result.revisions.d2).toMatchObject({ resource: "task", id: "task:1", deleted: true });
+  });
+});
+
+describe("DATA-41 revisions: SQL without raw SQL access", () => {
+  it("records no rev on change rows of a SQL table it cannot verify, and the write still succeeds", async () => {
+    const database = memoryAdapter();
+    const prismaLike = {
+      ...database,
+      capabilities: { ...database.capabilities, schema: { migrations: true, constraints: true, indexes: true } },
+      internal: new Proxy(database.internal, {
+        get: (target, property, receiver) => {
+          if (property === "findMany") {
+            return async (table: string, where: Array<{ field: string }>, opts?: unknown) => {
+              if (table === "__datafn_changes" && where.some((clause) => clause.field === "rev")) {
+                throw new Error('column "rev" does not exist');
+              }
+              return (target as any).findMany(table, where, opts);
+            };
+          }
+          if (property === "create" || property === "createMany") {
+            return async (table: string, data: any) => {
+              const rows = Array.isArray(data) ? data : [data];
+              if (table === "__datafn_changes" && rows.some((row) => "rev" in row)) {
+                throw new Error('column "rev" does not exist');
+              }
+              return (target as any)[property](table, data);
+            };
+          }
+          return Reflect.get(target, property, receiver);
+        },
+      }),
+    } as Adapter;
+    const { push, send, rev } = await serve({ database: prismaLike });
+    const inserted = await push({ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } });
+    expect(inserted.body.result.ok).toBe(true);
+    expect(await rev("task", "task:1")).toEqual({ rev: 1, deleted: false });
+    const pull = await send("pull", { clientId: "client:b", cursors: { task: "0" } });
+    expect(pull.body.result.records.task[0]).not.toHaveProperty("$rev");
+  });
+
+  it("reads revisions before the returned rows inside a transaction of unknown isolation", async () => {
+    const database = memoryAdapter();
+    await ensureRevisionsTable(database);
+    await bumpRevision(database, NS, "task", "task:1", false);
+    let title = "at-rev-1";
+    let reads = 0;
+    const rows = await readWithRevisions(
+      database,
+      NS,
+      "task",
+      async () => {
+        const row = [{ id: "task:1", title }];
+        // A write commits right after the first read.
+        if (reads++ === 0) {
+          await bumpRevision(database, NS, "task", "task:1", false);
+          title = "at-rev-2";
+        }
+        return row;
+      },
+      (result) => result,
+    );
+    expect(rows).toEqual([{ id: "task:1", title: "at-rev-2", $rev: 2 }]);
   });
 });

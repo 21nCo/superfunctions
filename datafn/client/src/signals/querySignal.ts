@@ -221,6 +221,15 @@ function applyOptimisticPatch(currentValue: any, event: any): any | null {
   if (!mutationIds || !Array.isArray(mutationIds) || mutationIds.length === 0) {
     return null;
   }
+
+  // DATA-41: a row carrying `$rev` is exactly the server state at that
+  // revision, so it is never patched with local fields; the signal refreshes.
+  const rows: unknown[] = Array.isArray(currentValue)
+    ? currentValue
+    : Array.isArray(currentValue?.data) ? currentValue.data : [];
+  if (rows.some((row: any) => row && mutationIds.includes(row.id) && "$rev" in row)) {
+    return null;
+  }
   
   // Handle result with data array (standard query result format)
   if (currentValue && Array.isArray(currentValue.data)) {

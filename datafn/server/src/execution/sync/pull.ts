@@ -6,7 +6,7 @@ import type { DatafnErrorCode, DatafnSchema } from "../../core-types.js";
 import type { Adapter } from "@superfunctions/db";
 import type { SequenceStore } from "./sequence-store.js";
 import { ChangeTrackingService, type ChangeEntry } from "./change-tracking.js";
-import { issuesRevisions, REVISION_FIELD } from "../revisions.js";
+import { issuesRevisions, wireChange } from "../revisions.js";
 import { isPrivateShareableResource, resolveAccessLevel } from "../../validation/authz.js";
 import {
   canonicalizeActorPrincipal,
@@ -850,13 +850,16 @@ async function executePullGlobalCursor(
       }
     }
 
+    // DATA-41: a complete row carries its revision as `$rev`; `rev` is the
+    // record's revision after any change that recorded one.
+    const wire = wireChange(schema, change.resource, change);
     visibleChanges.push({
       serverSeq: change.serverSeq,
       resource: change.resource,
       id: change.id,
       op: change.op === "delete" ? "delete" : "upsert",
-      record: change.op === "delete" ? null : change.record,
-      ...(change.rev !== undefined && issuesRevisions(schema, change.resource) ? { rev: change.rev } : {}),
+      record: change.op === "delete" ? null : wire.record,
+      ...(wire.rev !== undefined ? { rev: wire.rev } : {}),
     });
   }
 
@@ -977,12 +980,27 @@ async function executePullCanonical(
   const merged: Record<string, Array<Record<string, unknown>>> = Object.create(null);
   const deleted: Record<string, string[]> = Object.create(null);
   const deletedRevisions: Record<string, Record<string, number>> = Object.create(null);
-  // DATA-41: a change's row with its revision as `$rev` metadata. Clients
-  // pair it with the row only when the row is complete (`records`).
+  // DATA-41: a change's row as it goes on the wire; a complete row carries
+  // its revision as `$rev` (see wireChange).
   const withRev = (resource: string, change: ChangeEntry): Record<string, unknown> =>
-    change.rev !== undefined && issuesRevisions(schema, resource)
-      ? { ...change.record, [REVISION_FIELD]: change.rev }
-      : change.record!;
+    wireChange(schema, resource, change).record!;
+  // DATA-41: the buckets lose the order of one record's changes (clients
+  // apply rows, then patches, then deletes), so a whole row supersedes the
+  // earlier rows, patches and deletes of its id. A delete then re-insert
+  // therefore leaves the re-inserted row, not a delete applied after it.
+  const dropEarlier = (
+    bucket: Record<string, Array<Record<string, unknown>>>,
+    resource: string,
+    id: string,
+  ) => {
+    const rows = bucket[resource];
+    if (rows?.some((row) => row.id === id)) bucket[resource] = rows.filter((row) => row.id !== id);
+  };
+  const dropEarlierDelete = (resource: string, id: string) => {
+    const ids = deleted[resource];
+    if (ids?.includes(id)) deleted[resource] = ids.filter((deletedId) => deletedId !== id);
+    if (deletedRevisions[resource]) delete deletedRevisions[resource][id];
+  };
   const joins: Record<string, { upsert: Array<Record<string, unknown>>; delete: Array<{ from: string; to: string }> }> = Object.create(null);
   const cursors: Record<string, string> = Object.create(null);
 
@@ -1079,11 +1097,15 @@ async function executePullCanonical(
           continue;
         }
       }
+      dropEarlier(records, resource, change.id);
+      dropEarlier(merged, resource, change.id);
+      dropEarlierDelete(resource, change.id);
       records[resource].push(withRev(resource, change));
       continue;
     }
 
     if (change.op === "delete") {
+      // Deletes apply after rows and patches, so they already win over them.
       deleted[resource].push(change.id);
       if (change.rev !== undefined && issuesRevisions(schema, resource)) {
         (deletedRevisions[resource] ??= Object.create(null) as Record<string, number>)[change.id] = change.rev;

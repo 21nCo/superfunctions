@@ -53,10 +53,11 @@ export async function installServerRevisions(
 }
 
 /**
- * DATA-41: stores complete server rows. Rows with a revision are installed
- * with it in one write on an adapter that keeps revisions (see
- * installServerRevisions); every other row is returned without `$rev` for a
- * plain write, which leaves its revision unknown.
+ * DATA-41: stores complete server rows, given in change order. A record's
+ * last row replaces its earlier ones. When that row has a revision it is
+ * installed with it in one write on an adapter that keeps revisions (see
+ * installServerRevisions); every other record's rows are returned, in order
+ * and without `$rev`, for a plain write, which leaves its revision unknown.
  */
 async function storeServerRows(
   storage: DatafnStorageAdapter,
@@ -65,9 +66,13 @@ async function storeServerRows(
   options: ApplyRevisionOptions,
 ): Promise<Array<Record<string, unknown>>> {
   if (!options.revisionResources?.(resource)) return rows;
-  const entries = rows.flatMap((row) => {
+  const lastIndex = new Map<string, number>();
+  rows.forEach((row, index) => {
+    if (typeof row.id === "string") lastIndex.set(row.id, index);
+  });
+  const entries = rows.flatMap((row, index) => {
     const rev = readRowRevision(row);
-    return rev !== undefined && typeof row.id === "string"
+    return rev !== undefined && typeof row.id === "string" && lastIndex.get(row.id) === index
       ? [{ id: row.id, record: withoutRowRevision(row), rev }]
       : [];
   });
@@ -297,15 +302,15 @@ async function applyPullResultGlobalCursor(
   for (const change of changes) {
     const { resource, id, op, record } = change;
 
-    // DATA-41: an upsert here may be a partial merge, so only a delete
-    // (a tombstone) is paired with its revision.
+    // DATA-41: an upsert here may be a partial merge; the server marks a
+    // complete row by carrying its revision as `$rev`, and only such a row
+    // (or a tombstone) is paired with its revision.
     if (op === "delete") {
       await deleteServerRecord(storage, resource, id, change.rev, options);
     } else if (record) {
-      await storage.upsertRecord(
-        resource,
-        options.revisionResources?.(resource) ? withoutRowRevision(record) : record,
-      );
+      for (const row of await storeServerRows(storage, resource, [record], options)) {
+        await storage.upsertRecord(resource, row);
+      }
     }
   }
 
@@ -346,12 +351,15 @@ async function applyPullResultCanonical(
     for (const [resource, mergedRecords] of Object.entries(merged)) {
       for (const record of mergedRecords) {
         const id = record.id as string;
-        // A partial patch: never paired with its revision.
-        await storage.mergeRecord(
-          resource,
-          id,
-          revisionResources?.(resource) ? withoutRowRevision(record) : record,
-        );
+        // A partial patch carries no revision. The server marks a complete
+        // row (a KV write) by carrying its revision as `$rev`; it is
+        // installed with it, or else merged like any patch.
+        const patches = revisionResources?.(resource)
+          ? await storeServerRows(storage, resource, [record], options)
+          : [record];
+        for (const patch of patches) {
+          await storage.mergeRecord(resource, id, patch);
+        }
       }
     }
   }

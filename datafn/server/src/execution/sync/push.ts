@@ -448,6 +448,36 @@ export async function executePush(
   }
 
   const revisions: Record<string, DatafnPushRevision> = {};
+  /**
+   * DATA-41: the highest revision each record reached in this push, across
+   * every committed mutation's changes, its side effects (cascades, setNull,
+   * inherited-inactive updates) included.
+   */
+  const batchRevisions = new Map<string, number>();
+  const revisionKey = (resource: string, id: string) => JSON.stringify([resource, id]);
+  const noteBatchRevisions = (recorded: ChangeEntryInput[]) => {
+    for (const entry of recorded) {
+      if (entry.rev === undefined) continue;
+      const key = revisionKey(entry.resource, entry.id);
+      batchRevisions.set(key, Math.max(batchRevisions.get(key) ?? 0, entry.rev));
+    }
+  };
+  /**
+   * DATA-41: a mutation's post-write row (or tombstone) is returned only when
+   * no later mutation of this push changed the record again, so the client
+   * never installs a state a later write of its own batch replaced; a
+   * superseded entry keeps only its revision.
+   */
+  const settledRevisions = (): Record<string, DatafnPushRevision> => {
+    const settled: Record<string, DatafnPushRevision> = {};
+    for (const [mutationId, revision] of Object.entries(revisions)) {
+      const latest = batchRevisions.get(revisionKey(revision.resource, revision.id)) ?? revision.rev;
+      settled[mutationId] = latest > revision.rev
+        ? { resource: revision.resource, id: revision.id, rev: revision.rev }
+        : revision;
+    }
+    return settled;
+  };
 
   /**
    * DATA-41: the mutated record's revision and complete row after the write,
@@ -1258,6 +1288,7 @@ export async function executePush(
       };
       let mutationLatestSeq = 0;
       let mutationRevision: DatafnPushRevision | undefined;
+      let mutationRecorded: ChangeEntryInput[] = [];
       const mutationResourceSeqs: Record<string, number> = {};
       const pendingChangeEvents: number[] = [];
       try {
@@ -1283,6 +1314,7 @@ export async function executePush(
           // transaction-bound service callback and publish only after commit.
           const txChangeTracking = changeTracking.withDb(txDb, false);
           const recorded: ChangeEntryInput[] = [];
+          mutationRecorded = recorded;
           for (const change of changes) {
             const { seq, op, record } = await sequenceChange(
               change,
@@ -1343,6 +1375,7 @@ export async function executePush(
       }
 
       if (mutationSucceeded) {
+        noteBatchRevisions(mutationRecorded);
         await reconcilePermissionDirectoryAfterSettlement(true);
         await recordMutationSuccess(mut, mutationRevision);
       }
@@ -1405,6 +1438,7 @@ export async function executePush(
             recorded.push({ serverSeq: seq, resource: change.resource, id: change.id, op, record });
           }
           await changeTracking.assignRevisions(recorded);
+          noteBatchRevisions(recorded);
           for (const entry of recorded) {
             await recordChangeWithRetry(changeTracking, entry, 2, logger);
           }
@@ -1476,6 +1510,6 @@ export async function executePush(
     cursor: String(latestSeq),
     cursorBefore: String(cursorBeforeSeq),
     cursors,
-    ...(Object.keys(revisions).length > 0 ? { revisions } : {}),
+    ...(Object.keys(revisions).length > 0 ? { revisions: settledRevisions() } : {}),
   };
 }

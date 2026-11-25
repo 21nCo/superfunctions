@@ -285,10 +285,12 @@ export async function executeTransaction(
               for (let j = 0; j < failedStepIndex; j++) {
                 const priorResult = results[j];
                 if (priorResult && typeof priorResult === "object" && priorResult.ok) {
+                  // DATA-41: a rolled-back step committed no revision.
+                  const { rev: _uncommitted, ...rolledBackResult } = priorResult as MutationResult;
                   results[j] = {
                     ok: false,
                     rolledBack: true,
-                    result: priorResult,
+                    result: rolledBackResult,
                   };
                 }
               }

@@ -1683,6 +1683,9 @@ function _buildRawClient<S extends DatafnSchema>(
     table: null as any, // Will be set below
 
     async getWithRevision(resource: string, id: string) {
+      guardDestroyed();
+      await awaitNativeBridgeReady();
+      await storageValidationPromise; // STORAGE-INIT-001: fail fast if stores are missing
       const storage = resolvedStorage;
       if (storage?.capabilities?.revisions === true && storage.getRecordWithRevision) {
         const stored = await storage.getRecordWithRevision(resource, id);

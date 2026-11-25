@@ -16,6 +16,7 @@ import type { Adapter } from "@superfunctions/db";
 import type { DatafnSchema } from "../core-types.js";
 import { ensureInternalTable } from "./internal-tables.js";
 import { isKvResource } from "./mutation/kv-merge.js";
+import { canReadEveryField, withoutUnreadableFields } from "../validation/authz.js";
 
 export const REVISIONS_TABLE = "__datafn_revisions";
 /** Reserved row metadata property that carries a returned row's revision. */
@@ -202,6 +203,28 @@ export async function readRevisions(
   return result;
 }
 
+/** DATA-41: the complete stored rows of `ids`, read on `db`. */
+export async function readStoredRows(
+  db: Adapter,
+  namespace: string,
+  resource: string,
+  ids: readonly string[],
+): Promise<Map<string, Record<string, unknown>>> {
+  const result = new Map<string, Record<string, unknown>>();
+  const unique = [...new Set(ids)];
+  for (let i = 0; i < unique.length; i += READ_CHUNK) {
+    const rows = await db.findMany<Record<string, unknown>>({
+      model: resource,
+      where: [{ field: "id", operator: "in", value: unique.slice(i, i + READ_CHUNK) }],
+      namespace,
+    });
+    for (const row of rows) {
+      if (typeof row.id === "string") result.set(row.id, row);
+    }
+  }
+  return result;
+}
+
 function transactionsUsable(db: Adapter): boolean {
   return db.capabilities?.transactions?.supported !== false && typeof db.transaction === "function";
 }
@@ -264,22 +287,32 @@ export async function readWithRevisions<T>(
 ): Promise<T> {
   const idsOf = (result: T) =>
     (rowsOf(result) ?? []).map((row) => row.id).filter((id): id is string => typeof id === "string");
-  const unsnapshotted = async () => {
-    const ids = idsOf(await read(db));
-    const revisions = await readRevisions(db, namespace, resource, ids);
-    const result = await read(db);
+  const unsnapshotted = async (readDb: Adapter) => {
+    const ids = idsOf(await read(readDb));
+    const revisions = await readRevisions(readDb, namespace, resource, ids);
+    const result = await read(readDb);
     const rows = rowsOf(result);
     const firstRead = new Set(ids);
     if (rows) attachRead(rows, revisions, readable, (id) => firstRead.has(id));
     return result;
   };
-  if (!transactionsUsable(db)) return unsnapshotted();
+  // Only a verified snapshot pairs rows with revisions read after them:
+  // PostgreSQL at REPEATABLE READ, or SQLite (one writer at a time). Any other
+  // database, including SQL reached without raw SQL access (whose isolation
+  // level is unknown), reads revisions before the returned rows.
+  const dialect = db.rawSql?.dialect;
+  if (!transactionsUsable(db) || (dialect !== "postgres" && dialect !== "sqlite")) {
+    return unsnapshotted(db);
+  }
   try {
     return await db.transaction(async (tx) => {
-      if (tx.rawSql?.dialect === "postgres") {
-        await tx.rawSql.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ");
-      }
       const snapshotDb = tx as unknown as Adapter;
+      const txDialect = tx.rawSql?.dialect;
+      if (txDialect === "postgres") {
+        await tx.rawSql!.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ");
+      } else if (txDialect !== "sqlite") {
+        return unsnapshotted(snapshotDb);
+      }
       const result = await read(snapshotDb);
       const rows = rowsOf(result);
       if (rows) await attachRevisions(snapshotDb, namespace, resource, rows, readable);
@@ -288,13 +321,34 @@ export async function readWithRevisions<T>(
   } catch (error) {
     const message = String((error as Error)?.message ?? error).toLowerCase();
     if (message.includes("not supported") || message.includes("cannot return a promise")) {
-      return unsnapshotted();
+      return unsnapshotted(db);
     }
     throw error;
   }
 }
 
-const assignedEntries = new WeakSet<object>();
+type WriteEntry = {
+  resource: string;
+  id: string;
+  op: string;
+  record: Record<string, unknown> | null;
+  rev?: number;
+};
+
+/**
+ * One write's revision assignment. `bumped` and `finished` hold the last
+ * entries whose revision was raised and whose committed row was recorded, so
+ * a retry after a failure part-way through completes the remaining records
+ * without raising any record twice.
+ */
+interface WriteAssignment {
+  entries: ReadonlyArray<WriteEntry>;
+  bumped: WeakSet<object>;
+  finished: WeakSet<object>;
+  complete: boolean;
+}
+
+const assignments = new WeakMap<object, WriteAssignment>();
 
 /**
  * Raises the revision of each record one write changes exactly once, inside
@@ -302,41 +356,74 @@ const assignedEntries = new WeakSet<object>();
  * for it (an insert and its inherited-inactive update are one write). Only
  * the record's last entry carries the new revision; it marks a delete's
  * tombstone. Where `completeRow` holds, a last entry that writes a whole record
- * (insert, replace, upsert) records the stored row read on `db` after the
- * write, so a change carrying a revision always carries the exact committed
- * row (defaults and server fields included). A retry of the same entries
- * keeps the revisions already raised.
+ * (insert, replace, upsert, or any KV write) records the stored row read on
+ * `db` after the write, so a change carrying a revision always carries the exact committed
+ * row (defaults and server fields included). Recording entries of a write
+ * already assigned (in full or in part) keeps the revisions already raised
+ * and raises only the records a failed attempt did not reach.
  */
 export async function assignWriteRevisions(
   db: Adapter,
   namespace: string,
-  entries: ReadonlyArray<{
-    resource: string;
-    id: string;
-    op: string;
-    record: Record<string, unknown> | null;
-    rev?: number;
-  }>,
+  entries: ReadonlyArray<WriteEntry>,
   completeRow: (resource: string) => boolean,
 ): Promise<void> {
-  if (entries.some((entry) => assignedEntries.has(entry))) return;
-  const last = new Map<string, (typeof entries)[number]>();
+  let write: WriteAssignment | undefined;
   for (const entry of entries) {
-    assignedEntries.add(entry);
+    write = assignments.get(entry);
+    if (write) break;
+  }
+  if (write?.complete) return;
+  if (!write) {
+    write = { entries: [...entries], bumped: new WeakSet(), finished: new WeakSet(), complete: false };
+    for (const entry of entries) assignments.set(entry, write);
+  }
+  const last = new Map<string, WriteEntry>();
+  for (const entry of write.entries) {
     if (tracksRevisions(entry.resource)) last.set(JSON.stringify([entry.resource, entry.id]), entry);
   }
   for (const entry of last.values()) {
+    if (write.finished.has(entry)) continue;
     const deleted = entry.op === "delete";
-    entry.rev = await bumpRevision(db, namespace, entry.resource, entry.id, deleted);
-    if (deleted || entry.op === "merge" || isKvResource(entry.resource) || !completeRow(entry.resource)) continue;
-    const stored = await db.findOne({
-      model: entry.resource,
-      where: [{ field: "id", operator: "eq", value: entry.id }],
-      namespace,
-    });
-    if (stored) entry.record = { ...(stored as Record<string, unknown>) };
-    else entry.rev = undefined;
+    if (!write.bumped.has(entry)) {
+      entry.rev = await bumpRevision(db, namespace, entry.resource, entry.id, deleted);
+      write.bumped.add(entry);
+    }
+    if (!deleted && completeRow(entry.resource) && (entry.op !== "merge" || isKvResource(entry.resource))) {
+      const stored = await db.findOne({
+        model: entry.resource,
+        where: [{ field: "id", operator: "eq", value: entry.id }],
+        namespace,
+      });
+      if (stored) entry.record = { ...(stored as Record<string, unknown>) };
+      else entry.rev = undefined;
+    }
+    write.finished.add(entry);
   }
+  write.complete = true;
+}
+
+/**
+ * DATA-41: a pulled change's record and revision as they go on the wire.
+ * `rev` is the record's revision after the change, when the change recorded
+ * one and the resource issues revisions. The record carries it as `$rev` only
+ * when it is the complete committed row (insert, replace and upsert rows, and
+ * KV rows, which revision assignment records from storage) and the caller may
+ * read every field; clients pair a revision only with such a row. A revisioned
+ * record the read policy restricts has its unreadable fields withheld.
+ */
+export function wireChange(
+  schema: DatafnSchema,
+  resource: string,
+  change: { op: string; record: Record<string, unknown> | null; rev?: number },
+): { record: Record<string, unknown> | null; rev?: number } {
+  const rev = change.rev !== undefined && issuesRevisions(schema, resource) ? change.rev : undefined;
+  if (rev === undefined || !change.record) return { record: change.record, ...(rev !== undefined ? { rev } : {}) };
+  if (!canReadEveryField(schema, resource)) {
+    return { record: withoutUnreadableFields(schema, resource, change.record), rev };
+  }
+  const complete = change.op !== "delete" && (change.op !== "merge" || isKvResource(resource));
+  return { record: complete ? { ...change.record, [REVISION_FIELD]: rev } : change.record, rev };
 }
 
 /** The revision the last of `entries` for one record raised, if any. */

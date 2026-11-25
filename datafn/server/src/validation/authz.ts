@@ -203,6 +203,27 @@ export function canReadEveryField(
 }
 
 /**
+ * DATA-41: a copy of `row` without the fields the resource's read policy
+ * withholds (and without `$rev`, which only a complete row may carry).
+ * Resources without a policy are returned unchanged.
+ */
+export function withoutUnreadableFields(
+  schema: DatafnSchema,
+  resourceName: string,
+  row: Record<string, unknown>,
+): Record<string, unknown> {
+  const resource = getResourceSchema(schema, resourceName);
+  if (!resource || !resolvePermissions(schema, resource)) return row;
+  const readable: Record<string, unknown> = {};
+  for (const [field, value] of Object.entries(row)) {
+    if (field === "__ns" || (field !== "$rev" && canReadField(schema, resource, field))) {
+      readable[field] = value;
+    }
+  }
+  return readable;
+}
+
+/**
  * A relation of `resource` whose foreign key is stored on `resource` under
  * the relation's own name (e.g. a many-one `parent` with fkField "parent").
  */

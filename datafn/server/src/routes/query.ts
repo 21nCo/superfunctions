@@ -25,9 +25,10 @@ import {
   isPrivateShareableResource,
   canReadEveryField,
   resolveAccessLevel,
+  withoutUnreadableFields,
   validateQueryAuthz,
 } from "../validation/authz.js";
-import { ensureRevisionsTable, issuesRevisions, readWithRevisions } from "../execution/revisions.js";
+import { ensureRevisionsTable, issuesRevisions, readStoredRows, readWithRevisions } from "../execution/revisions.js";
 import { runBounded } from "./query/batch-executor.js";
 import { executeSingleQuery } from "./query/execute.js";
 import { validateQueryBody } from "./query/validate.js";
@@ -887,19 +888,53 @@ export function createQueryHandler(
                   timer,
                   multiRegionRuntime,
                 );
-                if (!isVersionedQuery(query, validatedSchema)) return run(db);
-                // DATA-41: rows and their revisions come from one snapshot.
+                const rowsOf = (result: unknown) => {
+                  const rows = (result as { data?: unknown })?.data;
+                  return Array.isArray(rows) ? (rows as Array<Record<string, unknown>>) : undefined;
+                };
                 const resourceName = String(query.resource);
+                if (!isVersionedQuery(query, validatedSchema)) {
+                  if (query.withRevisions !== true || query.relation !== undefined) return run(db);
+                  // DATA-41: a versioned read of a resource whose fields the
+                  // caller may not all read returns no revision and no
+                  // unreadable field.
+                  return run(db).then((result) => {
+                    const rows = rowsOf(result);
+                    rows?.forEach((row, index) => {
+                      rows[index] = withoutUnreadableFields(validatedSchema, resourceName, row);
+                    });
+                    return result;
+                  });
+                }
+                // DATA-41: the query selects the rows; each is returned as the
+                // complete stored row (as clone returns it, whatever the query
+                // strategy projected) with its revision, read in one snapshot.
+                const complete = new WeakSet<object>();
+                const read = async (readDb: Adapter) => {
+                  const result = await run(readDb);
+                  const rows = rowsOf(result);
+                  if (!rows) return result;
+                  const stored = await readStoredRows(
+                    readDb,
+                    namespace,
+                    resourceName,
+                    rows.map((row) => row.id).filter((id): id is string => typeof id === "string"),
+                  );
+                  rows.forEach((row, index) => {
+                    const whole = typeof row.id === "string" ? stored.get(row.id) : undefined;
+                    if (!whole) return;
+                    rows[index] = { ...whole };
+                    complete.add(rows[index]);
+                  });
+                  return result;
+                };
                 return ensureRevisionsTable(db).then(() => readWithRevisions(
                   db,
                   namespace,
                   resourceName,
-                  run,
-                  (result) => {
-                    const rows = (result as { data?: unknown })?.data;
-                    return Array.isArray(rows) ? (rows as Array<Record<string, unknown>>) : undefined;
-                  },
-                  (row) => canReadEveryField(validatedSchema, resourceName, row),
+                  read,
+                  rowsOf,
+                  (row) => complete.has(row) && canReadEveryField(validatedSchema, resourceName, row),
                 ));
               }).then((result) => {
                 queryDurations.push(Date.now() - queryStart);

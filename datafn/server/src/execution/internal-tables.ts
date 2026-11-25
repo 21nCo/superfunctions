@@ -112,8 +112,10 @@ const changesRevColumnReady = new WeakMap<object, Promise<boolean>>();
 
 /**
  * Adds the `rev` column to a `__datafn_changes` table created before DATA-41
- * and resolves whether change rows may carry it. Adapters without SQL store
- * any column. Runs once per adapter.
+ * and resolves whether change rows may carry it. Stores without a fixed
+ * schema keep any column; a SQL database without raw SQL access is probed.
+ * Runs once per adapter, outside any transaction (a failed probe would abort
+ * a PostgreSQL transaction).
  */
 export function ensureChangesRevColumn(adapter: Adapter): Promise<boolean> {
   let ready = changesRevColumnReady.get(adapter);
@@ -127,7 +129,18 @@ export function ensureChangesRevColumn(adapter: Adapter): Promise<boolean> {
 
 async function addChangesRevColumn(adapter: Adapter): Promise<boolean> {
   const rawSql = adapter.rawSql;
-  if (!rawSql) return true;
+  if (!rawSql) {
+    // Stores without a fixed schema (memory, KV) keep any column.
+    if (adapter.capabilities?.schema?.constraints !== true) return true;
+    // A SQL database reached without raw SQL (Prisma) cannot be altered
+    // here: change rows carry `rev` only if the table already has it.
+    try {
+      await adapter.internal.findMany("__datafn_changes", [{ field: "rev", op: "eq", value: -1 }], { limit: 1 });
+      return true;
+    } catch {
+      return false;
+    }
+  }
   if (rawSql.dialect === "postgres") {
     await rawSql.execute('ALTER TABLE "__datafn_changes" ADD COLUMN IF NOT EXISTS "rev" integer');
     return true;

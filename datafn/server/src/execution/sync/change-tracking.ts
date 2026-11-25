@@ -387,7 +387,9 @@ export class ChangeTrackingService {
    */
   async assignRevisions(entries: ChangeEntryInput[]): Promise<void> {
     if (!this.transactionBound) await this.ensureRevisionsReady();
-    if (this.issueRevisions && !this.revColumnReady) {
+    // Inside a transaction the column is only used when it was ensured before
+    // the transaction began; change rows then record no revision.
+    if (this.issueRevisions && !this.revColumnReady && !this.transactionBound) {
       this.revColumnReady = await ensureChangesRevColumn(this.db);
     }
     const recordRev = this.issueRevisions && this.revColumnReady;
