@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createAppleProvider } from '../index.js';
+import { APPLE_PROVIDER_HTTP_DEADLINE_MS, createAppleProvider } from '../index.js';
 
 // Golden vectors keep the billing-account mapping stable without duplicating its implementation.
 const USER_APP_ACCOUNT_TOKEN = ['a727af00', '9265', '52ac', 'a07b', '56be001cdbb7'].join('-');
@@ -797,5 +797,88 @@ describe('@billfn/provider-apple', () => {
         price: { ...price, providerProductId: 'apple.nucleus.month' }
       })).rejects.toMatchObject({ code: 'BILLFN_CONFLICT' });
     });
+  });
+});
+
+describe('provider HTTP deadlines', () => {
+  const billingAccount = {
+    id: 'ba_user_123',
+    ownerType: 'user' as const,
+    ownerId: 'user_123',
+    createdAt: '2026-04-20T00:00:00.000Z',
+    updatedAt: '2026-04-20T00:00:00.000Z'
+  };
+  const plan = { productKey: 'nucleus', planKey: 'nucleus', displayName: 'Nucleus', features: {}, limits: {}, prices: [] };
+
+  function apple(fetchMock: typeof fetch) {
+    return createAppleProvider({
+      bundleId: 'com.example.app',
+      fetch: fetchMock,
+      tokenProvider: async () => 'test-api-token',
+      advancedCommerce: { enabled: true }
+    });
+  }
+
+  it('treats a stalled Advanced Commerce request as an unknown outcome', async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchMock = vi.fn(() => new Promise<Response>(() => {})) as typeof fetch;
+      const pending = apple(fetchMock).refundCharge?.({ providerChargeId: 'txn_1', reason: 'customer_request' });
+      await Promise.all([
+        expect(pending).rejects.toMatchObject({
+          code: 'BILLFN_PROVIDER_ERROR',
+          retryable: false,
+          message: expect.stringContaining('whether the change was applied is unknown')
+        }),
+        vi.advanceTimersByTimeAsync(APPLE_PROVIDER_HTTP_DEADLINE_MS)
+      ]);
+      expect(String(vi.mocked(fetchMock).mock.calls[0]?.[0])).toContain('/advancedCommerce/v1/subscription/revoke/txn_1');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('treats a stalled Advanced Commerce success body as an unknown outcome', async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchMock = vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        text: () => new Promise<string>(() => {})
+      }) as unknown as Response) as typeof fetch;
+      const pending = apple(fetchMock).refundCharge?.({ providerChargeId: 'txn_1', reason: 'customer_request' });
+      await Promise.all([
+        expect(pending).rejects.toMatchObject({
+          code: 'BILLFN_PROVIDER_ERROR',
+          retryable: false,
+          message: expect.stringContaining('whether the change was applied is unknown')
+        }),
+        vi.advanceTimersByTimeAsync(APPLE_PROVIDER_HTTP_DEADLINE_MS)
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('treats a stalled StoreKit read body as a retryable failure', async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchMock = vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        text: () => new Promise<string>(() => {})
+      }) as unknown as Response) as typeof fetch;
+      const pending = apple(fetchMock).importSubscription?.({ providerReference: 'orig_1', billingAccount, plan });
+      await Promise.all([
+        expect(pending).rejects.toMatchObject({
+          code: 'BILLFN_PROVIDER_ERROR',
+          retryable: true,
+          message: expect.stringContaining('read can be retried')
+        }),
+        vi.advanceTimersByTimeAsync(APPLE_PROVIDER_HTTP_DEADLINE_MS)
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

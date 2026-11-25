@@ -7,7 +7,7 @@ import type {
   BillFnSubscription,
   BillFnVerifyCheckoutInput
 } from '@billfn/core';
-import { createDodoProvider, type DodoProviderConfig } from '../index.js';
+import { DODO_PROVIDER_HTTP_DEADLINE_MS, createDodoProvider, type DodoProviderConfig } from '../index.js';
 import recorded from './fixtures/dodo-api-v1.124.0.json';
 
 /*
@@ -975,6 +975,124 @@ describe('refundCharge -> POST /refunds', () => {
     await expect(provider(api.fetchMock).refundCharge?.(refundInput())).rejects.toMatchObject({
       code: 'BILLFN_PROVIDER_ERROR'
     });
+  });
+
+  it.each([
+    ['a fractional balance', 10.5],
+    ['a negative balance', -1],
+    // 2^53 round-trips through JSON and is not a safe integer, so it must not be sent as minor units.
+    ['an unsafe balance', Number.MAX_SAFE_INTEGER + 1]
+  ])('refuses a partial refund when a line item has %s, before creating a refund', async (_label, refundableAmount) => {
+    const api = dodoApi({
+      [`GET /payments/${PAYMENT_ID}`]: recorded.getSubscriptionPayment.response,
+      [`GET /payments/${PAYMENT_ID}/line-items`]: {
+        ...recorded.getPaymentLineItems.response,
+        items: [
+          { items_id: 'item_seat', refundable_amount: 400 },
+          { items_id: 'item_bad', refundable_amount: refundableAmount }
+        ]
+      },
+      'POST /refunds': recorded.createRefund.response
+    });
+
+    await expect(provider(api.fetchMock).refundCharge?.(refundInput({ mode: 'custom', amount: 100 }))).rejects.toMatchObject({
+      code: 'BILLFN_PROVIDER_ERROR',
+      retryable: false,
+      message: expect.stringContaining('nonnegative integer')
+    });
+    // The first line item could cover the amount. The malformed balance still refuses the refund.
+    expect(paths(api.calls)).toEqual([`GET /payments/${PAYMENT_ID}`, `GET /payments/${PAYMENT_ID}/line-items`]);
+  });
+
+  it('splits a partial refund across valid line items and skips a zero balance', async () => {
+    const api = dodoApi({
+      [`GET /payments/${PAYMENT_ID}`]: recorded.getSubscriptionPayment.response,
+      [`GET /payments/${PAYMENT_ID}/line-items`]: {
+        ...recorded.getPaymentLineItems.response,
+        items: [
+          { items_id: 'item_seat', refundable_amount: 400 },
+          { items_id: 'item_tax', refundable_amount: 0 },
+          { items_id: 'item_addon', refundable_amount: 900 }
+        ]
+      },
+      'POST /refunds': recorded.createRefund.response
+    });
+
+    await provider(api.fetchMock).refundCharge?.(refundInput({ mode: 'custom', amount: 700 }));
+
+    expect(api.calls.at(-1)?.body).toMatchObject({
+      payment_id: PAYMENT_ID,
+      currency: 'USD',
+      items: [
+        { item_id: 'item_seat', amount: 400 },
+        { item_id: 'item_addon', amount: 300 }
+      ]
+    });
+  });
+
+  it('treats a stalled line-item body as a retryable read and does not send the refund', async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchMock = vi.fn(async (input: string | URL | Request) => {
+        if (String(input).includes('/line-items')) {
+          return { ok: true, status: 200, text: () => new Promise<string>(() => {}) } as unknown as Response;
+        }
+        return Response.json(recorded.getSubscriptionPayment.response);
+      }) as typeof fetch;
+      const pending = provider(fetchMock).refundCharge?.(refundInput({ mode: 'custom', amount: 600 }));
+      await Promise.all([
+        expect(pending).rejects.toMatchObject({
+          code: 'BILLFN_PROVIDER_ERROR',
+          retryable: true,
+          message: expect.stringContaining('read can be retried')
+        }),
+        vi.advanceTimersByTimeAsync(DODO_PROVIDER_HTTP_DEADLINE_MS)
+      ]);
+      expect(vi.mocked(fetchMock).mock.calls.map((call) => String(call[0]))).not.toEqual(
+        expect.arrayContaining([expect.stringContaining('/refunds')])
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('treats a refund request that gets no response as an unknown outcome', async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchMock = vi.fn(() => new Promise<Response>(() => {})) as typeof fetch;
+      const pending = provider(fetchMock).refundCharge?.(refundInput());
+      await Promise.all([
+        expect(pending).rejects.toMatchObject({
+          code: 'BILLFN_PROVIDER_ERROR',
+          retryable: false,
+          message: expect.stringContaining('whether the change was applied is unknown')
+        }),
+        vi.advanceTimersByTimeAsync(DODO_PROVIDER_HTTP_DEADLINE_MS)
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps a refund Dodo accepted applied when the success body does not arrive before the deadline', async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchMock = vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        text: () => new Promise<string>(() => {})
+      }) as unknown as Response) as typeof fetch;
+      const pending = provider(fetchMock).refundCharge?.(refundInput());
+      await Promise.all([
+        expect(pending).resolves.toMatchObject({
+          operationStatus: 'applied',
+          raw: { bodyError: 'Dodo accepted the change but the response body did not arrive before the deadline' }
+        }),
+        vi.advanceTimersByTimeAsync(DODO_PROVIDER_HTTP_DEADLINE_MS)
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

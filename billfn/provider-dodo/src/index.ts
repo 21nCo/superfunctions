@@ -26,6 +26,9 @@ export const DODO_BASE_URLS: Readonly<Record<DodoEnvironment, string>> = {
   live_mode: 'https://live.dodopayments.com'
 };
 
+/** How long one Dodo HTTP call, including its response body, may take before the deadline fails it. */
+export const DODO_PROVIDER_HTTP_DEADLINE_MS = 30_000;
+
 export interface DodoProviderConfig {
   apiKey: string;
   /**
@@ -868,38 +871,207 @@ function dodoProductMatches(
       );
 }
 
-async function requestJson(fetchImpl: typeof fetch, url: string, init: RequestInit) {
-  const response = await fetchImpl(url, init);
-  const raw = await response.text();
-  if (!response.ok) {
-    throw createBillFnError({
-      code: 'BILLFN_PROVIDER_ERROR',
-      message: `Dodo request failed with status ${response.status}`,
-      details: {
-        status: response.status,
-        body: raw
-      }
-    });
+const PROVIDER_HTTP_DEADLINE_ERROR = 'ProviderHttpDeadlineError';
+
+interface HttpDeadline {
+  signal: AbortSignal;
+  /** Rejects when the deadline passes. It stays pending when the call finishes in time. */
+  expired: Promise<never>;
+  stop(): void;
+}
+
+function startHttpDeadline(ms: number): HttpDeadline {
+  const controller = new AbortController();
+  let rejectExpired: (error: Error) => void = () => {};
+  const expired = new Promise<never>((_, reject) => {
+    rejectExpired = reject;
+  });
+  // The race handles this rejection. The catch covers a deadline that fires after the race has settled.
+  void expired.catch(() => undefined);
+  const timer = setTimeout(() => {
+    const error = new Error('provider http deadline');
+    error.name = PROVIDER_HTTP_DEADLINE_ERROR;
+    controller.abort(error);
+    rejectExpired(error);
+  }, ms);
+  return {
+    signal: controller.signal,
+    expired,
+    stop() {
+      clearTimeout(timer);
+    }
+  };
+}
+
+function isDeadlineError(error: unknown): error is Error {
+  return error instanceof Error && error.name === PROVIDER_HTTP_DEADLINE_ERROR;
+}
+
+/** True when this call's own deadline aborted it, even if fetch rejected with its own abort error. */
+function deadlineReached(deadline: HttpDeadline, error: unknown): boolean {
+  if (isDeadlineError(error)) {
+    return true;
   }
-  return raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+  return deadline.signal.aborted && isDeadlineError(deadline.signal.reason);
+}
+
+function withAbortSignal(init: RequestInit, signal: AbortSignal): RequestInit {
+  if (init.signal === undefined || init.signal === null || init.signal === signal) {
+    return { ...init, signal };
+  }
+  const merged = new AbortController();
+  const forward = (source: AbortSignal) => {
+    if (source.aborted) {
+      if (!merged.signal.aborted) {
+        merged.abort(source.reason);
+      }
+      return;
+    }
+    source.addEventListener(
+      'abort',
+      () => {
+        if (!merged.signal.aborted) {
+          merged.abort(source.reason);
+        }
+      },
+      { once: true }
+    );
+  };
+  forward(init.signal);
+  forward(signal);
+  return { ...init, signal: merged.signal };
+}
+
+/** A read missed the deadline. Retrying it does not repeat a change. */
+function dodoReadDeadlineError(): never {
+  throw createBillFnError({
+    code: 'BILLFN_PROVIDER_ERROR',
+    message: 'Dodo did not answer before the deadline; the read can be retried',
+    retryable: true
+  });
+}
+
+/**
+ * A change got no answer before the deadline. Dodo may already have applied it, so this is not a read that a
+ * retry can safely repeat.
+ */
+function dodoMutationDeadlineError(): never {
+  throw createBillFnError({
+    code: 'BILLFN_PROVIDER_ERROR',
+    message: 'Dodo did not answer before the deadline; whether the change was applied is unknown',
+    retryable: false
+  });
+}
+
+async function fetchWithinDeadline(
+  fetchImpl: typeof fetch,
+  url: string,
+  init: RequestInit,
+  deadline: HttpDeadline
+): Promise<Response> {
+  try {
+    return await Promise.race([fetchImpl(url, withAbortSignal(init, deadline.signal)), deadline.expired]);
+  } catch (error) {
+    if (deadlineReached(deadline, error)) {
+      const reason = deadline.signal.reason;
+      throw isDeadlineError(reason) ? reason : error;
+    }
+    throw error;
+  }
+}
+
+async function readBodyWithinDeadline(response: Response, deadline: HttpDeadline): Promise<string> {
+  try {
+    return await Promise.race([response.text(), deadline.expired]);
+  } catch (error) {
+    if (deadlineReached(deadline, error)) {
+      const reason = deadline.signal.reason;
+      throw isDeadlineError(reason) ? reason : error;
+    }
+    throw error;
+  }
+}
+
+function isMutatingMethod(method: string | undefined): boolean {
+  const normalized = (method ?? 'GET').toUpperCase();
+  return normalized !== 'GET' && normalized !== 'HEAD';
+}
+
+async function requestJson(fetchImpl: typeof fetch, url: string, init: RequestInit) {
+  const deadline = startHttpDeadline(DODO_PROVIDER_HTTP_DEADLINE_MS);
+  const mutating = isMutatingMethod(init.method);
+  try {
+    let response: Response;
+    try {
+      response = await fetchWithinDeadline(fetchImpl, url, init, deadline);
+    } catch (error) {
+      if (deadlineReached(deadline, error)) {
+        return mutating ? dodoMutationDeadlineError() : dodoReadDeadlineError();
+      }
+      throw error;
+    }
+    let raw: string;
+    try {
+      raw = await readBodyWithinDeadline(response, deadline);
+    } catch (error) {
+      if (deadlineReached(deadline, error)) {
+        return mutating ? dodoMutationDeadlineError() : dodoReadDeadlineError();
+      }
+      throw error;
+    }
+    if (!response.ok) {
+      throw createBillFnError({
+        code: 'BILLFN_PROVIDER_ERROR',
+        message: `Dodo request failed with status ${response.status}`,
+        details: {
+          status: response.status,
+          body: raw
+        }
+      });
+    }
+    return raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+  } finally {
+    deadline.stop();
+  }
 }
 
 async function tryRequestJson(fetchImpl: typeof fetch, url: string, init: RequestInit) {
-  const response = await fetchImpl(url, init);
-  const raw = await response.text();
-  if (!response.ok) {
-    return {
-      ok: false as const,
-      error: {
-        status: response.status,
-        body: raw
+  const deadline = startHttpDeadline(DODO_PROVIDER_HTTP_DEADLINE_MS);
+  try {
+    let response: Response;
+    try {
+      response = await fetchWithinDeadline(fetchImpl, url, init, deadline);
+    } catch (error) {
+      if (deadlineReached(deadline, error)) {
+        dodoReadDeadlineError();
       }
+      throw error;
+    }
+    let raw: string;
+    try {
+      raw = await readBodyWithinDeadline(response, deadline);
+    } catch (error) {
+      if (deadlineReached(deadline, error)) {
+        dodoReadDeadlineError();
+      }
+      throw error;
+    }
+    if (!response.ok) {
+      return {
+        ok: false as const,
+        error: {
+          status: response.status,
+          body: raw
+        }
+      };
+    }
+    return {
+      ok: true as const,
+      data: raw ? (JSON.parse(raw) as Record<string, unknown>) : {}
     };
+  } finally {
+    deadline.stop();
   }
-  return {
-    ok: true as const,
-    data: raw ? (JSON.parse(raw) as Record<string, unknown>) : {}
-  };
 }
 
 type DodoRequestError = { status: number; body: string };
@@ -914,16 +1086,41 @@ function describeError(error: unknown): string {
 /**
  * Sends a request that changes Dodo state. A transport failure rejects (the outcome is unknown) and a non-2xx
  * status is returned as an error; after a 2xx status the change is committed, so an unreadable body never fails it.
+ * The deadline covers the body read. Missing the deadline before any status is the unknown outcome; missing it
+ * after a success status stays committed, the same as any other unreadable body.
  */
 async function sendDodoMutation(fetchImpl: typeof fetch, url: string, init: RequestInit): Promise<DodoMutationResponse> {
-  const response = await fetchImpl(url, init);
+  const deadline = startHttpDeadline(DODO_PROVIDER_HTTP_DEADLINE_MS);
+  try {
+    let response: Response;
+    try {
+      response = await fetchWithinDeadline(fetchImpl, url, init, deadline);
+    } catch (error) {
+      if (deadlineReached(deadline, error)) {
+        dodoMutationDeadlineError();
+      }
+      throw error;
+    }
+    return await readCommittedMutation(response, deadline);
+  } finally {
+    deadline.stop();
+  }
+}
+
+/** The committed or failed result of a mutation whose status line has already arrived. */
+async function readCommittedMutation(response: Response, deadline: HttpDeadline): Promise<DodoMutationResponse> {
   let raw: string;
   try {
-    raw = await response.text();
+    raw = await readBodyWithinDeadline(response, deadline);
   } catch (error) {
-    return response.ok
-      ? { ok: true, data: undefined, bodyError: describeError(error) }
-      : { ok: false, error: { status: response.status, body: '' } };
+    if (!response.ok) {
+      return { ok: false, error: { status: response.status, body: '' } };
+    }
+    // The status already accepted the change. A missing body, deadline included, does not undo it.
+    const bodyError = deadlineReached(deadline, error)
+      ? 'Dodo accepted the change but the response body did not arrive before the deadline'
+      : describeError(error);
+    return { ok: true, data: undefined, bodyError };
   }
   if (!response.ok) {
     return { ok: false, error: { status: response.status, body: raw } };
@@ -1260,6 +1457,25 @@ function readMetadataString(record: Record<string, unknown>, key: string): strin
   return metadata ? readString(metadata, [key]) : undefined;
 }
 
+/**
+ * A line item's refundable balance, in minor units. A missing or non-numeric balance is unused. A number that is
+ * not a nonnegative safe integer is refused: it is not a minor-unit amount BillFn can send back to Dodo.
+ */
+function readRefundableMinorUnits(item: Record<string, unknown>): number {
+  const refundable = item.refundable_amount;
+  if (typeof refundable !== 'number') {
+    return 0;
+  }
+  if (!Number.isSafeInteger(refundable) || refundable < 0) {
+    throw createBillFnError({
+      code: 'BILLFN_PROVIDER_ERROR',
+      message: 'Dodo returned a refundable balance that is not a nonnegative integer in minor units',
+      retryable: false
+    });
+  }
+  return refundable;
+}
+
 function assertDodoRefundAmount(amount: unknown): asserts amount is number {
   if (typeof amount !== 'number' || !Number.isSafeInteger(amount) || amount <= 0) {
     throw createBillFnError({
@@ -1383,9 +1599,11 @@ function allocateDodoPartialRefund(amount: number, lineItems: Record<string, unk
   const items: Array<{ item_id: string; amount: number }> = [];
   let remaining = amount;
   for (const item of asArrayOfRecords(lineItems.items)) {
+    // A fractional or unsafe balance would be sent back to Dodo as the refund amount. Refuse it before any refund
+    // is posted, including when an earlier line item could have covered the amount on its own.
+    const refundable = readRefundableMinorUnits(item);
     const itemId = readString(item, ['items_id', 'item_id']);
-    const refundable = typeof item.refundable_amount === 'number' ? item.refundable_amount : 0;
-    if (!itemId || refundable <= 0 || remaining === 0) {
+    if (!itemId || refundable === 0 || remaining === 0) {
       continue;
     }
     const share = Math.min(remaining, refundable);

@@ -52,6 +52,9 @@ export { APPLE_ROOT_CA_G3, APPLE_ROOT_CA_G3_SHA256 } from './apple-root-ca.js';
  */
 export const APPLE_BUNDLE_ID_METADATA_KEY = 'appleBundleId';
 
+/** How long one Apple HTTP call, including its response body, may take before the deadline fails it. */
+export const APPLE_PROVIDER_HTTP_DEADLINE_MS = 30_000;
+
 export interface AppleNotificationVerifierContext {
   rawBody: string;
   signedPayload: string;
@@ -603,15 +606,19 @@ async function requestAdvancedCommerce(
     ? await (bundleId === undefined ? hostTokenProvider() : hostTokenProvider({ bundleId }))
     : await config.tokenFor(bundleId);
   const baseUrl = (advancedCommerce.baseUrl ?? 'https://api.storekit.itunes.apple.com/advancedCommerce/v1').replace(/\/$/, '');
-  const response = await fetchImpl(`${baseUrl}${path}`, {
-    ...init,
-    headers: {
-      authorization: `Bearer ${token}`,
-      'content-type': 'application/json',
-      ...(init.headers ?? {})
-    }
-  });
-  const raw = await response.text();
+  const { response, raw } = await fetchProviderText(
+    fetchImpl,
+    `${baseUrl}${path}`,
+    {
+      ...init,
+      headers: {
+        authorization: `Bearer ${token}`,
+        'content-type': 'application/json',
+        ...(init.headers ?? {})
+      }
+    },
+    'mutation'
+  );
   if (!response.ok) {
     throw createBillFnError({
       code: 'BILLFN_PROVIDER_ERROR',
@@ -626,20 +633,139 @@ async function requestAdvancedCommerce(
 }
 
 async function requestJson(fetchImpl: typeof fetch, url: string, token: string, init: RequestInit = {}) {
-  const response = await fetchImpl(url, {
-    ...init,
-    method: init.method ?? 'GET',
-    headers: {
-      authorization: `Bearer ${token}`,
-      'content-type': 'application/json',
-      ...(init.headers ?? {})
-    }
-  });
-  const raw = await response.text();
+  const { response, raw } = await fetchProviderText(
+    fetchImpl,
+    url,
+    {
+      ...init,
+      method: init.method ?? 'GET',
+      headers: {
+        authorization: `Bearer ${token}`,
+        'content-type': 'application/json',
+        ...(init.headers ?? {})
+      }
+    },
+    'read'
+  );
   if (!response.ok) {
     throw createProviderError(response.status, raw);
   }
   return raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+}
+
+const PROVIDER_HTTP_DEADLINE_ERROR = 'ProviderHttpDeadlineError';
+
+interface HttpDeadline {
+  signal: AbortSignal;
+  expired: Promise<never>;
+  stop(): void;
+}
+
+function startHttpDeadline(ms: number): HttpDeadline {
+  const controller = new AbortController();
+  let rejectExpired: (error: Error) => void = () => {};
+  const expired = new Promise<never>((_, reject) => {
+    rejectExpired = reject;
+  });
+  void expired.catch(() => undefined);
+  const timer = setTimeout(() => {
+    const error = new Error('provider http deadline');
+    error.name = PROVIDER_HTTP_DEADLINE_ERROR;
+    controller.abort(error);
+    rejectExpired(error);
+  }, ms);
+  return {
+    signal: controller.signal,
+    expired,
+    stop() {
+      clearTimeout(timer);
+    }
+  };
+}
+
+function isDeadlineError(error: unknown): error is Error {
+  return error instanceof Error && error.name === PROVIDER_HTTP_DEADLINE_ERROR;
+}
+
+function deadlineReached(deadline: HttpDeadline, error: unknown): boolean {
+  if (isDeadlineError(error)) {
+    return true;
+  }
+  return deadline.signal.aborted && isDeadlineError(deadline.signal.reason);
+}
+
+function withAbortSignal(init: RequestInit, signal: AbortSignal): RequestInit {
+  if (init.signal === undefined || init.signal === null || init.signal === signal) {
+    return { ...init, signal };
+  }
+  const merged = new AbortController();
+  const forward = (source: AbortSignal) => {
+    if (source.aborted) {
+      if (!merged.signal.aborted) {
+        merged.abort(source.reason);
+      }
+      return;
+    }
+    source.addEventListener(
+      'abort',
+      () => {
+        if (!merged.signal.aborted) {
+          merged.abort(source.reason);
+        }
+      },
+      { once: true }
+    );
+  };
+  forward(init.signal);
+  forward(signal);
+  return { ...init, signal: merged.signal };
+}
+
+/**
+ * A missed deadline on a StoreKit read can be retried. The same miss on an Advanced Commerce change cannot: Apple
+ * may already have applied it, and BillFn has no committed-result record for that call.
+ */
+function appleDeadlineError(kind: 'read' | 'mutation'): never {
+  throw createBillFnError({
+    code: 'BILLFN_PROVIDER_ERROR',
+    message:
+      kind === 'mutation'
+        ? 'Apple did not answer before the deadline; whether the change was applied is unknown'
+        : 'Apple did not answer before the deadline; the read can be retried',
+    retryable: kind === 'read'
+  });
+}
+
+/** Fetches one Apple response and reads its body, under one deadline for both. */
+async function fetchProviderText(
+  fetchImpl: typeof fetch,
+  url: string,
+  init: RequestInit,
+  kind: 'read' | 'mutation'
+): Promise<{ response: Response; raw: string }> {
+  const deadline = startHttpDeadline(APPLE_PROVIDER_HTTP_DEADLINE_MS);
+  try {
+    let response: Response;
+    try {
+      response = await Promise.race([fetchImpl(url, withAbortSignal(init, deadline.signal)), deadline.expired]);
+    } catch (error) {
+      if (deadlineReached(deadline, error)) {
+        appleDeadlineError(kind);
+      }
+      throw error;
+    }
+    try {
+      const raw = await Promise.race([response.text(), deadline.expired]);
+      return { response, raw };
+    } catch (error) {
+      if (deadlineReached(deadline, error)) {
+        appleDeadlineError(kind);
+      }
+      throw error;
+    }
+  } finally {
+    deadline.stop();
+  }
 }
 
 function createProviderError(status: number, body: string) {
