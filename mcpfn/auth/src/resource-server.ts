@@ -208,6 +208,15 @@ export function createOAuthResourceServerHandler(
     } else {
       requiredScopes = options.requiredScopes ?? [];
     }
+    // Scope resolution may have awaited: refuse a token that expired
+    // meanwhile, before judging its scopes.
+    if (authInfo.expiresAt !== undefined &&
+        !(authInfo.expiresAt > (options.clock?.() ?? Date.now()) / 1_000)) {
+      return bearerChallengeResponse(401, metadataUrl, {
+        error: "invalid_token",
+        description: "The access token has expired",
+      });
+    }
     const grantedScopes = new Set(authInfo.scopes);
     const missingScopes = requiredScopes.filter((scope) => !grantedScopes.has(scope));
     if (missingScopes.length) {
@@ -217,14 +226,6 @@ export function createOAuthResourceServerHandler(
         scope: [...new Set(requiredScopes)]
           .sort(compareCodeUnits)
           .join(" "),
-      });
-    }
-    // Scope resolution may have awaited: refuse a token that expired meanwhile.
-    if (authInfo.expiresAt !== undefined &&
-        !(authInfo.expiresAt > (options.clock?.() ?? Date.now()) / 1_000)) {
-      return bearerChallengeResponse(401, metadataUrl, {
-        error: "invalid_token",
-        description: "The access token has expired",
       });
     }
     return mcpHandler(request, { authInfo });

@@ -156,6 +156,22 @@ describe("AuthFn provider adapter (MCP-SEC-05)", () => {
     expect((await call(handler)).status).toBe(401);
   });
 
+  it("rechecks the session deadline after scope resolution even when the mapping has none", async () => {
+    let now = Date.UTC(2026, 10, 25);
+    const handler = createAuthProviderMcpHandler(echoAuthInfo, {
+      resource,
+      clock: () => now,
+      provider: { authenticateBearer: async () => session({ expiresAt: new Date(now + 1_000) }) },
+      map: (current) => ({ subject: current.subject.actorId, clientId: "client-1", scopes: [], resourceIds: [resource] }),
+      requiredScopes: async () => {
+        now += 5_000;
+        return ["mcp:write"];
+      },
+    });
+    // Expired, so 401 invalid_token rather than a 403 scope challenge.
+    expect((await call(handler)).status).toBe(401);
+  });
+
   it("treats an infinite mapped expiry as expired", async () => {
     const handler = createAuthProviderMcpHandler(echoAuthInfo, {
       resource,
@@ -267,7 +283,7 @@ describe("OAuth resource server token expiry (MCP-SEC-11)", () => {
       clock: () => now,
       requiredScopes: async () => {
         now += 5_000;
-        return [];
+        return ["mcp:write"];
       },
     });
     expect((await call(handler)).status).toBe(401);

@@ -249,6 +249,15 @@ export function createAuthProviderMcpHandler<TSession extends McpFnAuthSessionLi
     } else {
       requiredScopes = options.requiredScopes ?? [];
     }
+    // Scope resolution may have awaited: refuse a credential that expired
+    // meanwhile (session or mapped deadline), before judging its scopes.
+    const now = options.clock?.() ?? Date.now();
+    const sessionExpiry = authenticated.session.expiresAt;
+    const mappedExpiry = authenticated.authInfo.expiresAt;
+    if ((sessionExpiry !== undefined && !expiresAfter(sessionExpiry.getTime(), now)) ||
+        (mappedExpiry !== undefined && !expiresAfter(mappedExpiry * 1_000, now))) {
+      return invalidTokenResponse(metadataUrl);
+    }
     const grantedScopes = new Set(authenticated.principal.scopes);
     const missingScopes = [...new Set(requiredScopes)].filter(
       (scope) => !grantedScopes.has(scope),
@@ -261,11 +270,6 @@ export function createAuthProviderMcpHandler<TSession extends McpFnAuthSessionLi
           .sort(compareCodeUnits)
           .join(" "),
       });
-    }
-    // Scope resolution may have awaited: refuse a credential that expired meanwhile.
-    const expiresAt = authenticated.authInfo.expiresAt;
-    if (expiresAt !== undefined && !expiresAfter(expiresAt * 1_000, options.clock?.() ?? Date.now())) {
-      return invalidTokenResponse(metadataUrl);
     }
     const handleOptions: HandleRequestOptions = { authInfo: authenticated.authInfo };
     return mcpHandler(request, handleOptions);
