@@ -570,19 +570,41 @@ describe("validateOpenAPI", () => {
     expect(result.document?.components?.schemas?.Value).toEqual(contents);
   });
 
-  it("preserves sibling constraints on a recursive preloaded schema", async () => {
+  it.each(["parent-only", "parent-first", "child-first"])("preserves recursive siblings with %s imports", async (order) => {
     const uri = "https://example.invalid/types.json";
     const contents = {
       type: "object",
       properties: { child: { $ref: "#", required: ["label"] }, label: { type: "string" } },
     };
-    const result = await validateAndDereferenceOpenAPI(documentWithReference(uri), {
+    const imports = Object.entries({ Value: { $ref: uri }, Child: { $ref: uri + "#/properties/child" } });
+    if (order === "parent-only") imports.pop();
+    if (order === "child-first") imports.reverse();
+    const doc = { ...documentWithReference(uri), components: { schemas: Object.fromEntries(imports) } };
+    const result = await validateAndDereferenceOpenAPI(doc, {
       externalReferences: new Map([[uri, JSON.stringify(contents)]]),
     });
     expect(result.errors).toEqual([]);
     const schema = result.document?.components?.schemas?.Value as typeof contents;
     expect(schema.properties.child.required).toEqual(["label"]);
     expect(schema.properties.child).toHaveProperty("properties", schema.properties);
+    if (order !== "parent-only") {
+      expect(result.document?.components?.schemas?.Child).toHaveProperty("required", ["label"]);
+    }
+  });
+
+  it("preserves sibling constraints through mutual recursion in a preloaded schema", async () => {
+    const uri = "https://example.invalid/types.json";
+    const contents = {
+      defs: {
+        N: { type: "object", properties: { m: { $ref: "#/defs/M" } } },
+        M: { type: "object", properties: { n: { $ref: "#/defs/N", required: ["m"] } } },
+      },
+    };
+    const result = await validateAndDereferenceOpenAPI(documentWithReference(uri + "#/defs/N"), {
+      externalReferences: new Map([[uri, JSON.stringify(contents)]]),
+    });
+    expect(result.errors).toEqual([]);
+    expect(result.document?.components?.schemas?.Value).toHaveProperty("properties.m.properties.n.required", ["m"]);
   });
 
   it("resolves an acyclic root alias through sibling definitions in a preloaded schema", async () => {
