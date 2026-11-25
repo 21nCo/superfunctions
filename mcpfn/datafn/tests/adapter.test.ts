@@ -371,6 +371,11 @@ describe("DataFn McpFn adapter", () => {
   describe("audit hardening", () => {
     const schema = {
       resources: [{
+        name: "alpha",
+        version: 1,
+        fields: [{ name: "label", type: "string" as const, required: true }],
+        permissions: { read: { fields: ["label"] }, write: { fields: ["label"] } },
+      }, {
         name: "notes",
         version: 1,
         fields: [
@@ -415,15 +420,28 @@ describe("DataFn McpFn adapter", () => {
       })).toThrow(/non-scalar field settings/);
       // A rejected configuration registers nothing in the supplied registry.
       const { McpFnRegistry } = await import("@mcpfn/core");
+      // A valid resource ("alpha") sorts before the refused one.
       const shared = new McpFnRegistry();
+      const expose = (filterFields: string[]) => ({
+        alpha: { fields: ["id", "label"] },
+        notes: { fields: ["id", "title"], list: { filterFields } },
+      });
       expect(() => createDatafnMcpRegistry({
         executor: datafn.executor,
         context: () => undefined,
         clientId: () => "test",
         registry: shared,
-        expose: { notes: { fields: ["id", "title"], list: { filterFields: ["settings"] } } },
+        expose: expose(["settings"]),
       })).toThrow(/non-scalar field settings/);
       expect(shared.listTools()).toEqual([]);
+      createDatafnMcpRegistry({
+        executor: datafn.executor,
+        context: () => undefined,
+        clientId: () => "test",
+        registry: shared,
+        expose: expose(["title"]),
+      });
+      expect(shared.listTools().map((tool) => tool.name)).toContain("datafn_alpha_list");
     });
   });
 });

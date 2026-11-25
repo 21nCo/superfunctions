@@ -1327,7 +1327,7 @@ describe("McpFn hosted authorization compatibility", () => {
     expect(authorize).not.toHaveBeenCalled();
   });
 
-  it.each(["application/json; charset=utf-8", 'application/json; profile="alpha,beta"'])("accepts a public Client ID Metadata Document served as %s", async (contentType) => {
+  it.each(["application/json; charset=utf-8", 'application/json; profile="alpha,beta"', "application/json;", "application/json; ; charset=utf-8"])("accepts a public Client ID Metadata Document served as %s", async (contentType) => {
     const clientId = "https://clients.example.com/client.json";
     const authorize = vi.fn(async () => Response.json({ ok: true }));
     const compatibility = createMcpAuthorizationCompatibilityHandler({

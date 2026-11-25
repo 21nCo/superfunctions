@@ -1606,11 +1606,12 @@ async function assertClientMetadataResponse(response: Response): Promise<void> {
 /**
  * The lower-cased media type of a Content-Type holding exactly one value, or
  * undefined. The whole header must be one media type with optional
- * token=token or token="quoted" parameters, so combined duplicate headers
+ * token=token or token="quoted" parameters (empty parameter slots allowed,
+ * RFC 9110 §5.6.6), so combined duplicate headers
  * (joined with commas) and stray quotes are refused.
  */
 const SINGLE_MEDIA_TYPE =
-  /^\s*([!#$%&'*+.^_`|~0-9a-z-]+\/[!#$%&'*+.^_`|~0-9a-z-]+)\s*(?:;\s*[!#$%&'*+.^_`|~0-9a-z-]+=(?:[!#$%&'*+.^_`|~0-9a-z-]+|"(?:[^"\\]|\\.)*")\s*)*$/i;
+  /^\s*([!#$%&'*+.^_`|~0-9a-z-]+\/[!#$%&'*+.^_`|~0-9a-z-]+)\s*(?:;\s*(?:[!#$%&'*+.^_`|~0-9a-z-]+=(?:[!#$%&'*+.^_`|~0-9a-z-]+|"(?:[^"\\]|\\.)*"))?\s*)*$/i;
 
 function singleMediaType(contentType: string): string | undefined {
   return SINGLE_MEDIA_TYPE.exec(contentType)?.[1]?.toLowerCase();
