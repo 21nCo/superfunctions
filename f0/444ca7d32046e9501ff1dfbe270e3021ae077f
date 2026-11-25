@@ -1,0 +1,28 @@
+hostfn/cli/src/commands/server/setup.ts
+  s_545bb079978e5a::t_ad4f6df332ec0f 117-122,216-219
+hostfn/docs/content/docs/documentation/server-management/setup.mdx
+  s_545bb079978e5a::t_ad4f6df332ec0f 89
+filefn/python/tests/test_upload_flow.py
+  s_545bb079978e5a::t_889f05b2183b11 1303,1305-1313
+hostfn/cli/src/runtimes/nodejs/index.ts
+  s_545bb079978e5a::t_ad4f6df332ec0f 59
+filefn/python/filefn/server/upload_sessions/service.py
+  s_545bb079978e5a::t_889f05b2183b11 836-847,900-905,919-921,995-996,1078-1079,1102,1104-1106,1246-1252
+  s_545bb079978e5a::t_58972400d0076d 1253
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f0444ca7d32046e9501ff1dfbe270e3021ae077f",
+  "prompts": {},
+  "sessions": {
+    "s_545bb079978e5a": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a2144f-8f2a-7690-8b1a-e7858b67a889",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

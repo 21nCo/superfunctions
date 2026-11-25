@@ -1,0 +1,69 @@
+authfn/adapters/lookup-cloudflare-do/package.json
+  s_fc285eff3f94eb::t_c0157e79526d17 34
+authfn/adapters/lookup-dynamodb/package.json
+  s_fc285eff3f94eb::t_d25dd4e1028f79 36
+authfn/admin/package.json
+  s_fc285eff3f94eb::t_0352939e708e27 43,47
+authfn/api-keys/package.json
+  s_fc285eff3f94eb::t_ae532eab570fd2 29
+authfn/client/package.json
+  s_fc285eff3f94eb::t_008d67aaaeebfa 33,40
+authfn/core/package.json
+  s_fc285eff3f94eb::t_ce48045d755f88 3
+authfn/docs/package.json
+  s_fc285eff3f94eb::t_1e682e2b029228 30,44
+authfn/email-otp/package.json
+  s_fc285eff3f94eb::t_68b3c146cf9664 29
+authfn/multi-region/package.json
+  s_fc285eff3f94eb::t_316fc878ba97af 29
+authfn/native-handoff/package.json
+  s_fc285eff3f94eb::t_2dbecb5f7b8614 29
+authfn/oauth-provider/package.json
+  s_fc285eff3f94eb::t_7d55a5aaca983e 30
+authfn/password/package.json
+  s_fc285eff3f94eb::t_d5d2fec8fb79a9 3,29
+authfn/schema-plugin/package.json
+  s_fc285eff3f94eb::t_754f521b064658 29
+authfn/social-oauth/package.json
+  s_fc285eff3f94eb::t_50d758128bf8b2 33
+authfn/two-factor/package.json
+  s_fc285eff3f94eb::t_2404d4d28b915b 29
+billfn/docs/package.json
+  s_fc285eff3f94eb::t_95dc79d9d45288 30,32-33,42
+billfn/provider-apple/package.json
+  s_fc285eff3f94eb::t_f0250bf4fd0d45 3
+billfn/provider-dodo/package.json
+  s_fc285eff3f94eb::t_23c72eb3aa8b7e 3
+datafn/admin/package.json
+  s_fc285eff3f94eb::t_dc546a7f0f2268 41
+datafn/server/package.json
+  s_fc285eff3f94eb::t_5515ed329b4163 3
+filefn/admin/package.json
+  s_fc285eff3f94eb::t_6e4fe8a237a6b8 41
+filefn/docs/package.json
+  s_fc285eff3f94eb::t_f7103bb56aea7d 41,47,50
+filefn/processing/container/package.json
+  s_fc285eff3f94eb::t_820435cf6899fa 18
+filefn/python/pyproject.toml
+  s_fc285eff3f94eb::t_573ea711f290da 7
+filefn/server/package.json
+  s_fc285eff3f94eb::t_b074b099b06858 3
+package-lock.json
+  s_fc285eff3f94eb::t_7195da134f897d 1275,1301,1327,1331,1361,1394,1400,1429,1525,1539,1849,3896,3929,3962,4001,4004,4036,4066,4155,4324,4326-4327,4336,5268,5291,8783,8822,8851,10131,10163,10173,11637,11769,11776,11786,12401,12459
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "14b7d0e83b29d7ce84ffdd162b303545a2caabb0",
+  "prompts": {},
+  "sessions": {
+    "s_fc285eff3f94eb": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21387-8c2b-7361-b97d-3400ba684e34",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
