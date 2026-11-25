@@ -223,7 +223,30 @@ input {
 }
 
 .dialog-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
   background: rgba(23, 26, 29, 0.52);
+}
+
+/* uifn dialog and menu parts are unstyled; place the floating layers here. */
+.dialog-positioner {
+  position: fixed;
+  inset: 0;
+  z-index: 51;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+}
+
+.dialog-positioner > * {
+  pointer-events: auto;
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+}
+
+.menu-positioner {
+  z-index: 40;
 }
 
 .dialog-content {
@@ -506,8 +529,22 @@ input {
 }
 
 .virtualized-viewport {
+  height: 336px;
   border-radius: 18px;
   background: rgba(252, 249, 245, 0.92);
+}
+
+.virtualized-scroll-viewport {
+  height: 100%;
+  overflow-y: auto;
+}
+
+.virtualized-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 4px 0;
+  list-style: none;
 }
 
 .virtualized-row {

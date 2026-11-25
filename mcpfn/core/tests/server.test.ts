@@ -483,7 +483,8 @@ describe("McpFnServer", () => {
     await server.connect(right); await client.connect(left);
     closeables.push(client, server);
 
-    await expect(client.listTools()).rejects.toThrow(/identity rejected/);
+    // The hook's own error text is withheld (MCP-SEC-08).
+    await expect(client.listTools()).rejects.toThrow(/Internal error/);
     expect(order).toEqual(["identity"]);
   });
 
