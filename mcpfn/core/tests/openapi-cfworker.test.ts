@@ -256,6 +256,38 @@ describe("fromOpenAPI under @cfworker/json-schema", () => {
     expect(new Set(result.skipped.map(({ code }) => code))).toEqual(new Set(["schema-too-large"]));
   }, 60_000);
 
+  it("matches required names against simple patterns, alone or across allOf members, and never runs patterns with groups", () => {
+    const string = { type: "string" };
+    const schemas = {
+      ...chain("C", 2_500, (member) => ({ type: "object", required: ["x1"], patternProperties: { "^x[0-9]+$": member } })),
+      ...chain("D", 2_500, (additionalProperties) => ({ type: "object", required: ["x1"], patternProperties: { "^y[0-9]+$": string }, additionalProperties })),
+      ...chain("S", 2_500, (member) => ({ allOf: [{ type: "object", required: ["x1"] }, { patternProperties: { "^x[a-z0-9]$": member } }] })),
+      ...chain("G", 2_500, (member) => ({ type: "object", required: ["x1"], patternProperties: { "^(x|y)[0-9]+$": member } })),
+    };
+    const result = fromOpenAPI(
+      {
+        openapi: "3.1.0",
+        paths: { "/c": body("classPattern", "C0"), "/d": body("unmatchedClass", "D0"), "/s": body("splitPattern", "S0"), "/g": body("groupPattern", "G0") },
+        components: { schemas },
+      },
+      { executor: recordingExecutor(), allowMutations: true },
+    );
+    expect(verdicts(result)).toEqual([tooDeep("classPattern"), tooDeep("splitPattern"), tooDeep("unmatchedClass")]);
+    // A pattern with a group is not run while converting: the edge is left unforced.
+    expect(result.tools.map(({ name }) => name)).toEqual(["groupPattern"]);
+  }, 120_000);
+
+  it("measures an output on its registered root, so the pure aliases inlined there stack no frames", () => {
+    const schemas: Record<string, unknown> = chain("R", 50, required);
+    for (let index = 0; index < 3_000; index += 1) schemas[`A${index}`] = { $ref: `#/components/schemas/${index + 1 < 3_000 ? `A${index + 1}` : "R0"}` };
+    const result = fromOpenAPI(
+      { openapi: "3.1.0", paths: { "/aliased": { get: { operationId: "aliased", responses: json({ $ref: "#/components/schemas/A0" }) } } }, components: { schemas } },
+      { executor: recordingExecutor() },
+    );
+    expect(verdicts(result)).toEqual([]);
+    expectArguments(tool(result.tools, "aliased").outputSchema!, { valid: [nested(50)], invalid: [nested(49)] });
+  }, 60_000);
+
   it("reports a value too deep for the validator's stack as invalid arguments and rethrows any other validator error", async () => {
     const handler = vi.fn(async () => ({ content: [] }));
     const registry = new McpFnRegistry().register({

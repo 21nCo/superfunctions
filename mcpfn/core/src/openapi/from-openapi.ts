@@ -548,7 +548,8 @@ class OperationConverter {
       this.schemas.chargeCopy(budget.used);
       this.reserved.set(copied, 1);
       this.pending.push(copied);
-      this.toolFrames.set(copied, () => this.schemas.frames(root, kind));
+      // Measured on the root as registered: an inlined root `$ref` stacks no frame.
+      this.toolFrames.set(copied, () => this.schemas.frames(schema, kind));
       return copied;
     };
     if (!this.shareSchemas) return produce();

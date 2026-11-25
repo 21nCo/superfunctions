@@ -2193,6 +2193,7 @@ function forEachChild(
   if (required.length > 0) charge(required.length * (1 + patterns.length));
   const forcedPatterns = new Set<string>();
   let forcedAdditional = false;
+  const expressions = new Map<string, RegExp | undefined>();
   for (const name of required) {
     const declared = Object.hasOwn(properties, name);
     // Matching patterns apply beside `properties`; `additionalProperties` only
@@ -2200,7 +2201,7 @@ function forEachChild(
     let matched = false;
     let readable = true;
     for (const [pattern] of patterns) {
-      const matches = patternMatches(pattern, name);
+      const matches = patternMatches(pattern, name, expressions, charge);
       if (matches === undefined) readable = false;
       else if (matches) {
         forcedPatterns.add(pattern);
@@ -2235,15 +2236,57 @@ function onlyType(whole: Conjunction, type: string): boolean {
  * other pattern). No pattern from the document runs as a regular expression
  * while converting.
  */
-function patternMatches(pattern: string, name: string): boolean | undefined {
+function patternMatches(
+  pattern: string,
+  name: string,
+  expressions: Map<string, RegExp | undefined>,
+  charge: (work: number) => void,
+): boolean | undefined {
   const start = pattern.startsWith("^");
   const end = pattern.length > (start ? 1 : 0) && pattern.endsWith("$") && !pattern.endsWith("\\$");
   const literal = pattern.slice(start ? 1 : 0, end ? -1 : undefined);
-  if (/[\\.^$|?*+()[\]{}]/.test(literal)) return undefined;
+  if (/[\\.^$|?*+()[\]{}]/.test(literal)) {
+    if (!expressions.has(pattern)) expressions.set(pattern, boundedExpression(pattern));
+    const expression = expressions.get(pattern);
+    if (expression === undefined) return undefined;
+    // One quantifier and no groups: at most quadratic in the name, charged first.
+    charge((name.length + 1) ** 2);
+    return expression.test(name);
+  }
   if (start && end) return name === literal;
   if (start) return name.startsWith(literal);
   if (end) return name.endsWith(literal);
   return name.includes(literal);
+}
+
+/**
+ * A pattern as the validator compiles it (`u`), only when it has no groups,
+ * alternation, backreferences or lookaround and at most one quantifier, so
+ * matching cannot backtrack exponentially (undefined otherwise).
+ */
+function boundedExpression(pattern: string): RegExp | undefined {
+  let quantifiers = 0;
+  for (let index = 0; index < pattern.length; index += 1) {
+    const char = pattern[index];
+    if (char === "\\") {
+      if (/[1-9k]/.test(pattern[index + 1] ?? "1")) return undefined;
+      index += 1;
+    } else if (char === "[") {
+      index += 1;
+      while (index < pattern.length && pattern[index] !== "]") index += pattern[index] === "\\" ? 2 : 1;
+      if (index >= pattern.length) return undefined;
+    } else if (char === "(" || char === ")" || char === "|") {
+      return undefined;
+    } else if (char === "*" || char === "+" || char === "?" || char === "{") {
+      quantifiers += 1;
+    }
+  }
+  if (quantifiers > 1) return undefined;
+  try {
+    return new RegExp(pattern, "u");
+  } catch {
+    return undefined;
+  }
 }
 
 /** Keep the largest frame each definition is applied at. */

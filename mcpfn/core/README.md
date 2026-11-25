@@ -125,7 +125,7 @@ for (const { operation, code, reason } of skipped) {
   `additionalProperties`; or when a child value holding flagged properties
   has more than one schema, sits under a condition, or is compared whole
   (`const`, `enum`, `uniqueItems`, `contains`). Patterns in the document are
-  never evaluated. In OpenAPI 3.0 every `$ref` sibling is ignored, `readOnly`
+  never evaluated for this. In OpenAPI 3.0 every `$ref` sibling is ignored, `readOnly`
   and unsupported keywords included; in 3.1 they apply. The request
   body is the first `application/json` media entry that is an object, else the
   first such `*+json` one; a declared body without a JSON media type is
@@ -204,7 +204,10 @@ for (const { operation, code, reason } of skipped) {
   `patternProperties` entry or else `additionalProperties`, when only
   objects are accepted, and the items up to `minItems` when only arrays are,
   read together from one schema object and its inline `allOf` members (for
-  example `required` in one member and `properties` in another). Any other
+  example `required` in one member and `properties` in another). A pattern
+  is matched against required names only when it has no groups,
+  alternation, backreferences or lookaround and at most one quantifier,
+  with the matching charged; any other pattern forces nothing. Any other
   child value starts again, since its depth is the instance's own, and a
   chain of required children that never ends, which no finite value
   satisfies, is too deep. This reading is charged to the same budget. Near
