@@ -167,8 +167,9 @@ function materializeRelatedRecord(
   store: DataStore,
   omit?: string[],
   metadata?: QueryMetadata,
+  knownResource?: string,
 ): Record<string, unknown> {
-  const resource = recordResourceName(schema, record.id, targetEndpointFor(match));
+  const resource = knownResource ?? recordResourceName(schema, record.id, targetEndpointFor(match));
   return materializeSelect(record, resource, select, schema, store, omit, metadata);
 }
 
@@ -323,7 +324,10 @@ export function materializeSelect(
 
       // Always expand from source records so successive nested tokens (e.g. items.id + items.title)
       // do not lose fields when earlier tokens projected only partial child objects.
-      const intermediateRecords = expandRelationToRecords(
+      const joinedRecords = relation.relation.type === "many-many"
+        ? expandManyManyRecords(record, relation, schema, store, resource, metadata)
+        : undefined;
+      const intermediateRecords = joinedRecords?.map((entry) => entry.record) ?? expandRelationToRecords(
         record,
         relation,
         schema,
@@ -338,7 +342,7 @@ export function materializeSelect(
       if (Array.isArray(intermediateRecords)) {
         const targetEffectiveOmit = omit ? [...omit] : [];
 
-        const newRecords = intermediateRecords.map((intermediateRecord) => {
+        const newRecords = intermediateRecords.map((intermediateRecord, index) => {
           const nestedResult = materializeRelatedRecord(
             intermediateRecord,
             relation,
@@ -347,15 +351,18 @@ export function materializeSelect(
             store,
             omit,
             metadata,
+            joinedRecords?.[index]?.resource,
           );
 
           // Merge with existing record if present
           let mergedRecord;
           if (existingRecords && Array.isArray(existingRecords)) {
-            const existingRecord = existingRecords.find(
-              (r: any) => r.id === intermediateRecord.id,
-            );
-            if (existingRecord && typeof existingRecord === "object") {
+            // The same sorted joins are projected for each token. Use their
+            // position so duplicate IDs from distinct resources stay separate.
+            const existingRecord = joinedRecords
+              ? existingRecords[index]
+              : existingRecords.find((r: any) => r.id === intermediateRecord.id);
+            if (existingRecord && typeof existingRecord === "object" && existingRecord.id === intermediateRecord.id) {
               mergedRecord = { ...existingRecord, ...nestedResult };
             } else {
               mergedRecord = nestedResult;
@@ -479,7 +486,7 @@ export function materializeSelect(
     } else if (parsed.directive === "#") {
       // Emit join rows for many-many
       if (relation.relation.type === "many-many") {
-        result[parsed.baseName] = getJoinRows(record, relation, schema, store);
+        result[parsed.baseName] = getJoinRows(record, relation, resource, schema, store);
       }
     } else if (parsed.directive === "*#") {
       // Expand relation with metadata for many-many
@@ -545,8 +552,32 @@ function getManyManyRows(
 
   return endpointList(relation.from).flatMap((fromResource) => {
     const joinRows = store.getJoinRows(relationKeyFor(fromResource, relation));
-    return joinRows.filter((j) => j.to === recordId &&
-      resolvePredicateEndpoint(schema, j.to, relation.to, j.toResource) === resource);
+    return joinRows
+      .filter((j) => j.to === recordId &&
+        resolvePredicateEndpoint(schema, j.to, relation.to, j.toResource) === resource)
+      .map((j) => ({ ...j, fromResource }));
+  });
+}
+
+function expandManyManyRecords(
+  record: Record<string, unknown>,
+  match: DatafnRelationMatch,
+  schema: DatafnSchema,
+  store: DataStore,
+  resource: string,
+  metadata?: QueryMetadata,
+) {
+  const isForward = match.direction === "forward";
+  const endpoint = targetEndpointFor(match);
+  const joins = sortJoinRows(getManyManyRows(record, match, resource, schema, store), match.relation);
+  return joins.flatMap((join) => {
+    const id = isForward ? join.to : join.from;
+    const discriminator = isForward ? join.toResource : join.fromResource;
+    const relatedResource = resolvePredicateEndpoint(schema, id, endpoint, discriminator);
+    if (typeof id !== "string" || !relatedResource) return [];
+    const related = store.getRecord(relatedResource, id);
+    if (!related || filterAncestorInactiveRecords([related], match, metadata).length === 0) return [];
+    return [{ record: related, resource: relatedResource, join }];
   });
 }
 
@@ -644,17 +675,6 @@ function expandRelationToRecords(
     return filterAncestorInactiveRecords(records, match, metadata);
   }
 
-  if (relation.type === "many-many") {
-    const sortedJoins = sortJoinRows(getManyManyRows(record, match, resource, schema, store), relation);
-
-    return sortedJoins
-      .map((join) => {
-        const targetId = isForward ? join.to : join.from;
-        return store.getRecord(recordResourceName(schema, targetId, targetEndpoint), targetId as string);
-      })
-      .filter(isMaterializedRecord);
-  }
-
   if (relation.type === "one-many") {
     if (!isForward) {
       const fkField = relation.fkField || relation.foreignKey || `${relation.inverse}Id`;
@@ -693,8 +713,6 @@ function expandRelation(
   const relation = match.relation;
   const isForward = match.direction === "forward";
   const currentResource = resource ?? firstEndpoint(match.direction === "forward" ? relation.from : relation.to);
-  const targetEndpoint = targetEndpointFor(match);
-
   if (relation.type === "many-one") {
     const records = expandRelationToRecords(record, match, schema, store, currentResource, metadata);
     if (!records) return isForward ? null : [];
@@ -707,41 +725,18 @@ function expandRelation(
   }
 
   if (relation.type === "many-many") {
-    const sortedJoins = sortJoinRows(getManyManyRows(record, match, currentResource, schema, store), relation);
-
-    if (!includeMetadata) {
-      return sortedJoins
-        .map((join) => {
-          const targetId = isForward ? join.to : join.from;
-          const relatedRecord = store.getRecord(recordResourceName(schema, targetId, targetEndpoint), targetId as string);
-          if (!relatedRecord) return null;
-          if (filterAncestorInactiveRecords([relatedRecord], match, metadata).length === 0) return null;
-          return materializeRelatedRecord(relatedRecord, match, ["*"], schema, store, omit, metadata);
-        })
-        .filter(isMaterializedRecord);
-    } else {
-      return sortedJoins
-        .map((join) => {
-          const targetId = isForward ? join.to : join.from;
-          const relatedRecord = store.getRecord(recordResourceName(schema, targetId, targetEndpoint), targetId as string);
-          if (!relatedRecord) return null;
-          if (filterAncestorInactiveRecords([relatedRecord], match, metadata).length === 0) return null;
-          const result = materializeRelatedRecord(relatedRecord, match, ["*"], schema, store, omit, metadata);
-
-          const relationMetadata: Record<string, unknown> = {};
-          if (relation.metadata) {
-            for (const metaField of relation.metadata) {
-              if (join[metaField.name] !== undefined) {
-                relationMetadata[metaField.name] = join[metaField.name];
-              }
-            }
-          }
-          result.$relation_metadata = relationMetadata;
-
-          return applyOmit(result, omit);
-        })
-        .filter(isMaterializedRecord);
-    }
+    return expandManyManyRecords(record, match, schema, store, currentResource, metadata).map((related) => {
+      const result = materializeSelect(related.record, related.resource, ["*"], schema, store, omit, metadata);
+      if (!includeMetadata) return result;
+      const relationMetadata: Record<string, unknown> = {};
+      for (const field of relation.metadata ?? []) {
+        if (related.join[field.name] !== undefined) {
+          relationMetadata[field.name] = related.join[field.name];
+        }
+      }
+      result.$relation_metadata = relationMetadata;
+      return applyOmit(result, omit);
+    });
   }
 
   // one-many: inverse of many-one
@@ -764,15 +759,11 @@ function expandRelation(
 function getJoinRows(
   record: Record<string, unknown>,
   match: DatafnRelationMatch,
+  resource: string,
   schema: DatafnSchema,
   store: DataStore,
 ): unknown[] {
   const relation = match.relation;
-  const resource = recordResourceName(
-    schema,
-    record.id,
-    match.direction === "forward" ? relation.from : relation.to,
-  );
   const sorted = sortJoinRows(getManyManyRows(record, match, resource, schema, store), relation);
 
   // Return join rows with from, to, and metadata

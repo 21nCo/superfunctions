@@ -1068,12 +1068,20 @@ it("preserves both resource discriminators on inverse predicates", async () => {
   const seed = (model: string, data: Record<string, unknown>) =>
     db.create({ model, namespace: "datafn", data });
   await seed("objective", { id: "legacy-entry", label: "Legacy entry" });
+  await seed("node", { id: "legacy-entry", label: "Node entry" });
   await seed("collection", { id: "legacy-target", label: "Linked collection" });
   await seed("task", { id: "legacy-target", label: "Unlinked task" });
   await seed("test_entries", {
     id: "test-join",
     from: "legacy-entry",
     fromResource: "objective",
+    to: "legacy-target",
+    toResource: "collection",
+  });
+  await seed("test_entries", {
+    id: "test-node-join",
+    from: "legacy-entry",
+    fromResource: "node",
     to: "legacy-target",
     toResource: "collection",
   });
@@ -1108,6 +1116,7 @@ it("preserves both resource discriminators on inverse predicates", async () => {
   expect(pushed.status).toBe(200);
   expect(pushed.body.result.data).toEqual([{ id: "legacy-entry" }]);
 
+  const linked = { resource: "collection", version: 1, filters: { id: "legacy-target" } };
   const response = await server.router.handle(new Request("http://localhost/datafn/transact", {
     method: "POST",
     body: JSON.stringify({
@@ -1115,6 +1124,10 @@ it("preserves both resource discriminators on inverse predicates", async () => {
       steps: [
         { query: forward },
         { query: { resource: "task", version: 1, select: ["id", "entries.#"], filters: { id: "legacy-target" } } },
+        { query: { ...linked, select: ["id", "entries.#"] } },
+        { query: { ...linked, select: ["id", "entries.*"] } },
+        { query: { ...linked, select: ["id", "entries.*#"] } },
+        { query: { ...linked, select: ["id", "entries.id", "entries.label"] } },
       ],
     }),
   }));
@@ -1122,6 +1135,11 @@ it("preserves both resource discriminators on inverse predicates", async () => {
   expect(response.status).toBe(200);
   expect(transaction.result.results[0].data).toEqual(pushed.body.result.data);
   expect(transaction.result.results[1].data).toEqual([{ id: "legacy-target", entries: [] }]);
+  expect(transaction.result.results[2].data[0].entries).toHaveLength(2);
+  for (const result of transaction.result.results.slice(3)) {
+    expect(result.data[0].entries.map((entry: { label: string }) => entry.label).sort())
+      .toEqual(["Legacy entry", "Node entry"]);
+  }
 });
 
 describe("relation expansion by name for in-memory queries", () => {
