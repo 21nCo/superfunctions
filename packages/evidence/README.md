@@ -63,6 +63,7 @@ const result = await verifyEvidence(JSON.parse(text), {
 
 - `artifactRoot` must be an absolute path to an existing directory; otherwise the result is `EVIDENCE_OPTIONS_INVALID` alone, with `artifactRoot` in `detail.invalid` (after any other invalid option names). The root is resolved once with `realpath`, so the root may itself be a symlink or sit below one.
 - When the record is missing or has a structural failure (`EVIDENCE_MISSING`, `EVIDENCE_MISSING_FIELD` or `EVIDENCE_MALFORMED`), or an option is invalid, no artifact is read. Otherwise every artifact is checked, also when the record has other failures such as `EVIDENCE_COMMIT_MISMATCH`.
+- The artifact list is copied when the record is validated, before any file is touched, so changing the record object while the promise is pending does not change what is checked.
 - An artifact is hashed with streaming SHA-256 over its raw bytes, with no size limit, one file at a time. `format` is recorded but never interpreted: a catchfn evidence event file is bytes to this package.
 - Each artifact path is walked from the root one component at a time without following symlinks. The artifact must be a regular file, with no symlink anywhere below the root, including the file itself, even when the link's target is inside the root.
 

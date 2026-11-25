@@ -1,6 +1,7 @@
 /// <reference types="node" />
 // The Node entry: verifies a record and re-hashes its artifacts on disk.
-// Only this file uses Node built-ins; the `.` entry stays runtime-neutral.
+// Only this file uses Node built-ins; the `.` entry stays runtime-neutral, and
+// tsconfig.neutral.json type-checks it without Node types.
 import { createHash } from "node:crypto";
 import { constants, promises as fs } from "node:fs";
 import type { Stats } from "node:fs";
@@ -153,6 +154,12 @@ function optionsInvalid(invalid: readonly unknown[]): EvidenceValidationResult {
  */
 export async function verifyEvidence(record: unknown, options: VerifyEvidenceOptions): Promise<EvidenceValidationResult> {
   const validation = validateEvidenceRecord(record, options);
+  const structurallyValid = !validation.failures.some((failure) => STOP_CODES.has(failure.code));
+  // Copy the validated artifact list before the first await, so a caller that
+  // changes the record while verification runs cannot change what is checked.
+  const artifacts: EvidenceArtifactHash[] = structurallyValid
+    ? (record as EvidenceRecordV1).source.artifactHashes.map(({ path: relative, sha256 }) => ({ path: relative, sha256 }))
+    : [];
   const invalidOptions = validation.failures.find((failure) => failure.code === "EVIDENCE_OPTIONS_INVALID");
   const optionsObject = typeof options === "object" && options !== null && !Array.isArray(options);
   // An options value that is not an object has no artifactRoot to resolve.
@@ -162,11 +169,9 @@ export async function verifyEvidence(record: unknown, options: VerifyEvidenceOpt
     return optionsInvalid(optionsObject && root === undefined ? [...invalid, "artifactRoot"] : invalid);
   }
   if (root === undefined) return optionsInvalid(["artifactRoot"]);
-  if (validation.failures.some((failure) => STOP_CODES.has(failure.code))) return validation;
+  if (!structurallyValid) return validation;
 
   const failures = [...validation.failures];
-  // The structural pass found no failure, so the record has the v1 shape.
-  const artifacts = (record as EvidenceRecordV1).source.artifactHashes;
   // One artifact at a time keeps the number of open files at one.
   for (const [index, artifact] of artifacts.entries()) {
     const base = pointer("/source/artifactHashes", index);

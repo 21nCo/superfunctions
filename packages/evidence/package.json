@@ -28,7 +28,7 @@
     "test": "vitest run && node scripts/verify-packed.mjs",
     "test:watch": "vitest --watch",
     "lint": "tsc --noEmit -p tsconfig.check.json",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.check.json",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.neutral.json && tsc --noEmit -p tsconfig.check.json",
     "clean": "rm -rf dist",
     "verify:packed": "node scripts/verify-packed.mjs"
   },

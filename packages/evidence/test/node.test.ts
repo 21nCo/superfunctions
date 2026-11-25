@@ -182,6 +182,15 @@ describe("verifyEvidence: artifacts that fail", () => {
     ]);
   });
 
+  it("checks the artifact list as validated, even when the caller changes the record while verification runs", async () => {
+    const { root, record } = passingTree();
+    rmSync(path.join(root, "reports", "unit.json"));
+    const pending = verifyEvidence(record, optionsFor(root));
+    record.source.artifactHashes[0]!.path = "catchfn/events.json";
+    record.source.artifactHashes.length = 0;
+    expect(summary(await pending)).toEqual([{ code: "EVIDENCE_ARTIFACT_MISSING", path: artifactPointer(0, "path"), artifact: "reports/unit.json" }]);
+  });
+
   it("produces each artifact code from the closed set", () => {
     const artifactCodes = EVIDENCE_FAILURE_CODES.filter((code) => code.startsWith("EVIDENCE_ARTIFACT_"));
     // Each is returned alone by one of the tests above.
