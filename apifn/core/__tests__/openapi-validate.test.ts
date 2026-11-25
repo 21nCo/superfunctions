@@ -329,6 +329,18 @@ describe("validateOpenAPI", () => {
     { directory: "C:\\project", ref: "\\shared.yaml", key: "C:\\shared.yaml", other: "/shared.yaml" },
     { directory: "C:\\project", ref: "../../shared.yaml", key: "C:\\shared.yaml", other: "/shared.yaml" },
     {
+      directory: "\\\\server\\share\\project",
+      ref: "./shared.yaml",
+      key: "//server/share/project/shared.yaml",
+      other: "C:/project/shared.yaml",
+    },
+    {
+      directory: "\\\\server\\share\\project",
+      ref: "../../shared.yaml",
+      key: "\\\\server\\share\\shared.yaml",
+      other: "//server/shared.yaml",
+    },
+    {
       directory: "/virtual/project\\branch",
       ref: "./shared.yaml",
       key: "/virtual/project%5Cbranch/shared.yaml",

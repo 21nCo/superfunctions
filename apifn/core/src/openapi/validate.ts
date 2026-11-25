@@ -33,6 +33,7 @@ interface DocumentLocation {
   url: URL;
   isPath: boolean;
   isWindowsPath: boolean;
+  shareRoot?: string;
 }
 
 interface ReferenceTarget {
@@ -75,12 +76,19 @@ const WINDOWS_DRIVE_PATH = /^[a-z]:[\\/]/i;
 
 function workingDirectoryLocation(): DocumentLocation {
   const cwd = typeof process !== "undefined" && process.cwd ? process.cwd() : "/";
-  const isWindowsPath = WINDOWS_DRIVE_PATH.test(cwd);
+  const share = /^\\\\([^\\]+)\\([^\\]+)(?:\\|$)/.exec(cwd);
+  // Use the URL's drive root to keep relative paths within the network share.
+  // The real share prefix is restored when forming the allowlist keys.
+  const windowsPath = share ? "C:\\" + cwd.slice(share[0].length) : cwd;
+  const isWindowsPath = WINDOWS_DRIVE_PATH.test(windowsPath);
   if (isWindowsPath) {
-    const [drive, ...segments] = cwd.replaceAll("\\", "/").split("/");
+    const [drive, ...segments] = windowsPath.replaceAll("\\", "/").split("/");
     const directory = segments.map(encodeURIComponent).join("/").replace(/\/$/, "");
     const url = new URL("file:///" + drive + "/" + (directory ? directory + "/" : ""));
-    return { url, isPath: true, isWindowsPath };
+    const shareRoot = share
+      ? absolutePathKey("//" + [share[1], share[2]].map(encodeURIComponent).join("/"))
+      : undefined;
+    return { url, isPath: true, isWindowsPath, shareRoot };
   }
   const path = (cwd.startsWith("/") ? cwd : "/" + cwd).replace(/\/$/, "") + "/";
   const url = new URL(LOCAL_PATH_ORIGIN);
@@ -109,13 +117,14 @@ function resolveDocumentURI(base: DocumentLocation, ref: string) {
   const pathname = isPath ? absolutePathKey(url.pathname) : undefined;
   const uri = pathname === undefined ? url.href : pathname + query;
   const pathWithoutLeadingSlash = pathname?.slice(1);
-  const isWindowsPath = pathWithoutLeadingSlash !== undefined && (windowsDrive || base.isWindowsPath) &&
-    WINDOWS_DRIVE_PATH.test(pathWithoutLeadingSlash);
-  const windowsPath = isWindowsPath ? pathWithoutLeadingSlash : undefined;
+  const drivePath = pathWithoutLeadingSlash !== undefined && (windowsDrive || base.isWindowsPath) &&
+    WINDOWS_DRIVE_PATH.test(pathWithoutLeadingSlash) ? pathWithoutLeadingSlash : undefined;
+  const shareRoot = drivePath !== undefined && !windowsDrive ? base.shareRoot : undefined;
+  const windowsPath = shareRoot && drivePath ? shareRoot + drivePath.slice(2) : drivePath;
   const keys = windowsPath === undefined
     ? [uri]
     : [windowsPath + query, windowsPath.replaceAll("/", "\\") + query];
-  return { uri: keys[0], fragment, keys, location: { url, isPath, isWindowsPath } };
+  return { uri: keys[0], fragment, keys, location: { url, isPath, isWindowsPath: drivePath !== undefined, shareRoot } };
 }
 
 const EXAMPLE_FIELDS = new Set(["value", "externalValue", "summary", "description"]);
