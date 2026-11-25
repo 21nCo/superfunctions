@@ -105,8 +105,11 @@ export function createMcpFnAuthProviderAdapter<TSession extends McpFnAuthSession
 ): McpFnAuthProviderAdapter<TSession> {
   const normalized = new URL(options.resource.toString());
   normalized.hash = "";
-  // Kept as a string so nothing outside can change the expected audience.
+  // Kept as strings so nothing outside can change the expected audience.
+  // Resource IDs are compared as identifiers (exactly), against the configured
+  // value or its normalized form, never by normalizing the session's IDs.
   const audience = normalized.toString();
+  const configuredResource = options.resource.toString();
   return {
     async authenticate(request) {
       const bearer = readBearerToken(request);
@@ -123,11 +126,12 @@ export function createMcpFnAuthProviderAdapter<TSession extends McpFnAuthSession
       if (!session) return null;
       const expired = () => {
         const now = options.clock?.() ?? Date.now();
-        if (session.expiresAt !== undefined && !(session.expiresAt.getTime() > now)) return true;
+        // A non-finite deadline (Infinity, NaN) counts as expired.
+        if (session.expiresAt !== undefined && !expiresAfter(session.expiresAt.getTime(), now)) return true;
         // A custom mapping's expiry (whole seconds) is checked as given; the
         // default mapping's comes from session.expiresAt, checked exactly above.
         const mappedExpiry = options.map ? principal?.expiresAt : undefined;
-        return mappedExpiry !== undefined && !(mappedExpiry * 1_000 > now);
+        return mappedExpiry !== undefined && !expiresAfter(mappedExpiry * 1_000, now);
       };
       let principal: McpFnPrincipal | undefined;
       if (expired()) return null;
@@ -141,7 +145,7 @@ export function createMcpFnAuthProviderAdapter<TSession extends McpFnAuthSession
       if (options.provider.authorize) {
         if (!(await options.provider.authorize(session, audience))) return null;
         audienceVerified = true;
-      } else if (principal.resourceIds.some((id) => sameResource(id, audience))) {
+      } else if (principal.resourceIds.some((id) => id === configuredResource || id === audience)) {
         audienceVerified = true;
       } else if (options.allowUnboundCredentials !== true || principal.resourceIds.length > 0) {
         // The opt-in covers credentials with no binding at all; one bound to
@@ -181,14 +185,9 @@ export function createMcpFnAuthProviderAdapter<TSession extends McpFnAuthSession
   };
 }
 
-function sameResource(candidate: string, audience: string): boolean {
-  try {
-    const parsed = new URL(candidate);
-    parsed.hash = "";
-    return parsed.toString() === audience;
-  } catch {
-    return false;
-  }
+/** Whether a millisecond deadline is finite and later than now. */
+function expiresAfter(deadline: number, now: number): boolean {
+  return Number.isFinite(deadline) && deadline > now;
 }
 
 async function withRequestClone<T>(
@@ -262,6 +261,11 @@ export function createAuthProviderMcpHandler<TSession extends McpFnAuthSessionLi
           .sort(compareCodeUnits)
           .join(" "),
       });
+    }
+    // Scope resolution may have awaited: refuse a credential that expired meanwhile.
+    const expiresAt = authenticated.authInfo.expiresAt;
+    if (expiresAt !== undefined && !expiresAfter(expiresAt * 1_000, options.clock?.() ?? Date.now())) {
+      return invalidTokenResponse(metadataUrl);
     }
     const handleOptions: HandleRequestOptions = { authInfo: authenticated.authInfo };
     return mcpHandler(request, handleOptions);

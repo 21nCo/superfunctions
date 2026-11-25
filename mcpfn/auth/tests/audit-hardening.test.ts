@@ -132,6 +132,39 @@ describe("AuthFn provider adapter (MCP-SEC-05)", () => {
     expect((await call(handler)).status).toBe(401);
   });
 
+  it("compares resource IDs exactly, as identifiers", async () => {
+    for (const id of ["https://MCP.example.com/mcp", "https://mcp.example.com:443/mcp", "https://mcp.example.com/mcp#fragment"]) {
+      const handler = createAuthProviderMcpHandler(echoAuthInfo, {
+        resource,
+        provider: { authenticateBearer: async () => session({ resourceIds: [id] }) },
+      });
+      expect((await call(handler)).status).toBe(401);
+    }
+  });
+
+  it("refuses a credential that expires while required scopes are resolved", async () => {
+    let now = Date.UTC(2026, 10, 25);
+    const handler = createAuthProviderMcpHandler(echoAuthInfo, {
+      resource,
+      clock: () => now,
+      provider: { authenticateBearer: async () => session({ expiresAt: new Date(now + 1_000) }) },
+      requiredScopes: async () => {
+        now += 5_000;
+        return [];
+      },
+    });
+    expect((await call(handler)).status).toBe(401);
+  });
+
+  it("treats an infinite mapped expiry as expired", async () => {
+    const handler = createAuthProviderMcpHandler(echoAuthInfo, {
+      resource,
+      provider: { authenticateBearer: async () => session() },
+      map: () => ({ subject: "user-1", clientId: "client-1", scopes: [], resourceIds: [resource], expiresAt: Infinity }),
+    });
+    expect((await call(handler)).status).toBe(401);
+  });
+
   it("rejects expired sessions and mapped principals", async () => {
     const now = Date.UTC(2026, 10, 25);
     const expired = createAuthProviderMcpHandler(echoAuthInfo, {
@@ -214,6 +247,30 @@ describe("OAuth resource server token expiry (MCP-SEC-11)", () => {
     expect((await call(at(deadline - 50))).status).toBe(200);
     expect((await call(at(deadline))).status).toBe(401);
     expect((await call(at(deadline + 400))).status).toBe(401);
+  });
+
+  it("refuses an infinite expiry", async () => {
+    const handler = createOAuthResourceServerHandler(echoAuthInfo, {
+      resource,
+      authorizationServers: ["https://login.example.com"],
+      verifier: verifier(Infinity),
+    });
+    expect((await call(handler)).status).toBe(401);
+  });
+
+  it("refuses a token that expires while required scopes are resolved", async () => {
+    let now = Date.UTC(2026, 10, 25);
+    const handler = createOAuthResourceServerHandler(echoAuthInfo, {
+      resource,
+      authorizationServers: ["https://login.example.com"],
+      verifier: verifier(now / 1_000 + 1),
+      clock: () => now,
+      requiredScopes: async () => {
+        now += 5_000;
+        return [];
+      },
+    });
+    expect((await call(handler)).status).toBe(401);
   });
 
   it("still accepts unexpired tokens", async () => {

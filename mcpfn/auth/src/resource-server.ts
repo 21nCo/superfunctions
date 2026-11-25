@@ -180,7 +180,8 @@ export function createOAuthResourceServerHandler(
         description: "The access token has no expiry",
       });
     }
-    if (authInfo.expiresAt !== undefined && !(authInfo.expiresAt > now)) {
+    // A non-finite deadline (Infinity, NaN) counts as expired.
+    if (authInfo.expiresAt !== undefined && !(Number.isFinite(authInfo.expiresAt) && authInfo.expiresAt > now)) {
       return bearerChallengeResponse(401, metadataUrl, {
         error: "invalid_token",
         description: "The access token has expired",
@@ -216,6 +217,14 @@ export function createOAuthResourceServerHandler(
         scope: [...new Set(requiredScopes)]
           .sort(compareCodeUnits)
           .join(" "),
+      });
+    }
+    // Scope resolution may have awaited: refuse a token that expired meanwhile.
+    if (authInfo.expiresAt !== undefined &&
+        !(authInfo.expiresAt > (options.clock?.() ?? Date.now()) / 1_000)) {
+      return bearerChallengeResponse(401, metadataUrl, {
+        error: "invalid_token",
+        description: "The access token has expired",
       });
     }
     return mcpHandler(request, { authInfo });
