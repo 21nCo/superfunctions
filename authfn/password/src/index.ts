@@ -12,7 +12,8 @@ import {
 import { createAuthFnRouteMeta, readOptionalJson } from 'authfn/http/router';
 import { authenticateAccountRequest, issueSession, revokeSessionById } from 'authfn/core/sessions';
 import { resolveEnvironment } from 'authfn/core/environment';
-import { assertCurrentPasswordCredential, signInWithPassword, signUpWithPassword } from 'authfn/core/passwords';
+import { getPasswordCredentialByUserId, signInWithPassword, signUpWithPassword } from 'authfn/core/passwords';
+import { AuthFnInvalidCredentialsError } from 'authfn/core/errors';
 import { jsonSuccess } from 'authfn/http/envelopes';
 import { assertOtpEmailBudgetConfig, completeResetPassword, sendOtpChallenge } from 'authfn/core/verifications';
 import { emitAuthEvent, eventRequestId } from 'authfn/core/observability';
@@ -235,6 +236,17 @@ function createPasswordRoutes(
           requireEmailVerifiedForSignIn: config.requireEmailVerifiedForSignIn,
           request
         });
+        const checkCredentialAfterWrite = async (discard: () => Promise<unknown>) => {
+          try {
+            const current = await getPasswordCredentialByUserId(ctx.config, result.user.id);
+            if (current?.id !== result.credential.id || current.passwordHash !== result.credential.passwordHash) {
+              throw new AuthFnInvalidCredentialsError('Invalid email or password');
+            }
+          } catch (error) {
+            await discard();
+            throw error;
+          }
+        };
         const twoFactorConfig = getTwoFactorPluginConfig(ctx.config);
         if (twoFactorConfig) {
           const challenge = await beginTwoFactorChallenge(
@@ -244,16 +256,13 @@ function createPasswordRoutes(
             twoFactorConfig
           );
           if (challenge) {
-            try {
-              await assertCurrentPasswordCredential(ctx.config, result.credential);
-            } catch (error) {
-              await ctx.config.database.delete({
+            await checkCredentialAfterWrite(() =>
+              ctx.config.database.delete({
                 model: 'two_factor_challenges',
                 where: [{ field: 'id', operator: 'eq', value: challenge.challenge.id }],
                 namespace: ctx.config.namespace ?? 'authfn'
-              });
-              throw error;
-            }
+              })
+            );
             await emitAuthEvent(ctx.config, {
               type: 'authfn.2fa.challenged',
               requestId: eventRequestId(request),
@@ -268,18 +277,19 @@ function createPasswordRoutes(
             throw createPendingTwoFactorResponse(challenge.challenge);
           }
         }
-        const issued = await issueSession(ctx.config, ctx.hooks, {
+        const issued = await issueSession(ctx.config, {
+          ...ctx.hooks,
+          async afterSessionIssue(hookContext, session) {
+            // Run before the host's success hook or issueSession's event.
+            await checkCredentialAfterWrite(() => revokeSessionById(ctx.config, session.id));
+            await ctx.hooks.afterSessionIssue?.(hookContext, session);
+          }
+        }, {
           request,
           userId: result.user.id,
           primaryEmail: result.user.primaryEmail,
           methods: ['password']
         });
-        try {
-          await assertCurrentPasswordCredential(ctx.config, result.credential);
-        } catch (error) {
-          await revokeSessionById(ctx.config, issued.session.id);
-          throw error;
-        }
         const response = buildSessionResponse(issued, body.sessionMode);
 
         return jsonSuccess(request, response.data, {

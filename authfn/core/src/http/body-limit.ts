@@ -14,7 +14,10 @@ export async function assertAuthRequestBodyLimit(request: Request): Promise<void
 
   if (!request.body || request.bodyUsed) return;
   const { signal } = request;
-  signal.throwIfAborted();
+  if (signal.aborted) {
+    cancel(request.body);
+    throw canceledBodyError();
+  }
   const reader = request.clone().body!.getReader();
   function cancelBothBranches() {
     // Do not wait for a stream source's cancellation handler.
@@ -38,7 +41,7 @@ export async function assertAuthRequestBodyLimit(request: Request): Promise<void
   let abort: (() => void) | undefined;
   const interrupted = new Promise<never>((_, reject) => {
     abort = () => {
-      reject(signal.reason);
+      reject(canceledBodyError());
       cancelBothBranches();
     };
     signal.addEventListener('abort', abort, { once: true });
@@ -54,6 +57,10 @@ export async function assertAuthRequestBodyLimit(request: Request): Promise<void
     if (abort) signal.removeEventListener('abort', abort);
     reader.releaseLock();
   }
+}
+
+function canceledBodyError(): AuthFnError {
+  return new AuthFnError('AUTHFN_VALIDATION_ERROR', 'Request body was canceled', { status: 408 });
 }
 
 function cancel(body: ReadableStream<Uint8Array> | null): void {

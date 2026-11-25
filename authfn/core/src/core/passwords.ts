@@ -291,7 +291,10 @@ export async function signInWithPassword(
   if (!valid) {
     throw new AuthFnInvalidCredentialsError('Invalid email or password');
   }
-  await assertCurrentPasswordCredential(config, credential);
+  const current = await getPasswordCredentialByUserId(config, user.id);
+  if (current?.id !== credential.id || current.passwordHash !== credential.passwordHash) {
+    throw new AuthFnInvalidCredentialsError('Invalid email or password');
+  }
 
   if (options.requireEmailVerifiedForSignIn && !user.emailVerifiedAt) {
     throw new AuthFnEmailNotVerifiedError('Email address must be verified before signing in', {
@@ -348,17 +351,6 @@ export async function getPasswordCredentialByUserId(
     where: [{ field: 'userId', operator: 'eq', value: userId }],
     namespace: namespace(config)
   });
-}
-
-/** A concurrent reset may replace the credential while verification or sign-in is in progress. */
-export async function assertCurrentPasswordCredential(
-  config: Pick<AuthFnRuntimeConfig, 'database' | 'namespace'>,
-  credential: AuthFnPasswordCredentialRecord
-): Promise<void> {
-  const current = await getPasswordCredentialByUserId(config, credential.userId);
-  if (current?.id !== credential.id || current.passwordHash !== credential.passwordHash) {
-    throw new AuthFnInvalidCredentialsError('Invalid email or password');
-  }
 }
 
 export async function updatePasswordCredential(

@@ -232,6 +232,21 @@ describe('authfn contained audit fixes', () => {
     }
   });
 
+  it('cancels the body source for a request that was aborted before handling', async () => {
+    const auth = createTestServer(passwordConfig(memoryAdapter({ debug: false })));
+    const cancellation = vi.fn();
+    const controller = new AbortController();
+    const request = new Request('https://account.example.com/auth/sign-in/password', {
+      method: 'POST',
+      body: new ReadableStream({ cancel: cancellation }),
+      signal: controller.signal,
+      duplex: 'half'
+    } as RequestInit);
+    controller.abort();
+    expect((await auth.router.handle(request)).status).toBe(408);
+    expect(cancellation).toHaveBeenCalledOnce();
+  });
+
   it('rejects an over-long password on signup, sign-in, and reset before the database or scrypt', async () => {
     const tracked = createDatabaseCounter(memoryAdapter({ debug: false }));
     const delivery = createDeliveryRecorder();
@@ -329,13 +344,15 @@ describe('authfn contained audit fixes', () => {
     let allowSession!: () => void;
     const ready = new Promise<void>((resolve) => { sessionReady = resolve; });
     const waitForReset = new Promise<void>((resolve) => { allowSession = resolve; });
+    const afterSessionIssue = vi.fn();
     const auth = createTestServer({
       ...config,
       hooks: {
         async beforeSessionIssue() {
           sessionReady();
           await waitForReset;
-        }
+        },
+        afterSessionIssue
       },
       pluginRuntime: { password: { otp: { delivery: delivery.provider } } }
     });
@@ -357,6 +374,7 @@ describe('authfn contained audit fixes', () => {
     const rejected = await signIn;
     expect(rejected.status).toBe(401);
     expect(rejected.headers.has('set-cookie')).toBe(false);
+    expect(afterSessionIssue).not.toHaveBeenCalled();
     const sessions = await config.database.findMany<{ revokedAt: Date | null }>({
       model: 'sessions',
       where: [{ field: 'userId', operator: 'eq', value: signedUp.user.id }],
