@@ -95,9 +95,9 @@ The first-party SDKs throw a typed `AuthFnError` (Node), `AuthFnError` (Swift), 
 
 ## Request IDs
 
-Every response carries a `requestId`. Every observability event carries the same `requestId`. Every server log line that authfn emits is prefixed with the `requestId`. This is the canonical correlation key.
+Every response carries a `requestId`. Every observability event for that request carries the same `requestId`, and the value is cached for the life of the request. The id in the JSON body matches the `X-Request-Id` response header.
 
-If you want to honor an inbound `X-Request-Id` header (e.g. from your gateway), authfn does so transparently: the inbound header value is reused across every event and response. Otherwise the kernel generates a [ULID](https://github.com/ulid/spec) and uses that.
+An inbound `X-Request-Id` is reused when it is 1–128 characters and each character is printable ASCII without spaces (character codes 0x21–0x7E). A missing header, a longer value, whitespace, or any other character is discarded. Authfn then generates an id of the form `req_` plus 16 hex characters.
 
 ## Streaming and binary responses
 

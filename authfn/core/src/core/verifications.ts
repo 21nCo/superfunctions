@@ -43,7 +43,7 @@ import {
   readSignUpProfile
 } from './users.js';
 import { readPluginRuntimeConfig } from './plugin-runtime.js';
-import { type PasswordPolicyOptions, updatePasswordCredential } from './passwords.js';
+import { assertPasswordWithinLimits, type PasswordPolicyOptions, preparePasswordCredentialUpdate } from './passwords.js';
 import { resolveEnvironment } from './environment.js';
 import {
   allowsOtpSignUpExistingUser,
@@ -288,6 +288,16 @@ export async function verifyOtpChallenge(
   runtimeOptions: OtpRuntimeOptions,
   input: VerifyOtpInput
 ): Promise<VerifyOtpResult> {
+  return verifyOtpChallengeBeforeConsume(config, hooks, runtimeOptions, input);
+}
+
+async function verifyOtpChallengeBeforeConsume(
+  config: AuthFnRuntimeConfig,
+  hooks: Partial<AuthFnHooks>,
+  runtimeOptions: OtpRuntimeOptions,
+  input: VerifyOtpInput,
+  beforeConsume?: (user: AuthFnUserRecord) => Promise<void>
+): Promise<VerifyOtpResult> {
   const email = normalizeEmail(input.email);
   const challenge = await findLatestChallenge(config, input.purpose, email);
   if (!challenge) {
@@ -426,8 +436,15 @@ export async function verifyOtpChallenge(
       verifiedByHolder = await isAccountHolderRequest(config, input.request, user.id);
     }
 
+    if (user && beforeConsume) await beforeConsume(user);
+    const consumedAt = resolveNow(runtimeOptions);
+    // An admitted challenge's expiry is immutable. Check it at the write
+    // boundary without binding a Date predicate on SQLite adapters.
+    if (challenge.expiresAt.getTime() <= consumedAt.getTime()) {
+      throw new AuthFnOtpExpiredError('OTP code has expired', { challengeId: challenge.id });
+    }
     consuming = true;
-    consumed = await consumeOtpChallenge(config, challenge, now);
+    consumed = await consumeOtpChallenge(config, challenge, consumedAt);
   } catch (error) {
     if (consuming && !(error instanceof AuthFnOtpReplayedError)) {
       // The consume write's outcome is unknown (it threw, or could not be
@@ -633,32 +650,37 @@ export async function completeResetPassword(
   runtimeOptions: OtpRuntimeOptions,
   input: CompleteResetPasswordInput
 ): Promise<{ passwordUpdated: true }> {
+  // Refuse an unacceptable password before the OTP is read or spent.
+  assertPasswordWithinLimits(input.newPassword);
   const email = normalizeEmail(input.email);
   const runtime = input.request ? await resolveEnvironment(config, input.request) : undefined;
-  const challenge = await verifyOtpChallenge(config, {}, runtimeOptions, {
+  let updatePassword: Awaited<ReturnType<typeof preparePasswordCredentialUpdate>> | undefined;
+  const challenge = await verifyOtpChallengeBeforeConsume(config, {}, runtimeOptions, {
     request: input.request,
     purpose: input.purpose,
     email,
     code: input.code
+  }, async (user) => {
+    updatePassword = await preparePasswordCredentialUpdate(config, {
+      userId: user.id,
+      password: input.newPassword
+    }, {
+      ...runtimeOptions.passwordPolicy,
+      request: input.request,
+      environment: runtime,
+      email,
+      purpose: 'reset-password'
+    });
   });
 
-  const user = challenge.user ?? await findUserByPrimaryEmail(config, email);
-  if (!user) {
+  const user = challenge.user;
+  if (!user || !updatePassword) {
     throw new AuthFnOtpInvalidError('Password reset requires an existing user', {
       email
     });
   }
 
-  await updatePasswordCredential(config, {
-    userId: user.id,
-    password: input.newPassword
-  }, {
-    ...runtimeOptions.passwordPolicy,
-    request: input.request,
-    environment: runtime,
-    email,
-    purpose: 'reset-password'
-  });
+  await updatePassword();
   // Whoever reset the password proved control of the mailbox. Sessions and
   // unfinished two-factor sign-ins that began before the reset (possibly by
   // someone who knew the old password) stop working. On an account whose

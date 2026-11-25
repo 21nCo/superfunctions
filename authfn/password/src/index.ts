@@ -10,9 +10,10 @@ import {
   type AuthFnSchemaDefinition
 } from 'authfn';
 import { createAuthFnRouteMeta, readOptionalJson } from 'authfn/http/router';
-import { authenticateAccountRequest, issueSession } from 'authfn/core/sessions';
+import { authenticateAccountRequest, issueSession, revokeSessionById } from 'authfn/core/sessions';
 import { resolveEnvironment } from 'authfn/core/environment';
-import { signInWithPassword, signUpWithPassword } from 'authfn/core/passwords';
+import { getPasswordCredentialByUserId, signInWithPassword, signUpWithPassword } from 'authfn/core/passwords';
+import { AuthFnInvalidCredentialsError, AuthFnNotFoundError } from 'authfn/core/errors';
 import { jsonSuccess } from 'authfn/http/envelopes';
 import { assertOtpEmailBudgetConfig, completeResetPassword, sendOtpChallenge } from 'authfn/core/verifications';
 import { emitAuthEvent, eventRequestId } from 'authfn/core/observability';
@@ -232,8 +233,20 @@ function createPasswordRoutes(
           email: body.email ?? '',
           password: body.password ?? ''
         }, {
-          requireEmailVerifiedForSignIn: config.requireEmailVerifiedForSignIn
+          requireEmailVerifiedForSignIn: config.requireEmailVerifiedForSignIn,
+          request
         });
+        const checkCredentialAfterWrite = async (discard: () => Promise<unknown>) => {
+          try {
+            const current = await getPasswordCredentialByUserId(ctx.config, result.user.id);
+            if (current?.id !== result.credential.id || current.passwordHash !== result.credential.passwordHash) {
+              throw new AuthFnInvalidCredentialsError('Invalid email or password');
+            }
+          } catch (error) {
+            await discard();
+            throw error;
+          }
+        };
         const twoFactorConfig = getTwoFactorPluginConfig(ctx.config);
         if (twoFactorConfig) {
           const challenge = await beginTwoFactorChallenge(
@@ -243,6 +256,13 @@ function createPasswordRoutes(
             twoFactorConfig
           );
           if (challenge) {
+            const discardChallenge = () =>
+              ctx.config.database.delete({
+                model: 'two_factor_challenges',
+                where: [{ field: 'id', operator: 'eq', value: challenge.challenge.id }],
+                namespace: ctx.namespace
+              });
+            await checkCredentialAfterWrite(discardChallenge);
             await emitAuthEvent(ctx.config, {
               type: 'authfn.2fa.challenged',
               requestId: eventRequestId(request),
@@ -254,15 +274,39 @@ function createPasswordRoutes(
                 primaryMethod: 'password'
               }
             });
+            await checkCredentialAfterWrite(discardChallenge);
             throw createPendingTwoFactorResponse(challenge.challenge);
           }
         }
-        const issued = await issueSession(ctx.config, ctx.hooks, {
+        const discardSession = async (sessionId: string) => {
+          try {
+            await revokeSessionById(ctx.config, sessionId);
+          } catch (error) {
+            if (error instanceof AuthFnNotFoundError) return;
+            // The account may also disappear between the revoke read and write.
+            const remaining = await ctx.config.database.findOne({
+              model: 'sessions',
+              where: [{ field: 'id', operator: 'eq', value: sessionId }],
+              namespace: ctx.namespace
+            });
+            if (remaining) throw error;
+          }
+        };
+        const issued = await issueSession(ctx.config, {
+          ...ctx.hooks,
+          async afterSessionIssue(hookContext, session) {
+            const discard = () => discardSession(session.id);
+            await checkCredentialAfterWrite(discard);
+            await ctx.hooks.afterSessionIssue?.(hookContext, session);
+            await checkCredentialAfterWrite(discard);
+          }
+        }, {
           request,
           userId: result.user.id,
           primaryEmail: result.user.primaryEmail,
           methods: ['password']
         });
+        await checkCredentialAfterWrite(() => discardSession(issued.session.id));
         const response = buildSessionResponse(issued, body.sessionMode);
 
         return jsonSuccess(request, response.data, {

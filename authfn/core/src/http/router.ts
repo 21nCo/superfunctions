@@ -1,4 +1,4 @@
-import { createObservabilityMiddleware, createRouter, type Route, type Router } from '@superfunctions/http';
+import { createObservabilityMiddleware, createRouter, type Middleware, type Route, type Router } from '@superfunctions/http';
 import type { AuthFnRuntimeConfig, AuthFnHooks } from '../types.js';
 import { AuthFnNotImplementedError, AuthFnUnauthenticatedError } from '../core/errors.js';
 import { AuthFnValidationError, isAuthFnErrorWithCookies } from '../core/errors.js';
@@ -18,6 +18,7 @@ import { createAuthFnRateLimitMiddleware } from '../core/rate-limit.js';
 import { createAuthFnCellPlacementMiddleware } from '../core/gateway-routing.js';
 import { getMultiRegionPluginConfig } from '../core/regions.js';
 import { findUserById } from '../core/users.js';
+import { assertAuthRequestBodyLimit, getOAuthBodyPolicy } from './body-limit.js';
 import { jsonError, jsonSuccess } from './envelopes.js';
 
 export function createAuthFnRouter(
@@ -25,12 +26,20 @@ export function createAuthFnRouter(
   _hooks: Partial<AuthFnHooks>,
   pluginRoutes: Route[]
 ): Router {
-  const rateLimitMiddleware = createAuthFnRateLimitMiddleware(config);
+  function hasRouteBodyLimit(request: Request): boolean {
+    const route = router.match(request.method, new URL(request.url).pathname)?.route;
+    if (route?.method !== 'POST') return false;
+    // These OAuth routes already bound their reads and return protocol errors.
+    // Use their existing operation IDs so released plugins keep that behavior.
+    const policy = getOAuthBodyPolicy(route.path);
+    return policy !== undefined && route.meta?.openapi?.operationId === policy.operationId;
+  }
+  const rateLimitMiddleware = createAuthFnRateLimitMiddleware(config, hasRouteBodyLimit);
   const multiRegionConfig = getMultiRegionPluginConfig(config);
   const placementMiddleware = multiRegionConfig
     ? createAuthFnCellPlacementMiddleware(config, multiRegionConfig)
     : null;
-  const middleware = [
+  const middleware: Middleware[] = [
     ...(config.observability
       ? [
           createObservabilityMiddleware({
@@ -40,11 +49,17 @@ export function createAuthFnRouter(
           })
         ]
       : []),
+    async (request, _context, next) => {
+      if (!hasRouteBodyLimit(request)) {
+        await assertAuthRequestBodyLimit(request);
+      }
+      return next();
+    },
     ...(placementMiddleware ? [placementMiddleware] : []),
     ...(rateLimitMiddleware ? [rateLimitMiddleware] : [])
   ];
 
-  return createRouter({
+  const router = createRouter({
     basePath: config.basePath ?? '/auth',
     middleware: middleware.length > 0 ? middleware : undefined,
     routes: [...createBaseRoutes(config, _hooks), ...pluginRoutes],
@@ -74,6 +89,7 @@ export function createAuthFnRouter(
       return response;
     }
   });
+  return router;
 }
 
 
