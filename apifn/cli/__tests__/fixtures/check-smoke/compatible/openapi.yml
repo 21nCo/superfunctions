@@ -1,0 +1,31 @@
+info:
+  title: Check smoke fixture
+  version: 1.0.0
+openapi: 3.1.0
+paths:
+  /users:
+    get:
+      operationId: listUsers
+      responses:
+        "200":
+          description: All users
+      summary: List users
+      tags:
+        - users
+  /users/{id}:
+    get:
+      operationId: getUser
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The user
+      summary: Get a user
+      tags:
+        - users
+tags:
+  - name: users

@@ -101,10 +101,12 @@ console.log(formatDiffAsText(result));
 ApiFn provides a reusable GitHub Actions workflow at `.github/workflows/apifn-api-check.yml` (repo root, so GitHub Actions can register and call it).
 
 The workflow checks out the **caller**, installs the pinned published `@apifn/cli`
-version, then runs it against the caller's spec and collection. The caller does
-not need to be this monorepo or contain an `@apifn/cli` workspace. Grant
+version, then checks the caller's contract. The caller does not need to be this
+monorepo or contain an `@apifn/cli` workspace. Grant `contents: read` and
 `pull-requests: write` on the calling job even when `post_pr_comment` is false;
-the reusable workflow cannot elevate the caller token. Same-repo callers:
+the reusable workflow cannot elevate the caller token. With `router_path` it
+runs `apifn check` from the router, which fails on spec drift, an invalid spec or
+a breaking change the contract version does not cover:
 
 ```yaml
 permissions:
@@ -112,18 +114,17 @@ permissions:
   pull-requests: write
 jobs:
   api-check:
-    uses: ./.github/workflows/apifn-api-check.yml
+    uses: 21nCo/superfunctions/.github/workflows/apifn-api-check.yml@dev
     with:
+      router_path: src/router.ts
       spec_path: .apifn/openapi.yml
-      collection_dir: .apifn/collection
+      base_branch: main
 ```
 
-External repositories can use the registered workflow directly:
+Without `router_path` it validates a committed spec and diffs it against the base
+branch, as before (same-repo callers can use `uses: ./.github/workflows/apifn-api-check.yml`):
 
 ```yaml
-permissions:
-  contents: read
-  pull-requests: write
 jobs:
   api-check:
     uses: 21nCo/superfunctions/.github/workflows/apifn-api-check.yml@dev
@@ -142,12 +143,25 @@ run the CLI commands in [Non-GitHub CI](#non-github-ci).
 
 ### What it does
 
+With `router_path`:
+
+- Runs `npm ci` in `working_directory` (when it has a `package.json`), because the router imports the caller's packages
+- Runs `apifn check <router_path> --base origin/<base_branch> --format markdown --report …` and the same check with `--format json` (`--base-spec` instead when `base_spec` is set); both reports are written to `$RUNNER_TEMP`, not the checkout
+- Uses the Markdown report as the job summary and PR comment
+
+Without `router_path`:
+
 - Validates OpenAPI specs via `apifn validate --format json`
 - Diffs current spec against base branch via `apifn diff --format json`
-- Runs collection tests via `apifn test --reporter json`
-- Emits machine-readable JSON artifacts (`validate-report.json`, `diff-report.json`, `test-report.json`)
-- Builds a markdown summary and posts/updates a PR comment (optional)
-- Enforces non-zero exits for validation failures, breaking changes, and test failures
+- Emits machine-readable JSON artifacts (`validate-report.json`, `diff-report.json`)
+- Builds a markdown summary
+
+Either way:
+
+- Runs collection tests via `apifn test --reporter json` into `test-report.json` when `collection_dir` is set; without it the summary reports the tests as **not run**
+- Posts or updates one PR comment holding `<!-- apifn-ci-report -->` (optional). A fork PR gets a read-only token, so it gets no comment, but its gates still apply
+- Sets the outputs `verdict`, `drift` and `breaking`
+- Fails the job on drift, validation failures, uncovered breaking changes and test failures (unless `enforce_gates` is false)
 
 Bundle split OpenAPI specs before passing them to `spec_path`. Validation resolves
 internal `#/` references and rejects file and remote references by default.
@@ -158,14 +172,27 @@ with the [direct CLI commands](#non-github-ci). Pass `--allow-scripts` or repeat
 
 ### Inputs
 
-- `spec_path` (required): Repo-relative OpenAPI path (e.g. `.apifn/openapi.yml`)
-- `collection_dir` (required): Repo-relative OpenCollection directory (e.g. `.apifn/collection`)
+- `router_path` (optional): Router module, relative to `working_directory`. Set it to run `apifn check`; leave it empty for validate-and-diff
+- `spec_path` (required without `router_path`): Repo-relative OpenAPI path (e.g. `.apifn/openapi.yml`). With `router_path` it is the committed spec passed as `--spec`, relative to `working_directory`; empty uses the config's default (`<output or .apifn>/openapi.yml`)
+- `config_path` (optional): apifn config file for `apifn check`, relative to `working_directory`; empty finds `apifn.config.ts`, `.js` or `.mjs` there
+- `working_directory` (optional, default `.`): Repo-relative directory of the caller's package; with `router_path`, `npm ci` and `apifn check` run there
+- `base_spec` (optional, `router_path` only): Base spec file (relative to `working_directory`) or HTTP(S) URL, instead of the spec committed at `origin/<base_branch>`
+- `allow_breaking` (optional, default `false`, `router_path` only): Report breaking changes the contract version does not cover without failing (`--allow-breaking`)
+- `cli_source` (optional, default `npm`): `npm` installs the CLI from the workflow revision's lockfile; `workspace` builds `@apifn/cli` from the checked-out repository and is allowed only in `21nCo/superfunctions` (the job fails in any other repository)
+- `enforce_gates` (optional, default `true`): Fail the job when a gate fails. `false` only reports, through the summary, comment and outputs; keep the default for a required check
+- `collection_dir` (optional): Repo-relative OpenCollection directory (e.g. `.apifn/collection`); empty skips the collection tests
 - `environment` (optional, default `development`): Collection environment
-- `cli_version` (optional, default `0.1.2`): Assertion against the `@apifn/cli` version pinned by the selected workflow revision. The default in the workflow file must match that revision's [CLI lockfile](../.github/apifn-cli-install/package-lock.json). The workflow uses the local lockfile when the caller checkout matches the workflow repository and commit. For other callers it fetches the lockfile from the workflow revision.
-- `base_branch` (optional, default `main`): Branch used to fetch baseline spec
-- `fail_on_breaking` (optional, default `true`): Whether breaking diff exits non-zero
+- `cli_version` (optional, default `0.1.2`): Assertion against the `@apifn/cli` version pinned by the selected workflow revision (`cli_source: npm`). The default in the workflow file must match that revision's [CLI lockfile](../.github/apifn-cli-install/package-lock.json). The workflow uses the local lockfile when the caller checkout matches the workflow repository and commit. For other callers it fetches the lockfile from the workflow revision.
+- `base_branch` (optional, default `main`): Branch whose committed spec is the base
+- `fail_on_breaking` (optional, default `true`, without `router_path`): Whether a breaking diff exits non-zero
 - `post_pr_comment` (optional, default `true`): Whether to post/update PR summary comment
 - `called_as_reusable_workflow` (optional, default `true`): Do not set it. It tells the job it was called, so it runs for every caller; setting it to `false` skips the check outside `21nCo/superfunctions`.
+
+### Outputs
+
+- `verdict`: `pass`, `warn` or `fail` for the whole job (`warn` only with `router_path`: warnings such as an allowed breaking change). A usage or load error of `apifn check` (exit 2) is `fail`
+- `drift`: `true` or `false` with `router_path` (whether the committed spec differs from the router); empty without it or when `apifn check` produced no report
+- `breaking`: `true` when the diff against the base found breaking changes, allowed or not; `false` otherwise; empty when `apifn check` produced no report
 
 ### Example
 

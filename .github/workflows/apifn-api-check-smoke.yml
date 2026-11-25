@@ -7,6 +7,7 @@ on:
       - ".github/workflows/apifn-api-check.yml"
       - ".github/workflows/apifn-api-check-smoke.yml"
       - "apifn/cli/**"
+      - "apifn/examples/ci-cd/github-actions.yml"
 
 permissions:
   contents: read
@@ -16,6 +17,40 @@ permissions:
   pull-requests: write
 
 jobs:
+  actionlint:
+    if: github.repository == '21nCo/superfunctions'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      # actionlint runs shellcheck (preinstalled on ubuntu-latest) on every run: script. It does not know the job
+      # context's workflow_repository and workflow_sha yet, which the API check workflow uses to find its own revision.
+      - name: Lint the API check workflows and the CI example
+        shell: bash
+        env:
+          ACTIONLINT_VERSION: "1.7.12"
+          ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+        run: |
+          set -euo pipefail
+          archive="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          dir="$RUNNER_TEMP/actionlint"
+          mkdir -p "$dir"
+          curl --fail --silent --show-error --location --output "$dir/$archive" \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/${archive}"
+          echo "${ACTIONLINT_SHA256}  $dir/$archive" | sha256sum --check --strict
+          tar -xzf "$dir/$archive" -C "$dir" actionlint
+          "$dir/actionlint" -version
+          "$dir/actionlint" \
+            -ignore 'property "workflow_(repository|sha)" is not defined in object type' \
+            .github/workflows/apifn-api-check.yml \
+            .github/workflows/apifn-api-check-smoke.yml \
+            apifn/examples/ci-cd/github-actions.yml
+
   api-check:
     if: github.repository == '21nCo/superfunctions'
     uses: ./.github/workflows/apifn-api-check.yml
@@ -28,3 +63,68 @@ jobs:
       post_pr_comment: false
       start_mock_server: true
       mock_port: 19999
+
+  # apifn check from the router against the spec committed at origin/dev (a new contract until this fixture lands).
+  router-compatible:
+    if: github.repository == '21nCo/superfunctions'
+    uses: ./.github/workflows/apifn-api-check.yml
+    with:
+      router_path: apifn/cli/__tests__/fixtures/check-smoke/compatible/router.ts
+      config_path: apifn/cli/__tests__/fixtures/check-smoke/compatible/apifn.config.ts
+      spec_path: apifn/cli/__tests__/fixtures/check-smoke/compatible/openapi.yml
+      cli_source: workspace
+      base_branch: dev
+      post_pr_comment: false
+
+  # A breaking change with only a minor bump against the compatible spec. enforce_gates: false keeps this caller
+  # non-blocking (a job calling a reusable workflow cannot set continue-on-error); router-outputs asserts the failure.
+  router-breaking:
+    if: github.repository == '21nCo/superfunctions'
+    uses: ./.github/workflows/apifn-api-check.yml
+    with:
+      router_path: apifn/cli/__tests__/fixtures/check-smoke/breaking/router.ts
+      config_path: apifn/cli/__tests__/fixtures/check-smoke/breaking/apifn.config.ts
+      spec_path: apifn/cli/__tests__/fixtures/check-smoke/breaking/openapi.yml
+      base_spec: apifn/cli/__tests__/fixtures/check-smoke/compatible/openapi.yml
+      allow_breaking: false
+      enforce_gates: false
+      cli_source: workspace
+      post_pr_comment: false
+
+  router-outputs:
+    needs: [router-compatible, router-breaking]
+    if: github.repository == '21nCo/superfunctions' && (always())
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Assert the reusable workflow outputs
+        shell: bash
+        env:
+          COMPATIBLE_RESULT: ${{ needs.router-compatible.result }}
+          COMPATIBLE_VERDICT: ${{ needs.router-compatible.outputs.verdict }}
+          COMPATIBLE_DRIFT: ${{ needs.router-compatible.outputs.drift }}
+          COMPATIBLE_BREAKING: ${{ needs.router-compatible.outputs.breaking }}
+          BREAKING_RESULT: ${{ needs.router-breaking.result }}
+          BREAKING_VERDICT: ${{ needs.router-breaking.outputs.verdict }}
+          BREAKING_DRIFT: ${{ needs.router-breaking.outputs.drift }}
+          BREAKING_BREAKING: ${{ needs.router-breaking.outputs.breaking }}
+        run: |
+          set -euo pipefail
+          failed=0
+          expect() {
+            if [ "$2" == "$3" ]; then
+              echo "ok: $1=$2"
+            else
+              echo "::error::$1 is '$2', expected '$3'"
+              failed=1
+            fi
+          }
+          expect router-compatible.result "$COMPATIBLE_RESULT" success
+          expect router-compatible.verdict "$COMPATIBLE_VERDICT" pass
+          expect router-compatible.drift "$COMPATIBLE_DRIFT" false
+          expect router-compatible.breaking "$COMPATIBLE_BREAKING" false
+          expect router-breaking.result "$BREAKING_RESULT" success
+          expect router-breaking.verdict "$BREAKING_VERDICT" fail
+          expect router-breaking.drift "$BREAKING_DRIFT" false
+          expect router-breaking.breaking "$BREAKING_BREAKING" true
+          exit "$failed"
