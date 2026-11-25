@@ -1,0 +1,49 @@
+authfn/admin/package.json
+  s_c8d3e62c4e5cbc::t_60ad2931af0432 3,40
+langfn/README.md
+  s_c8d3e62c4e5cbc::t_0e815e57117714 5,12
+langfn/docs/content/docs/reference/typescript.md
+  s_c8d3e62c4e5cbc::t_20bac3690732ef 8
+langfn/typescript/README.md
+  s_c8d3e62c4e5cbc::t_52e9bca620a061 5,10
+langfn/typescript/package.json
+  s_c8d3e62c4e5cbc::t_bfd7d2d0f20ded 3
+langfn/typescript/src/http/routes.ts
+  s_c8d3e62c4e5cbc::t_163e22a243abf4 43
+langfn/typescript/src/mcp/client.ts
+  s_c8d3e62c4e5cbc::t_904122cfe92486 9
+langfn/typescript/src/mcp/server.ts
+  s_c8d3e62c4e5cbc::t_49d2ee07d663f4 134
+langfn/typescript/tests/http-routes.test.ts
+  s_c8d3e62c4e5cbc::t_a012de5884eed4 17
+langfn/typescript/tests/package-contract.test.ts
+  s_c8d3e62c4e5cbc::t_9123a893899345 19,48-49,57-58
+langfn/typescript/tests/release-gate.test.ts
+  s_c8d3e62c4e5cbc::t_be36b135643325 200
+mcpfn/client/CHANGELOG.md
+  s_c8d3e62c4e5cbc::t_501bed40d1d24a 7-8
+memoryfn/typescript/package.json
+  s_c8d3e62c4e5cbc::t_a080a41e8fb927 3
+package-lock.json
+  s_c8d3e62c4e5cbc::t_263d6f81db3155 1321,1324,15055,24303,58417,64182
+packages/admin/package.json
+  s_c8d3e62c4e5cbc::t_e1b12161c35adb 3
+superconsole/package.json
+  s_c8d3e62c4e5cbc::t_8bdbcb34f41fab 28
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0183556fa9a3c6a756ef16c1e2cb3cdcf7919f04",
+  "prompts": {},
+  "sessions": {
+    "s_c8d3e62c4e5cbc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "81c58342-6481-4e86-8c66-8c52736f9b64",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

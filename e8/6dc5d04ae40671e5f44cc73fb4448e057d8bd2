@@ -1,0 +1,21 @@
+mcpfn/auth/src/provider-adapter.ts
+  s_f1ec4de2a6ae19::t_79afbcea6cf564 116,118
+mcpfn/auth/tests/audit-hardening.test.ts
+  s_f1ec4de2a6ae19::t_f39d96162218dd 152-160
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e86dc5d04ae40671e5f44cc73fb4448e057d8bd2",
+  "prompts": {},
+  "sessions": {
+    "s_f1ec4de2a6ae19": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21018-8037-7b61-a435-e187daf13467",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

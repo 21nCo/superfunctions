@@ -1,0 +1,22 @@
+datafn/server/src/execution/transact.ts
+  s_09f19affbc7889::t_405c27839ba617 7,291-300,303-304
+  s_09f19affbc7889::t_5989b8e869189e 208,383-385
+datafn/server/__tests__/transact-step-classification.test.ts
+  s_09f19affbc7889::t_405c27839ba617 29,32-39,99-110
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3e9c046fa04f767cc30956aeac06c3eda038f8d4",
+  "prompts": {},
+  "sessions": {
+    "s_09f19affbc7889": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a211b0-71ed-7282-8a24-bcadc7fcc607",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

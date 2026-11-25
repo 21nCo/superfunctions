@@ -1,0 +1,27 @@
+langfn/RELEASE_GATE.md
+  s_c8d3e62c4e5cbc::t_78f17cfb15a196 3
+langfn/docs/content/docs/getting-started.md
+  s_c8d3e62c4e5cbc::t_83a2da9bbff9cc 6
+langfn/docs/content/docs/index.md
+  s_c8d3e62c4e5cbc::t_06e4913d10a79e 8
+langfn/docs/content/docs/reference/release-gate.md
+  s_c8d3e62c4e5cbc::t_15013163e7cc94 6
+langfn/typescript/tests/release-gate.test.ts
+  s_c8d3e62c4e5cbc::t_dce388cb48cbcf 43-48
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e74362b9837a452f30c03db918909997c9841121",
+  "prompts": {},
+  "sessions": {
+    "s_c8d3e62c4e5cbc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "81c58342-6481-4e86-8c66-8c52736f9b64",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

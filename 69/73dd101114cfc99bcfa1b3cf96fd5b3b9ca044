@@ -1,0 +1,35 @@
+mcpfn/core/src/server.ts
+  s_c8d3e62c4e5cbc::t_67a84dd669ae90 5,136-170,175-178,1051-1055,1098-1100
+mcpfn/core/tests/http-session-security.test.ts
+  s_86bc8ec1258209::t_bb249094357cdb 179-263
+mcpfn/core/README.md
+  s_86bc8ec1258209::t_14eb99086e46c3 187,189-190
+mcpfn/docs/content/docs/reference/core.md
+  s_86bc8ec1258209::t_63fa2fbcc06029 192,194-195
+mcpfn/docs/static/llms-full.txt
+  s_86bc8ec1258209::t_5d76e4e6b8c2f1 886,888-889
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6973dd101114cfc99bcfa1b3cf96fd5b3b9ca044",
+  "prompts": {},
+  "sessions": {
+    "s_86bc8ec1258209": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d66c0d41-f11e-49d4-895d-e3fc7c28ac28",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_c8d3e62c4e5cbc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "81c58342-6481-4e86-8c66-8c52736f9b64",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

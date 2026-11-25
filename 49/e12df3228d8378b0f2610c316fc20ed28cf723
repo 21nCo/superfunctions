@@ -1,0 +1,25 @@
+mcpfn/auth/README.md
+  s_c8d3e62c4e5cbc::t_669b5a9be2ed6f 110-111
+mcpfn/auth/src/provider-adapter.ts
+  s_c8d3e62c4e5cbc::t_042a7fe06f4709 109-110,148
+mcpfn/auth/tests/audit-hardening.test.ts
+  s_c8d3e62c4e5cbc::t_c896c6a27510af 145-158
+mcpfn/docs/content/docs/reference/auth.md
+  s_c8d3e62c4e5cbc::t_65510112231ce3 113-114
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "49e12df3228d8378b0f2610c316fc20ed28cf723",
+  "prompts": {},
+  "sessions": {
+    "s_c8d3e62c4e5cbc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "81c58342-6481-4e86-8c66-8c52736f9b64",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

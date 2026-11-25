@@ -1,0 +1,75 @@
+authfn/adapters/lookup-cloudflare-do/package.json
+  s_033d3e6d4fb9b2::t_42230efcf68760 3,34
+authfn/adapters/lookup-dynamodb/package.json
+  s_033d3e6d4fb9b2::t_1755d3059e0294 3,36
+authfn/admin/package.json
+  s_033d3e6d4fb9b2::t_2fbfd0085f1660 43,46-47
+authfn/api-keys/package.json
+  s_033d3e6d4fb9b2::t_3d5a5f504c534a 3,29
+authfn/client/package.json
+  s_033d3e6d4fb9b2::t_eb0a71ff2531ce 3,33,37-42
+authfn/core/package.json
+  s_033d3e6d4fb9b2::t_383322377fda42 3,79
+authfn/core/vitest.config.ts
+  s_033d3e6d4fb9b2::t_804608b40ca3f2 6-8
+authfn/docs/package.json
+  s_033d3e6d4fb9b2::t_d8903f8cf79a33 26-32,44
+authfn/email-otp/package.json
+  s_033d3e6d4fb9b2::t_75836491861ba1 3,29
+authfn/multi-region/package.json
+  s_033d3e6d4fb9b2::t_8f56e067db3811 3,29
+authfn/native-handoff/package.json
+  s_033d3e6d4fb9b2::t_7817d6a61ffbe7 3,29
+authfn/oauth-provider/package.json
+  s_033d3e6d4fb9b2::t_6fac390dfeb667 3,30
+authfn/password/package.json
+  s_033d3e6d4fb9b2::t_b3469eb58bd946 3,29
+authfn/python/CHANGELOG.md
+  s_033d3e6d4fb9b2::t_52da30f9cd5bac 10-11,14-20,103-104
+authfn/python/authfn/__init__.py
+  s_033d3e6d4fb9b2::t_abace997ad1120 3
+authfn/python/pyproject.toml
+  s_033d3e6d4fb9b2::t_447c40a53ab9a3 7
+authfn/schema-plugin/package.json
+  s_033d3e6d4fb9b2::t_6d9a3848fc183c 3,29
+authfn/social-oauth/package.json
+  s_033d3e6d4fb9b2::t_4efdc0334148e6 3,33,40
+authfn/svelte/package.json
+  s_033d3e6d4fb9b2::t_94349810532f87 3,32,36
+authfn/two-factor/package.json
+  s_033d3e6d4fb9b2::t_bff62ec4fb43cb 3,29
+billfn/docs/package.json
+  s_033d3e6d4fb9b2::t_45337022c9cf2e 30,42
+filefn/docs/package.json
+  s_033d3e6d4fb9b2::t_3775a3ceaf6d83 40-41,50
+package-lock.json
+  s_033d3e6d4fb9b2::t_cfae69edbce590 1271,1275,1295,1301,1327,1330-1331,1358,1361,1390,1394,1397-1402,1429,1437,1521-1527,1539,1846,1849,3892,3896,3925,3929,3958,3962,4001,4004,4033,4036,4056,4064,4066,4126,4129,4136,4152,4155,4324,4336,11934-11935,11952,16960-17039,58568,59112,59141,59274,59330,59752
+packages/cli/package.json
+  s_033d3e6d4fb9b2::t_9fa3326ae2ae86 44
+packages/oauth-core/package.json
+  s_033d3e6d4fb9b2::t_e62a70ab9926c5 48
+packages/oauth-flow/package.json
+  s_033d3e6d4fb9b2::t_a36a15f3033f24 43
+packages/oauth-storage/package.json
+  s_033d3e6d4fb9b2::t_d5320f259702fc 3
+packages/oauth-testing/package.json
+  s_033d3e6d4fb9b2::t_410c4f2ab25006 43
+plugfn/core/package.json
+  s_033d3e6d4fb9b2::t_3c3fbd739dfd4e 40
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "28d593887bfbfdb660ac390c135220715dd0a576",
+  "prompts": {},
+  "sessions": {
+    "s_033d3e6d4fb9b2": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21136-6714-7472-8885-a9d68efa0e50",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

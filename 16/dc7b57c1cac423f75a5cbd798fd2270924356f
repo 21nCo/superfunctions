@@ -1,0 +1,36 @@
+searchfn/server/__tests__/authorization.test.ts
+  s_08ba8baed8969a::t_087aae16462063 1-2,124-130,133-134
+searchfn/docs/content/docs/recipes/multi-tenant.mdx
+  s_08ba8baed8969a::t_087aae16462063 71,74-75,80
+searchfn/docs/public/llms-full.txt
+  s_08ba8baed8969a::t_d7eb0b87a6efdb 5118,5123,5126-5127,5509,7380-7382,8535,8538-8539,8544
+searchfn/docs/content/docs/documentation/security/multi-tenant-isolation.mdx
+  s_08ba8baed8969a::t_087aae16462063 63,68,71-72
+searchfn/server/src/server.ts
+  s_08ba8baed8969a::t_0f5bacee6752eb 53-58,61,123-129
+  s_08ba8baed8969a::t_abed31f2ddae6c 35,44-52,59-60,62,222-225
+  s_08ba8baed8969a::t_087aae16462063 64-65,131,165-166,284,317
+  s_08ba8baed8969a::t_1b099f587a6a35 63
+searchfn/docs/content/docs/recipes/authfn-integration.mdx
+  s_08ba8baed8969a::t_087aae16462063 53-55
+searchfn/server/README.md
+  s_08ba8baed8969a::t_087aae16462063 93
+searchfn/docs/content/docs/documentation/security/request-authz.mdx
+  s_08ba8baed8969a::t_087aae16462063 104
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "16dc7b57c1cac423f75a5cbd798fd2270924356f",
+  "prompts": {},
+  "sessions": {
+    "s_08ba8baed8969a": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a211ab-e567-7052-ae97-961e8a10be50",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

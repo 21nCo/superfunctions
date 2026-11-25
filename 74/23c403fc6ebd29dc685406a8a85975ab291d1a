@@ -1,0 +1,65 @@
+filefn/examples/production/server/package.json
+  s_20e59dd6c64205::t_53311c0effd546 20
+  s_20e59dd6c64205::t_9f30a0b1cd9596 9
+.github/workflows/ci.yml
+  s_20e59dd6c64205::t_53311c0effd546 75-77
+filefn/server/src/metrics.ts
+  s_20e59dd6c64205::t_7a784abba6070f 1,5-23,31-35,37-48,53,63,72,77
+filefn/server/tests/domain-metrics.test.ts
+  s_20e59dd6c64205::t_f503e4a793c783 5,7-8,167-197
+  s_20e59dd6c64205::t_755daca443cb93 21,23,60,116-125,127-133,135,137,139
+  s_20e59dd6c64205::t_7bcdf5824f8468 45-59,61-71,113-115,126,134,136,138,140-166,219-220
+  s_20e59dd6c64205::t_ba526500ca65e2 198
+filefn/server/tests/stable-errors.test.ts
+  s_20e59dd6c64205::t_9a9e823e2ce8d7 98-137
+filefn/docs/content/docs/features/rate-limiting.md
+  s_20e59dd6c64205::t_53311c0effd546 42,59,66,81-84
+  s_ee025abfcc6d50::t_a53e762e5c16cf 85-86
+filefn/server/src/index.ts
+  s_20e59dd6c64205::t_7a784abba6070f 33,217
+filefn/docs/content/docs/reference/errors.md
+  s_20e59dd6c64205::t_53311c0effd546 72
+filefn/server/src/upload-sessions/service.ts
+  s_20e59dd6c64205::t_d175fd3fe5f446 576-579,586,603,609,702-716,721,727-733,1608,2085-2086,2144,2216,2247,2250,2292-2298,2300,2319
+  s_20e59dd6c64205::t_7b66a3feac78e9 3,2132-2143
+filefn/python/tests/test_release_metadata.py
+  s_20e59dd6c64205::t_9f30a0b1cd9596 1-8
+filefn/examples/production/server/src/production.test.mjs
+  s_20e59dd6c64205::t_9f30a0b1cd9596 2-4,6,9-24,32-56
+filefn/docs/content/docs/core-concepts/observability.md
+  s_20e59dd6c64205::t_639d71d3e014c7 99-116
+scripts/workflow-pins.test.mjs
+  s_20e59dd6c64205::t_53311c0effd546 1,3,12-22
+filefn/server/tests/dependency-pins.test.ts
+  s_20e59dd6c64205::t_39fdc86cec5cd5 2,11-16
+filefn/server/src/errors.ts
+  s_20e59dd6c64205::t_3811d25593b9c6 165-166
+filefn/docs/static/llms-full.txt
+  s_20e59dd6c64205::t_971f77fe528082 2118-2135,4341,4358,4365,4380-4385,8678
+package-lock.json
+  s_20e59dd6c64205::t_30e66173410ef5 12528
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7423c403fc6ebd29dc685406a8a85975ab291d1a",
+  "prompts": {},
+  "sessions": {
+    "s_20e59dd6c64205": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a211b0-8c37-7b63-8f91-222b058dcfea",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_ee025abfcc6d50": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "44b77d02-eb0d-440c-9830-00ecd45011c8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,40 @@
+datafn/server/src/execution/sync/__tests__/offline-execution-order.test.ts
+  s_1731e39e38ef67::t_9563b22589ec24 1-107
+  s_033d3e6d4fb9b2::t_ebdc7dc9421c5a 108-110
+datafn/docs/content/docs/documentation/sync/conflict-resolution.mdx
+  s_9c6f98e004317a::t_84662cfb8539cc 12,37
+datafn/docs/content/docs/recipes/offline-conflicts.mdx
+  s_9c6f98e004317a::t_93160baf393b06 12,14,33-38
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ff1cd9c0b0d2259a9e713a6a58fd1786410841c3",
+  "prompts": {},
+  "sessions": {
+    "s_033d3e6d4fb9b2": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21136-6714-7472-8885-a9d68efa0e50",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_1731e39e38ef67": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01a21142-2eb2-76c2-8264-b11730b7c224",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_9c6f98e004317a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "76095b34-e014-489d-90d8-3a0584a5495e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

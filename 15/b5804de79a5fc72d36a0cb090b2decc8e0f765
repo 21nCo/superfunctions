@@ -1,0 +1,21 @@
+authfn/core/README.md
+  s_033d3e6d4fb9b2::t_233d19fb1b0f56 13-22
+authfn/python/CHANGELOG.md
+  s_033d3e6d4fb9b2::t_eb658843a56d59 20
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "15b5804de79a5fc72d36a0cb090b2decc8e0f765",
+  "prompts": {},
+  "sessions": {
+    "s_033d3e6d4fb9b2": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21136-6714-7472-8885-a9d68efa0e50",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

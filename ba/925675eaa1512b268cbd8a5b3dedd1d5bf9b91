@@ -1,0 +1,29 @@
+datafn/server/__tests__/predicate-authz.test.ts
+  s_1731e39e38ef67::t_b14aa1ae413db2 1-183
+datafn/server/src/validation/authz.ts
+  s_033d3e6d4fb9b2::t_9a715abb79505e 387,453-583,618,622-631,634,637,681,685-701
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ba925675eaa1512b268cbd8a5b3dedd1d5bf9b91",
+  "prompts": {},
+  "sessions": {
+    "s_033d3e6d4fb9b2": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21136-6714-7472-8885-a9d68efa0e50",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_1731e39e38ef67": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01a21142-2eb2-76c2-8264-b11730b7c224",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

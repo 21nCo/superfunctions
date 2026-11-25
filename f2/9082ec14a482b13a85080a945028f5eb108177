@@ -1,0 +1,53 @@
+filefn/docs/content/docs/reference/changelog.md
+  s_20e59dd6c64205::t_a391aa1dc92d96 17
+filefn/server/tests/stable-errors.test.ts
+  s_20e59dd6c64205::t_a3a1197206d6c2 5,7,101-138
+  s_a8cc2dd76ee0e3::t_32532a5873a88b 139-140
+filefn/docs/static/llms-full.txt
+  s_20e59dd6c64205::t_0ec345bafbb7dd 2124,2469,2477,2480-2484,2486,4351,4355,8295
+filefn/server/src/upload-sessions/service.ts
+  s_20e59dd6c64205::t_32f2a98c654d45 712-716,2253,2264-2271,2280
+  s_20e59dd6c64205::t_a3a1197206d6c2 2245,2275
+filefn/processing/container/Dockerfile
+  s_20e59dd6c64205::t_a391aa1dc92d96 21,63-64
+filefn/docs/content/docs/core-concepts/rate-limiting.md
+  s_20e59dd6c64205::t_a391aa1dc92d96 48,56,59-63,65
+filefn/processing/container/Dockerfile.dockerignore
+  s_20e59dd6c64205::t_a391aa1dc92d96 7-8
+filefn/docs/content/docs/features/rate-limiting.md
+  s_20e59dd6c64205::t_a391aa1dc92d96 48,52
+filefn/server/src/metrics.ts
+  s_20e59dd6c64205::t_32f2a98c654d45 107,111
+filefn/server/src/processing/service.ts
+  s_20e59dd6c64205::t_32f2a98c654d45 1659,1824
+filefn/docs/content/docs/core-concepts/observability.md
+  s_20e59dd6c64205::t_32f2a98c654d45 105
+filefn/server/tests/domain-metrics.test.ts
+  s_20e59dd6c64205::t_32f2a98c654d45 242,256-258,276
+filefn/docs/scripts/changelog.test.mjs
+  s_20e59dd6c64205::t_a391aa1dc92d96 36
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f29082ec14a482b13a85080a945028f5eb108177",
+  "prompts": {},
+  "sessions": {
+    "s_20e59dd6c64205": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a211b0-8c37-7b63-8f91-222b058dcfea",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_a8cc2dd76ee0e3": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21202-c99a-74b2-ab81-600ff17fc0ab",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,35 @@
+packages/oauth-flow/package.json
+  s_033d3e6d4fb9b2::t_8ec430479315b4 43
+authfn/core/vitest.config.ts
+  s_033d3e6d4fb9b2::t_8ec430479315b4 6-8
+packages/oauth-core/package.json
+  s_033d3e6d4fb9b2::t_8ec430479315b4 48
+authfn/python/CHANGELOG.md
+  s_033d3e6d4fb9b2::t_8ec430479315b4 10,14-20,103-104
+packages/cli/package.json
+  s_033d3e6d4fb9b2::t_8ec430479315b4 44
+mcpfn/auth/package.json
+  s_033d3e6d4fb9b2::t_8ec430479315b4 26
+packages/oauth-testing/package.json
+  s_033d3e6d4fb9b2::t_8ec430479315b4 43
+plugfn/core/package.json
+  s_033d3e6d4fb9b2::t_8ec430479315b4 40
+package-lock.json
+  s_033d3e6d4fb9b2::t_bd384d5bc953d5 16873,38773-38776,59152,59696,59708-59713,59715,59718-59721,59723-59725,59727-59739,59741-59742,59745-59752,59754-59763,59773-59797,59801,59804,59810,59822-59869,59873,59914,60336,73834-74752
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "cc05adee5a7101de88b38d5d7a9e1cda387a7008",
+  "prompts": {},
+  "sessions": {
+    "s_033d3e6d4fb9b2": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21136-6714-7472-8885-a9d68efa0e50",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
