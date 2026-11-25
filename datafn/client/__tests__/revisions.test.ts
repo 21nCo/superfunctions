@@ -136,7 +136,7 @@ describe("DATA-41 client revisions", () => {
     const installed = await storage.putRecordsWithRevisions("task", [{ id: "task:1", record: { id: "task:1", title: "b" }, rev: 2 }], {
       unlessPending: true,
     });
-    expect(installed).toEqual([]);
+    expect(installed).toEqual({ installed: [], current: [] });
     expect((await storage.getRecordWithRevision("task", "task:1")).rev).toBeUndefined();
   });
 
@@ -255,7 +255,7 @@ describe("DATA-41 client revisions", () => {
   it("keeps revisions across a reopen of the IndexedDB adapter and clears them on a plain write", async () => {
     const dbName = `revisions_${Math.random()}`;
     const first = new IndexedDbStorageAdapter(dbName, ["task"], schema as any);
-    expect(await first.putRecordsWithRevisions("task", [{ id: "task:1", record: { id: "task:1", title: "a" }, rev: 4 }])).toEqual(["task:1"]);
+    expect(await first.putRecordsWithRevisions("task", [{ id: "task:1", record: { id: "task:1", title: "a" }, rev: 4 }])).toEqual({ installed: ["task:1"], current: [] });
     await first.close();
     const reopened = new IndexedDbStorageAdapter(dbName, ["task"], schema as any);
     expect(await reopened.getRecordWithRevision("task", "task:1")).toEqual({
@@ -446,13 +446,13 @@ describe("DATA-41 client revisions: never installed over newer local state", () 
     const second = new IndexedDbStorageAdapter(dbName, ["task"], schema as any);
     await first.getRecord("task", "task:0");
     await second.getRecord("task", "task:0");
-    expect(await first.putRecordsWithRevisions("task", [{ id: "task:1", record: { id: "task:1", title: "a" }, rev: 2 }])).toEqual(["task:1"]);
+    expect(await first.putRecordsWithRevisions("task", [{ id: "task:1", record: { id: "task:1", title: "a" }, rev: 2 }])).toEqual({ installed: ["task:1"], current: [] });
     await second.upsertRecord("task", { id: "task:2", title: "b" });
     expect(await second.getRecordWithRevision("task", "task:1")).toEqual({ record: { id: "task:1", title: "a" }, rev: 2 });
     // A write from the peer after an older request started blocks that request's install.
     const stamp = await first.revisionWriteStamp();
     await second.upsertRecord("task", { id: "task:1", title: "peer" });
-    expect(await first.putRecordsWithRevisions("task", [{ id: "task:1", record: { id: "task:1", title: "old" }, rev: 3 }], { writtenSince: stamp })).toEqual([]);
+    expect(await first.putRecordsWithRevisions("task", [{ id: "task:1", record: { id: "task:1", title: "old" }, rev: 3 }], { writtenSince: stamp })).toEqual({ installed: [], current: [] });
     expect(await first.getRecordWithRevision("task", "task:1")).toEqual({ record: { id: "task:1", title: "peer" }, rev: undefined });
     await first.close();
     await second.close();
@@ -601,7 +601,7 @@ describe("DATA-41 client revisions: round 2", () => {
     });
 
     await storage.putRecordsWithRevisions("task", [{ id: "task:2", record: { id: "task:2", title: "new" }, rev: 3 }]);
-    expect(await storage.putRecordsWithRevisions("task", [{ id: "task:2", record: null, rev: 2 }])).toEqual([]);
+    expect(await storage.putRecordsWithRevisions("task", [{ id: "task:2", record: null, rev: 2 }])).toEqual({ installed: [], current: ["task:2"] });
     expect(await storage.getRecordWithRevision("task", "task:2")).toEqual({ record: { id: "task:2", title: "new" }, rev: 3 });
   });
 
@@ -656,14 +656,14 @@ describe("DATA-41 client revisions: round 2", () => {
       expect(await adapter.putRecordsWithRevisions("task", [{ id: "task:1", record: { id: "task:1", title: "server" }, rev: 2 }], {
         unlessPending: true,
         writtenSince: stamp,
-      })).toEqual(["task:1"]);
+      })).toEqual({ installed: ["task:1"], current: [] });
       expect(await adapter.getRecordWithRevision("task", "task:1")).toEqual({ record: { id: "task:1", title: "server" }, rev: 2 });
       // A write after the stamp is still protected.
       const later = await adapter.revisionWriteStamp();
       await adapter.upsertRecord("task", { id: "task:1", title: "local" });
       expect(await adapter.putRecordsWithRevisions("task", [{ id: "task:1", record: { id: "task:1", title: "server-3" }, rev: 3 }], {
         writtenSince: later,
-      })).toEqual([]);
+      })).toEqual({ installed: [], current: [] });
       await adapter.close();
     }
   });
@@ -693,4 +693,207 @@ describe("DATA-41 client revisions: round 2", () => {
     expect(await adapter.getRecord("task", "task:1")).toBeNull();
     await adapter.close();
   });
+});
+
+describe("DATA-41 client revisions: round 3", () => {
+  const relationSchema: DatafnSchema = {
+    resources: [
+      { name: "task", version: 1, fields: [{ name: "title", type: "string", required: false }] },
+      {
+        name: "comment",
+        version: 1,
+        fields: [
+          { name: "body", type: "string", required: false },
+          { name: "taskId", type: "string", required: false },
+        ],
+      },
+    ],
+    relations: [
+      { from: "comment", to: "task", type: "many-one", relation: "task", fkField: "taskId", onDelete: { to: "cascade" } },
+    ],
+  } as any;
+
+  async function appendAs(storage: MemoryStorageAdapter, mutationId: string, mutation: Record<string, unknown>) {
+    await storage.changelogAppend({
+      clientId: "client:a",
+      mutationId,
+      timestampMs: Date.now(),
+      mutation: { version: 1, clientId: "client:a", mutationId, ...mutation },
+    });
+  }
+
+  it("installs no row from an earlier push attempt that a compaction replay's cascade later deleted", async () => {
+    const server = await createDatafnServer({
+      schema: relationSchema, database: memoryAdapter(), allowUnknownResources: true, revisions: { enabled: true },
+    });
+    servers.push(server);
+    await serverPush(server, "seed", [
+      { resource: "task", operation: "insert", id: "task:1", record: { title: "t" } },
+      { resource: "comment", operation: "insert", id: "comment:1", record: { body: "x", taskId: "task:1" } },
+    ]);
+    const storage = new MemoryStorageAdapter(["task", "comment"]);
+    let pushes = 0;
+    const replayTransport = new DefaultHttpTransport("http://datafn.test/datafn", {
+      fetch: async (input: RequestInfo | URL, init?: RequestInit) => {
+        const request = new Request(input, init);
+        if (new URL(request.url).pathname !== "/datafn/push" || pushes++ > 0) return server.router.handle(request);
+        // First attempt: the task delete fails terminally, the rest applies.
+        const payload = await request.json();
+        const failed = payload.mutations.filter((m: any) => m.operation === "delete");
+        payload.mutations = payload.mutations.filter((m: any) => m.operation !== "delete");
+        const response = await server.router.handle(new Request(request.url, {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+        }));
+        const body = await response.json();
+        const result = body.result ?? body;
+        result.ok = false;
+        result.errors = [
+          ...(result.errors ?? []),
+          ...failed.map((m: any) => ({ mutationId: m.mutationId, code: "FORBIDDEN", message: "denied once", retryable: false })),
+        ];
+        return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+      },
+    });
+    const engine = new SyncEngine(storage, replayTransport as any, new EventBus(), "client:a", relationSchema, { offlinability: true } as any);
+    await engine.cloneNow();
+    // Local: merge the task, merge the comment, then delete the task (cascading locally).
+    await storage.mergeRecord("task", "task:1", { title: "t2" });
+    await appendAs(storage, "m-task-merge", { resource: "task", operation: "merge", id: "task:1", record: { title: "t2" } });
+    await storage.mergeRecord("comment", "comment:1", { body: "y" });
+    await appendAs(storage, "m-comment-merge", { resource: "comment", operation: "merge", id: "comment:1", record: { body: "y" } });
+    await storage.deleteRecord("comment", "comment:1");
+    await storage.deleteRecord("task", "task:1");
+    await appendAs(storage, "m-task-delete", { resource: "task", operation: "delete", id: "task:1" });
+    await engine.processPush();
+
+    expect(pushes).toBe(2);
+    expect(await storage.changelogList()).toEqual([]);
+    // The first attempt returned the comment's rev-2 row; the replay's delete
+    // cascaded it to a tombstone. The comment must stay deleted.
+    expect(await storage.getRecord("comment", "comment:1")).toBeNull();
+    expect((await storage.getRecordWithRevision("comment", "comment:1")).rev).not.toBe(2);
+  });
+
+  it("stores no $rev field from a cloneUp catch-up pull against a revision server", async () => {
+    const server = await startServer();
+    const storage = new MemoryStorageAdapter(["task"]);
+    const client = createDatafnClient({
+      schema,
+      clientId: "client:cloneup",
+      storage,
+      sync: { remote: "http://datafn.test/datafn", http: { fetch: (i: any, init?: any) => server.router.handle(new Request(i, init)) } },
+    } as any);
+    await storage.upsertRecord("task", { id: "task:1", title: "local" });
+    // Another device writes a record the catch-up pull delivers.
+    await serverPush(server, "other", [{ resource: "task", operation: "insert", id: "task:2", record: { title: "remote" } }]);
+
+    const result = await client.sync.cloneUp();
+    expect(result.ok).toBe(true);
+    for (const record of await storage.listRecords("task")) expect(record).not.toHaveProperty("$rev");
+    expect(await storage.getRecordWithRevision("task", "task:2")).toEqual({
+      record: expect.objectContaining({ id: "task:2", title: "remote" }),
+      rev: 1,
+    });
+    client.sync.stop();
+  });
+
+  it("keeps a child's revision unknown while its parent's archive, which changed the child locally, is pending", async () => {
+    const inheritSchema: DatafnSchema = {
+      resources: [
+        { name: "goal", version: 1, fields: [{ name: "title", type: "string", required: false }] },
+        {
+          name: "step",
+          version: 1,
+          fields: [
+            { name: "title", type: "string", required: false },
+            { name: "goalId", type: "string", required: false },
+          ],
+        },
+      ],
+      relations: [{ from: "step", to: "goal", type: "many-one", relation: "goal", fkField: "goalId", inheritsInactive: true }],
+    } as any;
+    const server = await createDatafnServer({
+      schema: inheritSchema, database: memoryAdapter(), allowUnknownResources: true, revisions: { enabled: true },
+    });
+    servers.push(server);
+    await serverPush(server, "seed", [
+      { resource: "goal", operation: "insert", id: "goal:1", record: { title: "g" } },
+      { resource: "step", operation: "insert", id: "step:1", record: { title: "s", goalId: "goal:1" } },
+    ]);
+    const storage = new MemoryStorageAdapter(["goal", "step"]);
+    const client = createDatafnClient({
+      schema: inheritSchema,
+      clientId: "client:archive",
+      storage,
+      sync: {
+        offlinability: true,
+        remote: "http://datafn.test/datafn",
+        http: {
+          fetch: async (i: any, init?: any) => {
+            const request = new Request(i, init);
+            // Pushes fail, so the archive stays pending.
+            if (new URL(request.url).pathname === "/datafn/push") throw new TypeError("offline");
+            return server.router.handle(request);
+          },
+        },
+      },
+    } as any);
+    await client.sync.cloneNow();
+    await client.mutate({ resource: "goal", version: 1, operation: "archive", id: "goal:1" } as any);
+    expect(await storage.getRecord("step", "step:1")).toMatchObject({ isAncestorInactive: true });
+
+    await client.query({ resource: "step", version: 1, withRevisions: true, filters: { id: "step:1" } });
+    expect(await storage.getRecord("step", "step:1")).toMatchObject({ isAncestorInactive: true });
+    expect((await client.getWithRevision("step", "step:1")).rev).toBeUndefined();
+    client.sync.stop();
+  });
+
+  for (const kind of ["memory", "indexeddb"] as const) {
+    it(`keeps a newer or equal installed revision when a pull replays an older or equal row or tombstone (${kind})`, async () => {
+      const storage = kind === "memory"
+        ? new MemoryStorageAdapter(["task"])
+        : new IndexedDbStorageAdapter(`revisions_stale_${Math.random()}`, ["task"], schema as any);
+      const options = { revisionResources: schemaRevisionResources(schema) };
+      const held = { record: { id: "task:1", title: "v2" }, rev: 2 };
+      await storage.putRecordsWithRevisions!("task", [{ id: "task:1", record: { id: "task:1", title: "v2" }, rev: 2 }]);
+
+      // Canonical format: an older row, the equal row, an older tombstone.
+      await applyPullResult(storage, {
+        ok: true, records: { task: [{ id: "task:1", title: "v1", $rev: 1 }] }, deleted: {}, cursors: { task: "1" },
+      } as any, options);
+      expect(await storage.getRecordWithRevision!("task", "task:1")).toEqual(held);
+      await applyPullResult(storage, {
+        ok: true, records: { task: [{ id: "task:1", title: "v2", $rev: 2 }] }, deleted: {}, cursors: { task: "2" },
+      } as any, options);
+      expect(await storage.getRecordWithRevision!("task", "task:1")).toEqual(held);
+      await applyPullResult(storage, {
+        ok: true, records: {}, deleted: { task: ["task:1"] }, deletedRevisions: { task: { "task:1": 1 } }, cursors: { task: "3" },
+      } as any, options);
+      expect(await storage.getRecordWithRevision!("task", "task:1")).toEqual(held);
+
+      // Global-cursor format: the same three.
+      await applyPullResult(storage, {
+        ok: true,
+        changes: [
+          { serverSeq: 1, resource: "task", id: "task:1", op: "upsert", rev: 1, record: { id: "task:1", title: "v1", $rev: 1 } },
+          { serverSeq: 2, resource: "task", id: "task:1", op: "delete", rev: 1, record: null },
+        ],
+        nextCursor: "10",
+      } as any, options);
+      expect(await storage.getRecordWithRevision!("task", "task:1")).toEqual(held);
+      await applyPullResult(storage, {
+        ok: true,
+        changes: [{ serverSeq: 3, resource: "task", id: "task:1", op: "upsert", rev: 2, record: { id: "task:1", title: "v2", $rev: 2 } }],
+        nextCursor: "11",
+      } as any, options);
+      expect(await storage.getRecordWithRevision!("task", "task:1")).toEqual(held);
+
+      // A newer row still installs.
+      await applyPullResult(storage, {
+        ok: true, records: { task: [{ id: "task:1", title: "v3", $rev: 3 }] }, deleted: {}, cursors: { task: "12" },
+      } as any, options);
+      expect(await storage.getRecordWithRevision!("task", "task:1")).toEqual({ record: { id: "task:1", title: "v3" }, rev: 3 });
+      if (storage instanceof IndexedDbStorageAdapter) await storage.close();
+    });
+  }
 });

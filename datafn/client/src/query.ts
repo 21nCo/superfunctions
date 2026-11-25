@@ -91,7 +91,7 @@ async function finishVersionedQueryResult(
         ? [{ id: row.id, record: withoutRowRevision(row), rev }]
         : [];
     });
-    const installed = await installServerRevisions(storage, resource, entries, {
+    const { installed } = await installServerRevisions(storage, resource, entries, {
       revisionResources: schemaRevisionResources(schema),
       pendingMutations: hooks?.pendingMutations,
       writtenSince,

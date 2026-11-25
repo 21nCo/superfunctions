@@ -48,6 +48,7 @@ import {
   type DatafnHttpTransportOptions,
 } from "./transport/http.js";
 import { SyncEngine } from "./sync/engine.js";
+import { inheritsInactiveParents } from "./sync/apply.js";
 import { createKvApi, type DatafnKvApi, KV_RESOURCE_NAME } from "./kv.js";
 import {
   buildSearchIndexFingerprint,
@@ -1688,10 +1689,11 @@ function _buildRawClient<S extends DatafnSchema>(
       await storageValidationPromise; // STORAGE-INIT-001: fail fast if stores are missing
       const storage = resolvedStorage;
       if (storage?.capabilities?.revisions === true && storage.getRecordWithRevision) {
-        const stored = await storage.getRecordWithRevision(resource, id);
+        const propagatingResources = inheritsInactiveParents(schema);
+        const stored = await storage.getRecordWithRevision(resource, id, { propagatingResources });
         // A debounced local write not yet logged also makes it unknown.
         const debounced = debouncerMap.pendingMutations()
-          .some((mutation) => mutationTouchesRecord(mutation, resource, id));
+          .some((mutation) => mutationTouchesRecord(mutation, resource, id, propagatingResources));
         return debounced ? { record: stored.record, rev: undefined } : stored;
       }
       return { record: storage ? await storage.getRecord(resource, id) : null, rev: undefined };

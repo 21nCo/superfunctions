@@ -17,7 +17,7 @@ import {
   mutationTouchesRecord,
   revisionKey,
 } from "./shared.js";
-import type { DatafnRevisionEntry, DatafnRevisionInstallOptions } from "../storage.js";
+import type { DatafnRevisionEntry, DatafnRevisionInstallOptions, DatafnRevisionInstallResult, DatafnRevisionReadOptions } from "../storage.js";
 
 function validateMutation(mutation: any): void {
   if (!mutation.clientId) throw new Error("Missing clientId in mutation");
@@ -125,9 +125,10 @@ export class MemoryStorageAdapter implements DatafnStorageAdapter {
   async getRecordWithRevision(
     resource: string,
     id: string,
+    options?: DatafnRevisionReadOptions,
   ): Promise<{ record: Record<string, unknown> | null; rev: number | undefined }> {
     this.validateTableName(resource);
-    const pending = this.changelog.some((entry) => mutationTouchesRecord(entry.mutation, resource, id));
+    const pending = this.changelog.some((entry) => mutationTouchesRecord(entry.mutation, resource, id, options?.propagatingResources));
     return {
       record: this.records.get(resource)?.get(id) ?? null,
       rev: pending ? undefined : this.revisions.get(revisionKey(resource, id)),
@@ -138,7 +139,7 @@ export class MemoryStorageAdapter implements DatafnStorageAdapter {
     resource: string,
     entries: ReadonlyArray<DatafnRevisionEntry>,
     options?: DatafnRevisionInstallOptions,
-  ): Promise<string[]> {
+  ): Promise<DatafnRevisionInstallResult> {
     this.validateTableName(resource);
     let table = this.records.get(resource);
     if (!table) {
@@ -150,20 +151,24 @@ export class MemoryStorageAdapter implements DatafnStorageAdapter {
       ...(options?.pendingMutations ?? []),
     ];
     const installed: string[] = [];
+    const current: string[] = [];
     for (const { id, record, rev } of entries) {
       if (!id) throw new Error("Record missing id");
-      const written = this.writeStamps.get(revisionKey(resource, id)) ?? 0;
-      if (blocksRevisionInstall(written, options?.writtenSince, pending, resource, id)) continue;
       // Never an older revision over a newer one; the same revision is the
       // state already stored.
       const known = this.revisions.get(revisionKey(resource, id));
-      if (known !== undefined && rev <= known) continue;
+      if (known !== undefined && rev <= known) {
+        current.push(id);
+        continue;
+      }
+      const written = this.writeStamps.get(revisionKey(resource, id)) ?? 0;
+      if (blocksRevisionInstall(written, options?.writtenSince, pending, resource, id, options?.propagatingResources)) continue;
       if (record) table.set(id, { ...record, id });
       else table.delete(id);
       this.markWritten(resource, id, rev);
       installed.push(id);
     }
-    return installed;
+    return { installed, current };
   }
 
   /**

@@ -33,6 +33,7 @@ import {
   GLOBAL_CURSOR_KEY,
   type CloneResult,
   type PullResult,
+  type RevisionResources,
 } from "./apply.js";
 import { runBeforeSync, runAfterSync } from "../plugins/run-hooks.js";
 import {
@@ -1878,8 +1879,9 @@ export class SyncEngine {
    * DATA-41: `$rev` on rows of a resource is revision metadata unless the
    * resource has its own field named `$rev`.
    */
-  private readonly revisionResources = (resource: string): boolean =>
-    schemaRevisionResources(this.schema)(resource);
+  private get revisionResources(): RevisionResources {
+    return schemaRevisionResources(this.schema);
+  }
 
   /**
    * DATA-41: local mutations applied to storage but not yet in the
@@ -1893,13 +1895,21 @@ export class SyncEngine {
    * was written locally after the push started (`writtenSince`) or a pending
    * local change touches it. Installed records are re-indexed and live
    * queries refreshed.
+   *
+   * Only the final push attempt's rows are installed. The server settles
+   * the rows of one request against every later write of that request,
+   * side effects included (cascade, setNull, inherited inactive state), but
+   * a later attempt (a compaction replay) may change or delete a record an
+   * earlier attempt returned without returning it, so an earlier attempt's
+   * row could be older than the acknowledged state. Its record's revision
+   * stays unknown until a pull or versioned read delivers it.
    */
   private async applyPushRevisions(pushResults: PushSyncResult[], writtenSince: number | undefined): Promise<void> {
     const installed: Record<string, string[]> = {};
     // Several mutations of one push may write one record: only its latest
     // post-write row is installed.
     const latest = new Map<string, DatafnPushRevision>();
-    for (const pushResult of pushResults) {
+    for (const pushResult of pushResults.slice(-1)) {
       for (const revision of Object.values(pushResult.revisions ?? {})) {
         const key = JSON.stringify([revision.resource, revision.id]);
         const seen = latest.get(key);
@@ -1921,7 +1931,7 @@ export class SyncEngine {
           if (!record) rev = undefined;
         }
         if (rev === undefined) continue;
-        const ids = await installServerRevisions(
+        const { installed: ids } = await installServerRevisions(
           this.storage,
           revision.resource,
           [{ id: revision.id, record, rev }],

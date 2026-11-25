@@ -26,7 +26,7 @@ import {
   mutationTouchesRecord,
   revisionKey,
 } from "./shared.js";
-import type { DatafnRevisionEntry, DatafnRevisionInstallOptions } from "../storage.js";
+import type { DatafnRevisionEntry, DatafnRevisionInstallOptions, DatafnRevisionInstallResult, DatafnRevisionReadOptions } from "../storage.js";
 
 /**
  * DATA-41: per record (keyed by revisionKey(resource, id)) its last write
@@ -696,6 +696,7 @@ export class IndexedDbStorageAdapter implements DatafnStorageAdapter {
   async getRecordWithRevision(
     resource: string,
     id: string,
+    options?: DatafnRevisionReadOptions,
   ): Promise<{ record: Record<string, unknown> | null; rev: number | undefined }> {
     this.validateTableName(resource);
     if (!(await this.dbPromise).objectStoreNames.contains(resource)) {
@@ -711,7 +712,7 @@ export class IndexedDbStorageAdapter implements DatafnStorageAdapter {
       tx.oncomplete = () => {
         const value = revRequest?.result?.rev;
         const pending = ((pendingRequest?.result ?? []) as Array<{ mutation?: unknown }>)
-          .some((entry) => mutationTouchesRecord(entry.mutation, resource, id));
+          .some((entry) => mutationTouchesRecord(entry.mutation, resource, id, options?.propagatingResources));
         resolve({
           record: recordRequest.result ?? null,
           rev: typeof value === "number" && !pending ? value : undefined,
@@ -745,9 +746,9 @@ export class IndexedDbStorageAdapter implements DatafnStorageAdapter {
     resource: string,
     entries: ReadonlyArray<DatafnRevisionEntry>,
     options?: DatafnRevisionInstallOptions,
-  ): Promise<string[]> {
+  ): Promise<DatafnRevisionInstallResult> {
     this.validateTableName(resource);
-    if (entries.length === 0) return [];
+    if (entries.length === 0) return { installed: [], current: [] };
     const current = await this.dbPromise;
     if (!current.objectStoreNames.contains(REVISIONS_STORE)) {
       // The first revision install adds the store (a version upgrade).
@@ -757,7 +758,7 @@ export class IndexedDbStorageAdapter implements DatafnStorageAdapter {
     const { tx, store, revisions } = await this.recordWriteTransaction(resource, ["changelog"]);
     if (!revisions) {
       tx.abort();
-      return [];
+      return { installed: [], current: [] };
     }
     const prepared = entries.map(({ id, record, rev }) => ({
       id,
@@ -767,6 +768,7 @@ export class IndexedDbStorageAdapter implements DatafnStorageAdapter {
     }));
     return new Promise((resolve, reject) => {
       const installed: string[] = [];
+      const current: string[] = [];
       const pendingRequest = options?.unlessPending ? tx.objectStore("changelog").getAll() : null;
       const priorRequests = prepared.map(({ key }) => revisions!.get(key));
       // Requests complete in order, so the reads above are done when the
@@ -780,11 +782,14 @@ export class IndexedDbStorageAdapter implements DatafnStorageAdapter {
         const w = (Number(counter.result?.w) || 0) + 1;
         prepared.forEach(({ id, rev, key, record }, index) => {
           const prior = priorRequests[index].result as { w?: number; rev?: number } | undefined;
-          const written = Number(prior?.w) || 0;
-          if (blocksRevisionInstall(written, options?.writtenSince, pending, resource, id)) return;
           // Never an older revision over a newer one; the same revision is
           // the state already stored.
-          if (typeof prior?.rev === "number" && rev <= prior.rev) return;
+          if (typeof prior?.rev === "number" && rev <= prior.rev) {
+            current.push(id);
+            return;
+          }
+          const written = Number(prior?.w) || 0;
+          if (blocksRevisionInstall(written, options?.writtenSince, pending, resource, id, options?.propagatingResources)) return;
           if (record) store.put(record);
           else store.delete(id);
           revisions!.put({ key, w, rev });
@@ -792,7 +797,7 @@ export class IndexedDbStorageAdapter implements DatafnStorageAdapter {
         });
         revisions!.put({ key: WRITE_STAMP_KEY, w });
       };
-      tx.oncomplete = () => resolve(installed);
+      tx.oncomplete = () => resolve({ installed, current });
       tx.onerror = () => reject(tx.error);
       tx.onabort = () => reject(tx.error);
     });

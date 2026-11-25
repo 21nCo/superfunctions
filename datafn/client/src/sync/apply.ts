@@ -4,7 +4,7 @@
  * Apply clone/pull results into local storage with hydration state management.
  */
 
-import type { DatafnRevisionEntry, DatafnStorageAdapter } from "../storage.js";
+import type { DatafnRevisionEntry, DatafnRevisionInstallResult, DatafnStorageAdapter } from "../storage.js";
 import {
   DATAFN_REVISION_FIELD,
   KV_RESOURCE_NAME,
@@ -17,15 +17,35 @@ import {
  * DATA-41: whether `$rev` on rows of a resource is the server's revision
  * metadata (true unless the resource has its own field named `$rev`).
  */
-export type RevisionResources = (resource: string) => boolean;
+export type RevisionResources = ((resource: string) => boolean) & {
+  /**
+   * Parents of `inheritsInactive` relations: a write to one can change the
+   * inherited state of other records, so a pending one blocks every install.
+   */
+  propagatingResources?: ReadonlyArray<string>;
+};
 
 /** DATA-41: the revision resources of a schema (see RevisionResources). */
 export function schemaRevisionResources(schema: DatafnSchema): RevisionResources {
-  return (resource) => {
+  const isRevisionResource = (resource: string) => {
     const def = schema.resources.find((entry) => entry.name === resource);
     if (!def) return resource === KV_RESOURCE_NAME;
     return !(def.fields ?? []).some((field) => field.name === DATAFN_REVISION_FIELD);
   };
+  return Object.assign(isRevisionResource, { propagatingResources: inheritsInactiveParents(schema) });
+}
+
+/** DATA-41: the parent endpoints of the schema's `inheritsInactive` relations. */
+export function inheritsInactiveParents(schema: DatafnSchema): string[] {
+  const parents = new Set<string>();
+  for (const relation of schema.relations ?? []) {
+    if (relation.inheritsInactive !== true || relation.type === "many-many") continue;
+    const parent = relation.type === "many-one" ? relation.to : relation.from;
+    for (const name of Array.isArray(parent) ? parent : [parent]) {
+      if (typeof name === "string") parents.add(name);
+    }
+  }
+  return [...parents];
 }
 
 function storesRevisions(storage: DatafnStorageAdapter): boolean {
@@ -36,19 +56,23 @@ function storesRevisions(storage: DatafnStorageAdapter): boolean {
  * DATA-41: installs complete server rows (record null for a tombstone) with
  * their revisions in one storage write, leaving alone each record a pending
  * local change (logged or debounced) may change, or, with `writtenSince`, that
- * was written after the request started. Returns the installed ids.
+ * was written after the request started. Returns the installed ids and the
+ * ids whose stored revision is already equal or newer (`current`).
  */
 export async function installServerRevisions(
   storage: DatafnStorageAdapter,
   resource: string,
   entries: DatafnRevisionEntry[],
   options: ApplyRevisionOptions & { writtenSince?: number },
-): Promise<string[]> {
-  if (entries.length === 0 || !options.revisionResources?.(resource) || !storesRevisions(storage)) return [];
+): Promise<DatafnRevisionInstallResult> {
+  if (entries.length === 0 || !options.revisionResources?.(resource) || !storesRevisions(storage)) {
+    return { installed: [], current: [] };
+  }
   return storage.putRecordsWithRevisions!(resource, entries, {
     unlessPending: true,
     writtenSince: options.writtenSince,
     pendingMutations: options.pendingMutations?.(),
+    propagatingResources: options.revisionResources.propagatingResources,
   });
 }
 
@@ -56,8 +80,10 @@ export async function installServerRevisions(
  * DATA-41: stores complete server rows, given in change order. A record's
  * last row replaces its earlier ones. When that row has a revision it is
  * installed with it in one write on an adapter that keeps revisions (see
- * installServerRevisions); every other record's rows are returned, in order
- * and without `$rev`, for a plain write, which leaves its revision unknown.
+ * installServerRevisions); a record whose stored revision is already equal
+ * or newer keeps its stored row. Every other record's rows are returned, in
+ * order and without `$rev`, for a plain write, which leaves its revision
+ * unknown.
  */
 async function storeServerRows(
   storage: DatafnStorageAdapter,
@@ -76,13 +102,17 @@ async function storeServerRows(
       ? [{ id: row.id, record: withoutRowRevision(row), rev }]
       : [];
   });
-  const installed = new Set(await installServerRevisions(storage, resource, entries, options));
+  const { installed, current } = await installServerRevisions(storage, resource, entries, options);
+  const settled = new Set([...installed, ...current]);
   return rows
-    .filter((row) => typeof row.id !== "string" || !installed.has(row.id))
+    .filter((row) => typeof row.id !== "string" || !settled.has(row.id))
     .map((row) => withoutRowRevision(row));
 }
 
-/** DATA-41: a delete, as a tombstone with its revision when one is known. */
+/**
+ * DATA-41: a delete, as a tombstone with its revision when one is known. A
+ * record whose stored revision is already equal or newer is left alone.
+ */
 async function deleteServerRecord(
   storage: DatafnStorageAdapter,
   resource: string,
@@ -91,8 +121,8 @@ async function deleteServerRecord(
   options: ApplyRevisionOptions,
 ): Promise<void> {
   if (rev !== undefined) {
-    const installed = await installServerRevisions(storage, resource, [{ id, record: null, rev }], options);
-    if (installed.length > 0) return;
+    const { installed, current } = await installServerRevisions(storage, resource, [{ id, record: null, rev }], options);
+    if (installed.length > 0 || current.length > 0) return;
   }
   await storage.deleteRecord(resource, id);
 }

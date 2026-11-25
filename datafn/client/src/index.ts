@@ -71,6 +71,11 @@ export {
   type DatafnStorageFactory,
   type DatafnHydrationState,
   type DatafnChangelogEntry,
+  type DatafnRevisionEntry,
+  type DatafnRevisionInstallOptions,
+  type DatafnRevisionInstallResult,
+  type DatafnRevisionReadOptions,
+  type DatafnStoredRevision,
 } from "./storage.js";
 
 // Re-export namespace helper from core
