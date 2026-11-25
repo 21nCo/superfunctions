@@ -289,7 +289,7 @@ export function createAppleProvider(providerConfig: AppleProviderConfig): BillFn
       if (!config.advancedCommerce?.enabled) {
         return manageSubscriptionAction('Apple subscription management is handled by Apple-managed surfaces');
       }
-      const response = await requestAdvancedCommerce(
+      const { data, bodyTimedOut } = await requestAdvancedCommerce(
         fetchImpl,
         config,
         transactionId,
@@ -298,11 +298,24 @@ export function createAppleProvider(providerConfig: AppleProviderConfig): BillFn
           method: 'POST'
         }
       );
-      // Cancellation only confirms that renewal is off. A signed notification or sync updates billing state
-      // without overwriting a newer StoreKit event with the subscription snapshot from before this request.
+      if (bodyTimedOut) {
+        // The 200 confirms cancellation. Let StoreKit sync or a notification supply the state, since the
+        // response body is missing and writing the pre-request snapshot could overwrite a newer event.
+        return { operationStatus: 'applied', raw: data } satisfies BillFnProviderOperationResult;
+      }
       return {
         operationStatus: 'applied',
-        raw: response
+        billingState: {
+          subscriptionStatus: 'canceled',
+          checkoutStatus: 'succeeded',
+          providerSubscriptionId: input.subscription.providerSubscriptionId,
+          providerChargeId: input.subscription.providerChargeId,
+          currentPeriodStart: input.subscription.currentPeriodStart,
+          currentPeriodEnd: input.subscription.currentPeriodEnd,
+          autoRenew: false,
+          raw: data
+        },
+        raw: data
       } satisfies BillFnProviderOperationResult;
     },
     async changeSubscription(_input: BillFnChangeSubscriptionInput) {
@@ -330,7 +343,7 @@ export function createAppleProvider(providerConfig: AppleProviderConfig): BillFn
       if (!config.advancedCommerce?.enabled) {
         return manageSubscriptionAction('Apple refunds require Advanced Commerce or Apple-managed support flows');
       }
-      const response = await requestAdvancedCommerce(
+      const { data: response } = await requestAdvancedCommerce(
         fetchImpl,
         config,
         transactionId,
@@ -599,7 +612,7 @@ async function requestAdvancedCommerce(
     ? await (bundleId === undefined ? hostTokenProvider() : hostTokenProvider({ bundleId }))
     : await config.tokenFor(bundleId);
   const baseUrl = (advancedCommerce.baseUrl ?? 'https://api.storekit.itunes.apple.com/advancedCommerce/v1').replace(/\/$/, '');
-  const { response, raw } = await fetchProviderText(
+  const { response, raw, bodyTimedOut } = await fetchProviderText(
     fetchImpl,
     `${baseUrl}/subscription/${operation}/${transactionPath}`,
     {
@@ -622,7 +635,7 @@ async function requestAdvancedCommerce(
       }
     });
   }
-  return raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+  return { data: raw ? (JSON.parse(raw) as Record<string, unknown>) : {}, bodyTimedOut };
 }
 
 async function requestJson(fetchImpl: typeof fetch, url: string, token: string, init: RequestInit = {}) {
@@ -652,7 +665,7 @@ async function fetchProviderText(
   url: string,
   init: Omit<RequestInit, 'signal'>,
   kind: 'read' | 'cancel' | 'revoke'
-): Promise<{ response: Response; raw: string }> {
+): Promise<{ response: Response; raw: string; bodyTimedOut?: true }> {
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
   const expired = new Promise<never>((_, reject) => {
@@ -675,10 +688,13 @@ async function fetchProviderText(
     if (!controller.signal.aborted) {
       throw error;
     }
+    if (kind !== 'read' && response && !response.ok) {
+      return { response, raw: '' };
+    }
     // Apple documents HTTP 200 from the cancellation endpoint as confirmation that auto-renew is off.
     // https://developer.apple.com/documentation/advancedcommerceapi/cancel-a-subscription
-    if (kind !== 'read' && response && (!response.ok || (kind === 'cancel' && response.status === 200))) {
-      return { response, raw: '' };
+    if (kind === 'cancel' && response?.status === 200) {
+      return { response, raw: '', bodyTimedOut: true };
     }
     throw createBillFnError({
       code: 'BILLFN_PROVIDER_ERROR',

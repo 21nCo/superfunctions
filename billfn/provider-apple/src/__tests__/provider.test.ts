@@ -840,9 +840,9 @@ describe('provider HTTP deadlines', () => {
   });
 
   it.each([
-    ['arrives', () => Response.json({})],
-    ['stalls', () => new Response(new ReadableStream(), { status: 200 })]
-  ])('keeps confirmed cancellation applied and leaves billing state to StoreKit when the body %s', async (_label, respond) => {
+    ['arrives', () => Response.json({}), { subscriptionStatus: 'canceled', autoRenew: false }],
+    ['stalls', () => new Response(new ReadableStream(), { status: 200 }), undefined]
+  ])('keeps confirmed cancellation applied when the body %s', async (_label, respond, billingState) => {
     vi.useFakeTimers();
     try {
       const fetchMock = vi.fn(async () => respond()) as typeof fetch;
@@ -866,12 +866,17 @@ describe('provider HTTP deadlines', () => {
         }
       });
       await Promise.all([
-        expect(pending).resolves.toEqual({
+        expect(pending).resolves.toMatchObject({
           operationStatus: 'applied',
           raw: {}
         }),
         vi.advanceTimersByTimeAsync(APPLE_PROVIDER_HTTP_DEADLINE_MS)
       ]);
+      if (billingState) {
+        expect((await pending)?.billingState).toMatchObject(billingState);
+      } else {
+        expect((await pending)?.billingState).toBeUndefined();
+      }
       expect(String(vi.mocked(fetchMock).mock.calls[0]?.[0])).toContain('/advancedCommerce/v1/subscription/cancel/txn_1');
     } finally {
       vi.useRealTimers();
