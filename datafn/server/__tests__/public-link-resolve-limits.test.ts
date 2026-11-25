@@ -152,7 +152,7 @@ describe("public link resolve limits", () => {
     expect(result.body.result.resource).toBe("linkTag");
   });
 
-  it("keeps the bounded body and route parameters readable through plugin context", async () => {
+  it("preserves the body cache shared by global middleware and a plugin handler", async () => {
     const route: DatafnComposableRoute<{ actor: string }> = {
       method: "POST",
       path: "/datafn/example/:id",
@@ -165,6 +165,10 @@ describe("public link resolve limits", () => {
     const server = await start({
       context: { actor: "test-actor" },
       plugins: [{ name: "test-route", runsOn: ["server"], routes: () => [route] }],
+    });
+    server.router.use(async (_request, context, next) => {
+      await context.json();
+      return next();
     });
     const result = await read(await server.router.handle(new Request("http://localhost/datafn/example/test-id", {
       method: "POST",

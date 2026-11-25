@@ -16,6 +16,13 @@ import {
   resolveEndpointResource,
   resourceNameFromId,
 } from "@datafn/core";
+import type { DatafnResourceSchema, DatafnSchema } from "../../core-types.js";
+
+/** A dot-path rooted in a declared structured field stays inside that field. */
+export function isNestedFilterField(resource: DatafnResourceSchema | undefined, name: string): boolean {
+  const field = resource?.fields.find((candidate) => candidate.name === name);
+  return field?.type === "object" || field?.type === "json" || field?.type === "array" || field?.type === "file";
+}
 
 function normalizeOps(value: unknown): unknown {
   if (typeof value !== "object" || value === null) return value;
@@ -29,8 +36,10 @@ function normalizeOps(value: unknown): unknown {
   return out;
 }
 
-function buildResolver(schema: any, store: any) {
+function buildResolver(schema: DatafnSchema, store: any) {
   return (resource: string, recordId: string, relName: string): Record<string, unknown>[] => {
+    const source = schema.resources.find((candidate) => candidate.name === resource);
+    if (isNestedFilterField(source, relName)) return [];
     const rel = findRelation(schema, resource, relName);
     if (!rel) return [];
     const rec = store.getRecord(resource, recordId);

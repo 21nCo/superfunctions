@@ -197,8 +197,18 @@ export async function executeTransaction(
         actorId,
       );
       // Execute query
-      const queryResult = executeQuery(step.query, schema, store);
-      return queryResult;
+      try {
+        return executeQuery(step.query, schema, store);
+      } catch (error) {
+        // The in-memory evaluator can throw a plain DFQL validation error.
+        // Translate it here, after the adapter reads, to keep driver errors out.
+        if (error && typeof error === "object" && "code" in error &&
+            (error.code === "DFQL_INVALID" || error.code === "DFQL_UNSUPPORTED") &&
+            "message" in error && typeof error.message === "string") {
+          throw new DatafnExecutionError(error.code, error.message);
+        }
+        throw error;
+      }
     } else if (step.mutation) {
       const stepIdempotencyStore =
         idempotencyStore.withDb?.(stepDb) ?? idempotencyStore;

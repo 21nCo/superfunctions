@@ -14,7 +14,6 @@ import type { SearchProvider } from "./search-provider.js";
 import { parseDatafnRequest, collectStructuralResourceSelectors, validateSchema, ensureBuiltinKv, ensureBuiltinTemporal, isNamespaced } from "@datafn/core";
 import {
   createObservabilityMiddleware,
-  createRouteContext,
   createRouter,
   executeMiddlewareChain,
   type Router,
@@ -169,6 +168,7 @@ type DatafnServerComposablePlugin = DatafnPlugin & {
     database: Adapter;
     crossNamespaceDatabase?: Adapter;
     schema: DatafnSchema;
+    maxPayloadBytes?: number;
   }) => DatafnComposableRoute[];
   authorize?: (
     input: DatafnPluginAuthorizationInput,
@@ -1538,22 +1538,6 @@ export async function createDatafnServer<TContext = any>(
     search: (payload, context) => executeInProcess("search", searchHandler, payload, context),
   };
 
-  const requestWithBoundedBody = async (request: Request): Promise<Request | Response> => {
-    if (
-      !limits.maxPayloadBytes ||
-      request.method === "GET" ||
-      request.method === "HEAD" ||
-      request.body == null
-    ) {
-      return request;
-    }
-    const read = await readLimitedBody(request, limits.maxPayloadBytes, logger);
-    if (!read.ok) return read.response;
-    const headers = new Headers(request.headers);
-    headers.set("content-length", String(read.bytes.byteLength));
-    return new Request(request, { headers, body: read.bytes });
-  };
-
   const withPluginRouteGuards = (
     route: DatafnComposableRoute<TContext>,
   ): DatafnComposableRoute<TContext> => {
@@ -1569,18 +1553,11 @@ export async function createDatafnServer<TContext = any>(
           const limited = await rateLimitMiddleware(route.path, context);
           if (limited) return limited;
         }
-        const bounded = await requestWithBoundedBody(request);
-        if (bounded instanceof Response) return bounded;
-        let routeContext = context;
-        if (bounded !== request) {
-          const { json, text, formData } = createRouteContext(bounded, context.params);
-          routeContext = { ...context, json, text, formData };
-        }
         return executeMiddlewareChain(
           originalMiddleware ?? [],
-          bounded,
-          routeContext,
-          async () => originalHandler(bounded, routeContext),
+          request,
+          context,
+          async () => originalHandler(request, context),
         );
       },
     };
@@ -1702,6 +1679,7 @@ export async function createDatafnServer<TContext = any>(
         database: db ?? configuredDatabase,
         crossNamespaceDatabase: crossNamespaceDb,
         schema: validatedSchema,
+        maxPayloadBytes: multiRegionRuntime?.placement ? undefined : limits.maxPayloadBytes || undefined,
       }) as DatafnComposableRoute<TContext>[];
       for (const route of pluginRoutes) {
         if (!multiRegionRuntime?.placement || route.meta?.datafnPlacement === "none") {

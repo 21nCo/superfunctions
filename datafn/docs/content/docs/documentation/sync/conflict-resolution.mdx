@@ -9,7 +9,7 @@ Two clients write to the same row before either has pushed. When their mutations
 
 ## Default: last-writer-wins (LWW)
 
-The default policy is last successful write in server execution order (`serverSeq` when the write is sequenced). The server does not compare the client's `updatedAt`. It stamps its own `updatedAt` as it applies each write. When two unguarded updates both succeed, the later one in that order is what is stored, and both are acknowledged. Concurrent requests can finish in a different order from arrival.
+The default policy is last successful write. The server stamps its own `updatedAt` as it applies each write, regardless of the client's timestamp. When two unguarded updates both succeed, both are acknowledged and the last write applied determines the stored value. Concurrent requests can finish in a different order from arrival.
 
 This is the right answer for:
 

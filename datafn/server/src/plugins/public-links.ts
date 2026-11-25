@@ -7,6 +7,7 @@ import {
   type DatafnSchema,
 } from "@datafn/core";
 import { errorResponse, okResponse } from "../http/errors.js";
+import { checkPayloadLimit, readBodyWithLimit } from "../http/middleware.js";
 import {
   executeShare,
   getFailedSharePermissionRecord,
@@ -110,6 +111,7 @@ export interface DatafnPublicLinksPlugin<TSession = unknown> extends DatafnPlugi
     database: Adapter;
     crossNamespaceDatabase?: Adapter;
     schema: DatafnSchema;
+    maxPayloadBytes?: number;
   }): Route[];
 }
 
@@ -267,7 +269,7 @@ export function createDatafnPublicLinksPlugin<TSession = unknown>(
         directory: config.directory
       });
     },
-    routes({ database, crossNamespaceDatabase, schema }) {
+    routes({ database, crossNamespaceDatabase, schema, maxPayloadBytes }) {
       return [
         {
           method: "POST",
@@ -316,7 +318,22 @@ export function createDatafnPublicLinksPlugin<TSession = unknown>(
           path: "/datafn/public-links/resolve",
           meta: { datafnPlacement: publicLinkPlacement },
           handler: async (request) => {
-            const body = await request.json().catch(() => null);
+            let body: unknown;
+            if (maxPayloadBytes !== undefined && !request.bodyUsed) {
+              const read = await readBodyWithLimit(request, maxPayloadBytes);
+              if (!read.ok) return read.response;
+              try {
+                body = JSON.parse(read.body);
+              } catch {
+                body = null;
+              }
+            } else {
+              if (maxPayloadBytes !== undefined) {
+                const oversized = checkPayloadLimit(request, maxPayloadBytes);
+                if (oversized) return oversized;
+              }
+              body = await request.json().catch(() => null);
+            }
             const token =
               body &&
               typeof body === "object" &&

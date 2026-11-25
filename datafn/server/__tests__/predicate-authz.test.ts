@@ -47,7 +47,7 @@ const schema = {
   ],
 };
 
-async function createHarness() {
+async function createHarness(serverSchema = schema, personFields: Record<string, unknown> = {}) {
   const db = memoryAdapter();
   await db.initialize?.();
   await db.create({
@@ -63,11 +63,12 @@ async function createHarness() {
       employerId: "emp_1",
       secret: "test-secret-field",
       __ns: NAMESPACE,
+      ...personFields,
     },
     namespace: NAMESPACE,
   });
   const server = await createDatafnServer({
-    schema: schema as any,
+    schema: serverSchema as any,
     database: db,
     namespaceProvider: {
       getNamespace: () => NAMESPACE,
@@ -138,6 +139,30 @@ describe("predicate field authorization", () => {
     expect(denied.status).toBe(403);
     expect(denied.body.error.code).toBe("FORBIDDEN");
     expect(denied.body.error.message).toBe("Authorization denied");
+  });
+
+  it("filters a readable object field whose name is also a relation", async () => {
+    const [people, employers] = schema.resources;
+    const harness = await createHarness({
+      ...schema,
+      resources: [{
+        ...people,
+        fields: [...people.fields, { name: "employer", type: "object", required: false }],
+        permissions: {
+          ...people.permissions,
+          read: { fields: [...people.permissions.read.fields, "employer"] },
+        },
+      }, employers],
+    }, { employer: { city: "Pune" } });
+    server = harness.server;
+    const result = await harness.post("query", {
+      resource: "people",
+      version: 1,
+      select: ["id"],
+      filters: { "employer.city": "Pune" },
+    });
+    expect(result.status).toBe(200);
+    expect(result.body.result.data).toEqual([{ id: "per_1" }]);
   });
 
   it("allows a readable guard and rejects an unreadable guard before the write", async () => {

@@ -28,6 +28,7 @@ import {
 import type { CapabilityEntry, ShareableCapability } from "@datafn/core";
 import { canonicalizeActorPrincipal, resolveEffectivePrincipals } from "../execution/auth/principal-resolver.js";
 import { resolveEffectiveLevel, type AccessGrant } from "../execution/auth/access-resolver.js";
+import { isNestedFilterField } from "../execution/query/filters.js";
 import {
   getSpv2MigrationRuntimeConfig,
   resolveAccessLevelFromLegacyV1,
@@ -480,6 +481,7 @@ function authorizeRelationFilter(
   if (targets.length === 0) return "scalar";
 
   const quantifier = parts.length === 1 && isQuantifierFilterValue(value);
+  if (!quantifier && isNestedFilterField(resource, head)) return "scalar";
   const fkNamed = isForeignKeyNamedManyOne(schema, resource.name, head);
   // A scalar comparison on an FK stored under the relation name is a field filter.
   // A quantifier still filters the related resource, so it is not that field read.
@@ -531,7 +533,11 @@ function authorizeRelationFilter(
     const isLast = segmentIndex === parts.length - 1;
     const nextTargets = [
       ...new Set(
-        currentNames.flatMap((name) => resolveRelationTargetResources(schema, name, segment)),
+        currentNames.flatMap((name) =>
+          isNestedFilterField(getResourceSchema(schema, name), segment)
+            ? []
+            : resolveRelationTargetResources(schema, name, segment),
+        ),
       ),
     ];
     const segmentIsField = currentNames.some((name) => {

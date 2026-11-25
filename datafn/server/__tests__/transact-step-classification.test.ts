@@ -26,7 +26,7 @@ describe("transact step classification", () => {
     await server?.close?.();
   });
 
-  async function post(steps: unknown[]) {
+  async function post(steps: unknown[], atomic = true) {
     adapter = memoryAdapter();
     await adapter.initialize?.();
     const create = vi.spyOn(adapter, "create");
@@ -40,7 +40,7 @@ describe("transact step classification", () => {
       new Request("http://localhost/datafn/transact", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ steps }),
+        body: JSON.stringify({ atomic, steps }),
       }),
       {},
     );
@@ -80,5 +80,14 @@ describe("transact step classification", () => {
     expect(body.error.message).toBe("Invalid DFQL: id must be string");
     expect(body.error.details.path).toBe("steps[0].mutation.id");
     expect(create).not.toHaveBeenCalled();
+  });
+
+  it("preserves the evaluator's validation error for a non-atomic query step", async () => {
+    const { body } = await post([
+      { resource: "txn", operation: "insert", id: "txn-1", record: { amount: 1 } },
+      { resource: "txn", filters: { amount: { between: [1] } } },
+    ], false);
+
+    expect(body.result.results[1].error).toMatchObject({ code: "DFQL_INVALID" });
   });
 });

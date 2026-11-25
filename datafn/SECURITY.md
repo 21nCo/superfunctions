@@ -21,7 +21,7 @@ Core data routes (/datafn/query, /mutation, /transact, /push, …):
 Plugin routes (for example /datafn/public-links/resolve):
   These do not pass through the core withAuth chain, so they do not run the authorize callback.
   When rateLimit.enabled is set, they use that same limiter, keyed by the route path.
-  Without a placement runtime, the body is streamed and rejected past limits.maxPayloadBytes before the handler parses it.
+  Without placement, public-link resolve streams the request body under limits.maxPayloadBytes before parsing it.
   With placement, the placement runtime applies its own streaming cap before namespace resolution.
 ```
 
@@ -61,7 +61,7 @@ const server = await createDatafnServer({
 
 ## Layer 2: Payload Size Limits
 
-**When:** After rate limiting, before JSON parsing, on core data routes. Plugin routes without placement use the same `limits.maxPayloadBytes` cap. Placement routes use the placement streaming cap instead.
+**When:** After rate limiting, before JSON parsing, on core data routes and public-link resolve. Public-link resolve uses the placement streaming cap when placement is configured.
 **Config:** `createDatafnServer({ limits: { maxPayloadBytes: 1_048_576 } })`
 **Default:** `maxPayloadBytes` is 5,242,880 when unset.
 
