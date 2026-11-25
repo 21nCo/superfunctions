@@ -113,8 +113,9 @@ export function createMcpFnAuthProviderAdapter<TSession extends McpFnAuthSession
   if (configuredResource !== audience) {
     // Protected-resource metadata advertises the normalized form, so tokens are
     // issued for it; a differently spelled configuration would refuse them.
+    // The URL itself stays out of the message: it may carry a secret.
     throw new Error(
-      `MCP resource must be given in its normalized form: ${audience}`,
+      "MCP resource must be given in its normalized form (as new URL(resource).toString() serializes it, without a fragment)",
     );
   }
   return {

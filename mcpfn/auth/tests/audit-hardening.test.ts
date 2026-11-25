@@ -149,6 +149,15 @@ describe("AuthFn provider adapter (MCP-SEC-05)", () => {
         provider: { authenticateBearer: async () => session() },
       })).toThrow(/normalized form/);
     }
+    try {
+      createAuthProviderMcpHandler(echoAuthInfo, {
+        resource: "https://MCP.example.com/mcp?key=test-api-token",
+        provider: { authenticateBearer: async () => session() },
+      });
+      expect.unreachable();
+    } catch (error) {
+      expect(String(error)).not.toContain("test-api-token");
+    }
   });
 
   it("refuses a mapping whose resourceIds is not an array", async () => {
