@@ -509,7 +509,7 @@ export class SchemaConverter {
   private readonly projections = new Map<DirectionalKeyword, WeakMap<object, AccessConflict | null>>();
   /** Schema objects whose conversion failed for a reason of their own, by mode, for the whole call. */
   private readonly failures = new Map<SchemaMode, WeakMap<object, OpenApiSkip>>();
-  /** The `required` arrays already read, with whether they name "__proto__" (`refusePrototypeName`). */
+  /** The property-name lists already read, with whether they name "__proto__" (`checkNameList`). */
   private readonly readRequired = new WeakMap<object, boolean>();
   private budget: NodeBudget;
 
@@ -985,8 +985,10 @@ export class SchemaConverter {
       // 2020-12 (OpenAPI 3.1) defines no `dependencies`: it annotates only.
       if (keyword === this.ignoredKeyword()) continue;
       if (keyword === "dependencies" && isObject(value)) {
+        this.checkDependencies(value);
         dependencies = { ...dependencies, ...this.convertDependencies(value, mode, refs) };
       } else if (keyword === "dependentRequired" && isObject(value)) {
+        this.checkDependencies(value);
         dependencies = { ...value, ...dependencies };
       } else if (keyword === "$defs") {
         // Draft-07 has no $defs, so Ajv would not refuse a malformed one.
@@ -1012,6 +1014,29 @@ export class SchemaConverter {
     throw new OpenApiSkip("unsupported-property-name", PROTOTYPE_PROPERTY_REASON);
   }
 
+  /**
+   * Refuse a list of property names (`required`, a property dependency) that
+   * names "__proto__". Each document array is read once per call, so the
+   * reading stays within the document's size.
+   */
+  private checkNameList(list: unknown[]): void {
+    let prototype = this.readRequired.get(list);
+    if (prototype === undefined) {
+      prototype = documentItems(list).includes("__proto__");
+      this.readRequired.set(list, prototype);
+    }
+    if (prototype) this.refusePrototypeName();
+  }
+
+  /** Refuse a dependency map keyed or listing "__proto__" (`dependencies`, `dependentRequired`). */
+  private checkDependencies(value: JsonObject): void {
+    if (Object.hasOwn(value, "__proto__")) this.refusePrototypeName();
+    for (const key of this.budget.ownKeys(value)) {
+      const item = value[key];
+      if (Array.isArray(item)) this.checkNameList(item);
+    }
+  }
+
   private convertEntry(
     schema: JsonObject,
     keyword: string,
@@ -1030,15 +1055,7 @@ export class SchemaConverter {
       for (const item of value) converted.push(this.convert(item, mode, refs));
       return [keyword, converted];
     }
-    // Each document array is read once per call, so the reading stays within the document's size.
-    if (keyword === "required" && Array.isArray(value)) {
-      let prototype = this.readRequired.get(value);
-      if (prototype === undefined) {
-        prototype = documentItems(value).includes("__proto__");
-        this.readRequired.set(value, prototype);
-      }
-      if (prototype) this.refusePrototypeName();
-    }
+    if (keyword === "required" && Array.isArray(value)) this.checkNameList(value);
     if (keyword === "items") return [keyword, this.convert(value, mode, refs)];
     if (SCHEMA_KEYWORDS.has(keyword)) return [keyword, this.convert(value, mode, refs)];
     if ((keyword === "exclusiveMinimum" || keyword === "exclusiveMaximum") && typeof value === "boolean") {

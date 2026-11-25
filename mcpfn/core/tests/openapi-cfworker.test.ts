@@ -547,6 +547,19 @@ describe("fromOpenAPI under @cfworker/json-schema", () => {
     expect(wide.tools.map(({ name }) => name)).toEqual(["wideFlat"]);
   });
 
+  it("refuses tool arguments with an inherited enumerable property, as under Ajv", async () => {
+    const handler = vi.fn(async () => ({ content: [] }));
+    const registry = new McpFnRegistry().register({
+      name: "closed",
+      description: "Named object.",
+      inputSchema: { type: "object", properties: { name: { type: "string" } }, additionalProperties: false },
+      handler,
+    });
+    await expect(registry.callTool("closed", Object.assign(Object.create({ inherited: 1 }), { name: "ok" }), undefined, requestExtra()))
+      .rejects.toMatchObject({ code: "MCPFN_INVALID_ARGUMENTS", details: { issues: [expect.objectContaining({ keyword: "ownProperties" })] } });
+    expect(handler).not.toHaveBeenCalled();
+  });
+
   it("skips a __proto__ parameter, required or optional, as under Ajv", () => {
     const result = fromOpenAPI(fixture("skip-prototype-parameter-name"), { executor: recordingExecutor() });
     const reason = "query parameter __proto__ cannot be declared: the validators do not read that property name alike";

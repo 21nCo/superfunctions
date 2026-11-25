@@ -1297,6 +1297,26 @@ describe("fromOpenAPI bounded and dialect-aware conversion", () => {
     ]);
   });
 
+  it("skips a property dependency that names __proto__, as a key or in its list, under 3.0 and 3.1, and keeps ordinary dependencies", () => {
+    const operation = (version: "3.0.3" | "3.1.0", keyword: string, dependency: unknown) => JSON.parse(JSON.stringify({
+      openapi: version,
+      paths: {
+        "/in": { post: { operationId: "protoDependency", requestBody: body({ type: "object", [keyword]: dependency }), responses: ok } },
+        "/plain": { post: { operationId: "plainDependency", requestBody: body({ type: "object", [keyword]: { flag: ["name"] } }), responses: ok } },
+      },
+    }).replaceAll("PROTO", "__proto__")) as Record<string, unknown>;
+    for (const [version, keyword] of [["3.1.0", "dependentRequired"], ["3.0.3", "dependencies"]] as const) {
+      for (const dependency of [{ flag: ["PROTO"] }, { PROTO: ["flag"] }]) {
+        const result = fromOpenAPI(operation(version, keyword, dependency), options());
+        expect(skips(result)).toEqual([["protoDependency", "unsupported-property-name", PROTO_PROPERTY]]);
+        expectArguments(tool(result.tools, "plainDependency").inputSchema, {
+          valid: [{ body: {} }, { body: { flag: 1, name: "x" } }],
+          invalid: [{ body: { flag: 1 } }],
+        });
+      }
+    }
+  });
+
   it("keeps schema-less JSON bodies, large document arrays and unrelated deep reference chains out of the way", () => {
     const aliases: Record<string, unknown> = { Leaf: { type: "object", properties: { id: { type: "string", readOnly: true } } } };
     for (let index = 0; index < 20_000; index += 1) {
