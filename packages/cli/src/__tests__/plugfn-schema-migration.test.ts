@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { FieldSchema, TableSchema } from '@superfunctions/db';
 import { createPendingMigration } from '../commands/generate.js';
-import type { DatabaseColumn, DatabaseTable } from '../utils/introspection.js';
+import { introspectMySQL, type DatabaseColumn, type DatabaseTable } from '../utils/introspection.js';
 import { getSchema, PLUGFN_SCHEMA_VERSION } from '../../../../plugfn/core/src/schema.js';
 
 // The last schema version whose plugfn_sync_jobs.claim_token was VARCHAR(64)
@@ -84,6 +84,77 @@ function mysqlV7Snapshot(tables: TableSchema[], claimTokenLength: number): Datab
   });
 }
 
+/**
+ * The information_schema rows a MySQL server returns for a snapshot, keyed by
+ * the aliases introspectMySQL selects. `int` converts integer metadata the way
+ * the client library does (mysql2 returns numbers; Prisma can return bigint).
+ */
+function informationSchemaRows(snapshot: DatabaseTable[], int: (value: number) => number | bigint) {
+  return (sql: string, params: unknown[]): Record<string, unknown>[] => {
+    if (sql.includes('information_schema.TABLES')) {
+      return snapshot.map((table) => ({ table_name: table.name }));
+    }
+    const table = snapshot.find((candidate) => candidate.name === params[1]);
+    if (!table) throw new Error(`unexpected introspection query: ${sql}`);
+    if (sql.includes('information_schema.COLUMNS')) {
+      return table.columns.map((column) => ({
+        column_name: column.columnName,
+        data_type: column.dataType,
+        column_type: column.columnType,
+        character_maximum_length: column.maxLength == null ? null : int(column.maxLength),
+        extra: '',
+        generation_expression: '',
+        character_set_name: null,
+        collation_name: null,
+        column_comment: '',
+        is_nullable: column.isNullable ? 'YES' : 'NO',
+        column_default: null,
+        column_key: column.isPrimaryKey ? 'PRI' : '',
+      }));
+    }
+    if (sql.includes('information_schema.STATISTICS')) {
+      return table.indexes.flatMap((index) =>
+        index.columns.map((column, position) => ({
+          name: index.name,
+          table_name: table.name,
+          non_unique: int(index.isUnique ? 0 : 1),
+          column_name: column,
+          sub_part: index.prefixLengths?.[position] == null ? null : int(index.prefixLengths[position]!),
+          index_type: index.indexType,
+        })),
+      );
+    }
+    if (sql.includes('information_schema.KEY_COLUMN_USAGE')) return [];
+    throw new Error(`unexpected introspection query: ${sql}`);
+  };
+}
+
+/** The raw connection each adapter's CLI helper hands to introspection. */
+function mysqlConnection(adapterType: 'drizzle' | 'kysely' | 'prisma', snapshot: DatabaseTable[]) {
+  switch (adapterType) {
+    case 'drizzle': {
+      // mysql2/promise pool: query() resolves to [rows, fields].
+      const rows = informationSchemaRows(snapshot, (value) => value);
+      return { query: async (sql: string, params: unknown[]) => [rows(sql, params), []] };
+    }
+    case 'kysely': {
+      // Callback mysql2 pool: query() reports through a callback and returns a
+      // Query object, not a promise; promise() returns the promise pool.
+      const rows = informationSchemaRows(snapshot, (value) => value);
+      return {
+        query: () => ({ on: () => undefined }),
+        promise: () => ({ query: async (sql: string, params: unknown[]) => [rows(sql, params), []] }),
+      };
+    }
+    case 'prisma': {
+      // PrismaClient: no query(); raw SQL takes `?` parameters as arguments and
+      // resolves to the rows, with integer metadata as bigint.
+      const rows = informationSchemaRows(snapshot, (value) => BigInt(value));
+      return { $queryRawUnsafe: async (sql: string, ...params: unknown[]) => rows(sql, params) };
+    }
+  }
+}
+
 /** The executable part of an up migration, without comments. */
 function upStatements(adapterType: 'drizzle' | 'kysely' | 'prisma', content: string): string {
   const up = adapterType === 'kysely' ? content.slice(0, content.indexOf('export async function down')) : content;
@@ -91,6 +162,44 @@ function upStatements(adapterType: 'drizzle' | 'kysely' | 'prisma', content: str
     .split('\n')
     .filter((line) => !line.trim().startsWith('--'))
     .join('\n');
+}
+
+type PendingMigration = ReturnType<typeof createPendingMigration>;
+
+/** The v7 to v8 upgrade of a dev database whose claim_token is VARCHAR(64). */
+function expectDevV7Widening(adapterType: 'drizzle' | 'kysely' | 'prisma', pending: PendingMigration): void {
+  expect(pending).not.toBeNull();
+  // TEXT columns reported as 65535 match their unbounded schema strings, so
+  // only claim_token changes. Its unique index is not dropped: MySQL keeps a
+  // full-column index through a VARCHAR widening, so uniqueness is enforced
+  // for the whole upgrade.
+  expect(pending!.tableDiffs).toEqual([
+    {
+      tableName: 'plugfn_sync_jobs',
+      action: 'alter',
+      missingColumns: [],
+      extraColumns: [],
+      columnChanges: [
+        expect.objectContaining({
+          column: 'claim_token',
+          change: `maxLength changed from ${DEV_V7_CLAIM_TOKEN_LENGTH} to ${NEXT_V7_CLAIM_TOKEN_LENGTH}`,
+        }),
+      ],
+      missingIndexes: [],
+      changedIndexes: [],
+      rebuiltIndexes: [],
+    },
+  ]);
+
+  const up = upStatements(adapterType, pending!.migrationFile.content);
+  expect(up, adapterType).toContain(
+    `ALTER TABLE plugfn_sync_jobs MODIFY COLUMN claim_token VARCHAR(${NEXT_V7_CLAIM_TOKEN_LENGTH}) NULL`,
+  );
+  expect(up.match(/MODIFY COLUMN/g), adapterType).toHaveLength(1);
+  expect(up, adapterType).not.toMatch(/DROP TABLE|CREATE TABLE|DROP COLUMN|ADD COLUMN|dropIndex|INDEX/i);
+  expect(up.indexOf('MODIFY COLUMN')).toBeLessThan(
+    up.search(new RegExp(`version\\s*[:=]\\s*${PLUGFN_SCHEMA_VERSION}\\b`)),
+  );
 }
 
 describe('plugfn schema v8 migration', () => {
@@ -110,37 +219,27 @@ describe('plugfn schema v8 migration', () => {
         currentTables: mysqlV7Snapshot(schema.schemas, DEV_V7_CLAIM_TOKEN_LENGTH),
       });
 
-      expect(pending).not.toBeNull();
-      // TEXT columns reported as 65535 match their unbounded schema strings, so
-      // only claim_token changes. Its unique index is not dropped: MySQL keeps a
-      // full-column index through a VARCHAR widening, so uniqueness is enforced
-      // for the whole upgrade.
-      expect(pending!.tableDiffs).toEqual([
-        {
-          tableName: 'plugfn_sync_jobs',
-          action: 'alter',
-          missingColumns: [],
-          extraColumns: [],
-          columnChanges: [
-            expect.objectContaining({
-              column: 'claim_token',
-              change: `maxLength changed from ${DEV_V7_CLAIM_TOKEN_LENGTH} to ${NEXT_V7_CLAIM_TOKEN_LENGTH}`,
-            }),
-          ],
-          missingIndexes: [],
-          changedIndexes: [],
-          rebuiltIndexes: [],
-        },
-      ]);
+      expectDevV7Widening(adapterType, pending);
+    }
+  });
 
-      const up = upStatements(adapterType, pending!.migrationFile.content);
-      expect(up, adapterType).toContain(
-        `ALTER TABLE plugfn_sync_jobs MODIFY COLUMN claim_token VARCHAR(${NEXT_V7_CLAIM_TOKEN_LENGTH}) NULL`,
+  it('introspects a dev v7 MySQL database through each adapter connection and widens claim_token', async () => {
+    for (const adapterType of adapterTypes) {
+      const connection = mysqlConnection(adapterType, mysqlV7Snapshot(schema.schemas, DEV_V7_CLAIM_TOKEN_LENGTH));
+      const currentTables = await introspectMySQL(connection, 'app');
+
+      expect(currentTables.map((table) => table.name).sort(), adapterType).toEqual(
+        schema.schemas.map((table) => table.modelName).sort(),
       );
-      expect(up.match(/MODIFY COLUMN/g), adapterType).toHaveLength(1);
-      expect(up, adapterType).not.toMatch(/DROP TABLE|CREATE TABLE|DROP COLUMN|ADD COLUMN|dropIndex|INDEX/i);
-      expect(up.indexOf('MODIFY COLUMN')).toBeLessThan(
-        up.search(new RegExp(`version\\s*[:=]\\s*${PLUGFN_SCHEMA_VERSION}\\b`)),
+      expectDevV7Widening(
+        adapterType,
+        createPendingMigration({
+          adapterType,
+          dialect: 'mysql',
+          library,
+          currentVersion: V7_SCHEMA_VERSION,
+          currentTables,
+        }),
       );
     }
   });

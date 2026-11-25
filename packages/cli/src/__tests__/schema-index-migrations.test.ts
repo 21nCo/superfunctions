@@ -1036,6 +1036,58 @@ describe("schema index migrations", () => {
       .toEqual([["note", "maxLength changed from 255 to unbounded"]]);
   });
 
+  it("reads MySQL TINYINT(1) as boolean only for boolean fields", () => {
+    const column = (columnName: string, columnType: string) => ({
+      dialect: "mysql" as const,
+      tableName: "plugfn_counters",
+      columnName,
+      dataType: columnType.replace(/\(.*$/, ""),
+      columnType,
+      maxLength: null,
+      isNullable: columnName !== "id",
+      defaultValue: null,
+      isPrimaryKey: columnName === "id",
+      isUnique: false,
+    });
+    const diff = (fields: Record<string, unknown>, columns: ReturnType<typeof column>[]) =>
+      diffTables(
+        [{ modelName: "plugfn_counters", fields } as unknown as TableSchema],
+        [{
+          name: "plugfn_counters",
+          columns,
+          indexes: [{ name: "PRIMARY", tableName: "plugfn_counters", columns: ["id"], indexType: "BTREE", isUnique: true }],
+          constraints: [],
+        }],
+        "plugfn",
+      );
+
+    // TINYINT(1) is a numeric column with display width 1, also as a primary key.
+    expect(diff(
+      {
+        id: { type: "number", required: true, fieldName: "id" },
+        level: { type: "number", required: false, fieldName: "level" },
+      },
+      [column("id", "tinyint(1)"), column("level", "tinyint(1)")],
+    )).toEqual([]);
+    // MySQL reports BOOLEAN as TINYINT(1).
+    expect(diff(
+      {
+        id: { type: "number", required: true, fieldName: "id" },
+        enabled: { type: "boolean", required: false, fieldName: "enabled" },
+      },
+      [column("id", "int"), column("enabled", "tinyint(1)")],
+    )).toEqual([]);
+    // Other integer types are not booleans.
+    expect(diff(
+      {
+        id: { type: "number", required: true, fieldName: "id" },
+        enabled: { type: "boolean", required: false, fieldName: "enabled" },
+      },
+      [column("id", "int"), column("enabled", "tinyint(4)")],
+    )[0].columnChanges?.map((change) => [change.column, change.change]))
+      .toEqual([["enabled", "type changed from integer to boolean"]]);
+  });
+
   it("refuses MySQL type changes with undeclared or primary index dependencies", () => {
     const unbounded = {
       ...syncJobs,

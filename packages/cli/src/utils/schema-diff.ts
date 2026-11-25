@@ -380,8 +380,12 @@ export function diffTables(
         // Map FieldSchema types to SQL types for comparison
         const expectedType = mapFieldTypeToSQLType(fieldSchema, curCol.dialect);
         // MySQL stores BOOLEAN as TINYINT(1) and reports that column type.
+        // TINYINT(1) is also a valid integer column (the 1 is display width
+        // only), so read it as boolean only for boolean schema fields.
         const actualType =
-          curCol.dialect === 'mysql' && /^tinyint\s*\(\s*1\s*\)$/i.test(curCol.columnType?.trim() ?? '')
+          curCol.dialect === 'mysql' &&
+          fieldSchema.type === 'boolean' &&
+          /^tinyint\s*\(\s*1\s*\)$/i.test(curCol.columnType?.trim() ?? '')
             ? 'boolean'
             : normalizeColumnType(curCol.dataType);
 

@@ -162,14 +162,33 @@ export async function introspectPostgres(
   return result;
 }
 
+type MySqlQuery = (sql: string, params: unknown[]) => Promise<[any[], unknown?]>;
+
+/**
+ * Adapt the CLI's MySQL connections to one `[rows]` query shape: Drizzle's
+ * mysql2/promise pool already returns it, Kysely's callback mysql2 pool
+ * exposes it through `promise()`, and Prisma runs raw SQL with `?` parameters.
+ */
+function mysqlQuery(db: any): MySqlQuery {
+  if (typeof db?.$queryRawUnsafe === 'function') {
+    return async (sql, params) => [await db.$queryRawUnsafe(sql, ...params)];
+  }
+  if (typeof db?.promise === 'function') {
+    const promisePool = db.promise();
+    return (sql, params) => promisePool.query(sql, params);
+  }
+  return (sql, params) => db.query(sql, params);
+}
+
 /**
  * Introspect MySQL database schema
  */
 export async function introspectMySQL(
-  db: any,
+  connection: any,
   database: string,
   tablePrefix?: string
 ): Promise<DatabaseTable[]> {
+  const db = { query: mysqlQuery(connection) };
   // Query tables
   const tablesQuery = `
     SELECT TABLE_NAME as table_name
@@ -262,7 +281,8 @@ export async function introspectMySQL(
           columns: [],
           prefixLengths: [],
           indexType: row.index_type,
-          isUnique: row.non_unique === 0,
+          // Prisma can return integer metadata as bigint.
+          isUnique: Number(row.non_unique) === 0,
         });
       }
       indexMap.get(row.name)!.columns.push(row.column_name);
