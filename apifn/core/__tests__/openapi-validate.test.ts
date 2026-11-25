@@ -363,6 +363,19 @@ describe("validateOpenAPI", () => {
   });
 
   it.each([
+    ["%YAML 1.1\n---\n", "<<"],
+    ["", "!!merge <<"],
+  ])("rejects YAML merge keys before converting a preloaded document", async (directive, key) => {
+    const uri = "https://example.invalid/types.yaml";
+    const contents = directive + `x-shape: &shape { type: integer }\n${key}: *shape`;
+    await expect(validateOpenAPI(documentWithReference(uri), {
+      externalReferences: new Map([[uri, contents]]),
+    })).resolves.toEqual([
+      { path: "components.schemas.Value.$ref", message: expect.stringContaining("YAML merge keys"), severity: "error" },
+    ]);
+  });
+
+  it.each([
     { reversed: false, preloaded: false },
     { reversed: true, preloaded: false },
     { reversed: false, preloaded: true },
@@ -486,6 +499,19 @@ describe("validateOpenAPI", () => {
     }
   });
 
+  it("rejects an undecodable path instead of matching a literal percent filename", async () => {
+    const cwd = vi.spyOn(process, "cwd").mockReturnValue("/virtual/project");
+    try {
+      const externalReferences = new Map([["/virtual/project/types%25FF.yaml", "type: integer"]]);
+      await expect(validateOpenAPI(documentWithReference("./types%FF.yaml"), { externalReferences })).resolves.toEqual([
+        expect.objectContaining({ path: "components.schemas.Value.$ref", severity: "error" }),
+      ]);
+      await expect(validateOpenAPI(documentWithReference("./types%25FF.yaml"), { externalReferences })).resolves.toEqual([]);
+    } finally {
+      cwd.mockRestore();
+    }
+  });
+
   it.each([
     ["types.json%3Frevision=1", "types.json?revision=1"],
     ["types.json?", "types.json"],
@@ -526,6 +552,19 @@ describe("validateOpenAPI", () => {
     });
     expect(result.errors).toEqual([]);
     expect(result.document?.components?.schemas?.Value).toEqual({ type: "integer" });
+  });
+
+  it("resolves an acyclic root alias through sibling definitions in a preloaded schema", async () => {
+    const uri = "https://example.invalid/types.json";
+    const contents = JSON.stringify({
+      $ref: "#/$defs/Alias",
+      $defs: { Alias: { $ref: "#/$defs/Target" }, Target: { type: "integer" } },
+    });
+    const result = await validateAndDereferenceOpenAPI(documentWithReference(uri), {
+      externalReferences: new Map([[uri, contents]]),
+    });
+    expect(result.errors).toEqual([]);
+    expect(result.document?.components?.schemas?.Value).toMatchObject({ type: "integer" });
   });
 
   it("dereferences literal data used as a schema through an intermediate alias", async () => {

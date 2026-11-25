@@ -1,5 +1,5 @@
 import SwaggerParser from "@apidevtools/swagger-parser";
-import { isAlias, parseDocument, visit } from "yaml";
+import { isAlias, isPair, isScalar, parseDocument, visit } from "yaml";
 import type { OpenAPIDocument, ValidationError } from "../types.js";
 import { openAPIReferenceContext, type OpenAPIReferenceMode } from "./reference-context.js";
 
@@ -84,11 +84,20 @@ class ReferencePreparationError extends Error {
 function parsePreloadedDocument(contents: string): unknown {
   const parsed = parseDocument(contents);
   if (parsed.errors.length) throw new Error(parsed.errors[0].message);
+  const mergeTag = "tag:yaml.org,2002:merge";
+  const implicitMerge = parsed.schema.tags.some((tag) => tag.tag === mergeTag && tag.default);
   let hasAliases = false;
   let sourceNodes = 0;
   visit(parsed, (_key, node) => {
     sourceNodes += 1;
     hasAliases ||= isAlias(node);
+    if (isPair(node) && isScalar(node.key)) {
+      const { tag, type, value } = node.key;
+      const mergeKey = value === "<<" || (typeof value === "symbol" && value.description === "<<");
+      if (tag === mergeTag || (implicitMerge && (!type || type === "PLAIN") && mergeKey)) {
+        throw new Error("YAML merge keys are unsupported in preloaded OpenAPI documents");
+      }
+    }
   });
   // The parser retains alias identity. Check the expanded graph size below,
   // since the parser's anchor-count estimate can reject small nested graphs.
@@ -164,7 +173,7 @@ function absolutePathKey(pathname: string): string {
   // Decode filesystem names without letting a segment become a path separator
   // or a query. Escape percent signs so literal "%3F" and "?" cannot collide.
   return pathname.split("/").map((segment) =>
-    decodeFragment(segment).replaceAll("%", "%25").replaceAll("?", "%3F").replaceAll("/", "%2F").replaceAll("\\", "%5C")
+    decodeURIComponent(segment).replaceAll("%", "%25").replaceAll("?", "%3F").replaceAll("/", "%2F").replaceAll("\\", "%5C")
   ).join("/");
 }
 
@@ -291,10 +300,10 @@ function prepareReferences(document: OpenAPIDocument, externalReferences?: Reado
       const overrides = new Map<string, ReferenceTarget>();
       while (typeof value === "object" && value !== null && mode !== "literal" &&
           "$ref" in value && typeof value.$ref === "string" && value.$ref) {
-        // A reference can point into its own siblings. Following a cycle
-        // through other aliases cannot provide a concrete object to traverse.
+        // An alias already being resolved can still supply its own fields.
+        // Following that alias again to find an inherited field is a cycle.
         if (chain.has(value)) {
-          if (value === directAlias) break;
+          if (value === directAlias || Object.hasOwn(value, tokens[index])) break;
           throw new Error("Circular OpenAPI $ref aliases cannot be traversed");
         }
         chain.add(value);

@@ -88,6 +88,7 @@ Validate a document without changing it. Returns validation errors (`ValidationE
 Validation accepts local JSON pointers by default and refuses external references. If you validate a split document, pass trusted, preloaded JSON or YAML in `externalReferences`, keyed by resolved document URI or absolute path without a fragment. Use slash-delimited `#/` pointers within preloaded documents. Validation does not read files or make network requests.
 Escape literal `%`, `?`, and `\\` within path segments as `%25`, `%3F`, and `%5C`.
 Drive-qualified Windows paths and native network-share paths accept either slash style in allowlist keys. Use a URI key for an explicit `file:` reference.
+Preloaded YAML supports anchors and aliases within an expansion limit. Expand YAML merge keys before preloading.
 Literal `$ref` strings in examples and defaults are kept as data, including in preloaded schemas.
 Use `validateAndDereferenceOpenAPI` when you also need the validated copy with references resolved. Recursive schemas can produce circular objects in that copy.
 
