@@ -3,10 +3,13 @@
     Checkbox,
     CheckboxIndicator,
     Dialog,
+    DialogBackdrop,
     DialogClose,
     DialogContent,
-    DialogBackdrop,
+    DialogDescription,
     DialogPortal,
+    DialogPositioner,
+    DialogTitle,
     DialogTrigger,
     Switch,
     SwitchThumb,
@@ -76,83 +79,81 @@
         <DialogTrigger class="primary-button">Open settings console</DialogTrigger>
         <DialogPortal>
           <DialogBackdrop class="dialog-overlay" />
-          <DialogContent
-            class="dialog-content"
-            aria-labelledby="settings-dialog-title"
-            aria-describedby="settings-dialog-description"
-          >
-            <div class="dialog-header">
-              <div>
-                <h3 id="settings-dialog-title">Workspace settings</h3>
-                <p id="settings-dialog-description" class="scenario-description">
-                  Review defaults, notification rules, and approval prompts.
-                </p>
+          <DialogPositioner class="dialog-positioner">
+            <DialogContent class="dialog-content">
+              <div class="dialog-header">
+                <div>
+                  <DialogTitle>Workspace settings</DialogTitle>
+                  <DialogDescription class="scenario-description">
+                    Review defaults, notification rules, and approval prompts.
+                  </DialogDescription>
+                </div>
+                <DialogClose class="ghost-button">Dismiss</DialogClose>
               </div>
-              <DialogClose class="ghost-button">Dismiss</DialogClose>
-            </div>
 
-            <Tabs defaultValue={settingsSections[0]?.id ?? "general"}>
-              <TabsList class="tabs-list" aria-label="Settings sections">
+              <Tabs defaultValue={settingsSections[0]?.id ?? "general"}>
+                <TabsList class="tabs-list" aria-label="Settings sections">
+                  {#each settingsSections as section (section.id)}
+                    <TabsTrigger class="tab-trigger" value={section.id}>
+                      {section.title}
+                    </TabsTrigger>
+                  {/each}
+                </TabsList>
+
                 {#each settingsSections as section (section.id)}
-                  <TabsTrigger class="tab-trigger" value={section.id}>
-                    {section.title}
-                  </TabsTrigger>
-                {/each}
-              </TabsList>
+                  <TabsContent class="tab-panel" value={section.id}>
+                    <div class="section-intro">
+                      <div>
+                        <h4>{section.title}</h4>
+                        <p>{section.description}</p>
+                      </div>
 
-              {#each settingsSections as section (section.id)}
-                <TabsContent class="tab-panel" value={section.id}>
-                  <div class="section-intro">
-                    <div>
-                      <h4>{section.title}</h4>
-                      <p>{section.description}</p>
+                      <label class="checkbox-row">
+                        <span>
+                          Include in saved preset
+                          <small>Keep this section in your portable team profile.</small>
+                        </span>
+                        <Checkbox
+                          class="checkbox-root"
+                          checked={checkboxStates[section.id]}
+                          onCheckedChange={(checked) => updateSection(section.id, checked)}
+                          aria-label={`Include ${section.title} in saved preset`}
+                        >
+                          <CheckboxIndicator class="checkbox-indicator">✓</CheckboxIndicator>
+                        </Checkbox>
+                      </label>
                     </div>
 
-                    <label class="checkbox-row">
-                      <span>
-                        Include in saved preset
-                        <small>Keep this section in your portable team profile.</small>
-                      </span>
-                      <Checkbox
-                        class="checkbox-root"
-                        checked={checkboxStates[section.id]}
-                        onCheckedChange={(checked) => updateSection(section.id, checked)}
-                        aria-label={`Include ${section.title} in saved preset`}
-                      >
-                        <CheckboxIndicator class="checkbox-indicator">✓</CheckboxIndicator>
-                      </Checkbox>
-                    </label>
-                  </div>
+                    <div class="control-list">
+                      {#each settingsToggles.filter((toggle) => toggle.sectionId === section.id) as toggle (toggle.id)}
+                        <div class="control-row">
+                          <span>
+                            <strong>{toggle.label}</strong>
+                            <small>{toggle.description}</small>
+                          </span>
+                          <Switch
+                            class="switch-root"
+                            checked={switchStates[toggle.id]}
+                            onCheckedChange={(checked) => updateSwitch(toggle.id, checked)}
+                            aria-label={toggle.label}
+                          >
+                            <SwitchThumb class="switch-thumb" />
+                          </Switch>
+                        </div>
+                      {/each}
+                    </div>
+                  </TabsContent>
+                {/each}
+              </Tabs>
 
-                  <div class="control-list">
-                    {#each settingsToggles.filter((toggle) => toggle.sectionId === section.id) as toggle (toggle.id)}
-                      <div class="control-row">
-                        <span>
-                          <strong>{toggle.label}</strong>
-                          <small>{toggle.description}</small>
-                        </span>
-                        <Switch
-                          class="switch-root"
-                          checked={switchStates[toggle.id]}
-                          onCheckedChange={(checked) => updateSwitch(toggle.id, checked)}
-                          aria-label={toggle.label}
-                        >
-                          <SwitchThumb class="switch-thumb" />
-                        </Switch>
-                      </div>
-                    {/each}
-                  </div>
-                </TabsContent>
-              {/each}
-            </Tabs>
-
-            <div class="dialog-actions">
-              <DialogClose class="ghost-button">Cancel</DialogClose>
-              <button class="primary-button" type="button" on:click={applySettings}>
-                Apply settings
-              </button>
-            </div>
-          </DialogContent>
+              <div class="dialog-actions">
+                <DialogClose class="ghost-button">Cancel</DialogClose>
+                <button class="primary-button" type="button" on:click={applySettings}>
+                  Apply settings
+                </button>
+              </div>
+            </DialogContent>
+          </DialogPositioner>
         </DialogPortal>
       </Dialog>
 

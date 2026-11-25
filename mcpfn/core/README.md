@@ -104,6 +104,20 @@ that must map schema failures into a stable legacy envelope.
 
 When a tool declares a success `outputSchema`, error details remain in its JSON text content and `structuredContent` is omitted so the official SDK does not validate an error envelope against the success schema. Tools without an output schema retain both structured and text error envelopes.
 
+In a tool result, only `McpFnError` (and its subclasses), the SDK's `McpError` (as code `MCPFN_TOOL_ERROR`, its JSON-RPC code not kept, with its message and its `data` as `details`) and a thrown plain `{ code, message }` object reach the client with their code, message and details. Resource, prompt, completion, subscription and other request handlers keep only `McpFnError` and `McpError`; a thrown plain object is withheld there too. Any other thrown value, such as a filesystem, database or upstream
+HTTP error, becomes `{ code: "MCPFN_TOOL_ERROR", message: "The tool failed",
+details: { errorId } }`; resource, prompt, completion and subscription handlers
+answer such errors with a JSON-RPC `InternalError` carrying the same `errorId`.
+This covers errors from context factories, visibility hooks and task creation
+as well. The original error goes to the server's `onError({ error, errorId,
+method, tool })` sink, which is not awaited. An `McpError` from another copy of the SDK (such as the application's own) is recognised by its `McpError` name and `MCP error <code>:` message; a renamed subclass of it is withheld, so throw `McpFnError` for domain errors that must reach the client. `exposeErrors: true` restores verbatim error text. Argument validation
+stops at the first failure where the schema allows it: a large array whose
+`items` fail stops at the first bad item, while a failing `anyOf` or `oneOf`
+still reports each branch and, on `@cfworker/json-schema`, a tuple with
+`additionalItems: false` reports each extra item (responses keep at most 100
+issues), and tool arguments with more than 100,000 values in total are refused before any schema validation. Each client may hold at most `maxResourceSubscriptions` (default 1000) resource
+subscriptions.
+
 One `McpFnServer` instance connects to one transport. Create a new instance per concurrent connection and share the registry.
 
 ## Authenticated client profiles
