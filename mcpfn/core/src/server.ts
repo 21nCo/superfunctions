@@ -905,6 +905,10 @@ export class McpFnServer<TContext = undefined> {
       sessionPrincipal = defaultSessionPrincipal,
       ...transportOptions
     } = options;
+    // The host's session hooks, captured now and called on the host's own
+    // options object (keeping its receiver even if the object changes later).
+    const onSessionInitialized = options.onsessioninitialized;
+    const onSessionClosed = options.onsessionclosed;
     if (originPolicy !== "reject-unlisted" && originPolicy !== "off") {
       throw new McpFnError("MCPFN_INVALID_OPTIONS", 'originPolicy must be "reject-unlisted" or "off"');
     }
@@ -1000,17 +1004,17 @@ export class McpFnServer<TContext = undefined> {
             closedDuringInitialization = true;
             throw new Error("Server closed");
           }
-          const hostHook = Boolean(options.onsessioninitialized);
+          const hostHook = Boolean(onSessionInitialized);
           // Always yields, so a close() queued meanwhile is seen below. The
           // host's hooks are called on the host's own options object.
-          await options.onsessioninitialized?.(id);
+          await onSessionInitialized?.call(options, id);
           if (generation !== this.closeGeneration) {
             closedDuringInitialization = true;
             // Only a session the host's onsessioninitialized accepted gets
             // its onsessionclosed.
             if (hostHook) {
               try {
-                await options.onsessionclosed?.(id);
+                await onSessionClosed?.call(options, id);
               } catch {
                 // Best effort for a session that never went live.
               }
@@ -1023,7 +1027,7 @@ export class McpFnServer<TContext = undefined> {
         onsessionclosed: async (id) => {
           sessions.delete(id);
           try {
-            await options.onsessionclosed?.(id);
+            await onSessionClosed?.call(options, id);
           } finally {
             await release();
           }
