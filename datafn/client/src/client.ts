@@ -64,6 +64,7 @@ import {
   TIMEZONE_CHANGE_RESOURCE_NAME,
 } from "@datafn/core";
 import { ExtensionSubscriptionManager } from "./extension/subscriptionManager.js";
+import { mutationTouchesRecord } from "./adapters/shared.js";
 import { DebouncerMap } from "./debounce.js";
 import {
   exportData,
@@ -112,8 +113,8 @@ const OBSERVED_REMOTE_METHODS = new Set([
 ]);
 
 /**
- * DATA-41: forwards every call to `remote` and reports the `capabilities` of
- * each response envelope (none means an older server without revisions).
+ * DATA-41: forwards every call to `remote` and reports the `capabilities`
+ * each response envelope announces.
  */
 function observeServerCapabilities<T extends object>(
   remote: T,
@@ -126,11 +127,13 @@ function observeServerCapabilities<T extends object>(
       if (typeof prop !== "string" || !OBSERVED_REMOTE_METHODS.has(prop)) return value.bind(target);
       return async (...args: unknown[]) => {
         const response = await value.apply(target, args);
-        if (response && typeof response === "object" && "ok" in response) {
-          const capabilities = (response as { capabilities?: unknown }).capabilities;
-          onCapabilities(
-            capabilities && typeof capabilities === "object" ? (capabilities as DatafnServerCapabilities) : {},
-          );
+        // A response without capabilities (e.g. from a route or proxy that
+        // does not announce them) leaves the latest announcement in place.
+        const capabilities = response && typeof response === "object"
+          ? (response as { capabilities?: unknown }).capabilities
+          : undefined;
+        if (capabilities && typeof capabilities === "object") {
+          onCapabilities(capabilities as DatafnServerCapabilities);
         }
         return response;
       };
@@ -1290,6 +1293,9 @@ function _buildRawClient<S extends DatafnSchema>(
     latestServerCapabilities = capabilities;
   });
 
+  // Create debouncer for mutation debouncing (DEB-001)
+  const debouncerMap = new DebouncerMap();
+
   // Create SyncEngine (for offline push)
   let syncEngine: SyncEngine | undefined;
   if (
@@ -1310,6 +1316,8 @@ function _buildRawClient<S extends DatafnSchema>(
       config.searchIndexVersion,
       config.e2ee,
     );
+    // DATA-41: debounced writes count as pending for revision installs.
+    syncEngine.pendingLocalMutations = () => debouncerMap.pendingMutations();
   }
 
   const schedulePush: MutationPushScheduler | undefined = nativeSyncController
@@ -1612,8 +1620,6 @@ function _buildRawClient<S extends DatafnSchema>(
     );
   };
 
-  // Create debouncer for mutation debouncing (DEB-001)
-  const debouncerMap = new DebouncerMap();
 
   // Create cross-tab relay if enabled (TAB-001)
   let crossTabRelay: CrossTabRelay | undefined;
@@ -1654,6 +1660,20 @@ function _buildRawClient<S extends DatafnSchema>(
       config.temporal,
       config.e2ee,
       observeQuery,
+      {
+        pendingMutations: () => debouncerMap.pendingMutations(),
+        onInstalled: async (installed) => {
+          if (syncEngine) {
+            await syncEngine.afterRevisionInstall(installed);
+            return;
+          }
+          eventBus.emit({
+            type: "sync_applied",
+            timestampMs: getTimestamp(),
+            context: { phase: "revisions", resources: Object.keys(installed).sort() },
+          });
+        },
+      },
     );
   };
 
@@ -1665,7 +1685,11 @@ function _buildRawClient<S extends DatafnSchema>(
     async getWithRevision(resource: string, id: string) {
       const storage = resolvedStorage;
       if (storage?.capabilities?.revisions === true && storage.getRecordWithRevision) {
-        return storage.getRecordWithRevision(resource, id);
+        const stored = await storage.getRecordWithRevision(resource, id);
+        // A debounced local write not yet logged also makes it unknown.
+        const debounced = debouncerMap.pendingMutations()
+          .some((mutation) => mutationTouchesRecord(mutation, resource, id));
+        return debounced ? { record: stored.record, rev: undefined } : stored;
       }
       return { record: storage ? await storage.getRecord(resource, id) : null, rev: undefined };
     },

@@ -854,7 +854,9 @@ function createQuerySignal<T>(
     if (event.type === "sync_applied") {
       const ctx = (event as any).context;
       const phase = ctx?.phase;
-      if (phase === "clone" || phase === "pull") {
+      // DATA-41: "revisions" installs server rows from push results and
+      // versioned queries.
+      if (phase === "clone" || phase === "pull" || phase === "revisions") {
         const affectedResources: string[] = ctx?.resources ?? [];
         // Only refresh when specific resources that overlap with this signal's footprint
         // changed.  Removing the "length === 0" broadcast avoids refreshing all signals

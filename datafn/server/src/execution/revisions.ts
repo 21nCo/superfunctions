@@ -15,13 +15,15 @@ import { createHash } from "node:crypto";
 import type { Adapter } from "@superfunctions/db";
 import type { DatafnSchema } from "../core-types.js";
 import { ensureInternalTable } from "./internal-tables.js";
+import { isKvResource } from "./mutation/kv-merge.js";
 
 export const REVISIONS_TABLE = "__datafn_revisions";
 /** Reserved row metadata property that carries a returned row's revision. */
 export const REVISION_FIELD = "$rev";
 /** The namespace sequence allocator's CAS retry limit. */
 const MAX_BUMP_ATTEMPTS = 10;
-const READ_CHUNK = 500;
+/** Ids per `IN` list: D1 binds at most 100 parameters per statement. */
+export const READ_CHUNK = 90;
 
 export interface DatafnRevisionsConfig {
   /**
@@ -112,10 +114,14 @@ async function createIfAbsent(db: Adapter, row: Record<string, unknown>): Promis
     try {
       await db.internal.create(REVISIONS_TABLE, row);
       return true;
-    } catch {
+    } catch (error) {
       // A concurrent writer created it first (MySQL and SQLite reject only
-      // the statement); the caller reads it and retries the bump.
-      return false;
+      // the statement); the caller reads it and retries the bump. Any other
+      // failure is the write's failure.
+      if (await db.internal.findOne(REVISIONS_TABLE, [{ field: "id", op: "eq", value: row.id }])) {
+        return false;
+      }
+      throw error;
     }
   };
   return rawSql ? create() : withCreateLock(String(row.id), create);
@@ -201,33 +207,6 @@ function transactionsUsable(db: Adapter): boolean {
 }
 
 /**
- * Callers create `__datafn_revisions` (`ensureRevisionsTable`) before the
- * snapshot opens; a missing table would abort a PostgreSQL transaction.
- *
- * Runs `read` so that the rows it reads and the revisions read with them come
- * from one snapshot: a transaction at REPEATABLE READ on PostgreSQL. Other
- * adapters run it in a transaction when they support one (SQLite transactions
- * are serialized), or directly (best effort, like their other reads).
- */
-export async function readInSnapshot<T>(db: Adapter, read: (snapshotDb: Adapter) => Promise<T>): Promise<T> {
-  if (!transactionsUsable(db)) return read(db);
-  try {
-    return await db.transaction(async (tx) => {
-      if (tx.rawSql?.dialect === "postgres") {
-        await tx.rawSql.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ");
-      }
-      return read(tx as unknown as Adapter);
-    });
-  } catch (error) {
-    const message = String((error as Error)?.message ?? error).toLowerCase();
-    if (message.includes("not supported") || message.includes("cannot return a promise")) {
-      return read(db);
-    }
-    throw error;
-  }
-}
-
-/**
  * Replaces each returned row of `resource` that has a revision with a copy
  * carrying it as `$rev`,
  * reading the revisions on `db` (the snapshot the rows were read in). Rows the
@@ -242,13 +221,122 @@ export async function attachRevisions(
 ): Promise<void> {
   const ids = rows.map((row) => row.id).filter((id): id is string => typeof id === "string");
   const revisions = await readRevisions(db, namespace, resource, ids);
+  attachRead(rows, revisions, readable);
+}
+
+/**
+ * Pairs each row with its revision read earlier. A row without a revision
+ * row is a record written before revisions existed: revision 0. A tombstone
+ * paired with an existing row (written outside DataFn) gets none.
+ */
+function attachRead(
+  rows: Array<Record<string, unknown>>,
+  revisions: Map<string, StoredRevision>,
+  readable: (row: Record<string, unknown>) => boolean,
+  known: (id: string) => boolean = () => true,
+): void {
   rows.forEach((row, index) => {
-    const stored = typeof row.id === "string" ? revisions.get(row.id) : undefined;
-    if (stored && !stored.deleted && readable(row)) {
-      // A copy: some adapters return their stored row objects.
-      rows[index] = { ...row, [REVISION_FIELD]: stored.rev };
-    }
+    if (typeof row.id !== "string" || !known(row.id) || !readable(row)) return;
+    const stored = revisions.get(row.id) ?? { rev: 0, deleted: false };
+    if (stored.deleted) return;
+    // A copy: some adapters return their stored row objects.
+    rows[index] = { ...row, [REVISION_FIELD]: stored.rev };
   });
+}
+
+/**
+ * Reads rows with `read` and attaches each readable row's revision as
+ * `$rev`, never a revision newer than the row it is returned with. With
+ * transactions the rows and revisions come from one snapshot (REPEATABLE READ
+ * on PostgreSQL; SQLite transactions are serialized). Without, the rows are
+ * read twice: revisions are read after the first read (to learn the ids) and
+ * before the second, whose rows are returned, so a revision can only be
+ * older than its row. Callers create `__datafn_revisions` first; a missing
+ * table would abort a PostgreSQL transaction.
+ */
+export async function readWithRevisions<T>(
+  db: Adapter,
+  namespace: string,
+  resource: string,
+  read: (readDb: Adapter) => Promise<T>,
+  rowsOf: (result: T) => Array<Record<string, unknown>> | undefined,
+  readable: (row: Record<string, unknown>) => boolean = () => true,
+): Promise<T> {
+  const idsOf = (result: T) =>
+    (rowsOf(result) ?? []).map((row) => row.id).filter((id): id is string => typeof id === "string");
+  const unsnapshotted = async () => {
+    const ids = idsOf(await read(db));
+    const revisions = await readRevisions(db, namespace, resource, ids);
+    const result = await read(db);
+    const rows = rowsOf(result);
+    const firstRead = new Set(ids);
+    if (rows) attachRead(rows, revisions, readable, (id) => firstRead.has(id));
+    return result;
+  };
+  if (!transactionsUsable(db)) return unsnapshotted();
+  try {
+    return await db.transaction(async (tx) => {
+      if (tx.rawSql?.dialect === "postgres") {
+        await tx.rawSql.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ");
+      }
+      const snapshotDb = tx as unknown as Adapter;
+      const result = await read(snapshotDb);
+      const rows = rowsOf(result);
+      if (rows) await attachRevisions(snapshotDb, namespace, resource, rows, readable);
+      return result;
+    });
+  } catch (error) {
+    const message = String((error as Error)?.message ?? error).toLowerCase();
+    if (message.includes("not supported") || message.includes("cannot return a promise")) {
+      return unsnapshotted();
+    }
+    throw error;
+  }
+}
+
+const assignedEntries = new WeakSet<object>();
+
+/**
+ * Raises the revision of each record one write changes exactly once, inside
+ * the write's transaction, however many change entries the write recorded
+ * for it (an insert and its inherited-inactive update are one write). Only
+ * the record's last entry carries the new revision; it marks a delete's
+ * tombstone. With `completeRows`, a last entry that writes a whole record
+ * (insert, replace, upsert) records the stored row read on `db` after the
+ * write, so a change carrying a revision always carries the exact committed
+ * row (defaults and server fields included). A retry of the same entries
+ * keeps the revisions already raised.
+ */
+export async function assignWriteRevisions(
+  db: Adapter,
+  namespace: string,
+  entries: ReadonlyArray<{
+    resource: string;
+    id: string;
+    op: string;
+    record: Record<string, unknown> | null;
+    rev?: number;
+  }>,
+  completeRows: boolean,
+): Promise<void> {
+  if (entries.some((entry) => assignedEntries.has(entry))) return;
+  const last = new Map<string, (typeof entries)[number]>();
+  for (const entry of entries) {
+    assignedEntries.add(entry);
+    if (tracksRevisions(entry.resource)) last.set(JSON.stringify([entry.resource, entry.id]), entry);
+  }
+  for (const entry of last.values()) {
+    const deleted = entry.op === "delete";
+    entry.rev = await bumpRevision(db, namespace, entry.resource, entry.id, deleted);
+    if (!completeRows || deleted || entry.op === "merge" || isKvResource(entry.resource)) continue;
+    const stored = await db.findOne({
+      model: entry.resource,
+      where: [{ field: "id", operator: "eq", value: entry.id }],
+      namespace,
+    });
+    if (stored) entry.record = { ...(stored as Record<string, unknown>) };
+    else entry.rev = undefined;
+  }
 }
 
 /** The revision the last of `entries` for one record raised, if any. */

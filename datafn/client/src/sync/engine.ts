@@ -20,12 +20,14 @@ import {
   enumerateJoinStoreKeys,
   getJoinStoreKey,
   getRelationKeyName,
+  readRowRevision,
+  withoutRowRevision,
   type DatafnPushRevision,
 } from "@datafn/core";
 import {
   applyCloneResult,
   applyPullResult,
-  applyPushRevision,
+  installServerRevisions,
   schemaRevisionResources,
   setCursorMonotonically,
   GLOBAL_CURSOR_KEY,
@@ -1036,6 +1038,7 @@ export class SyncEngine {
             : [];
           await applyCloneResult(this.storage, result, {
             revisionResources: this.revisionResources,
+            pendingMutations: this.pendingLocalMutations,
             markReady: continuations.length === 0,
             // A clone may restart a table an earlier pass left incomplete;
             // keep that pass's older cursor so a pull replays its gap.
@@ -1241,6 +1244,7 @@ export class SyncEngine {
         // an interrupted one, so the stored cursor stays at the earliest.
         await applyCloneResult(this.storage, cloneResult, {
           revisionResources: this.revisionResources,
+          pendingMutations: this.pendingLocalMutations,
           markReady: false,
           keepEarliestCursor: true,
         });
@@ -1582,6 +1586,7 @@ export class SyncEngine {
           }
           const applying = applyPullResult(this.storage, lastResult, {
             revisionResources: this.revisionResources,
+            pendingMutations: this.pendingLocalMutations,
           });
           const applied = applying.then(
             () => undefined,
@@ -1876,23 +1881,44 @@ export class SyncEngine {
   private readonly revisionResources = (resource: string): boolean =>
     schemaRevisionResources(this.schema)(resource);
 
-  private async applyPushRevisions(pushResults: PushSyncResult[]): Promise<void> {
+  /**
+   * DATA-41: local mutations applied to storage but not yet in the
+   * changelog (debounced). Set by the client.
+   */
+  pendingLocalMutations: () => readonly unknown[] = () => [];
+
+  /**
+   * DATA-41: installs each applied mutation's post-write row (or tombstone)
+   * with the revision the row itself carries as `$rev`, unless the record
+   * was written locally after the push started (`writtenSince`) or a pending
+   * local change touches it. Installed records are re-indexed and live
+   * queries refreshed.
+   */
+  private async applyPushRevisions(pushResults: PushSyncResult[], writtenSince: number | undefined): Promise<void> {
+    const installed: Record<string, string[]> = {};
     for (const pushResult of pushResults) {
       for (const revision of Object.values(pushResult.revisions ?? {})) {
         try {
-          let record = revision.record;
-          if (record) {
+          let record: Record<string, unknown> | null = null;
+          let rev = revision.deleted ? revision.rev : readRowRevision(revision.record);
+          if (!revision.deleted && revision.record) {
             const decrypted = (await decryptPullResultForE2ee(this.schema, this.e2ee, {
               ok: true,
-              records: { [revision.resource]: [record] },
+              records: { [revision.resource]: [withoutRowRevision(revision.record)] },
               deleted: {},
               cursors: {},
             })) as { records: Record<string, Array<Record<string, unknown>>> };
-            record = decrypted.records[revision.resource]?.[0];
+            record = decrypted.records[revision.resource]?.[0] ?? null;
+            if (!record) rev = undefined;
           }
-          await applyPushRevision(this.storage, { ...revision, record }, {
-            revisionResources: this.revisionResources,
-          });
+          if (rev === undefined) continue;
+          const ids = await installServerRevisions(
+            this.storage,
+            revision.resource,
+            [{ id: revision.id, record, rev }],
+            { revisionResources: this.revisionResources, pendingMutations: this.pendingLocalMutations, writtenSince },
+          );
+          if (ids.length > 0) (installed[revision.resource] ??= []).push(...ids);
         } catch (error) {
           // The mutation is acknowledged; without its row the revision just
           // stays unknown.
@@ -1900,6 +1926,26 @@ export class SyncEngine {
         }
       }
     }
+    await this.afterRevisionInstall(installed);
+  }
+
+  /**
+   * DATA-41: re-indexes records installed with their revisions and refreshes
+   * the live queries over their resources.
+   */
+  async afterRevisionInstall(installed: Record<string, string[]>): Promise<void> {
+    const resources = Object.keys(installed).filter((resource) => installed[resource].length > 0);
+    if (resources.length === 0) return;
+    if (this.searchProvider) {
+      for (const resource of resources) {
+        await indexStoredRecords(this.searchProvider, this.storage, resource, installed[resource]);
+      }
+    }
+    this.eventBus.emit({
+      type: "sync_applied",
+      timestampMs: this.getTimestamp(),
+      context: { phase: "revisions", resources: resources.sort() },
+    });
   }
 
   async processPush() {
@@ -1967,7 +2013,9 @@ export class SyncEngine {
       let mutations = compacted.mutations;
       const batchThroughSeq = batchPending[batchPending.length - 1].seq;
 
-      // 2. Push with retries
+      // 2. Push with retries. DATA-41: a record written locally after this
+      // stamp keeps its newer state over the push's post-write row.
+      const revisionStamp = await this.storage.revisionWriteStamp?.();
       let pushResult = await this.pushWithRetries(mutations, batchClientId);
       const pushResults: PushSyncResult[] = pushResult ? [pushResult] : [];
 
@@ -2069,7 +2117,7 @@ export class SyncEngine {
 
         // 3b. DATA-41: install each applied mutation's post-write row with its
         // revision, now that acknowledged entries no longer count as pending.
-        await this.applyPushRevisions(pushResults);
+        await this.applyPushRevisions(pushResults, revisionStamp);
 
         // 3a. Advance per-table cursors from push response (FIX-B)
         // This prevents the client from re-fetching its own changes on the next pull.

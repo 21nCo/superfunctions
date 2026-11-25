@@ -22,12 +22,32 @@ import {
   validateTransition,
   validateCursor,
   cloneForStorage,
+  blocksRevisionInstall,
   mutationTouchesRecord,
   revisionKey,
 } from "./shared.js";
+import type { DatafnRevisionEntry, DatafnRevisionInstallOptions } from "../storage.js";
 
-/** DATA-41: each record's server revision, keyed by revisionKey(resource, id). */
+/**
+ * DATA-41: per record (keyed by revisionKey(resource, id)) its last write
+ * stamp `w` and, when the stored state is a server row at a known revision,
+ * `rev`. The entry under WRITE_STAMP_KEY holds the latest stamp.
+ */
 const REVISIONS_STORE = "__datafn_revisions";
+const WRITE_STAMP_KEY = "\u0000write-stamp";
+
+/**
+ * DATA-41: in the caller's readwrite transaction, gives the records the next
+ * write stamp and sets (or, without `rev`, clears) their revisions.
+ */
+function stampWrites(revisions: IDBObjectStore, entries: ReadonlyArray<{ key: string; rev?: number }>): void {
+  const counter = revisions.get(WRITE_STAMP_KEY);
+  counter.onsuccess = () => {
+    const w = (Number(counter.result?.w) || 0) + 1;
+    revisions.put({ key: WRITE_STAMP_KEY, w });
+    for (const { key, rev } of entries) revisions.put(rev === undefined ? { key, w } : { key, w, rev });
+  };
+}
 
 const DB_NAME = "datafn_client_db";
 const DB_VERSION = 2;
@@ -80,6 +100,8 @@ export class IndexedDbStorageAdapter implements DatafnStorageAdapter {
   readonly capabilities = { atomicMergeIfMissing: true, reportsMergeOutcome: true, revisions: true } as const;
   /** DATA-41: create the revisions store at the next upgrade. */
   private revisionsStoreRequested = false;
+  /** Closed by the caller: do not reopen after a version change. */
+  private closed = false;
   private dbPromise: Promise<IDBDatabase>;
   private validResources?: Set<string>;
   private schema?: DatafnSchema;
@@ -244,6 +266,13 @@ export class IndexedDbStorageAdapter implements DatafnStorageAdapter {
         const db = request.result;
         db.onversionchange = () => {
           db.close();
+          // DATA-41: another connection upgrades the database (e.g. adds the
+          // revisions store); reopen after it instead of keeping a closed
+          // connection for later operations.
+          if (this.closed) return;
+          this.dbPromise = this.openDatabaseAtMinimumVersion(DB_VERSION).then((opened) =>
+            this.ensureStores(opened),
+          );
         };
         resolve(db);
       };
@@ -363,9 +392,9 @@ export class IndexedDbStorageAdapter implements DatafnStorageAdapter {
           store.createIndex("by_timezone", "timezone", { unique: false });
         }
 
-        // DATA-41: record revisions, written with their records. Created
-        // on the first revision install, so a database without revisions
-        // keeps its single-store record transactions.
+        // DATA-41: record revisions and write stamps, written with their
+        // records. Created on the first revision install, so a database
+        // without revisions keeps its single-store record transactions.
         if (this.revisionsStoreRequested && !db.objectStoreNames.contains(REVISIONS_STORE)) {
           db.createObjectStore(REVISIONS_STORE, { keyPath: "key" });
         }
@@ -579,7 +608,7 @@ export class IndexedDbStorageAdapter implements DatafnStorageAdapter {
     const storageRecord = cloneForStorage(record);
     return new Promise((resolve, reject) => {
       const request = store.put(storageRecord);
-      revisions?.delete(revisionKey(resource, String(record.id)));
+      if (revisions) stampWrites(revisions, [{ key: revisionKey(resource, String(record.id)) }]);
       request.onsuccess = () => resolve();
       request.onerror = () => reject(request.error);
     });
@@ -615,7 +644,9 @@ export class IndexedDbStorageAdapter implements DatafnStorageAdapter {
       try {
         for (const record of storageRecords) {
           store.put(record);
-          revisions?.delete(revisionKey(resource, String(record.id)));
+        }
+        if (revisions) {
+          stampWrites(revisions, storageRecords.map((record) => ({ key: revisionKey(resource, String(record.id)) })));
         }
       } catch (error) {
         // A put that throws synchronously (e.g. a record without a key) must
@@ -637,7 +668,7 @@ export class IndexedDbStorageAdapter implements DatafnStorageAdapter {
     const { store, revisions } = await this.recordWriteTransaction(resource);
     return new Promise((resolve, reject) => {
       const request = store.delete(id);
-      revisions?.delete(revisionKey(resource, id));
+      if (revisions) stampWrites(revisions, [{ key: revisionKey(resource, id) }]);
       request.onsuccess = () => resolve();
       request.onerror = () => reject(request.error);
     });
@@ -653,43 +684,51 @@ export class IndexedDbStorageAdapter implements DatafnStorageAdapter {
     }
     const db = await this.dbPromise;
     const withRevisions = db.objectStoreNames.contains(REVISIONS_STORE);
-    const tx = db.transaction(withRevisions ? [resource, REVISIONS_STORE] : resource, "readonly");
+    const tx = db.transaction(withRevisions ? [resource, REVISIONS_STORE, "changelog"] : resource, "readonly");
     return new Promise((resolve, reject) => {
-      let record: Record<string, unknown> | null = null;
-      let rev: number | undefined;
       const recordRequest = tx.objectStore(resource).get(id);
-      recordRequest.onsuccess = () => {
-        record = recordRequest.result ?? null;
+      const revRequest = withRevisions ? tx.objectStore(REVISIONS_STORE).get(revisionKey(resource, id)) : null;
+      const pendingRequest = withRevisions ? tx.objectStore("changelog").getAll() : null;
+      tx.oncomplete = () => {
+        const value = revRequest?.result?.rev;
+        const pending = ((pendingRequest?.result ?? []) as Array<{ mutation?: unknown }>)
+          .some((entry) => mutationTouchesRecord(entry.mutation, resource, id));
+        resolve({
+          record: recordRequest.result ?? null,
+          rev: typeof value === "number" && !pending ? value : undefined,
+        });
       };
-      if (withRevisions) {
-        const revRequest = tx.objectStore(REVISIONS_STORE).get(revisionKey(resource, id));
-        revRequest.onsuccess = () => {
-          const value = revRequest.result?.rev;
-          rev = typeof value === "number" ? value : undefined;
-        };
-      }
-      tx.oncomplete = () => resolve({ record, rev });
       tx.onerror = () => reject(tx.error);
       tx.onabort = () => reject(tx.error);
     });
   }
 
+  async revisionWriteStamp(): Promise<number> {
+    const db = await this.dbPromise;
+    // No store yet: writes are not stamped, so a later install cannot tell
+    // which records changed; -1 makes it skip every record.
+    if (!db.objectStoreNames.contains(REVISIONS_STORE)) return -1;
+    const request = db.transaction(REVISIONS_STORE, "readonly").objectStore(REVISIONS_STORE).get(WRITE_STAMP_KEY);
+    return new Promise((resolve, reject) => {
+      request.onsuccess = () => resolve(Number(request.result?.w) || 0);
+      request.onerror = () => reject(request.error);
+    });
+  }
+
   async putRecordsWithRevisions(
     resource: string,
-    entries: ReadonlyArray<{ id: string; record: Record<string, unknown> | null; rev: number }>,
-    options?: { unlessPending?: boolean },
+    entries: ReadonlyArray<DatafnRevisionEntry>,
+    options?: DatafnRevisionInstallOptions,
   ): Promise<string[]> {
     this.validateTableName(resource);
+    if (entries.length === 0) return [];
     const current = await this.dbPromise;
     if (!current.objectStoreNames.contains(REVISIONS_STORE)) {
       // The first revision install adds the store (a version upgrade).
       this.revisionsStoreRequested = true;
       await this.repairMissingStore(REVISIONS_STORE, current);
     }
-    const { tx, store, revisions } = await this.recordWriteTransaction(
-      resource,
-      options?.unlessPending ? ["changelog"] : [],
-    );
+    const { tx, store, revisions } = await this.recordWriteTransaction(resource, ["changelog"]);
     if (!revisions) {
       tx.abort();
       return [];
@@ -697,27 +736,32 @@ export class IndexedDbStorageAdapter implements DatafnStorageAdapter {
     const prepared = entries.map(({ id, record, rev }) => ({
       id,
       rev,
+      key: revisionKey(resource, id),
       record: record ? cloneForStorage({ ...record, id }) : null,
     }));
     return new Promise((resolve, reject) => {
       const installed: string[] = [];
-      const install = (pendingMutations: unknown[]) => {
-        for (const { id, record, rev } of prepared) {
-          if (pendingMutations.some((mutation) => mutationTouchesRecord(mutation, resource, id))) continue;
+      const pendingRequest = options?.unlessPending ? tx.objectStore("changelog").getAll() : null;
+      const priorRequests = prepared.map(({ key }) => revisions!.get(key));
+      // Requests complete in order, so the reads above are done when the
+      // counter read is.
+      const counter = revisions!.get(WRITE_STAMP_KEY);
+      counter.onsuccess = () => {
+        const pending = [
+          ...((pendingRequest?.result ?? []) as Array<{ mutation?: unknown }>).map((entry) => entry.mutation),
+          ...(options?.pendingMutations ?? []),
+        ];
+        const w = (Number(counter.result?.w) || 0) + 1;
+        prepared.forEach(({ id, rev, key, record }, index) => {
+          const written = Number(priorRequests[index].result?.w) || 0;
+          if (blocksRevisionInstall(written, options?.writtenSince, pending, resource, id)) return;
           if (record) store.put(record);
           else store.delete(id);
-          revisions.put({ key: revisionKey(resource, id), rev });
+          revisions!.put({ key, w, rev });
           installed.push(id);
-        }
+        });
+        revisions!.put({ key: WRITE_STAMP_KEY, w });
       };
-      if (options?.unlessPending) {
-        const pending = tx.objectStore("changelog").getAll();
-        pending.onsuccess = () => {
-          install(((pending.result ?? []) as Array<{ mutation?: unknown }>).map((entry) => entry.mutation));
-        };
-      } else {
-        install([]);
-      }
       tx.oncomplete = () => resolve(installed);
       tx.onerror = () => reject(tx.error);
       tx.onabort = () => reject(tx.error);
@@ -744,7 +788,7 @@ export class IndexedDbStorageAdapter implements DatafnStorageAdapter {
     return new Promise((resolve, reject) => {
       const tx = db.transaction(withRevisions ? [resource, REVISIONS_STORE] : resource, "readwrite");
       const store = tx.objectStore(resource);
-      if (withRevisions) tx.objectStore(REVISIONS_STORE).delete(revisionKey(resource, id));
+      if (withRevisions) stampWrites(tx.objectStore(REVISIONS_STORE), [{ key: revisionKey(resource, id) }]);
       
       // Read existing record
       const getRequest = store.get(id);
@@ -1062,6 +1106,7 @@ export class IndexedDbStorageAdapter implements DatafnStorageAdapter {
   // --- Lifecycle (CLN-001, CLN-002) ---
 
   async close(): Promise<void> {
+    this.closed = true;
     const db = await this.dbPromise;
     db.close();
   }

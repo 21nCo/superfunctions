@@ -16,9 +16,10 @@ export interface DatafnPushRevision {
   /** The record's revision after the write. */
   rev: number;
   /**
-   * The record's complete row at `rev`, read in the write's transaction.
-   * Absent when the caller may not read every field, or on a deduplicated
-   * reply; the client then keeps the revision unknown.
+   * The record's complete row at `rev`, read in the write's transaction,
+   * carrying `rev` again as `$rev` row metadata (a client pairs the row only
+   * with that). Absent when the caller may not read every field, or on a
+   * deduplicated reply; the client then keeps the revision unknown.
    */
   record?: Record<string, unknown>;
   /** The write deleted the record; `rev` is its tombstone revision. */
@@ -31,11 +32,14 @@ export interface DatafnServerCapabilities {
   revisions?: boolean;
 }
 
-/** Reads a returned row's revision, or undefined when it carries none. */
+/**
+ * Reads a returned row's revision, or undefined when it carries none.
+ * Revision 0 is a record no write of a revision-aware release has touched.
+ */
 export function readRowRevision(row: unknown): number | undefined {
   if (!row || typeof row !== "object") return undefined;
   const rev = (row as Record<string, unknown>)[DATAFN_REVISION_FIELD];
-  return typeof rev === "number" && Number.isInteger(rev) && rev > 0 ? rev : undefined;
+  return typeof rev === "number" && Number.isInteger(rev) && rev >= 0 ? rev : undefined;
 }
 
 /** A copy of `row` without its revision metadata. */

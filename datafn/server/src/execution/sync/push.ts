@@ -18,7 +18,7 @@ import {
 } from "../idempotency.js";
 import type { SequenceStore } from "./sequence-store.js";
 import { ChangeTrackingService, recordChangeWithRetry } from "./change-tracking.js";
-import { issuesRevisions, recordedRevision, revisionsEnabled } from "../revisions.js";
+import { issuesRevisions, recordedRevision, REVISION_FIELD, revisionsEnabled } from "../revisions.js";
 import type { ChangeEntryInput } from "./change-tracking.js";
 import { canReadEveryField } from "../../validation/authz.js";
 import {
@@ -469,7 +469,11 @@ export async function executePush(
       where: [{ field: "id", operator: "eq", value: mut.id }],
       namespace,
     })) as Record<string, unknown> | null;
-    return row && canReadEveryField(schema, mut.resource, row) ? { ...base, record: row } : base;
+    // The row carries its revision as `$rev` metadata, so a host filter that
+    // trims the row and drops `$rev` leaves the client without a revision.
+    return row && canReadEveryField(schema, mut.resource, row)
+      ? { ...base, record: { ...row, [REVISION_FIELD]: rev } }
+      : base;
   }
 
   // Local dedup: track mutations processed in this batch (clientId:mutationId → ok)
@@ -1291,13 +1295,15 @@ export async function executePush(
               mutationResourceSeqs[change.resource] || 0,
               seq,
             );
-            // FIX-REL-002: retry within transaction
-            const entry: ChangeEntryInput = {
-              serverSeq: seq, resource: change.resource, id: change.id, op, record,
-            };
-            await recordChangeWithRetry(txChangeTracking, entry, 2, logger);
-            recorded.push(entry);
+            recorded.push({ serverSeq: seq, resource: change.resource, id: change.id, op, record });
             pendingChangeEvents.push(seq);
+          }
+          // DATA-41: the mutation is one write: each record it changes gets
+          // one revision, on its last change row.
+          await txChangeTracking.assignRevisions(recorded);
+          for (const entry of recorded) {
+            // FIX-REL-002: retry within transaction
+            await recordChangeWithRetry(txChangeTracking, entry, 2, logger);
           }
           mutationRevision = await postWriteRevision(mut, txDb, recorded);
         });
@@ -1396,11 +1402,11 @@ export async function executePush(
             const { seq, op, record } = await sequenceChange(change, sequenceAllocation, db);
             latestSeq = Math.max(latestSeq, seq);
             resourceSeqs[change.resource] = Math.max(resourceSeqs[change.resource] || 0, seq);
-            const entry: ChangeEntryInput = {
-              serverSeq: seq, resource: change.resource, id: change.id, op, record,
-            };
+            recorded.push({ serverSeq: seq, resource: change.resource, id: change.id, op, record });
+          }
+          await changeTracking.assignRevisions(recorded);
+          for (const entry of recorded) {
             await recordChangeWithRetry(changeTracking, entry, 2, logger);
-            recorded.push(entry);
           }
           mutationRevision = await postWriteRevision(mut, db, recorded);
         } catch (error) {

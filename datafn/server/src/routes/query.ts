@@ -27,7 +27,7 @@ import {
   resolveAccessLevel,
   validateQueryAuthz,
 } from "../validation/authz.js";
-import { attachRevisions, ensureRevisionsTable, issuesRevisions, readInSnapshot } from "../execution/revisions.js";
+import { ensureRevisionsTable, issuesRevisions, readWithRevisions } from "../execution/revisions.js";
 import { runBounded } from "./query/batch-executor.js";
 import { executeSingleQuery } from "./query/execute.js";
 import { validateQueryBody } from "./query/validate.js";
@@ -71,13 +71,17 @@ type QueryEnvelopeMetadata = QueryMetadata;
  * Create query validation + execution route handler
  */
 /**
- * DATA-41: a query sent with `withRevisions: true` returns each complete row's
- * revision as `$rev`. Rows are complete only without a projection, so a query
- * with `select` or `omit` (other than `*`), grouping or aggregation gets none.
+ * DATA-41: a query sent with `withRevisions: true` returns each complete row
+ * of its own resource with its revision as `$rev`. Only a plain row read
+ * qualifies: a relation traversal (rows of another resource), a projection
+ * (`select` other than `*`, `omit`), grouping, aggregation or a temporal
+ * clause gets none, and so does a resource whose fields the caller may not
+ * all read.
  */
 function isVersionedQuery(query: Record<string, unknown>, schema: DatafnSchema): boolean {
   if (query.withRevisions !== true || typeof query.resource !== "string") return false;
-  if (!issuesRevisions(schema, query.resource)) return false;
+  if (!issuesRevisions(schema, query.resource) || !canReadEveryField(schema, query.resource)) return false;
+  if (query.relation !== undefined || query.temporal !== undefined) return false;
   const select = query.select;
   if (Array.isArray(select) && !(select.length === 1 && select[0] === "*")) return false;
   if (Array.isArray(query.omit) && query.omit.length > 0) return false;
@@ -885,16 +889,18 @@ export function createQueryHandler(
                 );
                 if (!isVersionedQuery(query, validatedSchema)) return run(db);
                 // DATA-41: rows and their revisions come from one snapshot.
-                return ensureRevisionsTable(db).then(() => readInSnapshot(db, async (snapshotDb) => {
-                  const result = await run(snapshotDb);
-                  const rows = (result as { data?: unknown })?.data;
-                  if (Array.isArray(rows)) {
-                    const resourceName = String(query.resource);
-                    await attachRevisions(snapshotDb, namespace, resourceName, rows, (row) =>
-                      canReadEveryField(validatedSchema, resourceName, row));
-                  }
-                  return result;
-                }));
+                const resourceName = String(query.resource);
+                return ensureRevisionsTable(db).then(() => readWithRevisions(
+                  db,
+                  namespace,
+                  resourceName,
+                  run,
+                  (result) => {
+                    const rows = (result as { data?: unknown })?.data;
+                    return Array.isArray(rows) ? (rows as Array<Record<string, unknown>>) : undefined;
+                  },
+                  (row) => canReadEveryField(validatedSchema, resourceName, row),
+                ));
               }).then((result) => {
                 queryDurations.push(Date.now() - queryStart);
                 return result;

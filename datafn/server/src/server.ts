@@ -446,33 +446,31 @@ export interface DatafnServer<TContext = any> {
  * Create a DataFn server
  */
 /**
- * DATA-41: with revisions on, every JSON response object announces
- * `capabilities: { revisions: true }`, so a client can tell a revision-aware
- * server from an older one.
+ * DATA-41: with revisions on, every JSON envelope a DataFn route returns
+ * (success or error, including auth and validation errors) announces
+ * `capabilities: { revisions: true }`, so a client can tell a
+ * revision-aware server from an older one. The key is spliced into the
+ * serialized body, which is not parsed again.
  */
-function withRevisionCapability<H extends (...args: any[]) => Promise<Response>>(
+function withRevisionCapability<A extends unknown[]>(
   schema: DatafnSchema,
-  handler: H,
-): H {
+  handler: (...args: A) => Promise<Response>,
+): (...args: A) => Promise<Response> {
   if (!revisionsEnabled(schema)) return handler;
-  return (async (...args: Parameters<H>) => {
+  return async (...args: A) => {
     const response = await handler(...args);
-    if (!response.headers.get("content-type")?.includes("application/json")) return response;
-    let body: unknown;
-    try {
-      body = await response.clone().json();
-    } catch {
+    if (!response.body || !response.headers.get("content-type")?.includes("application/json")) {
       return response;
     }
-    if (!body || typeof body !== "object" || Array.isArray(body)) return response;
+    const text = await response.text();
+    const body = text.trimStart();
+    const spliced = !body.startsWith("{")
+      ? text
+      : `{"capabilities":{"revisions":true}${/^\{\s*\}/.test(body) ? "" : ","}${body.slice(1)}`;
     const headers = new Headers(response.headers);
     headers.delete("content-length");
-    return new Response(JSON.stringify({ ...body, capabilities: { revisions: true } }), {
-      status: response.status,
-      statusText: response.statusText,
-      headers,
-    });
-  }) as H;
+    return new Response(spliced, { status: response.status, statusText: response.statusText, headers });
+  };
 }
 
 export async function createDatafnServer<TContext = any>(
@@ -878,7 +876,7 @@ export async function createDatafnServer<TContext = any>(
     db,
   );
 
-  const queryHandler = withRevisionCapability(validatedSchema, createQueryHandler(
+  const queryHandler = createQueryHandler(
     validatedSchema,
     limits.maxLimit,
     extractNamespace,
@@ -899,14 +897,14 @@ export async function createDatafnServer<TContext = any>(
     },
     logger,
     crossNamespaceDb,
-  ));
+  );
 
   // Create mutation handler and idempotency store
   const idempotencyStore = db
     ? new DbIdempotencyStore(db, "datafn", logger)
     : undefined;
 
-  const mutationHandler = withRevisionCapability(validatedSchema, createMutationHandler(
+  const mutationHandler = createMutationHandler(
     validatedSchema,
     extractNamespace,
     extractActorId,
@@ -923,9 +921,9 @@ export async function createDatafnServer<TContext = any>(
     },
     logger,
     config.searchProvider,
-  ));
+  );
 
-  const transactHandler = withRevisionCapability(validatedSchema, createTransactHandler(
+  const transactHandler = createTransactHandler(
     validatedSchema,
     db,
     idempotencyStore,
@@ -939,9 +937,9 @@ export async function createDatafnServer<TContext = any>(
       debug: debugMode,
     },
     logger,
-  ));
+  );
 
-  const cloneHandler = withRevisionCapability(validatedSchema, createCloneHandler(
+  const cloneHandler = createCloneHandler(
     validatedSchema,
     extractNamespace,
     extractActorId,
@@ -949,8 +947,8 @@ export async function createDatafnServer<TContext = any>(
     plugins,
     sequenceStore,
     logger,
-  ));
-  const pullHandler = withRevisionCapability(validatedSchema, createPullHandler(
+  );
+  const pullHandler = createPullHandler(
     validatedSchema,
     extractNamespace,
     extractActorId,
@@ -960,8 +958,8 @@ export async function createDatafnServer<TContext = any>(
     limits.maxPullLimit,
     timingEmitter,
     logger,
-  ));
-  const reconcileHandler = withRevisionCapability(validatedSchema, createReconcileHandler(
+  );
+  const reconcileHandler = createReconcileHandler(
     validatedSchema,
     extractNamespace,
     extractActorId,
@@ -969,12 +967,12 @@ export async function createDatafnServer<TContext = any>(
     plugins,
     sequenceStore,
     logger,
-  ));
+  );
 
   // WebSocket Manager (SCA-005 limits, REL-007 heartbeat)
   const wsManager = new WebSocketManager(config.ws ?? {}, logger);
 
-  const pushHandler = withRevisionCapability(validatedSchema, createPushHandler(
+  const pushHandler = createPushHandler(
     validatedSchema,
     extractNamespace,
     extractActorId,
@@ -991,10 +989,10 @@ export async function createDatafnServer<TContext = any>(
       debug: debugMode,
     },
     logger,
-  ));
+  );
   const seedHandler = createSeedHandler(db, extractNamespace, logger);
 
-  const searchHandler = withRevisionCapability(validatedSchema, createSearchHandler(
+  const searchHandler = createSearchHandler(
     validatedSchema,
     extractNamespace,
     extractActorId,
@@ -1002,7 +1000,7 @@ export async function createDatafnServer<TContext = any>(
     plugins,
     config.searchProvider,
     logger,
-  ));
+  );
 
   // Initialize search provider if configured
   if (config.searchProvider?.initialize) {
@@ -1183,7 +1181,7 @@ export async function createDatafnServer<TContext = any>(
   };
 
   // LOW-001: withAuth returns a handler with signature compatible with Route<TContext>.handler
-  const withAuth = (
+  const withAuthUnannounced = (
     action: DataFnAction,
     handler: (
       req: Request,
@@ -1490,6 +1488,9 @@ export async function createDatafnServer<TContext = any>(
       }
     };
   };
+  // DATA-41: every DataFn route announces its capabilities, auth errors included.
+  const withAuth = (...args: Parameters<typeof withAuthUnannounced>) =>
+    withRevisionCapability(validatedSchema, withAuthUnannounced(...args));
 
   const executeInProcess = async <TResult>(
     action: "query" | "mutation" | "transact" | "search",

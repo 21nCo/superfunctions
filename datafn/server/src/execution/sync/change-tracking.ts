@@ -16,7 +16,7 @@ import type { Adapter } from "@superfunctions/db";
 import type { InternalWhereClause } from "@superfunctions/db/types";
 import type { SequenceStore } from "./sequence-store.js";
 import { ensureChangesRevColumn, ensureInternalTable } from "../internal-tables.js";
-import { bumpRevision, ensureRevisionsTable, tracksRevisions } from "../revisions.js";
+import { assignWriteRevisions, ensureRevisionsTable } from "../revisions.js";
 import type { DatafnLogger } from "../../logger.js";
 import { withAdapterNamespaceLock } from "./namespace-lock.js";
 
@@ -106,8 +106,9 @@ export interface ChangeEntryInput {
   op: "insert" | "merge" | "replace" | "upsert" | "delete";
   record: Record<string, unknown> | null;
   /**
-   * DATA-41: set by `recordChanges` to the record's revision after this
-   * change. A retry of the same entry reuses it instead of bumping again.
+   * DATA-41: set by `recordChanges` on a record's last entry of a write to
+   * the record's revision after that write. A retry of the same entries
+   * reuses it instead of bumping again.
    */
   rev?: number;
 }
@@ -367,6 +368,21 @@ export class ChangeTrackingService {
   }
 
   /**
+   * DATA-41: raises the revision of each record the entries of one write
+   * change, once per record, and sets it on the record's last entry (see
+   * assignWriteRevisions). Recording entries already assigned does not bump
+   * again, so a caller recording one write's entries one by one assigns them
+   * first.
+   */
+  async assignRevisions(entries: ChangeEntryInput[]): Promise<void> {
+    if (!this.transactionBound) await this.ensureRevisionsReady();
+    if (this.issueRevisions && !this.revColumnReady) {
+      this.revColumnReady = await ensureChangesRevColumn(this.db);
+    }
+    await assignWriteRevisions(this.db, this.namespace, entries, this.issueRevisions && this.revColumnReady);
+  }
+
+  /**
    * Record a change entry for a mutation (delegates to recordChanges)
    */
   async recordChange(params: ChangeEntryInput): Promise<void> {
@@ -388,23 +404,10 @@ export class ChangeTrackingService {
       this.changesEnsured = true;
     }
 
-    // DATA-41: every change is a committed write to its record (when this
-    // adapter's transaction commits), so it raises the record's revision.
-    if (!this.transactionBound) await this.ensureRevisionsReady();
-    if (this.issueRevisions && !this.revColumnReady) {
-      this.revColumnReady = await ensureChangesRevColumn(this.db);
-    }
-    for (const params of entries) {
-      if (params.rev === undefined && tracksRevisions(params.resource)) {
-        params.rev = await bumpRevision(
-          this.db,
-          this.namespace,
-          params.resource,
-          params.id,
-          params.op === "delete",
-        );
-      }
-    }
+    // DATA-41: unless the caller assigned them for a larger write, the
+    // entries are one committed write (when this adapter's transaction
+    // commits), which raises each changed record's revision once.
+    await this.assignRevisions(entries);
     const recordRev = this.issueRevisions && this.revColumnReady;
 
     const now = new Date().toISOString();

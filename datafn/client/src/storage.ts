@@ -47,9 +47,10 @@ export interface DatafnStorageAdapterCapabilities {
   readonly reportsMergeOutcome?: boolean;
   /**
    * DATA-41: the adapter stores each record's server revision with it
-   * (`getRecordWithRevision`, `putRecordWithRevision`) and every other record
-   * write (`upsertRecord`, `upsertRecords`, `mergeRecord`, `deleteRecord`)
-   * clears that record's revision in the same write.
+   * (`getRecordWithRevision`, `putRecordsWithRevisions`,
+   * `revisionWriteStamp`), and every other record write (`upsertRecord`,
+   * `upsertRecords`, `mergeRecord`, `deleteRecord`) clears that record's
+   * revision and raises its write stamp in the same write.
    */
   readonly revisions?: boolean;
 }
@@ -59,6 +60,16 @@ export interface DatafnRevisionEntry {
   id: string;
   record: Record<string, unknown> | null;
   rev: number;
+}
+
+/** DATA-41: which records a revision install must leave alone. */
+export interface DatafnRevisionInstallOptions {
+  /** Skip records a pending changelog entry may change. */
+  unlessPending?: boolean;
+  /** Skip records written after this write stamp (`revisionWriteStamp`). */
+  writtenSince?: number;
+  /** Also skip records these not yet logged local mutations (debounced writes) may change. */
+  pendingMutations?: ReadonlyArray<unknown>;
 }
 
 /** DATA-41: a record (null when deleted or absent) and its revision, read together. */
@@ -116,21 +127,27 @@ export interface DatafnStorageAdapter {
 
   /**
    * DATA-41 (adapters with `capabilities.revisions`): reads a record and its
-   * revision in one storage read.
+   * revision in one storage read. The revision is undefined while a pending
+   * changelog entry may change the record.
    */
   getRecordWithRevision?(resource: string, id: string): Promise<DatafnStoredRevision>;
+  /**
+   * DATA-41 (adapters with `capabilities.revisions`): the current write
+   * stamp. Every record write after this call (by any client sharing the
+   * storage) gets a higher stamp, so a request can install its rows with
+   * `writtenSince` and never overwrite a newer local state.
+   */
+  revisionWriteStamp?(): Promise<number>;
   /**
    * DATA-41 (adapters with `capabilities.revisions`): installs complete
    * server rows (or, where `record` is null, delete tombstones) together with
    * their revisions in one storage write, and returns the ids it installed.
-   * With `unlessPending`, it skips each record a pending changelog entry
-   * touches, so a local change is never overwritten or paired with a
-   * revision.
+   * It skips each record `options` say must not be overwritten.
    */
   putRecordsWithRevisions?(
     resource: string,
     entries: ReadonlyArray<DatafnRevisionEntry>,
-    options?: { unlessPending?: boolean },
+    options?: DatafnRevisionInstallOptions,
   ): Promise<string[]>;
 
   // Join rows (many-many)

@@ -49,6 +49,17 @@ export class DebouncerMap {
     };
   }
 
+  /** DATA-41: debounced mutations being executed (not yet in the changelog). */
+  private running = new Set<DfqlMutation>();
+
+  /**
+   * DATA-41: every mutation already applied to local storage but not yet
+   * appended to the changelog: waiting for its timer, or being executed.
+   */
+  pendingMutations(): DfqlMutation[] {
+    return [...[...this.pending.values()].map((entry) => entry.mutation), ...this.running];
+  }
+
   /** Mutation id of the mutation pending under `key`, if any. */
   pendingMutationId(key: string): string | undefined {
     return this.pending.get(key)?.mutation.mutationId;
@@ -83,7 +94,14 @@ export class DebouncerMap {
 
     return new Promise<void>((resolve, reject) => {
       const mutationToExecute = existing?.mutation || mutation;
-      const executorToUse = executor;
+      const executorToUse = async (m: DfqlMutation) => {
+        this.running.add(m);
+        try {
+          await executor(m);
+        } finally {
+          this.running.delete(m);
+        }
+      };
       
       const timer = setTimeout(async () => {
         this.pending.delete(key);

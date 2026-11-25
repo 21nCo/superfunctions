@@ -7,7 +7,7 @@ import { getJoinStoreKey, getRelationJoinTableName } from "@datafn/core";
 import type { Adapter, WhereClause } from "@superfunctions/db";
 import type { SequenceStore } from "./sequence-store.js";
 import { ChangeTrackingService } from "./change-tracking.js";
-import { attachRevisions, ensureRevisionsTable, issuesRevisions, readInSnapshot } from "../revisions.js";
+import { ensureRevisionsTable, issuesRevisions, readWithRevisions } from "../revisions.js";
 import type { DatafnLogger } from "../../logger.js";
 import {
   isNamespaceOwnerActor,
@@ -189,11 +189,7 @@ export async function executeClone(
   ): Promise<Array<Record<string, unknown>>> => {
     if (!issuesRevisions(schema, table)) return read(db);
     await ensureRevisionsTable(db);
-    return readInSnapshot(db, async (snapshotDb) => {
-      const rows = await read(snapshotDb);
-      await attachRevisions(snapshotDb, namespace, table, rows);
-      return rows;
-    });
+    return readWithRevisions(db, namespace, table, read, (rows) => rows);
   };
 
   // Handle paginated clone if page parameter is provided
@@ -230,16 +226,13 @@ export async function executeClone(
         : [];
 
       const records = await readCloneRows(table, (readDb) =>
-
         readDb.findMany({
           model: table,
           where,
           orderBy: [{ field: "id", direction: "asc" }],
           limit: effectiveLimit,
           namespace,
-
         }),
-
       );
       data[table] = await filterActorVisibleRows(table, records);
 

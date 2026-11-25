@@ -4,7 +4,7 @@
  * Apply clone/pull results into local storage with hydration state management.
  */
 
-import type { DatafnStorageAdapter } from "../storage.js";
+import type { DatafnRevisionEntry, DatafnStorageAdapter } from "../storage.js";
 import {
   DATAFN_REVISION_FIELD,
   KV_RESOURCE_NAME,
@@ -33,27 +33,45 @@ function storesRevisions(storage: DatafnStorageAdapter): boolean {
 }
 
 /**
+ * DATA-41: installs complete server rows (record null for a tombstone) with
+ * their revisions in one storage write, leaving alone each record a pending
+ * local change (logged or debounced) may change, or, with `writtenSince`, that
+ * was written after the request started. Returns the installed ids.
+ */
+export async function installServerRevisions(
+  storage: DatafnStorageAdapter,
+  resource: string,
+  entries: DatafnRevisionEntry[],
+  options: ApplyRevisionOptions & { writtenSince?: number },
+): Promise<string[]> {
+  if (entries.length === 0 || !options.revisionResources?.(resource) || !storesRevisions(storage)) return [];
+  return storage.putRecordsWithRevisions!(resource, entries, {
+    unlessPending: true,
+    writtenSince: options.writtenSince,
+    pendingMutations: options.pendingMutations?.(),
+  });
+}
+
+/**
  * DATA-41: stores complete server rows. Rows with a revision are installed
- * with it in one write on an adapter that keeps revisions, except where a
- * pending local change touches the record; every other row is returned
- * without `$rev` for a plain write, which leaves its revision unknown.
+ * with it in one write on an adapter that keeps revisions (see
+ * installServerRevisions); every other row is returned without `$rev` for a
+ * plain write, which leaves its revision unknown.
  */
 async function storeServerRows(
   storage: DatafnStorageAdapter,
   resource: string,
   rows: Array<Record<string, unknown>>,
-  revisionResources: RevisionResources | undefined,
+  options: ApplyRevisionOptions,
 ): Promise<Array<Record<string, unknown>>> {
-  if (!revisionResources?.(resource)) return rows;
+  if (!options.revisionResources?.(resource)) return rows;
   const entries = rows.flatMap((row) => {
     const rev = readRowRevision(row);
     return rev !== undefined && typeof row.id === "string"
       ? [{ id: row.id, record: withoutRowRevision(row), rev }]
       : [];
   });
-  const installed = entries.length > 0 && storesRevisions(storage)
-    ? new Set(await storage.putRecordsWithRevisions!(resource, entries, { unlessPending: true }))
-    : new Set<string>();
+  const installed = new Set(await installServerRevisions(storage, resource, entries, options));
   return rows
     .filter((row) => typeof row.id !== "string" || !installed.has(row.id))
     .map((row) => withoutRowRevision(row));
@@ -65,11 +83,10 @@ async function deleteServerRecord(
   resource: string,
   id: string,
   rev: number | undefined,
+  options: ApplyRevisionOptions,
 ): Promise<void> {
-  if (rev !== undefined && storesRevisions(storage)) {
-    const installed = await storage.putRecordsWithRevisions!(resource, [{ id, record: null, rev }], {
-      unlessPending: true,
-    });
+  if (rev !== undefined) {
+    const installed = await installServerRevisions(storage, resource, [{ id, record: null, rev }], options);
     if (installed.length > 0) return;
   }
   await storage.deleteRecord(resource, id);
@@ -92,6 +109,8 @@ export type CloneResult = {
 export type ApplyRevisionOptions = {
   /** Resources whose `$rev` row property is revision metadata. */
   revisionResources?: RevisionResources;
+  /** Local mutations applied to storage but not yet in the changelog (debounced). */
+  pendingMutations?: () => readonly unknown[];
 };
 
 /**
@@ -174,7 +193,7 @@ export async function applyCloneResult(
 
     // DATA-41: rows with a revision are installed with it; the rest are
     // upserted (clearing any revision).
-    const plainRecords = await storeServerRows(storage, resource, records, options.revisionResources);
+    const plainRecords = await storeServerRows(storage, resource, records, options);
 
     // Upsert all records by id, in one transaction when the adapter can
     if (storage.upsertRecords) {
@@ -281,12 +300,7 @@ async function applyPullResultGlobalCursor(
     // DATA-41: an upsert here may be a partial merge, so only a delete
     // (a tombstone) is paired with its revision.
     if (op === "delete") {
-      await deleteServerRecord(
-        storage,
-        resource,
-        id,
-        options.revisionResources?.(resource) ? change.rev : undefined,
-      );
+      await deleteServerRecord(storage, resource, id, change.rev, options);
     } else if (record) {
       await storage.upsertRecord(
         resource,
@@ -322,7 +336,7 @@ async function applyPullResultCanonical(
   // with it; merges and deletes below run after, so a later partial change
   // leaves the revision unknown.
   for (const [resource, resourceRecords] of Object.entries(records)) {
-    for (const record of await storeServerRows(storage, resource, resourceRecords, revisionResources)) {
+    for (const record of await storeServerRows(storage, resource, resourceRecords, options)) {
       await storage.upsertRecord(resource, record);
     }
   }
@@ -345,10 +359,7 @@ async function applyPullResultCanonical(
   // Apply record deletes
   for (const [resource, ids] of Object.entries(deleted)) {
     for (const id of ids) {
-      const rev = revisionResources?.(resource)
-        ? result.deletedRevisions?.[resource]?.[id]
-        : undefined;
-      await deleteServerRecord(storage, resource, id, rev);
+      await deleteServerRecord(storage, resource, id, result.deletedRevisions?.[resource]?.[id], options);
     }
   }
 
@@ -466,28 +477,4 @@ export function earlierCursor(stored: string | null, candidate: string): string 
   const b = Number(candidate);
   if (!Number.isFinite(a) || !Number.isFinite(b)) return candidate;
   return a < b ? stored : candidate;
-}
-
-/**
- * DATA-41: installs a push result's post-write row (or tombstone) with its
- * revision, unless a pending local change touches the record. A result
- * without a row changes nothing: the optimistic write already left the
- * revision unknown.
- */
-export async function applyPushRevision(
-  storage: DatafnStorageAdapter,
-  revision: { resource: string; id: string; rev: number; record?: Record<string, unknown>; deleted?: boolean },
-  options: ApplyRevisionOptions,
-): Promise<void> {
-  if (!options.revisionResources?.(revision.resource) || !storesRevisions(storage)) return;
-  if (!revision.deleted && !revision.record) return;
-  await storage.putRecordsWithRevisions!(
-    revision.resource,
-    [{
-      id: revision.id,
-      record: revision.deleted ? null : withoutRowRevision(revision.record!),
-      rev: revision.rev,
-    }],
-    { unlessPending: true },
-  );
 }

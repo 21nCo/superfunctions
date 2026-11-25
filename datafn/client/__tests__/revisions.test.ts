@@ -230,6 +230,16 @@ describe("DATA-41 client revisions", () => {
 
     const read: any = await client.query({ resource: "task", version: 1, withRevisions: true, filters: { id: { $in: ["task:1"] } } });
     expect(read.data[0]).toMatchObject({ id: "task:1", title: "secret title", $rev: 1 });
+    // On the wire the revision is row metadata beside the ciphertext, never inside it.
+    const pulled: any = await (await server.router.handle(new Request("http://datafn.test/datafn/pull", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ clientId: "client:wire", cursors: { task: "0" } }),
+    }))).json();
+    const wireRow = pulled.result.records.task[0];
+    expect(wireRow.$rev).toBe(1);
+    expect(wireRow.title).toMatchObject({ __datafnE2ee: 1 });
+    expect(JSON.stringify(wireRow.title)).not.toContain("rev");
 
     const before = requests.length;
     await expect(client.query({
@@ -278,3 +288,202 @@ describe("DATA-41 client revisions", () => {
     });
   });
 });
+
+/** A transport that runs `during` after the server answered a route and before the client sees the answer. */
+function delayedTransport(server: Server, route: string, during: () => Promise<void>, edit?: (body: any) => void) {
+  return new DefaultHttpTransport("http://datafn.test/datafn", {
+    fetch: async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = new Request(input, init);
+      const response = await server.router.handle(request);
+      if (new URL(request.url).pathname !== `/datafn/${route}`) return response;
+      await during();
+      const body = await response.json();
+      edit?.(body);
+      return new Response(JSON.stringify(body), { status: response.status, headers: { "content-type": "application/json" } });
+    },
+  });
+}
+
+describe("DATA-41 client revisions: never installed over newer local state", () => {
+  it("keeps a background pull's newer state when the push acknowledgement arrives after it", async () => {
+    const server = await startServer();
+    await serverPush(server, "seed", [{ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } }]);
+    const storage = new MemoryStorageAdapter(["task"]);
+    await engineFor(server, storage).cloneNow();
+    const bus = new EventBus();
+    const pusher = new SyncEngine(storage, delayedTransport(server, "push", async () => {
+      // Another device writes rev 3 and a background pull applies it first.
+      await serverPush(server, "other", [{ resource: "task", operation: "merge", id: "task:1", record: { notes: "newer" } }]);
+      await engineFor(server, storage).pullNow();
+    }) as any, bus, "client:a", schema, { offlinability: true } as any);
+
+    await storage.mergeRecord("task", "task:1", { title: "b" });
+    await appendLocal(storage, { resource: "task", operation: "merge", id: "task:1", record: { title: "b" } });
+    await pusher.processPush();
+
+    const pair = await storage.getRecordWithRevision("task", "task:1");
+    expect(pair.record).toMatchObject({ title: "b", notes: "newer" });
+    expect(pair.rev).toBeUndefined();
+  });
+
+  it("pairs a push row only with the $rev the row itself carries", async () => {
+    const server = await startServer();
+    await serverPush(server, "seed", [{ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } }]);
+    const storage = new MemoryStorageAdapter(["task"]);
+    await engineFor(server, storage).cloneNow();
+    // A host filter trimmed the row and removed its $rev.
+    const pusher = new SyncEngine(storage, delayedTransport(server, "push", async () => {}, (body) => {
+      for (const revision of Object.values<any>(body.result.revisions ?? {})) delete revision.record.$rev;
+    }) as any, new EventBus(), "client:a", schema, { offlinability: true } as any);
+    await storage.mergeRecord("task", "task:1", { title: "b" });
+    await appendLocal(storage, { resource: "task", operation: "merge", id: "task:1", record: { title: "b" } });
+    await pusher.processPush();
+    expect((await storage.getRecordWithRevision("task", "task:1")).rev).toBeUndefined();
+  });
+
+  it("re-indexes and refreshes live queries for rows a push installs", async () => {
+    const server = await startServer();
+    await serverPush(server, "seed", [{ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } }]);
+    const storage = new MemoryStorageAdapter(["task"]);
+    await engineFor(server, storage).cloneNow();
+    const bus = new EventBus();
+    const events: any[] = [];
+    bus.subscribe((event: any) => events.push(event));
+    const indexed: any[] = [];
+    const search = { updateIndices: async (params: any) => indexed.push(params) } as any;
+    const engine = new SyncEngine(storage, transport(server) as any, bus, "client:a", schema, { offlinability: true } as any, [], undefined, search);
+    await serverPush(server, "other", [{ resource: "task", operation: "merge", id: "task:1", record: { notes: "server" } }]);
+    await storage.mergeRecord("task", "task:1", { title: "b" });
+    await appendLocal(storage, { resource: "task", operation: "merge", id: "task:1", record: { title: "b" } });
+    await engine.processPush();
+
+    expect((await storage.getRecordWithRevision("task", "task:1")).rev).toBe(3);
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "sync_applied",
+      context: expect.objectContaining({ phase: "revisions", resources: ["task"] }),
+    }));
+    expect(indexed).toContainEqual(expect.objectContaining({
+      resource: "task",
+      operation: "upsert",
+      records: [expect.objectContaining({ id: "task:1", notes: "server" })],
+    }));
+  });
+
+  it("keeps a write made while a versioned query was in flight", async () => {
+    const server = await startServer();
+    await serverPush(server, "seed", [{ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } }]);
+    const storage = new MemoryStorageAdapter(["task"]);
+    await engineFor(server, storage).cloneNow();
+    const client = createDatafnClient({
+      schema,
+      clientId: "client:query-race",
+      storage,
+      sync: { offlinability: true, remote: "http://datafn.test/datafn", http: { fetch: async (i: any, init?: any) => {
+        const request = new Request(i, init);
+        const response = await server.router.handle(request);
+        // A pull applies a newer state while the query response is in flight.
+        if (new URL(request.url).pathname === "/datafn/query") await storage.mergeRecord("task", "task:1", { title: "pulled" });
+        return response;
+      } } },
+    });
+    const result: any = await client.query({ resource: "task", version: 1, withRevisions: true, filters: { id: "task:1" } });
+    expect(result.data[0]).toMatchObject({ title: "a", $rev: 1 });
+    expect(await client.getWithRevision("task", "task:1")).toEqual({
+      record: expect.objectContaining({ title: "pulled" }),
+      rev: undefined,
+    });
+  });
+
+  it("treats a debounced write as pending before it reaches the changelog", async () => {
+    const server = await startServer();
+    await serverPush(server, "seed", [{ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } }]);
+    const storage = new MemoryStorageAdapter(["task"]);
+    const client = createDatafnClient({
+      schema,
+      clientId: "client:debounce",
+      storage,
+      sync: { offlinability: true, remote: "http://datafn.test/datafn", http: { fetch: (i: any, init?: any) => server.router.handle(new Request(i, init)) } },
+    });
+    await client.sync.cloneNow();
+    expect(await client.getRevision("task", "task:1")).toBe(1);
+    const debounced = client.mutate({
+      resource: "task", version: 1, operation: "merge", id: "task:1", record: { title: "typing" },
+      debounceKey: "task:1:title", debounceMs: 60_000,
+    } as any);
+    await vi.waitFor(async () => expect((await storage.getRecord("task", "task:1"))?.title).toBe("typing"));
+    expect(await storage.changelogList()).toEqual([]);
+    // Unknown while the write waits for its timer, and not overwritten by a versioned read.
+    expect(await client.getRevision("task", "task:1")).toBeUndefined();
+    await client.query({ resource: "task", version: 1, withRevisions: true, filters: { id: "task:1" } });
+    expect(await client.getWithRevision("task", "task:1")).toEqual({
+      record: expect.objectContaining({ title: "typing" }),
+      rev: undefined,
+    });
+    await client.flush();
+    await debounced;
+    // Logged now, still pending until pushed.
+    expect(await client.getRevision("task", "task:1")).toBeUndefined();
+  });
+
+  it("keeps two IndexedDB adapters on one database working after a revision install", async () => {
+    const dbName = `revisions_peers_${Math.random()}`;
+    const first = new IndexedDbStorageAdapter(dbName, ["task"], schema as any);
+    const second = new IndexedDbStorageAdapter(dbName, ["task"], schema as any);
+    await first.getRecord("task", "task:0");
+    await second.getRecord("task", "task:0");
+    expect(await first.putRecordsWithRevisions("task", [{ id: "task:1", record: { id: "task:1", title: "a" }, rev: 2 }])).toEqual(["task:1"]);
+    await second.upsertRecord("task", { id: "task:2", title: "b" });
+    expect(await second.getRecordWithRevision("task", "task:1")).toEqual({ record: { id: "task:1", title: "a" }, rev: 2 });
+    // A write from the peer after an older request started blocks that request's install.
+    const stamp = await first.revisionWriteStamp();
+    await second.upsertRecord("task", { id: "task:1", title: "peer" });
+    expect(await first.putRecordsWithRevisions("task", [{ id: "task:1", record: { id: "task:1", title: "old" }, rev: 3 }], { writtenSince: stamp })).toEqual([]);
+    expect(await first.getRecordWithRevision("task", "task:1")).toEqual({ record: { id: "task:1", title: "peer" }, rev: undefined });
+    await first.close();
+    await second.close();
+  });
+
+  it("keeps the announced capabilities when a later response carries none", async () => {
+    const server = await startServer();
+    await serverPush(server, "seed", [{ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } }]);
+    const client = createDatafnClient({
+      schema,
+      clientId: "client:caps",
+      sync: { remote: "http://datafn.test/datafn", http: { fetch: async (i: any, init?: any) => {
+        const request = new Request(i, init);
+        const response = await server.router.handle(request);
+        if (new URL(request.url).pathname !== "/datafn/mutation") return response;
+        const { capabilities: _dropped, ...body } = (await response.json()) as any;
+        return new Response(JSON.stringify(body), { status: response.status, headers: { "content-type": "application/json" } });
+      } } },
+    });
+    await client.query({ resource: "task", version: 1, withRevisions: true, filters: { id: "task:1" } });
+    expect(client.serverCapabilities()).toEqual({ revisions: true });
+    await client.mutate({ resource: "task", version: 1, operation: "merge", id: "task:1", record: { title: "b" } });
+    expect(client.serverCapabilities()).toEqual({ revisions: true });
+  });
+
+  it("reads a coherent pair, or an unknown revision, while a background pull updates the record", async () => {
+    const server = await startServer();
+    await serverPush(server, "seed", [{ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } }]);
+    const storage = new MemoryStorageAdapter(["task"]);
+    const engine = engineFor(server, storage);
+    await engine.cloneNow();
+    await serverPush(server, "other", [{ resource: "task", operation: "merge", id: "task:1", record: { title: "b" } }]);
+    await serverPush(server, "another", [{ resource: "task", operation: "delete", id: "task:1" }]);
+    const seen: Array<{ record: Record<string, unknown> | null; rev: number | undefined }> = [];
+    const pulling = engine.pullNow();
+    for (let i = 0; i < 20; i++) {
+      seen.push(await storage.getRecordWithRevision("task", "task:1"));
+      await Promise.resolve();
+    }
+    await pulling;
+    seen.push(await storage.getRecordWithRevision("task", "task:1"));
+    const states = new Map<number, unknown>([[1, { id: "task:1", title: "a" }], [3, null]]);
+    for (const pair of seen) {
+      if (pair.rev !== undefined) expect(pair.record).toEqual(states.get(pair.rev));
+    }
+    expect(seen[seen.length - 1]).toEqual({ record: null, rev: 3 });
+  });
+});
+

@@ -6,7 +6,7 @@ import { memoryAdapter } from "@superfunctions/db/adapters";
 import type { Adapter } from "@superfunctions/db";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createDatafnServer } from "../src/server.js";
-import { readRevisions } from "../src/execution/revisions.js";
+import { READ_CHUNK, bumpRevision, ensureRevisionsTable, readRevisions, readWithRevisions } from "../src/execution/revisions.js";
 import { ChangeTrackingService } from "../src/execution/sync/change-tracking.js";
 import { INTERNAL_TABLE_SCHEMAS } from "../src/execution/internal-tables.js";
 import { resolveNamespaceStoragePlan } from "../src/namespace-storage.js";
@@ -26,6 +26,15 @@ const schema = {
         { name: "projectId", type: "string" as const, required: false },
       ],
     },
+    {
+      name: "step",
+      version: 1,
+      fields: [
+        { name: "title", type: "string" as const, required: false },
+        { name: "goalId", type: "string" as const, required: false },
+      ],
+    },
+    { name: "goal", version: 1, capabilities: ["archivable"] as any, fields: [{ name: "label", type: "string" as const, required: false }] },
     {
       name: "comment",
       version: 1,
@@ -52,6 +61,7 @@ const schema = {
   relations: [
     { from: "task", to: "project", type: "many-one", relation: "project", fkField: "projectId", onDelete: { to: "setNull" } },
     { from: "comment", to: "task", type: "many-one", relation: "task", fkField: "taskId", onDelete: { to: "cascade" } },
+    { from: "step", to: "goal", type: "many-one", relation: "goal", fkField: "goalId", inheritsInactive: true },
   ],
 } as any;
 
@@ -89,6 +99,7 @@ async function serve(options: { enabled?: boolean; database?: Adapter } = {}) {
 }
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
@@ -128,7 +139,8 @@ describe("DATA-41 revisions: every committed write bumps", () => {
 
   it("gives two writes in the same millisecond two different, increasing revisions", async () => {
     const { push, rev } = await serve();
-    vi.spyOn(Date, "now").mockReturnValue(1_700_000_000_000);
+    // Hold the clock (Date.now and new Date()) so both writes share updatedAt.
+    vi.useFakeTimers({ toFake: ["Date"], now: 1_700_000_000_000 });
     await push({ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } });
     await push({ resource: "task", operation: "merge", id: "task:1", record: { title: "b" } });
     const first = (await rev("task", "task:1"))!.rev;
@@ -353,5 +365,252 @@ describe("DATA-41 revisions: namespace storage", () => {
     expect(entry).toMatchObject({ logicalRole: "revisions", namespaceColumn: "namespace" });
     expect(entry!.operations).toEqual(expect.arrayContaining(["copy", "backup", "cleanup"]));
     expect(plan.entries.some((candidate) => candidate.relation === "__datafn_changes")).toBe(true);
+  });
+});
+
+describe("DATA-41 revisions: one bump per write, complete change rows", () => {
+  const changeRows = async (database: Adapter, id: string) =>
+    (await database.internal.findMany("__datafn_changes", []))
+      .filter((row) => row.record_id === id)
+      .sort((left, right) => Number(left.server_seq) - Number(right.server_seq))
+      .map((row) => ({ op: row.op, rev: row.rev ?? undefined, record: row.record ? JSON.parse(String(row.record)) : null }));
+  const stored = async (database: Adapter, model: string, id: string) =>
+    database.findOne({ model, where: [{ field: "id", operator: "eq", value: id }], namespace: NS });
+
+  it("bumps a record once for an insert under an archived inheritsInactive parent, on push and /mutation", async () => {
+    const { database, send, push, rev } = await serve();
+    await push({ resource: "goal", operation: "insert", id: "goal:1", record: { label: "G" } });
+    await push({ resource: "goal", operation: "archive", id: "goal:1" });
+
+    const inserted = await push({ resource: "step", operation: "insert", id: "step:1", record: { title: "a", goalId: "goal:1" } });
+    expect(await rev("step", "step:1")).toEqual({ rev: 1, deleted: false });
+    const rows = await changeRows(database, "step:1");
+    // Only the write's last change row carries the revision, with the exact committed row.
+    expect(rows.slice(0, -1).every((row) => row.rev === undefined)).toBe(true);
+    expect(rows[rows.length - 1].rev).toBe(1);
+    const committed = await stored(database, "step", "step:1");
+    expect(committed).toHaveProperty("isAncestorInactive", true);
+    if (rows[rows.length - 1].op !== "merge") expect(rows[rows.length - 1].record).toEqual(committed);
+    expect(inserted.body.result.revisions[inserted.mutationId]).toMatchObject({ rev: 1, record: { ...committed, $rev: 1 } });
+
+    const direct = await send("mutation", {
+      resource: "step", version: 1, operation: "insert", id: "step:2", record: { title: "b", goalId: "goal:1" },
+      clientId: "c", mutationId: "direct-under-archived",
+    });
+    expect(direct.body.result.rev).toBe(1);
+    expect(await rev("step", "step:2")).toEqual({ rev: 1, deleted: false });
+
+    const related = await push({ resource: "step", operation: "insert", id: "step:3", record: { title: "c" } });
+    expect(related.body.result.ok).toBe(true);
+    await push({ resource: "step", operation: "relate", id: "step:3", relations: { goal: "goal:1" } });
+    expect(await rev("step", "step:3")).toEqual({ rev: 2, deleted: false });
+  });
+
+  it("bumps each record inactive propagation changes", async () => {
+    const { database, push, rev } = await serve();
+    await push({ resource: "goal", operation: "insert", id: "goal:1", record: { label: "G" } });
+    await push({ resource: "step", operation: "insert", id: "step:1", record: { title: "a", goalId: "goal:1" } });
+    await push({ resource: "step", operation: "insert", id: "step:2", record: { title: "b", goalId: "goal:1" } });
+    await push({ resource: "goal", operation: "archive", id: "goal:1" });
+    expect(await rev("step", "step:1")).toEqual({ rev: 2, deleted: false });
+    expect(await rev("step", "step:2")).toEqual({ rev: 2, deleted: false });
+    expect(await rev("goal", "goal:1")).toEqual({ rev: 2, deleted: false });
+  });
+
+  it("records the stored row, with database defaults, on an insert change that carries a revision", async () => {
+    // A database that fills a column default the payload does not carry.
+    const base = memoryAdapter();
+    const withDefault = (adapter: Adapter): Adapter => ({
+      ...adapter,
+      create: (args: any) => adapter.create(args.model === "project" ? { ...args, data: { name: "db-default", ...args.data } } : args),
+      transaction: (callback: any) => adapter.transaction((tx: Adapter) => callback(withDefault(tx))),
+    }) as Adapter;
+    const { database, push } = await serve({ database: withDefault(base) });
+    await push({ resource: "project", operation: "insert", id: "project:1", record: {} });
+    const [insert] = await changeRows(database, "project:1");
+    expect(insert).toEqual({ op: "insert", rev: 1, record: { id: "project:1", name: "db-default" } });
+  });
+
+  it("bumps on every lifecycle and relation operation through /mutation and /transact", async () => {
+    // modifyRelation edits many-many join metadata only (no record changes).
+    const { send, push, rev } = await serve();
+    await push({ resource: "project", operation: "insert", id: "project:1", record: { name: "P" } });
+    await push({ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } });
+    const related = await send("mutation", {
+      resource: "task", version: 1, operation: "relate", id: "task:1", relations: { project: "project:1" },
+      clientId: "c", mutationId: "direct-relate",
+    });
+    expect(related.body.result.rev).toBe(2);
+    const unrelated = await send("transact", { atomic: true, steps: [{ mutation: {
+      resource: "task", version: 1, operation: "unrelate", id: "task:1", relations: { project: "project:1" },
+      clientId: "c", mutationId: "tx-unrelate",
+    } }] });
+    expect(unrelated.status).toBe(200);
+    expect((await rev("task", "task:1"))!.rev).toBe(3);
+
+    let expected = 3;
+    let n = 0;
+    for (const operation of ["trash", "restore", "archive", "unarchive", "replace", "delete"]) {
+      const mutation = { resource: "task", version: 1, operation, id: "task:1", clientId: "c", ...(operation === "replace" ? { record: { title: "r" } } : {}) };
+      const viaTransact = n++ % 2 === 1;
+      const response = viaTransact
+        ? await send("transact", { atomic: true, steps: [{ mutation: { ...mutation, mutationId: `tx-${operation}` } }] })
+        : await send("mutation", { ...mutation, mutationId: `direct-${operation}` });
+      expect(response.status, operation).toBe(200);
+      expected += 1;
+      expect(await rev("task", "task:1"), operation).toEqual({ rev: expected, deleted: operation === "delete" });
+    }
+  });
+
+  it("creates the revisions table before the in-process /transact executor opens its transaction", async () => {
+    const database = memoryAdapter();
+    let inTransaction = false;
+    const ensured: string[] = [];
+    const tracked = {
+      ...database,
+      internal: new Proxy(database.internal, {
+        get: (target, property, receiver) =>
+          property === "ensureTable"
+            ? async (table: string, columns: unknown) => {
+                if (inTransaction && table === "__datafn_revisions") throw new Error("DDL inside the transaction");
+                ensured.push(table);
+                return (target as any).ensureTable(table, columns);
+              }
+            : Reflect.get(target, property, receiver),
+      }),
+      transaction: async (callback: (tx: Adapter) => Promise<unknown>) => {
+        inTransaction = true;
+        try {
+          return await database.transaction(callback as any);
+        } finally {
+          inTransaction = false;
+        }
+      },
+    } as Adapter;
+    const server = await createDatafnServer({ schema, database: tracked, allowUnknownResources: true, revisions: { enabled: true } });
+    await (server as any).executor.transact({
+      atomic: true,
+      steps: [{ mutation: { resource: "task", version: 1, operation: "insert", id: "task:1", record: { title: "a" }, clientId: "c", mutationId: "m1" } }],
+    });
+    expect(ensured).toContain("__datafn_revisions");
+    expect((await readRevisions(database, NS, "task", ["task:1"])).get("task:1")?.rev).toBe(1);
+  });
+});
+
+describe("DATA-41 revisions: reads", () => {
+  it("reads revisions in id lists D1 can bind, also for a clone page and a versioned query over many rows", async () => {
+    const base = memoryAdapter();
+    const longest: number[] = [];
+    // Rejects revision lookups binding more than D1's 100 parameters.
+    const limitBinds = (adapter: Adapter): Adapter => ({
+      ...adapter,
+      internal: new Proxy(adapter.internal, {
+        get: (target, property, receiver) => {
+          const value = Reflect.get(target, property, receiver);
+          if (property !== "findMany") return value;
+          return async (table: string, where: any[], ...rest: unknown[]) => {
+            for (const clause of table === "__datafn_revisions" ? where ?? [] : []) {
+              if (clause.op !== "in") continue;
+              longest.push(clause.value.length);
+              if (clause.value.length > 100) throw new Error("too many SQL variables");
+            }
+            return value.call(target, table, where, ...rest);
+          };
+        },
+      }),
+      transaction: (callback: any) => adapter.transaction((tx: Adapter) => callback(limitBinds(tx))),
+    }) as Adapter;
+    const database = limitBinds(base);
+    const { send } = await serve({ database });
+    expect(READ_CHUNK).toBeLessThanOrEqual(90);
+    const mutations = Array.from({ length: 150 }, (_, i) => ({
+      version: 1, clientId: "client:a", mutationId: `bulk-${i}`, resource: "project", operation: "insert",
+      id: `project:${String(i).padStart(3, "0")}`, record: { name: `p${i}` },
+    }));
+    expect((await send("push", { clientId: "client:a", mutations })).body.result.ok).toBe(true);
+    const page = await send("clone", { clientId: "client:b", tables: ["project"], page: { table: "project", limit: 150 } });
+    expect(page.status).toBe(200);
+    expect(page.body.result.data.project).toHaveLength(150);
+    expect(page.body.result.data.project.every((row: Json) => row.$rev === 1)).toBe(true);
+    const query = await send("query", { resource: "project", version: 1, limit: 100, withRevisions: true });
+    expect(query.body.result.data).toHaveLength(100);
+    expect(query.body.result.data.every((row: Json) => row.$rev === 1)).toBe(true);
+    expect(Math.max(...longest)).toBeLessThanOrEqual(90);
+  }, 30_000);
+
+  it("without transactions never pairs a row with a revision newer than the row", async () => {
+    const database = memoryAdapter();
+    await ensureRevisionsTable(database);
+    const nonTransactional = {
+      ...database,
+      capabilities: { ...database.capabilities, transactions: { supported: false, nested: false } },
+    } as Adapter;
+    await bumpRevision(database, NS, "task", "task:1", false);
+    let title = "at-rev-1";
+    let reads = 0;
+    const rows = await readWithRevisions(
+      nonTransactional,
+      NS,
+      "task",
+      async () => {
+        const row = [{ id: "task:1", title }];
+        // A write commits after the first read, before revisions are read.
+        if (reads++ === 0) {
+          await bumpRevision(database, NS, "task", "task:1", false);
+          title = "at-rev-2";
+        }
+        return row;
+      },
+      (result) => result,
+    );
+    expect(rows).toEqual([{ id: "task:1", title: "at-rev-2", $rev: 2 }]);
+  });
+
+  it("gives a record written before revisions existed revision 0 on clone and a versioned query", async () => {
+    const { database, send } = await serve();
+    await database.create({ model: "task", data: { id: "task:old", title: "legacy" }, namespace: NS } as any);
+    const clone = await send("clone", { clientId: "client:b", tables: ["task"] });
+    expect(clone.body.result.data.task).toEqual([expect.objectContaining({ id: "task:old", $rev: 0 })]);
+    const query = await send("query", { resource: "task", version: 1, withRevisions: true });
+    expect(query.body.result.data).toEqual([expect.objectContaining({ id: "task:old", $rev: 0 })]);
+  });
+
+  it("decides read eligibility from the policy, so an unset hidden field still withholds the row and $rev", async () => {
+    const { send, push } = await serve();
+    const inserted = await push({ resource: "secretive", operation: "insert", id: "secretive:1", record: { title: "t" } });
+    expect(inserted.body.result.revisions[inserted.mutationId]).toEqual({ resource: "secretive", id: "secretive:1", rev: 1 });
+    expect(JSON.stringify(inserted.body.result)).not.toContain("hidden");
+    const query = await send("query", { resource: "secretive", version: 1, withRevisions: true });
+    expect(query.body.result.data[0]).not.toHaveProperty("$rev");
+  });
+
+  it("returns no revisions for a relation traversal, whose rows belong to another resource", async () => {
+    const { send, push } = await serve();
+    await push({ resource: "project", operation: "insert", id: "project:1", record: { name: "P" } });
+    await push({ resource: "task", operation: "insert", id: "task:1", record: { title: "a", projectId: "project:1" } });
+    const related = await send("query", { resource: "task", version: 1, id: "task:1", relation: "project", withRevisions: true });
+    expect(JSON.stringify(related.body)).not.toContain("$rev");
+  });
+
+  it("announces capabilities on every DataFn envelope, including seed, status and auth errors", async () => {
+    const database = memoryAdapter();
+    const server = await createDatafnServer({
+      schema,
+      database,
+      allowUnknownResources: true,
+      revisions: { enabled: true },
+      authorize: async (_ctx: unknown, action: string) => action !== "query",
+    } as any);
+    const call = async (route: string, body?: unknown) => {
+      const res = await server.router.handle(new Request(`http://localhost/datafn/${route}`, body === undefined
+        ? { method: "GET" }
+        : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }));
+      return (await res.json()) as Json;
+    };
+    expect((await call("status")).capabilities).toEqual({ revisions: true });
+    expect((await call("seed", { clientId: "c", seed: {} })).capabilities).toEqual({ revisions: true });
+    const denied = await call("query", { resource: "task", version: 1 });
+    expect(denied.ok).toBe(false);
+    expect(denied.capabilities).toEqual({ revisions: true });
   });
 });

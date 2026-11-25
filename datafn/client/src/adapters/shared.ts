@@ -104,3 +104,19 @@ export function mutationTouchesRecord(mutation: unknown, resource: string, id: s
   }
   return false;
 }
+
+/**
+ * DATA-41: whether a server row must not be installed over a record: it was
+ * written after the request that returned the row started (`writtenSince`),
+ * or a pending local mutation may change it.
+ */
+export function blocksRevisionInstall(
+  writtenStamp: number,
+  writtenSince: number | undefined,
+  pendingMutations: ReadonlyArray<unknown>,
+  resource: string,
+  id: string,
+): boolean {
+  if (writtenSince !== undefined && writtenStamp > writtenSince) return true;
+  return pendingMutations.some((mutation) => mutationTouchesRecord(mutation, resource, id));
+}
