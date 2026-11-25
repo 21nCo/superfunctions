@@ -65,7 +65,7 @@ export async function assertAuthRequestBodyLimit(request: Request): Promise<void
     };
     signal.addEventListener('abort', abort, { once: true });
     timer = setTimeout(() => {
-      reject(new AuthFnError('AUTHFN_VALIDATION_ERROR', 'Request body did not arrive in time', { status: 408 }));
+      reject(new AuthFnError('AUTHFN_VALIDATION_ERROR', 'Request body must arrive within 5 seconds', { status: 408 }));
       cancelBothBranches();
     }, AUTHFN_BODY_READ_TIMEOUT_MS);
   });
