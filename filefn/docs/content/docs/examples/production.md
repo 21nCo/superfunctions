@@ -104,8 +104,6 @@ The example wires `createS3StorageAdapter`. Set `S3_ENDPOINT=http://localhost:90
 
 ## Run it
 
-The example server requires Node.js 20.9.0 or later for `sharp`.
-
 ```bash
 cd filefn/examples/production/server
 cp .env.example .env

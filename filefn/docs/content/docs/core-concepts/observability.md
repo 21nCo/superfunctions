@@ -60,25 +60,6 @@ const logger = createLogger({
 });
 ```
 
-## Metrics
-
-When `observability.metrics` is set, filefn records three observations. The label set is closed: a file id, a session id, error text, and usage numbers are not labels.
-
-| Kind | Operation | When |
-| --- | --- | --- |
-| `filefn.upload` | `failure` | An upload fails because the size cannot be verified (`size_unverified`), parts are missing (`parts_missing`), or the stored size does not match (`size_mismatch`). `labels.reason` is that value. `ok` is false. |
-| `filefn.quota` | `denied` | A quota check refuses the upload. `ok` is false. The metric has no current or limit. |
-| `filefn.processing` | `complete` | A processing run reaches `processing.completed`. `durationMs` is the wall time of that run. `ok` is true. |
-
-```ts
-const fileFn = createFileFn({
-  database, storage,
-  observability: {
-    metrics: { record(metric) { /* sink */ } },
-  },
-});
-```
-
 ## Request IDs
 
 Every request flows through filefn with an `x-request-id` header. If the caller doesn't set one, the kernel mints one (`req_<random>`). The id is:
@@ -115,7 +96,24 @@ Run it on anything that's about to leave the process — webhooks, log lines, er
 
 ## Metrics
 
-filefn doesn't ship a metrics adapter. The recommended pattern is event-driven:
+When you configure `observability.metrics`, FileFn sends domain observations to your metric sink. The labels FileFn supplies exclude file and session IDs, error text, and usage figures.
+
+| Kind | Operation | When |
+| --- | --- | --- |
+| `filefn.upload` | `failure` | An upload fails because storage stat is unavailable (`size_unverified`), parts are missing (`parts_missing`), or the stored size does not match (`size_mismatch`). `labels.reason` is that value. `ok` is false. |
+| `filefn.quota` | `denied` | A quota check refuses the upload. `ok` is false. |
+| `filefn.processing` | `complete` | A processing run reaches `processing.completed`. `durationMs` is the elapsed processing time. `ok` is true. |
+
+```ts
+const fileFn = createFileFn({
+  database, storage,
+  observability: {
+    metrics: { record(metric) { /* sink */ } },
+  },
+});
+```
+
+For application-specific counters, subscribe to events.
 
 ```ts
 fileFn.events.on("file:uploaded", (e) => metrics.counter("filefn.uploads.complete").inc());

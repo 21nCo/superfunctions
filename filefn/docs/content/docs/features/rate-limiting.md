@@ -39,7 +39,7 @@ const fileFn = createFileFn({
 
 ## Categories are opt-in
 
-Every category is off until you set it. A category you omit is not limited, including on a deployment that sets the others. The categories are:
+With `rateLimit.limits`, each category is limited only when you configure it. The categories are:
 
 | Category | What it limits |
 | --- | --- |
@@ -56,13 +56,14 @@ Every category is off until you set it. A category you omit is not limited, incl
 
 ## Public uploads
 
-With `auth.required: false`, callers have no principal, so they share one bucket per category and tenant unless `clientKey` names them. Derive that key from an address your proxy sets, and ignore a header the browser can choose. On an edge that overwrites `cf-connecting-ip` (and strips a client-supplied copy), a public drop-off looks like this. Only the categories in `limits` are capped:
+With `auth.required: false`, unauthenticated callers share one bucket per category and tenant unless `clientKey` names them. Derive that key from an address your proxy sets, and ignore a header the browser can choose. On an edge that overwrites `cf-connecting-ip` (and strips a client-supplied copy), a public drop-off looks like this. Only the categories in `limits` are capped:
 
 ```ts
 const fileFn = createFileFn({
   database: db,
   storage,
   auth: { required: false },
+  policies: [{ name: "drop-off", contentTypes: ["text/plain"], visibility: "public" }],
   stores: { atomicKv: redisAtomicStore },
   rateLimit: {
     mode: "strict",
@@ -75,6 +76,12 @@ const fileFn = createFileFn({
     clientKey: (request) => request.headers.get("cf-connecting-ip"),
   },
 });
+```
+
+Send a JSON body like this to `POST /upload/init`:
+
+```json
+{ "policy": "drop-off", "fileName": "example.txt", "mimeType": "text/plain", "size": 4 }
 ```
 
 Two guests then have independent buckets. After one guest makes 10 `uploadInit` requests in the window, the next is limited without spending that guest's `list` budget. Guests for whom `clientKey` returns no value share the unnamed anonymous bucket.

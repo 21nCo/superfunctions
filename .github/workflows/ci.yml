@@ -72,6 +72,9 @@ jobs:
       - name: Verify CI planner
         run: node --test scripts/ci-plan.test.mjs
 
+      - name: Verify workflow action pins
+        run: node --test scripts/workflow-pins.test.mjs
+
       # The standalone-script list (SFNS-307) must match turbo.json's global inputs and no package may use a script on
       # it. These checks need no Turbo, so every pull request runs them, whatever the plan selects. The file's Turbo
       # task-hash tests need an installed Turbo and run with `node --test scripts/turbo-cache-config.test.mjs`.

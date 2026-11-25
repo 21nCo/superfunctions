@@ -2079,25 +2079,6 @@ const logger = createLogger({
 });
 ```
 
-## Metrics
-
-When `observability.metrics` is set, filefn records three observations. The label set is closed: a file id, a session id, error text, and usage numbers are not labels.
-
-| Kind | Operation | When |
-| --- | --- | --- |
-| `filefn.upload` | `failure` | An upload fails because the size cannot be verified (`size_unverified`), parts are missing (`parts_missing`), or the stored size does not match (`size_mismatch`). `labels.reason` is that value. `ok` is false. |
-| `filefn.quota` | `denied` | A quota check refuses the upload. `ok` is false. The metric has no current or limit. |
-| `filefn.processing` | `complete` | A processing run reaches `processing.completed`. `durationMs` is the wall time of that run. `ok` is true. |
-
-```ts
-const fileFn = createFileFn({
-  database, storage,
-  observability: {
-    metrics: { record(metric) { /* sink */ } },
-  },
-});
-```
-
 ## Request IDs
 
 Every request flows through filefn with an `x-request-id` header. If the caller doesn't set one, the kernel mints one (`req_<random>`). The id is:
@@ -2134,7 +2115,24 @@ Run it on anything that's about to leave the process — webhooks, log lines, er
 
 ## Metrics
 
-filefn doesn't ship a metrics adapter. The recommended pattern is event-driven:
+When you configure `observability.metrics`, FileFn sends domain observations to your metric sink. The labels FileFn supplies exclude file and session IDs, error text, and usage figures.
+
+| Kind | Operation | When |
+| --- | --- | --- |
+| `filefn.upload` | `failure` | An upload fails because storage stat is unavailable (`size_unverified`), parts are missing (`parts_missing`), or the stored size does not match (`size_mismatch`). `labels.reason` is that value. `ok` is false. |
+| `filefn.quota` | `denied` | A quota check refuses the upload. `ok` is false. |
+| `filefn.processing` | `complete` | A processing run reaches `processing.completed`. `durationMs` is the elapsed processing time. `ok` is true. |
+
+```ts
+const fileFn = createFileFn({
+  database, storage,
+  observability: {
+    metrics: { record(metric) { /* sink */ } },
+  },
+});
+```
+
+For application-specific counters, subscribe to events.
 
 ```ts
 fileFn.events.on("file:uploaded", (e) => metrics.counter("filefn.uploads.complete").inc());
@@ -3390,8 +3388,6 @@ The example wires `createS3StorageAdapter`. Set `S3_ENDPOINT=http://localhost:90
 
 ## Run it
 
-The example server requires Node.js 20.9.0 or later for `sharp`.
-
 ```bash
 cd filefn/examples/production/server
 cp .env.example .env
@@ -4342,7 +4338,7 @@ const fileFn = createFileFn({
 
 ## Categories are opt-in
 
-Every category is off until you set it. A category you omit is not limited, including on a deployment that sets the others. The categories are:
+With `rateLimit.limits`, each category is limited only when you configure it. The categories are:
 
 | Category | What it limits |
 | --- | --- |
@@ -4359,13 +4355,14 @@ Every category is off until you set it. A category you omit is not limited, incl
 
 ## Public uploads
 
-With `auth.required: false`, callers have no principal, so they share one bucket per category and tenant unless `clientKey` names them. Derive that key from an address your proxy sets, and ignore a header the browser can choose. On an edge that overwrites `cf-connecting-ip` (and strips a client-supplied copy), a public drop-off looks like this. Only the categories in `limits` are capped:
+With `auth.required: false`, unauthenticated callers share one bucket per category and tenant unless `clientKey` names them. Derive that key from an address your proxy sets, and ignore a header the browser can choose. On an edge that overwrites `cf-connecting-ip` (and strips a client-supplied copy), a public drop-off looks like this. Only the categories in `limits` are capped:
 
 ```ts
 const fileFn = createFileFn({
   database: db,
   storage,
   auth: { required: false },
+  policies: [{ name: "drop-off", contentTypes: ["text/plain"], visibility: "public" }],
   stores: { atomicKv: redisAtomicStore },
   rateLimit: {
     mode: "strict",
@@ -4378,6 +4375,12 @@ const fileFn = createFileFn({
     clientKey: (request) => request.headers.get("cf-connecting-ip"),
   },
 });
+```
+
+Send a JSON body like this to `POST /upload/init`:
+
+```json
+{ "policy": "drop-off", "fileName": "example.txt", "mimeType": "text/plain", "size": 4 }
 ```
 
 Two guests then have independent buckets. After one guest makes 10 `uploadInit` requests in the window, the next is limited without spending that guest's `list` budget. Guests for whom `clientKey` returns no value share the unnamed anonymous bucket.
@@ -8672,7 +8675,7 @@ Wire-format envelope:
 | `FILEFN_PART_CONFLICT` | 409 | Same part recorded with a different etag. | Check for concurrent retries; pick a single canonical etag. |
 | `FILEFN_UPLOAD_SIZE_MISMATCH` | 409 | Sum of part sizes ≠ `size` declared at init. | Re-check declared size before init. |
 | `FILEFN_NO_SUPPORTED_UPLOAD_MODE` | 500 | Adapter doesn't support multipart and proxy is disabled. | Use a multipart-capable adapter (S3, GCS, R2, MinIO, Azure). |
-| `FILEFN_STORAGE_STAT_UNAVAILABLE` | 500 | Init or complete cannot verify the declared size because the adapter cannot report an object's size. The message is `Upload size cannot be verified`. | Use an adapter that implements `statObject`. |
+| `FILEFN_STORAGE_STAT_UNAVAILABLE` | 500 | Init requires a storage adapter that implements `statObject`. Completion also returns this code if a storage stat fails. The message is `Upload size cannot be verified`. | Check adapter support and availability, then retry. |
 | `FILEFN_STORAGE_PATH_NOT_PER_VERSION` | 500 | The key the policy's `storagePath` returned does not contain the session's full `versionId`, so two upload sessions could write one object. Refused at init before any session row or storage upload is created. | Include the whole `versionId`, unshortened, in the key your `storagePath` returns. |
 | `FILEFN_INVALID_FILE_ID` | 400 | The `fileId` sent to `POST /upload/init` does not match `file_[A-Za-z0-9_-]{8,64}` (or is not a string). Refused before any session row or storage upload is created. | Send an ID in that grammar, such as `generateFileId()` output, or omit `fileId` to let the server generate one. |
 | `FILEFN_OFFLINE_UNSUPPORTED` | 400 | Client requested OPFS but the runtime doesn't support it. | Skip OPFS, upload directly. |

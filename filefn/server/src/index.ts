@@ -30,6 +30,7 @@ import { createBackgroundScheduler, type FileFnRuntime } from './runtime.js';
 import type { AuthConfig } from './auth.js';
 import type { RateLimitClientKey } from './rate-limit-key.js';
 import { redactSecrets as redactLogContext, type Logger } from './observability/logger.js';
+import { withSafeMetricSink } from './metrics.js';
 
 export interface RateLimitCategory {
   windowSeconds: number;
@@ -213,7 +214,7 @@ export function createFileFn(config: FileFnConfig): FileFn {
   if (!inputDatabase) {
     throw new Error('FILEFN_DATABASE_REQUIRED: database is required');
   }
-  const observabilityScope = normalizeObservability<FileFnObservationEvent>(observability)?.child({ component: 'filefn' });
+  const observabilityScope = normalizeObservability(withSafeMetricSink(observability))?.child({ component: 'filefn' });
   const logger = fileFnLoggerFromObservability(observabilityScope?.logger);
   const db = wrapWithSchema(inputDatabase, getSchema({ namespace }));
   const observedDb = instrumentAdapter(db, {

@@ -162,9 +162,8 @@ export function noSupportedUploadMode(): FileFnError {
 }
 
 /**
- * The adapter cannot report an object's size, so FileFn will not start or
- * finish an upload whose declared size it cannot check. The public message
- * names neither the adapter nor the session.
+ * FileFn could not verify the declared upload size. This covers adapters
+ * without stat support and failures to stat objects during completion.
  */
 export function storageStatUnavailable(): FileFnError {
   return new FileFnError(

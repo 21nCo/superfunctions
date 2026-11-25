@@ -1,5 +1,6 @@
 import type { Adapter, WhereClause } from '@superfunctions/db';
 import { getStorageCapabilities, type StorageAdapter, type StorageTargetName } from '@superfunctions/storage';
+import { isNotFoundError } from '@superfunctions/storage/internal/errors';
 import type { FileProviderContext } from '@superfunctions/files';
 import {
   computeStoragePath,
@@ -572,14 +573,17 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
   async function admitCompletion(
     session: UploadSession,
     ctx: FileProviderContext,
-  ): Promise<{ parts: Array<{ partNumber: number; etag: string }> } | { error: Error }> {
+  ): Promise<
+    { parts: Array<{ partNumber: number; etag: string }> }
+    | { error: Error; failure: 'parts_missing' | 'quota' }
+  > {
     const parts = await db.findMany<{ partNumber: number; etag: string }>({
       model: 'uploadParts',
       where: [{ field: 'uploadSessionId', operator: 'eq', value: session.uploadSessionId }],
       namespace,
     });
     if (parts.length !== session.totalParts) {
-      return { error: errors.uploadIncomplete() };
+      return { error: errors.uploadIncomplete(), failure: 'parts_missing' };
     }
     if (!quota) return { parts };
     // One read of the file decides both the account and whether the caller
@@ -595,14 +599,14 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       // usage: plain 403 (the session is left for the expiry sweep). One who
       // can't write it but passes is refused (403), fenced and cleaned by the
       // completion's own write check.
-      recordQuotaDenial(metrics);
       if (file && !(await canWriteFileNow(session.fileId!, ctx))) {
-        return { error: errors.forbidden({ fileId: session.fileId!, operation: 'replace' }) };
+        return { error: errors.forbidden({ fileId: session.fileId!, operation: 'replace' }), failure: 'quota' };
       }
       return {
         error: isCallersAccount(account, ctx)
           ? errors.quotaExceeded(quotaResult.current, quotaResult.limit, session.size)
           : errors.ownerQuotaExceeded(session.size),
+        failure: 'quota',
       };
     }
     return { parts };
@@ -695,19 +699,38 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
     }
   }
 
-  // Whether every proxy part object of the session is still in storage. Without
-  // statObject this cannot be told, and stitching runs as before.
+  function warnUploadFailure(message: string, requestId?: string, uploadSessionId?: string): void {
+    try {
+      void Promise.resolve(logger?.warn(message, { requestId, uploadSessionId })).catch(() => {});
+    } catch {
+      // Reporting an upload failure must preserve the original result.
+    }
+  }
+
+  function sizeUnverified(message: string, requestId?: string, uploadSessionId?: string): errors.FileFnError {
+    warnUploadFailure(message, requestId, uploadSessionId);
+    return errors.storageStatUnavailable();
+  }
+
+  // Whether every recorded proxy part is still in storage. A failed stat
+  // without a not-found signal is retryable and says nothing about the part.
   async function proxyPartsPresent(
     session: UploadSession,
     parts: Array<{ partNumber: number }>,
     target: StorageTargetName | undefined,
+    requestId?: string,
   ): Promise<boolean> {
     if (!storage.statObject) return true;
     for (const part of parts) {
       try {
         await storage.statObject({ key: proxyPartKey(session.storageKey, part.partNumber), target });
-      } catch {
-        return false;
+      } catch (error) {
+        if (isNotFoundError(error, {
+          names: ['NotFound', 'NoSuchKey'],
+          statusCode: 404,
+          stringCodes: ['STORAGE_NOT_FOUND', 'ENOENT'],
+        })) return false;
+        throw sizeUnverified('Upload part storage stat failed', requestId, session.uploadSessionId);
       }
     }
     return true;
@@ -1582,7 +1605,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       // upload starts rather than after storage was finalized.
       if (typeof storage.statObject !== 'function') {
         recordUploadFailure(metrics, 'size_unverified');
-        throw errors.storageStatUnavailable();
+        throw sizeUnverified('Upload storage adapter does not implement statObject', ctx.requestId);
       }
       const uploadSessionId = generateId();
       const now = new Date();
@@ -2059,12 +2082,8 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
               }
               await releaseClaim(uploadSessionId, ended.claim, 'in_progress', session.completionClaim ?? null);
             }
-            if (
-              admission.error instanceof errors.FileFnError &&
-              admission.error.code === errors.ErrorCodes.UPLOAD_INCOMPLETE
-            ) {
-              recordUploadFailure(metrics, 'parts_missing');
-            }
+            if (admission.failure === 'quota') recordQuotaDenial(metrics);
+            else recordUploadFailure(metrics, 'parts_missing');
             throw admission.error;
           }
           parts = admission.parts;
@@ -2109,6 +2128,19 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
           const releasedStatus = claimedSession.status === 'completing' ? 'in_progress' : claimedSession.status;
           // A stitch left behind keeps this claim, so the next call deletes it.
           await releaseClaim(uploadSessionId, claim, releasedStatus, discarded ? claimedSession.completionClaim ?? null : claim);
+        }
+        if (err instanceof errors.FileFnError) {
+          switch (err.code) {
+            case errors.ErrorCodes.STORAGE_STAT_UNAVAILABLE:
+              recordUploadFailure(metrics, 'size_unverified');
+              break;
+            case errors.ErrorCodes.UPLOAD_INCOMPLETE:
+              recordUploadFailure(metrics, 'parts_missing');
+              break;
+            case errors.ErrorCodes.UPLOAD_SIZE_MISMATCH:
+              recordUploadFailure(metrics, 'size_mismatch');
+              break;
+          }
         }
         throw err;
       }
@@ -2181,8 +2213,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
           // Checked before storage is finalized (sessions created before init
           // checked it): the size is verified with statObject below.
           if (typeof storage.statObject !== 'function') {
-            recordUploadFailure(metrics, 'size_unverified');
-            throw errors.storageStatUnavailable();
+            throw sizeUnverified('Upload storage adapter does not implement statObject', ctx.requestId, uploadSessionId);
           }
           try {
             await storage.completeMultipartUpload({
@@ -2213,10 +2244,10 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
           // The part objects stay until the session is completed, so every
           // holder of the session finds them.
           const sortedParts = parts.sort((a, b) => a.partNumber - b.partNumber);
-          if (!(await proxyPartsPresent(session, sortedParts, policyStorageTarget))) {
+          if (!(await proxyPartsPresent(session, sortedParts, policyStorageTarget, ctx.requestId))) {
             // Never open (and so truncate) an object without every part.
             // The public error names neither the session nor the part keys.
-            recordUploadFailure(metrics, 'parts_missing');
+            warnUploadFailure('Recorded upload parts are missing in storage', ctx.requestId, uploadSessionId);
             throw errors.uploadIncomplete();
           } else {
             if (!(await holdsClaim(uploadSessionId, claim))) return lostClaimResult(uploadSessionId);
@@ -2258,11 +2289,15 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         // cannot stat) fails the completion, which can be retried; it never
         // publishes an object of unknown size.
         if (typeof storage.statObject !== 'function') {
-          recordUploadFailure(metrics, 'size_unverified');
-          throw errors.storageStatUnavailable();
+          throw sizeUnverified('Upload storage adapter does not implement statObject', ctx.requestId, uploadSessionId);
         }
-        const stat = await storage.statObject({ key: attemptKey, target: policyStorageTarget });
-        if (stat.size !== session.size) {
+        let storedSize: number;
+        try {
+          storedSize = (await storage.statObject({ key: attemptKey, target: policyStorageTarget })).size;
+        } catch {
+          throw sizeUnverified('Completed upload storage stat failed', ctx.requestId, uploadSessionId);
+        }
+        if (storedSize !== session.size) {
           // Refused while this call still holds the session, then everything it
           // uploaded is deleted: an oversized object is never left in storage.
           if (!(await fenceRefusedSession(uploadSessionId, claim))) {
@@ -2281,8 +2316,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
               error: error instanceof Error ? error.message : String(error),
             });
           });
-          recordUploadFailure(metrics, 'size_mismatch');
-          throw errors.uploadSizeMismatch(session.size, stat.size);
+          throw errors.uploadSizeMismatch(session.size, storedSize);
         }
 
         // Check for deduplication

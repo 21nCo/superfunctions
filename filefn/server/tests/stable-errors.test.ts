@@ -95,4 +95,44 @@ describe('stable upload errors (N-06)', () => {
     });
     assertNoAdapterLeak(JSON.stringify(body), uploadSessionId);
   });
+
+  it.each(['part', 'output'])('returns a retryable error when stat fails for the %s', async (target) => {
+    const storage = createLocalStorageAdapter({ rootDir });
+    const stat = storage.statObject!;
+    let fail = false;
+    storage.statObject = async (input) => {
+      if (fail && input.key.endsWith('.part1') === (target === 'part')) {
+        throw new Error('test adapter connection timed out');
+      }
+      return stat.call(storage, input);
+    };
+    const fileFn = makeFileFn({ storage });
+    const init = await fileFn.router.handle(new Request('http://localhost/upload/init', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ policy: 'docs', fileName: 'a.txt', size: 1, mimeType: 'text/plain' }),
+    }));
+    expect(init!.status).toBe(200);
+    const created = await init!.json() as { data: { uploadSessionId: string; uploadSessionToken: string } };
+    const url = `http://localhost/upload/${created.data.uploadSessionId}`;
+    const headers = { 'x-upload-session-token': created.data.uploadSessionToken, 'x-request-id': 'req_test_stat_retry' };
+    const part = await fileFn.router.handle(new Request(`${url}/parts/1`, { method: 'PUT', headers, body: 'x' }));
+    expect(part!.status).toBe(200);
+
+    fail = true;
+    const complete = () => fileFn.router.handle(new Request(`${url}/complete`, { method: 'POST', headers }));
+    const response = await complete();
+    expect(response!.status).toBe(500);
+    const body = await response!.json();
+    expect(body).toMatchObject({
+      ok: false,
+      requestId: 'req_test_stat_retry',
+      error: { code: 'FILEFN_STORAGE_STAT_UNAVAILABLE', message: 'Upload size cannot be verified' },
+    });
+    expect(JSON.stringify(body)).not.toContain('test adapter connection timed out');
+    assertNoAdapterLeak(JSON.stringify(body), created.data.uploadSessionId);
+
+    fail = false;
+    expect((await complete())!.status).toBe(200);
+  });
 });
