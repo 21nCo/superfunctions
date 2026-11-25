@@ -22,6 +22,7 @@ import {
 } from "@datafn/core";
 import type { DatafnFieldSchema, DatafnRelationSchema, DatafnResourceSchema, DatafnSchema } from "../../core-types.js";
 import { DatafnExecutionError } from "../errors.js";
+import { fkResourceFieldForRelation } from "../relations/foreign-key.js";
 import type { DataStore } from "../store.js";
 
 // Keep the same traversal bound as Core's dot-path evaluator.
@@ -184,13 +185,11 @@ export function isPolymorphicForeignKey(relation: DatafnRelationSchema): boolean
 export function foreignKeyTargetResolver(
   schema: FilterSchema,
   relation: DatafnRelationSchema,
-  ownerResource: string,
 ) {
   const fk = relationForeignKey(relation);
   const endpoint = relation.type === "many-one" ? relation.to : relation.from;
   const discriminator = isPolymorphicForeignKey(relation)
-    ? getRelationFkFieldsForResource(schema as DatafnSchema, ownerResource)
-      .find(({ field }) => field === fk)?.resourceField
+    ? fkResourceFieldForRelation(relation, relation.type === "many-one" ? "to" : "from")
     : undefined;
   return (record: Record<string, unknown>) => {
     const id = record[fk];
@@ -209,15 +208,14 @@ export function getForeignKeyRelatedRecords(
 ): RelatedRecord[] {
   const { relation, direction } = match;
   if ((direction === "forward") === (relation.type === "many-one")) {
-    const target = foreignKeyTargetResolver(schema, relation, resourceName)(record);
+    const target = foreignKeyTargetResolver(schema, relation)(record);
     if (!target) return [];
     const found = store.getRecord(target.resource, target.id);
     return found ? [{ resource: target.resource, record: found }] : [];
   }
   const fk = relationForeignKey(relation);
-  const polymorphicFk = isPolymorphicForeignKey(relation);
+  const resolveTarget = isPolymorphicForeignKey(relation) ? foreignKeyTargetResolver(schema, relation) : undefined;
   return endpointList(relationTargetEndpoint(relation, direction)).flatMap((resource) => {
-    const resolveTarget = polymorphicFk ? foreignKeyTargetResolver(schema, relation, resource) : undefined;
     return store.findRecords(resource, fk, record.id)
       .filter((found) => !resolveTarget || resolveTarget(found)?.resource === resourceName)
       .map((found) => ({ resource, record: found }));

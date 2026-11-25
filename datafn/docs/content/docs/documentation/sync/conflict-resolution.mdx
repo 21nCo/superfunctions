@@ -21,25 +21,30 @@ For most fields, you don't need anything else.
 
 ## Optimistic concurrency: version guards
 
-For fields where you want to **refuse** the second writer instead of silently losing data, use `if` guards on the mutation:
+Use an `if` guard to reject a mutation when the stored row has already changed at the time of the check. Send the guarded write directly to `/datafn/mutation` or as a mutation step in `/datafn/transact`. A hydrated client's `mutate` call writes to the local changelog and syncs through `/datafn/push`, which skips guard evaluation.
 
 ```typescript
 const task = await client.table("tasks").get(taskId);
 
-await client.table("tasks").mutate({
-  operation: "merge",
-  id: taskId,
-  record: { title: newTitle },
-  if: { updatedAt: { $eq: task.updatedAt } },
+await fetch("/datafn/mutation", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    resource: "tasks",
+    version: 1,
+    operation: "merge",
+    id: taskId,
+    record: { title: newTitle },
+    if: { updatedAt: { $eq: task.updatedAt } },
+  }),
 });
 ```
 
-On `/datafn/mutation`, and on a mutation step inside `/datafn/transact`, the server evaluates `if` against the stored row. When the adapter supports transactions, the check and the write are one transaction. A mismatch is `CONFLICT` and the write is not applied. Atomic `transact` without transaction support returns `DFQL_UNSUPPORTED` before steps run. `/datafn/push` accepts `if` during validation and does not evaluate it, so a push write is not held back by a guard. The losing mutation client is informed; the user can retry, merge, or discard.
+If the predicate fails at the time of the check, the server returns `CONFLICT` without applying that write. When the adapter supports transactions, the guard read and write run in one transaction. Under read-committed isolation, concurrent guards can both read the old row before either write commits and both writes can succeed. Adapters without transactions check the guard separately from the write. An atomic `transact` with mutations on such an adapter returns `DFQL_UNSUPPORTED` before steps run.
 
 Use guards for:
 
 - Singular fields where data loss matters: title, body, name
-- Counter fields where you can't tolerate a missed increment
 - Permission lists, tag sets, settings
 
 ## Explicit merge (server-side hook)

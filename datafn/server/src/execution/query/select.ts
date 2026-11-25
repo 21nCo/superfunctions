@@ -20,6 +20,7 @@ import {
 } from "@datafn/core";
 import type { DataStore } from "../store.js";
 import { getReadableRelationFields, isPrivateShareableResource } from "../../validation/authz.js";
+import { fkResourceFieldForRelation } from "../relations/foreign-key.js";
 import { foreignKeyTargetResolver, getForeignKeyRelatedRecords, hasPredicateField, isPolymorphicForeignKey, resolvePredicateEndpoint } from "./filters.js";
 
 export type { SelectToken } from "@datafn/core";
@@ -246,7 +247,7 @@ function getFkFieldsToOmit(schema: DatafnSchema, targetResource: string): Set<st
         const fkField = relationFkFieldForManyOne(rel);
         cached.add(fkField);
         if (Array.isArray(rel.to) && rel.to.length > 1) {
-          cached.add(rel.fkResourceField || `${(rel.relation || "target").replace(/Id$/, "")}Resource`);
+          cached.add(fkResourceFieldForRelation(rel, "to"));
         }
       }
     }
@@ -659,7 +660,7 @@ function getRelationIds(
   const isForward = match.direction === "forward";
 
   if (relationReturnsSingleRecord(match)) {
-    const target = foreignKeyTargetResolver(schema, relation, resource)(record);
+    const target = foreignKeyTargetResolver(schema, relation)(record);
     if (!target) return null;
     if (store.requireVisibleRelatedRecords || isPrivateShareableResource(schema, target.resource)) {
       return store.getRecord(target.resource, target.id) ? target.id : null;

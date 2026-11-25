@@ -1049,6 +1049,13 @@ it("uses the same declared endpoint for legacy IDs in query and transact", async
       type: "many-one",
       from: "task",
       to: ["node", "objective"],
+      relation: "reviewItem",
+      fkField: "itemId",
+      fkResourceField: "reviewResource",
+    }, {
+      type: "many-one",
+      from: "task",
+      to: ["node", "objective"],
       inverse: "linkedTasks",
     }, {
       type: "one-many",
@@ -1068,6 +1075,7 @@ it("uses the same declared endpoint for legacy IDs in query and transact", async
     label: "Linked",
     itemId: "legacy-item",
     itemResource: "objective",
+    reviewResource: "node",
     nodeId: "legacy-item",
     targetResource: "objective",
     container: "legacy-item",
@@ -1139,6 +1147,10 @@ it("uses the same declared endpoint for legacy IDs in query and transact", async
     expect(result.status).toBe(200);
     expect(result.body.result.data).toEqual([{ id: "legacy-item", label: "Goal" }]);
   }
+  await expectQueryAndTransactData(server, {
+    ...owner,
+    select: ["id", "reviewItem.label"],
+  }, [{ id: "task:explicit", reviewItem: { id: "legacy-item", label: "Node" } }]);
 });
 
 it("projects an inverse FK row under its actual owner's field policy", async () => {
@@ -1410,6 +1422,24 @@ it("preserves both resource discriminators on inverse predicates", async () => {
     const result = await query(server, { resource, relation, id, version: 1, select: ["#"], count: true });
     expect(result.status).toBe(200);
     expect(result.body.result).toEqual({ data, nextCursor: null, count: data.length });
+  }
+
+  await seed("test_entries", {
+    id: "test-forward-join", from: "legacy-target", fromResource: "collection", to: "task:1", toResource: "task",
+  });
+  const findMany = db.findMany.bind(db);
+  const joinRead = vi.spyOn(db, "findMany").mockImplementation(async (params) => {
+    if (params.model === "test_entries" && params.where?.some(({ field }) => field === "to")) {
+      throw new Error("test inverse join read failure");
+    }
+    return findMany(params);
+  });
+  try {
+    const result = await query(server, withForcedInMemory({ ...linked, select: ["id", "entryGroups", "entries"] }));
+    expect(result.status).toBe(200);
+    expect(result.body.result.data).toEqual([{ id: "legacy-target", entryGroups: ["task:1"], entries: [] }]);
+  } finally {
+    joinRead.mockRestore();
   }
 });
 
