@@ -1,0 +1,286 @@
+authfn/core/README.md
+  s_12235e5930aa22::t_f7d30a93738840 13-22
+turbo.json
+  s_12235e5930aa22::t_f7d30a93738840 19
+mcpfn/examples/calculator-http-server.ts
+  s_12235e5930aa22::t_f7d30a93738840 1,6-29,31-32,37-44,50-54
+langfn/README.md
+  s_12235e5930aa22::t_90ce6b8409c91a 5,12
+mcpfn/docs/static/llms-full.txt
+  s_12235e5930aa22::t_f7d30a93738840 35-38,108-113,457-460,470-482,534-546,559-573,852-865,943-954,1058-1065,1381
+memoryfn/admin/package.json
+  s_12235e5930aa22::t_90ce6b8409c91a 36-37
+  s_12235e5930aa22::t_f7d30a93738840 1-35,38-43
+packages/oauth-flow/package.json
+  s_12235e5930aa22::t_f7d30a93738840 43
+authfn/admin/package.json
+  s_12235e5930aa22::t_f7d30a93738840 3,43,46-47
+  s_12235e5930aa22::t_90ce6b8409c91a 40
+langfn/typescript/tests/release-gate.test.ts
+  s_12235e5930aa22::t_90ce6b8409c91a 66-67,205
+  s_12235e5930aa22::t_f7d30a93738840 43-48
+mcpfn/datafn/tests/adapter.test.ts
+  s_12235e5930aa22::t_f7d30a93738840 36,121,138,160,193,219,242,280,344,370-445
+  s_12235e5930aa22::t_66f7ea0272b854 446
+apifn/contracts/package.json
+  s_12235e5930aa22::t_f7d30a93738840 62
+memoryfn/admin/src/client.ts
+  s_12235e5930aa22::t_f7d30a93738840 1-27
+mcpfn/auth/tests/audit-hardening.test.ts
+  s_12235e5930aa22::t_f7d30a93738840 1-390
+mcpfn/testing/tests/testing.test.ts
+  s_12235e5930aa22::t_f7d30a93738840 754-759,766
+memoryfn/admin/src/types.ts
+  s_12235e5930aa22::t_f7d30a93738840 1-62
+memoryfn/python/README.md
+  s_12235e5930aa22::t_f7d30a93738840 1-40
+memoryfn/typescript/package.json
+  s_12235e5930aa22::t_90ce6b8409c91a 3
+mcpfn/auth/src/resource-server.ts
+  s_12235e5930aa22::t_f7d30a93738840 32-36,175-184,211-219
+memoryfn/admin/tsconfig.json
+  s_12235e5930aa22::t_f7d30a93738840 1-33
+apifn/admin/turbo.json
+  s_12235e5930aa22::t_f7d30a93738840 15,31,47
+mcpfn/core/src/registry.ts
+  s_12235e5930aa22::t_f7d30a93738840 459-482,958-970,1187-1189,1191,1208-1209,1211
+  s_12235e5930aa22::t_fccf4794adaf37 973-976,983-991
+mcpfn/docs/content/docs/reference/core.md
+  s_12235e5930aa22::t_f7d30a93738840 110-123,201-211
+  s_12235e5930aa22::t_216b3c35027029 212
+authfn/adapters/lookup-cloudflare-do/package.json
+  s_12235e5930aa22::t_f7d30a93738840 3,34
+mcpfn/auth/tests/oauth-platform.test.ts
+  s_12235e5930aa22::t_f7d30a93738840 1242-1261,1271,1278,1286-1319,1321-1344,1346-1395,1397-1398,1402-1440,1784,1799,1811,1839,1864,1973,2006,2049,2060,2093,2101,2119
+mcpfn/core/README.md
+  s_12235e5930aa22::t_f7d30a93738840 273-286,362-378
+  s_12235e5930aa22::t_0191ea7d775dae 379
+mcpfn/testing/src/host-authorization.ts
+  s_12235e5930aa22::t_f7d30a93738840 85-95,669-673,803,809-857,859-862,865-884,887-890,897-903
+langfn/docs/content/docs/index.md
+  s_12235e5930aa22::t_90ce6b8409c91a 8
+mcpfn/inspector/package.json
+  s_12235e5930aa22::t_90ce6b8409c91a 3,24-25
+mcpfn/core/src/errors.ts
+  s_12235e5930aa22::t_f7d30a93738840 1,59-158,161,163-169
+memoryfn/admin/src/capability.ts
+  s_12235e5930aa22::t_f7d30a93738840 1-197
+billfn/docs/package.json
+  s_12235e5930aa22::t_f7d30a93738840 30,42
+mcpfn/testing/src/conformance.ts
+  s_12235e5930aa22::t_f7d30a93738840 3,100-101,114-117,125-127,177,274-280,282-283,420-430
+langfn/typescript/README.md
+  s_12235e5930aa22::t_f7d30a93738840 13
+  s_12235e5930aa22::t_90ce6b8409c91a 5,10
+scripts/test-mcpfn-cloudflare-worker.mjs
+  s_12235e5930aa22::t_f7d30a93738840 168
+mcpfn/auth/package.json
+  s_12235e5930aa22::t_f7d30a93738840 3
+mcpfn/auth/src/provider-adapter.ts
+  s_12235e5930aa22::t_f7d30a93738840 82-92,106-122,137-148,152-164,170,174-175,184-185,200-204,264-272,301-302,306-307,314-321
+  s_12235e5930aa22::t_a14b7d05266354 322
+mcpfn/core/src/validation.ts
+  s_12235e5930aa22::t_f7d30a93738840 60-63,658-659
+langfn/typescript/src/mcp/client.ts
+  s_12235e5930aa22::t_90ce6b8409c91a 9
+mcpfn/docs/content/docs/deployment.md
+  s_12235e5930aa22::t_f7d30a93738840 14-19
+mcpfn/datafn/README.md
+  s_12235e5930aa22::t_f7d30a93738840 45-52
+langfn/docs/content/docs/reference/release-gate.md
+  s_12235e5930aa22::t_90ce6b8409c91a 6
+mcpfn/datafn/package.json
+  s_12235e5930aa22::t_90ce6b8409c91a 3,30
+mcpfn/auth/src/oauth-client.ts
+  s_12235e5930aa22::t_f7d30a93738840 224-239,261-271
+mcpfn/client/package.json
+  s_12235e5930aa22::t_90ce6b8409c91a 3
+mcpfn/testing/README.md
+  s_12235e5930aa22::t_f7d30a93738840 25
+memoryfn/admin/src/index.ts
+  s_12235e5930aa22::t_f7d30a93738840 1-20
+mcpfn/docs/content/docs/reference/testing.md
+  s_12235e5930aa22::t_f7d30a93738840 28
+authfn/password/package.json
+  s_12235e5930aa22::t_f7d30a93738840 3,29
+scripts/turbo-cache-merge.mjs
+  s_12235e5930aa22::t_f7d30a93738840 1-509
+superfunctions.owners.json
+  s_12235e5930aa22::t_f7d30a93738840 61,66,267
+authfn/core/vitest.config.ts
+  s_12235e5930aa22::t_f7d30a93738840 6-8
+memoryfn/python/pyproject.toml
+  s_12235e5930aa22::t_f7d30a93738840 1-32
+authfn/docs/content/api/authfn.json
+  s_12235e5930aa22::t_f7d30a93738840 445-454
+  s_12235e5930aa22::t_d0657029c571dc 441-444
+authfn/docs/package.json
+  s_12235e5930aa22::t_f7d30a93738840 26-32,44
+authfn/python/authfn/__init__.py
+  s_12235e5930aa22::t_f7d30a93738840 3
+memoryfn/admin/src/domain-service.ts
+  s_12235e5930aa22::t_f7d30a93738840 1-114
+memoryfn/python/tests/test_pipeline.py
+  s_12235e5930aa22::t_f7d30a93738840 1-61
+authfn/adapters/lookup-dynamodb/package.json
+  s_12235e5930aa22::t_f7d30a93738840 3,36
+authfn/email-otp/package.json
+  s_12235e5930aa22::t_f7d30a93738840 3,29
+mcpfn/auth/src/hosted-authorization.ts
+  s_12235e5930aa22::t_f7d30a93738840 1347-1386,1409-1411,1423-1437,1440,1448,1475-1503,1511-1527,1530,1666-1670,1679-1691
+  s_12235e5930aa22::t_535d50870ca468 1692
+mcpfn/auth/README.md
+  s_12235e5930aa22::t_f7d30a93738840 19-22,32-44,96-108,121-135
+mcpfn/datafn/src/adapter.ts
+  s_12235e5930aa22::t_f7d30a93738840 119-127,279-305,325-336
+mcpfn/testing/tests/host-authorization.test.ts
+  s_12235e5930aa22::t_f7d30a93738840 1067-1070,1074,1076-1078,1081,1121,1135-1137,1142,1144-1155,1159-1162,1208-1210,1258-1263,1273,1278-1281,1292,1324-1325,1328,1348-1449,1483,1485,1545,1589,1612,1631
+memoryfn/admin/README.md
+  s_12235e5930aa22::t_f7d30a93738840 1-44
+memoryfn/python/memoryfn/core/types.py
+  s_12235e5930aa22::t_f7d30a93738840 1-60
+scripts/turbo-cache-config.test.mjs
+  s_12235e5930aa22::t_f7d30a93738840 23-24
+plugfn/core/package.json
+  s_12235e5930aa22::t_f7d30a93738840 40
+datafn/docs/public/llms-full.txt
+  s_12235e5930aa22::t_f7d30a93738840 7306,7311-7314,7320-7323,13305,13332,13335
+  s_12235e5930aa22::t_cf081545a1250e 13336
+langfn/typescript/tests/package-contract.test.ts
+  s_12235e5930aa22::t_90ce6b8409c91a 19,48-49,62-63
+memoryfn/python/memoryfn/extraction/facts.py
+  s_12235e5930aa22::t_f7d30a93738840 1-25
+filefn/docs/package.json
+  s_12235e5930aa22::t_f7d30a93738840 40-41,50
+packages/oauth-core/package.json
+  s_12235e5930aa22::t_f7d30a93738840 48
+.github/workflows/ci.yml
+  s_12235e5930aa22::t_f7d30a93738840 82-84,218-262,266,268,270,272-273,278,280,282,284-285,291-295,300,302,304,306-331,374-403,405-433
+memoryfn/python/memoryfn/core/config.py
+  s_12235e5930aa22::t_f7d30a93738840 1-9
+langfn/RELEASE_GATE.md
+  s_12235e5930aa22::t_90ce6b8409c91a 3
+mcpfn/testing/package.json
+  s_12235e5930aa22::t_f7d30a93738840 33
+  s_12235e5930aa22::t_90ce6b8409c91a 3,34
+memoryfn/python/memoryfn/core/pipeline.py
+  s_12235e5930aa22::t_f7d30a93738840 1-95
+mcpfn/core/tests/http-session-security.test.ts
+  s_12235e5930aa22::t_f7d30a93738840 1-773
+scripts/turbo-cache-merge.test.mjs
+  s_12235e5930aa22::t_f7d30a93738840 1-608
+memoryfn/admin/vitest.config.ts
+  s_12235e5930aa22::t_f7d30a93738840 1-8
+authfn/python/pyproject.toml
+  s_12235e5930aa22::t_f7d30a93738840 7
+authfn/multi-region/package.json
+  s_12235e5930aa22::t_f7d30a93738840 3,29
+superconsole/src/lib/server/super-console.ts
+  s_12235e5930aa22::t_f7d30a93738840 901-905
+authfn/svelte/package.json
+  s_12235e5930aa22::t_f7d30a93738840 3,32,36
+langfn/docs/content/docs/reference/typescript.md
+  s_12235e5930aa22::t_90ce6b8409c91a 8
+memoryfn/python/memoryfn/__init__.py
+  s_12235e5930aa22::t_f7d30a93738840 1-5
+memoryfn/python/memoryfn/providers/openai.py
+  s_12235e5930aa22::t_f7d30a93738840 1-34
+packages/oauth-storage/package.json
+  s_12235e5930aa22::t_f7d30a93738840 3
+langfn/typescript/package.json
+  s_12235e5930aa22::t_90ce6b8409c91a 3
+authfn/native-handoff/package.json
+  s_12235e5930aa22::t_f7d30a93738840 3,29
+packages/admin/package.json
+  s_12235e5930aa22::t_90ce6b8409c91a 3
+mcpfn/core/tests/error-and-validation-security.test.ts
+  s_12235e5930aa22::t_f7d30a93738840 1-531
+scripts/ci-plan.mjs
+  s_12235e5930aa22::t_f7d30a93738840 32-39,54
+mcpfn/core/src/server.ts
+  s_12235e5930aa22::t_f7d30a93738840 5,12-14,19,50-52,92-117,139-168,171-272,306-324,356-462,518,521,533-535,550-553,590,836-838,851-852,880-881,897-908,910-911,933-939,965-971,981-988,994-1101,1251-1284,1290-1291,1294,1320-1336,1338-1343,1347-1358,1361-1374,1376-1410,1412-1443,1445-1464,1466,1468-1477,1479,1481,1483-1497,1499,1501-1555,1720,1723-1726
+memoryfn/admin/src/adapter.ts
+  s_12235e5930aa22::t_f7d30a93738840 1-26
+langfn/typescript/src/http/routes.ts
+  s_12235e5930aa22::t_90ce6b8409c91a 43
+langfn/docs/static/llms-full.txt
+  s_12235e5930aa22::t_90ce6b8409c91a 16,169,391,414
+packages/cli/package.json
+  s_12235e5930aa22::t_f7d30a93738840 44
+mcpfn/datafn/src/types.ts
+  s_12235e5930aa22::t_f7d30a93738840 42-49,51-52
+mcpfn/core/tests/server.test.ts
+  s_12235e5930aa22::t_f7d30a93738840 486-487
+authfn/api-keys/package.json
+  s_12235e5930aa22::t_f7d30a93738840 3,29
+langfn/docs/content/docs/getting-started.md
+  s_12235e5930aa22::t_90ce6b8409c91a 6
+langfn/typescript/tests/http-routes.test.ts
+  s_12235e5930aa22::t_90ce6b8409c91a 17
+mcpfn/testing/tests/authenticated-output.test.ts
+  s_12235e5930aa22::t_f7d30a93738840 148-167
+authfn/social-oauth/package.json
+  s_12235e5930aa22::t_f7d30a93738840 3,33,40
+mcpfn/docs/content/docs/authorization.md
+  s_12235e5930aa22::t_f7d30a93738840 25-28
+memoryfn/admin/src/__tests__/admin.test.ts
+  s_12235e5930aa22::t_f7d30a93738840 1-165
+apifn/sdk/package.json
+  s_12235e5930aa22::t_f7d30a93738840 48
+authfn/client/package.json
+  s_12235e5930aa22::t_f7d30a93738840 3,33,37-42
+memoryfn/python/memoryfn/storage/postgres.py
+  s_12235e5930aa22::t_f7d30a93738840 1-140
+packages/oauth-testing/package.json
+  s_12235e5930aa22::t_f7d30a93738840 43
+authfn/schema-plugin/package.json
+  s_12235e5930aa22::t_f7d30a93738840 3,29
+mcpfn/cli/package.json
+  s_12235e5930aa22::t_90ce6b8409c91a 3,27,29-30
+  s_12235e5930aa22::t_f7d30a93738840 26
+authfn/oauth-provider/package.json
+  s_12235e5930aa22::t_f7d30a93738840 3,30
+mcpfn/docs/content/docs/reference/auth.md
+  s_12235e5930aa22::t_f7d30a93738840 22-25,35-47,99-111,124-138
+release-packages.json
+  s_12235e5930aa22::t_f7d30a93738840 4,9
+memoryfn/README.md
+  s_12235e5930aa22::t_f7d30a93738840 15-19
+superconsole/package.json
+  s_12235e5930aa22::t_90ce6b8409c91a 28
+authfn/core/package.json
+  s_12235e5930aa22::t_f7d30a93738840 3,79
+mcpfn/client/CHANGELOG.md
+  s_12235e5930aa22::t_f7d30a93738840 3-9
+langfn/typescript/src/mcp/server.ts
+  s_12235e5930aa22::t_f7d30a93738840 99-106,108-109,111-121
+  s_12235e5930aa22::t_90ce6b8409c91a 134
+authfn/two-factor/package.json
+  s_12235e5930aa22::t_f7d30a93738840 3,29
+mcpfn/docs/content/docs/reference/datafn.md
+  s_12235e5930aa22::t_f7d30a93738840 51-58
+mcpfn/auth/tests/auth.test.ts
+  s_12235e5930aa22::t_f7d30a93738840 170,205
+authfn/python/CHANGELOG.md
+  s_12235e5930aa22::t_f7d30a93738840 10-11,14-20,103-104
+memoryfn/python/uv.lock
+  s_12235e5930aa22::t_62550a78b50df0 1-982
+package-lock.json
+  s_12235e5930aa22::t_be2519456cda3e 1271,1275,1295,1301,1321,1324,1327,1330-1331,1358,1361,1390,1394,1397-1402,1429,1437,1521-1527,1539,1846,1849,3892,3896,3925,3929,3958,3962,4001,4004,4033,4036,4056,4064,4066,4126,4129,4136,4152,4155,4324,4336,11935-11936,11953,15056,16869,16961-17040,17423,17426-17427,17429-17430,17883,18817,18825,19277,19280-19281,19743,19746-19747,24010-24022,24397,31013-31016,58515,58569,59113,59142,59275,59331,59753,64280
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c736c6f801e014eecd04ff364644efd8d56b1edb",
+  "prompts": {},
+  "sessions": {
+    "s_12235e5930aa22": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a211ab-2f55-7b20-a3cd-c79e6e4b95cb",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

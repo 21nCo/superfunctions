@@ -1,0 +1,19 @@
+datafn/server/__tests__/query-principal-freshness.test.ts
+  s_1731e39e38ef67::t_cc274af29fbf39 1-198
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ccac3cc8829f05f51f4c39ca04cc5bc13e320c11",
+  "prompts": {},
+  "sessions": {
+    "s_1731e39e38ef67": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01a21142-2eb2-76c2-8264-b11730b7c224",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

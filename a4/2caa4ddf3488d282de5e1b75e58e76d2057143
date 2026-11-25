@@ -1,0 +1,23 @@
+scripts/ci-plan.mjs
+  s_20e59dd6c64205::t_dad8f3411661bc 55
+turbo.json
+  s_20e59dd6c64205::t_dad8f3411661bc 20
+scripts/ci-plan.test.mjs
+  s_20e59dd6c64205::t_07806df3c5f9c8 214,224
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a42caa4ddf3488d282de5e1b75e58e76d2057143",
+  "prompts": {},
+  "sessions": {
+    "s_20e59dd6c64205": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a211b0-8c37-7b63-8f91-222b058dcfea",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

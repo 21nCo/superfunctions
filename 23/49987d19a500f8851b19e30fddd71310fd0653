@@ -1,0 +1,19 @@
+mcpfn/core/src/openapi/schema.ts
+  s_c8d3e62c4e5cbc::t_678f3c7377e2c1 1765,1767-1771,1775,1796,1808,2137-2139,2151-2152
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2349987d19a500f8851b19e30fddd71310fd0653",
+  "prompts": {},
+  "sessions": {
+    "s_c8d3e62c4e5cbc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "81c58342-6481-4e86-8c66-8c52736f9b64",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

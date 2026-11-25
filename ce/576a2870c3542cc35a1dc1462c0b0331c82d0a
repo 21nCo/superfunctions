@@ -1,0 +1,90 @@
+mcpfn/core/tests/http-session-security.test.ts
+  s_c8d3e62c4e5cbc::t_283a02448997e1 1,3-12,14-16,18-25,28-32,37-62,65-73,75-109,116-117,126-127,144-145,476-504,522-541
+  s_c8d3e62c4e5cbc::t_53852861da194b 542
+  s_c8d3e62c4e5cbc::t_863291339bd4d3 17,26-27,33-36,167-168,178-179,352-353,360,362,422,466-467
+  s_c8d3e62c4e5cbc::t_0f9de26ee87668 186-187,197,201-202
+  s_c8d3e62c4e5cbc::t_e91d3764143c8a 211,253-254
+  s_c8d3e62c4e5cbc::t_8727b2f5e62f6c 307-308
+  s_c8d3e62c4e5cbc::t_7ed342aec04a4d 74,307-308,345-346,352-353
+  s_c8d3e62c4e5cbc::t_7e9adeb8367659 374-375,384,399-400
+  s_c8d3e62c4e5cbc::t_5cc9698c23ce5d 408-409,415,422
+  s_c8d3e62c4e5cbc::t_81254491b72f55 131,134-135
+  s_c8d3e62c4e5cbc::t_6e4c1e52f56f13 2,371,374-375,384,399-400,405,408-409,415,417,421-422,427-429
+  s_326c90f370b5d2::t_2b991a0ae3f807 377-380,383,387,390
+  s_326c90f370b5d2::t_204b8b3587ee85 407,410-414,416,418-420,423,425-426
+  s_326c90f370b5d2::t_2057509524c910 63-64,363-370,372-373,376,381-382,385-386,388-389,391-398,401-404,406,430-465,468-475
+  s_326c90f370b5d2::t_a091eadf276c81 424
+mcpfn/core/README.md
+  s_c8d3e62c4e5cbc::t_1374629a62ebaf 200-201,203-204,211
+  s_326c90f370b5d2::t_8c2de01c4b568e 196-199
+mcpfn/core/src/server.ts
+  s_c8d3e62c4e5cbc::t_5ae91dab0aff06 14,140-142,147-155,159-163,165,167,169,175,215-220,234-254,266,267-275,1150-1153,1159-1163,1164-1169,1186-1187,1220,1221,1225,1226,1231,1233-1234,1236-1239,1248-1249,1251,1253
+  s_ad3698fab860ae::t_79e24037d63f34 1275,1302,1311,1313-1314
+  s_c8d3e62c4e5cbc::t_15e0603eb59d9a 1425
+  s_c8d3e62c4e5cbc::t_15b506ced2a290 1349
+  s_aa8bdd1874355b::t_a1c2b80f7fcf35 487-489,491,521,742,758,772,781,820,843,857,873
+  s_c8d3e62c4e5cbc::t_98d4f066d65d3a 1373
+  s_c8d3e62c4e5cbc::t_d380947b358534 1349,1350,1352,1373,1385-1386,1388,1425
+  s_c8d3e62c4e5cbc::t_faa41670562d0f 1390,1413
+  s_c8d3e62c4e5cbc::t_473cd7623fbf88 1292,1301,1303,1305,1307,1312,1397
+  s_326c90f370b5d2::t_2ba20e98a13e1e 1334
+  s_326c90f370b5d2::t_0410bb556e5173 1216-1219,1222-1224,1227-1230,1240-1241,1245-1247,1250,1252,1257-1269,1271-1274,1280-1291,1293-1295,1300,1304,1306,1308-1310,1315-1332,1340-1343,1345-1347,1351,1353-1360,1362-1369,1371-1372,1374-1378,1380-1383,1387,1389,1391-1396,1398-1401,1403-1412,1414,1424,1426,1428,1430,1432-1433
+  s_326c90f370b5d2::t_204b8b3587ee85 1379
+  s_326c90f370b5d2::t_8c2de01c4b568e 1402,1427,1602-1605
+  s_326c90f370b5d2::t_4fab61878c78cf 25,164,166,168,172-174,176-177,417,1154-1156
+  s_326c90f370b5d2::t_b08013d5c72d08 1276-1279,1297-1299,1415-1423
+mcpfn/docs/content/docs/deployment.md
+  s_c8d3e62c4e5cbc::t_e1f9f816e6192c 15,17,19
+mcpfn/docs/content/docs/reference/core.md
+  s_c8d3e62c4e5cbc::t_92fb8a67bd0af1 201-202,204-205,212
+mcpfn/docs/static/llms-full.txt
+  s_c8d3e62c4e5cbc::t_5c7ed5cf6b519c 109,111,113,943-944,946-947,954
+mcpfn/examples/calculator-http-server.ts
+  s_c8d3e62c4e5cbc::t_a0700deba818c0 6-7,31-32,37-44
+  s_c8d3e62c4e5cbc::t_d4cc1b701dec41 1,8,10-29,50-54
+superconsole/src/lib/server/super-console.ts
+  s_c8d3e62c4e5cbc::t_b3e9b68f50dd9d 901-905
+langfn/typescript/src/mcp/server.ts
+  s_c8d3e62c4e5cbc::t_6ed0e376d89517 99-105
+  s_c8d3e62c4e5cbc::t_edfe9f8c8ce8e0 121
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ce576a2870c3542cc35a1dc1462c0b0331c82d0a",
+  "prompts": {},
+  "sessions": {
+    "s_326c90f370b5d2": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21124-a83e-7641-a8a7-9795baa64e3b",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_aa8bdd1874355b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "63dca604-ad8d-4768-af8b-eaccc96df503",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_ad3698fab860ae": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a20ff4-1634-7162-b3f4-d6355dcaacb8",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_c8d3e62c4e5cbc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "81c58342-6481-4e86-8c66-8c52736f9b64",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
