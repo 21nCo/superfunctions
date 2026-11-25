@@ -1674,27 +1674,24 @@ export class SchemaConverter {
   /**
    * The most frames a validator that follows references while it validates
    * (@cfworker/json-schema) stacks for one value of a tool schema whose
-   * converted `root` refers to a checked closure: at every position a value
-   * can take (the root, and each property, item or other child schema), the
-   * subschemas and references applied there in place, followed to their end.
-   * It depends on the schema alone, never on a sample value: how deep child
-   * values nest is the instance's own. Each component is walked once per
-   * call, and a root once per tool schema.
+   * converted `root` refers to a checked closure, from the schema alone,
+   * never from a sample value. At every position a value can take, the
+   * subschemas and references applied there in place count, followed to
+   * their end. A child value every valid instance must have (`forcedChild`)
+   * stacks on its parent's frames; any other child value starts its own
+   * chain, as its depth is the instance's own. A chain of forced children
+   * that never ends has no finite valid instance and is infinitely deep.
+   * Each component is walked once per call, and a root once per tool
+   * schema, each walk charged to the call's total.
    */
   frames(root: McpFnJsonSchema | boolean, mode: SchemaMode): number {
-    const { frames, refs } = this.positions(root, mode);
+    const own = this.positions(root, mode);
     const reach = memoMap(this.reachFrames, mode, () => new Map<string, number>());
-    const local = memoMap(this.positionFrames, mode, () => new Map<string, { frames: number; refs: Set<string> }>());
-    const of = (name: string) => {
-      let known = local.get(name);
-      if (!known) local.set(name, (known = this.positions(this.converted(name, mode).schema, mode)));
-      return known;
-    };
-    let most = frames;
-    for (const name of refs) {
-      const below = settleGraph(name, (key) => of(key).refs, reach, (component, deeper) => {
+    let most = this.localFrames(own, mode);
+    for (const name of own.refs) {
+      const below = settleGraph(name, (key) => this.componentPositions(key, mode).refs, reach, (component, deeper) => {
         let frames = deeper;
-        for (const key of component) frames = Math.max(frames, of(key).frames);
+        for (const key of component) frames = Math.max(frames, this.localFrames(this.componentPositions(key, mode), mode));
         return frames;
       });
       most = Math.max(most, below);
@@ -1702,31 +1699,86 @@ export class SchemaConverter {
     return most;
   }
 
-  /** By mode, for the whole call: the frames and references at the positions of one component (`positions`). */
-  private readonly positionFrames = new Map<SchemaMode, Map<string, { frames: number; refs: Set<string> }>>();
+  /** By mode, for the whole call: the positions of one component (`positions`). */
+  private readonly positionFrames = new Map<SchemaMode, Map<string, Positions>>();
   /** By mode, for the whole call: the most frames at any position a component's schema reaches (`frames`). */
   private readonly reachFrames = new Map<SchemaMode, Map<string, number>>();
+  /** By mode, for the whole call: the frames every valid value of a component stacks from its own frame (`forcedFrames`). */
+  private readonly forcedDepths = new Map<SchemaMode, Map<string, number>>();
 
-  /** The most frames at any position within `schema` itself, and the definitions it applies anywhere. */
-  private positions(schema: unknown, mode: SchemaMode): { frames: number; refs: Set<string> } {
-    const refs = new Set<string>();
-    let most = 0;
-    const visit = (node: unknown, frame: number): void => {
+  private componentPositions(name: string, mode: SchemaMode): Positions {
+    const local = memoMap(this.positionFrames, mode, () => new Map<string, Positions>());
+    let known = local.get(name);
+    if (known === undefined) {
+      known = this.positions(this.converted(name, mode).schema, mode);
+      local.set(name, known);
+    }
+    return known;
+  }
+
+  /** The most frames at the positions of one walked schema, with the forced chains its references continue. */
+  private localFrames(own: Positions, mode: SchemaMode): number {
+    let most = own.frames;
+    for (const [name, frame] of own.carried) most = Math.max(most, frame + this.forcedFrames(name, mode));
+    return most;
+  }
+
+  /**
+   * The frames every valid value of component `name` stacks from the frame
+   * of a reference to it: its forced chain, continued through the components
+   * that chain applies. A cycle of forced references has no finite valid
+   * value (Infinity). Settled once per component per call.
+   */
+  private forcedFrames(name: string, mode: SchemaMode): number {
+    const memo = memoMap(this.forcedDepths, mode, () => new Map<string, number>());
+    return settleGraph(name, (key) => this.componentPositions(key, mode).forced.keys(), memo, (component) => {
+      const key = component[0]!;
+      const own = this.componentPositions(key, mode);
+      if (component.length > 1 || own.forced.has(key)) return Number.POSITIVE_INFINITY;
+      let frames = own.forcedFrames;
+      for (const [next, frame] of own.forced) frames = Math.max(frames, frame + memo.get(next)!);
+      return frames;
+    });
+  }
+
+  /**
+   * One schema's positions: the most frames at any of them (`frames`), and
+   * on the chain of the schema's own value (`forcedFrames`), the definitions
+   * it applies anywhere (`refs`), and those applied where every valid value
+   * must satisfy them, with the frame they are applied at: on the schema's
+   * own chain (`forced`) or on any chain (`carried`). In place, `allOf`
+   * members and references must be satisfied; `anyOf`, `oneOf`, `not`,
+   * conditions and dependencies need not.
+   */
+  private positions(schema: unknown, mode: SchemaMode): Positions {
+    const result: Positions = { frames: 0, forcedFrames: 0, refs: new Set(), forced: new Map(), carried: new Map() };
+    let visited = 0;
+    const visit = (node: unknown, frame: number, own: boolean, must: boolean): void => {
       if (node === undefined) return;
-      most = Math.max(most, frame);
-      if (!isObject(node)) return;
-      if (typeof node.$ref === "string" && node.$ref.startsWith(DEFINITION_REF)) {
+      visited += 1;
+      let reached = frame;
+      if (isObject(node) && typeof node.$ref === "string" && node.$ref.startsWith(DEFINITION_REF)) {
         const name = node.$ref.slice(DEFINITION_REF.length);
-        refs.add(name);
+        result.refs.add(name);
         // Within a checked closure no in-place chain is a cycle.
-        most = Math.max(most, frame + Math.max(0, this.inPlaceDepth(name, mode)));
+        reached = frame + Math.max(0, this.inPlaceDepth(name, mode));
+        if (must) {
+          addFrame(result.carried, name, frame);
+          if (own) addFrame(result.forced, name, frame);
+        }
       }
-      forEachInPlace(node, (member) => visit(member, frame + 1));
-      // A child value starts its own chain of frames.
-      forEachChild(node, (member) => visit(member, 1));
+      result.frames = Math.max(result.frames, reached);
+      if (own) result.forcedFrames = Math.max(result.forcedFrames, reached);
+      if (!isObject(node)) return;
+      for (const member of arrayOf(node.allOf)) visit(member, frame + 1, own, must);
+      forEachInPlace(node, (member) => visit(member, frame + 1, own, false), false);
+      forEachChild(node, (member, forced) =>
+        forced && must ? visit(member, frame + 1, own, true) : visit(member, 1, false, true),
+      );
     };
-    visit(schema, 1);
-    return { frames: most, refs };
+    visit(schema, 1, true, true);
+    this.total.chargeNodes(visited);
+    return result;
   }
 
   /** The closure as `definitions`. Each tool schema holding it is charged while it is copied (`copyBudget`). */
@@ -2026,8 +2078,9 @@ function inPlaceReferences(schema: McpFnJsonSchema | boolean): { links: Map<stri
 }
 
 /** The subschemas a draft-07 validator applies to the same instance as `schema`. */
-function forEachInPlace(schema: JsonObject, visit: (member: unknown) => void): void {
+function forEachInPlace(schema: JsonObject, visit: (member: unknown) => void, allOf = true): void {
   for (const keyword of IN_PLACE_ARRAY_KEYWORDS) {
+    if (keyword === "allOf" && !allOf) continue;
     for (const member of arrayOf(schema[keyword])) visit(member);
   }
   visit(schema.not);
@@ -2039,20 +2092,82 @@ function forEachInPlace(schema: JsonObject, visit: (member: unknown) => void): v
   for (const [, dependency] of objectEntries(schema.dependencies)) visit(dependency);
 }
 
-/** The subschemas a draft-07 validator applies to child values (properties, items, ...) of the instance `schema` validates. */
-function forEachChild(schema: JsonObject, visit: (member: unknown) => void): void {
-  for (const keyword of ["properties", "patternProperties"] as const) {
-    for (const [, member] of objectEntries(schema[keyword])) visit(member);
+/**
+ * The subschemas a draft-07 validator applies to child values (properties,
+ * items, ...) of the instance `schema` validates, each with whether every
+ * value `schema` accepts has that child: a property `required` lists (its
+ * `properties` entry and the `patternProperties` matching it, else
+ * `additionalProperties`) when only objects are accepted, and items up to
+ * `minItems` when only arrays are.
+ */
+function forEachChild(schema: JsonObject, visit: (member: unknown, forced: boolean) => void): void {
+  const required = onlyType(schema, "object") ? arrayOf(schema.required).filter((name) => typeof name === "string") : [];
+  const properties = isObject(schema.properties) ? schema.properties : {};
+  const patterns = objectEntries(schema.patternProperties);
+  const forcedProperties = new Set<string>();
+  const forcedPatterns = new Set<string>();
+  let forcedAdditional = false;
+  for (const name of required) {
+    const declared = Object.hasOwn(properties, name);
+    if (declared) forcedProperties.add(name);
+    // Matching patterns apply beside `properties`; `additionalProperties` only
+    // without either. A pattern validators cannot read forces nothing.
+    let matched = false;
+    let readable = true;
+    for (const [pattern] of patterns) {
+      const matches = patternMatches(pattern, name);
+      if (matches === undefined) readable = false;
+      else if (matches) {
+        forcedPatterns.add(pattern);
+        matched = true;
+      }
+    }
+    if (!declared && !matched && readable) forcedAdditional = true;
   }
-  visit(schema.additionalProperties);
-  visit(schema.propertyNames);
-  visit(schema.contains);
+  for (const [name, member] of objectEntries(schema.properties)) visit(member, forcedProperties.has(name));
+  for (const [pattern, member] of patterns) visit(member, forcedPatterns.has(pattern));
+  visit(schema.additionalProperties, forcedAdditional);
+  visit(schema.propertyNames, false);
+  visit(schema.contains, false);
+  const minItems = onlyType(schema, "array") && typeof schema.minItems === "number" ? schema.minItems : 0;
   if (Array.isArray(schema.items)) {
-    for (const member of arrayOf(schema.items)) visit(member);
-    visit(schema.additionalItems);
+    const items = arrayOf(schema.items);
+    items.forEach((member, index) => visit(member, minItems > index));
+    visit(schema.additionalItems, minItems > items.length);
   } else {
-    visit(schema.items);
+    visit(schema.items, minItems >= 1);
   }
+}
+
+/** Whether `schema` accepts only values of JSON type `type` by its own `type`. */
+function onlyType(schema: JsonObject, type: string): boolean {
+  const types = schema.type;
+  if (typeof types === "string") return types === type;
+  const list = arrayOf(types);
+  return list.length > 0 && list.every((entry) => entry === type);
+}
+
+/** Whether a `patternProperties` pattern matches `name` as validators read it (undefined: not a pattern they read). */
+function patternMatches(pattern: string, name: string): boolean | undefined {
+  try {
+    return new RegExp(pattern, "u").test(name);
+  } catch {
+    return undefined;
+  }
+}
+
+/** Keep the largest frame each definition is applied at. */
+function addFrame(frames: Map<string, number>, name: string, frame: number): void {
+  frames.set(name, Math.max(frames.get(name) ?? 0, frame));
+}
+
+/** The positions of one schema (`SchemaConverter.positions`). */
+interface Positions {
+  frames: number;
+  forcedFrames: number;
+  refs: Set<string>;
+  forced: Map<string, number>;
+  carried: Map<string, number>;
 }
 
 /** A stack overflow (the converter's or a validator's) means schemas or references nest too deeply. */

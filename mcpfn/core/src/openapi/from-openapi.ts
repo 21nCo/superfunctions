@@ -293,10 +293,14 @@ class OperationConverter {
   private readonly reserved = new WeakMap<object, number>();
   /** Shared tool schemas compiled once, at their first reuse, before reuses are charged. */
   private readonly reuseChecked = new WeakSet<object>();
-  /** Shared tool schemas that check found nesting too deeply: every tool holding one is skipped, the first included. */
-  private readonly refused = new WeakSet<object>();
-  /** Validator frames each tool schema stacks for one value (`SchemaConverter.frames`). */
-  private readonly toolFrames = new WeakMap<object, number>();
+  /** Shared tool schemas that check found the registry would refuse, with why: every tool holding one is skipped, the first included. */
+  private readonly refused = new WeakMap<object, OpenApiSkip>();
+  /**
+   * Validator frames each tool schema stacks for one value
+   * (`SchemaConverter.frames`), measured (and charged) only when the
+   * @cfworker/json-schema depth check asks (`framesOf`).
+   */
+  private readonly toolFrames = new WeakMap<object, number | (() => number)>();
   /** How deep @cfworker/json-schema validates on this call's stack, measured once per call. */
   private readonly depth = new ValidationDepth((nodes) => this.schemas.chargeCopy(nodes));
   /** Why a schema checked as written failed to compile (null: it compiled), by source object and by content. */
@@ -534,7 +538,7 @@ class OperationConverter {
       this.schemas.chargeCopy(budget.used);
       this.reserved.set(copied, 1);
       this.pending.push(copied);
-      this.toolFrames.set(copied, this.schemas.frames(root, kind));
+      this.toolFrames.set(copied, () => this.schemas.frames(root, kind));
       return copied;
     };
     if (!this.shareSchemas) return produce();
@@ -545,14 +549,18 @@ class OperationConverter {
     // A schema whose copy failed fails the same way for every tool with the same content.
     if (known instanceof OpenApiSkip) throw known;
     if (known !== undefined) {
-      // A schema the registry will refuse for nesting too deeply holds no
-      // catalog copies: it is compiled once, at its first reuse, to know.
+      // A schema the registry will refuse holds no catalog copies: it is
+      // compiled once, at its first reuse, to know. Its first holder's
+      // reservation is given back now, and every holder gets its verdict.
       if (!this.reuseChecked.has(known)) {
         this.reuseChecked.add(known);
-        if (this.compileFailure(known, () => this.toolFrames.get(known) ?? 0) === TOO_DEEP_VERDICT) {
-          const skip = new OpenApiSkip("schema-too-large", TOO_DEEP);
+        const failure = this.compileFailure(known, () => this.framesOf(known));
+        if (failure !== null) {
+          const skip = invalidSkip(failure, kind);
           this.shared.set(key, skip);
-          this.refused.add(known);
+          this.refused.set(known, skip);
+          this.schemas.releaseCopy((this.reserved.get(known) ?? 0) * (this.copyNodes.get(known) ?? 0));
+          this.reserved.delete(known);
           throw skip;
         }
       }
@@ -598,9 +606,13 @@ class OperationConverter {
     return count > 0;
   }
 
-  /** Whether a tool schema here was found nesting too deeply when it was reused (`toolSchema`). */
-  refuses(schemas: readonly object[]): boolean {
-    return schemas.some((schema) => this.refused.has(schema));
+  /** Why the registry would refuse a tool schema here, found when it was reused (`toolSchema`). */
+  refusal(schemas: readonly object[]): OpenApiSkip | undefined {
+    for (const schema of schemas) {
+      const skip = this.refused.get(schema);
+      if (skip) return skip;
+    }
+    return undefined;
   }
 
   /** Give back the catalog copies reserved with these schemas, for a tool that will not register. */
@@ -617,8 +629,17 @@ class OperationConverter {
   /** Whether @cfworker/json-schema validates a value against each of these tool schemas without overflowing its stack. */
   validatesDeepEnough(schemas: readonly object[]): boolean {
     let frames = 0;
-    for (const schema of schemas) frames = Math.max(frames, this.toolFrames.get(schema) ?? 0);
+    for (const schema of schemas) frames = Math.max(frames, this.framesOf(schema));
     return this.depth.fits(frames);
+  }
+
+  /** The frames a tool schema stacks (`toolFrames`), measured once. */
+  private framesOf(schema: object): number {
+    const known = this.toolFrames.get(schema);
+    if (typeof known !== "function") return known ?? 0;
+    const frames = known();
+    this.toolFrames.set(schema, frames);
+    return frames;
   }
 
   /**
@@ -1068,10 +1089,13 @@ function chainValidates(frames: number): boolean {
 const TOO_DEEP_VERDICT = "\0too deep";
 
 function throwIfInvalid(failure: string | null, subject: string): void {
-  if (failure === TOO_DEEP_VERDICT) throw new OpenApiSkip("schema-too-large", TOO_DEEP);
-  if (failure !== null) {
-    throw new OpenApiSkip("invalid-schema", `the ${subject} schema is not a valid JSON Schema: ${failure}`);
-  }
+  if (failure !== null) throw invalidSkip(failure, subject);
+}
+
+/** The skip for a schema that failed to compile (`compileFailure`). */
+function invalidSkip(failure: string, subject: string): OpenApiSkip {
+  if (failure === TOO_DEEP_VERDICT) return new OpenApiSkip("schema-too-large", TOO_DEEP);
+  return new OpenApiSkip("invalid-schema", `the ${subject} schema is not a valid JSON Schema: ${failure}`);
 }
 
 interface CopiedValues {
@@ -1295,9 +1319,10 @@ function register<TContext>(
   candidates.forEach((candidate, index) => {
     const { operation } = candidate;
     const pair: [object, object] = [candidate.inputSchema, candidate.outputSchema ?? NO_OUTPUT];
-    if (overflowed.get(pair[0])?.has(pair[1]) || converter.refuses(pair)) {
+    const refusal = converter.refusal(pair);
+    if (overflowed.get(pair[0])?.has(pair[1]) || refusal) {
       converter.dropReservations(pair);
-      skipped.push(tooDeepSkip(operation));
+      skipped.push(refusal ? { operation: operationRef(operation), code: refusal.code, reason: refusal.message } : tooDeepSkip(operation));
       return;
     }
     engine ??= createSchemaCompiler().engine;
@@ -1314,6 +1339,8 @@ function register<TContext>(
       }
       catalogNodes = converter.holdCatalog(pair);
     } catch (error) {
+      // Measuring or holding ran out of budget: the tool's reservations go back.
+      converter.dropReservations(pair);
       const skip = candidateFailure(error);
       skipped.push({ operation: operationRef(operation), code: skip.code, reason: skip.message });
       return;

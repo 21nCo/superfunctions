@@ -186,17 +186,28 @@ for (const { operation, code, reason } of skipped) {
   and so are a copy made to check a schema and each walk of a closure's
   references; a copy that fails is charged only for what it copied. Each
   tool's catalog entry copies its schemas again: that copy is charged in
-  document order and given back when the tool does not register. No schema has a size or depth limit of its own: a schema that
+  document order and given back when the tool does not register. A schema
+  several tools share is compiled at its first reuse, and when the registry's
+  validator rejects it, every tool holding it is skipped with that verdict
+  and holds no catalog copy, so it never crowds out a later tool. No schema has a size or depth limit of its own: a schema that
   repeats objects the document shares between positions into more than four
   times the values they hold is skipped (`schema-too-large`), and a schema
   nested or referencing too deeply for the converter or the registry's
   validator to compile (a stack overflow) is skipped the same way. Under
   @cfworker/json-schema, which follows references only while validating, the
-  frames one value can stack are read from the schema itself (at every
-  position: parameters, bodies, properties and items) and compared with
+  frames one value stacks are read from the schema itself and compared with
   how deep the engine validates on the call's stack, measured once per call
-  with the engine. Near the validator's own limit, that verdict is the
-  validator's. A schema compiled
+  with the engine. At every position (parameters, bodies, properties and
+  items) the subschemas and references applied in place count. A child
+  value every valid value must have stacks on its parent's frames: a
+  property a `required` list names, through `properties`, a matching
+  `patternProperties` entry or else `additionalProperties`, when only
+  objects are accepted, and the items up to `minItems` when only arrays are,
+  read from the schema itself, its `allOf` members and its references. Any
+  other child value starts again, since its depth is the instance's own,
+  and a chain of required children that never ends, which no finite value
+  satisfies, is too deep. This reading is charged to the same budget. Near
+  the validator's own limit, that verdict is the validator's. A schema compiled
   only to be checked (a `HEAD` or non-object response, or one with
   properties to leave out) is compiled once per distinct schema. A Swagger
   2.0 document throws.

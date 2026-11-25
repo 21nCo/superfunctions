@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { fromOpenAPI } from "../src/openapi/index.js";
-import { expectArguments, recordingExecutor, tool } from "./openapi-helpers.js";
+import { createSchemaCompiler } from "../src/validation.js";
+import { expectArguments, recordingExecutor, requestExtra, tool } from "./openapi-helpers.js";
 
 // The edge runtime's engine: every compiler mcpFn creates without naming one is @cfworker/json-schema.
 vi.mock("../src/validation.js", async (importOriginal) => {
@@ -75,5 +76,89 @@ describe("fromOpenAPI under @cfworker/json-schema", () => {
     expect(result.registry.has("fallback")).toBe(true);
     expectArguments(tool(result.tools, "shortQuery").inputSchema, { valid: [{ query: { q: "ok" } }], invalid: [{ query: { q: 1 } }] });
     expectArguments(tool(result.tools, "fallback").inputSchema, { valid: [{ body: "ok" }], invalid: [{ body: {} }] });
+  }, 120_000);
+
+  /** A chain of `length` components named `prefix<n>`, each link written by `link` around a reference to the next. */
+  const chain = (prefix: string, length: number, link: (next: unknown) => unknown) => {
+    const schemas: Record<string, unknown> = { [`${prefix}${length}`]: { type: "object", properties: { v: { type: "integer" } } } };
+    for (let index = 0; index < length; index += 1) schemas[`${prefix}${index}`] = link({ $ref: `#/components/schemas/${prefix}${index + 1}` });
+    return schemas;
+  };
+  const nested = (depth: number): unknown => {
+    let value: unknown = { v: 1 };
+    for (let index = 0; index < depth; index += 1) value = { next: value };
+    return value;
+  };
+  const required = (next: unknown) => ({ type: "object", required: ["next"], properties: { next } });
+  const body = (operationId: string, name: string) => ({
+    post: { operationId, requestBody: { required: true, content: { "application/json": { schema: { $ref: `#/components/schemas/${name}` } } } }, responses: { "204": { description: "Done" } } },
+  });
+  const verdicts = (result: { skipped: Array<{ operation: { operationId?: string }; code: string; reason: string }> }) =>
+    result.skipped.map(({ operation, code, reason }) => [operation.operationId, code, reason]).sort();
+  const tooDeep = (operationId: string) => [operationId, "schema-too-large", "a schema or reference chain nests too deeply"];
+
+  it("stacks the frames of children every valid value must have, and lets optional ones and shallow recursion start again", async () => {
+    const schemas = {
+      ...chain("R", 2_500, required),
+      ...chain("T", 10, required),
+      ...chain("O", 2_500, (next) => ({ type: "object", properties: { next } })),
+      // A null value or a string stops these at once: nothing is forced.
+      ...chain("N", 2_500, (next) => ({ type: ["object", "null"], required: ["next"], properties: { next } })),
+      ...chain("U", 2_500, (next) => ({ required: ["next"], properties: { next } })),
+      Loop: { type: "object", required: ["next"], properties: { next: { $ref: "#/components/schemas/Loop" } } },
+      Tree: { type: "object", properties: { next: { $ref: "#/components/schemas/Tree" } } },
+    };
+    const executor = recordingExecutor();
+    const result = fromOpenAPI(
+      {
+        openapi: "3.1.0",
+        paths: {
+          "/r": body("requiredChain", "R0"),
+          "/t": body("shortChain", "T0"),
+          "/o": body("optionalChain", "O0"),
+          "/n": body("nullableChain", "N0"),
+          "/u": body("untypedChain", "U0"),
+          "/loop": body("forcedLoop", "Loop"),
+          "/tree": body("tree", "Tree"),
+          "/out": { get: { operationId: "requiredOutput", responses: json({ $ref: "#/components/schemas/R0" }) } },
+        },
+        components: { schemas },
+      },
+      { executor, allowMutations: true },
+    );
+    expect(verdicts(result)).toEqual([tooDeep("forcedLoop"), tooDeep("requiredChain"), tooDeep("requiredOutput")]);
+    expect(result.tools.map(({ name }) => name)).toEqual(["shortChain", "optionalChain", "nullableChain", "untypedChain", "tree"]);
+    const args = { body: nested(10) };
+    expectArguments(tool(result.tools, "shortChain").inputSchema, { valid: [args], invalid: [{ body: nested(9) }] });
+    await result.registry.callTool("shortChain", args, undefined, requestExtra());
+    expect(executor.calls.map((call) => call.args)).toEqual([args]);
+    // Ajv refuses this chain when it compiles it; the edge engine validates short values.
+    const optional = createSchemaCompiler("cfworker").compile(tool(result.tools, "optionalChain").inputSchema);
+    expect([optional({ body: {} }), optional({ body: nested(20) })]).toEqual([true, true]);
+  }, 120_000);
+
+  it("stacks items up to minItems and required names behind patternProperties or additionalProperties, in either catalog order", () => {
+    const schemas = {
+      ...chain("I", 2_500, (items) => ({ type: "array", minItems: 1, items })),
+      ...chain("E", 2_500, (items) => ({ type: "array", items })),
+      ...chain("A", 2_500, (additionalProperties) => ({ type: "object", required: ["x"], additionalProperties })),
+      ...chain("P", 2_500, (member) => ({ type: "object", required: ["x1"], patternProperties: { "^x": member } })),
+      ...chain("Q", 2_500, (member) => ({ type: "object", required: ["y"], patternProperties: { "^x": member } })),
+    };
+    const get = (operationId: string, name: string) => ({ get: { operationId, responses: json({ type: "object", required: ["v"], properties: { v: { $ref: `#/components/schemas/${name}` } } }) } });
+    const paths: Record<string, unknown> = {
+      "/i": get("minItemsChain", "I0"),
+      "/e": get("emptyItemsChain", "E0"),
+      "/a": get("additionalChain", "A0"),
+      "/p": get("patternChain", "P0"),
+      "/q": get("unmatchedPatternChain", "Q0"),
+    };
+    const run = (order: Record<string, unknown>) => fromOpenAPI({ openapi: "3.1.0", paths: order, components: { schemas } }, { executor: recordingExecutor() });
+    const forward = run(paths);
+    const reverse = run(Object.fromEntries(Object.entries(paths).reverse()));
+    expect(verdicts(forward)).toEqual([tooDeep("additionalChain"), tooDeep("minItemsChain"), tooDeep("patternChain")]);
+    expect(verdicts(reverse)).toEqual(verdicts(forward));
+    expect(forward.tools.map(({ name }) => name).sort()).toEqual(["emptyItemsChain", "unmatchedPatternChain"]);
+    expect(reverse.tools.map(({ name }) => name).sort()).toEqual(["emptyItemsChain", "unmatchedPatternChain"]);
   }, 120_000);
 });

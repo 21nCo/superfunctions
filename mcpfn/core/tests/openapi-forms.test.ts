@@ -1,7 +1,7 @@
 import Ajv from "ajv";
 import { describe, expect, it, vi } from "vitest";
 import { McpFnRegistry, McpFnValidationError } from "../src/index.js";
-import { fromOpenAPI } from "../src/openapi/index.js";
+import { fromOpenAPI, type OpenApiSkippedOperation } from "../src/openapi/index.js";
 import { NodeBudget, SchemaConverter } from "../src/openapi/schema.js";
 import {
   expectArguments,
@@ -3009,6 +3009,28 @@ describe("fromOpenAPI body fallback, synchronous schemas, per-kind alternatives 
     expect(result.skipped).toHaveLength(120);
     for (const entry of result.skipped) expect(entry.reason).toMatch(/^a schema repeats shared objects into \d+ nodes from \d+ source values$/);
     expectArguments(tool(result.tools, "ok").outputSchema!, { valid: [{ a: "x" }], invalid: [{ a: 1 }] });
+  }, 60_000);
+
+  it("reserves no catalog copies for a shared schema the validator rejects, so a valid later tool fits in either order", () => {
+    const literal = () => Array.from({ length: 3000 }, (_, index) => ({ k: index }));
+    const bad = { type: "object", properties: { s: { type: "string", minLength: -1 }, d: { type: "array", default: literal() } } };
+    const entries: Array<[string, unknown]> = [];
+    for (let index = 0; index < 800; index += 1) entries.push([`/bad${index}`, { get: { operationId: `bad${index}`, responses: json({ $ref: "#/components/schemas/Bad" }) } }]);
+    entries.push(["/ok", { get: { operationId: "ok", responses: json({ type: "object", properties: { a: { type: "string" }, d: { type: "array", default: literal() } } }) } }]);
+    const run = (order: Array<[string, unknown]>) =>
+      fromOpenAPI({ openapi: "3.1.0", paths: Object.fromEntries(order), components: { schemas: { Bad: bad } } }, options());
+    const forward = run(entries);
+    const reverse = run([...entries].reverse());
+    for (const result of [forward, reverse]) {
+      expect(registered(result)).toEqual([["ok", true]]);
+      expect(result.skipped).toHaveLength(800);
+      expect(new Set(result.skipped.map(({ code, reason }) => `${code}: ${reason}`))).toEqual(
+        new Set([expect.stringMatching(/^invalid-schema: the output schema is not a valid JSON Schema: .*minLength/) as unknown as string]),
+      );
+    }
+    const key = ({ operation, code, reason }: OpenApiSkippedOperation) => `${operation.operationId} ${code} ${reason}`;
+    expect(reverse.skipped.map(key).sort()).toEqual(forward.skipped.map(key).sort());
+    expectArguments(tool(forward.tools, "ok").outputSchema!, { valid: [{ a: "x" }], invalid: [{ a: 1 }] });
   }, 60_000);
 
   it("never measures a literal many components share once per component, and stops a closure repeating it while copying", () => {
