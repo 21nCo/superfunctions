@@ -1,0 +1,75 @@
+plugfn/core/package.json
+  s_40dcb0ed3cafb7::t_61714b05460ab6 79
+plugfn/core/src/financial-extraction/parsers/deterministic.ts
+  s_40dcb0ed3cafb7::t_6b83c080103b3f 1-126
+plugfn/core/src/financial-extraction/parsers/model-fallback.ts
+  s_40dcb0ed3cafb7::t_dd436db8ea9dcd 1-105
+plugfn/core/src/financial-extraction/parsers/pipeline.ts
+  s_40dcb0ed3cafb7::t_487bee53381acc 1-91
+plugfn/core/src/financial-extraction/storage.ts
+  s_40dcb0ed3cafb7::t_021a4d31cc648e 1-30
+plugfn/core/src/financial-extraction/types.ts
+  s_40dcb0ed3cafb7::t_4f887f44f522c5 1-123
+plugfn/core/src/mail/backup-channel.ts
+  s_40dcb0ed3cafb7::t_aea496baa197ad 1-77
+plugfn/core/src/mail/index.ts
+  s_40dcb0ed3cafb7::t_13045b42ed5b8e 2-3
+plugfn/core/src/mail/managed-policy.ts
+  s_40dcb0ed3cafb7::t_96281f8a2df6e2 1-147
+plugfn/core/src/policy/provider-policy-service.ts
+  s_40dcb0ed3cafb7::t_4345b4d779cbfc 132-157
+plugfn/core/src/schema.ts
+  s_40dcb0ed3cafb7::t_9d96f1492abc0f 229
+plugfn/core/src/security/e2ee-mode.ts
+  s_40dcb0ed3cafb7::t_bc81d776f63e00 1-170
+plugfn/core/src/send-governance/governor.ts
+  s_40dcb0ed3cafb7::t_6545cd45429c76 1-181
+plugfn/core/src/send-governance/policies.ts
+  s_40dcb0ed3cafb7::t_c926160e979c37 1-71
+plugfn/core/src/send-governance/queue.ts
+  s_40dcb0ed3cafb7::t_0954a258f1415f 1-129
+plugfn/core/src/send-governance/types.ts
+  s_40dcb0ed3cafb7::t_cfb4b1c69a1938 1-129
+plugfn/core/tests/financial-extraction/parser-pipeline.test.ts
+  s_40dcb0ed3cafb7::t_ad91a1e568aae7 1-171
+plugfn/core/tests/financial-extraction/parser-vectors.test.ts
+  s_40dcb0ed3cafb7::t_3619e8570d0849 1-94
+plugfn/core/tests/policy/provider-policy-service.test.ts
+  s_40dcb0ed3cafb7::t_504219640b364e 8,20-29
+plugfn/core/tests/schema.test.ts
+  s_40dcb0ed3cafb7::t_99d619d6b7acd8 1,31,50-57
+plugfn/core/tests/send-governance/governor.test.ts
+  s_40dcb0ed3cafb7::t_cd385bfff32215 1-151
+plugfn/core/tests/send-governance/idempotency.test.ts
+  s_40dcb0ed3cafb7::t_14c10dc051a0ab 1-126
+plugfn/docs/runbooks/mail-delivery-incident.md
+  s_40dcb0ed3cafb7::t_62c6f2b3f9f05e 1-62
+plugfn/examples/example-01/backend/src/db/generated/plugfn-schema.ts
+  s_40dcb0ed3cafb7::t_a10aab635604bb 264,283
+plugfn/providers/src/forwarding/index.ts
+  s_40dcb0ed3cafb7::t_b0cf2c7d37dbb4 1-237
+plugfn/providers/src/imap-smtp/smtp-client.ts
+  s_40dcb0ed3cafb7::t_040ce6ff3acb49 1-129
+plugfn/providers/src/managed-mail/index.ts
+  s_40dcb0ed3cafb7::t_19b709e1943005 1-218
+plugfn/providers/tests/forwarding.test.ts
+  s_40dcb0ed3cafb7::t_548a96ac3036e2 1-128
+plugfn/providers/tests/managed-mail.test.ts
+  s_40dcb0ed3cafb7::t_568745d369a588 1-163
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6760f4059e838f14dc87886ff24e57f5107a5ad8",
+  "prompts": {},
+  "sessions": {
+    "s_40dcb0ed3cafb7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "71fcde14-b183-474e-be68-9cc55164540f",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,23 @@
+packages/evidence/README.md
+  s_5f33704dcdb36a::t_e7cb29fe0a9620 64,75
+packages/evidence/src/node.ts
+  s_5f33704dcdb36a::t_6d2bb999d06155 66-76,139,141,145-146,160-163
+packages/evidence/test/node.test.ts
+  s_5f33704dcdb36a::t_5131a374faefa7 44-57,162,166-179,342-377
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "04272f8afbbbe4db5b21991ebe5302800cfff5b9",
+  "prompts": {},
+  "sessions": {
+    "s_5f33704dcdb36a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3fd7a8d4-a9b4-4d74-a2db-223caae9071f",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
