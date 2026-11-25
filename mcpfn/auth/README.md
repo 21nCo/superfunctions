@@ -79,8 +79,9 @@ default. `maxBytes`, `timeoutMs`, and `maxRedirects` can tighten those bounds.
 A Client ID Metadata Document must contain a `client_id` equal to its URL, be
 served with a single `application/json` media type, and use
 `token_endpoint_auth_method` `none` (an omitted method means
-`client_secret_basic` and is refused). Registrations and documents whose `client_uri`, `logo_uri`,
-`tos_uri` or `policy_uri` is not an absolute `https://` URL are refused with
+`client_secret_basic` and is refused). In registrations and documents, `client_uri`, `logo_uri`,
+`tos_uri` and `policy_uri` may be omitted or `null`; any other value must be an
+absolute `https://` URL without credentials, or the client is refused with
 `invalid_client_metadata`. The `allow` policy sees only the URL: reject
 private, loopback and link-local hosts there.
 
