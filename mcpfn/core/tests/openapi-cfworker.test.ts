@@ -463,6 +463,8 @@ describe("fromOpenAPI under @cfworker/json-schema", () => {
       // closed member's `minProperties` forces `next` for the other member's recursion.
       Owned: { type: "object", allOf: [{ required: ["toString"] }, { properties: { toString: { type: "object" } } }, { patternProperties: { "^toString$": { $ref: "#/components/schemas/Owned" } } }] },
       // Two closed members admit only `next`, which `minProperties` then forces.
+      // A name declared false is never owned.
+      ...chain("X", 2_500, (next) => ({ type: "object", additionalProperties: false, minProperties: 1, properties: { next, dead: false } })),
       ...chain("I", 2_500, (next) => ({ type: "object", minProperties: 1, allOf: [
         { additionalProperties: false, properties: { next, a: { type: "integer" } } },
         { additionalProperties: false, properties: { next: true, b: { type: "integer" } } },
@@ -487,13 +489,14 @@ describe("fromOpenAPI under @cfworker/json-schema", () => {
           "/owned": { ...post("ownedInherited", { "application/json": ref("Owned") }), get: { operationId: "ownedInheritedOutput", responses: json({ $ref: "#/components/schemas/Owned" }) } },
           "/closed-all-of": post("closedAllOf", { "application/json": ref("ClosedAllOf") }),
           "/intersection": post("closedIntersection", { "application/json": ref("I0") }),
+          "/dead": post("closedDead", { "application/json": ref("X0") }),
         },
         components: { schemas },
       },
       { executor: recordingExecutor(), allowMutations: true },
     );
     expect(verdicts(result)).toEqual([
-      tooDeep("closedAllOf"), tooDeep("closedIntersection"), tooDeep("closedMin"), tooDeep("closedMinOutput"), tooDeep("ownedInherited"), tooDeep("ownedInheritedOutput"),
+      tooDeep("closedAllOf"), tooDeep("closedDead"), tooDeep("closedIntersection"), tooDeep("closedMin"), tooDeep("closedMinOutput"), tooDeep("ownedInherited"), tooDeep("ownedInheritedOutput"),
     ]);
     expect(result.tools.map(({ name, operation }) => [name, operation.requestBody?.contentType])).toEqual([
       ["closedMinFallback", "application/example+json"],
@@ -533,11 +536,13 @@ describe("fromOpenAPI under @cfworker/json-schema", () => {
     const more = fromOpenAPI(JSON.parse(JSON.stringify({
       openapi: "3.1.0",
       paths: {
+        "/required-any": { post: { operationId: "requiredAny", requestBody: { required: true, content: { "application/json": { schema: { ...any, required: ["PROTO"] } } } }, responses: { "204": { description: "Done" } } } },
         "/split": { post: { operationId: "splitBody", requestBody: { required: true, content: { "application/json": { schema: split } } }, responses: { "204": { description: "Done" } } } },
         "/any": { get: { operationId: "anyOutput", responses: json(any) } },
       },
     }).replaceAll("PROTO", "__proto__")) as Record<string, unknown>, { executor: recordingExecutor(), allowMutations: true });
-    expect(more.skipped).toEqual([]);
+    // Required, `true` would let the inherited value satisfy it.
+    expect(more.skipped.map(({ operation, code }) => [operation.operationId, code])).toEqual([["requiredAny", "unsupported-property-name"]]);
     const splitBody = createSchemaCompiler("cfworker").compile(tool(more.tools, "splitBody").inputSchema);
     expect([splitBody(JSON.parse('{"body":{"__proto__":"ok"}}')), splitBody({ body: {} })]).toEqual([true, false]);
     const anyOutput = createSchemaCompiler("cfworker").compile(tool(more.tools, "anyOutput").outputSchema!);

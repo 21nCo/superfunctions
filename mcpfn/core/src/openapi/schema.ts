@@ -1009,15 +1009,16 @@ export class SchemaConverter {
     if (this.engine() !== "cfworker") {
       throw new OpenApiSkip("unsupported-property-name", "property __proto__ cannot be declared: Ajv ignores it in properties");
     }
-    // `true` accepts the inherited value as it accepts any own one.
-    if (property === true) return;
+    const required = this.requiresInline(schema, "__proto__");
+    // An optional `true` accepts the inherited value as it accepts any own one.
+    if (property === true && !required) return;
     let objects = true;
     try {
       objects = this.admits(property).values.has("object");
     } catch (error) {
       if (error instanceof OpenApiSkip && !rememberable(error)) throw error;
     }
-    if (objects || !this.requiresInline(schema, "__proto__")) {
+    if (objects || !required) {
       throw new OpenApiSkip(
         "unsupported-property-name",
         "property __proto__ must be required and admit no object: the validator reads the inherited Object.prototype when it is absent",
@@ -1033,7 +1034,9 @@ export class SchemaConverter {
       const node = pending.pop();
       if (!isObject(node) || seen.has(node)) continue;
       seen.add(node);
-      this.total.chargeNodes(1);
+      // OpenAPI 3.0 ignores the siblings of a `$ref`.
+      if (this.version === "3.0" && node !== schema && "$ref" in node) continue;
+      this.total.chargeNodes(1 + arrayOf(node.required).length);
       if (arrayOf(node.required).includes(name)) return true;
       pending.push(...arrayOf(node.allOf));
     }
@@ -2254,7 +2257,8 @@ function conjunction(schema: JsonObject): Conjunction {
     result.nodes += arrayOf(node.required).length + arrayOf(node.type).length + declared.length;
     for (const [name, member] of declared) if (member !== true) owned.add(name);
     if (node.additionalProperties === false && objectEntries(node.patternProperties).length === 0) {
-      closed.push(declared.map(([name]) => name));
+      // A name declared `false` is never owned.
+      closed.push(declared.filter(([, member]) => member !== false).map(([name]) => name));
     }
     for (const name of arrayOf(node.required)) if (typeof name === "string") required.push(name);
     if (node.type !== undefined) result.types = narrowed(result.types, node.type);
