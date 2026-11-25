@@ -456,6 +456,30 @@ export function promptArguments<TContext>(
     : schemaPromptArguments(definition);
 }
 
+/** Most values (objects, arrays and scalars together) one tool call may carry. */
+const MAX_ARGUMENT_NODES = 100_000;
+
+function exceedsJsonNodes(value: unknown, limit: number): boolean {
+  let count = 0;
+  const stack: unknown[] = [value];
+  while (stack.length) {
+    const current = stack.pop();
+    count += 1;
+    if (count > limit) return true;
+    if (Array.isArray(current)) {
+      if (count + stack.length + current.length > limit) return true;
+      for (const item of current) stack.push(item);
+    } else if (current && typeof current === "object") {
+      for (const key in current) {
+        if (!Object.hasOwn(current, key)) continue;
+        if (count + stack.length + 1 > limit) return true;
+        stack.push((current as Record<string, unknown>)[key]);
+      }
+    }
+  }
+  return false;
+}
+
 export class McpFnRegistry<TContext = undefined> {
   private readonly schemaCompiler: SchemaCompiler;
   private readonly registrations: Array<(target: McpFnRegistry<TContext>) => void> = [];
@@ -931,27 +955,40 @@ export class McpFnRegistry<TContext = undefined> {
     issues?: ReturnType<typeof formatMcpFnSchemaIssues>;
   } {
     const normalizedArgs = args ?? {};
+    // Bound validation work before any schema engine runs: @cfworker/json-schema
+    // keeps reporting every extra property or tuple item even when it stops at
+    // the first failure elsewhere.
+    // Thrown, not returned: an oversized call never reaches
+    // handleInvalidArguments, so it can't be turned into a success.
+    if (exceedsJsonNodes(normalizedArgs, MAX_ARGUMENT_NODES)) {
+      throw new McpFnValidationError(`Invalid arguments for ${registered.definition.name}`, {
+        issues: [{
+          path: "/", instancePath: "/", schemaPath: "#", keyword: "maxNodes",
+          message: `Tool arguments may contain at most ${MAX_ARGUMENT_NODES} values`,
+        }],
+      });
+    }
     let issues: SchemaIssue[] | null | undefined;
     try {
-      if (!registered.validateInput(normalizedArgs)) issues = registered.validateInput.errors;
+      if (registered.validateInput(normalizedArgs)) {
+        return { args: normalizedArgs as Record<string, unknown> };
+      }
+      issues = registered.validateInput.errors;
     } catch (error) {
       // A validator that recurses per instance (@cfworker/json-schema) can
       // overflow the stack on a deeply nested value: reject it as invalid input.
       if (!isStackOverflow(error)) throw error;
       issues = [{ instancePath: "", keyword: "depth", message: "must not nest too deeply to validate" }];
     }
-    if (issues !== undefined) {
-      return {
-        args:
-          normalizedArgs &&
-          typeof normalizedArgs === "object" &&
-          !Array.isArray(normalizedArgs)
-            ? (normalizedArgs as Record<string, unknown>)
-            : {},
-        issues: formatMcpFnSchemaIssues(issues),
-      };
-    }
-    return { args: normalizedArgs as Record<string, unknown> };
+    return {
+      args:
+        normalizedArgs &&
+        typeof normalizedArgs === "object" &&
+        !Array.isArray(normalizedArgs)
+          ? (normalizedArgs as Record<string, unknown>)
+          : {},
+      issues: formatMcpFnSchemaIssues(issues),
+    };
   }
 
   async callTool(
@@ -1147,8 +1184,11 @@ export class McpFnRegistry<TContext = undefined> {
       const prompt = this.prompts.get(ref.name);
       if (!prompt)
         throw new McpFnValidationError(`Unknown MCP prompt: ${ref.name}`);
+      const completers = prompt.definition.complete;
+      if (!completers || !Object.hasOwn(completers, argument.name)) return empty;
+      // Called as a method so a completer keeps its `this`.
       return (
-        prompt.definition.complete?.[argument.name]?.(
+        completers[argument.name]?.(
           argument.value,
           completionContext,
           context,
@@ -1165,8 +1205,10 @@ export class McpFnRegistry<TContext = undefined> {
         `Unknown MCP resource template: ${ref.uri}`,
       );
     }
+    const completers = template.definition.complete;
+    if (!completers || !Object.hasOwn(completers, argument.name)) return empty;
     return (
-      template.definition.complete?.[argument.name]?.(
+      completers[argument.name]?.(
         argument.value,
         completionContext,
         context,

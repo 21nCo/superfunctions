@@ -1344,6 +1344,46 @@ function validateHostedCapabilities(
   }
 }
 
+const SHARED_SECRET_METHODS: ReadonlySet<string> = new Set([
+  "client_secret_basic",
+  "client_secret_post",
+  "client_secret_jwt",
+]);
+
+/**
+ * The token endpoint method a Client ID Metadata Document selects (draft,
+ * section 5): RFC 7591's client_secret_basic default does not apply. When
+ * token_endpoint_auth_methods_supported is present it must be a nonempty list
+ * of strings that includes any declared method, and none is selected whenever
+ * the list offers it. Undefined when the
+ * declarations are malformed or inconsistent.
+ */
+function clientMetadataDocumentAuthMethod(record: Record<string, unknown>): string | undefined {
+  const supported = record.token_endpoint_auth_methods_supported;
+  if (
+    supported !== undefined &&
+    (!Array.isArray(supported) || supported.length === 0 ||
+      !supported.every((method) => typeof method === "string"))
+  ) {
+    return undefined;
+  }
+  const methods = supported as string[] | undefined;
+  const declared = record.token_endpoint_auth_method;
+  // Draft section 4.1: a document never names a shared-secret method, in
+  // either field, even one the server would not select.
+  if ([declared, ...(methods ?? [])].some((method) => SHARED_SECRET_METHODS.has(method as string))) {
+    return undefined;
+  }
+  if (declared !== undefined && declared !== null) {
+    if (typeof declared !== "string") return undefined;
+    if (methods && !methods.includes(declared)) return undefined;
+  }
+  // With a list, the server selects from it (none when offered); without one,
+  // the declared method, or none when it is omitted.
+  if (methods) return methods.includes("none") ? "none" : (declared as string | undefined) ?? methods[0];
+  return typeof declared === "string" ? declared : "none";
+}
+
 async function resolveClient(
   options: McpFnAuthorizationCompatibilityOptions,
   clientId: string,
@@ -1366,7 +1406,9 @@ async function resolveClient(
       if (error instanceof McpFnHostedAuthorizationError) return null;
       throw error;
     }
-    return registration;
+    return registration.source === "dynamic" || registration.source === "client-metadata-document"
+      ? withoutUnsafeLinks(registration)
+      : registration;
   }
   if (!options.clientMetadataDocuments?.enabled) return null;
   let clientUrl: URL;
@@ -1378,10 +1420,24 @@ async function resolveClient(
   if (clientUrl.protocol !== "https:" || clientUrl.pathname === "/") return null;
   const raw = await fetchClientMetadataDocument(clientUrl, options.clientMetadataDocuments);
   const record = raw as Record<string, unknown>;
-  if (record.client_id !== undefined && record.client_id !== clientId) {
+  if (record.client_id !== clientId) {
     throw new McpFnHostedAuthorizationError(
       "invalid_client_metadata",
-      "Client ID Metadata Document client_id does not match its URL",
+      "Client ID Metadata Document client_id must equal its URL",
+    );
+  }
+  // A metadata document is public, so it cannot carry a shared secret.
+  const documentAuthMethod = clientMetadataDocumentAuthMethod(record);
+  if (documentAuthMethod === undefined) {
+    throw new McpFnHostedAuthorizationError(
+      "invalid_client_metadata",
+      "Client ID Metadata Document token endpoint authentication methods are malformed or inconsistent",
+    );
+  }
+  if (documentAuthMethod !== "none") {
+    throw new McpFnHostedAuthorizationError(
+      "invalid_client_metadata",
+      "Client ID Metadata Document clients must use token_endpoint_auth_method none",
     );
   }
   const registration = normalizeMcpClientRegistration({
@@ -1389,8 +1445,7 @@ async function resolveClient(
     source: "client-metadata-document",
     metadata: normalizeClientMetadata({
       ...(record as OAuthClientMetadata),
-      token_endpoint_auth_method:
-        (record as OAuthClientMetadata).token_endpoint_auth_method ?? "client_secret_basic",
+      token_endpoint_auth_method: documentAuthMethod,
     }, options.redirectPolicy),
     redirectPolicy: options.redirectPolicy,
   });
@@ -1417,6 +1472,35 @@ async function runBeforeClientResolution(
   }
 }
 
+const CLIENT_LINK_FIELDS = ["client_uri", "logo_uri", "tos_uri", "policy_uri"] as const;
+
+/**
+ * An absolute https:// URL without credentials. "https:host" would also
+ * parse, but a consent page would resolve it against its own origin.
+ */
+function isSafeClientLink(uri: unknown): boolean {
+  if (typeof uri !== "string" || !/^https:\/\//i.test(uri)) return false;
+  try {
+    const parsed = new URL(uri);
+    return parsed.protocol === "https:" && !parsed.username && !parsed.password;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Stored self-registered clients may predate the link checks: drop any link
+ * field that fails them rather than pass it to the host's consent handler.
+ */
+function withoutUnsafeLinks(registration: McpFnNormalizedClientRegistration): McpFnNormalizedClientRegistration {
+  const metadata = registration.metadata as Record<string, unknown>;
+  const unsafe = CLIENT_LINK_FIELDS.filter((field) => metadata[field] !== undefined && !isSafeClientLink(metadata[field]));
+  if (unsafe.length === 0) return registration;
+  const cleaned = { ...metadata };
+  for (const field of unsafe) delete cleaned[field];
+  return { ...registration, metadata: cleaned as typeof registration.metadata };
+}
+
 function normalizeClientMetadata(
   value: OAuthClientMetadata,
   redirectPolicy?: McpFnRedirectPolicy,
@@ -1424,9 +1508,26 @@ function normalizeClientMetadata(
   if (!value || typeof value !== "object") {
     throw new McpFnHostedAuthorizationError("invalid_client_metadata", "Client metadata must be an object");
   }
+  // Consent pages may render these links; accept only absolute https URLs.
+  for (const field of CLIENT_LINK_FIELDS) {
+    const uri = (value as Record<string, unknown>)[field];
+    // Some clients write unset optional fields as null: nothing to render.
+    if (uri === undefined || uri === null) continue;
+    if (!isSafeClientLink(uri)) {
+      throw new McpFnHostedAuthorizationError(
+        "invalid_client_metadata",
+        `${field} must be an https URL`,
+      );
+    }
+  }
+  // A null link is dropped, so callers see an omitted field (string | undefined).
+  const withoutNullLinks: Record<string, unknown> = { ...value };
+  for (const field of CLIENT_LINK_FIELDS) {
+    if (withoutNullLinks[field] === null) delete withoutNullLinks[field];
+  }
   try {
     return {
-      ...value,
+      ...(withoutNullLinks as OAuthClientMetadata),
       redirect_uris: Array.isArray(value.redirect_uris)
         ? value.redirect_uris.map((redirect) =>
           normalizeMcpRedirectUri(redirect, redirectPolicy))
@@ -1562,14 +1663,31 @@ async function assertClientMetadataResponse(response: Response): Promise<void> {
       "Client ID Metadata Document could not be loaded",
     );
   }
-  const contentType = response.headers.get("content-type")?.toLowerCase();
-  if (!contentType?.includes("application/json")) {
+  const contentType = response.headers.get("content-type") ?? "";
+  // Exactly one media type (combined duplicate headers contain a comma),
+  // whose essence is application/json; parameters are allowed.
+  const mediaType = singleMediaType(contentType);
+  if (mediaType !== "application/json") {
     await response.body?.cancel().catch(() => undefined);
     throw new McpFnHostedAuthorizationError(
       "invalid_client",
       "Client ID Metadata Document must use application/json",
     );
   }
+}
+
+/**
+ * The lower-cased media type of a Content-Type holding exactly one value, or
+ * undefined. The whole header must be one media type with optional
+ * token=token or token="quoted" parameters (empty parameter slots allowed,
+ * RFC 9110 §5.6.6), so combined duplicate headers
+ * (joined with commas) and stray quotes are refused.
+ */
+const SINGLE_MEDIA_TYPE =
+  /^\s*([!#$%&'*+.^_`|~0-9a-z-]+\/[!#$%&'*+.^_`|~0-9a-z-]+)\s*(?:;\s*(?:[!#$%&'*+.^_`|~0-9a-z-]+=(?:[!#$%&'*+.^_`|~0-9a-z-]+|"(?:[^"\\]|\\.)*")\s*)?)*$/i;
+
+function singleMediaType(contentType: string): string | undefined {
+  return SINGLE_MEDIA_TYPE.exec(contentType)?.[1]?.toLowerCase();
 }
 
 function clientMetadataTimeoutError(): McpFnHostedAuthorizationError {

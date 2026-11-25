@@ -194,7 +194,8 @@ describe("fromOpenAPI under @cfworker/json-schema", () => {
     );
     expect(verdicts(result)).toEqual([tooDeep("allOfMinItems"), tooDeep("allOfRequired"), tooDeep("allOfType")]);
     expect(result.tools.map(({ name }) => name)).toEqual(["anyOfRequired", "nullableAllOf", "crossRef"]);
-    const deep = { body: nested(200_000) };
+    // Stay below the argument node limit so the validator reaches its depth limit.
+    const deep = { body: nested(20_000) };
     await expect(result.registry.callTool("crossRef", deep, undefined, requestExtra())).rejects.toMatchObject({
       code: "MCPFN_INVALID_ARGUMENTS",
       details: { issues: [expect.objectContaining({ instancePath: "/", keyword: "depth" })] },
@@ -296,7 +297,7 @@ describe("fromOpenAPI under @cfworker/json-schema", () => {
       inputSchema: { type: "object", properties: { next: { $ref: "#/definitions/Node" } }, definitions: { Node: { type: "object", properties: { next: { $ref: "#/definitions/Node" } } } } },
       handler,
     });
-    const error = await registry.callTool("tree", nested(200_000), undefined, requestExtra()).catch((caught: unknown) => caught);
+    const error = await registry.callTool("tree", nested(20_000), undefined, requestExtra()).catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(McpFnValidationError);
     expect(error).toMatchObject({ details: { issues: [{ instancePath: "/", keyword: "depth", message: "must not nest too deeply to validate" }] } });
     await expect(registry.callTool("tree", nested(5), undefined, requestExtra())).resolves.toEqual({ content: [] });

@@ -3,6 +3,21 @@ import { describe, expect, it } from "vitest";
 import { createSchemaCompiler, formatMcpFnSchemaIssues, validateSchemaCollection } from "../src/validation.js";
 
 describe("schema validation engines", () => {
+  it("compiles a wide allOf with Ajv and still stops at the first invalid member", () => {
+    const member = { properties: { value: { type: "string" } } };
+    const allOf = Array.from({ length: 3_000 }, () => member);
+    const validate = createSchemaCompiler("ajv").compile({
+      type: "object",
+      allOf: [...allOf, { properties: { value: { minLength: 2 } } }],
+    });
+
+    expect(validate({ value: "ok" })).toBe(true);
+    expect(validate({ value: 0 })).toBe(false);
+    expect(validate.errors).toEqual([expect.objectContaining({ schemaPath: "#/allOf/0/properties/value/type" })]);
+    expect(validate({ value: "x" })).toBe(false);
+    expect(validate.errors).toEqual([expect.objectContaining({ schemaPath: "#/allOf/3000/properties/value/minLength" })]);
+  });
+
   it.each(["ajv", "cfworker"] as const)("reports structural property names with %s", engine => {
     const required = createSchemaCompiler(engine).compile({ type: "object", required: ['missing"field'] });
     expect(required({})).toBe(false);

@@ -165,6 +165,7 @@ const protectedHandlerPromise = handlerPromise.then((handler) =>
           token,
           clientId: "cloudflare-regression-client",
           scopes: ["tools:call"],
+          expiresAt: Math.floor(Date.now() / 1_000) + 300,
           resource,
         };
       },
