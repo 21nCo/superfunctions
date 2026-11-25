@@ -4,10 +4,11 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { memoryAdapter } from "@superfunctions/db/adapters";
 import { createDatafnServer } from "../src/server.js";
+import type { DatafnSchema } from "../src/core-types.js";
 
 const NAMESPACE = "datafn";
 
-const schema = {
+const schema: DatafnSchema = {
   resources: [
     {
       name: "people",
@@ -47,7 +48,11 @@ const schema = {
   ],
 };
 
-async function createHarness(serverSchema = schema, personFields: Record<string, unknown> = {}) {
+async function createHarness(
+  serverSchema = schema,
+  personFields: Record<string, unknown> = {},
+  allowUnknownResources = false,
+) {
   const db = memoryAdapter();
   await db.initialize?.();
   await db.create({
@@ -68,8 +73,9 @@ async function createHarness(serverSchema = schema, personFields: Record<string,
     namespace: NAMESPACE,
   });
   const server = await createDatafnServer({
-    schema: serverSchema as any,
+    schema: serverSchema,
     database: db,
+    allowUnknownResources,
     namespaceProvider: {
       getNamespace: () => NAMESPACE,
       getActorId: () => "ada" as any,
@@ -150,7 +156,7 @@ describe("predicate field authorization", () => {
         fields: [...people.fields, { name: "employer", type: "object", required: false }],
         permissions: {
           ...people.permissions,
-          read: { fields: [...people.permissions.read.fields, "employer"] },
+          read: { fields: [...(people.permissions?.read?.fields ?? []), "employer"] },
         },
       }, employers],
     }, { employer: { city: "Pune" } });
@@ -176,6 +182,21 @@ describe("predicate field authorization", () => {
     });
     expect(result.status).toBe(200);
     expect(result.body.result.data).toEqual([{ id: "per_1" }]);
+  });
+
+  it("keeps explicit target permissions when the root resource has no policy", async () => {
+    const [people, employers] = schema.resources;
+    const harness = await createHarness({
+      ...schema,
+      resources: [{ ...people, permissions: undefined }, employers],
+    }, {}, true);
+    server = harness.server;
+
+    const query = { resource: "people", version: 1, select: ["id"] };
+    const allowed = await harness.post("query", { ...query, filters: { "employer.name": "Acme" } });
+    const denied = await harness.post("query", { ...query, filters: { "employer.taxId": "test-tax-id" } });
+    expect(allowed.status).toBe(200);
+    expect(denied.status).toBe(403);
   });
 
   it("allows a readable guard and rejects an unreadable guard before the write", async () => {

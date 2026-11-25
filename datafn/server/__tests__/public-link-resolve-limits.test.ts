@@ -84,7 +84,12 @@ describe("public link resolve limits", () => {
 
   async function read(response: Response) {
     const raw = await response.text();
-    return { status: response.status, raw, body: raw ? JSON.parse(raw) : null };
+    return {
+      status: response.status,
+      raw,
+      body: raw ? JSON.parse(raw) : null,
+      allowOrigin: response.headers.get("access-control-allow-origin"),
+    };
   }
 
   function streamRequest(bytes: number): Request {
@@ -135,18 +140,25 @@ describe("public link resolve limits", () => {
 
   it("rejects an over-limit stream that has no Content-Length", async () => {
     const server = await start({ limits: { maxPayloadBytes: 32 } });
-    let middlewareRan = false;
+    let middlewareParsedBody = false;
     server.router.use(async (_request, _context, next) => {
-      middlewareRan = true;
+      const response = await next();
+      response.headers.set("access-control-allow-origin", "https://example.test");
+      return response;
+    });
+    server.router.use(async (_request, context, next) => {
+      await context.json();
+      middlewareParsedBody = true;
       return next();
     });
     const request = streamRequest(128);
     expect(request.headers.get("content-length")).toBeNull();
     const result = await read(await server.router.handle(request, {}));
     expect(result.status).toBe(413);
+    expect(result.allowOrigin).toBe("https://example.test");
     expect(result.body.error.code).toBe("LIMIT_EXCEEDED");
     expect(result.raw).not.toContain("Public link is invalid or revoked");
-    expect(middlewareRan).toBe(false);
+    expect(middlewareParsedBody).toBe(false);
   });
 
   it("resolves a valid token after middleware parses the bounded body", async () => {
@@ -227,7 +239,7 @@ describe("public link resolve limits", () => {
     const limited = await start({
       context: (request: Request) => {
         if (new URL(request.url).pathname.endsWith("/resolve")) resolveContextCalls++;
-        return { rateKey: "test-client" };
+        return {};
       },
       rateLimit: {
         enabled: true,
@@ -235,6 +247,12 @@ describe("public link resolve limits", () => {
         windowSeconds: 60,
         keyExtractor: (context: { rateKey: string }) => context.rateKey,
       },
+    });
+    limited.router.use(async (_request, context, next) => {
+      Object.assign(context, { rateKey: "test-client" });
+      const response = await next();
+      response.headers.set("access-control-allow-origin", "https://example.test");
+      return response;
     });
     const token = await createToken(limited);
     const first = await resolve(limited, token);
@@ -244,6 +262,7 @@ describe("public link resolve limits", () => {
     const second = await read(await limited.router.handle(exhausted));
     expect(second.status).toBe(429);
     expect(second.body.error.code).toBe("RATE_LIMITED");
+    expect(second.allowOrigin).toBe("https://example.test");
     expect(exhausted.bodyUsed).toBe(false);
     expect(resolveContextCalls).toBe(2);
 

@@ -1,5 +1,5 @@
 import type { Adapter, IndexedDirectoryRecord, IndexedDirectoryStoreAdapter } from "@superfunctions/db";
-import type { Route } from "@superfunctions/http";
+import { RouterError, type Route } from "@superfunctions/http";
 import {
   ensureBuiltinPublicLinks,
   resolveCapabilities,
@@ -7,7 +7,7 @@ import {
   type DatafnSchema,
 } from "@datafn/core";
 import { errorResponse, okResponse } from "../http/errors.js";
-import { readBodyWithLimit, readLimitedBody } from "../http/middleware.js";
+import { checkPayloadLimit, payloadTooLarge, readBodyWithLimit } from "../http/middleware.js";
 import {
   executeShare,
   getFailedSharePermissionRecord,
@@ -29,18 +29,74 @@ export type DatafnPublicLinkShareLevel = "viewer" | "editor" | "owner";
 export type DatafnPublicLinkShareScope = "record" | "resource";
 
 export const PUBLIC_LINK_RESOLVE_PATH = "/datafn/public-links/resolve";
-const boundedResolveRequests = new WeakSet<Request>();
+const boundedResolveBodies = new WeakMap<Request, { complete: boolean; rejection: Response | null }>();
 
-/** Preserve a bounded body for the router's middleware and its route handler. */
-export async function preparePublicLinkResolveRequest(
+class ResolveBodyError extends RouterError {
+  constructor(private readonly response: Response) {
+    super("Public-link resolve body rejected", response.status);
+  }
+
+  override toResponse(): Response {
+    return this.response;
+  }
+}
+
+/** Enforce the cap for every body reader without reading until one is used. */
+export function preparePublicLinkResolveRequest(
   request: Request,
   maxPayloadBytes: number,
-): Promise<Request | Response> {
-  const read = await readLimitedBody(request, maxPayloadBytes);
-  if (!read.ok) return read.response;
-  const bounded = request.body ? new Request(request, { body: read.bytes }) : request;
-  boundedResolveRequests.add(bounded);
+): Request {
+  const source = request.body;
+  const state = { complete: !source, rejection: checkPayloadLimit(request, maxPayloadBytes) };
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  let total = 0;
+  const body = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        if (state.rejection) throw new ResolveBodyError(state.rejection);
+        if (!source) {
+          controller.close();
+          return;
+        }
+        if (!reader) {
+          if (request.bodyUsed) throw new TypeError("Request body already consumed");
+          reader = source.getReader();
+        }
+        const { value, done } = await reader.read();
+        if (done) {
+          state.complete = true;
+          reader.releaseLock();
+          controller.close();
+          return;
+        }
+        total += value.byteLength;
+        if (total > maxPayloadBytes) {
+          state.rejection = payloadTooLarge(maxPayloadBytes);
+          void reader.cancel().catch(() => undefined);
+          throw new ResolveBodyError(state.rejection);
+        }
+        controller.enqueue(value);
+      } catch (error) {
+        reader?.releaseLock();
+        state.rejection ??= unreadableResolveBody();
+        controller.error(error instanceof ResolveBodyError ? error : new ResolveBodyError(state.rejection));
+      }
+    },
+    cancel(reason) {
+      if (reader) {
+        void reader.cancel(reason).catch(() => undefined);
+        reader.releaseLock();
+      }
+    },
+  }, { highWaterMark: 0 });
+  const init: RequestInit & { duplex: "half" } = { body, duplex: "half" };
+  const bounded = new Request(request, init);
+  boundedResolveBodies.set(bounded, state);
   return bounded;
+}
+
+function unreadableResolveBody(): Response {
+  return errorResponse({ code: "DFQL_INVALID", message: "Failed to read request body", details: { path: "$" } }, 400);
 }
 
 export interface DatafnPublicLinkRecord {
@@ -334,8 +390,12 @@ export function createDatafnPublicLinksPlugin<TSession = unknown>(
           meta: { datafnPlacement: publicLinkPlacement },
           handler: async (request, context) => {
             let body: unknown;
-            if (boundedResolveRequests.has(request)) {
+            const bounded = boundedResolveBodies.get(request);
+            if (bounded) {
+              if (bounded.rejection) return bounded.rejection;
               body = await context.json().catch(() => null);
+              if (bounded.rejection) return bounded.rejection;
+              if (!bounded.complete) return unreadableResolveBody();
             } else if (maxPayloadBytes !== undefined) {
               const read = await readBodyWithLimit(request, maxPayloadBytes);
               if (!read.ok) return read.response;

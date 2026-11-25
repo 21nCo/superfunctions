@@ -8,13 +8,15 @@ import {
   endpointList,
   evaluateFilter as coreEvaluateFilter,
   findRelationMatch,
+  getCapabilityFields,
   OP_REMAP,
   relationKeyFor,
   relationTargetEndpoint,
   relationFkFieldForManyOne,
+  resolveCapabilities,
   resolveEndpointResource,
 } from "@datafn/core";
-import type { DatafnFieldSchema } from "../../core-types.js";
+import type { DatafnFieldSchema, DatafnResourceSchema, DatafnSchema } from "../../core-types.js";
 import { DatafnExecutionError } from "../errors.js";
 import type { DataStore } from "../store.js";
 
@@ -24,17 +26,30 @@ const MAX_RELATION_FILTER_DEPTH = 10;
 type FilterResource = {
   name: string;
   fields: readonly { name: string; type?: DatafnFieldSchema["type"] }[];
+  capabilities?: DatafnResourceSchema["capabilities"];
 };
 
 type FilterSchema = {
   resources: readonly FilterResource[];
   relations?: readonly unknown[];
+  capabilities?: DatafnSchema["capabilities"];
 };
 
 /** A dot-path rooted in a declared structured field stays inside that field. */
 export function isNestedFilterField(resource: FilterResource | undefined, name: string): boolean {
   const field = resource?.fields.find((candidate) => candidate.name === name);
   return field?.type === "object" || field?.type === "json" || field?.type === "array" || field?.type === "file";
+}
+
+export function hasPredicateField(schema: FilterSchema, resource: FilterResource, name: string): boolean {
+  if (name === "id" || resource.fields.some((field) => field.name === name)) return true;
+  const relation = findRelation(schema, resource.name, name);
+  if (relation?.relation.type === "many-one" && relation.direction === "forward" &&
+      relationFkFieldForManyOne(relation.relation) === name) return true;
+  if (relation?.relation.type === "one-many" && relation.direction === "inverse" &&
+      (relation.relation.fkField || relation.relation.foreignKey || `${relation.relation.inverse}Id`) === name) return true;
+  return getCapabilityFields(resolveCapabilities(schema.capabilities, resource.capabilities))
+    .some((field) => field.name === name);
 }
 
 function normalizeOps(value: unknown): unknown {
@@ -56,6 +71,7 @@ function evaluateFieldFilter(
   resourceName: string,
   schema: FilterSchema,
   store: DataStore,
+  related: boolean,
   depth = 0,
 ): boolean {
   if (depth > MAX_RELATION_FILTER_DEPTH) {
@@ -66,12 +82,15 @@ function evaluateFieldFilter(
     );
   }
   const dot = key.indexOf(".");
-  if (dot === -1 || record[key.slice(0, dot)] != null) {
-    return coreEvaluateFilter(record, { [key]: value });
+  const head = dot === -1 ? key : key.slice(0, dot);
+  const source = related || dot !== -1
+    ? schema.resources.find((candidate) => candidate.name === resourceName)
+    : undefined;
+  const knownField = !related || (!!source && hasPredicateField(schema, source, head));
+  if (dot === -1 || (knownField && record[head] != null)) {
+    return coreEvaluateFilter(knownField ? record : Object.create(null), { [key]: value });
   }
 
-  const head = key.slice(0, dot);
-  const source = schema.resources.find((candidate) => candidate.name === resourceName);
   if (isNestedFilterField(source, head)) return false;
   const relation = findRelation(schema, resourceName, head);
   if (!relation) return false;
@@ -80,7 +99,7 @@ function evaluateFieldFilter(
     throw new DatafnExecutionError("DFQL_INVALID", "Unsafe relation filter path", "filters");
   }
   return getRelatedRecords(record, relation, store, resourceName, schema).some(({ resource, record: related }) =>
-    evaluateFieldFilter(related, tail, value, resource, schema, store, depth + 1),
+    evaluateFieldFilter(related, tail, value, resource, schema, store, true, depth + 1),
   );
 }
 
@@ -94,20 +113,21 @@ export function evaluateFilter(
   resourceName: string,
   schema: FilterSchema,
   store: any,
+  related = false,
 ): boolean {
   for (const [key, value] of Object.entries(filters)) {
     // Recurse $and/$or through server's evaluateFilter (handles nested quantifiers)
     if (key === "$and") {
       if (!Array.isArray(value)) return false;
       if (!(value as Record<string, unknown>[]).every((sub) =>
-        evaluateFilter(record, sub, resourceName, schema, store)
+        evaluateFilter(record, sub, resourceName, schema, store, related)
       )) return false;
       continue;
     }
     if (key === "$or") {
       if (!Array.isArray(value)) return false;
       if (!(value as Record<string, unknown>[]).some((sub) =>
-        evaluateFilter(record, sub, resourceName, schema, store)
+        evaluateFilter(record, sub, resourceName, schema, store, related)
       )) return false;
       continue;
     }
@@ -121,7 +141,7 @@ export function evaluateFilter(
       }
     }
 
-    if (!evaluateFieldFilter(record, key, normalizeOps(value), resourceName, schema, store)) {
+    if (!evaluateFieldFilter(record, key, normalizeOps(value), resourceName, schema, store, related)) {
       return false;
     }
   }
@@ -200,7 +220,7 @@ function evaluateRelationFilter(
   if (ops.$any) {
     const subFilter = ops.$any as Record<string, unknown>;
     return relatedRecords.some(({ record, resource }) =>
-      evaluateFilter(record, subFilter, resource, schema, store),
+      evaluateFilter(record, subFilter, resource, schema, store, true),
     );
   }
 
@@ -208,7 +228,7 @@ function evaluateRelationFilter(
     const subFilter = ops.$all as Record<string, unknown>;
     if (relatedRecords.length === 0) return false;
     return relatedRecords.every(({ record, resource }) =>
-      evaluateFilter(record, subFilter, resource, schema, store),
+      evaluateFilter(record, subFilter, resource, schema, store, true),
     );
   }
 
@@ -216,7 +236,7 @@ function evaluateRelationFilter(
     const subFilter = ops.$none as Record<string, unknown>;
     if (relatedRecords.length === 0) return true;
     return !relatedRecords.some(({ record, resource }) =>
-      evaluateFilter(record, subFilter, resource, schema, store),
+      evaluateFilter(record, subFilter, resource, schema, store, true),
     );
   }
 

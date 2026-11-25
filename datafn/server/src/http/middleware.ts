@@ -20,7 +20,7 @@ export function checkPayloadLimit(req: Request, maxBytes: number): Response | nu
   return null;
 }
 
-function payloadTooLarge(maxBytes: number): Response {
+export function payloadTooLarge(maxBytes: number): Response {
   return errorResponse({
     code: "LIMIT_EXCEEDED",
     message: "Request payload exceeds maximum size",

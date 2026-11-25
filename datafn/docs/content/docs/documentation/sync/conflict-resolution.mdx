@@ -9,7 +9,7 @@ Two clients write to the same row before either has pushed. When their mutations
 
 ## Default: last-writer-wins (LWW)
 
-The default policy is last successful write. The server stamps its own `updatedAt` as it applies each write, regardless of the client's timestamp. When two unguarded updates both succeed, both are acknowledged and the last write applied determines the stored value. Concurrent requests can finish in a different order from arrival.
+The default policy is last successful write. For resources with the `timestamps` capability, the server stamps its own `updatedAt` when it applies each write. When two unguarded updates both succeed, both are acknowledged and the last write applied determines the stored value, regardless of client timestamps. Concurrent requests can finish in a different order from arrival.
 
 This is the right answer for:
 

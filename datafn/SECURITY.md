@@ -21,7 +21,7 @@ Core data routes (/datafn/query, /mutation, /transact, /push, …):
 Plugin routes (for example /datafn/public-links/resolve):
   These do not pass through the core withAuth chain, so they do not run the authorize callback.
   When rateLimit.enabled is set, they use that same limiter, keyed by the route path.
-  Without placement, the router runs the configured rate check and bounds the public-link resolve body before its middleware runs.
+  Without placement, the public-link resolve stream is bounded before it is exposed to middleware.
   With placement, the placement runtime applies its own streaming cap before namespace resolution.
 ```
 

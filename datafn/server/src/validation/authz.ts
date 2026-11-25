@@ -28,7 +28,7 @@ import {
 import type { CapabilityEntry, ShareableCapability } from "@datafn/core";
 import { canonicalizeActorPrincipal, resolveEffectivePrincipals } from "../execution/auth/principal-resolver.js";
 import { resolveEffectiveLevel, type AccessGrant } from "../execution/auth/access-resolver.js";
-import { isNestedFilterField } from "../execution/query/filters.js";
+import { hasPredicateField, isNestedFilterField } from "../execution/query/filters.js";
 import {
   getSpv2MigrationRuntimeConfig,
   resolveAccessLevelFromLegacyV1,
@@ -225,6 +225,17 @@ export function validateQueryAuthz(
   }
 
   const policy = resolvePermissions(schema, resource);
+  const checkPredicate = (key: "filters" | "having") => {
+    const filter = query[key];
+    if (!filter || typeof filter !== "object" || Array.isArray(filter)) return { ok: true } as const;
+    const { capabilityFields } = getCapabilityFieldSets(schema, resource);
+    const result = extractFieldsFromFilter(
+      filter as Record<string, unknown>, resource, policy, capabilityFields, schema, opts?.allowUnknownResources,
+    );
+    return key === "having" && !result.ok
+      ? { ...result, path: `having.${result.path.replace(/^filters\./, "")}` }
+      : result;
+  };
   if (!policy) {
     // VAL-001: Deny-by-default — resources without a policy are FORBIDDEN unless escape hatch enabled
     if (!opts?.allowUnknownResources) {
@@ -238,7 +249,9 @@ export function validateQueryAuthz(
         path: "resource",
       };
     }
-    return { ok: true };
+    // The missing-policy exception applies to this resource's fields only.
+    const filters = checkPredicate("filters");
+    return filters.ok ? checkPredicate("having") : filters;
   }
 
   const { capabilityFields } = getCapabilityFieldSets(schema, resource);
@@ -313,18 +326,8 @@ export function validateQueryAuthz(
   }
 
   // Validate filter fields
-  if (query.filters && typeof query.filters === "object") {
-    const filterFieldsResult = extractFieldsFromFilter(
-      query.filters as Record<string, unknown>,
-      resource,
-      policy,
-      capabilityFields,
-      schema,
-    );
-    if (!filterFieldsResult.ok) {
-      return filterFieldsResult;
-    }
-  }
+  const filters = checkPredicate("filters");
+  if (!filters.ok) return filters;
 
   const readFields = policy.read?.fields || [];
   const temporalAliases = getTemporalGroupAliases(query);
@@ -379,18 +382,8 @@ export function validateQueryAuthz(
   }
 
   // SEC-003: Validate having clause (recursive field extraction)
-  if (query.having && typeof query.having === "object" && !Array.isArray(query.having)) {
-    const havingResult = extractFieldsFromFilter(
-      query.having as Record<string, unknown>,
-      resource,
-      policy,
-      capabilityFields,
-      schema,
-    );
-    if (!havingResult.ok) {
-      return { ...havingResult, path: `having.${havingResult.path.replace(/^filters\./, "")}` };
-    }
-  }
+  const having = checkPredicate("having");
+  if (!having.ok) return having;
 
   // SEC-003: Validate sort fields
   if (query.sort && Array.isArray(query.sort)) {
@@ -470,7 +463,9 @@ function authorizeRelationFilter(
   key: string,
   value: unknown,
   resource: DatafnResourceSchema,
+  policy: DatafnPermissionsPolicy | undefined,
   schema: DatafnSchema | undefined,
+  allowUnknownResources: boolean,
 ): "scalar" | { ok: true } | AuthzError {
   if (!schema) return "scalar";
   const parts = key.split(".");
@@ -489,7 +484,7 @@ function authorizeRelationFilter(
   // A stored field can shadow a relation in a dot-path. A declared FK can
   // also expose its association through a quantifier. Check source and target.
   const hasSourceField = resource.fields.some((field) => field.name === head);
-  if ((hasSourceField || (!quantifier && fkNamed)) && !canReadField(schema, resource, head)) {
+  if (policy && (hasSourceField || (!quantifier && fkNamed)) && !canReadField(schema, resource, head)) {
     return {
       ok: false,
       code: "FORBIDDEN",
@@ -506,7 +501,8 @@ function authorizeRelationFilter(
       for (const targetName of targets) {
         const target = getResourceSchema(schema, targetName);
         if (!target) continue;
-        const targetPolicy = resolvePermissions(schema, target) ?? { read: { fields: [] } };
+        const targetPolicy = resolvePermissions(schema, target) ??
+          (allowUnknownResources ? undefined : { read: { fields: [] } });
         const { capabilityFields: targetFields } = getCapabilityFieldSets(schema, target);
         const result = extractFieldsFromFilter(
           sub as Record<string, unknown>,
@@ -514,6 +510,7 @@ function authorizeRelationFilter(
           targetPolicy,
           targetFields,
           schema,
+          allowUnknownResources,
         );
         if (!result.ok) {
           return {
@@ -537,10 +534,9 @@ function authorizeRelationFilter(
         ? []
         : resolveRelationTargetResources(schema, name, segment);
       // An endpoint may read a stored field even when another endpoint follows a relation.
-      const readsField = related.length === 0 ||
-        current?.fields.some((field) => field.name === segment) ||
-        isForeignKeyNamedManyOne(schema, name, segment);
-      if (!current || (readsField && !canReadField(schema, current, segment))) {
+      const needsReadCheck = current && hasPredicateField(schema, current, segment) &&
+        (!allowUnknownResources || resolvePermissions(schema, current));
+      if (!current || (needsReadCheck && !canReadField(schema, current, segment))) {
         return {
           ok: false,
           code: "FORBIDDEN",
@@ -563,11 +559,12 @@ function authorizeRelationFilter(
 function extractFieldsFromFilter(
   filter: Record<string, unknown>,
   resource: DatafnResourceSchema,
-  policy: DatafnPermissionsPolicy,
+  policy: DatafnPermissionsPolicy | undefined,
   capabilityFields: Set<string>,
   schema?: DatafnSchema,
+  allowUnknownResources = false,
 ): { ok: true } | AuthzError {
-  const readFields = policy.read?.fields || [];
+  const readFields = policy?.read?.fields || [];
 
   for (const [key, value] of Object.entries(filter)) {
     // Skip logical operators
@@ -581,6 +578,7 @@ function extractFieldsFromFilter(
               policy,
               capabilityFields,
               schema,
+              allowUnknownResources,
             );
             if (!result.ok) return result;
           }
@@ -593,7 +591,7 @@ function extractFieldsFromFilter(
     const baseField = parts[0];
     if (!baseField) continue;
 
-    const relationResult = authorizeRelationFilter(key, value, resource, schema);
+    const relationResult = authorizeRelationFilter(key, value, resource, policy, schema, allowUnknownResources);
     if (relationResult !== "scalar") {
       if (!relationResult.ok) return relationResult;
       continue;
@@ -608,7 +606,7 @@ function extractFieldsFromFilter(
                     (!!schema && parts.length === 1 &&
                       isForeignKeyNamedManyOne(schema, resource.name, baseField));
 
-    if (isField && !readFields.includes(baseField)) {
+    if (policy && isField && !readFields.includes(baseField)) {
       return {
         ok: false,
         code: "FORBIDDEN",
@@ -649,12 +647,9 @@ export function validateMutationAuthz(
         path: "resource",
       };
     }
-    return { ok: true };
   }
 
   const { capabilityFields, readonlyCapabilityFields } = getCapabilityFieldSets(schema, resource);
-
-  const writeFields = policy.write?.fields || [];
 
   // Guards read stored values. A field the caller cannot read must not be a predicate.
   if (opts?.evaluateGuard !== false &&
@@ -665,6 +660,7 @@ export function validateMutationAuthz(
       policy,
       capabilityFields,
       schema,
+      opts?.allowUnknownResources,
     );
     if (!guardResult.ok) {
       return {
@@ -673,6 +669,9 @@ export function validateMutationAuthz(
       };
     }
   }
+
+  if (!policy) return { ok: true };
+  const writeFields = policy.write?.fields || [];
 
   // Validate record fields for insert/merge/replace operations
   if (mutation.record && typeof mutation.record === "object") {
