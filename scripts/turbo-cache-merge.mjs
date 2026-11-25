@@ -6,9 +6,9 @@
 // replayed, so its entry is not saved. Each Turbo step runs with `--summarize`, then records (`--record <step>`) its
 // run summary, the cache directory's files and a drift snapshot (changed tracked and untracked unignored files, each
 // with a content hash); `--baseline` records the same before any task runs. Before saving, the merge deletes every
-// entry that first appeared during a step whose snapshot changed outside the declared outputs of the tasks in that
-// step's own summary (a replay of the step restores only those), every entry of a step without a readable summary,
-// listing or snapshot, and every entry no step recorded.
+// entry that first appeared during a step whose snapshot changed outside the declared outputs of the tasks that step
+// ran (cache MISS in its own summary; a replayed task restores only its archived outputs), every entry of a step
+// without a readable summary, listing or snapshot, and every entry no step recorded.
 // Drift only warns: the cache never changes a job's result.
 //
 // Merge. Runs that must verify every task (pushes, the nightly run, manual runs) replay nothing, yet the entry they
@@ -37,8 +37,9 @@ export function entryHash(fileName) {
   return ENTRY_FILE.exec(fileName)?.[1] ?? null;
 }
 
-// The tasks of a Turbo run summary or `--dry=json` output, each with a task hash and a directory. A summary without
-// tasks would prune every restored entry, so it is an error rather than an empty list.
+// The tasks of a Turbo run summary or `--dry=json` output, each with a task hash, a directory and its cache status
+// ("HIT" when Turbo replayed it, "MISS" when it ran). A summary without tasks would prune every restored entry, so it
+// is an error rather than an empty list.
 export function readSummaryTasks(json, what) {
   let summary;
   try {
@@ -54,7 +55,7 @@ export function readSummaryTasks(json, what) {
       throw new Error(`the ${what} gives task ${JSON.stringify(task?.taskId)} no task hash or directory`);
     }
     const { taskId, directory, outputs, excludedOutputs } = task;
-    return { taskId, hash, directory, outputs, excludedOutputs };
+    return { taskId, hash, directory, outputs, excludedOutputs, cacheStatus: task.cache?.status ?? null };
   });
 }
 
@@ -230,15 +231,15 @@ export function readRecords(stepsDir) {
 }
 
 // Why a step's new entries cannot be saved ({ reason, drift }), or null: its record has no readable summary or no
-// snapshot to compare with `previous`, or a file changed during the step that no task of the step's own summary
-// declares as an output. Only the step's own tasks count, since replaying the step restores only their outputs: a file
-// an earlier step's task declares but a later step rewrites would keep the earlier content on replay.
+// snapshot to compare with `previous`, or a file changed during the step that no task the step ran (cache MISS in its
+// own summary) declares as an output. A replayed task (HIT), whether in this step or an earlier one, restores its
+// archived outputs, not what another task of the step wrote over them, so its declarations excuse nothing.
 function stepTaint(step, previous) {
   if (!Array.isArray(step.tasks)) return { reason: "no readable Turbo run summary", drift: [] };
   if (!step.snapshot || !previous) return { reason: "no drift snapshot", drift: [] };
   let isOutput;
   try {
-    isOutput = declaredOutputMatcher(step.tasks);
+    isOutput = declaredOutputMatcher(step.tasks.filter((task) => task.cacheStatus === "MISS"));
   } catch (error) {
     return { reason: error.message, drift: [] };
   }
@@ -392,8 +393,8 @@ function main() {
     for (const file of drift) {
       console.log(
         `::warning file=${annotationProperty(file)},title=Changed outside Turbo outputs::The ${step} step changed ` +
-          "this file, which no task declares as an output, so a replay would not restore it. Its cache entries are " +
-          "not saved. Commit the regenerated file or declare it as an output."
+          "this file, which no task the step ran declares as an output, so a replay would not restore it. Its " +
+          "cache entries are not saved. Commit the regenerated file or declare it as an output of the task writing it."
       );
     }
   }

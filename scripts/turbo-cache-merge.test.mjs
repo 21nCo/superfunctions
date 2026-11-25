@@ -166,6 +166,7 @@ test("a summary's tasks are read, and a summary without tasks, hashes or directo
     directory: "pkg-1",
     outputs: ["dist/**"],
     excludedOutputs: undefined,
+    cacheStatus: "HIT",
   });
   assert.throws(() => readSummaryTasks("turbo 2.6.1\n{}", "dry run"), /dry run is not JSON/);
   assert.throws(() => readSummaryTasks(JSON.stringify({ tasks: [] }), "dry run"), /lists no tasks/);
@@ -260,34 +261,40 @@ test("only the entries that first appeared in a step that changed files outside 
   }
 });
 
-test("only files the step's own summarised tasks declare as outputs are not drift", () => {
+test("only files a task the step ran declares as an output are not drift", () => {
   const buildTask = {
     taskId: "ui#build",
     hash: BUILD,
     directory: "ui",
     outputs: ["src/*.generated.ts", "dist/**"],
     excludedOutputs: ["dist/skip/**"],
+    cacheStatus: "MISS",
   };
   const buildTasks = [buildTask];
   const snapshot = { "ui/src/catalog.generated.ts": "v2", "ui/dist/index.js": "v2" };
   const rewritten = { ...snapshot, "ui/src/catalog.generated.ts": "v3" };
-  // Typecheck rewrites a file only the earlier build declares; replaying typecheck would leave the build's v2.
+  const typecheck = { taskId: "app#typecheck", hash: TYPECHECK, directory: "app", cacheStatus: "MISS" };
   const built = step("build", files(BUILD), snapshot, buildTasks);
-  const records = [baseline(), built, step("typecheck", files(BUILD, TYPECHECK), rewritten)];
-  const { tainted, reports } = taintedEntries(records, files(BUILD, TYPECHECK));
-  assert.deepEqual([...tainted], [TYPECHECK]);
-  assert.deepEqual(reports, [
-    {
-      step: "typecheck",
-      reason: "files changed outside the declared outputs",
-      drift: ["ui/src/catalog.generated.ts"],
-      entries: 1,
-    },
-  ]);
-  // A step whose own summary replays the build restores its declared outputs, so that change is not drift.
-  const replaying = [...buildTasks, { taskId: "app#typecheck", hash: TYPECHECK, directory: "app" }];
-  const replayed = [baseline(), built, step("typecheck", files(BUILD, TYPECHECK), rewritten, replaying)];
-  assert.deepEqual([...taintedEntries(replayed, files(BUILD, TYPECHECK)).tainted], []);
+  const report = {
+    step: "typecheck",
+    reason: "files changed outside the declared outputs",
+    drift: ["ui/src/catalog.generated.ts"],
+    entries: 1,
+  };
+  // Typecheck rewrites a file only the build declares, whether the build is absent from its summary or only replayed
+  // there (HIT): replaying typecheck would leave the build's archived v2, so its entry is tainted and the build's kept.
+  for (const tasks of [[typecheck], [{ ...buildTask, cacheStatus: "HIT" }, typecheck]]) {
+    const records = [baseline(), built, step("typecheck", files(BUILD, TYPECHECK), rewritten, tasks)];
+    const { tainted, reports } = taintedEntries(records, files(BUILD, TYPECHECK));
+    assert.deepEqual([...tainted], [TYPECHECK], JSON.stringify(tasks));
+    assert.deepEqual(reports, [report]);
+  }
+  // A file the build declares, written while the build ran in this step, is not drift.
+  const ranAgain = [baseline(), built, step("typecheck", files(BUILD, TYPECHECK), rewritten, [buildTask, typecheck])];
+  assert.deepEqual([...taintedEntries(ranAgain, files(BUILD, TYPECHECK)).tainted], []);
+  // Nor is a summary task without a cache status (fail closed: only a MISS excuses a file).
+  const unknown = [baseline(), step("build", files(BUILD), snapshot, [{ ...buildTask, cacheStatus: null }])];
+  assert.deepEqual([...taintedEntries(unknown, files(BUILD)).tainted], [BUILD]);
 
   const excluded = [baseline(), step("build", files(BUILD), { ...snapshot, "ui/dist/skip/x.js": "v1" }, buildTasks)];
   const excludedResult = taintedEntries(excluded, files(BUILD));
@@ -299,7 +306,7 @@ test("missing evidence taints: no summary, no listing, no snapshot, no record or
   const built = files(BUILD);
   const both = files(BUILD, TYPECHECK);
   const TC = TYPECHECK;
-  const malformed = [{ taskId: "x#build", hash: BUILD, directory: "x", outputs: [7] }];
+  const malformed = [{ taskId: "x#build", hash: BUILD, directory: "x", outputs: [7], cacheStatus: "MISS" }];
   const cases = [
     ["no readable Turbo run summary", [baseline(), step("build", built, {}, null)], built, [BUILD]],
     // Without the build's listing, its entries first show up in the typecheck record, which is tainted for them.
