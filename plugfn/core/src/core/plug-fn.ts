@@ -44,6 +44,7 @@ import {
   createConnectionManagerOAuthDependencies,
 } from './connection-manager.js';
 import { ActionExecutor } from './action-executor.js';
+import { deriveCacheBindingKey } from '../middleware/caching.js';
 import { WorkflowEngine } from './workflow-engine.js';
 import { WebhookHandler } from '../webhooks/webhook-handler.js';
 import { AdapterConnectionStorage } from '../storage/connection-storage.js';
@@ -341,6 +342,7 @@ export function plugFn(config: PlugFnConfig): PlugFn {
       cacheStore: config.cache?.store ?? config.cacheStore,
       cacheTtl: config.cache?.ttl ?? config.cache?.defaultTTL,
       cacheKeyPrefix: config.cache?.keyPrefix,
+      cacheBindingKey: deriveCacheBindingKey(config.encryptionKey),
       respectProviderLimits: config.rateLimit?.respectProviderLimits,
       globalRateLimit: config.rateLimit?.global,
       rateLimitStore: config.rateLimit?.atomicStore,

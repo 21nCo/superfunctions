@@ -16,7 +16,7 @@ import { ConnectionManager } from './connection-manager.js';
 import { ProviderRegistry } from './provider-registry.js';
 import { RetryMiddleware } from '../middleware/retry.js';
 import { RateLimiter } from '../middleware/rate-limiter.js';
-import { CacheMiddleware, credentialFingerprint } from '../middleware/caching.js';
+import { CacheMiddleware, credentialBinding, randomCacheBindingKey } from '../middleware/caching.js';
 import { LoggingMiddleware } from '../middleware/logging.js';
 import { MetricsMiddleware } from '../middleware/metrics.js';
 import { FetchHttpClient } from '../utils/request.js';
@@ -38,6 +38,7 @@ export class ActionExecutor {
   private readonly enableRetry: boolean;
   private readonly enableRateLimit: boolean;
   private readonly enableCache: boolean;
+  private readonly cacheBindingKey: Uint8Array;
   private readonly enableLogging: boolean;
   private readonly enableMetrics: boolean;
   private readonly respectProviderLimits: boolean;
@@ -58,6 +59,12 @@ export class ActionExecutor {
       cacheStore?: KVStoreAdapter;
       cacheTtl?: number;
       cacheKeyPrefix?: string;
+      /**
+       * Server-side key that binds cache entries to credentials (see
+       * deriveCacheBindingKey). Without one, a random per-executor key is used,
+       * so entries are not shared with other executors on a shared store.
+       */
+      cacheBindingKey?: Uint8Array;
       respectProviderLimits?: boolean;
       globalRateLimit?: RateLimitConfig;
       rateLimitStore?: AtomicKVStoreAdapter;
@@ -71,6 +78,7 @@ export class ActionExecutor {
       store: _options.cacheStore,
       keyPrefix: _options.cacheKeyPrefix,
     });
+    this.cacheBindingKey = _options.cacheBindingKey ?? randomCacheBindingKey();
     this.loggingMiddleware = new LoggingMiddleware(logger, _options.database);
     this.metricsMiddleware = new MetricsMiddleware();
     this.maxConcurrentSyncPerConnection = Math.max(1, _options.maxConcurrentSyncPerConnection ?? 1);
@@ -153,10 +161,10 @@ export class ActionExecutor {
       // Bind the cache entry to the exact credential and granted scopes used
       // for this dispatch, so a replaced or narrowed credential on the same
       // connection never reads, or races a late write into, an older entry.
-      const fingerprint = shouldUseCache
-        ? await credentialFingerprint(credentials, grantedScopes)
+      const binding = shouldUseCache
+        ? credentialBinding(this.cacheBindingKey, credentials, grantedScopes)
         : undefined;
-      const cacheKey = fingerprint !== undefined
+      const cacheKey = binding !== undefined
         ? typeof options.cache === 'object' && options.cache.key
           ? this.cacheMiddleware.generateCustomKey(
               provider,
@@ -164,7 +172,7 @@ export class ActionExecutor {
               options.cache.key,
               options.userId,
               connection.id,
-              fingerprint
+              binding
             )
           : this.cacheMiddleware.generateKey(
               provider,
@@ -172,7 +180,7 @@ export class ActionExecutor {
               validatedParams,
               options.userId,
               connection.id,
-              fingerprint
+              binding
             )
         : undefined;
 

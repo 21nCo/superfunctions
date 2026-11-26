@@ -1,20 +1,24 @@
-import { describe, expect, it, vi } from 'vitest';
+import { createHash } from 'node:crypto';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { KVStoreAdapter } from '@superfunctions/db';
 import { ActionExecutor } from '../src/core/action-executor.js';
+import { deriveCacheBindingKey } from '../src/middleware/caching.js';
 import { mockProvider, mockResponse } from '../src/testing/index.js';
 
 // SFNS-107 architecture reset: an executor cache entry is bound to the exact
 // credential and granted scopes that produced it, for parameter-derived and
 // custom keys alike, so a replaced or narrowed credential on the same
-// connection never reads data cached under the earlier one.
+// connection never reads data cached under the earlier one. The binding is a
+// keyed HMAC (node:crypto), so the key is no offline verifier for the
+// credential and needs no global WebCrypto (absent on Node 18).
 
 type Credentials = { type: 'oauth2'; accessToken: string };
 
-function setup() {
+function setup(options: { cacheBindingKey?: Uint8Array; entries?: Map<string, string> } = {}) {
   let credentials: Credentials = { type: 'oauth2', accessToken: 'test-token-before' };
   let scopes = ['read', 'write'];
   const keys: string[] = [];
-  const entries = new Map<string, string>();
+  const entries = options.entries ?? new Map<string, string>();
   const store: KVStoreAdapter = {
     async get(key) {
       return entries.get(key) ?? null;
@@ -50,6 +54,7 @@ function setup() {
     enableRateLimit: false,
     enableRetry: false,
     cacheStore: store,
+    cacheBindingKey: options.cacheBindingKey,
   });
   return {
     executor,
@@ -121,6 +126,56 @@ describe.each([
     expect(seen).toHaveLength(1);
     expect(keys).toHaveLength(1);
     expect(keys[0]).not.toContain('test-token-before');
-    expect(keys[0]).toMatch(/:credential-sha256=[a-f0-9]{64}:/);
+    expect(keys[0]).toMatch(/:credential-hmac=[a-f0-9]{64}:/);
+  });
+});
+
+describe('ActionExecutor credential binding', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  // Test-only encryption keys: obviously fake, valid 32-byte hex shape.
+  const encryptionKeyA = '0'.repeat(63) + '1';
+  const encryptionKeyB = '0'.repeat(63) + '2';
+
+  it('carries a keyed digest, not the plain SHA-256 of the credential and scopes', async () => {
+    const { executor, keys } = setup({ cacheBindingKey: deriveCacheBindingKey(encryptionKeyA) });
+    await executor.execute('test', 'getProfile', read(true));
+
+    const canonical = JSON.stringify({
+      credentials: { accessToken: 'test-token-before', type: 'oauth2' },
+      scopes: ['read', 'write'],
+    });
+    const unkeyed = createHash('sha256').update(canonical).digest('hex');
+    const segment = /:credential-hmac=([a-f0-9]{64}):/.exec(keys[0])?.[1];
+    expect(segment).toBeDefined();
+    expect(segment).not.toBe(unkeyed);
+    expect(keys[0]).not.toContain(unkeyed);
+    expect(keys[0]).not.toContain('test-token-before');
+    expect(keys[0]).not.toContain(encryptionKeyA);
+  });
+
+  it('works without a global WebCrypto', async () => {
+    vi.stubGlobal('crypto', undefined);
+    expect(globalThis.crypto).toBeUndefined();
+    const { executor, seen } = setup({ cacheBindingKey: deriveCacheBindingKey(encryptionKeyA) });
+
+    await executor.execute('test', 'getProfile', read(true));
+    const second = await executor.execute('test', 'getProfile', read(true));
+    expect(second.cached).toBe(true);
+    expect(seen).toHaveLength(1);
+  });
+
+  it('shares entries only between executors keyed from the same encryption key', async () => {
+    const entries = new Map<string, string>();
+    const first = setup({ cacheBindingKey: deriveCacheBindingKey(encryptionKeyA), entries });
+    await first.executor.execute('test', 'getProfile', read(true));
+
+    const sameKey = setup({ cacheBindingKey: deriveCacheBindingKey(encryptionKeyA), entries });
+    expect((await sameKey.executor.execute('test', 'getProfile', read(true))).cached).toBe(true);
+
+    const otherKey = setup({ cacheBindingKey: deriveCacheBindingKey(encryptionKeyB), entries });
+    expect((await otherKey.executor.execute('test', 'getProfile', read(true))).cached).toBe(false);
   });
 });

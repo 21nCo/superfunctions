@@ -1,14 +1,35 @@
 import type { CacheOptions } from '../types/action.js';
 import type { Logger } from '../types/action.js';
 import type { KVStoreAdapter } from '@superfunctions/db';
-import { hash } from '../utils/crypto.js';
+import { createHmac, randomBytes } from 'node:crypto';
+import { hash, validateEncryptionKey } from '../utils/crypto.js';
 
-function credentialSegment(fingerprint: string | undefined): string {
-  if (fingerprint === undefined) return '';
-  if (!/^[a-f0-9]{64}$/.test(fingerprint)) {
-    throw new TypeError('credentialFingerprint must be a SHA-256 hex digest');
+function credentialSegment(binding: string | undefined): string {
+  if (binding === undefined) return '';
+  if (!/^[a-f0-9]{64}$/.test(binding)) {
+    throw new TypeError('credentialBinding must be an HMAC-SHA-256 hex digest');
   }
-  return `:credential-sha256=${fingerprint}`;
+  return `:credential-hmac=${binding}`;
+}
+
+const CACHE_BINDING_LABEL = 'plugfn/action-cache/credential-binding/v1';
+const CACHE_BINDING_KEY_BYTES = 32;
+
+/**
+ * Derive the server-side key that binds cache entries to credentials from the
+ * configured PlugFn encryption key, under a fixed label, so the encryption key
+ * itself is never used for anything but token encryption.
+ */
+export function deriveCacheBindingKey(encryptionKey: string): Uint8Array {
+  validateEncryptionKey(encryptionKey);
+  return createHmac('sha256', Buffer.from(encryptionKey, 'hex'))
+    .update(CACHE_BINDING_LABEL)
+    .digest();
+}
+
+/** A random binding key, for executors built without a configured secret. */
+export function randomCacheBindingKey(): Uint8Array {
+  return randomBytes(CACHE_BINDING_KEY_BYTES);
 }
 
 function canonicalJson(value: unknown): string {
@@ -26,22 +47,23 @@ function canonicalJson(value: unknown): string {
 }
 
 /**
- * SHA-256 (WebCrypto, hex) of the canonical credential and the sorted set of
- * granted scopes. Cache keys carry only this digest, never the secret itself.
+ * Keyed HMAC-SHA-256 (hex) of the canonical credential and the sorted set of
+ * granted scopes. Without the server-side binding key, a cache key or log line
+ * that carries this value cannot be used to test guesses for the credential.
  */
-export async function credentialFingerprint(
+export function credentialBinding(
+  bindingKey: Uint8Array,
   credentials: unknown,
   scopes: readonly string[] | undefined
-): Promise<string> {
+): string {
+  if (!(bindingKey instanceof Uint8Array) || bindingKey.length < CACHE_BINDING_KEY_BYTES) {
+    throw new TypeError('cache binding key must be at least 32 bytes');
+  }
   const canonical = canonicalJson({
     credentials,
     scopes: [...new Set(scopes ?? [])].sort(),
   });
-  const digest = await globalThis.crypto.subtle.digest(
-    'SHA-256',
-    new TextEncoder().encode(canonical)
-  );
-  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+  return createHmac('sha256', bindingKey).update(canonical, 'utf8').digest('hex');
 }
 
 interface CacheEntry {
@@ -188,9 +210,9 @@ export class CacheMiddleware {
   }
 
   /**
-   * Generate cache key for action. A credential fingerprint (see
-   * {@link credentialFingerprint}) binds the entry to the credential and
-   * granted scopes that produced it; keys without one are unchanged.
+   * Generate cache key for action. A credential binding (see
+   * {@link credentialBinding}) ties the entry to the credential and granted
+   * scopes that produced it; keys without one are unchanged.
    */
   generateKey(
     provider: string,
@@ -198,10 +220,10 @@ export class CacheMiddleware {
     params: any,
     userId?: string,
     connectionId?: string,
-    credentialFingerprint?: string
+    credentialBindingDigest?: string
   ): string {
     const paramsHash = hash(JSON.stringify(params));
-    return `${provider}:${action}:${userId || 'anonymous'}:${connectionId || 'default'}${credentialSegment(credentialFingerprint)}:${paramsHash}`;
+    return `${provider}:${action}:${userId || 'anonymous'}:${connectionId || 'default'}${credentialSegment(credentialBindingDigest)}:${paramsHash}`;
   }
 
   /** Generate a key in a namespace that cannot collide with parameter-derived keys. */
@@ -211,10 +233,10 @@ export class CacheMiddleware {
     customKey: string,
     userId?: string,
     connectionId?: string,
-    credentialFingerprint?: string
+    credentialBindingDigest?: string
   ): string {
     const customKeyHash = hash(customKey);
-    return `${provider}:${action}:${userId || 'anonymous'}:${connectionId || 'default'}${credentialSegment(credentialFingerprint)}:custom:${customKeyHash}`;
+    return `${provider}:${action}:${userId || 'anonymous'}:${connectionId || 'default'}${credentialSegment(credentialBindingDigest)}:custom:${customKeyHash}`;
   }
 
   /**

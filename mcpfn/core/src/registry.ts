@@ -101,10 +101,13 @@ function isThenable(value: unknown): value is PromiseLike<unknown> {
   );
 }
 
-function ignoreRejection(value: unknown): void {
+function ignoreRejection(value: unknown, containResult = true): void {
   if (!isThenable(value)) return;
   try {
-    value.then(undefined, () => undefined);
+    const chained: unknown = value.then(undefined, () => undefined);
+    // A custom then() may return its own rejected promise instead of the
+    // contained one; contain that value too, once.
+    if (containResult) ignoreRejection(chained, false);
   } catch {
     // A hostile thenable cannot make the caller throw here.
   }
@@ -585,7 +588,6 @@ interface CompileEntry {
 
 type CompileLogEntry<TContext> =
   | CompileEntry
-  | { kind: "seed"; schemas: object[] }
   | {
       kind: "registration";
       replay: (target: McpFnRegistry<TContext>) => void;
@@ -600,71 +602,48 @@ export class McpFnRegistry<TContext = undefined> {
   // leaves them as plain compile entries, because a compiler can keep state
   // from them (Ajv keeps a schema's `$id` even when its compile fails).
   private readonly compileLog: Array<CompileLogEntry<TContext>> = [];
-  // Validators for schemas replayed from a source registration, keyed by the
-  // schema object. The first registration that compiles the same object reuses
-  // its validator, as Ajv does for a schema object it already compiled, so a
-  // definition re-registered on a cloneEmpty() copy does not collide with its
-  // own `$id` on an engine that rejects a repeated `$id`.
-  private readonly seededValidators = new Map<object, CompiledSchema>();
 
-  /** Clone in successful registration order, preserving cross-definition references. */
+  /**
+   * Clone in successful registration order, preserving cross-definition
+   * references. A built-in compiler is a fresh instance given the same compiles,
+   * in the same order, as this registry's compiler (failed registrations
+   * included), so it resolves exactly the `$id`s this registry resolves.
+   */
   clone(): McpFnRegistry<TContext> {
-    return this.replayInto(new McpFnRegistry<TContext>(this.options), true);
-  }
-
-  /**
-   * An empty registry that keeps this registry's schema compiler and no
-   * definitions. A custom `compileSchema` is shared as-is. A built-in compiler
-   * is a fresh instance given the same compiles, in the same order, as this
-   * registry's compiler, so it resolves exactly the `$id`s this registry
-   * resolves, while later registrations on either registry stay separate.
-   */
-  cloneEmpty(): McpFnRegistry<TContext> {
-    return this.replayInto(new McpFnRegistry<TContext>(this.options), false);
-  }
-
-  /**
-   * Schema resources the runtime compiler resolves from successful
-   * registrations, in compile order, for catalog projections: hidden and
-   * visible tools and prompts, including source registrations a cloneEmpty()
-   * copy was seeded with.
-   */
-  schemaDefinitions(): object[] {
-    return this.compileLog.flatMap((entry) => entry.kind === "compile" ? [] : entry.schemas);
-  }
-
-  private replayInto(
-    target: McpFnRegistry<TContext>,
-    withDefinitions: boolean,
-  ): McpFnRegistry<TContext> {
+    const target = new McpFnRegistry<TContext>(this.options);
     // A shared custom compiler already holds whatever state it keeps.
     const builtIn = this.options.compileSchema === undefined;
     for (const entry of this.compileLog) {
-      if (entry.kind === "registration" && withDefinitions) {
-        entry.replay(target);
-      } else if (!builtIn) {
-        continue;
-      } else if (entry.kind === "compile") {
-        target.replayCompile(entry.schema, entry.ok);
-      } else if (entry.schemas.length > 0) {
-        const start = target.compileLog.length;
-        for (const schema of entry.schemas) {
-          const compiled = target.replayCompile(schema, true);
-          if (compiled) target.seededValidators.set(schema, compiled);
-        }
-        const compiles = target.compileLog.splice(start) as CompileEntry[];
-        target.compileLog.push({ kind: "seed", schemas: compiles.map(({ schema }) => schema) });
-      }
+      if (entry.kind === "registration") entry.replay(target);
+      else if (builtIn) target.replayCompile(entry.schema, entry.ok);
     }
     return target;
   }
 
-  private replayCompile(schema: object, expectedOk: boolean): CompiledSchema | undefined {
+  /**
+   * An empty, self-contained registry with this registry's options and no
+   * definitions. A custom `compileSchema` is shared as-is. A built-in compiler
+   * is a fresh instance that has compiled nothing, so every `$ref` a later
+   * registration makes must resolve to a schema registered on the copy, and
+   * its manifest stays valid on its own.
+   */
+  cloneEmpty(): McpFnRegistry<TContext> {
+    return new McpFnRegistry<TContext>(this.options);
+  }
+
+  /**
+   * Schema resources of successful registrations, in compile order, for
+   * catalog projections: hidden and visible tools and prompts.
+   */
+  schemaDefinitions(): object[] {
+    return this.compileLog.flatMap((entry) => entry.kind === "registration" ? entry.schemas : []);
+  }
+
+  private replayCompile(schema: object, expectedOk: boolean): void {
     let ok = true;
     let cause: unknown;
-    let compiled: CompiledSchema | undefined;
     try {
-      compiled = this.compile(schema);
+      this.compile(schema);
     } catch (error) {
       ok = false;
       cause = error;
@@ -675,16 +654,13 @@ export class McpFnRegistry<TContext = undefined> {
         { cause: cause instanceof Error ? cause.message : String(cause ?? "compile succeeded") },
       );
     }
-    return compiled;
   }
 
   /** The single compile chokepoint: every attempt is logged, failures included. */
   private compile(schema: object): CompiledSchema {
     let ok = false;
     try {
-      const seeded = this.seededValidators.get(schema);
-      this.seededValidators.delete(schema);
-      const compiled = seeded ?? this.compileSchema(schema);
+      const compiled = this.compileSchema(schema);
       ok = true;
       return compiled;
     } finally {
