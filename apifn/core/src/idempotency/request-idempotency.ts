@@ -794,7 +794,11 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
     receipt: IdempotencyReceipt,
     fingerprint: string,
   ): Promise<ReceiptOutcome> => {
-    await completeFromReceipt(storeKey, expectedVersion, generation, receipt);
+    try {
+      await completeFromReceipt(storeKey, expectedVersion, generation, receipt);
+    } catch {
+      // A failed cache write never hides the durable receipt; a later step records it.
+    }
     return receipt.fingerprint === fingerprint
       ? { outcome: "replay", response: fullReceiptResponse(receipt), source: "receipt" }
       : { outcome: "conflict" };
@@ -871,31 +875,38 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
     const version = nextVersion();
     // The lease starts at the write, after any slow receipt lookup, so it is never already expired.
     const at = now();
-    const written = await store.compareAndSet(storeKey, expectedVersion, {
-      state: "pending",
-      version,
-      generation,
-      fingerprint: prepared.fingerprint,
-      recovery: prepared.recovery,
-      leaseExpiresAt: at + leaseMs,
-      expiresAt: at + retentionMs,
-    });
+    let written: boolean;
+    try {
+      written = await store.compareAndSet(storeKey, expectedVersion, {
+        state: "pending",
+        version,
+        generation,
+        fingerprint: prepared.fingerprint,
+        recovery: prepared.recovery,
+        leaseExpiresAt: at + leaseMs,
+        expiresAt: at + retentionMs,
+      });
+    } catch (error) {
+      // The store may have written the claim and lost the acknowledgement. No handler runs under it, so free
+      // exactly the version this attempt wrote: a newer writer, or a write that never happened, is untouched.
+      await releaseUnusedQuietly(storeKey, version, generation, prepared);
+      throw error;
+    }
     if (!written) return undefined;
-    // A receipt that landed during a "none" acquire means the key is committed: free the claim, never run.
-    if (prepared.recovery === "none" && receipts) {
-      let committed: boolean;
+    // Durable commit evidence is checked after the claim is recorded and before any handler runs under it,
+    // so a commit that landed during the write (by a holder whose lease expired) is never run a second time.
+    if (receipts) {
+      let receipt: IdempotencyReceipt | undefined;
       try {
-        committed = (await findReceipt(storeKey)) !== undefined;
+        receipt = await findReceipt(storeKey);
       } catch (error) {
         // No handler runs under this claim: free it so it never strands the key, then report the lookup failure.
-        try {
-          await releaseUnused(storeKey, version, generation, prepared);
-        } catch {
-          // The lookup error is the one the caller needs; the release failure leaves the lease to expire.
-        }
+        await releaseUnusedQuietly(storeKey, version, generation, prepared);
         throw error;
       }
-      if (committed) {
+      if (receipt) {
+        // A receipt-mode claim records the receipt over its own version and reports it.
+        if (prepared.recovery === "receipt") return applyReceipt(storeKey, version, generation, receipt, prepared.fingerprint);
         // The tombstone keeps the receipt contract, so a later "none" request without receipts still conflicts.
         await releaseUnused(storeKey, version, generation, prepared, "receipt");
         return { outcome: "conflict" };
@@ -929,6 +940,20 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
       recovery,
       expiresAt: now() + retentionMs,
     });
+  };
+
+  /** Frees an unused claim on a failure path; the original failure is the one the caller needs. */
+  const releaseUnusedQuietly = async (
+    storeKey: string,
+    version: string,
+    generation: number,
+    prepared: Prepared,
+  ): Promise<void> => {
+    try {
+      await releaseUnused(storeKey, version, generation, prepared);
+    } catch {
+      // A failed release leaves the lease to expire.
+    }
   };
 
   const claim = async (request: IdempotencyRequest): Promise<IdempotencyClaimResult> => {
@@ -982,17 +1007,21 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
     const receipt = await findReceipt(token.storeKey);
     if (!receipt) return undefined;
     let recorded = false;
-    for (let attempt = 0; attempt < MAX_ATTEMPTS && !recorded; attempt += 1) {
-      const live = await readLive(token.storeKey, now());
-      if (live.kind === "present") {
-        const { record } = live;
-        recorded =
-          (record.state === "completed" && record.fromReceipt === true && record.fingerprint === receipt.fingerprint) ||
-          (await completeFromReceipt(token.storeKey, record.version, record.generation, receipt)) !== undefined;
-      } else {
-        recorded =
-          (await completeFromReceipt(token.storeKey, live.expectedVersion, live.previousGeneration, receipt)) !== undefined;
+    try {
+      for (let attempt = 0; attempt < MAX_ATTEMPTS && !recorded; attempt += 1) {
+        const live = await readLive(token.storeKey, now());
+        if (live.kind === "present") {
+          const { record } = live;
+          recorded =
+            (record.state === "completed" && record.fromReceipt === true && record.fingerprint === receipt.fingerprint) ||
+            (await completeFromReceipt(token.storeKey, record.version, record.generation, receipt)) !== undefined;
+        } else {
+          recorded =
+            (await completeFromReceipt(token.storeKey, live.expectedVersion, live.previousGeneration, receipt)) !== undefined;
+        }
       }
+    } catch {
+      // A failed cache read or write never hides the validated receipt; a later step records it.
     }
     // Persistent contention leaves the cache write to the next step; the durable receipt still decides.
     if (receipt.fingerprint !== token.fingerprint) return { outcome: "conflict" };

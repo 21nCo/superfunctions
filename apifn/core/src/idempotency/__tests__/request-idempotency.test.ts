@@ -1381,3 +1381,156 @@ describe("createRequestIdempotency round-7 regressions", () => {
     expect(canonicalJson(Object.assign(Object.create(null) as object, { b: 1, a: 2 }))).toBe('{"a":2,"b":1}');
   });
 });
+
+/** Atomic store that commits a receipt inside a chosen pending (acquire) write, then optionally bumps the record. */
+class ReceiptDuringAcquireStore extends FakeAtomicStore {
+  newer: IdempotencyRecord | undefined;
+  private pendingWrites = 0;
+  private landed = false;
+
+  constructor(
+    private readonly land: (storeKey: string, pending: IdempotencyRecord) => void,
+    private readonly options: { onPendingWrite?: number; bumpAfter?: boolean } = {},
+  ) {
+    super();
+  }
+
+  override async compareAndSet(storeKey: string, expectedVersion: string | null, next: IdempotencyRecord | null): Promise<boolean> {
+    const current = this.records.get(storeKey);
+    if (this.landed && this.options.bumpAfter && current && !this.newer) {
+      // A newer writer replaces the claim before the claimant records the receipt.
+      this.newer = { ...current, version: "test-version-newer-writer" };
+      this.records.set(storeKey, structuredClone(this.newer));
+    }
+    const written = await super.compareAndSet(storeKey, expectedVersion, next);
+    if (written && next?.state === "pending" && (this.pendingWrites += 1) === (this.options.onPendingWrite ?? 1)) {
+      this.landed = true;
+      this.land(storeKey, next);
+    }
+    return written;
+  }
+}
+
+describe("createRequestIdempotency round-8 regressions", () => {
+  const committedResponse = { status: 201, headers: { "content-type": "application/json" }, body: '{"id":1}' };
+
+  function receiptLander(database: FakeOrderDatabase, fingerprint?: string) {
+    return (storeKey: string, pending: IdempotencyRecord) => {
+      const commit = { storeKey, fingerprint: fingerprint ?? pending.fingerprint, generation: 1, claimId: "test-claim-other" };
+      database.receiptsByKey.set(storeKey, { ...commit, response: committedResponse });
+    };
+  }
+
+  it("rechecks the receipt after a receipt-mode acquire write and replays it instead of handing out a claim", async () => {
+    const database = new FakeOrderDatabase();
+    const store = new ReceiptDuringAcquireStore(receiptLander(database));
+    const { idempotency } = setup({ store, receipts: database.receipts });
+
+    const result = await idempotency.claim(orderRequest());
+    expect(result).toEqual({ outcome: "replay", response: committedResponse, source: "receipt" });
+    expect([...store.records.values()][0]).toMatchObject({ state: "completed", fromReceipt: true, recovery: "receipt" });
+    expect(database.orders).toEqual([]);
+  });
+
+  it("reports a conflict when a receipt for another body lands during a receipt-mode acquire write", async () => {
+    const database = new FakeOrderDatabase();
+    const store = new ReceiptDuringAcquireStore(receiptLander(database, "test-other-body-fingerprint"));
+    const { idempotency } = setup({ store, receipts: database.receipts });
+    expect(await idempotency.claim(orderRequest())).toEqual({ outcome: "conflict" });
+  });
+
+  it("rechecks the receipt after a takeover write of an expired receipt-mode claim", async () => {
+    const database = new FakeOrderDatabase();
+    const store = new ReceiptDuringAcquireStore(receiptLander(database), { onPendingWrite: 2 });
+    const { idempotency, clock } = setup({ store, receipts: database.receipts });
+    const slow = acquired(await idempotency.claim(orderRequest()));
+    clock.advance(1_001);
+    const result = await idempotency.claim(orderRequest());
+    expect(result).toMatchObject({ outcome: "replay", source: "receipt" });
+    expect([...store.records.values()][0]).toMatchObject({ state: "completed", fromReceipt: true, generation: 2 });
+    expect(slow.generation).toBe(1);
+  });
+
+  it("leaves a newer writer untouched when recording a receipt found after the acquire write", async () => {
+    const database = new FakeOrderDatabase();
+    const store = new ReceiptDuringAcquireStore(receiptLander(database), { bumpAfter: true });
+    const { idempotency } = setup({ store, receipts: database.receipts });
+    expect(await idempotency.claim(orderRequest())).toMatchObject({ outcome: "replay", source: "receipt" });
+    expect([...store.records.values()][0]).toEqual(store.newer);
+  });
+
+  it("frees a receipt-mode claim when the post-write receipt lookup fails", async () => {
+    const lookupError = new Error("receipt source unavailable");
+    let calls = 0;
+    const receipts = {
+      find: async (): Promise<IdempotencyReceipt | undefined> => {
+        await tick();
+        calls += 1;
+        if (calls === 2) throw lookupError;
+        return undefined;
+      },
+    };
+    const { idempotency, store } = setup({ receipts });
+    await expect(idempotency.claim(orderRequest())).rejects.toBe(lookupError);
+    expect([...store.records.values()][0]).toMatchObject({ state: "released", generation: 1, recovery: "receipt" });
+    expect(acquired(await idempotency.claim(orderRequest())).generation).toBe(2);
+  });
+
+  it("frees a claim whose acquire write landed but whose acknowledgement was lost", async () => {
+    const writeError = new Error("store acknowledgement lost");
+    class LostAckStore extends FakeAtomicStore {
+      failed = false;
+      override async compareAndSet(storeKey: string, expectedVersion: string | null, next: IdempotencyRecord | null) {
+        const written = await super.compareAndSet(storeKey, expectedVersion, next);
+        if (!this.failed && next?.state === "pending") {
+          this.failed = true;
+          throw writeError;
+        }
+        return written;
+      }
+    }
+    for (const recovery of ["receipt", "none"] as const) {
+      const store = new LostAckStore();
+      const { idempotency } = setup({ store });
+      await expect(idempotency.claim(orderRequest({ recovery }))).rejects.toBe(writeError);
+      expect([...store.records.values()][0]).toMatchObject({ state: "released", generation: 1, recovery });
+      expect(acquired(await idempotency.claim(orderRequest({ recovery }))).generation).toBe(2);
+    }
+  });
+
+  it("leaves the prior record unchanged when the acquire write throws without writing", async () => {
+    const writeError = new Error("store unavailable");
+    class FailingWriteStore extends FakeAtomicStore {
+      failing = false;
+      override async compareAndSet(storeKey: string, expectedVersion: string | null, next: IdempotencyRecord | null) {
+        if (this.failing && next?.state === "pending") throw writeError;
+        return super.compareAndSet(storeKey, expectedVersion, next);
+      }
+    }
+    const store = new FailingWriteStore();
+    const { idempotency, clock } = setup({ store });
+    acquired(await idempotency.claim(orderRequest()));
+    clock.advance(1_001);
+    const prior = structuredClone([...store.records.values()][0]);
+    store.failing = true;
+    await expect(idempotency.claim(orderRequest())).rejects.toBe(writeError);
+    expect([...store.records.values()][0]).toEqual(prior);
+  });
+
+  it("classifies from a validated receipt when recording it in the store throws", async () => {
+    class FailingCompleteStore extends FakeAtomicStore {
+      failing = false;
+      override async compareAndSet(storeKey: string, expectedVersion: string | null, next: IdempotencyRecord | null) {
+        if (this.failing && next?.state === "completed") throw new Error("store write failed");
+        return super.compareAndSet(storeKey, expectedVersion, next);
+      }
+    }
+    const store = new FailingCompleteStore();
+    const { idempotency, database } = setup({ store });
+    const token = acquired(await idempotency.claim(orderRequest()));
+    const response = await database.createOrder(token, "book");
+    store.failing = true;
+    expect(await idempotency.settle(token, response)).toEqual({ outcome: "settled", response });
+    expect(await idempotency.claim(orderRequest())).toEqual({ outcome: "replay", response, source: "receipt" });
+  });
+});
