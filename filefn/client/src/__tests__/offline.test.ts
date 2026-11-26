@@ -457,7 +457,7 @@ describe('replay transport', () => {
     }
   });
 
-  it('rejects an outstanding done() at once when aborted during publication, and keeps the publication journaled', async () => {
+  it('rejects an outstanding done() with the refused cancel when aborted during publication, and keeps the publication journaled', async () => {
     const publication = new Promise<never>(() => {});
     const client = offlineClient({ queue: { hooks: { publish: { run: () => publication } } } });
     const handle = await stagedOffline(client);
@@ -466,7 +466,8 @@ describe('replay transport', () => {
     client.getOfflineQueue().processAll().catch(() => {});
     await vi.waitFor(async () => expect((await client.getOfflineQueue().list())[0]).toMatchObject({ phase: 'publishing' }));
     handle.abort();
-    await expect(done).rejects.toThrow('Aborted');
+    // The cancel's refusal is the handle's: the generation is not cancelled.
+    await expect(done).rejects.toMatchObject({ code: 'FILEFN_QUEUE_PUBLICATION_PENDING' });
     expect((await client.getOfflineQueue().list())[0]).toMatchObject({ phase: 'publishing', state: 'provisional' });
   });
 });
@@ -495,5 +496,76 @@ describe('local previews of a file staged by several entries', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe('architecture reset: an offline upload is runnable only once its staging call lets it go', () => {
+  /** Tab 1's coordinator: holds back the return of the next partition-lock request, or fails the next one. */
+  function scriptedCoordinator() {
+    const inner = locks.forTab('tab-1');
+    const control: { hold?: Promise<void>; reached?: () => void; failNext?: Error } = {};
+    const coordinator: typeof inner = {
+      request: (async (lock: string, options: unknown, callback: unknown) => {
+        const partitionLock = !lock.includes(':entry:') && !lock.startsWith('filefn-offline-legacy:');
+        if (partitionLock && control.failNext) {
+          const error = control.failNext;
+          control.failNext = undefined;
+          throw error;
+        }
+        const value = await (inner.request as (...args: unknown[]) => Promise<unknown>)(lock, options, callback);
+        if (partitionLock && control.hold) {
+          const hold = control.hold;
+          control.hold = undefined;
+          control.reached?.();
+          await hold;
+        }
+        return value;
+      }) as typeof inner.request,
+    };
+    const holdNext = () => {
+      let release!: () => void;
+      let reached!: () => void;
+      control.hold = new Promise<void>((resolve) => (release = resolve));
+      const reachedPromise = new Promise<void>((resolve) => (reached = resolve));
+      control.reached = reached;
+      return { reached: reachedPromise, release };
+    };
+    return { coordinator, holdNext, control };
+  }
+
+  it('cancels a generation aborted while it is staged: another tab never uploads it', async () => {
+    const scripted = scriptedCoordinator();
+    const client = offlineClient({ implicitReplay: false, queue: { coordinator: scripted.coordinator } });
+    const other = offlineClient({ implicitReplay: false }, 'tab-2').getOfflineQueue();
+    const gate = scripted.holdNext();
+    const handle = client.uploadFile({ policy: 'p', file: new File(['content'], 'test.txt') });
+    const done = handle.done();
+    await gate.reached;
+    // Staged and journaled, but the staging call has not let it go: another tab's pass does not run it.
+    expect(await other.processAll()).toEqual([{ entryId: handle.fileId, result: expect.objectContaining({ status: 'provisional', reason: 'held' }) }]);
+    handle.abort();
+    gate.release();
+    await expect(done).rejects.toThrow('Aborted');
+    expect(await other.processAll()).toEqual([]);
+    expect(await other.list()).toEqual([]);
+    expect(server.inits).toEqual([]);
+  });
+
+  it('rejects the handle with a failed cancel and leaves the entry held, never runnable', async () => {
+    const scripted = scriptedCoordinator();
+    const client = offlineClient({ implicitReplay: false, queue: { coordinator: scripted.coordinator } });
+    const other = offlineClient({ implicitReplay: false }, 'tab-2').getOfflineQueue();
+    const gate = scripted.holdNext();
+    const handle = client.uploadFile({ policy: 'p', file: new File(['content'], 'test.txt') });
+    const done = handle.done();
+    await gate.reached;
+    handle.abort();
+    const lost = new Error('test lock lost');
+    scripted.control.failNext = lost;
+    gate.release();
+    await expect(done).rejects.toBe(lost);
+    expect(await other.list()).toEqual([expect.objectContaining({ entryId: handle.fileId, holds: [expect.any(Object)] })]);
+    expect(await other.processAll()).toEqual([{ entryId: handle.fileId, result: expect.objectContaining({ reason: 'held' }) }]);
+    expect(server.inits).toEqual([]);
   });
 });

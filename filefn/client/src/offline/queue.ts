@@ -4,13 +4,12 @@ import {
   UPLOAD_SESSION_ENDED_ERROR,
   REPLAY_SCOPE_MISMATCH_ERROR,
   assertValidExplicitFileId,
-  isValidFileId,
   isValidIdempotencyKey,
-  isFailureEnvelope,
-  isWellFormedId,
+  isReplayScope,
   derivePendingLocalSource,
   generateFileId,
 } from '../upload-manager.js';
+import { decodeFileFnBody, uploadSchemas } from '../client.js';
 import { OPFSStore } from './opfs-store.js';
 
 /**
@@ -84,6 +83,18 @@ export interface OfflineQueueLimits {
 }
 
 export interface OfflineQueueUploader {
+  /**
+   * The account scope every replay of a generation is bound to (the built-in
+   * transport: `offline.replayAccount`'s scope). When present, the queue
+   * resolves it before each upload step and, the first time, journals it with
+   * the generation's replay identity in the same write that claims the step,
+   * before any request. Every send then uses the journaled scope
+   * (`replayScope`). A later result that differs from it sends nothing: the
+   * generation stays provisional (`FILEFN_REPLAY_SCOPE_MISMATCH`) under the
+   * same key. A rejection sends nothing either (a principal mismatch stops
+   * the pass; anything else leaves the generation provisional).
+   */
+  replayScope?(principal: OfflineQueuePrincipal, signal: AbortSignal): Promise<string>;
   upload(input: {
     policy: string;
     file: File;
@@ -100,20 +111,13 @@ export interface OfflineQueueUploader {
      */
     assertPrincipal(): Promise<void>;
     /**
-     * The account scope this generation's first `upload/init` confirmed
-     * (`replayScope`), once journaled. The built-in transport pins every
-     * init, the first included, to the scope of the partition's expected
-     * account (`offline.replayAccount`) and refuses to send anything when a
-     * journaled scope differs from it, so the server refuses a replay that
-     * resolves to no account or another one.
+     * The scope journaled with the generation's replay identity (see
+     * `replayScope()` above), present whenever the uploader resolves one.
+     * The built-in transport sends it on every `upload/init`, the first
+     * included, so the server refuses a replay that resolves to no account
+     * or another one, creating nothing.
      */
     replayScope?: string;
-    /**
-     * Journals the scope a first `upload/init` returned, before anything else
-     * is sent under it. Rejects (FILEFN_REPLAY_SCOPE_MISMATCH) when another
-     * scope is pinned, or when the generation was replaced meanwhile.
-     */
-    pinReplayScope(scope: string): Promise<void>;
   }): Promise<UploadResult>;
 }
 
@@ -426,8 +430,9 @@ interface GenerationState {
   metadata?: Record<string, unknown>;
   localSource: PendingLocalSourceMetadata;
   /**
-   * `scope`: the account scope its first `upload/init` returned, pinned for
-   * every later replay of the generation, under any key.
+   * `scope`: the account scope of every replay of the generation, under any
+   * key, journaled with the claim of its first upload step before any request
+   * (see `OfflineQueueUploader.replayScope`). Never changed afterwards.
    */
   replay: { idempotencyKey: string; retiredKeys: string[]; scope?: string };
   /**
@@ -510,6 +515,8 @@ type StepKind = 'upload' | 'verify' | 'publish' | 'reconcile-publication';
 type Plan =
   | { kind: 'done'; result: OfflineQueueProcessResult }
   | { kind: 'continue' }
+  /** The upload step needs the uploader's current replay scope (resolved outside the lock): plan again with it. */
+  | { kind: 'resolve-scope' }
   /** A step started: `running` is its upload or hook, invoked right after its claim was journaled. */
   | { kind: StepKind; record: JournalRecord; controller: AbortController; release: () => void; running: Promise<unknown> };
 
@@ -818,15 +825,6 @@ function isHeld(error: unknown): boolean {
   return error instanceof OfflineQueueError && error.code === 'FILEFN_QUEUE_HELD';
 }
 
-/**
- * A success names what it stored: a file ID of the server grammar and a
- * well-formed versionId, and is not an explicit failure envelope (`ok` present
- * and not `true`, or an `error`).
- */
-function hasStoredIdentity(result: unknown): result is UploadResult {
-  const value = result as { fileId?: unknown; versionId?: unknown } | null | undefined;
-  return !isFailureEnvelope(result) && isValidFileId(value?.fileId) && isWellFormedId(value?.versionId);
-}
 
 const NOT_JSON: unique symbol = Symbol('not-json');
 
@@ -1017,6 +1015,12 @@ type AfterReturn = (settle: () => void) => void;
 /** A preview read that a newer read overtook: read again, never applied. */
 const STALE: unique symbol = Symbol('stale');
 
+/** What a preview read found for a file ID, at its durable position. */
+type PendingRead = { found: { record: JournalRecord; data: ArrayBuffer } | null; position: Position };
+
+/** The uploader's replay scope for one pass, or why there is none. */
+type ScopeResolution = { scope: string } | { error: unknown };
+
 /** Returned by `withEntryLock` when another tab or call holds the entry. */
 const BUSY: unique symbol = Symbol('busy');
 /** Returned by `finishStep` when the step's generation was replaced or removed meanwhile: plan the entry again. */
@@ -1031,10 +1035,39 @@ function isGenerationGone(error: unknown): boolean {
   return error instanceof OfflineQueueError && error.code === 'FILEFN_QUEUE_SUPERSEDED';
 }
 
+/**
+ * A durable point in one entry's history, the only order of observations: its
+ * generation (handed out once per partition, never reused), then its journal
+ * revision (raised by every write). An entry found absent by a read made when
+ * the partition's last generation was L is at (L, Infinity): after every
+ * generation it ever had then, before any staged since.
+ */
+interface Position {
+  generation: number;
+  revision: number;
+}
+
+function positionOf(record: JournalRecord): Position {
+  return { generation: record.current.generation, revision: record.revision };
+}
+
+function absentAt(lastGeneration: number): Position {
+  return { generation: lastGeneration, revision: Number.POSITIVE_INFINITY };
+}
+
+/** Whether `a` is older than `b` (never, when there is no `b`). */
+function isBefore(a: Position, b: Position | undefined): boolean {
+  return b !== undefined && (a.generation < b.generation || (a.generation === b.generation && a.revision < b.revision));
+}
+
 interface Waiter {
   generation: number;
-  /** `OfflineQueue.seq` when it was registered: only a read taken after that may settle it as absent. */
-  seq: number;
+  /**
+   * The entry's position read (under the partition lock) by the first read
+   * after the waiter was registered. Until then no observation settles it;
+   * after, only one at or after this position.
+   */
+  from?: Position;
   resolve: (entry: OfflineQueueEntry) => void;
   reject: (error: Error) => void;
 }
@@ -1063,24 +1096,16 @@ export class OfflineQueue {
   private readonly disposeListeners = new Set<() => void>();
   /** The fence of the transaction this instance is running (the partition lock serializes them). */
   private txFence: Fence | undefined;
+  private readonly objectUrls = new Map<string, { operationId: string; url: string }>();
   /**
-   * Orders this instance's reads: each transaction gets the next number once
-   * it holds the partition lock (`txSeq` while it runs). An observation acts
-   * only on what was there before it: a preview or waiter made after the
-   * read it comes from (`seq` not below the read's) is never settled,
-   * revoked or aborted by it, however late it is applied.
+   * Per entry, the newest durable position (see `Position`) an observation
+   * applied; per file ID, the newest one a preview returned. An observation
+   * or preview read older than these is discarded whole: it settles no
+   * waiter, revokes no preview and returns nothing. The check and what it
+   * delivers run in one synchronous block, after the read's last await.
    */
-  private seq = 0;
-  private txSeq = 0;
-  private readonly objectUrls = new Map<string, { operationId: string; url: string; seq: number }>();
-  /**
-   * Per entry, the newest read (`seq`) that replaced or dropped its preview
-   * (a stage, cancel or observation); per file ID, the newest preview read
-   * returned. A preview read older than either is stale: it never revokes,
-   * replaces or returns over them.
-   */
-  private readonly previewFloor = new Map<string, number>();
-  private readonly descriptorFloor = new Map<string, number>();
+  private readonly applied = new Map<string, Position>();
+  private readonly previewApplied = new Map<string, Position>();
   private partitionIdPromise: Promise<string> | undefined;
   private channelPromise: Promise<OfflineQueueChannel | undefined> | undefined;
   private posting: Promise<void> = Promise.resolve();
@@ -1303,22 +1328,19 @@ export class OfflineQueue {
   }
 
   private async listIn(after: AfterReturn): Promise<OfflineQueueEntry[]> {
-    const { records, tombstones, seq } = await this.transact(async (root) => {
-      const seq = this.txSeq;
+    const { records, meta } = await this.transact(async (root) => {
       const partitionDir = await this.partitionDir(root);
-      return { records: await this.readAllIn(partitionDir), tombstones: (await this.loadMeta(partitionDir)).tombstones, seq };
+      return { records: await this.readAllIn(partitionDir), meta: await this.loadMeta(partitionDir) };
     }, { disclose: true });
     const entries = records
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.entryId.localeCompare(b.entryId))
       .map(snapshot);
-    // Previews the entries no longer need go now (no callback runs); waiters
-    // settle after the result is returned.
+    // Observed (waiters, previews) after the result is returned, at the
+    // positions read: an older read than one applied since changes nothing.
     const present = new Set(records.map((record) => record.entryId));
-    for (const entryId of [...this.objectUrls.keys()]) if (!present.has(entryId)) this.revokeObjectUrl(entryId, seq);
-    for (const record of records) this.revokeIfDone(record, seq);
     after(() => {
-      for (const record of records) this.observe(record, seq, tombstones);
-      this.forgetAbsent(present, tombstones, seq);
+      for (const record of records) this.observe(record, meta.tombstones);
+      this.forgetAbsent(present, meta.tombstones, meta.lastGeneration);
     });
     return entries;
   }
@@ -1326,11 +1348,8 @@ export class OfflineQueue {
   async get(entryId: string): Promise<OfflineQueueEntry | null> {
     return this.disclosing(async (after) => {
       const found = await this.read(entryId);
-      const entry = found.record ? snapshot(found.record) : null;
-      if (found.record) this.revokeIfDone(found.record, found.seq);
-      else this.revokeObjectUrl(entryId, found.seq);
       after(found.settle);
-      return entry;
+      return found.record ? snapshot(found.record) : null;
     });
   }
 
@@ -1344,7 +1363,8 @@ export class OfflineQueue {
     this.assertUsable();
     const promise = new Promise<OfflineQueueEntry>((resolve, reject) => {
       const list = this.waiters.get(entryId) ?? [];
-      list.push({ generation, seq: this.seq, resolve, reject });
+      // Armed by the next read of the entry (`lookup` below, or the observer).
+      list.push({ generation, resolve, reject });
       this.waiters.set(entryId, list);
     });
     this.startObserving();
@@ -1362,7 +1382,6 @@ export class OfflineQueue {
 
   private async cancelIn(entryId: string, generation: number | undefined, after: AfterReturn): Promise<boolean> {
     const removed = await this.transact(async (root) => {
-      const seq = this.txSeq;
       const found = await this.readEntry(root, entryId);
       if (!found) return null;
       const { record } = found;
@@ -1375,20 +1394,20 @@ export class OfflineQueue {
       }
       const partitionDir = await this.partitionDir(root);
       await this.noteRemoval(partitionDir, [record]);
-      const { tombstones } = await this.loadMeta(partitionDir);
+      const { tombstones, lastGeneration } = await this.loadMeta(partitionDir);
       await this.removePath(partitionDir, await this.entryKey(entryId), true);
       // Fenced after the removal: no waiter is settled with the partition's
       // publication results once its principal is no longer current.
-      return { tombstones, seq, operationId: record.current.operationId };
+      return { tombstones, lastGeneration, operationId: record.current.operationId };
     }, { disclose: true });
     if (!removed) return false;
-    // Only what belonged to the removed generation: a step, preview or waiter
-    // of a generation staged since (by another tab, say) is left alone.
+    // Only what belonged to the removed generation: a step of a generation
+    // staged since (by another tab, say) is left alone, and so are its
+    // preview and waiters (the removal's position is older than it).
     const running = this.entryControllers.get(entryId);
     if (running?.operationId === removed.operationId) running.controller.abort();
     // A waiter of a generation published before (and replaced since) still resolves.
-    this.revokeObjectUrl(entryId, removed.seq);
-    after(() => this.settleAbsent(entryId, removed.tombstones, removed.seq));
+    after(() => this.settleAbsent(entryId, removed.tombstones, removed.lastGeneration));
     return true;
   }
 
@@ -1431,7 +1450,6 @@ export class OfflineQueue {
       throw new OfflineQueueError('FILEFN_QUEUE_INVALID_INPUT', 'publication.result must be JSON', { field: 'publication.result' });
     }
     const outcome = await this.withEntryLock(entryId, () => this.transact(async (root) => {
-      const seq = this.txSeq;
       const { dir, record } = await this.requireRecord(root, entryId);
       const cur = record.current;
       if (cur.generation !== generation) {
@@ -1445,7 +1463,7 @@ export class OfflineQueue {
         if (cur.phase !== 'publishing') {
           if (cur.phase === 'published' && publication.published && publication.attemptId === cur.publicationAttempt) {
             // Already confirmed: the first result stands and nothing is reported again.
-            return { record, changed: false, seq };
+            return { record, changed: false };
           }
           throw new OfflineQueueError('FILEFN_QUEUE_INVALID_INPUT', 'Generation has no unconfirmed publication', { entryId, phase: cur.phase });
         }
@@ -1464,19 +1482,19 @@ export class OfflineQueue {
           cur.phase = 'verified';
         }
       } else if (isTerminalPhase(cur.phase)) {
-        return { record, changed: false, seq };
+        return { record, changed: false };
       }
       cur.pending = undefined;
       if (!isTerminalPhase(cur.phase)) cur.attempts = 0;
       await this.writeRecord(dir, record);
-      return { record, changed: true, seq };
+      return { record, changed: true };
     }, { disclose: true }));
     if (outcome === BUSY) {
       throw new OfflineQueueError('FILEFN_QUEUE_BUSY', 'The entry is being processed; reconcile it once that finishes', { entryId, generation });
     }
     if (outcome.changed && outcome.record.current.phase === 'published') await this.emitFor(outcome.record);
     else if (outcome.changed) this.notifyWork();
-    await this.observeFenced(outcome.record, outcome.seq);
+    await this.observeFenced(outcome.record);
     // A listener or work listener above may have switched the account: the
     // outer fence keeps the outcome in the journal for its owner, and the
     // caller gets no entry.
@@ -1576,18 +1594,16 @@ export class OfflineQueue {
   }
 
   private async reclaimNow(after: AfterReturn): Promise<OfflineQueueReclaimResult> {
-    const { result, present, tombstones, seq } = await this.transact(async (root) => {
-      const seq = this.txSeq;
+    const { result, present, meta } = await this.transact(async (root) => {
       const partitionDir = await this.partitionDir(root);
       const reclaimed = await this.reclaimIn(partitionDir, false);
       return {
         result: reclaimed,
         present: new Set((await this.readAllIn(partitionDir)).map((record) => record.entryId)),
-        tombstones: (await this.loadMeta(partitionDir)).tombstones,
-        seq,
+        meta: await this.loadMeta(partitionDir),
       };
     }, { disclose: true });
-    after(() => this.forgetAbsent(present, tombstones, seq));
+    after(() => this.forgetAbsent(present, meta.tombstones, meta.lastGeneration));
     return result;
   }
 
@@ -1602,55 +1618,63 @@ export class OfflineQueue {
    * touch an entry (a hold, a failed attempt) never change the choice.
    */
   async getPendingLocalDescriptor(fileId: string): Promise<PendingLocalDescriptor | null> {
-    return this.disclosing(() => this.pendingDescriptorIn(fileId));
-  }
-
-  private async pendingDescriptorIn(fileId: string): Promise<PendingLocalDescriptor | null> {
-    // A read that a newer one overtook (its coordinator returned late, after
-    // a stage, cancel or newer preview here) is read again, never applied.
+    // A read that a newer one overtook (its coordinator or fence returned
+    // late) is read again, never returned and never applied.
     for (let attempt = 0; attempt < 3; attempt++) {
-      const descriptor = await this.readPendingDescriptor(fileId);
+      const descriptor = await this.disclosing(
+        () => this.readPendingDescriptor(fileId),
+        undefined,
+        (read) => this.deliverPendingDescriptor(fileId, read),
+      );
       if (descriptor !== STALE) return descriptor;
     }
     throw new OfflineQueueError('FILEFN_QUEUE_BUSY', 'The local preview kept changing while it was read; try again', { fileId });
   }
 
-  private async readPendingDescriptor(fileId: string): Promise<PendingLocalDescriptor | null | typeof STALE> {
-    const { found, seq } = await this.transact(async (root) => {
-      const seq = this.txSeq;
-      const records = (await this.readAll(root)).filter(
+  private async readPendingDescriptor(fileId: string): Promise<PendingRead> {
+    return this.transact(async (root) => {
+      const partitionDir = await this.partitionDir(root);
+      const records = (await this.readAllIn(partitionDir)).filter(
         (record) => record.current.fileId === fileId && record.current.phase !== 'published' && !record.current.dataRemoved,
       );
       records.sort((a, b) => b.current.generation - a.current.generation || a.entryId.localeCompare(b.entryId));
       for (const record of records) {
-        const dir = await getDir(await this.partitionDir(root), await this.entryKey(record.entryId));
+        const dir = await getDir(partitionDir, await this.entryKey(record.entryId));
         const blob = dir ? await getFile(dir, record.current.dataFile) : null;
-        if (blob) return { found: { record, data: await blob.arrayBuffer() }, seq };
+        if (blob) return { found: { record, data: await blob.arrayBuffer() }, position: positionOf(record) };
       }
-      return { found: null, seq };
+      return { found: null, position: absentAt((await this.loadMeta(partitionDir)).lastGeneration) };
     }, { disclose: true });
-    if (seq < (this.descriptorFloor.get(fileId) ?? 0)) return STALE;
-    if (!found) return null;
-    if (seq < (this.previewFloor.get(found.record.entryId) ?? 0)) return STALE;
+  }
+
+  /**
+   * The last step of a preview read, synchronous, after its outermost fence:
+   * a read older than the newest preview returned for the file, or than the
+   * newest observation of its entry, is STALE (read again). Otherwise its
+   * entry's preview URL is reused, or replaced when the generation changed.
+   */
+  private deliverPendingDescriptor(fileId: string, read: PendingRead): PendingLocalDescriptor | null | typeof STALE {
+    if (isBefore(read.position, this.previewApplied.get(fileId))) return STALE;
+    if (!read.found) {
+      this.previewApplied.set(fileId, read.position);
+      return null;
+    }
+    const { record, data } = read.found;
+    if (isBefore(read.position, this.applied.get(record.entryId))) return STALE;
     if (typeof URL === 'undefined' || typeof URL.createObjectURL !== 'function') {
       const error = new Error('Local preview unavailable') as Error & { code?: string };
       error.code = 'FILEFN_OFFLINE_PREVIEW_UNSUPPORTED';
       throw error;
     }
-    // The read may have waited on the coordinator: no URL of these bytes is
-    // created or returned unless the principal is still the partition's.
-    await this.discloseFence();
-    // The fence awaited too: a newer read may have overtaken this one since.
-    if (seq < (this.descriptorFloor.get(fileId) ?? 0) || seq < (this.previewFloor.get(found.record.entryId) ?? 0)) return STALE;
-    const cur = found.record.current;
-    let cached = this.objectUrls.get(found.record.entryId);
-    if (cached && cached.seq > seq) return STALE;
+    this.applied.set(record.entryId, read.position);
+    this.previewApplied.set(fileId, read.position);
+    const cur = record.current;
+    let cached = this.objectUrls.get(record.entryId);
     if (!cached || cached.operationId !== cur.operationId) {
-      this.revokeObjectUrl(found.record.entryId);
-      cached = { operationId: cur.operationId, url: URL.createObjectURL(new Blob([found.data], { type: cur.mimeType })), seq };
-      this.objectUrls.set(found.record.entryId, cached);
+      this.revokeObjectUrl(record.entryId);
+      cached = { operationId: cur.operationId, url: URL.createObjectURL(new Blob([data], { type: cur.mimeType })) };
+      this.objectUrls.set(record.entryId, cached);
     }
-    this.descriptorFloor.set(fileId, seq);
     return {
       fileId: cur.fileId,
       uploadSessionId: cur.operationId,
@@ -1956,7 +1980,9 @@ export class OfflineQueue {
    * FILEFN_QUEUE_PRINCIPAL_MISMATCH) and nothing `run` read; a disposal
    * throws FILEFN_QUEUE_DISPOSED. What `run` journaled stays with its owner.
    * Waiters `run` would settle (`after`) settle only once the fence passed,
-   * after the call returned, behind a fresh principal check.
+   * after the call returned, behind a fresh principal check. `deliver`, when
+   * given, turns `run`'s result into the returned one synchronously after the
+   * fence, so nothing awaited comes between its checks and the return.
    *
    * Wrapped: `stage`, `hold`, `release`, `list`, `get`, `cancel`,
    * `reconcile`, `process` (whose pipeline results also pass `disclosePass`),
@@ -1965,7 +1991,11 @@ export class OfflineQueue {
    * settle only behind a fresh principal check (`settleAfterReturn`,
    * `observeFenced`).
    */
-  private async disclosing<T>(run: (after: AfterReturn) => Promise<T>, onMismatch?: () => T): Promise<T> {
+  private async disclosing<T, R = T>(
+    run: (after: AfterReturn) => Promise<T>,
+    onMismatch?: () => R,
+    deliver?: (value: T) => R,
+  ): Promise<R> {
     const deferred: Array<() => void> = [];
     let outcome: { ok: true; value: T } | { ok: false; error: unknown };
     try {
@@ -1980,9 +2010,14 @@ export class OfflineQueue {
       if (onMismatch && isPrincipalMismatch(fenceError)) return onMismatch();
       throw fenceError;
     }
+    if (!outcome.ok) {
+      for (const settle of deferred) this.settleAfterReturn(settle);
+      throw outcome.error;
+    }
+    // `deliver` is the result's last step, synchronous, after every await.
+    const value = deliver ? deliver(outcome.value) : (outcome.value as unknown as R);
     for (const settle of deferred) this.settleAfterReturn(settle);
-    if (!outcome.ok) throw outcome.error;
-    return outcome.value;
+    return value;
   }
 
   /** `discloseFence` for a pass result: one with entry data becomes `stopped` when the fence fails. */
@@ -2037,31 +2072,6 @@ export class OfflineQueue {
         generation: planned.generation,
       });
     }
-    if (signal.aborted || this.disposed) throw abortError();
-  }
-
-  /**
-   * Journals the account scope the generation's first `upload/init` returned,
-   * behind the upload's guard, before anything else is sent under it. The
-   * same scope again is a no-op; another one is refused.
-   */
-  private async pinReplayScope(entryId: string, planned: GenerationState, scope: string, signal: AbortSignal): Promise<void> {
-    await this.guardPrincipal(signal);
-    await this.transact(async (root) => {
-      const found = await this.readEntry(root, entryId);
-      const cur = found?.record.current;
-      if (!found || cur!.generation !== planned.generation || cur!.operationId !== planned.operationId) {
-        throw generationGone(entryId, planned.generation);
-      }
-      if (cur!.replay.scope === scope) return;
-      if (cur!.replay.scope !== undefined) {
-        throw Object.assign(new Error("The replay's credentials act for another account than its first upload/init"), {
-          code: REPLAY_SCOPE_MISMATCH_ERROR,
-        });
-      }
-      cur!.replay.scope = scope;
-      await this.writeRecord(found.dir, found.record);
-    }, { signal });
     if (signal.aborted || this.disposed) throw abortError();
   }
 
@@ -2148,7 +2158,6 @@ export class OfflineQueue {
       return await this.coordinator!.request(name, { signal: this.lifetime.signal }, async () => {
         await fence();
         this.txFence = fence;
-        this.txSeq = ++this.seq;
         try {
           const value = await fn(root);
           if (options.disclose) await fence();
@@ -2357,23 +2366,24 @@ export class OfflineQueue {
     this.settleAfterReturn(found.settle);
   }
 
-  /** The entry as journaled, and how to settle its waiters from that read. */
-  private async read(entryId: string): Promise<{ record: JournalRecord | null; seq: number; settle: () => void }> {
-    const { record, tombstones, seq } = await this.transact(async (root) => {
-      const seq = this.txSeq;
+  /**
+   * The entry as journaled, and how to settle its waiters from that read.
+   * Arms (see `Waiter.from`) the entry's waiters registered before the read,
+   * at the position it read, under the partition lock.
+   */
+  private async read(entryId: string): Promise<{ record: JournalRecord | null; settle: () => void }> {
+    const { record, meta } = await this.transact(async (root) => {
       const found = await this.readEntry(root, entryId);
-      return { record: found?.record ?? null, tombstones: (await this.loadMeta(await this.partitionDir(root))).tombstones, seq };
+      const meta = await this.loadMeta(await this.partitionDir(root));
+      const record = found?.record ?? null;
+      const position = record ? positionOf(record) : absentAt(meta.lastGeneration);
+      for (const waiter of this.waiters.get(entryId) ?? []) waiter.from ??= position;
+      return { record, meta };
     }, { disclose: true });
     return {
       record,
-      seq,
-      settle: () => (record ? this.observe(record, seq, tombstones) : this.settleAbsent(entryId, tombstones, seq)),
+      settle: () => (record ? this.observe(record, meta.tombstones) : this.settleAbsent(entryId, meta.tombstones, meta.lastGeneration)),
     };
-  }
-
-  /** Drops the preview (made before read `seq`) of an entry whose generation was published or whose data is gone. */
-  private revokeIfDone(record: JournalRecord, seq: number): void {
-    if (record.current.phase === 'published' || record.current.dataRemoved) this.revokeObjectUrl(record.entryId, seq);
   }
 
   /**
@@ -2403,7 +2413,6 @@ export class OfflineQueue {
   ): Promise<OfflineQueueStageResult> {
     const localSource = input.localSource ?? derivePendingLocalSource(input.fileName, input.mimeType, bytes.byteLength);
     let outcome;
-    let stagedSeq = 0;
     try {
       outcome = await this.transact(async (root) => {
         let partitionDir: OfflineQueueDirectoryHandle | undefined;
@@ -2414,7 +2423,6 @@ export class OfflineQueue {
         };
         try {
           partitionDir = await this.partitionDir(root);
-          stagedSeq = this.txSeq;
           result = await this.stageIn(partitionDir, input, bytes, localSource, migration);
         } catch (error) {
           if (!isQuotaError(error)) throw error;
@@ -2456,14 +2464,14 @@ export class OfflineQueue {
       throw error;
     }
     if (outcome.status !== 'staged') return outcome;
-    this.revokeObjectUrl(input.entryId, stagedSeq);
-    this.notifyWork();
+    // A generation staged held is not runnable: its release announces it.
+    if (!outcome.holdId) this.notifyWork();
     // A work listener above may have switched the account: the caller's outer
     // fence (`disclosing`) keeps the staging committed for its principal and
-    // returns no entry of it. Waiters of the superseded generation settle
-    // after the result returned.
+    // returns no entry of it. Waiters of the superseded generation settle,
+    // and its preview goes, after the result returned.
     const staged = outcome;
-    after(() => this.observe(staged.record, stagedSeq, staged.tombstones));
+    after(() => this.observe(staged.record, staged.tombstones));
     return { status: 'staged', entry: snapshot(outcome.record), ...(outcome.holdId ? { holdId: outcome.holdId } : {}) };
   }
 
@@ -2723,10 +2731,17 @@ export class OfflineQueue {
     signal: AbortSignal | undefined,
     started: Promise<unknown>[],
   ): Promise<OfflineQueueProcessResult> {
+    // The uploader's current replay scope, resolved once per pass, outside
+    // the partition lock (it may run app code), when an upload step needs it.
+    let bound: ScopeResolution | undefined;
     for (;;) {
       let plan: Plan;
       try {
-        plan = await this.transact((root) => this.planStep(root, entryId, signal, started), { signal });
+        plan = await this.transact((root) => this.planStep(root, entryId, signal, started, bound), { signal });
+        if (plan.kind === 'resolve-scope') {
+          bound = await this.resolveReplayScope(signal);
+          continue;
+        }
       } catch (error) {
         const stopped = this.stoppedResult(error);
         if (stopped) return stopped;
@@ -2742,6 +2757,38 @@ export class OfflineQueue {
       if (outcome === REPLAN) continue;
       if (outcome) return this.disclosePass(outcome, signal);
     }
+  }
+
+  /**
+   * Resolves the uploader's replay scope for the partition's principal,
+   * behind a principal fence before and after. A principal mismatch, an
+   * abort or a disposal stops the pass (thrown); any other rejection, or a
+   * value that is not a scope, is returned as the step's error: nothing is
+   * sent and the generation stays provisional.
+   */
+  private async resolveReplayScope(signal: AbortSignal | undefined): Promise<ScopeResolution> {
+    const uploader = this.options.uploader;
+    await this.discloseFence(signal);
+    const controller = new AbortController();
+    const onAbort = () => controller.abort();
+    if (this.lifetime.signal.aborted || signal?.aborted) controller.abort();
+    this.lifetime.signal.addEventListener('abort', onAbort, { once: true });
+    signal?.addEventListener('abort', onAbort, { once: true });
+    let scope: unknown;
+    try {
+      scope = await uploader.replayScope!.call(uploader, this.partition.principal, controller.signal);
+    } catch (error) {
+      if (isPrincipalMismatch(error) || this.disposed || signal?.aborted) throw error;
+      return { error };
+    } finally {
+      this.lifetime.signal.removeEventListener('abort', onAbort);
+      signal?.removeEventListener('abort', onAbort);
+    }
+    await this.discloseFence(signal);
+    if (!isReplayScope(scope)) {
+      return { error: Object.assign(new Error('The uploader resolved no replay scope'), { code: 'FILEFN_REPLAY_SCOPE_UNCONFIRMED' }) };
+    }
+    return { scope };
   }
 
   /**
@@ -2809,8 +2856,8 @@ export class OfflineQueue {
     entryId: string,
     signal: AbortSignal | undefined,
     started: Promise<unknown>[],
+    bound: ScopeResolution | undefined,
   ): Promise<Plan> {
-    const seq = this.txSeq;
     const found = await this.readEntry(root, entryId);
     if (!found) {
       await this.txFence!();
@@ -2823,7 +2870,7 @@ export class OfflineQueue {
     const finish = async (result: OfflineQueueProcessResult, emit = false): Promise<Plan> => {
       await this.txFence!();
       if (emit) await this.emitFor(record, signal);
-      await this.observeFenced(record, seq);
+      await this.observeFenced(record);
       return { kind: 'done', result };
     };
     const provisional = (reason: Extract<OfflineQueueProcessResult, { status: 'provisional' }>['reason'], emit = false) =>
@@ -2868,6 +2915,27 @@ export class OfflineQueue {
           }
           return provisional('retry-limit');
         }
+        // The replay identity's account scope: journaled once, below, in the
+        // write that claims the first upload step, and only compared after.
+        if (this.options.uploader.replayScope && !bound) return { kind: 'resolve-scope' };
+        if (bound) {
+          const differs = 'scope' in bound && cur.replay.scope !== undefined && cur.replay.scope !== bound.scope;
+          if ('error' in bound || differs) {
+            // Nothing is sent: provisional under the same key and scope.
+            const info = errorInfo(
+              'error' in bound
+                ? bound.error
+                : Object.assign(new Error("The replay account's scope differs from the one journaled with the generation"), {
+                    code: REPLAY_SCOPE_MISMATCH_ERROR,
+                  }),
+            );
+            cur.attempts += 1;
+            cur.error = info;
+            cur.pending = { stage: 'upload', reason: 'ambiguous', message: info.message };
+            await write();
+            return provisional('ambiguous', true);
+          }
+        }
         const blob = await getFile(dir, cur.dataFile);
         if (!blob) {
           cur.phase = 'failed';
@@ -2878,6 +2946,7 @@ export class OfflineQueue {
         const file = new File([await blob.arrayBuffer()], cur.fileName, { type: cur.mimeType });
         cur.phase = 'uploading';
         cur.claim = { instanceId: this.instanceId, at: new Date().toISOString() };
+        if (bound && 'scope' in bound && cur.replay.scope === undefined) cur.replay.scope = bound.scope;
         await write();
         return start('upload', (controller) =>
           this.options.uploader.upload({
@@ -2890,7 +2959,6 @@ export class OfflineQueue {
             signal: controller.signal,
             assertPrincipal: () => this.guardUpload(entryId, cur, controller.signal),
             ...(cur.replay.scope !== undefined ? { replayScope: cur.replay.scope } : {}),
-            pinReplayScope: (scope) => this.pinReplayScope(entryId, cur, scope, controller.signal),
           }),
         );
       }
@@ -3002,11 +3070,11 @@ export class OfflineQueue {
     }
     switch (plan.kind) {
       case 'upload': {
-        const result = value as UploadResult;
-        if (!hasStoredIdentity(result)) {
-          // A success that does not name what it stored confirms nothing.
-          return this.recordFailure(entryId, plan, new Error('Upload result does not name a stored file and version'), signal);
-        }
+        // The transport's decoder and schema (see `FileFnResult`): only a
+        // success naming a stored file and version confirms anything.
+        const decoded = decodeFileFnBody(value, uploadSchemas.stored);
+        if (decoded.kind !== 'ok') return this.recordFailure(entryId, plan, decoded.error, signal);
+        const result: UploadResult = { fileId: decoded.data.fileId, versionId: decoded.data.versionId };
         if (result.fileId !== record.current.fileId) {
           return this.commit(entryId, record, signal, (state) => {
             state.phase = 'failed';
@@ -3145,10 +3213,8 @@ export class OfflineQueue {
     stopReason?: 'rejected' | 'failed' | 'ambiguous',
   ): Promise<OfflineQueueProcessResult | null> {
     let written: JournalRecord | null;
-    let seq = 0;
     try {
       written = await this.transact(async (root) => {
-        seq = this.txSeq;
         const found = await this.readEntry(root, entryId);
         if (!found) return null;
         const cur = found.record.current;
@@ -3172,7 +3238,7 @@ export class OfflineQueue {
     }
     if (!written) return { status: 'superseded' };
     await this.emitFor(written, signal);
-    await this.observeFenced(written, seq);
+    await this.observeFenced(written);
     return stopReason ? { status: 'provisional', entry: snapshot(written), reason: stopReason } : null;
   }
 
@@ -3203,42 +3269,64 @@ export class OfflineQueue {
    * `observe` after a fresh principal check: a listener (or anything else)
    * that switched the account since the state was read leaves the waiters
    * unsettled, for a read under their own principal, so no waiter receives
-   * the old principal's entry under the new one.
+   * the old principal's entry under the new one (and the failed check
+   * revoked every preview).
    */
-  private async observeFenced(record: JournalRecord, seq: number, tombstones?: Tombstone[]): Promise<void> {
+  private async observeFenced(record: JournalRecord, tombstones?: Tombstone[]): Promise<void> {
     if (this.disposed) return;
-    if (await this.principalMatches(this.lifetime.signal)) {
-      this.observe(record, seq, tombstones);
-      return;
-    }
-    this.revokeIfDone(record, seq);
+    if (await this.principalMatches(this.lifetime.signal)) this.observe(record, tombstones);
   }
 
   /**
-   * Settles waiters from a journal state read at `seq`, and drops a preview
-   * (made before that read) the entry no longer needs. A waiter of a newer
-   * generation than the one read stays pending: the read is older than that
-   * generation, however late it is applied, and settles nothing of it. A
-   * waiter of an older generation is settled only with the partition's
-   * `tombstones` at hand: it resolves if its generation was published (and
-   * since replaced or removed), else it was superseded. Without them it stays
-   * for a read that has them.
+   * Admits an observation of `entryId` at `position`: false (discard it
+   * whole) when an observation of a newer position was applied, else records
+   * it as the newest. Its caller delivers in the same synchronous block.
    */
-  private observe(record: JournalRecord, seq: number, tombstones?: Tombstone[]): void {
-    const cur = record.current;
-    this.revokeIfDone(record, seq);
-    const list = this.waiters.get(record.entryId);
-    if (!list || this.disposed) return;
+  private admit(entryId: string, position: Position): boolean {
+    if (this.disposed || isBefore(position, this.applied.get(entryId))) return false;
+    this.applied.set(entryId, position);
+    return true;
+  }
+
+  /** The waiters armed at or before `position`: only those may be settled from it. */
+  private takeWaiters(entryId: string, position: Position, settles: (waiter: Waiter) => boolean): Waiter[] {
+    const list = this.waiters.get(entryId);
+    if (!list) return [];
+    const taken: Waiter[] = [];
     const remaining: Waiter[] = [];
     for (const waiter of list) {
-      if (waiter.generation > cur.generation) {
-        remaining.push(waiter);
-      } else if (waiter.generation < cur.generation) {
-        if (!tombstones) {
-          remaining.push(waiter);
-          continue;
-        }
-        const tombstone = tombstones.find((t) => t.entryId === record.entryId && t.generation === waiter.generation);
+      if (waiter.from && !isBefore(position, waiter.from) && settles(waiter)) taken.push(waiter);
+      else remaining.push(waiter);
+    }
+    if (remaining.length > 0) this.waiters.set(entryId, remaining);
+    else this.waiters.delete(entryId);
+    return taken;
+  }
+
+  /**
+   * Applies a journal state (see `admit`): drops a preview the entry no
+   * longer needs (published, data removed, or of another generation), and
+   * settles waiters armed at or before it. A waiter of a newer generation
+   * than the one read stays pending. A waiter of an older generation is
+   * settled only with the partition's `tombstones` at hand: it resolves if
+   * its generation was published (and since replaced or removed), else it
+   * was superseded. Without them it stays for a read that has them.
+   */
+  private observe(record: JournalRecord, tombstones?: Tombstone[]): void {
+    const position = positionOf(record);
+    if (!this.admit(record.entryId, position)) return;
+    const cur = record.current;
+    const cached = this.objectUrls.get(record.entryId);
+    if (cached && (cur.phase === 'published' || cur.dataRemoved || cached.operationId !== cur.operationId)) {
+      this.revokeObjectUrl(record.entryId);
+    }
+    const settles = (waiter: Waiter): boolean =>
+      waiter.generation === cur.generation
+        ? isTerminalPhase(cur.phase) || cur.pending?.reason === 'retry-limit'
+        : waiter.generation < cur.generation && tombstones !== undefined;
+    for (const waiter of this.takeWaiters(record.entryId, position, settles)) {
+      if (waiter.generation < cur.generation) {
+        const tombstone = tombstones!.find((t) => t.entryId === record.entryId && t.generation === waiter.generation);
         if (tombstone) {
           waiter.resolve({ ...tombstone.entry });
           continue;
@@ -3257,48 +3345,36 @@ export class OfflineQueue {
           { entryId: record.entryId, generation: cur.generation, ...(cur.error?.code ? { cause: cur.error.code } : {}) },
         );
         waiter.reject(error);
-      } else if (cur.pending?.reason === 'retry-limit') {
-        waiter.reject(new OfflineQueueError('FILEFN_QUEUE_RETRY_LIMIT', cur.pending.message ?? 'Upload attempts reached the limit', {
+      } else {
+        waiter.reject(new OfflineQueueError('FILEFN_QUEUE_RETRY_LIMIT', cur.pending?.message ?? 'Upload attempts reached the limit', {
           entryId: record.entryId,
           generation: cur.generation,
         }));
-      } else {
-        remaining.push(waiter);
       }
     }
-    if (remaining.length > 0) this.waiters.set(record.entryId, remaining);
-    else this.waiters.delete(record.entryId);
   }
 
   /**
-   * Settles the waiters of an entry that was gone at read `seq`: a waiter of
-   * a generation whose tombstone shows it published resolves; any other is
-   * cancelled. Only waiters and previews made before that read: one made
-   * since may be for a generation staged after it.
+   * Applies an entry found absent when the partition's last generation was
+   * `lastGeneration` (see `admit`): its preview goes, and each waiter armed
+   * at or before then resolves if its generation's tombstone shows it
+   * published, else is cancelled.
    */
-  private settleAbsent(entryId: string, tombstones: Tombstone[], seq: number): void {
-    this.revokeObjectUrl(entryId, seq);
-    const list = this.waiters.get(entryId);
-    if (!list) return;
-    const remaining = list.filter((waiter) => waiter.seq >= seq);
-    if (remaining.length > 0) this.waiters.set(entryId, remaining);
-    else this.waiters.delete(entryId);
-    for (const waiter of list) {
-      if (waiter.seq >= seq) continue;
+  private settleAbsent(entryId: string, tombstones: Tombstone[], lastGeneration: number): void {
+    const position = absentAt(lastGeneration);
+    if (!this.admit(entryId, position)) return;
+    this.revokeObjectUrl(entryId);
+    for (const waiter of this.takeWaiters(entryId, position, () => true)) {
       const tombstone = tombstones.find((t) => t.entryId === entryId && t.generation === waiter.generation);
       if (tombstone) waiter.resolve({ ...tombstone.entry });
       else waiter.reject(new OfflineQueueError('FILEFN_QUEUE_CANCELLED', 'Entry was removed', { entryId }));
     }
   }
 
-  /** Settles waiters and drops previews of entries that were gone at read `seq` (cancelled or reclaimed, here or in another tab). */
-  private forgetAbsent(present: Set<string>, tombstones: Tombstone[], seq: number): void {
-    for (const entryId of [...this.waiters.keys()]) {
-      if (!present.has(entryId)) this.settleAbsent(entryId, tombstones, seq);
-    }
-    for (const entryId of [...this.objectUrls.keys()]) {
-      if (!present.has(entryId)) this.revokeObjectUrl(entryId, seq);
-    }
+  /** Applies the absence of every entry with waiters or a preview that a partition-wide read did not find. */
+  private forgetAbsent(present: Set<string>, tombstones: Tombstone[], lastGeneration: number): void {
+    const absent = new Set([...this.waiters.keys(), ...this.objectUrls.keys()].filter((entryId) => !present.has(entryId)));
+    for (const entryId of absent) this.settleAbsent(entryId, tombstones, lastGeneration);
   }
 
   /**
@@ -3329,14 +3405,9 @@ export class OfflineQueue {
     for (const entryId of [...this.objectUrls.keys()]) this.revokeObjectUrl(entryId);
   }
 
-  /** Revokes the entry's preview; with `before`, only one made by a read older than read `before`. */
-  private revokeObjectUrl(entryId: string, before?: number): void {
-    // A preview read older than `before` is stale from here on, even when it
-    // finds no preview to replace.
-    if (before !== undefined && before > (this.previewFloor.get(entryId) ?? 0)) this.previewFloor.set(entryId, before);
+  private revokeObjectUrl(entryId: string): void {
     const cached = this.objectUrls.get(entryId);
     if (!cached) return;
-    if (before !== undefined && cached.seq >= before) return;
     this.objectUrls.delete(entryId);
     if (typeof URL !== 'undefined' && typeof URL.revokeObjectURL === 'function') URL.revokeObjectURL(cached.url);
   }

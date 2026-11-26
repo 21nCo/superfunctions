@@ -43,8 +43,6 @@ const FILE_ID_MISMATCH_ERROR = 'FILEFN_CLIENT_FILE_ID_MISMATCH';
 export const UPLOAD_SESSION_ENDED_ERROR = 'FILEFN_UPLOAD_SESSION_ENDED';
 /** A replayed completed session's file could not be read back to confirm it. */
 export const UPLOAD_RECONCILE_FAILED_ERROR = 'FILEFN_UPLOAD_RECONCILE_FAILED';
-/** A completion response without a well-formed fileId and versionId: its outcome is unknown. */
-export const UPLOAD_RESULT_INVALID_ERROR = 'FILEFN_UPLOAD_RESULT_INVALID';
 /**
  * An offline replay's credentials resolved to another owner or tenant than
  * the scope its first `upload/init` pinned (the server's 409, or a response
@@ -61,20 +59,18 @@ export const REPLAY_SCOPE_UNCONFIRMED_ERROR = 'FILEFN_REPLAY_SCOPE_UNCONFIRMED';
 
 /**
  * Binds an offline replay's sessions to one account. Every `upload/init`,
- * the generation's first included, sends `x-filefn-replay-scope: <pinned>`,
- * the scope of the account the partition expects (`replayScopeOf`). The
- * server refuses a marked init from an anonymous caller (401) or from another
- * owner or tenant (409), creating nothing, so no session is ever created or
- * advanced under another account. `pin`, when given, journals the confirmed
- * scope with the generation before anything else is sent.
+ * the generation's first included, sends `x-filefn-replay-scope: <scope>`,
+ * the scope journaled with the generation's replay identity before its first
+ * request. The server refuses a marked init from an anonymous caller (401)
+ * or from another owner or tenant (409), creating nothing, so no session is
+ * ever created or advanced under another account.
  */
 export interface UploadReplayScope {
-  pinned: string;
-  pin?(scope: string): Promise<void>;
+  scope: string;
 }
 
-
-function isReplayScope(value: unknown): value is string {
+/** A replay scope as the server issues it: 1-255 visible ASCII characters. */
+export function isReplayScope(value: unknown): value is string {
   return typeof value === 'string' && /^[\x21-\x7e]{1,255}$/.test(value);
 }
 
@@ -102,41 +98,6 @@ export async function replayScopeOf(account: ReplayAccount): Promise<string> {
   const data = new TextEncoder().encode(JSON.stringify(['filefn-replay-scope', principalId, tenantId ?? null]));
   const digest = new Uint8Array(await subtle.digest('SHA-256', data));
   return `rs_${Array.from(digest, (byte) => byte.toString(16).padStart(2, '0')).join('')}`;
-}
-
-/**
- * A server-issued identifier such as a version ID: 1-256 URL-safe characters
- * (letters, digits, `_` and `-`, not starting with `_` or `-`), so it names
- * one path segment and nothing else (no `/`, `.` or `%`).
- */
-export function isWellFormedId(value: unknown): value is string {
-  return typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9_-]{0,255}$/.test(value);
-}
-
-/**
- * An explicit failure envelope: an object whose `ok` is present and not
- * `true`, or that carries an `error`. Such a body confirms nothing (no stored
- * version, no ended session), whatever else it names, so the outcome stays
- * unknown and a replay under the same key settles it.
- */
-export function isFailureEnvelope(value: unknown): boolean {
-  if (!value || typeof value !== 'object') return false;
-  const record = value as { ok?: unknown; error?: unknown };
-  if ('ok' in record && record.ok !== true) return true;
-  return 'error' in record && record.error !== undefined && record.error !== null;
-}
-
-/**
- * The payload of an `upload/init` answer, bare or enveloped. An explicit
- * failure envelope (at either level) is refused as an unknown outcome.
- */
-function initPayload(raw: unknown): Partial<InitUploadResponse> {
-  const payload =
-    raw && typeof raw === 'object' && 'uploadSessionId' in raw ? raw : (raw as { data?: unknown } | undefined)?.data;
-  if (isFailureEnvelope(raw) || isFailureEnvelope(payload)) {
-    throw createClientError(UPLOAD_RESULT_INVALID_ERROR, 'upload/init answered with a failure envelope; the session state is unknown');
-  }
-  return payload as Partial<InitUploadResponse>;
 }
 
 function createClientError(code: string, message: string, details?: Record<string, unknown>): Error & {
@@ -408,22 +369,16 @@ export class UploadManager {
           metadata: prepared.metadata,
           fileId: prepared.fileId,
           idempotencyKey: prepared.idempotencyKey,
-          ...(replay ? { replayScope: replay.pinned } : {}),
+          ...(replay ? { replayScope: replay.scope } : {}),
         },
         signal,
       );
-    // Accept both unwrapped { uploadSessionId, ... } and envelope { data: { uploadSessionId, ... } };
-    // only a successful answer confirms anything (an explicit failure
-    // envelope never ends, completes or names a session).
-    const initResponse = initPayload(await init());
-
-    const uploadSessionId = initResponse?.uploadSessionId;
-    if (!uploadSessionId) {
-      throw new Error(
-        "Failed to create upload session: no session ID returned. Ensure the server returns { ok: true, data: { uploadSessionId, totalParts, chunkSizeBytes, ... } } or { uploadSessionId, ... }.",
-      );
-    }
-    if (replay) await this.checkReplayScope(initResponse, replay);
+    // Decoded by the transport (`FileFnResult`): a well-formed session, and a
+    // completed one names its stored file and version. Anything else was
+    // thrown as a refusal or an unknown outcome.
+    const initResponse = await init();
+    const uploadSessionId = initResponse.uploadSessionId;
+    if (replay) this.checkReplayScope(initResponse, replay);
 
     this.session = {
       uploadSessionId,
@@ -443,11 +398,8 @@ export class UploadManager {
       return this.reconcileCompletedSession(initResponse, prepared.fileId, signal);
     }
     if (initResponse.status === "aborted" || initResponse.status === "expired") {
-      // Only a well-formed answer confirms the end (and retires the key): a
-      // malformed one stays ambiguous under the recorded key.
-      if (!isWellFormedId(uploadSessionId)) {
-        throw new Error("Upload session replay returned a malformed session ID; the session's state is unknown");
-      }
+      // A decoded success with a well-formed session confirms the end (and
+      // retires the key).
       throw createClientError(
         UPLOAD_SESSION_ENDED_ERROR,
         `Upload session ${uploadSessionId} is ${initResponse.status}; start again with a new idempotency key`,
@@ -464,9 +416,9 @@ export class UploadManager {
       if (status.status === "completed") {
         // Completed since the init answered: the same key's replay reports
         // the recorded version, which is reconciled (no part is sent).
-        const replayed = initPayload(await init());
-        if (replay) await this.checkReplayScope(replayed, replay);
-        if (replayed?.uploadSessionId === uploadSessionId && replayed.status === "completed") {
+        const replayed = await init();
+        if (replay) this.checkReplayScope(replayed, replay);
+        if (replayed.uploadSessionId === uploadSessionId && replayed.status === "completed") {
           return this.reconcileCompletedSession(replayed, prepared.fileId, signal);
         }
         throw new Error("Upload session completed meanwhile, but its replay did not report it; the outcome is unknown");
@@ -488,14 +440,7 @@ export class UploadManager {
       signal,
     );
 
-    if (isFailureEnvelope(result) || !isValidFileId(result?.fileId) || !isWellFormedId(result?.versionId)) {
-      // A success that does not name what it stored, or an explicit failure
-      // envelope naming one, confirms nothing: the outcome is unknown and a
-      // replay under the same key settles it.
-      throw createClientError(UPLOAD_RESULT_INVALID_ERROR, 'Upload completion did not name a stored file and version', {
-        uploadSessionId: this.session.uploadSessionId,
-      });
-    }
+    // Decoded by the transport: it names a stored file and version.
     if (result.fileId !== prepared.fileId) {
       throw createClientError(
         FILE_ID_MISMATCH_ERROR,
@@ -512,11 +457,10 @@ export class UploadManager {
 
   /**
    * The scope check of a marked offline replay: the response must name the
-   * scope the init was pinned to (the account the partition expects); the
-   * first confirmation is journaled (`pin`) before anything else is sent.
+   * journaled scope the init sent, or nothing more is sent under it.
    */
-  private async checkReplayScope(initResponse: Partial<InitUploadResponse>, replay: UploadReplayScope): Promise<void> {
-    const scope = initResponse?.replayScope;
+  private checkReplayScope(initResponse: InitUploadResponse, replay: UploadReplayScope): void {
+    const scope = initResponse.replayScope;
     if (!isReplayScope(scope)) {
       throw createClientError(
         REPLAY_SCOPE_UNCONFIRMED_ERROR,
@@ -524,15 +468,10 @@ export class UploadManager {
         { uploadSessionId: initResponse?.uploadSessionId },
       );
     }
-    if (scope !== replay.pinned) {
-      throw createClientError(REPLAY_SCOPE_MISMATCH_ERROR, "The replay's credentials act for another account than the partition's", {
+    if (scope !== replay.scope) {
+      throw createClientError(REPLAY_SCOPE_MISMATCH_ERROR, "The replay's credentials act for another account than its journaled scope", {
         uploadSessionId: initResponse.uploadSessionId,
       });
-    }
-    const pin = replay.pin;
-    if (pin) {
-      replay.pin = undefined;
-      await pin(scope);
     }
   }
 
@@ -543,16 +482,13 @@ export class UploadManager {
    * never confirmed.
    */
   private async reconcileCompletedSession(
-    initResponse: Partial<InitUploadResponse>,
+    initResponse: InitUploadResponse,
     expectedFileId: string,
     signal: AbortSignal,
   ): Promise<UploadResult> {
-    const { fileId, versionId } = initResponse;
-    if (!isValidFileId(fileId) || !isWellFormedId(versionId)) {
-      throw createClientError(UPLOAD_RECONCILE_FAILED_ERROR, 'Completed session did not report its stored file', {
-        uploadSessionId: initResponse.uploadSessionId,
-      });
-    }
+    // Decoded by the transport: a completed session names a well-formed file and version.
+    const fileId = initResponse.fileId!;
+    const versionId = initResponse.versionId!;
     if (fileId !== expectedFileId) {
       throw createClientError(
         FILE_ID_MISMATCH_ERROR,
@@ -581,7 +517,7 @@ export class UploadManager {
         { cause: error },
       );
     }
-    if (isFailureEnvelope(stored) || stored?.fileId !== fileId || stored?.versionId !== versionId) {
+    if (stored.fileId !== fileId || stored.versionId !== versionId) {
       throw createClientError(UPLOAD_RECONCILE_FAILED_ERROR, 'Stored version read back does not match the completed session', {
         uploadSessionId: initResponse.uploadSessionId,
         fileId,

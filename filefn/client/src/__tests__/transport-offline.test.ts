@@ -333,7 +333,8 @@ describe('replay settlement boundaries', () => {
     await stageOne(queue);
     expect(await queue.process(FILE)).toMatchObject({ status: 'provisional', reason: 'ambiguous' });
     expect(s.scopes).toEqual([scopeOf('user-alice')]);
-    expect(journals()).not.toContain('"scope"');
+    // Journaled with the replay identity before the first init was sent.
+    expect(journals()).toContain(`"scope":"${scopeOf('user-alice')}"`);
     otherAccount = false;
     expect(await queue.process(FILE)).toMatchObject({ status: 'published' });
     expect(s.scopes).toEqual([scopeOf('user-alice'), scopeOf('user-alice')]);
@@ -415,6 +416,171 @@ describe('replay settlement boundaries', () => {
     expect(await queue.process(FILE)).toMatchObject({ status: 'published' });
     expect(new Set(s.keys).size).toBe(1);
     c.dispose();
+  });
+
+  // Architecture reset (A): one decoder decides what a FileFn answer proves.
+  const completed = (init: RequestInit, extra: Record<string, unknown> = {}) => ({
+    uploadSessionId: 'sess_1',
+    status: 'completed',
+    fileId: FILE,
+    versionId: 'ver_1',
+    versionConfirmed: true,
+    ...replayScopeOf(init),
+    ...extra,
+  });
+
+  it.each([
+    ['an outer error with ok: true', (init: RequestInit) => json({ ok: true, error: { code: 'FILEFN_INTERNAL', message: 'x' }, data: { uploadSessionId: 'sess_1', status: 'expired', ...replayScopeOf(init) } })],
+    ['ok: false', (init: RequestInit) => json({ ok: false, data: { uploadSessionId: 'sess_1', status: 'aborted', ...replayScopeOf(init) } })],
+    ['no session ID', (init: RequestInit) => envelope({ status: 'expired', ...replayScopeOf(init) })],
+    ['a numeric session ID', (init: RequestInit) => envelope({ uploadSessionId: 12, status: 'expired', ...replayScopeOf(init) })],
+    ['a path-like session ID', (init: RequestInit) => envelope({ uploadSessionId: '../sess_1', status: 'aborted', ...replayScopeOf(init) })],
+  ] as const)('keeps the key of a session reported ended by an init answer with %s', async (_label, answer) => {
+    const s = server((path, init, call) => {
+      if (path !== '/upload/init') return undefined;
+      return call === 1 ? answer(init) : envelope(completed(init));
+    });
+    const c = client(s.fetch);
+    const queue = c.getOfflineQueue();
+    await stageOne(queue);
+    expect(await queue.process(FILE)).toMatchObject({ status: 'provisional', reason: 'ambiguous' });
+    expect(await queue.process(FILE)).toMatchObject({ status: 'published', entry: { upload: { versionId: 'ver_1' } } });
+    expect(s.keys).toHaveLength(2);
+    expect(new Set(s.keys).size).toBe(1);
+    c.dispose();
+  });
+
+  it('retires the key of a session a well-formed init answer reports expired, and journals a fresh one before sending it', async () => {
+    let journaledFirst = false;
+    const s = server((path, init, call) => {
+      if (path !== '/upload/init') return undefined;
+      if (call === 1) return envelope({ uploadSessionId: 'sess_1', status: 'expired', ...replayScopeOf(init) });
+      journaledFirst = journals().includes(`"idempotencyKey":"${new Headers(init.headers).get('x-idempotency-key')}"`);
+      return undefined;
+    });
+    const c = client(s.fetch);
+    const queue = c.getOfflineQueue();
+    await stageOne(queue);
+    expect(await queue.process(FILE)).toMatchObject({ status: 'published' });
+    expect(s.keys).toHaveLength(2);
+    expect(s.keys[1]).not.toBe(s.keys[0]);
+    expect(journaledFirst).toBe(true);
+    c.dispose();
+  });
+
+  it.each([
+    [
+      'completion: an outer error with ok: true',
+      (path: string) =>
+        path === '/upload/sess_1/complete' ? json({ ok: true, error: { code: 'FILEFN_INTERNAL' }, data: { fileId: FILE, versionId: 'ver_1' } }) : undefined,
+    ],
+    ['completion: a malformed versionId', (path: string) => (path === '/upload/sess_1/complete' ? envelope({ fileId: FILE, versionId: '../ver_1' }) : undefined)],
+    [
+      'a completed init: an outer error with ok: true',
+      (path: string, init: RequestInit) =>
+        path === '/upload/init' ? json({ ok: true, error: { code: 'FILEFN_INTERNAL' }, data: completed(init) }) : undefined,
+    ],
+    [
+      'a completed init: a malformed session ID',
+      (path: string, init: RequestInit) => (path === '/upload/init' ? envelope(completed(init, { uploadSessionId: 'sess/1' })) : undefined),
+    ],
+    [
+      'a completed init: a malformed versionId',
+      (path: string, init: RequestInit) => (path === '/upload/init' ? envelope(completed(init, { versionId: 'ver 1' })) : undefined),
+    ],
+    [
+      'the readback: an outer error with ok: true',
+      (path: string, init: RequestInit) => {
+        if (path === '/upload/init') return envelope(completed(init, { versionConfirmed: undefined }));
+        if (path === `/${FILE}/versions/ver_1`) return json({ ok: true, error: { code: 'FILEFN_INTERNAL' }, data: { fileId: FILE, versionId: 'ver_1' } });
+        return undefined;
+      },
+    ],
+  ] as const)('confirms no stored version from %s', async (_label, route) => {
+    const s = server(route as Route);
+    const c = client(s.fetch);
+    const queue = c.getOfflineQueue();
+    await stageOne(queue);
+    expect(await queue.process(FILE)).toMatchObject({ status: 'provisional', reason: 'ambiguous', entry: { phase: 'uploading' } });
+    expect((await queue.get(FILE))?.upload).toBeUndefined();
+    expect(persistedText()).toContain('.bin');
+    c.dispose();
+  });
+
+  it.each([
+    ['redirected elsewhere', true, { status: 'provisional', reason: 'ambiguous' }],
+    ['answered by the verified part route', false, { status: 'provisional', reason: 'failed' }],
+  ] as const)('reads a coded part refusal only when %s is not the case', async (label, redirected, expected) => {
+    const redirects: Array<RequestRedirect | undefined> = [];
+    const s = server((path, init) => {
+      if (path !== '/upload/sess_1/parts/1') return undefined;
+      redirects.push(init.redirect);
+      const refusal = json({ ok: false, error: { code: 'FILEFN_INVALID_PART', message: 'refused' } }, 400);
+      if (redirected) Object.defineProperty(refusal, 'redirected', { value: true });
+      return refusal;
+    });
+    const c = client(s.fetch);
+    const queue = c.getOfflineQueue();
+    await stageOne(queue);
+    const result = await queue.process(FILE);
+    expect(result, label).toMatchObject(expected);
+    // FileFn's part route is never followed elsewhere.
+    expect(redirects).toEqual(['error']);
+    if (redirected) {
+      // Retried under the same generation and key.
+      expect(await queue.get(FILE)).toMatchObject({ generation: 1, phase: 'uploading', state: 'provisional' });
+    } else {
+      expect(await queue.get(FILE)).toMatchObject({ phase: 'failed', error: { code: 'FILEFN_INVALID_PART' } });
+    }
+    c.dispose();
+  });
+
+  // Architecture reset (B): the scope is part of the journaled replay identity.
+  it('replays a lost first init only under the scope journaled before it, whatever replayAccount names later', async () => {
+    let tenant = 'tenant-a';
+    const s = server((path, _init, call) =>
+      path === '/upload/init' && call === 1 ? Promise.reject(new TypeError('network connection lost')) : undefined,
+    );
+    const c = client(s.fetch, { replayAccount: () => ({ principalId: 'server-user-7', tenantId: tenant }) });
+    const queue = c.getOfflineQueue();
+    await stageOne(queue);
+    expect(await queue.process(FILE)).toMatchObject({ status: 'provisional', reason: 'ambiguous' });
+    tenant = 'tenant-b';
+    expect(await queue.process(FILE)).toMatchObject({
+      status: 'provisional',
+      reason: 'ambiguous',
+      entry: { error: { code: 'FILEFN_REPLAY_SCOPE_MISMATCH' } },
+    });
+    // Nothing was sent for the other tenant.
+    expect(s.scopes).toEqual([scopeOf('server-user-7', 'tenant-a')]);
+    tenant = 'tenant-a';
+    expect(await queue.process(FILE)).toMatchObject({ status: 'published' });
+    expect(s.scopes).toEqual([scopeOf('server-user-7', 'tenant-a'), scopeOf('server-user-7', 'tenant-a')]);
+    expect(new Set(s.keys).size).toBe(1);
+    c.dispose();
+  });
+
+  it('journals the scope with the claim before the first request, so a reload replays the same key and scope', async () => {
+    const s = server();
+    let first = true;
+    const c1 = client(s.fetch, {
+      // The first request's credentials never resolve: the tab closes before anything is sent.
+      getAuthHeaders: () => (first ? ((first = false), new Promise<never>(() => {})) : { authorization: 'Bearer test-token-alice' }),
+    });
+    const q1 = c1.getOfflineQueue();
+    await stageOne(q1);
+    void q1.process(FILE).catch(() => {});
+    await vi.waitFor(() => expect(journals()).toContain(`"scope":"${scopeOf('user-alice')}"`));
+    expect(s.paths).toEqual([]);
+    const key = JSON.parse(journals()).current.replay.idempotencyKey as string;
+    locks.closeTab('a');
+    c1.dispose();
+
+    const c2 = client(s.fetch, { queue: { coordinator: locks.forTab('b') } });
+    expect(await c2.getOfflineQueue().process(FILE)).toMatchObject({ status: 'published' });
+    expect(s.scopes).toEqual([scopeOf('user-alice')]);
+    expect(s.keys).toEqual([key]);
+    c2.dispose();
   });
 
   it('refuses an offline idempotencyKey longer than the queue keeps, before returning a handle', () => {

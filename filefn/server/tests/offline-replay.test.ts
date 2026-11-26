@@ -391,8 +391,8 @@ describe('offline replays bound to the account of their first upload/init', () =
     app.signIn('anonymous');
     expect(await app.queue.process(FILE)).toMatchObject({ status: 'provisional', reason: 'ambiguous' });
     expect(await app.rows('uploadSessions')).toHaveLength(0);
-    expect(app.journalKey()).toMatchObject({ retiredKeys: [] });
-    expect(app.journalKey().scope).toBeUndefined();
+    // The partition account's scope was journaled with the key before the first init was sent.
+    expect(app.journalKey()).toMatchObject({ retiredKeys: [], scope: replayScopeOf({ principalId: 'user-owner' }) });
 
     app.signIn('user-owner');
     expect(await app.queue.process(FILE)).toMatchObject({ status: 'published' });

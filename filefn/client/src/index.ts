@@ -7,7 +7,7 @@ import {
   generateFileId,
   prepareUploadInput,
   replayScopeOf,
-  REPLAY_SCOPE_MISMATCH_ERROR,
+  REPLAY_SCOPE_UNCONFIRMED_ERROR,
 } from './upload-manager.js';
 import type {
   ArtifactDescriptor,
@@ -347,28 +347,24 @@ function replayUploader(
   principal: () => OfflineQueuePrincipal,
 ): OfflineQueueUploader {
   return {
-    upload: async (input) => {
-      // The account the partition expects, resolved before any request: the
-      // first init is pinned to it, so no session is ever created or
-      // advanced under another account (or none).
-      await input.assertPrincipal();
-      const bound = principal();
+    // The account the partition expects. The queue journals its scope with
+    // the generation's replay identity before the first request, and sends
+    // nothing when a later result differs from the journaled one.
+    replayScope: async (bound) => {
       const account: ReplayAccount | null = replayAccount
         ? await replayAccount(bound)
         : bound.kind === 'user'
           ? { principalId: bound.principalId, tenantId: bound.tenantId }
           : null;
-      await input.assertPrincipal();
       if (!account) {
         throw new OfflineQueueError('FILEFN_QUEUE_PRINCIPAL_MISMATCH', "No server account for the queue's principal");
       }
-      const expected = await replayScopeOf(account);
-      if (input.replayScope !== undefined && input.replayScope !== expected) {
-        // Its first init was confirmed for another account: nothing more is
-        // sent, and the generation stays provisional under its key.
-        throw Object.assign(new Error("The generation's first upload/init acted for another account than the partition's"), {
-          code: REPLAY_SCOPE_MISMATCH_ERROR,
-        });
+      return replayScopeOf(account);
+    },
+    upload: async (input) => {
+      if (input.replayScope === undefined) {
+        // Never sent without the journaled scope.
+        throw Object.assign(new Error('The generation has no journaled replay scope'), { code: REPLAY_SCOPE_UNCONFIRMED_ERROR });
       }
       const headers = async (): Promise<Record<string, string>> => {
         await input.assertPrincipal();
@@ -382,13 +378,10 @@ function replayUploader(
       // Already prepared when staged: no preprocessors run again.
       const manager = new UploadManager(createHttpClient(transport, { beforeSend: input.assertPrincipal, authHeaders: headers }));
       manager.bindAbortSignal(input.signal);
-      // Every init, the first included, is marked as a replay and pinned to
-      // the expected account's scope: the server refuses one with no account
-      // or another, creating nothing.
-      return manager.startUpload(input, undefined, {
-        pinned: expected,
-        ...(input.replayScope === undefined ? { pin: input.pinReplayScope } : {}),
-      });
+      // Every init, the first included, is marked as a replay and carries the
+      // journaled scope: the server refuses one with no account or another,
+      // creating nothing.
+      return manager.startUpload(input, undefined, { scope: input.replayScope });
     },
   };
 }
@@ -513,13 +506,18 @@ export function createFileFnClient(config: FileFnClientConfig): FileFnClient {
         const sync = startImplicitReplay(queue);
         const uploadSessionId = generateOfflineSessionId();
         let aborted = false;
-        let staged: { entryId: string; generation: number } | undefined;
-        // Rejects every outstanding done() as soon as the handle is aborted.
-        let rejectAborted!: (error: unknown) => void;
-        const abortedPromise = new Promise<never>((_, reject) => {
-          rejectAborted = reject;
+        /** Settles as the abort does: the cancellation's error, else an AbortError. */
+        let abortOutcome: Promise<never> | undefined;
+        let notifyAbort!: () => void;
+        const abortSignal = new Promise<void>((resolve) => {
+          notifyAbort = resolve;
         });
-        void abortedPromise.catch(() => {});
+        // The generation is staged held by this call, in the staging's own
+        // journal write: no sync, here or in another tab, may run it until
+        // this call lets it go. Aborted by then, it is cancelled under that
+        // hold; otherwise the hold is released, and only then is work
+        // announced. A failed cancel or release rejects the handle and leaves
+        // the entry held (recoverable through the queue), never runnable.
         const stagePromise = (async () => {
           const prepared = await prepareUploadInput(normalizedInput, [
             ...preprocessors,
@@ -538,12 +536,16 @@ export function createFileFnClient(config: FileFnClientConfig): FileFnClient {
             metadata: prepared.metadata,
             localSource: prepared.localSource,
             idempotencyKey: prepared.idempotencyKey,
+            hold: true,
           });
           if (result.status !== 'staged') {
             throw new OfflineQueueError('FILEFN_QUEUE_REFUSED', `Offline staging refused: ${result.reason}`, { ...result });
           }
-          staged = { entryId: result.entry.entryId, generation: result.entry.generation };
+          const staged = { entryId: result.entry.entryId, generation: result.entry.generation };
+          if (!aborted) await queue.release(staged.entryId, staged.generation, result.holdId!);
           if (aborted) {
+            // Aborted while staging or releasing: cancelled (a released
+            // generation that already started publishing refuses).
             await queue.cancel(staged.entryId, staged.generation);
             throw createAbortError();
           }
@@ -562,30 +564,37 @@ export function createFileFnClient(config: FileFnClientConfig): FileFnClient {
               return;
             }
             aborted = true;
-            rejectAborted(createAbortError());
-            if (staged) {
-              // An unconfirmed publication refuses the cancel and stays journaled for reconciliation.
-              void queue.cancel(staged.entryId, staged.generation).catch(() => {});
-            }
+            abortOutcome = stagePromise.then(
+              async (staged) => {
+                // Released before the abort: cancel it now. An unconfirmed
+                // publication refuses; its error is the handle's.
+                await queue.cancel(staged.entryId, staged.generation);
+                throw createAbortError();
+              },
+              (error) => {
+                throw error;
+              },
+            );
+            void abortOutcome.catch(() => {});
+            notifyAbort();
           },
           onProgress: (_cb) => {
             // Staging progress not implemented
           },
           done: async () => {
-            if (aborted) {
-              throw createAbortError();
-            }
+            const onAbort = abortSignal.then(() => abortOutcome!);
+            void onAbort.catch(() => {});
             try {
-              const { entryId, generation } = await Promise.race([stagePromise, abortedPromise]);
+              if (abortOutcome) return await abortOutcome;
+              const { entryId, generation } = await Promise.race([stagePromise, onAbort]);
               // Settles once this generation is published, not while it is provisional.
               const settled = queue.whenSettled(entryId, generation);
               void settled.catch(() => {});
-              const entry = await Promise.race([settled, abortedPromise]);
+              const entry = await Promise.race([settled, onAbort]);
               return entry.upload ?? { fileId: entry.fileId, versionId: '' };
             } catch (error) {
-              if (aborted) {
-                throw createAbortError();
-              }
+              // The abort's outcome: its cancellation error, else an AbortError.
+              if (aborted) return await abortOutcome!;
               throw error;
             }
           }

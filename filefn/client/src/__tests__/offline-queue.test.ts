@@ -817,7 +817,8 @@ describe('storage reclamation boundaries', () => {
     expect(revoked).toEqual(['blob:preview-1']);
     await tab('b').cancel('two');
     await a.list();
-    expect(revoked).toEqual(['blob:preview-1', 'blob:preview-2']);
+    // Applied with the list's observation, right after it returned.
+    await vi.waitFor(() => expect(revoked).toEqual(['blob:preview-1', 'blob:preview-2']));
   });
 
   it('refuses to migrate a legacy upload whose file ID is invalid', async () => {
@@ -2588,5 +2589,117 @@ describe('round 11: outer fences on every call, claims, overtaken previews and e
       usage: { entries: 0, bytes: 0 },
     });
     expect(read).not.toHaveBeenCalled();
+  });
+});
+
+describe('architecture reset: durable observation order and the upload result schema', () => {
+  it.each([
+    ['get', 'this tab'],
+    ['get', 'another tab'],
+    ['list', 'this tab'],
+    ['list', 'another tab'],
+  ] as const)('never settles a waiter from a %s read taken before a reconcile in %s and applied after it', async (read, where) => {
+    const failing: OfflineQueueUploader = {
+      async upload() {
+        throw new Error('network connection lost');
+      },
+    };
+    const gated = gatedCoordinator('a');
+    const a = tab('a', { coordinator: gated.coordinator, uploader: failing, maxUploadAttempts: 1 });
+    const staged = await stage(a);
+    expect(await a.process(FILE_ID)).toMatchObject({ status: 'provisional', reason: 'ambiguous' });
+    expect(await a.process(FILE_ID)).toMatchObject({ status: 'provisional', reason: 'retry-limit' });
+
+    const gate = gated.arm((lock) => !lock.includes(':entry:'));
+    const reading = read === 'get' ? a.get(FILE_ID) : a.list();
+    await gate.reached;
+    // The retry limit is cleared after the read, before it is applied.
+    const reconciler = where === 'this tab' ? a : tab('b');
+    expect(await reconciler.reconcile(FILE_ID, staged.entry.generation)).toMatchObject({ attempts: 0 });
+    const outcome: { settled?: string } = {};
+    const waiter = a.whenSettled(FILE_ID, staged.entry.generation);
+    waiter.then(() => (outcome.settled = 'resolved'), (error) => (outcome.settled = error.code));
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    gate.release();
+    await reading;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(outcome.settled).toBeUndefined();
+
+    expect(await tab('c').process(FILE_ID)).toMatchObject({ status: 'published' });
+    await a.get(FILE_ID);
+    await expect(waiter).resolves.toMatchObject({ state: 'published' });
+    a.dispose();
+  });
+
+  it.each([1, 2])(
+    'never returns a preview read overtaken while its fence call %i is paused, nor revokes the newer preview',
+    async (pausedCall) => {
+      const revoked: string[] = [];
+      let created = 0;
+      vi.stubGlobal('URL', { createObjectURL: () => `blob:preview-${++created}`, revokeObjectURL: (url: string) => revoked.push(url) });
+      let counting = false;
+      let calls = 0;
+      const paused = deferred<void>();
+      const resume = deferred<void>();
+      const gated = gatedCoordinator('a');
+      const a = tab('a', {
+        coordinator: gated.coordinator,
+        currentPrincipal: async () => {
+          if (counting && ++calls === pausedCall) {
+            counting = false;
+            paused.resolve();
+            await resume.promise;
+          }
+          return ALICE.principal;
+        },
+      });
+      await stage(a, 'v1');
+      const gate = gated.arm((lock) => !lock.includes(':entry:'));
+      const delivered: string[] = [];
+      const older = a.getPendingLocalDescriptor(FILE_ID);
+      void older.then(() => delivered.push('older'), () => delivered.push('older failed'));
+      await gate.reached;
+      // Another tab stages generation 2 after the older read, before it returns.
+      await stage(tab('b'), 'v2-bytes', { expectedGeneration: 1 });
+      counting = true;
+      gate.release();
+      await Promise.race([paused.promise, older.catch(() => undefined)]);
+      counting = false;
+      const newer = await a.getPendingLocalDescriptor(FILE_ID);
+      delivered.push('newer');
+      expect(newer).toMatchObject({ source: { size: 8 } });
+      resume.resolve();
+      const olderResult = await older;
+      if (delivered.indexOf('older') > delivered.indexOf('newer')) {
+        // Returned after the newer preview: never older than it.
+        expect(olderResult).toEqual(newer);
+      }
+      // The newer preview's URL stays valid.
+      expect(revoked).not.toContain(newer!.source.url);
+      a.dispose();
+    },
+  );
+
+  it.each([
+    ['an outer error with ok: true', { ok: true, error: { code: 'FILEFN_INTERNAL' }, data: { fileId: FILE_ID, versionId: 'ver_1' } }],
+    ['ok: false', { ok: false, fileId: FILE_ID, versionId: 'ver_1' }],
+    ['an error member', { fileId: FILE_ID, versionId: 'ver_1', error: 'failed' }],
+    ['a malformed versionId', { fileId: FILE_ID, versionId: 'ver/1' }],
+  ])('keeps a custom uploader result with %s provisional', async (_label, result) => {
+    const uploader: OfflineQueueUploader = { upload: async () => result as never };
+    const a = tab('a', { uploader });
+    await stage(a);
+    expect(await a.process(FILE_ID)).toMatchObject({ status: 'provisional', reason: 'ambiguous', entry: { phase: 'uploading' } });
+    expect((await a.get(FILE_ID))?.upload).toBeUndefined();
+    expect(dataFiles()).toHaveLength(1);
+    a.dispose();
+  });
+
+  it('accepts a custom uploader result in the success envelope', async () => {
+    const uploader: OfflineQueueUploader = { upload: async (input) => ({ ok: true, data: { fileId: input.fileId, versionId: 'ver_1' } }) as never };
+    const a = tab('a', { uploader });
+    await stage(a);
+    expect(await a.process(FILE_ID)).toMatchObject({ status: 'published', entry: { upload: { fileId: FILE_ID, versionId: 'ver_1' } } });
+    a.dispose();
   });
 });
