@@ -268,20 +268,15 @@ interface CheckResult {
   notice: string | null;
   /** The entry the notice came from, to record its delivery; null when there is no notice. */
   entry: LatestEntry | null;
+  /** The cache as read when the check settled, after a refresh; its delivery is weighed at hand-out time. */
+  shared?: CacheEntry | null;
 }
 
-function resultFor(
-  plan: CheckPlan,
-  entry: CacheEntry,
-  now: number,
-  shared: CacheEntry | null = null
-): CheckResult {
-  const notified =
-    recentlyNotified(entry, now, plan.intervalMs) || (shared !== null && recentlyNotified(shared, now, plan.intervalMs));
-  const notice = notified
+function resultFor(plan: CheckPlan, entry: CacheEntry, now: number, shared?: CacheEntry | null): CheckResult {
+  const notice = recentlyNotified(entry, now, plan.intervalMs)
     ? null
     : noticeFor(entry, plan.current, plan.currentText, plan.name);
-  return { notice, entry: notice !== null && "latest" in entry ? entry : null };
+  return { notice, entry: notice !== null && "latest" in entry ? entry : null, shared };
 }
 
 /** Settles as soon as the entry is known; the cache write it starts continues in the background. */
@@ -443,10 +438,10 @@ export function startUpdateCheck(options: UpdateCheckOptions): UpdateCheck {
   // is read again, bounded by the remaining time, and a read that finishes after the deadline is discarded; once none
   // remains the read made when the check settled stands, with no file access. The decision uses the time after that
   // read, so a delivery recorded meanwhile is not taken for one in the future.
-  const handOut = async (entry: LatestEntry, sampled: number): Promise<boolean> => {
+  const handOut = async (checked: CheckResult, entry: LatestEntry, sampled: number): Promise<boolean> => {
     const dir = checkPlan.stateDir;
     const left = remaining();
-    let shared: CacheEntry | null = null;
+    let shared = checked.shared ?? null;
     if (left > 0) {
       const read = await within(readCache(join(dir, UPDATE_CHECK_FILE)), left);
       if (read === LATE || !(remaining() >= 0)) {
@@ -468,7 +463,8 @@ export function startUpdateCheck(options: UpdateCheckOptions): UpdateCheck {
   };
 
   // The notice of an on-time result, the first time it is asked for. Hand-outs in this process run one at a time per
-  // app: a handle waits, within its own time, for another handle's hand-out and tries its own only if that one gave none.
+  // app: a handle waits, within its own time, for another handle's hand-out, then decides on its own (a delivery the
+  // other made within this handle's interval suppresses it).
   const deliver = async (): Promise<string | null> => {
     const checked: CheckResult | null = outcome === "ready" ? ready : null;
     if (handedOut || checked === null || checked.notice === null || checked.entry === null) {
@@ -482,7 +478,7 @@ export function startUpdateCheck(options: UpdateCheckOptions): UpdateCheck {
     const dir = checkPlan.stateDir;
     for (let other = handingOut.get(dir); other !== undefined; other = handingOut.get(dir)) {
       const left = remaining();
-      if (!(left > 0) || (await within(other, left)) !== false) {
+      if (!(left > 0) || (await within(other, left)) === LATE) {
         return null;
       }
     }
@@ -493,7 +489,7 @@ export function startUpdateCheck(options: UpdateCheckOptions): UpdateCheck {
     handingOut.set(dir, mine);
     let delivered = false;
     try {
-      delivered = await handOut(checked.entry, sampled);
+      delivered = await handOut(checked, checked.entry, sampled);
     } catch {
       delivered = false;
     } finally {

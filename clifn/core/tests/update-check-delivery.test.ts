@@ -272,4 +272,40 @@ describe("hand-out without blocking", () => {
 
     expect(await secondNotice).toBe(NOTICE_1_3_0);
   });
+
+  it("lets a waiting handle with a zero interval give the notice after another handle delivered", async () => {
+    await writeCacheJson({ checkedAt: T0, latest: "1.3.0" });
+    const first = check();
+    const second = check({ intervalMs: 0 });
+    await settle();
+    fsHooks.stallReads = gate();
+
+    const firstNotice = first.notice();
+    const secondNotice = second.notice();
+    await settle(20);
+    releaseAll();
+
+    expect(await firstNotice).toBe(NOTICE_1_3_0);
+    expect(await secondNotice).toBe(NOTICE_1_3_0);
+  });
+
+  it("weighs a delivery seen when a refresh settled at hand-out time", async () => {
+    let clock = T0;
+    let answer: () => void = () => undefined;
+    const fetch = vi.fn<UpdateCheckFetch>(
+      () =>
+        new Promise((resolve) => {
+          answer = () => resolve(new Response(JSON.stringify({ latest: "1.3.0" }), { status: 200 }));
+        })
+    );
+    const handle = check({ now: () => clock, timeoutMs: 60_000, intervalMs: 10, fetch });
+    await settle(20);
+    await writeCacheJson({ checkedAt: T0, latest: "1.3.0", notifiedAt: T0 + 95 });
+    clock = T0 + 101;
+    answer();
+    await settle();
+    clock = T0 + 106;
+
+    expect(await handle.notice()).toBe(NOTICE_1_3_0);
+  });
 });
