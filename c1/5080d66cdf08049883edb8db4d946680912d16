@@ -1,0 +1,69 @@
+apifn/admin/turbo.json
+  s_e3bc7bc3774e47::t_0ace1616ed3a91 15,31,47
+memoryfn/README.md
+  s_e3bc7bc3774e47::t_d0950760228755 15-19
+memoryfn/admin/README.md
+  s_e3bc7bc3774e47::t_c6885079d5fa3f 1-44
+memoryfn/admin/package.json
+  s_e3bc7bc3774e47::t_99df9f579b91ce 1-43
+memoryfn/admin/src/__tests__/admin.test.ts
+  s_e3bc7bc3774e47::t_0ccfb52aae639d 1-165
+memoryfn/admin/src/adapter.ts
+  s_e3bc7bc3774e47::t_1af323b78d81e3 1-26
+memoryfn/admin/src/capability.ts
+  s_e3bc7bc3774e47::t_2a118f4be68a54 1-197
+memoryfn/admin/src/client.ts
+  s_e3bc7bc3774e47::t_310286d2c4e5cc 1-27
+memoryfn/admin/src/domain-service.ts
+  s_e3bc7bc3774e47::t_aa515dc2c78421 1-114
+memoryfn/admin/src/index.ts
+  s_e3bc7bc3774e47::t_1100de0aa9d3b3 1-20
+memoryfn/admin/src/types.ts
+  s_e3bc7bc3774e47::t_0402aab2666bd6 1-62
+memoryfn/admin/tsconfig.json
+  s_e3bc7bc3774e47::t_af1d75fa244c25 1-33
+memoryfn/admin/vitest.config.ts
+  s_e3bc7bc3774e47::t_cfe97b47879b3e 1-8
+memoryfn/python/README.md
+  s_e3bc7bc3774e47::t_ad31923ced0363 1-40
+memoryfn/python/memoryfn/__init__.py
+  s_e3bc7bc3774e47::t_87a8e5757f134f 1-5
+memoryfn/python/memoryfn/core/config.py
+  s_e3bc7bc3774e47::t_3263e1627b9d76 1-9
+memoryfn/python/memoryfn/core/pipeline.py
+  s_e3bc7bc3774e47::t_3a4b3b757da469 1-95
+memoryfn/python/memoryfn/core/types.py
+  s_e3bc7bc3774e47::t_10c202c4e856f7 1-60
+memoryfn/python/memoryfn/extraction/facts.py
+  s_e3bc7bc3774e47::t_05c00cafeaeba0 1-25
+memoryfn/python/memoryfn/providers/openai.py
+  s_e3bc7bc3774e47::t_76349ffbdd55aa 1-34
+memoryfn/python/memoryfn/storage/postgres.py
+  s_e3bc7bc3774e47::t_034d6168b399d0 1-140
+memoryfn/python/pyproject.toml
+  s_e3bc7bc3774e47::t_4c3c850934f24a 1-32
+memoryfn/python/tests/test_pipeline.py
+  s_e3bc7bc3774e47::t_23e332d486db13 1-61
+memoryfn/python/uv.lock
+  s_e3bc7bc3774e47::t_111536c095b726 1-982
+package-lock.json
+  s_e3bc7bc3774e47::t_c886d175e09ce4 23957-23969,30960-30963
+superfunctions.owners.json
+  s_e3bc7bc3774e47::t_3a57395dfdf6e2 267
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c15080d66cdf08049883edb8db4d946680912d16",
+  "prompts": {},
+  "sessions": {
+    "s_e3bc7bc3774e47": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f6006d94-4421-49e6-a663-ff85640dfb3e",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,73 @@
+datafn/client/__tests__/revisions.test.ts
+  s_08a809e35d9cd5::t_66d5b89f6583e7 233-242,291-489
+datafn/client/src/adapters/indexedDbStorage.ts
+  s_08a809e35d9cd5::t_d4c9229cef603b 25,29,31-35,37-50,103-104,269-275,395-397,611,647-649,671,687,690-699,706-717,720-721,724,731,739,744-757,760,762-763,791,1109
+datafn/client/src/adapters/memoryStorage.ts
+  s_08a809e35d9cd5::t_511067722f5fda 16,20,35-37,101,110-122,130,133,139-140,148-151,155-156,159,193,445
+datafn/client/src/adapters/shared.ts
+  s_08a809e35d9cd5::t_29dd573c8cd8d8 107-122
+datafn/client/src/client.ts
+  s_08a809e35d9cd5::t_bb07ac82773616 67,116-117,130-136,1296-1298,1319-1320,1663-1676,1688-1692
+datafn/client/src/debounce.ts
+  s_08a809e35d9cd5::t_9f92576030514e 52-62,97-104
+datafn/client/src/query.ts
+  s_08a809e35d9cd5::t_3c9943f4f764eb 51,58-65,68-71,79-80,87,94-99,1542,1569-1570,1576-1578
+datafn/client/src/signals/querySignal.ts
+  s_08a809e35d9cd5::t_a544774fe327c7 857-859
+datafn/client/src/storage.ts
+  s_08a809e35d9cd5::t_97515c5aa92f76 50-53,65-74,130-131,134-140,145,150
+datafn/client/src/sync/apply.ts
+  s_08a809e35d9cd5::t_c70b356979fa2e 7,35-54,57-59,65,67,74,86,88-89,112-113,196,303,339,362
+datafn/client/src/sync/engine.ts
+  s_08a809e35d9cd5::t_0feb8826996386 23-24,30,1041,1247,1589,1884-1898,1902-1904,1907,1911-1912,1914-1921,1929-1948,2016-2018,2120
+datafn/client/src/sync/status.ts
+  s_08a809e35d9cd5::t_47f943c1a350a8 185-186
+datafn/core/src/dfql.ts
+  s_08a809e35d9cd5::t_e0d829cc57799b 30-31
+datafn/core/src/revisions.ts
+  s_08a809e35d9cd5::t_dc885b2bf36bb1 19-22,35-38,42
+datafn/docs/content/docs/documentation/sync/revisions.mdx
+  s_08a809e35d9cd5::t_03c8e8a65ba323 12,15,31,41,44,48,50-52,81-82,84
+datafn/docs/public/llms-full.txt
+  s_08a809e35d9cd5::t_b49d111f4b58c6 19142,19145,19161,19171,19174,19178,19180-19182,19211-19212,19214
+datafn/server/__tests__/revisions-postgres-server.test.ts
+  s_08a809e35d9cd5::t_09cb1798289193 1-115
+datafn/server/__tests__/revisions-postgres.test.ts
+  s_08a809e35d9cd5::t_35e2a1be45c83b 13,15-20,87,97-108,110-150
+datafn/server/__tests__/revisions.test.ts
+  s_08a809e35d9cd5::t_dd5f093b7310b7 9,29-37,64,102,142-143,370-616
+datafn/server/package.json
+  s_08a809e35d9cd5::t_e14ae47628ef2a 70,76
+datafn/server/src/execution/revisions.ts
+  s_08a809e35d9cd5::t_7d8e98ffba27aa 18,25-26,117,119-124,210-213,215-276,282-286,291,297-298,300-308,310,313-320,322-339
+datafn/server/src/execution/sync/change-tracking.ts
+  s_08a809e35d9cd5::t_94d5a965db1c1d 19,109-111,370-384,407-410
+datafn/server/src/execution/sync/clone.ts
+  s_08a809e35d9cd5::t_7e5c741244e46f 10,192
+datafn/server/src/execution/sync/push.ts
+  s_08a809e35d9cd5::t_f2c4bbc887bf90 21,472-476,1298-1304,1405-1408
+datafn/server/src/routes/query.ts
+  s_08a809e35d9cd5::t_5f13c202e25380 30,74-79,83-84,892-903
+datafn/server/src/server.ts
+  s_08a809e35d9cd5::t_88518a94c80375 449-453,455,457-458,460,462,465-469,472-473,879,900,907,924,926,940,942,950-951,961-962,970,975,992,995,1003,1184,1491-1493
+datafn/server/src/validation/authz.ts
+  s_08a809e35d9cd5::t_b7e207b394ea56 184-189,194,199-200
+package-lock.json
+  s_08a809e35d9cd5::t_63c156b07a3bc0 10248,10254
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "23bb5871b5505f78b7e03101a6492f97a849a320",
+  "prompts": {},
+  "sessions": {
+    "s_08a809e35d9cd5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4bab57f4-9a60-46e3-bd97-cb0519269c57",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
