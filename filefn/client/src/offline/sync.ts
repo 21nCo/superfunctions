@@ -181,7 +181,8 @@ export class OfflineSync {
     if (this.stopped()) return;
     if (this.queueGone(error)) return;
     // A failed pass of a queue whose principal is no longer current is retried, not reported.
-    const reportable = await this.config.queue.principalIsCurrent().catch(() => false);
+    // Raced with this sync's lifetime: a stalled check cannot hold a disposed sync.
+    const reportable = await this.config.queue.principalIsCurrent(this.lifetime.signal).catch(() => false);
     if (this.stopped()) return;
     if (!reportable) {
       if (this.isOnline()) this.scheduleQueueRetry();
@@ -263,7 +264,9 @@ export class OfflineSync {
     // Before a callback or the summary: still running, and still the partition's principal.
     const mayReport = async (): Promise<boolean> => {
       if (this.stopped()) return false;
-      const current = await queue.principalIsCurrent();
+      // Raced with this sync's lifetime: a stalled `currentPrincipal` cannot
+      // hold a disposed sync (the check settles false and nothing is reported).
+      const current = await queue.principalIsCurrent(this.lifetime.signal);
       if (this.stopped()) return false;
       if (current) return true;
       if (this.isOnline()) this.scheduleQueueRetry();

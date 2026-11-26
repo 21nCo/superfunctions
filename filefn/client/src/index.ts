@@ -531,8 +531,9 @@ export function createFileFnClient(config: FileFnClientConfig): FileFnClient {
         // hold, reading the abort there: only a committed release announces
         // work, and an abort before it removes the generation unrun. An abort
         // after the release is a lock-ordered `abortStaged` request at once:
-        // it removes the generation only if no tab claimed its first upload
-        // step yet, and otherwise keeps it (FILEFN_QUEUE_UPLOAD_STARTED).
+        // it removes the generation only if no tab's upload guard admitted
+        // its first request yet, and otherwise keeps it
+        // (FILEFN_QUEUE_UPLOAD_STARTED).
         let staged: { entryId: string; generation: number } | undefined;
         const stagePromise = (async () => {
           const prepared = await prepareUploadInput(normalizedInput, [

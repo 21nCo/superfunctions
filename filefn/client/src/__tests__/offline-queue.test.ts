@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   OfflineQueue,
+  OfflineQueueError,
   type OfflineQueueHoldResult,
   type OfflineQueueHooks,
   type OfflineQueueOptions,
@@ -3115,5 +3116,208 @@ describe('round 16: pass signals, partition-wide preview order, legacy roots and
     } finally {
       process.off('unhandledRejection', onUnhandled);
     }
+  });
+});
+
+describe('round 20: lock waits, resolver mismatches, legacy incarnations and the dispatch boundary', () => {
+  const ENTRY_A = 'file_00000000entry0a';
+  const ENTRY_B = 'file_00000000entry0b';
+  const settledWithin = <T>(promise: Promise<T>, ms = 200) =>
+    Promise.race([
+      promise.then(
+        () => 'settled' as const,
+        () => 'settled' as const,
+      ),
+      new Promise<'waiting'>((resolve) => setTimeout(() => resolve('waiting'), ms)),
+    ]);
+
+  it('stops waiting for the partition lock as soon as the pass is aborted, with no effect', async () => {
+    const uploader = recordingUploader();
+    const a = tab('a', { uploader });
+    await stage(a);
+    const isPartitionLock = (name: string) => name.startsWith('filefn-offline-queue:') && !name.includes(':entry:') && !name.includes(':admission:');
+    const name = locks.requests.find(isPartitionLock)!;
+    // Another tab holds the partition lock.
+    const holding = deferred<void>();
+    const held = deferred<void>();
+    const holder = locks.forTab('b').request(name, {}, async () => {
+      held.resolve();
+      await holding.promise;
+    });
+    await held.promise;
+    const before = locks.requests.filter((request) => request === name).length;
+    const controller = new AbortController();
+    const pass = a.process(FILE_ID, { signal: controller.signal });
+    void pass.catch(() => {});
+    await vi.waitFor(() => expect(locks.requests.filter((request) => request === name).length).toBe(before + 1));
+    controller.abort();
+    expect(await settledWithin(pass)).toBe('settled');
+    expect(await pass.then((value) => value, (error: unknown) => error)).toMatchObject(
+      expect.objectContaining({ status: 'stopped', reason: 'aborted' }),
+    );
+    holding.resolve();
+    await holder;
+    expect(uploader.calls).toEqual([]);
+    expect(await a.list()).toEqual([expect.objectContaining({ entryId: FILE_ID, phase: 'staged', attempts: 0 })]);
+    a.dispose();
+  });
+
+  it('settles a disposed sync whose principal check before a callback never answers', async () => {
+    let stall = false;
+    const stalled = deferred<void>();
+    const a = tab('a', {
+      currentPrincipal: () => {
+        if (!stall) return ALICE.principal;
+        stalled.resolve();
+        return new Promise<never>(() => {});
+      },
+    });
+    await stage(a);
+    const completions: unknown[] = [];
+    const sync = onlineSync(a, {
+      // The next check (before onSyncComplete) never answers.
+      onSyncProgress: () => {
+        stall = true;
+      },
+      onSyncComplete: (result) => completions.push(result),
+    });
+    const run = sync.syncAll();
+    await stalled.promise;
+    sync.dispose();
+    expect(await settledWithin(run)).toBe('settled');
+    expect(await run).toEqual({ succeeded: [], failed: [], totalProcessed: 0 });
+    expect(completions).toEqual([]);
+    a.dispose();
+  });
+
+  it('stops processAll when the replay-scope resolver reports another principal, and resumes both entries later', async () => {
+    let mode: 'ok' | 'switched' = 'ok';
+    const sent: string[] = [];
+    const uploader: OfflineQueueUploader = {
+      replayScope: async () => {
+        if (mode === 'switched') throw new OfflineQueueError('FILEFN_QUEUE_PRINCIPAL_MISMATCH', 'The credentials act for another principal');
+        return 'rs_test-scope-alice';
+      },
+      async upload(input) {
+        sent.push(input.fileId);
+        return { fileId: input.fileId, versionId: `ver_${sent.length}` };
+      },
+    };
+    let verifications = 0;
+    const a = tab('a', {
+      uploader,
+      // B's first verification is inconclusive, so B waits uploaded.
+      hooks: { verify: async () => (++verifications === 1 ? Promise.reject(new Error('verifier offline')) : { verified: true }) },
+    });
+    await stage(a, 'aaa', { fileId: ENTRY_A });
+    await stage(a, 'bbb', { fileId: ENTRY_B });
+    expect(await a.process(ENTRY_B)).toMatchObject({ status: 'provisional', reason: 'ambiguous', entry: { phase: 'verifying' } });
+    expect(sent).toEqual([ENTRY_B]);
+
+    mode = 'switched';
+    await expect(a.processAll()).rejects.toMatchObject({ code: 'FILEFN_QUEUE_PRINCIPAL_MISMATCH' });
+    // The pass stopped at A: B was neither verified nor published by it, and A used no attempt.
+    expect(verifications).toBe(1);
+    expect(sent).toEqual([ENTRY_B]);
+    const byId = Object.fromEntries((await a.list()).map((entry) => [entry.entryId, entry]));
+    expect(byId[ENTRY_A]).toMatchObject({ phase: 'staged', attempts: 0 });
+    expect(byId[ENTRY_A]!.pending).toBeUndefined();
+    expect(byId[ENTRY_B]).toMatchObject({ phase: 'verifying' });
+
+    mode = 'ok';
+    const results = await a.processAll();
+    expect(Object.fromEntries(results.map((item) => [item.entryId, 'result' in item ? item.result.status : item.error]))).toEqual({
+      [ENTRY_A]: 'published',
+      [ENTRY_B]: 'published',
+    });
+    a.dispose();
+  });
+
+  async function rewriteLegacy(id: string, key: string, bytes: string) {
+    const legacy = await (await storage.root.getDirectoryHandle('filefn-pending-uploads')).getDirectoryHandle(id, { create: true });
+    await writeCommitted(legacy, 'data.bin', bytes);
+    await writeCommitted(legacy, 'metadata.json', JSON.stringify({ uploadSessionId: id, fileId: FILE_ID, policy: 'p', fileName: 'new.txt', size: bytes.length, mimeType: 'text/plain', createdAt: '2026-11-02T00:00:00.000Z', retryCount: 0, metadataVersion: 2, idempotencyKey: key }));
+  }
+
+  it('keeps a legacy record rewritten under the same upload ID after an interrupted cleanup when the migration is retried', async () => {
+    await writeLegacy(LEGACY, 'test-legacy-key-0101');
+    const a = tab('a');
+    expect(await a.migrateLegacyUpload(LEGACY, { ownershipVerified: true })).toMatchObject({ status: 'staged', entry: { generation: 1 } });
+    // The cleanup was interrupted, and the legacy SDK wrote another upload under the same ID.
+    await rewriteLegacy(LEGACY, 'test-legacy-key-0202', 'new bytes!');
+    expect(await a.migrateLegacyUpload(LEGACY, { ownershipVerified: true })).toEqual({ status: 'refused', reason: 'already-migrated' });
+    expect(await a.listLegacyUploads()).toEqual([expect.objectContaining({ uploadSessionId: LEGACY, fileName: 'new.txt', size: 10 })]);
+    // Only the first admission's entry exists.
+    expect(await a.list()).toEqual([expect.objectContaining({ entryId: FILE_ID, generation: 1 })]);
+    a.dispose();
+  });
+
+  it('keeps a legacy record rewritten while its migration stages, instead of removing it with the admitted one', async () => {
+    await writeLegacy(LEGACY, 'test-legacy-key-0101');
+    const a = tab('a');
+    let rewritten = false;
+    storage.storage.fault = (path, step) => {
+      if (rewritten || step !== 'close' || !path.endsWith('/journal.json')) return;
+      rewritten = true;
+      // Synchronously, as another writer would between the staging and the removal.
+      const record = (storage.root.entries.get('filefn-pending-uploads') as MemoryDirectory).entries.get(LEGACY) as MemoryDirectory;
+      const metadata = record.entries.get('metadata.json') as MemoryFile;
+      const parsed = JSON.parse(new TextDecoder().decode(metadata.content)) as Record<string, unknown>;
+      metadata.content = new TextEncoder().encode(JSON.stringify({ ...parsed, idempotencyKey: 'test-legacy-key-0303', createdAt: '2026-11-03T00:00:00.000Z' }));
+    };
+    try {
+      expect(await a.migrateLegacyUpload(LEGACY, { ownershipVerified: true })).toEqual({ status: 'refused', reason: 'already-migrated' });
+    } finally {
+      storage.storage.fault = undefined;
+    }
+    expect(rewritten).toBe(true);
+    expect(await a.listLegacyUploads()).toEqual([expect.objectContaining({ uploadSessionId: LEGACY, createdAt: '2026-11-03T00:00:00.000Z' })]);
+    a.dispose();
+  });
+
+  it('removes a claimed generation whose upload guard has not admitted a request yet when the uploadFile call aborts, and sends nothing', async () => {
+    const entered = deferred<void>();
+    const proceed = deferred<void>();
+    const sent: string[] = [];
+    const uploader: OfflineQueueUploader = {
+      async upload(input) {
+        entered.resolve();
+        await proceed.promise;
+        await input.assertPrincipal();
+        sent.push(input.idempotencyKey);
+        return { fileId: input.fileId, versionId: 'ver_1' };
+      },
+    };
+    const a = tab('a', { uploader });
+    await stage(a);
+    const pass = a.process(FILE_ID);
+    await entered.promise;
+    // The upload step is claimed; no request was admitted yet.
+    expect(await a.abortStaged(FILE_ID, 1)).toBe(true);
+    proceed.resolve();
+    await pass;
+    expect(sent).toEqual([]);
+    expect(await a.list()).toEqual([]);
+    a.dispose();
+  });
+
+  it('keeps a generation whose upload guard admitted a request, and refuses the abort typed', async () => {
+    const admitted = deferred<void>();
+    const finish = deferred<void>();
+    const uploader: OfflineQueueUploader = {
+      async upload(input) {
+        await input.assertPrincipal();
+        admitted.resolve();
+        await finish.promise;
+        return { fileId: input.fileId, versionId: 'ver_1' };
+      },
+    };
+    const a = tab('a', { uploader });
+    await stage(a);
+    const pass = a.process(FILE_ID);
+    await admitted.promise;
+    await expect(a.abortStaged(FILE_ID, 1)).rejects.toMatchObject({ code: 'FILEFN_QUEUE_UPLOAD_STARTED', details: { entryId: FILE_ID, generation: 1 } });
+    finish.resolve();
+    expect(await pass).toMatchObject({ status: 'published', entry: { generation: 1 } });
   });
 });

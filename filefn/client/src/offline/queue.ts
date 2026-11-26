@@ -10,7 +10,7 @@ import {
   generateFileId,
 } from '../upload-manager.js';
 import { decodeFileFnBody, uploadSchemas } from '../client.js';
-import { OPFSStore } from './opfs-store.js';
+import { OPFSStore, type PendingUpload } from './opfs-store.js';
 
 /**
  * Durable, principal-scoped offline queue.
@@ -93,8 +93,11 @@ export interface OfflineQueueUploader {
    * generation stays provisional (`FILEFN_REPLAY_SCOPE_MISMATCH`) under the
    * same key. A rejection or a null account sends nothing either: it is
    * the generation's own outcome (provisional, `scope-unconfirmed`, no
-   * attempt used), and the pass goes on to other entries. Only the queue's
-   * own `currentPrincipal` check, which runs after it, stops the pass.
+   * attempt used), and the pass goes on to other entries. Only a principal
+   * mismatch stops the pass: the queue's own `currentPrincipal` check, which
+   * runs after it, or a rejection with an OfflineQueueError
+   * FILEFN_QUEUE_PRINCIPAL_MISMATCH (the credentials act for another
+   * principal). Then no attempt is used and no waiter settles.
    */
   replayScope?(principal: OfflineQueuePrincipal, signal: AbortSignal): Promise<string>;
   upload(input: {
@@ -412,8 +415,8 @@ export type OfflineQueueErrorCode =
   | 'FILEFN_QUEUE_PRINCIPAL_MISMATCH'
   | 'FILEFN_QUEUE_PUBLICATION_PENDING'
   /**
-   * An `uploadFile` abort came after a tab claimed the generation's first
-   * upload step: nothing was removed, and the generation stays provisional
+   * An `uploadFile` abort came after a tab's upload guard admitted the
+   * generation's first request: nothing was removed, and the generation stays provisional
    * and reconcilable under its recorded identity (`details`: entryId,
    * generation, phase).
    */
@@ -485,9 +488,10 @@ interface GenerationState {
   phase: OfflineQueuePhase;
   claim?: { instanceId: string; at: string };
   /**
-   * Set in the write that claims the generation's first upload step, before
-   * any request; never cleared. An `uploadFile` abort removes only a
-   * generation without it (see `abortStaged`).
+   * Set in the transaction of the upload's guard (`assertPrincipal`) that
+   * first admits a request of the generation, before that request goes out;
+   * never cleared. An `uploadFile` abort removes only a generation without
+   * it (see `abortStaged`).
    */
   dispatched?: true;
   upload?: UploadResult;
@@ -711,6 +715,27 @@ interface LegacyClaim {
   entryId: string;
   uploadSessionId: string;
   admissionId: string;
+  /**
+   * The legacy record this admission took (`legacyIncarnation`). A record
+   * rewritten under the same upload ID since is another incarnation: it is
+   * never admitted under this claim and never removed by its cleanup.
+   */
+  incarnation: string;
+}
+
+/**
+ * Identifies one incarnation of a legacy record: its metadata (the retry
+ * count, which the legacy SDK bumps in place, aside) and its bytes.
+ */
+async function legacyIncarnation(upload: PendingUpload): Promise<string> {
+  const { retryCount: _retryCount, fileData, ...metadata } = upload;
+  const subtle = globalThis.crypto?.subtle;
+  if (!subtle) {
+    throw new OfflineQueueError('FILEFN_QUEUE_STORAGE_UNAVAILABLE', 'crypto.subtle is required for the offline queue');
+  }
+  const data = Array.from(new Uint8Array(await subtle.digest('SHA-256', fileData)), (b) => b.toString(16).padStart(2, '0')).join('');
+  const fields = Object.keys(metadata).sort().map((name) => [name, (metadata as Record<string, unknown>)[name]]);
+  return sha256Hex(JSON.stringify([fields, data]));
 }
 
 function isNotFound(error: unknown): boolean {
@@ -780,6 +805,30 @@ async function listNames(dir: OfflineQueueDirectoryHandle, kind: 'file' | 'direc
     if (entry.kind === kind) names.push(entry.name);
   }
   return names;
+}
+
+/**
+ * Runs `fn` with one signal that aborts once any of `signals` does
+ * (`AbortSignal.any` where it exists, else a linked controller whose
+ * listeners are removed when `fn` settles).
+ */
+async function withLinkedSignal<T>(
+  signals: ReadonlyArray<AbortSignal | undefined>,
+  fn: (signal: AbortSignal) => Promise<T>,
+): Promise<T> {
+  const live = signals.filter((signal): signal is AbortSignal => signal !== undefined);
+  if (live.length === 1) return fn(live[0]!);
+  const any = (AbortSignal as { any?: (signals: AbortSignal[]) => AbortSignal }).any;
+  if (typeof any === 'function') return fn(any.call(AbortSignal, live));
+  const controller = new AbortController();
+  const onAbort = () => controller.abort();
+  if (live.some((signal) => signal.aborted)) controller.abort();
+  else for (const signal of live) signal.addEventListener('abort', onAbort, { once: true });
+  try {
+    return await fn(controller.signal);
+  } finally {
+    for (const signal of live) signal.removeEventListener('abort', onAbort);
+  }
 }
 
 /**
@@ -1314,10 +1363,12 @@ export class OfflineQueue {
    * disposed and `currentPrincipal` reports the partition's principal now.
    * `OfflineSync` checks it before each callback, so a callback that switches
    * the account receives nothing more about the old principal's entries.
+   * `currentPrincipal` is raced with `signal` (and the queue's lifetime): once
+   * it aborts, the check settles at once with false.
    */
-  async principalIsCurrent(): Promise<boolean> {
+  async principalIsCurrent(signal?: AbortSignal): Promise<boolean> {
     if (this.disposed) return false;
-    const matches = await this.principalMatches(this.lifetime.signal);
+    const matches = await this.principalMatches(signal ?? this.lifetime.signal);
     return matches && !this.disposed;
   }
 
@@ -1420,9 +1471,10 @@ export class OfflineQueue {
    * hold is released and only that committed release announces work. An
    * abort after that release (while this call is still returning) requests
    * `abortStaged` at once, until this call has returned (its outer fence
-   * included): it is ordered against the first upload-step claim
-   * by the partition lock, removes the generation only if that claim never
-   * committed, and otherwise throws FILEFN_QUEUE_UPLOAD_STARTED with the
+   * included): it is ordered against the first upload request the guard
+   * admits (the transaction that marks the generation dispatched) by the
+   * partition lock, removes the generation only if no request was admitted,
+   * and otherwise throws FILEFN_QUEUE_UPLOAD_STARTED with the
    * generation kept. A committed staging that a principal switch refused
    * (`principal-mismatch`) stays runnable for its principal. An abort that
    * comes after the queue was disposed or its principal changed cannot be
@@ -1490,11 +1542,13 @@ export class OfflineQueue {
 
   /**
    * The abort of an `uploadFile` call whose generation was already let go:
-   * in one partition-lock transaction, removes the generation if its first
-   * upload step was never claimed (`true`; `false` when it is gone or was
-   * replaced). Once that claim committed (here or in another tab), nothing
-   * is removed: its journal, replay key and bytes stay, provisional and
-   * reconcilable, and FILEFN_QUEUE_UPLOAD_STARTED is thrown.
+   * in one partition-lock transaction, removes the generation (and stops its
+   * upload step) if no request of it was ever admitted (`true`; `false` when
+   * it is gone or was replaced). A claimed upload step whose guard has not
+   * admitted its first request yet sends nothing: its guard finds the
+   * generation gone. Once the guard admitted a request (here or in another
+   * tab), nothing is removed: its journal, replay key and bytes stay,
+   * provisional and reconcilable, and FILEFN_QUEUE_UPLOAD_STARTED is thrown.
    */
   async abortStaged(entryId: string, generation: number): Promise<boolean> {
     return this.disclosing((after) => this.abortStagedIn(entryId, generation, after));
@@ -1506,7 +1560,7 @@ export class OfflineQueue {
       if (!found || found.record.current.generation !== generation) return null;
       const { record } = found;
       const cur = record.current;
-      if (cur.dispatched || cur.phase !== 'staged') {
+      if (cur.dispatched || (cur.phase !== 'staged' && cur.phase !== 'uploading')) {
         throw new OfflineQueueError(
           'FILEFN_QUEUE_UPLOAD_STARTED',
           'The upload of this generation already started: it is kept for reconciliation',
@@ -1517,9 +1571,12 @@ export class OfflineQueue {
       await this.noteRemoval(partitionDir, [record]);
       const { tombstones, lastGeneration } = await this.loadMeta(partitionDir);
       await this.removePath(partitionDir, await this.entryKey(entryId), true);
-      return { tombstones, lastGeneration };
+      return { tombstones, lastGeneration, operationId: cur.operationId };
     }, { disclose: true });
     if (!removed) return false;
+    // A claimed step of the removed generation stops (its guard would refuse anyway).
+    const running = this.entryControllers.get(entryId);
+    if (running?.operationId === removed.operationId) running.controller.abort();
     after(() => this.settleAbsent(entryId, removed.tombstones, removed.lastGeneration));
     return true;
   }
@@ -2051,7 +2108,10 @@ export class OfflineQueue {
    * written before the entry. A repeat in that partition returns the entry it
    * became, or `already-migrated` once that entry is gone or replaced; another
    * partition gets `already-migrated`. The legacy record is removed only
-   * after the new entry is written. Its replay key is taken over (so a session
+   * after the new entry is written, and only the incarnation the admission
+   * took (its metadata and bytes) while that entry is still the admission's
+   * or gone: a record rewritten under the same upload ID since stays, and
+   * the call returns `already-migrated`. Its replay key is taken over (so a session
    * it completed is reconciled, not uploaded again) only when no other legacy
    * upload and no generation of the partition has used that key; otherwise
    * the entry gets a fresh key.
@@ -2136,6 +2196,13 @@ export class OfflineQueue {
         throw new OfflineQueueError('FILEFN_QUEUE_NOT_FOUND', 'Legacy upload not found', { uploadSessionId });
       }
       assertValidExplicitFileId(legacy.fileId);
+      const incarnation = await legacyIncarnation(legacy);
+      if (claimedHere && (claim as LegacyClaim).incarnation !== incarnation) {
+        // The record was rewritten under the same upload ID after this
+        // admission took it (its cleanup was interrupted, say): another
+        // incarnation. It is neither admitted under this claim nor removed.
+        return { status: 'refused', reason: 'already-migrated' } as const;
+      }
       const fileId = legacy.fileId ?? generateFileId();
       // A retry recovers the admission its claim names (entry ID included),
       // whatever entry ID it asks for.
@@ -2144,7 +2211,7 @@ export class OfflineQueue {
       if (!claimedHere) {
         // Written before the entry: no other destination (partition or
         // queue root) admits it from here on.
-        const written: LegacyClaim = { v: 2, partitionId, queueRoot: this.rootDirName, entryId, uploadSessionId, admissionId };
+        const written: LegacyClaim = { v: 2, partitionId, queueRoot: this.rootDirName, entryId, uploadSessionId, admissionId, incarnation };
         try {
           await this.transact(async (root) => {
             await writeFile(await claimsDir(root), claimName, JSON.stringify(written), this.txFence);
@@ -2196,12 +2263,31 @@ export class OfflineQueue {
         // Removed under the partition lock, behind the principal check; the
         // claim stays. A switch during that cleanup keeps the entry and its
         // admission with their owner, and this caller gets no entry of it.
+        // The same transaction reads the record and the entry again: only
+        // the incarnation this admission took is removed, and only while the
+        // partition's entry from it is this admission's (or that entry is
+        // gone). A record rewritten in the meantime stays, refused.
+        let removal: 'removed' | 'kept';
         try {
-          await this.transact(() => store.deletePendingUpload(uploadSessionId));
+          removal = await this.transact(async (root) => {
+            const current = await store.readPendingUploadConfirmed(uploadSessionId);
+            if (!current) return 'removed';
+            if ((await legacyIncarnation(current)) !== incarnation) return 'kept';
+            const partitionDir = await this.partitionDir(root);
+            const admitted = (await this.readAllIn(partitionDir)).find((record) => record.migratedFrom === source);
+            const ours = admitted
+              ? admitted.migrationAdmission === admissionId
+              : (await this.loadMeta(partitionDir)).migrated.includes(source);
+            if (!ours) return 'kept';
+            await this.txFence!();
+            await store.deletePendingUpload(uploadSessionId);
+            return 'removed';
+          });
         } catch (error) {
           if (isPrincipalMismatch(error)) return { status: 'refused', reason: 'principal-mismatch' } as const;
           throw error;
         }
+        if (removal === 'kept') return { status: 'refused', reason: 'already-migrated' } as const;
       }
       return result;
     }), MISMATCH_REFUSAL);
@@ -2422,6 +2508,10 @@ export class OfflineQueue {
    * of an upload already running (FILEFN_QUEUE_HELD); a request this guard
    * admitted before the hold committed still goes out (the lock is not held
    * across the network). The upload resumes under the same key once released.
+   * The first admission marks the generation `dispatched` in the same
+   * transaction, before the request goes out: from then on an `uploadFile`
+   * abort keeps it (FILEFN_QUEUE_UPLOAD_STARTED); before, it removes it and
+   * this guard finds it gone.
    */
   private async guardUpload(entryId: string, planned: GenerationState, signal: AbortSignal): Promise<void> {
     await this.guardPrincipal(signal);
@@ -2429,7 +2519,12 @@ export class OfflineQueue {
       const found = await this.readEntry(root, entryId);
       const cur = found?.record.current;
       if (!found || cur!.generation !== planned.generation || cur!.operationId !== planned.operationId) return 'gone';
-      return found.record.holds.some((hold) => hold.operationId === planned.operationId) ? 'held' : 'ok';
+      if (found.record.holds.some((hold) => hold.operationId === planned.operationId)) return 'held';
+      if (!cur!.dispatched) {
+        cur!.dispatched = true;
+        await this.writeRecord(found.dir, found.record);
+      }
+      return 'ok';
     }, { signal });
     if (state === 'gone') throw generationGone(entryId, planned.generation);
     if (state === 'held') {
@@ -2521,7 +2616,10 @@ export class OfflineQueue {
       if (signal?.aborted) throw abortError();
     };
     try {
-      return await this.coordinator!.request(name, { signal: this.lifetime.signal }, async () => {
+      // A stopped call (its pass or caller signal) stops waiting for the lock
+      // as a disposal does, without taking it.
+      return await withLinkedSignal([signal, this.lifetime.signal], (waiting) =>
+        this.coordinator!.request(name, { signal: waiting }, async () => {
         await fence();
         // Every transaction reads the partition revision first (see
         // `seenRevision`); a change raises it before its first write.
@@ -2550,7 +2648,8 @@ export class OfflineQueue {
           this.txFence = undefined;
           this.txRevision = undefined;
         }
-      });
+        }),
+      );
     } catch (error) {
       if (this.disposed && isAbort(error)) {
         throw new OfflineQueueError('FILEFN_QUEUE_DISPOSED', 'Offline queue was disposed');
@@ -3241,10 +3340,12 @@ export class OfflineQueue {
 
   /**
    * Resolves the uploader's replay scope for the partition's principal,
-   * behind a principal fence before and after. A principal mismatch, an
-   * abort or a disposal stops the pass (thrown); any other rejection, or a
-   * value that is not a scope, is returned as the step's error: nothing is
-   * sent and the generation stays provisional.
+   * behind a principal fence before and after. A principal mismatch (a
+   * fence, or a resolver that rejects with an OfflineQueueError
+   * FILEFN_QUEUE_PRINCIPAL_MISMATCH), an abort or a disposal stops the pass
+   * (thrown: no attempt is used and no waiter settles); any other rejection,
+   * or a value that is not a scope, is returned as the step's error: nothing
+   * is sent and the generation stays provisional.
    */
   private async resolveReplayScope(signal: AbortSignal | undefined): Promise<{ scope: string } | { error: unknown }> {
     const uploader = this.options.uploader;
@@ -3260,10 +3361,11 @@ export class OfflineQueue {
         [signal, this.lifetime.signal],
       );
     } catch (error) {
-      if (this.disposed || signal?.aborted) throw error;
-      // A refusal (no account for the principal, whatever its code) is this
-      // generation's outcome, not the pass's: only the principal check below
-      // stops the pass.
+      // The resolver says the credentials act for another principal: the pass
+      // stops, as when the principal check below fails.
+      if (this.disposed || signal?.aborted || isPrincipalMismatch(error)) throw error;
+      // Any other refusal (no account for the principal, an unconfirmed
+      // scope) is this generation's outcome, not the pass's.
       refused = { error };
     }
     await this.discloseFence(signal);
@@ -3453,9 +3555,9 @@ export class OfflineQueue {
         const file = new File([await blob.arrayBuffer()], cur.fileName, { type: cur.mimeType });
         cur.phase = 'uploading';
         cur.claim = { instanceId: this.instanceId, at: new Date().toISOString() };
-        // Ordered against an uploadFile abort by the partition lock: whichever
-        // commits first wins (see abortStaged).
-        cur.dispatched = true;
+        // `dispatched` is set by the guard's first admission, not here: an
+        // uploadFile abort ordered before it (by the partition lock) still
+        // removes the generation, and the guard then sends nothing.
         if (scoped && 'scope' in scoped && cur.replay.scope === undefined) cur.replay.scope = scoped.scope;
         if (cur.pending?.reason === 'scope-unconfirmed') cur.pending = undefined;
         await write();
