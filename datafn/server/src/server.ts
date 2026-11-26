@@ -1563,7 +1563,9 @@ export async function createDatafnServer<TContext = any>(
           request: req,
           context: enrichedCtx,
           payload,
-          response: await handler(req, enrichedCtx, { readPostWriteRows }),
+          response: await (readPostWriteRows
+            ? handler(req, enrichedCtx, { readPostWriteRows })
+            : handler(req, enrichedCtx)),
         });
       } catch (error) {
         await emitDataFnEvent({
