@@ -475,10 +475,11 @@ describe("claim at settle", () => {
           answer = () => resolve(new Response(JSON.stringify({ latest: "1.3.0" }), { status: 200 }));
         })
     );
-    const handle = check({ now: () => clock, timeoutMs: 1_000, fetch, intervalMs: DAY });
+    // The timeout cannot run down on this clock, so the request is never aborted while the fixture is written.
+    const handle = check({ now: () => clock, timeoutMs: 60_000, fetch, intervalMs: DAY });
     await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(1), WAIT);
     // Another run delivers the notice while this one waits on the registry.
-    await writeCacheJson({ checkedAt: T0, latest: "1.3.0", notifiedAt: T0 });
+    await writeCacheJson({ checkedAt: T0 - 1, latest: "1.3.0", notifiedAt: T0 });
     answer();
     // Settled at T0: its first read, then its claim read and its refresh write's read.
     await untilReadsDone(3);
@@ -488,6 +489,12 @@ describe("claim at settle", () => {
 
     expect(notice).toBeNull();
     expect(await cachedNotifiedAt()).toBe(T0);
+    // The registry's answer reached the claim read: the refresh wrote it, keeping the other run's delivery.
+    expect(JSON.parse(await readFile(fsHooks.cacheFile, "utf8"))).toEqual({
+      checkedAt: T0,
+      latest: "1.3.0",
+      notifiedAt: T0,
+    });
   });
 
   it("decides the interval on the clock when the check settles", async () => {
@@ -528,7 +535,8 @@ describe("claim at settle", () => {
           answer = () => resolve(new Response(JSON.stringify({ latest: "1.3.0" }), { status: 200 }));
         })
     );
-    const updateCheck = check({ now: Date.now, timeoutMs: 200, fetch });
+    // Long enough that the request is answered before its abort timer fires, even on a loaded machine.
+    const updateCheck = check({ now: Date.now, timeoutMs: 1_000, fetch });
     const events: string[] = [];
     const started = performance.now();
     const action = runAction(
@@ -544,12 +552,16 @@ describe("claim at settle", () => {
     );
 
     expect(await action).toBe(3);
-    expect(performance.now() - started).toBeLessThan(200 + 80);
+    expect(performance.now() - started).toBeLessThan(1_000 + 80);
     expect(events).toEqual([]);
     releaseAll();
     // Settled (past its deadline): its first read, then its claim read and its refresh write's read.
     await untilReadsDone(3);
     expect(await cachedNotifiedAt()).toBeUndefined();
+    // The registry's successful answer was what waited at the claim read: the refresh cached it, not an error.
+    const cached = JSON.parse(await readFile(fsHooks.cacheFile, "utf8")) as Record<string, unknown>;
+    expect(cached).toMatchObject({ latest: "1.3.0" });
+    expect(cached).not.toHaveProperty("error");
     expect(await updateCheck.notice()).toBeNull();
   });
 

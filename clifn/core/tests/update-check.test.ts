@@ -586,18 +586,23 @@ describe("startUpdateCheck: cache interval", () => {
 
   it("never loses a delivery to a refresh written by the same process at the same time", async () => {
     await writeCacheText(JSON.stringify({ checkedAt: T0 - DAY + 1, latest: "1.3.0" }));
+    // The refresh reads the entry before the delivery lands, and fails only after the delivery is on disk.
+    let fail: () => void = () => undefined;
+    const fetch = vi.fn<UpdateCheckFetch>(
+      () => new Promise((resolve) => (fail = () => resolve(new Response("down", { status: 500 }))))
+    );
+    const refreshing = check({ fetch, now: () => T0 + 1, intervalMs: DAY - 2, timeoutMs: SETTLE_ONLY_MS });
+    await until(() => fetch.mock.calls.length === 1);
     const delivering = check({ now: () => T0 });
     await untilCached((cached) => cached.notifiedAt === T0);
-    const refreshing = check({
-      fetch: registry("down", 500),
-      now: () => T0 + 1,
-      intervalMs: DAY - 2,
-      timeoutMs: SETTLE_ONLY_MS,
-    });
+    fail();
+
     await expect(delivering.notice()).resolves.toBe(NOTICE_1_3_0);
+    // On its fixed clock, refreshing.notice() resolves only once the refresh has settled (its write is queued by then).
     await expect(refreshing.notice()).resolves.toBeNull();
     const cached = (await readCacheJson()) as Record<string, unknown>;
     expect(cached.notifiedAt).toBe(T0);
+    expect(cached).toEqual({ checkedAt: T0 + 1, error: true, notifiedAt: T0 });
   });
 
   it.each<[string, Record<string, unknown>]>([
