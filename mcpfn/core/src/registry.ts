@@ -291,50 +291,46 @@ function assertPromptArgumentsAgree(
 }
 
 /**
- * Why a schema collection does not resolve on its own, or undefined. With a
- * custom compiler, which already accepted each schema in its own dialect, a
- * collection the built-in engine rejects (for example a draft 2020-12 schema)
- * still counts as closed when every reference resolves inside it.
+ * Why a schema collection does not resolve on its own, or undefined. The
+ * built-in engine checks the whole collection in its own dialect. A custom
+ * compiler owns the dialect, syntax and `$id` rules and has already accepted
+ * each schema, so only reference resolution is checked, by one walk that
+ * knows every draft's subschema keywords and is never the draft-07 engine.
  */
 function collectionError(schemas: object[], custom: boolean): unknown {
   try {
-    validateSchemaCollection(schemas);
+    if (custom) validateSchemaReferences(schemas);
+    else validateSchemaCollection(schemas);
     return undefined;
   } catch (error) {
-    if (!custom) return error ?? new Error("schema collection is invalid");
-    if (schemas.some(hasDynamicReference)) {
-      return new Error("dynamic references cannot be checked for closure");
-    }
-    validateSchemaReferences(schemas);
-    return undefined;
+    return error ?? new Error("schema collection is invalid");
   }
 }
 
-// Every validator a custom compiler returned, per compiler and by schema text.
-// Such a compiler may keep state the registry cannot roll back (an Ajv
-// instance holding each compiled $id), and every registry using it (a clone,
-// a declaration's copy, or a retry after a failed registration or
-// declaration) shares that state, so the identical schema text is compiled
-// once and its validator reused. A cached validator is never listed: only a
-// registration that succeeds lists its schemas.
-const customCompiles = new WeakMap<McpFnSchemaCompiler, Map<string, CompiledSchema>>();
-
-function compilesFor(compiler: McpFnSchemaCompiler): Map<string, CompiledSchema> {
-  let compiles = customCompiles.get(compiler);
-  if (!compiles) {
-    compiles = new Map();
-    customCompiles.set(compiler, compiles);
-  }
-  return compiles;
+/**
+ * Validators a custom compiler returned to one registry or any copy derived
+ * from it (clone(), cloneEmpty(), a server declaration's copy). Such a
+ * compiler may hold state the registry cannot roll back (an Ajv instance keeps
+ * each compiled `$id`), so a validator from a registration that failed, or
+ * from a copy that does not hold it, is reused for an equal schema instead of
+ * compiling it again. A registry never reuses a validator it already holds,
+ * so a second equal schema is compiled and meets the compiler's own rules,
+ * and independent registries sharing one compiler share nothing.
+ */
+interface CompileLineage {
+  compiled: Map<string, SchemaEntry[]>;
 }
 
-// Dynamic references resolve at evaluation time, so the reference-only
-// closure check cannot prove them; a collection holding one is not closed.
-function hasDynamicReference(value: unknown): boolean {
-  if (Array.isArray(value)) return value.some(hasDynamicReference);
-  if (!isObject(value)) return false;
-  return Object.entries(value).some(([key, item]) =>
-    key === "$dynamicRef" || key === "$recursiveRef" || hasDynamicReference(item));
+/** JSON value equality that tells 0 from -0, unlike comparing JSON text. */
+function sameJson(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) return true;
+  if (!isObject(left) || !isObject(right) || Array.isArray(left) !== Array.isArray(right)) {
+    return false;
+  }
+  const leftKeys = Object.keys(left);
+  const rightRecord = right as Record<string, unknown>;
+  return leftKeys.length === Object.keys(right).length && leftKeys.every((key) =>
+    Object.hasOwn(right, key) && sameJson((left as Record<string, unknown>)[key], rightRecord[key]));
 }
 
 /** A registry-issued tool or prompt view and the caller definition behind it. */
@@ -483,7 +479,12 @@ export interface McpFnRegistryOptions {
   /**
    * Replace the built-in schema engine (Ajv, or @cfworker/json-schema where
    * code generation is unavailable). Clones of this registry, including the
-   * copy a server declaration makes, keep using it.
+   * copy a server declaration makes, keep using it. The compiler decides the
+   * dialect, schema syntax and `$id` uniqueness: each new registration of a
+   * schema reaches it, except an equal schema whose validator this registry
+   * or a copy of it already got and this registry does not hold (a retry
+   * after a failed registration or declaration). A copy's self-containment
+   * check only resolves references, in any draft's subschema keywords.
    */
   compileSchema?: McpFnSchemaCompiler;
 }
@@ -1045,8 +1046,8 @@ export class McpFnRegistry<TContext = undefined> {
   // in the middle of it.
   private registering = false;
   private compileAttempts = 0;
-  // The custom compiler's validators by schema text (see customCompiles).
-  private readonly compiles: Map<string, CompiledSchema> | undefined;
+  // The custom compiler's validators in this registry's lineage.
+  private lineage: CompileLineage = { compiled: new Map() };
 
   /**
    * Clone in successful registration order, preserving cross-definition
@@ -1092,6 +1093,7 @@ export class McpFnRegistry<TContext = undefined> {
 
   private derive(): McpFnRegistry<TContext> {
     const target = new McpFnRegistry<TContext>(this.options);
+    target.lineage = this.lineage;
     target.requireClosed = this.requireClosed || this.closureError() === undefined;
     for (const entry of this.entries) {
       let validator = entry.validator;
@@ -1175,13 +1177,18 @@ export class McpFnRegistry<TContext = undefined> {
 
   private compile(schema: object): CompiledSchema {
     this.compileAttempts += 1;
-    if (!this.customCompile || !this.compiles) return this.builtIn!.compile(schema);
+    if (!this.customCompile) return this.builtIn!.compile(schema);
     const text = snapshotText(schema);
-    let validator = this.compiles.get(text);
-    if (!validator) {
-      validator = this.customCompile(schema);
-      this.compiles.set(text, validator);
-    }
+    const compiled = this.lineage.compiled.get(text) ?? [];
+    const held = (validator: CompiledSchema) =>
+      this.entries.some((entry) => entry.validator === validator) ||
+      (this.pending ?? []).some((entry) => entry.validator === validator);
+    const reusable = compiled.find((entry) =>
+      sameJson(entry.snapshot, schema) && !held(entry.validator));
+    if (reusable) return reusable.validator;
+    const validator = this.customCompile(schema);
+    compiled.push({ snapshot: schema, validator });
+    this.lineage.compiled.set(text, compiled);
     return validator;
   }
 
@@ -1254,7 +1261,6 @@ export class McpFnRegistry<TContext = undefined> {
     this.options = { compileSchema };
     if (compileSchema) {
       this.customCompile = adaptSchemaCompiler(compileSchema);
-      this.compiles = compilesFor(compileSchema);
     } else {
       this.builtIn = createSchemaCompiler();
     }

@@ -577,14 +577,118 @@ function validateCfWorkerSchemaCollection(schemas: readonly object[]): void {
   prepareCfWorkerResources(schemas);
 }
 
+// Subschema-bearing keywords of every JSON Schema draft from 4 to 2020-12:
+// one schema, a list of schemas, or a map of schemas.
+const SUBSCHEMA_KEYWORDS = new Set([
+  "additionalItems", "additionalProperties", "contains", "contentSchema", "else", "if", "items",
+  "not", "propertyNames", "then", "unevaluatedItems", "unevaluatedProperties",
+  "allOf", "anyOf", "oneOf", "prefixItems",
+  "$defs", "definitions", "dependencies", "dependentSchemas", "patternProperties", "properties",
+]);
+const SCHEMA_MAP_KEYWORDS = new Set([
+  "$defs", "definitions", "dependencies", "dependentSchemas", "patternProperties", "properties",
+]);
+const REFERENCE_KEYWORDS = ["$ref", "$dynamicRef", "$recursiveRef"] as const;
+const REFERENCE_BASE = "https://mcpfn-schema-references.invalid/";
+
+interface ReferenceResource {
+  document: unknown;
+  anchors: Set<string>;
+}
+
+interface ReferenceScan {
+  resources: Map<string, ReferenceResource>;
+  references: Array<{ reference: string; target: URL }>;
+}
+
+function withoutFragment(uri: URL): string {
+  const copy = new URL(uri.href);
+  copy.hash = "";
+  return copy.href;
+}
+
+function scanReferences(
+  value: unknown,
+  base: URL,
+  resource: ReferenceResource,
+  scan: ReferenceScan,
+): void {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return;
+  const schema = value as Record<string, unknown>;
+  let scope = base;
+  let current = resource;
+  if (typeof schema.$id === "string") {
+    const id = new URL(schema.$id, base);
+    if (schema.$id.startsWith("#")) {
+      current.anchors.add(decodeURIComponent(id.hash.slice(1)));
+    } else {
+      scope = id;
+      current = { document: schema, anchors: new Set() };
+      if (!scan.resources.has(withoutFragment(id))) scan.resources.set(withoutFragment(id), current);
+    }
+  }
+  for (const anchor of [schema.$anchor, schema.$dynamicAnchor]) {
+    if (typeof anchor === "string") current.anchors.add(anchor);
+  }
+  for (const keyword of REFERENCE_KEYWORDS) {
+    const reference = schema[keyword];
+    if (typeof reference === "string") {
+      scan.references.push({ reference, target: new URL(reference, scope) });
+    }
+  }
+  for (const [key, item] of Object.entries(schema)) {
+    if (!SUBSCHEMA_KEYWORDS.has(key) || !item || typeof item !== "object") continue;
+    const subschemas = SCHEMA_MAP_KEYWORDS.has(key) && !Array.isArray(item)
+      ? Object.values(item)
+      : Array.isArray(item) ? item : [item];
+    for (const subschema of subschemas) scanReferences(subschema, scope, current, scan);
+  }
+}
+
+function resolvesPointer(document: unknown, pointer: string): boolean {
+  let node = document;
+  for (const token of pointer.split("/").slice(1)) {
+    const key = token.replaceAll("~1", "/").replaceAll("~0", "~");
+    if (!node || typeof node !== "object" || !Object.hasOwn(node, key)) return false;
+    node = (node as Record<string, unknown>)[key];
+  }
+  return true;
+}
+
+function resolvesReference(scan: ReferenceScan, target: URL): boolean {
+  const resource = scan.resources.get(withoutFragment(target));
+  if (!resource) return false;
+  const fragment = decodeURIComponent(target.hash.slice(1));
+  if (fragment === "") return true;
+  return fragment.startsWith("/")
+    ? resolvesPointer(resource.document, fragment)
+    : resource.anchors.has(fragment);
+}
+
 /**
- * Check only that every `$ref` in a related collection of JSON Schema
- * resources resolves inside the collection. Unlike validateSchemaCollection it
- * applies no dialect's syntax rules, so it suits schemas a caller-supplied
- * compiler accepts (for example draft 2020-12) that the built-in engines do not.
+ * Check only that every reference (`$ref`, `$dynamicRef`, `$recursiveRef`)
+ * in a related collection of JSON Schema resources resolves inside the
+ * collection: to a resource `$id`, a JSON Pointer within one, or an anchor.
+ * Unlike validateSchemaCollection it applies no single dialect's rules: it
+ * walks the subschema keywords of every draft from 4 to 2020-12 (for example
+ * `prefixItems`, `dependentSchemas` and `unevaluatedProperties`), so a schema
+ * in a caller compiler's dialect is checked like a draft-07 one, and an
+ * unknown keyword is an annotation it does not read. A schema without `$id`
+ * gets its own base.
  */
 export function validateSchemaReferences(schemas: readonly object[]): void {
-  prepareCfWorkerResources(schemas);
+  const scan: ReferenceScan = { resources: new Map(), references: [] };
+  schemas.forEach((schema, index) => {
+    const root = new URL(`__mcpfn_schema_${index}.json`, REFERENCE_BASE);
+    const resource: ReferenceResource = { document: schema, anchors: new Set() };
+    scan.resources.set(root.href, resource);
+    scanReferences(schema, root, resource, scan);
+  });
+  for (const { reference, target } of scan.references) {
+    if (!resolvesReference(scan, target)) {
+      throw new Error(`Unresolved reference "${reference}". Absolute URI "${target.href}".`);
+    }
+  }
 }
 
 /**

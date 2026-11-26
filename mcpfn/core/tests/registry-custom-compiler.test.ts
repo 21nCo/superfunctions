@@ -312,3 +312,118 @@ describe("McpFnRegistry custom compiler declaration retries and dynamic referenc
     expect(() => declared.registry.listTools()).toThrow("Registry schema collection is not self-contained");
   });
 });
+
+// SFNS-107 PR round 2 (architecture reset): the custom compiler is the
+// authority for `$id` uniqueness and dialect. Every new registration of a
+// schema the registry does not already hold reaches it, nothing is shared
+// between independent registries, and the self-containment check resolves
+// references in any draft's subschema keywords.
+describe("McpFnRegistry custom compiler authority", () => {
+  const sharedId = "https://test.invalid/shared";
+  const tool = (name: string) => ({
+    name,
+    description: `Tool ${name}.`,
+    inputSchema: { $id: sharedId, type: "object" as const },
+    handler,
+  });
+  const ajvCompiler = () => {
+    const ajv = new Ajv2020({ strict: false });
+    return (schema: object) => ajv.compile(schema);
+  };
+
+  it("rejects an equal schema with a registered $id in the registry, its clone and a declaration", async () => {
+    const { McpFnRegistry, defineMcpFnServer } = await import("../src/index.js");
+    const source = new McpFnRegistry({ compileSchema: ajvCompiler() }).register(tool("a"));
+
+    expect(() => source.register(tool("b"))).toThrow("Tool b contains an invalid JSON Schema");
+    expect(() => source.clone().register(tool("b"))).toThrow("Tool b contains an invalid JSON Schema");
+    expect(() => defineMcpFnServer({ info, registry: source, tools: [tool("b")] }))
+      .toThrow("Tool b contains an invalid JSON Schema");
+    expect(source.listTools().map((listed) => listed.name)).toEqual(["a"]);
+  });
+
+  it("compiles in each independent registry that shares one compiler", async () => {
+    const { McpFnRegistry } = await import("../src/index.js");
+    const compileSchema = vi.fn((schema: object) => new Ajv2020({ strict: false }).compile(schema));
+    new McpFnRegistry({ compileSchema }).register(tool("a"));
+    new McpFnRegistry({ compileSchema }).register(tool("a"));
+
+    expect(compileSchema).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects a further registration of a retried schema's $id", async () => {
+    const { McpFnRegistry } = await import("../src/index.js");
+    const registry = new McpFnRegistry({ compileSchema: ajvCompiler() });
+    expect(() => registry.register({
+      ...tool("t"),
+      outputSchema: { type: "object", properties: { ok: { type: "nonsense" } } } as never,
+    })).toThrow("Tool t contains an invalid JSON Schema");
+    registry.register(tool("t"));
+
+    expect(() => registry.register(tool("u"))).toThrow("Tool u contains an invalid JSON Schema");
+    expect(registry.listTools().map((listed) => listed.name)).toEqual(["t"]);
+  });
+
+  const rootId = "https://test.invalid/root";
+  const modern = (keyword: "prefixItems" | "dependentSchemas" | "unevaluatedProperties" | "anchor") => {
+    const toRoot = { $ref: rootId };
+    const applicators = {
+      prefixItems: { properties: { p: { type: "array", prefixItems: [toRoot, { $ref: "#/$defs/leaf" }] } } },
+      dependentSchemas: { dependentSchemas: { p: { properties: { q: toRoot } } } },
+      unevaluatedProperties: { unevaluatedProperties: toRoot },
+      anchor: { properties: { p: { $ref: "#leaf" } } },
+    }[keyword];
+    return {
+      name: "t",
+      description: `Draft 2020-12 ${keyword}.`,
+      inputSchema: {
+        $schema: "https://json-schema.org/draft/2020-12/schema",
+        $id: rootId,
+        type: "object" as const,
+        $defs: { leaf: { $anchor: "leaf", type: "string" } },
+        ...applicators,
+      },
+      handler,
+    };
+  };
+
+  it.each(["prefixItems", "dependentSchemas", "unevaluatedProperties", "anchor"] as const)(
+    "lists and manifests a declaration-supplied %s reference like a pre-registered one",
+    async (keyword) => {
+      const { McpFnRegistry, defineMcpFnServer } = await import("../src/index.js");
+      const preRegistered = defineMcpFnServer({
+        info,
+        registry: new McpFnRegistry({ compileSchema: ajvCompiler() }).register(modern(keyword)),
+      });
+      const declared = defineMcpFnServer({
+        info,
+        registry: new McpFnRegistry({ compileSchema: ajvCompiler() }),
+        tools: [modern(keyword)],
+      });
+
+      expect(declared.registry.listTools().map((listed) => listed.name)).toEqual(["t"]);
+      expect(declared.registry.listTools()).toEqual(preRegistered.registry.listTools());
+      expect(declared.manifest()).toEqual(preRegistered.manifest());
+      await expect(declared.registry.callTool("t", {}, undefined, requestExtra()))
+        .resolves.toMatchObject({ structuredContent: { ok: true } });
+    },
+  );
+
+  it("refuses a copy whose 2020-12 reference does not resolve in its collection", async () => {
+    const { McpFnRegistry, defineMcpFnServer } = await import("../src/index.js");
+    const permissive = () => Object.assign(() => true, { errors: null });
+    for (const target of ["https://test.invalid/missing", "#/$defs/missing", "#missing"]) {
+      const declared = defineMcpFnServer({
+        info,
+        registry: new McpFnRegistry({ compileSchema: permissive }),
+        tools: [{
+          name: "t",
+          description: "Dangling 2020-12 reference.",
+          inputSchema: { type: "object", properties: { p: { prefixItems: [{ $ref: target }] } } } as never,
+          handler,
+        }],
+      });
+      expect(() => declared.registry.listTools()).toThrow("Registry schema collection is not self-contained");
+    }
+  });
+});
