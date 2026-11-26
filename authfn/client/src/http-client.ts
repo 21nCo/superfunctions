@@ -26,7 +26,9 @@ const COUNT_PATTERN = /^\d{1,9}$/;
 const NETWORK_ERROR_CODE = 'AUTHFN_NETWORK_ERROR';
 /** Up to 2048 characters, none of them whitespace or control characters (`new URL` drops some). */
 const URL_TEXT_PATTERN = /^[^\s\u0000-\u001f\u007f-\u009f]{1,2048}$/;
-const ISO_TIMESTAMP_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,9})?(Z|[+-]\d{2}:\d{2})$/;
+const ISO_TIMESTAMP_PATTERN = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?(?:Z|[+-](\d{2}):(\d{2}))$/;
+/** The request fields the social handoff exchange reports in a validation error. */
+const EXCHANGE_VALIDATION_FIELDS: ReadonlySet<string> = new Set(['code', 'verifier', 'userId']);
 /**
  * The error details current hosts act on, per code, each kept only when it
  * has its shape and shares no text with the body; all others are dropped.
@@ -38,7 +40,8 @@ const KEPT_ERROR_DETAILS: Readonly<Record<string, Readonly<Record<string, TextCh
     redirectTo: isAbsoluteHttpUrl,
     continueLocally: 'boolean'
   },
-  AUTHFN_RATE_LIMITED: { resetAt: (value) => ISO_TIMESTAMP_PATTERN.test(value) && Number.isFinite(Date.parse(value)) }
+  AUTHFN_RATE_LIMITED: { resetAt: isIsoTimestamp },
+  AUTHFN_VALIDATION_ERROR: { field: (value) => EXCHANGE_VALIDATION_FIELDS.has(value) }
 };
 /**
  * The metric header fields a sensitive request may report, each only when
@@ -382,6 +385,25 @@ function keptDetails(code: string, details: unknown, secrets: readonly string[])
     }
   }
   return kept;
+}
+
+/**
+ * An ISO-8601 date and time with a zone whose calendar fields all exist, so
+ * an impossible date such as February 31, which `Date.parse` rolls over, fails.
+ */
+function isIsoTimestamp(value: string): boolean {
+  const match = ISO_TIMESTAMP_PATTERN.exec(value);
+  if (!match) {
+    return false;
+  }
+  const [year, month, day, hour, minute, second, offsetHour = 0, offsetMinute = 0] = match
+    .slice(1)
+    .map((part) => (part === undefined ? undefined : Number(part)));
+  const leapYear = year! % 4 === 0 && (year! % 100 !== 0 || year! % 400 === 0);
+  const daysInMonth = month === 2 ? (leapYear ? 29 : 28) : [4, 6, 9, 11].includes(month!) ? 30 : 31;
+  return month! >= 1 && month! <= 12 && day! >= 1 && day! <= daysInMonth
+    && hour! <= 23 && minute! <= 59 && second! <= 59
+    && offsetHour <= 23 && offsetMinute <= 59;
 }
 
 /** An absolute http(s) URL of at most 2048 characters, without credentials. */

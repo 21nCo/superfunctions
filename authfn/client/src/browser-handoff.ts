@@ -365,7 +365,9 @@ export function createBrowserHandoff(options: AuthFnBrowserHandoffOptions): Auth
   const prune = async (): Promise<number> => {
     let removed = 0;
     for (const key of await guarded.keys()) {
-      if (typeof key !== 'string' || !key.startsWith(keyPrefix)) {
+      // Only this instance's records: a key whose suffix is not a handoff id
+      // belongs to another instance (a nested prefix) or to the host.
+      if (typeof key !== 'string' || !key.startsWith(keyPrefix) || !HANDOFF_ID_PATTERN.test(key.slice(keyPrefix.length))) {
         continue;
       }
       const raw = await read(key);

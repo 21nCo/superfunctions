@@ -1005,7 +1005,12 @@ describe('createBrowserHandoff', () => {
 
   const detailsInput = { code: 'test-handoff-code-1', verifier: 'test-verifier-'.padEnd(43, 'v') };
   /** The details a sensitive request returns for an error envelope with `details`. */
-  const keptDetailsFor = async (code: string, status: number, details: Record<string, unknown>) => {
+  const keptDetailsFor = async (
+    code: string,
+    status: number,
+    details: Record<string, unknown>,
+    input: { code: string; verifier: string } = detailsInput
+  ) => {
     const client = createAuthFnClient({
       baseUrl: `${APP}/auth`,
       fetch: async () => Response.json({
@@ -1014,7 +1019,7 @@ describe('createBrowserHandoff', () => {
         error: { code, message: 'Request must continue elsewhere', retryable: status === 429, details }
       }, { status })
     });
-    const envelope = await client.exchangeSocialHandoff(detailsInput);
+    const envelope = await client.exchangeSocialHandoff(input);
     expect(envelope).toMatchObject({ ok: false, error: { code, message: `AuthFn request failed (${status})` } });
     return (envelope as { error: { details: Record<string, unknown> } }).error.details;
   };
@@ -1069,13 +1074,58 @@ describe('createBrowserHandoff', () => {
     expect(await keptDetailsFor('AUTHFN_RATE_LIMITED', 429, { regionId: 'eu' })).toEqual({ status: 429 });
   });
 
-  it('keeps no details but the status for errors other than a region mismatch', async () => {
+  it('keeps a reset time with an offset and drops one whose date or time does not exist', async () => {
+    expect(await keptDetailsFor('AUTHFN_RATE_LIMITED', 429, { resetAt: '2028-02-29T23:59:59+05:30' }))
+      .toEqual({ status: 429, resetAt: '2028-02-29T23:59:59+05:30' });
+    for (const resetAt of [
+      '2026-02-31T00:00:00Z',
+      '2026-02-29T00:00:00Z',
+      '2026-04-31T00:00:00Z',
+      '2026-13-01T00:00:00Z',
+      '2026-11-00T00:00:00Z',
+      '2026-11-26T24:00:00Z',
+      '2026-11-26T00:60:00Z',
+      '2026-11-26T00:00:60Z',
+      '2026-11-26T00:00:00+24:00'
+    ]) {
+      expect(await keptDetailsFor('AUTHFN_RATE_LIMITED', 429, { resetAt }), resetAt).toEqual({ status: 429 });
+    }
+  });
+
+  // A verifier with no run of 8 characters in common with the field names.
+  const plainInput = { code: 'test-handoff-code-1', verifier: 'test-pkce-'.padEnd(43, 'v') };
+
+  it.each(['code', 'verifier', 'userId'])('keeps the exchange field %s a validation error names', async (field) => {
+    expect(await keptDetailsFor('AUTHFN_VALIDATION_ERROR', 400, { field }, plainInput)).toEqual({ status: 400, field });
+  });
+
+  it.each([
+    ['a field the exchange does not have', { field: 'email' }, plainInput],
+    ['a field with different case', { field: 'Verifier' }, plainInput],
+    ['a field that is not a string', { field: 7 }, plainInput],
+    ['a field that is the code', { field: 'userId' }, { code: 'userId', verifier: plainInput.verifier }],
+    ['a field that repeats 8 characters of the verifier', { field: 'verifier' }, detailsInput]
+  ] as const)('drops a validation-error field that is %s', async (_label, details, input) => {
+    expect(await keptDetailsFor('AUTHFN_VALIDATION_ERROR', 400, { ...details, issue: 'required', path: ['body'] }, input))
+      .toEqual({ status: 400 });
+  });
+
+  it('keeps only the field of a validation error', async () => {
+    expect(await keptDetailsFor('AUTHFN_VALIDATION_ERROR', 400, {
+      field: 'verifier',
+      reason: 'required',
+      regionId: 'eu',
+      resetAt: '2026-11-26T00:10:00.000Z'
+    }, plainInput)).toEqual({ status: 400, field: 'verifier' });
+  });
+
+  it('keeps no details but the status for errors without kept details', async () => {
     const client = createAuthFnClient({
       baseUrl: `${APP}/auth`,
       fetch: async () => Response.json({
         ok: false,
         requestId: 'req-invalid',
-        error: { code: 'AUTHFN_OAUTH_STATE_INVALID', message: 'invalid', retryable: false, details: { regionId: 'eu' } }
+        error: { code: 'AUTHFN_OAUTH_STATE_INVALID', message: 'invalid', retryable: false, details: { regionId: 'eu', field: 'code' } }
       }, { status: 400 })
     });
 
@@ -1589,6 +1639,9 @@ describe('createBrowserHandoff', () => {
     const used = await handoff.begin({ returnTo: RETURN_TO });
     await handoff.complete(server.callbackFor(used));
     await handoff.begin({ returnTo: RETURN_TO });
+    const garbageKey = `authfn.handoff.${'g'.repeat(22)}`;
+    await store.set(garbageKey, 'not json');
+    // Under the prefix but not a handoff id: another instance's or the host's key.
     await store.set('authfn.handoff.garbage', 'not json');
     await store.set('unrelated', 'kept');
     clock.advance(1_000);
@@ -1599,7 +1652,8 @@ describe('createBrowserHandoff', () => {
     expect(events).toContainEqual({ type: 'pruned', count: 3 });
     expect(await store.get(`authfn.handoff.${used.handoffId}`)).toBeNull();
     expect(await store.get('unrelated')).toBe('kept');
-    expect(await retiredState(store, 'authfn.handoff.garbage')).toBe('tombstone');
+    expect(await retiredState(store, garbageKey)).toBe('tombstone');
+    expect(await store.get('authfn.handoff.garbage')).toBe('not json');
     const liveKey = `authfn.handoff.${live.handoffId}`;
     const liveVerifier = await storedVerifier(store, live.handoffId);
     await handoff.abandon(live.handoffId);
@@ -1608,7 +1662,22 @@ describe('createBrowserHandoff', () => {
     expect(failed(await handoff.complete(server.callbackFor(live))).reason).toBe('already-used');
     clock.advance(60 * 60 * 1000);
     expect(await handoff.prune()).toBe(3);
-    expect(Array.from(await store.keys())).toEqual(['unrelated']);
+    expect(Array.from(await store.keys()).sort()).toEqual(['authfn.handoff.garbage', 'unrelated']);
+  });
+
+  it('leaves the records of an instance with a nested prefix on the same store alone', async () => {
+    const { make, server, store } = setup();
+    const outer = make();
+    const inner = make({ keyPrefix: 'authfn.handoff.admin.' });
+    const innerBegun = await inner.begin({ returnTo: RETURN_TO });
+    // begin prunes, and so does an explicit prune: neither touches the other's record.
+    const outerBegun = await outer.begin({ returnTo: RETURN_TO });
+    expect(await outer.prune()).toBe(0);
+    expect(await inner.prune()).toBe(0);
+
+    expect(await inner.complete(server.callbackFor(innerBegun))).toMatchObject({ status: 'completed' });
+    expect(await outer.complete(server.callbackFor(outerBegun))).toMatchObject({ status: 'completed' });
+    expect(server.exchange).toHaveBeenCalledTimes(2);
   });
 
   it.each([
