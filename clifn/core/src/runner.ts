@@ -247,12 +247,16 @@ export async function runAction<TOptions>(
   return exitCode;
 }
 
-/** Tells the update check, if any, that its notice will not be read. Advisory: a throwing check is ignored. */
+/** Tells the update check, if any, that its notice will not be read. Advisory: a throw or rejection is ignored. */
 function discardUpdateCheck(runnerOptions: RunnerOptions): void {
   try {
     const updateCheck = runnerOptions.updateCheck;
     if (updateCheck !== undefined && updateCheck !== null && typeof updateCheck.discard === "function") {
-      updateCheck.discard();
+      // A discard() that returns a promise (an async method fits the type) must not reject unhandled.
+      const pending: unknown = updateCheck.discard();
+      if (typeof (pending as PromiseLike<unknown> | null)?.then === "function") {
+        (pending as PromiseLike<unknown>).then(undefined, () => undefined);
+      }
     }
   } catch {
     // Nothing to tell; the check claims as it would have.

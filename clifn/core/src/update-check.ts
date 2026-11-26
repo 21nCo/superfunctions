@@ -69,10 +69,11 @@ export interface UpdateCheck {
    * the first read, after a refresh a read once the registry answered) and the clock at that moment decide whether a
    * delivery within `intervalMs` is known. If none is, and no other handle of this app in this process holds a claim
    * within the interval, the handle claims the notice and records the claim time as `notifiedAt` in the cache, in the
-   * background (on a refresh, in the one write of the new entry; the later `notifiedAt` is kept, so an earlier one
-   * never replaces it). After that, `notice()` gives the claimed notice to its first call without any file access,
-   * however long the action ran, and every later call resolves `null`. Once the check settles, no I/O outlives it but
-   * that single write.
+   * background (added to whatever entry the file then holds, behind this run's own refresh write; the later
+   * `notifiedAt` is kept, so an earlier one never replaces it). After that, `notice()` gives the claimed notice to its
+   * first call without any file access, however long the action ran, and every later call resolves `null`; a claim
+   * that is `intervalMs` old or more by then is dropped, as the next interval's notice may be another run's. Once the
+   * check settles, no I/O outlives it but that single write (and a refresh write queued before it settled).
    *
    * So the notice is given at most once per `intervalMs`: a claim counts as the delivery, and a run that claims it and
    * never shows it (the action crashes, the process exits, `notice()` is never called) uses up that interval's notice.
@@ -272,38 +273,33 @@ interface CheckResult {
   entry: LatestEntry | null;
   /** The delivery times (`notifiedAt`) the check's cache reads showed; weighed with the settle-time clock. */
   seen: number[];
-  /** A refreshed entry still to be written (with the claim, when there is one); null on a cache hit. */
-  refreshed: CacheEntry | null;
 }
 
-function resultFor(plan: CheckPlan, entry: CacheEntry, seen: Array<CacheEntry | null>, refreshed: boolean): CheckResult {
+function resultFor(plan: CheckPlan, entry: CacheEntry, seen: Array<CacheEntry | null>): CheckResult {
   const notice = noticeFor(entry, plan.current, plan.currentText, plan.name);
   const times = seen.flatMap((item) => (item?.notifiedAt === undefined ? [] : [item.notifiedAt]));
-  return {
-    notice,
-    entry: notice !== null && "latest" in entry ? entry : null,
-    seen: times,
-    refreshed: refreshed ? entry : null,
-  };
+  return { notice, entry: notice !== null && "latest" in entry ? entry : null, seen: times };
 }
 
-/** Settles as soon as the entry and the claim read are known; the cache write is left to the caller. */
+/** Settles as soon as the entry and the claim read are known; the refresh write continues in the background. */
 async function runCheck(plan: CheckPlan): Promise<CheckResult> {
   const file = join(plan.stateDir, UPDATE_CHECK_FILE);
   const cached = await readCache(file);
   const now = plan.now();
   if (cached && isRecent(cached.checkedAt, now, plan.intervalMs)) {
     // The claim read is this read.
-    return resultFor(plan, cached, [cached], false);
+    return resultFor(plan, cached, [cached]);
   }
   const fetched = await requestLatest(plan);
   // The last delivery carries over to the new entry, an error entry too, so a refresh does not give a second notice
   // within the interval; the write also keeps a later delivery another run recorded during the request.
   const entry: CacheEntry = cached?.notifiedAt === undefined ? fetched : { ...fetched, notifiedAt: cached.notifiedAt };
+  // Queued now, whatever the claim decides, so the registry's answer is cached even when the claim read stalls.
+  void writeCacheQuietly(plan.stateDir, entry, plan.now);
   // The claim read: a delivery another run recorded during the request. The result counts only when this read, too,
-  // finishes before the timeout; the refreshed entry is written after it, carrying the claim when there is one.
+  // finishes before the timeout.
   const shared = await readCache(file);
-  return resultFor(plan, entry, [entry, shared], true);
+  return resultFor(plan, entry, [entry, shared]);
 }
 
 function monotonicNow(): number {
@@ -396,8 +392,9 @@ export function startUpdateCheck(options: UpdateCheckOptions): UpdateCheck {
   const dir = checkPlan.stateDir;
   // "pending" until the check settles or its deadline passes, whichever comes first; the outcome never changes after.
   let outcome: "pending" | "ready" | "expired" = "pending";
-  // The notice this handle claimed when the check settled, until the first notice() call takes it.
+  // The notice this handle claimed when the check settled, and when, until the first notice() call takes it.
   let claimed: string | null = null;
+  let claimedTime = 0;
   // Set by discard(): no notice will be read, so none is claimed.
   let discarded = false;
   const remaining = (): number => {
@@ -434,42 +431,37 @@ export function startUpdateCheck(options: UpdateCheckOptions): UpdateCheck {
     }
     claimedAt.set(dir, at);
     claimed = checked.notice;
+    claimedTime = at;
+    // The only I/O after the check settles: the claim's record, in the background, behind this run's refresh write.
+    void recordDeliveryQuietly(dir, checked.entry, at, checkPlan.now);
     return at;
-  };
-
-  // The only I/O after the check settles: one write, in the background, of the refreshed entry (with the claim) or,
-  // on a cache hit, of the claim alone.
-  const persist = (checked: CheckResult, notifiedAt: number | undefined): void => {
-    if (checked.refreshed !== null) {
-      const entry = notifiedAt === undefined ? checked.refreshed : { ...checked.refreshed, notifiedAt };
-      void writeCacheQuietly(dir, entry, checkPlan.now);
-    } else if (notifiedAt !== undefined && checked.entry !== null) {
-      void recordDeliveryQuietly(dir, checked.entry, notifiedAt, checkPlan.now);
-    }
   };
 
   const result = runCheck(checkPlan)
     .catch((): CheckResult | null => null)
     .then((checked) => {
-      let notifiedAt: number | undefined;
       if (outcome === "pending") {
         if (remaining() >= 0) {
           outcome = "ready";
-          notifiedAt = checked === null ? undefined : claim(checked);
+          if (checked !== null) {
+            claim(checked);
+          }
         } else {
           outcome = "expired";
         }
       }
-      if (checked !== null) {
-        persist(checked, notifiedAt);
-      }
     });
 
-  // The claimed notice, to the first call only.
+  // The claimed notice, to the first call only. A claim that is `intervalMs` old or more (or a clock that cannot tell)
+  // is dropped: another run may have claimed the next interval's notice by then. Reading the clock is no file access.
   const take = (): string | null => {
     const notice = claimed;
     claimed = null;
-    return notice;
+    if (notice === null) {
+      return null;
+    }
+    const at = clock();
+    return at !== undefined && isRecent(claimedTime, at, checkPlan.intervalMs) ? notice : null;
   };
 
   return {

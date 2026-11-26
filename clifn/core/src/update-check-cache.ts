@@ -144,31 +144,26 @@ async function writeCache(dir: string, entry: CacheEntry): Promise<void> {
 
 /**
  * Writes the entry, keeping the later `notifiedAt` (not after `now`) of the entry and of the file as it is right before
- * the write, so a refresh never drops a delivery another run recorded during its request; the entry's own `notifiedAt`
- * (a claim) is kept when the clock now throws or is not a number. Writes in this process are
+ * the write, so a refresh never drops a delivery another run recorded during its request. Writes in this process are
  * serialized per directory; two processes racing inside the read-then-rename window are the last-rename-wins boundary.
  */
 function writeCacheMerged(dir: string, entry: CacheEntry, now: () => number): Promise<void> {
   return serialized(dir, async () => {
     const current = await readCache(join(dir, UPDATE_CHECK_FILE));
-    const at = futureBound(now, entry.notifiedAt);
-    await writeCache(dir, withNotifiedAt(entry, laterDelivery(entry.notifiedAt, current?.notifiedAt, at)));
+    await writeCache(dir, withNotifiedAt(entry, laterDelivery(entry.notifiedAt, current?.notifiedAt, now())));
   });
 }
 
 /**
- * What counts as the future for a write: the clock now, and never less than the delivery being written, so that
- * delivery is kept when the clock now throws or is not a number.
+ * What counts as the future for a delivery record: the clock now, and never less than the delivery itself, so it is
+ * kept when the clock now throws or is not a number.
  */
-function futureBound(now: () => number, notifiedAt: number | undefined): number {
+function futureBound(now: () => number, notifiedAt: number): number {
   let time: number;
   try {
     time = now();
   } catch {
-    time = Number.NaN;
-  }
-  if (notifiedAt === undefined) {
-    return time;
+    return notifiedAt;
   }
   return Number.isFinite(time) ? Math.max(notifiedAt, time) : notifiedAt;
 }
@@ -179,8 +174,9 @@ export function writeCacheQuietly(dir: string, entry: CacheEntry, now: () => num
 }
 
 /**
- * Records that a notice was claimed at `notifiedAt` (a cache hit's claim). Called when the check settles, so the
- * record joins this process's queue for the directory right then, behind every write queued earlier. It re-reads the cache and adds the delivery to the entry the file holds, whatever
+ * Records that a notice was claimed at `notifiedAt`. Called when the check settles, so the record joins this
+ * process's queue for the directory right then: behind this run's own refresh write (queued when the registry
+ * answered) and every write queued earlier. It re-reads the cache and adds the delivery to the entry the file holds, whatever
  * its `checkedAt` (`entry` only when the file is missing or malformed): an error entry or an entry for another version
  * another run wrote meanwhile keeps its content and gains `notifiedAt`, so the delivery is neither rolled back nor
  * forgotten. The later of the file's `notifiedAt` and this one is kept, so an earlier delivery never replaces a later

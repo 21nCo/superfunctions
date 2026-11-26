@@ -18,6 +18,8 @@ const fsHooks = vi.hoisted(() => ({
   /** Reads of the cache file let through before a stall applies. */
   passReads: 0,
   stallReads: null as Promise<void> | null,
+  /** When set, only the read of the cache file with this ordinal (counting `reads`) stalls. */
+  stallOnly: null as number | null,
   holdRenames: null as Promise<void> | null,
 }));
 
@@ -39,7 +41,11 @@ vi.mock("node:fs/promises", async (importOriginal) => {
       fsHooks.reads += 1;
     }
     if (file === fsHooks.cacheFile && fsHooks.stallReads) {
-      if (fsHooks.passReads > 0) {
+      if (fsHooks.stallOnly !== null) {
+        if (fsHooks.reads === fsHooks.stallOnly) {
+          await fsHooks.stallReads;
+        }
+      } else if (fsHooks.passReads > 0) {
         fsHooks.passReads -= 1;
       } else {
         await fsHooks.stallReads;
@@ -93,6 +99,7 @@ beforeEach(async () => {
   fsHooks.syncReads = 0;
   fsHooks.reads = 0;
   fsHooks.passReads = 0;
+  fsHooks.stallOnly = null;
 });
 
 afterEach(async () => {
@@ -146,7 +153,7 @@ describe("delivery records", () => {
 
     const first = check({ now, intervalMs: 10, timeoutMs: 60_000 });
     await settle();
-    clock = T0 + 1020;
+    clock = T0 + 1005;
     expect(await first.notice()).toBe(NOTICE_1_3_0);
 
     clock = T0 + 1031;
@@ -344,6 +351,52 @@ describe("claim at settle", () => {
     expect(await cachedNotifiedAt()).toBe(T0 + 1);
   });
 
+  it("drops a claim that is intervalMs old by hand-out, once another handle has claimed the next interval", async () => {
+    await writeCacheJson({ checkedAt: T0, latest: "1.3.0" });
+    let clock = T0;
+    const first = check({ now: () => clock, intervalMs: 500 });
+    await settle();
+    clock = T0 + 600;
+    const second = check({ now: () => clock, intervalMs: 500 });
+    await settle();
+
+    expect(await second.notice()).toBe(NOTICE_1_3_0);
+    expect(await first.notice()).toBeNull();
+    expect(await cachedNotifiedAt()).toBe(T0 + 600);
+  });
+
+  it("caches the registry's answer while the claim read stalls", async () => {
+    await writeCacheJson({ checkedAt: T0 - 2 * DAY, latest: "1.3.0" });
+    // Read 1 is the first cache read; read 2 is the claim read after the registry answered.
+    fsHooks.stallOnly = 2;
+    fsHooks.stallReads = gate();
+    const handle = check({ fetch: registry("1.4.0"), timeoutMs: 60_000 });
+    await settle();
+    await settleCacheWrites();
+
+    expect(JSON.parse(await readFile(fsHooks.cacheFile, "utf8"))).toEqual({ checkedAt: T0, latest: "1.4.0" });
+    releaseAll();
+    expect(await handle.notice()).toBe("Update available: 1.2.0 → 1.4.0 (npm i -g my-cli)");
+  });
+
+  it("keeps the exit code when a quiet run's discard() rejects", async () => {
+    const updateCheck = {
+      notice: async () => null,
+      discard: async () => {
+        throw new Error("discard failed");
+      },
+    };
+    const exitCode = await runAction(() => ({ exitCode: 4 }), undefined, {
+      quiet: true,
+      stdout: () => undefined,
+      stderr: () => undefined,
+      updateCheck,
+    });
+    // An unhandled rejection would fail this test run.
+    await settle(20);
+    expect(exitCode).toBe(4);
+  });
+
   it("gives no notice when another run recorded a delivery before this check's refresh settled", async () => {
     let clock = T0;
     let answer: () => void = () => undefined;
@@ -437,19 +490,21 @@ describe("claim at settle", () => {
     ],
   ])("claims nothing when the clock at settle %s", async (_label, broken) => {
     await writeCacheJson({ checkedAt: T0, latest: "1.3.0", notifiedAt: T0 - DAY - 10 });
-    // The first reading decides the cache is fresh; the claim's reading fails.
-    let readings = 0;
-    const handle = check({ now: () => (readings++ === 0 ? T0 : broken()), timeoutMs: 60_000 });
+    let clock: () => number = () => T0;
+    const handle = check({ now: () => clock(), timeoutMs: 60_000 });
+    clock = broken;
     await settle();
+    clock = () => T0;
 
     expect(await handle.notice()).toBeNull();
-    expect(await cachedNotifiedAt()).toBe(T0 - DAY - 10);
+    // Nothing was claimed: the next run gives the notice.
+    expect(await check({ now: () => T0 + 1 }).notice()).toBe(NOTICE_1_3_0);
   });
 
   it.each([
     ["a cache hit", { checkedAt: T0, latest: "1.3.0", notifiedAt: T0 - DAY - 10 }, 1],
     ["a refresh", { checkedAt: T0 - 2 * DAY, latest: "1.3.0" }, 2],
-  ])("records the claim time on %s when the clock stops telling the time after the claim", async (_label, cached, pass) => {
+  ])("records the claim time on %s when the clock stops telling the time while it is written", async (_label, cached, pass) => {
     let clock: () => number = () => T0 + 20;
     await writeCacheJson(cached);
     // The claim read passes; the read the write merges with stalls until the clock has stopped.
@@ -459,6 +514,8 @@ describe("claim at settle", () => {
     await settle();
     clock = () => Number.NaN;
     releaseAll();
+    await settleCacheWrites();
+    clock = () => T0 + 20;
 
     expect(await handle.notice()).toBe(NOTICE_1_3_0);
     expect(await cachedNotifiedAt()).toBe(T0 + 20);
