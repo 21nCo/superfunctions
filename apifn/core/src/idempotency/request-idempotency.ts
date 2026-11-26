@@ -41,9 +41,14 @@
  *   request over a released or expired receipt-mode record that the store
  *   still holds is a conflict, with or without a receipts source.
  * - A claim is handed out only while its lease is still running after the
- *   acquire write; a write that outlasted the lease is released and retried.
- *   `leaseMs` must exceed the store's latency plus the handler's longest
- *   transaction.
+ *   acquire write and the `acquired` diagnostic; a claim that outlasted the
+ *   lease is released and retried. `leaseMs` must exceed the store's latency
+ *   plus the handler's longest transaction.
+ * - A durable receipt decides settle, release, claim and recover whether or
+ *   not the cache write that records it wins; a lost write never overwrites
+ *   the newer record.
+ * - Every instance that shares a store uses the same recovery mode per
+ *   operation and the same receipts source.
  */
 
 import { canonicalJson } from "./canonical-json.js";
@@ -204,14 +209,14 @@ export type IdempotencyClaimResult =
 
 /**
  * `settled`: the claim is complete; send `response`, never the bounded
- * stored copy. It is the holder's own full response, unchanged (credential
- * headers included), unless the holder's own receipt records a response
- * whose replay view (status, body and headers after the replay header rules)
- * differs; then it is that receipt's response with the replay header rules
- * applied, so the first delivery matches every replay. `committed`: another
- * holder's receipt for the same body exists and was recorded instead; send
- * its response. `conflict`: a receipt for a different body holds the key.
- * `stale`: no receipt exists and a newer claim owns the key.
+ * stored copy. Without a receipt it is the holder's own full response,
+ * unchanged. When the holder's own receipt exists, it is the receipt's
+ * response with the replay header rules applied (never size-bounded) plus
+ * only the holder's own credential headers (Set-Cookie and similar), so the
+ * first delivery equals every replay except for credentials a replay never
+ * carries. `committed`: another holder's receipt for the same body exists;
+ * send its response. `conflict`: a receipt for a different body holds the
+ * key. `stale`: no receipt exists and a newer claim owns the key.
  */
 export type IdempotencySettleResult =
   | { outcome: "settled"; response: IdempotentResponse }
@@ -259,7 +264,11 @@ export interface RequestIdempotencyOptions {
   credentialHeaders?: readonly string[];
   /** Unique version tokens. Defaults to `crypto.randomUUID()`. */
   nonce?: () => string;
-  /** Called synchronously; a throw or a rejected promise never changes an outcome. */
+  /**
+   * Called synchronously; a throw or a rejected promise never changes an
+   * outcome. The `acquired` claim diagnostic runs inside the claim's lease
+   * window, before the final lease check.
+   */
   onDiagnostic?: (event: IdempotencyDiagnostic) => void;
 }
 
@@ -403,9 +412,25 @@ function isCredentialHeader(name: string, extra: ReadonlySet<string>): boolean {
   return CREDENTIAL_HEADERS.has(name) || extra.has(name);
 }
 
-/** A field value: no control characters other than HTAB (RFC 9110 5.5). */
+/**
+ * A field value runtimes can send: HTAB, visible ASCII, space and obs-text
+ * (0x80-0xFF) only (RFC 9110 5.5). Other control characters and code points
+ * above U+00FF are rejected.
+ */
 function isSingleLine(value: unknown): value is string {
-  return typeof value === "string" && !/[\u0000-\u0008\u000a-\u001f\u007f]/.test(value);
+  return typeof value === "string" && /^[\t\x20-\x7e\x80-\xff]*$/.test(value);
+}
+
+/** A header map: a plain record. A `Headers` instance or other class would read as empty. */
+function isHeaderMap(value: unknown): value is Record<string, unknown> {
+  if (!isPlainObject(value)) return false;
+  const prototype: unknown = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+/** Sets a header as an own property, so a `__proto__` field is kept instead of changing the prototype. */
+function putHeader(target: Record<string, string>, name: string, value: string): void {
+  Object.defineProperty(target, name, { value, enumerable: true, writable: true, configurable: true });
 }
 
 /** Field names a Connection header nominates as hop-by-hop (RFC 9110 7.6.1). */
@@ -461,7 +486,7 @@ function normalize(response: IdempotentResponse, maxBytes: number, extraCredenti
   if (body !== undefined && BODYLESS_STATUSES.has(status)) {
     throw new TypeError(`idempotent response status ${status} must not have a body`);
   }
-  if (headers !== undefined && !isPlainObject(headers)) throw new TypeError("idempotent response headers must be an object");
+  if (headers !== undefined && !isHeaderMap(headers)) throw new TypeError("idempotent response headers must be a plain object");
   const kept: Record<string, string> = {};
   const seen = new Set<string>();
   const nominated = connectionNominated(headers ?? {});
@@ -474,7 +499,7 @@ function normalize(response: IdempotentResponse, maxBytes: number, extraCredenti
     if (seen.has(name)) throw new TypeError("idempotent response repeats a header name in a different case");
     seen.add(name);
     if (isCredentialHeader(name, extraCredentials) || HOP_BY_HOP_HEADERS.has(name) || nominated.has(name)) continue;
-    kept[name] = value;
+    putHeader(kept, name, value);
   }
   if (body === undefined) {
     return headerBytes(kept) <= maxBytes ? { status, headers: kept } : { status, headers: {}, omitted: ["headers"] };
@@ -482,7 +507,7 @@ function normalize(response: IdempotentResponse, maxBytes: number, extraCredenti
   if (headerBytes(kept) + byteLength(body) <= maxBytes) return { status, headers: kept, body };
   const withoutBody: Record<string, string> = {};
   for (const [name, value] of Object.entries(kept)) {
-    if (!BODY_REPRESENTATION_HEADERS.has(name)) withoutBody[name] = value;
+    if (!BODY_REPRESENTATION_HEADERS.has(name)) putHeader(withoutBody, name, value);
   }
   if (headerBytes(withoutBody) <= maxBytes) return { status, headers: withoutBody, omitted: ["body"] };
   return { status, headers: {}, omitted: ["body", "headers"] };
@@ -500,7 +525,7 @@ function replayable(response: StoredIdempotentResponse, extraCredentials: Readon
   for (const [name, value] of Object.entries(response.headers)) {
     if (isCredentialHeader(name, extraCredentials) || HOP_BY_HOP_HEADERS.has(name) || nominated.has(name)) continue;
     if (bodyOmitted && BODY_REPRESENTATION_HEADERS.has(name)) continue;
-    headers[name] = value;
+    putHeader(headers, name, value);
   }
   // Only the response fields are copied, never unknown fields a store kept on the record.
   return {
@@ -521,23 +546,8 @@ function isValidResponse(response: unknown, extraCredentials: ReadonlySet<string
   }
 }
 
-/**
- * Whether two responses replay identically: same status, body and headers
- * after the replay header rules. A response the write path rejects (such as
- * one that repeats a header name in a different case) never matches.
- */
-function sameReplayView(left: IdempotentResponse, right: IdempotentResponse, extraCredentials: ReadonlySet<string>): boolean {
-  if (!isValidResponse(left, extraCredentials) || !isValidResponse(right, extraCredentials)) return false;
-  const a = normalize(left, Number.POSITIVE_INFINITY, extraCredentials);
-  const b = normalize(right, Number.POSITIVE_INFINITY, extraCredentials);
-  if (a.status !== b.status || a.body !== b.body) return false;
-  const names = Object.keys(a.headers);
-  if (names.length !== Object.keys(b.headers).length) return false;
-  return names.every((name) => Object.hasOwn(b.headers, name) && a.headers[name] === b.headers[name]);
-}
-
 function isStoredResponse(value: unknown): value is StoredIdempotentResponse {
-  if (!isPlainObject(value) || !isValidStatus(value.status) || !isPlainObject(value.headers)) return false;
+  if (!isPlainObject(value) || !isValidStatus(value.status) || !isHeaderMap(value.headers)) return false;
   for (const [name, header] of Object.entries(value.headers)) {
     if (!STORED_HEADER_NAME_PATTERN.test(name) || !isSingleLine(header)) return false;
   }
@@ -772,8 +782,10 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
   type ReceiptOutcome = IdempotencyReplay | { outcome: "conflict" };
 
   /**
-   * Records a receipt over the live record and reports it: a replay for the
-   * same body, a conflict for another body. Undefined when the write lost.
+   * Records a receipt over the live record if that record is unchanged, and
+   * reports it: a replay for the same body, a conflict for another body. The
+   * receipt decides the outcome whether or not the write wins; a lost write
+   * leaves the newer record untouched, and a later step records the receipt.
    */
   const applyReceipt = async (
     storeKey: string,
@@ -781,8 +793,8 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
     generation: number,
     receipt: IdempotencyReceipt,
     fingerprint: string,
-  ): Promise<ReceiptOutcome | undefined> => {
-    if (!(await completeFromReceipt(storeKey, expectedVersion, generation, receipt))) return undefined;
+  ): Promise<ReceiptOutcome> => {
+    await completeFromReceipt(storeKey, expectedVersion, generation, receipt);
     return receipt.fingerprint === fingerprint
       ? { outcome: "replay", response: fullReceiptResponse(receipt), source: "receipt" }
       : { outcome: "conflict" };
@@ -799,7 +811,7 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
   const inspect = async (
     prepared: Prepared,
     at: number,
-  ): Promise<{ done: ReceiptOutcome | undefined } | { live: Live }> => {
+  ): Promise<{ done: ReceiptOutcome } | { live: Live }> => {
     const { storeKey, fingerprint, recovery } = prepared;
     const live = await readLive(storeKey, at);
     const record = live.kind === "present" ? live.record : undefined;
@@ -824,11 +836,15 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
     return { live };
   };
 
+  /** An acquired claim before its final lease check. */
+  type Acquired = { outcome: "acquired"; token: IdempotencyToken; leaseExpiresAt: number; prepared: Prepared };
+  type ClaimStepResult = Exclude<IdempotencyClaimResult, { outcome: "acquired" }> | Acquired;
+
   /**
    * One read-decide-write step. Returns a final result, or undefined when a
    * concurrent writer changed the record and the step must run again.
    */
-  const claimStep = async (prepared: Prepared): Promise<IdempotencyClaimResult | undefined> => {
+  const claimStep = async (prepared: Prepared): Promise<ClaimStepResult | undefined> => {
     const at = now();
     const inspected = await inspect(prepared, at);
     if ("done" in inspected) return inspected.done;
@@ -851,7 +867,7 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
     expectedVersion: string | null,
     generation: number,
     prepared: Prepared,
-  ): Promise<IdempotencyClaimResult | undefined> => {
+  ): Promise<ClaimStepResult | undefined> => {
     const version = nextVersion();
     // The lease starts at the write, after any slow receipt lookup, so it is never already expired.
     const at = now();
@@ -885,11 +901,6 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
         return { outcome: "conflict" };
       }
     }
-    // The write outlasted the lease, so another caller may already be taking the key over: never hand it out.
-    if (now() >= at + leaseMs) {
-      await releaseUnused(storeKey, version, generation, prepared);
-      return undefined;
-    }
     const token: IdempotencyToken = Object.freeze({
       storeKey,
       version,
@@ -899,7 +910,7 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
       recovery: prepared.recovery,
       operation: prepared.operation,
     });
-    return { outcome: "acquired", token };
+    return { outcome: "acquired", token, leaseExpiresAt: at + leaseMs, prepared };
   };
 
   /** Releases a claim no handler ran under. A lost write means a newer writer already owns the key. */
@@ -926,26 +937,33 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
       emit({ action: "claim", outcome: prepared.invalid.outcome, operation: prepared.operation });
       return prepared.invalid;
     }
-    let result: IdempotencyClaimResult | undefined;
-    for (let attempt = 0; attempt < MAX_ATTEMPTS && result === undefined; attempt += 1) {
-      result = await claimStep(prepared);
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
+      const step = await claimStep(prepared);
+      if (step === undefined) continue;
+      if (step.outcome !== "acquired") {
+        emit({ action: "claim", outcome: step.outcome, operation: prepared.operation, storeKey: prepared.storeKey });
+        return step;
+      }
+      const { token } = step;
+      const event = { action: "claim", operation: prepared.operation, storeKey: prepared.storeKey, generation: token.generation } as const;
+      // The diagnostic runs inside the lease window, before the final lease check.
+      emit({ ...event, outcome: "acquired" });
+      // The write (or the diagnostic) outlasted the lease, so another caller may already be taking the key over:
+      // never hand the claim out; retire it and try again.
+      if (now() >= step.leaseExpiresAt) {
+        await releaseUnused(token.storeKey, token.version, token.generation, step.prepared);
+        emit({ ...event, outcome: "lease_lapsed" });
+        continue;
+      }
+      return { outcome: "acquired", token };
     }
-    // Persistent contention: another caller keeps winning the write.
-    const final = result ?? { outcome: "in_progress", retryAfterMs: 1 };
-    emit({
-      action: "claim",
-      outcome: final.outcome,
-      operation: prepared.operation,
-      storeKey: prepared.storeKey,
-      ...(final.outcome === "acquired" ? { generation: final.token.generation } : {}),
-    });
+    // Persistent contention: another caller keeps winning the write, or every claim outlasted its lease.
+    const final = { outcome: "in_progress", retryAfterMs: 1 } as const;
+    emit({ action: "claim", outcome: final.outcome, operation: prepared.operation, storeKey: prepared.storeKey });
     return final;
   };
 
-  type Reconciled =
-    | { outcome: "receipt"; receipt: IdempotencyReceipt; own: boolean }
-    | { outcome: "conflict" }
-    | { outcome: "stale" };
+  type Reconciled = { outcome: "receipt"; receipt: IdempotencyReceipt; own: boolean } | { outcome: "conflict" };
 
   /**
    * The one reconcile step for settle and release. For a receipt-mode token
@@ -953,8 +971,11 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
    * it is already recorded (by this or any other caller), then reports it
    * relative to the token: the token's own commit (`own`), another holder's
    * commit of the same body, or `conflict` for a different body. The receipt
-   * wins over any record, as it does in claim and recover. Undefined when the
-   * token has no receipt contract or no receipt exists.
+   * wins over any record, as it does in claim and recover. The receipt
+   * decides the outcome even when other writers keep winning the cache write;
+   * their newer record is never overwritten, and a later step records the
+   * receipt. Undefined when the token has no receipt contract or no receipt
+   * exists.
    */
   const reconcileReceipt = async (token: IdempotencyToken): Promise<Reconciled | undefined> => {
     if (token.recovery !== "receipt") return undefined;
@@ -973,27 +994,45 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
           (await completeFromReceipt(token.storeKey, live.expectedVersion, live.previousGeneration, receipt)) !== undefined;
       }
     }
-    // Persistent contention: other writers keep winning; the next claim or recover records the receipt.
-    if (!recorded) return { outcome: "stale" };
+    // Persistent contention leaves the cache write to the next step; the durable receipt still decides.
     if (receipt.fingerprint !== token.fingerprint) return { outcome: "conflict" };
     // The claim id, never the generation: a generation restarts after eviction.
     return { outcome: "receipt", receipt, own: receipt.claimId === token.claimId };
   };
 
   /**
-   * Settle's view of a reconciled receipt. For the token's own commit, the
-   * holder's response is returned unchanged (credential headers such as
-   * Set-Cookie included) only when its replay view equals the receipt's;
-   * otherwise (an error after the commit, a different Location) the
-   * receipt's response is returned with the replay header rules applied, so
-   * the first delivery matches every replay. Another holder's commit always
-   * returns the receipt's response with the replay header rules applied.
+   * The holder's own credential headers (Set-Cookie and similar) for its
+   * first delivery. Only a response that passes write-path validation
+   * contributes, and never a field its Connection header nominates.
+   */
+  const holderCredentials = (response: IdempotentResponse): [string, string][] => {
+    if (!isValidResponse(response, extraCredentials) || response.headers === undefined) return [];
+    const nominated = connectionNominated(response.headers);
+    const credentials: [string, string][] = [];
+    for (const [rawName, value] of Object.entries(response.headers)) {
+      const name = rawName.toLowerCase();
+      if (!isCredentialHeader(name, extraCredentials) || HOP_BY_HOP_HEADERS.has(name) || nominated.has(name)) continue;
+      credentials.push([name, value]);
+    }
+    return credentials;
+  };
+
+  /**
+   * Settle's view of a reconciled receipt. The token's own commit returns the
+   * receipt's replay view (the replay header rules applied, never
+   * size-bounded) plus only the holder's own credential headers, so the first
+   * delivery differs from every replay only by the credentials a replay must
+   * never carry. Another holder's commit returns the receipt's replay view.
    */
   const settleResult = (reconciled: Reconciled, response: IdempotentResponse): IdempotencySettleResult => {
     if (reconciled.outcome !== "receipt") return reconciled;
     const { receipt, own } = reconciled;
-    if (!own) return { outcome: "committed", response: fullReceiptResponse(receipt) };
-    return { outcome: "settled", response: sameReplayView(response, receipt.response, extraCredentials) ? response : fullReceiptResponse(receipt) };
+    const view = fullReceiptResponse(receipt);
+    if (!own) return { outcome: "committed", response: view };
+    const headers: Record<string, string> = {};
+    for (const [name, value] of Object.entries(view.headers)) putHeader(headers, name, value);
+    for (const [name, value] of holderCredentials(response)) putHeader(headers, name, value);
+    return { outcome: "settled", response: { status: view.status, headers, ...(view.body === undefined ? {} : { body: view.body }) } };
   };
 
   /** Release's view: the key is committed, so the receipt's response is reported with the replay header rules. */

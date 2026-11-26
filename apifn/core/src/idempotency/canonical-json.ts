@@ -6,9 +6,9 @@
  * undefined items or extra properties, and plain objects (keys sorted by
  * UTF-16 code unit; undefined properties omitted). Anything a JSON serializer
  * would change, collapse or convert (sparse arrays, undefined array items,
- * array subclasses, getters, Dates, Buffers, Maps, class instances, any
- * object with `toJSON`, non-finite numbers, bigint, functions, symbols,
- * cycles) is rejected, so two different request bodies can never share a
+ * array subclasses, getters, symbol-keyed or non-enumerable members, Dates,
+ * Buffers, Maps, class instances, any object with `toJSON`, non-finite
+ * numbers, bigint, functions, symbols, cycles) is rejected, so two different request bodies can never share a
  * fingerprint. Hosts pass the validated, parsed JSON body.
  *
  * Error messages name the depth and array indexes only, never object member
@@ -94,8 +94,17 @@ function encodeObject(value: object, depth: number, ancestors: Set<object>): str
     if (prototype !== Object.prototype && prototype !== null) {
       throw new TypeError(`canonicalJson: non-plain object ${where(depth)}`);
     }
+    // Every own key is read, so a symbol or non-enumerable member a serializer would skip is rejected, not lost.
+    const keys: string[] = [];
+    for (const key of Reflect.ownKeys(value)) {
+      if (typeof key === "symbol") throw new TypeError(`canonicalJson: symbol-keyed property ${where(depth + 1)} is not plain JSON data`);
+      if (!Object.getOwnPropertyDescriptor(value, key)?.enumerable) {
+        throw new TypeError(`canonicalJson: non-enumerable property ${where(depth + 1)} is not plain JSON data`);
+      }
+      keys.push(key);
+    }
     const entries: string[] = [];
-    for (const key of Object.keys(value).sort(compareCodeUnits)) {
+    for (const key of keys.sort(compareCodeUnits)) {
       const item = dataValue(value, key, where(depth + 1));
       if (item !== undefined) entries.push(`${JSON.stringify(key)}:${encode(item, depth + 1, ancestors)}`);
     }

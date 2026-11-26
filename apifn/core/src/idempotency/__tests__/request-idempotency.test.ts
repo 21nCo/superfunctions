@@ -808,12 +808,15 @@ describe("createRequestIdempotency round-3 regressions", () => {
     },
   );
 
-  it("returns the holder's own response unchanged on its own commit and strips credentials from another holder's", async () => {
+  it("keeps the holder's own Set-Cookie on its own commit and strips credentials from another holder's", async () => {
     const { idempotency, database, clock } = setup();
     const own = acquired(await idempotency.claim(orderRequest()));
     const committed = await database.createOrder(own, "book");
     const sent = { ...committed, headers: { ...committed.headers, "Set-Cookie": "session=test-session-value" } };
-    expect(await idempotency.settle(own, sent)).toEqual({ outcome: "settled", response: sent });
+    expect(await idempotency.settle(own, sent)).toEqual({
+      outcome: "settled",
+      response: { ...committed, headers: { ...committed.headers, "set-cookie": "session=test-session-value" } },
+    });
 
     const slow = acquired(await idempotency.claim(orderRequest({ key: "order-key-2" })));
     clock.advance(1_001);
@@ -1257,5 +1260,124 @@ describe("createRequestIdempotency round-6 regressions", () => {
     expect(() => canonicalJson(own)).toThrow(TypeError);
     expect(() => canonicalJson(inherited)).toThrow(TypeError);
     expect(getter).not.toHaveBeenCalled();
+  });
+});
+
+/** Atomic store where, once armed, a newer writer replaces the record just before every compare-and-set. */
+class BumpingStore extends FakeAtomicStore {
+  bumping = false;
+  bumps = 0;
+  readonly newest = new Map<string, IdempotencyRecord>();
+
+  override async compareAndSet(storeKey: string, expectedVersion: string | null, next: IdempotencyRecord | null): Promise<boolean> {
+    const current = this.records.get(storeKey);
+    if (this.bumping && current) {
+      this.bumps += 1;
+      const newer = { ...current, version: `test-version-newer-${this.bumps}` };
+      this.newest.set(storeKey, newer);
+      this.records.set(storeKey, structuredClone(newer));
+    }
+    return super.compareAndSet(storeKey, expectedVersion, next);
+  }
+}
+
+describe("createRequestIdempotency round-7 regressions", () => {
+  it("classifies from a validated receipt when every cache write loses, and never overwrites the newer record", async () => {
+    const store = new BumpingStore();
+    const { idempotency, database, clock } = setup({ store });
+    const own = acquired(await idempotency.claim(orderRequest()));
+    const committed = await database.createOrder(own, "book");
+    const otherKey = orderRequest({ key: "order-key-2" });
+    const slow = acquired(await idempotency.claim(otherKey));
+    clock.advance(1_001);
+    const current = acquired(await idempotency.claim(otherKey));
+    database.receiptsByKey.set(slow.storeKey, { ...slow, response: committed });
+    const conflictKey = orderRequest({ key: "order-key-3" });
+    const loser = acquired(await idempotency.claim(conflictKey));
+    database.receiptsByKey.set(loser.storeKey, { ...loser, fingerprint: "test-other-body-fingerprint", response: committed });
+    store.bumping = true;
+
+    // The newer writer's pending record stays exactly as it wrote it.
+    const expectUntouched = (token: IdempotencyToken) => {
+      expect(store.records.get(token.storeKey)).toEqual(store.newest.get(token.storeKey));
+      expect(store.records.get(token.storeKey)).toMatchObject({ state: "pending", version: expect.stringMatching(/^test-version-newer-/) });
+    };
+
+    expect(await idempotency.settle(own, committed)).toEqual({ outcome: "settled", response: committed });
+    expectUntouched(own);
+    expect(await idempotency.settle(current, { status: 409 })).toEqual({ outcome: "committed", response: committed });
+    expect(await idempotency.settle(loser, { status: 409 })).toEqual({ outcome: "conflict" });
+    expect(await idempotency.release(own)).toEqual({ outcome: "committed", response: committed });
+    expect(await idempotency.release(loser)).toEqual({ outcome: "conflict" });
+    expect(await idempotency.claim(orderRequest())).toEqual({ outcome: "replay", response: committed, source: "receipt" });
+    expect(await idempotency.claim(conflictKey)).toEqual({ outcome: "conflict" });
+    expect(await idempotency.recover(orderRequest())).toEqual({ outcome: "replay", response: committed, source: "receipt" });
+    expect(await idempotency.recover(conflictKey)).toEqual({ outcome: "conflict" });
+    for (const token of [own, current, loser]) expectUntouched(token);
+    expect(database.orders).toEqual(["book"]);
+  });
+
+  it("delivers the receipt's replay view plus only the holder's own credential headers on its own commit", async () => {
+    const { idempotency, database } = setup();
+    const cookie = { "set-cookie": "session=test-session-value" };
+    const probes: { extra: Record<string, string>; kept: Record<string, string> }[] = [
+      { extra: { Connection: "content-encoding", "Content-Encoding": "gzip", "Set-Cookie": cookie["set-cookie"] }, kept: cookie },
+      { extra: { connection: "location", location: "/orders/elsewhere" }, kept: {} },
+      { extra: { "transfer-encoding": "chunked", "keep-alive": "timeout=5", "set-cookie": cookie["set-cookie"] }, kept: cookie },
+      { extra: { "x-request-id": "test-request-2", "set-cookie": cookie["set-cookie"] }, kept: cookie },
+      { extra: { connection: "set-cookie", "set-cookie": cookie["set-cookie"] }, kept: {} },
+    ];
+    for (const [index, { extra, kept }] of probes.entries()) {
+      const request = orderRequest({ key: `order-key-probe-${index}` });
+      const token = acquired(await idempotency.claim(request));
+      const committed = await database.createOrder(token, "book");
+      const result = await idempotency.settle(token, { ...committed, headers: { ...committed.headers, ...extra } });
+      expect(result).toEqual({ outcome: "settled", response: { ...committed, headers: { ...committed.headers, ...kept } } });
+      expect(await idempotency.claim(request)).toEqual({ outcome: "replay", response: committed, source: "store" });
+    }
+  });
+
+  it("runs the final lease check after the acquired diagnostic and retires a claim whose lease lapsed", async () => {
+    const clock = new FakeClock();
+    const events: IdempotencyDiagnostic[] = [];
+    const onDiagnostic = (event: IdempotencyDiagnostic) => {
+      events.push(event);
+      if (event.outcome === "acquired" && events.length === 1) clock.advance(1_500); // the lease is 1_000
+    };
+    const { idempotency, store } = setup({ clock, onDiagnostic });
+    const token = acquired(await idempotency.claim(orderRequest()));
+    expect(token.generation).toBe(2);
+    expect(events.map((event) => event.outcome)).toEqual(["acquired", "lease_lapsed", "acquired"]);
+    expect(store.records.get(token.storeKey)).toMatchObject({ state: "pending", version: token.version });
+  });
+
+  it("rejects non-plain header maps and values above U+00FF, and keeps a __proto__ header", async () => {
+    expect(() => normalizeIdempotentResponse({ status: 200, headers: new Headers({ "x-a": "1" }) as never })).toThrow(TypeError);
+    class HeaderBag {
+      "x-a" = "1";
+    }
+    expect(() => normalizeIdempotentResponse({ status: 200, headers: new HeaderBag() as never })).toThrow(TypeError);
+    expect(() => normalizeIdempotentResponse({ status: 200, headers: { "x-a": "Ā" } })).toThrow(TypeError);
+    expect(normalizeIdempotentResponse({ status: 200, headers: { "x-a": "café" } }).headers).toEqual({ "x-a": "café" });
+
+    const headers = JSON.parse('{"__proto__":"test-proto-value","x-b":"2"}') as Record<string, string>;
+    const stored = normalizeIdempotentResponse({ status: 200, headers });
+    expect(Object.hasOwn(stored.headers, "__proto__")).toBe(true);
+    expect(Object.getPrototypeOf(stored.headers)).toBe(Object.prototype);
+    expect(Object.entries(stored.headers)).toEqual([["__proto__", "test-proto-value"], ["x-b", "2"]]);
+
+    const { idempotency, store } = setup();
+    const plain = acquired(await idempotency.claim(orderRequest({ recovery: "none" })));
+    const record = { state: "completed", version: "v", generation: 1, fingerprint: plain.fingerprint, recovery: "none", expiresAt: 2_000_000 };
+    store.records.set(plain.storeKey, { ...record, response: { status: 200, headers } } as unknown as IdempotencyRecord);
+    const replay = await idempotency.claim(orderRequest({ recovery: "none" }));
+    if (replay.outcome !== "replay") throw new Error(`expected replay, got ${replay.outcome}`);
+    expect(Object.entries(replay.response.headers)).toEqual([["__proto__", "test-proto-value"], ["x-b", "2"]]);
+  });
+
+  it("rejects symbol-keyed and non-enumerable object members", () => {
+    expect(() => canonicalJson({ a: 1, [Symbol("hidden")]: 2 })).toThrow(TypeError);
+    expect(() => canonicalJson(Object.defineProperty({ a: 1 }, "b", { value: 2, enumerable: false }))).toThrow(TypeError);
+    expect(canonicalJson(Object.assign(Object.create(null) as object, { b: 1, a: 2 }))).toBe('{"a":2,"b":1}');
   });
 });
