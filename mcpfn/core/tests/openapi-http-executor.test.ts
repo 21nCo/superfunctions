@@ -3,7 +3,7 @@ import type { AddressInfo } from "node:net";
 import { runInNewContext } from "node:vm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { McpFnError, McpFnValidationError, type McpFnRequestExtra } from "../src/index.js";
-import { fromOpenAPI, httpExecutor, type OpenApiOperation } from "../src/openapi/index.js";
+import { fromOpenAPI, httpExecutor, type HttpExecutorHeaderSource, type OpenApiOperation } from "../src/openapi/index.js";
 import { requestExtra } from "./openapi-helpers.js";
 
 interface Received {
@@ -301,6 +301,59 @@ describe("httpExecutor request building", () => {
     sent = lastRequest();
     expect(sent.body).toBe("");
     expect(sent.headers["content-type"]).toBeUndefined();
+  });
+
+  describe("an operator Content-Type", () => {
+    const withContentType = (headers: HttpExecutorHeaderSource<Context>) =>
+      fromOpenAPI<Context>(document, { executor: httpExecutor<Context>({ baseUrl: `${api.origin}/v1/`, headers }), allowMutations: true })
+        .registry;
+
+    it.each([
+      ["a record", { "content-type": "application/json; charset=utf-8" }],
+      ["a function", () => ({ "Content-Type": "application/json; charset=utf-8" })],
+      ["a record, any case", { "content-type": "Application/JSON" }],
+    ] as Array<[string, HttpExecutorHeaderSource<Context>]>)("is sent as written from %s when it matches the body's media type", async (_, headers) => {
+      const expected = typeof headers === "function" ? headers(context)["Content-Type"] : (headers as Record<string, string>)["content-type"];
+      const result = await withContentType(headers).callTool(
+        "forms",
+        { path: { id: "a", ids: [1] }, header: { "X-Trace": "trace-1" }, body: { name: "Rex" } },
+        context,
+        clientExtra(),
+      );
+      expect(result.isError).toBeUndefined();
+      expect(lastRequest().headers["content-type"]).toBe(expected);
+      expect(JSON.parse(lastRequest().body)).toEqual({ name: "Rex" });
+    });
+
+    it("is sent as written for a +json operation when it matches", async () => {
+      const registry = withContentType({ "content-type": "application/merge-patch+json; charset=UTF-8" });
+      const result = await registry.callTool("merge", { path: { id: "m1" }, body: { name: null } }, context, clientExtra());
+      expect(result.isError).toBeUndefined();
+      expect(lastRequest().headers["content-type"]).toBe("application/merge-patch+json; charset=UTF-8");
+    });
+
+    it.each([
+      ["another media type", "text/x-operator-type"],
+      ["a JSON type the operation does not document", "application/json"],
+      ["a charset other than UTF-8", "application/merge-patch+json; charset=utf-16le"],
+      ["an unparsable value", "application/merge-patch+json; x-operator-param"],
+    ])("refuses the call before fetch for %s, naming the header but not its value", async (_, value) => {
+      const before = api.received.length;
+      for (const headers of [{ "content-type": value }, () => ({ "content-type": value })]) {
+        const result = await withContentType(headers).callTool("merge", { path: { id: "m1" }, body: { name: "Rex" } }, context, clientExtra());
+        expect(result.isError).toBe(true);
+        expect(text(result)).toContain("Content-Type");
+        expect(text(result)).not.toContain(value);
+      }
+      expect(api.received.length).toBe(before);
+    });
+
+    it("leaves a bodyless call unchanged", async () => {
+      const registry = withContentType({ "content-type": "text/x-operator-type" });
+      const result = await registry.callTool("merge", { path: { id: "m1" } }, context, clientExtra());
+      expect(result.isError).toBeUndefined();
+      expect(lastRequest().headers["content-type"]).toBe("text/x-operator-type");
+    });
   });
 
   it.each([

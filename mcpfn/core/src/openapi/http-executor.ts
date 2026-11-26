@@ -154,7 +154,7 @@ export function httpExecutor<TContext = unknown>(options: HttpExecutorOptions<TC
         headers = requestHeaders(operation, args.header, operator.headers, credentials.header);
         if (operation.requestBody && args.body !== undefined) {
           body = JSON.stringify(args.body);
-          headers.set("content-type", operation.requestBody.contentType);
+          bodyContentType(headers, operation.requestBody.contentType);
         }
       } catch (error) {
         if (error instanceof CallRejected) return toolError(error.message);
@@ -1110,15 +1110,48 @@ function decode(bytes: Uint8Array, response: Response): BodyText | undefined {
 const MEDIA_TOKEN = /[!#$%&'*+.^_`|~0-9A-Za-z-]+/y;
 
 /**
- * The `charset` parameter of a media type (RFC 9110: `type/subtype` then
- * `;`-separated `name=value` parameters, a value a token or a quoted
- * string), undefined when there is none, and null when the header cannot be
- * parsed or names two different charsets, so a `;` or `charset=` inside a
- * quoted value never picks the decoder.
+ * Sets the Content-Type of a JSON body. An operator Content-Type is kept, as
+ * written, only when its media type is the operation's documented one and any
+ * charset it names is UTF-8 (the body is sent as UTF-8); otherwise the call is
+ * refused before fetch, naming the header and never its value.
+ */
+function bodyContentType(headers: Headers, documented: string): void {
+  const operator = headers.get("content-type");
+  if (operator === null) {
+    headers.set("content-type", documented);
+    return;
+  }
+  const parsed = parseMediaType(operator);
+  const expected = parseMediaType(documented)?.essence ?? documented.split(";")[0]!.trim().toLowerCase();
+  if (
+    parsed === null ||
+    parsed.essence !== expected ||
+    (parsed.charset !== undefined && !/^utf-?8$/i.test(parsed.charset))
+  ) {
+    throw new CallRejected(
+      `The server's Content-Type header does not match the ${JSON.stringify(expected)} body this operation sends, so the call was not made.`,
+    );
+  }
+}
+
+/**
+ * The `charset` parameter of a media type, undefined when there is none, and
+ * null when the header cannot be parsed or names two different charsets.
  */
 function charset(contentType: string | null): string | undefined | null {
   if (contentType === null) return undefined;
-  const text = contentType;
+  const parsed = parseMediaType(contentType);
+  return parsed === null ? null : parsed.charset;
+}
+
+/**
+ * A media type (RFC 9110: `type/subtype` then `;`-separated `name=value`
+ * parameters, a value a token or a quoted string): its lowercased
+ * `type/subtype` and its `charset` parameter, or null when the text cannot be
+ * parsed or names two different charsets, so a `;` or `charset=` inside a
+ * quoted value never picks the decoder.
+ */
+function parseMediaType(text: string): { essence: string; charset: string | undefined } | null {
   let at = 0;
   const skipSpace = () => {
     while (text[at] === " " || text[at] === "\t") at += 1;
@@ -1130,13 +1163,16 @@ function charset(contentType: string | null): string | undefined | null {
     return found;
   };
   skipSpace();
-  if (token() === undefined || text[at] !== "/") return null;
+  const type = token();
+  if (type === undefined || text[at] !== "/") return null;
   at += 1;
-  if (token() === undefined) return null;
+  const subtype = token();
+  if (subtype === undefined) return null;
+  const essence = `${type}/${subtype}`.toLowerCase();
   let found: string | undefined;
   for (;;) {
     skipSpace();
-    if (at === text.length) return found;
+    if (at === text.length) return { essence, charset: found };
     if (text[at] !== ";") return null;
     at += 1;
     skipSpace();

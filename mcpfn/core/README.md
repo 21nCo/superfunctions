@@ -320,7 +320,10 @@ const { registry } = fromOpenAPI<{ apiToken: string }>(document, {
   promise of one; values are printable ASCII. A `Map`, a `Headers` or
   another realm's object is refused rather than read as empty, and so is a
   record with a symbol or non-enumerable key: every own key is sent or
-  refused, so only an explicit `{}` sends no operator headers. The tool input offers only what the executor sends: the
+  refused, so only an explicit `{}` sends no operator headers. An operator
+  `Content-Type` is sent as written with a JSON body only when its media
+  type is the operation's documented one and any charset it names is UTF-8;
+  otherwise the call is refused before it is sent. The tool input offers only what the executor sends: the
   forbidden headers (`Authorization`, `Cookie`, `Host`, `Content-Length`,
   `Proxy-*`, `Accept`, `Content-Type`), optional transport headers
   (`Connection`, `Transfer-Encoding`, `Expect`, ...), `apiKey` credential
