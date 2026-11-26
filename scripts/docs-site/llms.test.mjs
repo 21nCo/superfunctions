@@ -39,6 +39,8 @@ describe("LLM loader front matter policy", () => {
   const originalTmpdir = process.env.TMPDIR;
   let cwd;
   let scratch;
+  /** @type {string[]} */
+  let disposable;
   const dependencies = { buildManifest, loadDocsConfig, FsContentProvider };
 
   /** @param {Record<string, unknown>} [content] */
@@ -57,10 +59,20 @@ describe("LLM loader front matter policy", () => {
     writeFileSync(join(cwd, path), body);
   }
 
+  /** A disposable directory outside the site, under the system temp directory. */
+  function external() {
+    const directory = mkdtempSync(join(systemTmpdir, "docs-llms-external-"));
+    disposable.push(directory);
+    return directory;
+  }
+  let systemTmpdir = tmpdir();
+
   beforeEach(() => {
-    cwd = mkdtempSync(join(tmpdir(), "docs-llms-policy-"));
+    systemTmpdir = tmpdir();
+    cwd = mkdtempSync(join(systemTmpdir, "docs-llms-policy-"));
     // Snapshots are created under os.tmpdir(); point it at a disposable directory we can inspect.
-    scratch = mkdtempSync(join(tmpdir(), "docs-llms-scratch-"));
+    scratch = mkdtempSync(join(systemTmpdir, "docs-llms-scratch-"));
+    disposable = [cwd, scratch];
     process.env.TMPDIR = scratch;
     for (const directory of ["guide", "pages", "blog", "api", "static"]) mkdirSync(join(cwd, directory));
     writeSite();
@@ -69,9 +81,18 @@ describe("LLM loader front matter policy", () => {
   afterEach(() => {
     if (originalTmpdir === undefined) delete process.env.TMPDIR;
     else process.env.TMPDIR = originalTmpdir;
-    rmSync(cwd, { recursive: true, force: true });
-    rmSync(scratch, { recursive: true, force: true });
+    delete process.env.DOCSFN_HTML_UNSAFE_ALLOWLIST;
+    for (const directory of disposable) rmSync(directory, { recursive: true, force: true });
   });
+
+  /** Build through the snapshot and directly on the source tree with the installed provider. */
+  async function expectProviderParity() {
+    const { config, manifest } = await loadLlmsSiteSource(cwd, dependencies);
+    const direct = new FsContentProvider({ ...config.content });
+    expect(manifest).toEqual(await buildManifest(direct, config));
+    expect(readdirSync(scratch)).toEqual([]);
+    return manifest;
+  }
 
   it("keeps plain Markdown, default YAML and explicit YAML metadata", async () => {
     write("guide/plain.md", "# Plain\n\nPlain body.");
@@ -129,10 +150,9 @@ describe("LLM loader front matter policy", () => {
   ])("builds the same manifest as the provider on the source tree for %s", async (_name, layout) => {
     let content = layout;
     if (layout === "external") {
-      const external = join(cwd, "..", `${relative(tmpdir(), cwd)}-external`);
-      mkdirSync(external, { recursive: true });
-      writeFileSync(join(external, "outside.md"), "---\ntitle: Outside\n---\nOutside body.");
-      content = { root: ".", docsDir: external, pagesDir: join(cwd, "pages"), blogDir: "blog", apiDir: join(cwd, "api"), assetsDir: "static" };
+      const outside = external();
+      writeFileSync(join(outside, "outside.md"), "---\ntitle: Outside\n---\nOutside body.");
+      content = { root: ".", docsDir: outside, pagesDir: join(cwd, "pages"), blogDir: "blog", apiDir: join(cwd, "api"), assetsDir: "static" };
     }
     const root = content?.root === "site" ? join(cwd, "site") : cwd;
     const docs = layout === "external" ? undefined : join(root, content?.docsDir ?? (content ? "content/docs" : "guide"));
@@ -150,12 +170,66 @@ describe("LLM loader front matter policy", () => {
     writeFileSync(join(pages, "about.md"), "# About");
     writeFileSync(join(root, "api", "openapi.json"), '{"openapi":"3.0.0","info":{"title":"Example","version":"1"},"paths":{}}');
     writeSite(content);
-    const { config, manifest } = await loadLlmsSiteSource(cwd, dependencies);
-    const direct = new FsContentProvider({ ...config.content });
-    expect(manifest).toEqual(await buildManifest(direct, config));
+    const manifest = await expectProviderParity();
     expect(Object.keys(manifest.pages).length).toBeGreaterThan(1);
+  });
+
+  it("builds a docs-only site with DocsFn defaults like the provider", async () => {
+    for (const directory of ["guide", "pages", "blog", "api", "static"]) rmSync(join(cwd, directory), { recursive: true });
+    write("content/docs/index.md", "---\ntitle: Home\n---\nHome body.");
+    writeSite({ root: "." });
+    const manifest = await expectProviderParity();
+    expect(Object.keys(manifest.pages)).toEqual(["docs:index.md"]);
+  });
+
+  it("keeps an external collection apart from an in-root directory named like its snapshot", async () => {
+    const outside = external();
+    writeFileSync(join(outside, "index.md"), "# Outside docs");
+    write("external-docs/index.md", "# In-root pages");
+    write("external/docs/post.md", "---\ntitle: Post\ndate: \"2026-01-01\"\n---\nNested in-root post.");
+    writeSite({ root: ".", docsDir: outside, pagesDir: "external-docs", blogDir: "external/docs" });
+    const manifest = await expectProviderParity();
+    expect(manifest.pages["docs:index.md"].body).toBe("# Outside docs");
+    expect(manifest.pages["pages:index.md"].body).toBe("# In-root pages");
+    expect(Object.values(manifest.posts).map((post) => post.body)).toEqual(["Nested in-root post."]);
+  });
+
+  it.each([
+    ["an unconfigured assets directory without public", { root: ".", docsDir: "guide" }],
+    ["a missing optional pages directory", { root: ".", docsDir: "guide", pagesDir: "pages" }],
+  ])("resolves %s like the provider", async (_name, content) => {
+    rmSync(join(cwd, "pages"), { recursive: true });
+    rmSync(join(cwd, "static"), { recursive: true });
+    write("guide/index.md", "# Guide");
+    write("assets/logo.svg", "<svg/>");
+    writeSite(content);
+    await expectProviderParity();
+  });
+
+  it.each([
+    ["a missing docs directory", { root: ".", docsDir: "missing" }, "configured docsDir missing does not exist", "missing"],
+    ["a missing external pages directory", { root: ".", docsDir: "guide", pagesDir: "../docs-llms-absent" }, "configured pagesDir ", "../docs-llms-absent"],
+  ])("reports %s at its source path", async (_name, content, message, path) => {
+    write("guide/index.md", "# Guide");
+    writeSite(content);
+    const error = await loadLlmsSiteSource(cwd, dependencies).then(() => undefined, (caught) => caught);
+    expect(error).toMatchObject({ code: "DOCS_ENTRY_INVALID" });
+    expect(error.message).toContain(message);
+    expect(error.message).not.toContain("docs-llms-snapshot-");
+    expect(error.diagnostics[0].location.absolutePath).toBe(join(cwd, path));
     expect(readdirSync(scratch)).toEqual([]);
-    if (layout === "external") rmSync(join(cwd, "..", `${relative(tmpdir(), cwd)}-external`), { recursive: true, force: true });
+  });
+
+  it("applies path-based trust rules and diagnostics to the source files, not the snapshot", async () => {
+    write("guide/index.md", "# Guide");
+    write("guide/unsafe.md", "# Unsafe\n\n<script>alert(1)</script>");
+    const error = await loadLlmsSiteSource(cwd, dependencies).then(() => undefined, (caught) => caught);
+    expect(error).toMatchObject({ code: "DOCS_HTML_UNSAFE" });
+    expect(error.diagnostics[0].location.absolutePath).toBe(join(cwd, "guide", "unsafe.md"));
+    process.env.DOCSFN_HTML_UNSAFE_ALLOWLIST = join(cwd, "guide", "unsafe.md");
+    const { manifest } = await loadLlmsSiteSource(cwd, dependencies);
+    expect(manifest.pages["docs:unsafe.md"].body).toContain("<script>");
+    expect(readdirSync(scratch)).toEqual([]);
   });
 });
 
