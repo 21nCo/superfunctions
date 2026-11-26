@@ -113,3 +113,35 @@ export type {
 export { fetchRateLimits } from "./integrations/secfn.js";
 export { logfnReporter, createCliLogger } from "./integrations/logfn.js";
 export type { CliLoggerOptions } from "./integrations/logfn.js";
+export {
+  createRequestIdempotency,
+  normalizeIdempotentResponse,
+  sha256Fingerprint,
+} from "./idempotency/request-idempotency.js";
+export { canonicalJson } from "./idempotency/canonical-json.js";
+export type {
+  CompletedIdempotencyRecord,
+  IdempotencyClaimResult,
+  IdempotencyClock,
+  IdempotencyCommit,
+  IdempotencyDiagnostic,
+  IdempotencyInvalidKeyReason,
+  IdempotencyOmittedPart,
+  IdempotencyReceipt,
+  IdempotencyReceiptSource,
+  IdempotencyRecord,
+  IdempotencyRecoverResult,
+  IdempotencyRecovery,
+  IdempotencyReleaseResult,
+  IdempotencyReplay,
+  IdempotencyRequest,
+  IdempotencyScope,
+  IdempotencySettleResult,
+  IdempotencyStore,
+  IdempotencyToken,
+  IdempotentResponse,
+  PendingIdempotencyRecord,
+  RequestIdempotency,
+  RequestIdempotencyOptions,
+  StoredIdempotentResponse,
+} from "./idempotency/request-idempotency.js";

@@ -17,6 +17,7 @@ npm install @apifn/core @superfunctions/http
 - **OpenAPI Generation** — Produce an OpenAPI 3.1 document directly from a router
 - **OpenAPI Parsing & Validation** — Parse YAML/JSON specs and validate them against the OpenAPI schema
 - **Diff** — Compare two OpenAPI documents and classify changes as breaking / non-breaking
+- **Request Idempotency** — Claim, settle and replay keyed requests through a host-supplied atomic store, with receipt-based commit recovery
 - **Integrations** — First-class hooks for authfn, secfn, watchfn, logfn, and testfn
 
 ---
@@ -165,6 +166,53 @@ const report = formatDiffAsJson(result); // DiffReportJson (machine-readable)
 
 ---
 
+## Request Idempotency
+
+`createRequestIdempotency` lets a host retry a keyed request after a lost response and get the original result back. It needs no database of its own: the host supplies an atomic conditional store and, for handlers with a durable commit receipt, a receipt source.
+
+```typescript
+import { createRequestIdempotency } from "@apifn/core";
+
+const idempotency = createRequestIdempotency({
+  store,             // { get(storeKey), compareAndSet(storeKey, expectedVersion, next) }
+  receipts,          // optional: { find(storeKey) } over receipts committed with the effect
+  leaseMs: 30_000,   // how long a holder owns the key
+  retentionMs: 86_400_000,
+  maxResponseBytes: 65_536,
+});
+
+const claim = await idempotency.claim({
+  scope: { principal: user.id, tenant: org.id, operation: "createOrder", target: storeId },
+  key: request.headers.get("idempotency-key")!,
+  body: validatedBody,
+  recovery: "receipt",
+});
+
+switch (claim.outcome) {
+  case "acquired": {
+    // Write the effect and a receipt with claim.token's storeKey, fingerprint and generation
+    // in one transaction; the receipt store accepts one receipt per storeKey.
+    const response = await createOrder(claim.token, validatedBody);
+    await idempotency.settle(claim.token, response); // "settled" or "stale"
+    return response;
+  }
+  case "replay":        // claim.response: the stored response
+  case "conflict":      // same key, different body
+  case "in_progress":   // another holder owns the key; claim.retryAfterMs
+  case "indeterminate": // an expired holder without a receipt contract may have committed
+  case "invalid_key":   // the key is empty, too long or not visible ASCII
+}
+```
+
+- **Scope** — The record and receipt key is a digest of the tenant, principal, operation, target and idempotency key, so a different caller or tenant never sees another scope's result. Pass identifiers, never credentials. The body fingerprint uses `canonicalJson` (sorted keys; non-JSON values rejected).
+- **Store contract** — `compareAndSet` writes (or deletes, for `null`) only when the stored `version` equals the expected one, or when no record exists and the expected version is `null`. Every write gets a fresh version, so a stale holder cannot settle, release or overwrite a newer claim.
+- **Commit recovery** — With `recovery: "receipt"`, a pending claim whose receipt exists is completed from the receipt and replayed, even before its lease expires, and an expired claim is taken over only when no receipt exists. `release` after a commit records the receipt instead of freeing the key. `recovery: "receipt"` without a `receipts` source throws. Without receipts, an expired claim is `indeterminate` until its retention ends.
+- **`recover(request)`** — Reports a key's state without claiming it: `replay`, `conflict`, `in_progress`, `not_committed`, `indeterminate` or `absent`.
+- **Bounded data** — Stored responses keep the status, headers and string body within `maxResponseBytes`; a larger body (then headers) is dropped and listed in `omitted`. Credential headers such as `authorization` and `set-cookie` are never stored. `onDiagnostic` events carry the action, outcome, operation, store key digest and generation only.
+- **Defaults** — Fingerprints use SHA-256 through Web Crypto (`sha256Fingerprint`) and versions use `crypto.randomUUID()`; pass `fingerprint` and `nonce` on runtimes without them.
+
+---
+
 ## Integrations
 
 ### watchfn
@@ -256,6 +304,9 @@ export { detectSchemaType, convertSchema, convertZodSchema, convertTypeBoxSchema
 
 // Diff
 export { diffOpenAPI, formatDiffAsText, formatDiffAsJson }
+
+// Request idempotency
+export { createRequestIdempotency, canonicalJson, normalizeIdempotentResponse, sha256Fingerprint }
 
 // Integrations
 export { fetchEndpointMetrics, createWatchFnClient, apifnWatchMiddleware }
