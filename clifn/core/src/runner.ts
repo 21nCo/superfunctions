@@ -8,6 +8,7 @@ import {
 import { createExec, type ExecService } from "./exec.js";
 import { createOutput, type OutputService } from "./output.js";
 import { createScaffold, type ScaffoldService } from "./scaffold.js";
+import type { UpdateCheck } from "./update-check.js";
 
 export interface RunnerDiagnosticsSink {
   add(input: Diagnostic): void;
@@ -41,6 +42,12 @@ export interface RunnerOptions {
   stderr?: (text: string) => void;
   nonInteractive?: boolean;
   onDiagnostics?: RunnerDiagnosticsListener;
+  /**
+   * A started update check (`startUpdateCheck` from `@clifn/core/update-check`). In text mode its notice is written to
+   * stderr after the action finishes, on success or failure, without changing the exit code; a notice that is not
+   * ready by the check's timeout is dropped. JSON mode never asks for or writes it.
+   */
+  updateCheck?: Pick<UpdateCheck, "notice">;
 }
 
 export interface RunnerContext {
@@ -195,6 +202,7 @@ export async function runAction<TOptions>(
     return await runDocumentAction(action, options, ctx, runnerOptions, document);
   }
 
+  let exitCode: number;
   try {
     const result = await action(options, ctx);
 
@@ -209,7 +217,7 @@ export async function runAction<TOptions>(
       output.json(result.data);
     }
 
-    return normalizeExitCode(result?.exitCode);
+    exitCode = normalizeExitCode(result?.exitCode);
   } catch (error) {
     const failure = normalizeError(error);
     runnerOptions.onDiagnostics?.(diagnosticSink.list());
@@ -223,7 +231,37 @@ export async function runAction<TOptions>(
       output.error(failure.message);
     }
 
-    return 1;
+    exitCode = 1;
+  }
+
+  // `mode` as read once above, so JSON lines keeps its option reads; only text mode reads `updateCheck`.
+  if (mode !== "json") {
+    await writeUpdateNotice(runnerOptions, stderrOption);
+  }
+  return exitCode;
+}
+
+/**
+ * Writes the update check's notice, if any, as one line on stderr. Advisory: a check, `notice()` or stderr writer that
+ * throws or rejects loses only the notice.
+ */
+async function writeUpdateNotice(
+  runnerOptions: RunnerOptions,
+  stderrOption: ((text: string) => void) | undefined
+): Promise<void> {
+  try {
+    const updateCheck = runnerOptions.updateCheck;
+    if (updateCheck === undefined || updateCheck === null) {
+      return;
+    }
+    const notice = await updateCheck.notice();
+    if (typeof notice !== "string" || notice === "") {
+      return;
+    }
+    const stderr = stderrOption ?? ((text: string) => process.stderr.write(text));
+    stderr(`${notice}\n`);
+  } catch {
+    // The notice is lost; the action's output and exit code stand.
   }
 }
 
