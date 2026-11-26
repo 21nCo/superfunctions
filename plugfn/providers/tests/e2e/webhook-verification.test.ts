@@ -551,7 +551,8 @@ describe('PlugFn webhook verification e2e', () => {
       'delivery_worker_replay'
     );
     const [delivery] = await plug.runtime.webhooks.listDeliveries(receipt!.id);
-    expect(delivery.metadata?.rawBodyBase64).toBe(Buffer.from(rawBody).toString('base64'));
+    expect(delivery.runtimeReplayContext?.rawBodyBase64).toBe(Buffer.from(rawBody).toString('base64'));
+    expect(delivery.metadata).not.toHaveProperty('rawBodyBase64');
     await plug.runtime.webhooks.updateDelivery(delivery.id, { nextAttemptAt: new Date(0) });
 
     const workerHandler = vi.fn();
@@ -568,6 +569,7 @@ describe('PlugFn webhook verification e2e', () => {
     await expect(plug.runtime.webhooks.listDeliveries(receipt!.id)).resolves.toEqual([
       expect.objectContaining({
         status: 'success',
+        runtimeReplayContext: null,
         metadata: expect.not.objectContaining({ rawBodyBase64: expect.anything() }),
       }),
     ]);
