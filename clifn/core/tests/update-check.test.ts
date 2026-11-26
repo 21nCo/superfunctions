@@ -90,6 +90,17 @@ async function settled(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 20));
 }
 
+/** Waits (real timers) until the cache file satisfies `condition`, failing after five seconds. */
+async function untilCached(condition: (cached: Record<string, unknown>) => boolean): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  while (!condition(((await readCacheJson().catch(() => ({}))) ?? {}) as Record<string, unknown>)) {
+    if (Date.now() > deadline) {
+      throw new Error("the cache file never reached the expected state");
+    }
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+
 /** Lets real I/O progress while fake timers hold `setTimeout`. */
 async function until(condition: () => boolean | Promise<boolean>): Promise<void> {
   for (let attempt = 0; attempt < 2000; attempt += 1) {
@@ -498,6 +509,8 @@ describe("startUpdateCheck: cache interval", () => {
     await writeCacheText(JSON.stringify({ checkedAt: T0, latest: "1.3.0" }));
     const fetch = registry({ latest: "1.3.0" });
     const first = check({ fetch, now: () => T0 + 1 });
+    // `first` must settle (and claim) before `second` starts: the two reads finish in no fixed order otherwise.
+    await untilCached((cached) => cached.notifiedAt === T0 + 1);
     const second = check({ fetch, now: () => T0 + 2 });
     await settled();
 

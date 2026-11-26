@@ -1,8 +1,9 @@
 import { spawnSync } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import ts from "typescript";
 import { resolveAppPaths } from "../src/paths.js";
 import { runAction } from "../src/runner.js";
 import { startUpdateCheck, type UpdateCheckFetch, type UpdateCheckOptions } from "../src/update-check.js";
@@ -180,6 +181,20 @@ function blockSynchronously(ms: number): void {
   }
 }
 
+/** Transpiles `src` into `directory` as ES modules that plain node loads (no loader, no build output). */
+async function transpiledSources(directory: string): Promise<string> {
+  const sources = fileURLToPath(new URL("../src/", import.meta.url));
+  await mkdir(directory, { recursive: true });
+  await writeFile(path.join(directory, "package.json"), '{"type":"module"}');
+  for (const name of (await readdir(sources)).filter((file) => file.endsWith(".ts") && !file.endsWith(".d.ts"))) {
+    const { outputText } = ts.transpileModule(await readFile(path.join(sources, name), "utf8"), {
+      compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+    });
+    await writeFile(path.join(directory, name.replace(/\.ts$/, ".js")), outputText);
+  }
+  return directory;
+}
+
 async function cachedNotifiedAt(): Promise<number | undefined> {
   await settleCacheWrites();
   return (JSON.parse(await readFile(fsHooks.cacheFile, "utf8")) as { notifiedAt?: number }).notifiedAt;
@@ -250,7 +265,9 @@ describe("claim at settle", () => {
     async () => {
       // A child process (pullfrog's method): once the check settled, the cache file becomes a FIFO nobody writes, so
       // any later read of it would never finish and would keep the child alive.
-      const moduleUrl = (name: string) => new URL(`../src/${name}`, import.meta.url).href;
+      // Plain node with no loader: the sources are transpiled with the declared `typescript` devDependency.
+      const modules = await transpiledSources(path.join(root, "modules"));
+      const moduleUrl = (name: string) => pathToFileURL(path.join(modules, name)).href;
       const script = String.raw`
         const [checkUrl, runnerUrl, pathsUrl, dir] = process.argv.slice(1);
         const { startUpdateCheck } = await import(checkUrl);
@@ -287,8 +304,8 @@ describe("claim at settle", () => {
       const started = performance.now();
       const child = spawnSync(
         process.execPath,
-        ["--import", "tsx", "--input-type=module", "-e", script, moduleUrl("update-check.ts"), moduleUrl("runner.ts"), moduleUrl("paths.ts"), root],
-        { encoding: "utf8", timeout: 15_000, cwd: fileURLToPath(new URL(".", import.meta.url)) }
+        ["--input-type=module", "-e", script, moduleUrl("update-check.js"), moduleUrl("runner.js"), moduleUrl("paths.js"), root],
+        { encoding: "utf8", timeout: 15_000 }
       );
 
       expect(child.error).toBeUndefined();
