@@ -1,5 +1,6 @@
 import { defaultCookieAccessor, readCsrfToken } from './cookies.js';
 import { isRegionId } from './region-id.js';
+import { collectBodyStrings, repeatsSecret, safeText, type TextCheck } from './secret-text.js';
 import type { AuthFnClientOptions, AuthFnClientRequestMetric, AuthFnErrorEnvelope } from './types.js';
 
 interface RequestOptions {
@@ -23,9 +24,22 @@ const ERROR_CODE_PATTERN = /^[A-Z][A-Z0-9_]{0,63}$/;
 const DURATION_PATTERN = /^\d{1,9}(\.\d{1,6})?$/;
 const COUNT_PATTERN = /^\d{1,9}$/;
 const NETWORK_ERROR_CODE = 'AUTHFN_NETWORK_ERROR';
-const REGION_MISMATCH_CODE = 'AUTHFN_REGION_MISMATCH';
-/** A check a reported value must pass: a pattern it matches or a predicate. */
-type TextCheck = RegExp | ((value: string) => boolean);
+/** Up to 2048 characters, none of them whitespace or control characters (`new URL` drops some). */
+const URL_TEXT_PATTERN = /^[^\s\u0000-\u001f\u007f-\u009f]{1,2048}$/;
+const ISO_TIMESTAMP_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,9})?(Z|[+-]\d{2}:\d{2})$/;
+/**
+ * The error details current hosts act on, per code, each kept only when it
+ * has its shape and shares no text with the body; all others are dropped.
+ */
+const KEPT_ERROR_DETAILS: Readonly<Record<string, Readonly<Record<string, TextCheck | 'boolean'>>>> = {
+  AUTHFN_REGION_MISMATCH: {
+    regionId: isRegionId,
+    authority: isAbsoluteHttpUrl,
+    redirectTo: isAbsoluteHttpUrl,
+    continueLocally: 'boolean'
+  },
+  AUTHFN_RATE_LIMITED: { resetAt: (value) => ISO_TIMESTAMP_PATTERN.test(value) && Number.isFinite(Date.parse(value)) }
+};
 /**
  * The metric header fields a sensitive request may report, each only when
  * it matches its pattern and shares no text with the body. `serverTiming`
@@ -42,9 +56,6 @@ const SENSITIVE_METRIC_FIELDS = {
   workerColo: /^[A-Za-z0-9-]{1,16}$/,
   accountRegion: /^[A-Za-z0-9_.-]{1,64}$/
 } as const satisfies Partial<Record<keyof AuthFnClientRequestMetric, TextCheck>>;
-/** A reported value may not repeat this many consecutive characters of a secret. */
-const SECRET_WINDOW = 8;
-
 export function createAuthFnHttpClient(options: AuthFnClientOptions = {}) {
   const fetchImpl = options.fetch ?? fetch;
   const baseUrl = (options.baseUrl ?? '/auth').replace(/\/$/, '');
@@ -288,9 +299,10 @@ export function createAuthFnHttpClient(options: AuthFnClientOptions = {}) {
  * name and message. A success envelope is passed on with a safe request id;
  * any other result becomes an error envelope with a code that matches the
  * error code pattern, a fixed message, `details: { status }` and a safe
- * request id. The one exception is `AUTHFN_REGION_MISMATCH`, whose
- * `details.regionId` names the region to retry in: it is kept when it is a
- * region id that shares no text with the body. A request that failed before
+ * request id, plus the few details `KEPT_ERROR_DETAILS` lists for its code.
+ * A success envelope with any string (other than its request id) that
+ * repeats the body is not passed on: it becomes that error envelope too.
+ * A request that failed before
  * its response was read (fetch threw, or the body stream failed) is
  * `AUTHFN_NETWORK_ERROR` with the fixed transport message.
  */
@@ -329,13 +341,17 @@ const redactSensitive = {
     };
     const requestId = safeText(candidate.requestId, REQUEST_ID_PATTERN, secrets) ?? 'authfn-redacted';
     if (candidate.ok === true) {
-      return candidate.requestId === requestId ? result : { ...candidate, requestId };
+      // The request id is replaced on its own; any other string that repeats
+      // the body turns the whole success into an error.
+      const { requestId: _requestId, ...rest } = candidate;
+      if (!repeatsSecret(rest, secrets)) {
+        return candidate.requestId === requestId ? result : { ...candidate, requestId };
+      }
     }
-    const error = typeof candidate.error === 'object' && candidate.error !== null ? candidate.error : {};
+    const error = candidate.ok !== true && typeof candidate.error === 'object' && candidate.error !== null
+      ? candidate.error
+      : {};
     const code = safeText(error.code, ERROR_CODE_PATTERN, secrets) ?? 'AUTHFN_INTERNAL_ERROR';
-    const regionId = code === REGION_MISMATCH_CODE && typeof error.details === 'object' && error.details !== null
-      ? safeText((error.details as { regionId?: unknown }).regionId, isRegionId, secrets)
-      : undefined;
     return {
       ok: false,
       error: {
@@ -344,7 +360,7 @@ const redactSensitive = {
         retryable: typeof error.retryable === 'boolean' ? error.retryable : status === undefined || status >= 500,
         details: {
           ...(status === undefined ? {} : { status }),
-          ...(regionId === undefined ? {} : { regionId })
+          ...keptDetails(code, error.details, secrets)
         }
       },
       requestId
@@ -352,43 +368,30 @@ const redactSensitive = {
   }
 };
 
-/** `value` when it is a string that passes `check` and shares no text with `secrets`. */
-function safeText(value: unknown, check: TextCheck, secrets: readonly string[]): string | undefined {
-  if (typeof value !== 'string' || !(typeof check === 'function' ? check(value) : check.test(value))) {
-    return undefined;
+/** The details of `KEPT_ERROR_DETAILS[code]` that have their shape and share no text with `secrets`. */
+function keptDetails(code: string, details: unknown, secrets: readonly string[]): Record<string, unknown> {
+  const fields = Object.hasOwn(KEPT_ERROR_DETAILS, code) ? KEPT_ERROR_DETAILS[code]! : {};
+  const kept: Record<string, unknown> = {};
+  for (const [field, check] of Object.entries(fields)) {
+    const value = details && typeof details === 'object' && Object.hasOwn(details, field)
+      ? (details as Record<string, unknown>)[field]
+      : undefined;
+    const keep = check === 'boolean' ? typeof value === 'boolean' : safeText(value, check, secrets) !== undefined;
+    if (keep) {
+      kept[field] = value;
+    }
   }
-  return secrets.some((secret) => sharesText(value, secret)) ? undefined : value;
+  return kept;
 }
 
-/** Whether `value` contains `secret`, or any run of `SECRET_WINDOW` of its characters. */
-function sharesText(value: string, secret: string): boolean {
-  if (secret.length <= SECRET_WINDOW) {
-    return value.includes(secret);
+/** An absolute http(s) URL of at most 2048 characters, without credentials. */
+function isAbsoluteHttpUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return URL_TEXT_PATTERN.test(value) && /^https?:$/.test(url.protocol) && !url.username && !url.password;
+  } catch {
+    return false;
   }
-  for (let index = 0; index + SECRET_WINDOW <= secret.length; index += 1) {
-    if (value.includes(secret.slice(index, index + SECRET_WINDOW))) {
-      return true;
-    }
-  }
-  return false;
-}
-
-/** Every non-empty string value in a JSON request body. */
-function collectBodyStrings(body: unknown, found: string[] = []): string[] {
-  if (typeof body === 'string') {
-    if (body.length > 0) {
-      found.push(body);
-    }
-  } else if (Array.isArray(body)) {
-    for (const item of body) {
-      collectBodyStrings(item, found);
-    }
-  } else if (body && typeof body === 'object') {
-    for (const value of Object.values(body)) {
-      collectBodyStrings(value, found);
-    }
-  }
-  return found;
 }
 
 function now(): number {

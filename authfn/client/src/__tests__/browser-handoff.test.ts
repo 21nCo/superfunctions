@@ -33,6 +33,49 @@ function createClock(start = T0) {
   };
 }
 
+/**
+ * The data of an exchange that issued a session, in the shape the server
+ * sends it (core `buildUserSession`, social-oauth `buildSessionHandoffPayload`).
+ */
+function issuedData(sessionId: string, token: string) {
+  return {
+    session: {
+      id: sessionId,
+      type: 'session',
+      subject: { actorId: 'user-1', actorType: 'user' },
+      actorType: 'user',
+      actorId: 'user-1',
+      resourceIds: [] as string[],
+      methods: ['oauth-google']
+    },
+    handoff: { type: 'session-token', token, sessionId, regionId: null as string | null, expiresAt: null as string | null }
+  };
+}
+
+/** Server-shaped exchange data with one defect, each of which `complete()` must refuse. */
+const refusedSessionData: ReadonlyArray<readonly [string, unknown]> = ([
+  ['an empty session', (data) => { data.session = {}; }],
+  ['an empty token', (data) => { data.handoff.token = ''; }],
+  ['a whitespace-only token', (data) => { data.handoff.token = '   '; }],
+  ['a whitespace-only session id', (data) => { data.session.id = ' '; data.handoff.sessionId = ' '; }],
+  ['no handoff', (data) => { delete data.handoff; }],
+  ['a handoff for another session', (data) => { data.handoff.sessionId = 'different-session'; }],
+  ['a session without an actor id', (data) => { delete data.session.actorId; }],
+  ['methods that are not an array', (data) => { data.session.methods = 'oauth-google'; }],
+  ['a subject that is not the actor', (data) => { data.session.subject = { actorId: 'user-2', actorType: 'user' }; }],
+  ['a handoff given as an array', (data) => { data.handoff = Object.assign([], data.handoff); }],
+  ['an API key session', (data) => { data.session.type = 'api-key'; }],
+  ['a handoff region that is not a string or null', (data) => { data.handoff.regionId = 7; }]
+] as Array<[string, (data: { session: Record<string, unknown>; handoff: Record<string, unknown> }) => void]>)
+  .map(([label, defect]) => {
+    const data = issuedData('session-1', 'test-session-token') as unknown as {
+      session: Record<string, unknown>;
+      handoff: Record<string, unknown>;
+    };
+    defect(data);
+    return [label, data] as const;
+  });
+
 const challengeOf = (verifier: string) => createHash('sha256').update(verifier).digest('base64url');
 
 /**
@@ -69,25 +112,8 @@ function createFakeServer() {
     return {
       ok: true,
       requestId: `req-exchange-${exchanged}`,
-      data: {
-        session: {
-          id: `session-${exchanged}`,
-          type: 'session',
-          subject: { actorId: 'user-1', actorType: 'user' },
-          actorType: 'user',
-          actorId: 'user-1',
-          resourceIds: [],
-          methods: ['oauth-google']
-        },
-        handoff: {
-          type: 'session-token',
-          token: `test-session-token-${exchanged}`,
-          sessionId: `session-${exchanged}`,
-          regionId: null,
-          expiresAt: null
-        }
-      }
-    };
+      data: issuedData(`session-${exchanged}`, `test-session-token-${exchanged}`)
+    } as never;
   };
   return {
     exchange: vi.fn(exchange),
@@ -359,6 +385,43 @@ describe('createBrowserHandoff', () => {
       vi.unstubAllGlobals();
     }
     expect(Array.from(await store.keys())).toEqual([]);
+  });
+
+  it.each([
+    ['the memory store', () => createMemoryHandoffStore()],
+    ['the IndexedDB store', () => createIndexedDbHandoffStore({ indexedDB: new IDBFactory() })]
+  ] as const)('refuses to begin with %s for a return on another allowed origin than the page', async (_label, createStore) => {
+    const store = createStore();
+    const { make } = setup({ store });
+    // The bundled stores keep records for the page's origin only.
+    vi.stubGlobal('location', { origin: APP });
+    try {
+      await expect(make().begin({ returnTo: 'https://other.example.com/post-auth' })).rejects.toThrow(/own origin/);
+      expect(Array.from(await store.keys())).toEqual([]);
+      expect((await make().begin({ returnTo: RETURN_TO })).handoffId).toMatch(/^[A-Za-z0-9_-]{22}$/);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('lets a custom store that is not origin-scoped begin for another allowed origin', async () => {
+    const inner = createMemoryHandoffStore();
+    const shared: AuthFnBrowserHandoffStore = {
+      get: inner.get,
+      set: inner.set,
+      delete: inner.delete,
+      keys: inner.keys,
+      compareAndSet: inner.compareAndSet,
+      atomic: true
+    };
+    const { make } = setup({ store: shared });
+    vi.stubGlobal('location', { origin: APP });
+    try {
+      const begun = await make().begin({ returnTo: 'https://other.example.com/post-auth' });
+      expect(new URL(begun.start.returnTo).origin).toBe('https://other.example.com');
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it('refuses a duplicate return without exchanging again', async () => {
@@ -637,7 +700,7 @@ describe('createBrowserHandoff', () => {
         const sent = String(init?.body);
         const { code, verifier } = JSON.parse(sent) as { code: string; verifier: string };
         const payload = body === 'session'
-          ? JSON.stringify({ ok: true, requestId: 'req-ok', data: { session: { id: 'session-1' }, handoff: { type: 'session-token', token: 'test-session-token' } } })
+          ? JSON.stringify({ ok: true, requestId: 'req-ok', data: issuedData('session-1', 'test-session-token') })
           : body === 'error-echo'
             ? JSON.stringify({ ok: false, requestId: code, error: { code: 'AUTHFN_BAD_GATEWAY', message: `upstream rejected ${sent}`, retryable: true, details: { sent } } })
             : body === 'text'
@@ -727,6 +790,122 @@ describe('createBrowserHandoff', () => {
     expect(observed).not.toContain(verifier.slice(0, 8));
     expect(observed).not.toContain(code);
     expect(observed).not.toContain('upstream rejected');
+  });
+
+  /**
+   * Builds the exchange of `path` over a fetch that answers `respond(body)`,
+   * recording every metric, envelope and region selection.
+   */
+  function exchangeOver(
+    path: 'direct' | 'regional-current' | 'regional-bound' | 'custom',
+    respond: (sent: { code: string; verifier: string }) => Record<string, unknown>
+  ) {
+    const metrics: AuthFnClientRequestMetric[] = [];
+    const envelopes: unknown[] = [];
+    const selections: string[] = [];
+    const clientOptions = {
+      fetch: async (_input: RequestInfo | URL, init?: RequestInit) =>
+        Response.json(respond(JSON.parse(String(init?.body)) as { code: string; verifier: string })),
+      onRequestMetric: (metric: AuthFnClientRequestMetric) => metrics.push(metric)
+    };
+    const resolveBaseUrl = (regionId: string) => `https://${regionId}.account.example.com/auth`;
+    let exchange: AuthFnBrowserHandoffExchange;
+    if (path === 'custom') {
+      // A host adapter that does not go through the AuthFn client at all.
+      exchange = async (input) => respond(input) as never;
+    } else if (path === 'direct') {
+      exchange = createAuthFnClient({ ...clientOptions, baseUrl: `${APP}/auth` }).exchangeSocialHandoff;
+    } else {
+      const regionalClient = createAuthFnRegionalClient({
+        defaultRegionId: 'us',
+        resolveBaseUrl,
+        storage: { get: async () => null, set: async () => undefined, delete: async () => undefined },
+        clientOptions
+      });
+      exchange = createRegionalHandoffExchange({
+        regionalClient: {
+          exchangeSocialHandoff: regionalClient.exchangeSocialHandoff,
+          setCurrentRegionId: (regionId) => {
+            selections.push(regionId);
+            regionalClient.setCurrentRegionId(regionId);
+          }
+        },
+        resolveBaseUrl,
+        clientOptions
+      });
+    }
+    const recorded: AuthFnBrowserHandoffExchange = async (input, context) => {
+      const envelope = await exchange(input, context);
+      envelopes.push(envelope);
+      return envelope;
+    };
+    return { exchange: recorded, metrics, envelopes, selections };
+  }
+  const successPaths = [
+    ['the client', 'direct'],
+    ['the regional client without a stored region', 'regional-current'],
+    ['the regional adapter with a stored region', 'regional-bound'],
+    ['a custom exchange', 'custom']
+  ] as const;
+  const successEchoes = [
+    ['8 characters of the verifier in the session metadata', ({ verifier }: { code: string; verifier: string }) => {
+      const data = issuedData('session-1', 'test-session-token');
+      return { ok: true, requestId: 'req-echo', data: { ...data, session: { ...data.session, metadata: { debug: `v=${verifier.slice(9, 17)}` } } } };
+    }],
+    ['8 characters of the code in an extra handoff field', ({ code }: { code: string; verifier: string }) => {
+      const data = issuedData('session-1', 'test-session-token');
+      return { ok: true, requestId: 'req-echo', data: { ...data, handoff: { ...data.handoff, debugCode: code.slice(3, 11) } } };
+    }],
+    ['the whole body in an extra top-level field', (sent: { code: string; verifier: string }) => (
+      { ok: true, requestId: 'req-echo', data: issuedData('session-1', 'test-session-token'), debug: { sent } }
+    )]
+  ] as const;
+
+  it.each(successPaths.flatMap(([label, path]) => successEchoes.map(
+    ([echo, respond]) => [label, echo, path, respond] as const
+  )))('refuses a success through %s that repeats the body (%s)', async (_label, _echo, path, respond) => {
+    const { exchange, metrics, envelopes, selections } = exchangeOver(path, respond);
+    const { make, server, store, events } = setup({ exchange });
+    const begun = await make().begin({ returnTo: RETURN_TO, ...(path === 'regional-bound' ? { regionId: 'eu' } : {}) });
+    const verifier = await storedVerifier(store, begun.handoffId);
+    const callback = server.callbackFor(begun);
+    const code = new URL(callback).hash.match(/token=([^&]+)/)![1]!;
+
+    const result = await make().complete(callback);
+
+    expect(failed(result).reason).toBe('exchange-rejected');
+    expect(selections).toEqual([]);
+    expect(failed(await make().complete(callback)).reason).toBe('already-used');
+    if (path !== 'custom') {
+      // The client itself never passes the echo on.
+      expect(envelopes).toEqual([{
+        ok: false,
+        error: { code: 'AUTHFN_INTERNAL_ERROR', message: 'AuthFn request failed (200)', retryable: false, details: { status: 200 } },
+        requestId: 'req-echo'
+      }]);
+    }
+    const observed = JSON.stringify({ metrics, envelopes: path === 'custom' ? [] : envelopes, result, events });
+    for (const secret of [code, verifier]) {
+      for (let index = 0; index + 8 <= secret.length; index += 1) {
+        expect(observed).not.toContain(secret.slice(index, index + 8));
+      }
+    }
+  });
+
+  it.each(successPaths)('passes a genuine server success through %s unchanged and completes', async (_label, path) => {
+    const body = { ok: true, requestId: 'req-issued', data: issuedData('session-1', 'test-session-token') };
+    const { exchange, envelopes, selections } = exchangeOver(path, () => body);
+    const { make, server } = setup({ exchange });
+    const begun = await make().begin({ returnTo: RETURN_TO, ...(path === 'regional-bound' ? { regionId: 'eu' } : {}) });
+
+    expect(await make().complete(server.callbackFor(begun))).toMatchObject({
+      status: 'completed',
+      session: body.data.session,
+      handoff: body.data.handoff,
+      requestId: 'req-issued'
+    });
+    expect(envelopes).toEqual([body]);
+    expect(selections).toEqual(path === 'regional-bound' ? ['eu'] : []);
   });
 
   it('redacts by the body as sent, even when the caller changes the input before the response', async () => {
@@ -824,45 +1003,70 @@ describe('createBrowserHandoff', () => {
     expect(observed).not.toContain('aborted while reading');
   });
 
-  it.each([
-    ['a region id', 'eu', 'eu'],
-    ['a region id with a colon', 'aws:eu-west-1', 'aws:eu-west-1'],
-    ['the code', 'code', undefined],
-    ['the verifier', 'verifier', undefined],
-    ['a control character', 'eu\u0007', undefined],
-    ['not a string', 7, undefined]
-  ] as const)('keeps the region of a region mismatch only when it is %s that repeats no secret', async (_label, regionIdSent, expected) => {
-    const input = { code: 'test-handoff-code-1', verifier: 'test-verifier-'.padEnd(43, 'v') };
+  const detailsInput = { code: 'test-handoff-code-1', verifier: 'test-verifier-'.padEnd(43, 'v') };
+  /** The details a sensitive request returns for an error envelope with `details`. */
+  const keptDetailsFor = async (code: string, status: number, details: Record<string, unknown>) => {
     const client = createAuthFnClient({
       baseUrl: `${APP}/auth`,
       fetch: async () => Response.json({
         ok: false,
-        requestId: 'req-region-mismatch',
-        error: {
-          code: 'AUTHFN_REGION_MISMATCH',
-          message: 'Social handoff code belongs to a different region',
-          retryable: false,
-          details: {
-            regionId: regionIdSent === 'code' ? input.code : regionIdSent === 'verifier' ? input.verifier : regionIdSent,
-            authority: 'https://eu.account.example.com',
-            note: 'dropped'
-          }
-        }
-      }, { status: 409 })
+        requestId: 'req-detailed',
+        error: { code, message: 'Request must continue elsewhere', retryable: status === 429, details }
+      }, { status })
     });
+    const envelope = await client.exchangeSocialHandoff(detailsInput);
+    expect(envelope).toMatchObject({ ok: false, error: { code, message: `AuthFn request failed (${status})` } });
+    return (envelope as { error: { details: Record<string, unknown> } }).error.details;
+  };
+  const mismatchDetails = {
+    regionId: 'aws:eu-west-1',
+    authority: 'https://eu.account.example.com',
+    redirectTo: 'https://eu.account.example.com/auth',
+    continueLocally: false
+  };
 
-    const envelope = await client.exchangeSocialHandoff(input);
+  it('keeps the region-mismatch details hosts continue with, and nothing else', async () => {
+    expect(await keptDetailsFor('AUTHFN_REGION_MISMATCH', 409, {
+      ...mismatchDetails,
+      userId: 'user-1',
+      note: 'dropped'
+    })).toEqual({ status: 409, ...mismatchDetails });
+    expect(await keptDetailsFor('AUTHFN_REGION_MISMATCH', 409, { regionId: 'eu' })).toEqual({ status: 409, regionId: 'eu' });
+  });
 
-    expect(envelope).toEqual({
-      ok: false,
-      error: {
-        code: 'AUTHFN_REGION_MISMATCH',
-        message: 'AuthFn request failed (409)',
-        retryable: false,
-        details: { status: 409, ...(expected === undefined ? {} : { regionId: expected }) }
-      },
-      requestId: 'req-region-mismatch'
-    });
+  it.each([
+    ['a region id that is the code', { regionId: detailsInput.code }],
+    ['a region id that is the verifier', { regionId: detailsInput.verifier }],
+    ['a region id with a control character', { regionId: 'eu\u0007' }],
+    ['a region id that is not a string', { regionId: 7 }],
+    ['an authority that carries the code', { authority: `https://eu.account.example.com/?c=${detailsInput.code}` }],
+    ['a redirect that carries part of the verifier', { redirectTo: `https://eu.account.example.com/${detailsInput.verifier.slice(10, 18)}` }],
+    ['a javascript: redirect', { redirectTo: 'javascript:alert(1)' }],
+    ['a relative authority', { authority: '/auth' }],
+    // Built at runtime so no URL with credentials is committed.
+    ['a redirect with credentials', { redirectTo: ['https://', 'test-user', ':', 'test-pass', '@eu.account.example.com'].join('') }],
+    ['a redirect longer than 2048 characters', { redirectTo: `https://eu.account.example.com/${'a'.repeat(2048)}` }],
+    ['a redirect with a space', { redirectTo: 'https://eu.account.example.com/a b' }],
+    ['continueLocally that is not a boolean', { continueLocally: 'false' }]
+  ] as const)('drops a region-mismatch detail that is %s', async (_label, bad) => {
+    const field = Object.keys(bad)[0]!;
+    const details = await keptDetailsFor('AUTHFN_REGION_MISMATCH', 409, { ...mismatchDetails, ...bad });
+    const { [field]: _dropped, ...expected } = mismatchDetails as Record<string, unknown>;
+    expect(details).toEqual({ status: 409, ...expected });
+  });
+
+  it('keeps only the reset time of a rate limit, when it is an ISO timestamp', async () => {
+    expect(await keptDetailsFor('AUTHFN_RATE_LIMITED', 429, {
+      path: '/social/handoff/exchange',
+      scope: 'social',
+      dimension: 'ip',
+      resetAt: '2026-11-26T00:10:00.000Z'
+    })).toEqual({ status: 429, resetAt: '2026-11-26T00:10:00.000Z' });
+    expect(await keptDetailsFor('AUTHFN_RATE_LIMITED', 429, { resetAt: 'tomorrow' })).toEqual({ status: 429 });
+    expect(await keptDetailsFor('AUTHFN_RATE_LIMITED', 429, { resetAt: '2026-11-26' })).toEqual({ status: 429 });
+    expect(await keptDetailsFor('AUTHFN_RATE_LIMITED', 429, { resetAt: Date.parse('2026-11-26T00:10:00.000Z') })).toEqual({ status: 429 });
+    // A detail of another code is not kept for this one.
+    expect(await keptDetailsFor('AUTHFN_RATE_LIMITED', 429, { regionId: 'eu' })).toEqual({ status: 429 });
   });
 
   it('keeps no details but the status for errors other than a region mismatch', async () => {
@@ -936,19 +1140,32 @@ describe('createBrowserHandoff', () => {
     expect(server.exchange).not.toHaveBeenCalled();
   });
 
-  it.each([
-    ['an empty session', { session: {}, handoff: { type: 'session-token', token: 'test-session-token', sessionId: 's', regionId: null, expiresAt: null } }],
-    ['an empty token', { session: { id: 'session-1' }, handoff: { type: 'session-token', token: '', sessionId: 's', regionId: null, expiresAt: null } }],
-    ['a whitespace-only token', { session: { id: 'session-1' }, handoff: { type: 'session-token', token: '   ', sessionId: 's', regionId: null, expiresAt: null } }],
-    ['a whitespace-only session id', { session: { id: ' ' }, handoff: { type: 'session-token', token: 'test-session-token', sessionId: 's', regionId: null, expiresAt: null } }],
-    ['no handoff', { session: { id: 'session-1' } }]
-  ])('refuses an ok exchange response with %s as exchange-rejected', async (_label, data) => {
+  it.each(refusedSessionData)('refuses an ok exchange response with %s as exchange-rejected', async (_label, data) => {
     const exchange = vi.fn(async () => ({ ok: true, requestId: 'req-incomplete', data }) as never);
     const { make, server } = setup({ exchange });
     const begun = await make().begin({ returnTo: RETURN_TO });
+    const callback = server.callbackFor(begun);
 
-    expect(failed(await make().complete(server.callbackFor(begun))).reason).toBe('exchange-rejected');
+    expect(failed(await make().complete(callback)).reason).toBe('exchange-rejected');
     expect(exchange).toHaveBeenCalledTimes(1);
+    // The handoff stays retired.
+    expect(failed(await make().complete(callback)).reason).toBe('already-used');
+  });
+
+  it('completes with a server-shaped session and handoff passed on unchanged', async () => {
+    const data = issuedData('session-1', 'test-session-token');
+    data.handoff.regionId = 'eu';
+    data.handoff.expiresAt = '2026-11-27T00:00:00.000Z';
+    const exchange = vi.fn(async () => ({ ok: true, requestId: 'req-issued', data }) as never);
+    const { make, server } = setup({ exchange });
+    const begun = await make().begin({ returnTo: RETURN_TO });
+
+    expect(await make().complete(server.callbackFor(begun))).toMatchObject({
+      status: 'completed',
+      session: data.session,
+      handoff: data.handoff,
+      requestId: 'req-issued'
+    });
   });
 
   it('reports a code the server refuses as exchange-rejected', async () => {
@@ -1449,7 +1666,7 @@ describe('createBrowserHandoff', () => {
         fetch: async () => Response.json({
           ok: true,
           requestId: 'req-ok',
-          data: { session: { id: 'session-1' }, handoff: { type: 'session-token', token: 'test-session-token' } }
+          data: issuedData('session-1', 'test-session-token')
         })
       }
     });
@@ -1490,7 +1707,7 @@ describe('createRegionalHandoffExchange', () => {
   const okEnvelope = (label: string) => ({
     ok: true as const,
     requestId: label,
-    data: { session: { id: `session-${label}` }, handoff: { type: 'session-token', token: `test-session-token-${label}` } }
+    data: issuedData(`session-${label}`, `test-session-token-${label}`)
   }) as never;
   const failedEnvelope = (label: string) => ({
     ok: false as const,
@@ -1555,22 +1772,11 @@ describe('createRegionalHandoffExchange', () => {
   });
 
   it.each([
-    ['no body', () => new Response(null, { status: 204 })],
-    ['an empty session', () => Response.json({
-      ok: true,
-      requestId: 'req-empty-session',
-      data: { session: {}, handoff: { type: 'session-token', token: 'test-session-token' } }
-    })],
-    ['an empty token', () => Response.json({
-      ok: true,
-      requestId: 'req-empty-token',
-      data: { session: { id: 'session-1' }, handoff: { type: 'session-token', token: '' } }
-    })],
-    ['a whitespace-only token', () => Response.json({
-      ok: true,
-      requestId: 'req-blank-token',
-      data: { session: { id: 'session-1' }, handoff: { type: 'session-token', token: '   ' } }
-    })]
+    ['no body', () => new Response(null, { status: 204 })] as const,
+    ...refusedSessionData.map(([label, data]) => [
+      label,
+      () => Response.json({ ok: true, requestId: 'req-refused', data })
+    ] as const)
   ])('moves the client only for a response that carries a session (%s)', async (_label, respond) => {
     const selections: string[] = [];
     const exchange = createRegionalHandoffExchange({

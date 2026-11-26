@@ -1,5 +1,6 @@
 import { createAuthFnClient } from './client.js';
 import { isRegionId } from './region-id.js';
+import { repeatsSecret, safeText } from './secret-text.js';
 import type {
   AuthFnClientOptions,
   AuthFnErrorEnvelope,
@@ -51,6 +52,13 @@ export interface AuthFnBrowserHandoffStore {
    * or complete.
    */
   readonly atomic: boolean;
+  /**
+   * `true` when the store holds records for one origin only, as the bundled
+   * IndexedDB and memory stores do. `begin()` then refuses a `returnTo` on
+   * another origin than the page's, whose return could never find the
+   * record.
+   */
+  readonly originScoped?: boolean;
 }
 
 /** The part of `IDBFactory` (`globalThis.indexedDB`) the store uses. */
@@ -410,6 +418,10 @@ export function createBrowserHandoff(options: AuthFnBrowserHandoffOptions): Auth
       if (store.atomic !== true) {
         throw new Error(NOT_ATOMIC_MESSAGE);
       }
+      const pageOrigin = (globalThis as { location?: { origin?: unknown } }).location?.origin;
+      if (store.originScoped === true && typeof pageOrigin === 'string' && target.origin !== pageOrigin) {
+        throw new TypeError('begin returnTo must be on the page\'s own origin: this store keeps records for one origin');
+      }
       // Checked before anything is stored: on a page that is not a secure
       // context `crypto.subtle` is missing.
       const webCrypto = (globalThis as { crypto?: Partial<Crypto> }).crypto;
@@ -592,10 +604,7 @@ export function createBrowserHandoff(options: AuthFnBrowserHandoffOptions): Auth
       // Text from the exchange is passed on only in a fixed shape that cannot
       // carry the verifier or the code back out.
       const verifier = record.verifier;
-      const safeText = (value: unknown, pattern: RegExp): string | undefined =>
-        typeof value === 'string' && pattern.test(value) && !value.includes(verifier) && !value.includes(code)
-          ? value
-          : undefined;
+      const secrets = [code, verifier];
 
       let envelope: Awaited<ReturnType<AuthFnBrowserHandoffExchange>>;
       try {
@@ -613,9 +622,9 @@ export function createBrowserHandoff(options: AuthFnBrowserHandoffOptions): Auth
       if (!envelope || typeof envelope !== 'object') {
         return fail('exchange-rejected', { handoffId, cleanUrl });
       }
-      const requestId = safeText((envelope as { requestId?: unknown }).requestId, REQUEST_ID_PATTERN);
+      const requestId = safeText((envelope as { requestId?: unknown }).requestId, REQUEST_ID_PATTERN, secrets);
       if (envelope.ok !== true) {
-        const errorCode = safeText((envelope as AuthFnErrorEnvelope).error?.code, ERROR_CODE_PATTERN)
+        const errorCode = safeText((envelope as AuthFnErrorEnvelope).error?.code, ERROR_CODE_PATTERN, secrets)
           ?? INTERNAL_ERROR_CODE;
         const reason: AuthFnBrowserHandoffFailureReason = errorCode === REPLAYED_CODE
           ? 'already-used'
@@ -629,10 +638,10 @@ export function createBrowserHandoff(options: AuthFnBrowserHandoffOptions): Auth
           ...(requestId ? { requestId } : {})
         });
       }
-      if (!isIssuedHandoffSession(envelope)) {
+      const data = acceptedHandoffSession(envelope, secrets);
+      if (!data) {
         return fail('exchange-rejected', { handoffId, cleanUrl });
       }
-      const data = envelope.data;
       emit({ type: 'completed', handoffId });
       return {
         status: 'completed',
@@ -676,7 +685,8 @@ export function createMemoryHandoffStore(): AuthFnBrowserHandoffStore {
     },
     keys: () => Array.from(values.keys()),
     compareAndSet: (key, expected, next) => compareAndSetSync(values, key, expected, next),
-    atomic: true
+    atomic: true,
+    originScoped: true
   };
 }
 
@@ -719,7 +729,7 @@ export function createRegionalHandoffExchange(
     }
     const response = await clientFor(context.regionId).exchangeSocialHandoff(input);
     // Moves the page only for a response complete() accepts as a session.
-    if (isIssuedHandoffSession(response)) {
+    if (acceptedHandoffSession(response, [input.code, input.verifier])) {
       regionalClient.setCurrentRegionId(context.regionId);
     }
     return response;
@@ -838,7 +848,8 @@ export function createIndexedDbHandoffStore(
         decide(true);
       };
     }),
-    atomic: factory !== null
+    atomic: factory !== null,
+    originScoped: true
   };
 }
 
@@ -864,33 +875,56 @@ function matching(value: string | null, pattern: RegExp): string | undefined {
 }
 
 /**
- * Whether an exchange response issued a session: `ok`, a session object
- * with a non-blank id and a non-blank session-token handoff. `complete()` and the
- * regional exchange both accept only this shape.
+ * The session and handoff of an exchange response that issued a session in
+ * the shape the server sends, or `undefined`. The handoff is a session-token
+ * handoff for this session (`sessionId` is `session.id`) with a non-blank
+ * token; the session is a user session whose subject is its actor. No string
+ * in the envelope but its request id (checked on its own) may repeat the code
+ * or the verifier. `complete()` and the regional
+ * exchange both accept only this.
  */
-function isIssuedHandoffSession(
-  envelope: unknown
-): envelope is Extract<Awaited<ReturnType<AuthFnBrowserHandoffExchange>>, { ok: true }> {
-  if (!envelope || typeof envelope !== 'object' || (envelope as { ok?: unknown }).ok !== true) {
-    return false;
+function acceptedHandoffSession(envelope: unknown, secrets: readonly string[]): SocialHandoffData | undefined {
+  if (!isRecord(envelope) || envelope.ok !== true || !isRecord(envelope.data)) {
+    return undefined;
   }
-  const data = (envelope as { data?: unknown }).data as { session?: unknown; handoff?: unknown } | null | undefined;
-  if (!data || typeof data !== 'object') {
-    return false;
-  }
-  const session = data.session as { id?: unknown } | null | undefined;
-  const handoff = data.handoff as { type?: unknown; token?: unknown } | null | undefined;
-  return !!session
-    && typeof session === 'object'
-    && !Array.isArray(session)
-    && typeof session.id === 'string'
-    && session.id.trim().length > 0
-    && !!handoff
-    && typeof handoff === 'object'
-    && handoff.type === 'session-token'
-    && typeof handoff.token === 'string'
+  const { session, handoff } = envelope.data;
+  if (
+    !isRecord(session)
+    || !isRecord(handoff)
+    || !isNonBlank(session.id)
+    || session.type !== 'session'
+    || !isNonBlank(session.actorId)
+    || typeof session.actorType !== 'string'
+    || !isRecord(session.subject)
+    || session.subject.actorId !== session.actorId
+    || session.subject.actorType !== session.actorType
+    || !Array.isArray(session.resourceIds)
+    || !Array.isArray(session.methods)
+    || handoff.type !== 'session-token'
     // The bearer resolver trims the token, so whitespace alone is no token.
-    && handoff.token.trim().length > 0;
+    || !isNonBlank(handoff.token)
+    || handoff.sessionId !== session.id
+    || (handoff.regionId !== null && typeof handoff.regionId !== 'string')
+    || (handoff.expiresAt !== null && typeof handoff.expiresAt !== 'string')
+    || repeatsSecret(withoutRequestId(envelope), secrets)
+  ) {
+    return undefined;
+  }
+  return { session, handoff } as unknown as SocialHandoffData;
+}
+
+/** The envelope without its request id, which callers check on its own. */
+function withoutRequestId(envelope: Record<string, unknown>): Record<string, unknown> {
+  const { requestId: _requestId, ...rest } = envelope;
+  return rest;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isNonBlank(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
 }
 
 /**
