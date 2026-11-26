@@ -183,7 +183,8 @@ export function workLeft(work: WorkBudget, kind: WorkKind, redacted = false): nu
  * a 32 MiB old generation in every configuration. It is fixed because Node reports no old-generation limit and the
  * flags that size one may be out of sight (a worker started with `execArgv: []`, a NODE_OPTIONS changed before load,
  * `--minor-ms`): no flag or NODE_OPTIONS value raises it, and only a smaller heap lowers it (see `documentLimit`).
- * A larger result fails with the bounded CLIFN_RUNNER_FAILED document; use JSON lines for output of that size.
+ * A larger result fails with the bounded CLIFN_RUNNER_FAILED document; use JSON lines for output of that size. An old
+ * generation below 32 MiB is not detected where the young generation hides it in the heap limit.
  */
 export const DOCUMENT_MAX_LENGTH = 2_097_152;
 
