@@ -469,7 +469,10 @@ jobs:
             echo "::error::HEAD is not the checked-out commit (${CHECKOUT_COMMIT:-unknown})"
             exit 1
           fi
-          if [ "$CLI_SOURCE" == "workspace" ] && [ "$(pwd -P)" == "$(cd "$GITHUB_WORKSPACE" && pwd -P)" ]; then
+          # The workspace CLI build installed the repository root with scripts off; with allow_install_scripts: true the
+          # root is installed again below, with them on.
+          if [ "$CLI_SOURCE" == "workspace" ] && [ "$ALLOW_INSTALL_SCRIPTS" != "true" ] &&
+            [ "$(pwd -P)" == "$(cd "$GITHUB_WORKSPACE" && pwd -P)" ]; then
             echo "The workspace CLI build already installed the repository root."
             exit 0
           fi
@@ -494,6 +497,40 @@ jobs:
             echo "allow_install_scripts is true: npm ci runs the lifecycle scripts."
           else
             echo "allow_install_scripts is false: npm ci --ignore-scripts (set it to true if the router needs files install scripts build or generate)."
+          fi
+          if [ "$ignore_scripts" == "true" ]; then
+            # --ignore-scripts does not stop npm from running the prepare script of a git dependency, or of a directory
+            # dependency it installs as a copy (install-links), while packing it. Fail before npm runs anything when
+            # the lockfile has one; such a dependency needs allow_install_scripts: true.
+            node - <<'NODE'
+          const fs = require("node:fs");
+          const lockfile = ["npm-shrinkwrap.json", "package-lock.json"].find((file) => fs.existsSync(file));
+          if (lockfile === undefined) process.exit(0); // npm ci reports the missing lockfile
+          const lock = JSON.parse(fs.readFileSync(lockfile, "utf8"));
+          const prepared = [];
+          const check = (name, entry) => {
+            if (entry === null || typeof entry !== "object" || entry.link === true) return;
+            const source = [entry.resolved, entry.version].find(
+              (value) => typeof value === "string" && /^(git[+:]|github:|gitlab:|bitbucket:|gist:|file:)/.test(value)
+            );
+            if (source !== undefined && !/\.(tgz|tar\.gz|tar)$/.test(source)) prepared.push(`${name} (${source})`);
+          };
+          const walk = (dependencies, prefix) => {
+            for (const [name, entry] of Object.entries(dependencies ?? {})) {
+              check(prefix + name, entry);
+              walk(entry?.dependencies, `${prefix}${name} > `);
+            }
+          };
+          if (lock.packages) {
+            for (const [key, entry] of Object.entries(lock.packages)) if (key !== "") check(key, entry);
+          } else {
+            walk(lock.dependencies, "");
+          }
+          if (prepared.length > 0) {
+            console.log(`::error::${lockfile} has dependencies npm prepares by running their scripts even with --ignore-scripts: ${prepared.join(", ")}. Set allow_install_scripts: true to install them.`);
+            process.exit(1);
+          }
+          NODE
           fi
           npm ci --ignore-scripts="$ignore_scripts"
           if [ "$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)" != "$CHECKOUT_COMMIT" ]; then
