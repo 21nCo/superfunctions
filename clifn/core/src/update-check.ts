@@ -69,8 +69,9 @@ export interface UpdateCheck {
    * the same handle resolve `null`), and the time is recorded in the cache in the background (added to whatever entry
    * is there, so a newer entry another run wrote is kept). Right before handing the notice out the cache file is read
    * again, synchronously, and the notice is dropped when it records a delivery within `intervalMs`, so no run gives it
-   * once another run's delivery is recorded. Two runs handing it out at the same moment, before either delivery is
-   * written, may both give it: the last-rename-wins boundary of concurrent instances.
+   * once another run's delivery is recorded; within one process only one handle per app gives it. Two processes
+   * handing it out at the same moment, before either delivery is written, may both give it: the last-rename-wins
+   * boundary of concurrent instances.
    */
   notice(): Promise<string | null>;
 }
@@ -82,6 +83,9 @@ const DEFAULT_REGISTRY = "https://registry.npmjs.org";
 const MAX_BODY_BYTES = 64 * 1024;
 
 const NO_NOTICE: UpdateCheck = Object.freeze({ notice: () => Promise.resolve(null) });
+
+/** When a handle in this process last handed out a notice, per state directory, before the cache records it. */
+const handedOutAt = new Map<string, number>();
 
 /** Set means present and not empty. */
 function isSet(env: Readonly<Record<string, string | undefined>>, name: string): boolean {
@@ -282,7 +286,7 @@ async function runCheck(plan: CheckPlan): Promise<CheckResult> {
   // The last delivery carries over to the new entry, an error entry too, so a refresh does not give a second notice
   // within the interval; the write also keeps a later delivery another run recorded during the request.
   const entry: CacheEntry = cached?.notifiedAt === undefined ? fetched : { ...fetched, notifiedAt: cached.notifiedAt };
-  return resultFor(plan, entry, plan.now(), writeCacheQuietly(plan.stateDir, entry));
+  return resultFor(plan, entry, plan.now(), writeCacheQuietly(plan.stateDir, entry, plan.now));
 }
 
 function monotonicNow(): number {
@@ -353,7 +357,7 @@ function planCheck(options: UpdateCheckOptions): CheckPlan | null {
  * Skipped (no request, no cache access, `notice()` resolves `null`) in JSON mode (`terminal.json`), when the terminal
  * is not interactive per `resolveTerminal`, when `CI`, `NO_UPDATE_NOTIFIER` or `<APP>_NO_UPDATE_CHECK` is set to a
  * non-empty value, and when `currentVersion` is outside the version grammar. A cached result younger than
- * `intervalMs` is used without a request, and a notice is given at most once per `intervalMs` (two runs racing
+ * `intervalMs` is used without a request, and a notice is given at most once per `intervalMs` (two processes racing
  * to hand it out may both give it; see `notice()`). Otherwise it sends `GET <registry>/-/package/<name>/dist-tags` with
  * `Accept: application/json` and stores `{ checkedAt, latest }`, or `{ checkedAt, error: true }` for a network error,
  * a status other than 200, a body that is not JSON or has no valid `latest`, or a timeout, in
@@ -397,9 +401,9 @@ export function startUpdateCheck(options: UpdateCheckOptions): UpdateCheck {
       }
     });
 
-  // The notice of an on-time result, the first time it is asked for, unless the cache already records a delivery
-  // within the interval (another run handed it out since this check settled). The cache file is read synchronously,
-  // so this never waits. Records the delivery after this run's own write.
+  // The notice of an on-time result, the first time it is asked for, unless a delivery within the interval is known:
+  // handed out by another handle in this process, or recorded in the cache by another run since this check settled.
+  // The cache file is read synchronously, so this never waits. Records the delivery after this run's own write.
   const deliver = (): string | null => {
     const checked: CheckResult | null = outcome === "ready" ? ready : null;
     if (handedOut || checked === null || checked.notice === null || checked.entry === null) {
@@ -415,10 +419,15 @@ export function startUpdateCheck(options: UpdateCheckOptions): UpdateCheck {
     if (notifiedAt === undefined || !Number.isFinite(notifiedAt)) {
       return checked.notice;
     }
+    const local = handedOutAt.get(checkPlan.stateDir);
+    if (local !== undefined && isRecent(local, notifiedAt, checkPlan.intervalMs)) {
+      return null;
+    }
     const shared = readCacheSync(join(checkPlan.stateDir, UPDATE_CHECK_FILE));
     if (shared !== null && recentlyNotified(shared, notifiedAt, checkPlan.intervalMs)) {
       return null;
     }
+    handedOutAt.set(checkPlan.stateDir, notifiedAt);
     void recordDeliveryQuietly(checkPlan.stateDir, checked.entry, notifiedAt, checked.written);
     return checked.notice;
   };

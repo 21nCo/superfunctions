@@ -510,6 +510,45 @@ describe("startUpdateCheck: cache interval", () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
+  it("gives the notice to one of several handles asking in the same turn", async () => {
+    await writeCacheText(JSON.stringify({ checkedAt: T0, latest: "1.3.0" }));
+    const fetch = registry({ latest: "1.3.0" });
+    const handles = [check({ fetch }), check({ fetch }), check({ fetch })];
+    await settled();
+
+    const notices = await Promise.all(handles.map((handle) => handle.notice()));
+    expect(notices).toEqual([NOTICE_1_3_0, null, null]);
+    await expect(readCacheJson()).resolves.toEqual({ checkedAt: T0, latest: "1.3.0", notifiedAt: T0 });
+    await expect(run({ fetch, now: () => T0 + 1 })).resolves.toBeNull();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("replaces a notifiedAt in the future with the delivery, so the next run gives no notice", async () => {
+    await writeCacheText(JSON.stringify({ checkedAt: T0, latest: "1.3.0", notifiedAt: T0 + DAY }));
+    const fetch = registry({ latest: "1.3.0" });
+    await expect(run({ fetch, now: () => T0 + 1 })).resolves.toBe(NOTICE_1_3_0);
+    await expect(readCacheJson()).resolves.toEqual({ checkedAt: T0, latest: "1.3.0", notifiedAt: T0 + 1 });
+    await expect(run({ fetch, now: () => T0 + 2 })).resolves.toBeNull();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("does not carry a notifiedAt in the future over to a refreshed entry", async () => {
+    await writeCacheText(JSON.stringify({ checkedAt: T0 - DAY, latest: "1.3.0", notifiedAt: T0 + DAY }));
+    await expect(run({ fetch: registry({ latest: "1.3.0" }) })).resolves.toBe(NOTICE_1_3_0);
+    await expect(readCacheJson()).resolves.toEqual({ checkedAt: T0, latest: "1.3.0", notifiedAt: T0 });
+  });
+
+  it("never loses a delivery to a refresh written by the same process at the same time", async () => {
+    await writeCacheText(JSON.stringify({ checkedAt: T0 - DAY + 1, latest: "1.3.0" }));
+    const delivering = check({ now: () => T0 });
+    await settled();
+    const refreshing = check({ fetch: registry("down", 500), now: () => T0 + 1, intervalMs: DAY - 2 });
+    await expect(delivering.notice()).resolves.toBe(NOTICE_1_3_0);
+    await expect(refreshing.notice()).resolves.toBeNull();
+    const cached = (await readCacheJson()) as Record<string, unknown>;
+    expect(cached.notifiedAt).toBe(T0);
+  });
+
   it.each<[string, Record<string, unknown>]>([
     ["the same version", { checkedAt: T0 + 1, latest: "1.3.0", notifiedAt: T0 + 1 }],
     ["another version", { checkedAt: T0 + 1, latest: "1.4.0", notifiedAt: T0 + 1 }],
@@ -670,8 +709,8 @@ describe("startUpdateCheck: atomic cache writes", () => {
       versions.map((latest) => check({ fetch: registry({ latest }) }).notice())
     );
 
-    // The last-rename-wins boundary: hand-outs racing before any delivery is written may each give the notice.
-    expect(notices).toEqual(versions.map((latest) => `Update available: 1.2.0 → ${latest} (npm i -g my-cli)`));
+    // Within one process only one handle gives the notice; the cache keeps whichever result was renamed last.
+    expect(notices.filter((notice) => notice !== null)).toEqual([`Update available: 1.2.0 → 1.3.0 (npm i -g my-cli)`]);
     const cached = (await readCacheJson()) as { checkedAt: number; latest: string; notifiedAt: number };
     expect(await readdir(stateDir)).toEqual(["update-check.json"]);
     expect(cached.checkedAt).toBe(T0);

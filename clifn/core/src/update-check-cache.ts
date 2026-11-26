@@ -73,12 +73,26 @@ function withNotifiedAt(entry: CacheEntry, notifiedAt: unknown): CacheEntry {
   return typeof notifiedAt === "number" && Number.isFinite(notifiedAt) ? { ...base, notifiedAt } : base;
 }
 
-/** The later of two delivery times; undefined when neither records one. */
-function laterDelivery(a: number | undefined, b: number | undefined): number | undefined {
-  if (a === undefined) {
-    return b;
-  }
-  return b === undefined ? a : Math.max(a, b);
+/** The later of two delivery times not after `now`; a time in the future (a clock set back) counts as none. */
+function laterDelivery(a: number | undefined, b: number | undefined, now: number): number | undefined {
+  const valid = [a, b].filter((time): time is number => time !== undefined && time <= now);
+  return valid.length === 0 ? undefined : Math.max(...valid);
+}
+
+/** The read-merge-write of each cache directory in this process, run one after another so none loses another's. */
+const queues = new Map<string, Promise<void>>();
+
+function serialized(dir: string, task: () => Promise<void>): Promise<void> {
+  const previous = queues.get(dir) ?? Promise.resolve();
+  const next = previous.then(task, task);
+  const tail = next.catch(() => undefined);
+  queues.set(dir, tail);
+  void tail.then(() => {
+    if (queues.get(dir) === tail) {
+      queues.delete(dir);
+    }
+  });
+  return next;
 }
 
 export async function readCache(file: string): Promise<CacheEntry | null> {
@@ -142,25 +156,28 @@ async function writeCache(dir: string, entry: CacheEntry): Promise<void> {
 }
 
 /**
- * Writes the entry, keeping the later `notifiedAt` of the entry and of the file as it is right before the write, so a
- * refresh never drops a delivery another run recorded during its request. Two writes racing inside that read-then-rename
- * window are the last-rename-wins boundary.
+ * Writes the entry, keeping the later `notifiedAt` (not after `now`) of the entry and of the file as it is right before
+ * the write, so a refresh never drops a delivery another run recorded during its request. Writes in this process are
+ * serialized per directory; two processes racing inside the read-then-rename window are the last-rename-wins boundary.
  */
-async function writeCacheMerged(dir: string, entry: CacheEntry): Promise<void> {
-  const current = await readCache(join(dir, UPDATE_CHECK_FILE));
-  await writeCache(dir, withNotifiedAt(entry, laterDelivery(entry.notifiedAt, current?.notifiedAt)));
+function writeCacheMerged(dir: string, entry: CacheEntry, now: () => number): Promise<void> {
+  return serialized(dir, async () => {
+    const current = await readCache(join(dir, UPDATE_CHECK_FILE));
+    await writeCache(dir, withNotifiedAt(entry, laterDelivery(entry.notifiedAt, current?.notifiedAt, now())));
+  });
 }
 
 /** Writes the entry (see `writeCacheMerged`), never rejecting: an unwritable cache means the next run checks again. */
-export function writeCacheQuietly(dir: string, entry: CacheEntry): Promise<void> {
-  return trackCacheWrite(writeCacheMerged(dir, entry).catch(() => undefined));
+export function writeCacheQuietly(dir: string, entry: CacheEntry, now: () => number): Promise<void> {
+  return trackCacheWrite(writeCacheMerged(dir, entry, now).catch(() => undefined));
 }
 
 /**
  * Records that a notice was delivered at `notifiedAt`, once `after` (this run's own write) has settled. It re-reads the
  * cache and adds the delivery to whatever entry is there, newer of the file and `entry` by `checkedAt`: an error entry
  * or an entry for another version another run wrote meanwhile keeps its content and gains `notifiedAt`, so the
- * delivery is neither rolled back nor forgotten. A later `notifiedAt` already in the file is kept. Never rejects.
+ * delivery is neither rolled back nor forgotten. `notifiedAt` replaces any earlier time, and a time in the future
+ * (which counts as no delivery). Serialized with this process's other writes to the directory. Never rejects.
  */
 export function recordDeliveryQuietly(
   dir: string,
@@ -170,10 +187,11 @@ export function recordDeliveryQuietly(
 ): Promise<void> {
   const record = async (): Promise<void> => {
     await after;
-    const current = await readCache(join(dir, UPDATE_CHECK_FILE));
-    const base: CacheEntry = current !== null && current.checkedAt >= entry.checkedAt ? current : entry;
-    const delivered = laterDelivery(laterDelivery(current?.notifiedAt, base.notifiedAt), notifiedAt);
-    await writeCache(dir, withNotifiedAt(base, delivered));
+    await serialized(dir, async () => {
+      const current = await readCache(join(dir, UPDATE_CHECK_FILE));
+      const base: CacheEntry = current !== null && current.checkedAt >= entry.checkedAt ? current : entry;
+      await writeCache(dir, withNotifiedAt(base, notifiedAt));
+    });
   };
   return trackCacheWrite(record().catch(() => undefined));
 }
