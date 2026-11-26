@@ -500,9 +500,11 @@ jobs:
           else
             echo "allow_install_scripts is false: npm ci --ignore-scripts (set it to true if the router needs files install scripts build or generate)."
             # --ignore-scripts does not stop npm from running the prepare script of a git dependency, or of a directory
-            # dependency it installs as a copy, while packing it (npm's own git and directory classification decides
-            # which). These settings reach every npm process of the install: scripts stay off, and a script npm starts
-            # anyway runs /usr/bin/false instead of its command, so the install fails without running it.
+            # dependency it installs as a copy, while packing it. These settings reach every npm process of the
+            # install: scripts stay off, and where npm passes script-shell to that packing step (recent npm 10 and
+            # later) the script runs /usr/bin/false instead, so the install fails without running it. The npm bundled
+            # with Node 20 (10.8) packs with /bin/sh and still runs it, here in the read-only job, between the HEAD and
+            # tree checks (apifn/README.md).
             export npm_config_ignore_scripts=true npm_config_script_shell=/usr/bin/false
           fi
           if ! npm ci --ignore-scripts="$ignore_scripts"; then
