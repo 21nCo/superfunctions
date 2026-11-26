@@ -222,4 +222,54 @@ describe("hand-out without blocking", () => {
     expect(notice).toBeNull();
     expect(fsHooks.syncReads).toBe(0);
   });
+
+  it("discards a hand-out read that finishes after the deadline", async () => {
+    let clock = T0;
+    await writeCacheJson({ checkedAt: T0, latest: "1.3.0" });
+    const handle = check({ now: () => clock, timeoutMs: 1_000 });
+    await settle();
+    fsHooks.stallReads = gate();
+
+    const pending = handle.notice();
+    await settle(20);
+    clock = T0 + 5_000;
+    releaseAll();
+
+    expect(await pending).toBeNull();
+    await settleCacheWrites();
+    const file = JSON.parse(await readFile(fsHooks.cacheFile, "utf8")) as { notifiedAt?: number };
+    expect(file.notifiedAt).toBeUndefined();
+  });
+
+  it("drops the notice when another run records a delivery while the hand-out read is in flight", async () => {
+    let clock = T0;
+    await writeCacheJson({ checkedAt: T0, latest: "1.3.0" });
+    const handle = check({ now: () => clock, timeoutMs: 60_000 });
+    await settle();
+    fsHooks.stallReads = gate();
+
+    const pending = handle.notice();
+    await settle(20);
+    // Another run delivers one millisecond after this hand-out began.
+    await writeCacheJson({ checkedAt: T0, latest: "1.3.0", notifiedAt: T0 + 1 });
+    clock = T0 + 1;
+    releaseAll();
+
+    expect(await pending).toBeNull();
+  });
+
+  it("lets a second handle give the notice when the first one's hand-out read times out", async () => {
+    await writeCacheJson({ checkedAt: T0, latest: "1.3.0" });
+    const first = check({ timeoutMs: 100 });
+    const second = check({ timeoutMs: 5_000 });
+    await settle();
+    fsHooks.stallReads = gate();
+
+    const firstNotice = first.notice();
+    const secondNotice = second.notice();
+    expect(await firstNotice).toBeNull();
+    releaseAll();
+
+    expect(await secondNotice).toBe(NOTICE_1_3_0);
+  });
 });

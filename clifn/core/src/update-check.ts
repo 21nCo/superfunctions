@@ -89,6 +89,8 @@ const NO_NOTICE: UpdateCheck = Object.freeze({ notice: () => Promise.resolve(nul
 
 /** When a handle in this process last handed out a notice, per state directory, before the cache records it. */
 const handedOutAt = new Map<string, number>();
+/** The hand-out in progress per state directory in this process; settles `true` when it delivered the notice. */
+const handingOut = new Map<string, Promise<boolean>>();
 
 /** Set means present and not empty. */
 function isSet(env: Readonly<Record<string, string | undefined>>, name: string): boolean {
@@ -305,13 +307,13 @@ const LATE = Symbol("late");
 /** The longest delay `setTimeout` takes as given; a longer one would fire at once. */
 const MAX_TIMER_MS = 2 ** 31 - 1;
 
-/** The read's entry, or LATE when it does not finish within `ms`. */
-function readWithin(file: string, ms: number): Promise<CacheEntry | null | typeof LATE> {
+/** The promise's value, or LATE when it does not settle within `ms`. The promise must never reject. */
+function within<T>(promise: Promise<T>, ms: number): Promise<T | typeof LATE> {
   return new Promise((resolve) => {
     const timer = setTimeout(() => resolve(LATE), Math.min(ms, MAX_TIMER_MS));
-    void readCache(file).then((entry) => {
+    void promise.then((value) => {
       clearTimeout(timer);
-      resolve(entry);
+      resolve(value);
     });
   });
 }
@@ -428,48 +430,79 @@ export function startUpdateCheck(options: UpdateCheckOptions): UpdateCheck {
       }
     });
 
-  // The notice of an on-time result, the first time it is asked for, unless a delivery within the interval is known:
-  // handed out by another handle in this process, or recorded in the cache by another run. While time remains the cache
-  // is read again, bounded by the remaining time; once none remains the read made when the check settled stands, with
-  // no file access. The delivery is queued for recording at hand-out, after this run's own write.
+  const clock = (): number | undefined => {
+    try {
+      const time = checkPlan.now();
+      return Number.isFinite(time) ? time : undefined;
+    } catch {
+      return undefined;
+    }
+  };
+
+  // Hands the notice out unless a delivery within the interval is known, and records it. While time remains the cache
+  // is read again, bounded by the remaining time, and a read that finishes after the deadline is discarded; once none
+  // remains the read made when the check settled stands, with no file access. The decision uses the time after that
+  // read, so a delivery recorded meanwhile is not taken for one in the future.
+  const handOut = async (entry: LatestEntry, sampled: number): Promise<boolean> => {
+    const dir = checkPlan.stateDir;
+    const left = remaining();
+    let shared: CacheEntry | null = null;
+    if (left > 0) {
+      const read = await within(readCache(join(dir, UPDATE_CHECK_FILE)), left);
+      if (read === LATE || !(remaining() >= 0)) {
+        return false;
+      }
+      shared = read;
+    }
+    const notifiedAt = clock() ?? sampled;
+    const previous = handedOutAt.get(dir);
+    if (
+      (previous !== undefined && isRecent(previous, notifiedAt, checkPlan.intervalMs)) ||
+      (shared !== null && recentlyNotified(shared, notifiedAt, checkPlan.intervalMs))
+    ) {
+      return false;
+    }
+    handedOutAt.set(dir, notifiedAt);
+    void recordDeliveryQuietly(dir, entry, notifiedAt, checkPlan.now);
+    return true;
+  };
+
+  // The notice of an on-time result, the first time it is asked for. Hand-outs in this process run one at a time per
+  // app: a handle waits, within its own time, for another handle's hand-out and tries its own only if that one gave none.
   const deliver = async (): Promise<string | null> => {
     const checked: CheckResult | null = outcome === "ready" ? ready : null;
     if (handedOut || checked === null || checked.notice === null || checked.entry === null) {
       return null;
     }
     handedOut = true;
-    let notifiedAt: number | undefined;
-    try {
-      notifiedAt = checkPlan.now();
-    } catch {
-      notifiedAt = undefined;
-    }
-    if (notifiedAt === undefined || !Number.isFinite(notifiedAt)) {
+    const sampled = clock();
+    if (sampled === undefined) {
       return checked.notice;
     }
     const dir = checkPlan.stateDir;
-    const previous = handedOutAt.get(dir);
-    if (previous !== undefined && isRecent(previous, notifiedAt, checkPlan.intervalMs)) {
-      return null;
-    }
-    // Claimed before the read, so no other handle in this process hands it out meanwhile; released if it is dropped.
-    handedOutAt.set(dir, notifiedAt);
-    const left = remaining();
-    if (left > 0) {
-      const shared = await readWithin(join(dir, UPDATE_CHECK_FILE), left);
-      if (shared === LATE || (shared !== null && recentlyNotified(shared, notifiedAt, checkPlan.intervalMs))) {
-        if (handedOutAt.get(dir) === notifiedAt) {
-          if (previous === undefined) {
-            handedOutAt.delete(dir);
-          } else {
-            handedOutAt.set(dir, previous);
-          }
-        }
+    for (let other = handingOut.get(dir); other !== undefined; other = handingOut.get(dir)) {
+      const left = remaining();
+      if (!(left > 0) || (await within(other, left)) !== false) {
         return null;
       }
     }
-    void recordDeliveryQuietly(dir, checked.entry, notifiedAt, checkPlan.now);
-    return checked.notice;
+    let settle: (delivered: boolean) => void = () => undefined;
+    const mine = new Promise<boolean>((resolve) => {
+      settle = resolve;
+    });
+    handingOut.set(dir, mine);
+    let delivered = false;
+    try {
+      delivered = await handOut(checked.entry, sampled);
+    } catch {
+      delivered = false;
+    } finally {
+      if (handingOut.get(dir) === mine) {
+        handingOut.delete(dir);
+      }
+      settle(delivered);
+    }
+    return delivered ? checked.notice : null;
   };
 
   return {
