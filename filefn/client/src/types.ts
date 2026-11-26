@@ -251,6 +251,13 @@ export interface InitUploadResponse {
   status?: 'pending' | 'in_progress' | 'completed' | 'aborted' | 'expired';
   fileId?: string;
   versionId?: string;
+  /**
+   * `true` on a completed replay when the server checked, for the session's
+   * owner, that the recorded version is still stored under its file. The
+   * client then settles without reading the version back (no file read
+   * permission needed); otherwise it reads the version back.
+   */
+  versionConfirmed?: boolean;
 }
 
 export interface UploadStatusResponse {

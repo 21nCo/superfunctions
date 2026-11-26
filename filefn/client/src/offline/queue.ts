@@ -125,7 +125,11 @@ export type OfflineQueuePublicationCheck = { published: true; result?: unknown }
 export type OfflineQueuePublicationOutcome = OfflineQueuePublicationCheck & { attemptId: string };
 
 export interface OfflineQueueHooks {
-  /** Confirms an uploaded generation. A throw leaves it provisional and is retried. */
+  /**
+   * Confirms an uploaded generation. Only a plain `{ verified: true }` or
+   * `{ verified: false, reason? }` (string reason) decides; a throw or any
+   * other value leaves it provisional and it is verified again.
+   */
   verify?(context: OfflineQueueOperationContext): Promise<OfflineQueueVerification>;
   publish?: {
     /**
@@ -843,6 +847,20 @@ function isPlainEnvelope(value: unknown): value is Record<string, unknown> {
   return true;
 }
 
+/**
+ * What a verify hook's resolved value decides: only a plain `{ verified: true }`
+ * or `{ verified: false, reason? }` (a string reason) envelope decides; any
+ * other value or key (`{ verified: true, ok: false }`, a class instance with
+ * `verified: true`, ...) decides nothing (null).
+ */
+function verificationOutcome(value: unknown): { verified: true } | { verified: false; reason: string } | null {
+  if (!isPlainEnvelope(value)) return null;
+  if (value.verified === true) return hasOnlyKeys(value, ['verified']) ? { verified: true } : null;
+  if (value.verified !== false || !hasOnlyKeys(value, ['verified', 'reason'])) return null;
+  if (value.reason !== undefined && typeof value.reason !== 'string') return null;
+  return { verified: false, reason: value.reason ?? '' };
+}
+
 /** Whether a plain envelope has no own key outside `allowed`. */
 function hasOnlyKeys(value: Record<string, unknown>, allowed: readonly string[]): boolean {
   return Object.keys(value).every((key) => allowed.includes(key));
@@ -1177,16 +1195,30 @@ export class OfflineQueue {
       const partitionDir = await this.partitionDir(root);
       return { records: await this.readAllIn(partitionDir), tombstones: (await this.loadMeta(partitionDir)).tombstones };
     }, { disclose: true });
-    for (const record of records) this.observe(record, tombstones);
-    this.forgetAbsent(new Set(records.map((record) => record.entryId)), tombstones);
-    return records
+    await this.discloseFence();
+    const entries = records
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.entryId.localeCompare(b.entryId))
       .map(snapshot);
+    // Previews the entries no longer need go now (no callback runs); waiters
+    // settle after the result is returned.
+    const present = new Set(records.map((record) => record.entryId));
+    for (const entryId of [...this.objectUrls.keys()]) if (!present.has(entryId)) this.revokeObjectUrl(entryId);
+    for (const record of records) this.revokeIfDone(record);
+    this.settleAfterReturn(() => {
+      for (const record of records) this.observe(record, tombstones);
+      this.forgetAbsent(new Set(records.map((record) => record.entryId)), tombstones);
+    });
+    return entries;
   }
 
   async get(entryId: string): Promise<OfflineQueueEntry | null> {
-    const { record } = await this.lookup(entryId);
-    return record ? snapshot(record) : null;
+    const found = await this.read(entryId);
+    await this.discloseFence();
+    const entry = found.record ? snapshot(found.record) : null;
+    if (found.record) this.revokeIfDone(found.record);
+    else this.revokeObjectUrl(entryId);
+    this.settleAfterReturn(found.settle);
+    return entry;
   }
 
   /**
@@ -1234,7 +1266,8 @@ export class OfflineQueue {
     if (!removed) return false;
     this.entryControllers.get(entryId)?.abort();
     // A waiter of a generation published before (and replaced since) still resolves.
-    this.settleAbsent(entryId, removed.tombstones);
+    this.revokeObjectUrl(entryId);
+    this.settleAfterReturn(() => this.settleAbsent(entryId, removed.tombstones));
     return true;
   }
 
@@ -1413,7 +1446,7 @@ export class OfflineQueue {
         tombstones: (await this.loadMeta(partitionDir)).tombstones,
       };
     }, { disclose: true });
-    this.forgetAbsent(present, tombstones);
+    this.settleAfterReturn(() => this.forgetAbsent(present, tombstones));
     return result;
   }
 
@@ -1421,18 +1454,24 @@ export class OfflineQueue {
     return this.transact(async (root) => this.measure(await this.partitionDir(root)), { disclose: true });
   }
 
-  /** A local preview of the newest provisional generation staged for `fileId` in this partition. */
+  /**
+   * A local preview of the newest unpublished generation staged for `fileId`
+   * in this partition: among entries whose staged data is still present, the
+   * highest generation, ties broken by entry ID. Journal writes that only
+   * touch an entry (a hold, a failed attempt) never change the choice.
+   */
   async getPendingLocalDescriptor(fileId: string): Promise<PendingLocalDescriptor | null> {
     const found = await this.transact(async (root) => {
       const records = (await this.readAll(root)).filter(
         (record) => record.current.fileId === fileId && record.current.phase !== 'published' && !record.current.dataRemoved,
       );
-      records.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-      const record = records[0];
-      if (!record) return null;
-      const dir = await getDir(await this.partitionDir(root), await this.entryKey(record.entryId));
-      const blob = dir ? await getFile(dir, record.current.dataFile) : null;
-      return blob ? { record, data: await blob.arrayBuffer() } : null;
+      records.sort((a, b) => b.current.generation - a.current.generation || a.entryId.localeCompare(b.entryId));
+      for (const record of records) {
+        const dir = await getDir(await this.partitionDir(root), await this.entryKey(record.entryId));
+        const blob = dir ? await getFile(dir, record.current.dataFile) : null;
+        if (blob) return { record, data: await blob.arrayBuffer() };
+      }
+      return null;
     }, { disclose: true });
     if (!found) return null;
     if (typeof URL === 'undefined' || typeof URL.createObjectURL !== 'function') {
@@ -1440,7 +1479,9 @@ export class OfflineQueue {
       error.code = 'FILEFN_OFFLINE_PREVIEW_UNSUPPORTED';
       throw error;
     }
-    this.assertUsable();
+    // The read may have waited on the coordinator: no URL of these bytes is
+    // created or returned unless the principal is still the partition's.
+    await this.discloseFence();
     const cur = found.record.current;
     let cached = this.objectUrls.get(found.record.entryId);
     if (!cached || cached.operationId !== cur.operationId) {
@@ -1599,8 +1640,16 @@ export class OfflineQueue {
         { source: uploadSessionId, key: legacy.idempotencyKey, keyShared: found.keyShared },
       );
       if (result.status === 'staged' || (result.status === 'refused' && result.reason === 'already-migrated')) {
-        // Removed under the partition lock, behind the principal check; the claim stays.
-        await this.transact(() => store.deletePendingUpload(uploadSessionId));
+        // Removed under the partition lock, behind the principal check; the
+        // claim stays. A switch during that cleanup keeps the entry and its
+        // admission with their owner, and this caller gets no entry of it.
+        try {
+          await this.transact(() => store.deletePendingUpload(uploadSessionId));
+          if (result.status === 'staged') await this.discloseFence();
+        } catch (error) {
+          if (isPrincipalMismatch(error)) return { status: 'refused', reason: 'principal-mismatch' } as const;
+          throw error;
+        }
       }
       return result;
     });
@@ -2020,14 +2069,46 @@ export class OfflineQueue {
   }
 
   /** Reads one entry (or its tombstone) and settles its waiters from what it finds. */
-  private async lookup(entryId: string): Promise<{ record: JournalRecord | null }> {
+  /** Reads the entry and settles its waiters from it, behind a principal check. */
+  private async lookup(entryId: string): Promise<void> {
+    const found = await this.read(entryId);
+    this.settleAfterReturn(found.settle);
+  }
+
+  /** The entry as journaled, and how to settle its waiters from that read. */
+  private async read(entryId: string): Promise<{ record: JournalRecord | null; settle: () => void }> {
     const { record, tombstones } = await this.transact(async (root) => {
       const found = await this.readEntry(root, entryId);
       return { record: found?.record ?? null, tombstones: (await this.loadMeta(await this.partitionDir(root))).tombstones };
     }, { disclose: true });
-    if (record) this.observe(record, tombstones);
-    else this.settleAbsent(entryId, tombstones);
-    return { record };
+    return {
+      record,
+      settle: () => (record ? this.observe(record, tombstones) : this.settleAbsent(entryId, tombstones)),
+    };
+  }
+
+  /** Drops the preview of an entry whose generation was published or whose data is gone. */
+  private revokeIfDone(record: JournalRecord): void {
+    if (record.current.phase === 'published' || record.current.dataRemoved) this.revokeObjectUrl(record.entryId);
+  }
+
+  /**
+   * Settles waiters (`whenSettled`) from a read only after the public call
+   * that read it has returned its result, and only behind a fresh principal
+   * check. A waiter's callback runs user code that may switch the account:
+   * run after the result was fenced and returned, it can never make that
+   * call hand the old principal's entry to the new one, and a switch before
+   * it leaves the waiters pending for a read under their own principal.
+   */
+  private settleAfterReturn(settle: () => void): void {
+    queueMicrotask(() => {
+      void (async () => {
+        if (this.disposed) return;
+        if (!(await this.principalMatches(this.lifetime.signal))) return;
+        if (this.disposed) return;
+        settle();
+      })().catch(() => {});
+    });
   }
 
   private async stageBytes(
@@ -2089,15 +2170,18 @@ export class OfflineQueue {
     }
     if (outcome.status !== 'staged') return outcome;
     this.revokeObjectUrl(input.entryId);
-    this.observe(outcome.record, outcome.tombstones);
     this.notifyWork();
     // A work listener above may have switched the account: the staging stays
     // committed for its principal, and this caller gets no entry of it.
+    // Waiters of the superseded generation settle after the result returned.
+    const staged = outcome;
     try {
       await this.discloseFence();
     } catch (error) {
       if (isPrincipalMismatch(error)) return { status: 'refused', reason: 'principal-mismatch' };
       throw error;
+    } finally {
+      this.settleAfterReturn(() => this.observe(staged.record, staged.tombstones));
     }
     return { status: 'staged', entry: snapshot(outcome.record), ...(outcome.holdId ? { holdId: outcome.holdId } : {}) };
   }
@@ -2278,8 +2362,10 @@ export class OfflineQueue {
    * published). A journal that never committed (`corrupt`) counts as no
    * journal. Provisional entries and journals of another binding or layout
    * are never removed. Of `protect` (the entry being staged), only data
-   * files its journal does not name are removed: its journal and current
-   * data stay.
+   * files its journal does not name are removed (all of them when it has no
+   * committed journal): its journal and current data stay. A published
+   * entry's data is removed before its tombstone is written, so the
+   * tombstone write fits in the room the data frees.
    */
   private async reclaimIn(
     partitionDir: OfflineQueueDirectoryHandle,
@@ -2295,9 +2381,13 @@ export class OfflineQueue {
       const dataBytes = async (file: string) => (await getFile(dir, file))?.size ?? 0;
       const read = await this.inspectJournal(dir);
       if (name === protect) {
-        if (read.state !== 'ok') continue;
+        if (read.state === 'foreign') continue;
+        // Without a committed journal (a first staging that crashed before
+        // it), no file of the entry is named by anything: all its data goes,
+        // so the restage that follows is not refused for its own remains.
+        const named = read.state === 'ok' ? read.record.current.dataFile : undefined;
         for (const file of files) {
-          if (file === JOURNAL_FILE || file === read.record.current.dataFile) continue;
+          if (file === JOURNAL_FILE || file === named) continue;
           result.freedBytes += await dataBytes(file);
           await this.removePath(dir, file);
           result.removedFiles += 1;
@@ -2314,7 +2404,15 @@ export class OfflineQueue {
       const record = read.record;
       const cur = record.current;
       if (cur.phase === 'published' && (pressure || now - Date.parse(record.updatedAt) >= this.terminalRetentionMs)) {
-        for (const file of files) if (file !== JOURNAL_FILE) result.freedBytes += await dataBytes(file);
+        // Its data goes first: out of storage, the tombstone write below
+        // needs the room the data frees. A crash in between leaves a
+        // published journal without data, which nothing reads and the next
+        // reclamation removes the same way.
+        for (const file of files) {
+          if (file === JOURNAL_FILE) continue;
+          result.freedBytes += await dataBytes(file);
+          await this.removePath(dir, file);
+        }
         await this.noteRemoval(partitionDir, [record]);
         await this.removePath(partitionDir, name, true);
         result.removedEntries += 1;
@@ -2620,8 +2718,14 @@ export class OfflineQueue {
         });
       }
       case 'verify': {
-        const outcome = value as OfflineQueueVerification;
-        if (outcome?.verified === true) {
+        const outcome = verificationOutcome(value);
+        if (outcome === null) {
+          // Outside the hook's contract (extra keys, a class instance, a
+          // non-string reason, ...): it decides nothing, so the generation
+          // stays provisional and is verified again.
+          return this.recordFailure(entryId, plan, new Error('verify resolved with a value that decides nothing'), signal);
+        }
+        if (outcome.verified === true) {
           return this.commit(entryId, record, signal, (state) => {
             state.phase = 'verified';
             state.verification = { verified: true, byHook: true };
@@ -2631,7 +2735,7 @@ export class OfflineQueue {
         if (outcome?.verified === false) {
           return this.commit(entryId, record, signal, (state) => {
             state.phase = 'rejected';
-            state.verification = { verified: false, reason: String(outcome.reason ?? ''), byHook: true };
+            state.verification = { verified: false, reason: outcome.reason, byHook: true };
             state.pending = undefined;
           }, 'rejected');
         }

@@ -1873,6 +1873,8 @@ describe('an account switch inside a callback', () => {
     // Alice is back: a read settles her waiter from the durable journal.
     signedIn = ALICE.principal;
     await a.get(FILE_ID);
+    // Waiters settle only after the read returned its result.
+    await new Promise((resolve) => setTimeout(resolve, 0));
     expect(outcome).toMatchObject({ entryId: FILE_ID, state: 'published' });
     a.dispose();
   });
@@ -2088,5 +2090,148 @@ describe('a sync and its queue’s disposal', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe('round 9: completed reads, previews and envelopes', () => {
+  it.each(['list', 'get'] as const)('%s returns its result before a waiter it settles can switch the account', async (method) => {
+    let signedIn: OfflineQueuePrincipal = ALICE.principal;
+    const a = tab('a', { currentPrincipal: () => signedIn, observeIntervalMs: 0, channel: () => undefined });
+    const { entry } = await stage(a);
+    const order: string[] = [];
+    a.whenSettled(FILE_ID, entry.generation).then(() => {
+      order.push('waiter');
+      signedIn = BOB.principal;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(await tab('b').process(FILE_ID)).toMatchObject({ status: 'published' });
+
+    const result = method === 'list' ? await a.list() : await a.get(FILE_ID);
+    order.push(method);
+    expect(result).toMatchObject(method === 'list' ? [{ entryId: FILE_ID, state: 'published' }] : { entryId: FILE_ID, state: 'published' });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    // The read was fenced and returned while Alice was signed in; her waiter ran after it.
+    expect(order).toEqual([method, 'waiter']);
+    a.dispose();
+  });
+
+  it('returns no migrated entry when the principal changes during the legacy cleanup, and keeps it for its owner', async () => {
+    let signedIn: OfflineQueuePrincipal = ALICE.principal;
+    const pendingRoot = await storage.root.getDirectoryHandle('filefn-pending-uploads', { create: true });
+    const legacy = await pendingRoot.getDirectoryHandle('offline_1731000000000_legacy009', { create: true });
+    await writeCommitted(legacy, 'data.bin', 'old bytes');
+    await writeCommitted(legacy, 'metadata.json', JSON.stringify({ uploadSessionId: 'offline_1731000000000_legacy009', fileId: FILE_ID, policy: 'p', fileName: 'old.txt', size: 9, mimeType: 'text/plain', createdAt: '2026-11-01T00:00:00.000Z', retryCount: 0, metadataVersion: 2 }));
+    const remove = pendingRoot.removeEntry.bind(pendingRoot);
+    pendingRoot.removeEntry = async (name, options) => {
+      signedIn = BOB.principal;
+      return remove(name, options);
+    };
+    const a = tab('a', { currentPrincipal: () => signedIn });
+    expect(await a.migrateLegacyUpload('offline_1731000000000_legacy009', { ownershipVerified: true })).toEqual({
+      status: 'refused',
+      reason: 'principal-mismatch',
+    });
+    signedIn = ALICE.principal;
+    expect(await a.list()).toMatchObject([{ entryId: FILE_ID, fileName: 'old.txt', state: 'provisional' }]);
+    a.dispose();
+  });
+
+  it('previews the highest generation of a file, not the entry touched last', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(new Date('2026-11-26T10:00:00.000Z'));
+      vi.stubGlobal('URL', { createObjectURL: (blob: Blob) => `blob:size-${blob.size}`, revokeObjectURL: () => {} });
+      const a = tab('a');
+      const older = await stage(a, 'old', { entryId: 'older' });
+      await stage(a, 'newer!', { entryId: 'newer' });
+      vi.setSystemTime(new Date('2026-11-26T10:05:00.000Z'));
+      // A hold only touches the older entry's journal.
+      heldId(await a.hold('older', older.entry.generation));
+      expect(await a.getPendingLocalDescriptor(FILE_ID)).toMatchObject({ source: { url: 'blob:size-6' } });
+      a.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('creates no preview URL when the principal changes while the read waits on the coordinator', async () => {
+    let signedIn: OfflineQueuePrincipal = ALICE.principal;
+    let created = 0;
+    vi.stubGlobal('URL', { createObjectURL: () => `blob:preview-${++created}`, revokeObjectURL: () => {} });
+    const inner = locks.forTab('a');
+    let gate: Promise<void> | undefined;
+    const reached = deferred<void>();
+    const coordinator: typeof inner = {
+      request: (async (name: string, options: unknown, callback: unknown) => {
+        const result = await (inner.request as (...args: unknown[]) => Promise<unknown>)(name, options, callback);
+        if (gate) {
+          const wait = gate;
+          gate = undefined;
+          reached.resolve();
+          await wait;
+        }
+        return result;
+      }) as typeof inner.request,
+    };
+    const a = tab('a', { coordinator, currentPrincipal: () => signedIn });
+    await stage(a);
+    const release = deferred<void>();
+    gate = release.promise;
+    const pending = a.getPendingLocalDescriptor(FILE_ID);
+    await reached.promise;
+    signedIn = BOB.principal;
+    release.resolve();
+    await expect(pending).rejects.toMatchObject({ code: 'FILEFN_QUEUE_PRINCIPAL_MISMATCH' });
+    expect(created).toBe(0);
+    a.dispose();
+  });
+
+  it.each([
+    ['an extra key', { verified: true, ok: false }],
+    ['a class instance', Object.assign(new (class Verdict {})(), { verified: true })],
+    ['a non-string reason', { verified: false, reason: 42 }],
+  ])('keeps a generation provisional when the verifier resolves with %s', async (_label, value) => {
+    const run = vi.fn(async () => ({}));
+    const a = tab('a', { hooks: { verify: async () => value as never, publish: { run } } });
+    await stage(a);
+    expect(await a.process(FILE_ID)).toMatchObject({ status: 'provisional', entry: { phase: 'verifying', state: 'provisional' } });
+    expect((await a.get(FILE_ID))?.verification).toBeUndefined();
+    expect(run).not.toHaveBeenCalled();
+    a.dispose();
+  });
+
+  it('frees the unjournaled remains of the entry being restaged instead of refusing it on every retry', async () => {
+    const a = tab('a', { limits: { maxEntries: 5, maxBytes: 10 } });
+    await stage(a, 'eightbyt');
+    // A tab killed after writing the data but before the journal file existed
+    // leaves only the data (a failed staging cleans up after itself).
+    const entryDir = [...(await partitionDir()).entries.values()].find((entry) => entry instanceof MemoryDirectory) as MemoryDirectory;
+    entryDir.entries.delete('journal.json');
+    expect(await a.list()).toEqual([]);
+    expect(dataFiles()).toHaveLength(1);
+
+    expect(await stage(a, 'eightbyt')).toMatchObject({ status: 'staged' });
+    expect(await a.usage()).toEqual({ entries: 1, bytes: 8 });
+    a.dispose();
+  });
+
+  it('frees a published entry’s data before writing its tombstone when out of storage', async () => {
+    const a = tab('a');
+    await stage(a, 'done', { entryId: 'done' });
+    expect(await a.process('done')).toMatchObject({ status: 'published' });
+    const doneDir = [...(await partitionDir()).entries.values()].find(
+      (entry) => entry instanceof MemoryDirectory && journalOf('done').path.startsWith(`${entry.path}/`),
+    ) as MemoryDirectory;
+    // An interrupted cleanup left the published data behind, and the disk is full while it is there.
+    await writeCommitted(doneDir, 'g1.bin', 'published bytes');
+    storage.storage.fault = (path, step) => {
+      if (step === 'write' && path.endsWith('partition.json') && doneDir.entries.has('g1.bin')) throw quotaExceeded();
+    };
+    expect(await a.stage({ policy: 'p', file: new Blob(['next']), entryId: 'next', fileId: 'file_00000000entry02' })).toMatchObject({ status: 'staged' });
+    storage.storage.fault = undefined;
+    expect((await a.list()).map((e) => e.entryId)).toEqual(['next']);
+    // The published generation still reports published to its waiters.
+    expect(await a.whenSettled('done', 1)).toMatchObject({ entryId: 'done', state: 'published' });
+    a.dispose();
   });
 });

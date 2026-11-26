@@ -429,11 +429,19 @@ export class UploadManager {
         { expectedFileId, actualFileId: fileId },
       );
     }
+    // The server confirmed, for the session's owner, that the recorded version
+    // is still stored under its file: settle without a file read, which a
+    // write-only uploader may not be allowed (servers before this flag are
+    // read back below).
+    if (initResponse.versionConfirmed === true) return { fileId, versionId };
     let stored: Record<string, unknown>;
     try {
       stored = await this.httpClient.getFileVersion(fileId, versionId, signal);
     } catch (error) {
-      if (error instanceof DOMException && error.name === 'AbortError') throw error;
+      // An abort and a queue control error (a hold, a principal switch or a
+      // disposal fencing the request) say nothing about the stored file: they
+      // pass through unchanged, so the queue spends no attempt on them.
+      if (isControlError(error)) throw error;
       throw Object.assign(
         createClientError(UPLOAD_RECONCILE_FAILED_ERROR, 'Stored file of a completed session could not be read back', {
           uploadSessionId: initResponse.uploadSessionId,
@@ -598,4 +606,12 @@ export class UploadManager {
       }
     }
   }
+}
+
+/** An abort, or an offline queue control error (`FILEFN_QUEUE_*`). */
+function isControlError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  if ((error as { name?: unknown }).name === 'AbortError') return true;
+  const code = (error as { code?: unknown }).code;
+  return typeof code === 'string' && code.startsWith('FILEFN_QUEUE_');
 }

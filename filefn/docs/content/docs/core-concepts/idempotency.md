@@ -26,7 +26,7 @@ The server:
 4. If a row exists with a **different** payload hash → fail with `FILEFN_IDEMPOTENCY_CONFLICT`.
 5. Otherwise → create a new session and store the key + hash.
 
-A replayed session also reports its `status`. A `completed` one carries the stored `fileId` and `versionId`, so the client confirms the file instead of uploading again; `expired` (past its TTL) and `aborted` are final, and the client starts again under a new key.
+A replayed session also reports its `status`. A `completed` one carries the stored `fileId` and `versionId`, and `versionConfirmed: true` while that version is still stored under its file, so the client confirms the file instead of uploading again, without needing read permission on it; `expired` (past its TTL) and `aborted` are final, and the client starts again under a new key.
 
 Servers before 0.8 read the key only from the header. 0.8 also honors an `idempotencyKey` in the JSON body (what `@filefn/client` 0.4 and earlier sent) for one minor version, with a deprecation warning; a request giving both must give the same value.
 

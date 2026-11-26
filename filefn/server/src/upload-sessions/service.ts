@@ -746,7 +746,10 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
   /**
    * What an idempotent `upload/init` replay reports about the session it found,
    * so a client reconciles instead of uploading again: `status`, plus the
-   * `fileId` and `versionId` a completed session recorded itself. A session
+   * `fileId` and `versionId` a completed session recorded itself, with
+   * `versionConfirmed: true` when that version is still stored under its file
+   * (see recordedVersionStored), so a write-only uploader settles without a
+   * file read. A session
    * completed before completion versions were recorded reports neither: the
    * file's current version may belong to a later upload, so the client cannot
    * confirm the replay and keeps it provisional. A client treats 'expired' and
@@ -761,13 +764,14 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
     status: 'pending' | 'in_progress' | 'completed' | 'aborted' | 'expired';
     fileId?: string;
     versionId?: string;
+    versionConfirmed?: boolean;
   }> {
     let session: UploadSession | null = found;
     for (let attempt = 0; attempt < 4 && session; attempt += 1) {
       if (session.status === 'completed') {
-        return session.fileId && session.completionVersionId
-          ? { status: 'completed', fileId: session.fileId, versionId: session.completionVersionId }
-          : { status: 'completed' };
+        if (!session.fileId || !session.completionVersionId) return { status: 'completed' };
+        const recorded = { status: 'completed' as const, fileId: session.fileId, versionId: session.completionVersionId };
+        return (await recordedVersionStored(session)) ? { ...recorded, versionConfirmed: true } : recorded;
       }
       if (isAbortedStatus(session.status)) return { status: 'aborted' };
       if (session.status === 'expired') return { status: 'expired' };
@@ -795,6 +799,34 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       session = ended.current;
     }
     return { status: 'in_progress' };
+  }
+
+  // Whether the version a completed session recorded is still stored under its
+  // file: the session was not marked by a file delete, its version row exists
+  // under that file, and the file row exists. The replay caller already proved
+  // it owns the session (owner, tenant and payload hash), so this answer needs
+  // no read permission on the file and discloses nothing beyond the session's
+  // own recorded IDs. A file deleted since (even if its ID was reused) never
+  // confirms: the version rows go with the file and version IDs are not reused.
+  async function recordedVersionStored(session: UploadSession): Promise<boolean> {
+    if (session.completionPublication?.fileDeleted || session.completionPublication?.fileDeletedAt) return false;
+    try {
+      const version = await db.findOne<{ versionId: string; fileId: string }>({
+        model: 'fileVersions',
+        where: [{ field: 'versionId', operator: 'eq', value: session.completionVersionId! }],
+        namespace,
+      });
+      if (!version || version.versionId !== session.completionVersionId || version.fileId !== session.fileId) return false;
+      const file = await db.findOne<{ fileId: string }>({
+        model: 'files',
+        where: [{ field: 'fileId', operator: 'eq', value: session.fileId! }],
+        namespace,
+      });
+      return file?.fileId === session.fileId;
+    } catch {
+      // Unknown: the client falls back to reading the version back.
+      return false;
+    }
   }
 
   // Records an unfinished session past its expiry (pending, in_progress, or
@@ -1498,6 +1530,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       status?: 'pending' | 'in_progress' | 'completed' | 'aborted' | 'expired';
       fileId?: string;
       versionId?: string;
+      versionConfirmed?: boolean;
     }> {
       const warnings: string[] = [];
       // The route passes the JSON body through unchanged, so check every field

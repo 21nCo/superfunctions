@@ -22,14 +22,18 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
-async function createApp() {
+async function createApp(options: { writeOnly?: boolean } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'filefn-offline-replay-'));
   roots.push(root);
   const database = memoryAdapter();
   const fileFn = createFileFn({
     database,
     storage: createLocalStorageAdapter({ rootDir: root }),
-    authorizer: createDefaultAuthorizer({ db: database }),
+    authorizer: (() => {
+      const base = createDefaultAuthorizer({ db: database });
+      // A write-only uploader (an inbox or quarantine policy): never reads a file back.
+      return options.writeOnly ? { canRead: async () => false, canWrite: base.canWrite.bind(base), canDelete: base.canDelete.bind(base) } : base;
+    })(),
     policies: [{ name: 'doc', contentTypes: ['text/plain'], maxSizeBytes: 1024, visibility: 'private' } as any],
     auth: {
       required: true,
@@ -126,12 +130,48 @@ describe('offline replay against the FileFn server', () => {
     expect(inits[0].key).toMatch(/^test-replay-key-0001:op_/);
     expect(inits.map((r) => r.key)).toEqual([inits[0].key, inits[0].key]);
     expect(app.requests.filter((r) => r.path.endsWith('/sign'))).toHaveLength(1);
-    // The reconciliation reads the recorded version back.
-    const [version] = await app.rows('fileVersions');
-    expect(app.requests.at(-1)).toMatchObject({ method: 'GET', path: `/file_00000000replay01/versions/${version.versionId}` });
+    // The replay confirmed the recorded version for the session owner: no file read.
+    expect(app.requests.at(-1)).toMatchObject({ method: 'POST', path: '/upload/init' });
+    expect(app.requests.filter((r) => r.method === 'GET')).toHaveLength(0);
     expect(await app.rows('files')).toHaveLength(1);
     expect(await app.rows('fileVersions')).toHaveLength(1);
     expect(await app.rows('uploadSessions')).toHaveLength(1);
+  });
+
+  it('settles a write-only uploader whose completion response was lost, without read permission on the file', async () => {
+    const app = await createApp({ writeOnly: true });
+    await app.stage('file_00000000replay03', 'test-replay-key-0009');
+    app.loseResponse((path) => path.endsWith('/complete'));
+    expect(await app.queue.process('file_00000000replay03')).toMatchObject({ status: 'provisional', reason: 'ambiguous' });
+
+    expect(await app.queue.process('file_00000000replay03')).toMatchObject({
+      status: 'published',
+      entry: { upload: { fileId: 'file_00000000replay03' } },
+    });
+    const [version] = await app.rows('fileVersions');
+    expect((await app.queue.get('file_00000000replay03'))?.upload?.versionId).toBe(version.versionId);
+    // This uploader may not read the file, and the replay did not need to.
+    expect((await app.fetch(`${BASE}/file_00000000replay03/versions/${version.versionId}`)).status).toBe(403);
+    expect(app.requests.filter((r) => r.path.endsWith('/sign'))).toHaveLength(1);
+    expect(await app.rows('files')).toHaveLength(1);
+  });
+
+  it('confirms a completed replay only while its recorded version is still stored', async () => {
+    const app = await createApp({ writeOnly: true });
+    const init = () =>
+      app.fetch(`${BASE}/upload/init`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-idempotency-key': 'test-replay-key-0010' },
+        body: JSON.stringify({ policy: 'doc', fileName: 'a.txt', size: 5, mimeType: 'text/plain', fileId: 'file_00000000replay04' }),
+      }).then(async (response) => (await response.json()).data);
+    await app.client.uploadFile({ policy: 'doc', file: new File(['hello'], 'a.txt', { type: 'text/plain' }), fileId: 'file_00000000replay04', idempotencyKey: 'test-replay-key-0010' }).done();
+    const [version] = await app.rows('fileVersions');
+    expect(await init()).toMatchObject({ status: 'completed', fileId: 'file_00000000replay04', versionId: version.versionId, versionConfirmed: true });
+
+    expect((await app.fetch(`${BASE}/file_00000000replay04`, { method: 'DELETE' })).status).toBe(200);
+    const replay = await init();
+    expect(replay).toMatchObject({ status: 'completed', versionId: version.versionId });
+    expect(replay.versionConfirmed).toBeUndefined();
   });
 
   it('never confirms a completed session whose file was deleted and recreated under the same ID since', async () => {

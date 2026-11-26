@@ -147,3 +147,97 @@ describe('offline replay transport', () => {
     expect(await new Response(partPut?.body).text()).toBe('hello');
   });
 });
+
+describe('completed-session replay settlement', () => {
+  const FILE = 'file_00000000readback';
+
+  beforeEach(() => {
+    storage = createStorage();
+    locks = new SharedLockManager();
+    vi.stubGlobal('navigator', { storage: { getDirectory: async () => storage.root } });
+    setOnline(true);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  /** A server whose upload/init replays a session that already completed. */
+  function completedServer(replay: Record<string, unknown>, onInit?: () => Promise<void>) {
+    const paths: string[] = [];
+    const keys: Array<string | null> = [];
+    const fetch = (async (input: RequestInfo | URL, init: RequestInit = {}) => {
+      const path = String(input).slice(BASE.length);
+      paths.push(`${init.method ?? 'GET'} ${path}`);
+      if (path === '/upload/init') {
+        keys.push(new Headers(init.headers).get('x-idempotency-key'));
+        await onInit?.();
+        return envelope({ uploadSessionId: 'sess_1', uploadMode: 'proxy', chunkSizeBytes: 1024, totalParts: 1, expiresAt: 'x', status: 'completed', fileId: FILE, versionId: 'ver_1', ...replay });
+      }
+      if (path === `/${FILE}/versions/ver_1`) {
+        return replay.versionConfirmed === true
+          ? new Response(JSON.stringify({ ok: false, error: { code: 'FILEFN_FORBIDDEN', message: 'forbidden' } }), { status: 403, headers: { 'content-type': 'application/json' } })
+          : envelope({ fileId: FILE, versionId: 'ver_1' });
+      }
+      return new Response('unexpected', { status: 500 });
+    }) as typeof globalThis.fetch;
+    return { fetch, paths, keys };
+  }
+
+  function client(fetch: typeof globalThis.fetch, tab: string) {
+    return createFileFnClient({
+      baseUrl: BASE,
+      fetch,
+      retryOptions: { maxRetries: 0 },
+      offline: {
+        enabled: true,
+        partition: PARTITION,
+        currentPrincipal: () => PARTITION.principal,
+        getAuthHeaders: () => ({ authorization: 'Bearer test-token-alice' }),
+        implicitReplay: false,
+        queue: { coordinator: locks.forTab(tab) },
+      },
+    });
+  }
+
+  it('settles on the version the server confirmed for the session owner, without a file read a write-only uploader may lack', async () => {
+    const server = completedServer({ versionConfirmed: true });
+    const a = client(server.fetch, 'a');
+    const queue = a.getOfflineQueue();
+    await queue.stage({ policy: 'p', file: new Blob(['bytes']), fileId: FILE });
+    expect(await queue.process(FILE)).toMatchObject({ status: 'published', entry: { upload: { fileId: FILE, versionId: 'ver_1' } } });
+    // No read of the file (403 for this uploader) and no part signed.
+    expect(server.paths).toEqual(['POST /upload/init']);
+    a.dispose();
+  });
+
+  it('uses no attempt for a hold placed before the readback is sent, and resumes it under the same key on release without signing parts', async () => {
+    let holdId: string | undefined;
+    let generation = 0;
+    const other = () => client(server.fetch, 'b').getOfflineQueue();
+    let b: ReturnType<typeof other> | undefined;
+    const server = completedServer({}, async () => {
+      if (holdId) return;
+      b = other();
+      const held = await b.hold(FILE, generation);
+      if (held.status !== 'held') throw new Error('hold refused');
+      holdId = held.holdId;
+    });
+    const a = client(server.fetch, 'a');
+    const queue = a.getOfflineQueue();
+    const staged = await queue.stage({ policy: 'p', file: new Blob(['bytes']), fileId: FILE });
+    if (staged.status !== 'staged') throw new Error('not staged');
+    generation = staged.entry.generation;
+
+    expect(await queue.process(FILE)).toMatchObject({ status: 'provisional', reason: 'held', entry: { attempts: 0 } });
+    // The readback was never sent while held.
+    expect(server.paths).toEqual(['POST /upload/init']);
+
+    expect(await b!.release(FILE, generation, holdId!)).toBe(true);
+    expect(await queue.process(FILE)).toMatchObject({ status: 'published', entry: { upload: { versionId: 'ver_1' } } });
+    expect(server.paths).toEqual(['POST /upload/init', 'POST /upload/init', `GET /${FILE}/versions/ver_1`]);
+    expect(new Set(server.keys).size).toBe(1);
+    a.dispose();
+    b!.dispose();
+  });
+});

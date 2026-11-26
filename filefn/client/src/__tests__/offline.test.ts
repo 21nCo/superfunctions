@@ -469,3 +469,30 @@ describe('replay transport', () => {
     expect((await client.getOfflineQueue().list())[0]).toMatchObject({ phase: 'publishing', state: 'provisional' });
   });
 });
+
+describe('local previews of a file staged by several entries', () => {
+  it('previews the highest generation through the client and resolveRenderable, not the entry touched last', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(new Date('2026-11-26T10:00:00.000Z'));
+      const client = offlineClient({ implicitReplay: false });
+      const queue = client.getOfflineQueue();
+      const fileId = 'file_00000000preview1';
+      const older = await queue.stage({ policy: 'p', file: new File(['old'], 'old.png', { type: 'image/png' }), fileId, entryId: 'older' });
+      await queue.stage({ policy: 'p', file: new File(['newer!'], 'new.png', { type: 'image/png' }), fileId, entryId: 'newer' });
+      if (older.status !== 'staged') throw new Error('not staged');
+      vi.setSystemTime(new Date('2026-11-26T10:05:00.000Z'));
+      // Touches only the older entry's journal.
+      expect(await queue.hold('older', older.entry.generation)).toMatchObject({ status: 'held' });
+
+      expect(await client.getPendingLocalDescriptor(fileId)).toMatchObject({ source: { url: 'blob:local-6' } });
+      expect(await client.resolveRenderable({ fileId, intent: 'preview', preferLocal: true })).toMatchObject({
+        state: 'pending-local',
+        name: 'new.png',
+        size: 6,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

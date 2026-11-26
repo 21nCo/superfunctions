@@ -784,6 +784,11 @@ export const fileFnClientContract = {
           },
           fileId: { type: 'string', description: 'The file a completed replayed session stored.' },
           versionId: { type: 'string', description: 'The version a completed replayed session stored.' },
+          versionConfirmed: {
+            type: 'boolean',
+            description:
+              'Set (true) on a completed replay when the recorded version is still stored under its file. The session owner settles on it without read permission on the file; without it, read the version back.',
+          },
         },
         required: ['uploadSessionId', 'uploadMode', 'chunkSizeBytes', 'totalParts', 'expiresAt'],
       },
