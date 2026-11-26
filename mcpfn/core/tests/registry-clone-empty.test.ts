@@ -115,11 +115,12 @@ describe.each(["ajv", "cfworker"] as const)("McpFnRegistry.cloneEmpty() with the
   });
 });
 
-// Architecture reset (SFNS-107): clone() gives a fresh built-in compiler the
-// same ordered compiles the source compiler received, including compiles from
-// failed registrations, so it resolves exactly the `$id`s the source resolves
-// on each engine. cloneEmpty() replays none of them.
-describe.each(["ajv", "cfworker"] as const)("McpFnRegistry.clone() replays the %s compile log", (engine) => {
+// clone() keeps the dev contract: a fresh built-in compiler (or the shared
+// custom compiler) replays every successful registration with its live
+// definition, in registration order. Failed registrations are not replayed, so
+// a definition that only resolved through their compiler residue fails loudly
+// at clone() and at declaration time, as on dev. cloneEmpty() replays nothing.
+describe.each(["ajv", "cfworker"] as const)("McpFnRegistry.clone() with the built-in %s compiler", (engine) => {
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.resetModules();
@@ -128,13 +129,15 @@ describe.each(["ajv", "cfworker"] as const)("McpFnRegistry.clone() replays the %
   async function load() {
     if (engine === "cfworker") vi.stubGlobal("WebSocketPair", class {});
     vi.resetModules();
-    const { McpFnRegistry, structuredResult, defineMcpFnServer } = await import("../src/index.js");
+    const { McpFnRegistry, McpFnValidationError, structuredResult, defineMcpFnServer } = await import("../src/index.js");
     const { createSchemaCompiler } = await import("../src/validation.js");
     expect(createSchemaCompiler().engine).toBe(engine);
-    return { McpFnRegistry, structuredResult, defineMcpFnServer };
+    return { McpFnRegistry, McpFnValidationError, structuredResult, defineMcpFnServer, createSchemaCompiler };
   }
 
+  const info = { name: "test", version: "0.0.0" };
   const handler = async () => ({ content: [], structuredContent: { ok: true } });
+  const invalidOutput = () => ({ type: "object", properties: { a: { type: "not-a-type" } } });
   const objectWithId = (id: string) => ({
     $id: id,
     type: "object",
@@ -145,91 +148,6 @@ describe.each(["ajv", "cfworker"] as const)("McpFnRegistry.clone() replays the %
 
   type Registry = InstanceType<Awaited<ReturnType<typeof load>>["McpFnRegistry"]>;
 
-  async function expectRefValidates(registry: Registry, tool: string) {
-    await expect(registry.callTool(tool, { item: { name: "x" } }, undefined, requestExtra()))
-      .resolves.toMatchObject({ structuredContent: { ok: true } });
-    await expect(registry.callTool(tool, { item: { name: 1 } }, undefined, requestExtra()))
-      .rejects.toThrow(`Invalid arguments for ${tool}`);
-  }
-
-  async function expectDerivedMatchSource(source: Registry, refId: string) {
-    source.register({ name: "uses-ref", description: "Refers to residue.", inputSchema: refTo(refId), handler });
-    await expectRefValidates(source, "uses-ref");
-
-    const replayed = source.clone();
-    expect(replayed.listTools().map((tool) => tool.name)).toEqual(
-      source.listTools().map((tool) => tool.name),
-    );
-    await expectRefValidates(replayed, "uses-ref");
-
-    // A cloneEmpty() copy is self-contained: residue does not resolve there.
-    const empty = source.cloneEmpty();
-    expect(() => empty.register({ name: "uses-ref", description: "Refers to residue.", inputSchema: refTo(refId), handler }))
-      .toThrow("invalid JSON Schema");
-  }
-
-  it("keeps an input $id from a tool registration whose output schema failed", async () => {
-    const { McpFnRegistry } = await load();
-    const id = "https://test.invalid/failed-tool-input";
-    const source = new McpFnRegistry();
-    expect(() => source.register({
-      name: "broken",
-      description: "Valid input, invalid output.",
-      inputSchema: objectWithId(id),
-      outputSchema: { type: "object", properties: { a: { type: "not-a-type" } } },
-      handler,
-    })).toThrow("invalid JSON Schema");
-    expect(source.has("broken")).toBe(false);
-    await expectDerivedMatchSource(source, id);
-    // Residue is not a schema resource of any definition.
-    expect(source.schemaDefinitions()).toEqual([refTo(id)]);
-    expect(source.clone().schemaDefinitions()).toEqual([refTo(id)]);
-  });
-
-  it("keeps an arguments $id from a prompt registration that failed after compiling", async () => {
-    const { McpFnRegistry } = await load();
-    const id = "https://test.invalid/failed-prompt-arguments";
-    const source = new McpFnRegistry();
-    expect(() => source.registerPrompt({
-      name: "broken",
-      argumentsSchema: { ...objectWithId(id), properties: { name: { type: "string" } } },
-      complete: { unknown: async () => [] },
-      get: async () => ({ messages: [] }),
-    })).toThrow("completer for unknown argument");
-    expect(source.listPrompts()).toEqual([]);
-    await expectDerivedMatchSource(source, id);
-  });
-
-  it("matches the source after a failed compile, its dependency and a $ref to it", async () => {
-    const { McpFnRegistry } = await load();
-    const dependencyId = "https://test.invalid/dependency";
-    const dependentId = "https://test.invalid/dependent";
-    const dependent = { $id: dependentId, type: "object", properties: { name: { $ref: dependencyId } }, required: ["name"] };
-    const source = new McpFnRegistry();
-    expect(() => source.register({ name: "early", description: "Unresolved ref.", inputSchema: dependent, handler }))
-      .toThrow("invalid JSON Schema");
-    source.register({ name: "dependency", description: "Owns the dependency.", inputSchema: objectWithId(dependencyId), handler });
-
-    // Whether the failed compile left the dependent's $id behind is up to the
-    // engine; derived registries must resolve it exactly as the source does.
-    let sourceAccepts = true;
-    try {
-      source.register({ name: "late", description: "Refers to the dependent.", inputSchema: refTo(dependentId), handler });
-    } catch {
-      sourceAccepts = false;
-    }
-    if (engine === "ajv") expect(sourceAccepts).toBe(true);
-    const derived = source.clone();
-    const register = () => derived.register({
-      name: derived.has("late") ? "late-again" : "late",
-      description: "Refers to the dependent.",
-      inputSchema: refTo(dependentId),
-      handler,
-    });
-    if (sourceAccepts) expect(register).not.toThrow();
-    else expect(register).toThrow("invalid JSON Schema");
-  });
-
   async function expectNameValidates(registry: Registry, tool: string) {
     await expect(registry.callTool(tool, { name: "x" }, undefined, requestExtra()))
       .resolves.toMatchObject({ structuredContent: { ok: true } });
@@ -237,11 +155,36 @@ describe.each(["ajv", "cfworker"] as const)("McpFnRegistry.clone() replays the %
       .rejects.toThrow(`Invalid arguments for ${tool}`);
   }
 
-  it("replays a failed compile as compiled after the caller fixes the schema in place and retries", async () => {
+  it("clones a tool whose $id input was edited in place before a successful retry", async () => {
+    const { McpFnRegistry, defineMcpFnServer } = await load();
+    const inputSchema: Record<string, unknown> = objectWithId("https://test.invalid/edited-in-place");
+    const definition = { name: "t", description: "Valid input, invalid output.", inputSchema, outputSchema: invalidOutput() as object, handler };
+    const source = new McpFnRegistry();
+    expect(() => source.register(definition)).toThrow("invalid JSON Schema");
+    // Same object, same $id, edited in place; then the output is fixed.
+    inputSchema.title = "Edited";
+    definition.outputSchema = { type: "object" };
+    if (engine === "cfworker") {
+      // cfworker keeps the $id from the input's successful compile and rejects
+      // it again (same on dev); there is nothing more to clone.
+      expect(() => source.register(definition)).toThrow("invalid JSON Schema");
+      expect(source.clone().listTools()).toEqual([]);
+      return;
+    }
+    source.register(definition);
+
+    const replayed = source.clone();
+    const declaration = defineMcpFnServer({ info, registry: source });
+    for (const registry of [source, replayed, declaration.registry]) {
+      expect(registry.listTools().map((tool) => tool.name)).toEqual(["t"]);
+      await expectNameValidates(registry, "t");
+    }
+  });
+
+  it("clones a schema fixed in place after a failed compile", async () => {
     const { McpFnRegistry, defineMcpFnServer } = await load();
     const source = new McpFnRegistry();
-    const plain: { type: string; properties: { name: { type: string } }; required: string[] } =
-      { type: "object", properties: { name: { type: "bogus" } }, required: ["name"] };
+    const plain = { type: "object", properties: { name: { type: "bogus" } }, required: ["name"] };
     const withId = { ...objectWithId("https://test.invalid/fixed-in-place"), properties: { name: { type: "bogus" } } };
     for (const [name, inputSchema] of [["plain", plain], ["with-id", withId]] as const) {
       expect(() => source.register({ name, description: "Invalid nested type.", inputSchema, handler }))
@@ -250,57 +193,106 @@ describe.each(["ajv", "cfworker"] as const)("McpFnRegistry.clone() replays the %
       source.register({ name, description: "Fixed in place.", inputSchema, handler });
     }
 
-    const replayed = source.clone();
-    const declaration = defineMcpFnServer({ info: { name: "test", version: "0.0.0" }, registry: source });
-    for (const derived of [replayed, declaration.registry]) {
-      expect(derived.listTools().map((tool) => tool.name)).toEqual(["plain", "with-id"]);
-      for (const name of ["plain", "with-id"]) await expectNameValidates(derived, name);
-    }
-    for (const name of ["plain", "with-id"]) await expectNameValidates(source, name);
-  });
-
-  it("replays an ok input schema as compiled after the caller changes its $id in place and retries", async () => {
-    const { McpFnRegistry } = await load();
-    const firstId = "https://test.invalid/first-id";
-    const inputSchema = objectWithId(firstId);
-    const definition = {
-      name: "retried",
-      description: "Valid input, invalid output.",
-      inputSchema,
-      outputSchema: { type: "object", properties: { a: { type: "not-a-type" } } } as object,
-      handler,
-    };
-    const source = new McpFnRegistry();
-    expect(() => source.register(definition)).toThrow("invalid JSON Schema");
-    inputSchema.$id = "https://test.invalid/second-id";
-    definition.outputSchema = { type: "object" };
-    source.register(definition);
-    // The source compiler kept the first $id from the failed registration.
-    source.register({ name: "uses-first", description: "Refers to the first id.", inputSchema: refTo(firstId), handler });
-
-    const replayed = source.clone();
-    expect(replayed.listTools().map((tool) => tool.name)).toEqual(["retried", "uses-first"]);
-    for (const registry of [source, replayed]) {
-      await expectNameValidates(registry, "retried");
-      await expectRefValidates(registry, "uses-first");
+    const declaration = defineMcpFnServer({ info, registry: source });
+    for (const registry of [source, source.clone(), declaration.registry]) {
+      expect(registry.listTools().map((tool) => tool.name)).toEqual(["plain", "with-id"]);
+      for (const name of ["plain", "with-id"]) await expectNameValidates(registry, name);
     }
   });
 
-  it("does not fail clone() over a failed compile whose schema cannot be copied", async () => {
-    const { McpFnRegistry } = await load();
-    const uncopyable = { ...objectWithId("https://test.invalid/uncopyable"), examples: [() => undefined] };
-    const source = new McpFnRegistry();
-    expect(() => source.register({
+  it.each([
+    ["a tool whose output schema failed", (registry: Registry, id: string) => registry.register({
       name: "broken",
-      description: "Uncopyable input, invalid output.",
-      inputSchema: uncopyable,
-      outputSchema: { type: "object", properties: { a: { type: "not-a-type" } } },
+      description: "Valid input, invalid output.",
+      inputSchema: objectWithId(id),
+      outputSchema: invalidOutput(),
       handler,
-    })).toThrow("invalid JSON Schema");
-    source.register({ name: "later", description: "Plain.", inputSchema: objectWithId("https://test.invalid/later"), handler });
+    }), "invalid JSON Schema"],
+    ["a prompt that failed after compiling", (registry: Registry, id: string) => registry.registerPrompt({
+      name: "broken",
+      argumentsSchema: objectWithId(id),
+      complete: { unknown: async () => [] },
+      get: async () => ({ messages: [] }),
+    }), "completer for unknown argument"],
+  ] as const)("fails clone() and declaration loudly for a $ref resolved only by %s", async (_label, registerBroken, message) => {
+    const { McpFnRegistry, McpFnValidationError, defineMcpFnServer } = await load();
+    const id = "https://test.invalid/residue";
+    const source = new McpFnRegistry();
+    expect(() => registerBroken(source, id)).toThrow(message);
+    expect(source.has("broken")).toBe(false);
+    expect(source.listPrompts()).toEqual([]);
+    // The source compiler kept the $id, so the source accepts the $ref.
+    source.register({ name: "uses-residue", description: "Refers to residue.", inputSchema: refTo(id), handler });
+    expect(source.schemaDefinitions()).toEqual([refTo(id)]);
+
+    expect(() => source.clone()).toThrow(McpFnValidationError);
+    expect(() => source.clone()).toThrow("Tool uses-residue contains an invalid JSON Schema");
+    expect(() => defineMcpFnServer({ info, registry: source })).toThrow(McpFnValidationError);
+    expect(() => source.cloneEmpty().register({ name: "uses-residue", description: "Refers to residue.", inputSchema: refTo(id), handler }))
+      .toThrow("invalid JSON Schema");
+  });
+
+  it("rejects registration from inside this registry's schema compile without partial state", async () => {
+    const { McpFnRegistry, McpFnValidationError, createSchemaCompiler } = await load();
+    const builtIn = createSchemaCompiler();
+    const inner: unknown[] = [];
+    let registry: Registry | undefined;
+    let reenter: ((target: Registry) => unknown) | undefined;
+    let swallow = false;
+    registry = new McpFnRegistry({
+      compileSchema: (schema) => {
+        if (reenter && registry) {
+          const attempt = reenter;
+          reenter = undefined;
+          try {
+            attempt(registry);
+          } catch (error) {
+            inner.push(error);
+            if (!swallow) throw error;
+          }
+        }
+        return builtIn.compile(schema);
+      },
+    });
+    const source = registry;
+    // No $id: the custom compiler (and its schema store) is shared by clones.
+    source.register({ name: "base", description: "Plain.", inputSchema: { type: "object", properties: { name: { type: "string" } }, required: ["name"] }, handler });
+
+    const attempts: Array<[string, (target: Registry) => unknown]> = [
+      ["tool", (target) => target.register({ name: "inner", description: "Inner.", inputSchema: { type: "object" }, handler })],
+      ["prompt", (target) => target.registerPrompt({ name: "inner", get: async () => ({ messages: [] }) })],
+      ["resource", (target) => target.registerResource({ uri: "test://inner", name: "inner", read: async () => ({ contents: [] }) })],
+      ["resource-template", (target) => target.registerResourceTemplate({ name: "inner", uriTemplate: "test://inner/{id}", read: async () => ({ contents: [] }) })],
+    ];
+    for (const [kind, attempt] of attempts) {
+      // The compiler propagates the rejection: the outer registration fails.
+      reenter = attempt;
+      swallow = false;
+      expect(() => source.register({ name: "outer", description: "Outer.", inputSchema: { type: "object" }, handler }))
+        .toThrow("Tool outer contains an invalid JSON Schema");
+      // The compiler swallows it: the outer registration succeeds alone.
+      reenter = attempt;
+      swallow = true;
+      source.register({ name: `outer-${kind}`, description: "Outer.", inputSchema: { type: "object" }, handler });
+    }
+    expect(inner).toHaveLength(8);
+    for (const error of inner) {
+      expect(error).toBeInstanceOf(McpFnValidationError);
+      expect((error as Error).message).toMatch(/while this registry is compiling a schema/);
+    }
+
+    const toolNames = ["base", "outer-prompt", "outer-resource", "outer-resource-template", "outer-tool"];
+    expect(source.listTools().map((tool) => tool.name)).toEqual(toolNames);
+    expect(source.listPrompts()).toEqual([]);
+    expect(source.resourceDefinitions()).toEqual([]);
+    expect(source.listResourceTemplates()).toEqual([]);
     const replayed = source.clone();
-    expect(replayed.listTools().map((tool) => tool.name)).toEqual(["later"]);
-    await expectNameValidates(replayed, "later");
+    expect(replayed.listTools().map((tool) => tool.name)).toEqual(toolNames);
+    expect(replayed.listPrompts()).toEqual([]);
+    expect(replayed.resourceDefinitions()).toEqual([]);
+    expect(replayed.listResourceTemplates()).toEqual([]);
+    expect(replayed.schemaDefinitions()).toEqual(source.schemaDefinitions());
+    await expectNameValidates(replayed, "base");
   });
 
   it("leaks no later registration in either direction", async () => {

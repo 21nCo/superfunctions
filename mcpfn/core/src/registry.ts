@@ -580,97 +580,24 @@ function exceedsJsonNodes(value: unknown, limit: number): boolean {
   return false;
 }
 
-interface CompileEntry {
-  kind: "compile";
-  /** The object the compiler received. */
-  schema: object;
-  /**
-   * A deep copy taken before the compile (built-in compilers only), so an
-   * in-place edit after a failed registration cannot change what clone()
-   * replays. Undefined when the schema cannot be copied (for example, it
-   * holds a function); clone() then replays the live object best-effort.
-   */
-  snapshot: object | undefined;
-  ok: boolean;
-}
-
-function snapshotSchema(schema: object): object | undefined {
-  try {
-    return structuredClone(schema);
-  } catch {
-    return undefined;
-  }
-}
-
-/** Structural equality of a live schema and its snapshot; cycle-safe. */
-function sameSchemaValue(
-  a: unknown,
-  b: unknown,
-  seen = new Map<object, Set<object>>(),
-): boolean {
-  if (Object.is(a, b)) return true;
-  if (!a || !b || typeof a !== "object" || typeof b !== "object") return false;
-  if (Array.isArray(a) !== Array.isArray(b)) return false;
-  let pairs = seen.get(a);
-  if (pairs?.has(b)) return true;
-  if (!pairs) seen.set(a, (pairs = new Set()));
-  pairs.add(b);
-  const aKeys = Object.keys(a);
-  const bKeys = Object.keys(b);
-  if (aKeys.length !== bKeys.length) return false;
-  for (const key of aKeys) {
-    if (!Object.hasOwn(b, key)) return false;
-    if (!sameSchemaValue(
-      (a as Record<string, unknown>)[key],
-      (b as Record<string, unknown>)[key],
-      seen,
-    )) return false;
-  }
-  return true;
-}
-
-type CompileLogEntry<TContext> =
-  | CompileEntry
-  | {
-      kind: "registration";
-      replay: (target: McpFnRegistry<TContext>) => void;
-      schemas: object[];
-    };
-
 export class McpFnRegistry<TContext = undefined> {
   private readonly options: McpFnRegistryOptions;
   private readonly compileSchema: (schema: object) => CompiledSchema;
-  // Every schema compile this registry's compiler received, in order. A
-  // successful registration folds its compiles into one entry; a failed one
-  // leaves them as plain compile entries, because a compiler can keep state
-  // from them (Ajv keeps a schema's `$id` even when its compile fails).
-  private readonly compileLog: Array<CompileLogEntry<TContext>> = [];
+  private readonly registrations: Array<(target: McpFnRegistry<TContext>) => void> = [];
+  private readonly schemas: object[] = [];
+  // Set while this registry's compiler runs, so a compiler (or a schema getter
+  // it reads) cannot register on this registry in the middle of a registration.
+  private compiling = false;
 
   /**
    * Clone in successful registration order, preserving cross-definition
-   * references. A built-in compiler is a fresh instance given the same compiles,
-   * in the same order, as this registry's compiler (failed registrations
-   * included), so it resolves exactly the `$id`s this registry resolves.
-   * A failed registration's compiles replay as they were compiled, even if the
-   * caller edited those schema objects in place afterwards.
+   * references. Each successful registration is replayed with its live
+   * definition. A built-in compiler is a fresh instance; a custom
+   * `compileSchema` is shared as-is.
    */
   clone(): McpFnRegistry<TContext> {
     const target = new McpFnRegistry<TContext>(this.options);
-    // A shared custom compiler already holds whatever state it keeps.
-    const builtIn = this.options.compileSchema === undefined;
-    // Whether each entry's schema object is compiled again by a later entry.
-    const recompiledLater: boolean[] = [];
-    const later = new Set<object>();
-    for (let index = this.compileLog.length - 1; index >= 0; index -= 1) {
-      const entry = this.compileLog[index]!;
-      const schemas = entry.kind === "registration" ? entry.schemas : [entry.schema];
-      recompiledLater[index] = entry.kind === "compile" && later.has(entry.schema);
-      for (const schema of schemas) later.add(schema);
-    }
-    this.compileLog.forEach((entry, index) => {
-      if (entry.kind === "registration") entry.replay(target);
-      else if (builtIn) target.replayCompileEntry(entry, recompiledLater[index]!);
-    });
+    for (const register of this.registrations) register(target);
     return target;
   }
 
@@ -685,75 +612,26 @@ export class McpFnRegistry<TContext = undefined> {
     return new McpFnRegistry<TContext>(this.options);
   }
 
-  /**
-   * Schema resources of successful registrations, in compile order, for
-   * catalog projections: hidden and visible tools and prompts.
-   */
+  /** Registered schema resources for catalog projections, including hidden tools and prompts. */
   schemaDefinitions(): object[] {
-    return this.compileLog.flatMap((entry) => entry.kind === "registration" ? entry.schemas : []);
+    return [...this.schemas];
   }
 
-  private replayCompileEntry(entry: CompileEntry, recompiledLater: boolean): void {
-    const { schema, snapshot, ok } = entry;
-    if (snapshot === undefined) {
-      // Not copyable, so its compiled form is unknown: replay the live object
-      // and accept either outcome rather than fail the clone over it.
-      try {
-        this.compile(schema);
-      } catch {
-        // Best-effort replay; the outcome is not compared.
-      }
-      return;
-    }
-    // Unchanged: replay the same object, so a compiler that caches by object
-    // identity (Ajv) treats its later compiles exactly as the source's did.
-    if (sameSchemaValue(schema, snapshot)) return this.replayCompile(schema, ok);
-    // Edited in place after a failed compile and compiled again later: that
-    // later compile supersedes it (Ajv reuses the failed entry for the same
-    // object; cfworker keeps nothing from a failed compile).
-    if (!ok && recompiledLater) return;
-    this.replayCompile(snapshot, ok);
-  }
-
-  private replayCompile(schema: object, expectedOk: boolean): void {
-    let ok = true;
-    let cause: unknown;
+  private compile(schema: object): CompiledSchema {
+    this.compiling = true;
     try {
-      this.compile(schema);
-    } catch (error) {
-      ok = false;
-      cause = error;
+      return this.compileSchema(schema);
+    } finally {
+      this.compiling = false;
     }
-    if (ok !== expectedOk) {
+  }
+
+  private assertNotCompiling(kind: string): void {
+    if (this.compiling) {
       throw new McpFnValidationError(
-        "Cloned registry schema compile diverged from its source registry",
-        { cause: cause instanceof Error ? cause.message : String(cause ?? "compile succeeded") },
+        `Cannot register an MCP ${kind} while this registry is compiling a schema`,
       );
     }
-  }
-
-  /** The single compile chokepoint: every attempt is logged, failures included. */
-  private compile(schema: object): CompiledSchema {
-    // Only a built-in compiler's compiles are replayed, so only they need a copy.
-    const snapshot = this.options.compileSchema === undefined ? snapshotSchema(schema) : undefined;
-    let ok = false;
-    try {
-      const compiled = this.compileSchema(schema);
-      ok = true;
-      return compiled;
-    } finally {
-      this.compileLog.push({ kind: "compile", schema, snapshot, ok });
-    }
-  }
-
-  /** Fold the compiles a successful registration made since `start` into one entry. */
-  private commitRegistration(
-    start: number,
-    replay: (target: McpFnRegistry<TContext>) => void,
-  ): this {
-    const compiles = this.compileLog.splice(start) as CompileEntry[];
-    this.compileLog.push({ kind: "registration", replay, schemas: compiles.map(({ schema }) => schema) });
-    return this;
   }
 
   private readonly tools = new Map<string, RegisteredTool<TContext>>();
@@ -784,7 +662,7 @@ export class McpFnRegistry<TContext = undefined> {
   register<TDefinition extends McpFnToolDefinition<TContext>>(
     definition: TDefinition,
   ): this {
-    const logStart = this.compileLog.length;
+    this.assertNotCompiling("tool");
     assertName("tool", definition.name);
     if (this.tools.has(definition.name)) {
       throw new McpFnValidationError(`Duplicate MCP tool: ${definition.name}`);
@@ -854,7 +732,9 @@ export class McpFnRegistry<TContext = undefined> {
       validateInput,
       validateOutput,
     });
-    return this.commitRegistration(logStart, target => { target.register(definition); });
+    this.schemas.push(definition.inputSchema, ...(definition.outputSchema ? [definition.outputSchema] : []));
+    this.registrations.push(target => { target.register(definition); });
+    return this;
   }
 
   registerAll(definitions: McpFnToolDefinition<TContext>[]): this {
@@ -863,7 +743,7 @@ export class McpFnRegistry<TContext = undefined> {
   }
 
   registerResource(definition: McpFnResourceDefinition<TContext>): this {
-    const logStart = this.compileLog.length;
+    this.assertNotCompiling("resource");
     assertUri("resource", definition.uri);
     assertName("resource", definition.name);
     if (typeof definition.read !== "function") {
@@ -883,13 +763,14 @@ export class McpFnRegistry<TContext = undefined> {
       definition.unsubscribe,
     );
     this.resources.set(definition.uri, definition);
-    return this.commitRegistration(logStart, target => { target.registerResource(definition); });
+    this.registrations.push(target => { target.registerResource(definition); });
+    return this;
   }
 
   registerResourceTemplate(
     definition: McpFnResourceTemplateDefinition<TContext>,
   ): this {
-    const logStart = this.compileLog.length;
+    this.assertNotCompiling("resource template");
     assertName("resource template", definition.name);
     if (typeof definition.read !== "function") {
       throw new McpFnValidationError(
@@ -951,11 +832,12 @@ export class McpFnRegistry<TContext = undefined> {
       }
     }
     this.resourceTemplates.set(definition.name, { definition, template });
-    return this.commitRegistration(logStart, target => { target.registerResourceTemplate(definition); });
+    this.registrations.push(target => { target.registerResourceTemplate(definition); });
+    return this;
   }
 
   registerPrompt(definition: McpFnPromptDefinition<TContext>): this {
-    const logStart = this.compileLog.length;
+    this.assertNotCompiling("prompt");
     assertName("prompt", definition.name);
     if (this.prompts.has(definition.name)) {
       throw new McpFnValidationError(
@@ -1056,7 +938,9 @@ export class McpFnRegistry<TContext = undefined> {
       }
     }
     this.prompts.set(definition.name, { definition, validateArguments });
-    return this.commitRegistration(logStart, target => { target.registerPrompt(definition); });
+    this.schemas.push(promptSchema(definition));
+    this.registrations.push(target => { target.registerPrompt(definition); });
+    return this;
   }
 
   has(name: string): boolean {
