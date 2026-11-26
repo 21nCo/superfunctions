@@ -1,0 +1,59 @@
+datafn/docs/content/docs/recipes/filefn-integration.mdx
+  s_f28924c6e75cbb::t_7962a313fe902b 118
+datafn/docs/public/llms-full.txt
+  s_f28924c6e75cbb::t_2a2521da2b8439 22217
+filefn/client/README.md
+  s_f28924c6e75cbb::t_f1b56d0035721d 74
+filefn/client/src/__tests__/offline-queue.test.ts
+  s_f28924c6e75cbb::t_1de7c25d319262 1543-1767
+filefn/client/src/__tests__/transport-offline.test.ts
+  s_f28924c6e75cbb::t_20d4e62ad55398 60-65,115,135
+filefn/client/src/index.ts
+  s_f28924c6e75cbb::t_6dcf22675242d6 409-416
+filefn/client/src/offline/queue.ts
+  s_f28924c6e75cbb::t_bc6c60c9c367aa 372-373,497-501,509,511-512,515-516,519-522,738-743,749-750,762-765,774-786,788-809,813-822,1147-1148,1150,1306-1312,1533-1537,1539,1541-1566,1868-1870,1872,1875-1878,1896,1902,2019,2171-2172,2228-2239,2250,2283,2325-2326,2329,2337-2339,2374-2376,2555-2556
+filefn/client/src/offline/sync.ts
+  s_f28924c6e75cbb::t_8ac5de599d73d4 163,222,306,332,335,341,381,388,393,397-408,422,433
+filefn/client/src/types.ts
+  s_f28924c6e75cbb::t_9be2913a0cc31f 68-72,77-86
+filefn/docs/content/docs/core-concepts/offline.md
+  s_f28924c6e75cbb::t_d2041a68ae1758 30-35
+filefn/docs/content/docs/features/offline.md
+  s_f28924c6e75cbb::t_c89cbd7100976d 45,47,67,89-90,101-102,115,119
+filefn/docs/content/docs/frameworks/sveltekit.md
+  s_f28924c6e75cbb::t_72571b10a86ba4 52-53,61-66
+filefn/docs/content/docs/quickstart/hono.md
+  s_f28924c6e75cbb::t_a6e643fd60f656 56
+filefn/docs/content/docs/quickstart/sveltekit.md
+  s_f28924c6e75cbb::t_8d3dd038c95b30 97-99,110-117
+filefn/docs/content/docs/reference/changelog.md
+  s_f28924c6e75cbb::t_e30ca7c27f86cd 12,15-16
+filefn/docs/content/docs/sdk/client.md
+  s_f28924c6e75cbb::t_dd8c134fabcb2e 141
+filefn/docs/scripts/check-recipe-types.test.mjs
+  s_f28924c6e75cbb::t_08a9aa34e446b3 246-247
+filefn/docs/static/llms-full.txt
+  s_f28924c6e75cbb::t_5ac01acaa5e19c 2203-2208,3877,3879,3899,3921-3922,3933-3934,3947,3951,5418-5419,5427-5432,6212,6470-6472,6483-6490,8381,8384-8385,9367
+filefn/examples/production/server/src/index.ts
+  s_f28924c6e75cbb::t_67bd771343db57 128-130
+filefn/server/src/upload-sessions/service.ts
+  s_f28924c6e75cbb::t_0b2f5103c7054e 273-279,516-517,1850,1914,1998-2002,2010,2053,2116-2117
+filefn/server/tests/offline-replay.test.ts
+  s_f28924c6e75cbb::t_4eb7ec4d51ac64 384-410
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3f4f662aa3b59676979fe9c393f76a883f427a9e",
+  "prompts": {},
+  "sessions": {
+    "s_f28924c6e75cbb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec49bf15-18d9-4f16-941f-7b2db768b4a7",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
