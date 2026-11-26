@@ -2,14 +2,14 @@
 
 LangFn is the Superfunctions dual-language SDK for production LLM workflows. It ships aligned TypeScript and Python surfaces for model calls, prompts, tools, orchestration, state graphs, agents, RAG, observability, evaluation, HTTP routes, and MCP.
 
-Current release targets: TypeScript `0.2.0`, Python `0.1.0`.
+Current release targets: TypeScript `0.2.1`, Python `0.1.0`.
 
 ## Install
 
 TypeScript:
 
 ```bash
-npm install langfn@0.2.0
+npm install langfn@0.2.1
 ```
 
 Python:

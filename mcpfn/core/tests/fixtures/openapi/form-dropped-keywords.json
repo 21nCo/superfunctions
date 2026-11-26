@@ -1,0 +1,63 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "fixture",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/shapes": {
+      "post": {
+        "operationId": "createShape",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Shape"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Shape": {
+        "type": "object",
+        "example": {
+          "kind": "circle"
+        },
+        "discriminator": {
+          "propertyName": "kind",
+          "mapping": {
+            "circle": "#/components/schemas/Circle"
+          }
+        },
+        "xml": {
+          "name": "shape"
+        },
+        "externalDocs": {
+          "url": "https://docs.example.com/shapes"
+        },
+        "properties": {
+          "kind": {
+            "type": "string",
+            "example": "circle"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "Circle": {
+        "type": "object"
+      }
+    }
+  }
+}
