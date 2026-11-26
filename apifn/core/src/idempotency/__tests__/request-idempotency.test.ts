@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, webcrypto } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   canonicalJson,
@@ -404,9 +404,12 @@ describe("createRequestIdempotency", () => {
   });
 
   it("uses portable SHA-256 and Web Crypto versions by default", async () => {
+    // Node 18 has no global Web Crypto by default; the fixture supplies the standard one.
+    if (!(globalThis as { crypto?: unknown }).crypto) vi.stubGlobal("crypto", webcrypto);
     const store = new FakeAtomicStore();
     const idempotency = createRequestIdempotency({ store });
     const token = acquired(await idempotency.claim(orderRequest({ recovery: "none" })));
+    vi.unstubAllGlobals();
     expect(token.storeKey).toMatch(/^[0-9a-f]{64}$/);
     expect(token.fingerprint).toMatch(/^[0-9a-f]{64}$/);
     expect(await sha256Fingerprint("abc")).toBe(createHash("sha256").update("abc").digest("hex"));
@@ -1532,5 +1535,155 @@ describe("createRequestIdempotency round-8 regressions", () => {
     store.failing = true;
     expect(await idempotency.settle(token, response)).toEqual({ outcome: "settled", response });
     expect(await idempotency.claim(orderRequest())).toEqual({ outcome: "replay", response, source: "receipt" });
+  });
+});
+
+/** Atomic store whose reads return the stored object itself, so its accessors reach the library unchanged. */
+class RawReadStore extends FakeAtomicStore {
+  override async get(storeKey: string): Promise<IdempotencyRecord | undefined> {
+    await tick();
+    return this.records.get(storeKey);
+  }
+}
+
+/** A header map whose field is a getter: valid on its first read, a header injection on every later read. */
+function flippingHeaders(name: string, base: Record<string, string> = {}) {
+  const probe = { calls: 0, headers: { ...base } as Record<string, string> };
+  Object.defineProperty(probe.headers, name, {
+    enumerable: true,
+    get: () => ((probe.calls += 1) === 1 ? "test-value" : "test-value\r\nx-injected: 1"),
+  });
+  return probe;
+}
+
+describe("createRequestIdempotency round-9 regressions", () => {
+  it("never lets a stale holder's receipt replace a newer claim after the key's retention ended", async () => {
+    const database = new FakeOrderDatabase();
+    const store = new FakeAtomicStore();
+    let hook: (() => Promise<void>) | undefined;
+    const receipts = {
+      find: async (storeKey: string) => {
+        const found = await database.receipts.find(storeKey);
+        const run = hook;
+        hook = undefined;
+        // Between the stale holder's receipt read and its next step, retention ends and a newer claim starts.
+        if (run) await run();
+        return found;
+      },
+    };
+    const { idempotency } = setup({ store, receipts });
+    const stale = acquired(await idempotency.claim(orderRequest()));
+    const response = await database.createOrder(stale, "book");
+    let newer: IdempotencyToken | undefined;
+    let newerRecord: IdempotencyRecord | undefined;
+    hook = async () => {
+      database.receiptsByKey.clear();
+      store.records.clear();
+      newer = acquired(await idempotency.claim(orderRequest()));
+      newerRecord = structuredClone(store.records.get(newer.storeKey));
+    };
+
+    expect(await idempotency.settle(stale, response)).toEqual({ outcome: "stale" });
+    expect(newer).toBeDefined();
+    expect(store.records.get(stale.storeKey)).toEqual(newerRecord);
+
+    const newerResponse = await database.createOrder(newer!, "book");
+    expect(await idempotency.settle(newer!, newerResponse)).toEqual({ outcome: "settled", response: newerResponse });
+    expect(store.records.get(stale.storeKey)).toMatchObject({ fromReceipt: true, receiptClaimId: newer!.claimId });
+    expect(await idempotency.claim(orderRequest())).toEqual({ outcome: "replay", response: newerResponse, source: "store" });
+  });
+
+  it("records a newer commit over a record recorded from an older receipt for the same body", async () => {
+    const { idempotency, database, store } = setup();
+    const first = acquired(await idempotency.claim(orderRequest()));
+    await idempotency.settle(first, await database.createOrder(first, "book"));
+    expect(store.records.get(first.storeKey)).toMatchObject({ fromReceipt: true, receiptClaimId: first.claimId });
+    // The receipt store purged the first commit and a later claim of the same body committed again.
+    database.receiptsByKey.clear();
+    const later = { ...first, version: "test-version-later", claimId: "test-claim-later" };
+    const laterResponse = await database.createOrder(later, "book again");
+
+    expect(await idempotency.settle(later, laterResponse)).toEqual({ outcome: "settled", response: laterResponse });
+    expect(store.records.get(first.storeKey)).toMatchObject({ receiptClaimId: "test-claim-later", response: { body: laterResponse.body } });
+    expect(await idempotency.claim(orderRequest())).toEqual({ outcome: "replay", response: laterResponse, source: "store" });
+  });
+
+  it("rejects an accessor-backed connection header in normalize without invoking it", () => {
+    const probe = flippingHeaders("connection", { "x-note": "test-value" });
+    expect(() => normalizeIdempotentResponse({ status: 200, headers: probe.headers })).toThrow(TypeError);
+    expect(probe.calls).toBe(0);
+  });
+
+  it("never copies an accessor-backed set-cookie into the holder's own receipt-backed settle", async () => {
+    const { idempotency, database } = setup();
+    const token = acquired(await idempotency.claim(orderRequest()));
+    const committed = await database.createOrder(token, "book");
+    const probe = flippingHeaders("set-cookie", committed.headers);
+    const result = await idempotency.settle(token, { ...committed, headers: probe.headers });
+    expect(result).toEqual({ outcome: "settled", response: committed });
+    expect(probe.calls).toBe(0);
+  });
+
+  it("fails closed on a stored record whose header is an accessor, without invoking it", async () => {
+    const store = new RawReadStore();
+    const { idempotency } = setup({ store });
+    const token = acquired(await idempotency.claim(orderRequest({ recovery: "none" })));
+    await idempotency.settle(token, { status: 200, headers: { "x-note": "test-value" } });
+    const record = store.records.get(token.storeKey) as IdempotencyRecord & { response: { headers: Record<string, string> } };
+    const probe = flippingHeaders("x-note");
+    record.response.headers = probe.headers;
+
+    await expect(idempotency.claim(orderRequest({ recovery: "none" }))).rejects.toThrow(/malformed record/);
+    await expect(idempotency.recover(orderRequest({ recovery: "none" }))).rejects.toThrow(/malformed record/);
+    expect(probe.calls).toBe(0);
+  });
+
+  it("settles without a receipt from the response as validated, never the caller's later changes", async () => {
+    const store = new HookedStore();
+    const { idempotency } = setup({ store });
+    const token = acquired(await idempotency.claim(orderRequest({ recovery: "none" })));
+    const response = { status: 201, headers: { "x-note": "test-value", "set-cookie": "test-session=1" } as Record<string, string>, body: "{}" };
+    store.arm(token.version, async () => {
+      // The caller changes its object while the settle write is in flight.
+      response.status = 500;
+      response.headers["x-note"] = "test-value\r\nx-injected: 1";
+    });
+
+    const result = await idempotency.settle(token, response);
+    expect(result).toEqual({
+      outcome: "settled",
+      response: { status: 201, headers: { "x-note": "test-value", "set-cookie": "test-session=1" }, body: "{}" },
+    });
+    if (result.outcome === "settled") expect(result.response).not.toBe(response);
+    expect(store.records.get(token.storeKey)).toMatchObject({ response: { status: 201, headers: { "x-note": "test-value" } } });
+  });
+
+  it("rejects an accessor-backed header on settle without a receipt before any store write", async () => {
+    const { idempotency, store } = setup();
+    const token = acquired(await idempotency.claim(orderRequest({ recovery: "none" })));
+    const pending = structuredClone(store.records.get(token.storeKey));
+    const probe = flippingHeaders("x-note");
+    await expect(idempotency.settle(token, { status: 200, headers: probe.headers })).rejects.toThrow(TypeError);
+    expect(probe.calls).toBe(0);
+    expect(store.records.get(token.storeKey)).toEqual(pending);
+  });
+
+  it("reports a conflict when the tombstone write of a none claim that found a receipt rejects", async () => {
+    const database = new FakeOrderDatabase();
+    class FailingTombstoneStore extends ReceiptDuringAcquireStore {
+      override async compareAndSet(storeKey: string, expectedVersion: string | null, next: IdempotencyRecord | null) {
+        if (next?.state === "released") throw new Error("store write failed");
+        return super.compareAndSet(storeKey, expectedVersion, next);
+      }
+    }
+    const store = new FailingTombstoneStore((storeKey, pending) => {
+      const commit = { storeKey, fingerprint: pending.fingerprint, generation: 1, claimId: "test-claim-other" };
+      database.receiptsByKey.set(storeKey, { ...commit, response: { status: 201, headers: {}, body: "{}" } });
+    });
+    const { idempotency } = setup({ store, receipts: database.receipts });
+
+    expect(await idempotency.claim(orderRequest({ recovery: "none" }))).toEqual({ outcome: "conflict" });
+    expect([...store.records.values()][0]).toMatchObject({ state: "pending", recovery: "none", generation: 1 });
+    expect(store.writes).toBe(1);
   });
 });
