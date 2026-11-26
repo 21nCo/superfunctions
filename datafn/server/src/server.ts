@@ -457,56 +457,155 @@ export interface DatafnServer<TContext = any> {
 /**
  * Create a DataFn server
  */
+/** DATA-41: a push read-back's abort signal and deadline. */
+type ReadBackGuard = { signal: AbortSignal; deadline: number };
+
+const readBackExpiredError = () => new Error("DATA-41: post-write read-back deadline passed");
+const guardExpired = (guard?: ReadBackGuard) =>
+  guard !== undefined && (guard.signal.aborted || Date.now() >= guard.deadline);
+
+/**
+ * Reads a whole body. Under a read-back guard, each chunk is read only while
+ * the guard holds, and a body read past it is cancelled (a cancel that fails
+ * changes nothing).
+ */
+async function readBodyBytes(body: ReadableStream<Uint8Array>, guard?: ReadBackGuard): Promise<Uint8Array> {
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let onAbort: (() => void) | undefined;
+  const aborted = guard && new Promise<never>((_resolve, reject) => {
+    onAbort = () => reject(readBackExpiredError());
+    guard.signal.addEventListener("abort", onAbort, { once: true });
+  });
+  aborted?.catch(() => undefined);
+  try {
+    for (;;) {
+      if (guardExpired(guard)) throw readBackExpiredError();
+      const chunk = await (aborted ? Promise.race([reader.read(), aborted]) : reader.read());
+      if (chunk.done) break;
+      chunks.push(chunk.value);
+    }
+  } catch (error) {
+    try {
+      reader.cancel().catch(() => undefined);
+    } catch {
+      // Already released or closed.
+    }
+    throw error;
+  } finally {
+    if (onAbort) guard?.signal.removeEventListener("abort", onAbort);
+  }
+  const bytes = new Uint8Array(chunks.reduce((size, chunk) => size + chunk.byteLength, 0));
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
+}
+
+/**
+ * The JSON envelope with `capabilities.revisions` set. Leading whitespace and
+ * byte order marks are skipped. An envelope that already has a capabilities
+ * object gets the flag merged into it (one with a non-object capabilities
+ * value is left as it is); any other object gets the key spliced in, without
+ * parsing the body again. A body that is not an object is left as it is.
+ */
+function spliceRevisionCapability(text: string): string {
+  const body = text.trimStart();
+  if (!body.startsWith("{")) return text;
+  if (text.includes('"capabilities"')) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      parsed = undefined;
+    }
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed) && Object.prototype.hasOwnProperty.call(parsed, "capabilities")) {
+      const existing = (parsed as Record<string, unknown>).capabilities;
+      if (!existing || typeof existing !== "object" || Array.isArray(existing)) return text;
+      return JSON.stringify({ ...parsed, capabilities: { ...existing, revisions: true } });
+    }
+  }
+  return `{"capabilities":{"revisions":true}${/^\{\s*\}/.test(body) ? "" : ","}${body.slice(1)}`;
+}
+
+/**
+ * A read-back body served in slices, each only while the guard holds: once it
+ * expires, the stream (and every branch teed from it) is errored, so router
+ * middleware reading it stops at the push's deadline.
+ */
+function guardedBody(bytes: Uint8Array, guard: ReadBackGuard): ReadableStream<Uint8Array> {
+  const slice = 16 * 1024;
+  let offset = 0;
+  let onAbort: (() => void) | undefined;
+  const release = () => {
+    if (onAbort) guard.signal.removeEventListener("abort", onAbort);
+  };
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      onAbort = () => controller.error(readBackExpiredError());
+      guard.signal.addEventListener("abort", onAbort, { once: true });
+    },
+    pull(controller) {
+      if (guardExpired(guard)) {
+        release();
+        controller.error(readBackExpiredError());
+        return;
+      }
+      controller.enqueue(bytes.subarray(offset, offset + slice));
+      offset += slice;
+      if (offset >= bytes.byteLength) {
+        release();
+        controller.close();
+      }
+    },
+    cancel: release,
+  }, { highWaterMark: 0 });
+}
+
+/**
+ * Create a DataFn server
+ */
 /**
  * DATA-41: with revisions on, every JSON envelope a DataFn route returns
  * (success or error, including auth and validation errors) announces
  * `capabilities: { revisions: true }`, so a client can tell a
- * revision-aware server from an older one. The key is spliced into the
- * serialized body, which is not parsed again.
+ * revision-aware server from an older one. External requests and a push's
+ * own read-back get the envelope from the same splice, so router middleware
+ * sees the same body for both. A body with a Content-Encoding, or one that
+ * is not UTF-8, is passed through unchanged, without the capability. A
+ * read-back's body is read and served only until its deadline.
  */
 function withRevisionCapability<A extends unknown[]>(
   schema: DatafnSchema,
   handler: (...args: A) => Promise<Response>,
-  readBackSignal?: (...args: A) => AbortSignal | undefined,
+  readBackGuard?: (...args: A) => ReadBackGuard | undefined,
 ): (...args: A) => Promise<Response> {
   if (!revisionsEnabled(schema)) return handler;
   return async (...args: A) => {
     const response = await handler(...args);
-    if (!response.body || !response.headers.get("content-type")?.includes("application/json")) {
+    const encoding = response.headers.get("content-encoding")?.trim().toLowerCase();
+    if (
+      !response.body || !response.headers.get("content-type")?.includes("application/json") ||
+      (encoding && encoding !== "identity")
+    ) {
       return response;
     }
-    // A push's own read-back: the same envelope reaches router middleware, but
-    // spliced as it streams, so nothing here waits on the body, and the push's
-    // deadline (its abort signal) cancels the body wherever it is being read.
-    const signal = readBackSignal?.(...args);
-    if (signal) {
-      const prefix = new TextEncoder().encode('{"capabilities":{"revisions":true},');
-      let started = false;
-      const splice = new TransformStream<Uint8Array, Uint8Array>({
-        transform(chunk, controller) {
-          if (started) return controller.enqueue(chunk);
-          const index = chunk.findIndex((byte) => byte !== 0x20 && byte !== 0x09 && byte !== 0x0a && byte !== 0x0d);
-          if (index < 0) return controller.enqueue(chunk);
-          started = true;
-          if (chunk[index] !== 0x7b) return controller.enqueue(chunk);
-          controller.enqueue(prefix);
-          controller.enqueue(chunk.subarray(index + 1));
-        },
-      });
-      const headers = new Headers(response.headers);
-      headers.delete("content-length");
-      return new Response(response.body.pipeThrough(splice, { signal }), {
-        status: response.status, statusText: response.statusText, headers,
-      });
+    const guard = readBackGuard?.(...args);
+    const bytes = await readBodyBytes(response.body, guard);
+    let text: string | undefined;
+    try {
+      text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    } catch {
+      text = undefined;
     }
-    const text = await response.text();
-    const body = text.trimStart();
-    const spliced = !body.startsWith("{")
-      ? text
-      : `{"capabilities":{"revisions":true}${/^\{\s*\}/.test(body) ? "" : ","}${body.slice(1)}`;
+    const spliced = text === undefined ? bytes : new TextEncoder().encode(spliceRevisionCapability(text));
     const headers = new Headers(response.headers);
     headers.delete("content-length");
-    return new Response(spliced, { status: response.status, statusText: response.statusText, headers });
+    return new Response(guard ? guardedBody(spliced, guard) : spliced, {
+      status: response.status, statusText: response.statusText, headers,
+    });
   };
 }
 
@@ -1282,9 +1381,18 @@ export async function createDatafnServer<TContext = any>(
   const readBackWithin = (request: Request, deadline: number, abort: AbortController): Promise<unknown> => {
     let expired = false;
     let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+    // Every expiry aborts the read-back request: abort-aware middleware is
+    // told, and its body (and any branch teed from it) is errored.
+    const expire = () => {
+      expired = true;
+      abort.abort();
+    };
     // Ready chunks resume in microtasks that can starve the timer, so the
-    // clock is also checked on every chunk.
-    const late = () => expired || Date.now() >= deadline;
+    // clock is also checked on every chunk and after the parse.
+    const late = () => {
+      if (!expired && Date.now() >= deadline) expire();
+      return expired;
+    };
     const read = (async () => {
       const response = await router.handle(request);
       if (late() || !response.ok || !response.body) {
@@ -1301,14 +1409,14 @@ export async function createDatafnServer<TContext = any>(
         }
         text += decoder.decode(chunk.value, { stream: true });
       }
-      return late() ? undefined : JSON.parse(text + decoder.decode()) as unknown;
+      if (late()) return undefined;
+      const parsed = JSON.parse(text + decoder.decode()) as unknown;
+      return late() ? undefined : parsed;
     })();
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<undefined>((resolve) => {
       timer = setTimeout(() => {
-        expired = true;
-        // Tells abort-aware middleware, and cancels a body DataFn streams.
-        abort.abort();
+        expire();
         discardBody(reader);
         resolve(undefined);
       }, Math.max(0, deadline - Date.now()));
@@ -1701,7 +1809,10 @@ export async function createDatafnServer<TContext = any>(
   };
   // DATA-41: every DataFn route announces its capabilities, auth errors included.
   const withAuth = (...args: Parameters<typeof withAuthUnannounced>) =>
-    withRevisionCapability(validatedSchema, withAuthUnannounced(...args), (req) => (req ? postWriteReads.get(req)?.abort.signal : undefined));
+    withRevisionCapability(validatedSchema, withAuthUnannounced(...args), (req) => {
+      const read = req ? postWriteReads.get(req) : undefined;
+      return read && { signal: read.abort.signal, deadline: read.deadline };
+    });
 
   const executeInProcess = async <TResult>(
     action: "query" | "mutation" | "transact" | "search",

@@ -20,7 +20,7 @@ import {
 } from "../idempotency.js";
 import type { SequenceStore } from "./sequence-store.js";
 import { ChangeTrackingService, recordChangeWithRetry } from "./change-tracking.js";
-import { issuesRevisions, recordedRevision, recordIdMismatch, REVISION_FIELD } from "../revisions.js";
+import { canonicalRow, issuesRevisions, recordedRevision, recordIdMismatch, REVISION_FIELD } from "../revisions.js";
 import type { ChangeEntryInput } from "./change-tracking.js";
 import { canReadEveryField, isPrivateShareableResource, resolveAccessLevel } from "../../validation/authz.js";
 import {
@@ -242,20 +242,6 @@ function hasTrashCapability(resolvedCapabilities: unknown[]): boolean {
 
 function hasArchivableCapability(resolvedCapabilities: unknown[]): boolean {
   return resolvedCapabilities.some((entry) => entry === "archivable");
-}
-
-/** Orders strings by UTF-16 code unit, independent of locale. */
-function byCodeUnit(a: string, b: string): number {
-  if (a === b) return 0;
-  return a < b ? -1 : 1;
-}
-
-/** DATA-41: a row's JSON wire form with its keys sorted, for comparing rows. */
-function canonicalRow(row: Record<string, unknown>): string {
-  return JSON.stringify(JSON.parse(JSON.stringify(row)), (_key, value: unknown) =>
-    value && typeof value === "object" && !Array.isArray(value)
-      ? Object.fromEntries(Object.keys(value).sort(byCodeUnit).map((key) => [key, (value as Record<string, unknown>)[key]]))
-      : value);
 }
 
 /**

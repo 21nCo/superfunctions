@@ -119,6 +119,8 @@ export interface ChangeEntryInput {
    * reuses it instead of bumping again.
    */
   rev?: number;
+  /** DATA-41: the revision was raised from a possibly stale view; the change row is not certified. */
+  revUncertified?: boolean;
 }
 
 /**
@@ -481,7 +483,7 @@ export class ChangeTrackingService {
       record: params.record ? JSON.stringify(params.record) : null,
       created_at: now,
       ...(params.rev !== undefined && certifiesRecord(params.resource)
-        ? { rev: params.rev, rev_certified: this.writesCertified ? 1 : 0 }
+        ? { rev: params.rev, rev_certified: this.writesCertified && !params.revUncertified ? 1 : 0 }
         : {}),
     }));
 

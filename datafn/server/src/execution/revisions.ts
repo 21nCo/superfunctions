@@ -39,6 +39,20 @@ function certify<T extends Record<string, unknown>>(row: T): T {
   return row;
 }
 
+/** Orders strings by UTF-16 code unit, independent of locale. */
+function byCodeUnit(a: string, b: string): number {
+  if (a === b) return 0;
+  return a < b ? -1 : 1;
+}
+
+/** DATA-41: a row's JSON wire form with its keys sorted, for comparing rows. */
+export function canonicalRow(row: Record<string, unknown>): string {
+  return JSON.stringify(JSON.parse(JSON.stringify(row)), (_key, value: unknown) =>
+    value && typeof value === "object" && !Array.isArray(value)
+      ? Object.fromEntries(Object.keys(value).sort(byCodeUnit).map((key) => [key, (value as Record<string, unknown>)[key]]))
+      : value);
+}
+
 /** Whether `row`'s `$rev` was paired with it by the server. */
 export function isRevisionCertified(row: Record<string, unknown>): boolean {
   return certifiedRows.has(row);
@@ -253,6 +267,16 @@ export async function bumpRevision(
 }
 
 /**
+ * DATA-41: `staleView` is set when the bump succeeded only after a swap miss
+ * on an adapter whose reads are a transaction snapshot: the record row this
+ * transaction reads may then be older than the revision, so it is not
+ * recorded as the row at that revision.
+ */
+export interface BumpOutcome {
+  staleView?: boolean;
+}
+
+/**
  * DATA-41: raises a deleted record's revision to a tombstone, but only for a
  * write that moved the record from present to absent. Each attempt, every
  * compare-and-swap retry included, reads the revision row and then checks,
@@ -273,8 +297,9 @@ export async function bumpTombstone(
   namespace: string,
   resource: string,
   recordId: string,
+  outcome?: BumpOutcome,
 ): Promise<number | undefined> {
-  return raiseRevision(db, namespace, resource, recordId, true, async (row) =>
+  return raiseRevision(db, namespace, resource, recordId, true, outcome, async (row) =>
     isTombstone(row) ||
     (await db.findOne({
       model: resource,
@@ -299,9 +324,14 @@ export async function bumpPresent(
   namespace: string,
   resource: string,
   recordId: string,
+  outcome?: BumpOutcome,
 ): Promise<number | undefined> {
-  return raiseRevision(db, namespace, resource, recordId, false, async () =>
-    (await db.findOne({
+  // After a swap miss where reads are a snapshot, the record row read may be
+  // older than the write that won; the revision row (just written, so read
+  // current) decides instead: a tombstone committed since means this write
+  // changed nothing and must not turn it live.
+  return raiseRevision(db, namespace, resource, recordId, false, outcome, async (row, recovered) =>
+    recovered && row !== null ? isTombstone(row) : (await db.findOne({
       model: resource,
       where: [{ field: "id", operator: "eq", value: recordId }],
       namespace,
@@ -318,17 +348,22 @@ async function raiseRevision(
   resource: string,
   recordId: string,
   deleted: boolean,
-  skip?: (row: Record<string, unknown> | null) => Promise<boolean>,
+  outcome?: BumpOutcome,
+  skip?: (row: Record<string, unknown> | null, recovered: boolean) => Promise<boolean>,
 ): Promise<number | undefined> {
   const id = revisionRowId(namespace, resource, recordId);
   const where = [{ field: "id", op: "eq" as const, value: id }];
+  // Only PostgreSQL's READ COMMITTED reads the latest commit on every statement.
+  const snapshotReads = db.rawSql?.dialect !== "postgres";
   for (let attempt = 0; attempt < MAX_BUMP_ATTEMPTS; attempt++) {
     const updatedAt = new Date().toISOString();
+    const recovered = attempt > 0 && snapshotReads;
+    if (outcome) outcome.staleView = recovered;
     // A retry follows a write that committed after this transaction's read;
     // a plain read in a snapshot would return the same stale revision again.
     if (attempt > 0) await writeLatest(db, id, updatedAt);
     const row = await db.internal.findOne(REVISIONS_TABLE, where);
-    if (skip && (await skip(row))) return undefined;
+    if (skip && (await skip(row, recovered))) return undefined;
     if (!row) {
       const created = await createIfAbsent(db, {
         id,
@@ -584,6 +619,8 @@ type WriteEntry = {
   op: string;
   record: Record<string, unknown> | null;
   rev?: number;
+  /** The revision was raised from a possibly stale view; see BumpOutcome. */
+  revUncertified?: boolean;
 };
 
 /**
@@ -644,12 +681,17 @@ export async function assignWriteRevisions(
       // row and result carry no revision. Revisions are raised the same way
       // whether or not the server returns them, so a server with revisions
       // off never turns a tombstone live for a write that changed nothing.
+      const outcome: BumpOutcome = {};
       entry.rev = deleted
-        ? await bumpTombstone(db, namespace, entry.resource, entry.id)
-        : await bumpPresent(db, namespace, entry.resource, entry.id);
+        ? await bumpTombstone(db, namespace, entry.resource, entry.id, outcome)
+        : await bumpPresent(db, namespace, entry.resource, entry.id, outcome);
+      if (outcome.staleView) entry.revUncertified = true;
       write.bumped.add(entry);
     }
-    if (!deleted && completeRow(entry.resource) && (entry.op !== "merge" || isKvResource(entry.resource))) {
+    if (
+      !deleted && !entry.revUncertified && completeRow(entry.resource) &&
+      (entry.op !== "merge" || isKvResource(entry.resource))
+    ) {
       const stored = await db.findOne({
         model: entry.resource,
         where: [{ field: "id", operator: "eq", value: entry.id }],

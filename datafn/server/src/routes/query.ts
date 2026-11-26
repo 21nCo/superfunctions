@@ -30,6 +30,7 @@ import {
 } from "../validation/authz.js";
 import {
   REVISION_FIELD,
+  canonicalRow,
   isRevisionCertified,
   issuesRevisions,
   readWithRevisionsOrPlain,
@@ -1062,8 +1063,35 @@ export function createQueryHandler(
           timer?.startPhase("materialize");
           let result = isBatch ? results : results[0];
 
+          // DATA-41: a `$rev` belongs to the exact row it was certified with.
+          // After the afterQuery hooks, a row they changed or added keeps no
+          // `$rev`; an unchanged row (even a copy) keeps it.
+          const revisedRows = (value: unknown) => {
+            const rows = (value as { data?: unknown } | null)?.data;
+            return Array.isArray(rows)
+              ? (rows as unknown[]).filter((row): row is Record<string, unknown> =>
+                Boolean(row) && typeof row === "object" && REVISION_FIELD in (row as object))
+              : [];
+          };
+          const certifiedBefore = (isBatch ? results : [results[0]]).map(
+            (value) => new Set(revisedRows(value).map(canonicalRow)),
+          );
+
           // Run afterQuery hooks (fail-open)
           result = await runAfterQuery(transformedBody, result, hookCtx, plugins);
+
+          const afterHooks = isBatch ? (Array.isArray(result) ? result : []) : [result];
+          afterHooks.forEach((value, index) => {
+            const rows = (value as { data?: unknown[] } | null)?.data;
+            const queried = transformedQueries[index] as { resource?: unknown } | undefined;
+            if (!Array.isArray(rows) || !issuesRevisions(validatedSchema, String(queried?.resource))) return;
+            rows.forEach((row, position) => {
+              if (!row || typeof row !== "object" || !(REVISION_FIELD in row)) return;
+              if (certifiedBefore[index]?.has(canonicalRow(row as Record<string, unknown>))) return;
+              const { [REVISION_FIELD]: _uncertified, ...rest } = row as Record<string, unknown>;
+              rows[position] = rest;
+            });
+          });
 
           if (timingEmitter && timer) {
             timingEmitter(timer.build("/datafn/query", resource, "query"));

@@ -8,6 +8,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createDatafnServer } from "../src/server.js";
 import {
   READ_CHUNK,
+  assignWriteRevisions,
+  bumpPresent,
   bumpRevision,
   bumpTombstone,
   configureRevisions,
@@ -3375,3 +3377,186 @@ describe("DATA-41 revisions: PR review round 3", () => {
   });
 });
 
+
+describe("DATA-41 revisions: PR review round 4", () => {
+  const isQuery = (request: Request) => new URL(request.url).pathname.endsWith("/query");
+  const json = (body: unknown, headers: Record<string, string> = {}) =>
+    new Response(typeof body === "string" ? body : JSON.stringify(body), { status: 200, headers: { "content-type": "application/json", ...headers } });
+  const queryRoute = (served: { server: { router: { handle(request: Request): Promise<Response> } } }, body: unknown) =>
+    served.server.router.handle(new Request("http://localhost/datafn/query", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+    }));
+
+  it("gives a BOM-prefixed read-back the same capability envelope as an external /query", async () => {
+    const served = await serve({ config: { routeHooks: {
+      afterResponse: async ({ action, response }: { action: string; response: Response }) =>
+        action !== "query" ? response : json(`\uFEFF${await response.text()}`),
+    } } });
+    // Router middleware that redacts any envelope announcing revisions.
+    served.server.router.use(async (request, _ctx, next) => {
+      const response = await next();
+      if (!isQuery(request)) return response;
+      const body = JSON.parse(await response.text());
+      if (!body.capabilities?.revisions) return json(body);
+      return json({ ...body, result: { ...body.result, data: body.result.data.map((row: Json) => ({ ...row, title: "[redacted]" })) } });
+    });
+    const res = await served.push({ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } });
+    const read = await served.send("query", { version: 1, resource: "task", withRevisions: true, filters: { id: "task:1" } });
+    expect(read.body.result.data[0].title).toBe("[redacted]");
+    expect(res.body.result.revisions[res.mutationId]).toEqual({ resource: "task", id: "task:1", rev: 1 });
+  });
+
+  it("passes encoded bodies through unchanged and merges an existing capabilities object", async () => {
+    let gzipped: Uint8Array | undefined;
+    let mode: "gzip" | "merge" = "gzip";
+    const served = await serve({ config: { routeHooks: {
+      afterResponse: async ({ action, response }: { action: string; response: Response }) => {
+        if (action !== "query") return response;
+        const body = await response.json() as Json;
+        if (mode === "merge") return json({ ...body, capabilities: { custom: true } });
+        gzipped = new Uint8Array(await new Response(new Blob([JSON.stringify(body)]).stream()
+          .pipeThrough(new CompressionStream("gzip"))).arrayBuffer());
+        return new Response(gzipped, { status: 200, headers: { "content-type": "application/json", "content-encoding": "gzip" } });
+      },
+    } } });
+    await served.push({ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } });
+    const encoded = await queryRoute(served, { version: 1, resource: "task" });
+    expect(new Uint8Array(await encoded.arrayBuffer())).toEqual(gzipped);
+
+    mode = "merge";
+    const merged = await (await queryRoute(served, { version: 1, resource: "task", withRevisions: true })).text();
+    expect(merged.match(/"capabilities"/g)).toHaveLength(1);
+    expect(JSON.parse(merged).capabilities).toEqual({ custom: true, revisions: true });
+    // Control: an authorized push row equals the caller's /query row.
+    const res = await served.push({ resource: "task", operation: "merge", id: "task:1", record: { title: "b" } });
+    const read = await served.send("query", { version: 1, resource: "task", withRevisions: true, filters: { id: "task:1" } });
+    expect(res.body.result.revisions[res.mutationId].record).toEqual(read.body.result.data[0]);
+    expect(read.body.result.data[0]).toMatchObject({ title: "b", $rev: 2 });
+  });
+
+  it("aborts a read-back that ends late and stops serving its body past the deadline", async () => {
+    const realNow = Date.now.bind(Date);
+    let offset = 0;
+    vi.spyOn(Date, "now").mockImplementation(() => realNow() + offset);
+    let mode: "clone" | "drain" = "clone";
+    let reading: Promise<string> | undefined;
+    const served = await serve();
+    served.server.router.use(async (request, _ctx, next) => {
+      const response = await next();
+      if (!isQuery(request) || offset !== 0) return response;
+      const reader = (mode === "clone" ? response.clone() : response).body!.getReader();
+      await reader.read();
+      offset = 5_000;
+      // Reads the rest slowly (clone) or right away (drain), as middleware might.
+      reading = (async () => {
+        try {
+          for (let chunk = await reader.read(); !chunk.done; chunk = await reader.read()) {
+            if (mode === "clone") await new Promise((resolve) => setTimeout(resolve, 5));
+          }
+          return "done";
+        } catch {
+          return "errored";
+        }
+      })();
+      if (mode === "drain") await reading;
+      return response;
+    });
+    const big = "x".repeat(64 * 1024);
+    const cloned = await served.push({ resource: "task", operation: "insert", id: "task:1", record: { title: big } });
+    expect(cloned.body.result.revisions[cloned.mutationId]).toEqual({ resource: "task", id: "task:1", rev: 1 });
+    expect(await reading).toBe("errored");
+
+    offset = 0;
+    mode = "drain";
+    const drained = await served.push({ resource: "task", operation: "insert", id: "task:2", record: { title: big } });
+    expect(drained.body.result.revisions[drained.mutationId]).toEqual({ resource: "task", id: "task:2", rev: 1 });
+    expect(await reading).toBe("errored");
+  });
+
+  it("decides a retried bump from the current revision row where reads are a snapshot", async () => {
+    // InnoDB REPEATABLE READ: a plain read returns the row as of the
+    // transaction's first read until the transaction changes that row itself.
+    const snapshotView = (database: Adapter): Adapter => {
+      const seen = new Map<string, unknown>();
+      const read = async (key: string, load: () => Promise<unknown>) => {
+        if (!seen.has(key)) seen.set(key, await load());
+        return seen.get(key) ?? null;
+      };
+      const internal = new Proxy(database.internal, {
+        get(target, property, receiver) {
+          if (property === "findOne") {
+            return (table: string, where: any[]) => read(`${table}:${String(where[0]?.value)}`, () => target.findOne(table, where));
+          }
+          if (property === "update") {
+            return async (table: string, where: any[], data: Json) => {
+              const before = await target.findOne(table, [where[0]]);
+              const affected = await target.update(table, where, data);
+              if (affected > 0 && before && Object.entries(data).some(([key, value]) => before[key] !== value)) {
+                seen.delete(`${table}:${String(where[0]?.value)}`);
+              }
+              return affected;
+            };
+          }
+          return Reflect.get(target, property, receiver);
+        },
+      });
+      return new Proxy(database, {
+        get(target, property, receiver) {
+          if (property === "internal") return internal;
+          if (property === "findOne") {
+            return (args: any) => read(`${args.model}:${String(args.where[0]?.value)}`, () => target.findOne(args));
+          }
+          return Reflect.get(target, property, receiver);
+        },
+      }) as Adapter;
+    };
+    const ledger = (id: string) => [{ field: "id", op: "eq", value: revisionRowId(NS, "task", id) }] as any;
+    const record = (id: string) => ({ model: "task", where: [{ field: "id", operator: "eq", value: id }], namespace: NS }) as any;
+    const served = await serve();
+    await served.push({ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } });
+    await served.push({ resource: "task", operation: "insert", id: "task:2", record: { title: "a" } });
+
+    // A delete commits after this transaction's snapshot; its relation write matched no row.
+    const stale = snapshotView(served.database);
+    await stale.internal.findOne("__datafn_revisions", ledger("task:1"));
+    await stale.findOne(record("task:1"));
+    await served.push({ resource: "task", operation: "delete", id: "task:1" });
+    expect(await bumpPresent(stale, NS, "task", "task:1")).toBeUndefined();
+    expect(await served.rev("task", "task:1")).toEqual({ rev: 2, deleted: true });
+
+    // A bump recovered after a swap miss records no snapshot row at its revision.
+    const later = snapshotView(served.database);
+    await later.internal.findOne("__datafn_revisions", ledger("task:2"));
+    await bumpRevision(served.database, NS, "task", "task:2", false);
+    const entries: any[] = [{ resource: "task", id: "task:2", op: "replace", record: { id: "task:2", title: "r" } }];
+    await assignWriteRevisions(later, NS, entries, () => true, schema);
+    expect(entries[0]).toMatchObject({ rev: 3, revUncertified: true, record: { id: "task:2", title: "r" } });
+    expect(Object.keys(entries[0].record)).toEqual(["id", "title"]);
+  });
+
+  it("keeps a versioned query's $rev only on rows the afterQuery hooks left unchanged", async () => {
+    const hooks = {
+      name: "rewrite",
+      runsOn: ["server"],
+      afterQuery: (_ctx: unknown, _query: unknown, result: Json) => !Array.isArray(result?.data) ? result : ({
+        ...result,
+        data: [
+          ...result.data.map((row: Json) => {
+            if (row.id !== "task:trim") return { ...row };
+            const { title: _title, ...rest } = row;
+            return rest;
+          }),
+          { id: "task:made-up", title: "x", $rev: 7 },
+        ],
+      }),
+    };
+    const served = await serve({ config: { plugins: [hooks] } });
+    await served.push({ resource: "task", operation: "insert", id: "task:keep", record: { title: "a" } });
+    await served.push({ resource: "task", operation: "insert", id: "task:trim", record: { title: "a" } });
+    const read = await served.send("query", { version: 1, resource: "task", withRevisions: true, sort: ["id"] });
+    const byId = new Map(read.body.result.data.map((row: Json) => [row.id, row]));
+    expect(byId.get("task:keep")).toMatchObject({ $rev: 1 });
+    expect(byId.get("task:trim")).not.toHaveProperty("$rev");
+    expect(byId.get("task:made-up")).not.toHaveProperty("$rev");
+  });
+});
