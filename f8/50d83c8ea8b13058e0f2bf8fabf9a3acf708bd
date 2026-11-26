@@ -1,0 +1,62 @@
+packages/cli/src/utils/schema-diff.ts
+  s_cff285c8033656::t_1da3fdd3ede9cc 6,56,392-394
+packages/cli/src/commands/generate-schema.ts
+  s_cff285c8033656::t_8b7baf8dbbdd91 37,40,43,59-60,215,223
+  s_cff285c8033656::t_0db11a79552024 39,222
+plugfn/core/README.md
+  s_cff285c8033656::t_0db11a79552024 169,174-176
+plugfn/core/src/webhooks/webhook-handler.ts
+  s_cff285c8033656::t_329c735ecea8be 55,57,63,225,291-293
+  s_cff285c8033656::t_0db11a79552024 69
+packages/db/src/adapter/types.ts
+  s_cff285c8033656::t_1da3fdd3ede9cc 214-215
+plugfn/providers/src/github/index.ts
+  s_cff285c8033656::t_0db11a79552024 839
+plugfn/core/src/schema.ts
+  s_cff285c8033656::t_1da3fdd3ede9cc 218
+packages/cli/src/utils/generators.ts
+  s_cff285c8033656::t_1da3fdd3ede9cc 16,54
+plugfn/providers/tests/github/github-webhook-verification.test.ts
+  s_cff285c8033656::t_5e31bc5319fb3f 37
+  s_cff285c8033656::t_6f3c14e31810c4 14-36,38-40
+packages/cli/src/__tests__/plugfn-schema-migration.test.ts
+  s_cff285c8033656::t_6f3c14e31810c4 7,444,451-459
+  s_cff285c8033656::t_02878ab76e6873 460
+plugfn/core/src/storage/runtime-storage.ts
+  s_cff285c8033656::t_329c735ecea8be 372-373,380-381
+plugfn/docs/content/docs/getting-started.md
+  s_cff285c8033656::t_0db11a79552024 73
+plugfn/core/src/core/plug-fn.ts
+  s_cff285c8033656::t_329c735ecea8be 512-513,1014
+plugfn/core/src/router/http-router.ts
+  s_cff285c8033656::t_329c735ecea8be 902,904
+plugfn/core/src/core/workflow-engine.ts
+  s_cff285c8033656::t_329c735ecea8be 339,367
+plugfn/core/tests/webhook-workflow-binding.test.ts
+  s_cff285c8033656::t_6f3c14e31810c4 73,77,80,161-174,1050-1061
+  s_cff285c8033656::t_e952bc67ec87d5 1062
+packages/cli/src/utils/schema-generators.ts
+  s_cff285c8033656::t_1da3fdd3ede9cc 9,319,352-353,369,413
+packages/cli/src/cli.ts
+  s_cff285c8033656::t_8b7baf8dbbdd91 93
+packages/cli/src/utils/mysql-types.ts
+  s_cff285c8033656::t_1da3fdd3ede9cc 149-151
+plugfn/docs/static/llms-full.txt
+  s_cff285c8033656::t_65c0a075fc58db 167
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f850d83c8ea8b13058e0f2bf8fabf9a3acf708bd",
+  "prompts": {},
+  "sessions": {
+    "s_cff285c8033656": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a216a1-2ed9-7262-afcc-abca86f53363",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

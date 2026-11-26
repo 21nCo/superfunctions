@@ -1,0 +1,49 @@
+plugfn/providers/tests/github/github-webhook-verification.test.ts
+  s_52aac795e73b3c::t_cc9edfe3d30f06 3,22-36,39,41,62,76
+plugfn/core/tests/workflow-lifecycle.test.ts
+  s_52aac795e73b3c::t_cc9edfe3d30f06 7,161-168,215
+plugfn/core/tests/webhook-workflow-binding.test.ts
+  s_52aac795e73b3c::t_cac4a6aac40cbf 380-384,387-389
+  s_52aac795e73b3c::t_cc9edfe3d30f06 209-222,239-248,287,315,340-361,447,502
+  s_800f120c5f7f2f::t_99bb7719a6792c 362-363
+plugfn/core/src/core/workflow-engine.ts
+  s_52aac795e73b3c::t_26b766aab28a5b 17-22,216-217,235,239,241,307,337,363-366,373,387,418-419,421,441,473-474,487,788-793,855-857
+plugfn/core/src/core/plug-fn.ts
+  s_52aac795e73b3c::t_024bc99edde72b 505
+plugfn/core/README.md
+  s_52aac795e73b3c::t_e8177897e1c689 152-154
+  s_52aac795e73b3c::t_cac4a6aac40cbf 149-151,156-158
+plugfn/core/src/webhooks/webhook-handler.ts
+  s_52aac795e73b3c::t_cac4a6aac40cbf 145-147
+  s_52aac795e73b3c::t_024bc99edde72b 30,50,64,104-112,126,128,131-132,158-180,246-248,277-280,285-290,334,341,344-345,466-471,554-558
+  s_800f120c5f7f2f::t_3eae966ae7f009 559-561
+plugfn/providers/src/github/index.ts
+  s_52aac795e73b3c::t_771a512df798d1 846,904,946,997,1038,1081,1126,1175-1200
+  s_52aac795e73b3c::t_c3f34a0803f0b8 1201-1202
+plugfn/core/src/types/trigger.ts
+  s_52aac795e73b3c::t_024bc99edde72b 40-41
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7e7dec37de886736be769ee23ff25c8bb272138f",
+  "prompts": {},
+  "sessions": {
+    "s_52aac795e73b3c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21416-bce2-7d83-b799-161f4cb661ed",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_800f120c5f7f2f": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21405-3226-7ce2-b461-536d579b41bb",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

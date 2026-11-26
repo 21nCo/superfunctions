@@ -1,0 +1,30 @@
+plugfn/core/src/storage/adapters/database.ts
+  s_cff285c8033656::t_a6afb28f0a521b 498-501
+  s_cff285c8033656::t_f62e326b7ccf69 506
+  s_cff285c8033656::t_99fa92545fb2d1 15,496-497,502-505,507-518
+plugfn/core/src/webhooks/webhook-handler.ts
+  s_cff285c8033656::t_f62e326b7ccf69 650,652
+  s_cff285c8033656::t_99fa92545fb2d1 648-649,651,653-656
+plugfn/core/tests/webhook-workflow-binding.test.ts
+  s_cff285c8033656::t_ae9c98d9246a6a 119,122,126
+  s_cff285c8033656::t_9ef5456771b0a9 114-118,120-121,123-125,127-144
+plugfn/core/src/storage/runtime-storage.ts
+  s_cff285c8033656::t_99fa92545fb2d1 20,276-277,281
+  s_cff285c8033656::t_f62e326b7ccf69 279
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1f0311dc308fd61c09b6b03a7c28bb285cf6b7fb",
+  "prompts": {},
+  "sessions": {
+    "s_cff285c8033656": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a216a1-2ed9-7262-afcc-abca86f53363",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
