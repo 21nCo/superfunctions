@@ -288,14 +288,27 @@ export class AdapterRuntimeStorage {
     updates: Partial<PlugFnWebhookDelivery>
   ): Promise<PlugFnWebhookDelivery> {
     const { workflowScoped: _scope, ...fields } = updates;
-    const scope = fields.receiptId === undefined ? {} : {
-      workflowScoped: await this.workflowDeliveryScope(fields.receiptId),
-    };
-    return this.adapter.updateWebhookDelivery(id, {
-      ...fields,
-      ...scope,
-      updatedAt: new Date(),
+    const data = { ...fields, updatedAt: new Date() };
+    if (fields.receiptId === undefined) return this.adapter.updateWebhookDelivery(id, data);
+
+    const model = this.adapter.models.webhookDeliveries;
+    const byId: WhereClause[] = [{ field: 'id', operator: 'eq', value: id }];
+    const workflowScoped = await this.workflowDeliveryScope(fields.receiptId);
+    // The retry worker and receipt reassignment compete on the stored status.
+    // Change the receipt and its scope marker in the same conditional write.
+    const reassigned = await this.adapter.database.updateMany({
+      model,
+      where: [...byId, { field: 'status', operator: 'ne', value: 'running' }],
+      data: { ...data, workflowScoped },
     });
+    const delivery = await this.adapter.database.findOne<PlugFnWebhookDelivery>({ model, where: byId });
+    if (!delivery) throw new NotFoundError(model, byId);
+    if (!reassigned) {
+      throw Object.assign(new Error('cannot reassign a running webhook delivery'), {
+        code: 'WEBHOOK_DELIVERY_ACTIVE', status: 409, retryable: true,
+      });
+    }
+    return delivery;
   }
 
   private async workflowDeliveryScope(receiptId: string): Promise<true | null> {

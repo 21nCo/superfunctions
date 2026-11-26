@@ -301,6 +301,29 @@ describe('webhook workflow admission', () => {
     expect(await webhooks.processDueDeliveries(worker)).toMatchObject({ succeeded: 1 });
   });
 
+  it('rejects reassignment after a retry worker owns the attempt', async () => {
+    const { runtime } = startRuntime(database);
+    const webhooks = runtime.runtime.webhooks;
+    const input = { provider: 'test-provider', event: 'test.event', payloadHash: 'test-payload-hash' };
+    const standalone = await webhooks.createReceipt(input);
+    const scoped = await webhooks.createReceipt({
+      ...input, idempotencyKey: 'test-scope-key', idempotencyNamespace: 'workflow',
+    });
+    const attempt = await webhooks.createDelivery({ receiptId: standalone.id });
+    const worker = vi.fn(async () => {
+      await expect(webhooks.updateDelivery(attempt.id, { receiptId: scoped.id })).rejects.toMatchObject({
+        code: 'WEBHOOK_DELIVERY_ACTIVE', status: 409,
+      });
+    });
+
+    expect(await webhooks.processDueDeliveries(worker)).toMatchObject({ succeeded: 1 });
+    expect(worker).toHaveBeenCalledOnce();
+    expect(await webhooks.listDeliveries(scoped.id)).toEqual([]);
+    expect(await webhooks.listDeliveries(standalone.id)).toEqual([
+      expect.objectContaining({ id: attempt.id, status: 'success' }),
+    ]);
+  });
+
   it('resolves installations only within the verified signing authority', async () => {
     await seedWorkflow(database, 'one', firstBinding.tenantId, firstBinding.connectionId);
     const { send, action, resolveBinding, resolveAlternateBinding } = startRuntime(database);
