@@ -115,6 +115,12 @@ export class WebhookHandlerError extends Error {
   }
 }
 
+class WebhookPayloadValidationError extends WebhookHandlerError {
+  constructor() {
+    super('VALIDATION_ERROR', 'webhook payload validation failed');
+  }
+}
+
 export class WebhookHandler {
   private handlers = new Map<string, Set<TriggerHandler>>();
   private workflowHandlers = new Map<string, Set<ScopedTriggerHandler>>();
@@ -324,10 +330,14 @@ export class WebhookHandler {
     const transformedPayload = trigger.webhookConfig?.transformPayload
       ? trigger.webhookConfig.transformPayload(parsedPayload)
       : parsedPayload;
-    try {
-      trigger.schema.parse(transformedPayload);
-    } catch {
-      throw new WebhookHandlerError('VALIDATION_ERROR', 'webhook payload validation failed');
+    if (requiresBinding) {
+      if (!trigger.schema.safeParse(transformedPayload).success) throw new WebhookPayloadValidationError();
+    } else {
+      try {
+        trigger.schema.parse(transformedPayload);
+      } catch {
+        throw new WebhookPayloadValidationError();
+      }
     }
 
     const prepared = {
@@ -422,9 +432,15 @@ export class WebhookHandler {
                 const legacy = await this[prepareWebhookDelivery](
                   provider, standaloneEvent, payload, headers, secret, { rawBody: options.rawBody },
                 );
-                if (legacy.signatureVerified) scope.standalone = legacy;
-              } catch {
-                this.logger.warn(`Standalone webhook preparation failed for ${provider}.${legacyKey}`);
+                if (!legacy.signatureVerified) {
+                  throw new WebhookHandlerError(
+                    'WEBHOOK_SIGNATURE_REQUIRED', `signature verifier not configured for ${provider}.${legacyKey}`, 500,
+                  );
+                }
+                scope.standalone = legacy;
+              } catch (error) {
+                if (!(error instanceof WebhookPayloadValidationError)) throw error;
+                this.logger.warn(`Standalone webhook payload did not match ${provider}.${legacyKey}`);
               }
             }
           }
