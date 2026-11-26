@@ -1172,15 +1172,17 @@ githubProvider.actions['pulls.get'] = restAction({ name: 'pulls.get', method: 'G
 githubProvider.actions['issues.comments.create'] = { ...githubProvider.actions['issues.createComment'], name: 'issues.comments.create' };
 githubProvider.actions['pulls.review'] = { ...githubProvider.actions['pulls.createReview'], name: 'pulls.review' };
 
+const GITHUB_READ_ACTIONS = [
+  "repos.list",
+  "issues.list",
+  "issues.get",
+  "issues.comments.list",
+  "pulls.list",
+  "pulls.get"
+];
+
 declareContracts(githubProvider, {
-  "reads": [
-    "repos.list",
-    "issues.list",
-    "issues.get",
-    "issues.comments.list",
-    "pulls.list",
-    "pulls.get"
-  ],
+  "reads": GITHUB_READ_ACTIONS,
   "writes": [
     "issues.create",
     "issues.update",
@@ -1217,5 +1219,11 @@ declareContracts(githubProvider, {
     }
   ]
 });
+
+// Reads need no scope, so a downgraded or replaced token still passes the
+// executor's scope check. The default executor cache key has no credential
+// fingerprint, so a cached read could return data fetched under an earlier,
+// broader credential. Keep reads uncached unless a caller asks for caching.
+for (const name of GITHUB_READ_ACTIONS) githubProvider.actions[name].cacheable = false;
 
 applySelectedResources(githubProvider);

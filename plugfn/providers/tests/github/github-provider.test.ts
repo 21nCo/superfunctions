@@ -58,6 +58,14 @@ describe('github provider actions', () => {
     expect(githubProvider.actions['issues.create'].contract?.requiredScopes).toEqual(['repo']);
   });
 
+  it.each(['repos.list', 'issues.list', 'issues.get', 'issues.comments.list', 'pulls.list', 'pulls.get'])(
+    'does not cache the scope-free read %s by default',
+    name => {
+      expect(githubProvider.actions[name].contract?.effect).toBe('read');
+      expect(githubProvider.actions[name].cacheable).toBe(false);
+    },
+  );
+
   it('registers the expanded repository surface and webhook triggers', () => {
     expect(Object.keys(githubProvider.actions)).toEqual(
       expect.arrayContaining([
