@@ -202,7 +202,7 @@ describe("release gate contract", () => {
 
     const router = createLangFnRouter(new LangFn({ model: new MockChatModel({ responses: ["ok"] }) }));
     const health = await router.handle(new Request("http://localhost/health"));
-    expect(await health.json()).toMatchObject({ ok: true, data: { name: "langfn", version: "0.2.0" } });
+    expect(await health.json()).toMatchObject({ ok: true, data: { name: "langfn", version: "0.2.1" } });
 
     const tracer = new Tracer({ redactionKeys: ["apiKey"] });
     expect(tracer.sanitize({ apiKey: "secret", keep: 1 })).toEqual({ apiKey: "***REDACTED***", keep: 1 });

@@ -1,7 +1,7 @@
 import { runAction, type RunnerActionResult, type RunnerContext, type RunnerOptions } from "../src/runner.js";
 
-// Golden bytes recorded from the reference commit. Text mode and JSON-lines mode must keep printing exactly these
-// bytes (D2).
+// Golden bytes recorded from the reference commit (before `jsonStyle` existed). Text mode and the default
+// `'lines'` JSON mode must keep printing exactly these bytes (D2), whatever the document mode does.
 
 type SampleAction = (options: { name: string }, ctx: RunnerContext) => Promise<RunnerActionResult> | RunnerActionResult;
 
@@ -118,5 +118,17 @@ describe("reference-commit output bytes (text and 'lines' JSON)", () => {
   ] as const)("%s in %s mode", async (sample, variant, runnerOptions) => {
     const expected = (golden[sample] as Record<string, unknown>)[variant];
     await expect(capture(samples[sample], runnerOptions as RunnerOptions)).resolves.toEqual(expected);
+  });
+
+  it("keeps the same bytes when jsonStyle is 'lines' explicitly, or 'document' outside JSON mode", async () => {
+    for (const sample of ["report", "failure", "emit"] as const) {
+      const options = { ...({ jsonStyle: "lines" } as RunnerOptions), mode: "json" as const, verbose: true };
+      await expect(capture(samples[sample], options)).resolves.toEqual(
+        await capture(samples[sample], { mode: "json", verbose: true })
+      );
+    }
+    await expect(
+      capture(samples.failure, { ...({ jsonStyle: "document" } as RunnerOptions), color: false })
+    ).resolves.toEqual(golden.failure.text);
   });
 });

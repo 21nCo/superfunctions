@@ -1,6 +1,6 @@
 {
   "name": "@filefn/processing-container",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "description": "FileFn processing container entry: an HTTP server that runs one queued processing job per request (Cloudflare Containers image)",
   "type": "module",
@@ -14,8 +14,8 @@
   },
   "license": "MIT",
   "dependencies": {
-    "@filefn/processing": "0.4.0",
-    "@filefn/server": "0.7.1",
+    "@filefn/processing": "0.4.1",
+    "@filefn/server": "0.7.2",
     "@superfunctions/db": "0.2.0",
     "@superfunctions/storage-r2": "0.3.0",
     "sharp": "^0.33.5"

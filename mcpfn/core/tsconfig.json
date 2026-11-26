@@ -12,7 +12,8 @@
     "rootDir": "src",
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "resolveJsonModule": true
+    "resolveJsonModule": true,
+    "paths": { "@mcpfn/core": ["./src/index.ts"] }
   },
   "include": ["src"],
   "exclude": ["dist", "node_modules"]

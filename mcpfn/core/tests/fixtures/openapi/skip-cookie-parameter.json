@@ -1,0 +1,28 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "fixture",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/session": {
+      "get": {
+        "operationId": "getSession",
+        "parameters": [
+          {
+            "name": "session",
+            "in": "cookie",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    }
+  }
+}

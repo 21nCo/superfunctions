@@ -37,7 +37,7 @@
     "access": "public"
   },
   "dependencies": {
-    "@superfunctions/admin": "0.1.7",
+    "@superfunctions/admin": "0.1.8",
     "@superfunctions/db": "0.3.4",
     "@superfunctions/http": "0.2.0",
     "authfn": "0.10.0"

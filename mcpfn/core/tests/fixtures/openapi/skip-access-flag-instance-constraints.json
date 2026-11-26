@@ -1,0 +1,288 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "fixture",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/const": {
+      "post": {
+        "operationId": "readOnlyWithConst",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "readOnly": true
+                  },
+                  "label": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false,
+                "const": {
+                  "id": "fixed-id",
+                  "label": "fixed"
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/enum": {
+      "post": {
+        "operationId": "readOnlyWithEnum",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "readOnly": true
+                  },
+                  "label": {
+                    "type": "string"
+                  }
+                },
+                "enum": [
+                  {
+                    "id": "fixed-id",
+                    "label": "fixed"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/min-properties": {
+      "post": {
+        "operationId": "readOnlyWithMinProperties",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "readOnly": true
+                  },
+                  "label": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false,
+                "minProperties": 2
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/inherited-min-properties": {
+      "post": {
+        "operationId": "readOnlyWithInheritedMinProperties",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/Counted"
+                  }
+                ],
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "readOnly": true
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/const-in-one-of": {
+      "post": {
+        "operationId": "readOnlyBesideConstInOneOf",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "readOnly": true
+                  },
+                  "label": {
+                    "type": "string"
+                  }
+                },
+                "oneOf": [
+                  {
+                    "const": {
+                      "id": "fixed-id",
+                      "label": "fixed"
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/write-only-enum": {
+      "get": {
+        "operationId": "writeOnlyWithEnum",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "password": {
+                      "type": "string",
+                      "writeOnly": true
+                    }
+                  },
+                  "enum": [
+                    {
+                      "name": "a",
+                      "password": "test-password"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/max-properties": {
+      "post": {
+        "operationId": "readOnlyWithMaxProperties",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "readOnly": true
+                  },
+                  "label": {
+                    "type": "string"
+                  }
+                },
+                "maxProperties": 1
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/enum-without-flags": {
+      "post": {
+        "operationId": "enumWithoutAccessFlags",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "label": {
+                    "type": "string"
+                  }
+                },
+                "enum": [
+                  {
+                    "label": "a"
+                  },
+                  {
+                    "label": "b"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Counted": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "minProperties": 2
+      }
+    }
+  }
+}

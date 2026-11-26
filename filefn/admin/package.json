@@ -43,6 +43,7 @@
   },
   "devDependencies": {
     "@superfunctions/db": "0.2.0",
+    "@superfunctions/files": "0.1.1",
     "@superfunctions/storage-local": "0.3.0",
     "@types/node": "^22.0.0",
     "typescript": "^5.6.0",

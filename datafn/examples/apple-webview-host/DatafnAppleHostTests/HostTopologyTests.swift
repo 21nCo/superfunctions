@@ -2,6 +2,39 @@ import XCTest
 @testable import DatafnAppleHost
 
 final class HostTopologyTests: XCTestCase {
+    func testWebOriginPreservesIPv6AndNormalizesDefaultPorts() throws {
+        let origin = try XCTUnwrap(EmbeddedWebView.Coordinator.webOrigin(of: URL(string: "http://[::1]")!))
+        let sameOrigin = try XCTUnwrap(EmbeddedWebView.Coordinator.webOrigin(of: URL(string: "http://[0:0:0:0:0:0:0:1]:80/detail")!))
+        let otherPort = try XCTUnwrap(EmbeddedWebView.Coordinator.webOrigin(of: URL(string: "http://[::1]:4173")!))
+        let otherScheme = try XCTUnwrap(EmbeddedWebView.Coordinator.webOrigin(of: URL(string: "https://[::1]:80")!))
+
+        XCTAssertEqual(origin.port, 80)
+        XCTAssertTrue(origin == sameOrigin)
+        XCTAssertFalse(origin == otherPort)
+        XCTAssertFalse(origin == otherScheme)
+    }
+
+    func testWebOriginCanonicalizesIPv4Aliases() throws {
+        let origin = try XCTUnwrap(EmbeddedWebView.Coordinator.webOrigin(of: URL(string: "http://127.0.0.1:4173")!))
+        let aliases = [
+            "127.1", "0177.0.0.1", "0x7f.1", "127.0x.0.1", "127.0.0.1.",
+            "%EF%BC%91%EF%BC%92%EF%BC%97.%EF%BC%91",
+        ]
+        for alias in aliases {
+            let url = try XCTUnwrap(URL(string: "http://\(alias):4173/detail"))
+            let candidate = try XCTUnwrap(EmbeddedWebView.Coordinator.webOrigin(of: url))
+            XCTAssertTrue(origin == candidate, alias)
+        }
+    }
+
+    func testWebOriginMatchesEncodedAndPunycodeDomains() throws {
+        let encoded = try XCTUnwrap(URL(string: "http://%62%C3%BCcher.example/"))
+        let punycode = try XCTUnwrap(URL(string: "http://xn--bcher-kva.example:80/detail"))
+        let first = try XCTUnwrap(EmbeddedWebView.Coordinator.webOrigin(of: encoded))
+        let second = try XCTUnwrap(EmbeddedWebView.Coordinator.webOrigin(of: punycode))
+        XCTAssertTrue(first == second)
+    }
+
     func testTopologyMatrixMatchesOwnershipRules() throws {
         let options = makeOptions()
 

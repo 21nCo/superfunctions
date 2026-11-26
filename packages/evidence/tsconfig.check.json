@@ -2,10 +2,13 @@
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "noEmit": true,
-    "rootDir": ".",
+    "rootDir": "../..",
     "lib": ["ES2022", "DOM"],
     "types": ["node"],
-    "resolveJsonModule": true
+    "resolveJsonModule": true,
+    "paths": {
+      "catchfn": ["../../catchfn/typescript/src/index.ts"]
+    }
   },
   "include": ["src/**/*", "test/**/*", "vitest.config.ts"]
 }

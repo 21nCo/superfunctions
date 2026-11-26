@@ -1,0 +1,317 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "fixture",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/sibling-additional-properties": {
+      "post": {
+        "operationId": "readOnlySiblingAdditionalProperties",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "allOf": [
+                      {
+                        "$ref": "#/components/schemas/Base"
+                      },
+                      {
+                        "properties": {
+                          "x": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "x"
+                        ],
+                        "additionalProperties": {
+                          "const": "a"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "allOf": [
+                      {
+                        "$ref": "#/components/schemas/Base"
+                      },
+                      {
+                        "properties": {
+                          "x": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "x"
+                        ],
+                        "additionalProperties": {
+                          "const": "b"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/sibling-closed": {
+      "post": {
+        "operationId": "readOnlySiblingClosed",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/Base"
+                  },
+                  {
+                    "properties": {
+                      "x": {
+                        "type": "string"
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/if-pattern": {
+      "post": {
+        "operationId": "readOnlyIfPattern",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "readOnly": true
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "extra": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id",
+                  "name"
+                ],
+                "if": {
+                  "patternProperties": {
+                    "^id$": {
+                      "const": "special"
+                    }
+                  }
+                },
+                "then": {
+                  "required": [
+                    "extra"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/not-max-properties": {
+      "post": {
+        "operationId": "readOnlyNotMaxProperties",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "readOnly": true
+                  },
+                  "name": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id",
+                  "name"
+                ],
+                "not": {
+                  "maxProperties": 1
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/dependent-required": {
+      "post": {
+        "operationId": "readOnlyBesideDependentRequired",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "readOnly": true
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "label": {
+                    "type": "string"
+                  }
+                },
+                "dependentRequired": {
+                  "name": [
+                    "label"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/write-only-output": {
+      "get": {
+        "operationId": "writeOnlyOutputSiblingAdditionalProperties",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "password": {
+                          "type": "string",
+                          "writeOnly": true
+                        }
+                      },
+                      "required": [
+                        "password"
+                      ]
+                    },
+                    {
+                      "properties": {
+                        "user": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "user"
+                      ],
+                      "additionalProperties": {
+                        "type": "integer"
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/closed-listing": {
+      "post": {
+        "operationId": "readOnlyClosedListing",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "readOnly": true
+                  },
+                  "name": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id",
+                  "name"
+                ],
+                "additionalProperties": false,
+                "maxProperties": 2
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Base": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "readOnly": true
+          }
+        },
+        "required": [
+          "id"
+        ]
+      }
+    }
+  }
+}

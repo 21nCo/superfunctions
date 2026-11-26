@@ -774,6 +774,15 @@ describe('Combined Video and Audio Processing', () => {
       enabled: true,
     });
 
+    // The parent file rows must exist: an orphaned artifact is never served.
+    for (const [fileId, name] of [['file_013', 'video.mp4'], ['file_014', 'song.mp3']]) {
+      await db.create({
+        model: 'files',
+        data: { fileId, ownerId: 'user_123', visibility: 'private', policy: '', name, currentVersionId: 'ver_001' },
+        namespace: 'filefn',
+      });
+    }
+
     const testVideo = createMockVideoData(5000);
     storage.setData('tenant/file_013/ver_001.mp4', testVideo);
 
@@ -809,8 +818,8 @@ describe('Combined Video and Audio Processing', () => {
     const videoArtifactId = videoArtifacts[0].artifactId;
     const audioArtifactId = audioArtifacts.find((artifact) => artifact.kind.startsWith('audio-transcoded-'))?.artifactId;
 
-    const { url: videoUrl } = await service.getArtifactDownloadUrl(videoArtifactId, {});
-    const { url: audioUrl } = await service.getArtifactDownloadUrl(audioArtifactId!, {});
+    const { url: videoUrl } = await service.getArtifactDownloadUrl(videoArtifactId, { principalId: 'user_123' });
+    const { url: audioUrl } = await service.getArtifactDownloadUrl(audioArtifactId!, { principalId: 'user_123' });
 
     expect(videoUrl).toContain('tenant/file_013/ver_001-poster.jpg');
     expect(videoUrl).toMatch(/^https:\/\/storage\.test\/download\//);

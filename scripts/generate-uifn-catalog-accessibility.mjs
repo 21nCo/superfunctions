@@ -13,18 +13,30 @@ const outputPath = path.join(
   "catalog-accessibility.generated.ts"
 );
 const catalog = JSON.parse(fs.readFileSync(catalogPath, "utf8"));
-const accessibilityBySlug = Object.fromEntries(
-  catalog.primitives.map((primitive) => [
-    primitive.id,
-    {
-      profile: primitive.accessibility.profile,
-      primitiveNotes: primitive.accessibility.primitiveNotes,
-      rules: primitive.accessibility.rules,
-    },
-  ])
-);
+const isStringArray = (value) => Array.isArray(value) && value.every((entry) => typeof entry === "string");
+const rulesByProfile = new Map();
+const accessibilityEntries = catalog.primitives.map(({ id, accessibility }) => {
+  const { profile, primitiveNotes, rules } = accessibility;
+  if (typeof profile !== "string" || typeof rules?.nativeSemantics !== "string" ||
+      !isStringArray(rules.keyboard?.keys) || !isStringArray(rules.focus) || !isStringArray(rules.wcag)) {
+    throw new Error(`Accessibility summary fields are invalid for ${id}`);
+  }
+  const existing = rulesByProfile.get(profile);
+  if (existing && JSON.stringify(existing) !== JSON.stringify(rules)) {
+    throw new Error(`Accessibility profile ${profile} has conflicting rules for ${id}`);
+  }
+  rulesByProfile.set(profile, rules);
+  return [id, { profile, primitiveNotes }];
+});
+const payload = JSON.stringify({
+  rulesByProfile: Object.fromEntries(rulesByProfile),
+  primitives: Object.fromEntries(accessibilityEntries),
+}, null, 2)
+  .replaceAll("\\", "\\\\")
+  .replaceAll("`", "\\`")
+  .replaceAll("${", "\\${");
 const output = `// Generated from uifn/catalog/generated/catalog.json. Do not edit by hand.\n` +
-  `export const CATALOG_ACCESSIBILITY = ${JSON.stringify(accessibilityBySlug, null, 2)} as const;\n`;
+  `export const catalogAccessibilityJson: string = \`\n${payload}\n\`;\n`;
 
 if (!fs.existsSync(outputPath) || fs.readFileSync(outputPath, "utf8") !== output) {
   fs.writeFileSync(outputPath, output);
@@ -33,6 +45,6 @@ if (!fs.existsSync(outputPath) || fs.readFileSync(outputPath, "utf8") !== output
 console.log(JSON.stringify({
   ok: true,
   command: "generate:uifn-catalog-accessibility",
-  primitiveCount: Object.keys(accessibilityBySlug).length,
+  primitiveCount: accessibilityEntries.length,
   outputPath,
 }));

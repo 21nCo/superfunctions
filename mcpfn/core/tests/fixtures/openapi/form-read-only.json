@@ -1,0 +1,70 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "fixture",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/accounts": {
+      "post": {
+        "operationId": "createAccount",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Account"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Account"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Account": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "readOnly": true
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "name": {
+            "type": "string"
+          },
+          "secretAnswer": {
+            "type": "string",
+            "writeOnly": true
+          }
+        },
+        "required": [
+          "id",
+          "createdAt",
+          "name",
+          "secretAnswer"
+        ]
+      },
+      "Timestamp": {
+        "type": "string",
+        "format": "date-time",
+        "readOnly": true
+      }
+    }
+  }
+}
