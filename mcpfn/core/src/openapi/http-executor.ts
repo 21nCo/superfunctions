@@ -81,6 +81,7 @@ const HTML_NAMED: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '
 
 const encoder = new TextEncoder();
 const percentDecoder = new TextDecoder("utf-8", { ignoreBOM: true });
+const utf8Decoder = new TextDecoder("utf-8", { ignoreBOM: true });
 
 /** A call the executor refuses before sending anything; the message never holds operator values. */
 class CallRejected extends Error {}
@@ -569,10 +570,16 @@ function occurrences(text: string, secret: string): number {
  * the text, the text without them is judged the same way, so an echo
  * interleaved with NULs (UTF-16 read as single bytes) is found too.
  */
-function revealsEncoded(text: string, spans: ReadonlyArray<readonly [number, number]>, secrets: readonly string[]): boolean {
+function revealsEncoded(
+  text: string,
+  spans: ReadonlyArray<readonly [number, number]>,
+  secrets: readonly string[],
+  nulViews = true,
+): boolean {
   if (secrets.length === 0) return false;
   const literal = secrets.map((secret) => occurrences(text, secret));
-  const changesCount = [...textViews(text), ...textViews(text).flatMap(decodedViews)].some(
+  const views = nulViews ? textViews(text) : [text];
+  const changesCount = [...views, ...views.flatMap(decodedViews)].some(
     (view) => view !== text && secrets.some((secret, index) => occurrences(view, secret) !== literal[index]),
   );
   if (changesCount) return true;
@@ -580,7 +587,7 @@ function revealsEncoded(text: string, spans: ReadonlyArray<readonly [number, num
   // consumes, so an encoded echo elsewhere cannot hide behind an equal count.
   const masked = maskSpans(text, spans);
   if ([masked, ...decodedViews(masked)].some((view) => holdsSecret(view, secrets))) return true;
-  if (!text.includes("\u0000")) return false;
+  if (!nulViews || !text.includes("\u0000")) return false;
   const stripped = text.replaceAll("\u0000", "");
   return revealsEncoded(stripped, credentialSpans(stripped, secrets), secrets);
 }
@@ -626,23 +633,29 @@ async function toResult(response: Response, options: ResultOptions): Promise<Cal
   const { bytes, complete } = await readBody(response, options.maxResponseBytes, options.signal);
   if (!complete) return tooLarge(status, options.maxResponseBytes);
   if (bytes.byteLength === 0) return unstructured(status, options, "no body");
-  const decoded = decode(bytes, response);
-  if (decoded === undefined) {
-    return toolError(`The API responded with HTTP ${status}, so the call succeeded, but its body is in a character encoding that cannot be decoded and was withheld.`);
+  const body = decode(bytes, response);
+  if (body === undefined) {
+    return toolError(`The API responded with HTTP ${status}, so the call succeeded, but its body is in a character encoding that cannot be determined or decoded and was withheld.`);
   }
-  // Rewriting a success body could change its data: one that reveals a credential is withheld whole.
-  if (exposes(decoded, options.secrets)) {
-    return toolError(`The API responded with HTTP ${status}, so the call succeeded, but its body reveals an operator credential and was withheld.`);
+  const withheld = toolError(`The API responded with HTTP ${status}, so the call succeeded, but its body reveals an operator credential and was withheld.`);
+  // Rewriting a success body could change its data: one that reveals a
+  // credential in its declared encoding, read as UTF-8, or in its bytes
+  // (UTF-8 or UTF-16 at any offset) is withheld whole.
+  if (
+    exposes(body.text, options.secrets) ||
+    (body.encoding !== "utf-8" && exposes(utf8Decoder.decode(bytes), options.secrets)) ||
+    bytesHold(bytes, options.secrets)
+  ) {
+    return withheld;
   }
   // A leading byte order mark is dropped only after the check, as JSON parsing needs.
-  const text = decoded.startsWith("\uFEFF") ? decoded.slice(1) : decoded;
+  const text = withoutBom(body.text);
+  const parsed = parseJson(text);
+  // A reader that parses a JSON body sees each number as it serializes (`1.2345e4` as `12345`).
+  if (parsed.ok && serializedExposes(text, parsed.value, options.secrets)) return withheld;
   if (!options.hasOutputSchema) return { content: [{ type: "text", text }] };
-  let value: unknown;
-  try {
-    value = JSON.parse(text);
-  } catch {
-    return unstructured(status, options, "a body that is not JSON", text);
-  }
+  if (!parsed.ok) return unstructured(status, options, "a body that is not JSON", text);
+  const value = parsed.value;
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     return unstructured(status, options, "a body that is not a JSON object", text);
   }
@@ -656,9 +669,7 @@ async function toResult(response: Response, options: ResultOptions): Promise<Cal
     return unstructured(status, options, "a body that cannot be returned as structured content", text);
   }
   // What is returned, as it serializes: a number spelled differently in the body (`1.2345e4`) is checked as returned.
-  if (exposes(JSON.stringify(result.structuredContent), options.secrets)) {
-    return toolError(`The API responded with HTTP ${status}, so the call succeeded, but its body reveals an operator credential and was withheld.`);
-  }
+  if (exposes(JSON.stringify(result.structuredContent), options.secrets)) return withheld;
   if (options.checkOutput && !options.checkOutput(result.structuredContent as Record<string, unknown>)) {
     return unstructured(status, options, "a body the output schema does not describe", text);
   }
@@ -688,7 +699,18 @@ function unstructured(status: number, options: ResultOptions, what: string, text
  * Other spellings of the same value (`1e23`, `1.50`) pass. Strings are skipped.
  */
 function numbersExact(json: string): boolean {
+  return numberTokens(json).every((written) => {
+    const value = Number(written);
+    if (!Number.isFinite(value)) return false;
+    const shortest = String(value);
+    return written === shortest || decimalValue(written) === decimalValue(shortest);
+  });
+}
+
+/** The number literals of a JSON text, as written; strings are skipped. */
+function numberTokens(json: string): string[] {
   const token = /-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/y;
+  const tokens: string[] = [];
   for (let index = 0; index < json.length; index += 1) {
     const char = json[index]!;
     if (char === '"') {
@@ -701,12 +723,9 @@ function numbersExact(json: string): boolean {
     const written = token.exec(json)?.[0];
     if (written === undefined) continue;
     index += written.length - 1;
-    const value = Number(written);
-    if (!Number.isFinite(value)) return false;
-    const shortest = String(value);
-    if (written !== shortest && decimalValue(written) !== decimalValue(shortest)) return false;
+    tokens.push(written);
   }
-  return true;
+  return tokens;
 }
 
 /** The exact decimal value of a number literal, as significant digits and a power of ten. */
@@ -747,10 +766,11 @@ async function errorResult(response: Response, options: ResultOptions): Promise<
   }
   const { bytes, complete } = await readBody(response, options.maxResponseBytes, options.signal);
   if (!complete) return oversized;
-  const decoded = decode(bytes, response);
-  if (decoded === undefined) return toolError(`${heading}\n[body withheld: its character encoding cannot be decoded]`);
+  const body = decode(bytes, response);
+  if (body === undefined) return toolError(`${heading}\n[body withheld: its character encoding cannot be determined or decoded]`);
+  const decoded = body.text;
   let spans = credentialSpans(decoded, options.secrets);
-  if (revealsEncoded(decoded, spans, options.secrets)) {
+  if (errorBodyReveals(bytes, body, spans, options.secrets)) {
     return toolError(`${heading}\n[body withheld: it reveals an operator credential]`);
   }
   let text = decoded;
@@ -765,6 +785,135 @@ async function errorResult(response: Response, options: ResultOptions): Promise<
       (excerpt.length > 0 ? `\n\n${excerpt}` : "") +
       (end < text.length ? `\n[body truncated after ${encoder.encode(text.slice(0, end)).byteLength} bytes]` : ""),
   );
+}
+
+/**
+ * Whether an error body reveals a credential other than as a literal echo of
+ * its declared or marked encoding, which redaction covers: an encoded
+ * spelling in that text; in the bytes, a credential in UTF-8, UTF-16LE or
+ * UTF-16BE at any offset more often than the text shows it (so an echo in
+ * an encoding other than the declared one is found, whatever the declared
+ * one is); a spelling in the bytes read as UTF-8; or, when the redacted
+ * body is JSON, a number that serializes as a credential.
+ */
+function errorBodyReveals(bytes: Uint8Array, body: BodyText, spans: ReadonlyArray<readonly [number, number]>, secrets: readonly string[]): boolean {
+  if (secrets.length === 0) return false;
+  if (revealsEncoded(body.text, spans, secrets)) return true;
+  if (bytesRevealMore(bytes, body, spans, secrets)) return true;
+  if (body.encoding !== "utf-8") {
+    const asUtf8 = utf8Decoder.decode(bytes);
+    // Literal and NUL-interleaved echoes in the bytes are counted above.
+    if (revealsEncoded(asUtf8, credentialSpans(asUtf8, secrets), secrets, false)) return true;
+  }
+  const redacted = withoutBom(redactAll(body.text, spans));
+  const parsed = parseJson(redacted);
+  return parsed.ok && serializedExposes(redacted, parsed.value, secrets);
+}
+
+/** `text` with each span replaced by the redaction marker. */
+function redactAll(text: string, spans: ReadonlyArray<readonly [number, number]>): string {
+  let result = "";
+  let at = 0;
+  for (const [start, stop] of spans) {
+    result += text.slice(at, start) + REDACTED;
+    at = stop;
+  }
+  return result + text.slice(at);
+}
+
+function withoutBom(text: string): string {
+  return text.startsWith("\uFEFF") ? text.slice(1) : text;
+}
+
+function parseJson(text: string): { ok: true; value: unknown } | { ok: false } {
+  try {
+    return { ok: true, value: JSON.parse(text) };
+  } catch {
+    return { ok: false };
+  }
+}
+
+/**
+ * Whether the JSON `text`, parsed as `value`, reveals a credential as it
+ * serializes (a number in another spelling, `1.2345e4` as `12345`). For a
+ * value too deep to serialize, each number's serialized spelling is checked.
+ */
+function serializedExposes(text: string, value: unknown, secrets: readonly string[]): boolean {
+  if (secrets.length === 0) return false;
+  let serialized: string;
+  try {
+    serialized = JSON.stringify(value);
+  } catch {
+    serialized = numberTokens(text)
+      .map((token) => String(Number(token)))
+      .join("\n");
+  }
+  return exposes(serialized, secrets);
+}
+
+type ByteEncoding = "utf-8" | "utf-16le" | "utf-16be";
+
+/** `secret` in each encoding a body's bytes are searched in, as one character per byte. */
+function byteForms(secret: string): Array<[ByteEncoding, string]> {
+  let little = "";
+  let big = "";
+  for (let index = 0; index < secret.length; index += 1) {
+    const unit = secret.charCodeAt(index);
+    little += String.fromCharCode(unit & 0xff, unit >> 8);
+    big += String.fromCharCode(unit >> 8, unit & 0xff);
+  }
+  return [
+    ["utf-8", binary(encoder.encode(secret))],
+    ["utf-16le", little],
+    ["utf-16be", big],
+  ];
+}
+
+/** `bytes` as a string of one character per byte, so substring search runs on bytes at any offset. */
+function binary(bytes: Uint8Array): string {
+  let result = "";
+  for (let at = 0; at < bytes.length; at += 0x8000) result += String.fromCharCode(...bytes.subarray(at, at + 0x8000));
+  return result;
+}
+
+/** Whether the bytes hold any credential in UTF-8, UTF-16LE or UTF-16BE, at any offset. */
+function bytesHold(bytes: Uint8Array, secrets: readonly string[]): boolean {
+  if (secrets.length === 0) return false;
+  const raw = binary(bytes);
+  return secrets.some((secret) => byteForms(secret).some(([, form]) => raw.includes(form)));
+}
+
+/**
+ * Whether the bytes hold a credential (UTF-8, UTF-16LE or UTF-16BE, any
+ * offset) that the literal echoes of the decoded text (`spans`) do not
+ * account for. From UTF-16 each code unit is two bytes, so the echoes' bytes
+ * are masked and any credential left is one. Otherwise an echo accounts for
+ * the bytes of the encoding the text was decoded from, and for the UTF-8
+ * bytes of an ASCII credential in an ASCII-compatible encoding, so the bytes
+ * may hold each no more often than the text shows it.
+ */
+function bytesRevealMore(
+  bytes: Uint8Array,
+  body: BodyText,
+  spans: ReadonlyArray<readonly [number, number]>,
+  secrets: readonly string[],
+): boolean {
+  if (body.encoding === "utf-16le" || body.encoding === "utf-16be") {
+    const masked = bytes.slice();
+    // 0xFF is never part of a UTF-8 form and of no ASCII credential's UTF-16 form.
+    for (const [start, stop] of spans) masked.fill(0xff, start * 2, stop * 2);
+    return bytesHold(masked, secrets);
+  }
+  const raw = binary(bytes);
+  for (const secret of secrets) {
+    const shown = occurrences(body.text, secret);
+    const ascii = /^[\x00-\x7f]*$/.test(secret);
+    for (const [encoding, form] of byteForms(secret)) {
+      const accounted = encoding === body.encoding || (encoding === "utf-8" && ascii) ? shown : 0;
+      if (occurrences(raw, form) > accounted) return true;
+    }
+  }
+  return false;
 }
 
 /** Where literal credential forms occur in `text`, overlaps included, merged into sorted disjoint spans. */
@@ -886,39 +1035,99 @@ function discard(response: Response): void {
   response.body?.cancel().catch(() => undefined);
 }
 
+interface BodyText {
+  text: string;
+  /** The encoding the text was decoded from, as TextDecoder names it (`utf-8`, `utf-16le`, `windows-1252`, ...). */
+  encoding: string;
+}
+
 /**
  * Decodes a body for credential matching and excerpts in the encoding it
  * marks or declares: a UTF-16 or UTF-8 byte order mark, else the
  * `Content-Type` charset, else UTF-8. A leading byte order mark is kept (a
- * credential may begin with U+FEFF). Undefined when the declared charset is
- * one TextDecoder does not know, so the body is withheld rather than
- * checked in the wrong encoding.
+ * credential may begin with U+FEFF). Undefined when the `Content-Type`
+ * cannot be parsed or names a charset TextDecoder does not know, so the
+ * body is withheld rather than checked in the wrong encoding.
  */
-function decode(bytes: Uint8Array, response: Response): string | undefined {
+function decode(bytes: Uint8Array, response: Response): BodyText | undefined {
   let label: string | undefined;
   if (bytes[0] === 0xff && bytes[1] === 0xfe) label = "utf-16le";
   else if (bytes[0] === 0xfe && bytes[1] === 0xff) label = "utf-16be";
   else if (bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) label = "utf-8";
-  else label = charset(response.headers.get("content-type")) ?? "utf-8";
+  else {
+    const declared = charset(response.headers.get("content-type"));
+    if (declared === null) return undefined;
+    label = declared ?? "utf-8";
+  }
   let decoder: TextDecoder;
   try {
     decoder = new TextDecoder(label, { ignoreBOM: true });
   } catch {
     return undefined;
   }
-  return decoder.decode(bytes);
+  return { text: decoder.decode(bytes), encoding: decoder.encoding };
 }
 
-/** The `charset` parameter of a media type, unquoted, if any. */
-function charset(contentType: string | null): string | undefined {
+const MEDIA_TOKEN = /[!#$%&'*+.^_`|~0-9A-Za-z-]+/y;
+
+/**
+ * The `charset` parameter of a media type (RFC 9110: `type/subtype` then
+ * `;`-separated `name=value` parameters, a value a token or a quoted
+ * string), undefined when there is none, and null when the header cannot be
+ * parsed or names two different charsets, so a `;` or `charset=` inside a
+ * quoted value never picks the decoder.
+ */
+function charset(contentType: string | null): string | undefined | null {
   if (contentType === null) return undefined;
-  for (const parameter of contentType.split(";").slice(1)) {
-    const at = parameter.indexOf("=");
-    if (at === -1 || parameter.slice(0, at).trim().toLowerCase() !== "charset") continue;
-    const value = parameter.slice(at + 1).trim();
-    return value.length >= 2 && value.startsWith('"') && value.endsWith('"') ? value.slice(1, -1) : value;
+  const text = contentType;
+  let at = 0;
+  const skipSpace = () => {
+    while (text[at] === " " || text[at] === "\t") at += 1;
+  };
+  const token = (): string | undefined => {
+    MEDIA_TOKEN.lastIndex = at;
+    const found = MEDIA_TOKEN.exec(text)?.[0];
+    if (found !== undefined) at += found.length;
+    return found;
+  };
+  skipSpace();
+  if (token() === undefined || text[at] !== "/") return null;
+  at += 1;
+  if (token() === undefined) return null;
+  let found: string | undefined;
+  for (;;) {
+    skipSpace();
+    if (at === text.length) return found;
+    if (text[at] !== ";") return null;
+    at += 1;
+    skipSpace();
+    // An empty parameter (`;;` or a trailing `;`).
+    if (at === text.length || text[at] === ";") continue;
+    const name = token();
+    if (name === undefined || text[at] !== "=") return null;
+    at += 1;
+    let value: string | undefined;
+    if (text[at] === '"') {
+      value = "";
+      for (at += 1; ; at += 1) {
+        if (at >= text.length) return null;
+        const char = text[at]!;
+        if (char === '"') break;
+        if (char === "\\") {
+          at += 1;
+          if (at >= text.length) return null;
+          value += text[at];
+        } else value += char;
+      }
+      at += 1;
+    } else {
+      value = token();
+      if (value === undefined) return null;
+    }
+    if (name.toLowerCase() !== "charset") continue;
+    if (found !== undefined && found.toLowerCase() !== value.toLowerCase()) return null;
+    found = value;
   }
-  return undefined;
 }
 
 interface BaseUrl {

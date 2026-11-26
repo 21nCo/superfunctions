@@ -15,3 +15,10 @@ export function isForbiddenHeader(name: string): boolean {
   const lower = name.toLowerCase();
   return FORBIDDEN_HEADERS.has(lower) || lower.startsWith("proxy-");
 }
+
+const TOKEN = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
+
+/** Whether `name` is an HTTP token (RFC 9110), as a header or cookie name must be. */
+export function isHttpToken(name: string): boolean {
+  return TOKEN.test(name);
+}

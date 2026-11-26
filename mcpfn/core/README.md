@@ -304,12 +304,13 @@ const { registry } = fromOpenAPI<{ apiToken: string }>(document, {
   as `unsupported-by-executor`, and so is an operation whose every security
   requirement needs an `apiKey` credential in the query or in a header
   fetch manages, which operator headers cannot carry, and one whose security
-  is malformed (a level that is not a list, a requirement that is not an
-  object, scopes that are not a list of strings; `fromOpenAPI` reports it
+  is malformed (a level that is not a list, a requirement that is not a
+  plain object, such as a `Map` or `Date`, scopes that are not a list of strings; `fromOpenAPI` reports it
   to any executor as `operation.securityUnresolved`) or names a scheme that
   does not resolve (missing, an external `$ref`, a cycle, a `type` OpenAPI
-  does not define such as `api-key`) or an `apiKey` scheme without a usable
-  `name` and `in`, since the parameter that carries its credential is then
+  does not define such as `api-key`, a scheme object that is not a plain
+  object) or an `apiKey` scheme without a usable `name` and `in` (a header
+  or cookie name must be an HTTP token, a query name not empty), since the parameter that carries its credential is then
   unknown. It sets `outputSchemaRule: "every-success"`
   (see Outputs).
 - **Credentials (D9).** `headers` is a plain object (prototype
@@ -338,16 +339,22 @@ const { registry } = fromOpenAPI<{ apiToken: string }>(document, {
   as `Bearer`, and each value of a `Cookie` header, also percent-decoded as
   UTF-8 (a cookie parser's reading); and for echoes of these spelled with
   JSON escapes, percent escapes (also with `+` for a space) or HTML character
-  references (one or two of these, in either order). A body is checked in
+  references (one or two of these, in either order). A body is decoded in
   the encoding it marks or declares (a UTF-16 or UTF-8 byte order mark,
-  else the `Content-Type` charset, else UTF-8), also with any NUL
-  characters removed; one whose declared charset cannot be decoded is
-  withheld. Structured content is checked as it is returned, so a JSON
-  number that serializes as a credential is caught; text is returned as
-  written, so a number spelled inside a string or text is left alone.
-  An error excerpt shows literal echoes (overlapping ones merged) as
-  `[REDACTED]`, never cut inside one, and is withheld when the body reveals a
-  credential any other way. A success body that reveals one is withheld with
+  else the `Content-Type` charset, read with quoted values respected, else
+  UTF-8) and checked in that text, also with any NUL characters removed,
+  and read as UTF-8; its bytes are searched for each credential in UTF-8,
+  UTF-16LE and UTF-16BE at any offset, so the check never depends on the
+  declared charset being honest. One whose `Content-Type` cannot be parsed
+  or whose charset cannot be decoded is withheld. A JSON body is also
+  checked as it serializes (as structured content is returned), so a JSON
+  number that parses to a credential (`1.2345e4` for `12345`) is caught;
+  text is returned as written, so a number spelled inside a string or
+  text is left alone.
+  An error excerpt shows literal echoes of its decoded text (overlapping
+  ones merged) as `[REDACTED]`, never cut inside one, and is withheld when
+  the body reveals a credential any other way, including in its bytes or
+  as a JSON number. A success body that reveals one is withheld with
   an `isError` result that says the call succeeded, since rewriting it could
   change the data; so a short or common header value withholds every
   success body that happens to contain it. These spellings cover an upstream

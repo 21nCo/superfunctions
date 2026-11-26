@@ -25,7 +25,7 @@ import {
   TOO_DEEP,
   type OpenApiVersion,
 } from "./schema.js";
-import { isForbiddenHeader } from "./headers.js";
+import { isForbiddenHeader, isHttpToken } from "./headers.js";
 import type {
   FromOpenApiOptions,
   FromOpenApiResult,
@@ -203,7 +203,7 @@ function servers(...levels: unknown[]): OpenApiServer[] {
 function security(...levels: unknown[]): OpenApiOperation["security"] {
   for (const level of levels) {
     if (Array.isArray(level)) {
-      const requirements = documentItems(level, "invalid-operation").filter(isObject);
+      const requirements = documentItems(level, "invalid-operation").filter(isPlainRecord);
       // Scope lists reach the executor and the naming callback as arrays.
       for (const requirement of requirements) checkMetadata(checkedRequirements, requirement, (scopes) => scopes);
       return requirements as Record<string, string[]>[];
@@ -239,7 +239,8 @@ const securityProblems = new WeakMap<object, string | null>();
 
 function requirementsProblem(level: readonly unknown[]): string | undefined {
   for (const requirement of level) {
-    if (!isObject(requirement)) return "{where} security has a requirement that is not an object";
+    // A Map, Date or other class instance would read as `{}` (no credential), so only a plain object is a requirement.
+    if (!isPlainRecord(requirement)) return "{where} security has a requirement that is not a plain object";
     for (const [name, scopes] of Object.entries(requirement)) {
       if (!Array.isArray(scopes) || !(scopes as unknown[]).every((scope) => typeof scope === "string")) {
         return `the scopes of the security scheme ${JSON.stringify(name)} are not a list of strings`;
@@ -247,6 +248,13 @@ function requirementsProblem(level: readonly unknown[]): string | undefined {
     }
   }
   return undefined;
+}
+
+/** A plain object (prototype `Object.prototype` or `null`), as JSON and YAML parsing produce. */
+function isPlainRecord(value: unknown): value is JsonObject {
+  if (!isObject(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
 }
 
 function securityUnresolved(problem: string | undefined): { securityUnresolved?: string } {
@@ -304,7 +312,11 @@ const SCHEME_TYPES = new Set(["apiKey", "http", "oauth2", "openIdConnect", "mutu
 function schemeInfo(raw: JsonObject): OpenApiSecurityScheme | undefined {
   // A type OpenAPI does not define (such as "api-key") does not resolve, so its credential is not guessed.
   if (typeof raw.type !== "string" || !SCHEME_TYPES.has(raw.type)) return undefined;
-  const placed = raw.type === "apiKey" && typeof raw.name === "string" && (raw.in === "header" || raw.in === "query" || raw.in === "cookie");
+  // A name its location cannot carry (empty, or not a header or cookie token) leaves the credential unplaced.
+  const placed =
+    raw.type === "apiKey" &&
+    typeof raw.name === "string" &&
+    (raw.in === "query" ? raw.name !== "" : (raw.in === "header" || raw.in === "cookie") && isHttpToken(raw.name));
   return {
     type: raw.type,
     ...(placed ? { name: raw.name as string, in: raw.in as "header" | "query" | "cookie" } : {}),
@@ -547,7 +559,7 @@ class OperationConverter {
     }
     const found = new Map<string, OpenApiSecurityScheme>();
     for (const requirement of requirements) {
-      if (!isObject(requirement)) continue;
+      if (!isPlainRecord(requirement)) continue;
       for (const name of Object.keys(requirement)) {
         const scheme = found.has(name) ? undefined : this.securityScheme(name);
         if (scheme) found.set(name, scheme);
@@ -578,7 +590,7 @@ class OperationConverter {
       current = !visited.has(target) && Object.hasOwn(section, target) ? section[target] : undefined;
       visited.add(target);
     }
-    const scheme = isObject(current) ? schemeInfo(current) : undefined;
+    const scheme = isPlainRecord(current) ? schemeInfo(current) : undefined;
     this.schemeOutcomes.set(name, scheme ?? null);
     return scheme;
   }
@@ -892,8 +904,8 @@ class OperationConverter {
 
   /**
    * Whether every documented 2xx response has content, all of it JSON
-   * (`application/json` or `*+json`) declaring `schema`. A `2XX` range
-   * answers no: it covers `204` and `205`, which have no body. A response that
+   * (`application/json` or `*+json`) declaring `schema`. A `2XX` range,
+   * `204` or `205` answers no: those statuses carry no body. A response that
    * cannot be resolved describes no known body, so it answers no; it never
    * skips the operation.
    */
@@ -902,7 +914,7 @@ class OperationConverter {
     for (const [status, value] of Object.entries(raw.responses)) {
       if (!SUCCESS_STATUS.test(status)) continue;
       // A 2XX range also documents 204 and 205, which carry no body.
-      if (/^2XX$/i.test(status)) return false;
+      if (/^(?:2XX|20[45])$/i.test(status)) return false;
       let content: unknown;
       try {
         content = this.resolve(value, "responses").content;
