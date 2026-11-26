@@ -112,9 +112,19 @@ export interface OfflineQueueUploader {
      * Resolves when the credentials still act for the partition's principal,
      * else rejects with FILEFN_QUEUE_PRINCIPAL_MISMATCH. Call it immediately
      * before every request and retry (the built-in transport does), so no
-     * request carries another account's credentials.
+     * request carries another account's credentials. It admits the request:
+     * its first success marks the generation dispatched, so from then on an
+     * `uploadFile` abort keeps the generation (FILEFN_QUEUE_UPLOAD_STARTED).
      */
     assertPrincipal(): Promise<void>;
+    /**
+     * The same checks as `assertPrincipal()` (principal, current and not held
+     * generation), but it admits no request: the generation is not marked
+     * dispatched. For checks before a request is ready to go out, such as
+     * around resolving its credentials; call `assertPrincipal()` right before
+     * the request itself is sent.
+     */
+    checkPrincipal(): Promise<void>;
     /**
      * The scope journaled with the generation's replay identity (see
      * `replayScope()` above), present whenever the uploader resolves one.
@@ -489,7 +499,8 @@ interface GenerationState {
   claim?: { instanceId: string; at: string };
   /**
    * Set in the transaction of the upload's guard (`assertPrincipal`) that
-   * first admits a request of the generation, before that request goes out;
+   * first admits a request of the generation, immediately before that request
+   * goes out (after its credentials resolved; `checkPrincipal` never sets it);
    * never cleared. An `uploadFile` abort removes only a generation without
    * it (see `abortStaged`).
    */
@@ -1183,6 +1194,7 @@ function snapshot(record: JournalRecord): OfflineQueueEntry {
 
 const MISMATCH_REFUSAL = (): { status: 'refused'; reason: 'principal-mismatch' } => ({ status: 'refused', reason: 'principal-mismatch' });
 const STOPPED_MISMATCH = (): OfflineQueueProcessResult => ({ status: 'stopped', reason: 'principal-mismatch' });
+const STOPPED_ABORTED = (): OfflineQueueProcessResult => ({ status: 'stopped', reason: 'aborted' });
 
 /** Defers a waiter settlement until the public call returned (see `disclosing`). */
 type AfterReturn = (settle: () => void) => void;
@@ -1893,11 +1905,13 @@ export class OfflineQueue {
    * Advances one entry as far as it can go: upload, verification, publication
    * and cleanup. Returns `busy` when another tab or instance is processing it.
    * With `signal` aborted (or the queue disposed), nothing more is journaled
-   * and no new upload or hook starts. The entry stays claimed until an upload
+   * and no new upload or hook starts; an aborted call settles at once with
+   * `{ status: 'stopped', reason: 'aborted' }` and no entry data, also
+   * while `currentPrincipal` stalls. The entry stays claimed until an upload
    * or hook already started settles, even after the call has returned.
    */
   async process(entryId: string, options: { signal?: AbortSignal } = {}): Promise<OfflineQueueProcessResult> {
-    return this.disclosing(() => this.processIn(entryId, options), STOPPED_MISMATCH, undefined, options.signal);
+    return this.disclosing(() => this.processIn(entryId, options), STOPPED_MISMATCH, undefined, options.signal, STOPPED_ABORTED);
   }
 
   private async processIn(entryId: string, options: { signal?: AbortSignal }): Promise<OfflineQueueProcessResult> {
@@ -1929,11 +1943,14 @@ export class OfflineQueue {
    * failure, say) is returned for that entry and the pass goes on. Disposal
    * and a principal mismatch (of the listing or of any entry) stop the pass
    * and throw (FILEFN_QUEUE_DISPOSED, FILEFN_QUEUE_PRINCIPAL_MISMATCH), so no
-   * entry data of the pass is returned; an abort stops it after the results
-   * so far. Held entries are returned as `held` without being processed.
+   * entry data of the pass is returned. An abort stops the pass: the call
+   * settles at once, also while `currentPrincipal` stalls, and returns an
+   * empty list (no principal check passed after the results so far; their
+   * outcomes stay journaled for the next pass or `list`). Held entries are
+   * returned as `held` without being processed.
    */
   async processAll(options: { signal?: AbortSignal } = {}): Promise<OfflineQueueProcessAllItem[]> {
-    return this.disclosing(() => this.processAllIn(options), undefined, undefined, options.signal);
+    return this.disclosing(() => this.processAllIn(options), undefined, undefined, options.signal, () => []);
   }
 
   private async processAllIn(options: { signal?: AbortSignal }): Promise<OfflineQueueProcessAllItem[]> {
@@ -2432,12 +2449,18 @@ export class OfflineQueue {
    * `listLegacyUploads` and `migrateLegacyUpload`. `whenSettled` waiters
    * settle only behind a fresh principal check (`settleAfterReturn`,
    * `observeFenced`).
+   *
+   * With `signal`, the fence is raced with it, also when it aborted before
+   * the fence: a call stopped by its signal settles at once even while
+   * `currentPrincipal` stalls, returning `onAbort()` (an entry-free result)
+   * or throwing an AbortError, never `run`'s result.
    */
   private async disclosing<T, R = T>(
     run: (after: AfterReturn) => Promise<T>,
     onMismatch?: () => R,
     deliver?: (value: T) => R,
     signal?: AbortSignal,
+    onAbort?: () => R,
   ): Promise<R> {
     const deferred: Array<() => void> = [];
     let outcome: { ok: true; value: T } | { ok: false; error: unknown };
@@ -2450,12 +2473,17 @@ export class OfflineQueue {
       // A mismatch or an abort carries no entry data: thrown without another
       // principal check (one that stalls cannot hold up a stopped call).
       if (!outcome.ok && (isPrincipalMismatch(outcome.error) || isAbort(outcome.error))) throw outcome.error;
-      // Raced with the call's signal too, unless it already stopped: a call
-      // that stopped after its results so far returns them behind a check
-      // raced only with the queue's lifetime.
-      await this.discloseFence(signal && !signal.aborted ? signal : undefined);
+      // Raced with the call's signal, also once it aborted (the fence then
+      // fails at once): a stopped call never waits on a stalled principal
+      // check and never returns what `run` read without one.
+      await this.discloseFence(signal);
     } catch (fenceError) {
       if (onMismatch && isPrincipalMismatch(fenceError)) return onMismatch();
+      // Disposal (checked first by `assertUsable`) still throws FILEFN_QUEUE_DISPOSED.
+      if (onAbort && signal?.aborted && isAbort(fenceError)) {
+        this.assertUsable();
+        return onAbort();
+      }
       throw fenceError;
     }
     if (!outcome.ok) {
@@ -2508,19 +2536,21 @@ export class OfflineQueue {
    * of an upload already running (FILEFN_QUEUE_HELD); a request this guard
    * admitted before the hold committed still goes out (the lock is not held
    * across the network). The upload resumes under the same key once released.
-   * The first admission marks the generation `dispatched` in the same
-   * transaction, before the request goes out: from then on an `uploadFile`
-   * abort keeps it (FILEFN_QUEUE_UPLOAD_STARTED); before, it removes it and
-   * this guard finds it gone.
+   * With `admit` (the uploader's `assertPrincipal`, called right before a
+   * request is sent), the first admission marks the generation `dispatched`
+   * in the same transaction, before the request goes out: from then on an
+   * `uploadFile` abort keeps it (FILEFN_QUEUE_UPLOAD_STARTED); before, it
+   * removes it and this guard finds it gone. Without (`checkPrincipal`, e.g.
+   * before credentials resolve), nothing is written.
    */
-  private async guardUpload(entryId: string, planned: GenerationState, signal: AbortSignal): Promise<void> {
+  private async guardUpload(entryId: string, planned: GenerationState, signal: AbortSignal, admit: boolean): Promise<void> {
     await this.guardPrincipal(signal);
     const state = await this.transact(async (root) => {
       const found = await this.readEntry(root, entryId);
       const cur = found?.record.current;
       if (!found || cur!.generation !== planned.generation || cur!.operationId !== planned.operationId) return 'gone';
       if (found.record.holds.some((hold) => hold.operationId === planned.operationId)) return 'held';
-      if (!cur!.dispatched) {
+      if (admit && !cur!.dispatched) {
         cur!.dispatched = true;
         await this.writeRecord(found.dir, found.record);
       }
@@ -3570,7 +3600,8 @@ export class OfflineQueue {
             fileId: cur.fileId,
             idempotencyKey: cur.replay.idempotencyKey,
             signal: controller.signal,
-            assertPrincipal: () => this.guardUpload(entryId, cur, controller.signal),
+            assertPrincipal: () => this.guardUpload(entryId, cur, controller.signal, true),
+            checkPrincipal: () => this.guardUpload(entryId, cur, controller.signal, false),
             ...(cur.replay.scope !== undefined ? { replayScope: cur.replay.scope } : {}),
           }),
         );

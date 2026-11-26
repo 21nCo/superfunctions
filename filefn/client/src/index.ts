@@ -369,8 +369,12 @@ function replayUploader(
         // Never sent without the journaled scope.
         throw Object.assign(new Error('The generation has no journaled replay scope'), { code: REPLAY_SCOPE_UNCONFIRMED_ERROR });
       }
+      // The checks around the credentials admit no request (`checkPrincipal`):
+      // the generation is marked dispatched only by `beforeSend`, right
+      // before a request goes out, so an `uploadFile` abort while the
+      // credentials resolve (or are missing) still removes it, nothing sent.
       const headers = async (): Promise<Record<string, string>> => {
-        await input.assertPrincipal();
+        await input.checkPrincipal();
         // App code that runs before a request goes out (`raceCallerCallback`):
         // raced with the step's signal, so a disposal or cancellation with
         // nothing sent settles the step (and frees its entry) even if it never
@@ -379,10 +383,10 @@ function replayUploader(
         if (!bound) {
           // A switched principal stops the pass (the check throws); otherwise
           // the generation waits for credentials under the same key.
-          await input.assertPrincipal();
+          await input.checkPrincipal();
           throw new OfflineQueueError(CREDENTIALS_UNAVAILABLE_ERROR, "No credentials for the queue's principal");
         }
-        await input.assertPrincipal();
+        await input.checkPrincipal();
         return bound;
       };
       // Already prepared when staged: no preprocessors run again.

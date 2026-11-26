@@ -735,3 +735,66 @@ describe('architecture reset: an offline upload is runnable only once its stagin
     expect(server.inits).toHaveLength(1);
   });
 });
+
+describe('round 21: the built-in uploader marks a generation dispatched only right before a request goes out', () => {
+  it.each([
+    ['stall', 'credentials that have not resolved yet'],
+    ['null', 'no credentials for the principal'],
+  ] as const)('an uploadFile abort with %s credentials (%s) cancels the generation and sends nothing', async (mode, _label) => {
+    let asked!: () => void;
+    const askedForCredentials = new Promise<void>((resolve) => (asked = resolve));
+    const getAuthHeaders = vi.fn(() => {
+      asked();
+      return mode === 'stall' ? new Promise<Record<string, string> | null>(() => {}) : Promise.resolve(null);
+    });
+    const client = offlineClient({ implicitReplay: false, getAuthHeaders });
+    const handle = client.uploadFile({ policy: 'p', file: new File(['content'], 'test.txt') });
+    const done = handle.done();
+    void done.catch(() => {});
+    const queue = client.getOfflineQueue();
+    await vi.waitFor(async () => expect(await queue.list()).toEqual([expect.objectContaining({ entryId: handle.fileId, holds: [] })]));
+    setOnline(true);
+    const pass = queue.process(handle.fileId);
+    await askedForCredentials;
+    if (mode === 'null') {
+      // The generation waits for credentials under its key: nothing was sent.
+      expect(await pass).toMatchObject({ status: 'provisional' });
+    }
+    handle.abort();
+    await expect(done).rejects.toThrow('Aborted');
+    expect(await queue.list()).toEqual([]);
+    if (mode === 'stall') expect(await pass).toMatchObject({ status: expect.stringMatching(/^(stopped|not-found|superseded)$/) });
+    expect(server.calls).not.toHaveBeenCalled();
+    expect(dataFiles()).toEqual([]);
+  });
+
+  it('an abort after the first request was admitted still keeps the generation (FILEFN_QUEUE_UPLOAD_STARTED)', async () => {
+    let admitted!: () => void;
+    const initSent = new Promise<void>((resolve) => (admitted = resolve));
+    let releaseInit!: () => void;
+    const initGate = new Promise<void>((resolve) => (releaseInit = resolve));
+    const client = offlineClient({ implicitReplay: false });
+    const original = server.calls.getMockImplementation()!;
+    // The first upload/init is admitted and sent, then its answer is held back.
+    server.calls.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith('/upload/init')) {
+        admitted();
+        await initGate;
+      }
+      return original(input, init);
+    });
+    const handle = client.uploadFile({ policy: 'p', file: new File(['content'], 'test.txt') });
+    const done = handle.done();
+    void done.catch(() => {});
+    const queue = client.getOfflineQueue();
+    await vi.waitFor(async () => expect(await queue.list()).toEqual([expect.objectContaining({ entryId: handle.fileId, holds: [] })]));
+    setOnline(true);
+    const pass = queue.process(handle.fileId);
+    await initSent;
+    handle.abort();
+    await expect(done).rejects.toMatchObject({ code: 'FILEFN_QUEUE_UPLOAD_STARTED' });
+    releaseInit();
+    await pass;
+    expect(await queue.list()).toEqual([expect.objectContaining({ entryId: handle.fileId })]);
+  });
+});

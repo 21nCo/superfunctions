@@ -3321,3 +3321,115 @@ describe('round 20: lock waits, resolver mismatches, legacy incarnations and the
     expect(await pass).toMatchObject({ status: 'published', entry: { generation: 1 } });
   });
 });
+
+describe('round 21: a stopped pass never waits on a stalled principal check before it returns', () => {
+  const settledWithin = <T>(promise: Promise<T>, ms = 200) =>
+    Promise.race([
+      promise.then(
+        () => 'settled' as const,
+        () => 'settled' as const,
+      ),
+      new Promise<'waiting'>((resolve) => setTimeout(() => resolve('waiting'), ms)),
+    ]);
+  const isPartitionLock = (name: string) =>
+    name.startsWith('filefn-offline-queue:') && !name.includes(':entry:') && !name.includes(':admission:');
+  /** A tab whose `currentPrincipal` never answers once `stall()` was called. */
+  function stallingTab(name: string, overrides: Partial<OfflineQueueOptions> = {}) {
+    let stalling = false;
+    const queue = tab(name, {
+      ...overrides,
+      currentPrincipal: () => (stalling ? new Promise<never>(() => {}) : ALICE.principal),
+    });
+    return { queue, stall: () => (stalling = true) };
+  }
+
+  it('process aborted while it waits for the partition lock settles stopped/aborted while currentPrincipal stalls', async () => {
+    const uploader = recordingUploader();
+    const { queue: a, stall } = stallingTab('a', { uploader });
+    await stage(a);
+    const name = locks.requests.find(isPartitionLock)!;
+    const holding = deferred<void>();
+    const held = deferred<void>();
+    const holder = locks.forTab('b').request(name, {}, async () => {
+      held.resolve();
+      await holding.promise;
+    });
+    await held.promise;
+    const before = locks.requests.filter((request) => request === name).length;
+    const controller = new AbortController();
+    const pass = a.process(FILE_ID, { signal: controller.signal });
+    void pass.catch(() => {});
+    await vi.waitFor(() => expect(locks.requests.filter((request) => request === name).length).toBe(before + 1));
+    stall();
+    controller.abort();
+    expect(await settledWithin(pass)).toBe('settled');
+    expect(await pass).toEqual({ status: 'stopped', reason: 'aborted' });
+    holding.resolve();
+    await holder;
+    // The lock is free and the entry untouched: another tab of the principal lists it.
+    const b = tab('b');
+    expect(await settledWithin(b.list())).toBe('settled');
+    expect(await b.list()).toEqual([expect.objectContaining({ entryId: FILE_ID, phase: 'staged', attempts: 0 })]);
+    expect(uploader.calls).toEqual([]);
+    a.dispose();
+    b.dispose();
+  });
+
+  it('a disposed OfflineSync whose pass waits in replayScope settles withheld while currentPrincipal stalls, and frees the lock', async () => {
+    const resolving = deferred<void>();
+    const sent: string[] = [];
+    const uploader: OfflineQueueUploader = {
+      replayScope: () => {
+        resolving.resolve();
+        return new Promise<string>(() => {});
+      },
+      async upload(input) {
+        sent.push(input.fileId);
+        return { fileId: input.fileId, versionId: 'ver_1' };
+      },
+    };
+    const { queue: a, stall } = stallingTab('a', { uploader });
+    await stage(a);
+    const reports: unknown[] = [];
+    const sync = onlineSync(a, {
+      onSyncComplete: (result) => reports.push(result),
+      onSyncError: (error) => reports.push(error),
+    });
+    const run = sync.syncAll();
+    await resolving.promise;
+    stall();
+    // Only the sync is disposed: the queue (and its lifetime) stays.
+    sync.dispose();
+    expect(await settledWithin(run)).toBe('settled');
+    expect(await run).toEqual({ succeeded: [], failed: [], totalProcessed: 0 });
+    expect(reports).toEqual([]);
+    expect(sent).toEqual([]);
+    // The entry lock and the partition lock are free: another tab processes the entry.
+    const b = tab('b');
+    expect(await b.process(FILE_ID)).toMatchObject({ status: 'published' });
+    a.dispose();
+    b.dispose();
+  });
+
+  it('processAll aborted while an entry waits in replayScope returns an empty list while currentPrincipal stalls', async () => {
+    const resolving = deferred<void>();
+    const uploader: OfflineQueueUploader = {
+      replayScope: () => {
+        resolving.resolve();
+        return new Promise<string>(() => {});
+      },
+      upload: async (input) => ({ fileId: input.fileId, versionId: 'ver_1' }),
+    };
+    const { queue: a, stall } = stallingTab('a', { uploader });
+    await stage(a);
+    const controller = new AbortController();
+    const pass = a.processAll({ signal: controller.signal });
+    void pass.catch(() => {});
+    await resolving.promise;
+    stall();
+    controller.abort();
+    expect(await settledWithin(pass)).toBe('settled');
+    expect(await pass).toEqual([]);
+    a.dispose();
+  });
+});
