@@ -551,22 +551,45 @@ export class McpFnRegistry<TContext = undefined> {
   private readonly compileSchema: (schema: object) => CompiledSchema;
   private readonly registrations: Array<(target: McpFnRegistry<TContext>) => void> = [];
   private readonly schemas: object[] = [];
+  // Schemas a built-in compiler was seeded with by cloneEmpty(). They resolve
+  // `$ref`s like registered schemas but belong to no definition.
+  private readonly seededSchemas: object[] = [];
 
   /** Clone in successful registration order, preserving cross-definition references. */
   clone(): McpFnRegistry<TContext> {
     const target = new McpFnRegistry<TContext>(this.options);
+    target.seedSchemas(this.seededSchemas);
     for (const register of this.registrations) register(target);
     return target;
   }
 
-  /** An empty registry that keeps this registry's schema compiler and no definitions. */
+  /**
+   * An empty registry that keeps this registry's schema compiler and no
+   * definitions. A custom `compileSchema` is shared as-is. A built-in compiler
+   * is a fresh instance seeded, in registration order, with every schema this
+   * registry's compiler resolves, so `$ref`s to their `$id`s keep resolving
+   * while later registrations on either registry stay separate.
+   */
   cloneEmpty(): McpFnRegistry<TContext> {
-    return new McpFnRegistry<TContext>(this.options);
+    const target = new McpFnRegistry<TContext>(this.options);
+    target.seedSchemas([...this.seededSchemas, ...this.schemas]);
+    return target;
   }
 
-  /** Registered schema resources for catalog projections, including hidden tools and prompts. */
+  private seedSchemas(schemas: readonly object[]): void {
+    if (this.options.compileSchema !== undefined) return;
+    for (const schema of schemas) {
+      this.compileSchema(schema);
+      this.seededSchemas.push(schema);
+    }
+  }
+
+  /**
+   * Schema resources the runtime compiler resolves, in compile order, for
+   * catalog projections: seeded schemas, then hidden and visible tools and prompts.
+   */
   schemaDefinitions(): object[] {
-    return [...this.schemas];
+    return [...this.seededSchemas, ...this.schemas];
   }
   private readonly tools = new Map<string, RegisteredTool<TContext>>();
   private readonly resources = new Map<
