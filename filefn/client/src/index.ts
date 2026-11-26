@@ -139,7 +139,7 @@ export {
   OfflineQueue,
   OfflineQueueError,
 } from './offline/queue.js';
-export { UPLOAD_SESSION_ENDED_ERROR, UPLOAD_RECONCILE_FAILED_ERROR } from './upload-manager.js';
+export { UPLOAD_SESSION_ENDED_ERROR, UPLOAD_RECONCILE_FAILED_ERROR, createUploadSessionEndedError } from './upload-manager.js';
 
 export interface FileFnClient {
   uploadFile(input: UploadInput): UploadHandleWithFileId;
@@ -334,6 +334,25 @@ function buildPreprocessors(config: FileFnClientConfig): UploadPreprocessor[] {
   return preprocessors;
 }
 
+/** Settles with `promise`, or rejects with AbortError once `signal` aborts. */
+function raceSignal<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(new DOMException('Aborted', 'AbortError'));
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(new DOMException('Aborted', 'AbortError'));
+    signal.addEventListener('abort', onAbort, { once: true });
+    promise.then(
+      (value) => {
+        signal.removeEventListener('abort', onAbort);
+        resolve(value);
+      },
+      (error: unknown) => {
+        signal.removeEventListener('abort', onAbort);
+        reject(error);
+      },
+    );
+  });
+}
+
 /**
  * Replays queued uploads with a snapshot of the client's transport. Every
  * request, retry and part sends only headers `authHeaders(principal)` issued
@@ -368,7 +387,11 @@ function replayUploader(
       }
       const headers = async (): Promise<Record<string, string>> => {
         await input.assertPrincipal();
-        const bound = await authHeaders(principal());
+        // App code that runs before a request goes out: raced with the step's
+        // signal, so a disposal or cancellation with nothing sent settles the
+        // step (and frees its entry) even if it never settles. A late result
+        // is discarded.
+        const bound = await raceSignal(Promise.resolve().then(() => authHeaders(principal())), input.signal);
         if (!bound) {
           throw new OfflineQueueError('FILEFN_QUEUE_PRINCIPAL_MISMATCH', "No credentials for the queue's principal");
         }
@@ -505,7 +528,7 @@ export function createFileFnClient(config: FileFnClientConfig): FileFnClient {
         const queue = getOfflineQueue();
         const sync = startImplicitReplay(queue);
         const uploadSessionId = generateOfflineSessionId();
-        let aborted = false;
+        const abortController = new AbortController();
         /** Settles as the abort does: the cancellation's error, else an AbortError. */
         let abortOutcome: Promise<never> | undefined;
         let notifyAbort!: () => void;
@@ -519,13 +542,17 @@ export function createFileFnClient(config: FileFnClientConfig): FileFnClient {
         // the staging after its commit) leaves it runnable for its principal.
         // Release or cancellation is decided in the transaction that ends the
         // hold, reading the abort there: only a committed release announces
-        // work, and an abort before it removes the generation unrun.
+        // work, and an abort before it removes the generation unrun. An abort
+        // after the release is a lock-ordered `abortStaged` request at once:
+        // it removes the generation only if no tab claimed its first upload
+        // step yet, and otherwise keeps it (FILEFN_QUEUE_UPLOAD_STARTED).
+        let staged: { entryId: string; generation: number } | undefined;
         const stagePromise = (async () => {
           const prepared = await prepareUploadInput(normalizedInput, [
             ...preprocessors,
             ...(normalizedInput.preprocessors || []),
           ]);
-          if (aborted) {
+          if (abortController.signal.aborted) {
             throw createAbortError();
           }
           const result = await queue.stageAdmitted(
@@ -540,17 +567,18 @@ export function createFileFnClient(config: FileFnClientConfig): FileFnClient {
               localSource: prepared.localSource,
               idempotencyKey: prepared.idempotencyKey,
             },
-            () => aborted,
+            abortController.signal,
           );
           if (result.status === 'cancelled') throw createAbortError();
           if (result.status !== 'staged') {
             throw new OfflineQueueError('FILEFN_QUEUE_REFUSED', `Offline staging refused: ${result.reason}`, { ...result });
           }
-          const staged = { entryId: result.entry.entryId, generation: result.entry.generation };
-          if (aborted) {
-            // Aborted after the release committed: cancelled now (a
-            // generation that already started publishing refuses).
-            await queue.cancel(staged.entryId, staged.generation);
+          // Set synchronously with the return: an abort from now on requests
+          // abortStaged itself.
+          staged = { entryId: result.entry.entryId, generation: result.entry.generation };
+          if (abortController.signal.aborted) {
+            // Aborted after stageAdmitted stopped listening.
+            await queue.abortStaged(staged.entryId, staged.generation);
             throw createAbortError();
           }
           if (sync?.isOnline()) {
@@ -564,15 +592,21 @@ export function createFileFnClient(config: FileFnClientConfig): FileFnClient {
           uploadSessionId,
           fileId: normalizedInput.fileId!,
           abort: () => {
-            if (aborted) {
+            if (abortController.signal.aborted) {
               return;
             }
-            aborted = true;
-            abortOutcome = stagePromise.then(
-              async (staged) => {
-                // Released before the abort: cancel it now. An unconfirmed
-                // publication refuses; its error is the handle's.
-                await queue.cancel(staged.entryId, staged.generation);
+            const known = staged;
+            abortController.abort();
+            // Requested at once once the staging returned; before that, the
+            // staging call itself acts on the abort and settles stagePromise
+            // with its outcome.
+            const requested = known
+              ? queue.abortStaged(known.entryId, known.generation).then(() => {
+                  throw createAbortError();
+                })
+              : undefined;
+            abortOutcome = (requested ?? stagePromise).then(
+              () => {
                 throw createAbortError();
               },
               (error) => {
@@ -598,7 +632,7 @@ export function createFileFnClient(config: FileFnClientConfig): FileFnClient {
               return entry.upload ?? { fileId: entry.fileId, versionId: '' };
             } catch (error) {
               // The abort's outcome: its cancellation error, else an AbortError.
-              if (aborted) return await abortOutcome!;
+              if (abortController.signal.aborted) return await abortOutcome!;
               throw error;
             }
           }

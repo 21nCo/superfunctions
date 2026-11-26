@@ -467,7 +467,7 @@ describe('replay transport', () => {
     await vi.waitFor(async () => expect((await client.getOfflineQueue().list())[0]).toMatchObject({ phase: 'publishing' }));
     handle.abort();
     // The cancel's refusal is the handle's: the generation is not cancelled.
-    await expect(done).rejects.toMatchObject({ code: 'FILEFN_QUEUE_PUBLICATION_PENDING' });
+    await expect(done).rejects.toMatchObject({ code: 'FILEFN_QUEUE_UPLOAD_STARTED' });
     expect((await client.getOfflineQueue().list())[0]).toMatchObject({ phase: 'publishing', state: 'provisional' });
   });
 });
@@ -630,6 +630,49 @@ describe('architecture reset: an offline upload is runnable only once its stagin
     await expect(done).rejects.toThrow('Aborted');
     expect(await other.list()).toEqual([]);
     expect(server.inits).toEqual([]);
+  });
+
+  it('an abort while the staging call returns from its committed release cancels through the partition lock at once', async () => {
+    const scripted = scriptedCoordinator();
+    const client = offlineClient({ implicitReplay: false, queue: { coordinator: scripted.coordinator } });
+    const other = offlineClient({ implicitReplay: false }, 'tab-2').getOfflineQueue();
+    const staged = scripted.holdNext();
+    const handle = client.uploadFile({ policy: 'p', file: new File(['content'], 'test.txt') });
+    const done = handle.done();
+    await staged.reached;
+    // The transaction that ends the staging hold commits the release, then holds its return.
+    const ending = scripted.holdNext();
+    staged.release();
+    await ending.reached;
+    handle.abort();
+    // Requested at once, not when the staging call returns: no tab finds anything to send.
+    await vi.waitFor(async () => expect(await other.list()).toEqual([]));
+    expect(await other.processAll()).toEqual([]);
+    ending.release();
+    await expect(done).rejects.toThrow('Aborted');
+    expect(server.inits).toEqual([]);
+  });
+
+  it('an abort after another tab claimed the upload keeps the generation and its key, and rejects done() typed', async () => {
+    const client = offlineClient({ implicitReplay: false });
+    const other = offlineClient({ implicitReplay: false }, 'tab-2').getOfflineQueue();
+    // The first completion's outcome is unknown (another request is completing it).
+    server.state.override = (path) => (path === '/upload/sess_1/complete' ? failure(409, 'FILEFN_UPLOAD_COMPLETION_IN_PROGRESS') : undefined);
+    const handle = client.uploadFile({ policy: 'p', file: new File(['content'], 'test.txt') });
+    const done = handle.done();
+    void done.catch(() => {});
+    await vi.waitFor(async () => {
+      await other.processAll();
+      expect(server.inits).toHaveLength(1);
+    });
+    handle.abort();
+    await expect(done).rejects.toMatchObject({ code: 'FILEFN_QUEUE_UPLOAD_STARTED' });
+    // Nothing was removed: journal, key and bytes stay for the replay.
+    expect(await other.list()).toEqual([expect.objectContaining({ entryId: handle.fileId, phase: 'uploading', state: 'provisional' })]);
+    server.state.override = undefined;
+    expect(await other.processAll()).toEqual([{ entryId: handle.fileId, result: expect.objectContaining({ status: 'published' }) }]);
+    expect(server.inits).toHaveLength(2);
+    expect(server.inits[1].key).toBe(server.inits[0].key);
   });
 
   it('a reload between the staging commit and the release leaves the generation to replay under its recorded key', async () => {

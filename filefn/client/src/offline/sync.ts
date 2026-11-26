@@ -403,7 +403,7 @@ export class OfflineSync {
           result.succeeded.push(entryId);
           progress.completed += 1;
         } else if (outcome.status === 'provisional') {
-          retry ||= outcome.reason === 'ambiguous';
+          retry ||= outcome.reason === 'ambiguous' || outcome.reason === 'scope-unconfirmed';
           const message = outcome.entry.error?.message ?? outcome.entry.pending?.message ?? outcome.reason;
           failure = Object.assign(new Error(message), { code: outcome.reason });
         } else {

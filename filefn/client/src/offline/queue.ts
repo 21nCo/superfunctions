@@ -1,7 +1,7 @@
 import type { PendingLocalDescriptor, UploadResult } from '../types.js';
 import type { PendingLocalSourceMetadata } from '../preprocessing/types.js';
 import {
-  UPLOAD_SESSION_ENDED_ERROR,
+  isConfirmedSessionEnd,
   REPLAY_SCOPE_MISMATCH_ERROR,
   assertValidExplicitFileId,
   isValidIdempotencyKey,
@@ -254,7 +254,12 @@ export type OfflineQueuePhase =
 
 export interface OfflineQueuePending {
   stage: 'upload' | 'verification' | 'publication';
-  reason: 'ambiguous' | 'needs-reconcile' | 'retry-limit';
+  /**
+   * `scope-unconfirmed`: the replay account's scope could not be resolved, or
+   * differs from the one journaled with the generation. Nothing was sent and
+   * no attempt was used; a pass resumes it once the scope matches again.
+   */
+  reason: 'ambiguous' | 'needs-reconcile' | 'retry-limit' | 'scope-unconfirmed';
   message?: string;
 }
 
@@ -338,7 +343,16 @@ export type OfflineQueueProcessResult =
   | {
       status: 'provisional';
       entry: OfflineQueueEntry;
-      reason: 'held' | 'ambiguous' | 'needs-reconcile' | 'rejected' | 'failed' | 'retry-limit' | 'hook-unavailable';
+      reason:
+        | 'held'
+        | 'ambiguous'
+        | 'needs-reconcile'
+        | 'rejected'
+        | 'failed'
+        | 'retry-limit'
+        | 'hook-unavailable'
+        /** See `OfflineQueuePending.reason`: nothing sent, no attempt used, resumed by a later pass. */
+        | 'scope-unconfirmed';
     }
   /**
    * The pass stopped before its next effect: the caller's signal aborted
@@ -392,6 +406,13 @@ export type OfflineQueueErrorCode =
   /** The current principal is not the partition's; see `OfflineQueueCurrentPrincipal`. */
   | 'FILEFN_QUEUE_PRINCIPAL_MISMATCH'
   | 'FILEFN_QUEUE_PUBLICATION_PENDING'
+  /**
+   * An `uploadFile` abort came after a tab claimed the generation's first
+   * upload step: nothing was removed, and the generation stays provisional
+   * and reconcilable under its recorded identity (`details`: entryId,
+   * generation, phase).
+   */
+  | 'FILEFN_QUEUE_UPLOAD_STARTED'
   | 'FILEFN_QUEUE_SUPERSEDED'
   | 'FILEFN_QUEUE_REJECTED'
   | 'FILEFN_QUEUE_FAILED'
@@ -446,6 +467,12 @@ interface GenerationState {
   attempts: number;
   phase: OfflineQueuePhase;
   claim?: { instanceId: string; at: string };
+  /**
+   * Set in the write that claims the generation's first upload step, before
+   * any request; never cleared. An `uploadFile` abort removes only a
+   * generation without it (see `abortStaged`).
+   */
+  dispatched?: true;
   upload?: UploadResult;
   /**
    * `byHook`: a verify hook decided it. A generation verified without one
@@ -522,7 +549,7 @@ type Plan =
   | { kind: 'done'; result: OfflineQueueProcessResult }
   | { kind: 'continue' }
   /** The upload step needs the uploader's current replay scope (resolved outside the lock): plan again with it. */
-  | { kind: 'resolve-scope' }
+  | { kind: 'resolve-scope'; generation: number; operationId: string }
   /** A step started: `running` is its upload or hook, invoked right after its claim was journaled. */
   | { kind: StepKind; record: JournalRecord; controller: AbortController; release: () => void; running: Promise<unknown> };
 
@@ -769,7 +796,10 @@ type UploadFailure = { code?: unknown; status?: unknown; retryable?: unknown; de
  * the generation starts again under a fresh one.
  */
 function isSessionEnded(error: unknown): boolean {
-  return (error as UploadFailure)?.code === UPLOAD_SESSION_ENDED_ERROR;
+  // Only a confirmation the upload manager (or a custom uploader through
+  // createUploadSessionEndedError) made: a server refusal carrying the code
+  // proves nothing.
+  return isConfirmedSessionEnd(error);
 }
 
 /**
@@ -792,6 +822,10 @@ const REPLAYABLE_CODES = new Set([
   'FILEFN_SESSION_NOT_FOUND',
   'FILEFN_UPLOAD_EXPIRED',
   'FILEFN_UPLOAD_ABORTED',
+  // The client's own code: a response that names it confirmed nothing (only
+  // the upload manager's own confirmation retires a key), and the replay
+  // under the same key settles it.
+  'FILEFN_UPLOAD_SESSION_ENDED',
 ]);
 
 /**
@@ -1034,8 +1068,11 @@ type PendingRead = {
   absent: Position;
 };
 
-/** The uploader's replay scope for one pass, or why there is none. */
-type ScopeResolution = { scope: string } | { error: unknown };
+/**
+ * The uploader's replay scope, or why there is none, resolved for one
+ * generation and operation (`for`): it applies to no other.
+ */
+type ScopeResolution = ({ scope: string } | { error: unknown }) & { for: { generation: number; operationId: string } };
 
 /** Returned by `withEntryLock` when another tab or call holds the entry. */
 const BUSY: unique symbol = Symbol('busy');
@@ -1115,19 +1152,22 @@ export class OfflineQueue {
   private readonly objectUrls = new Map<string, { operationId: string; url: string }>();
   /**
    * Per entry, the newest durable position (see `Position`) an observation
-   * applied; per file, the entries' positions the newest preview read saw
-   * (`previewSeen`). An observation or preview read older than these is discarded whole: it settles no
-   * waiter, revokes no preview and returns nothing. The check and what it
-   * delivers run in one synchronous block, after the read's last await.
+   * applied; per file, the newest position of each of its entries that any
+   * observation or preview read applied (`fileView`). An observation or
+   * preview read older than these is discarded whole: it settles no waiter,
+   * revokes no preview and returns nothing. The check and what it delivers
+   * run in one synchronous block, after the read's last await.
    */
   private readonly applied = new Map<string, Position>();
   /**
-   * Per file: the position of each entry of the file as the newest preview
-   * read of it saw it (absent entries at the read's absence position). Each
-   * entry orders by its own durable journal position, so a file's order
-   * covers every entry of it, never just the one a read returned.
+   * Per file: the newest position of each entry of the file that any
+   * observation applied (a listing, a pass, a staging, a lookup, a removal,
+   * a preview read; a removed entry at its absence position). Each entry
+   * orders by its own durable journal position, so a preview read is ordered
+   * against every entry of its file that anything observed, never just the
+   * one it returned or earlier previews saw.
    */
-  private readonly previewSeen = new Map<string, Map<string, Position>>();
+  private readonly fileView = new Map<string, Map<string, Position>>();
   private partitionIdPromise: Promise<string> | undefined;
   private channelPromise: Promise<OfflineQueueChannel | undefined> | undefined;
   private posting: Promise<void> = Promise.resolve();
@@ -1273,35 +1313,101 @@ export class OfflineQueue {
    * closed or crashed before it was let go is runnable again for its
    * principal (the hold is dropped by the next plan). The staging call
    * decides release or cancellation in the one partition-lock transaction
-   * that ends the hold: `aborted()` is read there, and true removes the
+   * that ends the hold: `signal` is read there, and an abort removes the
    * generation (`cancelled`) without it ever being runnable; otherwise the
-   * hold is released and only that committed release announces work. A
-   * committed staging that a principal switch refused (`principal-mismatch`)
-   * stays runnable for its principal. An abort that comes after the queue
-   * was disposed or its principal changed cannot be journaled.
+   * hold is released and only that committed release announces work. An
+   * abort after that release (while this call is still returning) requests
+   * `abortStaged` at once: it is ordered against the first upload-step claim
+   * by the partition lock, removes the generation only if that claim never
+   * committed, and otherwise throws FILEFN_QUEUE_UPLOAD_STARTED with the
+   * generation kept. A committed staging that a principal switch refused
+   * (`principal-mismatch`) stays runnable for its principal. An abort that
+   * comes after the queue was disposed or its principal changed cannot be
+   * journaled. The result and errors pass the outer disclosing fence.
    */
   async stageAdmitted(
     input: Omit<OfflineQueueStageInput, 'hold'>,
-    aborted: () => boolean,
+    signal: AbortSignal,
   ): Promise<OfflineQueueStageResult | { status: 'cancelled'; entryId: string; generation: number }> {
     if (this.disposed) throw new OfflineQueueError('FILEFN_QUEUE_DISPOSED', 'Offline queue was disposed');
     const capability = this.capabilities();
     if (!capability.durable) return { status: 'refused', reason: capability.reason! };
-    const holdId = randomId('hold');
-    const lockName = await this.admissionLockName(holdId);
-    try {
-      return await this.coordinator!.request(lockName, { signal: this.lifetime.signal }, async () => {
-        const staged = await this.stageWith(input, holdId);
-        if (staged.status !== 'staged') return staged;
-        const { entryId, generation } = staged.entry;
-        const ended = await this.endAdmission(entryId, generation, holdId, aborted);
-        if (ended === 'cancelled') return { status: 'cancelled', entryId, generation } as const;
-        return staged;
-      });
-    } catch (error) {
-      if (this.disposed && isAbort(error)) throw new OfflineQueueError('FILEFN_QUEUE_DISPOSED', 'Offline queue was disposed');
-      throw error;
-    }
+    return this.disclosing(async (after) => {
+      const holdId = randomId('hold');
+      const lockName = await this.admissionLockName(holdId);
+      let abortRun: Promise<boolean> | undefined;
+      let listener: (() => void) | undefined;
+      let result: OfflineQueueStageResult | { status: 'cancelled'; entryId: string; generation: number };
+      try {
+        result = await this.coordinator!.request(lockName, { signal: this.lifetime.signal }, async () => {
+          const staged = await this.stageWith(input, holdId);
+          if (staged.status !== 'staged') return staged;
+          const { entryId, generation } = staged.entry;
+          // From the committed staging on, an abort is a lock-ordered request
+          // at once. Before the release commits, the admission hold keeps any
+          // claim out, so it always removes the generation (and the ending
+          // transaction then finds it gone, or reads the abort itself).
+          const request = () => {
+            abortRun ??= this.abortStagedIn(entryId, generation, after);
+            void abortRun.catch(() => {});
+          };
+          listener = request;
+          signal.addEventListener('abort', request, { once: true });
+          const ended = await this.endAdmission(entryId, generation, holdId, () => signal.aborted);
+          if (ended === 'cancelled') return { status: 'cancelled', entryId, generation } as const;
+          return staged;
+        });
+      } catch (error) {
+        if (this.disposed && isAbort(error)) throw new OfflineQueueError('FILEFN_QUEUE_DISPOSED', 'Offline queue was disposed');
+        throw error;
+      } finally {
+        if (listener) signal.removeEventListener('abort', listener);
+      }
+      if (abortRun && result.status === 'staged') {
+        const { entryId, generation } = result.entry;
+        await abortRun;
+        return { status: 'cancelled', entryId, generation } as const;
+      }
+      // The ending transaction cancelled it itself: the abort's request finds it gone.
+      if (abortRun) await abortRun.catch(() => {});
+      return result;
+    }, MISMATCH_REFUSAL);
+  }
+
+  /**
+   * The abort of an `uploadFile` call whose generation was already let go:
+   * in one partition-lock transaction, removes the generation if its first
+   * upload step was never claimed (`true`; `false` when it is gone or was
+   * replaced). Once that claim committed (here or in another tab), nothing
+   * is removed: its journal, replay key and bytes stay, provisional and
+   * reconcilable, and FILEFN_QUEUE_UPLOAD_STARTED is thrown.
+   */
+  async abortStaged(entryId: string, generation: number): Promise<boolean> {
+    return this.disclosing((after) => this.abortStagedIn(entryId, generation, after));
+  }
+
+  private async abortStagedIn(entryId: string, generation: number, after: AfterReturn): Promise<boolean> {
+    const removed = await this.transact(async (root) => {
+      const found = await this.readEntry(root, entryId);
+      if (!found || found.record.current.generation !== generation) return null;
+      const { record } = found;
+      const cur = record.current;
+      if (cur.dispatched || cur.phase !== 'staged') {
+        throw new OfflineQueueError(
+          'FILEFN_QUEUE_UPLOAD_STARTED',
+          'The upload of this generation already started: it is kept for reconciliation',
+          { entryId, generation, phase: cur.phase },
+        );
+      }
+      const partitionDir = await this.partitionDir(root);
+      await this.noteRemoval(partitionDir, [record]);
+      const { tombstones, lastGeneration } = await this.loadMeta(partitionDir);
+      await this.removePath(partitionDir, await this.entryKey(entryId), true);
+      return { tombstones, lastGeneration };
+    }, { disclose: true });
+    if (!removed) return false;
+    after(() => this.settleAbsent(entryId, removed.tombstones, removed.lastGeneration));
+    return true;
   }
 
   /**
@@ -1770,7 +1876,7 @@ export class OfflineQueue {
    * saw the removal or publication, which is newer.
    */
   private deliverPendingDescriptor(fileId: string, read: PendingRead): PendingLocalDescriptor | null | typeof STALE {
-    const seen = this.previewSeen.get(fileId) ?? new Map<string, Position>();
+    const seen = this.fileView.get(fileId) ?? new Map<string, Position>();
     const view = new Map<string, Position>();
     for (const entryId of new Set([...read.positions.keys(), ...seen.keys()])) {
       const position = read.positions.get(entryId) ?? read.absent;
@@ -1782,7 +1888,7 @@ export class OfflineQueue {
       error.code = 'FILEFN_OFFLINE_PREVIEW_UNSUPPORTED';
       throw error;
     }
-    this.previewSeen.set(fileId, view);
+    this.fileView.set(fileId, view);
     if (!read.found) return null;
     const { record, data } = read.found;
     this.applied.set(record.entryId, positionOf(record));
@@ -2102,7 +2208,8 @@ export class OfflineQueue {
    * given, turns `run`'s result into the returned one synchronously after the
    * fence, so nothing awaited comes between its checks and the return.
    *
-   * Wrapped: `stage`, `hold`, `release`, `list`, `get`, `cancel`,
+   * Wrapped: `stage`, `stageAdmitted`, `abortStaged`, `hold`, `release`,
+   * `list`, `get`, `cancel`,
    * `reconcile`, `process` (whose pipeline results also pass `disclosePass`),
    * `processAll`, `reclaim`, `usage`, `getPendingLocalDescriptor`,
    * `listLegacyUploads` and `migrateLegacyUpload`. `whenSettled` waiters
@@ -2851,15 +2958,18 @@ export class OfflineQueue {
     signal: AbortSignal | undefined,
     started: Promise<unknown>[],
   ): Promise<OfflineQueueProcessResult> {
-    // The uploader's current replay scope, resolved once per pass, outside
-    // the partition lock (it may run app code), when an upload step needs it.
+    // The uploader's current replay scope, resolved outside the partition
+    // lock (it may run app code) when an upload step needs it, for that
+    // step's generation and operation only: a replacement or re-plan
+    // resolves it again.
     let bound: ScopeResolution | undefined;
     for (;;) {
       let plan: Plan;
       try {
         plan = await this.transact((root) => this.planStep(root, entryId, signal, started, bound), { signal });
         if (plan.kind === 'resolve-scope') {
-          bound = await this.resolveReplayScope(signal);
+          const resolved = await this.resolveReplayScope(signal);
+          bound = { ...resolved, for: { generation: plan.generation, operationId: plan.operationId } };
           continue;
         }
       } catch (error) {
@@ -2874,7 +2984,10 @@ export class OfflineQueue {
       const outcome = await this.finishStep(entryId, plan, signal);
       // Replaced or removed by another tab or call: entry-local, so the entry
       // is planned again (its new generation, or not-found) and the pass goes on.
-      if (outcome === REPLAN) continue;
+      if (outcome === REPLAN) {
+        bound = undefined;
+        continue;
+      }
       if (outcome) return this.disclosePass(outcome, signal);
     }
   }
@@ -2886,7 +2999,7 @@ export class OfflineQueue {
    * value that is not a scope, is returned as the step's error: nothing is
    * sent and the generation stays provisional.
    */
-  private async resolveReplayScope(signal: AbortSignal | undefined): Promise<ScopeResolution> {
+  private async resolveReplayScope(signal: AbortSignal | undefined): Promise<{ scope: string } | { error: unknown }> {
     const uploader = this.options.uploader;
     await this.discloseFence(signal);
     const controller = new AbortController();
@@ -3053,23 +3166,32 @@ export class OfflineQueue {
         }
         // The replay identity's account scope: journaled once, below, in the
         // write that claims the first upload step, and only compared after.
-        if (this.options.uploader.replayScope && !bound) return { kind: 'resolve-scope' };
-        if (bound) {
-          const differs = 'scope' in bound && cur.replay.scope !== undefined && cur.replay.scope !== bound.scope;
-          if ('error' in bound || differs) {
-            // Nothing is sent: provisional under the same key and scope.
+        // A resolution made for another generation or operation never applies.
+        const scoped =
+          bound && bound.for.generation === cur.generation && bound.for.operationId === cur.operationId ? bound : undefined;
+        if (this.options.uploader.replayScope && !scoped) {
+          return { kind: 'resolve-scope', generation: cur.generation, operationId: cur.operationId };
+        }
+        if (scoped) {
+          const differs = 'scope' in scoped && cur.replay.scope !== undefined && cur.replay.scope !== scoped.scope;
+          if ('error' in scoped || differs) {
+            // Nothing is sent, and no attempt is used: provisional under the
+            // same key and scope until the resolver returns the journaled
+            // scope (a later pass resumes it by itself).
             const info = errorInfo(
-              'error' in bound
-                ? bound.error
+              'error' in scoped
+                ? scoped.error
                 : Object.assign(new Error("The replay account's scope differs from the one journaled with the generation"), {
                     code: REPLAY_SCOPE_MISMATCH_ERROR,
                   }),
             );
-            cur.attempts += 1;
-            cur.error = info;
-            cur.pending = { stage: 'upload', reason: 'ambiguous', message: info.message };
-            await write();
-            return provisional('ambiguous', true);
+            const changed = cur.pending?.reason !== 'scope-unconfirmed' || cur.error?.code !== info.code || cur.error?.message !== info.message;
+            if (changed) {
+              cur.error = info;
+              cur.pending = { stage: 'upload', reason: 'scope-unconfirmed', message: info.message };
+              await write();
+            }
+            return provisional('scope-unconfirmed', changed);
           }
         }
         const blob = await getFile(dir, cur.dataFile);
@@ -3082,7 +3204,11 @@ export class OfflineQueue {
         const file = new File([await blob.arrayBuffer()], cur.fileName, { type: cur.mimeType });
         cur.phase = 'uploading';
         cur.claim = { instanceId: this.instanceId, at: new Date().toISOString() };
-        if (bound && 'scope' in bound && cur.replay.scope === undefined) cur.replay.scope = bound.scope;
+        // Ordered against an uploadFile abort by the partition lock: whichever
+        // commits first wins (see abortStaged).
+        cur.dispatched = true;
+        if (scoped && 'scope' in scoped && cur.replay.scope === undefined) cur.replay.scope = scoped.scope;
+        if (cur.pending?.reason === 'scope-unconfirmed') cur.pending = undefined;
         await write();
         return start('upload', (controller) =>
           this.options.uploader.upload({
@@ -3424,6 +3550,20 @@ export class OfflineQueue {
     return true;
   }
 
+  /**
+   * Records an applied observation of an entry in its file's view (see
+   * `fileView`), and moves it out of the view of a file it no longer
+   * stages (its absence there is at least as new).
+   */
+  private viewFile(fileId: string, entryId: string, position: Position): void {
+    for (const [other, view] of this.fileView) {
+      if (other !== fileId && view.has(entryId)) view.set(entryId, { generation: position.generation, revision: Number.POSITIVE_INFINITY });
+    }
+    const view = this.fileView.get(fileId) ?? new Map<string, Position>();
+    if (!isBefore(position, view.get(entryId))) view.set(entryId, position);
+    this.fileView.set(fileId, view);
+  }
+
   /** The waiters armed at or before `position`: only those may be settled from it. */
   private takeWaiters(entryId: string, position: Position, settles: (waiter: Waiter) => boolean): Waiter[] {
     const list = this.waiters.get(entryId);
@@ -3451,6 +3591,7 @@ export class OfflineQueue {
   private observe(record: JournalRecord, tombstones?: Tombstone[]): void {
     const position = positionOf(record);
     if (!this.admit(record.entryId, position)) return;
+    this.viewFile(record.current.fileId, record.entryId, position);
     const cur = record.current;
     const cached = this.objectUrls.get(record.entryId);
     if (cached && (cur.phase === 'published' || cur.dataRemoved || cached.operationId !== cur.operationId)) {
@@ -3499,6 +3640,9 @@ export class OfflineQueue {
   private settleAbsent(entryId: string, tombstones: Tombstone[], lastGeneration: number): void {
     const position = absentAt(lastGeneration);
     if (!this.admit(entryId, position)) return;
+    for (const view of this.fileView.values()) {
+      if (view.has(entryId)) view.set(entryId, position);
+    }
     this.revokeObjectUrl(entryId);
     for (const waiter of this.takeWaiters(entryId, position, () => true)) {
       const tombstone = tombstones.find((t) => t.entryId === entryId && t.generation === waiter.generation);

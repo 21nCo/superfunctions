@@ -9,7 +9,7 @@ import {
   type OfflineQueueUploader,
 } from '../offline/queue.js';
 import { OfflineSync } from '../offline/sync.js';
-import { UPLOAD_SESSION_ENDED_ERROR } from '../upload-manager.js';
+import { UPLOAD_SESSION_ENDED_ERROR, createUploadSessionEndedError } from '../upload-manager.js';
 import {
   ChannelBus,
   MemoryDirectory,
@@ -265,7 +265,7 @@ describe('crash and reload', () => {
     const uploader: OfflineQueueUploader = {
       async upload(input) {
         keys.push(input.idempotencyKey);
-        if (keys.length === 1) throw Object.assign(new Error('expired'), { code: UPLOAD_SESSION_ENDED_ERROR });
+        if (keys.length === 1) throw createUploadSessionEndedError('ups_1', 'expired');
         return { fileId: input.fileId, versionId: 'ver_1' };
       },
     };
@@ -273,6 +273,33 @@ describe('crash and reload', () => {
     expect(await tab('a', { uploader }).process(FILE_ID)).toMatchObject({ status: 'published' });
     expect(keys[0]).toMatch(/^test-replay-key-0002:op_/);
     expect(keys[1]).not.toBe(keys[0]);
+  });
+
+  it('keeps the key when an error merely carries the session-ended code', async () => {
+    const keys: string[] = [];
+    const uploader: OfflineQueueUploader = {
+      async upload(input) {
+        keys.push(input.idempotencyKey);
+        if (keys.length === 1) throw Object.assign(new Error('expired'), { code: UPLOAD_SESSION_ENDED_ERROR });
+        return { fileId: input.fileId, versionId: 'ver_1' };
+      },
+    };
+    await stage(tab('a', { uploader }), 'v1', { idempotencyKey: 'test-replay-key-0003' });
+    expect(await tab('a', { uploader }).process(FILE_ID)).toMatchObject({ status: 'provisional', reason: 'ambiguous' });
+    expect(await tab('a', { uploader }).process(FILE_ID)).toMatchObject({ status: 'published' });
+    expect(keys).toEqual([keys[0], keys[0]]);
+  });
+
+  it('keeps a custom uploader result that names an ended session provisional', async () => {
+    const verify = vi.fn(async () => ({ verified: true as const }));
+    const uploader: OfflineQueueUploader = {
+      async upload(input) {
+        return { fileId: input.fileId, versionId: 'ver_1', status: 'aborted' } as unknown as Awaited<ReturnType<OfflineQueueUploader['upload']>>;
+      },
+    };
+    await stage(tab('a', { uploader, hooks: { verify } }), 'v1');
+    expect(await tab('a', { uploader, hooks: { verify } }).process(FILE_ID)).toMatchObject({ status: 'provisional', reason: 'ambiguous' });
+    expect(verify).not.toHaveBeenCalled();
   });
 
   it('keeps an ambiguous or rejected verification provisional across reload and in completion notifications', async () => {
@@ -2721,6 +2748,98 @@ describe('architecture reset: durable observation order and the upload result sc
     const a = tab('a', { uploader });
     await stage(a);
     expect(await a.process(FILE_ID)).toMatchObject({ status: 'published', entry: { upload: { fileId: FILE_ID, versionId: 'ver_1' } } });
+    a.dispose();
+  });
+});
+
+describe('round 14: the admission call passes the outer fence', () => {
+  const isAdmissionLock = (lock: string) => lock.includes(':admission:');
+  const input = () => ({ policy: 'p', file: new Blob(['v1'], { type: 'text/plain' }), fileName: 'a.txt', fileId: FILE_ID });
+
+  it('returns no entry when the account switches while the admission lock hands back the staging', async () => {
+    let signedIn: OfflineQueuePrincipal = ALICE.principal;
+    const gated = gatedCoordinator('a');
+    const uploader = recordingUploader();
+    const a = tab('a', { coordinator: gated.coordinator, currentPrincipal: () => signedIn, uploader });
+    const gate = gated.arm(isAdmissionLock);
+    const staging = a.stageAdmitted(input(), new AbortController().signal);
+    await gate.reached;
+    signedIn = BOB.principal;
+    gate.release();
+    expect(await staging).toEqual({ status: 'refused', reason: 'principal-mismatch' });
+    // The committed staging stays with its owner.
+    signedIn = ALICE.principal;
+    expect(await a.process(FILE_ID)).toMatchObject({ status: 'published' });
+    expect(uploader.calls).toHaveLength(1);
+    a.dispose();
+  });
+
+  it('rejects a staging whose admission lock hands back after the queue was disposed', async () => {
+    const gated = gatedCoordinator('a');
+    const a = tab('a', { coordinator: gated.coordinator });
+    const gate = gated.arm(isAdmissionLock);
+    const staging = a.stageAdmitted(input(), new AbortController().signal);
+    await gate.reached;
+    a.dispose();
+    gate.release();
+    await expect(staging).rejects.toMatchObject({ code: 'FILEFN_QUEUE_DISPOSED' });
+    const uploader = recordingUploader();
+    const b = tab('b', { uploader });
+    expect(await b.process(FILE_ID)).toMatchObject({ status: 'published' });
+    expect(uploader.calls).toHaveLength(1);
+    b.dispose();
+  });
+});
+
+describe('round 14: a replay scope resolution applies to its own generation only', () => {
+  it('resolves the scope again for a generation that replaced the one it was resolved for', async () => {
+    const resolving = deferred<string>();
+    const resolver = vi.fn(async () => (resolver.mock.calls.length === 1 ? resolving.promise : 'rs_test-scope-generation-2'));
+    const scopes: Array<string | undefined> = [];
+    const bodies: string[] = [];
+    const uploader: OfflineQueueUploader = {
+      replayScope: resolver,
+      async upload(input) {
+        scopes.push(input.replayScope);
+        bodies.push(await input.file.text());
+        return { fileId: input.fileId, versionId: 'ver_1' };
+      },
+    };
+    const a = tab('a', { uploader });
+    await stage(a, 'v1');
+    const pass = a.process(FILE_ID);
+    await vi.waitFor(() => expect(resolver).toHaveBeenCalledTimes(1));
+    // Replaced while its scope is being resolved.
+    expect(await stage(a, 'v2')).toMatchObject({ entry: { generation: 2 } });
+    resolving.resolve('rs_test-scope-generation-1');
+    expect(await pass).toMatchObject({ status: 'published', entry: { generation: 2 } });
+    expect(resolver).toHaveBeenCalledTimes(2);
+    expect(scopes).toEqual(['rs_test-scope-generation-2']);
+    expect(bodies).toEqual(['v2']);
+    a.dispose();
+  });
+});
+
+describe('round 14: a preview is ordered against every observation of its file', () => {
+  const isPartitionLock = (lock: string) =>
+    !lock.includes(':entry:') && !lock.includes(':admission:') && !lock.startsWith('filefn-offline-legacy:');
+
+  it.each([
+    ['a read that found an older entry', true],
+    ['an empty read', false],
+  ])('rereads %s once a listing observed a newer entry of the file', async (_label, withOlder) => {
+    vi.stubGlobal('URL', { createObjectURL: (blob: Blob) => `blob:size-${blob.size}`, revokeObjectURL: () => {} });
+    const gated = gatedCoordinator('a');
+    const a = tab('a', { coordinator: gated.coordinator });
+    if (withOlder) await stage(a, 'aaa', { entryId: 'entry-a' });
+    const gate = gated.arm(isPartitionLock);
+    const preview = a.getPendingLocalDescriptor(FILE_ID);
+    await gate.reached;
+    // While the preview's read hands back late: a newer entry of the same file, seen by a listing.
+    const newer = await stage(a, 'bbbbbbbbb', { entryId: 'entry-b' });
+    expect((await a.list()).map((entry) => entry.entryId)).toContain('entry-b');
+    gate.release();
+    expect(await preview).toMatchObject({ uploadSessionId: newer.entry.operationId, source: { url: 'blob:size-9' } });
     a.dispose();
   });
 });

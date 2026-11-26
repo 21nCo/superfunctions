@@ -141,7 +141,13 @@ const SESSION_STATUSES = new Set(["pending", "in_progress", "completed", "aborte
 
 /** The schemas of the upload-session routes' successful payloads. */
 export const uploadSchemas = {
-  /** `upload/init`: a well-formed session; a completed one names its stored file and version. */
+  /**
+   * `upload/init`: a well-formed, self-consistent session. A completed one
+   * names its stored file and version; only a completed one may carry
+   * `versionConfirmed`, and only an in-progress one `completionStarted`. An
+   * ended (aborted or expired) one carries neither and names no file or
+   * version: a body that contradicts itself proves nothing.
+   */
   init: (data: unknown): data is InitUploadResponse =>
     isObject(data) &&
     isWellFormedId(data.uploadSessionId) &&
@@ -152,7 +158,11 @@ export const uploadSchemas = {
     optional(data.versionConfirmed, isBoolean) &&
     optional(data.completionStarted, isBoolean) &&
     (data.status === undefined || (typeof data.status === "string" && SESSION_STATUSES.has(data.status))) &&
-    (data.status !== "completed" || (isValidFileId(data.fileId) && isWellFormedId(data.versionId))),
+    (data.status !== "completed" || (isValidFileId(data.fileId) && isWellFormedId(data.versionId))) &&
+    (data.versionConfirmed === undefined || data.status === "completed") &&
+    (data.completionStarted === undefined || data.status === "in_progress") &&
+    ((data.status !== "aborted" && data.status !== "expired") ||
+      (data.fileId === undefined && data.versionId === undefined)),
   status: (data: unknown): data is UploadStatusResponse =>
     isObject(data) &&
     typeof data.status === "string" &&
@@ -164,9 +174,16 @@ export const uploadSchemas = {
     isObject(data) && typeof data.url === "string" && data.url.length > 0 && optional(data.headers, isObject),
   /** A body-less success (204) or any object. */
   ack: <T>(data: unknown): data is T => data === undefined || isObject(data),
-  /** `upload/{id}/complete` and a version read: a stored file and version. */
+  /**
+   * `upload/{id}/complete` and a version read: a stored file and version. A
+   * payload that names a session status other than `completed` contradicts
+   * itself and proves nothing.
+   */
   stored: (data: unknown): data is CompleteUploadResponse =>
-    isObject(data) && isValidFileId(data.fileId) && isWellFormedId(data.versionId),
+    isObject(data) &&
+    isValidFileId(data.fileId) &&
+    isWellFormedId(data.versionId) &&
+    (data.status === undefined || data.status === "completed"),
   part: (data: unknown): data is { etag: string; recorded?: boolean } =>
     isObject(data) && optional(data.etag, isString) && optional(data.recorded, isBoolean),
 } as const;

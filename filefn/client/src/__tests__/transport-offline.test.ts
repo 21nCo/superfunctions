@@ -461,6 +461,74 @@ describe('replay settlement boundaries', () => {
     c.dispose();
   });
 
+  it.each([
+    ['expired with completionStarted', { status: 'expired', completionStarted: true }],
+    ['expired with versionConfirmed', { status: 'expired', versionConfirmed: true }],
+    ['aborted naming a stored file and version', { status: 'aborted', fileId: FILE, versionId: 'ver_1' }],
+    ['expired with every completion marker', { status: 'expired', completionStarted: true, versionConfirmed: true, fileId: FILE, versionId: 'ver_1' }],
+  ] as const)('keeps the key of a self-contradicting ended init: %s', async (_label, body) => {
+    const s = server((path, init, call) => {
+      if (path !== '/upload/init') return undefined;
+      if (call === 1) return envelope({ uploadSessionId: 'sess_1', ...body, ...replayScopeOf(init) });
+      return envelope({ uploadSessionId: 'sess_1', status: 'completed', fileId: FILE, versionId: 'ver_1', versionConfirmed: true, ...replayScopeOf(init) });
+    });
+    const c = client(s.fetch);
+    const queue = c.getOfflineQueue();
+    await stageOne(queue);
+    expect(await queue.process(FILE)).toMatchObject({ status: 'provisional', reason: 'ambiguous' });
+    expect(persistedText()).toContain('.bin');
+    expect(await queue.process(FILE)).toMatchObject({ status: 'published' });
+    expect(s.keys).toHaveLength(2);
+    expect(new Set(s.keys).size).toBe(1);
+    c.dispose();
+  });
+
+  it('keeps the key when a refusal merely names FILEFN_UPLOAD_SESSION_ENDED', async () => {
+    const s = server((path, init, call) => {
+      if (path !== '/upload/init') return undefined;
+      if (call === 1) return json({ ok: false, error: { code: 'FILEFN_UPLOAD_SESSION_ENDED', message: 'test refusal' } }, 410);
+      return envelope({ uploadSessionId: 'sess_1', status: 'completed', fileId: FILE, versionId: 'ver_1', versionConfirmed: true, ...replayScopeOf(init) });
+    });
+    const c = client(s.fetch);
+    const queue = c.getOfflineQueue();
+    await stageOne(queue);
+    expect(await queue.process(FILE)).toMatchObject({ status: 'provisional', reason: 'ambiguous' });
+    expect(await queue.process(FILE)).toMatchObject({ status: 'published' });
+    expect(s.keys).toHaveLength(2);
+    expect(new Set(s.keys).size).toBe(1);
+    c.dispose();
+  });
+
+  it.each([
+    ['completion', (path: string) => (path === '/upload/sess_1/complete' ? envelope({ fileId: FILE, versionId: 'ver_1', status: 'aborted' }) : undefined)],
+    [
+      'the version readback',
+      (path: string, init: RequestInit) => {
+        if (path === '/upload/init') return envelope({ uploadSessionId: 'sess_1', status: 'completed', fileId: FILE, versionId: 'ver_1', ...replayScopeOf(init) });
+        if (path === `/${FILE}/versions/ver_1`) return envelope({ fileId: FILE, versionId: 'ver_1', status: 'aborted' });
+        return undefined;
+      },
+    ],
+    [
+      'a completed init with completionStarted',
+      (path: string, init: RequestInit) =>
+        path === '/upload/init'
+          ? envelope({ uploadSessionId: 'sess_1', status: 'completed', completionStarted: true, fileId: FILE, versionId: 'ver_1', versionConfirmed: true, ...replayScopeOf(init) })
+          : undefined,
+    ],
+  ] as const)('confirms no stored version from a self-contradicting answer at %s', async (_label, route) => {
+    const s = server(route as Route);
+    const verify = vi.fn(async () => ({ verified: true as const }));
+    const c = client(s.fetch, { queue: { coordinator: locks.forTab('a'), hooks: { verify } } });
+    const queue = c.getOfflineQueue();
+    await stageOne(queue);
+    expect(await queue.process(FILE)).toMatchObject({ status: 'provisional', reason: 'ambiguous', entry: { phase: 'uploading' } });
+    expect((await queue.get(FILE))?.upload).toBeUndefined();
+    expect(verify).not.toHaveBeenCalled();
+    expect(persistedText()).toContain('.bin');
+    c.dispose();
+  });
+
   it('lets go of the entry when disposed while replayAccount never settles, so a new instance processes it', async () => {
     const s = server();
     let asked!: () => void;
@@ -478,6 +546,31 @@ describe('replay settlement boundaries', () => {
     await reached;
     stuck.dispose();
     await expect(pass).rejects.toMatchObject({ code: 'FILEFN_QUEUE_DISPOSED' });
+    // Same tab, same principal: the entry lock is free again.
+    const next = client(s.fetch);
+    expect(await next.getOfflineQueue().process(FILE)).toMatchObject({ status: 'published' });
+    expect(s.keys).toHaveLength(1);
+    next.dispose();
+  });
+
+  it('lets go of the entry when disposed while getAuthHeaders never settles, so a new instance processes it', async () => {
+    const s = server();
+    let asked!: () => void;
+    const reached = new Promise<void>((resolve) => (asked = resolve));
+    const stuck = client(s.fetch, {
+      getAuthHeaders: () => {
+        asked();
+        return new Promise<never>(() => {});
+      },
+    });
+    const queue = stuck.getOfflineQueue();
+    await stageOne(queue);
+    const pass = queue.process(FILE);
+    void pass.catch(() => {});
+    await reached;
+    stuck.dispose();
+    await expect(pass).rejects.toMatchObject({ code: 'FILEFN_QUEUE_DISPOSED' });
+    expect(s.paths).toEqual([]);
     // Same tab, same principal: the entry lock is free again.
     const next = client(s.fetch);
     expect(await next.getOfflineQueue().process(FILE)).toMatchObject({ status: 'published' });
@@ -631,13 +724,17 @@ describe('replay settlement boundaries', () => {
     await stageOne(queue);
     expect(await queue.process(FILE)).toMatchObject({ status: 'provisional', reason: 'ambiguous' });
     tenant = 'tenant-b';
-    expect(await queue.process(FILE)).toMatchObject({
-      status: 'provisional',
-      reason: 'ambiguous',
-      entry: { error: { code: 'FILEFN_REPLAY_SCOPE_MISMATCH' } },
-    });
+    // More passes than the attempt limit: each sends nothing and uses no attempt.
+    for (let pass = 0; pass < 7; pass += 1) {
+      expect(await queue.process(FILE)).toMatchObject({
+        status: 'provisional',
+        reason: 'scope-unconfirmed',
+        entry: { attempts: 1, error: { code: 'FILEFN_REPLAY_SCOPE_MISMATCH' }, pending: { reason: 'scope-unconfirmed' } },
+      });
+    }
     // Nothing was sent for the other tenant.
     expect(s.scopes).toEqual([scopeOf('server-user-7', 'tenant-a')]);
+    // The original account resumes it by itself, under the same key: no reconcile.
     tenant = 'tenant-a';
     expect(await queue.process(FILE)).toMatchObject({ status: 'published' });
     expect(s.scopes).toEqual([scopeOf('server-user-7', 'tenant-a'), scopeOf('server-user-7', 'tenant-a')]);

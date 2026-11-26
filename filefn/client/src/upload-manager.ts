@@ -41,6 +41,39 @@ const FILE_ID_MISMATCH_ERROR = 'FILEFN_CLIENT_FILE_ID_MISMATCH';
  * new one. `details.status` is the reported status.
  */
 export const UPLOAD_SESSION_ENDED_ERROR = 'FILEFN_UPLOAD_SESSION_ENDED';
+
+/**
+ * Session ends this client confirmed itself (a decoded, self-consistent
+ * `upload/init` replay reporting aborted or expired) or that a custom offline
+ * uploader confirmed through `createUploadSessionEndedError`. Only these
+ * retire an offline replay key: an error that merely carries the code, such
+ * as a server refusal naming `FILEFN_UPLOAD_SESSION_ENDED`, does not.
+ */
+const confirmedSessionEnds = new WeakSet<object>();
+
+/**
+ * The error that confirms an upload session of the replay key ended for good
+ * (aborted or expired). A custom `OfflineQueueUploader` throws it only when
+ * it confirmed that end itself; the queue then journals a fresh key before
+ * the next request. Any other error, whatever its code, leaves the outcome
+ * unknown under the same key.
+ */
+export function createUploadSessionEndedError(
+  uploadSessionId: string,
+  status: 'aborted' | 'expired',
+): Error & { code: string; details: Record<string, unknown> } {
+  const error = Object.assign(
+    new Error(`Upload session ${uploadSessionId} is ${status}; start again with a new idempotency key`),
+    { code: UPLOAD_SESSION_ENDED_ERROR, details: { uploadSessionId, status } as Record<string, unknown> },
+  );
+  confirmedSessionEnds.add(error);
+  return error;
+}
+
+/** Whether an error is a confirmed session end (see `createUploadSessionEndedError`). */
+export function isConfirmedSessionEnd(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && confirmedSessionEnds.has(error);
+}
 /** A replayed completed session's file could not be read back to confirm it. */
 export const UPLOAD_RECONCILE_FAILED_ERROR = 'FILEFN_UPLOAD_RECONCILE_FAILED';
 /**
@@ -400,11 +433,7 @@ export class UploadManager {
     if (initResponse.status === "aborted" || initResponse.status === "expired") {
       // A decoded success with a well-formed session confirms the end (and
       // retires the key).
-      throw createClientError(
-        UPLOAD_SESSION_ENDED_ERROR,
-        `Upload session ${uploadSessionId} is ${initResponse.status}; start again with a new idempotency key`,
-        { uploadSessionId, status: initResponse.status },
-      );
+      throw createUploadSessionEndedError(uploadSessionId, initResponse.status);
     }
     // A session whose completion was already decided gets no part again
     // (an adopted earlier publication may have no part records left): the
