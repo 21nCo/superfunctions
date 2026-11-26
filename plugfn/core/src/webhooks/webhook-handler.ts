@@ -24,7 +24,12 @@ interface VerifiedWebhook {
   verified: boolean;
 }
 
+interface PreparedWebhook extends VerifiedWebhook {
+  signatureVerified: boolean;
+}
+
 export interface WebhookAdmission {
+  signatureVerified: boolean;
   binding?: Readonly<WebhookWorkflowBinding>;
   idempotencyKey?: string;
   payloadHash?: string;
@@ -127,13 +132,15 @@ export class WebhookHandler {
   }
 
   async verifyWebhook(...args: Parameters<WebhookHandler[typeof prepareWebhookDelivery]>): Promise<VerifiedWebhook> {
-    const { admit: _admit, authenticatedWithoutSubject: _subject, ...verification } = await this[prepareWebhookDelivery](...args);
+    const {
+      admit: _admit, authenticatedWithoutSubject: _subject, signatureVerified: _signatureVerified, ...verification
+    } = await this[prepareWebhookDelivery](...args);
     return verification;
   }
 
   private async dispatchWebhook(
     provider: string,
-    prepared: VerifiedWebhook,
+    prepared: PreparedWebhook,
     scope?: WebhookDispatchScope,
     { skipListeners = false, onListenersCompleted }: WebhookDispatchOptions = {}
   ): Promise<WebhookEvent> {
@@ -149,7 +156,7 @@ export class WebhookHandler {
       return webhookEvent;
     }
 
-    const processedEventKey = idempotencyKey ?? null;
+    const processedEventKey = idempotencyKey && JSON.stringify([prepared.signatureVerified, idempotencyKey]);
     if (processedEventKey && this.processedEventIds.has(processedEventKey)) {
       this.logger.info(`Webhook duplicate ignored: ${provider}.${triggerKey}`, { eventId });
       return webhookEvent;
@@ -205,7 +212,7 @@ export class WebhookHandler {
     options: {
       rawBody?: Uint8Array;
     } = {}
-  ): Promise<VerifiedWebhook & { authenticatedWithoutSubject: boolean; admit(): Promise<WebhookAdmission> }> {
+  ): Promise<PreparedWebhook & { authenticatedWithoutSubject: boolean; admit(): Promise<WebhookAdmission> }> {
     const providerObj = this.providerRegistry.get(provider);
     if (!providerObj) {
       throw new WebhookHandlerError('VALIDATION_ERROR', `Provider ${provider} not found`, 404);
@@ -235,6 +242,7 @@ export class WebhookHandler {
     }
 
     let verified = this.options.verifySignatures !== false;
+    let signatureVerified = false;
     if (this.options.verifySignatures !== false && verifier) {
       if (!secret) {
         throw new WebhookHandlerError('WEBHOOK_SECRET_NOT_FOUND', `secret not configured for ${provider}`);
@@ -255,9 +263,10 @@ export class WebhookHandler {
       if (!verified) {
         throw new WebhookHandlerError('WEBHOOK_SIGNATURE_INVALID', 'signature verification failed');
       }
+      signatureVerified = verified === true;
     }
 
-    const authenticated = Boolean(rawBody?.length && verifier && verified && secret);
+    const authenticated = Boolean(rawBody?.length && signatureVerified && secret);
     const subject = requiresBinding && authenticated
       ? trigger.webhookConfig?.getWorkflowSubject?.(parsedPayload, verificationContext)
       : undefined;
@@ -285,6 +294,7 @@ export class WebhookHandler {
       normalizedHeaders,
       signature,
       verified,
+      signatureVerified,
     };
     const authenticatedWithoutSubject = Boolean(requiresBinding && authenticated && subject === undefined);
     return {
@@ -293,6 +303,7 @@ export class WebhookHandler {
       admit: async () => {
         if (!requiresBinding || (authenticatedWithoutSubject && this.getHandlerCount(provider, triggerKey) > 0)) {
           return {
+            signatureVerified,
             dispatch: (options) => this.dispatchWebhook(provider, prepared, undefined, options),
             event: () => this.createWebhookEvent(provider, prepared),
           };
@@ -352,6 +363,7 @@ export class WebhookHandler {
         };
         const scope = { binding, idempotencyKey, bindingIsCurrent, revoked };
         return {
+          signatureVerified,
           binding,
           idempotencyKey,
           payloadHash,
@@ -617,6 +629,10 @@ export function assertWebhookReceiptScope(
       409
     );
   }
+}
+
+export function hasWebhookSignatureProof(record: { metadata?: Record<string, unknown> }): boolean {
+  return record.metadata?.signatureVerified === true;
 }
 
 function sha256(value: string | Uint8Array): string {

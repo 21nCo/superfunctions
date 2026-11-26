@@ -11,6 +11,7 @@ import type { PlugFnConnectionOwner } from '../types/runtime.js';
 import { connectionMatchesActor, hasAny } from '../security/tenancy.js';
 import {
   assertWebhookReceiptScope,
+  hasWebhookSignatureProof,
   prepareWebhookDelivery,
   type WebhookAdmission,
 } from '../webhooks/webhook-handler.js';
@@ -951,6 +952,7 @@ export async function deliverWebhook(
   }
 ) {
   const { provider, event: resolvedEvent, headers, rawBody, verificationStatus, admission } = options;
+  const { signatureVerified } = admission;
   const idempotencyNamespace = admission.binding ? 'workflow' : 'standalone';
   const currentPayloadHash = options.legacyPayloadHash ?? legacyWebhookPayloadHash(provider, rawBody);
   const workflowBindings = plugFn.config.webhooks?.workflowBindings;
@@ -962,9 +964,7 @@ export async function deliverWebhook(
   let idempotencyKey: string | undefined;
 
   try {
-    // Only verified payloads may claim a durable idempotency key. In
-    // particular, Stripe event ids come from the body and are untrusted until
-    // signature verification succeeds.
+    // Preserve standalone receipt keys. Scoped keys come from the authenticated delivery identity.
     const legacyKey = readWebhookIdempotencyKey(provider, headers, rawBody);
     idempotencyKey = admission.binding ? admission.idempotencyKey : legacyKey;
     const admittedPayloadHash = admission.payloadHash ?? currentPayloadHash;
@@ -1007,7 +1007,7 @@ export async function deliverWebhook(
           existing.verificationStatus === 'verified' ||
           existing.verificationStatus === 'not-required'
         ) {
-          const disposition = await webhookReceiptDisposition(plugFn, existing);
+          const disposition = await webhookReceiptDisposition(plugFn, existing, signatureVerified);
           if (disposition === 'retry') {
             receiptId = existing.id;
           } else {
@@ -1042,7 +1042,8 @@ export async function deliverWebhook(
       legacyReceipt.payloadHash === currentPayloadHash &&
       (await plugFn.runtime.webhooks.listDeliveries(legacyReceipt.id)).some((delivery) =>
         delivery.status === 'success' &&
-        // Old deliveries that stored only a route cannot identify which listener ran.
+        // Reuse only a completion with proof of both signature verification and the listener's canonical trigger.
+        hasWebhookSignatureProof(delivery) &&
         delivery.metadata?.triggerKey === options.triggerKey
       )
     );
@@ -1063,6 +1064,7 @@ export async function deliverWebhook(
       metadata: {
         contentType: headers['content-type'],
         userAgent: headers['user-agent'],
+        ...(signatureVerified ? { signatureVerified } : {}),
         ...(admission.binding ? { tenantId: admission.binding.tenantId } : {}),
         ...(receiptClaimToken ? { receiptClaimToken } : {}),
       },
@@ -1073,7 +1075,7 @@ export async function deliverWebhook(
       receiptClaimToken &&
       receipt.metadata?.receiptClaimToken !== receiptClaimToken &&
       (receipt.verificationStatus === 'verified' || receipt.verificationStatus === 'not-required') &&
-      (await webhookReceiptDisposition(plugFn, receipt)) !== 'retry'
+      (await webhookReceiptDisposition(plugFn, receipt, signatureVerified)) !== 'retry'
     ) {
       return {
         duplicate: true,
@@ -1101,6 +1103,7 @@ export async function deliverWebhook(
         event: resolvedEvent,
         payloadHash: admittedPayloadHash,
         idempotencyKey,
+        ...(signatureVerified ? { signatureVerified } : {}),
         ...(!admission.binding ? {
           rawBodyBase64: Buffer.from(rawBody).toString('base64'),
           rawBodyExpiresAt: new Date(Date.now() + WEBHOOK_RETRY_PAYLOAD_TTL_MS).toISOString(),
@@ -1166,16 +1169,18 @@ export async function deliverWebhook(
 
 async function webhookReceiptDisposition(
   plugFn: PlugFn,
-  receipt: NonNullable<Awaited<ReturnType<PlugFn['runtime']['webhooks']['getReceipt']>>>
+  receipt: NonNullable<Awaited<ReturnType<PlugFn['runtime']['webhooks']['getReceipt']>>>,
+  signatureVerified: boolean,
 ): Promise<'complete' | 'active' | 'retry'> {
   const deliveries = await plugFn.runtime.webhooks.listDeliveries(receipt.id);
-  if (deliveries.some((delivery) => delivery.status === 'success')) {
+  const matchingDeliveries = signatureVerified ? deliveries.filter(hasWebhookSignatureProof) : deliveries;
+  if (matchingDeliveries.some((delivery) => delivery.status === 'success')) {
     return 'complete';
   }
 
   const now = Date.now();
   if (
-    deliveries.some(
+    matchingDeliveries.some(
       (delivery) =>
         delivery.status === 'running' &&
         now - new Date(delivery.updatedAt).getTime() < WEBHOOK_DELIVERY_LEASE_MS
@@ -1186,6 +1191,7 @@ async function webhookReceiptDisposition(
 
   if (
     deliveries.length === 0 &&
+    (!signatureVerified || hasWebhookSignatureProof(receipt)) &&
     now - new Date(receipt.createdAt).getTime() < WEBHOOK_DELIVERY_LEASE_MS
   ) {
     return 'active';

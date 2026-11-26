@@ -45,7 +45,7 @@ import {
 } from './connection-manager.js';
 import { ActionExecutor } from './action-executor.js';
 import { WorkflowEngine } from './workflow-engine.js';
-import { WebhookHandler, copyWebhookBody, prepareWebhookDelivery } from '../webhooks/webhook-handler.js';
+import { WebhookHandler, copyWebhookBody, hasWebhookSignatureProof, prepareWebhookDelivery } from '../webhooks/webhook-handler.js';
 import { deliverWebhook } from '../router/http-router.js';
 import { AdapterConnectionStorage } from '../storage/connection-storage.js';
 import {
@@ -877,6 +877,7 @@ export function plugFn(config: PlugFnConfig): PlugFn {
           (receiptDelivery) =>
             receiptDelivery.id !== delivery.id &&
             receiptDelivery.status === 'success' &&
+            (!hasWebhookSignatureProof(delivery) || hasWebhookSignatureProof(receiptDelivery)) &&
             receiptDelivery.sinkId === delivery.sinkId &&
             receiptDelivery.handlerName === delivery.handlerName
         )

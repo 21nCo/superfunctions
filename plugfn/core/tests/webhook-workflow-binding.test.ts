@@ -498,6 +498,92 @@ describe('webhook workflow admission', () => {
     expect(scoped.action).toHaveBeenCalledOnce();
   });
 
+  it.each([
+    { source: 'a provider without a verifier', withVerifier: false, verifySignatures: undefined },
+    { source: 'a provider with verification disabled', withVerifier: true, verifySignatures: false },
+  ])('dispatches the first signed delivery after accepting unsigned deliveries from $source', async (options) => {
+    await seedWorkflow(database, 'one', firstBinding.tenantId, firstBinding.connectionId);
+    const verifySignature = vi.fn((_payload, signature) => signature === 'test-signed-webhook');
+    const before = startRuntime(database, { ...options, withResolver: false, verifySignature });
+    const listener = vi.fn();
+    before.runtime.webhooks.on('test-provider', 'test.event', listener);
+    expect((await before.send('test-installation-one')).status).toBe(200);
+    expect(listener).toHaveBeenCalledOnce();
+    expect(verifySignature).not.toHaveBeenCalled();
+    const receipt = await before.runtime.runtime.webhooks.findReceiptByIdempotencyKey('test-provider', 'test-delivery');
+    expect(receipt?.verificationStatus).toBe(options.withVerifier ? 'not-required' : 'verified');
+    const [originalDelivery] = await before.runtime.runtime.webhooks.listDeliveries(receipt!.id);
+    expect(originalDelivery.metadata).not.toHaveProperty('signatureVerified');
+
+    const after = startRuntime(database, { verifySignatures: true, verifySignature });
+    after.runtime.webhooks.on('test-provider', 'test.event', listener);
+    const signedHeaders = { 'x-signature': 'test-signed-webhook' };
+    expect((await after.send('test-installation-one', 'test-delivery', signedHeaders)).status).toBe(200);
+    expect(verifySignature).toHaveBeenCalledOnce();
+    expect(listener).toHaveBeenCalledTimes(2);
+    expect(after.action).toHaveBeenCalledOnce();
+    expect(await database.findMany({ model: deliveryModel })).toContainEqual(expect.objectContaining({
+      status: 'success',
+      metadata: expect.objectContaining({ signatureVerified: true, triggerKey: 'test.event' }),
+    }));
+    const duplicate = await after.send('test-installation-one', 'test-delivery', signedHeaders);
+    await expect(duplicate.json()).resolves.toMatchObject({ data: { duplicate: true } });
+    expect(listener).toHaveBeenCalledTimes(2);
+  });
+
+  it('ignores a historical completion that records a trigger but no signature evidence', async () => {
+    await seedWorkflow(database, 'one', firstBinding.tenantId, firstBinding.connectionId);
+    const before = startRuntime(database, { withResolver: false });
+    before.runtime.webhooks.on('test-provider', 'test.event', vi.fn());
+    expect((await before.send('test-installation-one')).status).toBe(200);
+    const [delivery] = await database.findMany<{ id: string }>({ model: deliveryModel });
+    await database.updateWebhookDelivery(delivery.id, { metadata: { triggerKey: 'test.event' } });
+
+    const after = startRuntime(database);
+    const listener = vi.fn();
+    after.runtime.webhooks.on('test-provider', 'test.event', listener);
+    expect((await after.send('test-installation-one')).status).toBe(200);
+    expect(listener).toHaveBeenCalledOnce();
+    expect(after.action).toHaveBeenCalledOnce();
+  });
+
+  it('keeps unsigned standalone completion separate from signed standalone completion in the same runtime', async () => {
+    const { runtime, send } = startRuntime(database, { withResolver: false, withVerifier: false });
+    const listener = vi.fn();
+    runtime.webhooks.on('test-provider', 'test.event', listener);
+    expect((await send()).status).toBe(200);
+    expect(listener).toHaveBeenCalledOnce();
+
+    const provider = runtime.providers.get('test-provider')!;
+    provider.triggers!['test.event'].webhookConfig!.verifySignature = (_payload, signature) =>
+      signature === 'test-signed-webhook';
+    const signedHeaders = { 'x-signature': 'test-signed-webhook' };
+    expect((await send(undefined, 'test-delivery', signedHeaders)).status).toBe(200);
+    expect(listener).toHaveBeenCalledTimes(2);
+    const duplicate = await send(undefined, 'test-delivery', signedHeaders);
+    await expect(duplicate.json()).resolves.toMatchObject({ data: { duplicate: true } });
+    expect(listener).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not supersede a signed standalone retry using an unsigned completion', async () => {
+    const before = startRuntime(database, { withResolver: false, withVerifier: false });
+    before.runtime.webhooks.on('test-provider', 'test.event', vi.fn());
+    expect((await before.send()).status).toBe(200);
+
+    const { runtime, send } = startRuntime(database, { withResolver: false });
+    runtime.webhooks.on('test-provider', 'test.event', vi.fn().mockRejectedValue(new Error('test listener failed')));
+    expect((await send()).status).toBe(503);
+    const [failed] = await database.findMany<{ id: string }>({
+      model: deliveryModel, where: [{ field: 'status', operator: 'eq', value: 'failed' }],
+    });
+    await database.updateWebhookDelivery(failed.id, { nextAttemptAt: new Date(0) });
+    const retryHandler = vi.fn();
+    await expect(runtime.runtime.webhooks.processDueDeliveries(retryHandler)).resolves.toMatchObject({
+      processed: 1, succeeded: 1,
+    });
+    expect(retryHandler).toHaveBeenCalledOnce();
+  });
+
   it('uses only unowned legacy receipts to suppress a standalone listener during scoped dispatch', async () => {
     await seedWorkflow(database, 'one', firstBinding.tenantId, firstBinding.connectionId);
     const { runtime, send, action } = startRuntime(database);
@@ -512,7 +598,7 @@ describe('webhook workflow admission', () => {
       verificationStatus: 'verified',
     });
     await runtime.runtime.webhooks.createDelivery({
-      receiptId: receipt.id, status: 'success', metadata: { triggerKey: 'test.event' },
+      receiptId: receipt.id, status: 'success', metadata: { triggerKey: 'test.event', signatureVerified: true },
     });
 
     expect((await send('test-installation-one')).status).toBe(200);
@@ -563,7 +649,7 @@ describe('webhook workflow admission', () => {
     expect((await legacy.send('test-installation-one', 'test-delivery', {}, route)).status).toBe(200);
     if (historical) {
       const [delivery] = await database.findMany<{ id: string }>({ model: deliveryModel });
-      await database.updateWebhookDelivery(delivery.id, { metadata: { event: route } });
+      await database.updateWebhookDelivery(delivery.id, { metadata: { event: route, signatureVerified: true } });
     }
 
     const scoped = startRuntime(database, { authenticateEventHeader: true, otherRouteAlias: route });
