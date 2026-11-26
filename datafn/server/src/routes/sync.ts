@@ -30,6 +30,8 @@ export interface PushHandlerOpts extends MutationValidationOpts {
   allowUnknownResources?: boolean;
   /** FIX-SEC-006: Max batch size for push mutations (default 500) */
   maxBatchSize?: number;
+  /** DATA-41: post-write read-backs in flight at once (limits.maxBatchQueryConcurrency, default 20). */
+  maxPostWriteReadConcurrency?: number;
 }
 
 /**
@@ -463,7 +465,9 @@ export function createPushHandler(
         actorId,
         logger,
         getDatafnMultiRegionRuntimeConfig(plugins),
-        options.readPostWriteRows,
+        options.readPostWriteRows
+          ? { read: options.readPostWriteRows, concurrency: handlerOpts?.maxPostWriteReadConcurrency ?? 20 }
+          : undefined,
         );
 
         timer?.startPhase("changeLog");

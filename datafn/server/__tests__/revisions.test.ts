@@ -2944,8 +2944,7 @@ describe("DATA-41 revisions: PR review round 2", () => {
     expect(elsewhere.body.result.revisions[elsewhere.mutationId]).toEqual({ resource: "task", id: "task:1", rev: 1 });
   });
 
-  it("keeps post-write rows for a push a gateway routing assertion admitted", async () => {
-    let moveOnRead = false;
+  it("gives a push a gateway routing assertion admitted rev alone (PR review round 3)", async () => {
     const directory = createMemoryDatafnPlacementDirectory();
     await claimDatafnNamespacePlacement({ directory, namespace: "tenant", regionId: "eu" });
     const assertions = createDatafnHmacRoutingAssertions({ activeKeyId: "v1", keys: { v1: "test-only-secret" } });
@@ -2953,15 +2952,6 @@ describe("DATA-41 revisions: PR review round 2", () => {
       schema, database: memoryAdapter(), allowUnknownResources: true, revisions: { enabled: true },
       context: () => ({ namespace: "tenant" }),
       namespaceProvider: { getNamespace: (context: { namespace: string }) => context.namespace },
-      authorize: async (_ctx: unknown, action: string, payload: Json) => {
-        if (action === "query" && moveOnRead) {
-          // The placement moves to a new epoch while the read runs.
-          moveOnRead = false;
-          const current = (await directory.get("tenant"))!;
-          await directory.compareAndSet({ namespace: "tenant", expectedEpoch: current.epoch, next: { ...current, epoch: current.epoch + 1 } });
-        }
-        return action !== "query" || payload?.resource !== "project";
-      },
       plugins: [datafnMultiRegionPlugin({ regionId: "eu", directory: createMemoryIndexedDirectoryStore(),
         placement: { directory, requireRoutingAssertion: true, assertionVerifier: assertions, replayStore: createMemoryDatafnRoutingReplayStore() } })],
     } as any);
@@ -2972,20 +2962,16 @@ describe("DATA-41 revisions: PR review round 2", () => {
       dispatcher: { dispatch: ({ target, request, assertion }) => target(withDatafnRoutingAssertion(request, assertion), "tenant") },
       assertionSigner: assertions,
     } as any);
-    const pushVia = async (resource: string, id: string, record: Json) => {
-      const res = await gateway.handle(new Request("https://data.example/datafn/push", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ clientId: "c", mutations: [{ version: 1, clientId: "c", mutationId: id, resource, operation: "insert", id, record }] }),
-      }));
-      return ((await res.json()) as Json).result?.revisions?.[id];
-    };
-    expect((await pushVia("task", "task:1", { title: "t" })).record).toMatchObject({ id: "task:1", title: "t", $rev: 1 });
-    // The host's read rule still applies to the in-process read.
-    expect(await pushVia("project", "project:1", { name: "p" })).toEqual({ resource: "project", id: "project:1", rev: 1 });
-    moveOnRead = true;
-    expect(await pushVia("task", "task:2", { title: "t" })).toEqual({ resource: "task", id: "task:2", rev: 1 });
-    expect((await pushVia("task", "task:3", { title: "t" })).record).toMatchObject({ id: "task:3", $rev: 1 });
+    const res = await gateway.handle(new Request("https://data.example/datafn/push", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ clientId: "c", mutations: [{ version: 1, clientId: "c", mutationId: "m", resource: "task", operation: "insert", id: "task:1", record: { title: "t" } }] }),
+    }));
+    const body = (await res.json()) as Json;
+    expect(body.ok).toBe(true);
+    // The assertion is bound to the push request, so no /query the router
+    // admits can back the row: the push returns the revision alone.
+    expect(body.result.revisions.m).toEqual({ resource: "task", id: "task:1", rev: 1 });
   });
 
   it("gives an assertion-admitted push rev alone where route tickets guard queries", async () => {
@@ -3058,5 +3044,127 @@ describe("DATA-41 revisions: PR review round 2", () => {
     const inserted = await push({ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } });
     expect(inserted.body.result.revisions[inserted.mutationId].record).toMatchObject({ id: "task:1", $rev: 1 });
     expect((await send("query", { version: 1, resource: "task" })).status).toBe(200);
+  });
+});
+
+describe("DATA-41 revisions: PR review round 3", () => {
+  const isQuery = (request: Request) => new URL(request.url).pathname.endsWith("/query");
+
+  it("applies router middleware, including middleware added later, to the post-write read", async () => {
+    const served = await serve();
+    const first = await served.push({ resource: "task", operation: "insert", id: "task:0", record: { title: "z" } });
+    const row = first.body.result.revisions[first.mutationId].record;
+    // Control: the row equals what the caller's own /query returns, $rev included.
+    const read = await served.send("query", { version: 1, resource: "task", withRevisions: true, filters: { id: "task:0" } });
+    expect(row).toEqual(read.body.result.data[0]);
+    expect(row).toMatchObject({ id: "task:0", $rev: 1 });
+
+    // Registered after the server was created and used.
+    served.server.router.use(async (request, _ctx, next) =>
+      isQuery(request) ? new Response(JSON.stringify({ ok: false }), { status: 403, headers: { "content-type": "application/json" } }) : next());
+    expect((await served.send("query", { version: 1, resource: "task" })).status).toBe(403);
+    const insert = await served.push({ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } });
+    expect(insert.body.result.revisions[insert.mutationId]).toEqual({ resource: "task", id: "task:1", rev: 1 });
+    const merge = await served.push({ resource: "task", operation: "merge", id: "task:1", record: { title: "b" }, mutationId: "merge-1" });
+    expect(merge.body.result.revisions["merge-1"]).toEqual({ resource: "task", id: "task:1", rev: 2 });
+    const replay = await served.push({ resource: "task", operation: "merge", id: "task:1", record: { title: "b" }, mutationId: "merge-1" });
+    expect(replay.body.result.revisions?.["merge-1"]?.record).toBeUndefined();
+  });
+
+  it("withholds the row when router middleware redacts the /query response", async () => {
+    const served = await serve();
+    served.server.router.use(async (request, _ctx, next) => {
+      const response = await next();
+      if (!isQuery(request)) return response;
+      const body = (await response.json()) as Json;
+      for (const row of body.result?.data ?? []) row.title = "[redacted]";
+      return new Response(JSON.stringify(body), { status: response.status, headers: response.headers });
+    });
+    const res = await served.push({ resource: "task", operation: "insert", id: "task:1", record: { title: "secret" } });
+    expect(res.body.result.revisions[res.mutationId]).toEqual({ resource: "task", id: "task:1", rev: 1 });
+  });
+
+  it("exempts only the push's own read from the payload and rate limits", async () => {
+    const pushBody = JSON.stringify({
+      clientId: "client:a",
+      mutations: [{ version: 1, clientId: "client:a", mutationId: "m1", resource: "task", operation: "insert", id: "task:1", record: { title: "a" } }],
+    });
+    const maxPayloadBytes = new TextEncoder().encode(pushBody).length + 8;
+    const served = await serve({ config: {
+      limits: { maxPayloadBytes },
+      rateLimit: { enabled: true, maxRequests: 2, windowSeconds: 60 },
+    } });
+    const res = await served.push({ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } });
+    expect(res.body.result.revisions.m1.record).toMatchObject({ id: "task:1", title: "a", $rev: 1 });
+
+    // A caller cannot claim the exemption with a header or body field.
+    const forged = (body: Json) => served.server.router.handle(new Request("http://localhost/datafn/query", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-datafn-post-write-read": "1" },
+      body: JSON.stringify({ ...body, postWriteRead: true }),
+    }));
+    expect((await forged({ version: 1, resource: "task", filters: { title: "x".repeat(maxPayloadBytes) } })).status).toBe(413);
+    // The push's read-back used none of the query budget (2): the oversized query above took one.
+    expect((await forged({ version: 1, resource: "task" })).status).toBe(200);
+    expect((await forged({ version: 1, resource: "task" })).status).toBe(429);
+  });
+
+  it("runs at most maxBatchQueryConcurrency post-write reads at once", async () => {
+    let inFlight = 0;
+    let peak = 0;
+    const served = await serve({ config: {
+      limits: { maxBatchQueryConcurrency: 1 },
+      authorize: async (_ctx: unknown, action: string) => {
+        if (action !== "query") return true;
+        inFlight += 1;
+        peak = Math.max(peak, inFlight);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        inFlight -= 1;
+        return true;
+      },
+    } });
+    await served.push({ resource: "project", operation: "insert", id: "project:1", record: { name: "P" } });
+    const res = await served.send("push", { clientId: "client:a", mutations: [
+      { version: 1, clientId: "client:a", mutationId: "t", resource: "task", operation: "insert", id: "task:1", record: { title: "a" } },
+      { version: 1, clientId: "client:a", mutationId: "p", resource: "project", operation: "merge", id: "project:1", record: { name: "Q" } },
+    ] });
+    expect(res.body.result.revisions.t.record).toMatchObject({ id: "task:1", $rev: 1 });
+    expect(res.body.result.revisions.p.record).toMatchObject({ id: "project:1", name: "Q", $rev: 2 });
+    expect(peak).toBe(1);
+  });
+
+  it("retries a revision swap with a current read when the transaction reads a stale snapshot", async () => {
+    const database = memoryAdapter();
+    const served = await serve({ database });
+    await served.push({ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } });
+    // InnoDB REPEATABLE READ: a plain read returns the row as of the
+    // transaction's first read until the transaction writes that row itself.
+    const snapshot = new Map<string, Record<string, unknown>>();
+    const internal = new Proxy(database.internal, {
+      get(target, property, receiver) {
+        if (property === "findOne") {
+          return async (table: string, where: Array<{ value: unknown }>) => {
+            const key = `${table}:${String(where[0]?.value)}`;
+            if (!snapshot.has(key)) snapshot.set(key, await target.findOne(table, where as any));
+            return snapshot.get(key) ?? null;
+          };
+        }
+        if (property === "update") {
+          return async (table: string, where: Array<{ value: unknown }>, data: Record<string, unknown>) => {
+            const affected = await target.update(table, where as any, data);
+            if (affected > 0) snapshot.delete(`${table}:${String(where[0]?.value)}`);
+            return affected;
+          };
+        }
+        return Reflect.get(target, property, receiver);
+      },
+    });
+    const stale = new Proxy(database, { get: (target, property, receiver) => property === "internal" ? internal : Reflect.get(target, property, receiver) });
+    // This transaction reads revision 1, then another writer commits revision 2.
+    const ledgerId = (await database.internal.findMany("__datafn_revisions", [])).find((row) => row.record_id === "task:1")!.id;
+    await stale.internal.findOne("__datafn_revisions", [{ field: "id", op: "eq", value: ledgerId }] as any);
+    await bumpRevision(database, NS, "task", "task:1", false);
+    expect(await bumpRevision(stale, NS, "task", "task:1", false)).toBe(3);
+    expect(await served.rev("task", "task:1")).toEqual({ rev: 3, deleted: false });
   });
 });

@@ -16,8 +16,6 @@ import {
   createObservabilityMiddleware,
   createRouter,
   executeMiddlewareChain,
-  createRouteContext,
-  mergeContexts,
   type Router,
   type Route,
   type RouteHandler,
@@ -1039,6 +1037,7 @@ export async function createDatafnServer<TContext = any>(
       maxBatchSize: limits.maxBatchSize,
       allowUnknownResources,
       debug: debugMode,
+      maxPostWriteReadConcurrency: limits.maxBatchQueryConcurrency,
     },
     logger,
   );
@@ -1232,6 +1231,10 @@ export async function createDatafnServer<TContext = any>(
     return { ok: true };
   };
 
+  // DATA-41: a push's read-back requests, keyed by the Request object the push
+  // created, so no header or body field a caller sends can mark a request.
+  const postWriteReads = new WeakMap<Request, PostWriteReadProbe>();
+
   // LOW-001: withAuth returns a handler with signature compatible with Route<TContext>.handler
   const withAuthUnannounced = (
     action: DataFnAction,
@@ -1242,11 +1245,16 @@ export async function createDatafnServer<TContext = any>(
     ) => Promise<Response> | Response,
     origin: "http" | "executor" = "http",
     rest = false,
-    // DATA-41: a push's post-write read; the push was already rate limited.
-    postWriteRead = false,
   ): ((req: Request, ctx: TContext) => Promise<Response>) => {
     return async (req: Request, ctx: TContext): Promise<Response> => {
       const enrichedCtx = createEnrichedContext(ctx);
+      // DATA-41: only a push's own read-back request (marked in process, never
+      // by anything the caller sends) carries a probe, skips the query rate
+      // limit (the push was limited) and the caller body limit (its body is
+      // generated).
+      const postWriteRead = action === "query" ? postWriteReads.get(req) : undefined;
+      (enrichedCtx as Record<symbol, unknown>)[POST_WRITE_READ_PROBE] = postWriteRead;
+      const maxPayloadBytes = postWriteRead ? undefined : limits.maxPayloadBytes;
       const parseBody = req.method === "POST" || req.method === "PUT" || req.method === "PATCH";
       const verifyHttpPlacement = multiRegionRuntime?.placement && origin === "http" && action !== "status";
       let placementRequest: Request | undefined;
@@ -1291,8 +1299,8 @@ export async function createDatafnServer<TContext = any>(
         }
 
         // Enforce payload limits (LIMIT-001) — single inline check, no sentinel pattern
-        if (limits.maxPayloadBytes) {
-          const limitError = checkPayloadLimit(req, limits.maxPayloadBytes);
+        if (maxPayloadBytes) {
+          const limitError = checkPayloadLimit(req, maxPayloadBytes);
           if (limitError) {
             await emitDataFnEvent({
               domain: "datafn",
@@ -1319,12 +1327,12 @@ export async function createDatafnServer<TContext = any>(
 
         // For POST/PUT/PATCH endpoints, parse JSON body FIRST before authorization
         // AUTH-001: Invalid JSON must return DFQL_INVALID, never FORBIDDEN
-        if (verifyHttpPlacement && (!parseBody || !limits.maxPayloadBytes)) {
+        if (verifyHttpPlacement && (!parseBody || !maxPayloadBytes)) {
           placementRequest = req.clone();
         }
         if (parseBody) {
-          if (limits.maxPayloadBytes) {
-            const bodyResult = await readLimitedBody(req, limits.maxPayloadBytes, logger);
+          if (maxPayloadBytes) {
+            const bodyResult = await readLimitedBody(req, maxPayloadBytes, logger);
             if (!bodyResult.ok) {
               return completeDatafnResponse({
                 action,
@@ -1443,17 +1451,16 @@ export async function createDatafnServer<TContext = any>(
           });
         }
 
-        let admittedPlacement: { epoch: number; regionId: string } | undefined;
         if (multiRegionRuntime?.placement && action !== "status") {
           try {
-            ({ placement: admittedPlacement } = await validateDatafnPlacement({
+            await validateDatafnPlacement({
               namespace: await extractNamespace(enrichedCtx),
               regionId: multiRegionRuntime.regionId,
               runtime: multiRegionRuntime.placement,
               request: placementRequest,
               scope: action,
               trustedInternal: origin === "executor",
-            }));
+            });
           } catch (error) {
             if (error instanceof DatafnRoutingError) {
               return completeDatafnResponse({
@@ -1518,29 +1525,22 @@ export async function createDatafnServer<TContext = any>(
         }
 
         // DATA-41: push returns a post-write row only when the caller's own
-        // query of that record would return it: the push hands its handler
-        // a reader that runs a versioned `/query` for the written ids through
-        // the query route, with every admission step that route applies
-        // (placement and route-ticket validation with the query scope, plugin
-        // and host authorization, query hooks), on a context the configured
-        // factory builds afresh from that request, in the push's namespace.
-        // A routing assertion is bound to the push request's path and body,
-        // so it cannot admit the read: a push the gateway's assertion
-        // admitted reads in process (placement and fencing are checked
-        // again, every authorization and query hook still runs), except
-        // where route tickets are configured, whose query boundary a push
-        // assertion must not satisfy (rev only); a route ticket is validated
-        // again for the read with the query scope. The read is not rate
-        // limited again, and counts only if the query handler executed the
-        // query for the written resource in the push's namespace.
+        // `/query` of that record returns it. The reader dispatches a versioned
+        // query for the written ids through the DataFn router's current handle
+        // function, exactly as an external request: router middleware
+        // (including middleware added later with router.use), the context
+        // factory, placement and route-ticket validation with the query scope,
+        // plugin and host authorization and query hooks all apply. The push
+        // compares the response the router returns. A routing assertion is
+        // bound to the push request's path and body and cannot admit that
+        // query, so a push the gateway's assertion admitted gets revisions only.
         const assertionAdmitted = Boolean(verifyHttpPlacement) && Boolean(
           req.headers.get(multiRegionRuntime?.placement?.assertionHeader ?? DATAFN_ROUTING_ASSERTION_HEADER)?.trim(),
         );
-        const readOrigin = assertionAdmitted ? "executor" : origin;
         const readPostWriteRows: PostWriteRowReader | undefined = action === "push"
           ? async (resource, ids) => {
             const rows = new Map<string, Record<string, unknown>>();
-            if (assertionAdmitted && multiRegionRuntime?.placement?.routeTickets) return rows;
+            if (assertionAdmitted) return rows;
             const readUrl = new URL(req.url);
             let pushPath = readUrl.pathname;
             while (pushPath.endsWith("/")) pushPath = pushPath.slice(0, -1);
@@ -1558,16 +1558,9 @@ export async function createDatafnServer<TContext = any>(
               const headers = new Headers(req.headers);
               headers.delete("content-length");
               const readRequest = new Request(readUrl, { method: "POST", headers, body: JSON.stringify(readPayload) });
-              const configuredContext = config.context;
-              const readUserCtx = typeof configuredContext === "function"
-                ? await (configuredContext as (request: Request) => Promise<TContext> | TContext)(readRequest)
-                : configuredContext ?? ({} as TContext);
               const probe: PostWriteReadProbe = {};
-              const readCtx = Object.assign(
-                mergeContexts(readUserCtx as object, createRouteContext(readRequest, {})),
-                { [POST_WRITE_READ_PROBE]: probe },
-              ) as TContext;
-              const response = await withAuthUnannounced("query", queryHandler, readOrigin, false, true)(readRequest, readCtx);
+              postWriteReads.set(readRequest, probe);
+              const response = await router.handle(readRequest);
               const executed = probe.executed;
               const query = executed?.queries.length === 1 ? executed.queries[0] : undefined;
               if (
@@ -1578,15 +1571,6 @@ export async function createDatafnServer<TContext = any>(
               if (body?.ok !== true || !Array.isArray(body.result?.data)) continue;
               for (const row of body.result.data as Array<Record<string, unknown>>) {
                 if (row && typeof row.id === "string" && chunk.includes(row.id)) rows.set(row.id, row);
-              }
-            }
-            if (assertionAdmitted && rows.size > 0) {
-              // The in-process read checks no routing grant's epoch. Epochs only
-              // increase, so the admitted placement still current after the
-              // read means the read ran under it.
-              const current = await multiRegionRuntime?.placement?.directory.get(pushNamespace);
-              if (current?.epoch !== admittedPlacement?.epoch || current?.regionId !== admittedPlacement?.regionId) {
-                return new Map();
               }
             }
             return rows;

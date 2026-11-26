@@ -2,6 +2,7 @@
  * Push implementation - upload local mutations with change tracking
  */
 
+import { runBounded } from "../../routes/query/batch-executor.js";
 import type { DatafnSchema } from "../../core-types.js";
 import {
   coerceDateFieldsToEpoch,
@@ -243,11 +244,17 @@ function hasArchivableCapability(resolvedCapabilities: unknown[]): boolean {
   return resolvedCapabilities.some((entry) => entry === "archivable");
 }
 
+/** Orders strings by UTF-16 code unit, independent of locale. */
+function byCodeUnit(a: string, b: string): number {
+  if (a === b) return 0;
+  return a < b ? -1 : 1;
+}
+
 /** DATA-41: a row's JSON wire form with its keys sorted, for comparing rows. */
 function canonicalRow(row: Record<string, unknown>): string {
   return JSON.stringify(JSON.parse(JSON.stringify(row)), (_key, value: unknown) =>
     value && typeof value === "object" && !Array.isArray(value)
-      ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, (value as Record<string, unknown>)[key]]))
+      ? Object.fromEntries(Object.keys(value).sort(byCodeUnit).map((key) => [key, (value as Record<string, unknown>)[key]]))
       : value);
 }
 
@@ -276,8 +283,9 @@ export async function executePush(
   actorId?: string,
   logger?: DatafnLogger,
   multiRegionRuntime?: DatafnMultiRegionRuntimeConfig | null,
-  readPostWriteRows?: PostWriteRowReader,
+  postWriteRead?: { read: PostWriteRowReader; concurrency: number },
 ): Promise<PushResult> {
+  const readPostWriteRows = postWriteRead?.read;
   // DFN-01: idempotency records belong to the request's namespace and actor.
   idempotencyStore = scopeIdempotencyStore(idempotencyStore, { namespace, actorId });
   // Validate clientId at request level - this is a critical error
@@ -521,13 +529,14 @@ export async function executePush(
     }
     if (!readPostWriteRows || readBackIds.size === 0) return settled;
     const readBack = new Map<string, ReadonlyMap<string, Record<string, unknown>>>();
-    await Promise.all([...readBackIds].map(async ([resource, ids]) => {
+    // Bounded like a batch query (limits.maxBatchQueryConcurrency).
+    await runBounded([...readBackIds].map(([resource, ids]) => async () => {
       try {
         readBack.set(resource, await readPostWriteRows(resource, [...ids]));
       } catch {
         // Fail closed: the revision is returned without a row.
       }
-    }));
+    }), postWriteRead?.concurrency ?? 20);
     // The query proves only that the caller may read the row: the row
     // returned is the one read in the write's transaction, and only when the
     // query returned exactly that row (a hook that redirects, rewrites or

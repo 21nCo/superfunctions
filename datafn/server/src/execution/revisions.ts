@@ -307,6 +307,14 @@ async function raiseRevision(
   const where = [{ field: "id", op: "eq" as const, value: id }];
   for (let attempt = 0; attempt < MAX_BUMP_ATTEMPTS; attempt++) {
     const updatedAt = new Date().toISOString();
+    if (attempt > 0) {
+      // A retry follows a write that committed after this transaction's read.
+      // Under a snapshot-per-transaction isolation (MySQL InnoDB REPEATABLE
+      // READ) a plain read would return the same stale revision again, so
+      // first write the row: that locks it and makes the transaction's next
+      // read see the latest committed revision (its own version of the row).
+      await db.internal.update(REVISIONS_TABLE, where, { updated_at: updatedAt });
+    }
     const row = await db.internal.findOne(REVISIONS_TABLE, where);
     if (skip && (await skip(row))) return undefined;
     if (!row) {
