@@ -119,7 +119,7 @@ export class WebhookHandler {
   }
 
   async verifyWebhook(...args: Parameters<WebhookHandler[typeof prepareWebhookDelivery]>): Promise<VerifiedWebhook> {
-    const { admit: _admit, ...verification } = await this[prepareWebhookDelivery](...args);
+    const { admit: _admit, authenticatedWithoutSubject: _subject, ...verification } = await this[prepareWebhookDelivery](...args);
     return verification;
   }
 
@@ -194,7 +194,7 @@ export class WebhookHandler {
     options: {
       rawBody?: Uint8Array;
     } = {}
-  ): Promise<VerifiedWebhook & { admit(): Promise<WebhookAdmission> }> {
+  ): Promise<VerifiedWebhook & { authenticatedWithoutSubject: boolean; admit(): Promise<WebhookAdmission> }> {
     const providerObj = this.providerRegistry.get(provider);
     if (!providerObj) {
       throw new WebhookHandlerError('VALIDATION_ERROR', `Provider ${provider} not found`, 404);
@@ -275,12 +275,12 @@ export class WebhookHandler {
       signature,
       verified,
     };
+    const authenticatedWithoutSubject = Boolean(requiresBinding && authenticated && subject === undefined);
     return {
       ...prepared,
+      authenticatedWithoutSubject,
       admit: async () => {
-        if (!requiresBinding || (
-          authenticated && subject === undefined && this.getHandlerCount(provider, triggerKey) > 0
-        )) {
+        if (!requiresBinding || (authenticatedWithoutSubject && this.getHandlerCount(provider, triggerKey) > 0)) {
           return {
             dispatch: (options) => this.dispatchWebhook(provider, prepared, undefined, options),
             event: () => this.createWebhookEvent(provider, prepared),

@@ -528,6 +528,7 @@ class DbBackedPlugFnDatabaseAdapter implements PlugFnDatabaseStorageAdapter {
           { field: 'id', operator: 'eq', value: id },
           { field: 'status', operator: 'eq', value: 'running' },
           { field: 'claimToken', operator: 'eq', value: claimToken },
+          { field: 'workflowScoped', operator: 'eq', value: null },
         ],
         data: cloneRecord(updates),
       });
@@ -611,6 +612,8 @@ class DbBackedPlugFnDatabaseAdapter implements PlugFnDatabaseStorageAdapter {
       const where: WhereClause[] = [
         { field: 'id', operator: 'eq', value: delivery.id },
         { field: 'status', operator: 'eq', value: delivery.status },
+        { field: 'receiptId', operator: 'eq', value: delivery.receiptId },
+        { field: 'workflowScoped', operator: 'eq', value: null },
       ];
       if (delivery.nextAttemptAt) {
         where.push({ field: 'nextAttemptAt', operator: 'lte', value: now });

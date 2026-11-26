@@ -159,8 +159,9 @@ verification credential for the same signing authority. The lower-level
 
 Apply PlugFn schema version 9 with `superfunctions generate` and your adapter's
 migration runner before starting the upgraded webhook workers. The migration
-adds a separately indexed workflow receipt key and preserves existing receipt
-keys. Retry a scoped delivery by requesting provider redelivery or by supplying
+preserves existing receipt keys and adds a separately indexed workflow receipt
+key and a scope marker on deliveries. Upgrade all retry workers before enabling
+workflow bindings. Retry a scoped delivery by requesting provider redelivery or by supplying
 the original body and verification credential to the SDK. The standalone retry
 worker leaves scoped receipts to those verified entry points.
 

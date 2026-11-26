@@ -89,7 +89,7 @@ export interface PlugFnWebhookDelivery {
   receiptId: string;
   sinkId?: string;
   handlerName?: string;
-  workflowScoped?: true;
+  workflowScoped?: true | null;
   status: 'pending' | 'running' | 'success' | 'failed' | 'dead-lettered';
   claimToken?: string;
   attempts: number;

@@ -266,14 +266,14 @@ export class AdapterRuntimeStorage {
   }
 
   async createWebhookDelivery(input: CreateWebhookDeliveryInput): Promise<PlugFnWebhookDelivery> {
-    const receipt = await this.adapter.getWebhookReceipt(input.receiptId);
+    const workflowScoped = await this.workflowDeliveryScope(input.receiptId);
     const now = new Date();
     return this.adapter.createWebhookDelivery({
       id: generateId('whdel'),
       receiptId: input.receiptId,
       sinkId: input.sinkId,
       handlerName: input.handlerName,
-      ...(receipt?.workflowIdempotencyKey ? { workflowScoped: true } : {}),
+      ...(workflowScoped ? { workflowScoped } : {}),
       status: input.status ?? 'pending',
       attempts: 0,
       nextAttemptAt: input.nextAttemptAt,
@@ -283,14 +283,24 @@ export class AdapterRuntimeStorage {
     });
   }
 
-  updateWebhookDelivery(
+  async updateWebhookDelivery(
     id: string,
     updates: Partial<PlugFnWebhookDelivery>
   ): Promise<PlugFnWebhookDelivery> {
+    const { workflowScoped: _scope, ...fields } = updates;
+    const scope = fields.receiptId === undefined ? {} : {
+      workflowScoped: await this.workflowDeliveryScope(fields.receiptId),
+    };
     return this.adapter.updateWebhookDelivery(id, {
-      ...updates,
+      ...fields,
+      ...scope,
       updatedAt: new Date(),
     });
+  }
+
+  private async workflowDeliveryScope(receiptId: string): Promise<true | null> {
+    const receipt = await this.adapter.getWebhookReceipt(receiptId);
+    return receipt?.workflowIdempotencyKey ? true : null;
   }
 
   updateClaimedWebhookDelivery(

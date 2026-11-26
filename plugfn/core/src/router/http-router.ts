@@ -859,7 +859,8 @@ async function handleWebhookRoute(
   const requiresBinding = workflowBindings && Object.hasOwn(workflowBindings, provider);
 
   try {
-    headers = normalizeHeaders(req.headers);
+    const requestHeaders = normalizeHeaders(req.headers);
+    headers = requestHeaders;
     await assertWebhookSourceAllowed(
       req,
       plugFn.config.webhooks?.allowedIPs,
@@ -876,32 +877,35 @@ async function handleWebhookRoute(
     }
     const rawBody = await readRequestBytes(req, { maxBytes: options.maxWebhookPayloadBytes });
     const github = provider.toLowerCase() === 'github';
-    const requestedEvent = github && requiresBinding ? event?.toLowerCase().replaceAll('-', '_') : event;
-    if (!requestedEvent || github) {
+    const resolveRouteEvent = (requestedEvent: string | undefined) => {
+      if (requestedEvent && !github) return requestedEvent;
       const inferredEvent = inferWebhookEvent(
         provider,
-        headers,
+        requestHeaders,
         rawBody,
         plugFn.providers.get(provider)?.triggers,
         requestedEvent
       );
-      resolvedEvent =
-        requestedEvent && inferredEvent !== requestedEvent && !inferredEvent.startsWith(`${requestedEvent}.`)
+      return requestedEvent && inferredEvent !== requestedEvent && !inferredEvent.startsWith(`${requestedEvent}.`)
           ? requestedEvent
           : inferredEvent;
-    }
+    };
+    const standaloneEvent = resolveRouteEvent(event);
+    resolvedEvent = github && requiresBinding
+      ? resolveRouteEvent(event?.toLowerCase().replaceAll('-', '_'))
+      : standaloneEvent;
     const secret = await resolveWebhookSecret(provider, req, headers, options.webhookSecret);
     if (!requiresBinding) {
       payloadHash = legacyWebhookPayloadHash(provider, rawBody);
     }
-    const verification = await plugFn.webhooks[prepareWebhookDelivery](
-      provider,
-      resolvedEvent,
-      undefined,
-      headers,
-      secret,
-      { rawBody }
+    const verifyEvent = (routeEvent: string) => plugFn.webhooks[prepareWebhookDelivery](
+      provider, routeEvent, undefined, requestHeaders, secret, { rawBody }
     );
+    let verification = await verifyEvent(resolvedEvent);
+    if (verification.authenticatedWithoutSubject && resolvedEvent !== standaloneEvent) {
+      resolvedEvent = standaloneEvent;
+      verification = await verifyEvent(resolvedEvent);
+    }
 
     const slackChallenge = readSlackUrlVerificationChallenge(
       provider,

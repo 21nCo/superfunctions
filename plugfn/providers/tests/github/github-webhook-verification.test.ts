@@ -12,9 +12,10 @@ function sign(rawBody: string, secret: string): string {
 
 describe('github webhook verification', () => {
   it.each([
-    { scoped: true, event: 'pull_request.closed' },
-    { scoped: false, event: 'pull_request' },
-  ])('dispatches the pull-request alias as $event with scoped routing $scoped', async ({ scoped, event }) => {
+    { scoped: true, hasInstallation: true, event: 'pull_request.closed' },
+    { scoped: true, hasInstallation: false, event: 'pull_request' },
+    { scoped: false, hasInstallation: true, event: 'pull_request' },
+  ])('dispatches the pull-request alias as $event with bindings $scoped and installation $hasInstallation', async ({ scoped, hasInstallation, event }) => {
     const binding = {
       tenantId: 'test-tenant',
       connectionId: 'test-connection',
@@ -45,7 +46,7 @@ describe('github webhook verification', () => {
 
     const payload = {
       action: 'closed',
-      installation: { id: 42 },
+      ...(hasInstallation ? { installation: { id: 42 } } : {}),
       pull_request: {
         id: 9,
         number: 42,
@@ -76,7 +77,7 @@ describe('github webhook verification', () => {
     await expect(accepted.json()).resolves.toMatchObject({
       data: { event: { event, verified: true } },
     });
-    if (scoped) expect(resolveBinding).toHaveBeenCalledWith('42');
+    if (scoped && hasInstallation) expect(resolveBinding).toHaveBeenCalledWith('42');
     else expect(resolveBinding).not.toHaveBeenCalled();
     expect(listener).toHaveBeenCalledTimes(1);
     const resolutionsAfterDispatch = resolveBinding.mock.calls.length;

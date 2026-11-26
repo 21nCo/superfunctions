@@ -855,6 +855,18 @@ export function plugFn(config: PlugFnConfig): PlugFn {
         continue;
       }
 
+      if (receipt.workflowIdempotencyKey) {
+        const excluded = await updateClaimed({
+          status: 'failed',
+          workflowScoped: true,
+          error: 'scoped webhook retries require verified ingress',
+          metadata: withoutWebhookReplayBody(delivery.metadata),
+        });
+        if (excluded) deliveries.push(excluded);
+        failed += 1;
+        continue;
+      }
+
       const receiptDeliveries = await runtimeStorage.listWebhookDeliveries(receipt.id);
       if (
         receiptDeliveries.some(
