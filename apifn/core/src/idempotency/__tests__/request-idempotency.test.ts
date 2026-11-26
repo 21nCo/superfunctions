@@ -1982,3 +1982,171 @@ describe("createRequestIdempotency PR round-1 regressions", () => {
     expect(await idempotency.settle(holder, response)).toMatchObject({ outcome: "settled", response: { body: response.body } });
   });
 });
+
+/** Atomic store with hooks around a write over an absence, and an optional failing tombstone write. */
+class AbsenceHookStore extends FakeAtomicStore {
+  beforeAbsenceWrite?: () => Promise<void>;
+  afterAbsenceWrite?: () => Promise<void>;
+  failTombstones = false;
+
+  override async compareAndSet(storeKey: string, expectedVersion: string | null, next: IdempotencyRecord | null): Promise<boolean> {
+    const before = expectedVersion === null ? this.beforeAbsenceWrite : undefined;
+    if (before) {
+      this.beforeAbsenceWrite = undefined;
+      await before();
+    }
+    if (this.failTombstones && next?.state === "released") throw new Error("store write failed");
+    const written = await super.compareAndSet(storeKey, expectedVersion, next);
+    const after = written && expectedVersion === null ? this.afterAbsenceWrite : undefined;
+    if (after) {
+      this.afterAbsenceWrite = undefined;
+      await after();
+    }
+    return written;
+  }
+}
+
+/** A receipt source that can be made to reject, to answer with an invalid receipt, or to reject after `failAfter` lookups. */
+function switchableReceipts(database: FakeOrderDatabase) {
+  const state: { mode: "ok" | "outage" | "status" | "storeKey"; failAfter?: number } = { mode: "ok" };
+  const receipts: IdempotencyReceiptSource = {
+    find: async (storeKey: string) => {
+      const found = await database.receipts.find(storeKey);
+      if (state.failAfter !== undefined && (state.failAfter -= 1) < 0) throw new Error("receipt source unavailable");
+      if (state.mode === "outage") throw new Error("receipt source unavailable");
+      if (found && state.mode === "status") return { ...found, response: { ...found.response, status: 99 } };
+      if (found && state.mode === "storeKey") return { ...found, storeKey: "another-store-key" };
+      return found;
+    },
+  };
+  return { state, receipts };
+}
+
+describe("createRequestIdempotency PR round-2 regressions", () => {
+  function world() {
+    const store = new AbsenceHookStore();
+    const database = new FakeOrderDatabase();
+    const source = switchableReceipts(database);
+    const clock = new FakeClock();
+    const make = () =>
+      createRequestIdempotency({ store, receipts: source.receipts, clock, leaseMs: 1_000, retentionMs: 60_000, nonce: testNonce });
+    return { store, database, source, clock, make };
+  }
+
+  /** Commits receipt A for the order key, then evicts its record. */
+  async function committedAndEvicted(w: ReturnType<typeof world>) {
+    const token = acquired(await w.make().claim(orderRequest()));
+    const response = await w.database.createOrder(token, "book");
+    w.store.records.clear();
+    return { token, response };
+  }
+
+  it.each(["status", "storeKey"] as const)("fails closed on a receipt with an invalid %s over a confirmed copy", async (mode) => {
+    const w = world();
+    const idempotency = w.make();
+    const token = acquired(await idempotency.claim(orderRequest()));
+    await w.database.createOrder(token, "book");
+    expect(await idempotency.claim(orderRequest())).toMatchObject({ outcome: "replay", source: "receipt" });
+    w.source.state.mode = mode;
+    await expect(idempotency.claim(orderRequest())).rejects.toThrow(/receipt/);
+    await expect(idempotency.recover(orderRequest())).rejects.toThrow(/receipt/);
+    // Only a source outage falls back to the confirmed complete copy.
+    w.source.state.mode = "outage";
+    expect(await idempotency.claim(orderRequest())).toMatchObject({ outcome: "replay", source: "store" });
+    expect(await idempotency.recover(orderRequest())).toMatchObject({ outcome: "replay", source: "store" });
+  });
+
+  it.each(["pruned", "outage"] as const)("never lets a concurrent reader decide from an unconfirmed absence copy (%s receipt)", async (kind) => {
+    const w = world();
+    await committedAndEvicted(w);
+    const x = w.make();
+    const y = w.make();
+    const seen: unknown[] = [];
+    w.store.afterAbsenceWrite = async () => {
+      // Between X's write over the absence and X's recheck.
+      expect([...w.store.records.values()][0]).toMatchObject({ fromReceipt: true, provisional: true });
+      if (kind === "pruned") w.database.receiptsByKey.clear();
+      else w.source.state.mode = "outage";
+      for (const step of [() => y.recover(orderRequest()), () => y.claim(orderRequest())]) {
+        seen.push(await step().catch((error: Error) => error.message));
+      }
+      w.source.state.mode = "ok";
+    };
+    const result = await x.claim(orderRequest());
+    if (kind === "pruned") {
+      expect(seen).toEqual([{ outcome: "absent" }, expect.objectContaining({ outcome: "acquired" })]);
+      expect(result).toMatchObject({ outcome: "in_progress" });
+    } else {
+      expect(seen).toEqual(["receipt source unavailable", "receipt source unavailable"]);
+      expect(result).toMatchObject({ outcome: "replay", source: "receipt" });
+      expect([...w.store.records.values()][0]).not.toHaveProperty("provisional");
+    }
+  });
+
+  it("never replays a provisional copy left by a failed retire", async () => {
+    const w = world();
+    await committedAndEvicted(w);
+    const idempotency = w.make();
+    w.store.afterAbsenceWrite = async () => {
+      w.database.receiptsByKey.clear();
+      w.store.failTombstones = true;
+    };
+    expect(await idempotency.recover(orderRequest())).toEqual({ outcome: "absent" });
+    expect([...w.store.records.values()][0]).toMatchObject({ state: "completed", provisional: true });
+    w.store.failTombstones = false;
+    expect(await idempotency.claim(orderRequest())).toMatchObject({ outcome: "acquired" });
+  });
+
+  it.each(["settle", "release"] as const)("%s decides with the validated receipt when its absence write loses to the same commit", async (action) => {
+    const w = world();
+    const { token, response } = await committedAndEvicted(w);
+    const holder = w.make();
+    const other = w.make();
+    w.store.beforeAbsenceWrite = async () => {
+      // Another instance records the same receipt first; only the recheck lookup succeeds after that.
+      expect(await other.recover(orderRequest())).toMatchObject({ outcome: "replay", source: "receipt" });
+      w.source.state.failAfter = 1;
+    };
+    if (action === "settle") {
+      expect(await holder.settle(token, response)).toMatchObject({ outcome: "settled", response: { body: response.body } });
+    } else {
+      expect(await holder.release(token)).toMatchObject({ outcome: "committed", response: { body: response.body } });
+    }
+  });
+
+  it("confirms an absence copy once the recheck validates it, and keeps the confirmed-copy fallbacks", async () => {
+    const w = world();
+    const { response } = await committedAndEvicted(w);
+    const idempotency = w.make();
+    expect(await idempotency.claim(orderRequest())).toMatchObject({ outcome: "replay", source: "receipt" });
+    const [record] = [...w.store.records.values()];
+    expect(record).toMatchObject({ state: "completed", fromReceipt: true });
+    expect(record).not.toHaveProperty("provisional");
+    w.source.state.mode = "outage";
+    expect(await idempotency.recover(orderRequest())).toMatchObject({ outcome: "replay", source: "store", response: { body: response.body } });
+    w.source.state.mode = "ok";
+    w.database.receiptsByKey.clear();
+    expect(await idempotency.claim(orderRequest())).toMatchObject({ outcome: "replay", source: "store", response: { body: response.body } });
+    w.clock.advance(60_000);
+    expect(await idempotency.claim(orderRequest())).toMatchObject({ outcome: "acquired" });
+  });
+
+  it.each([
+    ["on a record not recorded from a receipt", { provisional: true }],
+    ["when it is not true", { fromReceipt: true, receiptClaimId: "test-claim", provisional: false }],
+  ])("fails closed on a provisional flag %s", async (_name, extra) => {
+    const { store, clock, idempotency } = setup();
+    const token = acquired(await idempotency.claim(orderRequest()));
+    store.records.set(token.storeKey, {
+      state: "completed",
+      version: "test-stored-version",
+      generation: 1,
+      fingerprint: token.fingerprint,
+      recovery: "receipt",
+      expiresAt: clock.time + 1_000,
+      response: { status: 200, headers: {} },
+      ...extra,
+    } as IdempotencyRecord);
+    await expect(idempotency.claim(orderRequest())).rejects.toThrow(/malformed record/);
+  });
+});

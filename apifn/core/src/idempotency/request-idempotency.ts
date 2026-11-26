@@ -53,6 +53,10 @@
  *   the receipt, and writing only over the version they saw; a completed
  *   record names the receipt claim it was recorded from, so a receipt read
  *   before a key's retention ended never replaces a newer claim.
+ * - A receipt copy written where no record existed is provisional until a
+ *   recheck of the live receipt confirms the same commit. Only a confirmed
+ *   copy stands in for a pruned receipt or a receipt-source outage; a receipt
+ *   the source returns that fails validation always fails closed.
  * - Responses, stored records, receipts and tokens are read exactly once,
  *   through own data property descriptors, into fresh validated copies; an
  *   accessor is rejected without being invoked. Every check and every
@@ -132,6 +136,13 @@ export interface CompletedIdempotencyRecord extends IdempotencyRecordBase {
   response: StoredIdempotentResponse;
   /** True when the response was recorded from a durable receipt. */
   fromReceipt?: boolean;
+  /**
+   * Set on a copy recorded where no record existed, until a recheck of the
+   * live receipt confirms the same commit. A provisional copy is never commit
+   * evidence on its own: without a live validated receipt the key is free at
+   * its version. A copy without the flag is confirmed.
+   */
+  provisional?: true;
   /**
    * The `claimId` of the receipt the response was recorded from. Present
    * exactly when `fromReceipt` is true, so a record is matched to one commit,
@@ -691,10 +702,13 @@ function parseRecord(value: unknown): IdempotencyRecord | undefined {
   // Only a receipt-mode record can be recorded from a receipt, and such a record names the receipt's claim.
   if (fromReceipt === true && (recovery !== "receipt" || !nonEmptyString(receiptClaimId))) return undefined;
   if (fromReceipt !== true && receiptClaimId !== undefined) return undefined;
+  // Only a copy recorded from a receipt can be provisional, and the flag is only ever true.
+  const provisional = field(value, "provisional");
+  if (provisional !== undefined && (provisional !== true || fromReceipt !== true)) return undefined;
   const response = parseStoredResponse(field(value, "response"));
   if (!response) return undefined;
   return fromReceipt === true
-    ? { ...base, state, response, fromReceipt, receiptClaimId: receiptClaimId as string }
+    ? { ...base, state, response, fromReceipt, receiptClaimId: receiptClaimId as string, ...(provisional ? { provisional } : {}) }
     : { ...base, state, response, ...(fromReceipt === undefined ? {} : { fromReceipt }) };
 }
 
@@ -824,10 +838,14 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
     return { kind: "present", record: stored };
   };
 
-  /** Reads and validates the key's receipt once; its response becomes a snapshot that later steps read. */
-  const findReceipt = async (storeKey: string): Promise<ParsedReceipt | undefined> => {
-    if (!receipts) return undefined;
-    const raw = await receipts.find(storeKey);
+  /** The receipt source's raw answer. Only its rejection is a source outage; validation happens in `parseReceipt`. */
+  const lookupReceipt = async (storeKey: string): Promise<unknown> => (receipts ? receipts.find(storeKey) : undefined);
+
+  /**
+   * Validates a looked-up receipt once; its response becomes a snapshot that later steps read. A malformed
+   * receipt, or one for another key, throws: the source answered, so it is never treated as an outage.
+   */
+  const parseReceipt = (storeKey: string, raw: unknown): ParsedReceipt | undefined => {
     if (raw === undefined || raw === null) return undefined;
     const malformed = () => new Error("idempotency receipt source returned a malformed receipt");
     if (!isPlainObject(raw)) throw malformed();
@@ -850,10 +868,16 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
     return { storeKey, fingerprint, claimId, generation: generation as number, response };
   };
 
+  const findReceipt = async (storeKey: string): Promise<ParsedReceipt | undefined> =>
+    parseReceipt(storeKey, await lookupReceipt(storeKey));
+
   /** Whether two receipts are the same commit: the same claim and body. */
   const sameCommit = (a: ParsedReceipt, b: ParsedReceipt): boolean => a.claimId === b.claimId && a.fingerprint === b.fingerprint;
 
-  /** Writes a receipt's response as the completed result under `version`, if `expectedVersion` still holds. */
+  /**
+   * Writes a receipt's response as the completed result under `version`, if `expectedVersion` still holds. A
+   * write over an absence (`null`) is provisional: that absence may be a later one than the receipt's.
+   */
   const writeFromReceipt = async (
     storeKey: string,
     expectedVersion: string | null,
@@ -871,12 +895,13 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
       expiresAt: now() + retentionMs,
       fromReceipt: true,
       receiptClaimId: receipt.claimId,
+      ...(expectedVersion === null ? { provisional: true as const } : {}),
     });
 
   /**
    * How recording a receipt ended: `recorded` (written), `lost` (a newer
-   * writer holds the key: read it again), `failed` (the write threw, or lost
-   * to a newer writer after a recheck validated the receipt: it decides) or
+   * writer holds the key: read it again), `failed` (the write threw, or a
+   * recheck validated the receipt whatever the write did: it decides) or
    * `gone` (no receipt is left for the key: decide again).
    */
   type Recorded = { kind: "recorded" | "lost" | "failed"; receipt: ParsedReceipt } | { kind: "gone" };
@@ -893,7 +918,7 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
         expiresAt: now() + retentionMs,
       });
     } catch {
-      // A failed retire leaves the copy to the next read, which checks it against the live receipt.
+      // A failed retire leaves a provisional copy, which no read treats as commit evidence without its receipt.
     }
   };
 
@@ -902,12 +927,13 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
    * still holds. The record names the receipt's claim, so a later step knows
    * which commit it holds. A write over an absence (`null`) cannot tell the
    * absence its caller saw from a later one (a newer claim committed and its
-   * record was evicted, or the receipt expired), so whatever the write did,
-   * the receipt is read again and the latest one decides: a newer commit
-   * replaces the copy just written, and no receipt retires it. Only the
-   * version this step wrote is ever replaced or deleted. When that lookup
-   * fails, the copy is retired and the error is thrown: an unverified receipt
-   * never decides.
+   * record was evicted, or the receipt expired), so the copy it writes is
+   * provisional, and whatever the write did, the receipt is read again and
+   * the latest one decides: the same commit promotes the copy just written,
+   * a newer commit replaces it, and no receipt retires it. Only the version
+   * this step wrote is ever replaced or deleted. When that lookup fails, the
+   * copy is retired and the error is thrown: an unverified receipt never
+   * decides.
    */
   const completeFromReceipt = async (
     storeKey: string,
@@ -939,21 +965,22 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
       if (attempted !== undefined) await retireQuietly(storeKey, attempted, receipt, generation);
       throw error;
     }
-    // A receipt the recheck validated decides, also when the write's acknowledgement was lost.
-    const kind = written === undefined ? "failed" : written ? "recorded" : "lost";
-    if (latest && sameCommit(latest, receipt)) return { kind, receipt };
+    if (!latest) {
+      // No commit is left: the provisional copy is retired, and a failed retire leaves it provisional.
+      if (attempted !== undefined) await retireQuietly(storeKey, attempted, receipt, generation);
+      return { kind: "gone" };
+    }
     if (attempted !== undefined) {
-      if (!latest) await retireQuietly(storeKey, attempted, receipt, generation);
-      else {
-        try {
-          await writeFromReceipt(storeKey, attempted, generation, latest);
-        } catch {
-          // The newer receipt still decides; a later step records it.
-        }
+      // Confirms only the version this step wrote: the same commit promotes it, a newer one replaces it.
+      try {
+        await writeFromReceipt(storeKey, attempted, generation, latest);
+      } catch {
+        // The validated receipt still decides; the copy stays provisional and a later step confirms it.
       }
     }
-    // A newer commit the recheck validated decides, even when the write lost to its writer.
-    return latest ? { kind: written === true ? "recorded" : "failed", receipt: latest } : { kind: "gone" };
+    // The receipt the recheck validated decides whatever the write did, also when it lost to a writer of the same
+    // commit or its acknowledgement was lost: the step never reads the key again from an unverified state.
+    return { kind: written === true && sameCommit(latest, receipt) ? "recorded" : "failed", receipt: latest };
   };
 
   // Store keys always use the portable SHA-256, whatever body digest the host supplies.
@@ -994,11 +1021,17 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
     return { outcome: "replay", response: replayable(record.response, extraCredentials), source: "store" };
   };
 
-  /** Whether the live record already holds this exact commit: the receipt's claim, not only its body. */
+  /** A copy recorded from a receipt and confirmed: commit evidence while its receipt is pruned or unreachable. */
+  const isConfirmedCopy = (record: ActiveIdempotencyRecord | undefined): record is CompletedIdempotencyRecord =>
+    record?.state === "completed" && record.fromReceipt === true && record.provisional !== true;
+
+  /**
+   * Whether the live record already holds this exact commit, confirmed: the receipt's claim, not only its body.
+   * A provisional copy of it is recorded again over its version, which confirms it.
+   */
   const holdsReceipt = (live: Live, receipt: ParsedReceipt): boolean =>
     live.kind === "present" &&
-    live.record.state === "completed" &&
-    live.record.fromReceipt === true &&
+    isConfirmedCopy(live.record) &&
     live.record.receiptClaimId === receipt.claimId &&
     live.record.fingerprint === receipt.fingerprint;
 
@@ -1036,8 +1069,11 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
    * committed key and never sees the receipt's response. For a receipt-mode
    * request the receipt is always read, also for a record recorded from a
    * receipt, and wins over any record that does not hold that exact commit:
-   * a cached copy never masks a newer durable receipt. The matched receipt
-   * is returned for the replay.
+   * a cached copy never masks a newer durable receipt. Only a confirmed copy
+   * stands in for a pruned or unreachable receipt; a provisional one without
+   * its receipt leaves the key free at its version. A receipt that fails
+   * validation always fails closed. The matched receipt is returned for the
+   * replay.
    */
   const inspect = async (
     prepared: Prepared,
@@ -1053,17 +1089,25 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
       if (!record && (await findReceipt(storeKey))) return { done: { outcome: "conflict" } };
       return { live };
     }
-    let receipt: ParsedReceipt | undefined;
+    let raw: unknown;
     try {
-      receipt = await findReceipt(storeKey);
+      raw = await lookupReceipt(storeKey);
     } catch (error) {
       // A receipt-source outage never hides a complete copy of a confirmed commit: it replays (or conflicts) from
-      // the store. A copy missing parts, and every other record, needs the receipt.
-      if (record?.state === "completed" && record.fromReceipt === true && record.response.omitted === undefined) return { live };
+      // the store. A provisional copy, a copy missing parts, and every other record need the receipt.
+      if (isConfirmedCopy(record) && record.response.omitted === undefined) return { live };
       throw error;
     }
-    // A copy whose receipt the host pruned still holds a confirmed commit: it replays until its own retention ends.
-    if (!receipt) return { live };
+    // The source answered: a malformed receipt, or one for another key, fails closed over any record.
+    const receipt = parseReceipt(storeKey, raw);
+    if (!receipt) {
+      // A provisional copy without its receipt is no commit evidence: the key is free at the copy's version.
+      if (record?.state === "completed" && record.provisional === true) {
+        return { live: { kind: "absent", expectedVersion: record.version, previousGeneration: record.generation, previousRecovery: record.recovery } };
+      }
+      // A confirmed copy whose receipt the host pruned still holds its commit: it replays until its own retention ends.
+      return { live };
+    }
     if (holdsReceipt(live, receipt)) return { live, receipt };
     const [expected, generation] =
       live.kind === "present" ? [live.record.version, live.record.generation] : [live.expectedVersion, live.previousGeneration];
@@ -1248,7 +1292,16 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
         if (receipt === undefined) throw error;
         break;
       }
-      receipt = await findReceipt(token.storeKey);
+      let raw: unknown;
+      try {
+        raw = await lookupReceipt(token.storeKey);
+      } catch (error) {
+        // A source outage after a receipt was validated over an observed version never hides that receipt.
+        if (receipt === undefined) throw error;
+        break;
+      }
+      // The source answered: a malformed receipt fails closed.
+      receipt = parseReceipt(token.storeKey, raw);
       if (!receipt) return undefined;
       if (holdsReceipt(live, receipt)) break;
       const [expected, generation] =
