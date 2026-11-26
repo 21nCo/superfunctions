@@ -1,0 +1,33 @@
+filefn/client/src/__tests__/offline-queue.test.ts
+  s_1eb217f2cbe12c::t_9e53a47220eca5 1904-2092
+filefn/client/src/__tests__/upload.test.ts
+  s_1eb217f2cbe12c::t_e5ee8a4c7e4dc2 448-469
+filefn/client/src/offline/queue.ts
+  s_1eb217f2cbe12c::t_1ea225fc2ef944 133-137,145,846-850,854-856,860-861,867-877,970,1049-1057,1082-1095,1258,1261,1315-1317,1654-1660,1662,1665-1667,1669-1698,1700,2044-2047,2053-2075,2094-2101,2355-2357,2360,2653-2654,2908-2911
+filefn/client/src/offline/sync.ts
+  s_1eb217f2cbe12c::t_ea09f0ccaa3a16 78,100-102,123-124,138-139,143-154
+filefn/client/src/upload-manager.ts
+  s_1eb217f2cbe12c::t_015f6030c5ad12 361-365
+filefn/docs/content/docs/features/offline.md
+  s_1eb217f2cbe12c::t_2bf4774dbb7e2c 45,90,115,119,144
+filefn/docs/content/docs/reference/changelog.md
+  s_1eb217f2cbe12c::t_a1af0f23c766e8 13
+filefn/docs/static/llms-full.txt
+  s_1eb217f2cbe12c::t_53c089346ea2ea 3877,3922,3947,3951,3976,8382
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4c23e860a3fa1198b43219aec66538a055b9548d",
+  "prompts": {},
+  "sessions": {
+    "s_1eb217f2cbe12c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2b2155d1-b0bb-4e5e-bb89-8414e78e1489",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
