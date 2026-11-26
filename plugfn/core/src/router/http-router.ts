@@ -9,6 +9,14 @@ import type { Connection, HandleCallbackResult } from '../types/connection.js';
 import type { PlugFnApiEnvelope, PlugFnResponseMeta } from '../types/protocol.js';
 import type { PlugFnConnectionOwner } from '../types/runtime.js';
 import { connectionMatchesActor, hasAny } from '../security/tenancy.js';
+import { webhookReceiptTenantId, webhookSignatureProof } from '../storage/runtime-storage.js';
+import {
+  assertWebhookReceiptScope,
+  hasWebhookSignatureProof,
+  prepareWebhookIngress,
+  WebhookHandlerError,
+  type WebhookAdmission,
+} from '../webhooks/webhook-handler.js';
 
 export interface RouteAuthContext {
   userId: string;
@@ -855,6 +863,8 @@ async function handleWebhookRoute(
   let idempotencyKey: string | undefined;
   let resolvedEvent = event ?? 'event';
   let verificationStatus: 'verified' | 'not-required';
+  const bindings = ctx.plugFn.config.webhooks?.workflowBindings;
+  const requiresBinding = bindings && Object.hasOwn(bindings, provider);
 
   try {
     headers = normalizeHeaders(req.headers);
@@ -891,7 +901,21 @@ async function handleWebhookRoute(
       .update(webhookPayloadForHash(provider, rawBody))
       .digest('hex');
     payloadHash = currentPayloadHash;
-    const verification = await ctx.plugFn.webhooks.verify(
+    const preparation = requiresBinding
+      ? await prepareWebhookIngress(
+        ctx.plugFn.config,
+        ctx.plugFn.webhooks,
+        provider,
+        provider.toLowerCase() === 'github'
+          ? resolveWebhookRouteEvent(provider, event?.toLowerCase().replaceAll('-', '_'), headers, rawBody, ctx.plugFn.providers.get(provider)?.triggers)
+          : resolvedEvent,
+        undefined,
+        headers,
+        secret,
+        { rawBody, standaloneEvent: resolvedEvent },
+      )
+      : undefined;
+    const verification = preparation ?? await ctx.plugFn.webhooks.verify(
       provider,
       resolvedEvent,
       undefined,
@@ -907,6 +931,13 @@ async function handleWebhookRoute(
     );
     if (slackChallenge !== undefined) {
       return Response.json({ challenge: slackChallenge });
+    }
+
+    const admission = await preparation?.admit();
+    if (admission?.binding && preparation) {
+      return successResponse(await deliverScopedWebhook(ctx.plugFn, {
+        provider, event: preparation.triggerKey, headers, admission,
+      }));
     }
 
     // Only verified payloads may claim a durable idempotency key. In
@@ -1022,7 +1053,7 @@ async function handleWebhookRoute(
     deliveryId = delivery.id;
     deliveryAttempts = delivery.attempts;
 
-    const webhookEvent = await ctx.plugFn.webhooks.handle(
+    const webhookEvent = admission ? await admission.dispatch() : await ctx.plugFn.webhooks.handle(
       provider,
       resolvedEvent,
       undefined,
@@ -1043,7 +1074,7 @@ async function handleWebhookRoute(
       deliveryId: delivery.id,
     });
   } catch (error) {
-    if (!receiptId) {
+    if (!receiptId && !requiresBinding) {
       await createFailedWebhookReceipt(
         ctx,
         provider,
@@ -1053,7 +1084,7 @@ async function handleWebhookRoute(
         idempotencyKey,
         error
       );
-    } else if (!deliveryId) {
+    } else if (receiptId && !deliveryId) {
       await ctx.plugFn.runtime.webhooks.updateReceipt(receiptId, {
         verificationStatus: 'failed',
         metadata: {
@@ -1074,11 +1105,78 @@ async function handleWebhookRoute(
   }
 }
 
+/** Persist only admitted bindings. Scoped attempts never enter standalone replay. */
+export async function deliverScopedWebhook(
+  plugFn: PlugFn,
+  options: { provider: string; event: string; headers: Record<string, string>; admission: WebhookAdmission }
+) {
+  const { provider, event, headers, admission } = options;
+  const { binding, idempotencyKey, payloadHash } = admission;
+  if (!binding || !idempotencyKey || !payloadHash || !admission.signatureVerified) {
+    throw new WebhookHandlerError('WEBHOOK_WORKFLOW_BINDING_REQUIRED', 'verified workflow binding required', 403);
+  }
+  try {
+    await plugFn.ready;
+  } catch (error) {
+    throw new WebhookHandlerError('PLUGFN_NOT_READY', 'workflow trigger rehydration failed', 503, {
+      error: error instanceof Error ? error.message : 'unknown initialization failure',
+    });
+  }
+
+  admission.assertActive?.();
+  const webhooks = plugFn.runtime.webhooks;
+  const receiptClaimToken = `claim_${randomBytes(12).toString('hex')}`;
+  const receipt = await webhooks.createReceipt({
+    provider,
+    event,
+    payloadHash,
+    idempotencyKey,
+    idempotencyNamespace: 'workflow',
+    connectionId: binding.connectionId,
+    headersRedacted: redactHeaders(headers),
+    verificationStatus: 'verified',
+    [webhookReceiptTenantId]: binding.tenantId,
+    [webhookSignatureProof]: true,
+    metadata: { receiptClaimToken, contentType: headers['content-type'], userAgent: headers['user-agent'] },
+  });
+  assertWebhookReceiptScope(receipt, binding);
+  if (receipt.event !== event) {
+    throw new WebhookHandlerError('WEBHOOK_IDEMPOTENCY_CONFLICT', 'webhook delivery key was reused for a different event', 409);
+  }
+  admission.assertActive?.();
+  if (receipt.metadata?.receiptClaimToken !== receiptClaimToken &&
+      await webhookReceiptDisposition({ plugFn }, receipt, true) !== 'retry') {
+    return { duplicate: true as const, receiptId: receipt.id, event: { provider, event, verified: true } };
+  }
+
+  const delivery = await webhooks.createDelivery({
+    receiptId: receipt.id,
+    handlerName: `${provider}.${event}`,
+    status: 'running',
+    [webhookSignatureProof]: true,
+  });
+  let webhookEvent;
+  try {
+    webhookEvent = await admission.dispatch();
+  } catch (error) {
+    await webhooks.updateDelivery(delivery.id, {
+      status: 'failed',
+      attempts: delivery.attempts + 1,
+      error: error instanceof Error ? error.message : 'webhook handler failed',
+    });
+    throw error;
+  }
+  await webhooks.updateDelivery(delivery.id, { status: 'success', attempts: delivery.attempts + 1 });
+  return { event: webhookEvent, receiptId: receipt.id, deliveryId: delivery.id };
+}
+
 async function webhookReceiptDisposition(
-  ctx: PlugFnContext,
-  receipt: NonNullable<Awaited<ReturnType<PlugFn['runtime']['webhooks']['getReceipt']>>>
+  ctx: Pick<PlugFnContext, 'plugFn'>,
+  receipt: NonNullable<Awaited<ReturnType<PlugFn['runtime']['webhooks']['getReceipt']>>>,
+  scoped = false,
 ): Promise<'complete' | 'active' | 'retry'> {
-  const deliveries = await ctx.plugFn.runtime.webhooks.listDeliveries(receipt.id);
+  const attempts = await ctx.plugFn.runtime.webhooks.listDeliveries(receipt.id);
+  const deliveries = scoped ? attempts.filter(hasWebhookSignatureProof) : attempts;
   if (deliveries.some((delivery) => delivery.status === 'success')) {
     return 'complete';
   }
@@ -1095,7 +1193,8 @@ async function webhookReceiptDisposition(
   }
 
   if (
-    deliveries.length === 0 &&
+    attempts.length === 0 &&
+    (!scoped || hasWebhookSignatureProof(receipt)) &&
     now - new Date(receipt.createdAt).getTime() < WEBHOOK_DELIVERY_LEASE_MS
   ) {
     return 'active';
@@ -1154,6 +1253,20 @@ async function createFailedWebhookReceipt(
   } catch {
     // A failed receipt is observability best-effort; the original deterministic error is returned.
   }
+}
+
+export function resolveWebhookRouteEvent(
+  provider: string,
+  requestedEvent: string | undefined,
+  headers: Record<string, string>,
+  rawBody?: Uint8Array,
+  triggers?: Record<string, unknown>,
+): string {
+  if (requestedEvent && provider.toLowerCase() !== 'github') return requestedEvent;
+  const inferred = inferWebhookEvent(provider, headers, rawBody, triggers, requestedEvent);
+  return requestedEvent && inferred !== requestedEvent && !inferred.startsWith(`${requestedEvent}.`)
+    ? requestedEvent
+    : inferred;
 }
 
 function inferWebhookEvent(

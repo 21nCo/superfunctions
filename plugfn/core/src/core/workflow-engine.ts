@@ -14,8 +14,13 @@ import type {
 import { WorkflowStatus, WorkflowExecutionStatus } from '../types/workflow.js';
 import type { Logger } from '../types/action.js';
 import { WorkflowStorage } from '../storage/workflow-storage.js';
-import { WebhookHandler } from '../webhooks/webhook-handler.js';
-import type { TriggerHandler } from '../types/trigger.js';
+import {
+  WebhookHandler,
+  WebhookHandlerError,
+  isBindingId,
+  webhookBindingRevoked,
+} from '../webhooks/webhook-handler.js';
+import type { ScopedTriggerHandler, WebhookWorkflowBinding } from '../types/trigger.js';
 
 interface PersistedWorkflowState {
   idempotencyKey?: string;
@@ -26,12 +31,22 @@ interface PersistedWorkflowState {
   errorCode?: string;
 }
 
-interface WorkflowTriggerBinding {
-  backend: 'webhook-handler';
+interface WorkflowTriggerScope {
   provider: string;
   event: string;
-  handler: TriggerHandler;
+  scope: WebhookWorkflowBinding;
 }
+
+interface WorkflowTriggerBinding extends WorkflowTriggerScope {
+  handler: ScopedTriggerHandler;
+}
+
+interface WorkflowExecutionAdmission extends WorkflowTriggerScope {
+  bindingIsCurrent(): Promise<boolean>;
+  revoked: AbortSignal;
+}
+
+class WorkflowBindingChanged extends Error {}
 
 export class WorkflowEngineError extends Error {
   readonly code:
@@ -60,6 +75,7 @@ export class WorkflowEngineError extends Error {
 
 export class WorkflowEngine {
   private readonly triggerBindings = new Map<string, WorkflowTriggerBinding>();
+  private readonly skippedUnboundTriggers = new Set<string>();
   private readonly executionLocks = new Map<string, Promise<void>>();
   private readonly persistedFailures = new WeakSet<Error>();
 
@@ -76,7 +92,7 @@ export class WorkflowEngine {
     const created = await this.workflowStorage.create(workflow);
 
     if (workflow.status === WorkflowStatus.Enabled) {
-      await this.registerTrigger(created);
+      this.registerTrigger(created);
     }
 
     this.logger.info(`Workflow created: ${created.name}`, { workflowId: created.id });
@@ -98,8 +114,9 @@ export class WorkflowEngine {
 
     for (const workflow of workflows) {
       try {
-        await this.registerTrigger(workflow);
-        registered += 1;
+        if (this.registerTrigger(workflow)) {
+          registered += 1;
+        }
       } catch (error) {
         failed += 1;
         this.logger.error('Workflow trigger rehydration failed', {
@@ -120,7 +137,7 @@ export class WorkflowEngine {
     assertUniqueWorkflowStepIds(workflow.definition.steps);
 
     const updated = await this.workflowStorage.update(id, { status: WorkflowStatus.Enabled });
-    await this.registerTrigger(updated);
+    this.registerTrigger(updated);
 
     this.logger.info(`Workflow enabled: ${workflow.name}`, { workflowId: id });
   }
@@ -132,48 +149,51 @@ export class WorkflowEngine {
     }
 
     const updated = await this.workflowStorage.update(id, { status: WorkflowStatus.Disabled });
-    await this.unregisterTrigger(updated);
+    this.unregisterTrigger(updated);
 
     this.logger.info(`Workflow disabled: ${workflow.name}`, { workflowId: id });
   }
 
   async delete(id: string): Promise<void> {
     const workflow = await this.workflowStorage.get(id);
-    if (workflow && (workflow.status === WorkflowStatus.Enabled || this.triggerBindings.has(workflow.id))) {
-      await this.unregisterTrigger(workflow);
+    if (workflow && (workflow.status === WorkflowStatus.Enabled || this.triggerBindings.has(id))) {
+      this.unregisterTrigger(workflow);
     }
-
     await this.workflowStorage.delete(id);
+    this.skippedUnboundTriggers.delete(id);
     this.logger.info(`Workflow deleted`, { workflowId: id });
   }
 
   async execute(workflowId: string, triggerPayload: any): Promise<WorkflowExecution> {
+    return this.runExecution(workflowId, triggerPayload);
+  }
+
+  private async runExecution(
+    workflowId: string,
+    triggerPayload: any,
+    admission?: WorkflowExecutionAdmission
+  ): Promise<WorkflowExecution> {
     if (this.coordinator) {
       const key = this.resolveIdempotencyKey(triggerPayload);
       if (!key) throw new Error("WORKFLOW_IDEMPOTENCY_KEY_REQUIRED");
       return this.coordinator.run(
         JSON.stringify([workflowId, key]),
-        () => this.executeLocal(workflowId, triggerPayload),
+        () => this.executeLocal(workflowId, triggerPayload, admission),
         {
           classifyFailure: (error) =>
-            error instanceof Error && this.persistedFailures.has(error) ? 'known' : 'uncertain',
+            error instanceof WorkflowBindingChanged || error instanceof WebhookHandlerError ||
+            (error instanceof Error && this.persistedFailures.has(error)) ? 'known' : 'uncertain',
         },
       );
     }
-    return this.executeLocal(workflowId, triggerPayload);
+    return this.executeLocal(workflowId, triggerPayload, admission);
   }
 
-  private async executeLocal(workflowId: string, triggerPayload: any): Promise<WorkflowExecution> {
-    const workflow = await this.workflowStorage.get(workflowId);
-    if (!workflow) {
-      throw new Error(`Workflow ${workflowId} not found`);
-    }
-
-    if (workflow.status !== WorkflowStatus.Enabled) {
-      throw new Error(`Workflow ${workflowId} is not enabled`);
-    }
-    assertUniqueWorkflowStepIds(workflow.definition.steps);
-
+  private async executeLocal(
+    workflowId: string,
+    triggerPayload: any,
+    admission?: WorkflowExecutionAdmission
+  ): Promise<WorkflowExecution> {
     const idempotencyKey = this.resolveIdempotencyKey(triggerPayload);
     const lockKey = idempotencyKey ? `${workflowId}:${idempotencyKey}` : undefined;
     const previousExecution = lockKey
@@ -192,21 +212,58 @@ export class WorkflowEngine {
     await previousExecution.catch(() => {});
 
     try {
+      let workflow = await this.workflowStorage.get(workflowId);
+      assertWorkflowBindingActive(admission?.revoked);
+      if (admission && !matchesWorkflowAdmission(workflow, admission)) {
+        throw new WorkflowBindingChanged();
+      }
+
+      if (!workflow) {
+        throw new Error(`Workflow ${workflowId} not found`);
+      }
+      if (workflow.status !== WorkflowStatus.Enabled) {
+        throw new Error(`Workflow ${workflowId} is not enabled`);
+      }
+      assertUniqueWorkflowStepIds(workflow.definition.steps);
+
       const existingExecution = idempotencyKey
         ? await this.workflowStorage.findExecutionByIdempotencyKey(workflowId, idempotencyKey)
         : null;
+
+      if (admission) {
+        if (!(await admission.bindingIsCurrent())) {
+          throw webhookBindingRevoked();
+        }
+        // Read the workflow after the asynchronous registry and execution checks.
+        const current = await this.workflowStorage.get(workflowId);
+        assertWorkflowBindingActive(admission.revoked);
+        if (!matchesWorkflowAdmission(current, admission)) {
+          throw new WorkflowBindingChanged();
+        }
+        if (
+          current.userId !== workflow.userId ||
+          current.updatedAt.valueOf() !== workflow.updatedAt.valueOf()
+        ) {
+          throw webhookBindingRevoked();
+        }
+        workflow = current;
+        assertUniqueWorkflowStepIds(workflow.definition.steps);
+      }
 
       if (existingExecution && existingExecution.status === WorkflowExecutionStatus.Completed) {
         return existingExecution;
       }
 
       const resumed = Boolean(existingExecution);
+      const executionInput = this.buildExecutionInput(triggerPayload, idempotencyKey);
+      const scopedInput = admission ? structuredClone(executionInput) : undefined;
       const execution =
         existingExecution ??
         (await this.workflowStorage.createExecution({
           workflowId,
           status: WorkflowExecutionStatus.Running,
-          input: this.buildExecutionInput(triggerPayload, idempotencyKey),
+          // Until the claim is rechecked, persist the key without the scoped payload.
+          input: admission ? this.buildExecutionInput({}, idempotencyKey) : executionInput,
         }));
 
       if (existingExecution) {
@@ -224,18 +281,28 @@ export class WorkflowEngine {
         workflowId,
         executionId: execution.id,
         userId: workflow.userId,
+        tenantId: workflow.tenantId,
         trigger: {
           provider: workflow.definition.trigger.provider,
           event: workflow.definition.trigger.event,
+          connectionId: admission?.scope.connectionId,
           payload: triggerPayload,
         },
         data: contextData,
+      };
+      let includeScopedInput = false;
+      const writeExecution = async (updates: Partial<WorkflowExecution>) => {
+        await this.workflowStorage.updateExecution(execution.id, {
+          ...(includeScopedInput ? { input: scopedInput } : {}),
+          ...updates,
+        });
+        includeScopedInput = false;
       };
       const checkpointStep = async (stepId: string): Promise<void> => {
         if (!completedStepIds.includes(stepId)) {
           completedStepIds.push(stepId);
         }
-        await this.workflowStorage.updateExecution(execution.id, {
+        await writeExecution({
           status: WorkflowExecutionStatus.Running,
           output: this.buildExecutionOutput(context.data, {
             idempotencyKey,
@@ -250,13 +317,27 @@ export class WorkflowEngine {
       let activeStepId: string | undefined;
 
       try {
+        assertWorkflowBindingActive(admission?.revoked);
+        if (admission) {
+          const current = await this.workflowStorage.get(workflowId);
+          assertWorkflowBindingActive(admission.revoked);
+          if (
+            !matchesWorkflowAdmission(current, admission) ||
+            current.userId !== workflow.userId ||
+            current.updatedAt.valueOf() !== workflow.updatedAt.valueOf()
+          ) {
+            throw webhookBindingRevoked();
+          }
+          includeScopedInput = true;
+        }
         if (workflow.definition.trigger.filter) {
           const shouldRun = this.resolveCondition(
             workflow.definition.trigger.filter,
             'workflow trigger filter'
           )(context);
           if (!shouldRun) {
-            await this.workflowStorage.updateExecution(execution.id, {
+            assertWorkflowBindingActive(admission?.revoked);
+            await writeExecution({
               status: WorkflowExecutionStatus.Completed,
               output: this.buildExecutionOutput(context.data, {
                 idempotencyKey,
@@ -279,11 +360,12 @@ export class WorkflowEngine {
             continue;
           }
 
-          await this.executeStep(step, context, completedStepIds, checkpointStep);
+          await this.executeStep(step, context, completedStepIds, checkpointStep, admission?.revoked);
           await checkpointStep(step.id);
         }
 
-        await this.workflowStorage.updateExecution(execution.id, {
+        assertWorkflowBindingActive(admission?.revoked);
+        await writeExecution({
           status: WorkflowExecutionStatus.Completed,
           output: this.buildExecutionOutput(context.data, {
             idempotencyKey,
@@ -305,15 +387,20 @@ export class WorkflowEngine {
         const completedExecution = await this.getExecutionById(workflowId, execution.id);
         return completedExecution ?? execution;
       } catch (error) {
-        const failure = normalizeWorkflowExecutionFailure(error);
+        let failure = normalizeWorkflowExecutionFailure(
+          admission?.revoked.aborted ? webhookBindingRevoked() : error
+        );
         this.logger.error(`Workflow execution failed: ${workflow.name}`, {
           workflowId,
           executionId: execution.id,
           errorCode: failure.code,
         });
 
-        if (workflow.definition.errorHandlers) {
+        if (failure.code !== 'WEBHOOK_WORKFLOW_BINDING_REVOKED' && workflow.definition.errorHandlers) {
           for (const errorHandler of workflow.definition.errorHandlers) {
+            if (admission?.revoked.aborted) {
+              break;
+            }
             try {
               await this.resolveErrorHandler(
                 errorHandler.handler,
@@ -325,8 +412,13 @@ export class WorkflowEngine {
           }
         }
 
-        await this.workflowStorage.updateExecution(execution.id, {
-          status: WorkflowExecutionStatus.Failed,
+        if (admission?.revoked.aborted) {
+          failure = normalizeWorkflowExecutionFailure(webhookBindingRevoked());
+        }
+        await writeExecution({
+          status: failure.code === 'WEBHOOK_WORKFLOW_BINDING_REVOKED'
+            ? WorkflowExecutionStatus.Cancelled
+            : WorkflowExecutionStatus.Failed,
           error: `${failure.code}:${failure.error.message}`,
           output: this.buildExecutionOutput(context.data, {
             idempotencyKey,
@@ -357,8 +449,10 @@ export class WorkflowEngine {
     step: WorkflowStep,
     context: WorkflowContext,
     completedStepIds: string[],
-    checkpointStep: (stepId: string) => Promise<void>
+    checkpointStep: (stepId: string) => Promise<void>,
+    revoked?: AbortSignal
   ): Promise<void> {
+    assertWorkflowBindingActive(revoked);
     switch (step.type) {
       case 'action': {
         const result = await this.resolveAction(step.action, `action step ${step.id}`)(context);
@@ -378,12 +472,12 @@ export class WorkflowEngine {
       }
 
       case 'branch': {
-        await this.executeBranchStep(step, context, completedStepIds, checkpointStep);
+        await this.executeBranchStep(step, context, completedStepIds, checkpointStep, revoked);
         break;
       }
 
       case 'parallel': {
-        await this.executeParallelStep(step, context, completedStepIds, checkpointStep);
+        await this.executeParallelStep(step, context, completedStepIds, checkpointStep, revoked);
         break;
       }
 
@@ -410,7 +504,8 @@ export class WorkflowEngine {
     step: Extract<WorkflowStep, { type: 'branch' }>,
     context: WorkflowContext,
     completedStepIds: string[],
-    checkpointStep: (stepId: string) => Promise<void>
+    checkpointStep: (stepId: string) => Promise<void>,
+    revoked?: AbortSignal
   ): Promise<void> {
     const branch = this.resolveCondition(step.condition, `branch step ${step.id}`)(context)
       ? step.then
@@ -423,7 +518,7 @@ export class WorkflowEngine {
       if (completedStepIds.includes(branchStep.id)) {
         continue;
       }
-      await this.executeStep(branchStep, context, completedStepIds, checkpointStep);
+      await this.executeStep(branchStep, context, completedStepIds, checkpointStep, revoked);
       await checkpointStep(branchStep.id);
     }
   }
@@ -432,7 +527,8 @@ export class WorkflowEngine {
     step: Extract<WorkflowStep, { type: 'parallel' }>,
     context: WorkflowContext,
     completedStepIds: string[],
-    checkpointStep: (stepId: string) => Promise<void>
+    checkpointStep: (stepId: string) => Promise<void>,
+    revoked?: AbortSignal
   ): Promise<void> {
     const pendingActions = step.actions
       .map((action, index) => ({
@@ -441,7 +537,10 @@ export class WorkflowEngine {
       }))
       .filter(({ checkpointId }) => !completedStepIds.includes(checkpointId));
     const results = await Promise.allSettled(
-      pendingActions.map(({ action }) => action(context))
+      pendingActions.map(async ({ action }) => {
+        assertWorkflowBindingActive(revoked);
+        return action(context);
+      })
     );
 
     for (const [index, result] of results.entries()) {
@@ -544,33 +643,38 @@ export class WorkflowEngine {
     };
   }
 
-  private async registerTrigger(workflow: Workflow): Promise<void> {
+  private registerTrigger(workflow: Workflow): boolean {
     assertUniqueWorkflowStepIds(workflow.definition.steps);
     if (this.triggerBindings.has(workflow.id)) {
-      await this.unregisterTrigger(workflow, { allowMissing: true });
+      this.unregisterTrigger(workflow);
     }
 
-    const handler: TriggerHandler = async (event: any) => {
+    const { provider, event } = workflow.definition.trigger;
+    const scope = workflowScope(workflow);
+    if (!scope) {
+      this.skippedUnboundTriggers.add(workflow.id);
+      this.logger.warn('Workflow webhook trigger skipped: tenant and connection binding required', {
+        workflowId: workflow.id,
+      });
+      return false;
+    }
+
+    const handler: ScopedTriggerHandler = async (delivery, { bindingIsCurrent, revoked }) => {
       try {
-        await this.execute(workflow.id, event);
+        await this.runExecution(workflow.id, delivery, { provider, event, scope, bindingIsCurrent, revoked });
       } catch (error) {
+        if (error instanceof WorkflowBindingChanged) {
+          return;
+        }
         this.logger.error(`Workflow trigger execution failed`, { workflow: workflow.id, errorCode: 'WORKFLOW_TRIGGER_EXECUTION_FAILED' });
         throw error;
       }
     };
 
-    this.webhookHandler.on(
-      workflow.definition.trigger.provider,
-      workflow.definition.trigger.event,
-      handler
-    );
-
-    this.triggerBindings.set(workflow.id, {
-      backend: 'webhook-handler',
-      provider: workflow.definition.trigger.provider,
-      event: workflow.definition.trigger.event,
-      handler,
-    });
+    const binding = { provider, event, scope, handler };
+    this.webhookHandler.onWorkflow(provider, event, scope, handler);
+    this.triggerBindings.set(workflow.id, binding);
+    this.skippedUnboundTriggers.delete(workflow.id);
 
     this.logger.info('Workflow trigger registered', {
       workflowId: workflow.id,
@@ -578,25 +682,16 @@ export class WorkflowEngine {
       provider: workflow.definition.trigger.provider,
       event: workflow.definition.trigger.event,
     });
+    return true;
   }
 
-  private async unregisterTrigger(
-    workflow: Workflow,
-    options: { allowMissing?: boolean } = {}
-  ): Promise<void> {
+  private unregisterTrigger(workflow: Workflow): void {
     const binding = this.triggerBindings.get(workflow.id);
 
     if (!binding) {
-      this.logger.error('Workflow trigger unregister failed: missing active binding', {
-        workflowId: workflow.id,
-        provider: workflow.definition.trigger.provider,
-        event: workflow.definition.trigger.event,
-      });
-
-      if (options.allowMissing) {
+      if (this.skippedUnboundTriggers.has(workflow.id) || !workflowScope(workflow)) {
         return;
       }
-
       throw new WorkflowEngineError(
         'WORKFLOW_TRIGGER_UNREGISTER_FAILED',
         `active trigger binding not found for workflow ${workflow.id}`,
@@ -609,12 +704,12 @@ export class WorkflowEngine {
       );
     }
 
-    this.webhookHandler.off(binding.provider, binding.event, binding.handler);
+    this.webhookHandler.offWorkflow(binding.provider, binding.event, binding.scope, binding.handler);
     this.triggerBindings.delete(workflow.id);
 
     this.logger.info('Workflow trigger unregistered', {
       workflowId: workflow.id,
-      backend: binding.backend,
+      backend: 'webhook-handler',
       provider: binding.provider,
       event: binding.event,
     });
@@ -709,6 +804,31 @@ export class WorkflowEngine {
 
 const PARALLEL_ACTION_CHECKPOINT_PREFIX = '__parallel__:';
 
+function workflowScope(workflow: Workflow): WebhookWorkflowBinding | undefined {
+  const { tenantId } = workflow;
+  const { connectionId } = workflow.definition.trigger;
+  return isBindingId(tenantId) && isBindingId(connectionId)
+    ? { tenantId, connectionId }
+    : undefined;
+}
+
+function matchesWorkflowAdmission(
+  workflow: Workflow | null,
+  admission: WorkflowTriggerScope
+): workflow is Workflow {
+  return workflow?.status === WorkflowStatus.Enabled &&
+    workflow.tenantId === admission.scope.tenantId &&
+    workflow.definition.trigger.connectionId === admission.scope.connectionId &&
+    workflow.definition.trigger.provider === admission.provider &&
+    workflow.definition.trigger.event === admission.event;
+}
+
+function assertWorkflowBindingActive(revoked: AbortSignal | undefined): void {
+  if (revoked?.aborted) {
+    throw webhookBindingRevoked();
+  }
+}
+
 function parallelActionCheckpointId(stepId: string, actionIndex: number): string {
   return `${PARALLEL_ACTION_CHECKPOINT_PREFIX}${stepId}:${actionIndex}`;
 }
@@ -770,6 +890,9 @@ function normalizeWorkflowExecutionFailure(error: unknown): {
   retriable: boolean;
   error: Error;
 } {
+  if (error instanceof WebhookHandlerError && error.code === 'WEBHOOK_WORKFLOW_BINDING_REVOKED') {
+    return { code: error.code, retriable: true, error };
+  }
   if (error instanceof WorkflowEngineError) {
     return {
       code: error.code,

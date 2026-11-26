@@ -7,6 +7,7 @@ import type { AuthSession } from '@superfunctions/auth';
 import type { PlugFnOAuthClientConfig, PlugFnSecretResolverConfig } from './runtime.js';
 import type { Connection } from './connection.js';
 import type { WorkflowRuntimeRegistry } from './workflow.js';
+import type { WebhookWorkflowBindingMatch } from './trigger.js';
 
 export type PlugFnDatabaseAdapter = DbAdapter;
 export type Adapter = PlugFnDatabaseAdapter;
@@ -76,13 +77,22 @@ export interface BasicAuthIntegrationConfig {
   password: string;
 }
 
-/**
- * Webhook configuration
- */
+export interface WebhookWorkflowAuthority {
+  /** Stable, host-assigned identity of the signing app across credential rotations. */
+  id: string;
+  /** SHA-256 hex fingerprints of the authority's accepted verification credentials. */
+  credentialFingerprints: readonly string[];
+  /** Resolve only installations belonging to this signing authority. */
+  resolve(subject: string): readonly WebhookWorkflowBindingMatch[] | Promise<readonly WebhookWorkflowBindingMatch[]>;
+}
+
+/** Webhook configuration. */
 export interface WebhookOptions {
   verifySignatures?: boolean;
   allowedIPs?: string[];
   maxPayloadSize?: number;
+  /** Map a provider-authenticated subject to active tenant connections in a trusted registry. */
+  workflowBindings?: Readonly<Partial<Record<string, readonly WebhookWorkflowAuthority[]>>>;
 }
 
 /**
