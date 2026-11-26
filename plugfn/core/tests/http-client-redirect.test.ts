@@ -75,6 +75,21 @@ describe('HTTP client redirect handling', () => {
     expect(cancel).toHaveBeenCalledTimes(1);
   });
 
+  it('rejects the redirect without waiting for a body cancellation that never settles', async () => {
+    const response = new Response(new ReadableStream(), {
+      status: 302,
+      headers: { location: 'https://attacker.example/steal' },
+    });
+    const cancel = vi.fn(() => new Promise<void>(() => {}));
+    Object.defineProperty(response.body!, 'cancel', { value: cancel });
+    globalThis.fetch = workerdFetch(() => response) as any;
+
+    await expect(
+      new FetchHttpClient().get('https://api.example.com/items', { redirect: 'error', timeout: 60_000 })
+    ).rejects.toThrow(new TypeError('Redirect blocked: request requires redirect "error"'));
+    expect(cancel).toHaveBeenCalledTimes(1);
+  }, 2_000);
+
   it('rejects an opaque redirect from browser fetch', async () => {
     const opaque = new Response(null, { status: 200 });
     Object.defineProperty(opaque, 'type', { value: 'opaqueredirect' });

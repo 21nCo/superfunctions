@@ -147,6 +147,81 @@ describe('ConnectionManager OAuth shared integration', () => {
     expect(tokenClient.exchangeToken).toHaveBeenCalledTimes(1);
   });
 
+  it('binds every delegated owner field before exchanging the authorization code', async () => {
+    const adapter = new MemoryAdapter();
+    const tokenClient = createTokenHttpClient();
+    const env = createManagerEnvironment(adapter, tokenClient);
+    const owner = {
+      kind: 'delegated',
+      organizationId: 'org-1',
+      delegatedToUserId: 'delegate-a',
+      installedByUserId: 'admin-1',
+      grants: ['read', 'write'],
+      tenantId: 'workspace-1',
+    } as const;
+    const authUrl = await env.manager.getAuthUrl({
+      userId: 'admin-1',
+      provider: 'google',
+      redirectUri: REDIRECT_URI,
+      owner: { ...owner, grants: [...owner.grants] },
+    });
+    const state = new URL(authUrl).searchParams.get('state')!;
+
+    for (const expectedOwner of [
+      { ...owner, grants: [...owner.grants], delegatedToUserId: 'delegate-b' },
+      { ...owner, grants: [...owner.grants], installedByUserId: 'admin-2' },
+      { ...owner, grants: ['read'] },
+      { ...owner, grants: ['read', 'write', 'admin'] },
+    ]) {
+      await expect(
+        env.manager.handleCallback({ code: 'auth-code-1', state, expectedOwner })
+      ).rejects.toMatchObject({ code: 'TENANT_ACCESS_DENIED' });
+    }
+    expect(tokenClient.exchangeToken).not.toHaveBeenCalled();
+
+    // Grants compare as a set, so their order does not matter.
+    const result = await env.manager.handleCallback({
+      code: 'auth-code-1',
+      state,
+      expectedOwner: { ...owner, grants: ['write', 'read'] },
+      actor: { userId: 'admin-1', tenantId: 'workspace-1', organizationId: 'org-1' },
+    });
+    expect(result.connection).toMatchObject({
+      ownerKind: 'delegated',
+      delegatedToUserId: 'delegate-a',
+      installedByUserId: 'admin-1',
+    });
+    expect(tokenClient.exchangeToken).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects a tenant-scoped callback actor for an unscoped owner state', async () => {
+    const adapter = new MemoryAdapter();
+    const tokenClient = createTokenHttpClient();
+    const env = createManagerEnvironment(adapter, tokenClient);
+    const authUrl = await env.manager.getAuthUrl({
+      userId: 'user-1',
+      provider: 'google',
+      redirectUri: REDIRECT_URI,
+    });
+    const state = new URL(authUrl).searchParams.get('state')!;
+
+    await expect(
+      env.manager.handleCallback({
+        code: 'auth-code-1',
+        state,
+        actor: { userId: 'user-1', tenantId: 'workspace-1' },
+      })
+    ).rejects.toMatchObject({ code: 'TENANT_ACCESS_DENIED' });
+    expect(tokenClient.exchangeToken).not.toHaveBeenCalled();
+
+    const result = await env.manager.handleCallback({
+      code: 'auth-code-1',
+      state,
+      actor: { userId: 'user-1' },
+    });
+    expect(result.connection.tenantId).toBeUndefined();
+  });
+
   it('keeps existing token material when refresh fails', async () => {
     const adapter = new MemoryAdapter();
     const tokenClient = createTokenHttpClient({
@@ -712,6 +787,50 @@ describe('ConnectionManager OAuth shared integration', () => {
       })
     ).rejects.toMatchObject({ code: 'TENANT_ACCESS_DENIED' });
     expect(await adapter.listConnections('user-1', 'linear')).toEqual([]);
+  });
+
+  it('scopes a direct connection to the actor tenant when no owner is given', async () => {
+    const adapter = new MemoryAdapter();
+    const env = createManagerEnvironment(adapter, createTokenHttpClient());
+    env.providers.set('linear', createApiKeyProvider());
+
+    const connection = await env.manager.connect({
+      userId: 'user-1',
+      provider: 'linear',
+      credentials: { type: 'api-key', apiKey: 'test-linear-api-key' },
+      actor: { userId: 'user-1', tenantId: 'workspace-1' },
+    });
+    expect(connection).toMatchObject({ ownerKind: 'user', ownerId: 'user-1', tenantId: 'workspace-1' });
+
+    await expect(
+      env.manager.connect({
+        userId: 'user-1',
+        provider: 'linear',
+        credentials: { type: 'api-key', apiKey: 'test-linear-api-key' },
+        owner: { kind: 'user', userId: 'user-1' },
+        actor: { userId: 'user-1', tenantId: 'workspace-1' },
+      })
+    ).rejects.toMatchObject({ code: 'TENANT_ACCESS_DENIED' });
+    expect(await adapter.listConnections('user-1', 'linear')).toHaveLength(1);
+  });
+
+  it.each([
+    ['missing credentials', 'linear', undefined],
+    ['a non-string API key', 'linear', { type: 'api-key', apiKey: 12345 }],
+    ['a non-string JWT token', 'jwt-service', { type: 'jwt', token: { value: 'test-token' } }],
+    ['a non-string Basic username', 'basic-service', { type: 'basic', username: 7, password: 'test-password' }],
+    ['a non-string Basic password', 'basic-service', { type: 'basic', username: 'test-user', password: 12345 }],
+  ])('rejects %s with a validation error before storing', async (_label, provider, credentials) => {
+    const adapter = new MemoryAdapter();
+    const env = createManagerEnvironment(adapter, createTokenHttpClient());
+    env.providers.set('linear', createApiKeyProvider());
+    env.providers.set('jwt-service', { ...createApiKeyProvider(), name: 'jwt-service', auth: { type: AuthType.JWT, config: {} } } as Provider);
+    env.providers.set('basic-service', { ...createApiKeyProvider(), name: 'basic-service', auth: { type: AuthType.Basic, config: {} } } as Provider);
+
+    await expect(
+      env.manager.connect({ userId: 'user-1', provider, credentials: credentials as any })
+    ).rejects.toMatchObject({ code: 'VALIDATION_ERROR', status: 400 });
+    expect(await adapter.listConnections('user-1', provider)).toEqual([]);
   });
 });
 

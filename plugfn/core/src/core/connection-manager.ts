@@ -280,13 +280,7 @@ export class ConnectionManager {
       }
     }
     if (options.expectedOwner) {
-      const expected = ownerFields(options.expectedOwner);
-      const pending = ownerFields(pendingOwner);
-      if (
-        expected.ownerKind !== pending.ownerKind ||
-        expected.ownerId !== pending.ownerId ||
-        !tenantMatches(expected.tenantId, pending.tenantId)
-      ) {
+      if (!ownersEqual(options.expectedOwner, pendingOwner)) {
         throw new ConnectionResolutionError(
           'TENANT_ACCESS_DENIED',
           'connection owner mismatch',
@@ -368,7 +362,11 @@ export class ConnectionManager {
       [AuthType.Basic]: 'basic',
     };
     const expectedCredentialType = credentialTypes[provider.auth.type];
-    if (!expectedCredentialType || options.credentials.type !== expectedCredentialType) {
+    const credentials: unknown = options.credentials;
+    if (!isPlainMetadataRecord(credentials)) {
+      throw new ConnectionResolutionError('VALIDATION_ERROR', 'credentials are required', 400);
+    }
+    if (!expectedCredentialType || credentials.type !== expectedCredentialType) {
       throw new ConnectionResolutionError(
         'VALIDATION_ERROR',
         provider.auth.type === AuthType.OAuth2
@@ -379,10 +377,11 @@ export class ConnectionManager {
     }
     assertDirectCredentials(options.credentials);
 
-    const owner = options.owner ?? {
+    const owner: PlugFnConnectionOwner = options.owner ?? {
       kind: 'user',
       userId: options.userId,
-    } satisfies PlugFnConnectionOwner;
+      ...(options.actor?.tenantId !== undefined ? { tenantId: options.actor.tenantId } : {}),
+    };
     const actor = options.actor ?? { userId: options.userId };
     if (actor.userId !== options.userId || !actorCanInstallForOwner(actor, owner)) {
       throw new ConnectionResolutionError(
@@ -926,18 +925,46 @@ function actorCanInstallForOwner(
   actor: PlugFnActor,
   owner: PlugFnConnectionOwner
 ): boolean {
-  if (owner.tenantId && actor.tenantId !== owner.tenantId) return false;
+  if (!tenantMatches(owner.tenantId, actor.tenantId)) return false;
   if (owner.kind === 'user') return owner.userId === actor.userId;
   if (owner.installedByUserId !== actor.userId) return false;
   return actor.organizationId === owner.organizationId;
 }
 
+function ownersEqual(left: PlugFnConnectionOwner, right: PlugFnConnectionOwner): boolean {
+  const a = ownerFields(left);
+  const b = ownerFields(right);
+  return (
+    a.ownerKind === b.ownerKind &&
+    a.ownerId === b.ownerId &&
+    tenantMatches(a.tenantId, b.tenantId) &&
+    a.organizationId === b.organizationId &&
+    a.installedByUserId === b.installedByUserId &&
+    a.delegatedToUserId === b.delegatedToUserId &&
+    grantSetsEqual(a.grants, b.grants)
+  );
+}
+
+function grantSetsEqual(left: string[] | undefined, right: string[] | undefined): boolean {
+  if (left === undefined || right === undefined) return left === right;
+  const a = new Set(left);
+  const b = new Set(right);
+  return a.size === b.size && [...a].every((grant) => b.has(grant));
+}
+
+function isNonBlankString(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
 function assertDirectCredentials(credentials: Exclude<Credentials, OAuth2Credentials>): void {
+  const fields = credentials as unknown as Record<string, unknown>;
   const invalid =
-    (credentials.type === 'api-key' && credentials.apiKey.trim().length === 0) ||
-    (credentials.type === 'jwt' && credentials.token.trim().length === 0) ||
+    (credentials.type === 'api-key' && !isNonBlankString(fields.apiKey)) ||
+    (credentials.type === 'jwt' && !isNonBlankString(fields.token)) ||
     (credentials.type === 'basic' &&
-      (credentials.username.trim().length === 0 || credentials.password.length === 0));
+      (!isNonBlankString(fields.username) ||
+        typeof fields.password !== 'string' ||
+        fields.password.length === 0));
   if (invalid) {
     throw new ConnectionResolutionError(
       'VALIDATION_ERROR',

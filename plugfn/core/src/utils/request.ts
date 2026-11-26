@@ -59,7 +59,9 @@ export class FetchHttpClient implements HttpClient {
       });
 
       if (rejectRedirect && isRedirectResponse(response)) {
-        await response.body?.cancel().catch(() => {});
+        // Never await the cancellation: it may not settle (for example when the
+        // body was teed by clone()), and the redirect must fail immediately.
+        void response.body?.cancel().catch(() => {});
         throw new TypeError('Redirect blocked: request requires redirect "error"');
       }
 
