@@ -1074,8 +1074,10 @@ export function createQueryHandler(
           };
           const hasRevision = (row: unknown): row is Record<string, unknown> =>
             Boolean(row) && typeof row === "object" && REVISION_FIELD in (row as object);
-          const certifiedBefore = (isBatch ? results : [results[0]]).map((value, index) =>
-            new Set(versioned[index] ? rowsWithRevision(value).filter(hasRevision).map(canonicalRow) : []));
+          // Rows with a `$rev` before the hooks: certified rows of a versioned
+          // query, and application values of any other query.
+          const certifiedBefore = (isBatch ? results : [results[0]]).map((value) =>
+            new Set(rowsWithRevision(value).filter(hasRevision).map(canonicalRow)));
 
           // Run afterQuery hooks (fail-open)
           result = await runAfterQuery(transformedBody, result, hookCtx, plugins);
@@ -1133,7 +1135,10 @@ export function createQueryHandler(
 /**
  * DATA-41: serialize `{ ok: true, result }` once and keep `$rev` only on rows
  * of a versioned query whose wire form equals a row certified before the
- * afterQuery hooks. An unexpected wire shape loses every `$rev`. The returned
+ * afterQuery hooks. If the hooks changed the batch's shape, results cannot be
+ * matched to queries, so every row keeps a `$rev` only if it equals a row that
+ * had one before the hooks (certified, or an application value). Only rows of
+ * `data` arrays are checked; other values are left as they are. The returned
  * value is plain JSON, so okResponse re-serializes it byte-identically.
  */
 function withCertifiedRevisionsOnly(
@@ -1145,27 +1150,21 @@ function withCertifiedRevisionsOnly(
   const wire = JSON.parse(JSON.stringify({ ok: true, result })) as { result?: unknown };
   const entries = isBatch ? wire.result : [wire.result];
   if (!Array.isArray(entries) || entries.length !== versioned.length) {
-    stripEveryRevision(wire.result);
+    const kept = new Set(certifiedBefore.flatMap((rows) => [...rows]));
+    for (const entry of Array.isArray(entries) ? entries : [entries]) keepCertifiedRevisions(entry, kept);
     return wire.result;
   }
   for (let index = 0; index < entries.length; index++) {
-    if (!versioned[index]) continue;
-    const entry = entries[index] as { data?: unknown } | null;
-    const rows = entry !== null && typeof entry === "object" ? entry.data : undefined;
-    if (!Array.isArray(rows)) {
-      stripEveryRevision(entry);
-      continue;
-    }
-    for (const row of rows) {
-      if (row === null || typeof row !== "object" || !(REVISION_FIELD in row)) continue;
-      if (!certifiedBefore[index]?.has(canonicalRow(row))) delete (row as Record<string, unknown>)[REVISION_FIELD];
-    }
+    if (versioned[index]) keepCertifiedRevisions(entries[index], certifiedBefore[index]);
   }
   return wire.result;
 }
 
-function stripEveryRevision(value: unknown): void {
-  if (value === null || typeof value !== "object") return;
-  if (!Array.isArray(value)) delete (value as Record<string, unknown>)[REVISION_FIELD];
-  for (const child of Object.values(value)) stripEveryRevision(child);
+function keepCertifiedRevisions(entry: unknown, kept: Set<string>): void {
+  const rows = entry !== null && typeof entry === "object" ? (entry as { data?: unknown }).data : undefined;
+  if (!Array.isArray(rows)) return;
+  for (const row of rows) {
+    if (row === null || typeof row !== "object" || !(REVISION_FIELD in row)) continue;
+    if (!kept.has(canonicalRow(row as Record<string, unknown>))) delete (row as Record<string, unknown>)[REVISION_FIELD];
+  }
 }

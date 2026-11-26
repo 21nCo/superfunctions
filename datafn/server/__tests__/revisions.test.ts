@@ -1756,11 +1756,11 @@ describe("DATA-41 revisions: a tombstone needs an actual delete (round 10)", () 
     const wrap = (db: Adapter): Adapter =>
       new Proxy(db, {
         get(target, property, receiver) {
-          if (property === "delete" || property === "deleteMany") {
+          if (property === "delete") {
             return async (args: any) => {
               const id = (args.where ?? []).find((w: any) => w.field === "id")?.value;
-              if (ids.has(id)) return property === "delete" ? undefined : 0;
-              return (target as any)[property](args);
+              if (ids.has(id)) return undefined;
+              return target.delete(args);
             };
           }
           if (property === "transaction") {
@@ -2006,15 +2006,15 @@ describe("DATA-41 revisions: a tombstone needs a present-to-absent delete (round
     const racing = {
       ...database,
       capabilities: { ...database.capabilities, transactions: { supported: false, nested: false } },
-      deleteMany: async (args: any) => {
+      updateMany: async (args: any) => {
         if (args.model === "task" && concurrentDelete) {
           // Another delete of the record removes it and commits its
-          // tombstone just before this delete's DELETE, which matches nothing.
+          // tombstone just before this delete locks the row, which matches nothing.
           const write = concurrentDelete;
           concurrentDelete = undefined;
           await write();
         }
-        return database.deleteMany(args);
+        return database.updateMany(args);
       },
     } as Adapter;
     const served = await serve({ database: racing });
@@ -3811,6 +3811,8 @@ describe("DATA-41 revisions: PR review round 5", () => {
     expect(res.body.result.revisions[res.mutationId]).toEqual({ resource: "task", id: "task:1", rev: 1 });
     expect(kept).toBeDefined();
     expect(signal?.aborted).toBe(true);
+    // The body the middleware kept is errored, not served after the push.
+    await expect(kept!.text()).rejects.toThrow();
   });
 
   it("gives router middleware the read-back Response before its body is read", async () => {
@@ -3860,4 +3862,103 @@ describe("DATA-41 revisions: PR review round 5", () => {
     mode = "identity";
     expect((await query())[0]).toMatchObject({ id: "task:1", title: "secret", $rev: 1 });
   });
+
+  /** SQL of unknown isolation whose UPDATE counts report changed rows (MySQL without found rows). */
+  function changedRowCounts(database: Adapter): Adapter {
+    const wrap = (db: Adapter): Adapter => new Proxy(db, {
+      get(target, property, receiver) {
+        if (property === "id") return "changed-rows";
+        if (property === "updateMany") {
+          return async (args: any) => {
+            const rows = (await target.findMany({ model: args.model, where: args.where, namespace: args.namespace } as any)) as Json[];
+            const changed = rows.filter((row) =>
+              Object.entries(args.data).some(([key, value]) => JSON.stringify(row[key] ?? null) !== JSON.stringify(value ?? null))).length;
+            await target.updateMany(args);
+            return changed;
+          };
+        }
+        if (property === "transaction") {
+          return (fn: (tx: Adapter) => Promise<unknown>) => target.transaction((tx) => fn(wrap(tx as Adapter)));
+        }
+        return Reflect.get(target, property, receiver);
+      },
+    });
+    return wrap(database);
+  }
+
+  it("merges a KV record whose row lock changes no value where counts are changed rows", async () => {
+    const served = await serve({ database: changedRowCounts(memoryAdapter()) });
+    await served.push({ resource: "kv", operation: "merge", id: "kv:prefs", record: { value: { a: 1 } } });
+    const merged = await served.push({ resource: "kv", operation: "merge", id: "kv:prefs", record: { value: { b: 2 } } });
+    expect(merged.body.result.ok, JSON.stringify(merged.body)).toBe(true);
+    expect(await served.rev("kv", "kv:prefs")).toEqual({ rev: 2, deleted: false });
+    const stored = await served.database.findOne({ model: "kv", where: [{ field: "id", operator: "eq", value: "kv:prefs" }], namespace: NS } as any);
+    expect(stored?.value).toEqual({ a: 1, b: 2 });
+  });
+
+  it("raises each batched relation target its own statement changed where counts are changed rows", async () => {
+    const batchSchema = {
+      resources: [
+        { name: "project", version: 1, fields: [{ name: "name", type: "string" as const, required: false }] },
+        { name: "task", version: 1, fields: [{ name: "title", type: "string" as const, required: false }, { name: "projectId", type: "string" as const, required: false }] },
+      ],
+      relations: [{ from: "project", to: "task", type: "one-many", relation: "tasks", fkField: "projectId" }],
+    } as any;
+    const served = await serve({ schema: batchSchema, database: changedRowCounts(memoryAdapter()) });
+    await served.push({ resource: "project", operation: "insert", id: "project:1", record: { name: "p" } });
+    await served.push({ resource: "task", operation: "insert", id: "task:1", record: { title: "a", projectId: "project:1" } });
+    await served.push({ resource: "task", operation: "insert", id: "task:2", record: { title: "b" } });
+    const res = await served.push({ resource: "project", operation: "relate", id: "project:1", relations: { tasks: ["task:1", "task:2"] } });
+    expect(res.body.result.ok, JSON.stringify(res.body)).toBe(true);
+    // task:1 already pointed at the project (its state is unchanged); task:2 changed.
+    expect(await served.rev("task", "task:1")).toEqual({ rev: 1, deleted: false });
+    expect(await served.rev("task", "task:2")).toEqual({ rev: 2, deleted: false });
+  });
+
+  it("raises nothing for a setNull child whose update an adapter without strict not-found reports as undefined", async () => {
+    const raced = new Set<string>();
+    const inner = deletedBeforeUpdate(memoryAdapter(), raced);
+    const lenient = (db: Adapter): Adapter => new Proxy(db, {
+      get(target, property, receiver) {
+        if (property === "capabilities") {
+          const capabilities = Reflect.get(target, property, receiver) as Json;
+          return { ...capabilities, operations: { ...capabilities.operations, strictUpdateNotFound: false } };
+        }
+        if (property === "update") {
+          return async (args: any) => (await (target as any).update(args)) ?? undefined;
+        }
+        if (property === "transaction") {
+          return (fn: (tx: Adapter) => Promise<unknown>) => target.transaction((tx) => fn(lenient(tx as Adapter)));
+        }
+        return Reflect.get(target, property, receiver);
+      },
+    });
+    const served = await serve({ database: lenient(inner) });
+    await served.push({ resource: "project", operation: "insert", id: "project:1", record: { name: "p" } });
+    await served.push({ resource: "task", operation: "insert", id: "task:1", record: { title: "a", projectId: "project:1" } });
+    raced.add("task:1");
+    const res = await served.push({ resource: "project", operation: "delete", id: "project:1" });
+    expect(res.body.result.ok, JSON.stringify(res.body)).toBe(true);
+    expect(raced.size).toBe(0);
+    expect(await served.rev("task", "task:1")).toEqual({ rev: 2, deleted: true });
+  });
+
+  it("keeps application $rev values when afterQuery hooks reshape a mixed batch", async () => {
+    const hooks = {
+      name: "shorten",
+      runsOn: ["server"],
+      afterQuery: (_ctx: unknown, _query: unknown, result: unknown) => (Array.isArray(result) ? result.slice(1) : result),
+    };
+    const served = await serve({ config: { plugins: [hooks] } });
+    await served.push({ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } });
+    await served.push({ resource: "legacy", operation: "insert", id: "legacy:1", record: { $rev: "app-value" } });
+    const res = await served.send("query", [
+      { version: 1, resource: "task", withRevisions: true },
+      { version: 1, resource: "legacy" },
+    ]);
+    expect(res.body.ok, JSON.stringify(res.body)).toBe(true);
+    expect(res.body.result).toHaveLength(1);
+    expect(res.body.result[0].data).toEqual([expect.objectContaining({ id: "legacy:1", $rev: "app-value" })]);
+  });
 });
+

@@ -12,7 +12,7 @@
  */
 
 import { createHash } from "node:crypto";
-import { NotFoundError, type Adapter } from "@superfunctions/db";
+import type { Adapter } from "@superfunctions/db";
 import { getRelationFkFieldsForResource, resolveJoinStoreResources } from "@datafn/core";
 import type { DatafnSchema } from "../core-types.js";
 import { ensureInternalTable, registerAdapterWrapper } from "./internal-tables.js";
@@ -327,12 +327,18 @@ const writeLogs = new WeakMap<object, WriteEvent[]>();
 
 /**
  * DATA-41: `db` for one write, recording what each of its own record
- * statements did to each record row it names by id: a create or upsert that
- * succeeded wrote the row, and an update or delete changed it only if the
- * statement's own affected-row count says so. Where reads may be a snapshot,
- * an update's returned row is a re-read, not evidence, so the update runs as
- * a counted update (a current read) and the row is read after it. A revision
- * is raised only on this evidence (assignWriteRevisions).
+ * statements did to each record row it names by id, from a statement's own
+ * affected-row count (the rows it matched: MySQL connections must report
+ * found rows, the mysql and mysql2 drivers' default), never from a read. A
+ * create or upsert that succeeded wrote the row. An update changed it when its
+ * counted write matched it (where reads may be a snapshot, the update is first
+ * run as a counted write, since the adapter's own update re-selects the row
+ * from the snapshot). A delete by id moved it from present to absent when a
+ * counted lock of the row (`SET id = id`) matched it before the adapter's own
+ * delete and matches nothing after it. A batched update by ids that matched
+ * only some of them locks each to tell which (where counts may be changed
+ * rows, it runs one counted statement per id). A revision is raised only on this evidence
+ * (assignWriteRevisions).
  */
 export function withWriteEvidence(db: Adapter, log: WriteEvent[] = []): Adapter {
   const note = (model: string, ids: readonly string[], deleted: boolean, applied: boolean) => {
@@ -340,6 +346,8 @@ export function withWriteEvidence(db: Adapter, log: WriteEvent[] = []): Adapter 
   };
   const snapshot = readsMayBeSnapshot(db);
   const target = db as Adapter & Record<string, unknown>;
+  const lock = (p: { model: string; namespace?: string }, id: string) =>
+    db.updateMany({ model: p.model, where: [{ field: "id", operator: "eq", value: id }], data: { id }, namespace: p.namespace } as any);
   const writers: Record<string, (p: any, ...rest: unknown[]) => Promise<unknown>> = {
     async create(p) {
       const out = await db.create(p);
@@ -363,39 +371,52 @@ export function withWriteEvidence(db: Adapter, log: WriteEvent[] = []): Adapter 
       if (snapshot) {
         const count = await db.updateMany({ model: p.model, where: p.where, data: p.data, namespace: p.namespace });
         note(p.model, ids, false, count > 0);
-        if (count === 0) throw new NotFoundError(p.model, p.where);
-        return db.findOne({ model: p.model, where: p.where, select: p.select, namespace: p.namespace });
+        return db.update(p);
       }
+      let out: unknown;
       try {
-        const out = await db.update(p);
-        const strict = db.capabilities?.operations?.strictUpdateNotFound === true;
-        note(p.model, ids, false, !(out === null || (strict && out === undefined)));
-        return out;
+        out = await db.update(p);
       } catch (error) {
         if (isNotFoundError(error)) note(p.model, ids, false, false);
         throw error;
       }
+      // An adapter may report a miss as an empty result: count the write.
+      const applied = out !== null && out !== undefined
+        ? true
+        : (await db.updateMany({ model: p.model, where: p.where, data: p.data, namespace: p.namespace })) > 0;
+      note(p.model, ids, false, applied);
+      return out;
     },
     async updateMany(p) {
-      const count = await db.updateMany(p);
       const ids = idsOf(p.where, true);
-      if (!ids || ids.length === 0) return count;
+      if (!ids || ids.length === 0) return db.updateMany(p);
+      if (snapshot) {
+        // Counts may be changed rows: one counted statement per id.
+        let total = 0;
+        for (const id of ids) {
+          const where = [...p.where.filter((c: { field?: unknown }) => c?.field !== "id"), { field: "id", operator: "eq", value: id }];
+          const count = await db.updateMany({ ...p, where });
+          note(p.model, [id], false, count > 0);
+          total += count;
+        }
+        return total;
+      }
+      const count = await db.updateMany(p);
       if (count === 0 || count === ids.length) {
         note(p.model, ids, false, count > 0);
         return count;
       }
-      // Some named rows matched and some did not: the same write again, one
-      // row at a time, tells which (it leaves matched rows as they are).
-      for (const id of ids) {
-        const where = [...p.where.filter((c: { field?: unknown }) => c?.field !== "id"), { field: "id", operator: "eq", value: id }];
-        note(p.model, [id], false, (await db.updateMany({ ...p, where })) > 0);
-      }
+      // Some targets matched: a counted lock of each (a current read) tells
+      // which are present. One re-inserted since is only raised once more.
+      for (const id of ids) note(p.model, [id], false, (await lock(p, id)) > 0);
       return count;
     },
     async delete(p) {
       const ids = idsOf(p.where, false);
       if (!ids) return db.delete(p);
-      note(p.model, ids, true, (await db.deleteMany({ model: p.model, where: p.where, namespace: p.namespace })) > 0);
+      const present = (await lock(p, ids[0])) > 0;
+      await db.delete(p);
+      note(p.model, ids, true, present && (await lock(p, ids[0])) === 0);
     },
     async deleteMany(p) {
       const count = await db.deleteMany(p);
