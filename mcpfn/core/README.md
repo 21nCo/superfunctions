@@ -304,9 +304,10 @@ const { registry } = fromOpenAPI<{ apiToken: string }>(document, {
   header value is left out. The JSON body is sent with the operation's media
   type (`application/json` or the selected `*+json` type). Operations fetch
   cannot send (`TRACE`, `GET` or `HEAD` with a request body, a required
-  header fetch manages, such as `Connection` or `Sec-Fetch-Mode`, or a body
+  header fetch manages, such as `Connection`, `Sec-Fetch-Mode` or `Range`, or a body
   whose documented media type names a charset other than UTF-8, since the
-  body is sent as UTF-8) are skipped by `fromOpenAPI`
+  body is sent as UTF-8, or has a character no header can carry, such as a
+  CR, LF, NUL or one above 0xFF) are skipped by `fromOpenAPI`
   as `unsupported-by-executor`, and so is an operation whose every security
   requirement needs an `apiKey` credential in the query or in a header
   fetch manages, which operator headers cannot carry, and one whose security
@@ -323,7 +324,9 @@ const { registry } = fromOpenAPI<{ apiToken: string }>(document, {
 - **Credentials (D9).** `headers` is a plain object (prototype
   `Object.prototype` or `null`) or a function of the server's trusted
   context (and the operation), called on every call, returning one or a
-  promise of one; values are printable ASCII. A record is validated once,
+  promise of one; values are printable ASCII. Leaving `headers` out sends
+  none; `null` or any other value is refused when the executor is created,
+  and a function result that is not a plain object refuses the call. A record is validated once,
   when the executor is created, and that copy is sent on every call:
   changing the object later changes nothing, so rotate credentials with a
   function. A `Map`, a `Headers` or
@@ -335,7 +338,9 @@ const { registry } = fromOpenAPI<{ apiToken: string }>(document, {
   otherwise the call is refused before it is sent. The tool input offers only what the executor sends: the
   forbidden headers (`Authorization`, `Cookie`, `Host`, `Content-Length`,
   `Proxy-*`, `Accept`, `Content-Type`), optional transport headers
-  (`Connection`, `Transfer-Encoding`, `Expect`, `Sec-Fetch-Mode`, ...), `apiKey` credential
+  (`Connection`, `Transfer-Encoding`, `Expect`, and the headers undici
+  rewrites: `Sec-Fetch-Mode`, and `Range`, beside which it adds `identity`
+  to `Accept-Encoding`; an operator entry for one is refused), `apiKey` credential
   parameters and, with a `headers` record, every header it sets are not
   inputs; a value injected past validation for one of them is never sent,
   and an `apiKey` credential the operator does not set goes unsent. With a
@@ -363,18 +368,18 @@ const { registry } = fromOpenAPI<{ apiToken: string }>(document, {
   number is also read as written, as a parser reads it (also under a
   duplicate key), so one that parses to a credential (`1.2345e4` for
   `12345`) is caught; a number spelled inside a string, or in a body that
-  is not JSON, is left alone. Structured content is checked as returned,
-  both serialized and as its pretty-printed text.
-  An error excerpt shows literal echoes of its decoded text (overlapping
-  and adjacent ones merged) as `[REDACTED]`, never cut inside one. The body
-  with those echoes masked is then checked exactly as a success body is
-  (every view above, its bytes and its JSON numbers), and so is the
-  excerpt as returned; the body is withheld when any check finds a
-  credential, when another reading finds an echo the literal ones do not
-  account for (a decoding, the text without NULs or its JSON numbers as
-  parsed finding more, or a byte form in UTF-8, UTF-16LE or UTF-16BE that
-  straddles a redacted span), or when the echoes cannot be located in its bytes (a charset other than UTF-8 or
-  UTF-16, or UTF-8 that does not decode cleanly). Redaction uses a mask of
+  is not JSON, is left alone. Structured content is returned with its
+  compact serialization as text (no pretty-printing, which deep nesting
+  would multiply), and both are checked as returned.
+  An error body that reveals no credential is excerpted as it is. One that
+  reveals a credential is redacted only when it is plain, so its literal
+  text is its only reading: UTF-8 that decodes cleanly, with no NUL and no
+  byte order mark, no JSON escape, percent escape, `+` or HTML reference,
+  every JSON number written as it parses, and no UTF-16 form of a
+  credential in its bytes. Its literal echoes (overlapping and adjacent ones
+  merged) are then shown as `[REDACTED]`, never cut inside one, and the body
+  with them masked, and the excerpt as returned, must reveal nothing. Any
+  other body that reveals a credential is withheld whole. Redaction uses a mask of
   the body's length, so memory stays a small multiple of `maxResponseBytes`
   however densely the body echoes a credential. A success body that reveals one is withheld with
   an `isError` result that says the call succeeded, since rewriting it could

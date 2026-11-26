@@ -1596,6 +1596,8 @@ describe("httpExecutor header sources it cannot read as a record", () => {
     ["a Headers", () => new Headers({ authorization: `Bearer ${operatorToken}` })],
     ["another realm's object", () => runInNewContext("({ authorization: value })", { value: `Bearer ${operatorToken}` })],
     ["another realm's promise of another realm's object", () => runInNewContext("Promise.resolve({ authorization: value })", { value: `Bearer ${operatorToken}` })],
+    ["null", () => null],
+    ["a string", () => `Bearer ${operatorToken}`],
   ])("refuses %s, sending nothing, from a function or as the option", async (_label, make) => {
     const { fetch, sent } = capturingFetch();
     const executor = httpExecutor<Context>({ baseUrl: api.origin, headers: () => make() as unknown as Record<string, string>, fetch });
@@ -1705,14 +1707,14 @@ describe("httpExecutor bodies in other character encodings", () => {
     ["a declared utf-16le charset", utf16(`seen ${operatorToken}`), "text/plain; charset=utf-16le"],
     ["a quoted declared charset", utf16(`seen ${operatorToken}`), 'text/plain; charset="UTF-16LE"'],
     ["a UTF-16 byte order mark without a charset", utf16(`seen ${operatorToken}`, true), "text/plain"],
-  ])("checks and redacts a credential echoed in %s", async (_label, body, contentType) => {
+  ])("checks and withholds a credential echoed in %s, a body read in more than one way", async (_label, body, contentType) => {
     const { fetch } = stubFetch(() => new Response(body, { status: 200, headers: { "content-type": contentType } }));
     const success = await execute(httpExecutor<Context>({ baseUrl: api.origin, headers, fetch }), operationOf("echo"));
     expect(success.isError).toBe(true);
     expect(text(success)).toContain("reveals an operator credential and was withheld");
     const failing = stubFetch(() => new Response(body, { status: 500, headers: { "content-type": contentType } }));
     const failure = await execute(httpExecutor<Context>({ baseUrl: api.origin, headers, fetch: failing.fetch }), operationOf("echo"));
-    expect(text(failure)).toBe("The API responded with HTTP 500.\n\nseen [REDACTED]");
+    expect(text(failure)).toBe("The API responded with HTTP 500.\n[body withheld: it reveals an operator credential]");
   });
 
   it("withholds a credential echo interleaved with NULs, as UTF-16 read without its encoding", async () => {
@@ -2049,8 +2051,8 @@ describe("httpExecutor error and text bodies judged as returned", () => {
     expect(text(success)).toContain("reveals an operator credential and was withheld");
   });
 
-  it("checks the pretty-printed text of structured content, not only its compact serialization", async () => {
-    // Only the pretty-printed text content holds the credential: "test": "key".
+  it("returns structured content with its compact serialization as text, which holds no pretty-printed spelling", async () => {
+    // A pretty-printed text would hold the credential: "test": "key".
     const headers = { "x-api-key": 'test": "key' };
     const result = await execute(
       httpExecutor<Context>({ baseUrl: api.origin, headers, fetch: reply('{"test":"key"}', 200) }),
@@ -2058,14 +2060,13 @@ describe("httpExecutor error and text bodies judged as returned", () => {
       {},
       { hasOutputSchema: true },
     );
-    expect(result.isError).toBe(true);
-    expect(text(result)).toContain("reveals an operator credential and was withheld");
+    expect(result).toEqual({ content: [{ type: "text", text: '{"test":"key"}' }], structuredContent: { test: "key" } });
   });
 });
 
-describe("httpExecutor error excerpts with an echo the literal ones do not account for", () => {
+describe("httpExecutor error excerpts redacted only in plain bodies", () => {
   const withheld = "The API responded with HTTP 500.\n[body withheld: it reveals an operator credential]";
-  const run = (headers: Record<string, string>, body: string, contentType = "text/plain") =>
+  const run = (headers: Record<string, string>, body: BodyInit, contentType = "text/plain") =>
     execute(
       httpExecutor<Context>({
         baseUrl: api.origin,
@@ -2093,6 +2094,44 @@ describe("httpExecutor error excerpts with an echo the literal ones do not accou
   it("still redacts overlapping literal echoes whole", async () => {
     const headers = { "x-first": "test-key-one", "x-second": "one-more" };
     expect(text(await run(headers, "seen test-key-one-more!"))).toBe("The API responded with HTTP 500.\n\nseen [REDACTED]!");
+  });
+
+  it.each([
+    ["a number written shorter beside one that parses to the credential", '{"a":12345e-1,"b":1.2345e4}'],
+    ["a number that overflows beside one that parses to the credential", '{"removed":12345e400,"encoded":1.2345e4}'],
+  ])("withholds a JSON body with %s", async (_label, body) => {
+    expect(text(await run({ "x-api-key": "12345", "x-short": "345" }, body, "application/json"))).toBe(withheld);
+  });
+
+  it("withholds a body whose HTML references move an echo between spellings", async () => {
+    const headers = { "x-api-key": "test&amp;key", "x-short": "key" };
+    expect(text(await run(headers, "test&amp;key &#116;est&amp;amp;key &#116;est&amp;amp;amp;key"))).toBe(withheld);
+  });
+
+  it("withholds a utf-16le body whose bytes read as UTF-8 hold an echo", async () => {
+    const bytes = Buffer.concat([Buffer.from("te%73t-", "utf16le").swap16(), Buffer.from("key", "utf16le")]);
+    expect(text(await run({ "x-api-key": "test-key", "x-short": "key" }, new Uint8Array(bytes), "text/plain; charset=utf-16le"))).toBe(withheld);
+  });
+
+  it.each([
+    ["a percent escape", "seen test-key-one at /a%20b"],
+    ["a JSON escape", '{"seen":"test-key-one","note":"\\u0041"}'],
+    ["an HTML reference", "seen test-key-one &amp; more"],
+    ["a plus sign, read as a space in a form", "seen test-key-one a+b"],
+  ])("withholds a literal echo in a body with %s, which has another reading", async (_label, body) => {
+    expect(text(await run({ "x-api-key": "test-key-one" }, body))).toBe(withheld);
+  });
+
+  it("still redacts a literal echo in a plain JSON body", async () => {
+    const body = '{"error":"bad key test-key-one","code":401}';
+    expect(text(await run({ "x-api-key": "test-key-one" }, body, "application/json"))).toBe(
+      'The API responded with HTTP 500.\n\n{"error":"bad key [REDACTED]","code":401}',
+    );
+  });
+
+  it("returns a body with escapes unchanged when it reveals no credential", async () => {
+    const body = '{"path":"/a%20b","note":"\\u0041 &amp; a+b"}';
+    expect(text(await run({ "x-api-key": "test-key-one" }, body, "application/json"))).toBe(`The API responded with HTTP 500.\n\n${body}`);
   });
 });
 
@@ -2245,5 +2284,119 @@ describe("httpExecutor documented request media types that name a charset", () =
     ]);
     await registry.callTool("utf8", { body: {} }, undefined, requestExtra());
     expect(urls).toEqual([`${api.origin}/utf8`]);
+  });
+});
+
+describe("httpExecutor security arrays read without their methods", () => {
+  const documentWith = (security: unknown[]) => ({
+    openapi: "3.1.0",
+    info: { title: "security-arrays", version: "1.0.0" },
+    paths: {
+      "/a": { get: { operationId: "a", security, responses: ok } },
+      "/b": { get: { operationId: "b", responses: ok } },
+    },
+  });
+
+  it("never calls an own entries method of a security array", () => {
+    const security: unknown[] = [{}];
+    Object.defineProperty(security, "entries", {
+      value: () => {
+        throw new Error("test-entries-called");
+      },
+    });
+    const { tools } = fromOpenAPI(documentWith(security), { executor: httpExecutor({ baseUrl: api.origin }) });
+    expect(tools.map((tool) => tool.name).sort()).toEqual(["a", "b"]);
+  });
+
+  it("reads a sparse security array of length 1e8 in time proportional to its elements", () => {
+    const security: unknown[] = [{}];
+    security.length = 1e8;
+    const started = performance.now();
+    const { tools } = fromOpenAPI(documentWith(security), { executor: httpExecutor({ baseUrl: api.origin }) });
+    expect(performance.now() - started).toBeLessThan(1000);
+    expect(tools.map((tool) => tool.name)).toContain("b");
+  });
+});
+
+describe("httpExecutor structured results of deeply nested bodies", () => {
+  it("returns text within twice the body size, not a pretty-printed expansion", async () => {
+    let value: object = { leaf: Array.from({ length: 20_000 }, () => 0) };
+    for (let level = 0; level < 1000; level += 1) value = { a: value };
+    const body = JSON.stringify(value);
+    const result = await execute(
+      httpExecutor<Context>({
+        baseUrl: api.origin,
+        fetch: stubFetch(() => new Response(body, { headers: { "content-type": "application/json" } })).fetch,
+      }),
+      operationOf("echo"),
+      {},
+      { hasOutputSchema: true },
+    );
+    expect(result.structuredContent).toBeDefined();
+    expect(text(result).length).toBeLessThanOrEqual(2 * body.length);
+  });
+});
+
+describe("httpExecutor documented request media types no header can carry", () => {
+  const documentWith = (contentType: string) => ({
+    openapi: "3.1.0",
+    info: { title: "media-types", version: "1.0.0" },
+    paths: { "/p": { post: { operationId: "p", requestBody: { content: { [contentType]: { schema: { type: "object" } } } }, responses: ok } } },
+  });
+
+  it.each([
+    ["a quoted CR LF", 'application/json; profile="a\r\nb"'],
+    ["a quoted NUL", 'application/json; profile="a\u0000b"'],
+    ["a quoted character above 0xFF", 'application/json; profile="a\u20acb"'],
+  ])("skips an operation whose media type has %s, and refuses a call to it without throwing", async (_label, contentType) => {
+    const { fetch, urls } = stubFetch(() => new Response("ok"));
+    const executor = httpExecutor({ baseUrl: api.origin, fetch });
+    const { tools, skipped } = fromOpenAPI(documentWith(contentType), { executor, allowMutations: true });
+    expect(tools).toEqual([]);
+    expect(skipped).toMatchObject([
+      { code: "unsupported-by-executor", reason: "the request body's documented media type has a character no HTTP header can carry" },
+    ]);
+    const { tools: sendable } = fromOpenAPI(documentWith("application/json"), { executor, allowMutations: true });
+    const operation = sendable[0]!.operation;
+    const result = await execute(executor as ReturnType<typeof httpExecutor<Context>>, {
+      ...operation,
+      requestBody: { ...operation.requestBody!, contentType },
+    }, { body: {} });
+    expect(result.isError).toBe(true);
+    expect(urls).toEqual([]);
+  });
+});
+
+describe("httpExecutor Range, beside which undici rewrites Accept-Encoding", () => {
+  const documentWith = (required: boolean) => ({
+    openapi: "3.1.0",
+    info: { title: "range", version: "1.0.0" },
+    paths: {
+      "/range": {
+        get: {
+          operationId: "range",
+          parameters: [{ name: "Range", in: "header", required, schema: { type: "string" } }],
+          responses: ok,
+        },
+      },
+    },
+  });
+
+  it("publishes no input for an optional one", () => {
+    const { tools } = fromOpenAPI(documentWith(false), { executor: httpExecutor({ baseUrl: api.origin }) });
+    expect(tools[0]!.operation.parameters).toEqual([]);
+  });
+
+  it("skips an operation that requires one", () => {
+    const { tools, skipped } = fromOpenAPI(documentWith(true), { executor: httpExecutor({ baseUrl: api.origin }) });
+    expect(tools).toEqual([]);
+    expect(skipped).toMatchObject([{ code: "unsupported-by-executor", reason: 'fetch manages the required header "Range"' }]);
+  });
+
+  it("refuses an operator entry, naming only the header", () => {
+    const create = () => httpExecutor({ baseUrl: api.origin, headers: { Range: "bytes=0-1" } });
+    expect(create).toThrow(McpFnValidationError);
+    expect(create).toThrow('httpExecutor headers entry "Range" is managed by fetch');
+    expect(create).not.toThrow(/bytes=0-1/);
   });
 });

@@ -50,14 +50,18 @@ const MAX_TIMEOUT_MS = 2_147_483_647;
 const EXCERPT_BYTES = 4096;
 const REDACTED = "[REDACTED]";
 
-// Hop-by-hop and framing headers belong to fetch, and so does `Sec-Fetch-Mode`,
-// which undici replaces with its own value: neither the operator nor a parameter sets them.
+// Hop-by-hop and framing headers belong to fetch, and so do the request headers
+// undici rewrites: `Sec-Fetch-Mode`, which it replaces with its own value, and
+// `Range`, beside which it appends `identity` to `Accept-Encoding`. Neither the
+// operator nor a parameter sets them. (The headers undici only adds when absent,
+// such as `Accept`, `User-Agent` and `Cache-Control`, are sent as given.)
 const TRANSPORT_HEADERS = new Set([
   "connection",
   "content-length",
   "expect",
   "host",
   "keep-alive",
+  "range",
   "sec-fetch-mode",
   "te",
   "trailer",
@@ -127,7 +131,8 @@ export function httpExecutor<TContext = unknown>(options: HttpExecutorOptions<TC
   try {
     source = options.headers;
     if (typeof source !== "function") {
-      fixed = operatorHeaders(source ?? {});
+      // Only an omitted option means no headers: `null` or any other value that is not a record is refused.
+      fixed = operatorHeaders(source === undefined ? {} : source);
       fixedNames = new Set(fixed.headers.keys());
     }
   } catch (error) {
@@ -310,6 +315,10 @@ function unsupportedReason(operation: OpenApiOperation): string | undefined {
     return `fetch cannot send a ${operation.method} request with a body`;
   }
   if (operation.requestBody) {
+    // Headers.set throws for CR, LF, NUL or a character above 0xFF, also inside a quoted parameter.
+    if (/[\x00-\x08\x0a-\x1f\x7f]|[^\x00-\xff]/.test(operation.requestBody.contentType)) {
+      return "the request body's documented media type has a character no HTTP header can carry";
+    }
     const documented = parseMediaType(operation.requestBody.contentType);
     if (documented === null || (documented.charset !== undefined && !isUtf8(documented.charset))) {
       return "the request body's documented media type names a charset other than UTF-8, but the body is sent as UTF-8";
@@ -632,7 +641,10 @@ async function toResult(response: Response, options: ResultOptions): Promise<Cal
   let result: CallToolResult;
   try {
     if (!numbersExact(text)) throw new RangeError("a number JSON parsing would change");
-    result = structuredResult(value as Record<string, unknown>);
+    // Normalized with no text, which is then the compact serialization: a
+    // pretty-printed one could be many times the body (deep nesting indents every line).
+    const normalized = structuredResult(value as Record<string, unknown>, []).structuredContent;
+    result = { content: [{ type: "text", text: JSON.stringify(normalized) }], structuredContent: normalized };
   } catch {
     return unstructured(status, options, "a body that cannot be returned as structured content", text);
   }
@@ -745,11 +757,10 @@ function declaredLength(response: Response): number {
 /**
  * Status and an excerpt of at most 4 KiB. The whole body (within
  * `maxResponseBytes`) is read and checked, so no credential is judged from
- * part of its spelling. Every literal credential echo (overlapping ones
- * merged) is replaced whole and never cut. A body that reveals a credential
- * any other way, whose echoes cannot be located in its bytes, or in which
- * another reading finds an echo the literal ones do not account for (one that
- * overlaps a redacted span, which masking would only break), is withheld.
+ * part of its spelling. A body that reveals a credential is redacted only when
+ * it is plain (`isPlain`): its literal text is then the only reading of it, so
+ * replacing every literal echo (overlapping ones merged, never cut) leaves
+ * none. Any other body that reveals a credential is withheld whole.
  */
 async function errorResult(response: Response, options: ResultOptions): Promise<CallToolResult> {
   const { status } = response;
@@ -775,20 +786,18 @@ async function errorResult(response: Response, options: ResultOptions): Promise<
   let mask: Uint8Array | undefined;
   let masked: string | undefined;
   if (bodyExposes(bytes, text, encoding, json, secrets)) {
-    // Only literal echoes are redacted, and only where the bytes behind them
-    // are known. The body with them masked is judged exactly as a success
-    // body is (every view, its bytes and its JSON numbers) and must reveal nothing.
+    if (!isPlain(bytes, text, encoding, json, secrets)) return withheld;
     mask = literalMask(text, secrets);
-    const byteMask = mask && bytesBehind(bytes, text, encoding, mask);
-    if (!mask || !byteMask || unaccountedEchoes(bytes, byteMask, text, encoding, json, secrets)) return withheld;
+    if (!mask) return withheld;
+    // The body with its literal echoes masked is judged exactly as a success body is and must reveal nothing.
     masked = maskText(text, mask);
-    if (bodyExposes(maskBytes(bytes, byteMask), masked, encoding, json, secrets)) return withheld;
+    if (bodyExposes(encoder.encode(masked), masked, encoding, json, secrets)) return withheld;
   }
-  // A leading byte order mark is dropped, unless a redacted credential begins with it.
-  const start = text.startsWith("\uFEFF") && !mask?.[0] ? 1 : 0;
+  // A leading byte order mark is dropped (a plain body, the only one redacted, has none).
+  const start = text.startsWith("\uFEFF") ? 1 : 0;
   const { excerpt, end } = boundedExcerpt(text, mask, start, EXCERPT_BYTES);
-  // What is returned is checked as returned: the excerpt, and the numbers its
-  // cut leaves (`1.2345e4` of `1.2345e45`).
+  // What is returned is checked as returned: the excerpt (a marker beside the
+  // text around it), and the numbers its cut leaves (`1.2345e4` of `1.2345e45`).
   if (exposes(excerpt, secrets)) return withheld;
   if (json !== undefined && end < text.length && exposes(canonicalNumbers(masked ?? text, json, start, end), secrets)) return withheld;
   return toolError(
@@ -796,6 +805,23 @@ async function errorResult(response: Response, options: ResultOptions): Promise<
       (excerpt.length > 0 ? `\n\n${excerpt}` : "") +
       (end < text.length ? `\n[body truncated after ${encoder.encode(text.slice(start, end)).byteLength} bytes]` : ""),
   );
+}
+
+/**
+ * Whether the literal text is the only reading of a body, so masking its
+ * literal credential echoes removes every echo: it is UTF-8 that re-encodes to
+ * the same bytes, with no NUL and no leading byte order mark; no decoding
+ * (JSON escapes, percent escapes, `+` as a space, HTML references) changes it;
+ * as JSON, every number is written as it parses; and its bytes hold no UTF-16
+ * form of a credential. Each condition is checked on its own, never counted.
+ */
+function isPlain(bytes: Uint8Array, text: string, encoding: string, json: string | undefined, secrets: readonly string[]): boolean {
+  if (encoding !== "utf-8" || text.includes("\u0000") || text.startsWith("\uFEFF")) return false;
+  if (!sameBytes(encoder.encode(text), bytes)) return false;
+  if (jsonUnescaped(text) !== text || percentDecoded(text) !== text || text.includes("+") || htmlUnescaped(text) !== text) return false;
+  if (json !== undefined && canonicalNumbers(text, json, 0, text.length) !== text) return false;
+  const raw = binary(bytes);
+  return !secrets.some((secret) => byteForms(secret).some(([name, form]) => name !== "utf-8" && raw.includes(form)));
 }
 
 /**
@@ -863,79 +889,6 @@ function canonicalNumbers(text: string, json: string, from: number, to: number):
   return parts.join("");
 }
 
-/**
- * Whether a reading of the body finds a credential echo the literal echoes of
- * `text` do not account for. Masking the literal echoes breaks an echo that
- * overlaps one, so the masked body alone cannot show it: a decoding that
- * changes how often a credential occurs (`te%73t-` before an echo of its own
- * shorter suffix), the text without NULs (`test\0-key-test-key-test` for
- * `test-key-test`) or with its JSON numbers as parsed (`1.2345e4` beside an
- * echo of `345`) finding more, or a byte form (UTF-8, UTF-16LE, UTF-16BE, at
- * any offset) that straddles a redacted span.
- */
-function unaccountedEchoes(
-  bytes: Uint8Array,
-  byteMask: Uint8Array,
-  text: string,
-  encoding: string,
-  json: string | undefined,
-  secrets: readonly string[],
-): boolean {
-  // Counted only once a reading changes the text.
-  let literal: number[] | undefined;
-  const counts = () => (literal ??= secrets.map((secret) => occurrences(text, secret)));
-  const changes = (view: string) => secrets.some((secret, index) => occurrences(view, secret) !== counts()[index]);
-  const adds = (view: string) => secrets.some((secret, index) => occurrences(view, secret) > counts()[index]!);
-  for (const view of decodedViews(text)) if (view !== text && changes(view)) return true;
-  // Credentials hold no NUL, so removing NULs never loses a literal echo; one more is an overlap.
-  if (text.includes("\u0000")) {
-    const joined = text.replaceAll("\u0000", "");
-    if (adds(joined)) return true;
-    for (const view of decodedViews(joined)) if (view !== joined && changes(view)) return true;
-  }
-  if (json !== undefined) {
-    const parsed = canonicalNumbers(text, json, 0, text.length);
-    if (parsed !== text && adds(parsed)) return true;
-  }
-  return bytesStraddle(bytes, byteMask, encoding, secrets);
-}
-
-/**
- * Whether a byte form of a credential, at any offset, lies partly in the
- * masked bytes and partly outside them. In a UTF-16 body the other byte
- * order's form one byte off a redacted echo of the same credential (an ASCII
- * echo `t\0e\0` read from the byte before as `\0t\0e`) is that echo, not another.
- */
-function bytesStraddle(bytes: Uint8Array, byteMask: Uint8Array, encoding: string, secrets: readonly string[]): boolean {
-  // masked[i] is how many of the first i bytes are masked.
-  const masked = new Int32Array(bytes.length + 1);
-  for (let index = 0; index < bytes.length; index += 1) masked[index + 1] = masked[index]! + byteMask[index]!;
-  const inside = (at: number, length: number) => masked[at + length]! - masked[at]!;
-  const raw = binary(bytes);
-  for (const secret of secrets) {
-    const forms = byteForms(secret);
-    const own = forms.find(([name]) => name === encoding)?.[1];
-    for (const [name, form] of forms) {
-      // Where the body's own form of the same credential starts when this one is it read one byte off.
-      const shift = own === undefined || name === "utf-8" || name === encoding ? undefined : encoding === "utf-16le" ? 1 : -1;
-      for (let at = raw.indexOf(form); at !== -1; at = raw.indexOf(form, at + 1)) {
-        const count = inside(at, form.length);
-        if (count === 0 || count === form.length) continue;
-        const echo = shift === undefined ? -1 : at + shift;
-        if (echo >= 0 && raw.startsWith(own!, echo) && inside(echo, own!.length) === own!.length) continue;
-        return true;
-      }
-    }
-  }
-  return false;
-}
-
-function occurrences(text: string, secret: string): number {
-  let count = 0;
-  for (let at = text.indexOf(secret); at !== -1; at = text.indexOf(secret, at + 1)) count += 1;
-  return count;
-}
-
 /** Which characters of `text` belong to a literal credential echo (overlaps included), or undefined when none does. */
 function literalMask(text: string, secrets: readonly string[]): Uint8Array | undefined {
   let mask: Uint8Array | undefined;
@@ -962,42 +915,6 @@ function maskText(text: string, mask: Uint8Array): string {
     result += String.fromCharCode(...chunk);
   }
   return result;
-}
-
-/**
- * Which bytes are behind the masked characters of `text` (1 each), or
- * undefined when they cannot be located: only UTF-16 (two bytes a code unit)
- * and UTF-8 that re-encodes to the same bytes are mapped.
- */
-function bytesBehind(bytes: Uint8Array, text: string, encoding: string, mask: Uint8Array): Uint8Array | undefined {
-  const behind = new Uint8Array(bytes.length);
-  if (encoding === "utf-16le" || encoding === "utf-16be") {
-    for (let at = mask.indexOf(1); at !== -1; at = mask.indexOf(1, at)) {
-      const stop = mask.indexOf(0, at);
-      const end = stop === -1 ? mask.length : stop;
-      behind.fill(1, at * 2, end * 2);
-      if (stop === -1) break;
-      at = stop;
-    }
-    return behind;
-  }
-  if (encoding !== "utf-8" || !sameBytes(encoder.encode(text), bytes)) return undefined;
-  let offset = 0;
-  for (let index = 0; index < text.length; index += 1) {
-    const code = text.codePointAt(index)!;
-    const size = code < 0x80 ? 1 : code < 0x800 ? 2 : code < 0x10000 ? 3 : 4;
-    if (mask[index] || (size === 4 && mask[index + 1])) behind.fill(1, offset, offset + size);
-    offset += size;
-    if (size === 4) index += 1;
-  }
-  return behind;
-}
-
-/** `bytes` with each byte `byteMask` marks set to 0xFF (never part of a UTF-8 form, nor of an ASCII credential's UTF-16 form). */
-function maskBytes(bytes: Uint8Array, byteMask: Uint8Array): Uint8Array {
-  const masked = bytes.slice();
-  for (let index = 0; index < masked.length; index += 1) if (byteMask[index]) masked[index] = 0xff;
-  return masked;
 }
 
 function sameBytes(left: Uint8Array, right: Uint8Array): boolean {

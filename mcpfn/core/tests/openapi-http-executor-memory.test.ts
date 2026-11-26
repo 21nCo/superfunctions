@@ -16,9 +16,11 @@ describe("httpExecutor error bodies dense with credential echoes", () => {
   const headers = { "x-api-version": "1", accept: "11", "x-region": "1 1", "x-tier": "2" };
 
   it.each([
-    ["one run of echoes", "1".repeat(1024 * 1024), /^\[REDACTED\]$/],
+    // A body of digits alone is also a JSON number that parses to another spelling, so it is withheld.
+    ["one run of echoes, as a JSON number", "1".repeat(1024 * 1024), /^\[body withheld: it reveals an operator credential\]$/],
+    ["one run of echoes", `x${"1".repeat(1024 * 1024 - 1)}`, /^x\[REDACTED\]$/],
     ["echoes between spaces", "1 2 ".repeat(256 * 1024), /^(?:\[REDACTED\] ?)+\n\[body truncated after \d+ bytes\]$/],
-  ])("redacts a 1 MiB body of %s with memory bounded by a small multiple of the body", async (_label, body, excerpt) => {
+  ])("handles a 1 MiB body of %s with memory bounded by a small multiple of the body", async (_label, body, excerpt) => {
     const executor = httpExecutor({
       baseUrl,
       headers,
@@ -35,8 +37,7 @@ describe("httpExecutor error bodies dense with credential echoes", () => {
     // maxRSS is in KiB.
     const growthMiB = (process.resourceUsage().maxRSS - before) / 1024;
     expect(result.isError).toBe(true);
-    const [heading, shown] = (result.content[0] as { text: string }).text.split("\n\n");
-    expect(heading).toBe("The API responded with HTTP 500.");
+    const shown = (result.content[0] as { text: string }).text.replace(/^The API responded with HTTP 500\.\n\n?/, "");
     expect(shown).toMatch(excerpt);
     expect(growthMiB).toBeLessThan(64);
   });

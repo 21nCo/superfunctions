@@ -1619,12 +1619,26 @@ function clonesUnchanged(value: unknown): boolean {
   );
 }
 
+/**
+ * Marks the requirements of one security level. Only the elements present are
+ * read (a sparse array's length costs nothing), by their own keys, never by a
+ * method the caller's array could override; an element defined by an accessor
+ * is marked too, as its value is not known.
+ */
 function markLevel(level: unknown, copied: unknown): void {
   if (!Array.isArray(level) || !Array.isArray(copied)) return;
-  for (const [index, requirement] of level.entries()) {
-    if (isObject(requirement) && !clonesUnchanged(requirement) && index < copied.length) copied[index] = null;
+  for (const key of Object.keys(level)) {
+    if (!ARRAY_INDEX.test(key)) continue;
+    const index = Number(key);
+    if (index >= copied.length) continue;
+    const descriptor = Object.getOwnPropertyDescriptor(level, key);
+    if (descriptor === undefined) continue;
+    const requirement: unknown = descriptor.value;
+    if (!("value" in descriptor) || (isObject(requirement) && !clonesUnchanged(requirement))) copied[index] = null;
   }
 }
+
+const ARRAY_INDEX = /^(?:0|[1-9]\d*)$/;
 
 /** An own property's value (never one inherited, such as `__proto__`). */
 function ownValue(holder: unknown, key: string): unknown {
