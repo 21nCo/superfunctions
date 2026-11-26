@@ -1,5 +1,5 @@
 /**
- * watchfn integration tests (TV-WATCH-001 through TV-WATCH-004).
+ * watchfn integration tests (TV-WATCH-001 and TV-WATCH-002).
  *
  * All tests use vi.stubGlobal("fetch", ...) to mock HTTP without a real server.
  */
@@ -8,7 +8,6 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
     fetchEndpointMetrics,
     createWatchFnClient,
-    apifnWatchMiddleware,
 } from "../src/integrations/watchfn.js";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -162,91 +161,5 @@ describe("createWatchFnClient", () => {
     });
 });
 
-// ─── TV-WATCH-004: apifnWatchMiddleware ──────────────────────────────────────
-
-describe("TV-WATCH-004: apifnWatchMiddleware", () => {
-    afterEach(() => { vi.unstubAllGlobals(); });
-
-    it("calls next() and then POSTs an event to watchfn", async () => {
-        const postFetch = vi.fn().mockResolvedValue({ ok: true, status: 200 });
-        vi.stubGlobal("fetch", postFetch);
-
-        const middleware = apifnWatchMiddleware({ baseUrl: BASE_URL, fireAndForget: false });
-        const req = { method: "GET", path: "/users" };
-        const res = { statusCode: 200 };
-        let nextCalled = false;
-        const next = async () => { nextCalled = true; };
-
-        await middleware(req, res, next);
-
-        expect(nextCalled).toBe(true);
-        expect(postFetch).toHaveBeenCalledWith(
-            expect.stringContaining("/api/events"),
-            expect.objectContaining({ method: "POST" })
-        );
-    });
-
-    it("event body contains method, path, status_code, duration_ms, timestamp", async () => {
-        const postFetch = vi.fn().mockResolvedValue({ ok: true, status: 200 });
-        vi.stubGlobal("fetch", postFetch);
-
-        const middleware = apifnWatchMiddleware({ baseUrl: BASE_URL, fireAndForget: false });
-        await middleware({ method: "POST", path: "/orders" }, { statusCode: 201 }, async () => { });
-
-        const body = JSON.parse(postFetch.mock.calls[0][1].body as string);
-        expect(body.method).toBe("POST");
-        expect(body.path).toBe("/orders");
-        expect(body.status_code).toBe(201);
-        expect(typeof body.duration_ms).toBe("number");
-        expect(typeof body.timestamp).toBe("string");
-    });
-
-    it("does not crash when watchfn is unavailable (fire-and-forget)", async () => {
-        vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("ECONNREFUSED")));
-        const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => { });
-
-        const middleware = apifnWatchMiddleware({ baseUrl: BASE_URL, fireAndForget: true });
-        // Should not throw
-        await middleware({ method: "GET", path: "/ping" }, { statusCode: 200 }, async () => { });
-        // Give microtasks time to resolve
-        await new Promise((r) => setTimeout(r, 10));
-
-        warnSpy.mockRestore();
-    });
-
-    it("silent mode suppresses warnings", async () => {
-        vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network error")));
-        const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => { });
-
-        const middleware = apifnWatchMiddleware({ baseUrl: BASE_URL, fireAndForget: false, silent: true });
-        await middleware({ method: "GET", path: "/x" }, { statusCode: 200 }, async () => { });
-        expect(warnSpy).not.toHaveBeenCalled();
-        warnSpy.mockRestore();
-    });
-
-    it("sends Authorization header when apiKey provided", async () => {
-        const postFetch = vi.fn().mockResolvedValue({ ok: true, status: 200 });
-        vi.stubGlobal("fetch", postFetch);
-
-        const middleware = apifnWatchMiddleware({ baseUrl: BASE_URL, apiKey: "watch-key", fireAndForget: false });
-        await middleware({ method: "GET", path: "/" }, { statusCode: 200 }, async () => { });
-
-        const headers = postFetch.mock.calls[0][1].headers as Record<string, string>;
-        expect(headers["Authorization"]).toBe("Bearer watch-key");
-    });
-
-    it("middleware uses req.url.pathname as fallback when req.path not set", async () => {
-        const postFetch = vi.fn().mockResolvedValue({ ok: true, status: 200 });
-        vi.stubGlobal("fetch", postFetch);
-
-        const middleware = apifnWatchMiddleware({ baseUrl: BASE_URL, fireAndForget: false });
-        await middleware(
-            { method: "GET", url: "http://localhost/api/items?q=test" },
-            { statusCode: 200 },
-            async () => { }
-        );
-
-        const body = JSON.parse(postFetch.mock.calls[0][1].body as string);
-        expect(body.path).toBe("/api/items");
-    });
-});
+// TV-WATCH-004 (apifnWatchMiddleware) lives in src/integrations/__tests__/watchfn-middleware.test.ts,
+// inside the type-checked source tree, so its typed router registration is compiled by `tsc`.
