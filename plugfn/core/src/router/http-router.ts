@@ -9,10 +9,12 @@ import type { Connection, HandleCallbackResult } from '../types/connection.js';
 import type { PlugFnApiEnvelope, PlugFnResponseMeta } from '../types/protocol.js';
 import type { PlugFnConnectionOwner } from '../types/runtime.js';
 import { connectionMatchesActor, hasAny } from '../security/tenancy.js';
+import { claimFirstSignedWebhookDelivery, type CreateWebhookDeliveryInput } from '../storage/runtime-storage.js';
 import {
   assertWebhookReceiptScope,
   hasWebhookSignatureProof,
   prepareWebhookDelivery,
+  withoutWebhookReplayData,
   type WebhookAdmission,
 } from '../webhooks/webhook-handler.js';
 
@@ -962,6 +964,11 @@ export async function deliverWebhook(
   let receiptId: string | undefined;
   let receiptMetadata: Record<string, unknown> | undefined;
   let idempotencyKey: string | undefined;
+  const duplicate = (receiptId: string) => ({
+    duplicate: true as const,
+    receiptId,
+    event: { provider, event: resolvedEvent, verified: true },
+  });
 
   try {
     // Preserve standalone receipt keys. Scoped keys come from the authenticated delivery identity.
@@ -1011,15 +1018,7 @@ export async function deliverWebhook(
           if (disposition === 'retry') {
             receiptId = existing.id;
           } else {
-            return {
-              duplicate: true,
-              receiptId: existing.id,
-              event: {
-                provider,
-                event: resolvedEvent,
-                verified: true,
-              },
-            };
+            return duplicate(existing.id);
           }
         }
       }
@@ -1051,6 +1050,7 @@ export async function deliverWebhook(
     const receiptClaimToken = idempotencyKey
       ? `claim_${randomBytes(12).toString('hex')}`
       : undefined;
+    const headersRedacted = redactHeaders(headers);
     admission.assertActive?.();
     const receipt = await plugFn.runtime.webhooks.createReceipt({
       provider,
@@ -1059,7 +1059,7 @@ export async function deliverWebhook(
       idempotencyKey,
       idempotencyNamespace,
       connectionId: admission.binding?.connectionId,
-      headersRedacted: redactHeaders(headers),
+      headersRedacted,
       verificationStatus,
       metadata: {
         contentType: headers['content-type'],
@@ -1077,15 +1077,7 @@ export async function deliverWebhook(
       (receipt.verificationStatus === 'verified' || receipt.verificationStatus === 'not-required') &&
       (await webhookReceiptDisposition(plugFn, receipt, signatureVerified)) !== 'retry'
     ) {
-      return {
-        duplicate: true,
-        receiptId: receipt.id,
-        event: {
-          provider,
-          event: resolvedEvent,
-          verified: true,
-        },
-      };
+      return duplicate(receipt.id);
     }
     receiptId = receipt.id;
     if (receipt.verificationStatus !== verificationStatus) {
@@ -1094,7 +1086,7 @@ export async function deliverWebhook(
       });
     }
     admission.assertActive?.();
-    const delivery = await plugFn.runtime.webhooks.createDelivery({
+    const deliveryInput: CreateWebhookDeliveryInput = {
       receiptId: receipt.id,
       handlerName: `${provider}.${resolvedEvent}`,
       status: 'running',
@@ -1107,9 +1099,18 @@ export async function deliverWebhook(
         ...(!admission.binding ? {
           rawBodyBase64: Buffer.from(rawBody).toString('base64'),
           rawBodyExpiresAt: new Date(Date.now() + WEBHOOK_RETRY_PAYLOAD_TTL_MS).toISOString(),
+          ...(signatureVerified ? { replayHeaders: headersRedacted } : {}),
         } : {}),
       },
-    });
+    };
+    let delivery;
+    if (signatureVerified && idempotencyKey && !admission.binding && !hasWebhookSignatureProof(receipt)) {
+      delivery = await plugFn.runtime.webhooks[claimFirstSignedWebhookDelivery](deliveryInput);
+      if (!delivery && await webhookReceiptDisposition(plugFn, receipt, signatureVerified) !== 'retry') {
+        return duplicate(receipt.id);
+      }
+    }
+    delivery ??= await plugFn.runtime.webhooks.createDelivery(deliveryInput);
     deliveryId = delivery.id;
     deliveryAttempts = delivery.attempts;
 
@@ -1123,7 +1124,7 @@ export async function deliverWebhook(
       status: 'success',
       attempts: delivery.attempts + 1,
       metadata: {
-        ...withoutWebhookReplayBody(delivery.metadata),
+        ...withoutWebhookReplayData(delivery.metadata),
         ...(listenersCompleted ? { triggerKey: options.triggerKey } : {}),
       },
     });
@@ -1444,17 +1445,6 @@ function readWebhookNestedStringField(
   } catch {
     return undefined;
   }
-}
-
-function withoutWebhookReplayBody(
-  metadata: Record<string, unknown> | undefined
-): Record<string, unknown> | undefined {
-  if (!metadata) return undefined;
-  return Object.fromEntries(
-    Object.entries(metadata).filter(
-      ([key]) => key !== 'rawBodyBase64' && key !== 'rawBodyExpiresAt'
-    )
-  );
 }
 
 function redactHeaders(headers: Record<string, string>): Record<string, string> {

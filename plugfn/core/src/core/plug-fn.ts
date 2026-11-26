@@ -45,11 +45,18 @@ import {
 } from './connection-manager.js';
 import { ActionExecutor } from './action-executor.js';
 import { WorkflowEngine } from './workflow-engine.js';
-import { WebhookHandler, copyWebhookBody, hasWebhookSignatureProof, prepareWebhookDelivery } from '../webhooks/webhook-handler.js';
+import {
+  WebhookHandler,
+  copyWebhookBody,
+  hasWebhookSignatureProof,
+  prepareWebhookDelivery,
+  withoutWebhookReplayData,
+} from '../webhooks/webhook-handler.js';
 import { deliverWebhook } from '../router/http-router.js';
 import { AdapterConnectionStorage } from '../storage/connection-storage.js';
 import {
   AdapterRuntimeStorage,
+  claimFirstSignedWebhookDelivery,
   type CreateConnectionGrantInput,
   type CreateProviderInstallationInput,
   type CreateSyncJobInput,
@@ -112,6 +119,7 @@ export interface PlugFn {
       ): Promise<PlugFnWebhookReceipt | null>;
       updateReceipt(id: string, updates: Partial<PlugFnWebhookReceipt>): Promise<PlugFnWebhookReceipt>;
       createDelivery(input: CreateWebhookDeliveryInput): Promise<PlugFnWebhookDelivery>;
+      [claimFirstSignedWebhookDelivery](input: CreateWebhookDeliveryInput): Promise<PlugFnWebhookDelivery | null>;
       updateDelivery(id: string, updates: Partial<PlugFnWebhookDelivery>): Promise<PlugFnWebhookDelivery>;
       listDeliveries(receiptId: string): Promise<PlugFnWebhookDelivery[]>;
       processDueDeliveries(
@@ -427,6 +435,7 @@ export function plugFn(config: PlugFnConfig): PlugFn {
           runtimeStorage.findWebhookReceiptByIdempotencyKey(provider, idempotencyKey, namespace),
         updateReceipt: (id, updates) => runtimeStorage.updateWebhookReceipt(id, updates),
         createDelivery: (input) => runtimeStorage.createWebhookDelivery(input),
+        [claimFirstSignedWebhookDelivery]: (input) => runtimeStorage.claimFirstSignedWebhookDelivery(input),
         updateDelivery: (id, updates) => runtimeStorage.updateWebhookDelivery(id, updates),
         listDeliveries: (receiptId) => runtimeStorage.listWebhookDeliveries(receiptId),
         processDueDeliveries: (handler, options) => processDueWebhookDeliveries(handler, options),
@@ -512,7 +521,7 @@ export function plugFn(config: PlugFnConfig): PlugFn {
           verificationStatus: 'verified',
           admission,
         });
-        return delivery.duplicate ? admission.event() : delivery.event;
+        return 'duplicate' in delivery ? admission.event() : delivery.event;
       },
       verify: (provider, event, payload, headers, secret, options) =>
         webhookHandler.verifyWebhook(provider, event, payload, headers, secret, options),
@@ -848,7 +857,7 @@ export function plugFn(config: PlugFnConfig): PlugFn {
           status: 'dead-lettered',
           attempts: attempt,
           error: 'webhook receipt not found',
-          metadata: withoutWebhookReplayBody(delivery.metadata),
+          metadata: withoutWebhookReplayData(delivery.metadata),
         });
         if (deadLetter) {
           deliveries.push(deadLetter);
@@ -864,7 +873,7 @@ export function plugFn(config: PlugFnConfig): PlugFn {
           status: 'failed',
           workflowScoped: true,
           error: 'scoped webhook retries require verified ingress',
-          metadata: withoutWebhookReplayBody(delivery.metadata),
+          metadata: withoutWebhookReplayData(delivery.metadata),
         });
         if (excluded) deliveries.push(excluded);
         failed += 1;
@@ -887,7 +896,7 @@ export function plugFn(config: PlugFnConfig): PlugFn {
           attempts: attempt,
           error: 'webhook receipt was already delivered successfully',
           nextAttemptAt: undefined,
-          metadata: withoutWebhookReplayBody(delivery.metadata),
+          metadata: withoutWebhookReplayData(delivery.metadata),
         });
         if (superseded) {
           deliveries.push(superseded);
@@ -926,18 +935,20 @@ export function plugFn(config: PlugFnConfig): PlugFn {
         if (webhookReplayBodyExpired(delivery)) {
           throw new Error('webhook retry payload expired');
         }
+        const replayHeaders = webhookReplayHeaders(delivery);
+        const replayEvent = replayHeaders ? delivery.metadata?.event : undefined;
         await handler({
           delivery,
           receipt,
           provider: receipt.provider,
-          event: receipt.event,
-          headers: receipt.headersRedacted ?? {},
+          event: typeof replayEvent === 'string' ? replayEvent : receipt.event,
+          headers: replayHeaders ?? receipt.headersRedacted ?? {},
           rawBody: decodeWebhookDeliveryBody(delivery),
         });
         const updated = await finishClaim({
           status: 'success',
           attempts: attempt,
-          metadata: withoutWebhookReplayBody(delivery.metadata),
+          metadata: withoutWebhookReplayData(delivery.metadata),
         });
         if (updated) {
           deliveries.push(updated);
@@ -961,7 +972,7 @@ export function plugFn(config: PlugFnConfig): PlugFn {
           error: errorMessage,
           nextAttemptAt,
           ...(status === 'dead-lettered'
-            ? { metadata: withoutWebhookReplayBody(delivery.metadata) }
+            ? { metadata: withoutWebhookReplayData(delivery.metadata) }
             : {}),
         });
         if (updated) {
@@ -999,15 +1010,12 @@ export function plugFn(config: PlugFnConfig): PlugFn {
     return typeof expiresAt === 'string' && Date.parse(expiresAt) <= Date.now();
   }
 
-  function withoutWebhookReplayBody(
-    metadata: Record<string, unknown> | undefined
-  ): Record<string, unknown> | undefined {
-    if (!metadata) return undefined;
-    return Object.fromEntries(
-      Object.entries(metadata).filter(
-        ([key]) => key !== 'rawBodyBase64' && key !== 'rawBodyExpiresAt'
-      )
-    );
+  function webhookReplayHeaders(delivery: PlugFnWebhookDelivery): Record<string, string> | undefined {
+    const headers = delivery.metadata?.replayHeaders;
+    if (!headers || typeof headers !== 'object' || Array.isArray(headers)) return undefined;
+    return Object.values(headers).every((value) => typeof value === 'string')
+      ? headers as Record<string, string>
+      : undefined;
   }
 
   // Create dynamic provider proxies

@@ -17,6 +17,8 @@ import {
   type PlugFnDatabaseStorageAdapter,
 } from './adapters/database.js';
 
+export const claimFirstSignedWebhookDelivery = Symbol('plugfn.claimFirstSignedWebhookDelivery');
+
 export interface CreateProviderInstallationInput {
   provider: string;
   owner: PlugFnConnectionOwner;
@@ -265,11 +267,30 @@ export class AdapterRuntimeStorage {
     return this.adapter.updateWebhookReceipt(id, normalizedUpdates);
   }
 
-  async createWebhookDelivery(input: CreateWebhookDeliveryInput): Promise<PlugFnWebhookDelivery> {
+  createWebhookDelivery(input: CreateWebhookDeliveryInput): Promise<PlugFnWebhookDelivery> {
+    return this.persistWebhookDelivery(input, generateId('whdel'));
+  }
+
+  async claimFirstSignedWebhookDelivery(input: CreateWebhookDeliveryInput): Promise<PlugFnWebhookDelivery | null> {
+    // The primary key arbitrates the first signed attempt on a pre-verification receipt.
+    const id = `whdel_signed_${createHash('sha256').update(input.receiptId).digest('hex')}`;
+    try {
+      return await this.persistWebhookDelivery(input, id);
+    } catch (error) {
+      const existing = await this.adapter.database.findOne<PlugFnWebhookDelivery>({
+        model: this.adapter.models.webhookDeliveries,
+        where: [{ field: 'id', operator: 'eq', value: id }],
+      });
+      if (existing) return null;
+      throw error;
+    }
+  }
+
+  private async persistWebhookDelivery(input: CreateWebhookDeliveryInput, id: string): Promise<PlugFnWebhookDelivery> {
     const workflowScoped = await this.workflowDeliveryScope(input.receiptId);
     const now = new Date();
     return this.adapter.createWebhookDelivery({
-      id: generateId('whdel'),
+      id,
       receiptId: input.receiptId,
       sinkId: input.sinkId,
       handlerName: input.handlerName,

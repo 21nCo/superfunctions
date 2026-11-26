@@ -635,6 +635,14 @@ export function hasWebhookSignatureProof(record: { metadata?: Record<string, unk
   return record.metadata?.signatureVerified === true;
 }
 
+export function withoutWebhookReplayData(
+  metadata: Record<string, unknown> | undefined
+): Record<string, unknown> | undefined {
+  if (!metadata) return undefined;
+  const { rawBodyBase64: _body, rawBodyExpiresAt: _expiry, replayHeaders: _headers, ...remaining } = metadata;
+  return remaining;
+}
+
 function sha256(value: string | Uint8Array): string {
   return createHash('sha256').update(value).digest('hex');
 }

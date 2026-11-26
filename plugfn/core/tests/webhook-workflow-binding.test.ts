@@ -565,23 +565,57 @@ describe('webhook workflow admission', () => {
     expect(listener).toHaveBeenCalledTimes(2);
   });
 
-  it('does not supersede a signed standalone retry using an unsigned completion', async () => {
+  it('uses the signed attempt headers when retrying after an unsigned completion', async () => {
     const before = startRuntime(database, { withResolver: false, withVerifier: false });
     before.runtime.webhooks.on('test-provider', 'test.event', vi.fn());
-    expect((await before.send()).status).toBe(200);
+    expect((await before.send(undefined, 'test-delivery', { 'x-test-topic': 'test-unsigned-topic' })).status).toBe(200);
 
     const { runtime, send } = startRuntime(database, { withResolver: false });
     runtime.webhooks.on('test-provider', 'test.event', vi.fn().mockRejectedValue(new Error('test listener failed')));
-    expect((await send()).status).toBe(503);
+    expect((await send(undefined, 'test-delivery', {
+      'x-test-topic': 'test-signed-topic', 'x-signature': 'test-signature',
+    })).status).toBe(503);
     const [failed] = await database.findMany<{ id: string }>({
       model: deliveryModel, where: [{ field: 'status', operator: 'eq', value: 'failed' }],
     });
     await database.updateWebhookDelivery(failed.id, { nextAttemptAt: new Date(0) });
     const retryHandler = vi.fn();
-    await expect(runtime.runtime.webhooks.processDueDeliveries(retryHandler)).resolves.toMatchObject({
-      processed: 1, succeeded: 1,
-    });
-    expect(retryHandler).toHaveBeenCalledOnce();
+    const result = await runtime.runtime.webhooks.processDueDeliveries(retryHandler);
+    expect(result).toMatchObject({ processed: 1, succeeded: 1 });
+    expect(retryHandler).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      headers: expect.objectContaining({ 'x-test-topic': 'test-signed-topic', 'x-signature': '[redacted]' }),
+    }));
+    expect(result.deliveries[0]?.metadata).toMatchObject({ signatureVerified: true });
+    expect(result.deliveries[0]?.metadata).not.toHaveProperty('replayHeaders');
+  });
+
+  it('claims the first signed delivery once across runtimes that share an older receipt', async () => {
+    const before = startRuntime(database, { withResolver: false, withVerifier: false });
+    before.runtime.webhooks.on('test-provider', 'test.event', vi.fn());
+    expect((await before.send()).status).toBe(200);
+
+    const contenders = [startRuntime(database, { withResolver: false }), startRuntime(database, { withResolver: false })];
+    const listener = vi.fn();
+    let claims = 0;
+    let releaseClaims!: () => void;
+    const bothClaiming = new Promise<void>((resolve) => { releaseClaims = resolve; });
+    for (const { runtime } of contenders) {
+      runtime.webhooks.on('test-provider', 'test.event', listener);
+      const webhooks = runtime.runtime.webhooks;
+      const createReceipt = webhooks.createReceipt;
+      vi.spyOn(webhooks, 'createReceipt').mockImplementation(async (input) => {
+        const receipt = await createReceipt(input);
+        if (++claims === contenders.length) releaseClaims();
+        await bothClaiming;
+        return receipt;
+      });
+    }
+
+    const responses = await Promise.all(contenders.map(({ send }) => send()));
+    expect(responses.map(({ status }) => status)).toEqual([200, 200]);
+    const results = await Promise.all(responses.map((response) => response.json()));
+    expect(results.filter(({ data }) => data.duplicate)).toHaveLength(1);
+    expect(listener).toHaveBeenCalledOnce();
   });
 
   it('uses only unowned legacy receipts to suppress a standalone listener during scoped dispatch', async () => {
