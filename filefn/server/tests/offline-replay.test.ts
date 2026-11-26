@@ -5,7 +5,7 @@ import { memoryAdapter } from '@superfunctions/db/adapters/memory';
 import { createLocalStorageAdapter } from '@superfunctions/storage-local';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDefaultAuthorizer, createFileFn } from '../src/index.js';
-import { BODY_IDEMPOTENCY_KEY_DEPRECATED } from '../src/upload-sessions/routes.js';
+import { BODY_IDEMPOTENCY_KEY_DEPRECATED, replayScopeOf } from '../src/upload-sessions/routes.js';
 // The real client sources and its queue test doubles, so the test covers what an app runs.
 import { createFileFnClient } from '../../client/src/index.js';
 import { MemoryDirectory, MemoryFile, SharedLockManager, createStorage } from '../../client/src/__tests__/helpers/offline-fixtures.js';
@@ -382,7 +382,25 @@ describe('offline replays bound to the account of their first upload/init', () =
     expect(new Set(app.requests.filter((r) => r.path === '/upload/init').map((r) => r.key))).toEqual(new Set([app.journalKey().idempotencyKey]));
   });
 
-  it('refuses a marked upload/init with no account (401) or another account (409), and answers its own with the same scope', async () => {
+  it('creates nothing for a first replay whose credential resolves to another owner or the shared anonymous principal', async () => {
+    const app = await createApp({ authOptional: true });
+    await app.stage(FILE, 'test-replay-key-0204');
+    // The generation's first init is already pinned to the partition's account.
+    app.signIn('user-other');
+    expect(await app.queue.process(FILE)).toMatchObject({ status: 'provisional', reason: 'ambiguous' });
+    app.signIn('anonymous');
+    expect(await app.queue.process(FILE)).toMatchObject({ status: 'provisional', reason: 'ambiguous' });
+    expect(await app.rows('uploadSessions')).toHaveLength(0);
+    expect(app.journalKey()).toMatchObject({ retiredKeys: [] });
+    expect(app.journalKey().scope).toBeUndefined();
+
+    app.signIn('user-owner');
+    expect(await app.queue.process(FILE)).toMatchObject({ status: 'published' });
+    expect((await app.rows('uploadSessions')).map((row) => row.ownerId)).toEqual(['user-owner']);
+    expect(new Set(app.requests.filter((r) => r.path === '/upload/init').map((r) => r.key))).toEqual(new Set([app.journalKey().idempotencyKey]));
+  });
+
+  it('refuses a marked upload/init from no account or the anonymous principal (401) and from another account (409), creating nothing', async () => {
     const app = await createApp({ authOptional: true });
     const init = (user: string | null, scope: string) =>
       app.fileFn.router.handle(
@@ -392,22 +410,27 @@ describe('offline replays bound to the account of their first upload/init', () =
             'content-type': 'application/json',
             'x-idempotency-key': 'test-replay-key-0203',
             'x-filefn-replay-scope': scope,
-            ...(user ? { 'x-test-user': user } : {}),
+            ...(user !== null ? { 'x-test-user': user } : {}),
           },
           body: JSON.stringify({ policy: 'doc', fileName: 'a.txt', size: 5, mimeType: 'text/plain', fileId: FILE }),
         }),
       ) as Promise<Response>;
-    const anonymous = await init(null, 'unpinned');
-    expect(anonymous.status).toBe(401);
-    expect(await anonymous.json()).toMatchObject({ error: { code: 'FILEFN_AUTH_REQUIRED' } });
-    const first = await init('user-owner', 'unpinned');
-    const { data } = (await first.json()) as { data: { replayScope: string } };
-    expect(data.replayScope).toMatch(/^rs_[0-9a-f]{64}$/);
-    const other = await init('user-other', data.replayScope);
-    expect(other.status).toBe(409);
-    expect(await other.json()).toMatchObject({ error: { code: 'FILEFN_REPLAY_SCOPE_MISMATCH' } });
-    const again = await init('user-owner', data.replayScope);
-    expect(((await again.json()) as { data: { replayScope: string } }).data.replayScope).toBe(data.replayScope);
+    const ownerScope = replayScopeOf({ principalId: 'user-owner' });
+    expect(ownerScope).toMatch(/^rs_[0-9a-f]{64}$/);
+    for (const user of [null, 'anonymous']) {
+      const refused = await init(user, ownerScope);
+      expect(refused.status).toBe(401);
+      expect(await refused.json()).toMatchObject({ error: { code: 'FILEFN_AUTH_REQUIRED' } });
+    }
+    // No unpinned form: a first init names the account it must act for.
+    for (const [user, scope] of [['user-owner', 'unpinned'], ['user-other', ownerScope]] as const) {
+      const refused = await init(user, scope);
+      expect(refused.status).toBe(409);
+      expect(await refused.json()).toMatchObject({ error: { code: 'FILEFN_REPLAY_SCOPE_MISMATCH' } });
+    }
+    expect(await app.rows('uploadSessions')).toHaveLength(0);
+    const own = await init('user-owner', ownerScope);
+    expect(((await own.json()) as { data: { replayScope: string } }).data.replayScope).toBe(ownerScope);
     expect((await app.rows('uploadSessions')).map((row) => row.ownerId)).toEqual(['user-owner']);
   });
 });

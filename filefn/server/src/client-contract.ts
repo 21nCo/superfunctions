@@ -546,7 +546,7 @@ export const fileFnClientContract = {
         in: 'header',
         required: false,
         description:
-          'Marks an offline replay: unpinned on the first upload/init of an upload, else the replayScope that init returned. A marked request needs an authenticated caller (401 FILEFN_AUTH_REQUIRED otherwise, also where auth is optional) whose owner and tenant match the pinned scope (409 FILEFN_REPLAY_SCOPE_MISMATCH otherwise); nothing is created when refused.',
+          'Marks an offline replay pinned to one account, from the first upload/init of an upload on: the replay scope of the owner and tenant it must act for (rs_ and the hex SHA-256 of the JSON array ["filefn-replay-scope", principalId, tenantId or null]). A marked request needs an authenticated, non-anonymous caller (401 FILEFN_AUTH_REQUIRED otherwise, also where auth is optional) whose owner and tenant have exactly that scope (409 FILEFN_REPLAY_SCOPE_MISMATCH otherwise); nothing is created when refused.',
         schema: { type: 'string', maxLength: 255 },
       },
       XUploadSessionToken: {

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createHash } from 'node:crypto';
 import { createFileFnClient } from '../index.js';
 import { MemoryDirectory, SharedLockManager, createStorage, replayScopeOf } from './helpers/offline-fixtures.js';
 
@@ -239,5 +240,189 @@ describe('completed-session replay settlement', () => {
     expect(new Set(server.keys).size).toBe(1);
     a.dispose();
     b!.dispose();
+  });
+});
+
+describe('replay settlement boundaries', () => {
+  const FILE = 'file_00000000boundary';
+  // Its own partition (and work channel): clients of earlier tests never drive these entries.
+  const OWN = { serviceId: 'svc-boundaries', principal: { kind: 'user', principalId: 'user-alice' } } as const;
+
+  beforeEach(() => {
+    storage = createStorage();
+    locks = new SharedLockManager();
+    vi.stubGlobal('navigator', { storage: { getDirectory: async () => storage.root } });
+    setOnline(true);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  /** The scope @filefn/server computes for an authenticated caller. */
+  function scopeOf(principalId: string, tenantId: string | null = null): string {
+    return `rs_${createHash('sha256').update(JSON.stringify(['filefn-replay-scope', principalId, tenantId])).digest('hex')}`;
+  }
+
+  function json(body: unknown, status = 200): Response {
+    return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+  }
+
+  type Route = (path: string, init: RequestInit, call: number) => Response | Promise<Response> | undefined;
+
+  /** A scripted FileFn: `route` answers first; otherwise a proxy upload that completes as ver_1. */
+  function server(route: Route = () => undefined) {
+    const paths: string[] = [];
+    const scopes: Array<string | null> = [];
+    const keys: Array<string | null> = [];
+    const counts = new Map<string, number>();
+    const fetch = (async (input: RequestInfo | URL, init: RequestInit = {}) => {
+      const path = String(input).slice(BASE.length);
+      const call = (counts.get(path) ?? 0) + 1;
+      counts.set(path, call);
+      paths.push(`${init.method ?? 'GET'} ${path}`);
+      if (path === '/upload/init') {
+        scopes.push(new Headers(init.headers).get('x-filefn-replay-scope'));
+        keys.push(new Headers(init.headers).get('x-idempotency-key'));
+      }
+      const scripted = await route(path, init, call);
+      if (scripted) return scripted;
+      if (path === '/upload/init') {
+        return envelope({ uploadSessionId: 'sess_1', uploadSessionToken: 'upls_1', uploadMode: 'proxy', chunkSizeBytes: 100, totalParts: 1, ...replayScopeOf(init) });
+      }
+      if (path === '/upload/sess_1/parts/1/sign') return envelope({ url: '/upload/sess_1/parts/1', headers: {}, expiresAt: 'x' });
+      if (path === '/upload/sess_1/parts/1') return envelope({ etag: 'proxy-etag', recorded: true });
+      if (path === '/upload/sess_1/complete') return envelope({ fileId: FILE, versionId: 'ver_1' });
+      return new Response('unexpected', { status: 500 });
+    }) as typeof globalThis.fetch;
+    return { fetch, paths, scopes, keys };
+  }
+
+  function client(fetch: typeof globalThis.fetch, offline: Record<string, unknown> = {}) {
+    return createFileFnClient({
+      baseUrl: BASE,
+      fetch,
+      retryOptions: { maxRetries: 0 },
+      offline: {
+        enabled: true,
+        partition: OWN,
+        currentPrincipal: () => OWN.principal,
+        getAuthHeaders: () => ({ authorization: 'Bearer test-token-alice' }),
+        implicitReplay: false,
+        queue: { coordinator: locks.forTab('a') },
+        ...offline,
+      },
+    });
+  }
+
+  async function stageOne(queue: ReturnType<ReturnType<typeof createFileFnClient>['getOfflineQueue']>) {
+    const staged = await queue.stage({ policy: 'p', file: new Blob(['bytes']), fileId: FILE });
+    if (staged.status !== 'staged') throw new Error('not staged');
+    return staged;
+  }
+
+  it('pins the first upload/init to the partition account, so credentials of another account create nothing', async () => {
+    let otherAccount = true;
+    const s = server((path, init) =>
+      path === '/upload/init' && otherAccount
+        ? json({ ok: false, error: { code: 'FILEFN_REPLAY_SCOPE_MISMATCH', message: 'another account' } }, 409)
+        : undefined,
+    );
+    const c = client(s.fetch);
+    const queue = c.getOfflineQueue();
+    await stageOne(queue);
+    expect(await queue.process(FILE)).toMatchObject({ status: 'provisional', reason: 'ambiguous' });
+    expect(s.scopes).toEqual([scopeOf('user-alice')]);
+    expect(journals()).not.toContain('"scope"');
+    otherAccount = false;
+    expect(await queue.process(FILE)).toMatchObject({ status: 'published' });
+    expect(s.scopes).toEqual([scopeOf('user-alice'), scopeOf('user-alice')]);
+    expect(new Set(s.keys).size).toBe(1);
+    c.dispose();
+  });
+
+  it('pins to the server account replayAccount names, and sends nothing when it names none', async () => {
+    const s = server();
+    let account: { principalId: string; tenantId?: string } | null = null;
+    const c = client(s.fetch, { replayAccount: () => account });
+    const queue = c.getOfflineQueue();
+    await stageOne(queue);
+    expect(await queue.process(FILE)).not.toMatchObject({ status: 'published' });
+    expect(s.paths).toEqual([]);
+    account = { principalId: 'server-user-7', tenantId: 'tenant-a' };
+    expect(await queue.process(FILE)).toMatchObject({ status: 'published' });
+    expect(s.scopes).toEqual([scopeOf('server-user-7', 'tenant-a')]);
+    c.dispose();
+  });
+
+  it('keeps the key of a session an explicit failure envelope reports as expired', async () => {
+    const s = server((path, init, call) => {
+      if (path !== '/upload/init') return undefined;
+      if (call === 1) return json({ ok: false, data: { uploadSessionId: 'sess_1', status: 'expired', ...replayScopeOf(init) } });
+      return envelope({ uploadSessionId: 'sess_1', status: 'completed', fileId: FILE, versionId: 'ver_1', versionConfirmed: true, ...replayScopeOf(init) });
+    });
+    const c = client(s.fetch);
+    const queue = c.getOfflineQueue();
+    await stageOne(queue);
+    expect(await queue.process(FILE)).toMatchObject({ status: 'provisional', reason: 'ambiguous' });
+    expect(await queue.process(FILE)).toMatchObject({ status: 'published', entry: { upload: { versionId: 'ver_1' } } });
+    expect(s.keys).toHaveLength(2);
+    expect(new Set(s.keys).size).toBe(1);
+    c.dispose();
+  });
+
+  it.each([
+    ['completion', (path: string) => (path === '/upload/sess_1/complete' ? json({ ok: false, fileId: FILE, versionId: 'ver_1' }) : undefined)],
+    [
+      'a completed init',
+      (path: string, init: RequestInit) =>
+        path === '/upload/init'
+          ? json({ ok: false, data: { uploadSessionId: 'sess_1', status: 'completed', fileId: FILE, versionId: 'ver_1', versionConfirmed: true, ...replayScopeOf(init) } })
+          : undefined,
+    ],
+    [
+      'the version readback',
+      (path: string, init: RequestInit) => {
+        if (path === '/upload/init') return envelope({ uploadSessionId: 'sess_1', status: 'completed', fileId: FILE, versionId: 'ver_1', ...replayScopeOf(init) });
+        if (path === `/${FILE}/versions/ver_1`) return json({ ok: false, fileId: FILE, versionId: 'ver_1', error: { code: 'FILEFN_INTERNAL' } });
+        return undefined;
+      },
+    ],
+  ] as const)('confirms no stored version from an explicit failure envelope at %s', async (_label, route) => {
+    const s = server(route as Route);
+    const c = client(s.fetch);
+    const queue = c.getOfflineQueue();
+    await stageOne(queue);
+    expect(await queue.process(FILE)).toMatchObject({ status: 'provisional', reason: 'ambiguous', entry: { phase: 'uploading' } });
+    expect((await queue.get(FILE))?.upload).toBeUndefined();
+    expect(persistedText()).toContain('.bin');
+    c.dispose();
+  });
+
+  it('keeps a coded 404 from a same-origin signed storage URL provisional, and reconciles it under the same key', async () => {
+    const s = server((path, init, call) => {
+      if (path === '/upload/sess_1/parts/1/sign') return envelope({ url: `${BASE}/storage-bucket/object-1`, headers: {}, expiresAt: 'x' });
+      if (path === '/storage-bucket/object-1') return json({ ok: false, error: { code: 'FILEFN_NOT_FOUND', message: 'gone' } }, 404);
+      if (path === '/upload/init' && call === 2) {
+        return envelope({ uploadSessionId: 'sess_1', status: 'completed', fileId: FILE, versionId: 'ver_1', versionConfirmed: true, ...replayScopeOf(init) });
+      }
+      return undefined;
+    });
+    const c = client(s.fetch);
+    const queue = c.getOfflineQueue();
+    await stageOne(queue);
+    expect(await queue.process(FILE)).toMatchObject({ status: 'provisional', reason: 'ambiguous', entry: { phase: 'uploading' } });
+    expect(await queue.process(FILE)).toMatchObject({ status: 'published' });
+    expect(new Set(s.keys).size).toBe(1);
+    c.dispose();
+  });
+
+  it('refuses an offline idempotencyKey longer than the queue keeps, before returning a handle', () => {
+    setOnline(false);
+    const c = client(server().fetch);
+    expect(() => c.uploadFile({ policy: 'p', file: new Blob(['bytes']), fileId: FILE, idempotencyKey: 'k'.repeat(201) })).toThrow(
+      expect.objectContaining({ code: 'FILEFN_INVALID_IDEMPOTENCY_KEY' }),
+    );
+    c.dispose();
   });
 });

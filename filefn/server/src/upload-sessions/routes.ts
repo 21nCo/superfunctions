@@ -6,6 +6,7 @@ import { createHash } from 'crypto';
 import { FileFnError, authRequired, invalidRequest, rateLimited, replayScopeMismatch } from '../errors.js';
 import { rateLimitSubject, type RateLimitClientKey } from '../rate-limit-key.js';
 import { readJsonBody } from '../http-body.js';
+import { isAnonymousContext } from '../authz/ownership.js';
 
 export interface RouteContext {
   service: UploadSessionService;
@@ -30,16 +31,17 @@ export interface RouteContext {
 }
 
 /**
- * Marks an `upload/init` as an offline replay: `unpinned` on a generation's
- * first init, else the `replayScope` that init returned. A marked init is
- * refused unless a caller is authenticated (401, also where auth is
- * optional: an anonymous replay would store the bytes outside the owner's
- * scope, with no idempotency) and, when pinned, unless the caller's scope is
- * the pinned one (409 FILEFN_REPLAY_SCOPE_MISMATCH). Either way nothing is
- * created. Unmarked requests, anonymous ones included, are unchanged.
+ * Marks an `upload/init` as an offline replay pinned to one account: its
+ * value is the scope (`replayScopeOf`) of the owner and tenant the replay
+ * must act for, from the generation's first init on. A marked init is
+ * refused unless the caller is authenticated and not anonymous (401, also
+ * where auth is optional, by the same test `createSession` uses for
+ * idempotency: an anonymous replay would store the bytes outside the owner's
+ * scope, with no idempotency) and unless the caller's scope is the pinned
+ * one (409 FILEFN_REPLAY_SCOPE_MISMATCH). Either way nothing is created.
+ * Unmarked requests, anonymous ones included, are unchanged.
  */
 export const REPLAY_SCOPE_HEADER = 'x-filefn-replay-scope';
-export const REPLAY_SCOPE_UNPINNED = 'unpinned';
 
 /**
  * An opaque fingerprint of the caller's owner and tenant (the scope its
@@ -150,9 +152,9 @@ export function createUploadSessionRoutes(ctx: RouteContext) {
         const pinnedScope = request.headers.get(REPLAY_SCOPE_HEADER);
         let replayScope: string | undefined;
         if (pinnedScope !== null) {
-          if (!principal) throw authRequired();
+          if (!principal || isAnonymousContext(principal)) throw authRequired();
           replayScope = replayScopeOf(principal);
-          if (pinnedScope !== REPLAY_SCOPE_UNPINNED && pinnedScope !== replayScope) throw replayScopeMismatch();
+          if (pinnedScope !== replayScope) throw replayScopeMismatch();
         }
         await checkRateLimit(request, 'upload-init', principal, rateLimits?.uploadInit);
 

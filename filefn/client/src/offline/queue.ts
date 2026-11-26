@@ -6,6 +6,7 @@ import {
   assertValidExplicitFileId,
   isValidFileId,
   isValidIdempotencyKey,
+  isFailureEnvelope,
   isWellFormedId,
   derivePendingLocalSource,
   generateFileId,
@@ -99,10 +100,12 @@ export interface OfflineQueueUploader {
      */
     assertPrincipal(): Promise<void>;
     /**
-     * The account scope this generation's first `upload/init` returned
-     * (`replayScope`), once pinned. The built-in transport sends it as
-     * `x-filefn-replay-scope` (`unpinned` before), so the server refuses a
-     * replay that resolves to no account or another one.
+     * The account scope this generation's first `upload/init` confirmed
+     * (`replayScope`), once journaled. The built-in transport pins every
+     * init, the first included, to the scope of the partition's expected
+     * account (`offline.replayAccount`) and refuses to send anything when a
+     * journaled scope differs from it, so the server refuses a replay that
+     * resolves to no account or another one.
      */
     replayScope?: string;
     /**
@@ -815,10 +818,14 @@ function isHeld(error: unknown): boolean {
   return error instanceof OfflineQueueError && error.code === 'FILEFN_QUEUE_HELD';
 }
 
-/** A success names what it stored: a file ID of the server grammar and a well-formed versionId. */
+/**
+ * A success names what it stored: a file ID of the server grammar and a
+ * well-formed versionId, and is not an explicit failure envelope (`ok` present
+ * and not `true`, or an `error`).
+ */
 function hasStoredIdentity(result: unknown): result is UploadResult {
   const value = result as { fileId?: unknown; versionId?: unknown } | null | undefined;
-  return isValidFileId(value?.fileId) && isWellFormedId(value?.versionId);
+  return !isFailureEnvelope(result) && isValidFileId(value?.fileId) && isWellFormedId(value?.versionId);
 }
 
 const NOT_JSON: unique symbol = Symbol('not-json');
@@ -1002,6 +1009,13 @@ function snapshot(record: JournalRecord): OfflineQueueEntry {
 }
 
 const MISMATCH_REFUSAL = (): { status: 'refused'; reason: 'principal-mismatch' } => ({ status: 'refused', reason: 'principal-mismatch' });
+const STOPPED_MISMATCH = (): OfflineQueueProcessResult => ({ status: 'stopped', reason: 'principal-mismatch' });
+
+/** Defers a waiter settlement until the public call returned (see `disclosing`). */
+type AfterReturn = (settle: () => void) => void;
+
+/** A preview read that a newer read overtook: read again, never applied. */
+const STALE: unique symbol = Symbol('stale');
 
 /** Returned by `withEntryLock` when another tab or call holds the entry. */
 const BUSY: unique symbol = Symbol('busy');
@@ -1059,6 +1073,14 @@ export class OfflineQueue {
   private seq = 0;
   private txSeq = 0;
   private readonly objectUrls = new Map<string, { operationId: string; url: string; seq: number }>();
+  /**
+   * Per entry, the newest read (`seq`) that replaced or dropped its preview
+   * (a stage, cancel or observation); per file ID, the newest preview read
+   * returned. A preview read older than either is stale: it never revokes,
+   * replaces or returns over them.
+   */
+  private readonly previewFloor = new Map<string, number>();
+  private readonly descriptorFloor = new Map<string, number>();
   private partitionIdPromise: Promise<string> | undefined;
   private channelPromise: Promise<OfflineQueueChannel | undefined> | undefined;
   private posting: Promise<void> = Promise.resolve();
@@ -1207,10 +1229,26 @@ export class OfflineQueue {
     const fileId = input.fileId ?? generateFileId();
     const entryId = requireId(input.entryId ?? fileId, 'entryId');
     if (input.idempotencyKey !== undefined) assertQueueKeyPrefix(input.idempotencyKey);
+    if (input.file.size > this.limits.maxBytes) {
+      // More than the partition may ever hold: refused before its bytes are read.
+      return this.disclosing<OfflineQueueStageResult>(
+        async () => ({
+          status: 'refused',
+          reason: 'capacity',
+          limit: 'bytes',
+          usage: await this.transact(async (root) => this.measure(await this.partitionDir(root)), { disclose: true }),
+          limits: this.limits,
+        }),
+        MISMATCH_REFUSAL,
+      );
+    }
     const bytes = await input.file.arrayBuffer();
     const fileName = input.fileName ?? (typeof File !== 'undefined' && input.file instanceof File ? input.file.name : 'blob');
     const mimeType = input.mimeType || input.file.type || 'application/octet-stream';
-    return this.disclosing(() => this.stageBytes({ ...input, entryId, fileId, fileName, mimeType }, bytes), MISMATCH_REFUSAL);
+    return this.disclosing<OfflineQueueStageResult>(
+      (after) => this.stageBytes({ ...input, entryId, fileId, fileName, mimeType }, bytes, undefined, after),
+      MISMATCH_REFUSAL,
+    );
   }
 
   /**
@@ -1240,7 +1278,7 @@ export class OfflineQueue {
 
   /** Releases one hold. A hold of another generation, or an unknown hold, is left as it is. */
   async release(entryId: string, generation: number, holdId: string): Promise<boolean> {
-    return this.transact(async (root) => {
+    return this.disclosing(() => this.transact(async (root) => {
       const found = await this.readEntry(root, entryId);
       if (!found) return false;
       const { dir, record } = found;
@@ -1252,7 +1290,7 @@ export class OfflineQueue {
     }).then((released) => {
       if (released) this.notifyWork();
       return released;
-    });
+    }));
   }
 
   /**
@@ -1261,12 +1299,15 @@ export class OfflineQueue {
    * current principal is not the partition's.
    */
   async list(): Promise<OfflineQueueEntry[]> {
+    return this.disclosing((after) => this.listIn(after));
+  }
+
+  private async listIn(after: AfterReturn): Promise<OfflineQueueEntry[]> {
     const { records, tombstones, seq } = await this.transact(async (root) => {
       const seq = this.txSeq;
       const partitionDir = await this.partitionDir(root);
       return { records: await this.readAllIn(partitionDir), tombstones: (await this.loadMeta(partitionDir)).tombstones, seq };
     }, { disclose: true });
-    await this.discloseFence();
     const entries = records
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.entryId.localeCompare(b.entryId))
       .map(snapshot);
@@ -1275,7 +1316,7 @@ export class OfflineQueue {
     const present = new Set(records.map((record) => record.entryId));
     for (const entryId of [...this.objectUrls.keys()]) if (!present.has(entryId)) this.revokeObjectUrl(entryId, seq);
     for (const record of records) this.revokeIfDone(record, seq);
-    this.settleAfterReturn(() => {
+    after(() => {
       for (const record of records) this.observe(record, seq, tombstones);
       this.forgetAbsent(present, tombstones, seq);
     });
@@ -1283,13 +1324,14 @@ export class OfflineQueue {
   }
 
   async get(entryId: string): Promise<OfflineQueueEntry | null> {
-    const found = await this.read(entryId);
-    await this.discloseFence();
-    const entry = found.record ? snapshot(found.record) : null;
-    if (found.record) this.revokeIfDone(found.record, found.seq);
-    else this.revokeObjectUrl(entryId, found.seq);
-    this.settleAfterReturn(found.settle);
-    return entry;
+    return this.disclosing(async (after) => {
+      const found = await this.read(entryId);
+      const entry = found.record ? snapshot(found.record) : null;
+      if (found.record) this.revokeIfDone(found.record, found.seq);
+      else this.revokeObjectUrl(entryId, found.seq);
+      after(found.settle);
+      return entry;
+    });
   }
 
   /**
@@ -1315,6 +1357,10 @@ export class OfflineQueue {
    * An unconfirmed publication must be reconciled first.
    */
   async cancel(entryId: string, generation?: number): Promise<boolean> {
+    return this.disclosing((after) => this.cancelIn(entryId, generation, after));
+  }
+
+  private async cancelIn(entryId: string, generation: number | undefined, after: AfterReturn): Promise<boolean> {
     const removed = await this.transact(async (root) => {
       const seq = this.txSeq;
       const found = await this.readEntry(root, entryId);
@@ -1342,7 +1388,7 @@ export class OfflineQueue {
     if (running?.operationId === removed.operationId) running.controller.abort();
     // A waiter of a generation published before (and replaced since) still resolves.
     this.revokeObjectUrl(entryId, removed.seq);
-    this.settleAfterReturn(() => this.settleAbsent(entryId, removed.tombstones, removed.seq));
+    after(() => this.settleAbsent(entryId, removed.tombstones, removed.seq));
     return true;
   }
 
@@ -1356,6 +1402,16 @@ export class OfflineQueue {
    * races a running publication hook.
    */
   async reconcile(
+    entryId: string,
+    generation: number,
+    publication?: OfflineQueuePublicationOutcome,
+  ): Promise<OfflineQueueEntry> {
+    // A conflict error names the current generation or attempt: it passes the
+    // same outer fence as the returned entry.
+    return this.disclosing(() => this.reconcileIn(entryId, generation, publication));
+  }
+
+  private async reconcileIn(
     entryId: string,
     generation: number,
     publication?: OfflineQueuePublicationOutcome,
@@ -1422,8 +1478,8 @@ export class OfflineQueue {
     else if (outcome.changed) this.notifyWork();
     await this.observeFenced(outcome.record, outcome.seq);
     // A listener or work listener above may have switched the account: the
-    // journal keeps the outcome for its owner, the caller gets no entry.
-    await this.discloseFence();
+    // outer fence keeps the outcome in the journal for its owner, and the
+    // caller gets no entry.
     return snapshot(outcome.record);
   }
 
@@ -1435,6 +1491,10 @@ export class OfflineQueue {
    * or hook already started settles, even after the call has returned.
    */
   async process(entryId: string, options: { signal?: AbortSignal } = {}): Promise<OfflineQueueProcessResult> {
+    return this.disclosing(() => this.processIn(entryId, options), STOPPED_MISMATCH);
+  }
+
+  private async processIn(entryId: string, options: { signal?: AbortSignal }): Promise<OfflineQueueProcessResult> {
     let deliver!: (result: OfflineQueueProcessResult) => void;
     let fail!: (error: unknown) => void;
     const result = new Promise<OfflineQueueProcessResult>((resolve, reject) => {
@@ -1467,6 +1527,10 @@ export class OfflineQueue {
    * so far. Held entries are returned as `held` without being processed.
    */
   async processAll(options: { signal?: AbortSignal } = {}): Promise<OfflineQueueProcessAllItem[]> {
+    return this.disclosing(() => this.processAllIn(options));
+  }
+
+  private async processAllIn(options: { signal?: AbortSignal }): Promise<OfflineQueueProcessAllItem[]> {
     const entries = await this.list();
     const results: OfflineQueueProcessAllItem[] = [];
     const mismatch = () => new OfflineQueueError('FILEFN_QUEUE_PRINCIPAL_MISMATCH', "The current principal is not this queue's");
@@ -1497,13 +1561,8 @@ export class OfflineQueue {
         entry.phase === 'published' && result.status === 'published' && result.entry.generation === entry.generation;
       if (!sameCleanup) results.push({ entryId: entry.entryId, result });
     }
-    // Each result passed a fence when it was made; the batch passes one more,
-    // so an entry's error after a switch does not return the others.
-    if (results.length > 0) {
-      this.assertUsable();
-      if (!(await this.principalMatches(this.lifetime.signal))) throw mismatch();
-      this.assertUsable();
-    }
+    // Each result passed a fence when it was made; the batch passes the outer
+    // one, so an entry's error after a switch does not return the others.
     return results;
   }
 
@@ -1513,6 +1572,10 @@ export class OfflineQueue {
    * the only copy of the user's file: they stay until `cancel`.
    */
   async reclaim(): Promise<OfflineQueueReclaimResult> {
+    return this.disclosing((after) => this.reclaimNow(after));
+  }
+
+  private async reclaimNow(after: AfterReturn): Promise<OfflineQueueReclaimResult> {
     const { result, present, tombstones, seq } = await this.transact(async (root) => {
       const seq = this.txSeq;
       const partitionDir = await this.partitionDir(root);
@@ -1524,12 +1587,12 @@ export class OfflineQueue {
         seq,
       };
     }, { disclose: true });
-    this.settleAfterReturn(() => this.forgetAbsent(present, tombstones, seq));
+    after(() => this.forgetAbsent(present, tombstones, seq));
     return result;
   }
 
   async usage(): Promise<OfflineQueueUsage> {
-    return this.transact(async (root) => this.measure(await this.partitionDir(root)), { disclose: true });
+    return this.disclosing(() => this.transact(async (root) => this.measure(await this.partitionDir(root)), { disclose: true }));
   }
 
   /**
@@ -1539,7 +1602,21 @@ export class OfflineQueue {
    * touch an entry (a hold, a failed attempt) never change the choice.
    */
   async getPendingLocalDescriptor(fileId: string): Promise<PendingLocalDescriptor | null> {
-    const found = await this.transact(async (root) => {
+    return this.disclosing(() => this.pendingDescriptorIn(fileId));
+  }
+
+  private async pendingDescriptorIn(fileId: string): Promise<PendingLocalDescriptor | null> {
+    // A read that a newer one overtook (its coordinator returned late, after
+    // a stage, cancel or newer preview here) is read again, never applied.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const descriptor = await this.readPendingDescriptor(fileId);
+      if (descriptor !== STALE) return descriptor;
+    }
+    throw new OfflineQueueError('FILEFN_QUEUE_BUSY', 'The local preview kept changing while it was read; try again', { fileId });
+  }
+
+  private async readPendingDescriptor(fileId: string): Promise<PendingLocalDescriptor | null | typeof STALE> {
+    const { found, seq } = await this.transact(async (root) => {
       const seq = this.txSeq;
       const records = (await this.readAll(root)).filter(
         (record) => record.current.fileId === fileId && record.current.phase !== 'published' && !record.current.dataRemoved,
@@ -1548,11 +1625,13 @@ export class OfflineQueue {
       for (const record of records) {
         const dir = await getDir(await this.partitionDir(root), await this.entryKey(record.entryId));
         const blob = dir ? await getFile(dir, record.current.dataFile) : null;
-        if (blob) return { record, data: await blob.arrayBuffer(), seq };
+        if (blob) return { found: { record, data: await blob.arrayBuffer() }, seq };
       }
-      return null;
+      return { found: null, seq };
     }, { disclose: true });
+    if (seq < (this.descriptorFloor.get(fileId) ?? 0)) return STALE;
     if (!found) return null;
+    if (seq < (this.previewFloor.get(found.record.entryId) ?? 0)) return STALE;
     if (typeof URL === 'undefined' || typeof URL.createObjectURL !== 'function') {
       const error = new Error('Local preview unavailable') as Error & { code?: string };
       error.code = 'FILEFN_OFFLINE_PREVIEW_UNSUPPORTED';
@@ -1561,13 +1640,17 @@ export class OfflineQueue {
     // The read may have waited on the coordinator: no URL of these bytes is
     // created or returned unless the principal is still the partition's.
     await this.discloseFence();
+    // The fence awaited too: a newer read may have overtaken this one since.
+    if (seq < (this.descriptorFloor.get(fileId) ?? 0) || seq < (this.previewFloor.get(found.record.entryId) ?? 0)) return STALE;
     const cur = found.record.current;
     let cached = this.objectUrls.get(found.record.entryId);
+    if (cached && cached.seq > seq) return STALE;
     if (!cached || cached.operationId !== cur.operationId) {
       this.revokeObjectUrl(found.record.entryId);
-      cached = { operationId: cur.operationId, url: URL.createObjectURL(new Blob([found.data], { type: cur.mimeType })), seq: found.seq };
+      cached = { operationId: cur.operationId, url: URL.createObjectURL(new Blob([found.data], { type: cur.mimeType })), seq };
       this.objectUrls.set(found.record.entryId, cached);
     }
+    this.descriptorFloor.set(fileId, seq);
     return {
       fileId: cur.fileId,
       uploadSessionId: cur.operationId,
@@ -1583,7 +1666,7 @@ export class OfflineQueue {
    */
   async listLegacyUploads(): Promise<LegacyPendingUploadSummary[]> {
     const store = this.legacyStore();
-    return this.transact(async () => {
+    return this.disclosing(() => this.transact(async () => {
       const summaries: LegacyPendingUploadSummary[] = [];
       for (const uploadSessionId of await store.listPendingUploads()) {
         const upload = await store.getPendingUpload(uploadSessionId);
@@ -1598,7 +1681,7 @@ export class OfflineQueue {
         });
       }
       return summaries;
-    }, { disclose: true });
+    }, { disclose: true }));
   }
 
   /**
@@ -1657,7 +1740,7 @@ export class OfflineQueue {
     };
     // Fenced at the outermost boundary, after the legacy lock (whose
     // coordinator may return late) and every transaction inside it.
-    return this.disclosing(() => this.withLegacyLock(async () => {
+    return this.disclosing<OfflineQueueStageResult>((after) => this.withLegacyLock(async () => {
       // Read under the partition lock and the principal check, like every other read.
       let found;
       try {
@@ -1727,14 +1810,35 @@ export class OfflineQueue {
         },
         legacy.fileData,
         { source: uploadSessionId, key: legacy.idempotencyKey, keyShared: found.keyShared, admissionId },
+        after,
       );
+      if (
+        result.status === 'refused' &&
+        (result.reason === 'generation-conflict' || result.reason === 'publication-pending' || result.reason === 'capacity')
+      ) {
+        // Refused in the transaction that found no admission of this upload
+        // in the partition: nothing was admitted. The claim goes (still under
+        // the legacy lock), so a retry may choose a free entry ID; one that
+        // committed, or whose outcome is unknown (a principal switch), keeps
+        // its claim and destination.
+        await this.transact(async (root) => {
+          let claims: OfflineQueueDirectoryHandle;
+          try {
+            claims = await (await root.getDirectoryHandle(LEGACY_CLAIMS_DIR)).getDirectoryHandle(claimsDirName);
+          } catch (error) {
+            if (isNotFound(error)) return;
+            throw error;
+          }
+          if (await getFile(claims, claimName)) await this.removePath(claims, claimName);
+        });
+        return result;
+      }
       if (result.status === 'staged' || (result.status === 'refused' && result.reason === 'already-migrated')) {
         // Removed under the partition lock, behind the principal check; the
         // claim stays. A switch during that cleanup keeps the entry and its
         // admission with their owner, and this caller gets no entry of it.
         try {
           await this.transact(() => store.deletePendingUpload(uploadSessionId));
-          if (result.status === 'staged') await this.discloseFence();
         } catch (error) {
           if (isPrincipalMismatch(error)) return { status: 'refused', reason: 'principal-mismatch' } as const;
           throw error;
@@ -1843,37 +1947,42 @@ export class OfflineQueue {
   }
 
   /**
-   * The outermost boundary of a public call: `run`'s result is returned only
-   * after `discloseFence` passes, after every coordinator and transaction
-   * `run` awaited (a lock coordinator may hand control back long after the
-   * work inside it). On a principal mismatch the caller gets `onMismatch()`
-   * (or the error) and nothing `run` read; a disposal throws
-   * FILEFN_QUEUE_DISPOSED. What `run` journaled stays with its owner.
+   * The outermost boundary of every public queue call that reads or writes
+   * the journal: `run`'s result, or the error it threw (a conflict error may
+   * name the current generation or attempt), reaches the caller only after
+   * `discloseFence` passes, after every coordinator and transaction `run`
+   * awaited (a lock coordinator may hand control back long after the work
+   * inside it). On a principal mismatch the caller gets `onMismatch()` (or
+   * FILEFN_QUEUE_PRINCIPAL_MISMATCH) and nothing `run` read; a disposal
+   * throws FILEFN_QUEUE_DISPOSED. What `run` journaled stays with its owner.
+   * Waiters `run` would settle (`after`) settle only once the fence passed,
+   * after the call returned, behind a fresh principal check.
    *
-   * Every public call that returns entry data ends in this fence:
-   * `stage`, `migrateLegacyUpload` and `hold` through this wrapper; `list`,
-   * `get`, `reconcile`, `getPendingLocalDescriptor` and `processAll` call
-   * `discloseFence` (or `principalMatches`) as their last await; `process`
-   * through `disclosePass` on every result of its pipeline;
-   * `listLegacyUploads` and `usage` read inside one transaction with
-   * `disclose` and await nothing after it; `whenSettled` waiters settle only
-   * behind a fresh principal check (`settleAfterReturn`, `observeFenced`).
+   * Wrapped: `stage`, `hold`, `release`, `list`, `get`, `cancel`,
+   * `reconcile`, `process` (whose pipeline results also pass `disclosePass`),
+   * `processAll`, `reclaim`, `usage`, `getPendingLocalDescriptor`,
+   * `listLegacyUploads` and `migrateLegacyUpload`. `whenSettled` waiters
+   * settle only behind a fresh principal check (`settleAfterReturn`,
+   * `observeFenced`).
    */
-  private async disclosing<T>(run: () => Promise<T>, onMismatch?: () => T): Promise<T> {
-    let value: T;
+  private async disclosing<T>(run: (after: AfterReturn) => Promise<T>, onMismatch?: () => T): Promise<T> {
+    const deferred: Array<() => void> = [];
+    let outcome: { ok: true; value: T } | { ok: false; error: unknown };
     try {
-      value = await run();
+      outcome = { ok: true, value: await run((settle) => deferred.push(settle)) };
     } catch (error) {
-      if (onMismatch && isPrincipalMismatch(error)) return onMismatch();
-      throw error;
+      outcome = { ok: false, error };
     }
     try {
+      if (!outcome.ok && isPrincipalMismatch(outcome.error)) throw outcome.error;
       await this.discloseFence();
-    } catch (error) {
-      if (onMismatch && isPrincipalMismatch(error)) return onMismatch();
-      throw error;
+    } catch (fenceError) {
+      if (onMismatch && isPrincipalMismatch(fenceError)) return onMismatch();
+      throw fenceError;
     }
-    return value;
+    for (const settle of deferred) this.settleAfterReturn(settle);
+    if (!outcome.ok) throw outcome.error;
+    return outcome.value;
   }
 
   /** `discloseFence` for a pass result: one with entry data becomes `stopped` when the fence fails. */
@@ -2289,7 +2398,8 @@ export class OfflineQueue {
   private async stageBytes(
     input: OfflineQueueStageInput & { entryId: string; fileId: string; fileName: string; mimeType: string },
     bytes: ArrayBuffer,
-    migration?: { source: string; key?: string; keyShared?: boolean; admissionId?: string },
+    migration: { source: string; key?: string; keyShared?: boolean; admissionId?: string } | undefined,
+    after: AfterReturn,
   ): Promise<OfflineQueueStageResult> {
     const localSource = input.localSource ?? derivePendingLocalSource(input.fileName, input.mimeType, bytes.byteLength);
     let outcome;
@@ -2348,18 +2458,12 @@ export class OfflineQueue {
     if (outcome.status !== 'staged') return outcome;
     this.revokeObjectUrl(input.entryId, stagedSeq);
     this.notifyWork();
-    // A work listener above may have switched the account: the staging stays
-    // committed for its principal, and this caller gets no entry of it.
-    // Waiters of the superseded generation settle after the result returned.
+    // A work listener above may have switched the account: the caller's outer
+    // fence (`disclosing`) keeps the staging committed for its principal and
+    // returns no entry of it. Waiters of the superseded generation settle
+    // after the result returned.
     const staged = outcome;
-    try {
-      await this.discloseFence();
-    } catch (error) {
-      if (isPrincipalMismatch(error)) return { status: 'refused', reason: 'principal-mismatch' };
-      throw error;
-    } finally {
-      this.settleAfterReturn(() => this.observe(staged.record, stagedSeq, staged.tombstones));
-    }
+    after(() => this.observe(staged.record, stagedSeq, staged.tombstones));
     return { status: 'staged', entry: snapshot(outcome.record), ...(outcome.holdId ? { holdId: outcome.holdId } : {}) };
   }
 
@@ -3227,6 +3331,9 @@ export class OfflineQueue {
 
   /** Revokes the entry's preview; with `before`, only one made by a read older than read `before`. */
   private revokeObjectUrl(entryId: string, before?: number): void {
+    // A preview read older than `before` is stale from here on, even when it
+    // finds no preview to replace.
+    if (before !== undefined && before > (this.previewFloor.get(entryId) ?? 0)) this.previewFloor.set(entryId, before);
     const cached = this.objectUrls.get(entryId);
     if (!cached) return;
     if (before !== undefined && cached.seq >= before) return;

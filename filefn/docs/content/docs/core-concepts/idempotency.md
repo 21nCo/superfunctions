@@ -30,7 +30,7 @@ A replayed session also reports its `status`. A `completed` one carries the stor
 
 An `in_progress` replay whose completion was already decided adds `completionStarted: true` (so does the session status): send no part, finish it with the completion call.
 
-An offline replay (`@filefn/client`'s queue) also sends `x-filefn-replay-scope`: `unpinned` on its first `upload/init`, then the `replayScope` that init returned (an opaque fingerprint of the caller's owner and tenant). A marked init without an authenticated caller is refused with 401, also where auth is optional, and one whose caller has another owner or tenant than the pinned scope with 409 `FILEFN_REPLAY_SCOPE_MISMATCH`; neither creates anything. Unmarked requests are unchanged.
+An offline replay (`@filefn/client`'s queue) also sends `x-filefn-replay-scope` on every `upload/init`, its first included: the scope of the owner and tenant it must act for (`rs_` and the hex SHA-256 of `["filefn-replay-scope", principalId, tenantId ?? null]` as JSON), which the response echoes as `replayScope`. A marked init whose caller is not authenticated or is the shared `anonymous` principal is refused with 401, also where auth is optional, and one whose caller has another owner or tenant with 409 `FILEFN_REPLAY_SCOPE_MISMATCH`; neither creates anything. Unmarked requests are unchanged.
 
 Servers before 0.8 read the key only from the header. 0.8 also honors an `idempotencyKey` in the JSON body (what `@filefn/client` 0.4 and earlier sent) for one minor version, with a deprecation warning; a request giving both must give the same value.
 

@@ -2,6 +2,7 @@ import type { HttpClient } from "./client.js";
 import type {
   InitUploadResponse,
   PendingLocalDescriptor,
+  ReplayAccount,
   UploadInput,
   UploadHandle,
   UploadProgress,
@@ -59,21 +60,48 @@ export const REPLAY_SCOPE_MISMATCH_ERROR = 'FILEFN_REPLAY_SCOPE_MISMATCH';
 export const REPLAY_SCOPE_UNCONFIRMED_ERROR = 'FILEFN_REPLAY_SCOPE_UNCONFIRMED';
 
 /**
- * Binds an offline replay's sessions to one account. Every `upload/init`
- * sends `x-filefn-replay-scope`: `unpinned` until a first init returned the
- * caller's scope, which `pin` journals before anything else is sent; that
- * scope afterwards. The server refuses a marked init from an anonymous
- * caller (401) or another owner or tenant (409), creating nothing.
+ * Binds an offline replay's sessions to one account. Every `upload/init`,
+ * the generation's first included, sends `x-filefn-replay-scope: <pinned>`,
+ * the scope of the account the partition expects (`replayScopeOf`). The
+ * server refuses a marked init from an anonymous caller (401) or from another
+ * owner or tenant (409), creating nothing, so no session is ever created or
+ * advanced under another account. `pin`, when given, journals the confirmed
+ * scope with the generation before anything else is sent.
  */
 export interface UploadReplayScope {
-  pinned?: string;
-  pin(scope: string): Promise<void>;
+  pinned: string;
+  pin?(scope: string): Promise<void>;
 }
 
-const REPLAY_SCOPE_UNPINNED = 'unpinned';
 
 function isReplayScope(value: unknown): value is string {
-  return typeof value === 'string' && /^[\x21-\x7e]{1,255}$/.test(value) && value !== REPLAY_SCOPE_UNPINNED;
+  return typeof value === 'string' && /^[\x21-\x7e]{1,255}$/.test(value);
+}
+
+/**
+ * The replay scope of `account`, as `@filefn/server` computes it for an
+ * authenticated caller: `rs_` and the hex SHA-256 of
+ * `["filefn-replay-scope", principalId, tenantId ?? null]` as JSON. An
+ * unusable account (no principal ID, or the shared `anonymous` one) or no Web
+ * Crypto refuses with `FILEFN_REPLAY_SCOPE_UNCONFIRMED`: nothing is sent.
+ */
+export async function replayScopeOf(account: ReplayAccount): Promise<string> {
+  const { principalId, tenantId } = account ?? ({} as ReplayAccount);
+  if (
+    typeof principalId !== 'string' ||
+    principalId === '' ||
+    principalId === 'anonymous' ||
+    (tenantId !== undefined && tenantId !== null && typeof tenantId !== 'string')
+  ) {
+    throw createClientError(REPLAY_SCOPE_UNCONFIRMED_ERROR, 'An offline replay needs the server account it acts for: a non-anonymous principalId');
+  }
+  const subtle = (globalThis as { crypto?: Crypto }).crypto?.subtle;
+  if (!subtle) {
+    throw createClientError(REPLAY_SCOPE_UNCONFIRMED_ERROR, 'An offline replay needs Web Crypto (crypto.subtle) to bind its account');
+  }
+  const data = new TextEncoder().encode(JSON.stringify(['filefn-replay-scope', principalId, tenantId ?? null]));
+  const digest = new Uint8Array(await subtle.digest('SHA-256', data));
+  return `rs_${Array.from(digest, (byte) => byte.toString(16).padStart(2, '0')).join('')}`;
 }
 
 /**
@@ -83,6 +111,32 @@ function isReplayScope(value: unknown): value is string {
  */
 export function isWellFormedId(value: unknown): value is string {
   return typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9_-]{0,255}$/.test(value);
+}
+
+/**
+ * An explicit failure envelope: an object whose `ok` is present and not
+ * `true`, or that carries an `error`. Such a body confirms nothing (no stored
+ * version, no ended session), whatever else it names, so the outcome stays
+ * unknown and a replay under the same key settles it.
+ */
+export function isFailureEnvelope(value: unknown): boolean {
+  if (!value || typeof value !== 'object') return false;
+  const record = value as { ok?: unknown; error?: unknown };
+  if ('ok' in record && record.ok !== true) return true;
+  return 'error' in record && record.error !== undefined && record.error !== null;
+}
+
+/**
+ * The payload of an `upload/init` answer, bare or enveloped. An explicit
+ * failure envelope (at either level) is refused as an unknown outcome.
+ */
+function initPayload(raw: unknown): Partial<InitUploadResponse> {
+  const payload =
+    raw && typeof raw === 'object' && 'uploadSessionId' in raw ? raw : (raw as { data?: unknown } | undefined)?.data;
+  if (isFailureEnvelope(raw) || isFailureEnvelope(payload)) {
+    throw createClientError(UPLOAD_RESULT_INVALID_ERROR, 'upload/init answered with a failure envelope; the session state is unknown');
+  }
+  return payload as Partial<InitUploadResponse>;
 }
 
 function createClientError(code: string, message: string, details?: Record<string, unknown>): Error & {
@@ -354,18 +408,14 @@ export class UploadManager {
           metadata: prepared.metadata,
           fileId: prepared.fileId,
           idempotencyKey: prepared.idempotencyKey,
-          ...(replay ? { replayScope: replay.pinned ?? REPLAY_SCOPE_UNPINNED } : {}),
+          ...(replay ? { replayScope: replay.pinned } : {}),
         },
         signal,
       );
-    const rawInit = await init();
-
-    // Accept both unwrapped { uploadSessionId, ... } and envelope { data: { uploadSessionId, ... } }
-    const initResponse = (
-      rawInit && typeof rawInit === "object" && "uploadSessionId" in rawInit
-        ? rawInit
-        : (rawInit as { data?: Partial<InitUploadResponse> })?.data
-    ) as Partial<InitUploadResponse>;
+    // Accept both unwrapped { uploadSessionId, ... } and envelope { data: { uploadSessionId, ... } };
+    // only a successful answer confirms anything (an explicit failure
+    // envelope never ends, completes or names a session).
+    const initResponse = initPayload(await init());
 
     const uploadSessionId = initResponse?.uploadSessionId;
     if (!uploadSessionId) {
@@ -414,10 +464,7 @@ export class UploadManager {
       if (status.status === "completed") {
         // Completed since the init answered: the same key's replay reports
         // the recorded version, which is reconciled (no part is sent).
-        const again = await init();
-        const replayed = (
-          again && typeof again === "object" && "uploadSessionId" in again ? again : (again as { data?: Partial<InitUploadResponse> })?.data
-        ) as Partial<InitUploadResponse>;
+        const replayed = initPayload(await init());
         if (replay) await this.checkReplayScope(replayed, replay);
         if (replayed?.uploadSessionId === uploadSessionId && replayed.status === "completed") {
           return this.reconcileCompletedSession(replayed, prepared.fileId, signal);
@@ -441,9 +488,10 @@ export class UploadManager {
       signal,
     );
 
-    if (!isValidFileId(result?.fileId) || !isWellFormedId(result?.versionId)) {
-      // A success that does not name what it stored confirms nothing: the
-      // outcome is unknown and a replay under the same key settles it.
+    if (isFailureEnvelope(result) || !isValidFileId(result?.fileId) || !isWellFormedId(result?.versionId)) {
+      // A success that does not name what it stored, or an explicit failure
+      // envelope naming one, confirms nothing: the outcome is unknown and a
+      // replay under the same key settles it.
       throw createClientError(UPLOAD_RESULT_INVALID_ERROR, 'Upload completion did not name a stored file and version', {
         uploadSessionId: this.session.uploadSessionId,
       });
@@ -464,8 +512,8 @@ export class UploadManager {
 
   /**
    * The scope check of a marked offline replay: the response must name the
-   * caller's scope; a pinned scope must match it, and a first one is
-   * journaled (`pin`) before anything else is sent under it.
+   * scope the init was pinned to (the account the partition expects); the
+   * first confirmation is journaled (`pin`) before anything else is sent.
    */
   private async checkReplayScope(initResponse: Partial<InitUploadResponse>, replay: UploadReplayScope): Promise<void> {
     const scope = initResponse?.replayScope;
@@ -476,16 +524,16 @@ export class UploadManager {
         { uploadSessionId: initResponse?.uploadSessionId },
       );
     }
-    if (replay.pinned !== undefined) {
-      if (scope !== replay.pinned) {
-        throw createClientError(REPLAY_SCOPE_MISMATCH_ERROR, "The replay's credentials act for another account than its first upload/init", {
-          uploadSessionId: initResponse.uploadSessionId,
-        });
-      }
-      return;
+    if (scope !== replay.pinned) {
+      throw createClientError(REPLAY_SCOPE_MISMATCH_ERROR, "The replay's credentials act for another account than the partition's", {
+        uploadSessionId: initResponse.uploadSessionId,
+      });
     }
-    await replay.pin(scope);
-    replay.pinned = scope;
+    const pin = replay.pin;
+    if (pin) {
+      replay.pin = undefined;
+      await pin(scope);
+    }
   }
 
   /**
@@ -533,7 +581,7 @@ export class UploadManager {
         { cause: error },
       );
     }
-    if (stored?.fileId !== fileId || stored?.versionId !== versionId) {
+    if (isFailureEnvelope(stored) || stored?.fileId !== fileId || stored?.versionId !== versionId) {
       throw createClientError(UPLOAD_RECONCILE_FAILED_ERROR, 'Stored version read back does not match the completed session', {
         uploadSessionId: initResponse.uploadSessionId,
         fileId,

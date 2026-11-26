@@ -2236,40 +2236,44 @@ describe('round 9: completed reads, previews and envelopes', () => {
   });
 });
 
+/** `tab`'s coordinator, holding back the return (result or error) of the next request whose lock name matches `armed` until released. */
+function gatedCoordinator(name: string) {
+  const inner = locks.forTab(name);
+  const control: { armed?: (lock: string) => boolean; release?: Promise<void>; reached?: ReturnType<typeof deferred<void>> } = {};
+  const coordinator: typeof inner = {
+    request: (async (lock: string, options: unknown, callback: unknown) => {
+      const settled = await (inner.request as (...args: unknown[]) => Promise<unknown>)(lock, options, callback).then(
+        (value) => ({ ok: true as const, value }),
+        (error: unknown) => ({ ok: false as const, error }),
+      );
+      if (control.armed?.(lock)) {
+        control.armed = undefined;
+        control.reached?.resolve();
+        await control.release;
+      }
+      if (!settled.ok) throw settled.error;
+      return settled.value;
+    }) as typeof inner.request,
+  };
+  const arm = (match: (lock: string) => boolean) => {
+    const release = deferred<void>();
+    const reached = deferred<void>();
+    Object.assign(control, { armed: match, release: release.promise, reached });
+    return { reached: reached.promise, release: () => release.resolve() };
+  };
+  return { coordinator, arm };
+}
+
+async function writeLegacy(id: string, key: string) {
+  const legacy = await (await storage.root.getDirectoryHandle('filefn-pending-uploads', { create: true })).getDirectoryHandle(id, { create: true });
+  await writeCommitted(legacy, 'data.bin', 'old bytes');
+  await writeCommitted(legacy, 'metadata.json', JSON.stringify({ uploadSessionId: id, fileId: FILE_ID, policy: 'p', fileName: 'old.txt', size: 9, mimeType: 'text/plain', createdAt: '2026-11-01T00:00:00.000Z', retryCount: 0, metadataVersion: 2, idempotencyKey: key }));
+}
+
+const LEGACY = 'offline_1731000000000_legacy101';
+const isLegacyLock = (lock: string) => lock.startsWith('filefn-offline-legacy:');
+
 describe('round 10: outermost fences, admissions, observations and read errors', () => {
-  /** `tab`'s coordinator, holding back the return of the next request whose lock name matches `armed` until released. */
-  function gatedCoordinator(name: string) {
-    const inner = locks.forTab(name);
-    const control: { armed?: (lock: string) => boolean; release?: Promise<void>; reached?: ReturnType<typeof deferred<void>> } = {};
-    const coordinator: typeof inner = {
-      request: (async (lock: string, options: unknown, callback: unknown) => {
-        const result = await (inner.request as (...args: unknown[]) => Promise<unknown>)(lock, options, callback);
-        if (control.armed?.(lock)) {
-          control.armed = undefined;
-          control.reached?.resolve();
-          await control.release;
-        }
-        return result;
-      }) as typeof inner.request,
-    };
-    const arm = (match: (lock: string) => boolean) => {
-      const release = deferred<void>();
-      const reached = deferred<void>();
-      Object.assign(control, { armed: match, release: release.promise, reached });
-      return { reached: reached.promise, release: () => release.resolve() };
-    };
-    return { coordinator, arm };
-  }
-
-  async function writeLegacy(id: string, key: string) {
-    const legacy = await (await storage.root.getDirectoryHandle('filefn-pending-uploads', { create: true })).getDirectoryHandle(id, { create: true });
-    await writeCommitted(legacy, 'data.bin', 'old bytes');
-    await writeCommitted(legacy, 'metadata.json', JSON.stringify({ uploadSessionId: id, fileId: FILE_ID, policy: 'p', fileName: 'old.txt', size: 9, mimeType: 'text/plain', createdAt: '2026-11-01T00:00:00.000Z', retryCount: 0, metadataVersion: 2, idempotencyKey: key }));
-  }
-
-  const LEGACY = 'offline_1731000000000_legacy101';
-  const isLegacyLock = (lock: string) => lock.startsWith('filefn-offline-legacy:');
-
   it.each(['fresh admission', 'already-admitted recovery'])(
     'returns no entry when the account switches while the legacy lock hands back a %s',
     async (path) => {
@@ -2452,5 +2456,137 @@ describe('round 10: outermost fences, admissions, observations and read errors',
     ]);
     expect(calls.map((call) => call.body)).toEqual(['first v1', 'first v2', 'second']);
     expect((await a.get(FIRST))?.attempts).toBe(0);
+  });
+});
+
+describe('round 11: outer fences on every call, claims, overtaken previews and envelopes', () => {
+  const MISMATCH = { code: 'FILEFN_QUEUE_PRINCIPAL_MISMATCH' };
+
+  it.each(['listLegacyUploads', 'usage', 'reclaim'] as const)(
+    '%s returns nothing of the old principal when its coordinator hands back after a switch or a disposal',
+    async (method) => {
+      await writeLegacy(LEGACY, 'test-legacy-key-0111');
+      let signedIn: OfflineQueuePrincipal = ALICE.principal;
+      const gated = gatedCoordinator('a');
+      const a = tab('a', { coordinator: gated.coordinator, currentPrincipal: () => signedIn });
+      await stage(a);
+      let gate = gated.arm(() => true);
+      let call = a[method]();
+      await gate.reached;
+      signedIn = BOB.principal;
+      gate.release();
+      await expect(call).rejects.toMatchObject(MISMATCH);
+
+      signedIn = ALICE.principal;
+      gate = gated.arm(() => true);
+      call = a[method]();
+      await gate.reached;
+      a.dispose();
+      gate.release();
+      await expect(call).rejects.toMatchObject({ code: 'FILEFN_QUEUE_DISPOSED' });
+    },
+  );
+
+  it.each(['hold', 'reconcile'] as const)('a %s conflict error naming the current generation passes the outer fence', async (method) => {
+    let signedIn: OfflineQueuePrincipal = ALICE.principal;
+    const gated = gatedCoordinator('a');
+    const a = tab('a', { coordinator: gated.coordinator, currentPrincipal: () => signedIn });
+    await stage(a);
+    await expect(method === 'hold' ? a.hold(FILE_ID, 7) : a.reconcile(FILE_ID, 7)).rejects.toMatchObject({
+      code: 'FILEFN_QUEUE_STALE_GENERATION',
+      details: { currentGeneration: 1 },
+    });
+    const gate = gated.arm(() => true);
+    const call = method === 'hold' ? a.hold(FILE_ID, 7) : a.reconcile(FILE_ID, 7);
+    await gate.reached;
+    signedIn = BOB.principal;
+    gate.release();
+    const error = await call.then(() => null, (caught: unknown) => caught);
+    expect(error).toMatchObject(MISMATCH);
+    expect(JSON.stringify((error as { details?: unknown }).details ?? {})).not.toContain('currentGeneration');
+    a.dispose();
+  });
+
+  it('frees the claim of a migration refused before anything was admitted, so a free entry ID can be chosen', async () => {
+    await writeLegacy(LEGACY, 'test-legacy-key-0112');
+    const a = tab('a', { rootDir: 'queue-root-a' });
+    // The legacy file ID is taken by an entry of the partition.
+    await stage(a, 'taken');
+    expect(await a.migrateLegacyUpload(LEGACY, { ownershipVerified: true })).toMatchObject({
+      status: 'refused',
+      reason: 'generation-conflict',
+    });
+    expect(await a.migrateLegacyUpload(LEGACY, { ownershipVerified: true, entryId: 'free-entry' })).toMatchObject({
+      status: 'staged',
+      entry: { entryId: 'free-entry', generation: expect.any(Number) },
+    });
+    expect(await a.listLegacyUploads()).toEqual([]);
+    // That admission is now fixed to its root: another root is refused.
+    await writeLegacy(LEGACY, 'test-legacy-key-0112');
+    expect(await tab('b', { rootDir: 'queue-root-b' }).migrateLegacyUpload(LEGACY, { ownershipVerified: true, entryId: 'elsewhere' })).toEqual({
+      status: 'refused',
+      reason: 'already-migrated',
+    });
+  });
+
+  it('an older preview read handed back late neither revokes nor replaces the newer preview, nor returns its bytes', async () => {
+    const revoked: string[] = [];
+    let created = 0;
+    vi.stubGlobal('URL', {
+      createObjectURL: (blob: Blob) => `blob:preview-${++created}-size-${blob.size}`,
+      revokeObjectURL: (url: string) => revoked.push(url),
+    });
+    const gated = gatedCoordinator('a');
+    const a = tab('a', { coordinator: gated.coordinator });
+    await stage(a, 'v1');
+    const gate = gated.arm(() => true);
+    const older = a.getPendingLocalDescriptor(FILE_ID);
+    await gate.reached;
+    await stage(a, 'v2-longer', { expectedGeneration: 1 });
+    const newer = await a.getPendingLocalDescriptor(FILE_ID);
+    expect(newer?.source.url).toBe('blob:preview-1-size-9');
+    gate.release();
+    expect((await older)?.source.url).toBe('blob:preview-1-size-9');
+    expect(revoked).toEqual([]);
+    expect(created).toBe(1);
+    a.dispose();
+  });
+
+  it.each([
+    ['ok: false', { ok: false, fileId: FILE_ID, versionId: 'ver_1' }],
+    ['an error', { fileId: FILE_ID, versionId: 'ver_1', error: { code: 'FILEFN_INTERNAL' } }],
+  ])('keeps a custom uploader result with %s provisional under the same key', async (_label, failure) => {
+    const keys: string[] = [];
+    let fail = true;
+    const verify = vi.fn(async () => ({ verified: true as const }));
+    const a = tab('a', {
+      hooks: { verify },
+      uploader: {
+        async upload(input) {
+          keys.push(input.idempotencyKey);
+          return (fail ? failure : { fileId: input.fileId, versionId: 'ver_2' }) as never;
+        },
+      },
+    });
+    await stage(a);
+    expect(await a.process(FILE_ID)).toMatchObject({ status: 'provisional', reason: 'ambiguous', entry: { phase: 'uploading' } });
+    expect(verify).not.toHaveBeenCalled();
+    expect(dataFiles()).toHaveLength(1);
+    fail = false;
+    expect(await a.process(FILE_ID)).toMatchObject({ status: 'published', entry: { upload: { versionId: 'ver_2' } } });
+    expect(new Set(keys).size).toBe(1);
+  });
+
+  it('refuses a file larger than the partition may hold without reading its bytes', async () => {
+    const a = tab('a', { limits: { maxBytes: 4 } });
+    const file = new Blob(['more than four bytes']);
+    const read = vi.spyOn(file, 'arrayBuffer');
+    expect(await a.stage({ policy: 'p', file, fileId: FILE_ID })).toMatchObject({
+      status: 'refused',
+      reason: 'capacity',
+      limit: 'bytes',
+      usage: { entries: 0, bytes: 0 },
+    });
+    expect(read).not.toHaveBeenCalled();
   });
 });

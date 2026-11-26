@@ -263,8 +263,11 @@ export class ChannelBus {
 
 /**
  * What a FileFn 0.8+ server adds to an offline replay's `upload/init` (one
- * carrying `x-filefn-replay-scope`): the caller's account scope, here fixed.
+ * carrying `x-filefn-replay-scope`) whose caller is the pinned account: the
+ * caller's scope, which is the pinned one. Pass `scope` for a caller acting
+ * for another account.
  */
-export function replayScopeOf(init: RequestInit | undefined, scope = 'rs_test-scope-user-owner'): { replayScope?: string } {
-  return new Headers(init?.headers).has('x-filefn-replay-scope') ? { replayScope: scope } : {};
+export function replayScopeOf(init: RequestInit | undefined, scope?: string): { replayScope?: string } {
+  const pinned = new Headers(init?.headers).get('x-filefn-replay-scope');
+  return pinned === null ? {} : { replayScope: scope ?? pinned };
 }

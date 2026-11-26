@@ -61,7 +61,7 @@ export interface HttpClient {
       metadata?: Record<string, unknown>;
       fileId?: string;
       idempotencyKey?: string;
-      /** Marks an offline replay: `unpinned`, or the scope pinned by its first init (`x-filefn-replay-scope`). */
+      /** Marks an offline replay pinned to the scope of the account it must act for (`x-filefn-replay-scope`). */
       replayScope?: string;
     },
     signal?: AbortSignal,
@@ -646,8 +646,11 @@ export function createHttpClient(config: FileFnClientConfig, httpOptions: HttpCl
           });
 
           if (!response.ok) {
-            // FileFn's proxy route answers with its error envelope: keep its
-            // code and details (a retryable conflict, an ended session).
+            // FileFn's verified proxy part route answers with its error
+            // envelope: keep its code and details (a retryable conflict, an
+            // ended session). Any other URL, a same-origin signed storage URL
+            // included, is not FileFn's route: its body is never read as a
+            // FileFn code, so a storage 4xx stays an ordinary HTTP error.
             const { rawBody, parsedBody, isJson } = await readResponseBody(response).catch(() => ({
               rawBody: "",
               parsedBody: undefined,
@@ -656,7 +659,7 @@ export function createHttpClient(config: FileFnClientConfig, httpOptions: HttpCl
             throw new FileFnHttpError(
               `Upload failed: HTTP ${response.status}`,
               response.status,
-              toFileFn ? (rawBody ? (isJson ? parsedBody : rawBody) : parsedBody) : undefined,
+              partRequest ? (rawBody ? (isJson ? parsedBody : rawBody) : parsedBody) : undefined,
             );
           }
 

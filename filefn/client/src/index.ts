@@ -3,8 +3,11 @@ import {
   UploadManager,
   assertValidExplicitFileId,
   assertValidIdempotencyKey,
+  isValidIdempotencyKey,
   generateFileId,
   prepareUploadInput,
+  replayScopeOf,
+  REPLAY_SCOPE_MISMATCH_ERROR,
 } from './upload-manager.js';
 import type {
   ArtifactDescriptor,
@@ -12,6 +15,7 @@ import type {
   FileFnClientConfig,
   PendingLocalDescriptor,
   RenderDescriptor,
+  ReplayAccount,
   RenderIntent,
   RenderPlaceholderKind,
   UploadInput,
@@ -37,6 +41,7 @@ export type {
   ClientArtifactKind,
   UploadArtifactInput,
   FileFnClientConfig,
+  ReplayAccount,
   PendingLocalDescriptor,
   RenderDescriptor,
   RenderIntent,
@@ -338,10 +343,33 @@ function buildPreprocessors(config: FileFnClientConfig): UploadPreprocessor[] {
 function replayUploader(
   transport: FileFnClientConfig,
   authHeaders: NonNullable<NonNullable<FileFnClientConfig['offline']>['getAuthHeaders']>,
+  replayAccount: NonNullable<FileFnClientConfig['offline']>['replayAccount'],
   principal: () => OfflineQueuePrincipal,
 ): OfflineQueueUploader {
   return {
-    upload: (input) => {
+    upload: async (input) => {
+      // The account the partition expects, resolved before any request: the
+      // first init is pinned to it, so no session is ever created or
+      // advanced under another account (or none).
+      await input.assertPrincipal();
+      const bound = principal();
+      const account: ReplayAccount | null = replayAccount
+        ? await replayAccount(bound)
+        : bound.kind === 'user'
+          ? { principalId: bound.principalId, tenantId: bound.tenantId }
+          : null;
+      await input.assertPrincipal();
+      if (!account) {
+        throw new OfflineQueueError('FILEFN_QUEUE_PRINCIPAL_MISMATCH', "No server account for the queue's principal");
+      }
+      const expected = await replayScopeOf(account);
+      if (input.replayScope !== undefined && input.replayScope !== expected) {
+        // Its first init was confirmed for another account: nothing more is
+        // sent, and the generation stays provisional under its key.
+        throw Object.assign(new Error("The generation's first upload/init acted for another account than the partition's"), {
+          code: REPLAY_SCOPE_MISMATCH_ERROR,
+        });
+      }
       const headers = async (): Promise<Record<string, string>> => {
         await input.assertPrincipal();
         const bound = await authHeaders(principal());
@@ -354,9 +382,13 @@ function replayUploader(
       // Already prepared when staged: no preprocessors run again.
       const manager = new UploadManager(createHttpClient(transport, { beforeSend: input.assertPrincipal, authHeaders: headers }));
       manager.bindAbortSignal(input.signal);
-      // Every init is marked as a replay and bound to the account scope its
-      // first init pinned: the server refuses one with no account or another.
-      return manager.startUpload(input, undefined, { pinned: input.replayScope, pin: input.pinReplayScope });
+      // Every init, the first included, is marked as a replay and pinned to
+      // the expected account's scope: the server refuses one with no account
+      // or another, creating nothing.
+      return manager.startUpload(input, undefined, {
+        pinned: expected,
+        ...(input.replayScope === undefined ? { pin: input.pinReplayScope } : {}),
+      });
     },
   };
 }
@@ -423,7 +455,8 @@ export function createFileFnClient(config: FileFnClientConfig): FileFnClient {
         currentPrincipal,
         legacyRootDir: config.offline.opfsDir,
         uploader:
-          config.offline.uploader ?? replayUploader(transport, boundAuthHeaders!, () => queue!.partition.principal),
+          config.offline.uploader ??
+          replayUploader(transport, boundAuthHeaders!, config.offline.replayAccount, () => queue!.partition.principal),
       });
       offlineQueue = queue;
     }
@@ -471,6 +504,11 @@ export function createFileFnClient(config: FileFnClientConfig): FileFnClient {
       };
 
       if (config.offline?.enabled && shouldUseOfflineMode(true)) {
+        // The queue keeps room in the key for its own suffix: a longer key is
+        // refused now, not after the handle was returned.
+        if (input.idempotencyKey !== undefined && !isValidIdempotencyKey(input.idempotencyKey, 200)) {
+          throw offlineError('FILEFN_INVALID_IDEMPOTENCY_KEY', 'An offline idempotencyKey must be 1-200 visible ASCII characters');
+        }
         const queue = getOfflineQueue();
         const sync = startImplicitReplay(queue);
         const uploadSessionId = generateOfflineSessionId();

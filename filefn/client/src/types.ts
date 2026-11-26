@@ -11,6 +11,12 @@ import type {
   UploadPreprocessor,
 } from './preprocessing/types.js';
 
+/** The server account an offline replay must act for: a FileFn principal and tenant. */
+export interface ReplayAccount {
+  principalId: string;
+  tenantId?: string | null;
+}
+
 export interface RetryOptions {
   maxRetries?: number;
   baseDelayMs?: number;
@@ -76,6 +82,18 @@ export interface FileFnClientConfig {
     getAuthHeaders?: (
       principal: OfflineQueuePrincipal,
     ) => Promise<Record<string, string> | null> | Record<string, string> | null;
+    /**
+     * The server account (the FileFn `principalId` and `tenantId` your server's
+     * auth resolves) that replays of `principal` must act for. Defaults to the
+     * partition principal's own `principalId` and `tenantId`. Every built-in
+     * replay `upload/init`, the first included, is pinned to this account
+     * (`x-filefn-replay-scope`): when the credentials resolve to another
+     * account or none, the server creates nothing and the generation stays
+     * provisional under its key (`FILEFN_REPLAY_SCOPE_MISMATCH`, or a 401).
+     * Return null when there is none: nothing is sent and the replay stays
+     * provisional.
+     */
+    replayAccount?: (principal: OfflineQueuePrincipal) => Promise<ReplayAccount | null> | ReplayAccount | null;
     /**
      * Whether offline `uploadFile`, `getPendingLocalDescriptor` and
      * `resolveRenderable` start a sync of the queue on their own. Defaults to
