@@ -369,6 +369,8 @@ export type OfflineQueueErrorCode =
   | 'FILEFN_QUEUE_BUSY'
   /** Uploads of the generation reached the attempt limit; `reconcile` retries it. */
   | 'FILEFN_QUEUE_RETRY_LIMIT'
+  /** Given to an uploader by `assertPrincipal`: the generation is held, so no further request may go out. */
+  | 'FILEFN_QUEUE_HELD'
   /** `uploadFile` could not stage offline; `details` is the refused stage result. */
   | 'FILEFN_QUEUE_REFUSED';
 
@@ -492,7 +494,11 @@ function requireId(value: unknown, field: string): string {
   return value;
 }
 
-/** Validates and copies a partition, so later changes to the caller's object have no effect. */
+/**
+ * Validates and copies a partition into a frozen object, so neither later
+ * changes to the caller's object nor changes to the copy (exposed as
+ * `queue.partition` and to hooks) can redirect the queue's binding.
+ */
 export function normalizeOfflineQueuePartition(partition: OfflineQueuePartition): OfflineQueuePartition {
   if (!partition || typeof partition !== 'object' || !partition.principal || typeof partition.principal !== 'object') {
     throw new OfflineQueueError('FILEFN_QUEUE_INVALID_INPUT', 'partition needs a serviceId and a principal', { field: 'partition' });
@@ -500,17 +506,20 @@ export function normalizeOfflineQueuePartition(partition: OfflineQueuePartition)
   const serviceId = requireId(partition.serviceId, 'serviceId');
   const principal = partition.principal;
   if (principal.kind === 'user') {
-    return {
+    return Object.freeze({
       serviceId,
-      principal: {
-        kind: 'user',
+      principal: Object.freeze({
+        kind: 'user' as const,
         principalId: requireId(principal.principalId, 'principal.principalId'),
         ...(principal.tenantId !== undefined ? { tenantId: requireId(principal.tenantId, 'principal.tenantId') } : {}),
-      },
-    };
+      }),
+    });
   }
   if (principal.kind === 'guest') {
-    return { serviceId, principal: { kind: 'guest', namespace: requireId(principal.namespace, 'principal.namespace') } };
+    return Object.freeze({
+      serviceId,
+      principal: Object.freeze({ kind: 'guest' as const, namespace: requireId(principal.namespace, 'principal.namespace') }),
+    });
   }
   throw new OfflineQueueError('FILEFN_QUEUE_INVALID_INPUT', "principal.kind must be 'user' or 'guest'", { field: 'principal.kind' });
 }
@@ -726,15 +735,19 @@ const TRANSIENT_STATUSES = new Set([401, 403, 408, 423, 425, 429]);
 
 /**
  * A failure that no replay with the same input can fix: a client-side input
- * error or a 4xx refusal of the request itself. Anything the server marks
- * retryable, a replayable conflict, a transient status, a 5xx or a network
- * error is not: the outcome stays unknown until replayed under the same key.
+ * error or FileFn's own 4xx refusal of the request (a FileFn error code).
+ * Anything the server marks retryable, a replayable conflict, a transient
+ * status, a 5xx, a network error, and a 4xx without a FileFn code (a signed
+ * storage URL's 404 once FileFn completed or swept the session, a proxy's
+ * answer) is not: it cannot settle the FileFn session, so the outcome stays
+ * unknown until `upload/init` replays the same key.
  */
 function isPermanentUploadError(error: unknown): boolean {
   const failure = error as UploadFailure;
   if (failure?.code === 'FILEFN_CLIENT_FILE_ID_MISMATCH' || failure?.code === 'FILEFN_INVALID_FILE_ID') return true;
   if (failure?.retryable === true || failure?.details?.retryable === true) return false;
-  if (typeof failure?.code === 'string' && REPLAYABLE_CODES.has(failure.code)) return false;
+  if (typeof failure?.code !== 'string' || !failure.code.startsWith('FILEFN_')) return false;
+  if (REPLAYABLE_CODES.has(failure.code)) return false;
   const status = failure?.status;
   if (typeof status === 'number') {
     return status >= 400 && status < 500 && !TRANSIENT_STATUSES.has(status);
@@ -746,6 +759,10 @@ function isPrincipalMismatch(error: unknown): boolean {
   return error instanceof OfflineQueueError && error.code === 'FILEFN_QUEUE_PRINCIPAL_MISMATCH';
 }
 
+function isHeld(error: unknown): boolean {
+  return error instanceof OfflineQueueError && error.code === 'FILEFN_QUEUE_HELD';
+}
+
 /** A success names what it stored: a file ID of the server grammar and a well-formed versionId. */
 function hasStoredIdentity(result: unknown): result is UploadResult {
   const value = result as { fileId?: unknown; versionId?: unknown } | null | undefined;
@@ -754,15 +771,53 @@ function hasStoredIdentity(result: unknown): result is UploadResult {
 
 const NOT_JSON: unique symbol = Symbol('not-json');
 
-/** `value` as stored in a journal, or NOT_JSON when it would not survive JSON unchanged in kind. */
+/**
+ * Whether `value` is JSON data that a JSON round trip keeps exactly: null,
+ * booleans, strings, finite numbers, dense arrays and plain objects of such
+ * values. Anything JSON.stringify would drop, convert or call (undefined
+ * members, functions, symbols and symbol keys, NaN and Infinity, a toJSON
+ * method, class instances such as Date or Map, accessors, cycles) is not.
+ */
+function isExactJson(value: unknown, seen: Set<object>): boolean {
+  if (value === null || typeof value === 'string' || typeof value === 'boolean') return true;
+  if (typeof value === 'number') return Number.isFinite(value);
+  if (typeof value !== 'object') return false;
+  if (seen.has(value)) return false;
+  seen.add(value);
+  try {
+    if (Array.isArray(value)) {
+      if (Object.getPrototypeOf(value) !== Array.prototype) return false;
+      const keys = Reflect.ownKeys(value);
+      // Dense, and nothing but its indexes and length.
+      if (keys.length !== value.length + 1) return false;
+      for (let i = 0; i < value.length; i += 1) {
+        const descriptor = Object.getOwnPropertyDescriptor(value, i);
+        if (!descriptor || !('value' in descriptor) || !isExactJson(descriptor.value, seen)) return false;
+      }
+      return true;
+    }
+    const proto = Object.getPrototypeOf(value);
+    if (proto !== Object.prototype && proto !== null) return false;
+    for (const key of Reflect.ownKeys(value)) {
+      if (typeof key !== 'string') return false;
+      const descriptor = Object.getOwnPropertyDescriptor(value, key)!;
+      if (!descriptor.enumerable || !('value' in descriptor)) return false;
+      if (key === 'toJSON' || !isExactJson(descriptor.value, seen)) return false;
+    }
+    return true;
+  } finally {
+    seen.delete(value);
+  }
+}
+
+/**
+ * `value` as stored in a journal, or NOT_JSON when a JSON round trip would
+ * change it in any way (see `isExactJson`): such a value confirms nothing.
+ */
 function strictJson(value: unknown): unknown {
   if (value === undefined) return undefined;
-  try {
-    const text = JSON.stringify(value);
-    return text === undefined ? NOT_JSON : JSON.parse(text);
-  } catch {
-    return NOT_JSON;
-  }
+  if (!isExactJson(value, new Set())) return NOT_JSON;
+  return JSON.parse(JSON.stringify(value));
 }
 
 /**
@@ -1089,8 +1144,10 @@ export class OfflineQueue {
       await this.noteRemoval(partitionDir, [record]);
       const { tombstones } = await this.loadMeta(partitionDir);
       await this.removePath(partitionDir, await this.entryKey(entryId), true);
+      // Fenced after the removal: no waiter is settled with the partition's
+      // publication results once its principal is no longer current.
       return { tombstones };
-    });
+    }, { disclose: true });
     if (!removed) return false;
     this.entryControllers.get(entryId)?.abort();
     // A waiter of a generation published before (and replaced since) still resolves.
@@ -1245,6 +1302,13 @@ export class OfflineQueue {
       const sameCleanup =
         entry.phase === 'published' && result.status === 'published' && result.entry.generation === entry.generation;
       if (!sameCleanup) results.push({ entryId: entry.entryId, result });
+    }
+    // Each result passed a fence when it was made; the batch passes one more,
+    // so an entry's error after a switch does not return the others.
+    if (results.length > 0) {
+      this.assertUsable();
+      if (!(await this.principalMatches(this.lifetime.signal))) throw mismatch();
+      this.assertUsable();
     }
     return results;
   }
@@ -1466,11 +1530,40 @@ export class OfflineQueue {
     }
   }
 
-  /** The `assertPrincipal` given to uploaders and hooks: also rejects once their step is stopped. */
+  /**
+   * The `assertPrincipal` given to uploaders and hooks: also rejects once
+   * their step ended (its controller is aborted on release) or was stopped,
+   * or the queue is disposed, before or during the check.
+   */
   private async guardPrincipal(signal: AbortSignal): Promise<void> {
-    if (signal.aborted) throw abortError();
+    if (signal.aborted || this.disposed) throw abortError();
     await this.assertPrincipal(signal);
-    if (signal.aborted) throw abortError();
+    if (signal.aborted || this.disposed) throw abortError();
+  }
+
+  /**
+   * The upload's guard before each request: the principal (`guardPrincipal`),
+   * then, under the partition lock, that the generation is still current and
+   * not held. A hold taken by any tab therefore admits no further request of
+   * an upload already running (FILEFN_QUEUE_HELD); the upload resumes under
+   * the same key once released.
+   */
+  private async guardUpload(entryId: string, planned: GenerationState, signal: AbortSignal): Promise<void> {
+    await this.guardPrincipal(signal);
+    const state = await this.transact(async (root) => {
+      const found = await this.readEntry(root, entryId);
+      const cur = found?.record.current;
+      if (!found || cur!.generation !== planned.generation || cur!.operationId !== planned.operationId) return 'gone';
+      return found.record.holds.some((hold) => hold.operationId === planned.operationId) ? 'held' : 'ok';
+    }, { signal });
+    if (state === 'gone') throw abortError();
+    if (state === 'held') {
+      throw new OfflineQueueError('FILEFN_QUEUE_HELD', 'The generation is held: no further upload request is sent until released', {
+        entryId,
+        generation: planned.generation,
+      });
+    }
+    if (signal.aborted || this.disposed) throw abortError();
   }
 
   /** Runs `fn` under the lock of the legacy directory, shared by every partition and tab. */
@@ -1772,14 +1865,17 @@ export class OfflineQueue {
           const usage = partitionDir ? await this.measure(partitionDir) : { entries: 0, bytes: 0 };
           result = { status: 'refused', reason: 'capacity', limit: 'quota', usage, limits: this.limits } as const;
         }
-        // What was only read (a refusal's state, the entry a repeated migration
-        // became) passes the fence before it is returned; a staging's own
-        // journal write passed it.
-        if (result.status !== 'staged' || !result.written) await this.txFence!();
+        // Whatever is returned, observed or settled passes the fence after the
+        // staging's last storage step (the old data's removal included): after
+        // a switch a committed staging stays for its principal, undisclosed.
         return result;
-      });
+      }, { disclose: true });
     } catch (error) {
       if (isPrincipalMismatch(error)) return { status: 'refused', reason: 'principal-mismatch' };
+      if (isQuotaError(error)) {
+        // Out of storage before the partition could even be opened.
+        return { status: 'refused', reason: 'capacity', limit: 'quota', usage: { entries: 0, bytes: 0 }, limits: this.limits };
+      }
       throw error;
     }
     if (outcome.status !== 'staged') return outcome;
@@ -1797,13 +1893,13 @@ export class OfflineQueue {
     migration: { source: string; key?: string; keyShared?: boolean } | undefined,
   ): Promise<
     | Exclude<OfflineQueueStageResult, { status: 'staged' }>
-    | { status: 'staged'; record: JournalRecord; holdId: string | undefined; tombstones: Tombstone[] | undefined; written: boolean }
+    | { status: 'staged'; record: JournalRecord; holdId: string | undefined; tombstones: Tombstone[] | undefined }
   > {
     const key = await this.entryKey(input.entryId);
     if (migration) {
       // Checked in the same transaction as the staging: one admission per legacy upload.
       const migrated = (await this.readAllIn(partitionDir)).find((record) => record.migratedFrom === migration.source);
-      if (migrated) return { status: 'staged', record: migrated, holdId: undefined, tombstones: undefined, written: false };
+      if (migrated) return { status: 'staged', record: migrated, holdId: undefined, tombstones: undefined };
       if ((await this.loadMeta(partitionDir)).migrated.includes(migration.source)) {
         return { status: 'refused', reason: 'already-migrated' };
       }
@@ -1920,8 +2016,7 @@ export class OfflineQueue {
       // Best effort: a leftover file is an orphan the next reclaim removes.
       await this.removePath(dir, previous.current.dataFile).catch(() => {});
     }
-    // Read before the journal write, whose fence it passed.
-    return { status: 'staged', record, holdId, tombstones: meta.tombstones, written: true };
+    return { status: 'staged', record, holdId, tombstones: meta.tombstones };
   }
 
   /** `target` is the entry being staged: reclamation never removes it, so the new generation keeps its directory. */
@@ -2073,6 +2168,8 @@ export class OfflineQueue {
         this.lifetime.signal.removeEventListener('abort', onAbort);
         signal?.removeEventListener('abort', onAbort);
         if (this.entryControllers.get(entryId) === controller) this.entryControllers.delete(entryId);
+        // The step is over: a helper or signal a hook kept from it is dead.
+        controller.abort();
       },
     };
   }
@@ -2127,11 +2224,19 @@ export class OfflineQueue {
       return provisional('held');
     }
     const hooks = this.options.hooks;
-    // This instance's hooks join the generation's requirements with its first
-    // write, so an instance without one of them never skips that step later.
-    cur.requires.verify ||= Boolean(hooks?.verify);
-    cur.requires.publish ||= Boolean(hooks?.publish);
     const write = (): Promise<void> => this.writeRecord(dir, record);
+    // This instance's hooks join the generation's requirements, journaled at
+    // once (before any step, reconciliation included, can move the generation
+    // on), so an instance without one of them never skips that step later.
+    const adopt = { verify: !cur.requires.verify && Boolean(hooks?.verify), publish: !cur.requires.publish && Boolean(hooks?.publish) };
+    if ((adopt.verify || adopt.publish) && !isTerminalPhase(cur.phase)) {
+      cur.requires.verify ||= adopt.verify;
+      cur.requires.publish ||= adopt.publish;
+      await write();
+    }
+    // A required verifier that no hook has satisfied yet (the generation was
+    // verified, or its publication started, while none was required).
+    const verifyOwed = cur.requires.verify && cur.verification?.byHook !== true;
     const start = async (kind: StepKind, run: (controller: AbortController) => Promise<unknown>): Promise<Plan> => {
       await this.txFence!();
       // Same turn as the check: the work starts only for the partition's principal.
@@ -2142,7 +2247,7 @@ export class OfflineQueue {
     };
     // Verified without a hook while none was required: a verifier that is
     // required now runs before publication.
-    const reverify = cur.phase === 'verified' && cur.requires.verify && cur.verification?.byHook !== true;
+    const reverify = cur.phase === 'verified' && verifyOwed;
     switch (reverify ? 'uploaded' : cur.phase) {
       case 'staged':
       case 'uploading': {
@@ -2175,7 +2280,7 @@ export class OfflineQueue {
             fileId: cur.fileId,
             idempotencyKey: cur.replay.idempotencyKey,
             signal: controller.signal,
-            assertPrincipal: () => this.guardPrincipal(controller.signal),
+            assertPrincipal: () => this.guardUpload(entryId, cur, controller.signal),
           }),
         );
       }
@@ -2217,9 +2322,11 @@ export class OfflineQueue {
       case 'publishing': {
         const publish = hooks?.publish;
         if (publish?.reconcile) {
+          // Settles the earlier attempt without a new one; `published: false`
+          // reopens it at verified, where an owed verifier runs first.
           return start('reconcile-publication', (controller) => publish.reconcile!(this.operationContext(entryId, cur, controller.signal)));
         }
-        if (publish?.idempotent) {
+        if (publish?.idempotent && !verifyOwed) {
           // Each run is an attempt of its own (the operation ID stays): an
           // outcome established for an earlier run never settles this one.
           cur.publicationAttempt = randomId('pub');
@@ -2227,6 +2334,9 @@ export class OfflineQueue {
           await write();
           return start('publish', (controller) => publish.run(this.operationContext(entryId, cur, controller.signal)));
         }
+        // Not run again: either the hook is not idempotent, or a verifier is
+        // now required that never ran, and another attempt would publish
+        // unverified. The earlier attempt is settled by `reconcile` first.
         if (cur.pending?.reason !== 'needs-reconcile') {
           cur.pending = { stage: 'publication', reason: 'needs-reconcile' };
           await write();
@@ -2261,6 +2371,9 @@ export class OfflineQueue {
       // Stopped, or the principal changed: nothing is recorded or returned.
       const stopped = this.stoppedResult(controller.signal.aborted && !isPrincipalMismatch(error) ? abortError() : error);
       if (stopped) return stopped;
+      // A hold stopped the upload between requests: no attempt is used, and
+      // the next step reports it held.
+      if (plan.kind === 'upload' && isHeld(error)) return null;
       return this.recordFailure(entryId, plan, error, signal);
     } finally {
       plan.release();
@@ -2439,6 +2552,8 @@ export class OfflineQueue {
     const event: OfflineQueueEvent = entry.state === 'published' ? { type: 'published', entry } : { type: 'provisional', entry };
     if (event.type === 'provisional' && !entry.pending && !isTerminalPhase(entry.phase)) return;
     for (const listener of this.listeners) {
+      // A listener that stopped the pass (or disposed the queue) ends the fan-out.
+      if (this.disposed || signal?.aborted) return;
       try {
         listener(event);
       } catch {

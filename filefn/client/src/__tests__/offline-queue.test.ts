@@ -1540,3 +1540,228 @@ describe('legacy migration admission', () => {
     expect((await notes.list()).length + (await otherService.list()).length).toBe(1);
   });
 });
+
+describe('a verifier required after publication started', () => {
+  it('reruns no publication until that verifier ran, and keeps it required across a reopened publication', async () => {
+    const first = tab('first', { hooks: { publish: { run: async () => { throw new Error('network lost'); } } } });
+    await stage(first);
+    expect(await first.process(FILE_ID)).toMatchObject({ status: 'provisional', reason: 'ambiguous', entry: { phase: 'publishing' } });
+    const verify = vi.fn(async () => ({ verified: false as const, reason: 'malware' }));
+    const run = vi.fn(async () => ({}));
+    const second = tab('second', { hooks: { verify, publish: { run, idempotent: true } } });
+    // Another idempotent run would publish an unverified generation: the earlier attempt is reconciled first.
+    expect(await second.process(FILE_ID)).toMatchObject({ status: 'provisional', reason: 'needs-reconcile' });
+    expect(run).not.toHaveBeenCalled();
+    const attemptId = (await second.get(FILE_ID))!.publicationAttemptId!;
+    await second.reconcile(FILE_ID, 1, { published: false, attemptId });
+    // Reopened at verified: an instance without the verifier cannot publish it.
+    expect(await tab('bare', { hooks: { publish: { run } } }).process(FILE_ID)).toMatchObject({ status: 'provisional', reason: 'hook-unavailable' });
+    expect(await second.process(FILE_ID)).toMatchObject({ status: 'provisional', reason: 'rejected' });
+    expect(verify).toHaveBeenCalledTimes(1);
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it('runs that verifier after a reconciliation hook reopens the publication, before publishing again', async () => {
+    const first = tab('first', { hooks: { publish: { run: async () => { throw new Error('network lost'); } } } });
+    await stage(first);
+    await first.process(FILE_ID);
+    const reconcile = vi.fn(async () => ({ published: false as const }));
+    const verify = vi.fn(async () => ({ verified: true as const }));
+    const run = vi.fn(async () => ({}));
+    expect(await tab('second', { hooks: { verify, publish: { run, reconcile } } }).process(FILE_ID)).toMatchObject({ status: 'published' });
+    expect(reconcile.mock.invocationCallOrder[0]).toBeLessThan(verify.mock.invocationCallOrder[0]);
+    expect(verify.mock.invocationCallOrder[0]).toBeLessThan(run.mock.invocationCallOrder[0]);
+  });
+});
+
+describe('upload failures that cannot settle the FileFn session', () => {
+  it('keeps a 4xx without a FileFn code (a signed storage URL) ambiguous under the same key', async () => {
+    const keys: string[] = [];
+    let fail = true;
+    const a = tab('a', {
+      uploader: {
+        async upload(input) {
+          keys.push(input.idempotencyKey);
+          if (fail) throw Object.assign(new Error('Upload failed: HTTP 404'), { status: 404 });
+          return { fileId: input.fileId, versionId: 'ver_1' };
+        },
+      },
+    });
+    await stage(a);
+    expect(await a.process(FILE_ID)).toMatchObject({ status: 'provisional', reason: 'ambiguous', entry: { phase: 'uploading' } });
+    fail = false;
+    expect(await a.process(FILE_ID)).toMatchObject({ status: 'published' });
+    expect(new Set(keys).size).toBe(1);
+  });
+
+  it('still fails a generation that FileFn itself refused with a coded 4xx', async () => {
+    const a = tab('a', {
+      uploader: { upload: async () => { throw Object.assign(new Error('Policy not found'), { status: 404, code: 'FILEFN_POLICY_NOT_FOUND' }); } },
+    });
+    await stage(a);
+    expect(await a.process(FILE_ID)).toMatchObject({ status: 'provisional', reason: 'failed', entry: { phase: 'failed' } });
+  });
+});
+
+describe('publication results a JSON round trip would change', () => {
+  const sparse = [1, , 3]; // eslint-disable-line no-sparse-arrays
+  it.each([
+    ['NaN', { result: Number.NaN }],
+    ['Infinity in an object', { result: { count: Number.POSITIVE_INFINITY } }],
+    ['a function member', { result: { id: 'r1', toString: () => 'x' } }],
+    ['an undefined member', { result: { id: 'r1', extra: undefined } }],
+    ['a symbol key', { result: { id: 'r1', [Symbol('k')]: 1 } }],
+    ['a Date', { result: new Date(0) }],
+    ['a sparse array', { result: sparse }],
+    ['a toJSON method', { result: { toJSON: () => 'other' } }],
+  ])('never confirms a publication whose result has %s', async (_label, value) => {
+    const a = tab('a', { hooks: { publish: { run: async () => value as never } } });
+    await stage(a);
+    expect(await a.process(FILE_ID)).toMatchObject({ status: 'provisional', reason: 'ambiguous', entry: { phase: 'publishing' } });
+  });
+
+  it('confirms exact JSON unchanged, and refuses a lossy manual or hook reconciliation', async () => {
+    const result = { id: 'r1', tags: ['a', 'b'], nested: { n: 1.5, ok: true, none: null } };
+    const a = tab('a', { hooks: { publish: { run: async () => ({ result }) } } });
+    await stage(a);
+    expect(await a.process(FILE_ID)).toMatchObject({ status: 'published', entry: { publication: { result } } });
+
+    const b = tab('b', { hooks: { publish: { run: async () => { throw new Error('lost'); }, reconcile: async () => ({ published: true, result: { count: Number.NaN } }) } } });
+    await stage(b, 'v2', { entryId: 'e2', fileId: 'file_00000000entry02' });
+    expect(await b.process('e2')).toMatchObject({ status: 'provisional', reason: 'ambiguous', entry: { phase: 'publishing' } });
+    expect(await b.process('e2')).toMatchObject({ status: 'provisional', reason: 'ambiguous', entry: { phase: 'publishing' } });
+    const attemptId = (await b.get('e2'))!.publicationAttemptId!;
+    await expect(b.reconcile('e2', 1, { published: true, attemptId, result: { count: Number.POSITIVE_INFINITY } })).rejects.toMatchObject({
+      code: 'FILEFN_QUEUE_INVALID_INPUT',
+    });
+    expect((await b.get('e2'))!.phase).toBe('publishing');
+  });
+});
+
+describe('stopping drivers and helpers with their queue', () => {
+  it('delivers nothing more and schedules nothing once the queue is disposed inside a sync callback', async () => {
+    const a = tab('a');
+    await stage(a, 'one', { entryId: 'one', fileId: 'file_00000000entry01' });
+    await stage(a, 'two', { entryId: 'two', fileId: 'file_00000000entry02' });
+    const progress = vi.fn();
+    const complete = vi.fn();
+    const sync = onlineSync(a, {
+      onSyncProgress: (p) => {
+        progress(p);
+        a.dispose();
+      },
+      onSyncComplete: complete,
+    });
+    await sync.syncAll();
+    expect(progress).toHaveBeenCalledTimes(1);
+    expect(complete).not.toHaveBeenCalled();
+    expect(sync.isDisposed).toBe(true);
+  });
+
+  it('rejects a principal check a hook kept once its step ended, and after disposal', async () => {
+    let kept: (() => Promise<void>) | undefined;
+    const a = tab('a', {
+      hooks: {
+        verify: async (context) => {
+          kept = context.assertPrincipal;
+          await context.assertPrincipal();
+          return { verified: true };
+        },
+      },
+    });
+    await stage(a);
+    expect(await a.process(FILE_ID)).toMatchObject({ status: 'published' });
+    await expect(kept!()).rejects.toMatchObject({ name: 'AbortError' });
+    a.dispose();
+    await expect(kept!()).rejects.toMatchObject({ name: 'AbortError' });
+  });
+});
+
+describe('principal binding at the last storage step', () => {
+  it('returns no staged snapshot when the principal changes as the journal commits, and keeps the staging for its owner', async () => {
+    let signedIn: OfflineQueuePrincipal = ALICE.principal;
+    const a = tab('a', { currentPrincipal: () => signedIn });
+    storage.storage.fault = (path, step) => {
+      if (step === 'close' && path.endsWith('/journal.json')) signedIn = BOB.principal;
+    };
+    const result = await a.stage({ policy: 'p', file: new Blob(['v1']), fileName: 'a.txt', fileId: FILE_ID, metadata: { title: 'alice-private' } });
+    storage.storage.fault = undefined;
+    expect(result).toEqual({ status: 'refused', reason: 'principal-mismatch' });
+    signedIn = ALICE.principal;
+    expect((await a.list()).map((entry) => entry.metadata)).toEqual([{ title: 'alice-private' }]);
+  });
+
+  it('settles no waiter from a cancellation when the principal changes during the removal', async () => {
+    let signedIn: OfflineQueuePrincipal = ALICE.principal;
+    const a = tab('a', { currentPrincipal: () => signedIn, observeIntervalMs: 0 });
+    await stage(a);
+    expect(await a.process(FILE_ID)).toMatchObject({ status: 'published' });
+    await stage(a, 'v2');
+    const waiter = vi.fn();
+    void a.whenSettled(FILE_ID, 1).then(waiter, waiter);
+    await vi.waitFor(() => expect(waiter).toHaveBeenCalledTimes(1));
+    waiter.mockClear();
+    void a.whenSettled(FILE_ID, 2).then(waiter, waiter);
+    const remove = MemoryDirectory.prototype.removeEntry;
+    const spy = vi.spyOn(MemoryDirectory.prototype, 'removeEntry').mockImplementation(async function (this: MemoryDirectory, name, options) {
+      await remove.call(this, name, options);
+      if (name.startsWith('e_')) signedIn = BOB.principal;
+    });
+    try {
+      await expect(a.cancel(FILE_ID)).rejects.toMatchObject({ code: 'FILEFN_QUEUE_PRINCIPAL_MISMATCH' });
+    } finally {
+      spy.mockRestore();
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(waiter).not.toHaveBeenCalled();
+  });
+
+  it('keeps the partition used for binding, hooks and credentials immutable', async () => {
+    let seen: OfflineQueuePartition | undefined;
+    const a = tab('a', { hooks: { verify: async (context) => ((seen = context.partition), { verified: true }) } });
+    expect(() => {
+      (a.partition.principal as { principalId: string }).principalId = 'user-bob';
+    }).toThrow(TypeError);
+    await stage(a);
+    await a.process(FILE_ID);
+    expect(seen).toBe(a.partition);
+    expect(Object.isFrozen(seen) && Object.isFrozen(seen!.principal)).toBe(true);
+  });
+});
+
+describe('a hold taken while an upload runs', () => {
+  it('admits no further upload request once another tab holds the generation, and resumes under the same key on release', async () => {
+    const between = deferred<void>();
+    const resume = deferred<void>();
+    const requests: string[] = [];
+    let blocking = true;
+    const a = tab('a', {
+      uploader: {
+        async upload(input) {
+          await input.assertPrincipal();
+          requests.push(`init ${input.idempotencyKey}`);
+          if (blocking) {
+            between.resolve();
+            await resume.promise;
+          }
+          await input.assertPrincipal();
+          requests.push(`complete ${input.idempotencyKey}`);
+          return { fileId: input.fileId, versionId: 'ver_1' };
+        },
+      },
+    });
+    const staged = await stage(a);
+    const running = a.process(FILE_ID);
+    await between.promise;
+    const b = tab('b');
+    const holdId = heldId(await b.hold(FILE_ID, staged.entry.generation));
+    resume.resolve();
+    expect(await running).toMatchObject({ status: 'provisional', reason: 'held', entry: { phase: 'uploading', attempts: 0 } });
+    expect(requests).toHaveLength(1);
+    blocking = false;
+    expect(await b.release(FILE_ID, staged.entry.generation, holdId)).toBe(true);
+    expect(await a.process(FILE_ID)).toMatchObject({ status: 'published' });
+    const key = requests[0].split(' ')[1];
+    expect(requests).toEqual([`init ${key}`, `init ${key}`, `complete ${key}`]);
+  });
+});

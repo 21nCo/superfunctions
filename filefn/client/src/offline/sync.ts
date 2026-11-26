@@ -160,7 +160,7 @@ export class OfflineSync {
   }
 
   private passFailed(error: unknown): void {
-    if (this.disposed) return;
+    if (this.stopped()) return;
     if (this.queueGone(error)) return;
     this.config.onSyncError(error instanceof Error ? error : new Error('Unknown error'), this.config.queue ? '*queue*' : '*sync*');
     if (this.config.queue && this.isOnline()) this.scheduleQueueRetry();
@@ -219,7 +219,7 @@ export class OfflineSync {
    * Sync all pending uploads.
    */
   async syncAll(): Promise<SyncResult> {
-    if (this.disposed) {
+    if (this.stopped()) {
       return { succeeded: [], failed: [], totalProcessed: 0 };
     }
     if (this.isSyncing) {
@@ -303,7 +303,7 @@ export class OfflineSync {
       return result;
     } finally {
       this.isSyncing = false;
-      if (this.rerunRequested && !this.disposed) {
+      if (this.rerunRequested && !this.stopped()) {
         this.rerunRequested = false;
         if (this.isOnline()) this.runPass();
       }
@@ -329,16 +329,16 @@ export class OfflineSync {
     try {
       outcomes = await queue.processAll({ signal: this.lifetime.signal });
     } catch (error) {
-      if (this.disposed || this.queueGone(error)) return result;
+      if (this.stopped() || this.queueGone(error)) return result;
       if ((error as { code?: unknown })?.code !== 'FILEFN_QUEUE_PRINCIPAL_MISMATCH') throw error;
       // Another account is active for now: look again later.
-      if (this.isOnline()) this.scheduleQueueRetry();
+      if (this.isOnline() && !this.stopped()) this.scheduleQueueRetry();
       return result;
     }
     progress.totalPending = outcomes.length;
     let retry = false;
     for (const item of outcomes) {
-      if (this.disposed) return result;
+      if (this.stopped()) return result;
       const { entryId } = item;
       let failure: Error | undefined;
       if ('error' in item) {
@@ -378,20 +378,32 @@ export class OfflineSync {
         result.failed.push(entryId);
         progress.failed += 1;
         this.config.onSyncError(failure, entryId);
-        if (this.disposed) return result;
+        if (this.stopped()) return result;
       }
       result.totalProcessed += 1;
       progress.current = entryId;
       this.config.onSyncProgress(progress);
     }
     progress.current = null;
-    if (this.disposed) return result;
+    if (this.stopped()) return result;
     this.config.onSyncComplete(result);
     if (!retry) {
       this.queueRetries = 0;
       this.scheduleIdlePoll();
-    } else if (this.isOnline() && !this.disposed) this.scheduleQueueRetry();
+    } else if (this.isOnline() && !this.stopped()) this.scheduleQueueRetry();
     return result;
+  }
+
+  /**
+   * Whether this sync is done driving work: disposed, or its queue was
+   * disposed (even from inside one of this sync's callbacks), which disposes
+   * the sync too. Checked before every callback and every timer.
+   */
+  private stopped(): boolean {
+    if (this.disposed) return true;
+    if (!this.config.queue?.isDisposed) return false;
+    this.dispose();
+    return true;
   }
 
   /**
@@ -407,7 +419,7 @@ export class OfflineSync {
   private scheduleIdlePoll(): void {
     const key = '*idle*';
     const delay = this.config.idlePollMs;
-    if (!this.autoSyncing || this.disposed || !(delay > 0) || this.retryTimers.has(key) || this.retryTimers.has('*queue*')) return;
+    if (!this.autoSyncing || this.stopped() || !(delay > 0) || this.retryTimers.has(key) || this.retryTimers.has('*queue*')) return;
     if (!this.isOnline()) return;
     const timer = setTimeout(() => {
       this.retryTimers.delete(key);
@@ -418,7 +430,7 @@ export class OfflineSync {
 
   private scheduleQueueRetry(): void {
     const key = '*queue*';
-    if (this.retryTimers.has(key) || this.disposed) return;
+    if (this.retryTimers.has(key) || this.stopped()) return;
     const delay = Math.min(this.config.retryDelayMs * 2 ** this.queueRetries, 60_000);
     this.queueRetries += 1;
     const timer = setTimeout(() => {

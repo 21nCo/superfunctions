@@ -49,7 +49,8 @@ import { createFileFnClient } from "@filefn/client";
 import { browser } from "$app/environment";
 
 // Offline work is scoped to the signed-in user: on sign-out or a user change,
-// call filefnClient.dispose() and create a new client.
+// call filefnClient.dispose() and create a new client. `readStoredAccessToken`
+// returns a token your server issued for that user at sign-in (or null).
 export const filefnClient = browser
   ? createFileFnClient({
       baseUrl: "/filefn",
@@ -57,9 +58,12 @@ export const filefnClient = browser
         enabled: true,
         partition: { serviceId: "app", principal: { kind: "user", principalId: getSignedInUserId() } },
         currentPrincipal: () => ({ kind: "user", principalId: getSignedInUserId() }),
-        // Cookie auth: send nothing extra, and only while this user is still signed in.
-        getAuthHeaders: (principal) =>
-          principal.kind === "user" && principal.principalId === getSignedInUserId() ? {} : null,
+        // Queued replays send no cookies: a token issued for exactly this
+        // user (null when this device holds none for them).
+        getAuthHeaders: (principal) => {
+          const token = principal.kind === "user" ? readStoredAccessToken(principal.principalId) : null;
+          return token ? { Authorization: `Bearer ${token}` } : null;
+        },
       },
     })
   : null;

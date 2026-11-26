@@ -57,7 +57,12 @@ describe('offline replay transport', () => {
     vi.unstubAllGlobals();
   });
 
-  it('replays an upload staged before a reload through the new client fetch, headers and credentials', async () => {
+  // Replays send no ambient cookies unless the app opts in: a cookie acts for
+  // whoever signed in last, in any tab, not for the partition.
+  it.each([
+    { replayAmbientCredentials: undefined, expected: 'omit' },
+    { replayAmbientCredentials: true, expected: 'include' },
+  ] as const)('replays an upload staged before a reload through the new client fetch and bound headers (ambient credentials $replayAmbientCredentials -> $expected)', async ({ replayAmbientCredentials, expected }) => {
     setOnline(false);
     const stagingFetch = vi.fn<typeof fetch>();
     const beforeReload = createFileFnClient({
@@ -107,6 +112,7 @@ describe('offline replay transport', () => {
         currentPrincipal: () => PARTITION.principal,
         // Replays send credentials issued for the partition's principal, resolved at replay time.
         getAuthHeaders: () => ({ 'x-csrf-token': 'csrf-after-reload' }),
+        ...(replayAmbientCredentials !== undefined ? { replayAmbientCredentials } : {}),
         queue: { coordinator: locks.forTab('after') },
       },
     });
@@ -126,7 +132,7 @@ describe('offline replay transport', () => {
     ]);
     for (const call of calls) {
       expect(call.headers.get('x-csrf-token')).toBe('csrf-after-reload');
-      expect(call.credentials).toBe('include');
+      expect(call.credentials).toBe(expected);
     }
     // The journaled replay key travels in the header, not the body.
     const init = calls[0];

@@ -65,15 +65,25 @@ export interface FileFnClientConfig {
      * `FILEFN_OFFLINE_CREDENTIALS_REQUIRED`): auth headers that act for exactly
      * `principal`, sent by every queued replay request instead of the client's
      * `getAuthHeaders` (which acts for whoever is signed in now). Return null
-     * when there are none: the replay stays provisional. Ambient cookies are
-     * sent per `credentials` and are covered only by the `currentPrincipal`
-     * checks, so cookie-authenticated apps should return headers that the
-     * server binds to `principal` (for example a per-principal CSRF or session
-     * token), or supply `uploader`.
+     * when there are none: the replay stays provisional. Replays send no
+     * ambient cookies (credentials `omit`) unless `replayAmbientCredentials`
+     * is set, so these headers must authenticate the request on their own: a
+     * bearer or session token the app issued for `principal`. A cookie-session
+     * app supplies such a token, or its own `uploader`.
      */
     getAuthHeaders?: (
       principal: OfflineQueuePrincipal,
     ) => Promise<Record<string, string> | null> | Record<string, string> | null;
+    /**
+     * Opt-in, defaults to false: queued replays by the built-in transport send
+     * ambient credentials per `credentials` (cookies) as well as
+     * `getAuthHeaders`. A cookie is the browser's, not the partition's: another
+     * tab can switch it after the last `currentPrincipal` check, and the
+     * request then acts for the new account. Set it only when the server
+     * refuses a request whose cookie and bound headers name different
+     * principals, or when you accept that race.
+     */
+    replayAmbientCredentials?: boolean;
     /**
      * Whether offline `uploadFile`, `getPendingLocalDescriptor` and
      * `resolveRenderable` start a sync of the queue on their own. Defaults to

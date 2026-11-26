@@ -94,8 +94,9 @@ import { createFileFnClient } from "@filefn/client";
 // `readSession()` reads the session your app keeps current locally (for
 // example a store updated on sign-in, sign-out and from other tabs): the
 // offline queue calls it before every local read and staging, also offline,
-// so it must not make a network request.
-export function createFilefnClient(userId: string, readSession: () => { userId: string } | null) {
+// so it must not make a network request. Its `accessToken` is the token your
+// server issued for that user at sign-in (sent as a bearer header).
+export function createFilefnClient(userId: string, readSession: () => { userId: string; accessToken: string } | null) {
   return createFileFnClient({
     baseUrl: "/filefn",
     offline: {
@@ -106,9 +107,14 @@ export function createFilefnClient(userId: string, readSession: () => { userId: 
         const session = readSession();
         return session ? { kind: "user", principalId: session.userId } : null;
       },
-      // Credentials for exactly this principal, sent by every queued replay.
-      getAuthHeaders: (principal) =>
-        principal.kind === "user" && readSession()?.userId === principal.principalId ? {} : null,
+      // A token issued for exactly this principal: every queued replay sends
+      // it and no cookies (another tab may switch the cookie).
+      getAuthHeaders: (principal) => {
+        const session = readSession();
+        return principal.kind === "user" && session?.userId === principal.principalId
+          ? { Authorization: `Bearer ${session.accessToken}` }
+          : null;
+      },
     },
   });
 }

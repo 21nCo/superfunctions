@@ -406,7 +406,14 @@ export function createFileFnClient(config: FileFnClientConfig): FileFnClient {
     }
     if (!offlineQueue) {
       // Captured now: later changes to `config` never redirect queued work.
-      const transport: FileFnClientConfig = { ...config, getAuthHeaders: undefined, offline: undefined };
+      // No ambient cookies unless opted in: they act for whoever signed in
+      // last, in any tab, not for the partition.
+      const transport: FileFnClientConfig = {
+        ...config,
+        getAuthHeaders: undefined,
+        offline: undefined,
+        credentials: config.offline.replayAmbientCredentials === true ? config.credentials : 'omit',
+      };
       let queue: OfflineQueue | undefined;
       queue = new OfflineQueue({
         ...config.offline.queue,

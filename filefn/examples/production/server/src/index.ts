@@ -125,6 +125,9 @@ app.use(
       "Authorization",
       "x-filefn-client-version",
       "x-request-id",
+      // Sent by keyed uploads and every offline replay (@filefn/client).
+      "x-idempotency-key",
+      "x-upload-session-token",
     ],
   }),
 );

@@ -270,6 +270,13 @@ function isExpiredAt(expiresAt: string): boolean {
   return expiresAtMs <= Date.now();
 }
 
+// A session that takes no more part work: recorded as 'expired' (a replay
+// reported it ended, so its client starts again under a new key: every
+// worker honours that, whatever its clock says), or past its expiry.
+function isSessionExpired(session: Pick<UploadSession, 'status' | 'expiresAt'>): boolean {
+  return session.status === 'expired' || isExpiredAt(session.expiresAt);
+}
+
 async function forEachBodyChunk(
   body: ReadableStream | Blob | Buffer,
   onChunk: (chunk: Uint8Array) => Promise<void> | void
@@ -506,6 +513,8 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
   // the nonces of the earlier retakes whose stitched objects may remain
   // (comma-separated), so every one of them stays known until deleted.
   async function claimCompletion(session: UploadSession): Promise<{ claim: string } | { current: UploadSession | null }> {
+    // An ended session is never claimed, whatever this process's clock says.
+    if (session.status === 'expired') return { current: session };
     const nonce = randomBytes(6).toString('hex');
     let claim = `${new Date().toISOString()} ${nonce}`;
     if (session.completionClaim) {
@@ -1838,7 +1847,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       if (session.status === 'completed') throw errors.uploadAlreadyCompleted();
       // The completion has read the parts it publishes.
       if (session.status === 'completing' || session.status === 'publishing') throw errors.uploadCompletionInProgress();
-      if (isExpiredAt(session.expiresAt)) throw errors.uploadExpired();
+      if (isSessionExpired(session)) throw errors.uploadExpired();
       // Init refuses more than 10,000 parts; a session created before that
       // keeps its declared part range (cleanup of its unrecorded parts stops
       // at the cap).
@@ -1902,7 +1911,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       if (session.status === 'completed') throw errors.uploadAlreadyCompleted();
       // The completion has read the parts it publishes.
       if (session.status === 'completing' || session.status === 'publishing') throw errors.uploadCompletionInProgress();
-      if (isExpiredAt(session.expiresAt)) throw errors.uploadExpired();
+      if (isSessionExpired(session)) throw errors.uploadExpired();
       // Init refuses more than 10,000 parts; a session created before that
       // keeps its declared part range (cleanup of its unrecorded parts stops
       // at the cap).
@@ -1986,7 +1995,11 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       // session's parts are never used again, and its cleanup may already
       // have run.
       const afterWrite = await readSession(uploadSessionId).catch(() => 'unknown' as const);
-      if (afterWrite === null || (afterWrite !== 'unknown' && (isAbortedStatus(afterWrite.status) || afterWrite.status === 'completed'))) {
+      if (
+        afterWrite === null ||
+        (afterWrite !== 'unknown' &&
+          (isAbortedStatus(afterWrite.status) || afterWrite.status === 'completed' || afterWrite.status === 'expired'))
+      ) {
         if (storage.deleteObject) {
           await storage.deleteObject({ key: partKey, target: storageTarget }).catch(() => {});
         }
@@ -1994,6 +2007,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         // completed, so a client replays it under the same key and reconciles
         // the stored version instead of starting over.
         if (afterWrite === null) throw errors.sessionNotFound();
+        if (afterWrite.status === 'expired') throw errors.uploadExpired();
         throw afterWrite.status === 'completed' ? errors.uploadAlreadyCompleted() : errors.uploadAborted();
       }
 
@@ -2036,7 +2050,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       if (session.status === 'completed') throw errors.uploadAlreadyCompleted();
       // The completion has read the parts it publishes.
       if (session.status === 'completing' || session.status === 'publishing') throw errors.uploadCompletionInProgress();
-      if (isExpiredAt(session.expiresAt)) throw errors.uploadExpired();
+      if (isSessionExpired(session)) throw errors.uploadExpired();
       // Init refuses more than 10,000 parts; a session created before that
       // keeps its declared part range (cleanup of its unrecorded parts stops
       // at the cap).
@@ -2099,6 +2113,8 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       let parts: Array<{ partNumber: number; etag: string }> = [];
       while (claim === undefined) {
         if (isAbortedStatus(session.status)) throw errors.uploadAborted();
+        // Recorded as ended when a replay reported it so: never completed after.
+        if (session.status === 'expired') throw errors.uploadExpired();
         if (session.status === 'completed') return recordedResult(session);
         if (session.status === 'publishing') return publishSession(session, ctx);
         if (!(session.status === 'completing' && !isStaleClaim(session))) {

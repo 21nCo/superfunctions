@@ -381,6 +381,33 @@ describe('session outcomes a replay settles under the same key', () => {
     expect(await server.database.findMany({ model: 'fileVersions' })).toHaveLength(0);
   });
 
+  it('takes no more part work and no completion for a session recorded as expired, whatever the worker clock says', async () => {
+    let endNow: (() => Promise<void>) | undefined;
+    const server = await createServer(async () => endNow?.());
+    const session = await server.fileFn.createUploadSession(init, owner);
+    await server.fileFn.services.uploads.uploadPartBytes(session.uploadSessionId, 1, body(4), 4, owner);
+    // A replay ended it; this worker's clock still puts its expiry in the future.
+    await server.updateSession(session.uploadSessionId, { status: 'expired', expiresAt: new Date(Date.now() + 3_600_000).toISOString() });
+    const uploads = server.fileFn.services.uploads;
+    const expired = { code: 'FILEFN_UPLOAD_EXPIRED' };
+    await expect(uploads.signPart(session.uploadSessionId, 1, 4, owner)).rejects.toMatchObject(expired);
+    await expect(uploads.uploadPartBytes(session.uploadSessionId, 1, body(4), 4, owner)).rejects.toMatchObject(expired);
+    await expect(uploads.completePart(session.uploadSessionId, 1, 'test-etag', 4, owner)).rejects.toMatchObject(expired);
+    await expect(server.fileFn.completeUploadSession({ uploadSessionId: session.uploadSessionId }, owner)).rejects.toMatchObject(expired);
+    expect((await server.session(session.uploadSessionId)).status).toBe('expired');
+    expect(await server.database.findMany({ model: 'fileVersions' })).toHaveLength(0);
+
+    // A proxy part write that the replay's end overtakes is not recorded either.
+    const other = await server.fileFn.createUploadSession({ ...init, fileId: 'file_00000000outcome3' }, owner);
+    endNow = async () => {
+      endNow = undefined;
+      await server.updateSession(other.uploadSessionId, { status: 'expired' });
+    };
+    await expect(uploads.uploadPartBytes(other.uploadSessionId, 1, body(4), 4, owner)).rejects.toMatchObject(expired);
+    const parts = await server.database.findMany<Record<string, any>>({ model: 'uploadParts' });
+    expect(parts.filter((part) => part.uploadSessionId === other.uploadSessionId)).toHaveLength(0);
+  });
+
   it('finishes an expired session an earlier FileFn left partly published instead of reporting it ended', async () => {
     const server = await createServer();
     const key = 'test-replay-key-0102';

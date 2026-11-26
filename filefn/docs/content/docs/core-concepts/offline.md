@@ -27,9 +27,12 @@ const client = createFileFnClient({
     // Who the credentials act for right now, from local state (it is called
     // offline too); queued work runs and is shown only while it matches.
     currentPrincipal: () => (session.userId ? { kind: "user", principalId: session.userId } : null),
-    // Credentials issued for exactly this principal, sent by queued replays.
-    getAuthHeaders: (principal) =>
-      principal.kind === "user" && principal.principalId === session.userId ? {} : null,
+    // A token issued for exactly this principal: queued replays send it and
+    // no cookies (another tab may switch the cookie). Null when there is none.
+    getAuthHeaders: (principal) => {
+      const token = principal.kind === "user" ? readStoredAccessToken(principal.principalId) : null;
+      return token ? { Authorization: `Bearer ${token}` } : null;
+    },
   },
 });
 
