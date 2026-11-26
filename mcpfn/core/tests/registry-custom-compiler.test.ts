@@ -360,6 +360,30 @@ describe("McpFnRegistry custom compiler authority", () => {
     expect(compileSchema).toHaveBeenCalledTimes(3);
   });
 
+  it("reuses a failed registration's compile for its retry while another tool holds an equal schema", async () => {
+    const { McpFnRegistry } = await import("../src/index.js");
+    // Accepts two schemas with one $id and rejects the third.
+    const seen = new Map<unknown, number>();
+    const compileSchema = vi.fn((schema: object) => {
+      const id = (schema as { $id?: unknown }).$id;
+      const count = (seen.get(id) ?? 0) + 1;
+      seen.set(id, count);
+      if (count > 2) throw new Error(`schema with key or id "${String(id)}" already exists`);
+      if ((schema as { properties?: { ok?: { type?: unknown } } }).properties?.ok?.type === "nonsense") {
+        throw new Error("invalid output schema");
+      }
+      return Object.assign(() => true, { errors: null });
+    });
+    const registry = new McpFnRegistry({ compileSchema }).register(tool("a"));
+    const output = (type: string) => ({ type: "object", properties: { ok: { type } } }) as never;
+    expect(() => registry.register({ ...tool("b"), outputSchema: output("nonsense") }))
+      .toThrow("Tool b contains an invalid JSON Schema");
+
+    registry.register({ ...tool("b"), outputSchema: output("boolean") });
+    expect(() => registry.register(tool("c"))).toThrow("Tool c contains an invalid JSON Schema");
+    expect(registry.listTools().map((listed) => listed.name)).toEqual(["a", "b"]);
+  });
+
   it("compiles in each independent registry that shares one compiler", async () => {
     const { McpFnRegistry } = await import("../src/index.js");
     const compileSchema = vi.fn((schema: object) => new Ajv2020({ strict: false }).compile(schema));

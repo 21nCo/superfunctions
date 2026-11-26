@@ -596,7 +596,8 @@ interface DialectKeywords {
 const COMMON_SINGLE = ["additionalProperties", "contains", "propertyNames", "not", "if", "then", "else", "items"];
 const COMMON_MAPS = ["$defs", "definitions", "properties", "patternProperties"];
 const MODERN_SINGLE = [...COMMON_SINGLE, "unevaluatedItems", "unevaluatedProperties", "contentSchema"];
-const MODERN_MAPS = [...COMMON_MAPS, "dependentSchemas"];
+// Ajv still evaluates schema-valued `dependencies` in 2019-09 and 2020-12.
+const MODERN_MAPS = [...COMMON_MAPS, "dependentSchemas", "dependencies"];
 const DIALECT_KEYWORDS: Record<ReferenceDialect, DialectKeywords> = {
   draft7: {
     single: [...COMMON_SINGLE, "additionalItems"],
@@ -625,7 +626,7 @@ const DIALECT_KEYWORDS: Record<ReferenceDialect, DialectKeywords> = {
   any: {
     single: [...MODERN_SINGLE, "additionalItems"],
     arrays: ["allOf", "anyOf", "oneOf", "items", "prefixItems"],
-    maps: [...MODERN_MAPS, "dependencies"],
+    maps: MODERN_MAPS,
     references: ["$ref", "$recursiveRef", "$dynamicRef"],
     anchors: ["$anchor", "$dynamicAnchor"],
     idAnchors: true,
@@ -664,6 +665,8 @@ function forEachDialectSubschema(
 interface ReferenceResource {
   document: Record<string, unknown>;
   anchors: Set<string>;
+  // The scope at the resource root, for a JSON Pointer target inside it.
+  scope?: ReferenceScope;
 }
 
 interface ReferenceScope {
@@ -677,6 +680,7 @@ interface ReferenceScope {
 interface ReferenceScan {
   resources: Map<string, ReferenceResource>;
   references: Array<{ reference: string; scope: ReferenceScope }>;
+  visited: Set<object>;
 }
 
 function isFragmentOnly(reference: string): boolean {
@@ -684,6 +688,8 @@ function isFragmentOnly(reference: string): boolean {
 }
 
 function scanReferences(schema: Record<string, unknown>, parent: ReferenceScope, scan: ReferenceScan): void {
+  if (scan.visited.has(schema)) return;
+  scan.visited.add(schema);
   const dialect = referenceDialect(schema, parent.dialect);
   const keywords = DIALECT_KEYWORDS[dialect];
   let scope: ReferenceScope = { ...parent, dialect };
@@ -696,6 +702,7 @@ function scanReferences(schema: Record<string, unknown>, parent: ReferenceScope,
       if (keywords.idAnchors && fragment) scope.resource.anchors.add(fragment);
     } else {
       scope = { base: resource, dialect, resource: { document: schema, anchors: new Set() }, anonymous: false };
+      scope.resource.scope = scope;
       if (!scan.resources.has(resource)) scan.resources.set(resource, scope.resource);
       if (keywords.idAnchors && fragment && !fragment.startsWith("/")) scope.resource.anchors.add(fragment);
     }
@@ -708,19 +715,28 @@ function scanReferences(schema: Record<string, unknown>, parent: ReferenceScope,
     const reference = schema[keyword];
     if (typeof reference === "string") scan.references.push({ reference, scope });
   }
+  // Up to draft-07 (and in Ajv's draft-07 engine) keywords beside $ref are ignored.
+  if (dialect === "draft7" && typeof schema.$ref === "string") return;
   forEachDialectSubschema(schema, dialect, (subschema) => scanReferences(subschema, scope, scan));
 }
 
-function resolvesPointer(document: unknown, pointer: string): boolean {
+const UNRESOLVED = Symbol("unresolved");
+
+function pointerTarget(document: unknown, pointer: string): unknown {
   let node = document;
   for (const token of pointer.split("/").slice(1)) {
     const key = token.replaceAll("~1", "/").replaceAll("~0", "~");
-    if (!node || typeof node !== "object" || !Object.hasOwn(node, key)) return false;
+    if (!node || typeof node !== "object" || !Object.hasOwn(node, key)) return UNRESOLVED;
     node = (node as Record<string, unknown>)[key];
   }
-  return true;
+  return node;
 }
 
+/**
+ * Whether a reference resolves. A JSON Pointer may name a location the
+ * dialect walk does not read (inside `default`, for example), so its target
+ * is then scanned as a schema of the resource it points into.
+ */
 function resolvesReference(scan: ReferenceScan, reference: string, scope: ReferenceScope): boolean {
   const resolved = resolveSchemaUri(reference, scope.base);
   const resourceUri = schemaResourceUri(resolved);
@@ -730,7 +746,13 @@ function resolvesReference(scan: ReferenceScan, reference: string, scope: Refere
   if (!resource) return false;
   const fragment = decodeURIComponent(resolved.slice(resourceUri.length + 1));
   if (fragment === "") return true;
-  return fragment.startsWith("/") ? resolvesPointer(resource.document, fragment) : resource.anchors.has(fragment);
+  if (!fragment.startsWith("/")) return resource.anchors.has(fragment);
+  const target = pointerTarget(resource.document, fragment);
+  if (target === UNRESOLVED) return false;
+  if (target && typeof target === "object" && !Array.isArray(target)) {
+    scanReferences(target as Record<string, unknown>, resource.scope ?? scope, scan);
+  }
+  return true;
 }
 
 /**
@@ -756,17 +778,21 @@ export function validateSchemaReferences(schemas: readonly object[]): void {
   while (origins.has(`https://${index}${relativeSchemaHostSuffix}`)) index += 1;
   const relativeBase = `https://${index}${relativeSchemaHostSuffix}/`;
 
-  const scan: ReferenceScan = { resources: new Map(), references: [] };
+  const scan: ReferenceScan = { resources: new Map(), references: [], visited: new Set() };
   for (const schema of schemas) {
     const document = schema as Record<string, unknown>;
-    scanReferences(document, {
+    const scope: ReferenceScope = {
       base: relativeBase,
       dialect: "any",
       resource: { document, anchors: new Set() },
       anonymous: true,
-    }, scan);
+    };
+    scope.resource.scope = scope;
+    scanReferences(document, scope, scan);
   }
-  for (const { reference, scope } of scan.references) {
+  // Resolving a pointer can scan its target and add references.
+  for (let next = 0; next < scan.references.length; next += 1) {
+    const { reference, scope } = scan.references[next];
     if (!resolvesReference(scan, reference, scope)) {
       throw new Error(`Unresolved reference "${reference}". Absolute URI "${resolveSchemaUri(reference, scope.base)}".`);
     }

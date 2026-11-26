@@ -48,9 +48,10 @@ describe("fromOpenAPI scale", () => {
     expect(elapsed).toBeLessThan(2000);
   });
 
-  // SFNS-107 PR round 2: a custom compileSchema registry finds a reusable
-  // validator in constant time, so 2,000 operations whose input and output
-  // schemas are all equal register as fast as on the built-in engine.
+  // SFNS-107 PR round 2: with a custom compileSchema, each of 2,000
+  // operations whose input and output schemas are all equal still reaches the
+  // compiler (4,000 compiles), and checking for a reusable validator stays
+  // constant time per schema, so registration stays linear.
   it("registers 2,000 operations with equal schemas on a custom compiler within 2 seconds", () => {
     const paths: Record<string, unknown> = {};
     for (let index = 0; index < 2000; index += 1) {

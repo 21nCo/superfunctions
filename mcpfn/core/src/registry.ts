@@ -311,14 +311,16 @@ function collectionError(schemas: object[], custom: boolean): unknown {
  * Validators a custom compiler returned to one registry or any copy derived
  * from it (clone(), cloneEmpty(), a server declaration's copy). Such a
  * compiler may hold state the registry cannot roll back (an Ajv instance keeps
- * each compiled `$id`), so a registry that holds no equal schema reuses the
- * lineage's validator for it (a retry after a failed registration or
- * declaration) instead of compiling it again. A registry that already holds
- * an equal schema compiles another one, which meets the compiler's own rules,
- * and independent registries sharing one compiler share nothing.
+ * each compiled `$id`). A validator compiled by a registration that failed is
+ * parked and used once by the next equal schema (the retry). Otherwise a
+ * registry that holds no equal schema reuses the lineage's validator for it
+ * (a retry of a failed declaration, whose copy was discarded), and one that
+ * already holds an equal schema compiles another, which meets the compiler's
+ * own rules. Independent registries sharing one compiler share nothing.
  */
 interface CompileLineage {
   compiled: Map<string, SchemaEntry[]>;
+  parked: Map<string, SchemaEntry[]>;
 }
 
 /** JSON value equality that tells 0 from -0, unlike comparing JSON text. */
@@ -1048,7 +1050,7 @@ export class McpFnRegistry<TContext = undefined> {
   private compileAttempts = 0;
   // The custom compiler's validators in this registry's lineage, and the
   // accepted entries by snapshot text (see CompileLineage).
-  private lineage: CompileLineage = { compiled: new Map() };
+  private lineage: CompileLineage = { compiled: new Map(), parked: new Map() };
   private readonly held = new Map<string, SchemaEntry[]>();
 
   /**
@@ -1188,6 +1190,9 @@ export class McpFnRegistry<TContext = undefined> {
     if (!this.customCompile) return this.builtIn!.compile(schema);
     const text = snapshotText(schema);
     const equal = (entry: SchemaEntry) => sameJson(entry.snapshot, schema);
+    const parked = this.lineage.parked.get(text);
+    const retried = parked?.findIndex(equal) ?? -1;
+    if (retried >= 0) return parked!.splice(retried, 1)[0].validator;
     const compiled = this.lineage.compiled.get(text);
     // A registry that holds an equal schema compiles another one, so the
     // compiler's own rules (a duplicate `$id`) apply to it.
@@ -1230,6 +1235,10 @@ export class McpFnRegistry<TContext = undefined> {
         body();
       } catch (error) {
         if (this.builtIn && this.compileAttempts !== attempts) this.resetBuiltIn();
+        for (const entry of this.customCompile ? pending : []) {
+          const text = snapshotText(entry.snapshot);
+          this.lineage.parked.set(text, [...(this.lineage.parked.get(text) ?? []), entry]);
+        }
         throw error;
       } finally {
         this.pending = undefined;

@@ -678,6 +678,17 @@ describe("validateSchemaReferences", () => {
       dependentSchemas: { a: { $ref: "https://test.invalid/modern#/$defs/leaf" } },
     }]],
     ["a reference in a location draft-07 does not read", [{ $schema: draft07, prefixItems: [{ $ref: "#/missing" }] }]],
+    ["a draft-07 $ref whose ignored sibling refers outside", [{
+      $schema: draft07,
+      $ref: "#/definitions/a",
+      definitions: { a: { type: "string" } },
+      properties: { b: { $ref: "https://test.invalid/external" } },
+    }]],
+    ["a pointer into annotation data that resolves inside", [{
+      properties: { a: { $ref: "#/default/leaf" } },
+      default: { leaf: { $ref: "#/definitions/x" } },
+      definitions: { x: { type: "string" } },
+    }]],
   ])("accepts %s", (_name, schemas) => {
     expect(() => validateSchemaReferences(schemas)).not.toThrow();
   });
@@ -702,6 +713,12 @@ describe("validateSchemaReferences", () => {
       { $ref: "shared" },
     ]],
     ["a reference naming a synthetic collection identifier", [{ $ref: "https://schema-collection.mcpfn.invalid/0-0" }]],
+    ["an outside reference reached through a pointer into annotation data", [{
+      properties: { a: { $ref: "#/default/leaf" } },
+      default: { leaf: { $ref: "https://test.invalid/external" } },
+    }]],
+    ["an outside reference in draft 2019-09 dependencies", [{ $schema: draft2019, dependencies: { a: { $ref: "https://test.invalid/external" } } }]],
+    ["an outside reference in draft 2020-12 dependencies", [{ $schema: draft2020, dependencies: { a: { $ref: "https://test.invalid/external" } } }]],
     ["a missing pointer in draft 2020-12 prefixItems", [{ $schema: draft2020, prefixItems: [{ $ref: "#/missing" }] }]],
     ["a missing pointer in prefixItems without $schema", [{ prefixItems: [{ $ref: "#/missing" }] }]],
     ["a missing anchor in draft 2020-12 unevaluatedProperties", [{ $schema: draft2020, unevaluatedProperties: { $ref: "#nowhere" } }]],
