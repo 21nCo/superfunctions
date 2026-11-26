@@ -81,6 +81,7 @@ import {
 } from "./plugins/public-links.js";
 import { getDatafnMultiRegionRuntimeConfig } from "./plugins/multi-region.js";
 import {
+  DATAFN_ROUTING_ASSERTION_HEADER,
   DatafnRoutingError,
   prepareDatafnRoutingRequest,
   type PreparedDatafnRoutingRequest,
@@ -1520,6 +1521,15 @@ export async function createDatafnServer<TContext = any>(
         // (placement and route-ticket validation with the query scope, plugin
         // and host authorization, query hooks), on a context the configured
         // factory builds afresh from that request, in the push's namespace.
+        // A routing assertion is bound to the push request's path and body,
+        // so it cannot admit the read: a push the gateway's assertion
+        // admitted reads in process (placement and fencing are checked
+        // again, every authorization and query hook still runs), while a
+        // route ticket is validated again for the read with the query scope.
+        const assertionAdmitted = Boolean(verifyHttpPlacement) && Boolean(
+          req.headers.get(multiRegionRuntime?.placement?.assertionHeader ?? DATAFN_ROUTING_ASSERTION_HEADER)?.trim(),
+        );
+        const readOrigin = assertionAdmitted ? "executor" : origin;
         const readPostWriteRows: PostWriteRowReader | undefined = action === "push"
           ? async (resource, ids) => {
             const rows = new Map<string, Record<string, unknown>>();
@@ -1545,8 +1555,11 @@ export async function createDatafnServer<TContext = any>(
                 ? await (configuredContext as (request: Request) => Promise<TContext> | TContext)(readRequest)
                 : configuredContext ?? ({} as TContext);
               const readCtx = mergeContexts(readUserCtx as object, createRouteContext(readRequest, {})) as TContext;
-              if ((await extractNamespace(createEnrichedContext(readCtx))) !== pushNamespace) return rows;
-              const response = await withAuthUnannounced("query", queryHandler, origin)(readRequest, readCtx);
+              // The namespace the query handler resolves, with its parsed payload in place.
+              const namespaceProbe = createEnrichedContext(readCtx);
+              namespaceProbe.parsedBody = readPayload;
+              if ((await extractNamespace(namespaceProbe)) !== pushNamespace) return rows;
+              const response = await withAuthUnannounced("query", queryHandler, readOrigin)(readRequest, readCtx);
               if (!response.ok) continue;
               const body = (await response.json()) as { ok?: boolean; result?: { data?: unknown } };
               if (body?.ok !== true || !Array.isArray(body.result?.data)) continue;

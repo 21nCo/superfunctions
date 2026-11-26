@@ -243,6 +243,14 @@ function hasArchivableCapability(resolvedCapabilities: unknown[]): boolean {
   return resolvedCapabilities.some((entry) => entry === "archivable");
 }
 
+/** DATA-41: a row's JSON wire form with its keys sorted, for comparing rows. */
+function canonicalRow(row: Record<string, unknown>): string {
+  return JSON.stringify(JSON.parse(JSON.stringify(row)), (_key, value: unknown) =>
+    value && typeof value === "object" && !Array.isArray(value)
+      ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, (value as Record<string, unknown>)[key]]))
+      : value);
+}
+
 /**
  * DATA-41: reads records back through the caller's own `/query` route, with
  * all of its admission (route tickets, plugin and host authorization, query
@@ -493,7 +501,7 @@ export async function executePush(
    * DATA-41: a post-write row is disclosed only when the caller's own query
    * of that record, run after every write of the push (so no write of the
    * batch can make the decision stale) and outside any write transaction,
-   * returns it at the same revision; that query's row is the one returned.
+   * returns exactly that row at the same revision.
    * Without a reader (direct handler use, where no host read policy applies)
    * the row read in the write's transaction is returned.
    */
@@ -520,12 +528,16 @@ export async function executePush(
         // Fail closed: the revision is returned without a row.
       }
     }));
+    // The query proves only that the caller may read the row: the row
+    // returned is the one read in the write's transaction, and only when the
+    // query returned exactly that row (a hook that redirects, rewrites or
+    // trims it leaves the revision alone).
     for (const [mutationId, revision] of Object.entries(settled)) {
       if (!revision.record) continue;
       const row = readBack.get(revision.resource)?.get(revision.id);
-      settled[mutationId] = row?.[REVISION_FIELD] === revision.rev
-        ? { ...revision, record: row }
-        : { resource: revision.resource, id: revision.id, rev: revision.rev };
+      if (!row || canonicalRow(row) !== canonicalRow(revision.record)) {
+        settled[mutationId] = { resource: revision.resource, id: revision.id, rev: revision.rev };
+      }
     }
     return settled;
   };

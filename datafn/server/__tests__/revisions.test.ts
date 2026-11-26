@@ -23,7 +23,14 @@ import { resolveNamespaceStoragePlan } from "../src/namespace-storage.js";
 import { createMemoryIndexedDirectoryStore } from "@superfunctions/db/adapters";
 import { datafnMultiRegionPlugin } from "../src/plugins/multi-region.js";
 import { createDatafnHmacRouteTickets } from "../src/regional-tickets.js";
-import { claimDatafnNamespacePlacement, createMemoryDatafnPlacementDirectory } from "../src/multi-region-routing.js";
+import {
+  claimDatafnNamespacePlacement,
+  createDatafnGatewayRouter,
+  createDatafnHmacRoutingAssertions,
+  createMemoryDatafnPlacementDirectory,
+  createMemoryDatafnRoutingReplayStore,
+  withDatafnRoutingAssertion,
+} from "../src/multi-region-routing.js";
 
 type Json = Record<string, any>;
 const NS = "datafn";
@@ -2908,5 +2915,64 @@ describe("DATA-41 revisions: PR review round 2", () => {
 
     const shown = await push({ resource: "task", operation: "insert", id: "task:shown", record: { title: "c" } });
     expect(shown.body.result.revisions[shown.mutationId].record).toMatchObject({ id: "task:shown", title: "c", $rev: 1 });
+  });
+
+  it("returns the write's own row only when the caller's query returns exactly that row", async () => {
+    // afterQuery rewrites a field but keeps id and $rev; beforeQuery redirects task:moved reads to project.
+    const hooks = {
+      name: "rewriting-hooks",
+      runsOn: ["server"],
+      beforeQuery: (_ctx: unknown, query: Json) =>
+        JSON.stringify(query.filters ?? {}).includes("task:moved") ? { ...query, resource: "project" } : query,
+      afterQuery: (_ctx: unknown, _query: unknown, result: Json) =>
+        ({ ...result, data: result.data.map((row: Json) => (row.id === "task:redacted" ? { ...row, title: "[hidden]" } : row)) }),
+    };
+    const { push } = await serve({ config: { plugins: [hooks] } });
+    const redacted = await push({ resource: "task", operation: "insert", id: "task:redacted", record: { title: "secret" } });
+    expect(redacted.body.result.revisions[redacted.mutationId]).toEqual({ resource: "task", id: "task:redacted", rev: 1 });
+    await push({ resource: "project", operation: "insert", id: "task:moved", record: { name: "other" } });
+    const moved = await push({ resource: "task", operation: "insert", id: "task:moved", record: { title: "mine" } });
+    expect(moved.body.result.revisions[moved.mutationId]).toEqual({ resource: "task", id: "task:moved", rev: 1 });
+    const plain = await push({ resource: "task", operation: "insert", id: "task:plain", record: { title: "p" } });
+    expect(plain.body.result.revisions[plain.mutationId].record).toMatchObject({ id: "task:plain", title: "p", $rev: 1 });
+
+    // A namespace provider that picks another namespace for a parsed versioned query.
+    const scoped = await serve({ config: { namespaceProvider: {
+      getNamespace: (ctx: Json) => (ctx?.parsedBody?.withRevisions === true ? "elsewhere" : NS),
+    } } });
+    const elsewhere = await scoped.push({ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } });
+    expect(elsewhere.body.result.revisions[elsewhere.mutationId]).toEqual({ resource: "task", id: "task:1", rev: 1 });
+  });
+
+  it("keeps post-write rows for a push a gateway routing assertion admitted", async () => {
+    const directory = createMemoryDatafnPlacementDirectory();
+    await claimDatafnNamespacePlacement({ directory, namespace: "tenant", regionId: "eu" });
+    const assertions = createDatafnHmacRoutingAssertions({ activeKeyId: "v1", keys: { v1: "test-only-secret" } });
+    const server = await createDatafnServer({
+      schema, database: memoryAdapter(), allowUnknownResources: true, revisions: { enabled: true },
+      context: () => ({ namespace: "tenant" }),
+      namespaceProvider: { getNamespace: (context: { namespace: string }) => context.namespace },
+      authorize: (_ctx: unknown, action: string, payload: Json) => action !== "query" || payload?.resource !== "project",
+      plugins: [datafnMultiRegionPlugin({ regionId: "eu", directory: createMemoryIndexedDirectoryStore(),
+        placement: { directory, requireRoutingAssertion: true, assertionVerifier: assertions, replayStore: createMemoryDatafnRoutingReplayStore() } })],
+    } as any);
+    const gateway = createDatafnGatewayRouter({
+      directory,
+      deriveNamespace: () => "tenant",
+      cellRegistry: { resolve: () => (request: Request) => server.router.handle(request) },
+      dispatcher: { dispatch: ({ target, request, assertion }) => target(withDatafnRoutingAssertion(request, assertion), "tenant") },
+      assertionSigner: assertions,
+    } as any);
+    const pushVia = async (resource: string, id: string, record: Json) => {
+      const res = await gateway.handle(new Request("https://data.example/datafn/push", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ clientId: "c", mutations: [{ version: 1, clientId: "c", mutationId: id, resource, operation: "insert", id, record }] }),
+      }));
+      return ((await res.json()) as Json).result?.revisions?.[id];
+    };
+    expect((await pushVia("task", "task:1", { title: "t" })).record).toMatchObject({ id: "task:1", title: "t", $rev: 1 });
+    // The host's read rule still applies to the in-process read.
+    expect(await pushVia("project", "project:1", { name: "p" })).toEqual({ resource: "project", id: "project:1", rev: 1 });
   });
 });
