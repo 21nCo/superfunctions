@@ -3235,5 +3235,65 @@ describe("DATA-41 revisions: PR review round 3", () => {
     await new Promise((resolve) => setTimeout(resolve, 10));
     expect(cancelled).toEqual(["stall", "deny"]);
   });
+
+  it("checks the read-back deadline on every body chunk, not only on the timer", async () => {
+    const served = await serve();
+    // A body that keeps chunks ready (each read resumes in a microtask) for
+    // longer than the deadline, then completes a valid document holding the row.
+    served.server.router.use(async (request, _ctx, next) => {
+      const response = await next();
+      if (!isQuery(request)) return response;
+      const text = await response.text();
+      const stopAt = Date.now() + 2_500;
+      let sent = false;
+      return new Response(new ReadableStream<Uint8Array>({
+        pull(controller) {
+          const busyUntil = Date.now() + 2;
+          while (Date.now() < busyUntil) { /* keep the chunk ready */ }
+          if (Date.now() < stopAt) return controller.enqueue(new TextEncoder().encode(" "));
+          if (!sent) { sent = true; return controller.enqueue(new TextEncoder().encode(text)); }
+          controller.close();
+        },
+      }), { status: response.status, headers: response.headers });
+    });
+    const res = await served.push({ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } });
+    expect(res.body.result.revisions[res.mutationId]).toEqual({ resource: "task", id: "task:1", rev: 1 });
+  });
+
+  it("cancels a stalled route-hook body and skips a read-back admitted after its deadline", async () => {
+    let stall = true;
+    let cancelled = 0;
+    let queries = 0;
+    const served = await serve({ config: {
+      routeHooks: {
+        afterResponse: ({ action, response }: { action: string; response: Response }) => !stall || action !== "query" ? response
+          : new Response(new ReadableStream<Uint8Array>({
+            start(controller) { controller.enqueue(new TextEncoder().encode("{")); },
+            cancel() { cancelled += 1; },
+          }), { status: 200, headers: { "content-type": "application/json" } }),
+      },
+      plugins: [{ name: "count", runsOn: ["server"], beforeQuery: (_ctx: unknown, query: unknown) => { queries += 1; return query; } }],
+    } });
+    const stalled = await served.push({ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } });
+    expect(stalled.body.result.revisions[stalled.mutationId]).toEqual({ resource: "task", id: "task:1", rev: 1 });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(cancelled).toBe(1);
+
+    // Router middleware that holds /query requests past the deadline before admitting them.
+    stall = false;
+    queries = 0;
+    let delayed: Promise<unknown> | undefined;
+    served.server.router.use(async (request, _ctx, next) => {
+      if (!isQuery(request)) return next();
+      delayed = new Promise((resolve) => setTimeout(resolve, 2_300));
+      await delayed;
+      return next();
+    });
+    const late = await served.push({ resource: "task", operation: "insert", id: "task:2", record: { title: "b" } });
+    expect(late.body.result.revisions[late.mutationId]).toEqual({ resource: "task", id: "task:2", rev: 1 });
+    await delayed;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(queries).toBe(0);
+  });
 });
 
