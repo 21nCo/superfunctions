@@ -49,15 +49,25 @@ interface WebhookDispatchScope {
 export const prepareWebhookDelivery = Symbol('plugfn.prepareWebhookDelivery');
 
 type WebhookPreparation = WebhookHandler[typeof prepareWebhookDelivery];
-// A shallow copy of the public facade keeps its handle function.
+type WebhookFacade = { handle: object; verify: object };
 const webhookPreparations = new WeakMap<object, WebhookPreparation>();
 
-export function registerWebhookPreparation(handle: object, prepare: WebhookPreparation): void {
-  webhookPreparations.set(handle, prepare);
+export function registerWebhookPreparation(facade: WebhookFacade, prepare: WebhookPreparation): void {
+  webhookPreparations.set(facade, prepare);
+  // Copies of the facade retain the original methods unless a caller wraps them.
+  webhookPreparations.set(facade.handle, prepare);
+  webhookPreparations.set(facade.verify, prepare);
 }
 
-export function prepareWebhookIngress(handle: object, ...args: Parameters<WebhookPreparation>): ReturnType<WebhookPreparation> {
-  const prepare = webhookPreparations.get(handle);
+export function prepareWebhookIngress(facade: WebhookFacade, ...args: Parameters<WebhookPreparation>): ReturnType<WebhookPreparation> {
+  let prepare = webhookPreparations.get(facade);
+  if (!prepare) {
+    const byHandle = webhookPreparations.get(facade.handle);
+    const byVerify = webhookPreparations.get(facade.verify);
+    if (!byHandle || !byVerify || byHandle === byVerify) {
+      prepare = byHandle ?? byVerify;
+    }
+  }
   if (!prepare) {
     throw new WebhookHandlerError('PLUGFN_NOT_READY', 'webhook ingress is not initialized', 503);
   }

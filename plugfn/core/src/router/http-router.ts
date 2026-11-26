@@ -909,7 +909,7 @@ async function handleWebhookRoute(
       payloadHash = legacyWebhookPayloadHash(provider, rawBody);
     }
     const verifyEvent = (routeEvent: string) => prepareWebhookIngress(
-      plugFn.webhooks.handle, provider, routeEvent, undefined, requestHeaders, secret, { rawBody }
+      plugFn.webhooks, provider, routeEvent, undefined, requestHeaders, secret, { rawBody }
     );
     let verification = await verifyEvent(resolvedEvent);
     if (verification.authenticatedWithoutSubject && resolvedEvent !== standaloneEvent) {

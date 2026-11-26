@@ -70,6 +70,23 @@ describe('webhook workflow admission', () => {
     expect(listener).toHaveBeenCalledOnce();
   });
 
+  it.each(['original', 'copy'] as const)('routes HTTP webhooks after wrapping handle on the %s SDK facade', async (facade) => {
+    const { runtime } = startRuntime(database, { withResolver: false });
+    const listener = vi.fn();
+    runtime.webhooks.on('test-provider', 'test.event', listener);
+    const plug = facade === 'copy' ? { ...runtime, webhooks: { ...runtime.webhooks } } : runtime;
+    const tracedHandle = vi.fn(plug.webhooks.handle);
+    plug.webhooks.handle = tracedHandle;
+    const router = createPlugFnRouter(plug, { webhookSecret: { 'test-provider': signingCredential } });
+
+    const response = await router.handle(new Request('https://app.example.test/webhooks/test-provider/test.event', {
+      method: 'POST', body: JSON.stringify({ id: 'test-delivery' }),
+    }));
+    expect(response.status).toBe(200);
+    expect(listener).toHaveBeenCalledOnce();
+    expect(tracedHandle).not.toHaveBeenCalled();
+  });
+
   it('keeps a scoped receipt bound when an application replaces its metadata', async () => {
     await seedWorkflow(database, 'one', firstBinding.tenantId, firstBinding.connectionId);
     const { runtime, send, action, resolveBinding } = startRuntime(database);
