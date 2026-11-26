@@ -1051,7 +1051,15 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
       if (!record && (await findReceipt(storeKey))) return { done: { outcome: "conflict" } };
       return { live };
     }
-    const receipt = await findReceipt(storeKey);
+    let receipt: ParsedReceipt | undefined;
+    try {
+      receipt = await findReceipt(storeKey);
+    } catch (error) {
+      // A receipt-source outage never hides a complete copy of a confirmed commit: it replays (or conflicts) from
+      // the store. A copy missing parts, and every other record, needs the receipt.
+      if (record?.state === "completed" && record.fromReceipt === true && record.response.omitted === undefined) return { live };
+      throw error;
+    }
     // A copy whose receipt the host pruned still holds a confirmed commit: it replays until its own retention ends.
     if (!receipt) return { live };
     if (holdsReceipt(live, receipt)) return { live, receipt };

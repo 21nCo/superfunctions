@@ -1873,6 +1873,25 @@ describe("createRequestIdempotency PR round-1 regressions", () => {
     expect((await idempotency.claim(orderRequest())).outcome).toBe("acquired");
   });
 
+  it("replays a complete confirmed copy from the store while the receipt source is down", async () => {
+    const database = new FakeOrderDatabase();
+    let down = false;
+    const receipts = {
+      find: async (storeKey: string) => {
+        if (down) throw new Error("receipt source unavailable");
+        return database.receipts.find(storeKey);
+      },
+    };
+    const { idempotency } = setup({ receipts });
+    const first = acquired(await idempotency.claim(orderRequest()));
+    const response = await database.createOrder(first, "book");
+    await idempotency.settle(first, response);
+    down = true;
+
+    expect(await idempotency.claim(orderRequest())).toEqual({ outcome: "replay", response, source: "store" });
+    expect(await idempotency.recover(orderRequest({ body: otherBody }))).toEqual({ outcome: "conflict" });
+  });
+
   it("lets a newer receipt the recheck validated decide when the write over an absence lost its acknowledgement", async () => {
     class RejectingCopyStore extends FakeAtomicStore {
       override async compareAndSet(storeKey: string, expectedVersion: string | null, next: IdempotencyRecord | null) {
