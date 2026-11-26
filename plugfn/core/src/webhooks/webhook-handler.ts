@@ -29,7 +29,12 @@ export interface WebhookAdmission {
   payloadHash?: string;
   assertActive?(): void;
   event(): WebhookEvent;
-  dispatch(options?: { skipListeners?: boolean }): Promise<WebhookEvent>;
+  dispatch(options?: WebhookDispatchOptions): Promise<WebhookEvent>;
+}
+
+interface WebhookDispatchOptions {
+  skipListeners?: boolean;
+  onListenersCompleted?(): void;
 }
 
 interface WebhookDispatchScope {
@@ -122,7 +127,7 @@ export class WebhookHandler {
     provider: string,
     prepared: VerifiedWebhook,
     scope?: WebhookDispatchScope,
-    skipListeners = false
+    { skipListeners = false, onListenersCompleted }: WebhookDispatchOptions = {}
   ): Promise<WebhookEvent> {
     const { triggerKey, trigger, transformedPayload, verified } = prepared;
     if (scope && (!(await scope.bindingIsCurrent()) || scope.revoked.aborted)) {
@@ -146,7 +151,8 @@ export class WebhookHandler {
     if (scope?.revoked.aborted) {
       throw webhookBindingRevoked();
     }
-    await this.emit(provider, triggerKey, { ...triggerEvent, ...webhookEvent }, scope, skipListeners);
+    const listenersCompleted = await this.emit(provider, triggerKey, { ...triggerEvent, ...webhookEvent }, scope, skipListeners);
+    if (listenersCompleted) onListenersCompleted?.();
 
     if (processedEventKey) {
       this.rememberProcessedEvent(processedEventKey);
@@ -276,7 +282,7 @@ export class WebhookHandler {
           authenticated && subject === undefined && this.getHandlerCount(provider, triggerKey) > 0
         )) {
           return {
-            dispatch: () => this.dispatchWebhook(provider, prepared),
+            dispatch: (options) => this.dispatchWebhook(provider, prepared, undefined, options),
             event: () => this.createWebhookEvent(provider, prepared),
           };
         }
@@ -342,7 +348,7 @@ export class WebhookHandler {
               throw webhookBindingRevoked();
             }
           },
-          dispatch: (options) => this.dispatchWebhook(provider, prepared, scope, options?.skipListeners),
+          dispatch: (options) => this.dispatchWebhook(provider, prepared, scope, options),
           event: () => this.createWebhookEvent(provider, prepared, scope),
         };
       },
@@ -439,12 +445,12 @@ export class WebhookHandler {
     webhookEvent: Parameters<TriggerHandler>[0],
     scope: WebhookDispatchScope | undefined,
     skipListeners: boolean
-  ): Promise<void> {
+  ): Promise<boolean> {
     const listeners = skipListeners ? undefined : this.handlers.get(handlerKey(provider, event));
     const workflowHandlers = scope && this.workflowHandlers.get(handlerKey(provider, event, scope.binding));
     if (!listeners?.size && !workflowHandlers?.size) {
       this.logger.debug(`No handlers registered for ${provider}.${event}`);
-      return;
+      return false;
     }
 
     if (scope && workflowHandlers) {
@@ -462,9 +468,11 @@ export class WebhookHandler {
     if (scope?.revoked.aborted) {
       throw webhookBindingRevoked();
     }
-    await this.settleHandlers(provider, event, [...(listeners ?? [])].map((handler) =>
+    const listenerCalls = [...(listeners ?? [])].map((handler) =>
       Promise.resolve().then(() => handler({ ...webhookEvent }))
-    ));
+    );
+    await this.settleHandlers(provider, event, listenerCalls);
+    return listenerCalls.length > 0;
   }
 
   private async settleHandlers(provider: string, event: string, calls: Promise<void>[]): Promise<void> {

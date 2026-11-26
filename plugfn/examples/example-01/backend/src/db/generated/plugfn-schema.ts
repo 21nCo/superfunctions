@@ -253,6 +253,7 @@ export const plugfn_webhook_deliveries = pgTable(
   sinkId: text('sink_id'),
   status: text('status').notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull(),
+  workflowScoped: boolean('workflow_scoped'),
   },
   (table) => ({
     idx_plugfn_webhook_deliveries_receipt: index('idx_plugfn_webhook_deliveries_receipt').on(table.receiptId),

@@ -265,13 +265,15 @@ export class AdapterRuntimeStorage {
     return this.adapter.updateWebhookReceipt(id, normalizedUpdates);
   }
 
-  createWebhookDelivery(input: CreateWebhookDeliveryInput): Promise<PlugFnWebhookDelivery> {
+  async createWebhookDelivery(input: CreateWebhookDeliveryInput): Promise<PlugFnWebhookDelivery> {
+    const receipt = await this.adapter.getWebhookReceipt(input.receiptId);
     const now = new Date();
     return this.adapter.createWebhookDelivery({
       id: generateId('whdel'),
       receiptId: input.receiptId,
       sinkId: input.sinkId,
       handlerName: input.handlerName,
+      ...(receipt?.workflowIdempotencyKey ? { workflowScoped: true } : {}),
       status: input.status ?? 'pending',
       attempts: 0,
       nextAttemptAt: input.nextAttemptAt,

@@ -552,62 +552,49 @@ class DbBackedPlugFnDatabaseAdapter implements PlugFnDatabaseStorageAdapter {
     limit = 100,
     leaseMs = WEBHOOK_DELIVERY_LEASE_MS
   ): Promise<PlugFnWebhookDelivery[]> {
-    const staleBefore = new Date(now.getTime() - leaseMs);
-    const [pending, failed, staleRunning] = await Promise.all([
-      this.listStandaloneWebhookRetries([
+    const pending = await this.database.findMany<PlugFnWebhookDelivery>({
+      model: this.models.webhookDeliveries,
+      // Legacy rows have no scope marker. Scoped attempts can only be retried
+      // through verified ingress, so exclude them before applying the limit.
+      where: [
         { field: 'status', operator: 'eq', value: 'pending' },
-      ], 'createdAt', now, limit),
-      this.listStandaloneWebhookRetries([
+        { field: 'workflowScoped', operator: 'eq', value: null },
+      ],
+      orderBy: [{ field: 'createdAt', direction: 'asc' }],
+      limit,
+    });
+
+    const failed = await this.database.findMany<PlugFnWebhookDelivery>({
+      model: this.models.webhookDeliveries,
+      where: [
         { field: 'status', operator: 'eq', value: 'failed' },
+        { field: 'workflowScoped', operator: 'eq', value: null },
         { field: 'nextAttemptAt', operator: 'lte', value: now },
-      ], 'updatedAt', now, limit),
-      this.listStandaloneWebhookRetries([
+      ],
+      orderBy: [{ field: 'updatedAt', direction: 'asc' }],
+      limit,
+    });
+
+    const staleBefore = new Date(now.getTime() - leaseMs);
+    const staleRunning = await this.database.findMany<PlugFnWebhookDelivery>({
+      model: this.models.webhookDeliveries,
+      where: [
         { field: 'status', operator: 'eq', value: 'running' },
+        { field: 'workflowScoped', operator: 'eq', value: null },
         { field: 'updatedAt', operator: 'lte', value: staleBefore },
-      ], 'updatedAt', now, limit),
-    ]);
+      ],
+      orderBy: [{ field: 'updatedAt', direction: 'asc' }],
+      limit,
+    });
 
     return [...pending, ...failed, ...staleRunning]
+      .filter((delivery) => !delivery.nextAttemptAt || toTime(delivery.nextAttemptAt) <= now.getTime())
       .sort((left, right) => {
         const leftTime = toTime(left.nextAttemptAt ?? left.createdAt);
         const rightTime = toTime(right.nextAttemptAt ?? right.createdAt);
         return leftTime - rightTime;
       })
       .slice(0, limit);
-  }
-
-  private async listStandaloneWebhookRetries(
-    where: WhereClause[],
-    orderBy: 'createdAt' | 'updatedAt',
-    now: Date,
-    limit: number
-  ): Promise<PlugFnWebhookDelivery[]> {
-    const eligible: PlugFnWebhookDelivery[] = [];
-    for (let offset = 0; eligible.length < limit; offset += limit) {
-      const page = await this.database.findMany<PlugFnWebhookDelivery>({
-        model: this.models.webhookDeliveries,
-        where,
-        orderBy: [{ field: orderBy, direction: 'asc' }, { field: 'id', direction: 'asc' }],
-        limit,
-        offset,
-      });
-      if (!page.length) break;
-      // The legacy retry callback cannot reverify workflow scope. Leave those
-      // rows to fresh, authenticated redelivery, even if their lease expired.
-      const scoped = await this.database.findMany<Pick<PlugFnWebhookReceipt, 'id'>>({
-        model: this.models.webhookReceipts,
-        where: [
-          { field: 'id', operator: 'in', value: [...new Set(page.map((attempt) => attempt.receiptId))] },
-          { field: 'workflowIdempotencyKey', operator: 'ne', value: null },
-        ],
-        select: ['id'],
-      });
-      const scopedIds = new Set(scoped.map(({ id }) => id));
-      eligible.push(...page.filter((attempt) => !scopedIds.has(attempt.receiptId) &&
-        (!attempt.nextAttemptAt || toTime(attempt.nextAttemptAt) <= now.getTime())));
-      if (page.length < limit) break;
-    }
-    return eligible.slice(0, limit);
   }
 
   async claimWebhookDeliveriesForRetry(

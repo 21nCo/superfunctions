@@ -211,6 +211,7 @@ export function getSchema(options: PlugFnSchemaOptions = {}): { version: number;
           receiptId: { type: 'string', required: true, fieldName: 'receipt_id' },
           sinkId: { type: 'string', required: false, fieldName: 'sink_id' },
           handlerName: { type: 'string', required: false, fieldName: 'handler_name' },
+          workflowScoped: { type: 'boolean', required: false, fieldName: 'workflow_scoped' },
           status: { type: 'string', required: true, fieldName: 'status' },
           claimToken: { type: 'string', required: false, fieldName: 'claim_token' },
           attempts: { type: 'number', required: true, fieldName: 'attempts' },

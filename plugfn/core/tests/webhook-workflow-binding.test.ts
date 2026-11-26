@@ -241,12 +241,12 @@ describe('webhook workflow admission', () => {
     expect((await send('test-installation-one')).status).toBe(503);
     const [scoped] = await database.findMany<{ id: string }>({ model: deliveryModel });
     const webhooks = runtime.runtime.webhooks;
-    expect(scoped).toMatchObject({ status: 'failed', attempts: 1 });
+    expect(scoped).toMatchObject({ status: 'failed', attempts: 1, workflowScoped: true });
     expect(scoped).not.toHaveProperty('metadata.rawBodyBase64');
     expect(await webhooks.processDueDeliveries(vi.fn())).toMatchObject({ processed: 0 });
 
     // A crashed scoped request can leave a stale running row. It must not
-    // take the only slot from a standalone attempt in the same queue page.
+    // take the only slot from a standalone attempt in the same queue.
     await database.updateWebhookDelivery(scoped.id, { status: 'running', updatedAt: new Date(0) });
     const receipt = await webhooks.createReceipt({
       provider: 'test-provider', event: 'test.event', payloadHash: 'test-payload-hash',
@@ -259,6 +259,25 @@ describe('webhook workflow admission', () => {
     expect(await webhooks.listDeliveries(receipt.id)).toEqual([expect.objectContaining({ status: 'success' })]);
     expect((await send('test-installation-one')).status).toBe(200);
     expect(action).toHaveBeenCalledTimes(2);
+  });
+
+  it('records the canonical listener only when the receipt actually dispatched it', async () => {
+    const { runtime, send } = startRuntime(database, { withResolver: false, authenticateEventHeader: true });
+    const first = vi.fn();
+    const second = vi.fn();
+    runtime.webhooks.on('test-provider', 'test.event', first);
+    runtime.webhooks.on('test-provider', 'test.other-event', second);
+    const rawBody = Buffer.from(JSON.stringify({ id: 'test-delivery', installationId: 'test-installation-one' }));
+    await runtime.webhooks.handle('test-provider', 'test.event', undefined, {
+      'x-plugfn-delivery': 'test-delivery',
+    }, signingCredential, { rawBody });
+    expect(first).toHaveBeenCalledOnce();
+
+    expect((await send('test-installation-one', 'test-delivery', {}, 'test.other-event')).status).toBe(200);
+    expect(second).not.toHaveBeenCalled();
+    const [delivery] = await database.findMany({ model: deliveryModel });
+    expect(delivery).toMatchObject({ status: 'success' });
+    expect(delivery).not.toHaveProperty('metadata.triggerKey');
   });
 
   it('resolves installations only within the verified signing authority', async () => {

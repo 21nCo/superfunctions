@@ -21,6 +21,11 @@ const WORKFLOW_RECEIPT_INDEX = 'idx_plugfn_webhook_receipts_workflow_idempotency
 
 function getV8Tables(): TableSchema[] {
   return getSchema().schemas.map((table) => {
+    if (table.modelName === 'plugfn_webhook_deliveries') {
+      const fields = { ...table.fields };
+      delete fields.workflowScoped;
+      return { ...table, fields };
+    }
     if (table.modelName !== RECEIPT_TABLE) return table;
     const fields = { ...table.fields };
     delete fields.workflowIdempotencyKey;
@@ -413,12 +418,15 @@ describe('plugfn schema v9 migration', () => {
         currentTables: mysqlV7Snapshot(getV8Tables(), NEXT_V7_CLAIM_TOKEN_LENGTH),
       });
 
-      expect(pending?.tableDiffs).toEqual([expect.objectContaining({
-        tableName: RECEIPT_TABLE,
-        missingColumns: ['workflow_idempotency_key'],
-        missingIndexes: [{ name: WORKFLOW_RECEIPT_INDEX, columns: ['workflow_idempotency_key'], unique: true }],
-        changedIndexes: [],
-      })]);
+      expect(pending?.tableDiffs).toEqual([
+        expect.objectContaining({
+          tableName: RECEIPT_TABLE,
+          missingColumns: ['workflow_idempotency_key'],
+          missingIndexes: [{ name: WORKFLOW_RECEIPT_INDEX, columns: ['workflow_idempotency_key'], unique: true }],
+          changedIndexes: [],
+        }),
+        expect.objectContaining({ tableName: 'plugfn_webhook_deliveries', missingColumns: ['workflow_scoped'] }),
+      ]);
 
       const up = upStatements(adapterType, pending!.migrationFile.content);
       expect(up).toContain(adapterType === 'kysely'

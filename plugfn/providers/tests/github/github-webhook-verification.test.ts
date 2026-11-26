@@ -11,7 +11,10 @@ function sign(rawBody: string, secret: string): string {
 }
 
 describe('github webhook verification', () => {
-  it('resolves the authenticated installation before dispatching pull_request.closed', async () => {
+  it.each([
+    { scoped: true, event: 'pull_request.closed' },
+    { scoped: false, event: 'pull_request' },
+  ])('dispatches the pull-request alias as $event with scoped routing $scoped', async ({ scoped, event }) => {
     const binding = {
       tenantId: 'test-tenant',
       connectionId: 'test-connection',
@@ -26,7 +29,7 @@ describe('github webhook verification', () => {
       encryptionKey: Buffer.alloc(32, 1).toString('hex'),
       integrations: {},
       logger: new NoopLogger(),
-      webhooks: {
+      webhooks: scoped ? {
         workflowBindings: {
           github: [{
             id: 'test-github-app',
@@ -34,11 +37,11 @@ describe('github webhook verification', () => {
             resolve: resolveBinding,
           }],
         },
-      },
+      } : undefined,
     });
     runtime.providers.register(githubProvider);
     const listener = vi.fn();
-    runtime.webhooks.on('github', 'pull_request.closed', listener);
+    runtime.webhooks.on('github', event, listener);
 
     const payload = {
       action: 'closed',
@@ -49,9 +52,13 @@ describe('github webhook verification', () => {
         title: 'PR title',
         html_url: 'https://github.com/21nCo/super-functions/pull/42',
         merged: true,
+        state: 'closed',
+        head: { ref: 'test-topic' },
+        base: { ref: 'dev' },
       },
       repository: {
         name: 'super-functions',
+        full_name: '21nCo/super-functions',
         owner: {
           login: '21nCo',
         },
@@ -67,9 +74,10 @@ describe('github webhook verification', () => {
     }));
     expect(accepted.status).toBe(200);
     await expect(accepted.json()).resolves.toMatchObject({
-      data: { event: { event: 'pull_request.closed', verified: true } },
+      data: { event: { event, verified: true } },
     });
-    expect(resolveBinding).toHaveBeenCalledWith('42');
+    if (scoped) expect(resolveBinding).toHaveBeenCalledWith('42');
+    else expect(resolveBinding).not.toHaveBeenCalled();
     expect(listener).toHaveBeenCalledTimes(1);
     const resolutionsAfterDispatch = resolveBinding.mock.calls.length;
 

@@ -876,7 +876,7 @@ async function handleWebhookRoute(
     }
     const rawBody = await readRequestBytes(req, { maxBytes: options.maxWebhookPayloadBytes });
     const github = provider.toLowerCase() === 'github';
-    const requestedEvent = github ? event?.toLowerCase().replaceAll('-', '_') : event;
+    const requestedEvent = github && requiresBinding ? event?.toLowerCase().replaceAll('-', '_') : event;
     if (!requestedEvent || github) {
       const inferredEvent = inferWebhookEvent(
         provider,
@@ -1102,12 +1102,19 @@ export async function deliverWebhook(
     deliveryId = delivery.id;
     deliveryAttempts = delivery.attempts;
 
-    const webhookEvent = await admission.dispatch({ skipListeners });
+    let listenersCompleted = false;
+    const webhookEvent = await admission.dispatch({
+      skipListeners,
+      onListenersCompleted: () => { listenersCompleted = true; },
+    });
 
     await plugFn.runtime.webhooks.updateDelivery(delivery.id, {
       status: 'success',
       attempts: delivery.attempts + 1,
-      metadata: { ...withoutWebhookReplayBody(delivery.metadata), triggerKey: options.triggerKey },
+      metadata: {
+        ...withoutWebhookReplayBody(delivery.metadata),
+        ...(listenersCompleted ? { triggerKey: options.triggerKey } : {}),
+      },
     });
 
     return {
