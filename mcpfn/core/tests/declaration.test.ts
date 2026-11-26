@@ -117,7 +117,7 @@ describe("McpFn server declarations", () => {
     expect(registry.listTools()).toEqual([]);
   });
 
-  it("recompiles a supplied registry's definitions with its own schema compiler", () => {
+  it("reuses a supplied registry's validators instead of calling its schema compiler again", () => {
     const compiledSchemas: object[] = [];
     const inputSchema = { type: "object" };
     const registry = new McpFnRegistry({
@@ -132,9 +132,9 @@ describe("McpFn server declarations", () => {
       handler: async () => structuredResult({ ok: true }),
     });
     const declaration = defineMcpFnServer({ info: { name: "copied", version: "1.0.0" }, registry });
-    expect(compiledSchemas).toEqual([inputSchema, inputSchema]);
+    expect(compiledSchemas).toEqual([inputSchema]);
     expect(declaration.registry.clone().listTools().map(({ name }) => name)).toEqual(["existing"]);
-    expect(compiledSchemas).toHaveLength(3);
+    expect(compiledSchemas).toHaveLength(1);
   });
 
   it("keeps task-store capability flags identical in manifest and runtime", () => {

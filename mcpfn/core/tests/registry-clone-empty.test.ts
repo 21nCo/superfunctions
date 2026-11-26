@@ -320,6 +320,121 @@ describe.each(["ajv", "cfworker"] as const)("McpFnRegistry.clone() with the buil
   });
 });
 
+// A custom compileSchema is shared by every clone, so clone() reuses the
+// validators the source registration compiled and never calls it again: a
+// stateful compiler that rejects a repeated $id clones like the source.
+describe.each(["ajv", "cfworker"] as const)("McpFnRegistry.clone() with a stateful custom compiler over %s", (engine) => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.resetModules();
+  });
+
+  async function load() {
+    if (engine === "cfworker") vi.stubGlobal("WebSocketPair", class {});
+    vi.resetModules();
+    const { McpFnRegistry, McpFnValidationError, defineMcpFnServer } = await import("../src/index.js");
+    const { createSchemaCompiler } = await import("../src/validation.js");
+    const builtIn = createSchemaCompiler();
+    expect(builtIn.engine).toBe(engine);
+    const compiled: object[] = [];
+    const ids = new Set<string>();
+    // One shared schema store that rejects a repeated $id, like a cfworker Validator.
+    const compileSchema = (schema: object) => {
+      compiled.push(schema);
+      const id = (schema as { $id?: unknown }).$id;
+      if (typeof id === "string") {
+        if (ids.has(id)) throw new Error(`schema ${id} already exists`);
+        ids.add(id);
+      }
+      return builtIn.compile(schema);
+    };
+    return { McpFnRegistry, McpFnValidationError, defineMcpFnServer, compileSchema, compiled };
+  }
+
+  const info = { name: "test", version: "0.0.0" };
+  const handler = async (args: { name?: unknown }) => ({
+    content: [],
+    structuredContent: args.name === "bad-output" ? { ok: "no" } : { ok: true },
+  });
+  const objectWithId = (id: string) => ({
+    $id: id,
+    type: "object",
+    properties: { name: { type: "string" } },
+    required: ["name"],
+  });
+  const output = () => ({ type: "object", properties: { ok: { type: "boolean" } }, required: ["ok"] });
+  const prompt = () => ({
+    name: "p",
+    argumentsSchema: { type: "object", properties: { topic: { type: "string", enum: ["a", "b"] } }, required: ["topic"] },
+    get: async () => ({ messages: [] }),
+  });
+
+  type Registry = InstanceType<Awaited<ReturnType<typeof load>>["McpFnRegistry"]>;
+
+  async function expectSameAnswers(registry: Registry) {
+    await expect(registry.callTool("t", { name: "x" }, undefined, requestExtra()))
+      .resolves.toMatchObject({ structuredContent: { ok: true } });
+    await expect(registry.callTool("t", { name: 1 }, undefined, requestExtra()))
+      .rejects.toThrow("Invalid arguments for t");
+    await expect(registry.callTool("t", { name: "bad-output" }, undefined, requestExtra()))
+      .rejects.toThrow("Invalid output from t");
+    await expect(registry.getPrompt("p", { topic: "a" }, undefined, requestExtra())).resolves.toEqual({ messages: [] });
+    await expect(registry.getPrompt("p", { topic: "c" }, undefined, requestExtra())).rejects.toThrow();
+  }
+
+  it("clones and declares without calling the compiler again for source schemas", async () => {
+    const { McpFnRegistry, defineMcpFnServer, compileSchema, compiled } = await load();
+    const source = new McpFnRegistry({ compileSchema })
+      .register({ name: "t", description: "Has an $id input.", inputSchema: objectWithId("https://test.invalid/s"), outputSchema: output(), handler })
+      .registerPrompt(prompt());
+    expect(compiled).toHaveLength(3);
+
+    const replayed = source.clone();
+    const declared = defineMcpFnServer({ info, registry: source });
+    expect(compiled).toHaveLength(3);
+    const extended = defineMcpFnServer({
+      info,
+      registry: source,
+      tools: [{ name: "u", description: "Added.", inputSchema: objectWithId("https://test.invalid/u"), handler }],
+    });
+    expect(compiled).toHaveLength(4);
+
+    for (const registry of [source, replayed, declared.registry, extended.registry, replayed.clone()]) {
+      await expectSameAnswers(registry);
+    }
+    expect(extended.registry.listTools().map((tool) => tool.name)).toEqual(["t", "u"]);
+    expect(replayed.schemaDefinitions()).toEqual(source.schemaDefinitions());
+  });
+
+  it("keeps non-compile checks when replaying a reused registration", async () => {
+    const { McpFnRegistry, McpFnValidationError, compileSchema, compiled } = await load();
+    const definition = { name: "t", description: "Valid at registration.", inputSchema: objectWithId("https://test.invalid/s"), handler };
+    const source = new McpFnRegistry({ compileSchema }).register(definition);
+    definition.description = " ";
+    expect(() => source.clone()).toThrow(McpFnValidationError);
+    expect(() => source.clone()).toThrow("Tool t requires a non-empty description");
+    expect(compiled).toHaveLength(1);
+  });
+
+  it("leaks no later registration in either direction", async () => {
+    const { McpFnRegistry, compileSchema, compiled } = await load();
+    const source = new McpFnRegistry({ compileSchema })
+      .register({ name: "t", description: "Has an $id input.", inputSchema: objectWithId("https://test.invalid/s"), outputSchema: output(), handler })
+      .registerPrompt(prompt());
+    const replayed = source.clone();
+    source.register({ name: "source-only", description: "Later.", inputSchema: { type: "object" }, handler });
+    replayed.register({ name: "clone-only", description: "Later.", inputSchema: { type: "object" }, handler });
+    replayed.registerPrompt({ name: "clone-prompt", get: async () => ({ messages: [] }) });
+    expect(source.listTools().map((tool) => tool.name)).toEqual(["source-only", "t"]);
+    expect(replayed.listTools().map((tool) => tool.name)).toEqual(["clone-only", "t"]);
+    expect(source.listPrompts().map((entry) => entry.name)).toEqual(["p"]);
+    expect(replayed.listPrompts().map((entry) => entry.name)).toEqual(["clone-prompt", "p"]);
+    expect(compiled).toHaveLength(6);
+    await expectSameAnswers(source);
+    await expectSameAnswers(replayed);
+  });
+});
+
 describe("McpFnRegistry custom compileSchema validators", () => {
   it("fails closed without an unhandled rejection when a validator returns a promise", async () => {
     const { McpFnRegistry } = await import("../src/index.js");
@@ -344,28 +459,73 @@ describe("McpFnRegistry custom compileSchema validators", () => {
   });
 });
 
-describe("McpFnRegistry custom compileSchema thenable validators", () => {
-  it("contains a rejected promise returned by a thenable's own then()", async () => {
-    const { McpFnRegistry } = await import("../src/index.js");
+describe("McpFnRegistry custom compileSchema thenable results", () => {
+  async function withUnhandledRejections(run: (unhandled: unknown[]) => Promise<void>) {
     const unhandled: unknown[] = [];
     const onUnhandled = (reason: unknown) => { unhandled.push(reason); };
     process.on("unhandledRejection", onUnhandled);
     try {
+      await run(unhandled);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+  }
+
+  // T1.then returns T2, whose then returns a rejected promise: every call into
+  // foreign then() code can create another rejection, so it is never called.
+  function chainedThenable() {
+    const second = { then: vi.fn(() => Promise.reject(new Error("rejected from T2.then()"))) };
+    const first = { then: vi.fn(() => second) };
+    return { first, second };
+  }
+
+  it("fails a non-native thenable validator result closed without calling its then()", async () => {
+    const { McpFnRegistry } = await import("../src/index.js");
+    await withUnhandledRejections(async () => {
+      const { first, second } = chainedThenable();
       const handler = vi.fn(async () => ({ content: [] }));
-      // then() ignores its handlers and returns a fresh rejected promise.
-      const thenable = { then: () => Promise.reject(new Error("rejected from then()")) };
       const registry = new McpFnRegistry({
-        compileSchema: () => (() => thenable) as never,
+        compileSchema: () => (() => first) as never,
       }).register({ name: "t", description: "Thenable validator.", inputSchema: { type: "object" }, handler });
       await expect(registry.callTool("t", {}, undefined, requestExtra())).rejects.toMatchObject({
         message: "Invalid arguments for t",
         details: { issues: [expect.objectContaining({ message: "compileSchema validators must be synchronous" })] },
       });
       expect(handler).not.toHaveBeenCalled();
-      await new Promise((resolve) => setTimeout(resolve, 20));
-      expect(unhandled).toEqual([]);
-    } finally {
-      process.off("unhandledRejection", onUnhandled);
-    }
+      expect(first.then).not.toHaveBeenCalled();
+      expect(second.then).not.toHaveBeenCalled();
+    });
+  });
+
+  it("rejects a non-native thenable compiler result without calling its then()", async () => {
+    const { McpFnRegistry } = await import("../src/index.js");
+    await withUnhandledRejections(async () => {
+      const { first, second } = chainedThenable();
+      const registry = new McpFnRegistry({ compileSchema: () => first as never });
+      let thrown: unknown;
+      try {
+        registry.register({ name: "t", description: "Thenable compiler.", inputSchema: { type: "object" }, handler: async () => ({ content: [] }) });
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toMatchObject({
+        message: "Tool t contains an invalid JSON Schema",
+        details: { cause: "compileSchema must return a validator function" },
+      });
+      expect(registry.has("t")).toBe(false);
+      expect(first.then).not.toHaveBeenCalled();
+      expect(second.then).not.toHaveBeenCalled();
+    });
+  });
+
+  it("contains a native rejected promise returned by the compiler", async () => {
+    const { McpFnRegistry } = await import("../src/index.js");
+    await withUnhandledRejections(async () => {
+      const registry = new McpFnRegistry({ compileSchema: () => Promise.reject(new Error("async compiler")) as never });
+      expect(() => registry.register({ name: "t", description: "Async compiler.", inputSchema: { type: "object" }, handler: async () => ({ content: [] }) }))
+        .toThrow("Tool t contains an invalid JSON Schema");
+    });
   });
 });

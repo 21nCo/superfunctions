@@ -93,23 +93,31 @@ function customSchemaIssues(errors: unknown): SchemaIssue[] {
     : [{ instancePath: "", message: "Schema validation failed", keyword: "schema" }];
 }
 
-function isThenable(value: unknown): value is PromiseLike<unknown> {
-  return (
-    value !== null &&
-    (typeof value === "object" || typeof value === "function") &&
-    typeof (value as { then?: unknown }).then === "function"
-  );
+function isThenable(value: unknown): boolean {
+  try {
+    return (
+      value !== null &&
+      (typeof value === "object" || typeof value === "function") &&
+      typeof (value as { then?: unknown }).then === "function"
+    );
+  } catch {
+    // A throwing `then` getter is not a usable synchronous result either.
+    return true;
+  }
 }
 
-function ignoreRejection(value: unknown, containResult = true): void {
-  if (!isThenable(value)) return;
+const ignore = (): undefined => undefined;
+
+/**
+ * Mark a native promise's rejection as handled. Any other thenable's then() is
+ * never called: foreign then() code could create a new rejected promise on
+ * every call, so the registry only fails closed on it.
+ */
+function ignoreRejection(value: unknown): void {
   try {
-    const chained: unknown = value.then(undefined, () => undefined);
-    // A custom then() may return its own rejected promise instead of the
-    // contained one; contain that value too, once.
-    if (containResult) ignoreRejection(chained, false);
+    if (value instanceof Promise) Promise.prototype.then.call(value, undefined, ignore);
   } catch {
-    // A hostile thenable cannot make the caller throw here.
+    // An object that only looks like a native promise cannot make the caller throw.
   }
 }
 
@@ -592,8 +600,11 @@ export class McpFnRegistry<TContext = undefined> {
   /**
    * Clone in successful registration order, preserving cross-definition
    * references. Each successful registration is replayed with its live
-   * definition. A built-in compiler is a fresh instance; a custom
-   * `compileSchema` is shared as-is.
+   * definition and every non-compile check. A built-in compiler is a fresh
+   * instance that recompiles each schema. A custom `compileSchema` is shared
+   * as-is and is not called again: the clone reuses the validators the source
+   * registration compiled, so a stateful custom compiler (for example one
+   * that rejects a repeated `$id`) clones like the source.
    */
   clone(): McpFnRegistry<TContext> {
     const target = new McpFnRegistry<TContext>(this.options);
@@ -615,6 +626,14 @@ export class McpFnRegistry<TContext = undefined> {
   /** Registered schema resources for catalog projections, including hidden tools and prompts. */
   schemaDefinitions(): object[] {
     return [...this.schemas];
+  }
+
+  /**
+   * Validators a replayed registration may reuse: only with a shared custom
+   * compiler, whose compiled validators are valid for every registry using it.
+   */
+  private reusable<T>(compiled: T): T | undefined {
+    return this.options.compileSchema ? compiled : undefined;
   }
 
   private compile(schema: object): CompiledSchema {
@@ -661,6 +680,13 @@ export class McpFnRegistry<TContext = undefined> {
 
   register<TDefinition extends McpFnToolDefinition<TContext>>(
     definition: TDefinition,
+  ): this {
+    return this.registerTool(definition, undefined);
+  }
+
+  private registerTool(
+    definition: McpFnToolDefinition<TContext>,
+    reuse: { validateInput: CompiledSchema; validateOutput: CompiledSchema | undefined } | undefined,
   ): this {
     this.assertNotCompiling("tool");
     assertName("tool", definition.name);
@@ -716,10 +742,14 @@ export class McpFnRegistry<TContext = undefined> {
     let validateInput: CompiledSchema;
     let validateOutput: CompiledSchema | undefined;
     try {
-      validateInput = this.compile(definition.inputSchema);
-      validateOutput = definition.outputSchema !== undefined
-        ? this.compile(definition.outputSchema)
-        : undefined;
+      if (reuse) {
+        ({ validateInput, validateOutput } = reuse);
+      } else {
+        validateInput = this.compile(definition.inputSchema);
+        validateOutput = definition.outputSchema !== undefined
+          ? this.compile(definition.outputSchema)
+          : undefined;
+      }
     } catch (error) {
       throw new McpFnValidationError(
         `Tool ${definition.name} contains an invalid JSON Schema`,
@@ -733,7 +763,8 @@ export class McpFnRegistry<TContext = undefined> {
       validateOutput,
     });
     this.schemas.push(definition.inputSchema, ...(definition.outputSchema ? [definition.outputSchema] : []));
-    this.registrations.push(target => { target.register(definition); });
+    const compiled = this.reusable({ validateInput, validateOutput });
+    this.registrations.push(target => { target.registerTool(definition, compiled); });
     return this;
   }
 
@@ -837,6 +868,13 @@ export class McpFnRegistry<TContext = undefined> {
   }
 
   registerPrompt(definition: McpFnPromptDefinition<TContext>): this {
+    return this.registerPromptDefinition(definition, undefined);
+  }
+
+  private registerPromptDefinition(
+    definition: McpFnPromptDefinition<TContext>,
+    reuseArguments: CompiledSchema | undefined,
+  ): this {
     this.assertNotCompiling("prompt");
     assertName("prompt", definition.name);
     if (this.prompts.has(definition.name)) {
@@ -896,7 +934,7 @@ export class McpFnRegistry<TContext = undefined> {
     }
     let validateArguments: CompiledSchema;
     try {
-      validateArguments = this.compile(promptSchema(definition));
+      validateArguments = reuseArguments ?? this.compile(promptSchema(definition));
     } catch (error) {
       throw new McpFnValidationError(
         `Prompt ${definition.name} contains an invalid arguments JSON Schema`,
@@ -939,7 +977,8 @@ export class McpFnRegistry<TContext = undefined> {
     }
     this.prompts.set(definition.name, { definition, validateArguments });
     this.schemas.push(promptSchema(definition));
-    this.registrations.push(target => { target.registerPrompt(definition); });
+    const compiledArguments = this.reusable(validateArguments);
+    this.registrations.push(target => { target.registerPromptDefinition(definition, compiledArguments); });
     return this;
   }
 
