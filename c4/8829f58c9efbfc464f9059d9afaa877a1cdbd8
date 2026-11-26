@@ -1,0 +1,24 @@
+docsfn/docs/content/docs/core-concepts/content-format.md
+  s_12031223da782f::t_0b5126c166b746 110-111
+docsfn/provider-fs/src/index.ts
+  s_12031223da782f::t_0b5126c166b746 401-413
+docsfn/provider-fs/src/index.test.ts
+  s_12031223da782f::t_26744bf566aff9 50,52-76,115-117
+  s_12031223da782f::t_9ddf3a08dca1a9 4-6,9-13,45-49,51,77-114,118-123
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c48829f58c9efbfc464f9059d9afaa877a1cdbd8",
+  "prompts": {},
+  "sessions": {
+    "s_12031223da782f": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21416-db41-7b90-aafa-aaaf93c35b87",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

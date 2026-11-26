@@ -1,0 +1,35 @@
+mcpfn/core/src/registry.ts
+  s_16be15e550007d::t_a2c8c747920897 96-112,117,119,122,124-135,137-138,580-594,598-608,612,618-620,623-658,662-670,672-678,681-702,704,733,787,789,803,812,832,838,900,904,963,1005
+mcpfn/core/tests/registry-clone-empty.test.ts
+  s_16be15e550007d::t_98a565ae5d0512 93-292
+plugfn/core/src/core/action-executor.ts
+  s_16be15e550007d::t_899f159171209f 19,138-159,166-167,174-175
+plugfn/core/src/core/connection-manager.ts
+  s_16be15e550007d::t_a229a09e6cb572 258-269,281,283-284,293-294,304-305,312-313,334,365-371,373,390-391,396-404,413-414,416,421-422,1006-1047,1049-1079
+plugfn/core/src/middleware/caching.ts
+  s_16be15e550007d::t_95459af2b75ce5 6-46,191-193,200-201,204,213-214,217
+plugfn/core/tests/action-cache-credential.test.ts
+  s_16be15e550007d::t_a3bc61ee01368a 1-126
+plugfn/core/tests/connection-manager.test.ts
+  s_16be15e550007d::t_a2709b28875373 1082-1208
+plugfn/providers/src/github/index.ts
+  s_16be15e550007d::t_136213c49f700c 1176-1183
+plugfn/providers/tests/github/github-read-cache.test.ts
+  s_16be15e550007d::t_1c9ab9cf01b3a9 53-64
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "25603cffede3d916d8e40c0d06c3f187d497002a",
+  "prompts": {},
+  "sessions": {
+    "s_16be15e550007d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "44b38904-9085-4967-8629-ea949fdc5da6",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
