@@ -908,10 +908,11 @@ describe("httpExecutor edge cases", () => {
   });
 
   it("keeps the excerpt within 4 KiB when redaction markers are longer than the credentials", async () => {
-    const { fetch } = stubFetch(() => new Response("q".repeat(4096), { status: 500 }));
+    // Separate echoes, so each is its own marker (adjacent ones merge into one).
+    const { fetch } = stubFetch(() => new Response("q ".repeat(2048), { status: 500 }));
     const executor = httpExecutor<Context>({ baseUrl: api.origin, headers: { "x-api-key": "q" }, fetch });
     const result = await execute(executor, operationOf("fail"));
-    const excerpt = /^The API responded with HTTP 500\.\n\n((?:\[REDACTED\])+)\n\[body truncated after \d+ bytes\]$/.exec(text(result));
+    const excerpt = /^The API responded with HTTP 500\.\n\n((?:\[REDACTED\] )+)\n\[body truncated after \d+ bytes\]$/.exec(text(result));
     expect(excerpt).not.toBeNull();
     expect(Buffer.byteLength(excerpt![1]!)).toBeLessThanOrEqual(4096);
   });
@@ -1100,6 +1101,9 @@ describe("httpExecutor edge cases", () => {
       '{"n":0.123456789012345678901}',
       '{"n":1.0000000000000001}',
       '{"n":9007199254740991.1}',
+      // A negative zero serializes as 0.
+      '{"n":-0}',
+      '{"n":-0.0e5}',
       '{"id":"9007199254740993","n":1.5}',
     ]) {
       const { fetch } = stubFetch(() => new Response(body, { headers: { "content-type": "application/json" } }));
@@ -1885,5 +1889,100 @@ describe("httpExecutor explicit 204 and 205 entries", () => {
       { executor: httpExecutor({ baseUrl: api.origin }), allowMutations: true },
     );
     expect(tools[0]!.outputSchema).toBeUndefined();
+  });
+});
+
+describe("httpExecutor security objects structuredClone would flatten", () => {
+  it("skips an operation whose requirement or scheme is a class instance, though cloning would make it a plain object", () => {
+    class Requirement {}
+    class Scheme {
+      type = "apiKey";
+      in = "header";
+      name = "X-Api-Key";
+    }
+    const keyParameter = { name: "X-Api-Key", in: "header", schema: { type: "string" } };
+    const { tools, skipped } = fromOpenAPI(
+      {
+        openapi: "3.1.0",
+        info: { title: "instances", version: "1.0.0" },
+        components: { securitySchemes: { headerKey: { type: "apiKey", in: "header", name: "X-Api-Key" }, instanceKey: new Scheme() } },
+        security: [{ headerKey: [] }],
+        paths: {
+          // Cloned, the instance reads as {} (no credential) and would expose the inherited X-Api-Key as an input.
+          "/requirement": { get: { operationId: "instanceRequirement", security: [new Requirement()], parameters: [keyParameter], responses: ok } },
+          "/scheme": { get: { operationId: "instanceScheme", security: [{ instanceKey: [] }], parameters: [keyParameter], responses: ok } },
+          "/inherited": { get: { operationId: "inherited", parameters: [keyParameter], responses: ok } },
+        },
+      },
+      { executor: httpExecutor({ baseUrl: api.origin, headers: { "x-api-key": operatorToken } }) },
+    );
+    expect(tools.map((tool) => [tool.name, Object.keys((tool.inputSchema.properties ?? {}) as object)])).toEqual([["inherited", []]]);
+    expect(skipped.map(({ operation, code, reason }) => [operation.operationId, code, reason])).toEqual([
+      ["instanceRequirement", "unsupported-by-executor", "its security cannot be read: the operation's security has a requirement that is not a plain object"],
+      [
+        "instanceScheme",
+        "unsupported-by-executor",
+        'the security scheme "instanceKey" does not resolve to a scheme of a known type, so the parameter that carries its credential is unknown',
+      ],
+    ]);
+  });
+});
+
+describe("httpExecutor error and text bodies judged as returned", () => {
+  const reply = (body: BodyInit, status: number, contentType = "application/json") =>
+    stubFetch(() => new Response(body, { status, headers: { "content-type": contentType } })).fetch;
+  const withheldError = (status: number) => `The API responded with HTTP ${status}.\n[body withheld: it reveals an operator credential]`;
+
+  describe("with an all-digit credential", () => {
+    const headers = { "x-api-key": "12345" };
+    const run = (body: string, status: number) =>
+      execute(httpExecutor<Context>({ baseUrl: api.origin, headers, fetch: reply(body, status) }), operationOf("echo"));
+
+    it("reads JSON numbers as written in the unredacted body, duplicate keys included", async () => {
+      // Redacting the literal 12345 must not hide the 1.2345e4 next to it.
+      expect(text(await run('{"literal":12345,"encoded":1.2345e4}', 500))).toBe(withheldError(500));
+      // JSON.parse keeps only the last of a duplicate key.
+      expect(text(await run('{"seen":1.2345e4,"seen":0}', 500))).toBe(withheldError(500));
+      const success = await run('{"seen":1.2345e4,"seen":0}', 200);
+      expect(success.isError).toBe(true);
+      expect(text(success)).toContain("reveals an operator credential and was withheld");
+      // A JSON string is never read as a number.
+      expect(text(await run('{"seen":"1.2345e4"}', 500))).toBe('The API responded with HTTP 500.\n\n{"seen":"1.2345e4"}');
+      await expect(run('{"seen":"1.2345e4"}', 200)).resolves.toEqual({ content: [{ type: "text", text: '{"seen":"1.2345e4"}' }] });
+    });
+
+    it("withholds an excerpt whose 4 KiB cut leaves a number that parses to the credential", async () => {
+      // Cut after 4,096 bytes, 1.2345e45 is shown as 1.2345e4.
+      const body = `{"pad":"${"x".repeat(4074)}","n":1.2345e45}`;
+      expect(body.indexOf("1.2345e45") + "1.2345e4".length).toBe(4096);
+      expect(text(await run(body, 500))).toBe(withheldError(500));
+      // The same body cut elsewhere is returned.
+      expect(text(await run(`{"pad":"${"x".repeat(4073)}","n":1.2345e45}`, 500))).toContain("[body truncated after 4096 bytes]");
+    });
+  });
+
+  it("checks the UTF-8 view of an error body without NULs as the success path does", async () => {
+    // Declared utf-16le, the bytes are UTF-16BE: read as UTF-8 without NULs they spell the credential percent-encoded.
+    const encoded = [...operatorToken].map((char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`).join("");
+    const body = Buffer.from(`seen ${encoded}`, "utf16le").swap16();
+    const headers = { authorization: `Bearer ${operatorToken}` };
+    const contentType = "text/plain; charset=utf-16le";
+    const failure = await execute(httpExecutor<Context>({ baseUrl: api.origin, headers, fetch: reply(body, 500, contentType) }), operationOf("echo"));
+    expect(text(failure)).toBe(withheldError(500));
+    const success = await execute(httpExecutor<Context>({ baseUrl: api.origin, headers, fetch: reply(body, 200, contentType) }), operationOf("echo"));
+    expect(text(success)).toContain("reveals an operator credential and was withheld");
+  });
+
+  it("checks the pretty-printed text of structured content, not only its compact serialization", async () => {
+    // Only the pretty-printed text content holds the credential: "test": "key".
+    const headers = { "x-api-key": 'test": "key' };
+    const result = await execute(
+      httpExecutor<Context>({ baseUrl: api.origin, headers, fetch: reply('{"test":"key"}', 200) }),
+      operationOf("echo"),
+      {},
+      { hasOutputSchema: true },
+    );
+    expect(result.isError).toBe(true);
+    expect(text(result)).toContain("reveals an operator credential and was withheld");
   });
 });

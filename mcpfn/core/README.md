@@ -305,7 +305,8 @@ const { registry } = fromOpenAPI<{ apiToken: string }>(document, {
   requirement needs an `apiKey` credential in the query or in a header
   fetch manages, which operator headers cannot carry, and one whose security
   is malformed (a level that is not a list, a requirement that is not a
-  plain object, such as a `Map` or `Date`, scopes that are not a list of strings; `fromOpenAPI` reports it
+  plain object, such as a `Map`, `Date` or class instance, judged before
+  the document is copied, scopes that are not a list of strings; `fromOpenAPI` reports it
   to any executor as `operation.securityUnresolved`) or names a scheme that
   does not resolve (missing, an external `$ref`, a cycle, a `type` OpenAPI
   does not define such as `api-key`, a scheme object that is not a plain
@@ -346,15 +347,22 @@ const { registry } = fromOpenAPI<{ apiToken: string }>(document, {
   and read as UTF-8; its bytes are searched for each credential in UTF-8,
   UTF-16LE and UTF-16BE at any offset, so the check never depends on the
   declared charset being honest. One whose `Content-Type` cannot be parsed
-  or whose charset cannot be decoded is withheld. A JSON body is also
-  checked as it serializes (as structured content is returned), so a JSON
-  number that parses to a credential (`1.2345e4` for `12345`) is caught;
-  text is returned as written, so a number spelled inside a string or
-  text is left alone.
+  or whose charset cannot be decoded is withheld. In a JSON body each
+  number is also read as written, as a parser reads it (also under a
+  duplicate key), so one that parses to a credential (`1.2345e4` for
+  `12345`) is caught; a number spelled inside a string, or in a body that
+  is not JSON, is left alone. Structured content is checked as returned,
+  both serialized and as its pretty-printed text.
   An error excerpt shows literal echoes of its decoded text (overlapping
-  ones merged) as `[REDACTED]`, never cut inside one, and is withheld when
-  the body reveals a credential any other way, including in its bytes or
-  as a JSON number. A success body that reveals one is withheld with
+  and adjacent ones merged) as `[REDACTED]`, never cut inside one. The body
+  with those echoes masked is then checked exactly as a success body is
+  (every view above, its bytes and its JSON numbers), and so is the
+  excerpt as returned; the body is withheld when any check finds a
+  credential, when an encoded spelling overlaps a literal echo, or when the
+  echoes cannot be located in its bytes (a charset other than UTF-8 or
+  UTF-16, or UTF-8 that does not decode cleanly). Redaction uses a mask of
+  the body's length, so memory stays a small multiple of `maxResponseBytes`
+  however densely the body echoes a credential. A success body that reveals one is withheld with
   an `isError` result that says the call succeeded, since rewriting it could
   change the data; so a short or common header value withholds every
   success body that happens to contain it. These spellings cover an upstream

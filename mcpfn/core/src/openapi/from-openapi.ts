@@ -1499,6 +1499,7 @@ export function fromOpenAPI<TContext>(
     options,
   };
   const source = privateCopy(document);
+  keepSecurityShapes(document as JsonObject, source);
   const converter = new OperationConverter(
     source,
     version,
@@ -1551,6 +1552,66 @@ function privateCopy(document: object): JsonObject {
       cause: error instanceof Error ? error.message : String(error),
     });
   }
+}
+
+/**
+ * structuredClone turns a class instance into a plain object, so a security
+ * requirement or scheme that is not a plain object (such as an instance that
+ * would read as `{}`, no credential) is marked in the private copy before it
+ * is read: a requirement becomes `null` (the security is unresolved) and a
+ * scheme does not resolve, so an executor that sends credentials refuses the
+ * operation. Only these places are checked; a Date elsewhere (a YAML
+ * timestamp) is left alone.
+ */
+function keepSecurityShapes(document: JsonObject, copy: JsonObject): void {
+  try {
+    markLevel(document.security, ownValue(copy, "security"));
+    const paths = document.paths;
+    if (isObject(paths)) {
+      for (const [path, pathItem] of Object.entries(paths)) {
+        if (!isObject(pathItem)) continue;
+        const copiedItem = ownValue(ownValue(copy, "paths"), path);
+        for (const [key, operation] of Object.entries(pathItem)) {
+          if (METHODS.has(key) && isObject(operation)) markLevel(operation.security, ownValue(ownValue(copiedItem, key), "security"));
+        }
+      }
+    }
+    const components = document.components;
+    if (!isObject(components)) return;
+    const copiedComponents = ownValue(copy, "components");
+    const schemes = isPlainRecord(components) ? components.securitySchemes : undefined;
+    if (!isPlainRecord(components) || (isObject(schemes) && !isPlainRecord(schemes))) {
+      // No scheme of a section that is not a plain object resolves.
+      if (isObject(copiedComponents)) setOwn(copiedComponents, "securitySchemes", {});
+      return;
+    }
+    if (!isObject(schemes)) return;
+    const copiedSchemes = ownValue(copiedComponents, "securitySchemes");
+    if (!isObject(copiedSchemes)) return;
+    for (const [name, scheme] of Object.entries(schemes)) {
+      if (isObject(scheme) && !isPlainRecord(scheme)) setOwn(copiedSchemes, name, null);
+    }
+  } catch (error) {
+    throw new McpFnValidationError("fromOpenAPI expects a plain JSON document", {
+      cause: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+function markLevel(level: unknown, copied: unknown): void {
+  if (!Array.isArray(level) || !Array.isArray(copied)) return;
+  for (const [index, requirement] of level.entries()) {
+    if (isObject(requirement) && !isPlainRecord(requirement) && index < copied.length) copied[index] = null;
+  }
+}
+
+/** An own property's value (never one inherited, such as `__proto__`). */
+function ownValue(holder: unknown, key: string): unknown {
+  return isObject(holder) || Array.isArray(holder) ? Object.getOwnPropertyDescriptor(holder, key)?.value : undefined;
+}
+
+function setOwn(holder: object, key: string, value: unknown): void {
+  Object.defineProperty(holder, key, { value, writable: true, enumerable: true, configurable: true });
 }
 
 function pathItemSkip(path: string, pathItem: unknown): OpenApiSkippedOperation | undefined {

@@ -524,83 +524,40 @@ function holdsSecret(text: string, secrets: readonly string[]): boolean {
   return secrets.some((secret) => text.includes(secret));
 }
 
-/** `text` as a reader may decode it: each decoding, and each pair of them in either order. */
-function decodedViews(text: string): string[] {
+/** `text` as a reader may decode it: each decoding, and each pair of them in either order, made one at a time. */
+function* decodedViews(text: string): Generator<string> {
   const decoders = [
     jsonUnescaped,
     percentDecoded,
     (value: string) => percentDecoded(value.replace(/\+/g, " ")),
     htmlUnescaped,
   ];
-  const views: string[] = [];
   for (const first of decoders) {
     const once = first(text);
-    views.push(once);
-    for (const second of decoders) views.push(second(once));
+    yield once;
+    for (const second of decoders) yield second(once);
   }
-  return views;
 }
 
 /**
  * Whether `text` reveals a credential to a reader who decodes it, literal
  * echoes included, also with any NUL characters removed (a UTF-16 echo read
- * as single bytes).
+ * as single bytes). Views are made one at a time, so memory stays a small
+ * multiple of the text.
  */
 function exposes(text: string, secrets: readonly string[]): boolean {
   if (secrets.length === 0) return false;
-  return textViews(text).some((view) => holdsSecret(view, secrets) || decodedViews(view).some((decoded) => holdsSecret(decoded, secrets)));
+  for (const view of textViews(text)) {
+    if (holdsSecret(view, secrets)) return true;
+    for (const decoded of decodedViews(view)) if (holdsSecret(decoded, secrets)) return true;
+  }
+  return false;
 }
 
 /** `text`, and `text` without NUL characters when it has any. */
-function textViews(text: string): string[] {
-  return text.includes("\u0000") ? [text, text.replaceAll("\u0000", "")] : [text];
-}
-
-function occurrences(text: string, secret: string): number {
-  let count = 0;
-  for (let at = text.indexOf(secret); at !== -1; at = text.indexOf(secret, at + 1)) count += 1;
-  return count;
-}
-
-/**
- * Whether `text` reveals a credential other than as a literal echo, judged
- * on the text as received: a decoding that changes how often any credential
- * occurs (so one spelled with escapes, or overlapping a literal one, is
- * found). Literal echoes alone never trigger it. With NUL characters in
- * the text, the text without them is judged the same way, so an echo
- * interleaved with NULs (UTF-16 read as single bytes) is found too.
- */
-function revealsEncoded(
-  text: string,
-  spans: ReadonlyArray<readonly [number, number]>,
-  secrets: readonly string[],
-  nulViews = true,
-): boolean {
-  if (secrets.length === 0) return false;
-  const literal = secrets.map((secret) => occurrences(text, secret));
-  const views = nulViews ? textViews(text) : [text];
-  const changesCount = [...views, ...views.flatMap(decodedViews)].some(
-    (view) => view !== text && secrets.some((secret, index) => occurrences(view, secret) !== literal[index]),
-  );
-  if (changesCount) return true;
-  // Also with every literal echo masked by a character no decoding produces or
-  // consumes, so an encoded echo elsewhere cannot hide behind an equal count.
-  const masked = maskSpans(text, spans);
-  if ([masked, ...decodedViews(masked)].some((view) => holdsSecret(view, secrets))) return true;
-  if (!nulViews || !text.includes("\u0000")) return false;
-  const stripped = text.replaceAll("\u0000", "");
-  return revealsEncoded(stripped, credentialSpans(stripped, secrets), secrets);
-}
-
-/** `text` with each span replaced by NUL characters of the same length. */
-function maskSpans(text: string, spans: ReadonlyArray<readonly [number, number]>): string {
-  let result = "";
-  let at = 0;
-  for (const [start, stop] of spans) {
-    result += text.slice(at, start) + "\u0000".repeat(stop - start);
-    at = stop;
-  }
-  return result + text.slice(at);
+function* textViews(text: string): Generator<string> {
+  yield text;
+  if (text.includes("\u0000")) yield text.replaceAll("\u0000", "");
 }
 
 interface ResultOptions {
@@ -638,16 +595,8 @@ async function toResult(response: Response, options: ResultOptions): Promise<Cal
     return toolError(`The API responded with HTTP ${status}, so the call succeeded, but its body is in a character encoding that cannot be determined or decoded and was withheld.`);
   }
   const withheld = toolError(`The API responded with HTTP ${status}, so the call succeeded, but its body reveals an operator credential and was withheld.`);
-  // Rewriting a success body could change its data: one that reveals a
-  // credential in its declared encoding, read as UTF-8, or in its bytes
-  // (UTF-8 or UTF-16 at any offset) is withheld whole.
-  if (
-    exposes(body.text, options.secrets) ||
-    (body.encoding !== "utf-8" && exposes(utf8Decoder.decode(bytes), options.secrets)) ||
-    bytesHold(bytes, options.secrets)
-  ) {
-    return withheld;
-  }
+  // Rewriting a success body could change its data, so one that reveals a credential in any way is withheld whole.
+  if (bodyExposes(bytes, body.text, body.encoding, jsonStructure(body.text, options.secrets), options.secrets)) return withheld;
   // A leading byte order mark is dropped only after the check, as JSON parsing needs.
   const text = withoutBom(body.text);
   const parsed = parseJson(text);
@@ -668,8 +617,14 @@ async function toResult(response: Response, options: ResultOptions): Promise<Cal
   } catch {
     return unstructured(status, options, "a body that cannot be returned as structured content", text);
   }
-  // What is returned, as it serializes: a number spelled differently in the body (`1.2345e4`) is checked as returned.
-  if (exposes(JSON.stringify(result.structuredContent), options.secrets)) return withheld;
+  // What is returned is checked as returned: the structured content as it
+  // serializes (a number spelled `1.2345e4` in the body) and the text that carries it.
+  if (
+    exposes(JSON.stringify(result.structuredContent), options.secrets) ||
+    result.content.some((block) => block.type === "text" && exposes(block.text, options.secrets))
+  ) {
+    return withheld;
+  }
   if (options.checkOutput && !options.checkOutput(result.structuredContent as Record<string, unknown>)) {
     return unstructured(status, options, "a body the output schema does not describe", text);
   }
@@ -701,7 +656,8 @@ function unstructured(status: number, options: ResultOptions, what: string, text
 function numbersExact(json: string): boolean {
   return numberTokens(json).every((written) => {
     const value = Number(written);
-    if (!Number.isFinite(value)) return false;
+    // An overflow, and a negative zero (it serializes as `0`), would change.
+    if (!Number.isFinite(value) || Object.is(value, -0)) return false;
     const shortest = String(value);
     return written === shortest || decimalValue(written) === decimalValue(shortest);
   });
@@ -748,8 +704,8 @@ function declaredLength(response: Response): number {
  * Status and an excerpt of at most 4 KiB. The whole body (within
  * `maxResponseBytes`) is read and checked, so no credential is judged from
  * part of its spelling. Every literal credential echo (overlapping ones
- * merged) is replaced whole and never cut; a body that would reveal a
- * credential any other way is withheld.
+ * merged) is replaced whole and never cut. A body that reveals a credential
+ * any other way, or whose echoes cannot be located in its bytes, is withheld.
  */
 async function errorResult(response: Response, options: ResultOptions): Promise<CallToolResult> {
   const { status } = response;
@@ -768,57 +724,185 @@ async function errorResult(response: Response, options: ResultOptions): Promise<
   if (!complete) return oversized;
   const body = decode(bytes, response);
   if (body === undefined) return toolError(`${heading}\n[body withheld: its character encoding cannot be determined or decoded]`);
-  const decoded = body.text;
-  let spans = credentialSpans(decoded, options.secrets);
-  if (errorBodyReveals(bytes, body, spans, options.secrets)) {
-    return toolError(`${heading}\n[body withheld: it reveals an operator credential]`);
+  const withheld = toolError(`${heading}\n[body withheld: it reveals an operator credential]`);
+  const { secrets } = options;
+  const { text, encoding } = body;
+  const json = jsonStructure(text, secrets);
+  let mask: Uint8Array | undefined;
+  let masked: string | undefined;
+  if (bodyExposes(bytes, text, encoding, json, secrets)) {
+    // Only literal echoes are redacted, and only where the bytes behind them
+    // are known. The body with them masked is judged exactly as a success
+    // body is (every view, its bytes and its JSON numbers) and must reveal nothing.
+    mask = literalMask(text, secrets);
+    const maskedBytes = mask && maskBytes(bytes, text, encoding, mask);
+    if (!mask || !maskedBytes || decodingChangesCount(text, secrets)) return withheld;
+    masked = maskText(text, mask);
+    if (bodyExposes(maskedBytes, masked, encoding, json, secrets)) return withheld;
   }
-  let text = decoded;
-  // A leading byte order mark is dropped after the check, unless a redacted credential begins with it.
-  if (text.startsWith("\uFEFF") && spans[0]?.[0] !== 0) {
-    text = text.slice(1);
-    spans = spans.map(([start, stop]) => [start - 1, stop - 1]);
-  }
-  const { excerpt, end } = boundedExcerpt(text, spans, text.length, EXCERPT_BYTES);
+  // A leading byte order mark is dropped, unless a redacted credential begins with it.
+  const start = text.startsWith("\uFEFF") && !mask?.[0] ? 1 : 0;
+  const { excerpt, end } = boundedExcerpt(text, mask, start, EXCERPT_BYTES);
+  // What is returned is checked as returned: the excerpt, and the numbers its
+  // cut leaves (`1.2345e4` of `1.2345e45`).
+  if (exposes(excerpt, secrets)) return withheld;
+  if (json !== undefined && end < text.length && exposes(canonicalNumbers(masked ?? text, json, start, end), secrets)) return withheld;
   return toolError(
     heading +
       (excerpt.length > 0 ? `\n\n${excerpt}` : "") +
-      (end < text.length ? `\n[body truncated after ${encoder.encode(text.slice(0, end)).byteLength} bytes]` : ""),
+      (end < text.length ? `\n[body truncated after ${encoder.encode(text.slice(start, end)).byteLength} bytes]` : ""),
   );
 }
 
 /**
- * Whether an error body reveals a credential other than as a literal echo of
- * its declared or marked encoding, which redaction covers: an encoded
- * spelling in that text; in the bytes, a credential in UTF-8, UTF-16LE or
- * UTF-16BE at any offset more often than the text shows it (so an echo in
- * an encoding other than the declared one is found, whatever the declared
- * one is); a spelling in the bytes read as UTF-8; or, when the redacted
- * body is JSON, a number that serializes as a credential.
+ * Whether a body reveals a credential to any reader: in `text` (its declared
+ * or marked decoding), in its bytes read as UTF-8, in the bytes themselves
+ * (UTF-8, UTF-16LE or UTF-16BE at any offset), or, when the body is JSON,
+ * through a number a parser reads as one (`1.2345e4` as `12345`, also under
+ * a duplicate key). `json` is the unmasked body when it is JSON: its strings
+ * and syntax decide which characters are number tokens. The error path runs
+ * it again on the body with its literal echoes masked, so both paths judge
+ * the same views.
  */
-function errorBodyReveals(bytes: Uint8Array, body: BodyText, spans: ReadonlyArray<readonly [number, number]>, secrets: readonly string[]): boolean {
+function bodyExposes(
+  bytes: Uint8Array,
+  text: string,
+  encoding: string,
+  json: string | undefined,
+  secrets: readonly string[],
+): boolean {
   if (secrets.length === 0) return false;
-  if (revealsEncoded(body.text, spans, secrets)) return true;
-  if (bytesRevealMore(bytes, body, spans, secrets)) return true;
-  if (body.encoding !== "utf-8") {
-    const asUtf8 = utf8Decoder.decode(bytes);
-    // Literal and NUL-interleaved echoes in the bytes are counted above.
-    if (revealsEncoded(asUtf8, credentialSpans(asUtf8, secrets), secrets, false)) return true;
-  }
-  const redacted = withoutBom(redactAll(body.text, spans));
-  const parsed = parseJson(redacted);
-  return parsed.ok && serializedExposes(redacted, parsed.value, secrets);
+  if (exposes(text, secrets)) return true;
+  if (encoding !== "utf-8" && exposes(utf8Decoder.decode(bytes), secrets)) return true;
+  if (bytesHold(bytes, secrets)) return true;
+  return json !== undefined && exposes(canonicalNumbers(text, json, 0, text.length), secrets);
 }
 
-/** `text` with each span replaced by the redaction marker. */
-function redactAll(text: string, spans: ReadonlyArray<readonly [number, number]>): string {
-  let result = "";
-  let at = 0;
-  for (const [start, stop] of spans) {
-    result += text.slice(at, start) + REDACTED;
-    at = stop;
+/** The body text when (a leading byte order mark aside) it is JSON and there is a credential to look for, else undefined. */
+function jsonStructure(text: string, secrets: readonly string[]): string | undefined {
+  return secrets.length > 0 && parseJson(withoutBom(text)).ok ? text : undefined;
+}
+
+/**
+ * `text[from, to)` with each JSON number token written in another spelling
+ * replaced by the one a parser's value serializes as. Which characters are
+ * strings is read from `json` (the unmasked body, of the same length), so a
+ * masked character never changes it and a token stops at one. Strings and
+ * everything else are kept as written.
+ */
+function canonicalNumbers(text: string, json: string, from: number, to: number): string {
+  const token = /-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/y;
+  const parts: string[] = [];
+  let kept = from;
+  for (let index = from; index < to; index += 1) {
+    if (json[index] === '"') {
+      // Skip the string, escapes included.
+      for (index += 1; index < to && json[index] !== '"'; index += 1) if (json[index] === "\\") index += 1;
+      continue;
+    }
+    const char = text[index]!;
+    if (char !== "-" && (char < "0" || char > "9")) continue;
+    token.lastIndex = index;
+    let written = token.exec(text)?.[0];
+    if (written === undefined) continue;
+    // A token the range cuts is read as far as it is shown.
+    if (index + written.length > to) written = /^-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/.exec(text.slice(index, to))?.[0];
+    if (written === undefined) continue;
+    const value = String(Number(written));
+    if (value !== written) {
+      parts.push(text.slice(kept, index), value);
+      kept = index + written.length;
+    }
+    index += written.length - 1;
   }
-  return result + text.slice(at);
+  parts.push(text.slice(kept, to));
+  return parts.join("");
+}
+
+/**
+ * Whether a decoding of `text` changes how often a credential occurs, as when
+ * an encoded spelling overlaps a literal echo (`te%73t-` before an echo of
+ * its own shorter suffix): masking the literal one would leave part of the other.
+ */
+function decodingChangesCount(text: string, secrets: readonly string[]): boolean {
+  // Counted only once a decoding changes the text.
+  let literal: number[] | undefined;
+  for (const view of decodedViews(text)) {
+    if (view === text) continue;
+    literal ??= secrets.map((secret) => occurrences(text, secret));
+    if (secrets.some((secret, index) => occurrences(view, secret) !== literal![index])) return true;
+  }
+  return false;
+}
+
+function occurrences(text: string, secret: string): number {
+  let count = 0;
+  for (let at = text.indexOf(secret); at !== -1; at = text.indexOf(secret, at + 1)) count += 1;
+  return count;
+}
+
+/** Which characters of `text` belong to a literal credential echo (overlaps included), or undefined when none does. */
+function literalMask(text: string, secrets: readonly string[]): Uint8Array | undefined {
+  let mask: Uint8Array | undefined;
+  for (const secret of secrets) {
+    // Occurrences come in order, so each character is marked once.
+    let marked = 0;
+    for (let at = text.indexOf(secret); at !== -1; at = text.indexOf(secret, at + 1)) {
+      mask ??= new Uint8Array(text.length);
+      const stop = at + secret.length;
+      for (let index = Math.max(at, marked); index < stop; index += 1) mask[index] = 1;
+      marked = stop;
+    }
+  }
+  return mask;
+}
+
+/** `text` with each masked character replaced by U+FFFF, which no decoding produces or consumes. */
+function maskText(text: string, mask: Uint8Array): string {
+  let result = "";
+  const units = new Uint16Array(Math.min(text.length, 0x8000));
+  for (let at = 0; at < text.length; at += 0x8000) {
+    const chunk = units.subarray(0, Math.min(text.length - at, 0x8000));
+    for (let index = 0; index < chunk.length; index += 1) chunk[index] = mask[at + index] ? 0xffff : text.charCodeAt(at + index);
+    result += String.fromCharCode(...chunk);
+  }
+  return result;
+}
+
+/**
+ * `bytes` with the bytes behind each masked character of `text` set to 0xFF
+ * (never part of a UTF-8 form, nor of an ASCII credential's UTF-16 form), or
+ * undefined when they cannot be located: only UTF-16 (two bytes a code unit)
+ * and UTF-8 that re-encodes to the same bytes are mapped.
+ */
+function maskBytes(bytes: Uint8Array, text: string, encoding: string, mask: Uint8Array): Uint8Array | undefined {
+  const masked = bytes.slice();
+  if (encoding === "utf-16le" || encoding === "utf-16be") {
+    for (let at = mask.indexOf(1); at !== -1; at = mask.indexOf(1, at)) {
+      const stop = mask.indexOf(0, at);
+      const end = stop === -1 ? mask.length : stop;
+      masked.fill(0xff, at * 2, end * 2);
+      if (stop === -1) break;
+      at = stop;
+    }
+    return masked;
+  }
+  if (encoding !== "utf-8" || !sameBytes(encoder.encode(text), bytes)) return undefined;
+  let offset = 0;
+  for (let index = 0; index < text.length; index += 1) {
+    const code = text.codePointAt(index)!;
+    const size = code < 0x80 ? 1 : code < 0x800 ? 2 : code < 0x10000 ? 3 : 4;
+    if (mask[index] || (size === 4 && mask[index + 1])) masked.fill(0xff, offset, offset + size);
+    offset += size;
+    if (size === 4) index += 1;
+  }
+  return masked;
+}
+
+function sameBytes(left: Uint8Array, right: Uint8Array): boolean {
+  if (left.length !== right.length) return false;
+  for (let index = 0; index < left.length; index += 1) if (left[index] !== right[index]) return false;
+  return true;
 }
 
 function withoutBom(text: string): string {
@@ -884,95 +968,50 @@ function bytesHold(bytes: Uint8Array, secrets: readonly string[]): boolean {
 }
 
 /**
- * Whether the bytes hold a credential (UTF-8, UTF-16LE or UTF-16BE, any
- * offset) that the literal echoes of the decoded text (`spans`) do not
- * account for. From UTF-16 each code unit is two bytes, so the echoes' bytes
- * are masked and any credential left is one. Otherwise an echo accounts for
- * the bytes of the encoding the text was decoded from, and for the UTF-8
- * bytes of an ASCII credential in an ASCII-compatible encoding, so the bytes
- * may hold each no more often than the text shows it.
- */
-function bytesRevealMore(
-  bytes: Uint8Array,
-  body: BodyText,
-  spans: ReadonlyArray<readonly [number, number]>,
-  secrets: readonly string[],
-): boolean {
-  if (body.encoding === "utf-16le" || body.encoding === "utf-16be") {
-    const masked = bytes.slice();
-    // 0xFF is never part of a UTF-8 form and of no ASCII credential's UTF-16 form.
-    for (const [start, stop] of spans) masked.fill(0xff, start * 2, stop * 2);
-    return bytesHold(masked, secrets);
-  }
-  const raw = binary(bytes);
-  for (const secret of secrets) {
-    const shown = occurrences(body.text, secret);
-    const ascii = /^[\x00-\x7f]*$/.test(secret);
-    for (const [encoding, form] of byteForms(secret)) {
-      const accounted = encoding === body.encoding || (encoding === "utf-8" && ascii) ? shown : 0;
-      if (occurrences(raw, form) > accounted) return true;
-    }
-  }
-  return false;
-}
-
-/** Where literal credential forms occur in `text`, overlaps included, merged into sorted disjoint spans. */
-function credentialSpans(text: string, secrets: readonly string[]): Array<[number, number]> {
-  const found: Array<[number, number]> = [];
-  for (const secret of secrets) {
-    for (let at = text.indexOf(secret); at !== -1; at = text.indexOf(secret, at + 1)) found.push([at, at + secret.length]);
-  }
-  found.sort((a, b) => a[0] - b[0]);
-  const merged: Array<[number, number]> = [];
-  for (const span of found) {
-    const last = merged.at(-1);
-    if (last && span[0] < last[1]) last[1] = Math.max(last[1], span[1]);
-    else merged.push([...span]);
-  }
-  return merged;
-}
-
-/**
- * The redacted excerpt of `text[0, usable)` that fits in `limit` UTF-8 bytes,
- * and where in `text` it stops. It stops before a span it cannot show whole
- * (one that crosses `usable`, or a marker that would not fit) and never
- * splits a character.
+ * The excerpt of `text` from `start` that fits in `limit` UTF-8 bytes, each
+ * masked run shown as the redaction marker, and where in `text` it stops. It
+ * stops before a marker that would not fit and never splits a character;
+ * nothing larger than the excerpt is built.
  */
 function boundedExcerpt(
   text: string,
-  spans: ReadonlyArray<readonly [number, number]>,
-  usable: number,
+  mask: Uint8Array | undefined,
+  start: number,
   limit: number,
 ): { excerpt: string; end: number } {
   let excerpt = "";
   let size = 0;
-  let at = 0;
+  let at = start;
   const markerSize = encoder.encode(REDACTED).byteLength;
-  for (const [start, stop] of [...spans.filter(([start]) => start < usable), [usable, usable] as const]) {
-    const plain = text.slice(at, start);
-    const fits = indexAtBytes(plain, limit - size);
-    excerpt += plain.slice(0, fits);
-    size += encoder.encode(plain.slice(0, fits)).byteLength;
-    if (fits < plain.length) return { excerpt, end: at + fits };
-    if (start >= usable || stop > usable || size + markerSize > limit) return { excerpt, end: start };
+  while (at < text.length) {
+    const found = mask ? mask.indexOf(1, at) : -1;
+    const run = found === -1 ? text.length : found;
+    const fits = indexAtBytes(text, at, run, limit - size);
+    const shown = text.slice(at, fits);
+    excerpt += shown;
+    size += encoder.encode(shown).byteLength;
+    if (fits < run) return { excerpt, end: fits };
+    if (run === text.length) break;
+    if (size + markerSize > limit) return { excerpt, end: run };
     excerpt += REDACTED;
     size += markerSize;
-    at = stop;
+    const stop = mask!.indexOf(0, run);
+    at = stop === -1 ? text.length : stop;
   }
-  return { excerpt, end: at };
+  return { excerpt, end: text.length };
 }
 
-/** The index in `text` of the first character that would take its UTF-8 size past `limit`. */
-function indexAtBytes(text: string, limit: number): number {
+/** The index in `text[from, to)` of the first character that would take its UTF-8 size past `limit`, or `to`. */
+function indexAtBytes(text: string, from: number, to: number, limit: number): number {
   let bytes = 0;
-  for (let index = 0; index < text.length; index += 1) {
+  for (let index = from; index < to; index += 1) {
     const code = text.codePointAt(index)!;
     const size = code < 0x80 ? 1 : code < 0x800 ? 2 : code < 0x10000 ? 3 : 4;
     if (bytes + size > limit) return index;
     bytes += size;
     if (code >= 0x10000) index += 1;
   }
-  return text.length;
+  return to;
 }
 
 function tooLarge(status: number, limit: number): CallToolResult {
