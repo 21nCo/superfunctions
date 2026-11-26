@@ -559,6 +559,11 @@ export class McpFnRegistry<TContext = undefined> {
     return target;
   }
 
+  /** An empty registry that keeps this registry's schema compiler and no definitions. */
+  cloneEmpty(): McpFnRegistry<TContext> {
+    return new McpFnRegistry<TContext>(this.options);
+  }
+
   /** Registered schema resources for catalog projections, including hidden tools and prompts. */
   schemaDefinitions(): object[] {
     return [...this.schemas];

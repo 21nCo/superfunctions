@@ -832,6 +832,113 @@ describe('ConnectionManager OAuth shared integration', () => {
     ).rejects.toMatchObject({ code: 'VALIDATION_ERROR', status: 400 });
     expect(await adapter.listConnections('user-1', provider)).toEqual([]);
   });
+
+  it.each([
+    ['JWT', 'jwt-service', AuthType.JWT, { type: 'jwt', token: 'test-service-token' }],
+    ['Basic', 'basic-service', AuthType.Basic, { type: 'basic', username: 'test-user', password: 'test-password' }],
+  ] as const)('round-trips valid %s credentials through encrypted storage', async (_label, provider, authType, credentials) => {
+    const adapter = new MemoryAdapter();
+    const env = createManagerEnvironment(adapter, createTokenHttpClient());
+    env.providers.set(provider, { ...createApiKeyProvider(), name: provider, auth: { type: authType, config: {} } } as Provider);
+
+    const connection = await env.manager.connect({ userId: 'user-1', provider, credentials: { ...credentials } });
+    await expect(env.manager.getCredentials(connection.id)).resolves.toEqual(credentials);
+  });
+
+  it('stores only the validated values of a credential object with prototype getters', async () => {
+    const adapter = new MemoryAdapter();
+    const env = createManagerEnvironment(adapter, createTokenHttpClient());
+    env.providers.set('basic-service', { ...createApiKeyProvider(), name: 'basic-service', auth: { type: AuthType.Basic, config: {} } } as Provider);
+    class BasicCredentialSource {
+      readonly type = 'basic';
+      readonly extra = 'not-a-credential-field';
+      get username() { return 'test-user'; }
+      get password() { return 'test-password'; }
+    }
+
+    const connection = await env.manager.connect({
+      userId: 'user-1',
+      provider: 'basic-service',
+      credentials: new BasicCredentialSource() as any,
+    });
+    await expect(env.manager.getCredentials(connection.id)).resolves.toEqual({
+      type: 'basic',
+      username: 'test-user',
+      password: 'test-password',
+    });
+  });
+
+  it('stores the validated values of a credential object with a custom toJSON', async () => {
+    const adapter = new MemoryAdapter();
+    const env = createManagerEnvironment(adapter, createTokenHttpClient());
+    env.providers.set('linear', createApiKeyProvider());
+    const credentials = {
+      type: 'api-key' as const,
+      apiKey: 'test-linear-api-key',
+      toJSON: () => ({ type: 'api-key', apiKey: 'test-replaced-api-key' }),
+    };
+
+    const connection = await env.manager.connect({ userId: 'user-1', provider: 'linear', credentials });
+    await expect(env.manager.getCredentials(connection.id)).resolves.toEqual({
+      type: 'api-key',
+      apiKey: 'test-linear-api-key',
+    });
+  });
+
+  it.each([
+    ['an organization owner without organizationId', { kind: 'organization', installedByUserId: 'user-1' }],
+    ['a delegated owner without grants', {
+      kind: 'delegated',
+      organizationId: 'org-1',
+      delegatedToUserId: 'delegate-a',
+      installedByUserId: 'user-1',
+    }],
+  ])('rejects %s on connect with a validation error before storing', async (_label, owner) => {
+    const adapter = new MemoryAdapter();
+    const env = createManagerEnvironment(adapter, createTokenHttpClient());
+    env.providers.set('linear', createApiKeyProvider());
+
+    await expect(
+      env.manager.connect({
+        userId: 'user-1',
+        provider: 'linear',
+        credentials: { type: 'api-key', apiKey: 'test-linear-api-key' },
+        owner: owner as any,
+        actor: { userId: 'user-1', organizationId: 'org-1' },
+      })
+    ).rejects.toMatchObject({ code: 'VALIDATION_ERROR', status: 400 });
+    expect(await adapter.listConnections('user-1', 'linear')).toEqual([]);
+  });
+
+  it.each([
+    ['an organization owner without organizationId', { kind: 'organization', installedByUserId: 'admin-1' }],
+    ['a delegated owner without grants', {
+      kind: 'delegated',
+      organizationId: 'org-1',
+      delegatedToUserId: 'delegate-a',
+      installedByUserId: 'admin-1',
+    }],
+  ])('rejects %s as expectedOwner before the code exchange and keeps the state', async (_label, expectedOwner) => {
+    const adapter = new MemoryAdapter();
+    const tokenClient = createTokenHttpClient();
+    const env = createManagerEnvironment(adapter, tokenClient);
+    const owner = { kind: 'organization', organizationId: 'org-1', installedByUserId: 'admin-1' } as const;
+    const authUrl = await env.manager.getAuthUrl({
+      userId: 'admin-1',
+      provider: 'google',
+      redirectUri: REDIRECT_URI,
+      owner,
+    });
+    const state = new URL(authUrl).searchParams.get('state')!;
+
+    await expect(
+      env.manager.handleCallback({ code: 'auth-code-1', state, expectedOwner: expectedOwner as any })
+    ).rejects.toMatchObject({ code: 'VALIDATION_ERROR', status: 400 });
+    expect(tokenClient.exchangeToken).not.toHaveBeenCalled();
+
+    const result = await env.manager.handleCallback({ code: 'auth-code-1', state, expectedOwner: owner });
+    expect(result.connection).toMatchObject({ ownerKind: 'organization', ownerId: 'org-1' });
+  });
 });
 
 function createManagerEnvironment(

@@ -255,6 +255,9 @@ export class ConnectionManager {
   }
 
   async handleCallback(options: HandleCallbackOptions): Promise<HandleCallbackResult> {
+    if (options.expectedOwner !== undefined) {
+      assertConnectionOwnerShape(options.expectedOwner, 'expectedOwner');
+    }
     const statePreview = await this.oauthStateStore.get(options.state);
     if (!statePreview) {
       throw new Error('OAuth state is invalid or expired');
@@ -356,7 +359,7 @@ export class ConnectionManager {
       throw new Error(`Provider ${options.provider} not found`);
     }
 
-    const credentialTypes: Partial<Record<AuthType, Credentials['type']>> = {
+    const credentialTypes: Partial<Record<AuthType, Exclude<Credentials, OAuth2Credentials>['type']>> = {
       [AuthType.ApiKey]: 'api-key',
       [AuthType.JWT]: 'jwt',
       [AuthType.Basic]: 'basic',
@@ -366,7 +369,8 @@ export class ConnectionManager {
     if (!isPlainMetadataRecord(credentials)) {
       throw new ConnectionResolutionError('VALIDATION_ERROR', 'credentials are required', 400);
     }
-    if (!expectedCredentialType || credentials.type !== expectedCredentialType) {
+    const credentialType = credentials.type;
+    if (!expectedCredentialType || credentialType !== expectedCredentialType) {
       throw new ConnectionResolutionError(
         'VALIDATION_ERROR',
         provider.auth.type === AuthType.OAuth2
@@ -375,7 +379,10 @@ export class ConnectionManager {
         400
       );
     }
-    assertDirectCredentials(options.credentials);
+    const directCredentials = normalizeDirectCredentials(credentials, expectedCredentialType);
+    if (options.owner !== undefined) {
+      assertConnectionOwnerShape(options.owner, 'owner');
+    }
 
     const owner: PlugFnConnectionOwner = options.owner ?? {
       kind: 'user',
@@ -397,7 +404,7 @@ export class ConnectionManager {
       ...ownerFields(owner),
       name: options.connectionName,
       status: ConnectionStatus.Active,
-      credentials: this.tokenStorage.encryptCredentials(options.credentials),
+      credentials: this.tokenStorage.encryptCredentials(directCredentials),
       connectedAt: new Date(),
     });
     this.logger.info(`Connection created: ${options.provider}`, {
@@ -956,19 +963,40 @@ function isNonBlankString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;
 }
 
-function assertDirectCredentials(credentials: Exclude<Credentials, OAuth2Credentials>): void {
-  const fields = credentials as unknown as Record<string, unknown>;
-  const invalid =
-    (credentials.type === 'api-key' && !isNonBlankString(fields.apiKey)) ||
-    (credentials.type === 'jwt' && !isNonBlankString(fields.token)) ||
-    (credentials.type === 'basic' &&
-      (!isNonBlankString(fields.username) ||
-        typeof fields.password !== 'string' ||
-        fields.password.length === 0));
-  if (invalid) {
+/**
+ * Reads each required credential field once, validates it, and returns a fresh
+ * plain record holding only those values, so storage never serializes the
+ * caller's object (prototype getters, toJSON overrides or extra fields).
+ */
+function normalizeDirectCredentials(
+  credentials: Record<string, unknown>,
+  type: Exclude<Credentials, OAuth2Credentials>['type']
+): Exclude<Credentials, OAuth2Credentials> {
+  if (type === 'api-key') {
+    const apiKey = credentials.apiKey;
+    if (isNonBlankString(apiKey)) return { type, apiKey };
+  } else if (type === 'jwt') {
+    const token = credentials.token;
+    if (isNonBlankString(token)) return { type, token };
+  } else if (type === 'basic') {
+    const username = credentials.username;
+    const password = credentials.password;
+    if (isNonBlankString(username) && typeof password === 'string' && password.length > 0) {
+      return { type, username, password };
+    }
+  }
+  throw new ConnectionResolutionError(
+    'VALIDATION_ERROR',
+    'credentials must not be empty',
+    400
+  );
+}
+
+function assertConnectionOwnerShape(value: unknown, field: string): void {
+  if (!isConnectionOwner(value)) {
     throw new ConnectionResolutionError(
       'VALIDATION_ERROR',
-      'credentials must not be empty',
+      `${field} is not a valid connection owner`,
       400
     );
   }

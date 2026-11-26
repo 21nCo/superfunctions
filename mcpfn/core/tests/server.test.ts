@@ -184,6 +184,74 @@ describe("McpFnServer", () => {
     expect(registry.listTools()).toEqual([]);
   });
 
+  it("cloneEmpty() keeps the schema compiler and copies no definitions", async () => {
+    const compiledSchemas: object[] = [];
+    const source = new McpFnRegistry({
+      compileSchema: (schema) => {
+        compiledSchemas.push(schema);
+        const validate: McpFnSchemaValidator = (data: unknown) => {
+          const valid = Boolean(data && typeof data === "object" &&
+            (data as Record<string, unknown>).value === "allowed");
+          validate.errors = valid ? null : [{ keyword: "const", message: "value is not allowed" }];
+          return valid;
+        };
+        return validate;
+      },
+    })
+      .register({
+        name: "existing",
+        description: "An existing tool.",
+        inputSchema: { type: "object" },
+        handler: async () => structuredResult({ ok: true }),
+      })
+      .registerResource({ uri: "file:///existing", name: "existing", read: async () => ({ contents: [] }) })
+      .registerResourceTemplate({
+        uriTemplate: "file:///items/{id}",
+        name: "item",
+        read: async (uri) => ({ contents: [{ uri: uri.href, text: "item" }] }),
+      })
+      .registerPrompt({ name: "existing", get: async () => ({ messages: [] }) });
+    const sourceTools = source.listTools();
+    expect(sourceTools).toHaveLength(1);
+    expect(await source.listResources()).toHaveLength(1);
+    expect(source.listResourceTemplates()).toHaveLength(1);
+    expect(source.listPrompts()).toHaveLength(1);
+    const compiledBefore = compiledSchemas.length;
+
+    const empty = source.cloneEmpty();
+    expect(empty).not.toBe(source);
+    expect(compiledSchemas).toHaveLength(compiledBefore);
+    expect(empty.listTools()).toEqual([]);
+    expect(await empty.listResources()).toEqual([]);
+    expect(empty.listResourceTemplates()).toEqual([]);
+    expect(empty.listPrompts()).toEqual([]);
+
+    let handlerCalls = 0;
+    const inputSchema = { type: "object", properties: { value: { type: "string" } } };
+    empty.register({
+      name: "safe",
+      description: "Validated by the inherited compiler.",
+      inputSchema,
+      handler: async () => {
+        handlerCalls += 1;
+        return structuredResult({ ok: true });
+      },
+    });
+    expect(compiledSchemas.at(-1)).toBe(inputSchema);
+    expect(source.listTools()).toEqual(sourceTools);
+
+    const server = createMcpFnServer({ info: { name: "empty", version: "1.0.0" }, registry: empty });
+    const client = new Client({ name: "test-client", version: "1.0.0" }, { capabilities: {} });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    closeables.push(client, server);
+    const denied = await client.callTool({ name: "safe", arguments: { value: "denied" } });
+    expect(denied).toMatchObject({ isError: true });
+    expect(JSON.stringify(denied)).toContain("value is not allowed");
+    expect(handlerCalls).toBe(0);
+  });
+
   it("normalizes structured results without treating repeated references as cycles", () => {
     const shared = { value: 1 };
     const circular: Record<string, unknown> = { shared };
