@@ -199,3 +199,74 @@ describe("McpFnRegistry nested handlers after registration", () => {
     expect(topic.mock.contexts[0]).toBe(complete);
   });
 });
+
+// Delta-review follow-ups for the round-1 repairs.
+describe("McpFnRegistry custom compiler edge cases", () => {
+  it("still lists a declaration-supplied draft-07 schema whose annotation carries $ref text", async () => {
+    const { McpFnRegistry, defineMcpFnServer } = await import("../src/index.js");
+    const { createSchemaCompiler } = await import("../src/validation.js");
+    const shared = createSchemaCompiler();
+    const declared = defineMcpFnServer({
+      info,
+      registry: new McpFnRegistry({ compileSchema: (schema) => shared.compile(schema) as never }),
+      tools: [{
+        name: "t",
+        description: "Annotated.",
+        inputSchema: { type: "object", "x-documentation": { $ref: "https://docs.test.invalid/page" } } as never,
+        handler,
+      }],
+    });
+
+    expect(declared.registry.listTools().map((tool) => tool.name)).toEqual(["t"]);
+  });
+
+  it("retries a declaration whose output failed after its input compiled on the shared compiler", async () => {
+    const { McpFnRegistry, defineMcpFnServer } = await import("../src/index.js");
+    const ajv = new Ajv2020({ strict: false });
+    const registry = new McpFnRegistry({ compileSchema: (schema: object) => ajv.compile(schema) });
+    const tool = (ok: string) => ({
+      name: "t",
+      description: "Declared.",
+      inputSchema: { $id: "https://test.invalid/declared", type: "object" as const },
+      outputSchema: { type: "object", properties: { ok: { type: ok } } } as never,
+      handler,
+    });
+
+    expect(() => defineMcpFnServer({ info, registry, tools: [tool("nonsense")] })).toThrow();
+    const declared = defineMcpFnServer({ info, registry, tools: [tool("boolean")] });
+    expect(declared.registry.listTools().map((listed) => listed.name)).toEqual(["t"]);
+  });
+
+  it("keeps createTask of a callable task handler and a non-enumerable completer", async () => {
+    const { McpFnRegistry } = await import("../src/index.js");
+    const registered = vi.fn(async () => ({ task: { taskId: "registered" } }));
+    const callable = Object.assign(() => undefined, { createTask: registered as (...args: unknown[]) => unknown });
+    const source = new McpFnRegistry().register({
+      name: "t",
+      description: "Task tool.",
+      inputSchema: { type: "object" },
+      execution: { taskSupport: "optional" },
+      handler,
+      taskHandler: callable as never,
+    });
+    callable.createTask = vi.fn();
+    await source.clone().createToolTask("t", {}, undefined, { ...requestExtra(), taskStore: {} } as never);
+    expect(registered).toHaveBeenCalledTimes(1);
+
+    const complete = {};
+    Object.defineProperty(complete, "topic", {
+      value: async () => ({ completion: { values: ["hidden"] } }),
+      enumerable: false,
+    });
+    const prompts = new McpFnRegistry().registerPrompt({
+      name: "p",
+      arguments: [{ name: "topic" }],
+      get: async () => ({ messages: [] }),
+      complete: complete as never,
+    });
+    for (const registry of [prompts, prompts.clone()]) {
+      await expect(registry.complete({ type: "ref/prompt", name: "p" }, { name: "topic", value: "" }, undefined, undefined, requestExtra()))
+        .resolves.toMatchObject({ completion: { values: ["hidden"] } });
+    }
+  });
+});

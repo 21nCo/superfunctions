@@ -1,5 +1,5 @@
 import type { Adapter as DbAdapter } from '@superfunctions/db';
-import { randomBytes } from 'node:crypto';
+import { createHmac, pbkdf2Sync, randomBytes } from 'node:crypto';
 import type {
   Connection,
   ConnectOptions,
@@ -84,6 +84,9 @@ export interface OAuthStatePin {
   readonly changed: boolean;
   release(): void;
 }
+
+const CONFIGURED_VERSION_LABEL = 'plugfn/configured-credential-version/v1';
+const CONFIGURED_VERSION_ITERATIONS = 10_000;
 
 interface VersionedCredentials {
   credentials: Credentials;
@@ -319,6 +322,7 @@ export class ConnectionManager {
   private readonly refreshInFlight = new Map<string, Promise<Connection>>();
   private readonly credentialVersions = new WeakMap<Credentials, string>();
   private readonly configuredVersions = new Map<string, { values: unknown[]; version: string }>();
+  private readonly configuredVersionSalt: Buffer;
 
   constructor(
     private connectionStorage: ConnectionStorage,
@@ -331,6 +335,9 @@ export class ConnectionManager {
     private authorizeConnection?: PlugFnAuthorizationOptions['authorizeConnection']
   ) {
     this.tokenStorage = new SecureTokenStorage(encryptionKey);
+    this.configuredVersionSalt = createHmac('sha256', encryptionKey)
+      .update(CONFIGURED_VERSION_LABEL)
+      .digest();
     this.oauthFlowService = oauthDependencies.oauthFlowService;
     this.oauthStateStore = oauthDependencies.oauthStateStore;
     this.oauthStateGuard = oauthDependencies.oauthStateGuard;
@@ -1015,14 +1022,27 @@ export class ConnectionManager {
     }
   }
 
-  /** A random version per configured secret, renewed when any field changes. */
+  /**
+   * The version of a configured credential: a salted PBKDF2 derivation under a
+   * salt bound to the encryption key, so every instance sharing that key and
+   * configured secret agrees on it (and shares cache entries), a rotated
+   * secret gets a new one, and it says nothing about the secret to anyone
+   * without the key. Derived once per secret and provider, then reused.
+   */
   private configuredVersion(provider: string, credentials: Credentials): VersionedCredentials {
     const values = Object.values(credentials);
     const known = this.configuredVersions.get(provider);
     if (known?.values.length === values.length && known.values.every((value, index) => value === values[index])) {
       return { credentials, version: known.version };
     }
-    const version = `configured:${randomBytes(16).toString('hex')}`;
+    const derived = pbkdf2Sync(
+      JSON.stringify([provider, credentials]),
+      this.configuredVersionSalt,
+      CONFIGURED_VERSION_ITERATIONS,
+      32,
+      'sha256'
+    );
+    const version = `configured:${derived.toString('hex')}`;
     this.configuredVersions.set(provider, { values, version });
     return { credentials, version };
   }

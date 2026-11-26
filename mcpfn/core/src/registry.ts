@@ -290,6 +290,41 @@ function assertPromptArgumentsAgree(
   }
 }
 
+/**
+ * Why a schema collection does not resolve on its own, or undefined. With a
+ * custom compiler, which already accepted each schema in its own dialect, a
+ * collection the built-in engine rejects (for example a draft 2020-12 schema)
+ * still counts as closed when every reference resolves inside it.
+ */
+function collectionError(schemas: object[], custom: boolean): unknown {
+  try {
+    validateSchemaCollection(schemas);
+    return undefined;
+  } catch (error) {
+    if (!custom) return error ?? new Error("schema collection is invalid");
+    validateSchemaReferences(schemas);
+    return undefined;
+  }
+}
+
+// Validators a custom compiler returned during registrations that failed, per
+// compiler and by schema text. Such a compiler may keep state the registry
+// cannot roll back (an Ajv instance holding each compiled $id), and every
+// registry derived from one (a clone, or a declaration's copy) shares it, so
+// an exact retry of the same schema on any of them reuses that compile instead
+// of compiling it again. They are never listed, and are used for nothing but
+// the identical schema text.
+const abandonedCompiles = new WeakMap<McpFnSchemaCompiler, Map<string, CompiledSchema>>();
+
+function abandonedFor(compiler: McpFnSchemaCompiler): Map<string, CompiledSchema> {
+  let abandoned = abandonedCompiles.get(compiler);
+  if (!abandoned) {
+    abandoned = new Map();
+    abandonedCompiles.set(compiler, abandoned);
+  }
+  return abandoned;
+}
+
 /** A registry-issued tool or prompt view and the caller definition behind it. */
 interface DefinitionRecord {
   kind: "tool" | "prompt";
@@ -372,19 +407,26 @@ function readDefinition(
  * registration changes neither execution, completion nor clone().
  */
 function captureField(definition: object, key: PropertyKey, value: unknown): unknown {
-  if (typeof value === "function") {
-    return BOUND_FIELDS.has(key) ? value.bind(definition) : value;
+  if (key === "taskHandler" && isObject(value)) {
+    const createTask = (value as { createTask?: unknown }).createTask;
+    return Object.freeze(createTask === undefined ? {} : {
+      createTask: typeof createTask === "function" ? createTask.bind(value) : createTask,
+    });
   }
-  if ((key === "taskHandler" || key === "complete") && isObject(value)) {
-    const table: Record<PropertyKey, unknown> = {};
-    const names = key === "taskHandler" ? ["createTask"] : Object.keys(value);
-    for (const name of names) {
-      const handler = (value as Record<PropertyKey, unknown>)[name];
-      if (key === "taskHandler" && handler === undefined) continue;
-      defineField(table, name, typeof handler === "function" ? handler.bind(value) : handler);
+  if (key === "complete" && isObject(value)) {
+    // Every own string key, keeping its enumerability: registration checks the
+    // enumerable names and dispatch any own name, exactly as on the caller's table.
+    const table: Record<string, unknown> = {};
+    for (const name of Object.getOwnPropertyNames(value)) {
+      const handler = (value as Record<string, unknown>)[name];
+      Object.defineProperty(table, name, {
+        value: typeof handler === "function" ? handler.bind(value) : handler,
+        enumerable: Object.prototype.propertyIsEnumerable.call(value, name),
+      });
     }
     return Object.freeze(table);
   }
+  if (typeof value === "function" && BOUND_FIELDS.has(key)) return value.bind(definition);
   return value;
 }
 
@@ -991,12 +1033,9 @@ export class McpFnRegistry<TContext = undefined> {
   // in the middle of it.
   private registering = false;
   private compileAttempts = 0;
-  // Validators a custom compiler returned during registrations that failed,
-  // by schema text. Such a compiler may keep state the registry cannot roll
-  // back (an Ajv instance holding each compiled $id), so an exact retry of the
-  // same schema reuses that compile instead of compiling it again. They are
-  // never listed, and are used for nothing but the identical schema text.
-  private readonly abandoned = new Map<string, CompiledSchema>();
+  // Failed registrations' compiles, shared by every registry using the same
+  // custom compiler (see abandonedCompiles).
+  private readonly abandoned: Map<string, CompiledSchema> | undefined;
 
   /**
    * Clone in successful registration order, preserving cross-definition
@@ -1074,9 +1113,7 @@ export class McpFnRegistry<TContext = undefined> {
     if (this.closure?.count !== this.registrations.length) {
       let error: unknown;
       try {
-        const schemas = [...new Set(this.schemas)];
-        if (this.customCompile) validateSchemaReferences(schemas);
-        else validateSchemaCollection(schemas);
+        error = collectionError([...new Set(this.schemas)], this.customCompile !== undefined);
       } catch (error_) {
         error = error_ ?? new Error("schema collection is invalid");
       }
@@ -1126,7 +1163,7 @@ export class McpFnRegistry<TContext = undefined> {
   }
 
   private reuseAbandoned(snapshot: object): CompiledSchema | undefined {
-    if (!this.customCompile || this.abandoned.size === 0) return undefined;
+    if (!this.abandoned || this.abandoned.size === 0) return undefined;
     const text = snapshotText(snapshot);
     const validator = this.abandoned.get(text);
     this.abandoned.delete(text);
@@ -1167,10 +1204,8 @@ export class McpFnRegistry<TContext = undefined> {
         body();
       } catch (error) {
         if (this.builtIn && this.compileAttempts !== attempts) this.resetBuiltIn();
-        if (this.customCompile) {
-          for (const entry of pending) {
-            this.abandoned.set(snapshotText(entry.snapshot), entry.validator);
-          }
+        for (const entry of this.abandoned ? pending : []) {
+          this.abandoned!.set(snapshotText(entry.snapshot), entry.validator);
         }
         throw error;
       } finally {
@@ -1212,6 +1247,7 @@ export class McpFnRegistry<TContext = undefined> {
     this.options = { compileSchema };
     if (compileSchema) {
       this.customCompile = adaptSchemaCompiler(compileSchema);
+      this.abandoned = abandonedFor(compileSchema);
     } else {
       this.builtIn = createSchemaCompiler();
     }

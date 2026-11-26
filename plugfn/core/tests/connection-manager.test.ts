@@ -1564,7 +1564,7 @@ describe('ConnectionManager OAuth callback subject precheck', () => {
 });
 
 describe('ConnectionManager credential versions', () => {
-  function apiKeyManager(apiKey: string) {
+  function apiKeyManager(apiKey: string, encryptionKey = ENCRYPTION_KEY) {
     const adapter = new MemoryAdapter();
     const base = createManagerEnvironment(adapter, createTokenHttpClient());
     const providers = new Map<string, Provider>([['linear', createApiKeyProvider()]]);
@@ -1574,7 +1574,7 @@ describe('ConnectionManager credential versions', () => {
       providers,
       integrationConfigs,
       BASE_URL,
-      ENCRYPTION_KEY,
+      encryptionKey,
       new NoopLogger(),
       base.oauthDependencies
     );
@@ -1612,7 +1612,15 @@ describe('ConnectionManager credential versions', () => {
     const configured = await manager.resolveConnectionForAction({ userId: 'user-1', provider: 'linear' });
     const first = manager.credentialVersion(await manager.getCredentials(configured!.id));
     expect(manager.credentialVersion(await manager.getCredentials(configured!.id))).toBe(first);
-    expect(first).toMatch(/^configured:[a-f0-9]{32}$/);
+    expect(first).toMatch(/^configured:[a-f0-9]{64}$/);
+    expect(first).not.toContain('test-configured-key-one');
+
+    // Another instance with the same key and secret (another process, or a
+    // restart) agrees, so entries in a shared cache are reused.
+    const other = apiKeyManager('test-configured-key-one').manager;
+    expect(other.credentialVersion(await other.getCredentials(configured!.id))).toBe(first);
+    const otherKey = apiKeyManager('test-configured-key-one', '0'.repeat(63) + '9').manager;
+    expect(otherKey.credentialVersion(await otherKey.getCredentials(configured!.id))).not.toBe(first);
 
     integrationConfigs.get('linear').apiKey = 'test-configured-key-two';
     expect(manager.credentialVersion(await manager.getCredentials(configured!.id))).not.toBe(first);
