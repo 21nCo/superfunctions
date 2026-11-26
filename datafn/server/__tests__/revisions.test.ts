@@ -3522,7 +3522,8 @@ describe("DATA-41 revisions: PR review round 4", () => {
     await stale.internal.findOne("__datafn_revisions", ledger("task:1"));
     await stale.findOne(record("task:1"));
     await served.push({ resource: "task", operation: "delete", id: "task:1" });
-    expect(await bumpPresent(stale, NS, "task", "task:1")).toBeUndefined();
+    // Without evidence that it wrote the row, the write fails (and is retried) rather than guess.
+    await expect(bumpPresent(stale, NS, "task", "task:1")).rejects.toThrow(/concurrent delete/);
     expect(await served.rev("task", "task:1")).toEqual({ rev: 2, deleted: true });
 
     // A re-insert that loses the swap to that tombstone still raises it live.
@@ -3530,9 +3531,13 @@ describe("DATA-41 revisions: PR review round 4", () => {
     await again.internal.findOne("__datafn_revisions", ledger("task:1"));
     await bumpRevision(served.database, NS, "task", "task:1", true);
     await served.database.create({ model: "task", data: { id: "task:1", title: "again" }, namespace: NS } as any);
-    const reinsert: any[] = [{ resource: "task", id: "task:1", op: "insert", record: { id: "task:1", title: "again" } }];
+    // An inherited-inactive update of the same record comes last.
+    const reinsert: any[] = [
+      { resource: "task", id: "task:1", op: "insert", record: { id: "task:1", title: "again" } },
+      { resource: "task", id: "task:1", op: "merge", record: { id: "task:1", isAncestorInactive: true } },
+    ];
     await assignWriteRevisions(again, NS, reinsert, () => true, schema);
-    expect(reinsert[0]).toMatchObject({ rev: 4, revUncertified: true });
+    expect(reinsert[1]).toMatchObject({ rev: 4, revUncertified: true });
     expect(await served.rev("task", "task:1")).toEqual({ rev: 4, deleted: false });
 
     // A bump recovered after a swap miss records no snapshot row at its revision.
@@ -3541,8 +3546,8 @@ describe("DATA-41 revisions: PR review round 4", () => {
     await bumpRevision(served.database, NS, "task", "task:2", false);
     const entries: any[] = [{ resource: "task", id: "task:2", op: "replace", record: { id: "task:2", title: "r" } }];
     await assignWriteRevisions(later, NS, entries, () => true, schema);
-    expect(entries[0]).toMatchObject({ rev: 3, revUncertified: true, record: { id: "task:2", title: "r" } });
-    expect(Object.keys(entries[0].record)).toEqual(["id", "title"]);
+    // Its own whole-row write is read back (stored fields included), uncertified.
+    expect(entries[0]).toMatchObject({ rev: 3, revUncertified: true, record: { id: "task:2", title: "a" } });
   });
 
   it("keeps a versioned query's $rev only on rows the afterQuery hooks left unchanged", async () => {
@@ -3572,21 +3577,25 @@ describe("DATA-41 revisions: PR review round 4", () => {
   });
 
   it("rechecks afterQuery output without modifying it, and only on versioned queries", async () => {
+    // A hook row whose wire form (toJSON) leaves out its title.
+    class Redacted {
+      constructor(row: Json) { Object.assign(this, row); }
+      toJSON() { return { id: (this as Json).id, $rev: (this as Json).$rev }; }
+    }
     const hooks = {
       name: "frozen",
       runsOn: ["server"],
       afterQuery: (_ctx: unknown, query: Json, result: Json) => !Array.isArray(result?.data) ? result : Object.freeze({
         ...result,
         data: Object.freeze(result.data.map((row: Json) =>
-          Object.freeze(query.withRevisions ? { ...row, title: "redacted" } : { ...row, $rev: "app" }))),
+          Object.freeze(query.withRevisions ? new Redacted(row) : { ...row, $rev: "app" }))),
       }),
     };
     const served = await serve({ config: { plugins: [hooks] } });
     await served.push({ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } });
     const versioned = await served.send("query", { version: 1, resource: "task", withRevisions: true });
     expect(versioned.status).toBe(200);
-    expect(versioned.body.result.data[0]).toEqual(expect.objectContaining({ id: "task:1", title: "redacted" }));
-    expect(versioned.body.result.data[0]).not.toHaveProperty("$rev");
+    expect(versioned.body.result.data[0]).toEqual({ id: "task:1" });
     const plain = await served.send("query", { version: 1, resource: "task" });
     expect(plain.body.result.data[0]).toMatchObject({ id: "task:1", $rev: "app" });
   });

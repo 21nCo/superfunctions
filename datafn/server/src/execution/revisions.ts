@@ -327,18 +327,23 @@ export async function bumpPresent(
   outcome?: BumpOutcome,
   writesRow = false,
 ): Promise<number | undefined> {
-  // After a swap miss where reads are a snapshot, the record row read may be
-  // older than the write that won. A write that certainly wrote the row
-  // (`writesRow`: an insert, replace, upsert or KV merge that succeeded) reads
-  // its own row, which is current. For any other write the revision row (just
-  // written, so read current) decides: a tombstone committed since means the
-  // write matched no row and must not turn it live.
-  return raiseRevision(db, namespace, resource, recordId, false, outcome, async (row, recovered) =>
-    recovered && row !== null && !writesRow ? isTombstone(row) : (await db.findOne({
+  // After a swap miss where reads are a snapshot, a record row this write did
+  // not write may be read as it was before a delete committed since (the
+  // revision row, just written, is read current). A write that certainly
+  // wrote the row (`writesRow`: the write inserted, replaced, upserted or
+  // KV-merged it) reads its own, current row. Any other write facing a
+  // tombstone committed since cannot tell a recreation from a write that
+  // matched no row, so it fails and is retried rather than guess.
+  return raiseRevision(db, namespace, resource, recordId, false, outcome, async (row, recovered) => {
+    if (recovered && isTombstone(row) && !writesRow) {
+      throw new Error("INTERNAL: Record revision changed by a concurrent delete; retry the write");
+    }
+    return (await db.findOne({
       model: resource,
       where: [{ field: "id", operator: "eq", value: recordId }],
       namespace,
-    })) === null);
+    })) === null;
+  });
 }
 
 function isTombstone(row: Record<string, unknown> | null): boolean {
@@ -671,8 +676,15 @@ export async function assignWriteRevisions(
     for (const entry of entries) assignments.set(entry, write);
   }
   const last = new Map<string, WriteEntry>();
+  // Records any entry of this write wrote as a whole row, whatever entry
+  // (such as an inherited-inactive update) comes last.
+  const wroteRow = new Set<string>();
   for (const entry of write.entries) {
-    if (tracksRevisions(entry.resource, schema)) last.set(JSON.stringify([entry.resource, entry.id]), entry);
+    const key = JSON.stringify([entry.resource, entry.id]);
+    if (tracksRevisions(entry.resource, schema)) last.set(key, entry);
+    if (["insert", "replace", "upsert"].includes(entry.op) || (entry.op === "merge" && isKvResource(entry.resource))) {
+      wroteRow.add(key);
+    }
   }
   for (const entry of last.values()) {
     if (write.finished.has(entry)) continue;
@@ -687,15 +699,14 @@ export async function assignWriteRevisions(
       const outcome: BumpOutcome = {};
       entry.rev = deleted
         ? await bumpTombstone(db, namespace, entry.resource, entry.id, outcome)
-        : await bumpPresent(db, namespace, entry.resource, entry.id, outcome, entry.op === "insert" ||
-          entry.op === "replace" || entry.op === "upsert" || (entry.op === "merge" && isKvResource(entry.resource)));
+        : await bumpPresent(db, namespace, entry.resource, entry.id, outcome,
+          wroteRow.has(JSON.stringify([entry.resource, entry.id])));
       if (outcome.staleView) entry.revUncertified = true;
       write.bumped.add(entry);
     }
-    if (
-      !deleted && !entry.revUncertified && completeRow(entry.resource) &&
-      (entry.op !== "merge" || isKvResource(entry.resource))
-    ) {
+    // A whole-row write reads its own row (current even after a recovered
+    // swap, which only leaves the change row uncertified).
+    if (!deleted && completeRow(entry.resource) && (entry.op !== "merge" || isKvResource(entry.resource))) {
       const stored = await db.findOne({
         model: entry.resource,
         where: [{ field: "id", operator: "eq", value: entry.id }],

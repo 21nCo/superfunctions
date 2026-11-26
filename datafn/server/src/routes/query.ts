@@ -1088,8 +1088,10 @@ export function createQueryHandler(
             const kept = rows.map((row) => {
               if (!hasRevision(row) || certified?.has(canonicalRow(row))) return row;
               changed = true;
-              const { [REVISION_FIELD]: _uncertified, ...rest } = row;
-              return rest;
+              // The row as it goes on the wire (a hook's toJSON applied), without `$rev`.
+              const wire = JSON.parse(JSON.stringify(row)) as Record<string, unknown>;
+              delete wire[REVISION_FIELD];
+              return wire;
             });
             return changed ? { ...(value as Record<string, unknown>), data: kept } : value;
           };
