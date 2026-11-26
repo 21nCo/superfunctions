@@ -99,12 +99,13 @@ describe('github webhook verification', () => {
   });
 
   it.each([
-    { scoped: true, hasInstallation: true, event: 'pull_request.closed', ingress: 'HTTP' },
-    { scoped: true, hasInstallation: true, event: 'pull_request.closed', ingress: 'SDK' },
-    { scoped: true, hasInstallation: false, event: 'pull_request', ingress: 'HTTP' },
-    { scoped: false, hasInstallation: true, event: 'pull_request', ingress: 'HTTP' },
-  ])('dispatches the pull-request alias via $ingress with binding $scoped and installation $hasInstallation', async ({
-    scoped, hasInstallation, event, ingress,
+    { scoped: true, hasInstallation: true, event: 'pull_request.closed', ingress: 'HTTP', legacyPayload: true },
+    { scoped: true, hasInstallation: true, event: 'pull_request.closed', ingress: 'SDK', legacyPayload: true },
+    { scoped: true, hasInstallation: true, event: 'pull_request.closed', ingress: 'HTTP', legacyPayload: false },
+    { scoped: true, hasInstallation: false, event: 'pull_request', ingress: 'HTTP', legacyPayload: true },
+    { scoped: false, hasInstallation: true, event: 'pull_request', ingress: 'HTTP', legacyPayload: true },
+  ])('dispatches the pull-request alias via $ingress (binding $scoped, installation $hasInstallation, legacy payload $legacyPayload)', async ({
+    scoped, hasInstallation, event, ingress, legacyPayload,
   }) => {
     const binding = {
       tenantId: 'test-tenant',
@@ -163,8 +164,7 @@ describe('github webhook verification', () => {
         html_url: 'https://github.com/21nCo/super-functions/pull/42',
         merged: true,
         state: 'closed',
-        head: { ref: 'test-topic' },
-        base: { ref: 'dev' },
+        ...(legacyPayload ? { head: { ref: 'test-topic' }, base: { ref: 'dev' } } : {}),
       },
       repository: {
         name: 'super-functions',
@@ -200,7 +200,11 @@ describe('github webhook verification', () => {
     }
     if (scoped && hasInstallation) expect(resolveBinding).toHaveBeenCalledWith('42');
     else expect(resolveBinding).not.toHaveBeenCalled();
-    expect(listener).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ event: 'pull_request' }));
+    if (legacyPayload) {
+      expect(listener).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ event: 'pull_request' }));
+    } else {
+      expect(listener).not.toHaveBeenCalled();
+    }
     expect(otherListener).not.toHaveBeenCalled();
     expect(action).toHaveBeenCalledTimes(scoped && hasInstallation ? 1 : 0);
     const resolutionsAfterDispatch = resolveBinding.mock.calls.length;
@@ -218,7 +222,7 @@ describe('github webhook verification', () => {
       code: 'WEBHOOK_SIGNATURE_INVALID',
     });
     expect(resolveBinding).toHaveBeenCalledTimes(resolutionsAfterDispatch);
-    expect(listener).toHaveBeenCalledTimes(1);
+    expect(listener).toHaveBeenCalledTimes(legacyPayload ? 1 : 0);
   });
 
   it('does not classify review, review thread, or unknown-action bodies as pull requests', () => {

@@ -830,7 +830,7 @@ describe('webhook workflow admission', () => {
     vi.spyOn(database, 'findMany').mockImplementation(async (query) => {
       const rows = await findMany(query);
       return query.model === deliveryModel
-        ? rows.map((row) => row.signatureVerified === true ? { ...row, signatureVerified: 1 } : row)
+        ? rows.map((row) => row.signatureVerified === true ? { ...row, signatureVerified: 1, workflowScoped: 1 } : row)
         : rows;
     });
 
@@ -841,6 +841,12 @@ describe('webhook workflow admission', () => {
     expect(duplicate.status).toBe(200);
     await expect(duplicate.json()).resolves.toMatchObject({ data: { duplicate: true, receiptId: data.receiptId } });
     expect(listener).not.toHaveBeenCalled();
+    await expect(after.runtime.runtime.webhooks.getReceipt(data.receiptId)).resolves.toMatchObject({
+      signatureVerified: true,
+    });
+    await expect(after.runtime.runtime.webhooks.listDeliveries(data.receiptId)).resolves.toEqual([
+      expect.objectContaining({ signatureVerified: true, workflowScoped: true }),
+    ]);
     expect(await findOne({ model: receiptModel, where: [{ field: 'id', operator: 'eq', value: data.receiptId }] }))
       .toEqual(receipt);
   });

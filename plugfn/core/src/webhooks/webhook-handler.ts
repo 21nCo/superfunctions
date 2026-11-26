@@ -418,11 +418,14 @@ export class WebhookHandler {
           if (legacyKey !== triggerKey) {
             scope.standalone = null;
             if (legacyKey && this.getHandlerCount(provider, legacyKey) > 0) {
-              const legacy = await this[prepareWebhookDelivery](
-                provider, standaloneEvent, payload, headers, secret, { rawBody: options.rawBody },
-              );
-              if (!legacy.signatureVerified) throw webhookBindingRequired('standalone webhook signature proof required');
-              scope.standalone = legacy;
+              try {
+                const legacy = await this[prepareWebhookDelivery](
+                  provider, standaloneEvent, payload, headers, secret, { rawBody: options.rawBody },
+                );
+                if (legacy.signatureVerified) scope.standalone = legacy;
+              } catch {
+                this.logger.warn(`Standalone webhook preparation failed for ${provider}.${legacyKey}`);
+              }
             }
           }
         }
