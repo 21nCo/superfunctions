@@ -467,15 +467,37 @@ export interface DatafnServer<TContext = any> {
 function withRevisionCapability<A extends unknown[]>(
   schema: DatafnSchema,
   handler: (...args: A) => Promise<Response>,
-  passThrough?: (...args: A) => boolean,
+  readBackSignal?: (...args: A) => AbortSignal | undefined,
 ): (...args: A) => Promise<Response> {
   if (!revisionsEnabled(schema)) return handler;
   return async (...args: A) => {
     const response = await handler(...args);
-    // A push's own read-back reads the body itself, within its deadline.
-    if (passThrough?.(...args)) return response;
     if (!response.body || !response.headers.get("content-type")?.includes("application/json")) {
       return response;
+    }
+    // A push's own read-back: the same envelope reaches router middleware, but
+    // spliced as it streams, so nothing here waits on the body, and the push's
+    // deadline (its abort signal) cancels the body wherever it is being read.
+    const signal = readBackSignal?.(...args);
+    if (signal) {
+      const prefix = new TextEncoder().encode('{"capabilities":{"revisions":true},');
+      let started = false;
+      const splice = new TransformStream<Uint8Array, Uint8Array>({
+        transform(chunk, controller) {
+          if (started) return controller.enqueue(chunk);
+          const index = chunk.findIndex((byte) => byte !== 0x20 && byte !== 0x09 && byte !== 0x0a && byte !== 0x0d);
+          if (index < 0) return controller.enqueue(chunk);
+          started = true;
+          if (chunk[index] !== 0x7b) return controller.enqueue(chunk);
+          controller.enqueue(prefix);
+          controller.enqueue(chunk.subarray(index + 1));
+        },
+      });
+      const headers = new Headers(response.headers);
+      headers.delete("content-length");
+      return new Response(response.body.pipeThrough(splice, { signal }), {
+        status: response.status, statusText: response.statusText, headers,
+      });
     }
     const text = await response.text();
     const body = text.trimStart();
@@ -1236,7 +1258,7 @@ export async function createDatafnServer<TContext = any>(
 
   // DATA-41: a push's read-back requests, keyed by the Request object the push
   // created, so no header or body field a caller sends can mark a request.
-  const postWriteReads = new WeakMap<Request, { probe: PostWriteReadProbe; deadline: number }>();
+  const postWriteReads = new WeakMap<Request, { probe: PostWriteReadProbe; deadline: number; abort: AbortController }>();
   /**
    * DATA-41: the read-back re-enters the router while the push is still in
    * flight, so router middleware that serializes requests (a lock held across
@@ -1257,7 +1279,7 @@ export async function createDatafnServer<TContext = any>(
    * before `deadline`. Undefined for a non-2xx answer, an unreadable body or
    * a missed deadline; a body that is not read is cancelled.
    */
-  const readBackWithin = (request: Request, deadline: number): Promise<unknown> => {
+  const readBackWithin = (request: Request, deadline: number, abort: AbortController): Promise<unknown> => {
     let expired = false;
     let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
     // Ready chunks resume in microtasks that can starve the timer, so the
@@ -1285,6 +1307,8 @@ export async function createDatafnServer<TContext = any>(
     const timeout = new Promise<undefined>((resolve) => {
       timer = setTimeout(() => {
         expired = true;
+        // Tells abort-aware middleware, and cancels a body DataFn streams.
+        abort.abort();
         discardBody(reader);
         resolve(undefined);
       }, Math.max(0, deadline - Date.now()));
@@ -1598,7 +1622,7 @@ export async function createDatafnServer<TContext = any>(
         );
         let readDeadline: number | undefined;
         const readPostWriteRows: PostWriteRowReader | undefined = action === "push"
-          ? async (resource, ids) => {
+          ? async (resource, ids, pushNamespace) => {
             readDeadline ??= Date.now() + POST_WRITE_READ_TIMEOUT_MS;
             const rows = new Map<string, Record<string, unknown>>();
             if (assertionAdmitted) return rows;
@@ -1607,7 +1631,6 @@ export async function createDatafnServer<TContext = any>(
             while (pushPath.endsWith("/")) pushPath = pushPath.slice(0, -1);
             if (!pushPath.endsWith("/push")) return rows;
             readUrl.pathname = `${pushPath.slice(0, -"/push".length)}/query`;
-            const pushNamespace = await extractNamespace(enrichedCtx);
             const chunkSize = Math.max(1, limits.maxLimit ?? ids.length);
             for (let offset = 0; offset < ids.length && Date.now() < readDeadline; offset += chunkSize) {
               const chunk = ids.slice(offset, offset + chunkSize);
@@ -1618,10 +1641,13 @@ export async function createDatafnServer<TContext = any>(
               };
               const headers = new Headers(req.headers);
               headers.delete("content-length");
-              const readRequest = new Request(readUrl, { method: "POST", headers, body: JSON.stringify(readPayload) });
+              const abort = new AbortController();
+              const readRequest = new Request(readUrl, {
+                method: "POST", headers, body: JSON.stringify(readPayload), signal: abort.signal,
+              });
               const probe: PostWriteReadProbe = {};
-              postWriteReads.set(readRequest, { probe, deadline: readDeadline });
-              const body = (await readBackWithin(readRequest, readDeadline)) as
+              postWriteReads.set(readRequest, { probe, deadline: readDeadline, abort });
+              const body = (await readBackWithin(readRequest, readDeadline, abort)) as
                 { ok?: boolean; result?: { data?: unknown } } | undefined;
               const executed = probe.executed;
               const query = executed?.queries.length === 1 ? executed.queries[0] : undefined;
@@ -1675,7 +1701,7 @@ export async function createDatafnServer<TContext = any>(
   };
   // DATA-41: every DataFn route announces its capabilities, auth errors included.
   const withAuth = (...args: Parameters<typeof withAuthUnannounced>) =>
-    withRevisionCapability(validatedSchema, withAuthUnannounced(...args), (req) => !!req && postWriteReads.has(req));
+    withRevisionCapability(validatedSchema, withAuthUnannounced(...args), (req) => (req ? postWriteReads.get(req)?.abort.signal : undefined));
 
   const executeInProcess = async <TResult>(
     action: "query" | "mutation" | "transact" | "search",

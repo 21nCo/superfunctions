@@ -267,6 +267,8 @@ function canonicalRow(row: Record<string, unknown>): string {
 export type PostWriteRowReader = (
   resource: string,
   ids: readonly string[],
+  /** The namespace the push wrote in, as already resolved for the write. */
+  namespace: string,
 ) => Promise<ReadonlyMap<string, Record<string, unknown>>>;
 
 /**
@@ -532,7 +534,7 @@ export async function executePush(
     // Bounded like a batch query (limits.maxBatchQueryConcurrency).
     await runBounded([...readBackIds].map(([resource, ids]) => async () => {
       try {
-        readBack.set(resource, await readPostWriteRows(resource, [...ids]));
+        readBack.set(resource, await readPostWriteRows(resource, [...ids], namespace));
       } catch {
         // Fail closed: the revision is returned without a row.
       }

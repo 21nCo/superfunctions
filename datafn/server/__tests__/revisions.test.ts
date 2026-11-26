@@ -14,6 +14,7 @@ import {
   ensureRevisionsTable,
   readRevisions,
   readWithRevisions,
+  revisionRowId,
 } from "../src/execution/revisions.js";
 import { executeClone } from "../src/execution/sync/clone.js";
 import { executePull } from "../src/execution/sync/pull.js";
@@ -3163,6 +3164,15 @@ describe("DATA-41 revisions: PR review round 3", () => {
             return affected;
           };
         }
+        if (property === "create") {
+          // The primary key is checked against the latest committed rows.
+          return async (table: string, row: Record<string, unknown>) => {
+            if (await target.findOne(table, [{ field: "id", op: "eq", value: row.id }] as any)) {
+              throw new Error("Duplicate entry for key 'PRIMARY'");
+            }
+            return target.create(table, row);
+          };
+        }
         return Reflect.get(target, property, receiver);
       },
     });
@@ -3173,6 +3183,14 @@ describe("DATA-41 revisions: PR review round 3", () => {
     await bumpRevision(database, NS, "task", "task:1", false);
     expect(await bumpRevision(stale, NS, "task", "task:1", false)).toBe(3);
     expect(await served.rev("task", "task:1")).toEqual({ rev: 3, deleted: false });
+
+    // A record with no revision row yet: this transaction's snapshot misses
+    // the row another writer creates first, so its own insert is a duplicate.
+    const firstId = revisionRowId(NS, "task", "task:legacy");
+    await stale.internal.findOne("__datafn_revisions", [{ field: "id", op: "eq", value: firstId }] as any);
+    expect(await bumpRevision(database, NS, "task", "task:legacy", false)).toBe(1);
+    expect(await bumpRevision(stale, NS, "task", "task:legacy", false)).toBe(2);
+    expect(await served.rev("task", "task:legacy")).toEqual({ rev: 2, deleted: false });
   });
 
   it("settles a push whose read-back router middleware would queue behind the push", async () => {
@@ -3294,6 +3312,66 @@ describe("DATA-41 revisions: PR review round 3", () => {
     await delayed;
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(queries).toBe(0);
+  });
+
+  it("gives router middleware the same query envelope for the read-back as for an external query", async () => {
+    const served = await serve();
+    // Middleware that strips a field from revision-capable query responses only.
+    served.server.router.use(async (request, _ctx, next) => {
+      const response = await next();
+      if (!isQuery(request)) return response;
+      const body = (await response.json()) as Json;
+      if (body.capabilities?.revisions) for (const row of body.result?.data ?? []) delete row.title;
+      return new Response(JSON.stringify(body), { status: response.status, headers: { "content-type": "application/json" } });
+    });
+    const res = await served.push({ resource: "task", operation: "insert", id: "task:1", record: { title: "secret" } });
+    expect(res.body.result.revisions[res.mutationId]).toEqual({ resource: "task", id: "task:1", rev: 1 });
+  });
+
+  it("reads back in the namespace the push already resolved, without asking the provider again", async () => {
+    const database = memoryAdapter();
+    let pushContexts = 0;
+    const served = await serve({ database, config: { namespaceProvider: {
+      getNamespace: async (ctx: Json) => {
+        if (!ctx?.parsedBody?.mutations) return NS;
+        // The push's own context: after its write commits, the provider stalls.
+        pushContexts += 1;
+        const written = await database.findOne({ model: "task", where: [{ field: "id", operator: "eq", value: "task:1" }], namespace: NS } as any);
+        return written ? new Promise<string>(() => undefined) : NS;
+      },
+    } } });
+    const res = await served.push({ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } });
+    expect(pushContexts).toBeGreaterThan(0);
+    expect(res.body.result.revisions[res.mutationId].record).toMatchObject({ id: "task:1", $rev: 1 });
+  });
+
+  it("aborts a read-back body that router middleware is still reading at the deadline", async () => {
+    let middlewareRead: "pending" | "settled" = "pending";
+    let cancelled = 0;
+    const served = await serve({ config: {
+      routeHooks: {
+        afterResponse: ({ action, response }: { action: string; response: Response }) => action !== "query" ? response
+          : new Response(new ReadableStream<Uint8Array>({
+            start(controller) { controller.enqueue(new TextEncoder().encode("{")); },
+            cancel() { cancelled += 1; },
+          }), { status: 200, headers: { "content-type": "application/json" } }),
+      },
+    } });
+    served.server.router.use(async (request, _ctx, next) => {
+      const response = await next();
+      if (!isQuery(request)) return response;
+      try {
+        await response.json();
+      } finally {
+        middlewareRead = "settled";
+      }
+      return response;
+    });
+    const res = await served.push({ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } });
+    expect(res.body.result.revisions[res.mutationId]).toEqual({ resource: "task", id: "task:1", rev: 1 });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(middlewareRead).toBe("settled");
+    expect(cancelled).toBe(1);
   });
 });
 

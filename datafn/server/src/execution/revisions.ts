@@ -184,6 +184,22 @@ async function withCreateLock<T>(key: string, task: () => Promise<T>): Promise<T
 }
 
 /** Inserts the first revision row of a record unless another writer did. */
+/**
+ * Changes the revision row's timestamp, locking it and giving the transaction
+ * its own version of the latest committed row. Under a snapshot-per-
+ * transaction isolation (MySQL InnoDB REPEATABLE READ) a plain read after
+ * this sees the latest committed revision. An update that leaves every value
+ * as it is creates no such version, so two different timestamps are written:
+ * at least one changes the row, and the second leaves the current time.
+ * Returns the rows the updates affected (0 when the row does not exist).
+ */
+async function writeLatest(db: Adapter, id: unknown, updatedAt: string): Promise<number> {
+  const where = [{ field: "id", op: "eq" as const, value: id }];
+  const later = new Date(Date.parse(updatedAt) + 1_000).toISOString();
+  return (await db.internal.update(REVISIONS_TABLE, where, { updated_at: later })) +
+    (await db.internal.update(REVISIONS_TABLE, where, { updated_at: updatedAt }));
+}
+
 async function createIfAbsent(db: Adapter, row: Record<string, unknown>): Promise<boolean> {
   const rawSql = db.rawSql;
   if (rawSql?.dialect === "postgres") {
@@ -206,9 +222,10 @@ async function createIfAbsent(db: Adapter, row: Record<string, unknown>): Promis
       return true;
     } catch (error) {
       // A concurrent writer created it first (MySQL and SQLite reject only
-      // the statement); the caller reads it and retries the bump. Any other
-      // failure is the write's failure.
-      if (await db.internal.findOne(REVISIONS_TABLE, [{ field: "id", op: "eq", value: row.id }])) {
+      // the statement); the caller reads it and retries the bump. A plain
+      // read may not see that row in this transaction's snapshot, so check by
+      // writing it. Any other failure is the write's failure.
+      if ((await writeLatest(db, row.id, String(row.updated_at))) > 0) {
         return false;
       }
       throw error;
@@ -307,19 +324,9 @@ async function raiseRevision(
   const where = [{ field: "id", op: "eq" as const, value: id }];
   for (let attempt = 0; attempt < MAX_BUMP_ATTEMPTS; attempt++) {
     const updatedAt = new Date().toISOString();
-    if (attempt > 0) {
-      // A retry follows a write that committed after this transaction's read.
-      // Under a snapshot-per-transaction isolation (MySQL InnoDB REPEATABLE
-      // READ) a plain read would return the same stale revision again, so
-      // first change the row: that locks it and makes the transaction's next
-      // read see the latest committed revision (its own version of the row).
-      // An update that leaves every value as it is creates no such version,
-      // so write two different timestamps: at least one changes the row, and
-      // the second leaves the current time.
-      const later = new Date(Date.parse(updatedAt) + 1_000).toISOString();
-      await db.internal.update(REVISIONS_TABLE, where, { updated_at: later });
-      await db.internal.update(REVISIONS_TABLE, where, { updated_at: updatedAt });
-    }
+    // A retry follows a write that committed after this transaction's read;
+    // a plain read in a snapshot would return the same stale revision again.
+    if (attempt > 0) await writeLatest(db, id, updatedAt);
     const row = await db.internal.findOne(REVISIONS_TABLE, where);
     if (skip && (await skip(row))) return undefined;
     if (!row) {
