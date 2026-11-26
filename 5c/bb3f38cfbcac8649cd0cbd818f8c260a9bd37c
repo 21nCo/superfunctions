@@ -1,0 +1,68 @@
+authfn/adapters/lookup-cloudflare-do/package.json
+  h_bdc5b81c173ee9 3,34
+authfn/adapters/lookup-dynamodb/package.json
+  h_bdc5b81c173ee9 3,36
+authfn/admin/package.json
+  h_bdc5b81c173ee9 43,46-47
+authfn/api-keys/package.json
+  h_bdc5b81c173ee9 3,29
+authfn/client/package.json
+  h_bdc5b81c173ee9 3,33,37-42
+authfn/core/package.json
+  h_bdc5b81c173ee9 3
+authfn/docs/package.json
+  h_bdc5b81c173ee9 26-32,44
+authfn/email-otp/package.json
+  h_bdc5b81c173ee9 3,29
+authfn/multi-region/package.json
+  h_bdc5b81c173ee9 3,29
+authfn/native-handoff/package.json
+  h_bdc5b81c173ee9 3,29
+authfn/oauth-provider/package.json
+  h_bdc5b81c173ee9 3,30
+authfn/password/package.json
+  h_bdc5b81c173ee9 3,29
+authfn/schema-plugin/package.json
+  h_bdc5b81c173ee9 3,29
+authfn/social-oauth/package.json
+  h_bdc5b81c173ee9 3,33
+authfn/svelte/package.json
+  h_bdc5b81c173ee9 3,32
+authfn/two-factor/package.json
+  h_bdc5b81c173ee9 3,29
+billfn/docs/package.json
+  h_bdc5b81c173ee9 30,32-33,42
+billfn/provider-apple/package.json
+  h_bdc5b81c173ee9 3
+billfn/provider-dodo/package.json
+  h_bdc5b81c173ee9 3
+datafn/admin/package.json
+  h_bdc5b81c173ee9 41
+datafn/server/package.json
+  h_bdc5b81c173ee9 3
+filefn/admin/turbo.json
+  h_bdc5b81c173ee9 1-15
+filefn/docs/package.json
+  h_bdc5b81c173ee9 40-41,47,50
+filefn/processing/container/package.json
+  h_bdc5b81c173ee9 18
+filefn/python/pyproject.toml
+  h_bdc5b81c173ee9 7
+filefn/server/package.json
+  h_bdc5b81c173ee9 3
+filefn/server/tests/dependency-pins.test.ts
+  h_bdc5b81c173ee9 1,8-10,14-29
+package-lock.json
+  h_bdc5b81c173ee9 1271,1275,1295,1301,1327,1330-1331,1358,1361,1390,1394,1397-1402,1429,1521-1527,1539,1846,1849,3892,3896,3925,3929,3958,3962,4001,4004,4033,4036,4056,4066,4126,4136,4152,4155,4324,4326-4327,4336,5268,5291,8783,8822,8851,10131,10167,10177,11652-11665,11720-11757,11823-11824,11831,11841,12491,12549
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5cbb3f38cfbcac8649cd0cbd818f8c260a9bd37c",
+  "prompts": {},
+  "humans": {
+    "h_bdc5b81c173ee9": {
+      "author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

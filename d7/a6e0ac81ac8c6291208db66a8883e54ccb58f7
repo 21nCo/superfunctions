@@ -1,0 +1,21 @@
+datafn/docs/content/docs/documentation/sync/revisions.mdx
+  s_c2c759774af68f::t_989ebf97ff6c18 58
+datafn/docs/public/llms-full.txt
+  s_c2c759774af68f::t_a65625df31af9c 19194
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d7a6e0ac81ac8c6291208db66a8883e54ccb58f7",
+  "prompts": {},
+  "sessions": {
+    "s_c2c759774af68f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a7ee61a8-a3f2-4352-b05e-7b0b5fbcd452",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

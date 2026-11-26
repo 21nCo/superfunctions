@@ -1,0 +1,35 @@
+.github/workflows/apifn-api-check.yml
+  s_79e8f3979f95c3::t_f84dd3391d3fc3 465-516,554-581
+apifn/README.md
+  s_79e8f3979f95c3::t_76ccf9c27ee024 164,199
+apifn/cli/__tests__/check-smoke-fixtures.test.ts
+  s_79e8f3979f95c3::t_13e4bca1fc5a37 5-6,88-105
+apifn/cli/__tests__/fixtures/check-smoke/install-scripts-npm10/apifn.config.ts
+  s_79e8f3979f95c3::t_ba44daba02b002 1-4
+apifn/cli/__tests__/fixtures/check-smoke/install-scripts-npm10/npm-shrinkwrap.json
+  s_79e8f3979f95c3::t_0d139704e4cba8 1-13
+apifn/cli/__tests__/fixtures/check-smoke/install-scripts-npm10/openapi.yml
+  s_79e8f3979f95c3::t_4e68da5afc2bdc 1-16
+apifn/cli/__tests__/fixtures/check-smoke/install-scripts-npm10/package.json
+  s_79e8f3979f95c3::t_164a542270953d 1-16
+apifn/cli/__tests__/fixtures/check-smoke/install-scripts-npm10/router.ts
+  s_79e8f3979f95c3::t_48a0c3985153f5 1-22
+.github/workflows/apifn-api-check-smoke.yml
+  s_79e8f3979f95c3::t_e9519838ee0154 124-126,160-178,180,207-210,244-247
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7d6452ca30c2d39faa0072123c5630c24e3fc3e0",
+  "prompts": {},
+  "sessions": {
+    "s_79e8f3979f95c3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e0988030-089a-46f7-81d3-a25643b99e90",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

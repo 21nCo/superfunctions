@@ -1,0 +1,41 @@
+plugfn/core/src/router/http-router.ts
+  s_52aac795e73b3c::t_155e7c464af79f 920,941,1029
+plugfn/core/README.md
+  s_52aac795e73b3c::t_eb203c86c86529 170-172
+plugfn/core/src/webhooks/webhook-handler.ts
+  s_52aac795e73b3c::t_155e7c464af79f 2,451
+  s_52aac795e73b3c::t_27b67b8cfd51cf 453
+plugfn/core/src/core/plug-fn.ts
+  s_52aac795e73b3c::t_155e7c464af79f 500
+plugfn/core/src/core/workflow-engine.ts
+  s_52aac795e73b3c::t_27b67b8cfd51cf 259,295-297,300-301
+  s_52aac795e73b3c::t_155e7c464af79f 258,265-266,293-294,298-299,306,322-334,341,368,418,423-424
+plugfn/core/tests/webhook-workflow-binding.test.ts
+  s_52aac795e73b3c::t_27b67b8cfd51cf 301-307,312,316,325
+  s_52aac795e73b3c::t_eb203c86c86529 53-54,68-75,310-311,313-315,317-324,326,356-374,484-506,635,696-697
+  s_65ab3fd936115b::t_a624bc3fcefbfc 308-309,698
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fb4203b1946a0d95adbbda9da8ad0c2c76f0f83e",
+  "prompts": {},
+  "sessions": {
+    "s_52aac795e73b3c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21416-bce2-7d83-b799-161f4cb661ed",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_65ab3fd936115b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a213e4-6745-7c73-bb35-ff1dc8f4cf2d",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

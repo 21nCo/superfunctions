@@ -1,0 +1,16 @@
+datafn/server/__tests__/revisions.test.ts
+  h_bdc5b81c173ee9 3238-3297
+datafn/server/src/server.ts
+  h_bdc5b81c173ee9 470,475-476,1239,1263-1265,1268,1276-1279,1282,1313-1314,1334,1623,1641,1648,1678
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a4d9339393cc8963e245a8edb79323bd9d942537",
+  "prompts": {},
+  "humans": {
+    "h_bdc5b81c173ee9": {
+      "author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

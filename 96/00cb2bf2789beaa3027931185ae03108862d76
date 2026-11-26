@@ -1,0 +1,31 @@
+plugfn/core/tests/webhook-workflow-binding.test.ts
+  s_cff285c8033656::t_44c343e2da7ce8 568,571,575-577,585-587,590-618
+  s_cff285c8033656::t_cd98e7cf5802e7 583-584,588-589
+plugfn/core/src/storage/runtime-storage.ts
+  s_cff285c8033656::t_ad774bbb9a5d6f 20-21,270-289,293
+plugfn/core/src/router/http-router.ts
+  s_cff285c8033656::t_2784726680f61a 17
+  s_cff285c8033656::t_bbdc305f24cbb2 12,967-971,1021,1053,1062,1080,1089,1102,1105-1113,1127
+plugfn/core/src/core/plug-fn.ts
+  s_cff285c8033656::t_2784726680f61a 48-54,938-939,944-945
+  s_cff285c8033656::t_bbdc305f24cbb2 59,122,438,860,876,899,951,975,1013-1018
+  s_cff285c8033656::t_067b1d610abc72 524
+plugfn/core/src/webhooks/webhook-handler.ts
+  s_cff285c8033656::t_2784726680f61a 638-645
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9600cb2bf2789beaa3027931185ae03108862d76",
+  "prompts": {},
+  "sessions": {
+    "s_cff285c8033656": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a216a1-2ed9-7262-afcc-abca86f53363",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": null
+    }
+  }
+}

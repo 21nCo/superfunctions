@@ -1,0 +1,49 @@
+plugfn/core/src/router/http-router.ts
+  s_52aac795e73b3c::t_37130961082840 12-16
+  s_52aac795e73b3c::t_8ae40ced068f76 920,940,946,977,1035,1075
+  s_52aac795e73b3c::t_fedbf88544b0f4 853-854,858,865,877,883,892-895,914-919,921-939,941-945,947-955,964,979,1000,1004,1012,1021,1029,1036,1057,1059,1067,1071,1076,1094,1100,1104,1109,1113,1119,1128,1135,1140,1143,1192,1205,1319-1321
+  s_52aac795e73b3c::t_458ffeace72035 1322
+plugfn/core/src/webhooks/webhook-handler.ts
+  s_52aac795e73b3c::t_37130961082840 25
+  s_52aac795e73b3c::t_8ae40ced068f76 29,306-310
+  s_52aac795e73b3c::t_c4827788ee07de 9,37,40-42,100,104-108,121,161,270-271,289,297-300,314,425,502-504
+plugfn/core/tests/workflow-lifecycle.test.ts
+  s_52aac795e73b3c::t_dcf912c22a11f4 20-24
+plugfn/core/src/router/index.ts
+  s_52aac795e73b3c::t_37130961082840 1-2
+plugfn/providers/tests/github/github-webhook-verification.test.ts
+  s_52aac795e73b3c::t_dcf912c22a11f4 21-25
+plugfn/core/src/core/plug-fn.ts
+  s_52aac795e73b3c::t_37130961082840 47-48,171,485,489-492,494-495,497-505
+plugfn/core/src/types/config.ts
+  s_52aac795e73b3c::t_c4827788ee07de 10,86
+plugfn/core/src/types/trigger.ts
+  s_52aac795e73b3c::t_c4827788ee07de 24-28,109
+plugfn/core/README.md
+  s_52aac795e73b3c::t_37130961082840 137-141
+plugfn/core/src/core/workflow-engine.ts
+  s_52aac795e73b3c::t_c4827788ee07de 41,211,234,610,612
+plugfn/core/tests/webhook-workflow-binding.test.ts
+  s_52aac795e73b3c::t_dcf912c22a11f4 10-19,168-212,311-330
+  s_52aac795e73b3c::t_3c9194dda5fe5a 331
+plugfn/core/tests/router-auth.test.ts
+  s_52aac795e73b3c::t_8ac8dede0817ab 1,786
+plugfn/providers/tests/webhook-raw-body.test.ts
+  s_52aac795e73b3c::t_8ac8dede0817ab 1,82,123-124,149,182,207,527
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e7f10f279b84b5ece4fe31593cc47b876df3d8be",
+  "prompts": {},
+  "sessions": {
+    "s_52aac795e73b3c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21416-bce2-7d83-b799-161f4cb661ed",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
