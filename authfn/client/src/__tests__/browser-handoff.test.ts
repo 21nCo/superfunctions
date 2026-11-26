@@ -286,6 +286,34 @@ describe('createBrowserHandoff', () => {
     expect(server.exchange).not.toHaveBeenCalled();
   });
 
+  it('treats a custom store that does not declare atomic: true as not atomic', async () => {
+    const shared = createMemoryHandoffStore();
+    // A read-then-write store that never says whether its claim is atomic.
+    const { atomic: _atomic, ...undeclared } = shared;
+    const unsure = undeclared as unknown as AuthFnBrowserHandoffStore;
+    const { make, server } = setup();
+
+    await expect(make({ store: unsure }).begin({ returnTo: RETURN_TO })).rejects.toThrow(/atomic/);
+    expect(Array.from(await shared.keys())).toEqual([]);
+
+    const begun = await make({ store: shared }).begin({ returnTo: RETURN_TO });
+    expect(failed(await make({ store: unsure }).complete(server.callbackFor(begun))).reason).toBe('store-not-atomic');
+    expect(Array.from(await shared.keys())).toEqual([]);
+    expect(server.exchange).not.toHaveBeenCalled();
+  });
+
+  it('refuses to begin outside a secure context, before storing anything', async () => {
+    const { make, store } = setup();
+    // Browsers leave crypto.subtle undefined on pages that are not secure contexts.
+    vi.stubGlobal('crypto', { getRandomValues: globalThis.crypto.getRandomValues.bind(globalThis.crypto) });
+    try {
+      await expect(make().begin({ returnTo: RETURN_TO })).rejects.toThrow(/secure context/);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect(Array.from(await store.keys())).toEqual([]);
+  });
+
   it('refuses a duplicate return without exchanging again', async () => {
     const { make, server } = setup();
     const handoff = make();
@@ -424,6 +452,7 @@ describe('createBrowserHandoff', () => {
     ['with another code', (url: URL) => url.searchParams.set('authfnCode', 'AUTHFN_OTHER')],
     ['with a non-canonical challenge id', (url: URL) => url.searchParams.set('challengeId', 'Signin:2FA.Test')],
     ['with a method the social callback never sends', (url: URL) => url.searchParams.set('primaryMethod', 'password')],
+    ['with a social method the callback never sends', (url: URL) => url.searchParams.set('primaryMethod', 'oauth-unknown')],
     ['with a handoff code too', (url: URL) => {
       url.hash = `${url.hash.slice(1)}&token=test-handoff-code-1&handoff=code`;
     }]
@@ -436,7 +465,12 @@ describe('createBrowserHandoff', () => {
     url.searchParams.set('primaryMethod', 'oauth-google');
     mutate(url);
 
-    expect(failed(await make().complete(url.href)).reason).toBe('malformed-callback');
+    const events: AuthFnBrowserHandoffEvent[] = [];
+    expect(failed(await make({ onEvent: (event) => events.push(event) }).complete(url.href)).reason)
+      .toBe('malformed-callback');
+    expect(events.map((event) => event.type)).toEqual(['failed']);
+    // The handoff is retired: a well-formed return of it cannot complete later.
+    expect(failed(await make().complete(server.callbackFor(begun))).reason).toBe('already-used');
     expect(server.exchange).not.toHaveBeenCalled();
   });
 
@@ -564,6 +598,19 @@ describe('createBrowserHandoff', () => {
     expect(server.exchange).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['an empty session', { session: {}, handoff: { type: 'session-token', token: 'test-session-token', sessionId: 's', regionId: null, expiresAt: null } }],
+    ['an empty token', { session: { id: 'session-1' }, handoff: { type: 'session-token', token: '', sessionId: 's', regionId: null, expiresAt: null } }],
+    ['no handoff', { session: { id: 'session-1' } }]
+  ])('refuses an ok exchange response with %s as exchange-rejected', async (_label, data) => {
+    const exchange = vi.fn(async () => ({ ok: true, requestId: 'req-incomplete', data }) as never);
+    const { make, server } = setup({ exchange });
+    const begun = await make().begin({ returnTo: RETURN_TO });
+
+    expect(failed(await make().complete(server.callbackFor(begun))).reason).toBe('exchange-rejected');
+    expect(exchange).toHaveBeenCalledTimes(1);
+  });
+
   it('reports a code the server refuses as exchange-rejected', async () => {
     const { make, server } = setup();
     const begun = await make().begin({ returnTo: RETURN_TO });
@@ -651,6 +698,50 @@ describe('createBrowserHandoff', () => {
     // A later return over a working store finds nothing to claim.
     expect(failed(await make().complete(callback)).reason).toBe('unknown-handoff');
     expect(server.exchange).not.toHaveBeenCalled();
+  });
+
+  it('keeps the tombstone of a window that claimed first when this window\'s claim fails', async () => {
+    const { make, server, store } = setup();
+    const begun = await make().begin({ returnTo: RETURN_TO });
+    const callback = server.callbackFor(begun);
+    const key = `authfn.handoff.${begun.handoffId}`;
+    // This window read the pending record; another window claims and
+    // completes before this window's compare-and-set fails.
+    const broken: AuthFnBrowserHandoffStore = {
+      ...store,
+      compareAndSet: async () => {
+        expect((await make().complete(callback)).status).toBe('completed');
+        throw new Error('storage unavailable');
+      }
+    };
+
+    expect(failed(await make({ store: broken }).complete(callback)).reason).toBe('already-used');
+    expect(JSON.parse(String(await store.get(key))).state).toBe('used');
+    expect(failed(await make().complete(callback)).reason).toBe('already-used');
+    expect(server.exchange).toHaveBeenCalledTimes(1);
+  });
+
+  it('counts a pruned record only when it was removed', async () => {
+    const { make, store, clock, events } = setup();
+    const expired = await make().begin({ returnTo: RETURN_TO });
+    const claimed = await make().begin({ returnTo: RETURN_TO });
+    const claimedKey = `authfn.handoff.${claimed.handoffId}`;
+    const record = JSON.parse(String(await store.get(claimedKey)));
+    await store.set(claimedKey, JSON.stringify({ v: 1, id: record.id, state: 'used', expiresAt: record.expiresAt }));
+    clock.advance(10 * 60 * 1000);
+    const unavailable = () => Promise.reject(new Error('storage unavailable'));
+    const failing: AuthFnBrowserHandoffStore = { ...store, compareAndSet: unavailable, delete: unavailable };
+
+    expect(await make({ store: failing }).prune()).toBe(0);
+    expect(events.some((event) => event.type === 'pruned')).toBe(false);
+    expect(await store.get(`authfn.handoff.${expired.handoffId}`)).not.toBeNull();
+
+    // With only compare-and-set failing, the expired pending record is
+    // deleted and the tombstone (no verifier) is left to a later prune.
+    const casFailing: AuthFnBrowserHandoffStore = { ...store, compareAndSet: unavailable };
+    expect(await make({ store: casFailing }).prune()).toBe(1);
+    expect(await store.get(`authfn.handoff.${expired.handoffId}`)).toBeNull();
+    expect(JSON.parse(String(await store.get(claimedKey))).state).toBe('used');
   });
 
   it('prunes a record under the prefix that is not a string, even one holding a verifier', async () => {
@@ -866,7 +957,19 @@ describe('createRegionalHandoffExchange', () => {
     expect(current()).toBe('ap');
   });
 
-  it('moves the client only for a response that carries a session', async () => {
+  it.each([
+    ['no body', () => new Response(null, { status: 204 })],
+    ['an empty session', () => Response.json({
+      ok: true,
+      requestId: 'req-empty-session',
+      data: { session: {}, handoff: { type: 'session-token', token: 'test-session-token' } }
+    })],
+    ['an empty token', () => Response.json({
+      ok: true,
+      requestId: 'req-empty-token',
+      data: { session: { id: 'session-1' }, handoff: { type: 'session-token', token: '' } }
+    })]
+  ])('moves the client only for a response that carries a session (%s)', async (_label, respond) => {
     const selections: string[] = [];
     const exchange = createRegionalHandoffExchange({
       regionalClient: {
@@ -874,8 +977,8 @@ describe('createRegionalHandoffExchange', () => {
         setCurrentRegionId: (regionId) => selections.push(regionId)
       },
       resolveBaseUrl: (regionId) => `https://${regionId}.account.example.com/auth`,
-      // An ok response without a body: complete() refuses it, so the region must not move.
-      clientOptions: { fetch: async () => new Response(null, { status: 204 }) }
+      // An ok response complete() refuses, so the region must not move.
+      clientOptions: { fetch: async () => respond() }
     });
     const { make, server } = setup({ exchange });
     const begun = await make().begin({ returnTo: RETURN_TO, regionId: 'eu' });

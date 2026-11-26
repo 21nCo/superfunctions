@@ -45,10 +45,11 @@ export interface AuthFnBrowserHandoffStore {
    */
   compareAndSet(key: string, expected: string, next: string | null): Awaitable<boolean>;
   /**
-   * `false` when `compareAndSet` cannot be atomic across participants; the
-   * handoff then refuses to begin or complete. Omitted means atomic.
+   * `true` only when `compareAndSet` is atomic across participants. Any
+   * other value, including a missing one, makes the handoff refuse to begin
+   * or complete.
    */
-  readonly atomic?: boolean;
+  readonly atomic: boolean;
 }
 
 /** The part of `IDBFactory` (`globalThis.indexedDB`) the store uses. */
@@ -233,8 +234,8 @@ const CODE_PATTERN = /^[A-Za-z0-9_-]{1,256}$/;
 const REGION_ID_PATTERN = /^[A-Za-z0-9_.-]{1,64}$/;
 /** The server's canonical challenge id spelling (`CANONICAL_CHALLENGE_ID`). */
 const CHALLENGE_ID_PATTERN = /^[a-z0-9_-]{1,255}$/;
-/** The social callback names a social sign-in method (`oauth-google`, `oauth-apple`, `oauth-github`). */
-const METHOD_PATTERN = /^oauth-[a-z0-9-]{1,58}$/;
+/** The social sign-in methods the social callback names (`SOCIAL_PROVIDER_METHODS`). */
+const SOCIAL_METHODS = new Set(['oauth-google', 'oauth-apple', 'oauth-github']);
 const ERROR_CODE_PATTERN = /^[A-Z][A-Z0-9_]{0,63}$/;
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9_.:-]{1,128}$/;
 const USED_RECORD_KEYS = ['expiresAt', 'id', 'state', 'v'].join();
@@ -245,7 +246,9 @@ const REPLAYED_CODE = 'AUTHFN_OAUTH_STATE_REPLAYED';
 const NETWORK_ERROR_CODE = 'AUTHFN_NETWORK_ERROR';
 const INTERNAL_ERROR_CODE = 'AUTHFN_INTERNAL_ERROR';
 const NOT_ATOMIC_MESSAGE = 'createBrowserHandoff needs a store that claims atomically across windows; '
-  + 'this store is atomic: false (for example createIndexedDbHandoffStore without IndexedDB)';
+  + 'this store is not atomic: true (for example createIndexedDbHandoffStore without IndexedDB)';
+const NO_WEB_CRYPTO_MESSAGE = 'createBrowserHandoff needs Web Crypto (crypto.getRandomValues and crypto.subtle), '
+  + 'which browsers provide only in secure contexts (https, or http on localhost)';
 const EXCHANGE_FAILURE_MESSAGES: Partial<Record<AuthFnBrowserHandoffFailureReason, string>> = {
   'already-used': 'This social sign-in was already completed',
   'exchange-canceled': 'The social sign-in exchange did not complete',
@@ -287,16 +290,47 @@ export function createBrowserHandoff(options: AuthFnBrowserHandoffOptions): Auth
   };
 
   /**
-   * Removes a record this helper will not use, if it still holds `raw`. When
-   * the store cannot compare-and-set, the record is deleted anyway, so a
-   * verifier never outlives the decision to retire it.
+   * Runs after a compare-and-set on `key` threw. Whatever it left that could
+   * still hold a verifier is deleted; a used tombstone (another participant's
+   * committed claim) is kept, so later returns still report `already-used`.
+   */
+  const cleanupAfterFailedSet = async (key: string): Promise<'removed' | 'used' | 'gone' | 'failed'> => {
+    let current: unknown;
+    try {
+      current = await store.get(key);
+    } catch {
+      // Unreadable, so it may still hold the verifier: delete it below.
+      current = '';
+    }
+    if (current === null || current === undefined) {
+      return 'gone';
+    }
+    if (typeof current === 'string' && parseRecord(current, key.slice(keyPrefix.length), now())?.state === 'used') {
+      return 'used';
+    }
+    return await tryDelete(key) ? 'removed' : 'failed';
+  };
+
+  /**
+   * Removes a record this helper will not use, if it still holds `raw`, and
+   * reports whether it removed it. When the store cannot compare-and-set,
+   * anything but a used tombstone is deleted, so a verifier never outlives
+   * the decision to retire it.
    */
   const retireRecord = async (key: string, raw: string): Promise<boolean> => {
     try {
       return await store.compareAndSet(key, raw, null);
     } catch {
-      await retire(() => store.delete(key));
+      return await cleanupAfterFailedSet(key) === 'removed';
+    }
+  };
+
+  const tryDelete = async (key: string): Promise<boolean> => {
+    try {
+      await store.delete(key);
       return true;
+    } catch {
+      return false;
     }
   };
 
@@ -319,8 +353,9 @@ export function createBrowserHandoff(options: AuthFnBrowserHandoffOptions): Auth
       if (typeof raw !== 'string') {
         // Not written by this helper (which stores strings), and possibly
         // holding a verifier: remove it.
-        await retire(() => store.delete(key));
-        removed += 1;
+        if (await tryDelete(key)) {
+          removed += 1;
+        }
         continue;
       }
       // The clock is read after the record, so a record another window
@@ -345,8 +380,14 @@ export function createBrowserHandoff(options: AuthFnBrowserHandoffOptions): Auth
       if (regionId !== undefined && (typeof regionId !== 'string' || !REGION_ID_PATTERN.test(regionId))) {
         throw new TypeError('begin regionId must be a region id of letters, digits, dot, dash or underscore');
       }
-      if (store.atomic === false) {
+      if (store.atomic !== true) {
         throw new Error(NOT_ATOMIC_MESSAGE);
+      }
+      // Checked before anything is stored: on a page that is not a secure
+      // context `crypto.subtle` is missing.
+      const webCrypto = (globalThis as { crypto?: Partial<Crypto> }).crypto;
+      if (typeof webCrypto?.getRandomValues !== 'function' || typeof webCrypto.subtle?.digest !== 'function') {
+        throw new Error(NO_WEB_CRYPTO_MESSAGE);
       }
       await prune();
       const handoffId = randomBase64Url(16);
@@ -411,7 +452,7 @@ export function createBrowserHandoff(options: AuthFnBrowserHandoffOptions): Auth
         return fail('malformed-callback', { cleanUrl });
       }
       const key = keyFor(handoffId);
-      if (store.atomic === false) {
+      if (store.atomic !== true) {
         // Without an atomic claim two windows could both exchange; retire
         // the verifier instead (removing it is safe without a lock).
         await retire(() => store.delete(key));
@@ -459,9 +500,11 @@ export function createBrowserHandoff(options: AuthFnBrowserHandoffOptions): Auth
         claimed = await store.compareAndSet(key, raw, tombstone);
       } catch {
         // Nothing was exchanged; remove the verifier rather than leave it
-        // for a later claim the store may not be able to make either.
-        await retire(() => store.delete(key));
-        return fail('malformed-state', { handoffId, cleanUrl });
+        // for a later claim the store may not be able to make either. A
+        // tombstone another participant committed meanwhile stays.
+        return await cleanupAfterFailedSet(key) === 'used'
+          ? fail('already-used', { handoffId, cleanUrl })
+          : fail('malformed-state', { handoffId, cleanUrl });
       }
       if (!claimed) {
         return fail('already-used', { handoffId, cleanUrl });
@@ -559,10 +602,10 @@ export function createBrowserHandoff(options: AuthFnBrowserHandoffOptions): Auth
           ...(requestId ? { requestId } : {})
         });
       }
-      const data = envelope.data;
-      if (!data || typeof data.handoff?.token !== 'string' || !data.session) {
+      if (!isIssuedHandoffSession(envelope)) {
         return fail('exchange-rejected', { handoffId, cleanUrl });
       }
+      const data = envelope.data;
       emit({ type: 'completed', handoffId });
       return {
         status: 'completed',
@@ -641,7 +684,7 @@ export function createRegionalHandoffExchange(
     }
     const response = await clientFor(context.regionId).exchangeSocialHandoff(input);
     // Moves the page only for a response complete() accepts as a session.
-    if (response?.ok === true && response.data?.session && typeof response.data.handoff?.token === 'string') {
+    if (isIssuedHandoffSession(response)) {
       regionalClient.setCurrentRegionId(context.regionId);
     }
     return response;
@@ -785,6 +828,35 @@ function matching(value: string | null, pattern: RegExp): string | undefined {
   return value !== null && pattern.test(value) ? value : undefined;
 }
 
+/**
+ * Whether an exchange response issued a session: `ok`, a session object
+ * with an id and a non-empty session-token handoff. `complete()` and the
+ * regional exchange both accept only this shape.
+ */
+function isIssuedHandoffSession(
+  envelope: unknown
+): envelope is Extract<Awaited<ReturnType<AuthFnBrowserHandoffExchange>>, { ok: true }> {
+  if (!envelope || typeof envelope !== 'object' || (envelope as { ok?: unknown }).ok !== true) {
+    return false;
+  }
+  const data = (envelope as { data?: unknown }).data as { session?: unknown; handoff?: unknown } | null | undefined;
+  if (!data || typeof data !== 'object') {
+    return false;
+  }
+  const session = data.session as { id?: unknown } | null | undefined;
+  const handoff = data.handoff as { type?: unknown; token?: unknown } | null | undefined;
+  return !!session
+    && typeof session === 'object'
+    && !Array.isArray(session)
+    && typeof session.id === 'string'
+    && session.id.length > 0
+    && !!handoff
+    && typeof handoff === 'object'
+    && handoff.type === 'session-token'
+    && typeof handoff.token === 'string'
+    && handoff.token.length > 0;
+}
+
 async function retire(action: () => Awaitable<unknown>): Promise<void> {
   try {
     await action();
@@ -917,7 +989,8 @@ function readTwoFactorChallenge(
   };
   const authfnCode = single(TWO_FACTOR_CODE_PARAM, ERROR_CODE_PATTERN);
   const challengeId = single('challengeId', CHALLENGE_ID_PATTERN);
-  const primaryMethod = single('primaryMethod', METHOD_PATTERN);
+  const methods = url.searchParams.getAll('primaryMethod');
+  const primaryMethod = methods.length === 1 && SOCIAL_METHODS.has(methods[0]!) ? methods[0]! : undefined;
   if (
     authfnCode !== TWO_FACTOR_REQUIRED_CODE
     || !challengeId
