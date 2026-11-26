@@ -332,6 +332,10 @@ describe("claim at settle", () => {
           } else {
             results.push(appName + ":unasked");
           }
+          // Observation window, not an ordering wait: a referenced 400 ms timer keeps the child alive after each FIFO
+          // install, so a later read of the cache (even one the check deferred on an unref'd timer) starts while the
+          // child still runs and then keeps it from exiting on its own.
+          await new Promise((resolve) => setTimeout(resolve, 400));
         }
         process.stdout.write(results.join(","));
       `;
