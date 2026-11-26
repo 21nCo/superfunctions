@@ -67,14 +67,17 @@ export interface UpdateCheck {
    * Resolving with the notice counts as delivering it: only the first call that resolves with it gets it (later calls on
    * the same handle resolve `null`), and the time is recorded in the cache in the background (added to whatever entry
    * is there, so a newer entry another run wrote is kept, and an earlier delivery never replaces a later one). The
-   * notice is dropped when the cache records a delivery within `intervalMs`: the cache is read when the check settles
-   * (that read must finish before the timeout for the result to count) and, while time remains, read again at hand-out,
-   * asynchronously and bounded by the remaining time (a read that does not finish in time drops the notice). When no
-   * time remains, as after an action longer than the timeout, the notice is handed out on the read made when the check
-   * settled, without any file access. So no run gives it once another run's delivery is recorded before its last read;
-   * within one process only one handle per app gives it. Two processes that both read the cache before either delivery
-   * is written (the window between a run's last read and its hand-out) may both give it: the last-rename-wins boundary
-   * of concurrent instances.
+   * notice is dropped when a delivery within `intervalMs` of the hand-out time is known. The cache is read when the
+   * check settles (that read must finish before the timeout for the result to count), then reread in the background
+   * every 250 ms (unref'd timers, one read at a time, for at most one hour) until the notice is handed out or dropped,
+   * and, while time remains, read once more at hand-out, asynchronously and bounded by the remaining time (a read that
+   * does not finish in time drops the notice). Every delivery a read saw counts; a failed or empty read erases none.
+   * When no time remains, as after an action longer than the timeout, the decision uses what the rereads saw, without
+   * any file access, and the notice is dropped when their last read started more than 1 s earlier (for example after
+   * the event loop was blocked). So no run gives it once another run's delivery is recorded before its last read;
+   * within one process only one handle per app gives it. Two processes whose last reads both come before either
+   * delivery is written may both give it: a window of one reread period (at most 1 s) plus the other run's write, the
+   * last-rename-wins boundary of concurrent instances.
    */
   notice(): Promise<string | null>;
 }
@@ -148,11 +151,6 @@ function noticeFor(entry: CacheEntry, current: ParsedVersion, currentText: strin
 /** True when `time` is not in the future and less than `intervalMs` ago; a time in the future counts as stale. */
 function isRecent(time: number, now: number, intervalMs: number): boolean {
   return time <= now && now - time < intervalMs;
-}
-
-/** True when the entry records a notice delivered within the interval. */
-function recentlyNotified(entry: CacheEntry, now: number, intervalMs: number): boolean {
-  return entry.notifiedAt !== undefined && isRecent(entry.notifiedAt, now, intervalMs);
 }
 
 function abortRejection(signal: AbortSignal): Promise<never> {
@@ -268,24 +266,26 @@ interface CheckResult {
   notice: string | null;
   /** The entry the notice came from, to record its delivery; null when there is no notice. */
   entry: LatestEntry | null;
-  /** The cache as read when the check settled, after a refresh; its delivery is weighed at hand-out time. */
-  shared?: CacheEntry | null;
+  /** The delivery times (`notifiedAt`) the cache showed while the check ran; weighed at hand-out time. */
+  seen: number[];
+  /** When (monotonic clock) the check's last cache read started. */
+  readAt: number;
 }
 
-function resultFor(plan: CheckPlan, entry: CacheEntry, now: number, shared?: CacheEntry | null): CheckResult {
-  const notice = recentlyNotified(entry, now, plan.intervalMs)
-    ? null
-    : noticeFor(entry, plan.current, plan.currentText, plan.name);
-  return { notice, entry: notice !== null && "latest" in entry ? entry : null, shared };
+function resultFor(plan: CheckPlan, entry: CacheEntry, seen: Array<CacheEntry | null>, readAt: number): CheckResult {
+  const notice = noticeFor(entry, plan.current, plan.currentText, plan.name);
+  const times = seen.flatMap((item) => (item?.notifiedAt === undefined ? [] : [item.notifiedAt]));
+  return { notice, entry: notice !== null && "latest" in entry ? entry : null, seen: times, readAt };
 }
 
 /** Settles as soon as the entry is known; the cache write it starts continues in the background. */
 async function runCheck(plan: CheckPlan): Promise<CheckResult> {
   const file = join(plan.stateDir, UPDATE_CHECK_FILE);
+  const readAt = monotonicNow();
   const cached = await readCache(file);
   const now = plan.now();
   if (cached && isRecent(cached.checkedAt, now, plan.intervalMs)) {
-    return resultFor(plan, cached, now);
+    return resultFor(plan, cached, [cached], readAt);
   }
   const fetched = await requestLatest(plan);
   // The last delivery carries over to the new entry, an error entry too, so a refresh does not give a second notice
@@ -294,11 +294,21 @@ async function runCheck(plan: CheckPlan): Promise<CheckResult> {
   void writeCacheQuietly(plan.stateDir, entry, plan.now);
   // The claim read: a delivery another run recorded during the request. The result counts only when this read, too,
   // finishes before the timeout.
+  const claimAt = monotonicNow();
   const shared = await readCache(file);
-  return resultFor(plan, entry, plan.now(), shared);
+  return resultFor(plan, entry, [entry, shared], claimAt);
 }
 
 const LATE = Symbol("late");
+/** How often a ready notice rereads the cache in the background until it is handed out or dropped. */
+const REREAD_MS = 250;
+/**
+ * A hand-out with no time left uses what the cache showed only when that read started at most this long ago (real
+ * time); otherwise, for example after the event loop was blocked, the notice is dropped.
+ */
+const FRESH_MS = 1_000;
+/** Background rereads stop this long after the check settled; a hand-out with no time left after that gives none. */
+const OBSERVE_MS = 60 * 60 * 1000;
 /** The longest delay `setTimeout` takes as given; a longer one would fire at once. */
 const MAX_TIMER_MS = 2 ** 31 - 1;
 
@@ -381,9 +391,9 @@ function planCheck(options: UpdateCheckOptions): CheckPlan | null {
  * Skipped (no request, no cache access, `notice()` resolves `null`) in JSON mode (`terminal.json`), when the terminal
  * is not interactive per `resolveTerminal`, when `CI`, `NO_UPDATE_NOTIFIER` or `<APP>_NO_UPDATE_CHECK` is set to a
  * non-empty value, and when `currentVersion` is outside the version grammar. A cached result younger than
- * `intervalMs` is used without a request, and a notice is given at most once per `intervalMs` (two processes racing
- * to hand it out may both give it; see `notice()`). Otherwise it sends `GET <registry>/-/package/<name>/dist-tags` with
- * `Accept: application/json` and stores `{ checkedAt, latest }`, or `{ checkedAt, error: true }` for a network error,
+ * `intervalMs` is used without a request, and a notice is given at most once per `intervalMs` (two processes whose
+ * last cache reads both come before either delivery is written may both give it; see `notice()`). Otherwise it sends
+ * `GET <registry>/-/package/<name>/dist-tags` with `Accept: application/json` and stores `{ checkedAt, latest }`, or `{ checkedAt, error: true }` for a network error,
  * a status other than 200, a body that is not JSON or has no valid `latest`, or a timeout, in
  * `<state>/update-check.json`, written atomically. A notice is given only when `latest` is a release greater than
  * `currentVersion`. The result is known as soon as the registry answers; cache writes finish in the background.
@@ -412,6 +422,39 @@ export function startUpdateCheck(options: UpdateCheckOptions): UpdateCheck {
       return 0;
     }
   };
+  // What the cache has shown since the check began: every delivery time seen (a later read adds to it and never erases
+  // one) and when the last completed read started. Kept current by rereads in the background from the moment a notice
+  // is ready until it is handed out or dropped; unref'd, one read at a time, so they never keep the process alive.
+  const file = join(checkPlan.stateDir, UPDATE_CHECK_FILE);
+  const seen = new Set<number>();
+  let readAt = Number.NEGATIVE_INFINITY;
+  let observing = false;
+  let rereadTimer: ReturnType<typeof setTimeout> | undefined;
+  const observe = (read: CacheEntry | null, startedAt: number): void => {
+    if (read?.notifiedAt !== undefined) {
+      seen.add(read.notifiedAt);
+    }
+    readAt = Math.max(readAt, startedAt);
+  };
+  const stopObserving = (): void => {
+    observing = false;
+    clearTimeout(rereadTimer);
+  };
+  const scheduleReread = (until: number): void => {
+    rereadTimer = setTimeout(() => {
+      const startedAt = monotonicNow();
+      void readCache(file).then((read) => {
+        if (observing) {
+          observe(read, startedAt);
+          if (monotonicNow() < until) {
+            scheduleReread(until);
+          }
+        }
+      });
+    }, REREAD_MS);
+    (rereadTimer as { unref?: () => void }).unref?.();
+  };
+
   const result = runCheck(checkPlan)
     .catch((): CheckResult | null => null)
     .then((checked) => {
@@ -419,6 +462,12 @@ export function startUpdateCheck(options: UpdateCheckOptions): UpdateCheck {
         if (remaining() >= 0) {
           outcome = "ready";
           ready = checked;
+          if (checked !== null && checked.notice !== null && !handedOut) {
+            checked.seen.forEach((time) => seen.add(time));
+            readAt = checked.readAt;
+            observing = true;
+            scheduleReread(monotonicNow() + OBSERVE_MS);
+          }
         } else {
           outcome = "expired";
         }
@@ -435,30 +484,28 @@ export function startUpdateCheck(options: UpdateCheckOptions): UpdateCheck {
   };
 
   // Hands the notice out unless a delivery within the interval is known, and records it. While time remains the cache
-  // is read again, bounded by the remaining time, and a read that finishes after the deadline is discarded; once none
-  // remains the read made when the check settled stands, with no file access. The decision uses the time after that
-  // read, so a delivery recorded meanwhile is not taken for one in the future.
-  const handOut = async (
-    checked: CheckResult,
-    entry: LatestEntry,
-    sampled: number,
-    budget: () => number
-  ): Promise<boolean> => {
+  // is read once more, bounded by the remaining time (a read that finishes after the deadline drops the notice) and
+  // added to what was seen; once none remains the decision uses what the rereads saw, with no file access, and only
+  // when their last read started within FRESH_MS. The interval is decided here, on the time after that read, so a
+  // delivery that expired since the check settled no longer suppresses the notice.
+  const handOut = async (entry: LatestEntry, sampled: number, budget: () => number): Promise<boolean> => {
     const dir = checkPlan.stateDir;
     const left = budget();
-    let shared = checked.shared ?? null;
     if (left > 0) {
-      const read = await within(readCache(join(dir, UPDATE_CHECK_FILE)), left);
+      const startedAt = monotonicNow();
+      const read = await within(readCache(file), left);
       if (read === LATE || !(budget() >= 0)) {
         return false;
       }
-      shared = read;
+      observe(read, startedAt);
+    } else if (!(monotonicNow() - readAt <= FRESH_MS)) {
+      return false;
     }
     const notifiedAt = clock() ?? sampled;
     const previous = handedOutAt.get(dir);
     if (
       (previous !== undefined && isRecent(previous, notifiedAt, checkPlan.intervalMs)) ||
-      (shared !== null && recentlyNotified(shared, notifiedAt, checkPlan.intervalMs))
+      [...seen].some((time) => isRecent(time, notifiedAt, checkPlan.intervalMs))
     ) {
       return false;
     }
@@ -476,6 +523,7 @@ export function startUpdateCheck(options: UpdateCheckOptions): UpdateCheck {
       return null;
     }
     handedOut = true;
+    stopObserving();
     const sampled = clock();
     if (sampled === undefined) {
       return checked.notice;
@@ -494,7 +542,7 @@ export function startUpdateCheck(options: UpdateCheckOptions): UpdateCheck {
     handingOut.set(dir, mine);
     let delivered = false;
     try {
-      delivered = await handOut(checked, checked.entry, sampled, budget);
+      delivered = await handOut(checked.entry, sampled, budget);
     } catch {
       delivered = false;
     } finally {
