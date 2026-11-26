@@ -485,8 +485,9 @@ class OperationConverter {
 
   /**
    * The schemes the operation's effective security requirements name that
-   * `components.securitySchemes` defines. A requirement list `security()`
-   * refuses names none here: the operation is skipped for it when built.
+   * `components.securitySchemes` defines. A name that does not resolve is
+   * left out, so an executor can tell it from `security` and refuse the
+   * operation (`httpExecutor` does) rather than guess its credential.
    */
   securitySchemes(raw: JsonObject): Readonly<Record<string, OpenApiSecurityScheme>> | undefined {
     const level = [raw.security, this.document.security].find(Array.isArray);

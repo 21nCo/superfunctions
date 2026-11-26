@@ -301,12 +301,18 @@ const { registry } = fromOpenAPI<{ apiToken: string }>(document, {
   cannot send (`TRACE`, `GET` or `HEAD` with a request body, or a required
   header fetch manages, such as `Connection`) are skipped by `fromOpenAPI`
   as `unsupported-by-executor`, and so is an operation whose every security
-  requirement needs an `apiKey` credential in the query, which operator
-  headers cannot carry. It sets `outputSchemaRule: "every-success"`
+  requirement needs an `apiKey` credential in the query or in a header
+  fetch manages, which operator headers cannot carry, and one whose security
+  names a scheme that does not resolve (missing, an external `$ref`, a
+  cycle) or an `apiKey` scheme without a usable `name` and `in`, since the
+  parameter that carries its credential is then unknown. It sets `outputSchemaRule: "every-success"`
   (see Outputs).
-- **Credentials (D9).** `headers` is a record or a function of the server's
-  trusted context (and the operation), called on every call; values are
-  printable ASCII. The tool input offers only what the executor sends: the
+- **Credentials (D9).** `headers` is a plain object (prototype
+  `Object.prototype` or `null`) or a function of the server's trusted
+  context (and the operation), called on every call, returning one or a
+  promise of one; values are printable ASCII. A `Map`, a `Headers` or
+  another realm's object is refused rather than read as empty, so only an
+  explicit `{}` sends no operator headers. The tool input offers only what the executor sends: the
   forbidden headers (`Authorization`, `Cookie`, `Host`, `Content-Length`,
   `Proxy-*`, `Accept`, `Content-Type`), optional transport headers
   (`Connection`, `Transfer-Encoding`, `Expect`, ...), `apiKey` credential
@@ -315,7 +321,9 @@ const { registry } = fromOpenAPI<{ apiToken: string }>(document, {
   and an `apiKey` credential the operator does not set goes unsent. With a
   `headers` function, whose header names are known only per call, a call
   that gives a header parameter it sets a value is refused with an
-  `isError` result rather than having the value dropped. So a caller can
+  `isError` result rather than having the value dropped; a required header
+  parameter the function sets therefore refuses every call, so set such a
+  header with a `headers` record, which removes it from the input. So a caller can
   neither replace nor add credentials; argument names the operation does not
   declare are never read. Nothing from the MCP client's request, such as its
   `Authorization` header, is forwarded. Every operator header value is
@@ -343,7 +351,8 @@ const { registry } = fromOpenAPI<{ apiToken: string }>(document, {
   does not describe (no body, as for `204` or `HEAD`, a body that is not a
   JSON object, one that fails `checkOutput`, or one whose numbers JSON
   parsing would change, such as an integer beyond 2^53 however it is
-  spelled) cannot be
+  spelled or a decimal with more digits than a double holds, like
+  `1.0000000000000001`) cannot be
   structured content; it is an `isError` result that says the call
   succeeded and not to repeat it, followed by the body text. Any other
   status is an `isError` result with the status and an excerpt of at most

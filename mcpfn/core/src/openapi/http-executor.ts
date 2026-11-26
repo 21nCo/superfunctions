@@ -14,7 +14,7 @@ import type {
 /** Headers the operator adds to every request. */
 export type HttpExecutorHeaders = Readonly<Record<string, string>>;
 
-/** A record of headers, or a function of the server's trusted context (and the operation) returning one. */
+/** A plain object of headers, or a function of the server's trusted context (and the operation) returning one; a `Map`, `Headers` or another realm's object is refused. */
 export type HttpExecutorHeaderSource<TContext> =
   | HttpExecutorHeaders
   | ((context: TContext, operation: OpenApiOperation) => HttpExecutorHeaders | Promise<HttpExecutorHeaders>);
@@ -250,22 +250,40 @@ function credentialParameters(operation: OpenApiOperation): { query: Set<string>
 }
 
 /**
- * A query apiKey scheme the operation cannot do without: operator headers
- * cannot carry it, so every call would go unauthenticated. An alternative
- * requirement without one (another scheme, or `{}` for none) is enough.
+ * Why the operation's security cannot be met with operator headers alone.
+ * A requirement that names a scheme which does not resolve (missing, an
+ * external `$ref`, a cycle) or an `apiKey` scheme with no usable placement
+ * leaves its credential parameter unknown, so a caller could fill it: the
+ * operation is refused whatever the alternatives. Otherwise it is refused
+ * when every requirement needs an `apiKey` the operator cannot send: a
+ * query one, or a header fetch manages. An alternative without one
+ * (another scheme, or `{}` for none) is enough.
  */
-function queryCredentialOnly(operation: OpenApiOperation): string | undefined {
+function securityRefusal(operation: OpenApiOperation): string | undefined {
   const requirements = operation.security;
   if (!requirements || requirements.length === 0) return undefined;
   const schemes = operation.securitySchemes ?? {};
+  const schemeOf = (name: string) => (Object.hasOwn(schemes, name) ? schemes[name] : undefined);
+  for (const requirement of requirements) {
+    for (const name of Object.keys(requirement)) {
+      const scheme = schemeOf(name);
+      if (scheme === undefined) {
+        return `the security scheme ${JSON.stringify(name)} does not resolve, so the parameter that carries its credential is unknown`;
+      }
+      if (scheme.type === "apiKey" && (scheme.name === undefined || scheme.in === undefined)) {
+        return `the apiKey security scheme ${JSON.stringify(name)} has no usable name and location`;
+      }
+    }
+  }
   let needed: string | undefined;
   for (const requirement of requirements) {
-    const query = Object.keys(requirement).find((name) => {
-      const scheme = Object.hasOwn(schemes, name) ? schemes[name] : undefined;
-      return scheme?.type === "apiKey" && scheme.in === "query";
-    });
-    if (query === undefined) return undefined;
-    needed ??= schemes[query]!.name;
+    const unsuppliable = Object.keys(requirement)
+      .map((name) => schemeOf(name)!)
+      .find((scheme) => scheme.type === "apiKey" && (scheme.in === "query" || (scheme.in === "header" && TRANSPORT_HEADERS.has(scheme.name!.toLowerCase()))));
+    if (unsuppliable === undefined) return undefined;
+    needed ??= unsuppliable.in === "query"
+      ? `the operation needs the query credential ${JSON.stringify(unsuppliable.name)}, which operator headers cannot supply`
+      : `the operation needs the credential header ${JSON.stringify(unsuppliable.name)}, which fetch manages`;
   }
   return needed;
 }
@@ -280,11 +298,7 @@ function unsupportedReason(operation: OpenApiOperation): string | undefined {
     (parameter) => parameter.in === "header" && parameter.required && TRANSPORT_HEADERS.has(parameter.name.toLowerCase()),
   );
   if (managed) return `fetch manages the required header ${JSON.stringify(managed.name)}`;
-  const queryCredential = queryCredentialOnly(operation);
-  if (queryCredential !== undefined) {
-    return `the operation needs the query credential ${JSON.stringify(queryCredential)}, which operator headers cannot supply`;
-  }
-  return undefined;
+  return securityRefusal(operation);
 }
 
 function cancelled(): CallToolResult {
@@ -356,9 +370,11 @@ async function resolveHeaders<TContext>(
   let box: { record: unknown };
   try {
     if (typeof source === "function") {
-      // Only a promise is awaited: a record returned as it is is never treated as a thenable.
+      // Only a native promise (of any realm) is awaited: a record returned
+      // as it is is never treated as a thenable.
       const result: unknown = source(context, operation);
-      box = { record: result instanceof Promise ? await result : result };
+      const settled = nativePromise(result);
+      box = { record: settled === undefined ? result : await settled };
     } else {
       box = { record: source ?? {} };
     }
@@ -371,6 +387,27 @@ async function resolveHeaders<TContext>(
   } catch (error) {
     throw new Error(headerFailure(error));
   }
+}
+
+/**
+ * The settlement of a native promise from any realm, found by its internal
+ * slot: `Promise.prototype.then` throws for anything else before reading a
+ * property, so a record's own `then` is never called.
+ */
+function nativePromise(value: unknown): Promise<unknown> | undefined {
+  if (value === null || (typeof value !== "object" && typeof value !== "function")) return undefined;
+  let resolve!: (value: unknown) => void;
+  let reject!: (reason: unknown) => void;
+  const settled = new Promise<unknown>((onResolve, onReject) => {
+    resolve = onResolve;
+    reject = onReject;
+  });
+  try {
+    Promise.prototype.then.call(value, resolve, reject);
+  } catch {
+    return undefined;
+  }
+  return settled;
 }
 
 /** The message for a header failure: ours names at most a header; anything else, which may hold a value, is replaced. */
@@ -391,8 +428,9 @@ function operatorHeaders(record: unknown): OperatorHeaders {
 /** Validates operator headers by name only, so no error message carries a value. Values are trimmed as fetch sends them. */
 function validateHeaders(record: unknown): Map<string, string> {
   const option = "headers";
-  if (record === null || typeof record !== "object" || Array.isArray(record)) {
-    throw new HeaderError(`httpExecutor ${option} must be an object of header names to string values`);
+  // Only a plain record: a Map, a Headers or another realm's object would read as empty and send no credentials.
+  if (record === null || typeof record !== "object" || !isPlainRecord(record)) {
+    throw new HeaderError(`httpExecutor ${option} must be a plain object of header names to string values`);
   }
   const headers = new Map<string, string>();
   for (const [name, value] of Object.entries(record)) {
@@ -407,6 +445,11 @@ function validateHeaders(record: unknown): Map<string, string> {
     headers.set(lower, value.replace(/^[\t ]+|[\t ]+$/g, ""));
   }
   return headers;
+}
+
+function isPlainRecord(record: object): boolean {
+  const prototype: unknown = Object.getPrototypeOf(record);
+  return prototype === Object.prototype || prototype === null;
 }
 
 /**
@@ -570,11 +613,13 @@ async function toResult(response: Response, options: ResultOptions): Promise<Cal
   const { bytes, complete } = await readBody(response, options.maxResponseBytes, options.signal);
   if (!complete) return tooLarge(status, options.maxResponseBytes);
   if (bytes.byteLength === 0) return unstructured(status, options, "no body");
-  const text = decode(bytes);
+  const decoded = decode(bytes);
   // Rewriting a success body could change its data: one that reveals a credential is withheld whole.
-  if (exposes(text, options.secrets)) {
+  if (exposes(decoded, options.secrets)) {
     return toolError(`The API responded with HTTP ${status}, so the call succeeded, but its body reveals an operator credential and was withheld.`);
   }
+  // A leading byte order mark is dropped only after the check, as JSON parsing needs.
+  const text = decoded.startsWith("\uFEFF") ? decoded.slice(1) : decoded;
   if (!options.hasOutputSchema) return { content: [{ type: "text", text }] };
   let value: unknown;
   try {
@@ -615,12 +660,12 @@ function unstructured(status: number, options: ResultOptions, what: string, text
 }
 
 /**
- * Whether every number in a JSON text parses to the value written, as far as
- * JSON can tell: a number that overflows or underflows, or one at or beyond
- * 2^53 whose shortest spelling (which serializing produces) denotes another
- * decimal value, however it was written (`9007199254740993`,
- * `9007199254740993.0`, `9.007199254740993e15`), would be changed, and so
- * would the data the tool returns. Strings are skipped.
+ * Whether every number in a JSON text parses to the value written: one whose
+ * shortest spelling (which serializing produces) denotes another decimal
+ * value, however it was written (`9007199254740993.0`,
+ * `0.123456789012345678901`, `1.0000000000000001`, an overflow or an
+ * underflow), would be changed, and so would the data the tool returns.
+ * Other spellings of the same value (`1e23`, `1.50`) pass. Strings are skipped.
  */
 function numbersExact(json: string): boolean {
   const token = /-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/y;
@@ -638,11 +683,8 @@ function numbersExact(json: string): boolean {
     index += written.length - 1;
     const value = Number(written);
     if (!Number.isFinite(value)) return false;
-    if (Math.abs(value) >= 2 ** 53) {
-      if (decimalValue(written) !== decimalValue(String(value))) return false;
-    } else if (value === 0 && /[1-9]/.test(written.replace(/[eE].*$/, ""))) {
-      return false;
-    }
+    const shortest = String(value);
+    if (written !== shortest && decimalValue(written) !== decimalValue(shortest)) return false;
   }
   return true;
 }
@@ -817,8 +859,9 @@ function discard(response: Response): void {
   response.body?.cancel().catch(() => undefined);
 }
 
+/** Decodes a body for credential matching and excerpts, keeping a leading byte order mark a credential may begin with. */
 function decode(bytes: Uint8Array): string {
-  return new TextDecoder("utf-8").decode(bytes);
+  return new TextDecoder("utf-8", { ignoreBOM: true }).decode(bytes);
 }
 
 interface BaseUrl {

@@ -1,5 +1,6 @@
 import { createServer, type IncomingHttpHeaders, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
+import { runInNewContext } from "node:vm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { McpFnError, McpFnValidationError, type McpFnRequestExtra } from "../src/index.js";
 import { fromOpenAPI, httpExecutor, type OpenApiOperation } from "../src/openapi/index.js";
@@ -1095,6 +1096,10 @@ describe("httpExecutor edge cases", () => {
       // An underflow written longer than any fixed window.
       `{"n":0.${"0".repeat(1200)}1}`,
       '{"n":1e-400}',
+      // Below 2^53 too: digits a double cannot hold are lost.
+      '{"n":0.123456789012345678901}',
+      '{"n":1.0000000000000001}',
+      '{"n":9007199254740991.1}',
       '{"id":"9007199254740993","n":1.5}',
     ]) {
       const { fetch } = stubFetch(() => new Response(body, { headers: { "content-type": "application/json" } }));
@@ -1127,14 +1132,13 @@ describe("httpExecutor edge cases", () => {
   });
 
   it("never reads a then property of a header record", async () => {
-    const record = Object.create(
-      {
-        get then(): unknown {
-          throw new Error(`then read for ${operatorToken}`);
-        },
+    // A plain record with a then getter that is not enumerable, so only thenable handling would read it.
+    const record = Object.defineProperty({ authorization: `Bearer ${operatorToken}` }, "then", {
+      get(): unknown {
+        throw new Error(`then read for ${operatorToken}`);
       },
-      { authorization: { value: `Bearer ${operatorToken}`, enumerable: true } },
-    ) as Record<string, string>;
+      enumerable: false,
+    }) as Record<string, string>;
     const { fetch, urls } = stubFetch(() => new Response("ok"));
     for (const headers of [record, () => record]) {
       const executor = httpExecutor<Context>({ baseUrl: api.origin, headers, fetch });
@@ -1233,11 +1237,11 @@ describe("httpExecutor edge cases", () => {
   });
 
   it("keeps a large number whose shortest spelling is the value written, however it is written", async () => {
-    const body = '{"a":1e23,"b":100000000000000000000000,"c":9007199254740992.0,"d":-9.007199254740992e15}';
+    const body = '{"a":1e23,"b":100000000000000000000000,"c":9007199254740992.0,"d":-9.007199254740992e15,"e":1.50,"f":0.10,"g":1E2}';
     const { fetch } = stubFetch(() => new Response(body, { headers: { "content-type": "application/json" } }));
     const executor = httpExecutor<Context>({ baseUrl: api.origin, fetch });
     const result = await execute(executor, operationOf("echo"), {}, { hasOutputSchema: true });
-    expect(result.structuredContent).toEqual({ a: 1e23, b: 1e23, c: 9007199254740992, d: -9007199254740992 });
+    expect(result.structuredContent).toEqual({ a: 1e23, b: 1e23, c: 9007199254740992, d: -9007199254740992, e: 1.5, f: 0.1, g: 100 });
   });
 
   it.each([
@@ -1457,5 +1461,126 @@ describe("httpExecutor apiKey credentials (D9)", () => {
     const result = await registry.callTool("headerKey", {}, context, clientExtra());
     expect(result.isError).toBeUndefined();
     expect(lastRequest().headers["x-api-key"]).toBe("test-operator-key");
+  });
+});
+
+describe("httpExecutor security schemes it cannot rely on", () => {
+  it("skips an operation whose security names a scheme that does not resolve or has no placement, or a header fetch manages", () => {
+    const { tools, skipped } = fromOpenAPI(
+      {
+        openapi: "3.1.0",
+        info: { title: "schemes", version: "1.0.0" },
+        components: {
+          securitySchemes: {
+            external: { $ref: "https://schemes.example.com/key.yaml#/key" },
+            cycleA: { $ref: "#/components/securitySchemes/cycleB" },
+            cycleB: { $ref: "#/components/securitySchemes/cycleA" },
+            nameless: { type: "apiKey", in: "query" },
+            connectionKey: { type: "apiKey", in: "header", name: "Connection" },
+            bearer: { type: "http", scheme: "bearer" },
+          },
+        },
+        paths: {
+          // An alternative without credentials does not help: the missing scheme's parameter is unknown.
+          "/missing": {
+            get: {
+              operationId: "missing",
+              security: [{ missing: [] }, {}],
+              parameters: [{ name: "key", in: "query", schema: { type: "string" } }],
+              responses: ok,
+            },
+          },
+          "/external": { get: { operationId: "external", security: [{ external: [] }], responses: ok } },
+          "/cycle": { get: { operationId: "cycle", security: [{ bearer: [] }, { cycleA: [] }], responses: ok } },
+          "/nameless": { get: { operationId: "nameless", security: [{ nameless: [] }], responses: ok } },
+          "/transport": { get: { operationId: "transport", security: [{ connectionKey: [] }], responses: ok } },
+          "/transport-or-bearer": { get: { operationId: "transportOrBearer", security: [{ connectionKey: [] }, { bearer: [] }], responses: ok } },
+        },
+      },
+      { executor: httpExecutor({ baseUrl: api.origin }) },
+    );
+    expect(tools.map((tool) => tool.name)).toEqual(["transportOrBearer"]);
+    expect(skipped.map(({ operation, code, reason }) => [operation.operationId, code, reason])).toEqual([
+      ["missing", "unsupported-by-executor", 'the security scheme "missing" does not resolve, so the parameter that carries its credential is unknown'],
+      ["external", "unsupported-by-executor", 'the security scheme "external" does not resolve, so the parameter that carries its credential is unknown'],
+      ["cycle", "unsupported-by-executor", 'the security scheme "cycleA" does not resolve, so the parameter that carries its credential is unknown'],
+      ["nameless", "unsupported-by-executor", 'the apiKey security scheme "nameless" has no usable name and location'],
+      ["transport", "unsupported-by-executor", 'the operation needs the credential header "Connection", which fetch manages'],
+    ]);
+  });
+});
+
+describe("httpExecutor header sources it cannot read as a record", () => {
+  function capturingFetch() {
+    const sent: Headers[] = [];
+    const fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
+      sent.push(new Headers(init?.headers));
+      return new Response("ok");
+    }) as typeof globalThis.fetch;
+    return { fetch, sent };
+  }
+
+  it("awaits a promise from another realm, so its headers are sent", async () => {
+    const record = { authorization: `Bearer ${operatorToken}` };
+    const { fetch, sent } = capturingFetch();
+    const executor = httpExecutor<Context>({
+      baseUrl: api.origin,
+      headers: () => runInNewContext("Promise.resolve(record)", { record }) as Record<string, string>,
+      fetch,
+    });
+    await expect(execute(executor, operationOf("getItem"), { path: { id: "1" } })).resolves.toEqual({ content: [{ type: "text", text: "ok" }] });
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.get("authorization")).toBe(`Bearer ${operatorToken}`);
+  });
+
+  it.each([
+    ["a Map", () => new Map([["authorization", `Bearer ${operatorToken}`]])],
+    ["a Headers", () => new Headers({ authorization: `Bearer ${operatorToken}` })],
+    ["another realm's object", () => runInNewContext("({ authorization: value })", { value: `Bearer ${operatorToken}` })],
+    ["another realm's promise of another realm's object", () => runInNewContext("Promise.resolve({ authorization: value })", { value: `Bearer ${operatorToken}` })],
+  ])("refuses %s, sending nothing, from a function or as the option", async (_label, make) => {
+    const { fetch, sent } = capturingFetch();
+    const executor = httpExecutor<Context>({ baseUrl: api.origin, headers: () => make() as unknown as Record<string, string>, fetch });
+    const failure = await execute(executor, operationOf("getItem"), { path: { id: "1" } }).catch((error: Error) => error);
+    expect(failure).toBeInstanceOf(Error);
+    expect(failure).not.toBeInstanceOf(McpFnError);
+    expect((failure as Error).message).toBe("httpExecutor headers must be a plain object of header names to string values");
+    expect(sent).toEqual([]);
+    const value = make();
+    if (!(value instanceof Promise) && !String(value).includes("Promise")) {
+      expect(() => httpExecutor({ baseUrl: api.origin, headers: value as unknown as Record<string, string>, fetch })).toThrow(McpFnValidationError);
+    }
+  });
+
+  it("still sends no operator headers only for an explicit empty record", async () => {
+    const { fetch, sent } = capturingFetch();
+    for (const headers of [{}, () => ({}), () => Object.create(null) as Record<string, string>]) {
+      const executor = httpExecutor<Context>({ baseUrl: api.origin, headers, fetch });
+      await execute(executor, operationOf("getItem"), { path: { id: "1" } });
+    }
+    expect(sent.map((headers) => headers.get("authorization"))).toEqual([null, null, null]);
+  });
+});
+
+describe("httpExecutor credentials beginning with a byte order mark", () => {
+  it("recognises the credential echoed at the start of a success or error body", async () => {
+    const wire = `%EF%BB%BF${["test", "fake", "cookie"].join("-")}`;
+    const decoded = decodeURIComponent(wire);
+    expect(decoded.startsWith("\uFEFF")).toBe(true);
+    for (const status of [200, 500]) {
+      // The UTF-8 body starts with the bytes EF BB BF, which a BOM-stripping decoder drops.
+      const { fetch } = stubFetch(() => new Response(`${decoded} and more`, { status, headers: { "content-type": "text/plain" } }));
+      const executor = httpExecutor<Context>({ baseUrl: api.origin, headers: { cookie: `session=${wire}` }, fetch });
+      const result = await execute(executor, operationOf("echo"));
+      expect(result.isError).toBe(true);
+      expect(JSON.stringify(result)).not.toContain("test-fake-cookie");
+    }
+  });
+
+  it("still parses a JSON success body that starts with a byte order mark", async () => {
+    const { fetch } = stubFetch(() => new Response('\uFEFF{"ok":true}', { headers: { "content-type": "application/json" } }));
+    const executor = httpExecutor<Context>({ baseUrl: api.origin, fetch });
+    const result = await execute(executor, operationOf("echo"), {}, { hasOutputSchema: true });
+    expect(result.structuredContent).toEqual({ ok: true });
   });
 });
