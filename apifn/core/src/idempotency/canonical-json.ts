@@ -51,6 +51,18 @@ function dataValue(target: object, key: string, location: string): unknown {
   return descriptor.value;
 }
 
+/**
+ * Whether `toJSON` is a function or an accessor anywhere on the prototype
+ * chain. Descriptors are read, so a getter is never invoked.
+ */
+function hasToJsonHook(value: object): boolean {
+  for (let target: object | null = value; target !== null; target = Object.getPrototypeOf(target) as object | null) {
+    const descriptor = Object.getOwnPropertyDescriptor(target, "toJSON");
+    if (descriptor) return !("value" in descriptor) || typeof descriptor.value === "function";
+  }
+  return false;
+}
+
 function encodeArray(value: unknown[], depth: number, ancestors: Set<object>): string {
   if (Object.getPrototypeOf(value) !== Array.prototype) throw new TypeError(`canonicalJson: array subclass ${where(depth)} is not plain JSON data`);
   // The length is read once, so nothing can extend the walk.
@@ -72,7 +84,7 @@ function encodeArray(value: unknown[], depth: number, ancestors: Set<object>): s
 function encodeObject(value: object, depth: number, ancestors: Set<object>): string {
   if (ancestors.has(value)) throw new TypeError(`canonicalJson: cycle ${where(depth)}`);
   // A toJSON hook would let two different values share one encoding (Date and its ISO string).
-  if (typeof (value as { toJSON?: unknown }).toJSON === "function") {
+  if (hasToJsonHook(value)) {
     throw new TypeError(`canonicalJson: object with toJSON ${where(depth)} is not plain JSON data`);
   }
   ancestors.add(value);

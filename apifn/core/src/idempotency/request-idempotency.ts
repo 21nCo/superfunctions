@@ -277,7 +277,9 @@ const MAX_RESPONSE_BYTES_LIMIT = 16 * 1024 * 1024;
 const MAX_KEY_LENGTH = 255;
 const MAX_ATTEMPTS = 8;
 const KEY_PATTERN = /^[\x21-\x7e]+$/;
-const HEADER_NAME_PATTERN = /^[!#$%&'*+.^_`|~0-9a-z-]+$/;
+const HEADER_NAME_PATTERN = /^[!#$%&'*+.^_`|~0-9a-z-]+$/i;
+/** A stored (lower-case) header name. */
+const STORED_HEADER_NAME_PATTERN = /^[!#$%&'*+.^_`|~0-9a-z-]+$/;
 // Response headers that carry or set credentials are never stored or replayed.
 const CREDENTIAL_HEADERS = new Set([
   "authorization",
@@ -389,7 +391,7 @@ function credentialHeaderSet(names: unknown): ReadonlySet<string> {
   const set = new Set<string>();
   for (let index = 0; index < names.length; index += 1) {
     const name: unknown = names[index];
-    if (typeof name !== "string" || !HEADER_NAME_PATTERN.test(name.toLowerCase())) {
+    if (typeof name !== "string" || !HEADER_NAME_PATTERN.test(name)) {
       throw new TypeError("credentialHeaders must contain valid header names");
     }
     set.add(name.toLowerCase());
@@ -401,8 +403,9 @@ function isCredentialHeader(name: string, extra: ReadonlySet<string>): boolean {
   return CREDENTIAL_HEADERS.has(name) || extra.has(name);
 }
 
+/** A field value: no control characters other than HTAB (RFC 9110 5.5). */
 function isSingleLine(value: unknown): value is string {
-  return typeof value === "string" && !/[\r\n\0]/.test(value);
+  return typeof value === "string" && !/[\u0000-\u0008\u000a-\u001f\u007f]/.test(value);
 }
 
 /** Field names a Connection header nominates as hop-by-hop (RFC 9110 7.6.1). */
@@ -463,8 +466,9 @@ function normalize(response: IdempotentResponse, maxBytes: number, extraCredenti
   const seen = new Set<string>();
   const nominated = connectionNominated(headers ?? {});
   for (const [rawName, value] of Object.entries(headers ?? {})) {
+    // The raw name is checked: lower-casing maps some non-ASCII letters (U+212A KELVIN SIGN) onto ASCII.
+    if (!HEADER_NAME_PATTERN.test(rawName)) throw new TypeError("idempotent response has an invalid header name");
     const name = rawName.toLowerCase();
-    if (!HEADER_NAME_PATTERN.test(name)) throw new TypeError("idempotent response has an invalid header name");
     if (!isSingleLine(value)) throw new TypeError("idempotent response header values must be single-line strings");
     // Two spellings of one field would leave the delivered and the replayed response different.
     if (seen.has(name)) throw new TypeError("idempotent response repeats a header name in a different case");
@@ -535,7 +539,7 @@ function sameReplayView(left: IdempotentResponse, right: IdempotentResponse, ext
 function isStoredResponse(value: unknown): value is StoredIdempotentResponse {
   if (!isPlainObject(value) || !isValidStatus(value.status) || !isPlainObject(value.headers)) return false;
   for (const [name, header] of Object.entries(value.headers)) {
-    if (!HEADER_NAME_PATTERN.test(name) || !isSingleLine(header)) return false;
+    if (!STORED_HEADER_NAME_PATTERN.test(name) || !isSingleLine(header)) return false;
   }
   if (value.body !== undefined && typeof value.body !== "string") return false;
   if (value.body !== undefined && BODYLESS_STATUSES.has(value.status)) return false;
@@ -551,7 +555,8 @@ function isStoredResponse(value: unknown): value is StoredIdempotentResponse {
     parts.add(part);
   }
   // Parts the write path dropped are absent, and headers are dropped only after the body (or with no body).
-  if (omitted.includes("body") && value.body !== undefined) return false;
+  // A bodyless status never had a body to omit.
+  if (omitted.includes("body") && (value.body !== undefined || BODYLESS_STATUSES.has(value.status))) return false;
   if (omitted.includes("headers") && (Object.keys(value.headers).length > 0 || value.body !== undefined)) return false;
   return true;
 }
@@ -861,9 +866,24 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
     });
     if (!written) return undefined;
     // A receipt that landed during a "none" acquire means the key is committed: free the claim, never run.
-    if (prepared.recovery === "none" && receipts && (await findReceipt(storeKey))) {
-      await releaseUnused(storeKey, version, generation, prepared);
-      return { outcome: "conflict" };
+    if (prepared.recovery === "none" && receipts) {
+      let committed: boolean;
+      try {
+        committed = (await findReceipt(storeKey)) !== undefined;
+      } catch (error) {
+        // No handler runs under this claim: free it so it never strands the key, then report the lookup failure.
+        try {
+          await releaseUnused(storeKey, version, generation, prepared);
+        } catch {
+          // The lookup error is the one the caller needs; the release failure leaves the lease to expire.
+        }
+        throw error;
+      }
+      if (committed) {
+        // The tombstone keeps the receipt contract, so a later "none" request without receipts still conflicts.
+        await releaseUnused(storeKey, version, generation, prepared, "receipt");
+        return { outcome: "conflict" };
+      }
     }
     // The write outlasted the lease, so another caller may already be taking the key over: never hand it out.
     if (now() >= at + leaseMs) {
@@ -883,13 +903,19 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
   };
 
   /** Releases a claim no handler ran under. A lost write means a newer writer already owns the key. */
-  const releaseUnused = async (storeKey: string, version: string, generation: number, prepared: Prepared): Promise<void> => {
+  const releaseUnused = async (
+    storeKey: string,
+    version: string,
+    generation: number,
+    prepared: Prepared,
+    recovery: IdempotencyRecovery = prepared.recovery,
+  ): Promise<void> => {
     await store.compareAndSet(storeKey, version, {
       state: "released",
       version: nextVersion(),
       generation,
       fingerprint: prepared.fingerprint,
-      recovery: prepared.recovery,
+      recovery,
       expiresAt: now() + retentionMs,
     });
   };

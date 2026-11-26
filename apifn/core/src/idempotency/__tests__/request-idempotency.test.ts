@@ -1092,8 +1092,11 @@ describe("createRequestIdempotency round-5 regressions", () => {
     const store = new LateReceiptStore();
     const { idempotency } = setup({ store, receipts: database.receipts });
     expect(await idempotency.claim(orderRequest({ recovery: "none" }))).toEqual({ outcome: "conflict" });
-    expect([...store.records.values()][0]).toMatchObject({ state: "released", recovery: "none" });
+    // The tombstone keeps the receipt contract, so an instance without receipts still refuses the key.
+    expect([...store.records.values()][0]).toMatchObject({ state: "released", recovery: "receipt" });
     expect(await idempotency.claim(orderRequest({ recovery: "none" }))).toEqual({ outcome: "conflict" });
+    const withoutReceipts = createRequestIdempotency({ store, clock: new FakeClock(), leaseMs: 1_000, retentionMs: 60_000, nonce: testNonce });
+    expect(await withoutReceipts.claim(orderRequest({ recovery: "none" }))).toEqual({ outcome: "conflict" });
   });
 
   it("accepts final statuses only and no body for 204, 205 and 304", async () => {
@@ -1169,5 +1172,90 @@ describe("createRequestIdempotency round-5 regressions", () => {
       expect(() => normalizeIdempotentResponse({ status: 200 }, { maxBytes })).toThrow(/maxBytes/);
     }
     expect(normalizeIdempotentResponse({ status: 200, body: "x" }, { maxBytes: 16 * 1024 * 1024 })).toMatchObject({ body: "x" });
+  });
+});
+
+describe("createRequestIdempotency round-6 regressions", () => {
+  /** A receipt source whose post-write lookup (the second call) runs `fail` and rejects. */
+  function failingSecondLookup(fail: () => Promise<void> | void = () => undefined) {
+    const lookupError = new Error("receipt source unavailable");
+    let calls = 0;
+    const receipts = {
+      find: async (): Promise<IdempotencyReceipt | undefined> => {
+        await tick();
+        calls += 1;
+        if (calls !== 2) return undefined;
+        await fail();
+        throw lookupError;
+      },
+    };
+    return { receipts, lookupError };
+  }
+
+  it("frees an unused claim when the post-write receipt lookup fails, so the key is not stranded", async () => {
+    const { receipts, lookupError } = failingSecondLookup();
+    const { idempotency, store } = setup({ receipts });
+    const none = orderRequest({ recovery: "none" });
+
+    await expect(idempotency.claim(none)).rejects.toBe(lookupError);
+    const [record] = [...store.records.values()];
+    expect(record).toMatchObject({ state: "released", generation: 1 });
+    // No handler ran, so the next caller acquires instead of waiting for the lease or retention.
+    expect(acquired(await idempotency.claim(none)).generation).toBe(2);
+  });
+
+  it("never clears a newer writer's record after a failed post-write receipt lookup", async () => {
+    let store!: FakeAtomicStore;
+    const newer = { state: "pending", version: "test-version-newer", generation: 7, recovery: "none" } as const;
+    const { receipts, lookupError } = failingSecondLookup(() => {
+      const [[storeKey, current]] = [...store.records.entries()];
+      store.records.set(storeKey, { ...current, ...newer } as IdempotencyRecord);
+    });
+    const context = setup({ receipts });
+    store = context.store;
+    const { idempotency } = context;
+
+    await expect(idempotency.claim(orderRequest({ recovery: "none" }))).rejects.toBe(lookupError);
+    expect([...store.records.values()][0]).toMatchObject(newer);
+  });
+
+  it("reports the lookup failure even when freeing the unused claim also fails", async () => {
+    class FailingReleaseStore extends FakeAtomicStore {
+      override async compareAndSet(storeKey: string, expectedVersion: string | null, next: IdempotencyRecord | null) {
+        if (next?.state === "released") throw new Error("store write failed");
+        return super.compareAndSet(storeKey, expectedVersion, next);
+      }
+    }
+    const { receipts, lookupError } = failingSecondLookup();
+    const { idempotency } = setup({ receipts, store: new FailingReleaseStore() });
+    await expect(idempotency.claim(orderRequest({ recovery: "none" }))).rejects.toBe(lookupError);
+  });
+
+  it("rejects non-ASCII header names, control characters in values and an omitted body on a bodyless status", async () => {
+    const invalid: Record<string, string>[] = [{ "\u212A-name": "x" }, { "x-a": "a\u0001b" }, { "x-a": "a\u007fb" }];
+    for (const headers of invalid) {
+      expect(() => normalizeIdempotentResponse({ status: 200, headers })).toThrow(TypeError);
+    }
+    expect(normalizeIdempotentResponse({ status: 200, headers: { "X-Tab": "a\tb" } }).headers).toEqual({ "x-tab": "a\tb" });
+
+    const { idempotency, store } = setup();
+    const plain = acquired(await idempotency.claim(orderRequest({ recovery: "none" })));
+    const base = { state: "completed", version: "v", generation: 1, fingerprint: plain.fingerprint, recovery: "none", expiresAt: 2_000_000 };
+    for (const response of [
+      { status: 204, headers: {}, omitted: ["body"] },
+      { status: 200, headers: { "x-a": "a\u0001b" } },
+    ]) {
+      store.records.set(plain.storeKey, { ...base, response } as unknown as IdempotencyRecord);
+      await expect(idempotency.claim(orderRequest({ recovery: "none" }))).rejects.toThrow(/malformed record/);
+    }
+  });
+
+  it("rejects a toJSON getter without invoking it", () => {
+    const getter = vi.fn(() => () => "converted");
+    const own = Object.defineProperty({ a: 1 }, "toJSON", { get: getter, enumerable: true });
+    const inherited = Object.create(Object.defineProperty({}, "toJSON", { get: getter })) as object;
+    expect(() => canonicalJson(own)).toThrow(TypeError);
+    expect(() => canonicalJson(inherited)).toThrow(TypeError);
+    expect(getter).not.toHaveBeenCalled();
   });
 });
