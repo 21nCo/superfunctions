@@ -2833,3 +2833,80 @@ describe("DATA-41 revisions: PR review round 1", () => {
     expect((await pushAs("reader", "task:3", "/datafn/push/")).record).toMatchObject({ id: "task:3", $rev: 1 });
   });
 });
+
+describe("DATA-41 revisions: PR review round 2", () => {
+  it("re-validates the route ticket for the read at settlement: revoked or unauthenticated reads get rev alone", async () => {
+    const directory = createMemoryDatafnPlacementDirectory();
+    const placement = await claimDatafnNamespacePlacement({ directory, namespace: "tenant", regionId: "eu" });
+    const tickets = createDatafnHmacRouteTickets({ activeKeyId: "test", keys: { test: "x".repeat(32) } });
+    // A ticket named revoked-* is revoked after its push was admitted.
+    const checks = new Map<string, number>();
+    const isActive = async (claims: Json) => {
+      checks.set(claims.ticketId, (checks.get(claims.ticketId) ?? 0) + 1);
+      return !claims.ticketId.startsWith("ticket-revoked") || checks.get(claims.ticketId) === 1;
+    };
+    // The host's session check rejects reads for a caller marked write-only.
+    const authenticate = async (request: Request) =>
+      request.headers.get("x-test-role") === "writer-only" && new URL(request.url).pathname.endsWith("/query")
+        ? null
+        : { subject: "subject", namespace: "tenant" };
+    const server = await createDatafnServer({
+      schema, database: memoryAdapter(), allowUnknownResources: true, revisions: { enabled: true },
+      context: () => ({ namespace: "tenant" }),
+      namespaceProvider: { getNamespace: (context: { namespace: string }) => context.namespace },
+      plugins: [datafnMultiRegionPlugin({ regionId: "eu", directory: createMemoryIndexedDirectoryStore(),
+        placement: { directory, routeTickets: { verifier: tickets, issuer: "app", audience: "eu", isActive, authenticate } } })],
+    } as any);
+    const call = async (route: string, ticketId: string, body: unknown, role = "reader") => {
+      const now = Date.now();
+      const ticket = await tickets.sign({
+        version: 1, issuer: "app", audience: "eu", subject: "subject", namespace: "tenant", regionId: "eu",
+        epoch: placement.placement.epoch, scopes: ["push", "query"], issuedAt: now, notBefore: now, expiresAt: now + 60_000, ticketId,
+      });
+      const res = await server.router.handle(new Request(`http://localhost/datafn/${route}`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-datafn-route-ticket": ticket, "x-test-role": role },
+        body: JSON.stringify(body),
+      }));
+      return (await res.json()) as Json;
+    };
+    const insert = (id: string) => ({ clientId: "c", mutations: [{ version: 1, clientId: "c", mutationId: id, resource: "task", operation: "insert", id, record: { title: "t" } }] });
+
+    const revoked = await call("push", "ticket-revoked-1", insert("task:1"));
+    expect(revoked.ok).toBe(true);
+    expect(revoked.result.revisions["task:1"]).toEqual({ resource: "task", id: "task:1", rev: 1 });
+    const unauthenticated = await call("push", "ticket-2", insert("task:2"), "writer-only");
+    expect(unauthenticated.ok).toBe(true);
+    expect(unauthenticated.result.revisions["task:2"]).toEqual({ resource: "task", id: "task:2", rev: 1 });
+
+    // Control: a caller whose query is admitted gets exactly the row /query returns.
+    const admitted = await call("push", "ticket-3", insert("task:3"));
+    const queried = await call("query", "ticket-4", { version: 1, resource: "task", withRevisions: true, filters: { id: "task:3" } });
+    expect(queried.result.data).toEqual([expect.objectContaining({ id: "task:3", $rev: 1 })]);
+    expect(admitted.result.revisions["task:3"]).toEqual({ resource: "task", id: "task:3", rev: 1, record: queried.result.data[0] });
+  });
+
+  it("withholds a post-write row that a plugin query hook denies or filters out", async () => {
+    const hooks = {
+      name: "read-hooks",
+      runsOn: ["server"],
+      beforeQuery: (_ctx: unknown, query: Json) => {
+        if (query.resource === "project") throw Object.assign(new Error("no project reads"), { code: "FORBIDDEN" });
+        return query;
+      },
+      afterQuery: (_ctx: unknown, _query: unknown, result: Json) =>
+        ({ ...result, data: result.data.filter((row: Json) => row.id !== "task:hidden") }),
+    };
+    const { push } = await serve({ config: { plugins: [hooks] } });
+    const hidden = await push({ resource: "task", operation: "insert", id: "task:hidden", record: { title: "a" } });
+    expect(hidden.body.result.revisions[hidden.mutationId]).toEqual({ resource: "task", id: "task:hidden", rev: 1 });
+    const merged = await push({ resource: "task", operation: "merge", id: "task:hidden", record: { title: "b" } });
+    expect(merged.body.result.revisions[merged.mutationId]).toEqual({ resource: "task", id: "task:hidden", rev: 2 });
+    const denied = await push({ resource: "project", operation: "insert", id: "project:1", record: { name: "p" } });
+    expect(denied.body.result.revisions[denied.mutationId]).toEqual({ resource: "project", id: "project:1", rev: 1 });
+    expect(JSON.stringify([hidden.body, merged.body, denied.body])).not.toContain("$rev");
+
+    const shown = await push({ resource: "task", operation: "insert", id: "task:shown", record: { title: "c" } });
+    expect(shown.body.result.revisions[shown.mutationId].record).toMatchObject({ id: "task:shown", title: "c", $rev: 1 });
+  });
+});

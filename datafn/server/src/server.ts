@@ -42,8 +42,8 @@ import {
   createPullHandler,
   createPushHandler,
   createReconcileHandler,
-  pushReadAuthorizers,
 } from "./routes/sync.js";
+import type { PostWriteRowReader } from "./execution/sync/push.js";
 import { createSeedHandler } from "./routes/seed.js";
 import { createSearchHandler } from "./routes/search.js";
 import { executeCrossResourceSearch } from "./execution/search/cross-resource.js";
@@ -1237,6 +1237,7 @@ export async function createDatafnServer<TContext = any>(
     handler: (
       req: Request,
       ctx: TContext & { parsedBody?: unknown },
+      options?: { readPostWriteRows?: PostWriteRowReader },
     ) => Promise<Response> | Response,
     origin: "http" | "executor" = "http",
     rest = false,
@@ -1439,17 +1440,16 @@ export async function createDatafnServer<TContext = any>(
           });
         }
 
-        let admittedTicketScopes: readonly string[] | undefined;
         if (multiRegionRuntime?.placement && action !== "status") {
           try {
-            ({ scopes: admittedTicketScopes } = (await validateDatafnPlacement({
+            await validateDatafnPlacement({
               namespace: await extractNamespace(enrichedCtx),
               regionId: multiRegionRuntime.regionId,
               runtime: multiRegionRuntime.placement,
               request: placementRequest,
               scope: action,
               trustedInternal: origin === "executor",
-            })).ticket ?? {});
+            });
           } catch (error) {
             if (error instanceof DatafnRoutingError) {
               return completeDatafnResponse({
@@ -1513,23 +1513,30 @@ export async function createDatafnServer<TContext = any>(
           }
         }
 
-        if (action === "push") {
-          // DATA-41: push returns a post-write row only to a caller whom a
-          // query of the resource would admit: a route ticket with the query
-          // scope where tickets are configured (a push admitted without a
-          // ticket gets none), and the plugin and host authorization of a
-          // query request (the REST read payload `{ resource }`) whose
-          // context the configured context factory builds afresh from that
-          // request, in the push's namespace. A denial or error omits the row.
-          const requireQueryTicket = Boolean(multiRegionRuntime?.placement?.routeTickets);
-          pushReadAuthorizers.set(enrichedCtx, async (resource) => {
-            try {
-              if (requireQueryTicket && !admittedTicketScopes?.includes("query")) return false;
-              const readPayload = { resource };
-              const readUrl = new URL(req.url);
-              const pushPath = readUrl.pathname.replace(/\/+$/, "");
-              if (!pushPath.endsWith("/push")) return false;
-              readUrl.pathname = `${pushPath.slice(0, -"/push".length)}/query`;
+        // DATA-41: push returns a post-write row only when the caller's own
+        // query of that record would return it: the push hands its handler
+        // a reader that runs a versioned `/query` for the written ids through
+        // the query route, with every admission step that route applies
+        // (placement and route-ticket validation with the query scope, plugin
+        // and host authorization, query hooks), on a context the configured
+        // factory builds afresh from that request, in the push's namespace.
+        const readPostWriteRows: PostWriteRowReader | undefined = action === "push"
+          ? async (resource, ids) => {
+            const rows = new Map<string, Record<string, unknown>>();
+            const readUrl = new URL(req.url);
+            let pushPath = readUrl.pathname;
+            while (pushPath.endsWith("/")) pushPath = pushPath.slice(0, -1);
+            if (!pushPath.endsWith("/push")) return rows;
+            readUrl.pathname = `${pushPath.slice(0, -"/push".length)}/query`;
+            const pushNamespace = await extractNamespace(enrichedCtx);
+            const chunkSize = Math.max(1, limits.maxLimit ?? ids.length);
+            for (let offset = 0; offset < ids.length; offset += chunkSize) {
+              const chunk = ids.slice(offset, offset + chunkSize);
+              const readPayload = {
+                version: 1, resource, withRevisions: true, filters: { id: { $in: chunk } }, limit: chunk.length,
+                // A written record may be trashed, archived or under an inactive ancestor.
+                metadata: { includeTrashed: true, includeArchived: true, includeAncestorInactive: true },
+              };
               const headers = new Headers(req.headers);
               headers.delete("content-length");
               const readRequest = new Request(readUrl, { method: "POST", headers, body: JSON.stringify(readPayload) });
@@ -1537,27 +1544,26 @@ export async function createDatafnServer<TContext = any>(
               const readUserCtx = typeof configuredContext === "function"
                 ? await (configuredContext as (request: Request) => Promise<TContext> | TContext)(readRequest)
                 : configuredContext ?? ({} as TContext);
-              const readCtx = createEnrichedContext(
-                mergeContexts(readUserCtx as object, createRouteContext(readRequest, {})) as TContext,
-              );
-              readCtx.parsedBody = readPayload;
-              if ((await extractNamespace(readCtx)) !== (await extractNamespace(enrichedCtx))) return false;
-              if (!(await authorizePlugins({ action: "query", request: readRequest, context: readCtx, payload: readPayload })).ok) {
-                return false;
+              const readCtx = mergeContexts(readUserCtx as object, createRouteContext(readRequest, {})) as TContext;
+              if ((await extractNamespace(createEnrichedContext(readCtx))) !== pushNamespace) return rows;
+              const response = await withAuthUnannounced("query", queryHandler, origin)(readRequest, readCtx);
+              if (!response.ok) continue;
+              const body = (await response.json()) as { ok?: boolean; result?: { data?: unknown } };
+              if (body?.ok !== true || !Array.isArray(body.result?.data)) continue;
+              for (const row of body.result.data as Array<Record<string, unknown>>) {
+                if (row && typeof row.id === "string" && chunk.includes(row.id)) rows.set(row.id, row);
               }
-              return config.authorize ? Boolean(await config.authorize(readCtx, "query", readPayload)) : true;
-            } catch {
-              return false;
             }
-          });
-        }
+            return rows;
+          }
+          : undefined;
 
         return completeDatafnResponse({
           action,
           request: req,
           context: enrichedCtx,
           payload,
-          response: await handler(req, enrichedCtx),
+          response: await handler(req, enrichedCtx, { readPostWriteRows }),
         });
       } catch (error) {
         await emitDataFnEvent({

@@ -10,7 +10,7 @@ import { getBodyFromContext } from "../http/json.js";
 import { errorResponse } from "../http/errors.js";
 import { executeClone } from "../execution/sync/clone.js";
 import { executePull } from "../execution/sync/pull.js";
-import { executePush } from "../execution/sync/push.js";
+import { executePush, type PostWriteRowReader } from "../execution/sync/push.js";
 import { executeReconcile } from "../execution/sync/reconcile.js";
 import { runBeforeSync, runAfterSync } from "../plugins/run-hooks.js";
 import { logRequest } from "../logging.js";
@@ -252,13 +252,6 @@ export function createPullHandler(
 }
 
 /**
- * DATA-41: the read authorization of a push request, set by the server's
- * auth wrapper on the request context. Without one (direct handler use) no
- * host read policy applies.
- */
-export const pushReadAuthorizers = new WeakMap<object, (resource: string) => Promise<boolean>>();
-
-/**
  * Create push route handler
  */
 export function createPushHandler(
@@ -274,7 +267,14 @@ export function createPushHandler(
   handlerOpts?: PushHandlerOpts,
   logger?: DatafnLogger,
 ) {
-  return async (req: Request, ctx?: { parsedBody?: unknown }): Promise<Response> => {
+  // DATA-41: the server's auth wrapper passes `readPostWriteRows`, the
+  // caller's own query of a written record; without it (direct handler use)
+  // no host read policy applies.
+  return async (
+    req: Request,
+    ctx?: { parsedBody?: unknown },
+    options: { readPostWriteRows?: PostWriteRowReader } = {},
+  ): Promise<Response> => {
     const startTime = Date.now();
     let body: any;
     const timer = timingEmitter ? new ExecutionTimer() : null;
@@ -463,7 +463,7 @@ export function createPushHandler(
         actorId,
         logger,
         getDatafnMultiRegionRuntimeConfig(plugins),
-        ctx ? pushReadAuthorizers.get(ctx) : undefined,
+        options.readPostWriteRows,
         );
 
         timer?.startPhase("changeLog");

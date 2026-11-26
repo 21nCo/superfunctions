@@ -244,6 +244,17 @@ function hasArchivableCapability(resolvedCapabilities: unknown[]): boolean {
 }
 
 /**
+ * DATA-41: reads records back through the caller's own `/query` route, with
+ * all of its admission (route tickets, plugin and host authorization, query
+ * hooks), and returns the rows that query returned by id. Rows it withholds
+ * or returns without `$rev` are absent or unrevisioned in the result.
+ */
+export type PostWriteRowReader = (
+  resource: string,
+  ids: readonly string[],
+) => Promise<ReadonlyMap<string, Record<string, unknown>>>;
+
+/**
  * Execute push operation - apply mutations with change tracking
  */
 export async function executePush(
@@ -257,7 +268,7 @@ export async function executePush(
   actorId?: string,
   logger?: DatafnLogger,
   multiRegionRuntime?: DatafnMultiRegionRuntimeConfig | null,
-  authorizeRead?: (resource: string) => Promise<boolean>,
+  readPostWriteRows?: PostWriteRowReader,
 ): Promise<PushResult> {
   // DFN-01: idempotency records belong to the request's namespace and actor.
   idempotencyStore = scopeIdempotencyStore(idempotencyStore, { namespace, actorId });
@@ -479,25 +490,42 @@ export async function executePush(
   const revisionTargets = new Map<string, string>();
   const ambiguousRevisionIds = new Set<string>();
   /**
-   * DATA-41: a post-write row is disclosed only for a resource the host and
-   * plugin read authorization admits, decided after every write of the push
-   * (so no write of the batch can make the decision stale) and outside any
-   * write transaction.
+   * DATA-41: a post-write row is disclosed only when the caller's own query
+   * of that record, run after every write of the push (so no write of the
+   * batch can make the decision stale) and outside any write transaction,
+   * returns it at the same revision; that query's row is the one returned.
+   * Without a reader (direct handler use, where no host read policy applies)
+   * the row read in the write's transaction is returned.
    */
   const settledRevisions = async (): Promise<Record<string, DatafnPushRevision>> => {
     const settled: Record<string, DatafnPushRevision> = Object.create(null);
-    const readable = new Map<string, boolean>();
+    const readBackIds = new Map<string, Set<string>>();
     for (const [mutationId, revision] of Object.entries(revisions)) {
       if (ambiguousRevisionIds.has(mutationId)) continue;
       const latest = batchRevisions.get(revisionKey(revision.resource, revision.id)) ?? revision.rev;
-      let mayRead = true;
-      if (revision.record && authorizeRead) {
-        if (!readable.has(revision.resource)) readable.set(revision.resource, await authorizeRead(revision.resource));
-        mayRead = readable.get(revision.resource) === true;
-      }
-      settled[mutationId] = latest > revision.rev || !mayRead
+      settled[mutationId] = latest > revision.rev
         ? { resource: revision.resource, id: revision.id, rev: revision.rev }
         : revision;
+      if (latest <= revision.rev && revision.record && readPostWriteRows) {
+        const ids = readBackIds.get(revision.resource) ?? new Set<string>();
+        readBackIds.set(revision.resource, ids.add(revision.id));
+      }
+    }
+    if (!readPostWriteRows || readBackIds.size === 0) return settled;
+    const readBack = new Map<string, ReadonlyMap<string, Record<string, unknown>>>();
+    await Promise.all([...readBackIds].map(async ([resource, ids]) => {
+      try {
+        readBack.set(resource, await readPostWriteRows(resource, [...ids]));
+      } catch {
+        // Fail closed: the revision is returned without a row.
+      }
+    }));
+    for (const [mutationId, revision] of Object.entries(settled)) {
+      if (!revision.record) continue;
+      const row = readBack.get(revision.resource)?.get(revision.id);
+      settled[mutationId] = row?.[REVISION_FIELD] === revision.rev
+        ? { ...revision, record: row }
+        : { resource: revision.resource, id: revision.id, rev: revision.rev };
     }
     return settled;
   };
