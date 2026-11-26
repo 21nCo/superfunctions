@@ -98,6 +98,15 @@ export {
 } from "./paths.js";
 export { InvalidStoreOptionsError } from "./store-options.js";
 export {
+  startUpdateCheck,
+  type UpdateCheck,
+  type UpdateCheckFetch,
+  type UpdateCheckOptions,
+  type UpdateCheckRequestInit,
+  type UpdateCheckResponse,
+  type UpdateCheckTerminal,
+} from "./update-check.js";
+export {
   createApiClient,
   HttpFailureError,
   HttpRequestError,
