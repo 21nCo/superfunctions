@@ -1,0 +1,9 @@
+{
+  "name": "apifn-check-smoke-prepare-dep",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Directory dependency of the install-scripts smoke fixture; npm installs it as a copy and runs its prepare script while packing it",
+  "scripts": {
+    "prepare": "node prepare.mjs"
+  }
+}
