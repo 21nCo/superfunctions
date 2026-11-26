@@ -5,10 +5,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { requestExtra } from "./openapi-helpers.js";
 
 // cloneEmpty() (ported from 615d6f44e) returns a registry with no definitions
-// that inherits the schemas the source accepted so far: re-registering them in
-// any order reuses the source snapshot, and a copy of a self-contained source
-// never exposes a collection that does not resolve on its own. No later
-// registration leaks in either direction.
+// that inherits the schemas the source accepted so far: re-registering the same
+// schema object (a registry-issued snapshot or the unchanged caller object) in
+// any order reuses the source snapshot, any other schema meets the engine as it
+// would on the source, and a copy of a self-contained source never exposes a
+// collection that does not resolve on its own. No later registration leaks in
+// either direction.
 describe.each(["ajv", "cfworker"] as const)("McpFnRegistry.cloneEmpty() with the built-in %s compiler", (engine) => {
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -71,8 +73,8 @@ describe.each(["ajv", "cfworker"] as const)("McpFnRegistry.cloneEmpty() with the
     }
     expect(source.has("b")).toBe(false);
 
-    // Registering the inherited schema unchanged closes the copy.
-    empty.register({ name: "a", description: "Same schema on the copy.", inputSchema: { ...sharedSchema }, handler });
+    // Registering the inherited schema object unchanged closes the copy.
+    empty.register({ name: "a", description: "Same schema on the copy.", inputSchema: sharedSchema, handler });
     expect(empty.listTools().map((tool) => tool.name)).toEqual(["a", "b"]);
     expect(() => validateManifest(createManifest(info, empty))).not.toThrow();
     await expect(empty.callTool("b", { item: { name: "x" } }, undefined, requestExtra()))
@@ -94,8 +96,10 @@ describe.each(["ajv", "cfworker"] as const)("McpFnRegistry.cloneEmpty() with the
         thrown = error;
       }
       expect(thrown).toBeInstanceOf(McpFnValidationError);
-      expect((thrown as Error).message).toContain(`Schema $id ${sharedId} is inherited`);
-      expect((thrown as Error).message).toContain("new McpFnRegistry()");
+      // The copy's engine holds the inherited schema, as the source's does.
+      expect((thrown as Error).message).toBe("Tool z contains an invalid JSON Schema");
+      expect(() => source.register({ name: "z", description: "Changed schema.", inputSchema: { ...sharedSchema, required: [] }, handler }))
+        .toThrow("Tool z contains an invalid JSON Schema");
       expect(derived.has("z")).toBe(false);
     }
   });
@@ -144,8 +148,8 @@ describe.each(["ajv", "cfworker"] as const)("McpFnRegistry.cloneEmpty() with the
       .register({ name: "a", description: "Owns the shared schema.", inputSchema: sharedSchema, handler });
     const empty = source.cloneEmpty();
 
-    // The source $id registers on the copy without a duplicate-id collision.
-    empty.register({ name: "a", description: "Same id on the copy.", inputSchema: { ...sharedSchema }, handler });
+    // The source schema object registers on the copy without a duplicate-id collision.
+    empty.register({ name: "a", description: "Same id on the copy.", inputSchema: sharedSchema, handler });
 
     const cloneOnlyId = "https://test.invalid/clone-only";
     empty.register({ name: "c", description: "Clone-only schema.", inputSchema: { ...sharedSchema, $id: cloneOnlyId }, handler });
@@ -331,7 +335,7 @@ describe.each(["ajv", "cfworker"] as const)("McpFnRegistry.clone() with the buil
     expect(inner).toHaveLength(8);
     for (const error of inner) {
       expect(error).toBeInstanceOf(McpFnValidationError);
-      expect((error as Error).message).toMatch(/while this registry is compiling a schema/);
+      expect((error as Error).message).toMatch(/while this registry is registering another definition/);
     }
 
     const toolNames = ["base", "outer-prompt", "outer-resource", "outer-resource-template", "outer-tool"];

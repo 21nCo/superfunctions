@@ -71,6 +71,86 @@ export interface ConnectionManagerOAuthDependencies {
   encryptedTokenVault: EncryptedTokenVault;
   keyRef: string;
   actionLogAdapter: PlugFnDatabaseStorageAdapter;
+  /**
+   * Pins the state row a callback previewed in the store `oauthFlowService`
+   * reads and consumes. Without it, handleCallback can only compare the
+   * subject oauth-flow reports after the code exchange.
+   */
+  oauthStateGuard?: OAuthStateGuard;
+}
+
+/** A pinned OAuth state: `changed` is set once a read returned another row. */
+export interface OAuthStatePin {
+  readonly changed: boolean;
+  release(): void;
+}
+
+export interface OAuthStateGuard {
+  pin(record: OAuthStateRecord): OAuthStatePin;
+}
+
+function sortedJson(value: unknown): string {
+  return JSON.stringify(value, (_key, item: unknown) =>
+    item && typeof item === 'object' && !Array.isArray(item)
+      ? Object.fromEntries(
+          Object.entries(item as Record<string, unknown>).sort(([left], [right]) =>
+            left < right ? -1 : left > right ? 1 : 0
+          )
+        )
+      : item
+  );
+}
+
+/** Every field of a state row except consumption bookkeeping. */
+function oauthStateFingerprint(record: OAuthStateRecord): string {
+  const { consumedAt: _consumedAt, expiresAt: _expiresAt, ...authorization } = record;
+  return sortedJson(authorization);
+}
+
+/**
+ * Wrap the state store PlugFn passes to oauth-flow so a callback can pin the
+ * row it previewed. While a state is pinned, every get() or consume() of it
+ * must return the same row (all fields but consumedAt and expiresAt), or it
+ * throws. oauth-core consumes the state before it exchanges the code, so a row
+ * replaced between preview and consume stops the callback before any token is
+ * requested, stored or bound to a connection.
+ */
+function guardOAuthStateStore(store: OAuthStateStore): OAuthStateStore & OAuthStateGuard {
+  const pins = new Map<string, Set<{ fingerprint: string; changed: boolean }>>();
+  const check = (stateId: string, record: OAuthStateRecord | null): OAuthStateRecord | null => {
+    const pinned = pins.get(stateId);
+    if (!record || !pinned) return record;
+    const fingerprint = oauthStateFingerprint(record);
+    let changed = false;
+    for (const pin of pinned) {
+      if (pin.fingerprint !== fingerprint) {
+        pin.changed = true;
+        changed = true;
+      }
+    }
+    if (changed) throw new Error('OAuth state changed during callback');
+    return record;
+  };
+  return {
+    put: (record) => store.put(record),
+    get: async (stateId) => check(stateId, await store.get(stateId)),
+    consume: async (stateId, consumedAt) => check(stateId, await store.consume(stateId, consumedAt)),
+    deleteExpired: (before) => store.deleteExpired(before),
+    pin(record) {
+      const pin = { fingerprint: oauthStateFingerprint(record), changed: false };
+      const pinned = pins.get(record.stateId) ?? new Set();
+      pins.set(record.stateId, pinned.add(pin));
+      return {
+        get changed() {
+          return pin.changed;
+        },
+        release() {
+          pinned.delete(pin);
+          if (!pinned.size && pins.get(record.stateId) === pinned) pins.delete(record.stateId);
+        },
+      };
+    },
+  };
 }
 
 interface CreateConnectionManagerOAuthDependenciesInput {
@@ -117,7 +197,7 @@ export function createConnectionManagerOAuthDependencies(
   const tokenHttpClient = input.tokenHttpClient ?? new DefaultOAuthTokenHttpClient();
   const actionLogAdapter = ensurePlugFnDatabaseAdapter(input.database);
   const runtimeStorage = actionLogAdapter;
-  const stateStore = createPlugFnOAuthStateStore(input.database);
+  const stateStore = guardOAuthStateStore(createPlugFnOAuthStateStore(input.database));
   const { encryptedTokenVault } = createPlugFnEncryptedTokenVault({
     database: input.database,
     encryptionKey: input.encryptionKey,
@@ -176,6 +256,7 @@ export function createConnectionManagerOAuthDependencies(
   return {
     oauthFlowService,
     oauthStateStore: stateStore,
+    oauthStateGuard: stateStore,
     encryptedTokenVault,
     keyRef: DEFAULT_TOKEN_KEY_REF,
     actionLogAdapter,
@@ -219,6 +300,7 @@ export class ConnectionManager {
   private readonly tokenStorage: SecureTokenStorage;
   private readonly oauthFlowService: OAuthFlowService;
   private readonly oauthStateStore: OAuthStateStore;
+  private readonly oauthStateGuard: OAuthStateGuard | undefined;
   private readonly encryptedTokenVault: EncryptedTokenVault;
   private readonly keyRef: string;
   private readonly actionLogAdapter: PlugFnDatabaseStorageAdapter;
@@ -237,6 +319,7 @@ export class ConnectionManager {
     this.tokenStorage = new SecureTokenStorage(encryptionKey);
     this.oauthFlowService = oauthDependencies.oauthFlowService;
     this.oauthStateStore = oauthDependencies.oauthStateStore;
+    this.oauthStateGuard = oauthDependencies.oauthStateGuard;
     this.encryptedTokenVault = oauthDependencies.encryptedTokenVault;
     this.keyRef = oauthDependencies.keyRef;
     this.actionLogAdapter = oauthDependencies.actionLogAdapter;
@@ -330,24 +413,34 @@ export class ConnectionManager {
       throw new Error('OAuth state is invalid or expired');
     }
 
-    const callbackResult = await this.oauthFlowService.handleCallback({
-      providerId,
-      code,
-      state,
-      redirectUri,
-    });
-    const callbackConnectionId = callbackResult.connectionId;
     // The connection is created only for the exact state that passed the
-    // checks above: the subject oauth-flow reports for the consumed state must
-    // match the preview, and every owner, user and fallback-scope field below
-    // comes from the preview, never from the consumed row.
-    // Limit: a same-user, same-tenant replacement of the state row's owner
-    // metadata or requested scopes between preview and consume is not
-    // detectable here; it needs an oauth-core consume-with-expected-record
-    // (and write access to the OAuth state store).
+    // checks above. The pin makes oauth-flow's reads and its consume of this
+    // state fail on any other row, before the code exchange. The subject check
+    // below is the remaining defence for injected dependencies without a
+    // guard, and every owner, user and fallback-scope field comes from the
+    // preview, never from the consumed row.
+    const pin = this.oauthStateGuard?.pin(statePreview);
+    const stateChanged = () =>
+      new ConnectionResolutionError('TENANT_ACCESS_DENIED', 'OAuth state changed during callback', 403);
+    let callbackResult: Awaited<ReturnType<OAuthFlowService['handleCallback']>>;
+    try {
+      callbackResult = await this.oauthFlowService.handleCallback({
+        providerId,
+        code,
+        state,
+        redirectUri,
+      });
+    } catch (error) {
+      if (pin?.changed) throw stateChanged();
+      throw error;
+    } finally {
+      pin?.release();
+    }
+    const callbackConnectionId = callbackResult.connectionId;
     const previewSubject = oauthStateSubject(statePreview);
     const callbackSubject = callbackResult.subject;
     if (
+      pin?.changed ||
       callbackSubject?.kind !== 'connection' ||
       previewSubject.kind !== 'connection' ||
       (callbackSubject.userId !== undefined && callbackSubject.userId !== statePreview.userId) ||
@@ -361,11 +454,7 @@ export class ConnectionManager {
           });
         });
       }
-      throw new ConnectionResolutionError(
-        'TENANT_ACCESS_DENIED',
-        'OAuth state changed during callback',
-        403
-      );
+      throw stateChanged();
     }
     const subjectUserId = statePreview.userId;
     if (!subjectUserId || !callbackConnectionId) {

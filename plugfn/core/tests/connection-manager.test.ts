@@ -1279,3 +1279,89 @@ describe('ConnectionManager OAuth callback subject binding', () => {
     expect(consumed.connectionId).toBeTruthy();
   });
 });
+
+// PlugFn pins the state row handleCallback previewed in the store it hands to
+// oauth-flow, so a row replaced before oauth-flow reads or consumes it (even
+// with the same user and tenant) stops the callback before the code exchange.
+describe('ConnectionManager OAuth callback state pin', () => {
+  const owner = {
+    kind: 'delegated',
+    organizationId: 'org-1',
+    delegatedToUserId: 'delegate-a',
+    installedByUserId: 'admin-1',
+    grants: ['read', 'write'],
+    tenantId: 'workspace-1',
+  } as const;
+  const replacements: Array<[string, (record: Record<string, unknown>) => Record<string, unknown>]> = [
+    ['another delegated owner', (record) => JSON.parse(JSON.stringify(record).replaceAll('delegate-a', 'delegate-b'))],
+    ['other grants', (record) => JSON.parse(JSON.stringify(record).replaceAll('["read","write"]', '["read","write","admin"]'))],
+    ['other requested scopes', (record) => ({ ...record, requestedScopes: ['scope-a', 'scope-b', 'scope-c'] })],
+  ];
+
+  async function pinnedState() {
+    const adapter = new MemoryAdapter();
+    const tokenClient = createTokenHttpClient();
+    const env = createManagerEnvironment(adapter, tokenClient);
+    const authUrl = await env.manager.getAuthUrl({
+      userId: 'admin-1',
+      provider: 'google',
+      redirectUri: REDIRECT_URI,
+      owner: { ...owner, grants: [...owner.grants] },
+      scopes: ['scope-a', 'scope-b'],
+    });
+    const state = new URL(authUrl).searchParams.get('state')!;
+    const manager = env.manager as any;
+    const store = manager.oauthStateStore;
+    const record = await store.get(state);
+    const create = vi.spyOn(manager.connectionStorage, 'create');
+    const putTokenSet = vi.spyOn(manager.encryptedTokenVault, 'putTokenSet');
+    return { env, store, state, record, tokenClient, create, putTokenSet };
+  }
+
+  for (const [label, replace] of replacements) {
+    for (const when of ['before oauth-flow reads it', 'just before oauth-core consumes it'] as const) {
+      it(`rejects ${label} written ${when}, before the code exchange`, async () => {
+        const { env, store, state, record, tokenClient, create, putTokenSet } = await pinnedState();
+        const flow = (env.manager as any).oauthFlowService;
+        if (when === 'before oauth-flow reads it') {
+          const original = flow.handleCallback.bind(flow);
+          vi.spyOn(flow, 'handleCallback').mockImplementation(async (...args: unknown[]) => {
+            await store.put(replace(record));
+            return original(...args);
+          });
+        } else {
+          const original = store.consume.bind(store);
+          vi.spyOn(store, 'consume').mockImplementation(async (...args: unknown[]) => {
+            await store.put(replace(record));
+            return original(...args);
+          });
+        }
+
+        await expect(env.manager.handleCallback({ code: 'auth-code-1', state })).rejects.toMatchObject({
+          code: 'TENANT_ACCESS_DENIED',
+          message: 'OAuth state changed during callback',
+        });
+        expect(tokenClient.exchangeToken).not.toHaveBeenCalled();
+        expect(putTokenSet).not.toHaveBeenCalled();
+        expect(create).not.toHaveBeenCalled();
+        // The pin is released: a later read of the state no longer throws.
+        await expect(store.get(state)).resolves.toBeTruthy();
+      });
+    }
+  }
+
+  it('connects an unchanged state with the previewed owner and scopes', async () => {
+    const { env, state, tokenClient, create, putTokenSet } = await pinnedState();
+
+    const { connection } = await env.manager.handleCallback({ code: 'auth-code-1', state });
+    expect(tokenClient.exchangeToken).toHaveBeenCalledTimes(1);
+    expect(putTokenSet).toHaveBeenCalled();
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(connection).toMatchObject({
+      userId: 'admin-1',
+      ownerKind: 'delegated',
+      delegatedToUserId: 'delegate-a',
+      tenantId: 'workspace-1',
+    });
+  });
+});
