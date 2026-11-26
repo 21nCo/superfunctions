@@ -193,23 +193,25 @@ switch (claim.outcome) {
     // Write the effect and a receipt with claim.token's storeKey, fingerprint and generation
     // in one transaction; the receipt store accepts one receipt per storeKey.
     const response = await createOrder(claim.token, validatedBody);
-    await idempotency.settle(claim.token, response); // "settled" or "stale"
-    return response;
+    const settled = await idempotency.settle(claim.token, response);
+    // "settled" or "committed": send settled.response (a committed receipt wins over the handler's own result);
+    // "conflict": a receipt for a different body holds the key; "stale": a newer claim owns it.
+    return settled;
   }
   case "replay":        // claim.response: the stored response
-  case "conflict":      // same key, different body
+  case "conflict":      // same key, different body or recovery mode
   case "in_progress":   // another holder owns the key; claim.retryAfterMs
   case "indeterminate": // an expired holder without a receipt contract may have committed
   case "invalid_key":   // the key is empty, too long or not visible ASCII
 }
 ```
 
-- **Scope** — The record and receipt key is a digest of the tenant, principal, operation, target and idempotency key, so a different caller or tenant never sees another scope's result. Pass identifiers, never credentials. The body fingerprint uses `canonicalJson` (sorted keys; non-JSON values rejected).
+- **Scope** — The record and receipt key is a digest of the tenant, principal, operation, target and idempotency key, so a different caller or tenant never sees another scope's result. Pass identifiers, never credentials. The body fingerprint uses `canonicalJson` (sorted keys and `JSON.stringify` semantics for `toJSON`, omitted properties and array holes; non-JSON values rejected), and an omitted body never matches a `null` body.
 - **Store contract** — `compareAndSet` writes (or deletes, for `null`) only when the stored `version` equals the expected one, or when no record exists and the expected version is `null`. Every write gets a fresh version, so a stale holder cannot settle, release or overwrite a newer claim.
-- **Commit recovery** — With `recovery: "receipt"`, a pending claim whose receipt exists is completed from the receipt and replayed, even before its lease expires, and an expired claim is taken over only when no receipt exists. `release` after a commit records the receipt instead of freeing the key. `recovery: "receipt"` without a `receipts` source throws. Without receipts, an expired claim is `indeterminate` until its retention ends.
+- **Commit recovery** — With `recovery: "receipt"`, a pending claim whose receipt exists is completed from the receipt and replayed, even before its lease expires, and an expired claim is taken over only when no receipt exists. A committed receipt always wins: `settle` and `release` record it instead of the holder's result, and `claim` and `recover` replace a response settled without it. A receipt for a different body is a `conflict`, never a replay. A request whose `recovery` differs from the live record's is a `conflict`, so it never takes over or downgrades a claim. `recovery: "receipt"` without a `receipts` source throws. Without receipts, an expired claim is `indeterminate` until its retention ends.
 - **`recover(request)`** — Reports a key's state without claiming it: `replay`, `conflict`, `in_progress`, `not_committed`, `indeterminate` or `absent`.
-- **Bounded data** — Stored responses keep the status, headers and string body within `maxResponseBytes`; a larger body (then headers) is dropped and listed in `omitted`. Credential headers such as `authorization` and `set-cookie` are never stored. `onDiagnostic` events carry the action, outcome, operation, store key digest and generation only.
-- **Defaults** — Fingerprints use SHA-256 through Web Crypto (`sha256Fingerprint`) and versions use `crypto.randomUUID()`; pass `fingerprint` and `nonce` on runtimes without them.
+- **Bounded data** — Stored responses keep the status, headers and string body within `maxResponseBytes`; a larger body (then headers) is dropped and listed in `omitted`, and a dropped body takes its representation headers (`content-length`, `content-encoding`, `etag`, digests) with it. Credential headers such as `authorization` and `set-cookie` and hop-by-hop headers such as `transfer-encoding` are never stored. `onDiagnostic` events carry the action, outcome, operation, store key digest and generation only.
+- **Defaults** — Store keys and body fingerprints use SHA-256 through Web Crypto (`sha256Fingerprint`), and versions use `crypto.randomUUID()`. `fingerprint` replaces the body digest only and must be collision-resistant; store keys always use SHA-256. Pass `nonce` on runtimes without `crypto.randomUUID()`.
 
 ---
 
