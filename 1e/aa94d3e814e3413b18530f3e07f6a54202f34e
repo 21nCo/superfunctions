@@ -1,0 +1,19 @@
+scripts/docs-site/origin.test.mjs
+  s_1e5ab457420093::t_d91107ecb2f707 30-32
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1eaa94d3e814e3413b18530f3e07f6a54202f34e",
+  "prompts": {},
+  "sessions": {
+    "s_1e5ab457420093": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e6c8b518-b4cb-4a3f-bdb9-cb9a070fbeea",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}
