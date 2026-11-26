@@ -1859,16 +1859,55 @@ describe("createRequestIdempotency PR round-1 regressions", () => {
     expect([...store.records.values()]).toEqual([expect.objectContaining({ state: "released", recovery: "receipt" })]);
   });
 
-  it("never replays or conflicts on a copy recorded from a receipt that is gone", async () => {
-    const { idempotency, database, store } = setup();
+  it("keeps replaying a confirmed copy after the host prunes its receipt, until the copy's own retention ends", async () => {
+    const { idempotency, database, clock } = setup();
     const first = acquired(await idempotency.claim(orderRequest()));
-    await idempotency.settle(first, await database.createOrder(first, "book"));
-    // The receipt expired, or the copy's writer stopped before its recheck: the key is free again.
+    const response = await database.createOrder(first, "book");
+    await idempotency.settle(first, response);
+    clock.advance(30_000);
     database.receiptsByKey.clear();
 
-    expect(await idempotency.recover(orderRequest({ body: otherBody }))).toEqual({ outcome: "absent" });
-    expect([...store.records.values()]).toEqual([expect.objectContaining({ state: "released", recovery: "receipt", generation: 1 })]);
-    expect(acquired(await idempotency.claim(orderRequest({ body: otherBody }))).generation).toBe(2);
+    expect(await idempotency.claim(orderRequest())).toEqual({ outcome: "replay", response, source: "store" });
+    expect(await idempotency.recover(orderRequest({ body: otherBody }))).toEqual({ outcome: "conflict" });
+    clock.advance(30_000);
+    expect((await idempotency.claim(orderRequest())).outcome).toBe("acquired");
+  });
+
+  it("lets a newer receipt the recheck validated decide when the write over an absence lost its acknowledgement", async () => {
+    class RejectingCopyStore extends FakeAtomicStore {
+      override async compareAndSet(storeKey: string, expectedVersion: string | null, next: IdempotencyRecord | null) {
+        if (expectedVersion === null && next?.state === "completed" && next.receiptClaimId === "test-claim-a") {
+          throw new Error("store write failed");
+        }
+        return super.compareAndSet(storeKey, expectedVersion, next);
+      }
+    }
+    const store = new RejectingCopyStore();
+    const database = new FakeOrderDatabase();
+    const paused = pausingReceipts(database);
+    let finds: number | undefined;
+    const receipts = {
+      find: async (storeKey: string) => {
+        // After the paused read and the recheck, any further lookup fails: B must already decide.
+        if (finds !== undefined && (finds += 1) > 2) throw new Error("receipt lookup failed");
+        return paused.receipts.find(storeKey);
+      },
+    };
+    const { idempotency } = setup({ store, receipts });
+    const holder = { ...acquired(await idempotency.claim(orderRequest())), claimId: "test-claim-a" };
+    const response = await database.createOrder(holder, "book");
+    store.records.clear();
+    const { newer, run } = newerEpoch(idempotency, database, store);
+    paused.pauseNext(async () => {
+      const saved = finds;
+      finds = undefined;
+      await run();
+      finds = saved;
+    });
+    finds = 0;
+
+    expect(await idempotency.settle(holder, response)).toEqual({ outcome: "conflict" });
+    expect(newer.claimId).toBeDefined();
   });
 
   it("settles from a receipt the recheck confirms after the write over an absence lost its acknowledgement", async () => {

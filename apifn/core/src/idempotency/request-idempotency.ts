@@ -880,20 +880,17 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
    */
   type Recorded = { kind: "recorded" | "lost" | "failed"; receipt: ParsedReceipt } | { kind: "gone" };
 
-  /** Retires a copy recorded from a receipt, and only that version, with a tombstone that keeps the receipt contract. */
-  const retire = (storeKey: string, version: string, generation: number, fingerprint: string): Promise<boolean> =>
-    store.compareAndSet(storeKey, version, {
-      state: "released",
-      version: nextVersion(),
-      generation,
-      fingerprint,
-      recovery: "receipt",
-      expiresAt: now() + retentionMs,
-    });
-
+  /** Retires a copy this step wrote, and only that version, with a tombstone that keeps the receipt contract. */
   const retireQuietly = async (storeKey: string, version: string, receipt: ParsedReceipt, generation: number): Promise<void> => {
     try {
-      await retire(storeKey, version, Math.max(generation, receipt.generation, 1), receipt.fingerprint);
+      await store.compareAndSet(storeKey, version, {
+        state: "released",
+        version: nextVersion(),
+        generation: Math.max(generation, receipt.generation, 1),
+        fingerprint: receipt.fingerprint,
+        recovery: "receipt",
+        expiresAt: now() + retentionMs,
+      });
     } catch {
       // A failed retire leaves the copy to the next read, which checks it against the live receipt.
     }
@@ -941,11 +938,9 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
       if (attempted !== undefined) await retireQuietly(storeKey, attempted, receipt, generation);
       throw error;
     }
-    // A confirmed receipt decides even when the write's acknowledgement was lost.
-    if (latest && sameCommit(latest, receipt)) {
-      if (written === undefined) return { kind: "failed", receipt };
-      return { kind: written ? "recorded" : "lost", receipt };
-    }
+    // A receipt the recheck validated decides, also when the write's acknowledgement was lost.
+    const kind = written === undefined ? "failed" : written ? "recorded" : "lost";
+    if (latest && sameCommit(latest, receipt)) return { kind, receipt };
     if (attempted !== undefined) {
       if (!latest) await retireQuietly(storeKey, attempted, receipt, generation);
       else {
@@ -956,7 +951,7 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
         }
       }
     }
-    return latest ? { kind: written ? "recorded" : "lost", receipt: latest } : { kind: "gone" };
+    return latest ? { kind, receipt: latest } : { kind: "gone" };
   };
 
   // Store keys always use the portable SHA-256, whatever body digest the host supplies.
@@ -1057,12 +1052,7 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
       return { live };
     }
     const receipt = await findReceipt(storeKey);
-    if (!receipt && record?.state === "completed" && record.fromReceipt === true) {
-      // A copy recorded from a receipt never outlives it (an expired commit, or a writer stopped before its
-      // recheck): retire exactly that version and decide again over the free key.
-      await retire(storeKey, record.version, record.generation, record.fingerprint);
-      return { done: undefined };
-    }
+    // A copy whose receipt the host pruned still holds a confirmed commit: it replays until its own retention ends.
     if (!receipt) return { live };
     if (holdsReceipt(live, receipt)) return { live, receipt };
     const [expected, generation] =
