@@ -478,6 +478,11 @@ describe("startUpdateCheck: cache interval", () => {
       { checkedAt: T0 + 10, latest: "1.4.0", notifiedAt: T0 + 20 },
     ],
     [
+      "an error entry stamped earlier (a clock set back)",
+      { checkedAt: T0 - 10, error: true },
+      { checkedAt: T0 - 10, error: true, notifiedAt: T0 + 20 },
+    ],
+    [
       "a newer entry for the same version",
       { checkedAt: T0 + 10, latest: "1.3.0" },
       { checkedAt: T0 + 10, latest: "1.3.0", notifiedAt: T0 + 20 },

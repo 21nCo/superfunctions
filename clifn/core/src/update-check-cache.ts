@@ -174,9 +174,9 @@ export function writeCacheQuietly(dir: string, entry: CacheEntry, now: () => num
 
 /**
  * Records that a notice was delivered at `notifiedAt`, once `after` (this run's own write) has settled. It re-reads the
- * cache and adds the delivery to whatever entry is there, newer of the file and `entry` by `checkedAt`: an error entry
- * or an entry for another version another run wrote meanwhile keeps its content and gains `notifiedAt`, so the
- * delivery is neither rolled back nor forgotten. `notifiedAt` replaces any earlier time, and a time in the future
+ * cache and adds the delivery to the entry the file holds, whatever its `checkedAt` (`entry` only when the file is
+ * missing or malformed): an error entry or an entry for another version another run wrote meanwhile keeps its content
+ * and gains `notifiedAt`, so the delivery is neither rolled back nor forgotten. `notifiedAt` replaces any earlier time, and a time in the future
  * (which counts as no delivery). Serialized with this process's other writes to the directory. Never rejects.
  */
 export function recordDeliveryQuietly(
@@ -189,8 +189,7 @@ export function recordDeliveryQuietly(
     await after;
     await serialized(dir, async () => {
       const current = await readCache(join(dir, UPDATE_CHECK_FILE));
-      const base: CacheEntry = current !== null && current.checkedAt >= entry.checkedAt ? current : entry;
-      await writeCache(dir, withNotifiedAt(base, notifiedAt));
+      await writeCache(dir, withNotifiedAt(current ?? entry, notifiedAt));
     });
   };
   return trackCacheWrite(record().catch(() => undefined));
