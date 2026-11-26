@@ -2150,3 +2150,62 @@ describe("createRequestIdempotency PR round-2 regressions", () => {
     await expect(idempotency.claim(orderRequest())).rejects.toThrow(/malformed record/);
   });
 });
+
+describe("createRequestIdempotency PR round-2 delta regressions", () => {
+  function world() {
+    const store = new HookedStore();
+    const database = new FakeOrderDatabase();
+    const source = switchableReceipts(database);
+    const clock = new FakeClock();
+    const make = () =>
+      createRequestIdempotency({ store, receipts: source.receipts, clock, leaseMs: 1_000, retentionMs: 60_000, nonce: testNonce });
+    return { store, database, source, clock, make };
+  }
+
+  it.each([
+    ["settle", "the same body"],
+    ["settle", "another body"],
+    ["release", "the same body"],
+    ["release", "another body"],
+  ] as const)("%s never decides with a receipt whose cache write lost to a newer commit (%s, source down)", async (action, bodyCase) => {
+    const w = world();
+    const holder = w.make();
+    const token = acquired(await holder.claim(orderRequest()));
+    const response = await w.database.createOrder(token, "book");
+    const newer = bodyCase === "the same body" ? orderRequest() : orderRequest({ body: { item: "pen", quantity: 2 } });
+    let newerResponse: IdempotentResponse | undefined;
+    w.store.arm(token.version, async () => {
+      // The holder's record and receipt end their retention; a newer claim takes the key, commits and settles.
+      w.clock.advance(120_000);
+      w.store.records.clear();
+      w.database.receiptsByKey.clear();
+      const other = w.make();
+      const newerToken = acquired(await other.claim(newer));
+      newerResponse = await w.database.createOrder(newerToken, "pen");
+      expect(await other.settle(newerToken, newerResponse)).toMatchObject({ outcome: "settled" });
+      w.source.state.mode = "outage";
+    });
+    const result = action === "settle" ? holder.settle(token, response) : holder.release(token);
+    await expect(result).rejects.toThrow(/receipt source unavailable/);
+    w.source.state.mode = "ok";
+    // The newer commit keeps the key.
+    expect(await w.make().recover(newer)).toMatchObject({ outcome: "replay", response: { body: newerResponse?.body } });
+  });
+
+  it.each(["settle", "release"] as const)("%s decides with its receipt during an outage when a confirmed copy of it won the write", async (action) => {
+    const w = world();
+    const holder = w.make();
+    const token = acquired(await holder.claim(orderRequest()));
+    const response = await w.database.createOrder(token, "book");
+    w.store.arm(token.version, async () => {
+      // Another instance records the same commit first, then the receipt source goes down.
+      expect(await w.make().recover(orderRequest())).toMatchObject({ outcome: "replay", source: "receipt" });
+      w.source.state.mode = "outage";
+    });
+    if (action === "settle") {
+      expect(await holder.settle(token, response)).toMatchObject({ outcome: "settled", response: { body: response.body } });
+    } else {
+      expect(await holder.release(token)).toMatchObject({ outcome: "committed", response: { body: response.body } });
+    }
+  });
+});

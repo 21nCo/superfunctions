@@ -1276,29 +1276,25 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
    * absence) it saw, so a receipt read before a key's retention ended never
    * replaces a newer claim, and no lookup is reused by a later attempt's
    * write. The latest validated receipt decides the outcome even when other
-   * writers keep winning the cache write or a later store read fails; their
-   * newer record is never overwritten. Undefined when the token has no
-   * receipt contract or the latest lookup found no receipt.
+   * writers keep winning the cache write; their newer record is never
+   * overwritten. After a lost write, a failed read decides with the earlier
+   * receipt only when the live record is a confirmed copy of that commit.
+   * Undefined when the token has no receipt contract or the latest lookup
+   * found no receipt.
    */
   const reconcileReceipt = async (token: IdempotencyToken): Promise<Reconciled | undefined> => {
     if (token.recovery !== "receipt") return undefined;
     let receipt: ParsedReceipt | undefined;
     for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
-      let live: Live;
-      try {
-        live = await readLive(token.storeKey, now());
-      } catch (error) {
-        // Before any receipt is in hand the failure is the caller's to see; after one, the receipt still decides.
-        if (receipt === undefined) throw error;
-        break;
-      }
+      // A receipt in hand here lost its cache write to a newer record, so it is unverified: a failed read throws.
+      const live = await readLive(token.storeKey, now());
       let raw: unknown;
       try {
         raw = await lookupReceipt(token.storeKey);
       } catch (error) {
-        // A source outage after a receipt was validated over an observed version never hides that receipt.
-        if (receipt === undefined) throw error;
-        break;
+        // During a source outage an earlier receipt decides only while the live record confirms the same commit.
+        if (receipt !== undefined && holdsReceipt(live, receipt)) break;
+        throw error;
       }
       // The source answered: a malformed receipt fails closed.
       receipt = parseReceipt(token.storeKey, raw);
