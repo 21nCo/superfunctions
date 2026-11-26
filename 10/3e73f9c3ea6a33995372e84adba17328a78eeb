@@ -1,0 +1,51 @@
+filefn/client/src/offline/queue.ts
+  s_e120983e115e7f::t_5d03636644ad4c 991-1002,1033-1037,1267,1269,1353-1357,1462,1465-1475,1478-1489,1492-1498,1507-1517,1528-1535,1563-1593,2316-2317,2410,2643-2644,2648-2654,2659-2661,2671-2686
+filefn/docs/content/docs/features/offline.md
+  s_ae51b1cb5f0a89::t_589f7f4bcd2f4b 47,67,115,119,121
+filefn/docs/content/docs/reference/changelog.md
+  s_ae51b1cb5f0a89::t_8c080d1d057025 12
+filefn/docs/static/llms-full.txt
+  s_ae51b1cb5f0a89::t_6e33538a1a9ae8 3879,3899,3947,3951,3953,8381,9367
+filefn/client/README.md
+  s_e120983e115e7f::t_25fd4632385619 74
+filefn/client/src/__tests__/helpers/offline-fixtures.ts
+  s_e120983e115e7f::t_e158013d754d4f 14-15,36
+filefn/client/src/__tests__/offline-queue.test.ts
+  s_e120983e115e7f::t_ab3ee8563315ab 1517-1547,1850-1903
+filefn/client/src/__tests__/transport-offline.test.ts
+  s_e120983e115e7f::t_d623e41177d089 60-62,64-67,117-118
+filefn/client/src/index.ts
+  s_e120983e115e7f::t_b00ba1bb53dd1d 409-410,415
+filefn/client/src/offline/opfs-store.ts
+  s_e120983e115e7f::t_a03c9867bf7239 157-158
+filefn/client/src/offline/sync.ts
+  s_e120983e115e7f::t_9f4452f2aa845a 159,162,165-171,331-335,352-361,363,402,407-408,411-413
+filefn/client/src/types.ts
+  s_e120983e115e7f::t_da7762d45d6438 68-74
+filefn/docs/content/docs/sdk/client.md
+  s_e120983e115e7f::t_9601712391ca5d 141
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "103e73f9c3ea6a33995372e84adba17328a78eeb",
+  "prompts": {},
+  "sessions": {
+    "s_ae51b1cb5f0a89": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6e748db9-1dba-456b-b44f-c33309ee40ba",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_e120983e115e7f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "bf59acf4-77ba-44fd-9362-a485d4d2897a",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
