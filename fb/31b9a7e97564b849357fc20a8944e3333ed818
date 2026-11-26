@@ -1,0 +1,25 @@
+filefn/docs/content/docs/core-concepts/upload-sessions.md
+  s_b841cebdcfad95::t_6f2bd08afb3ada 47
+filefn/docs/static/llms-full.txt
+  s_b841cebdcfad95::t_89536825a36d4b 2962
+filefn/server/src/upload-sessions/input.ts
+  s_b841cebdcfad95::t_d6a47600d34641 18-19,153,159,171
+filefn/server/tests/upload-input-security.test.ts
+  s_b841cebdcfad95::t_7f1202c191becd 190-198
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fb31b9a7e97564b849357fc20a8944e3333ed818",
+  "prompts": {},
+  "sessions": {
+    "s_b841cebdcfad95": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "436f4738-d86e-44e1-82bc-c432f9aaabf3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

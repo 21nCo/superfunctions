@@ -1,0 +1,172 @@
+apifn/cli/__tests__/test-command.test.ts
+  s_83fa589146e8c6::t_86afa2e1df6481 208
+  s_83fa589146e8c6::t_d427fda5d10b33 201-207,209-217,223-227,241-246,248,251-257,259-260,262-266
+  s_83fa589146e8c6::t_920ad55b9b32dd 218,247,249-250,258,261
+  s_83fa589146e8c6::t_b889bb70478a62 219
+  s_83fa589146e8c6::t_b42e29e0bc2faf 222
+  s_83fa589146e8c6::t_f3c093683dbb75 228
+  s_83fa589146e8c6::t_02965c878c6068 231-239,241-242
+  s_83fa589146e8c6::t_4753249c51f01f 220-221,240
+apifn/cli/README.md
+  s_83fa589146e8c6::t_ad24b378bd89ee 103-104
+apifn/collections/src/types.ts
+  s_83fa589146e8c6::t_c6ec44a3796285 169-172
+  s_83fa589146e8c6::t_112f3b6d00a1c3 145-146
+apifn/collections/README.md
+  s_83fa589146e8c6::t_d427fda5d10b33 132-133,193,199-200,229,233
+  s_83fa589146e8c6::t_62015cf8fe69e7 121
+apifn/collections/src/variables.ts
+  s_83fa589146e8c6::t_c6ec44a3796285 43,66
+apifn/collections/__tests__/runner.test.ts
+  s_83fa589146e8c6::t_0be6b89758bf46 155,228,241-288,575
+  s_83fa589146e8c6::t_920ad55b9b32dd 289-327
+apifn/cli/src/commands/test.ts
+  s_83fa589146e8c6::t_c6ec44a3796285 53-56,138-139,145-148
+apifn/collections/src/runner/runner.ts
+  s_83fa589146e8c6::t_c6ec44a3796285 505,525,527-528,530
+  s_83fa589146e8c6::t_52bc42edd84843 51-52,249,263,515,517,519-524,526,529,557-558,576,596-597,614
+  s_83fa589146e8c6::t_112f3b6d00a1c3 516,518
+apifn/cli/src/index.ts
+  s_83fa589146e8c6::t_c6ec44a3796285 237-238
+  s_83fa589146e8c6::t_dadd27e1e48885 2,42-49,56-72,554,591
+  s_83fa589146e8c6::t_b42e29e0bc2faf 568-574
+  s_83fa589146e8c6::t_f3c093683dbb75 55,279-282,285
+  s_83fa589146e8c6::t_4eb4fa23aa515d 54,284,556-564
+  s_9159abe4269a26::t_a614e630f331f0 565
+  s_83fa589146e8c6::t_80625289c59b91 50-53
+apifn/core/__tests__/testfn-adapter.test.ts
+  s_83fa589146e8c6::t_d2c08626c4865b 120-125,127-128,139-140,142-145,219
+  s_83fa589146e8c6::t_62015cf8fe69e7 11,18,28,83-88,92,94,99-100,126,129-138,146,149-153
+  s_638a994b69d08e::t_75034890d2ddbb 154
+  s_83fa589146e8c6::t_3b72096caa99ee 56,60,155,176-203
+  s_83fa589146e8c6::t_ebd516dc545d1a 204
+  s_83fa589146e8c6::t_47671ef45d9c32 230
+  s_83fa589146e8c6::t_2888d93eba4b45 205-229
+  s_83fa589146e8c6::t_942b6482ab780d 141
+  s_83fa589146e8c6::t_4b9dc28220df46 156-175
+apifn/admin/src/__tests__/admin.test.ts
+  s_83fa589146e8c6::t_ee247e30513b35 108-126
+  s_83fa589146e8c6::t_62015cf8fe69e7 127-158
+  s_83fa589146e8c6::t_536d4009e5c092 108-158
+apifn/core/src/openapi/validate.ts
+  s_83fa589146e8c6::t_21d97cc740e685 6-8,11-16,91-96,99-103,246-247,249-257,259,279-280,282-287,296-300,301,307,309
+  s_83fa589146e8c6::t_9e75feacc8c339 4,168,177,210-211,212,294,295
+  s_83fa589146e8c6::t_e06e40f0674c9c 209,260,281,302-303
+  s_83fa589146e8c6::t_0a8d8a0fb8bc0e 257,296-297,309
+  s_83fa589146e8c6::t_942b6482ab780d 295
+  s_83fa589146e8c6::t_f8f388479b7442 181
+  s_83fa589146e8c6::t_6c395964bcba14 9-10,286,296-297
+  s_83fa589146e8c6::t_6daccff026c63a 153,155-156
+  s_83fa589146e8c6::t_c2c1ca008dddbc 132-133,139,142-143,145-152,157-163,165,218
+  s_83fa589146e8c6::t_44079def439fbf 2,4-219,246-247,249-257,259-307,309
+apifn/core/README.md
+  s_83fa589146e8c6::t_f6c7610d332b5e 237
+  s_83fa589146e8c6::t_ee247e30513b35 87
+  s_83fa589146e8c6::t_62015cf8fe69e7 235
+  s_83fa589146e8c6::t_b889bb70478a62 90
+  s_83fa589146e8c6::t_3b72096caa99ee 236
+  s_83fa589146e8c6::t_6c395964bcba14 88
+  s_83fa589146e8c6::t_d9ec2835d0988b 87-90
+apifn/admin/src/operator-service.ts
+  s_83fa589146e8c6::t_21d97cc740e685 4,228-229,253-254
+  s_83fa589146e8c6::t_60aba18641780e 4,228-229,253-254
+apifn/core/__tests__/openapi-validate.test.ts
+  s_83fa589146e8c6::t_ee247e30513b35 1-10,45-57,102,171-172,207-217,228-232
+  s_83fa589146e8c6::t_b889bb70478a62 101-112
+  s_83fa589146e8c6::t_3b72096caa99ee 199-208,218-221
+  s_83fa589146e8c6::t_4197e8d94bf01d 222
+  s_83fa589146e8c6::t_e06e40f0674c9c 59-60,67-68,223-224
+  s_83fa589146e8c6::t_0a8d8a0fb8bc0e 61-66
+  s_83fa589146e8c6::t_eac92179e2cf62 225-227
+  s_83fa589146e8c6::t_942b6482ab780d 233,235-238,240-249,293
+  s_83fa589146e8c6::t_f8f388479b7442 258-275
+  s_83fa589146e8c6::t_6c395964bcba14 234,239,250-256
+  s_83fa589146e8c6::t_8e4a8e2126e304 257
+  s_83fa589146e8c6::t_6daccff026c63a 133-158
+  s_83fa589146e8c6::t_10e367904440c9 1-10,45-293
+apifn/core/src/integrations/testfn.ts
+  s_83fa589146e8c6::t_d2c08626c4865b 53-59,63-66,213-214
+  s_83fa589146e8c6::t_7448deb7f33b36 205,216
+  s_83fa589146e8c6::t_112f3b6d00a1c3 14,18,37-52,122-123,125-130,141-144,171-172,177,215,223-224,259
+  s_83fa589146e8c6::t_ebd516dc545d1a 166,217-219,272
+  s_83fa589146e8c6::t_f3c093683dbb75 173,175,179,186,189,191-192,194,200-203
+  s_83fa589146e8c6::t_1a381840ce135e 204
+  s_83fa589146e8c6::t_2888d93eba4b45 21-26,124,169-170,174,176,181-185,187
+  s_83fa589146e8c6::t_942b6482ab780d 27-36,180
+  s_83fa589146e8c6::t_760910be6f08e9 188,190,193,195-199
+apifn/core/src/index.ts
+  s_83fa589146e8c6::t_21d97cc740e685 89-90
+  s_83fa589146e8c6::t_9e75feacc8c339 91-92
+  s_83fa589146e8c6::t_d67e43cd856624 89-92
+apifn/collections/src/index.ts
+  s_83fa589146e8c6::t_112f3b6d00a1c3 43-44
+apifn/README.md
+  s_83fa589146e8c6::t_489cffad22118a 25,30,32,34-36
+  s_83fa589146e8c6::t_7984bc94cdab53 24,26-29,31,33
+apifn/core/src/openapi/reference-context.ts
+  s_83fa589146e8c6::t_94a1f92d232371 1-70
+  s_83fa589146e8c6::t_9e75feacc8c339 71-77
+  s_83fa589146e8c6::t_75f11a2902e00a 1-77
+apifn/cli/src/commands/check-compare.ts
+  s_83fa589146e8c6::t_9e75feacc8c339 12,120,127,129,153,175
+  s_83fa589146e8c6::t_94a1f92d232371 7-8,13
+  s_83fa589146e8c6::t_0aa1f952296905 7-8,12-13,120,127,129,153,175
+apifn/sdk/src/version.ts
+  s_83fa589146e8c6::t_24671f2fbe766d 1-3
+apifn/admin/package.json
+  s_83fa589146e8c6::t_703798d4f2c157 3,41,47
+apifn/cli/package.json
+  s_83fa589146e8c6::t_d268ff72ac6273 3,26-31
+apifn/collections/package.json
+  s_83fa589146e8c6::t_beb791c278c956 3,23
+apifn/contracts/package.json
+  s_83fa589146e8c6::t_ee11a641797d4f 3,43
+apifn/core/package.json
+  s_83fa589146e8c6::t_86542a54682fc1 3
+apifn/docsfn/package.json
+  s_83fa589146e8c6::t_be894f07e4d2f2 3,32-34
+apifn/mock/package.json
+  s_83fa589146e8c6::t_c0a0e94176c3de 3,23
+apifn/react/package.json
+  s_83fa589146e8c6::t_9d5e80e0e450dc 3,22
+apifn/sdk/package.json
+  s_83fa589146e8c6::t_d544d76375219d 3,32
+apifn/snippets/package.json
+  s_83fa589146e8c6::t_2b050a562cf279 3,23
+apifn/svelte/package.json
+  s_83fa589146e8c6::t_3ff6864db4a094 3,50
+package-lock.json
+  s_83fa589146e8c6::t_adeb9782619541 93,96,99,110,113-118,137,140,263,266,305,392,395-397,429,432,443,446,809,812,846,849,860,863
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8e73cb02178b8c1485653152e7df946ced9ca6d4",
+  "prompts": {},
+  "sessions": {
+    "s_638a994b69d08e": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21264-fb13-7703-86f8-4ea0ca3fe7f4",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_83fa589146e8c6": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21253-9943-7ef0-8aad-8a89b106fa79",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_9159abe4269a26": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5ee4e765-f1b2-4447-8482-ef33d3f5f99f",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

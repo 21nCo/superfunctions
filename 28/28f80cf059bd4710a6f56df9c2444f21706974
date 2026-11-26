@@ -1,0 +1,75 @@
+plugfn/core/src/router/http-router.ts
+  s_52aac795e73b3c::t_5b91decb0354ad 10-11,946,998,1085-1099
+  s_52aac795e73b3c::t_9a82c828a41288 13,860-861,916-917,921-924,988,994,1038,1053-1063
+  s_59132baea83da2::t_5c41ec623255c9 1100-1102
+plugfn/core/src/types/config.ts
+  s_52aac795e73b3c::t_01b7ad57e1edfa 10,89
+  s_52aac795e73b3c::t_511728877d6432 80-84,90
+plugfn/core/src/core/workflow-engine.ts
+  s_52aac795e73b3c::t_9a82c828a41288 746-753
+  s_52aac795e73b3c::t_522970566b34f2 252,256
+  s_52aac795e73b3c::t_c0fff77968e468 17-18,32,36-37,103-105,154-161,167,170-171,175,178-182,201-219,574,580-589,591,593-595,601-603,611,621-623,646,651
+plugfn/core/src/core/plug-fn.ts
+  s_52aac795e73b3c::t_9a82c828a41288 191,348
+plugfn/core/src/types/workflow.ts
+  s_52aac795e73b3c::t_01b7ad57e1edfa 53-54
+  s_52aac795e73b3c::t_522970566b34f2 122,126
+plugfn/providers/src/github/index.ts
+  s_52aac795e73b3c::t_da97cb1d15899c 845,902,943,993,1033,1075,1119,1161-1166
+  s_52aac795e73b3c::t_9144c7d5a7bd75 1167
+plugfn/providers/tests/github/github-webhook-verification.test.ts
+  s_52aac795e73b3c::t_92bea430a5819b 16,21-25,27,31,58,73
+plugfn/core/tests/webhook-workflow-binding.test.ts
+  s_52aac795e73b3c::t_16d4927907add8 1-37,42-90,114-163,168-185,187-219
+  s_52aac795e73b3c::t_87efc9288de181 38-41,91-113,164-167,186
+plugfn/core/src/webhooks/index.ts
+  s_52aac795e73b3c::t_511728877d6432 1
+plugfn/providers/tests/webhook-raw-body.test.ts
+  s_52aac795e73b3c::t_92bea430a5819b 101-102,122-125,130-131,148,160-161,181,206,502
+  s_52aac795e73b3c::t_d69d30b15af0be 503-505
+plugfn/core/tests/router-auth.test.ts
+  s_52aac795e73b3c::t_d69d30b15af0be 785-788
+plugfn/core/tests/workflow-lifecycle.test.ts
+  s_52aac795e73b3c::t_d69d30b15af0be 19-20,45,48,51,59,63,105,139-141,184-189,195-197,210,217
+plugfn/core/README.md
+  s_52aac795e73b3c::t_5b91decb0354ad 125-153
+plugfn/core/src/types/trigger.ts
+  s_52aac795e73b3c::t_01b7ad57e1edfa 19-23,33-34
+plugfn/core/src/webhooks/webhook-handler.ts
+  s_52aac795e73b3c::t_511728877d6432 1-7,12-24,86,139,192,216-227,343-344
+  s_52aac795e73b3c::t_fe42fed00110fe 8,31,43,67,81-85,87-88,91-92,120,148,151,155,191,193,203,211-214,229-240,243-244,254-255,267,269,304-310,312-315,321,392-411
+  s_52aac795e73b3c::t_522970566b34f2 149-150,152-153,215,228,311
+  s_12031223da782f::t_15a72df6ebf3e4 11,412
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2828f80cf059bd4710a6f56df9c2444f21706974",
+  "prompts": {},
+  "sessions": {
+    "s_12031223da782f": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21416-db41-7b90-aafa-aaaf93c35b87",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_52aac795e73b3c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21416-bce2-7d83-b799-161f4cb661ed",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_59132baea83da2": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21416-9b0a-7d92-90d3-d1a55a9c138f",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

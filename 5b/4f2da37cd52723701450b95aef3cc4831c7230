@@ -1,0 +1,37 @@
+clifn/core/tests/runner-document.test.ts
+  s_275f74b9c09a3b::t_3e8728dce1fefc 270-272,1409-1412
+clifn/core/CHANGELOG.md
+  s_275f74b9c09a3b::t_ee0a9709579d57 9
+clifn/core/README.md
+  s_275f74b9c09a3b::t_a8b035e8653532 265
+clifn/core/src/document-output.ts
+  s_275f74b9c09a3b::t_9067d44858d388 36-53,55-58,60-65,67-68,70,96-102,134-136,138-140,142-145,224-229,231-236,238-242,254-256,259,261-262,405-485,489-490,493-511,514-517,519,522,529,535,539,541-542,568
+clifn/core/src/errors.ts
+  s_275f74b9c09a3b::t_edd360e014aa17 53,62,135,143-149,155,157,161-165
+clifn/core/src/json-value.ts
+  s_275f74b9c09a3b::t_a27a04a0059570 339-343,372-374,476-478
+clifn/core/src/runner.ts
+  s_275f74b9c09a3b::t_3c34746f7306e1 2-7,24-26,134-144,146-153,188,233-240,242,249-253,256,258,261,265-267,270,274,283-285,292,311,335
+clifn/core/tests/runner-document-bounds.test.ts
+  s_275f74b9c09a3b::t_7d75f41a581498 13-19,54-57,339-343,390-401,665-809,1062-1104,1343,1347,1350-1352,1354-1362,1437-1458,1461,1500-1512
+clifn/docs/content/docs/reference/core-readme.md
+  s_275f74b9c09a3b::t_bf2e8cd7d29e7f 268
+clifn/docs/static/llms-full.txt
+  s_275f74b9c09a3b::t_f80ad8a4711af5 576
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5b4f2da37cd52723701450b95aef3cc4831c7230",
+  "prompts": {},
+  "sessions": {
+    "s_275f74b9c09a3b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9f6f4cab-d02b-4aa5-b83c-fc32bc4f73e9",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

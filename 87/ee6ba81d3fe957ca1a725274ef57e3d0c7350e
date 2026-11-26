@@ -1,0 +1,55 @@
+cifn/typescript/control-plane/scripts/verify-remote-execution.mjs
+  s_3b7ffdae337f69::t_edbd66d0189615 133-135
+cifn/typescript/control-plane/scripts/verify-remote-logs.mjs
+  s_3b7ffdae337f69::t_4d6f71abab60ab 183-194,272,274,280-282,285
+cifn/typescript/control-plane/src/api/claims.ts
+  s_3b7ffdae337f69::t_a6d17ffd07465b 2,40-44
+cifn/typescript/control-plane/src/api/routes.ts
+  s_3b7ffdae337f69::t_7715ba025a5c01 7,19,68-69,71,383,390-391,395-396,402-404
+cifn/typescript/control-plane/src/dispatch/prepare.ts
+  s_3b7ffdae337f69::t_86523150619dc1 2,4,58-59,61,63,68-75,79-82
+cifn/typescript/control-plane/src/index.ts
+  s_3b7ffdae337f69::t_e438dbba2e4e32 33,66-67
+cifn/typescript/control-plane/src/queue/flowfn-client.ts
+  s_3b7ffdae337f69::t_d86f19337ca34b 2,63-67,76,84-87,91-96,98-103,105-110
+cifn/typescript/control-plane/src/store/database-store.test.ts
+  s_3b7ffdae337f69::t_599531e0add5d3 256-258,271
+cifn/typescript/control-plane/src/store/database-store.ts
+  s_3b7ffdae337f69::t_ecaa9964c3a2e6 490-496,502-503
+cifn/typescript/control-plane/src/store/memory-store.ts
+  s_3b7ffdae337f69::t_c1c8de625910b6 2,38,44-45,115,187-212
+cifn/typescript/control-plane/src/store/store.ts
+  s_3b7ffdae337f69::t_e54acc9aa57a55 23-41
+cifn/typescript/control-plane/src/triggers/triggers.test.ts
+  s_3b7ffdae337f69::t_747457dbd12794 6-7,499-508,512,514,517-518,520-523,525-541,545,548-556,559,561,563-571,575-591,595-601,603-604,607-613,616-621,623-624,627-632,635-641,644,654,659,661-663
+cifn/typescript/runner/src/claim-journal.ts
+  s_3b7ffdae337f69::t_96a48112d0342b 18-19,21-24,115-128,134-135
+cifn/typescript/runner/src/log-spool.test.ts
+  s_3b7ffdae337f69::t_515b0461c1ba0f 7-10,145-147,234-235,245-247,267,273,282,292,305,339,342,357,364-365,374,376-425
+cifn/typescript/runner/src/log-spool.ts
+  s_3b7ffdae337f69::t_b3f0bf927e34b9 117,119-130,266,268-270,273,307-309,327,330-334,339-347,349-350,353-364,366-367
+cifn/typescript/runner/src/remote-runner.test.ts
+  s_3b7ffdae337f69::t_e7ccb8b66bcf67 303,305,308-309,316,323-324,326-333,898,913,925,930,932-935,943-946
+cifn/typescript/runner/src/remote-runner.ts
+  s_3b7ffdae337f69::t_ab1941b80f7833 4,11,21-22,119,124,127-136,206-207,300-301,388,420-425
+cifn/typescript/runner/src/runner.test.ts
+  s_3b7ffdae337f69::t_d0a68c54b66a02 1001,1009-1012,1014-1020,1023-1026,1029-1030,1032-1033,1036-1041,1044
+cifn/typescript/runner/src/runner.ts
+  s_3b7ffdae337f69::t_a0ec121d842814 14,170-174,177
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "87ee6ba81d3fe957ca1a725274ef57e3d0c7350e",
+  "prompts": {},
+  "sessions": {
+    "s_3b7ffdae337f69": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "13c7e944-15d1-4421-9eb4-c991d75b96d8",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,23 @@
+authfn/core/src/__tests__/social-apple.test.ts
+  s_687cdb19048a2c::t_48acf0c5454059 109-118
+authfn/docs/content/docs/plugins/social-oauth/apple.md
+  s_687cdb19048a2c::t_be80ff69bfe9f8 67-74,78,98-99,103-104
+authfn/docs/static/llms-full.txt
+  s_687cdb19048a2c::t_c2c0e4f424fcb6 6603-6610,6614,6634-6635,6639-6640
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1dd6d4e40b1fc9c4c1de2db62148e44ee72773d9",
+  "prompts": {},
+  "sessions": {
+    "s_687cdb19048a2c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f680d6cd-3926-44a8-bf08-89b3f8ad09d1",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

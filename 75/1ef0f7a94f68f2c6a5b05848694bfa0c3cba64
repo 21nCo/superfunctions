@@ -1,0 +1,53 @@
+clifn/core/src/config.ts
+  s_e5ac07859c1bc9::t_36a6beaab2154f 3-9,60-61,68,95
+clifn/core/src/credentials.ts
+  s_e5ac07859c1bc9::t_decd4b3de58143 6,95-96,99,117
+clifn/core/src/paths.ts
+  s_e57b4d52f64683::t_78cdbb872807bb 51-54,56,81-94,97-98,106-108
+clifn/core/src/store-options.ts
+  s_e5ac07859c1bc9::t_5b2bc318d7e49c 34-53
+clifn/core/tests/app-stores.test.ts
+  s_e5ac07859c1bc9::t_2b2407095c8a9c 3,7,15-16,57-58,61-78,122-123,159-163
+clifn/core/tests/paths.test.ts
+  s_e5ac07859c1bc9::t_32a1f6506626e2 88-92,125-136
+clifn/core/CHANGELOG.md
+  s_57962be8fb12e3::t_82a2bf37c8bdd6 5-6
+clifn/core/README.md
+  s_57962be8fb12e3::t_d12e955b5029ad 220,274
+clifn/docs/content/docs/reference/core-readme.md
+  s_57962be8fb12e3::t_96f1a143bf11bb 223,277
+clifn/docs/static/llms-full.txt
+  s_e5ac07859c1bc9::t_315db48b599c04 531,585
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "751ef0f7a94f68f2c6a5b05848694bfa0c3cba64",
+  "prompts": {},
+  "sessions": {
+    "s_57962be8fb12e3": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1fea9-ebf9-7881-bfe3-6e4f96657f42",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_e57b4d52f64683": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e345be53-b180-41cd-906e-e2d4f4ef4cff",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_e5ac07859c1bc9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5142ca70-a18b-4d6e-8f19-4855393dcdd0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

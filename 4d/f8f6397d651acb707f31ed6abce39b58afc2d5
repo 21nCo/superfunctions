@@ -1,0 +1,22 @@
+apifn/core/__tests__/openapi-validate.test.ts
+  s_1249bd91e0e351::t_4b8b95f86078f9 326-328,330,343,347-358
+  s_1249bd91e0e351::t_849c91064ef91f 359-360
+apifn/core/src/openapi/validate.ts
+  s_1249bd91e0e351::t_d2b973d5d89709 87,91,93-96
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4df8f6397d651acb707f31ed6abce39b58afc2d5",
+  "prompts": {},
+  "sessions": {
+    "s_1249bd91e0e351": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a2131a-2ee1-7040-aaeb-f4b9e01820a7",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

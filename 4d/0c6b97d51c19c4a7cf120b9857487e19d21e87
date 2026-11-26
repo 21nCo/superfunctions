@@ -1,0 +1,23 @@
+AGENTS.md
+  s_b996deaa3d01f1::t_77c52893a8caf3 21
+scripts/owners.mjs
+  s_b996deaa3d01f1::t_f56a4cbfe9ccf3 8,467-473,475,477,483-484,486-492
+scripts/owners.test.mjs
+  s_b996deaa3d01f1::t_d319ea6780f7d7 394-398
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4d0c6b97d51c19c4a7cf120b9857487e19d21e87",
+  "prompts": {},
+  "sessions": {
+    "s_b996deaa3d01f1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c40e7b19-3313-4542-ad8e-39c9c4c912f1",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

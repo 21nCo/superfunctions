@@ -1,0 +1,31 @@
+billfn/client/src/types.ts
+  s_0d7e11293d5a4e::t_0519cf00e4121c 35-36
+billfn/core/src/__tests__/http-surface.test.ts
+  s_0d7e11293d5a4e::t_1b5c023cd0bcde 457-469
+billfn/core/src/router.ts
+  s_0d7e11293d5a4e::t_64720ce6dbde1e 5,248-250,258
+billfn/core/src/service.ts
+  s_0d7e11293d5a4e::t_160f3e50edad68 42,327-328
+billfn/core/src/types.ts
+  s_0d7e11293d5a4e::t_f8bea22227e9c4 911-913,925
+billfn/python/billfn/types.py
+  s_0d7e11293d5a4e::t_06cc6ffce4bd46 7,9,206-207
+billfn/python/tests/test_checkout_metadata.py
+  s_0d7e11293d5a4e::t_7a1e9f93a2d2db 1-18
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "beaf612d26eaecf389db83c4f94198511b181b48",
+  "prompts": {},
+  "sessions": {
+    "s_0d7e11293d5a4e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "97ac12a3-1bf1-4732-a6f3-ece8c28b207e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

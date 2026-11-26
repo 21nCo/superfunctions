@@ -1,0 +1,29 @@
+testfn/python/README.md
+  s_b996deaa3d01f1::t_5afde6ed452f60 110-118,145
+testfn/python/testfn/fixtures/_js_json.py
+  s_b996deaa3d01f1::t_017df7206c7ede 61-67
+testfn/python/testfn/fixtures/authfn.py
+  s_b996deaa3d01f1::t_6a708f266f68ac 13,18,50,55,62,126-143,166-177,198-201,213-227,336,351-355,357-360
+testfn/python/testfn/fixtures/billfn.py
+  s_b996deaa3d01f1::t_0f85e02a10776e 99-101,139-141,197-198
+testfn/python/tests/test_fixtures_authfn.py
+  s_b996deaa3d01f1::t_66bbc4250a0698 282,284,296-299,301-328,330-333,338,340-341,343,345-346,351-352,359,425-429,445-452,457
+testfn/python/tests/test_fixtures_billfn.py
+  s_b996deaa3d01f1::t_47d92a39d4c51f 4,425-432,472-488,490
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "cd8d6f64d1af6d77585309b18c94115e005b14d5",
+  "prompts": {},
+  "sessions": {
+    "s_b996deaa3d01f1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c40e7b19-3313-4542-ad8e-39c9c4c912f1",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

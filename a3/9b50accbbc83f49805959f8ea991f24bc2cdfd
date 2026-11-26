@@ -1,0 +1,23 @@
+filefn/python/filefn/server/files/service.py
+  s_b841cebdcfad95::t_56861c17b14784 9
+filefn/python/filefn/server/processing/service.py
+  s_b841cebdcfad95::t_91999cf4dfe3dd 9
+filefn/python/filefn/server/shares/service.py
+  s_b841cebdcfad95::t_2636b7ff402fa3 9
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a39b50accbbc83f49805959f8ea991f24bc2cdfd",
+  "prompts": {},
+  "sessions": {
+    "s_b841cebdcfad95": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "436f4738-d86e-44e1-82bc-c432f9aaabf3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

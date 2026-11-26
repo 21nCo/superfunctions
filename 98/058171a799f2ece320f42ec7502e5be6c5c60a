@@ -1,0 +1,189 @@
+.github/workflows/publish-python.yml
+  s_55d5334e2ddc84::t_fd68d5bd8432c7 43,46,99,102
+.github/workflows/pullfrog.yml
+  s_55d5334e2ddc84::t_b3881abb05c770 30-32
+authfn/adapters/lookup-cloudflare-do/package.json
+  s_55d5334e2ddc84::t_0da0a02482a7d0 33-34
+authfn/adapters/lookup-dynamodb/package.json
+  s_55d5334e2ddc84::t_d34495b52acf77 35-36
+authfn/admin/package.json
+  s_55d5334e2ddc84::t_67db95c7a60f31 40-41
+authfn/client/package.json
+  s_55d5334e2ddc84::t_7fc068803ff58d 33,37-42
+authfn/client/src/__tests__/client-account-settings.test.ts
+  s_55d5334e2ddc84::t_258343ca54392a 32-33,267,281
+authfn/core/package.json
+  s_55d5334e2ddc84::t_33fcd1d7fa8286 76
+authfn/core/src/__tests__/otp.test.ts
+  s_55d5334e2ddc84::t_f29e6e487f6462 18,20,1044-1595
+authfn/core/src/__tests__/sessions.test.ts
+  s_55d5334e2ddc84::t_b56191f575bc13 18,640-657
+authfn/core/src/__tests__/social-apple.test.ts
+  s_55d5334e2ddc84::t_f4556ffd183fb9 1-2,8-28,30-46,381-654
+authfn/core/src/__tests__/social-google.test.ts
+  s_55d5334e2ddc84::t_ca14b6a0db3fce 1,374-446,597-611
+authfn/core/src/__tests__/sqlite/generated/authfn-schema.ts
+  s_55d5334e2ddc84::t_34c27d4cec2b2f 103
+authfn/core/src/__tests__/sqlite/migrations/0000_authfn_sqlite.sql
+  s_55d5334e2ddc84::t_8a6a8842958cfb 30
+authfn/core/src/__tests__/two-factor.test.ts
+  s_55d5334e2ddc84::t_71524005527b6d 18,453-479
+authfn/core/src/core/account.ts
+  s_55d5334e2ddc84::t_1fe250f499d947 226,231-233
+authfn/core/src/core/two-factor.ts
+  s_55d5334e2ddc84::t_47c73e7f227e79 540-544
+authfn/core/src/core/verifications.ts
+  s_80c003a3d55799::t_1206433e61c477 16,22,45,55-59,68-70,132-137,140,145,149-151,159-160,321,324-329,344,429,432-445,528,537,542-548,708-1131,1205-1253,1263,1265,1278-1280,1308-1322,1333,1336,1348-1351,1411
+authfn/core/src/plugin-types.ts
+  s_55d5334e2ddc84::t_76309fb6af7931 42-61
+authfn/docs/content/docs/core-concepts/rate-limiting.md
+  s_55d5334e2ddc84::t_f89a74a5dbee6d 35
+authfn/docs/content/docs/plugins/email-otp.md
+  s_55d5334e2ddc84::t_0840b9348b5e8a 55-57,99,138,140
+authfn/docs/content/docs/plugins/native-handoff.md
+  s_55d5334e2ddc84::t_c497bda1d04a2a 82,87-92,95-96
+authfn/docs/content/docs/plugins/password.md
+  s_55d5334e2ddc84::t_ff2019b2d6d564 50
+authfn/docs/content/docs/plugins/social-oauth/apple.md
+  s_55d5334e2ddc84::t_277e6c14173599 110-113
+authfn/docs/content/docs/plugins/social-oauth/index.md
+  s_55d5334e2ddc84::t_e69305f608976c 171-180
+authfn/docs/content/docs/quickstart/python.md
+  s_55d5334e2ddc84::t_ca97dea64c9657 29,40-46,48-51,56-57
+authfn/docs/content/docs/reference/configuration.md
+  s_55d5334e2ddc84::t_e9330eaa6a2189 113
+authfn/docs/content/docs/reference/schema.md
+  s_55d5334e2ddc84::t_3cd6c26472e67e 70-71
+authfn/docs/content/docs/sdk/swift.md
+  s_55d5334e2ddc84::t_7ad85499bad60f 117,122-127,130
+authfn/docs/package.json
+  s_55d5334e2ddc84::t_8172c7d43656a2 26-32,34,44
+authfn/docs/static/llms-full.txt
+  s_55d5334e2ddc84::t_5fbbefa2d870c5 3128,5762-5764,5806,5845,5847,6293,6298-6303,6306-6307,6399,6683-6686,7102-7111,7726,7737-7743,7745-7748,7753-7754,10070,10612-10613,11712,11717-11722,11725
+authfn/email-otp/src/index.ts
+  s_55d5334e2ddc84::t_d17be04db7ca33 11,33,62-67
+authfn/native-handoff/package.json
+  s_55d5334e2ddc84::t_b1f22fd4698945 30
+authfn/oauth-provider/package.json
+  s_55d5334e2ddc84::t_768fa3c0845446 34
+authfn/password/src/index.ts
+  s_55d5334e2ddc84::t_82fec899aaf8cb 17,35-39,42-49,51-56,60-67,97-98,102
+authfn/python/CHANGELOG.md
+  s_55d5334e2ddc84::t_e4193bd30af425 10-12
+authfn/python/README.md
+  s_55d5334e2ddc84::t_b501fe796ecdb0 28,42-53,62-63
+authfn/python/authfn/authfn.py
+  s_55d5334e2ddc84::t_c664b9acf3d96b 100-101
+authfn/python/authfn/http.py
+  s_55d5334e2ddc84::t_6eec388721b50d 162-169,171-175,1740-1742
+authfn/python/authfn/plugins/email_otp.py
+  s_55d5334e2ddc84::t_77eaee39b4c0bb 459-460,463-469,487-505,561-566
+authfn/python/authfn/plugins/social_oauth.py
+  s_55d5334e2ddc84::t_48a4d74d1ef9e3 15-17,60,106-108,182-183,186-187,189-195,256-258,262-265,284-383,577,580-585,594-597,656-663,673-674,778-779,878,887,1306-1311,1690-1692,1697-1724
+authfn/python/tests/test_openapi.py
+  s_55d5334e2ddc84::t_66148a7995261d 67,150
+authfn/python/tests/test_otp.py
+  s_55d5334e2ddc84::t_7235ca0df13493 7,369-459
+authfn/python/tests/test_social_oauth.py
+  s_55d5334e2ddc84::t_850d0d66804eaa 49-51,110-123,135-137,338,395,444,480,519,542,582,593,619,651,703,731,745-1136
+authfn/schema-plugin/package.json
+  s_55d5334e2ddc84::t_443af32c736cd6 29-30
+authfn/social-oauth/package.json
+  s_55d5334e2ddc84::t_6cc1fe04d77fa5 34
+authfn/social-oauth/src/index.ts
+  s_55d5334e2ddc84::t_01e08ac528599a 242-249,514-525,556,559,619-635,650,682-699,718-719,1895,1900,2069,2080,2088,2092,2118-2164,2166-2172,2174-2190,2195-2199,2203-2206,2214-2220,2680-2681,2904,2912
+authfn/swift/Sources/AuthFnWebViewBridgeHost/AuthFnWebViewBridgeHost.swift
+  s_55d5334e2ddc84::t_a19271178d06cd 5-394,407,409-413,417,421-426,449-454,549-553
+authfn/swift/Tests/AuthFnWebViewBridgeHostTests/AuthFnWebViewBridgeHostTests.swift
+  s_55d5334e2ddc84::t_9a753f31b8c694 13-193
+memoryfn/docs/content/docs/documents-and-sources.md
+  s_55d5334e2ddc84::t_d5b5802a8c59c5 1-69
+memoryfn/docs/content/docs/embeddings-and-extraction.md
+  s_55d5334e2ddc84::t_a5ecf543a9eb5c 6
+memoryfn/docs/content/docs/http.md
+  s_55d5334e2ddc84::t_aacb92d07135aa 22
+memoryfn/docs/content/docs/meta.json
+  s_55d5334e2ddc84::t_19916daca12337 10
+memoryfn/docs/content/docs/reference/api.md
+  s_55d5334e2ddc84::t_f42f7b6d4fb4a8 21-22,27
+memoryfn/docs/content/docs/storage.md
+  s_55d5334e2ddc84::t_820272d92134d1 31
+memoryfn/docs/static/llms-full.txt
+  s_55d5334e2ddc84::t_20f30b59029c60 10-82,89,174,301-302,307,509
+memoryfn/docs/static/llms.txt
+  s_55d5334e2ddc84::t_83df16423822db 7
+memoryfn/typescript/README.md
+  s_55d5334e2ddc84::t_7e9c167cbfc888 34-37
+memoryfn/typescript/package.json
+  s_55d5334e2ddc84::t_6dcda322cc960e 42
+memoryfn/typescript/src/chunking/markdown.ts
+  s_55d5334e2ddc84::t_703ab29d89d4d7 1-246
+memoryfn/typescript/src/core/config.ts
+  s_55d5334e2ddc84::t_77ef7f7bad8f3d 2,82-87
+memoryfn/typescript/src/core/pipeline.ts
+  s_55d5334e2ddc84::t_9f1eb034d00534 2-12,15,56-57,90-213,249-468
+memoryfn/typescript/src/core/types.ts
+  s_55d5334e2ddc84::t_fbed0497864efd 1-2,11-13,101-144
+memoryfn/typescript/src/extraction/dedup.ts
+  s_55d5334e2ddc84::t_44cb64617b2f78 4-21,31,33-34
+memoryfn/typescript/src/extraction/facts.ts
+  s_55d5334e2ddc84::t_4d8602ffd11a78 10-24,32,49-55,57-107,109
+memoryfn/typescript/src/http/router.ts
+  s_55d5334e2ddc84::t_f2f76f39351983 5-28,38-62,80-92
+memoryfn/typescript/src/index.ts
+  s_55d5334e2ddc84::t_d4abe7f0779c8b 94
+memoryfn/typescript/src/providers/embed/openai.ts
+  s_55d5334e2ddc84::t_c6a90a95b81b01 4-23,49-54,57-67
+memoryfn/typescript/src/storage/adapter.ts
+  s_55d5334e2ddc84::t_c10a0361bfdc40 27-30,70-91,104-113,126-136,157-161,164,233-236,238,245-250,257-306,330
+memoryfn/typescript/src/storage/memory/adapter.ts
+  s_55d5334e2ddc84::t_3a895c78b3f26f 5,90-91,96,183-193,201,209,277-281,287-289,291-301,323-325
+memoryfn/typescript/src/storage/pg/adapter.ts
+  s_55d5334e2ddc84::t_3360af4af2147d 4,28-29,36-40,122-132,140,160,335-339,349-371,375-383,449-451
+memoryfn/typescript/tests/chunking.test.ts
+  s_55d5334e2ddc84::t_3ab5894485e4d2 1-206
+memoryfn/typescript/tests/documents.test.ts
+  s_55d5334e2ddc84::t_104d23ae6c0f5d 1-1106
+memoryfn/typescript/tests/http-documents.test.ts
+  s_55d5334e2ddc84::t_f1bf5e7e7d9166 1-243
+memoryfn/typescript/tests/openai-provider.test.ts
+  s_55d5334e2ddc84::t_e2da04cdfedc35 16-17,66-109
+memoryfn/typescript/tests/postgres-source-statements.test.ts
+  s_55d5334e2ddc84::t_5a28470b38b7d2 5,10,12-13,20,22,26,100-173
+memoryfn/typescript/tests/source-contract.ts
+  s_55d5334e2ddc84::t_7a63a573d7599a 97-112
+memoryfn/typescript/tests/types/legacy-consumers.ts
+  s_55d5334e2ddc84::t_e82ab569947661 1-24
+memoryfn/typescript/tsconfig.types.json
+  s_55d5334e2ddc84::t_803ee882f3198f 1-5
+package-lock.json
+  s_55d5334e2ddc84::t_ba9467b4cbfeb8 1274-1275,1300-1301,1324-1325,1394,1397-1402,1433,1521-1527,1529,1539,3927,3965,4035-4036,4058,61597-61625,61630-61636
+packages/oauth-storage/src/token-vault.ts
+  s_55d5334e2ddc84::t_4640247b8ecc8c 48-50,64-65,86-92
+packages/oauth-storage/tests/state-vault.test.ts
+  s_55d5334e2ddc84::t_d6479903bcfc0c 202-217
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "98058171a799f2ece320f42ec7502e5be6c5c60a",
+  "prompts": {},
+  "sessions": {
+    "s_55d5334e2ddc84": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d4b6a8f4-c2a0-4451-9371-f9eff24e451a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_80c003a3d55799": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1fedf-723b-7223-ab3b-a721743cbccd",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

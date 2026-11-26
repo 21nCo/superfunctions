@@ -1,0 +1,27 @@
+testfn/scripts/packed-consumer.mjs
+  s_342b6bd116b568::t_49d8e0e6eb3a25 186-200
+testfn/typescript/README.md
+  s_342b6bd116b568::t_b87284d5550134 233-235,238-239,242
+testfn/typescript/src/fixtures/mailfn/envelope.ts
+  s_342b6bd116b568::t_edfac748be71eb 85-86,89,155
+testfn/typescript/src/fixtures/mailfn/memory.ts
+  s_342b6bd116b568::t_1dd6c14f4d1f18 11,126,181-188,191-193,232-267,289-292,315-322,325-345,347,350,357-358,363-364,396-404,421,434-436,439,482,485-491,493-494,498-506,537-539,542-543,601-604,636-642,658-659,661-662,669,688,705
+testfn/typescript/tests/mailfn-fixture.test.ts
+  s_342b6bd116b568::t_3ee49b6579e3ef 650-881
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9b27f96d3ab2e4e175d4efb43ecb85c2f649b8ee",
+  "prompts": {},
+  "sessions": {
+    "s_342b6bd116b568": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_342b6bd116b568",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

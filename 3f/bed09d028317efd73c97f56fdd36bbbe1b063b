@@ -1,0 +1,25 @@
+flowfn/typescript/src/adapters/memory.ts
+  s_5b56d5236ff374::t_5d7faecf009369 42-43,48
+flowfn/typescript/src/queue/claim-many.test.ts
+  s_5b56d5236ff374::t_18ce463f165e6a 542-664,894-910
+flowfn/typescript/docs/queue-ownership.md
+  s_5b56d5236ff374::t_0246a1b05c6d91 63-65,67-69,73-74,78-80
+flowfn/typescript/src/queue/queue.ts
+  s_5b56d5236ff374::t_cb4c2dea2a9a7a 1092-1108,1113,1128-1129,1313-1316,1371-1374,1377-1379,1381-1382,1452-1464
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3fbed09d028317efd73c97f56fdd36bbbe1b063b",
+  "prompts": {},
+  "sessions": {
+    "s_5b56d5236ff374": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7abe78a8-09d3-45e3-850a-2814dd8a95fb",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

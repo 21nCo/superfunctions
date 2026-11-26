@@ -1,0 +1,77 @@
+apifn/cli/src/index.ts
+  s_fdbebe3d0ce817::t_e504316e6a3f6c 448
+apifn/core/README.md
+  s_c2d6ef2e96fafa::t_8a96cd6fd224d1 8,11-12,222-226,229,256-257
+apifn/core/__tests__/testfn-adapter.test.ts
+  s_b15184ae60b291::t_0cf67ddf2f9b0b 1-4,6-7,22-23,28-32,43-47,62,64-65
+apifn/core/scripts/verify-packed-consumer.mjs
+  s_85b805eb8f2a27::t_19fed5c8d656c2 1-141
+apifn/admin/package.json
+  s_85b805eb8f2a27::t_ba8079b96ca990 3,41,47
+apifn/cli/package.json
+  s_85b805eb8f2a27::t_63c26e19af8d67 3,26,28-29,31
+apifn/collections/package.json
+  s_85b805eb8f2a27::t_48b75092740d92 3,23
+apifn/contracts/package.json
+  s_85b805eb8f2a27::t_cbc9ffe06435b3 42
+apifn/core/__tests__/root-entry-graph.test.ts
+  s_85b805eb8f2a27::t_b0d4dc81da3074 1-83
+apifn/core/package.json
+  s_85b805eb8f2a27::t_18395761408ba8 3,19-23,29-31,41-42,50-52,57-58
+apifn/core/tsup.config.ts
+  s_85b805eb8f2a27::t_d28a33de7a73df 4-10
+apifn/core/turbo.json
+  s_85b805eb8f2a27::t_c58cb1534fc70d 1-9
+apifn/docsfn/package.json
+  s_85b805eb8f2a27::t_d42f082333e076 3,32-34
+apifn/mock/package.json
+  s_85b805eb8f2a27::t_6b1068ce97919c 3,23
+apifn/react/package.json
+  s_85b805eb8f2a27::t_6c7c2a40603117 3,22
+apifn/snippets/package.json
+  s_85b805eb8f2a27::t_22879d2dc4ae6f 3,23
+apifn/svelte/package.json
+  s_85b805eb8f2a27::t_eeb645dac794bb 3,50
+package-lock.json
+  s_85b805eb8f2a27::t_524e55e93d7773 93,96,99,110,113,115-116,118,137,140,266,305,315-316,324-325,333-335,346-349,353-387,392,395-397,429,432,443,446,846,849,860,863,37269,37278,37501,38554,38571,38581,38598,38608,38618,38625,38633,38658,38669,38682,38687,38698,38711,38718,38731,38766,38781,43298,43407,45731,50754,50841,53500,53751,54676,54690,54746,57571,57673,57681,57696,57704,57712,57717,57722,57730,57741,57749,57945
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "78d54f80c81414c9c3c37b84fb1887ff07460c89",
+  "prompts": {},
+  "sessions": {
+    "s_85b805eb8f2a27": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c43fbb5b-5ccf-4c4c-b66c-48ade57b2074",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_b15184ae60b291": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "dd21c743-8ca1-4896-ad7b-a3b81c2516fb",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_c2d6ef2e96fafa": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "06fe544c-d9eb-46b8-b581-824711a616bb",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_fdbebe3d0ce817": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1fab0-2725-77f3-97af-373fcf0222d6",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

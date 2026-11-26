@@ -1,0 +1,21 @@
+authfn/docs/content/docs/plugins/social-oauth/apple.md
+  s_d584f7b0ec7863::t_ee059c50b230b3 115
+authfn/docs/static/llms-full.txt
+  s_d584f7b0ec7863::t_ee059c50b230b3 6688
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e3e27fa604c921283224d373447c8de0946de3d8",
+  "prompts": {},
+  "sessions": {
+    "s_d584f7b0ec7863": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ef7b35a3-950e-44c9-b6fe-63291f5cdafb",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

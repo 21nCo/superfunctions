@@ -1,0 +1,21 @@
+packages/evidence/tsconfig.check.json
+  s_545bb079978e5a::t_19b777817cb05c 5,8-11
+packages/evidence/vitest.config.ts
+  s_545bb079978e5a::t_427442ebb1adfc 1-2,5-6,8-14
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "62f14a26ee2c7e4b9e42c1b21621100fb103a1d3",
+  "prompts": {},
+  "sessions": {
+    "s_545bb079978e5a": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a2144f-8f2a-7690-8b1a-e7858b67a889",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

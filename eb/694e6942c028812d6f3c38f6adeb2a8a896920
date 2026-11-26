@@ -1,0 +1,21 @@
+reviewfn/harness-cli/src/adapter.ts
+  s_83fa589146e8c6::t_9633e20aa95e47 526-528
+reviewfn/harness-cli/test/adapter.test.ts
+  s_83fa589146e8c6::t_be90df7b909be0 1298
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "eb694e6942c028812d6f3c38f6adeb2a8a896920",
+  "prompts": {},
+  "sessions": {
+    "s_83fa589146e8c6": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21253-9943-7ef0-8aad-8a89b106fa79",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

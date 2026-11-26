@@ -1,0 +1,49 @@
+mcpfn/core/README.md
+  s_b996deaa3d01f1::t_97387db2697d94 103-106,117-118,126-127,133-140
+mcpfn/core/src/openapi/from-openapi.ts
+  s_b996deaa3d01f1::t_e5b7a676911654 169-170,174,183
+mcpfn/core/src/openapi/schema.ts
+  s_b996deaa3d01f1::t_04e7ea29a28b4a 26-35,43-44,49,126-127,131-144,152-155,234-239,249,255-265,277-287,290-291,299,327,359-364,367-368,372-376,383-388,394-502,504,506,510-524,526-527,530-531,538,543-548,551,554-556,558-560,562-563,569-617
+mcpfn/core/src/openapi/types.ts
+  s_b996deaa3d01f1::t_206bc8c8200c80 62
+mcpfn/core/src/validation.ts
+  s_b996deaa3d01f1::t_a96b747a090312 564-574,577-615
+mcpfn/core/tests/fixtures/openapi/README.md
+  s_eff44b53bb502a::t_3e52d60545bd04 9-12
+mcpfn/core/tests/fixtures/openapi/form-read-only-composed.json
+  s_eff44b53bb502a::t_e266e7ef233637 1-164
+mcpfn/core/tests/fixtures/openapi/skip-2020-12-keywords.json
+  s_eff44b53bb502a::t_7090c0f5934bce 118-181
+mcpfn/core/tests/fixtures/openapi/skip-nonproductive-recursion.json
+  s_eff44b53bb502a::t_04c3f946a3a20e 1-165
+mcpfn/core/tests/openapi-forms.test.ts
+  s_eff44b53bb502a::t_0160d3d876c665 229-312,401-402,409-410,414-453
+mcpfn/core/tests/validation.test.ts
+  s_b996deaa3d01f1::t_6c713426a45376 641-675
+mcpfn/core/tests/openapi-catalog.test.ts
+  s_eff44b53bb502a::t_19ac1454d8d419 314-331
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "73aa1f71358f35f3731afb1c96c351913faacfd6",
+  "prompts": {},
+  "sessions": {
+    "s_b996deaa3d01f1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c40e7b19-3313-4542-ad8e-39c9c4c912f1",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_eff44b53bb502a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f474bc08-cf48-43e9-9920-a080cc8905e0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

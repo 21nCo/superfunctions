@@ -1,0 +1,59 @@
+flowfn/python/flowfn/adapters/memory.py
+  s_f3a04596604b6d::t_65a422c5085bfa 274-278,283
+flowfn/python/flowfn/adapters/redis.py
+  s_f3a04596604b6d::t_c293b4978d34ea 279-281,302-303,305-315,321-322,324-326,387,391,394
+flowfn/python/flowfn/adapters/redis_queues.py
+  s_f3a04596604b6d::t_dc9d68de6c3f89 18-82,89-91,144,178,183-184,194-195,197,199,202,204,209-212,288-290,293-312
+flowfn/python/flowfn/queue/dlq.py
+  s_f3a04596604b6d::t_5c9d7fa0b020c0 25-27,72
+flowfn/python/tests/test_durable_retention.py
+  s_f3a04596604b6d::t_22e26e6f945422 5-7,56-90
+flowfn/python/tests/test_redis_queue_fallback_commit.py
+  s_f3a04596604b6d::t_87f70846b68d08 1-48
+flowfn/python/tests/test_stream_mixed_visibility.py
+  s_f3a04596604b6d::t_0944f258486420 1-45
+flowfn/typescript/src/adapters/base.ts
+  s_f3a04596604b6d::t_51e02266a1e36e 15-19,24-30,42
+flowfn/typescript/src/adapters/memory.ts
+  s_f3a04596604b6d::t_63ad449389e146 3,44,47
+flowfn/typescript/src/adapters/postgres/index.ts
+  s_f3a04596604b6d::t_252f05bd18c1ba 7,77-82,239,246,670,698
+flowfn/typescript/src/adapters/postgres/postgres.test.ts
+  s_f3a04596604b6d::t_19f3bad063707a 6,9,36,41
+flowfn/typescript/src/adapters/postgres/schema.ts
+  s_f3a04596604b6d::t_13be13e7d1d450 102-103
+flowfn/typescript/src/adapters/redis.test.ts
+  s_f3a04596604b6d::t_fe92576d7aa27d 6,9,204,480-488,494-495,501,692-693,695
+flowfn/typescript/src/adapters/redis.ts
+  s_f3a04596604b6d::t_841a5069016caa 6,96-113,224-228,230,239-244,283,374,380,438-439,443,602-605,619,623,626,708-723,730,732,874-875,878
+flowfn/typescript/src/queue/queue.ts
+  s_f3a04596604b6d::t_d12c090f6c5bd4 181,509-511
+flowfn/typescript/src/queue/snapshot.test.ts
+  s_f3a04596604b6d::t_292c5c06b209a1 3,12-14
+flowfn/typescript/src/storage/queue-snapshot-contract.ts
+  s_f3a04596604b6d::t_db66bd2cb810d9 56-93,103-108,119-132
+flowfn/typescript/src/storage/stream-lease-contract.ts
+  s_f3a04596604b6d::t_2685e7aa8c6732 99-121
+flowfn/typescript/src/workflow/expired-owner.test.ts
+  s_f3a04596604b6d::t_7388a685d47115 1-25
+flowfn/typescript/src/workflow/recovery.test.ts
+  s_f3a04596604b6d::t_6259c01ec8bc6c 59-120
+flowfn/typescript/src/workflow/workflow.ts
+  s_f3a04596604b6d::t_17d271ff5bc664 264-265,350-358,436-439,442-443,450,611,635,788,828-839,1078-1084,1086-1090,1182
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ff9c9d5560b876e24f15ad9e987e422bedcdd025",
+  "prompts": {},
+  "sessions": {
+    "s_f3a04596604b6d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_f3a04596604b6d",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

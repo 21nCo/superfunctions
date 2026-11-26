@@ -1,0 +1,49 @@
+memoryfn/docs/content/docs/documents-and-sources.md
+  s_1eb217f2cbe12c::t_177e0ecd7a01cb 1-68
+memoryfn/docs/content/docs/http.md
+  s_1eb217f2cbe12c::t_38447efa07555c 22
+memoryfn/docs/content/docs/meta.json
+  s_1eb217f2cbe12c::t_f2cb9a5f460ed5 10
+memoryfn/docs/content/docs/reference/api.md
+  s_1eb217f2cbe12c::t_e7d01fbd4fdb15 21-22,27
+memoryfn/docs/static/llms-full.txt
+  s_1eb217f2cbe12c::t_a2a42065e06365 10-81,173,300-301,306
+memoryfn/docs/static/llms.txt
+  s_1eb217f2cbe12c::t_00d445d3edcee0 7
+memoryfn/typescript/README.md
+  s_1eb217f2cbe12c::t_b1ce660c7d6208 34-37
+memoryfn/typescript/src/chunking/markdown.ts
+  s_1eb217f2cbe12c::t_0bdb3ba89521c3 1-152
+memoryfn/typescript/src/core/config.ts
+  s_1eb217f2cbe12c::t_50d0999d2fba57 2,82-83
+memoryfn/typescript/src/core/pipeline.ts
+  s_1eb217f2cbe12c::t_30a03a0791f91b 2-7,84-138,174-180
+memoryfn/typescript/src/core/types.ts
+  s_1eb217f2cbe12c::t_1a64a2ed1c4352 1-2,98-137
+memoryfn/typescript/src/http/router.ts
+  s_1eb217f2cbe12c::t_2ec8450465648d 5-21,31-47,65-77
+memoryfn/typescript/src/index.ts
+  s_1eb217f2cbe12c::t_8dd6dbb34120c4 94
+memoryfn/typescript/tests/chunking.test.ts
+  s_1eb217f2cbe12c::t_aee1182a580db7 1-83
+memoryfn/typescript/tests/documents.test.ts
+  s_1eb217f2cbe12c::t_e3b52f1de4b952 1-186
+memoryfn/typescript/tests/http-documents.test.ts
+  s_1eb217f2cbe12c::t_956fd419bf2d4b 1-126
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e21e4549f221101919664b0cf1c97f057c17d803",
+  "prompts": {},
+  "sessions": {
+    "s_1eb217f2cbe12c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2b2155d1-b0bb-4e5e-bb89-8414e78e1489",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

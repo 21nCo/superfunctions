@@ -1,0 +1,29 @@
+logfn/python/README.md
+  s_4f0df468dbe2ee::t_e497b26e7a3d33 163-172
+logfn/python/src/logfn/default_redaction.py
+  s_4f0df468dbe2ee::t_f9ab833a5d78c1 48-61,63-65,69-76,78-82,84,87,89-90,97,99-100,104,106,108-115,117,120,122,127-171,205,207,249-254,341-346,349-350,356,359,361,364,366-370,375,377,379,383-398,415
+logfn/python/tests/test_default_redaction.py
+  s_4f0df468dbe2ee::t_a145f43f7e33b6 6,266-290,297-300,321-324,332-348,350-355,357,421-502
+logfn/typescript/README.md
+  s_4f0df468dbe2ee::t_773a0262e504fd 619-627
+logfn/typescript/src/core/default-redaction.test.ts
+  s_4f0df468dbe2ee::t_db5b490364e4ff 234-237,239-241,243-252,254-255,257-279,292-295,310-311,313,371-445
+logfn/typescript/src/pipeline/default-redaction.ts
+  s_4f0df468dbe2ee::t_df7f381167f3fb 39-52,55-60,62-65,67-68,76-78,83-84,86-89,93,95,101-102,104-137,196-202,270-272,278,281,283,285,287-295,297-298,300,302-315,331
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2bf9debb54d704271e8bd39643af0eb19f23b38c",
+  "prompts": {},
+  "sessions": {
+    "s_4f0df468dbe2ee": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_4f0df468dbe2ee",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

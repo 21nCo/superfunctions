@@ -1,0 +1,27 @@
+filefn/python/filefn/server/core.py
+  s_b841cebdcfad95::t_7a9b25b2ee59a9 103-105,108-113
+filefn/python/filefn/server/errors.py
+  s_b841cebdcfad95::t_0f2353ea8da925 50,166-168
+filefn/python/filefn/server/policies.py
+  s_b841cebdcfad95::t_b4dee27efb9df5 1,86-133,140,142-145
+filefn/python/filefn/server/upload_sessions/service.py
+  s_b841cebdcfad95::t_ceb74178b150c7 2,4,8,10,23,67-70,77-243,392-393,473-480
+filefn/python/tests/test_upload_flow.py
+  s_b841cebdcfad95::t_8647f696ffd9ed 5,772-1026
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7b0af5c2f666d69a78b23d7111ae76a1946fddfb",
+  "prompts": {},
+  "sessions": {
+    "s_b841cebdcfad95": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "436f4738-d86e-44e1-82bc-c432f9aaabf3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

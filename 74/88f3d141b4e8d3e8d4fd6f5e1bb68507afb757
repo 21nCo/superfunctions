@@ -1,0 +1,27 @@
+billfn/core/src/__tests__/router-subject-refund.test.ts
+  s_0d7e11293d5a4e::t_0756cb474bbf84 256-257
+billfn/core/src/service.ts
+  s_0d7e11293d5a4e::t_f01cfd71140db9 1201
+billfn/core/src/types.ts
+  s_0d7e11293d5a4e::t_6edd783209f62d 533-537
+billfn/provider-dodo/src/__tests__/contract.test.ts
+  s_0d7e11293d5a4e::t_b86bc70834a9de 820-844
+billfn/provider-dodo/src/index.ts
+  s_0d7e11293d5a4e::t_20e6478b50f1b1 1180-1186
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7488f3d141b4e8d3e8d4fd6f5e1bb68507afb757",
+  "prompts": {},
+  "sessions": {
+    "s_0d7e11293d5a4e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "97ac12a3-1bf1-4732-a6f3-ece8c28b207e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

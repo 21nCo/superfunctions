@@ -1,0 +1,37 @@
+mcpfn/client/package.json
+  s_1bda23a4d9a4de::t_dfb77ce41c8b9d 47
+mcpfn/client/scripts/build-stamp.d.mts
+  s_1bda23a4d9a4de::t_ec5565309bc5dd 2,4-6
+mcpfn/client/scripts/build-stamp.mjs
+  s_1bda23a4d9a4de::t_3f444b6b63d285 5-8,10,98-115,118-142,156-158
+mcpfn/client/scripts/build.mjs
+  s_1bda23a4d9a4de::t_a241da0e77847d 1-17
+mcpfn/client/src/targets.ts
+  s_1bda23a4d9a4de::t_a5fe8f807f2466 64-66
+mcpfn/client/tests/request-id.test.ts
+  s_1bda23a4d9a4de::t_240d006af05c3b 37-38,41
+mcpfn/client/tests/stdio-compat-abort.test.ts
+  s_1bda23a4d9a4de::t_c80768b5b19494 77-95
+scripts/gate-mcpfn-release.mjs
+  s_1bda23a4d9a4de::t_f3c79b98a5a6e3 489-490
+mcpfn/client/src/client.ts
+  s_1bda23a4d9a4de::t_30e221eb9e7abf 109-119,124-126,130,132
+mcpfn/client/tests/build-stamp.test.ts
+  s_1bda23a4d9a4de::t_647b4f29a69ca0 4,12,172-219
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "11c51bd885dbe9cd5faee868484ad8c78025dde9",
+  "prompts": {},
+  "sessions": {
+    "s_1bda23a4d9a4de": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5db001a6-d1a9-4f02-8218-821388db0834",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

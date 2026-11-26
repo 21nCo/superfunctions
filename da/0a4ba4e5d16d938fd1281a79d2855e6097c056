@@ -1,0 +1,21 @@
+testfn/typescript/README.md
+  s_819597e2f2ee0a::t_ee63973f3ab446 207-208
+testfn/typescript/src/fixtures/billfn/deliver.ts
+  s_819597e2f2ee0a::t_1bad1f597daa5b 35-38,54-57
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "da0a4ba4e5d16d938fd1281a79d2855e6097c056",
+  "prompts": {},
+  "sessions": {
+    "s_819597e2f2ee0a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "779a684e-6419-4de8-9bfb-40c9be6e621a",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

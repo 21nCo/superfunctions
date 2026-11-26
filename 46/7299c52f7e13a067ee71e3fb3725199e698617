@@ -1,0 +1,31 @@
+authfn/client/src/regional-client.ts
+  s_a941fa5a2a6cc9::t_903c7c84d6469b 132-133
+authfn/core/src/__tests__/password.test.ts
+  s_a941fa5a2a6cc9::t_a78a7adfdf14f1 8,13-14,435-505
+authfn/core/src/core/passwords.ts
+  s_a941fa5a2a6cc9::t_edfc9e8837f17e 41-45,49,53-57,60,440-445,451-452,491
+authfn/docs/content/docs/plugins/multi-region.md
+  s_a941fa5a2a6cc9::t_990bad21e3ecd8 116
+authfn/docs/content/docs/plugins/password.md
+  s_a941fa5a2a6cc9::t_dd573a1dd5599d 70-75
+authfn/docs/static/llms-full.txt
+  s_a941fa5a2a6cc9::t_77b92058d13ba6 6125,6406-6411
+authfn/multi-region/src/index.ts
+  s_a941fa5a2a6cc9::t_c9054de6aa6c5f 352-355
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "467299c52f7e13a067ee71e3fb3725199e698617",
+  "prompts": {},
+  "sessions": {
+    "s_a941fa5a2a6cc9": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1fc39-ce2f-7a43-bfce-0870dd87370b",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

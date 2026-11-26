@@ -1,0 +1,39 @@
+logfn/.conduct/python-typing-readiness.md
+  s_1551f1f071ff3e::t_0a7a8885d87a4d 23-24
+logfn/admin/README.md
+  s_1551f1f071ff3e::t_b56d0a5c3f221c 5
+logfn/python/README.md
+  s_1551f1f071ff3e::t_a12e95e53df9d5 55-59
+logfn/python/src/logfn/sinks.py
+  s_1551f1f071ff3e::t_91a592c77a57f5 145-146,253-262,264-283
+logfn/python/tests/test_http_delivery.py
+  s_1551f1f071ff3e::t_d9548db16ba505 276-313
+logfn/python/tests/test_pipeline.py
+  s_1551f1f071ff3e::t_20ead4a574e4eb 2,31-32
+logfn/scripts/watchfn-integration-acceptance.mjs
+  s_1551f1f071ff3e::t_91835da3118ee3 52-54,57-61
+logfn/typescript/README.md
+  s_1551f1f071ff3e::t_33cb74bdea87a5 478-487
+logfn/typescript/src/core/error-hook.test.ts
+  s_1551f1f071ff3e::t_d1f7bedf065e3c 85-89,92-93,96-99,101,103-137,210-212
+logfn/typescript/src/core/logger.ts
+  s_1551f1f071ff3e::t_eeb11377d2b0e7 58-62,69-70,77-80,84-85,88-90,162-171,187,189-190,195,210,221-229,234-236,429
+logfn/typescript/src/types.ts
+  s_1551f1f071ff3e::t_c77b188fa49a6c 181-183
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "401073d81a332e11a2cde61cbb9f581e3405faec",
+  "prompts": {},
+  "sessions": {
+    "s_1551f1f071ff3e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_1551f1f071ff3e",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

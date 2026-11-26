@@ -1,0 +1,23 @@
+clifn/core/tests/consumer-contract.test-d.ts
+  s_f2a8788aafa614::t_b8e04f4495dfb5 173-174,177-178,180,186
+clifn/core/tests/consumer-import-scanner.ts
+  s_f2a8788aafa614::t_895e50e0ea48bf 138-141,143-145,153-157,243-246,252-255,258-261,265-266,269-273
+clifn/core/tests/consumer-scan.test.ts
+  s_f2a8788aafa614::t_142c2eb95edc21 7-14,240-253,287-311,320-341,343-346
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b7a8ed69a76fb521df59bd58bf485457221d3601",
+  "prompts": {},
+  "sessions": {
+    "s_f2a8788aafa614": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d0216421-3ce7-4aec-bc92-7245787096fd",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

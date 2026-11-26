@@ -1,0 +1,27 @@
+apifn/README.md
+  s_a53647f7f9b276::t_acc64e07e44141 137,157
+apifn/examples/ci-cd/github-actions.yml
+  s_a53647f7f9b276::t_acc64e07e44141 24
+.github/workflows/apifn-api-check.yml
+  s_a53647f7f9b276::t_acc64e07e44141 22,72
+.github/apifn-cli-install/package.json
+  s_a53647f7f9b276::t_acc64e07e44141 6
+.github/apifn-cli-install/package-lock.json
+  s_a53647f7f9b276::t_4096d47e86d7be 9,61-63,66-71,82-84,87,93-102,104-106,116-117,125-127,132-143,146-147,151-153,156,168-171,173,175,178-181,237-239,296-298
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5b5a2c0e2ad233e33bc6f2e46833ec0ad4f63494",
+  "prompts": {},
+  "sessions": {
+    "s_a53647f7f9b276": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a2139d-87fd-7710-98a5-0525e984c6d4",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

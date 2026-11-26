@@ -1,0 +1,29 @@
+contentfn/README.md
+  s_28e00589e9e5de::t_4a75211538d0fa 100-105,116-119,204-205
+contentfn/SPEC.md
+  s_28e00589e9e5de::t_43fab6934120c0 296,333,356,363,401,405-410,460-465,483-488
+contentfn/server/README.md
+  s_28e00589e9e5de::t_fdab05dffdffd3 72-82
+contentfn/server/src/__tests__/review-regressions.test.ts
+  s_28e00589e9e5de::t_f83960d65cedae 94-128,180-214
+contentfn/server/src/storage/docs.ts
+  s_28e00589e9e5de::t_67d6684ae14950 245-260
+contentfn/server/src/storage/schedules.ts
+  s_28e00589e9e5de::t_926e89adbc3759 11,58-59
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8f78a314f1f4c72aa52e185a8ab8bf157bae180b",
+  "prompts": {},
+  "sessions": {
+    "s_28e00589e9e5de": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2c4babcd-af84-4a66-a2b6-7bebf521f7ac",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,33 @@
+authfn/core/src/__tests__/password-scrypt-order.test.ts
+  s_e5ac07859c1bc9::t_cc95d35c1e6789 87
+authfn/core/src/__tests__/password.test.ts
+  s_e5ac07859c1bc9::t_5c66e043b71b67 684-692
+authfn/password/src/index.ts
+  s_e5ac07859c1bc9::t_f392b2c9d9b6d3 262-265
+authfn/core/src/core/passwords.ts
+  s_9b1252ca6550d5::t_06e69c48166814 84-93,324
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8aaa724b0b98a1a8ed208691d01e4048d82ed833",
+  "prompts": {},
+  "sessions": {
+    "s_9b1252ca6550d5": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1fe66-149a-7781-84d6-e9fe72a713a6",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_e5ac07859c1bc9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5142ca70-a18b-4d6e-8f19-4855393dcdd0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

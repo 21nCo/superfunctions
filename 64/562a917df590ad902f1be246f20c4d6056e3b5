@@ -1,0 +1,21 @@
+scripts/ci-plan.mjs
+  s_5d5a2018329495::t_d2dac7cb5b751c 42-44
+turbo.json
+  s_5d5a2018329495::t_5ccbbd6f3f4046 15-17
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "64562a917df590ad902f1be246f20c4d6056e3b5",
+  "prompts": {},
+  "sessions": {
+    "s_5d5a2018329495": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_5d5a2018329495",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

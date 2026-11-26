@@ -1,0 +1,33 @@
+memoryfn/docs/content/docs/storage.md
+  s_b996deaa3d01f1::t_d02efbc8999a42 31
+memoryfn/docs/static/llms-full.txt
+  s_b996deaa3d01f1::t_4bab990bc825fc 434
+memoryfn/typescript/src/storage/adapter.ts
+  s_b996deaa3d01f1::t_08cb96fb554ede 33-36,48-56,140-141,160,181,183,187-201,208,216,223,225,233
+memoryfn/typescript/src/storage/pg/adapter.ts
+  s_b996deaa3d01f1::t_ab43c356402130 18-19,204-215,253,259-260,280,282,293-295,297-299,301-303,312-314,323-325,328-331,337-338,361,369-370
+memoryfn/typescript/src/storage/pg/index.ts
+  s_b996deaa3d01f1::t_c7461743877e49 3
+memoryfn/typescript/tests/postgres-source-statements.test.ts
+  s_b996deaa3d01f1::t_8031fb62bc6950 1-66
+memoryfn/typescript/tests/postgres.test.ts
+  s_b996deaa3d01f1::t_21580816c68f5b 208-209
+memoryfn/typescript/tests/source-contract.ts
+  s_b996deaa3d01f1::t_324be261dd2c6a 232,234-236,243-244,262-273
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "039a516bc85d8feb96c783d2cc83f4a480cfbb82",
+  "prompts": {},
+  "sessions": {
+    "s_b996deaa3d01f1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c40e7b19-3313-4542-ad8e-39c9c4c912f1",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

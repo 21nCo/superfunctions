@@ -1,0 +1,21 @@
+filefn/docs/content/docs/core-concepts/security.md
+  s_b841cebdcfad95::t_6355e52672bf59 50
+filefn/docs/static/llms-full.txt
+  s_b841cebdcfad95::t_baa732926e758b 2692
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ceced336fee158d3598ed61a234af88cce854875",
+  "prompts": {},
+  "sessions": {
+    "s_b841cebdcfad95": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "436f4738-d86e-44e1-82bc-c432f9aaabf3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

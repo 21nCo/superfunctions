@@ -1,0 +1,47 @@
+package.json
+  s_2e02573f08eb77::t_69946ec53759c7 150
+mcpfn/auth/package.json
+  s_2e02573f08eb77::t_ccf9382a27b9ee 3,17,24
+mcpfn/auth/tests/bundled-sdk-version.test.ts
+  s_2e02573f08eb77::t_3d2858dc0d9e4f 1-62
+mcpfn/cli/package.json
+  s_2e02573f08eb77::t_1861c885cd732a 3,25-30
+mcpfn/client/package.json
+  s_2e02573f08eb77::t_b1f79a12f5c211 3,24,28
+mcpfn/core/package.json
+  s_2e02573f08eb77::t_2ba39e9e669a7e 3,17,25
+mcpfn/core/tests/bundled-sdk-version.test.ts
+  s_2e02573f08eb77::t_c9972e2edca967 1-111
+mcpfn/datafn/package.json
+  s_2e02573f08eb77::t_f81c4894fd2b04 3,26,30
+mcpfn/inspector/package.json
+  s_2e02573f08eb77::t_bb8c784d84e8ed 3,24-26,30
+mcpfn/testing/package.json
+  s_2e02573f08eb77::t_36d78bb74c6474 3,33-36
+package-lock.json
+  s_2e02573f08eb77::t_74534fb7493610 66,12589-12600,15139-15166,15403-15418,16975,16978,17003-17006,17008,17436,17439-17444,17462-17465,17467,17883,17886,17890,17901-17904,17906,18334,18338,18355-18357,18787,18792,18795,19247,19250-19252,19256,19267-19270,19272,19700,19703-19706,19730-19733,19735,24362-24389,24830-24845,29517-29519,29522,29525,31041-31052,58511-59030,65006-65017,65029-65084,65124-65136,65169-65236,65265-65355,65374-65403,65417-65432,65443-65451,65498-65576,65619-65666,65693-65737,65933-65963
+scripts/gate-mcpfn-release.mjs
+  s_2e02573f08eb77::t_0c7f4da0e16c78 92-93,95-100,147-237,512,526,528,543
+scripts/test-mcpfn-registry-install.mjs
+  s_2e02573f08eb77::t_7551245178383d 32
+scripts/verify-mcpfn-bundled-sdk.d.mts
+  s_2e02573f08eb77::t_290142074eaff9 1-19
+scripts/verify-mcpfn-bundled-sdk.mjs
+  s_2e02573f08eb77::t_abbed45117e835 1-131
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "036d276e0bb8654ff1f7e5166bfd33d4b50b47d1",
+  "prompts": {},
+  "sessions": {
+    "s_2e02573f08eb77": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2934745b-40de-4cb5-afbd-07b38d4d2267",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

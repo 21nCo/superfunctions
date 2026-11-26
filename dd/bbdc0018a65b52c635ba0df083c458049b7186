@@ -1,0 +1,34 @@
+billfn/core/src/router.ts
+  s_0d7e11293d5a4e::t_8d429b6fedcea6 295-305
+billfn/core/src/index.ts
+  s_0d7e11293d5a4e::t_8d429b6fedcea6 39
+billfn/core/src/__tests__/router-subject-refund.test.ts
+  s_0d7e11293d5a4e::t_2acf9415b9bfd9 4-6,204-205,215-228,230-231,241-250,252-263
+billfn/core/src/service.ts
+  s_0d7e11293d5a4e::t_4d8da25773e72b 71
+  s_0d7e11293d5a4e::t_8d429b6fedcea6 278-283,1096-1099,1121-1130
+billfn/core/src/types.ts
+  s_0d7e11293d5a4e::t_8d429b6fedcea6 959-964,969-970,972
+billfn/docs/content/docs/server/routes.mdx
+  s_0d7e11293d5a4e::t_819d238974ed8a 33
+billfn/docs/content/docs/server/setup.mdx
+  s_0d7e11293d5a4e::t_1d6654a736b43f 114-122
+billfn/docs/content/docs/troubleshooting.mdx
+  s_0d7e11293d5a4e::t_59666375a14c75 55-56
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ddbbdc0018a65b52c635ba0df083c458049b7186",
+  "prompts": {},
+  "sessions": {
+    "s_0d7e11293d5a4e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "97ac12a3-1bf1-4732-a6f3-ece8c28b207e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

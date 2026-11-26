@@ -1,0 +1,31 @@
+memoryfn/docs/content/docs/storage.md
+  s_aad3da13d40b6e::t_63c4b43a2b8253 31
+memoryfn/docs/static/llms-full.txt
+  s_aad3da13d40b6e::t_c8fe5660879555 509
+memoryfn/typescript/src/chunking/markdown.ts
+  s_aad3da13d40b6e::t_b1d51558ac2c86 220-221,223,225-226,228
+memoryfn/typescript/src/core/pipeline.ts
+  s_aad3da13d40b6e::t_fcf26b5bff6527 266,311-325
+memoryfn/typescript/src/storage/adapter.ts
+  s_aad3da13d40b6e::t_3f49c877719311 85-87,112-113
+memoryfn/typescript/tests/chunking.test.ts
+  s_aad3da13d40b6e::t_2ba1ed9639fa08 193-199
+memoryfn/typescript/tests/documents.test.ts
+  s_aad3da13d40b6e::t_d97d9e5a9ba0c9 517-518
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d2da65c3579378a14aeb837464d0e294276d4ded",
+  "prompts": {},
+  "sessions": {
+    "s_aad3da13d40b6e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3e953412-56c2-471f-9f9c-49876f7b1782",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

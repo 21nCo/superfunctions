@@ -1,0 +1,50 @@
+datafn/server/package.json
+  s_df6686278ce1d2::t_210b2951f622b7 3
+datafn/server/src/execution/mutation/__tests__/share-spv2.test.ts
+  s_df6686278ce1d2::t_eda148d0054ba2 2044-2046,2129-2131,2225-2227
+datafn/server/__tests__/namespace-provider.test.ts
+  s_df6686278ce1d2::t_312ef97c6b7765 234-235,261-263
+datafn/server/src/execution/sync/push.ts
+  s_df6686278ce1d2::t_491837f46f50db 15,250-251
+datafn/docs/content/docs/documentation/advanced/idempotency.mdx
+  s_df6686278ce1d2::t_210b2951f622b7 67,77,79-81
+datafn/server/src/execution/sync/__tests__/push-capabilities.test.ts
+  s_df6686278ce1d2::t_eda148d0054ba2 357-358,369-370,394-395,584-585,596-597,1469-1470,1481-1482
+datafn/docs/content/docs/documentation/namespaces.mdx
+  s_df6686278ce1d2::t_30de30b6db1bcc 121,148
+datafn/server/src/server.ts
+  s_df6686278ce1d2::t_312ef97c6b7765 810-813,819-822
+  s_df6686278ce1d2::t_9289999916cb58 622,762
+datafn/server/src/routes/sync.ts
+  s_df6686278ce1d2::t_2b74089d89eef6 89-91,203-205,574-576
+datafn/server/src/execution/idempotency-db.ts
+  s_df6686278ce1d2::t_9289999916cb58 8,10,29,39-51,70,105-116,127,150,152
+datafn/server/__tests__/security-audit-identity.test.ts
+  s_df6686278ce1d2::t_16fdee90834ebd 1-312
+datafn/server/src/execution/idempotency.ts
+  s_df6686278ce1d2::t_9289999916cb58 38-107
+datafn/server/src/execution/mutation/execute.ts
+  s_df6686278ce1d2::t_491837f46f50db 8-13,1123-1124
+datafn/server/src/validation/authz.ts
+  s_df6686278ce1d2::t_1705a3b3bdb94f 642-644,649,653
+  s_df6686278ce1d2::t_1ae9aa2c1adc09 575,585-592,598,600-607,609-615,618-623,628,635-641,645-648,650-652,654-656
+  s_df6686278ce1d2::t_c1528a95d087d0 657-658
+package-lock.json
+  s_df6686278ce1d2::t_766386ee4d7312 11002
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e8d88ca4501560220d29c4a4665bd3e986d6569a",
+  "prompts": {},
+  "sessions": {
+    "s_df6686278ce1d2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e9c490bb-690e-4bdf-82c6-aea2b9d5fd51",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

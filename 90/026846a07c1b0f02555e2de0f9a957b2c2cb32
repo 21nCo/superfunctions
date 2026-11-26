@@ -1,0 +1,21 @@
+mcpfn/core/tests/yield-between-tests.ts
+  s_50db2f80bcc167::t_9ba8903c4a37cb 1-7
+mcpfn/core/vitest.config.ts
+  s_50db2f80bcc167::t_81bf950d382483 19
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "90026846a07c1b0f02555e2de0f9a957b2c2cb32",
+  "prompts": {},
+  "sessions": {
+    "s_50db2f80bcc167": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21365-adee-73f0-b063-a599a1011231",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,48 @@
+datafn/server/src/routes/query/execute.ts
+  s_09f19affbc7889::t_fb648ba690217e 237
+  s_09f19affbc7889::t_938b7fb7072114 83,136,161,204,206,218,238,297
+datafn/server/src/validation/authz.ts
+  s_09f19affbc7889::t_a2fe65a32d9bd9 194-198
+datafn/server/src/execution/transact.ts
+  s_09f19affbc7889::t_622d405d4947fc 60,199
+datafn/server/src/execution/query/pushdown.ts
+  s_09f19affbc7889::t_6f1b6c3b3e8454 275,299
+  s_09f19affbc7889::t_5d9e5698cc90d2 228,236,284,335,391
+datafn/server/src/execution/query/select.ts
+  s_09f19affbc7889::t_7a7f18194dcae0 596-603,615,757
+datafn/server/src/execution/db-store.ts
+  s_09f19affbc7889::t_03853079a7c98f 25,107,109-113,220,235,379,690,1085
+datafn/server/__tests__/query-filter-pushdown.test.ts
+  s_09f19affbc7889::t_0ed8f0354fed4a 122,154,177-193,1137-1187,1189
+  s_ad3a3856a87c81::t_08bfa8665ceb2b 1188,1190
+datafn/server/src/execution/query/filter-plan.ts
+  s_09f19affbc7889::t_14122827b1844a 40,96,568
+datafn/server/src/routes/query.ts
+  s_09f19affbc7889::t_0153db3b6f95bb 502,879
+datafn/server/src/routes/transact.ts
+  s_09f19affbc7889::t_95520ee8d38344 161
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "19aac6f235d74f3fd968c174aba5c35f372050cb",
+  "prompts": {},
+  "sessions": {
+    "s_09f19affbc7889": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a211b0-71ed-7282-8a24-bcadc7fcc607",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_ad3a3856a87c81": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a2126c-2a4d-7b03-aaf0-909847a5e9c7",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

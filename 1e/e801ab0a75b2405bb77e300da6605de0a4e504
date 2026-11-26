@@ -1,0 +1,29 @@
+flowfn/typescript/src/queue/queue.ts
+  s_a4a9279b38a3d6::t_be4d0af332e178 27-30,32-36,320-327
+flowfn/typescript/src/queue/transactional-enqueue.test.ts
+  s_ee209e791cba34::t_819badcea4f359 101-137
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1ee801ab0a75b2405bb77e300da6605de0a4e504",
+  "prompts": {},
+  "sessions": {
+    "s_a4a9279b38a3d6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1855ecfc-893f-4a3a-9ace-d8374583571f",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_ee209e791cba34": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1fe34-505a-7d91-87df-7cac65dc64d3",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

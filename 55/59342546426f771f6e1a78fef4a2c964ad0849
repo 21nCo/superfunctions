@@ -1,0 +1,37 @@
+flowfn/typescript/docs/queue-ownership.md
+  s_9a14e5a0abf66c::t_de07ef883123a0 47-57
+flowfn/typescript/src/adapters/base.ts
+  s_9a14e5a0abf66c::t_cfe1284f245e46 74-80,83,215-216
+flowfn/typescript/src/adapters/memory.ts
+  s_9a14e5a0abf66c::t_d7ee7069938af6 67,70
+flowfn/typescript/src/adapters/postgres/index.ts
+  s_9a14e5a0abf66c::t_daac5825411c60 253,879
+flowfn/typescript/src/adapters/postgres/postgres.test.ts
+  s_9a14e5a0abf66c::t_bd44ed904611a3 6,60
+flowfn/typescript/src/adapters/redis.test.ts
+  s_9a14e5a0abf66c::t_1293632144d7a1 6,240
+flowfn/typescript/src/core/flow-fn.ts
+  s_9a14e5a0abf66c::t_bae9ad009745d6 123
+flowfn/typescript/src/queue/claim-many.test.ts
+  s_9a14e5a0abf66c::t_47e9d2a5d8b85b 2,4-5,17-45,49-50,52,73,80-84,255-413
+flowfn/typescript/src/queue/queue.ts
+  s_9a14e5a0abf66c::t_aaceae91804653 16,75-78,562-563,565-566,579-582,954,1020-1021,1023,1042,1055-1056,1062,1066,1069-1078,1093-1100,1106-1107,1109,1112-1132,1137-1149,1160-1165,1169-1170,1175-1177,1180,1182,1184-1190,1193-1195,1197-1212,1270,1657-1659
+flowfn/typescript/src/storage/queue-claim-many-contract.ts
+  s_9a14e5a0abf66c::t_4111fbfca0da59 48-64
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5559342546426f771f6e1a78fef4a2c964ad0849",
+  "prompts": {},
+  "sessions": {
+    "s_9a14e5a0abf66c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c49c4f5c-f661-442d-a38e-9f6b9423e963",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

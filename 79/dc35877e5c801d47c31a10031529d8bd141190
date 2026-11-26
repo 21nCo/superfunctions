@@ -1,0 +1,21 @@
+memoryfn/typescript/src/storage/pg/adapter.ts
+  s_19abec75182420::t_fdd1591f3787d9 235-239,246,254-260,262-267
+memoryfn/typescript/tests/postgres.test.ts
+  s_19abec75182420::t_720bb777d6455c 4,14-25,127-145
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "79dc35877e5c801d47c31a10031529d8bd141190",
+  "prompts": {},
+  "sessions": {
+    "s_19abec75182420": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d61a7abd-8c27-4e7c-ba23-13d43e2da322",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

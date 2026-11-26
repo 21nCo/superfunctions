@@ -1,0 +1,19 @@
+scripts/owners.mjs
+  s_20609992b3fca5::t_bff0c955f76593 427
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2bcab5effea958d9c63f8ac9bd724b579b519387",
+  "prompts": {},
+  "sessions": {
+    "s_20609992b3fca5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c4fce3a1-9c12-4ca0-adfe-8997b42f23bb",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,21 @@
+filefn/server/src/upload-sessions/input.ts
+  s_b841cebdcfad95::t_e49edfb2d053d0 179-187,261
+filefn/server/tests/upload-input-security.test.ts
+  s_b841cebdcfad95::t_9811b58926551f 190-201
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7e89c84b8b629b3745c6c5cf0f1f9a40507714c8",
+  "prompts": {},
+  "sessions": {
+    "s_b841cebdcfad95": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "436f4738-d86e-44e1-82bc-c432f9aaabf3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

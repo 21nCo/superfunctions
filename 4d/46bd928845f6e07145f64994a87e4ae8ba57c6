@@ -1,0 +1,21 @@
+clifn/core/src/app-dirs.ts
+  s_c7ec784961d5e7::t_e5f5cc769b3f81 51-52
+clifn/core/tests/app-stores.test.ts
+  s_c7ec784961d5e7::t_11a0eabb52ed43 463-476
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4d46bd928845f6e07145f64994a87e4ae8ba57c6",
+  "prompts": {},
+  "sessions": {
+    "s_c7ec784961d5e7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "725aba51-cd3f-454e-b48e-f55aeead54ac",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,23 @@
+billfn/core/src/service.ts
+  s_0d7e11293d5a4e::t_4344aa8543cc42 1186-1193,1205-1207,4631-4646,4675,4695
+billfn/docs/content/docs/server/setup.mdx
+  s_0d7e11293d5a4e::t_2a46560cdf48a3 170
+billfn/core/src/__tests__/refund-idempotency.test.ts
+  s_0d7e11293d5a4e::t_cce5810d2c18c4 790-816,818-824
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3ff6b1099382801b90c74e752bc6d26205e31592",
+  "prompts": {},
+  "sessions": {
+    "s_0d7e11293d5a4e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "97ac12a3-1bf1-4732-a6f3-ece8c28b207e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

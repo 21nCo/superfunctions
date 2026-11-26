@@ -1,0 +1,19 @@
+filefn/server/tests/storage-key-security.test.ts
+  s_b841cebdcfad95::t_6a99e4fde2e388 55,62-67,131-132,139
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "beffb1873f6b8d55b80ca37118ba6c0e69aa4588",
+  "prompts": {},
+  "sessions": {
+    "s_b841cebdcfad95": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "436f4738-d86e-44e1-82bc-c432f9aaabf3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

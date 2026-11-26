@@ -1,0 +1,43 @@
+flowfn/SPEC.md
+  s_b996deaa3d01f1::t_3672c3f9717480 1611,1618
+flowfn/admin/README.md
+  s_b996deaa3d01f1::t_6450178175526e 15,22-25
+flowfn/admin/src/__tests__/admin.test.ts
+  s_b996deaa3d01f1::t_b4cef030804557 376-377,380,383,385-387,417,421,425-427,429-439,441-482,511
+flowfn/admin/src/capability.ts
+  s_b996deaa3d01f1::t_fdf6476ccc9719 701
+flowfn/admin/src/domain-service.ts
+  s_b996deaa3d01f1::t_bfd86895bf97bb 334,336-342
+flowfn/typescript/README.md
+  s_b996deaa3d01f1::t_c4405ecc8bfa77 55-60
+flowfn/typescript/docs/durable-scheduling.md
+  s_b996deaa3d01f1::t_e0f40d98048352 31-34
+flowfn/typescript/src/core/durable-scheduler.ts
+  s_b996deaa3d01f1::t_1496c87a2a8472 76-82
+flowfn/typescript/src/core/scheduler-generation.test.ts
+  s_b996deaa3d01f1::t_b9ed77499ae83a 26-96
+flowfn/typescript/src/queue/worker-pool.test.ts
+  s_b996deaa3d01f1::t_ef0a12da00cb4d 4,8-39
+flowfn/typescript/src/queue/worker-pool.ts
+  s_b996deaa3d01f1::t_d467c623e39326 10,14-15,21-26,40-45,93-94
+flowfn/typescript/src/storage/worker-contract.ts
+  s_b996deaa3d01f1::t_6603d5cf7e1a02 54-56,58
+flowfn/typescript/tests/dlq.test.ts
+  s_b996deaa3d01f1::t_8c41668e749540 205-224
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0b97c55a0b202f731256020665e47a0388db6089",
+  "prompts": {},
+  "sessions": {
+    "s_b996deaa3d01f1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c40e7b19-3313-4542-ad8e-39c9c4c912f1",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

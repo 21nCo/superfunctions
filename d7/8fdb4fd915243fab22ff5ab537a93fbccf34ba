@@ -1,0 +1,23 @@
+apifn/cli/src/commands/check-git.ts
+  s_6d7793942586f4::t_2c6112065e46b2 30,429
+apifn/cli/src/commands/check-publish.ts
+  s_6d7793942586f4::t_97960156a65a63 42-43,57,361,415-416,424,456,709,847,849
+apifn/cli/src/utils/router-loader.ts
+  s_6d7793942586f4::t_2bc4e468ccb057 47
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d78fdb4fd915243fab22ff5ab537a93fbccf34ba",
+  "prompts": {},
+  "sessions": {
+    "s_6d7793942586f4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec2a1132-33c2-4d38-8cf7-6f92501ab558",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

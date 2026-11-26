@@ -1,0 +1,65 @@
+clifn/core/src/diagnostics.ts
+  s_20e59dd6c64205::t_d61ac3cfbb1918 1-2,83
+clifn/core/src/errors.ts
+  s_20e59dd6c64205::t_aff0d0b9011a4a 1,10,25,89-90,101,105,109-110,112,114,117
+clifn/core/src/output.ts
+  s_20e59dd6c64205::t_e658401119d7a7 72-114
+clifn/core/src/runner.ts
+  s_20e59dd6c64205::t_21cdb7f95df2fd 82-90,108,112
+clifn/core/src/terminal.ts
+  s_fd9c337a48c8c2::t_9e43c4fc0339fc 105,108-110
+clifn/core/tests/runner-golden.test.ts
+  s_fd9c337a48c8c2::t_3315c688f0f185 3-4
+clifn/core/tests/terminal.test.ts
+  s_fd9c337a48c8c2::t_a452ad2f81b058 59,164
+clifn/core/CHANGELOG.md
+  s_6995960938c607::t_1879a7fbec8a33 5,7
+clifn/core/README.md
+  s_6995960938c607::t_25397735eb15a4 282
+clifn/core/tests/errors.test.ts
+  s_6995960938c607::t_3d68b556e14e3b 1-123
+clifn/core/tests/fixtures/cac/index.ts
+  s_6995960938c607::t_df435926eb5ade 2
+clifn/core/tests/fixtures/commander/index.ts
+  s_6995960938c607::t_e1dac6cd5a83be 2
+clifn/core/tests/fixtures/parse-args/index.ts
+  s_6995960938c607::t_bb6e5c24d3e891 2
+clifn/docs/content/docs/reference/core-readme.md
+  s_6995960938c607::t_4498ca086d67d0 285
+clifn/docs/content/docs/reference/exports.md
+  s_6995960938c607::t_9dc83a70104cc1 10
+clifn/docs/static/llms-full.txt
+  s_6995960938c607::t_0eca3b20a53a40 593,739
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2beb2479539f749ddb8865fb7ebfeb74c98a042a",
+  "prompts": {},
+  "sessions": {
+    "s_20e59dd6c64205": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a211b0-8c37-7b63-8f91-222b058dcfea",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_6995960938c607": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "583c32ed-aa79-4c46-b3cd-c2f158f1fb81",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_fd9c337a48c8c2": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a211b7-1583-7170-9139-2cc498049e56",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

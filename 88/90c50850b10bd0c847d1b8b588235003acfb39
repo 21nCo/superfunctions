@@ -1,0 +1,25 @@
+filefn/python/filefn/server/authz/grant_expiry.py
+  s_b841cebdcfad95::t_d77222759f045f 6-7,12,38
+filefn/python/tests/test_core.py
+  s_b841cebdcfad95::t_5af828bcb12a2b 107-118
+filefn/server/src/authz/grant-expiry.ts
+  s_b841cebdcfad95::t_57a959e666c54d 5,8,40
+filefn/server/tests/sharing-security.test.ts
+  s_b841cebdcfad95::t_0f44a66b1859bf 542-546
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8890c50850b10bd0c847d1b8b588235003acfb39",
+  "prompts": {},
+  "sessions": {
+    "s_b841cebdcfad95": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "436f4738-d86e-44e1-82bc-c432f9aaabf3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

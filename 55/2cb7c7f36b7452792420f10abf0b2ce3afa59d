@@ -1,0 +1,27 @@
+memoryfn/typescript/src/storage/adapter.ts
+  s_b996deaa3d01f1::t_bf0c7d184e90c3 76-79,81
+memoryfn/typescript/src/storage/memory/adapter.ts
+  s_b996deaa3d01f1::t_e208d5e779616d 90-91,96,183-185,317-319
+memoryfn/typescript/src/storage/pg/adapter.ts
+  s_b996deaa3d01f1::t_80bcb9e36bffa6 28-29,36-40,122-124,443-445
+memoryfn/typescript/tests/documents.test.ts
+  s_b996deaa3d01f1::t_6d9623caa00f22 849,893-925
+memoryfn/typescript/tests/postgres-source-statements.test.ts
+  s_b996deaa3d01f1::t_c2d7455a201469 118-128
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "552cb7c7f36b7452792420f10abf0b2ce3afa59d",
+  "prompts": {},
+  "sessions": {
+    "s_b996deaa3d01f1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c40e7b19-3313-4542-ad8e-39c9c4c912f1",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

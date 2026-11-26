@@ -1,0 +1,47 @@
+logfn/.conduct/readiness.md
+  s_0d85e5b70dc887::t_89c266fc0edea6 19-20,26,32
+logfn/.conduct/response-correlation-readiness.md
+  s_0d85e5b70dc887::t_19cc8ee1337ea2 19
+logfn/python/README.md
+  s_0d85e5b70dc887::t_639463e3a2f62b 59-63,250-251
+logfn/python/src/logfn/default_redaction.py
+  s_0d85e5b70dc887::t_81ba4f86a5f293 17-19,34-35,37-38,52
+logfn/python/src/logfn/serialization.py
+  s_0d85e5b70dc887::t_78b4370c9fe2c8 14-25,58-66
+logfn/python/src/logfn/sinks.py
+  s_0d85e5b70dc887::t_def32f858c7212 61-65,70-71,123,130-134,227-237,239,242-245
+logfn/python/tests/test_default_redaction.py
+  s_0d85e5b70dc887::t_291918c8c92e30 52-55
+logfn/python/tests/test_http_delivery.py
+  s_0d85e5b70dc887::t_6d45cf9714cbc4 64-78
+logfn/python/tests/test_serialization.py
+  s_0d85e5b70dc887::t_5ba86d3353f7c1 133-146
+logfn/typescript/README.md
+  s_0d85e5b70dc887::t_b34023cd1172c3 356,358,412-418,468-469
+logfn/typescript/src/core/default-redaction.test.ts
+  s_0d85e5b70dc887::t_77afeda0e85780 40-42
+logfn/typescript/src/pipeline/default-redaction.ts
+  s_0d85e5b70dc887::t_e162b7748e1c24 11-13,18-21,27
+logfn/typescript/src/sinks/http-delivery.test.ts
+  s_0d85e5b70dc887::t_0db64b377e580c 52-53,55,57-68,70-72
+logfn/typescript/src/sinks/http.ts
+  s_0d85e5b70dc887::t_52f273486699a2 55-56,61-69,97,142-144,160-171,174,183-187,197,257,332,335
+logfn/typescript/src/sinks/indexeddb-queue.test.ts
+  s_0d85e5b70dc887::t_6c9813776a96fe 36-56
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2ce2009553ec357ab3280ec2a99b57ed0d5b18b7",
+  "prompts": {},
+  "sessions": {
+    "s_0d85e5b70dc887": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "37e3656b-fb3d-4769-b9a9-5d99c965fb6b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

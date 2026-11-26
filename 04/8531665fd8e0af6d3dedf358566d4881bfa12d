@@ -1,0 +1,45 @@
+cifn/typescript/control-plane/src/api/routes.ts
+  s_1eb217f2cbe12c::t_1c5e8a803ae457 389-391
+cifn/typescript/control-plane/src/queue/flowfn-client.ts
+  s_1eb217f2cbe12c::t_9f30cb71ef39c3 2,17-18,47-49,54-55,61-63,66-70,72-77
+cifn/typescript/control-plane/src/secrets/redact.ts
+  s_1eb217f2cbe12c::t_8f246a804508c4 5-8,19
+cifn/typescript/control-plane/src/store/database-store.test.ts
+  s_1eb217f2cbe12c::t_13ed623f677190 448,634,640,646,669,1268-1274
+cifn/typescript/control-plane/src/store/database-store.ts
+  s_1eb217f2cbe12c::t_93507fad9eb9ff 192,424-426,477-478,483
+cifn/typescript/control-plane/src/triggers/triggers.test.ts
+  s_1eb217f2cbe12c::t_a93f0c26c50719 478,480,504,506-507
+cifn/typescript/runner/src/claim-journal.ts
+  s_1eb217f2cbe12c::t_c0451de43f9a43 12-13
+cifn/typescript/runner/src/owned-docker-executor.test.ts
+  s_1eb217f2cbe12c::t_07072434fda984 4,73,169-180
+cifn/typescript/runner/src/owned-docker-executor.ts
+  s_1eb217f2cbe12c::t_5c430cdc072acc 435,441-442,492,499
+cifn/typescript/runner/src/remote-checkout.test.ts
+  s_1eb217f2cbe12c::t_90f6aeeac8f725 63-81
+cifn/typescript/runner/src/remote-runner.test.ts
+  s_1eb217f2cbe12c::t_8500e45795772e 74-75,432,444,640-657
+cifn/typescript/runner/src/remote-runner.ts
+  s_1eb217f2cbe12c::t_a2fe48d64b71ab 20-21,125-127,130,142-143,145,161,191-203,216,274,285-291,330
+cifn/typescript/runner/src/runner.ts
+  s_1eb217f2cbe12c::t_7d859d9708945f 33-45,329-330
+cifn/typescript/runner/src/secrets-steps.test.ts
+  s_1eb217f2cbe12c::t_0de275460dbb20 101-105
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "048531665fd8e0af6d3dedf358566d4881bfa12d",
+  "prompts": {},
+  "sessions": {
+    "s_1eb217f2cbe12c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2b2155d1-b0bb-4e5e-bb89-8414e78e1489",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

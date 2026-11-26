@@ -1,0 +1,33 @@
+clifn/core/tests/consumer-import-scanner.ts
+  s_a4a9279b38a3d6::t_44520aa0d49727 4-5,12-15,17-22,28,30,48,52-145,147-148,150-160,164-183,205-214,219-226,228-229,231,235-240,244-248,250-252,254-265
+clifn/core/tests/consumer-scan.test.ts
+  s_2bb09271643bcf::t_b939c5db208e37 143,145,149-183,191,193
+clifn/core/tests/fixtures/consumer-scan/boundary-listed-forms.ts
+  s_a4a9279b38a3d6::t_06a1663cc51767 1-13
+clifn/core/tests/fixtures/consumer-scan/statement-boundary-forms.ts
+  s_a4a9279b38a3d6::t_903e168c41f96f 1-15
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "14be3ec4cb61931a9b9cb1e6092e51304d3c2aa0",
+  "prompts": {},
+  "sessions": {
+    "s_2bb09271643bcf": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d02a377b-861a-4099-bac5-ba4c2e6c65b8",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    },
+    "s_a4a9279b38a3d6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1855ecfc-893f-4a3a-9ace-d8374583571f",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

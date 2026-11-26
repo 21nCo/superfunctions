@@ -1,0 +1,21 @@
+authfn/swift/Sources/AuthFnWebViewBridgeHost/AuthFnWebViewBridgeHost.swift
+  s_e5ac07859c1bc9::t_fae646a74da1fd 79-85,104,153-156,163-175,177,179,183-190,249-260,263-264
+authfn/swift/Tests/AuthFnWebViewBridgeHostTests/AuthFnWebViewBridgeHostTests.swift
+  s_e5ac07859c1bc9::t_0bfc9f652f75be 115-131
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1a51905f03ea76f3fd9740025913dc065c73cd5a",
+  "prompts": {},
+  "sessions": {
+    "s_e5ac07859c1bc9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5142ca70-a18b-4d6e-8f19-4855393dcdd0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

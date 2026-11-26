@@ -1,0 +1,87 @@
+apifn/cli/__tests__/__snapshots__/check-command.test.ts.snap
+  s_50de5efcb2fce4::t_a88905213148a6 1-92
+apifn/cli/__tests__/check-command.test.ts
+  s_50de5efcb2fce4::t_ff8c15e439a30d 1-3780
+apifn/cli/__tests__/fixtures/check/base-zero/apifn.config.ts
+  s_50de5efcb2fce4::t_42e1b78e6873c3 1-5
+apifn/cli/__tests__/fixtures/check/base/apifn.config.ts
+  s_50de5efcb2fce4::t_b4c39f60be0c84 1-4
+apifn/cli/__tests__/fixtures/check/base/router.ts
+  s_50de5efcb2fce4::t_36d23f5ccfa956 1-29
+apifn/cli/__tests__/fixtures/check/breaking-major/apifn.config.ts
+  s_50de5efcb2fce4::t_2425660109deaa 1-4
+apifn/cli/__tests__/fixtures/check/breaking-major/router.ts
+  s_50de5efcb2fce4::t_5a5b956614d3ee 1-18
+apifn/cli/__tests__/fixtures/check/breaking-zero-minor/apifn.config.ts
+  s_50de5efcb2fce4::t_5eaec7c1c02b9b 1-5
+apifn/cli/__tests__/fixtures/check/breaking/apifn.config.ts
+  s_50de5efcb2fce4::t_7fd45f2dbe6666 1-4
+apifn/cli/__tests__/fixtures/check/breaking/router.ts
+  s_50de5efcb2fce4::t_b55ee655f119c1 1-18
+apifn/cli/__tests__/fixtures/check/compatible/apifn.config.ts
+  s_50de5efcb2fce4::t_9453d690331e7e 1-4
+apifn/cli/__tests__/fixtures/check/compatible/router.ts
+  s_50de5efcb2fce4::t_9b3f50764457ee 1-40
+apifn/cli/__tests__/fixtures/check/invalid-diff/apifn.config.ts
+  s_50de5efcb2fce4::t_74fea105f6ef1b 1-4
+apifn/cli/__tests__/fixtures/check/invalid-diff/router.ts
+  s_50de5efcb2fce4::t_cd6b2af3b11e79 1-31
+apifn/cli/__tests__/fixtures/check/invalid/apifn.config.ts
+  s_50de5efcb2fce4::t_077b5d5f892a82 1-4
+apifn/cli/__tests__/fixtures/check/invalid/router.ts
+  s_50de5efcb2fce4::t_632ebcbd344ff6 1-29
+apifn/cli/__tests__/fixtures/check/non-semver/apifn.config.ts
+  s_50de5efcb2fce4::t_65f4566b58cc02 1-5
+apifn/cli/__tests__/temp-dirs.ts
+  s_50de5efcb2fce4::t_929cc9f15a8758 9-10,12-14
+apifn/cli/package.json
+  s_50de5efcb2fce4::t_3d4b104ff8f989 3
+apifn/cli/src/bin.ts
+  s_50de5efcb2fce4::t_fbc39679519a3d 3,5,8-11
+apifn/cli/src/commands/check-args.ts
+  s_50de5efcb2fce4::t_180c973e837f16 1-198
+apifn/cli/src/commands/check-compare.ts
+  s_50de5efcb2fce4::t_9df70381a4c7d5 1-471
+apifn/cli/src/commands/check-git.ts
+  s_50de5efcb2fce4::t_4a2dcfe40dd5e2 1-377
+apifn/cli/src/commands/check-io.ts
+  s_50de5efcb2fce4::t_38d06752e43ea1 1-124
+apifn/cli/src/commands/check-parse.ts
+  s_50de5efcb2fce4::t_80988cd2b345e4 1-314
+apifn/cli/src/commands/check-paths.ts
+  s_50de5efcb2fce4::t_8029faf6c91409 1-132
+apifn/cli/src/commands/check-publish.ts
+  s_50de5efcb2fce4::t_15d58bd38542d8 1-732
+apifn/cli/src/commands/check-report.ts
+  s_50de5efcb2fce4::t_7784dabdb49c89 1-182
+apifn/cli/src/commands/check.ts
+  s_50de5efcb2fce4::t_34920d86bd0773 1-563
+apifn/cli/src/commands/diff.ts
+  s_50de5efcb2fce4::t_9bdad14db58643 41-42
+apifn/cli/src/commands/generate.ts
+  s_50de5efcb2fce4::t_7068fd4eb94930 5,7,10-30,32,34,41,54-71,74,76,79
+apifn/cli/src/index.ts
+  s_50de5efcb2fce4::t_922ebdb6c45f8d 10-11,24-31,307-357,509-524,527,530-531,539
+apifn/cli/src/signals.ts
+  s_50de5efcb2fce4::t_a56b0e63c73c55 1-56
+apifn/cli/src/utils/router-loader.ts
+  s_50de5efcb2fce4::t_9e4abe3206b022 3,14-19,22,25-32,43-50
+package-lock.json
+  s_50de5efcb2fce4::t_ffb8f13c964c28 110
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "45cc616ce8d85a8820bfac19260febc5c15e4682",
+  "prompts": {},
+  "sessions": {
+    "s_50de5efcb2fce4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "90fcc1e7-1916-4100-92f7-3cb6af188f99",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

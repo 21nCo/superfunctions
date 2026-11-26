@@ -1,0 +1,39 @@
+flowfn/typescript/README.md
+  s_b996deaa3d01f1::t_d3c16b55602eed 60-61
+flowfn/typescript/docs/queue-ownership.md
+  s_b996deaa3d01f1::t_e54581be628220 42,46-49,60-61
+flowfn/typescript/src/adapters/postgres/index.ts
+  s_b996deaa3d01f1::t_456c691c49d3d0 25-32,34,37,287-288,306-312,314,327-332,335
+flowfn/typescript/src/adapters/postgres/postgres.test.ts
+  s_b996deaa3d01f1::t_427383d4185857 2,554-612
+flowfn/typescript/src/queue/dlq.ts
+  s_b996deaa3d01f1::t_334c1f2393e6dd 100-101,199,218-228,235-241,258-259
+flowfn/typescript/src/queue/queue.ts
+  s_b996deaa3d01f1::t_fe9b74f4b02ded 28,324,330,426-430
+flowfn/typescript/src/queue/types.ts
+  s_b996deaa3d01f1::t_f1594ae4327616 61-62
+flowfn/typescript/src/queue/worker-pool.test.ts
+  s_b996deaa3d01f1::t_a319172e886e64 122-169
+flowfn/typescript/src/queue/worker-pool.ts
+  s_b996deaa3d01f1::t_c065c315f5329d 45,49-53,68,118-126
+flowfn/typescript/src/queue/worker.ts
+  s_b996deaa3d01f1::t_f46b4af710b1d6 86-87
+flowfn/typescript/tests/dlq.test.ts
+  s_b996deaa3d01f1::t_365b35ab180351 510-511,521,523-526,539
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "800179f63360fd9f957a75e8fe7e0d5ee482dc81",
+  "prompts": {},
+  "sessions": {
+    "s_b996deaa3d01f1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c40e7b19-3313-4542-ad8e-39c9c4c912f1",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

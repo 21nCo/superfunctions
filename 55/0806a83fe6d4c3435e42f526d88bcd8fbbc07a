@@ -1,0 +1,27 @@
+mcpfn/core/README.md
+  s_19abec75182420::t_286de26f69a889 170
+mcpfn/core/src/client-profiles.ts
+  s_19abec75182420::t_c10f5b4714b683 443-447,449
+mcpfn/core/src/server.ts
+  s_19abec75182420::t_b2be18a780bee1 233-238,560-580,587-589,1065
+mcpfn/core/tests/client-profiles.test.ts
+  s_19abec75182420::t_06fae5b6f39ab2 1286-1302
+mcpfn/core/tests/server.test.ts
+  s_19abec75182420::t_44453b2824d064 901-948
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "550806a83fe6d4c3435e42f526d88bcd8fbbc07a",
+  "prompts": {},
+  "sessions": {
+    "s_19abec75182420": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d61a7abd-8c27-4e7c-ba23-13d43e2da322",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

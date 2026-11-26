@@ -1,0 +1,35 @@
+logfn/python/README.md
+  s_989f702088508e::t_a202b7271ca934 192-195
+logfn/python/src/logfn/default_redaction.py
+  s_989f702088508e::t_757011c67ec94f 410-411,435-441,443-444,451,455-456,460,462-472
+logfn/python/tests/test_default_redaction.py
+  s_989f702088508e::t_bea696e66b75e4 504-505,507-508
+logfn/typescript/README.md
+  s_989f702088508e::t_f1333c52d69990 650-652
+logfn/typescript/src/core/default-redaction.test.ts
+  s_989f702088508e::t_e87c9612e3dd72 506-509
+logfn/typescript/src/pipeline/default-redaction.ts
+  s_989f702088508e::t_29ef44288694b3 334-339,341,343-344,347,352,361-365
+watchfn/python/tests/test_log_integration.py
+  s_989f702088508e::t_f66406119c9578 159-160,164-165
+watchfn/typescript/src/integrations/logfn/index.ts
+  s_989f702088508e::t_60ce03b0549d36 55-56
+watchfn/typescript/tests/logfn-integration.test.ts
+  s_989f702088508e::t_89fcc4429cc004 33-34,38
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2ca2036ed077168372977f65a3b4d6d274ab6214",
+  "prompts": {},
+  "sessions": {
+    "s_989f702088508e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4af38aeb-3f3a-4dde-a1ff-98327fa8b718",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

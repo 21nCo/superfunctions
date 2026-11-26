@@ -1,0 +1,25 @@
+billfn/core/src/__tests__/http-surface.test.ts
+  s_0d7e11293d5a4e::t_961d6712470458 251-267
+billfn/core/src/http.ts
+  s_0d7e11293d5a4e::t_676b5b246717b6 60,65
+billfn/python/billfn/types.py
+  s_0d7e11293d5a4e::t_0b391f9092168b 7,9,207
+billfn/python/tests/test_checkout_metadata.py
+  s_0d7e11293d5a4e::t_e53a0931a64b6a 15-16
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "dd2833434a808cfa203ccff2ef6ffd01b27f45a4",
+  "prompts": {},
+  "sessions": {
+    "s_0d7e11293d5a4e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "97ac12a3-1bf1-4732-a6f3-ece8c28b207e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

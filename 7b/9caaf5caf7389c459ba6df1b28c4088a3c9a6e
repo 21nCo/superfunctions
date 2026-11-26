@@ -1,0 +1,19 @@
+.github/workflows/pullfrog.yml
+  s_646b1753df3755::t_13fd42c280a9ff 30-32
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7b9caaf5caf7389c459ba6df1b28c4088a3c9a6e",
+  "prompts": {},
+  "sessions": {
+    "s_646b1753df3755": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1fe5f-7ed4-7f62-8f18-d0420492a877",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,23 @@
+recfn/server/__tests__/bot-worker-cleanup.test.ts
+  s_f62fe94347f153::t_94209bba39b29e 1,6,9,13,17,64-91
+recfn/server/src/store/bot-work.ts
+  s_f62fe94347f153::t_6a2b14577d9c48 20-26,31
+recfn/server/src/worker/bot-worker.ts
+  s_f62fe94347f153::t_dfe016ed604f52 5,135-136,155,163-164,168,523-525
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4aa1d14832ec8e231b18a76614b0e9582dca4995",
+  "prompts": {},
+  "sessions": {
+    "s_f62fe94347f153": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_f62fe94347f153",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

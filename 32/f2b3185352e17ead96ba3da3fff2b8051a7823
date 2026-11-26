@@ -1,0 +1,37 @@
+recfn/README.md
+  s_9836c37cbafbb3::t_45499f70c05ddf 243-246
+recfn/core/__tests__/bot-config.test.ts
+  s_9836c37cbafbb3::t_a612f8985168ac 2,21-35
+recfn/core/src/index.ts
+  s_9836c37cbafbb3::t_3e135ad690f012 57
+recfn/core/src/validators/bot-config.ts
+  s_9836c37cbafbb3::t_adfd00b9de1aab 1,30-39
+recfn/server/__tests__/api-bots.test.ts
+  s_9836c37cbafbb3::t_cb659a1125e53d 49-64
+recfn/server/__tests__/bot-worker-cleanup.test.ts
+  s_9836c37cbafbb3::t_cb4a37ff2daa1b 1-63
+recfn/server/__tests__/consent.test.ts
+  s_9836c37cbafbb3::t_282680e811aa76 12-15,243-244,254-290
+recfn/server/src/calendar/scheduler.ts
+  s_9836c37cbafbb3::t_f034076b07f5e9 10,187
+recfn/server/src/routes/bots.ts
+  s_9836c37cbafbb3::t_d5cb7384000ed8 73
+recfn/server/src/worker/bot-worker.ts
+  s_9836c37cbafbb3::t_bb0b82dcc46a85 2,141-143,147,255,261,283,437
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "32f2b3185352e17ead96ba3da3fff2b8051a7823",
+  "prompts": {},
+  "sessions": {
+    "s_9836c37cbafbb3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_9836c37cbafbb3",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

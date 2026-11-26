@@ -1,0 +1,31 @@
+apifn/cli/__tests__/check-command.test.ts
+  s_50de5efcb2fce4::t_d9048420c94bdf 11,15,45,3917-4192
+apifn/cli/src/commands/check-git.ts
+  s_50de5efcb2fce4::t_1999469c4bbe81 357-359,361,374-375,377,379,383
+apifn/cli/src/commands/check-publish.ts
+  s_50de5efcb2fce4::t_06caaa001fe1d0 37-40,193,285-300,303-304,306,313-324,330-332,365-371,374-421,423-424,513,649-651,653,656-666,668-670,707-713,722-724,737,776,780,793-796,829-831
+apifn/cli/src/commands/check.ts
+  s_50de5efcb2fce4::t_884b5def5fd1a9 40-41,70-75,81-82,181-183,201,203-210,214,218,224,235-267,269,271-273,275,278,283-295,349-350,353-357,359-364,366-372,376-379,402,404,412-414,599-601,608,636-645,649-650
+apifn/cli/src/commands/generate.ts
+  s_50de5efcb2fce4::t_fde1124ae1b303 34-35,43
+apifn/cli/src/index.ts
+  s_50de5efcb2fce4::t_4d4cf92e63fb2c 10,335,339-340,342-343,355
+apifn/cli/src/utils/router-loader.ts
+  s_50de5efcb2fce4::t_dbcf4c68d94b17 17-18,22-23,34
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c9db6bb5f7bff8c6508c3223dbeb701cd6219466",
+  "prompts": {},
+  "sessions": {
+    "s_50de5efcb2fce4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "90fcc1e7-1916-4100-92f7-3cb6af188f99",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

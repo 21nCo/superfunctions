@@ -1,0 +1,21 @@
+browsefn/typescript/src/core/cache-storage.ts
+  s_c719faa707762b::t_fa81f06a84f5e4 135,137-143,149-151,154,166,169-183,185,192,196-197,202,210-211,216-217,222,224,230,257-263,265,267-270,272,275,289,294,296-299,301,307-308
+browsefn/typescript/tests/cache-file-lock.test.ts
+  s_c719faa707762b::t_ae18b54c999dfd 57,60-65,99,115,141,182,193,212,239,262,288-356
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "891020d93a1f2a9fe4fd872e858748d4a42f08f3",
+  "prompts": {},
+  "sessions": {
+    "s_c719faa707762b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0d229937-ba84-4ae8-ba85-eced28f5d576",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,21 @@
+datafn/docs/content/docs/documentation/security/payload-limits.mdx
+  s_27f9df4550c0cc::t_98d4f98aebecfa 33
+datafn/server/src/server.ts
+  s_27f9df4550c0cc::t_87134345cf7a15 1262-1263,1684-1687
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ac3955f7188c783f019e2b5d5e898c80e38718af",
+  "prompts": {},
+  "sessions": {
+    "s_27f9df4550c0cc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ecf71e55-8f39-450b-a8cf-7340e626a7a9",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,32 @@
+filefn/python/filefn/server/core.py
+  s_b841cebdcfad95::t_d235681929428f 103-105,108-113
+packages/storage-local/src/adapter.test.ts
+  s_b841cebdcfad95::t_429c4463b0e015 325,333-338
+  s_b841cebdcfad95::t_a5742b95e3d931 339-340
+filefn/python/filefn/server/upload_sessions/service.py
+  s_b841cebdcfad95::t_d235681929428f 7,9,66-69,89-91,115-116,119,125,135-136,139
+packages/storage-local/src/adapter.ts
+  s_b841cebdcfad95::t_d235681929428f 52-54
+filefn/server/src/upload-sessions/input.ts
+  s_b841cebdcfad95::t_d235681929428f 77-78
+filefn/python/tests/test_upload_flow.py
+  s_b841cebdcfad95::t_429c4463b0e015 842,857,870-900
+filefn/server/tests/upload-input-security.test.ts
+  s_b841cebdcfad95::t_429c4463b0e015 159
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "046ee1d60013793f93a410c3023ec6e8339100b7",
+  "prompts": {},
+  "sessions": {
+    "s_b841cebdcfad95": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "436f4738-d86e-44e1-82bc-c432f9aaabf3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

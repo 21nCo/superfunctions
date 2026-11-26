@@ -1,0 +1,51 @@
+cachefn/python/cachefn/core/cache.py
+  s_afc99cba2554a1::t_ed54febf5a349c 108-111,115,118,125,287-288,415-416
+cachefn/python/cachefn/core/types.py
+  s_afc99cba2554a1::t_a7f6988897a2cd 153-160
+cachefn/python/cachefn/storage/memory_storage.py
+  s_afc99cba2554a1::t_6e1f894ea8da24 48-59,61,68,77
+cachefn/python/tests/test_readiness.py
+  s_afc99cba2554a1::t_337fb9035dc7a3 2,8,209-242
+cachefn/typescript/README.md
+  s_afc99cba2554a1::t_a18dbfedbb39b1 205,212,216-218,461-464
+cachefn/typescript/__tests__/cache-fetch.test.ts
+  s_afc99cba2554a1::t_6af7e283094a78 43-107
+cachefn/typescript/__tests__/factory-convenience.test.ts
+  s_afc99cba2554a1::t_12430442185c7f 85-86
+cachefn/typescript/__tests__/memoize.test.ts
+  s_afc99cba2554a1::t_426832c888b41e 114-132
+cachefn/typescript/src/core/cache.ts
+  s_afc99cba2554a1::t_9d207ab8ba1a29 25,55,133-141,145,148,156,307-308,321,457-459,461,469-474,486-489,494,512,548-549
+cachefn/typescript/src/memoization/compatible.ts
+  s_afc99cba2554a1::t_d28b71b5af6961 16-17
+cachefn/typescript/src/memoization/memoize.ts
+  s_afc99cba2554a1::t_ce607dd0395013 7,48,50,92-94
+cachefn/typescript/src/storage/auto-storage.ts
+  s_afc99cba2554a1::t_f7434ee3f40e2b 119
+cachefn/typescript/src/storage/indexeddb-storage.ts
+  s_afc99cba2554a1::t_e648288cfeb4de 127-130,134-138
+cachefn/typescript/src/storage/local-storage.ts
+  s_afc99cba2554a1::t_862cb4bc195133 58-59,68
+cachefn/typescript/src/storage/memory-storage.ts
+  s_afc99cba2554a1::t_803b4753526833 37,39-43,61
+cachefn/typescript/src/storage/storage-interface.ts
+  s_afc99cba2554a1::t_c285794a92ba40 28-35
+cachefn/typescript/src/utils/pattern.ts
+  s_afc99cba2554a1::t_cb7b3a6832e8a3 34-42,50
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8cfc7513d5ee1423410186d79fdf1d26ab0ac801",
+  "prompts": {},
+  "sessions": {
+    "s_afc99cba2554a1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_afc99cba2554a1",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

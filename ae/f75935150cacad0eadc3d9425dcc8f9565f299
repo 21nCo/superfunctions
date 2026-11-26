@@ -1,0 +1,21 @@
+flowfn/admin/src/__tests__/admin.test.ts
+  s_7bf22060f44a0e::t_85e2d937c99e0d 948-967
+flowfn/admin/src/domain-service.ts
+  s_7bf22060f44a0e::t_c29d2d7089ff55 373-378
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "aef75935150cacad0eadc3d9425dcc8f9565f299",
+  "prompts": {},
+  "sessions": {
+    "s_7bf22060f44a0e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b8a69ea3-df7e-4989-88c4-f94f8c1a9f65",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

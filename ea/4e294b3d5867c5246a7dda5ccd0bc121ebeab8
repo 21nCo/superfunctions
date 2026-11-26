@@ -1,0 +1,29 @@
+.github/workflows/publish-tag.yml
+  s_3ed13376daf624::t_28d64713d9c5f4 52,197
+scripts/release-gate-workflows.test.mjs
+  s_033d3e6d4fb9b2::t_489f4c182ebf50 172-194
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ea4e294b3d5867c5246a7dda5ccd0bc121ebeab8",
+  "prompts": {},
+  "sessions": {
+    "s_033d3e6d4fb9b2": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a21136-6714-7472-8885-a9d68efa0e50",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_3ed13376daf624": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a2114a-4190-7393-8504-5795186786f7",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

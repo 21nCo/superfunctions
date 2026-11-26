@@ -1,0 +1,25 @@
+testfn/typescript/README.md
+  s_dce946a63623d1::t_c33ed80906b725 188
+testfn/typescript/src/fixtures/billfn/dodo.ts
+  s_dce946a63623d1::t_e5425636ac8f8f 220-225
+testfn/typescript/src/fixtures/billfn/standard-webhooks.ts
+  s_dce946a63623d1::t_5da86de5695ac2 8-9
+testfn/typescript/tests/billfn-fixture.test.ts
+  s_dce946a63623d1::t_67a683494c7724 283-303
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "cf51e64e0ad279bf98665075b56761977bbba8ce",
+  "prompts": {},
+  "sessions": {
+    "s_dce946a63623d1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9622ecc3-ba53-4b14-ac4b-c9f0ef10d352",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

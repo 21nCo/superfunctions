@@ -1,0 +1,36 @@
+filefn/server/src/upload-sessions/service.ts
+  s_b841cebdcfad95::t_02ae6b29b1bdd5 5,8,1362,1370-1380
+  s_b841cebdcfad95::t_0f3174c7355e1f 1381
+filefn/server/src/index.ts
+  s_b841cebdcfad95::t_02ae6b29b1bdd5 509-510
+packages/storage-local/src/adapter.ts
+  s_b841cebdcfad95::t_02ae6b29b1bdd5 50-59
+packages/storage-local/src/adapter.test.ts
+  s_b841cebdcfad95::t_02ae6b29b1bdd5 318-349
+filefn/server/src/__tests__/policies.test.ts
+  s_b841cebdcfad95::t_02ae6b29b1bdd5 17-18
+filefn/server/tests/storage-key-security.test.ts
+  s_b841cebdcfad95::t_85960566756a20 1-118
+filefn/server/src/policies.ts
+  s_b841cebdcfad95::t_02ae6b29b1bdd5 89-130,139-142
+filefn/docs/content/docs/core-concepts/policies.md
+  s_b841cebdcfad95::t_02ae6b29b1bdd5 106-108
+filefn/docs/static/llms-full.txt
+  s_b841cebdcfad95::t_07c71c243155e3 2365-2367
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5f6f6feb929fd3b5530a0aed88039bbe0c47e10b",
+  "prompts": {},
+  "sessions": {
+    "s_b841cebdcfad95": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "436f4738-d86e-44e1-82bc-c432f9aaabf3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

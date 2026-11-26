@@ -1,0 +1,23 @@
+searchfn/server/src/server.ts
+  s_08ba8baed8969a::t_3ec6e34096d3ca 54-55,58,62-64
+  s_08ba8baed8969a::t_6eb6faf048e862 1,26,56,65-67,129-130,132,135-139,174-175
+searchfn/server/__tests__/authorization.test.ts
+  s_08ba8baed8969a::t_6eb6faf048e862 2,136-157
+  s_08ba8baed8969a::t_0369d2d81f1c89 158
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "915beceff5c52ea721e4150f9365bf15dfc8e58d",
+  "prompts": {},
+  "sessions": {
+    "s_08ba8baed8969a": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a211ab-e567-7052-ae97-961e8a10be50",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

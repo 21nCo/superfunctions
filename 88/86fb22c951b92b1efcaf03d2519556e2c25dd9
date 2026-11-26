@@ -1,0 +1,44 @@
+datafn/docs/content/docs/documentation/sync/conflict-resolution.mdx
+  s_09f19affbc7889::t_f24140b4566ca6 24,29-39,43
+datafn/server/__tests__/query-filter-pushdown.test.ts
+  s_09f19affbc7889::t_003fad8714e279 1052-1054,1078,1150-1153,1426-1442
+  s_59ae97f9289aa7::t_20f4a4a696226d 1048-1051,1443
+datafn/server/src/execution/mutation/relations.ts
+  s_09f19affbc7889::t_238775001bc327 24
+datafn/server/src/execution/query/select.ts
+  s_09f19affbc7889::t_e3f7cdb8f58e93 23,250,663
+datafn/docs/content/docs/recipes/offline-conflicts.mdx
+  s_09f19affbc7889::t_a012d4835cb9e4 42
+  s_09f19affbc7889::t_cbd7af101e534c 20,25-35,37,43,45,55
+datafn/server/src/execution/query/filters.ts
+  s_09f19affbc7889::t_0d6cac8e95fba0 25,192,211,217
+datafn/server/src/execution/relations/foreign-key.ts
+  s_09f19affbc7889::t_f9b86b2325ebca 1-14
+datafn/server/src/execution/db-store.ts
+  s_09f19affbc7889::t_bbda899a50e77c 277,315,399,579,586
+  s_09f19affbc7889::t_7fdea585e24fde 928-937,939-953,955-958,960-963
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8886fb22c951b92b1efcaf03d2519556e2c25dd9",
+  "prompts": {},
+  "sessions": {
+    "s_09f19affbc7889": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a211b0-71ed-7282-8a24-bcadc7fcc607",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_59ae97f9289aa7": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a212b7-90f5-7990-bee3-d9c339c756c1",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

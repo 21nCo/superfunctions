@@ -1,0 +1,21 @@
+clifn/core/tests/consumer-import-scanner.ts
+  s_fb251cc0a0945b::t_9c298c705d1589 22-23,56,67-68,245-260,262-266,269,276,279,285-305,313,315,319-320,335-336,361-373,412-418
+clifn/core/tests/consumer-scan.test.ts
+  s_fb251cc0a0945b::t_bff52b5822f331 312-367
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2110be64c6b8593ba15cd4c3742c583bd7ced902",
+  "prompts": {},
+  "sessions": {
+    "s_fb251cc0a0945b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2c054bd7-19ac-430b-a68f-f4e5ef84e77e",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

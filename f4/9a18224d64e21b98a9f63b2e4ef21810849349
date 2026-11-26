@@ -1,0 +1,25 @@
+AGENTS.md
+  s_9eee58b10976e0::t_d1c73ba09eb052 7-10,29
+README.md
+  s_9eee58b10976e0::t_a1b49caca024c8 283
+scripts/owners.mjs
+  s_9eee58b10976e0::t_88ee2cba3dca09 6,333-334,358-359,383-385,389-396,407-429
+scripts/owners.test.mjs
+  s_9eee58b10976e0::t_0a011bb3b92cb8 3,248-252,256,265-268,282-294
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f49a18224d64e21b98a9f63b2e4ef21810849349",
+  "prompts": {},
+  "sessions": {
+    "s_9eee58b10976e0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_9eee58b10976e0",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

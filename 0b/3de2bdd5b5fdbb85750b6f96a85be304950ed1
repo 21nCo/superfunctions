@@ -1,0 +1,31 @@
+.depot/workflows/ci.yml
+  h_a39f9495f9ec1d 66-67
+  s_57207f5d742981::t_413278f0bc9c11 68
+release-packages.json
+  h_a39f9495f9ec1d 47
+scripts/check-release-paths.test.mjs
+  h_a39f9495f9ec1d 1-109
+NPM_PUBLISHING.md
+  s_57207f5d742981::t_88e0c16ec1a605 5-6
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0b3de2bdd5b5fdbb85750b6f96a85be304950ed1",
+  "prompts": {},
+  "humans": {
+    "h_a39f9495f9ec1d": {
+      "author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  },
+  "sessions": {
+    "s_57207f5d742981": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_57207f5d742981",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

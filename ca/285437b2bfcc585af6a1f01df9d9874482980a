@@ -1,0 +1,19 @@
+flowfn/typescript/docs/queue-ownership.md
+  s_a125fbd0197874::t_6abf476c7720c2 9-11
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ca285437b2bfcc585af6a1f01df9d9874482980a",
+  "prompts": {},
+  "sessions": {
+    "s_a125fbd0197874": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_a125fbd0197874",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

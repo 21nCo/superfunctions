@@ -1,0 +1,23 @@
+testfn/python/README.md
+  s_b996deaa3d01f1::t_a2f78cd7f69e13 124-128
+testfn/python/testfn/fixtures/authfn.py
+  s_b996deaa3d01f1::t_7416564c20d8fb 18,164,228-230,236-242,394-396
+testfn/python/tests/test_fixtures_authfn.py
+  s_b996deaa3d01f1::t_33253a08525cc9 351,428,437-439
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "302639dedf67c37b8c1bff25b61b8eceb5403ac1",
+  "prompts": {},
+  "sessions": {
+    "s_b996deaa3d01f1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c40e7b19-3313-4542-ad8e-39c9c4c912f1",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

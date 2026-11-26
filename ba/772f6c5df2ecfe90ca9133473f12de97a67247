@@ -1,0 +1,25 @@
+secfn/keys/README.md
+  s_68ec65b71fc06f::t_647ba7b4907cb1 41-46
+secfn/keys/src/__tests__/key-ring.test.ts
+  s_68ec65b71fc06f::t_7d8c5112c3be2b 3,76-129
+secfn/keys/src/index.ts
+  s_68ec65b71fc06f::t_a7860bc65ce390 8
+secfn/keys/src/key-ring.ts
+  s_68ec65b71fc06f::t_54b69e91259b53 37-41,52-55,70-77,115-117,208-211,214,216,220-230,235-236,250-255
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ba772f6c5df2ecfe90ca9133473f12de97a67247",
+  "prompts": {},
+  "sessions": {
+    "s_68ec65b71fc06f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_68ec65b71fc06f",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

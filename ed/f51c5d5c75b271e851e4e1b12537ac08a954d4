@@ -1,0 +1,61 @@
+logfn/.conduct/default-redaction-readiness.md
+  s_76480b6925881c::t_2b4a0d4d61f880 69-71
+logfn/.conduct/readiness.md
+  s_76480b6925881c::t_af02f02e590c7d 13-18
+logfn/.conduct/response-correlation-readiness.md
+  s_76480b6925881c::t_fa068b63abf005 15
+logfn/python/README.md
+  s_76480b6925881c::t_b9de70e73a7c84 117-119,145-147
+logfn/python/src/logfn/core.py
+  s_76480b6925881c::t_6f8fc71d8d3575 6-7,36-38,41,43,56,76-83,87-91,137-141,149-151,156-157
+logfn/python/src/logfn/default_redaction.py
+  s_76480b6925881c::t_0b5b67a55894b3 13-37,57-58
+logfn/python/src/logfn/serialization.py
+  s_76480b6925881c::t_8b70709a478361 5-7,9,39-42,47
+logfn/python/src/logfn/sinks.py
+  s_76480b6925881c::t_dc506c3d1ace0d 106-110,137,140,195-201,206-207,209
+logfn/python/tests/test_default_redaction.py
+  s_76480b6925881c::t_1321297ac8a4a1 29-39
+logfn/python/tests/test_dynamic_sinks.py
+  s_76480b6925881c::t_3df13d39981cfc 85-106
+logfn/python/tests/test_error_reporting.py
+  s_76480b6925881c::t_aaac0d6de2cfc3 88-112
+logfn/python/tests/test_http_delivery.py
+  s_76480b6925881c::t_3777f40737b8eb 294-319
+logfn/python/tests/test_serialization.py
+  s_76480b6925881c::t_8e9d6db625166c 107-132
+logfn/typescript/README.md
+  s_76480b6925881c::t_2ef4aeb52cccff 450-452,549-551
+logfn/typescript/src/core/default-redaction.test.ts
+  s_76480b6925881c::t_38e93e2e8e22b1 21-30
+logfn/typescript/src/core/error-hook.test.ts
+  s_76480b6925881c::t_6b4e49e39b88c4 30-41
+logfn/typescript/src/core/logger.ts
+  s_76480b6925881c::t_6ee14678589945 35-37,79-81,88,267
+logfn/typescript/src/http/shared.test.ts
+  s_76480b6925881c::t_7b190ec74217e9 39-52
+logfn/typescript/src/http/shared.ts
+  s_76480b6925881c::t_7289e463500320 25-26,28-33
+logfn/typescript/src/pipeline/default-redaction.ts
+  s_76480b6925881c::t_d75b72b6c32230 9-19,36
+logfn/typescript/src/sinks/http-lifecycle.test.ts
+  s_76480b6925881c::t_f2f1a41b19f171 56-59,71-90
+logfn/typescript/src/sinks/http.ts
+  s_76480b6925881c::t_588b6050c26c35 99,113,136,212-222,224,228-236
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "edf51c5d5c75b271e851e4e1b12537ac08a954d4",
+  "prompts": {},
+  "sessions": {
+    "s_76480b6925881c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_76480b6925881c",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

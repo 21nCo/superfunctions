@@ -1,0 +1,27 @@
+mcpfn/cli/package.json
+  s_b996deaa3d01f1::t_f66d57effdf166 3,29-30
+mcpfn/datafn/package.json
+  s_b996deaa3d01f1::t_bc76449b36f9d7 3,30
+mcpfn/inspector/package.json
+  s_b996deaa3d01f1::t_96b222baaa229a 3,25
+mcpfn/testing/package.json
+  s_b996deaa3d01f1::t_2a6cb85575aea7 3
+package-lock.json
+  s_b996deaa3d01f1::t_b18213688fe15b 18106,18112-18113,19455,19463,19915,19919,20367
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3be9b4ee2893dabf13d9227ca053acd6a3d242d9",
+  "prompts": {},
+  "sessions": {
+    "s_b996deaa3d01f1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c40e7b19-3313-4542-ad8e-39c9c4c912f1",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

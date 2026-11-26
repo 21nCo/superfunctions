@@ -1,0 +1,25 @@
+billfn/docs/content/docs/providers/apple.mdx
+  s_19abec75182420::t_6576d27f62f4d8 55-64,70
+billfn/provider-apple/README.md
+  s_19abec75182420::t_2695e5730d5f1a 34,43-44
+billfn/provider-apple/src/__tests__/provider-builtins.test.ts
+  s_19abec75182420::t_c3d7398b288161 535-539,554,642-734
+billfn/provider-apple/src/index.ts
+  s_19abec75182420::t_1d450acc24ef60 3,93-100,120-121,124-126,187,191,212,253,354-355,381,422,720-766,939-940,957,1029-1031,1047,1053-1055,1072,1076-1080
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "45d10d313bbd8f098d622b8c29be0865f0769f1d",
+  "prompts": {},
+  "sessions": {
+    "s_19abec75182420": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d61a7abd-8c27-4e7c-ba23-13d43e2da322",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

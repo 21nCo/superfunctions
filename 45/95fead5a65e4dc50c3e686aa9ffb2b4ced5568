@@ -1,0 +1,55 @@
+filefn/docs/content/docs/core-concepts/artifacts.md
+  s_b841cebdcfad95::t_d64110e8d104ca 75
+filefn/docs/content/docs/core-concepts/grants.md
+  s_b841cebdcfad95::t_092f97b61ed919 66
+filefn/docs/content/docs/features/grants.md
+  s_b841cebdcfad95::t_6cab12e3f1150c 53,57
+filefn/docs/content/docs/features/share-links.md
+  s_b841cebdcfad95::t_3c397d89a7b2d1 63
+filefn/docs/content/docs/recipes/signed-share-links.md
+  s_b841cebdcfad95::t_d19e152d9d0f58 15,29,41
+filefn/docs/static/llms-full.txt
+  s_b841cebdcfad95::t_be77808511fcab 1409,1780,3604,3608,4360,7240,7254,7266
+filefn/python/filefn/server/authz/grant_expiry.py
+  s_b841cebdcfad95::t_06d12dfef311b6 1-40,44,47-48
+filefn/python/filefn/server/authz/grants_service.py
+  s_b841cebdcfad95::t_365f2afa60df3e 8,23-37,41-42,51,72-75,77-86,91-93,98
+filefn/python/filefn/server/core.py
+  s_b841cebdcfad95::t_d410c9698239d0 47-54,83,284
+filefn/python/filefn/server/files/service.py
+  s_b841cebdcfad95::t_23aa51f570dbb2 8,140
+filefn/python/filefn/server/shares/service.py
+  s_b841cebdcfad95::t_07f90e24c7183d 9,54-63,103,135-145,158,194,220,274
+filefn/python/tests/test_downloads.py
+  s_b841cebdcfad95::t_8c9f1fd6281684 822-893
+filefn/server/src/__tests__/artifact-authz.test.ts
+  s_b841cebdcfad95::t_4b953ce5c7ee97 9
+filefn/server/src/__tests__/shares.test.ts
+  s_b841cebdcfad95::t_382d3810402464 9
+filefn/server/src/authz/grant-expiry.ts
+  s_b841cebdcfad95::t_c2aff9ec221841 1-5,7-40,46-47
+filefn/server/src/authz/grants.service.ts
+  s_b841cebdcfad95::t_c9332d50478490 7,87-88
+filefn/server/src/http-body.ts
+  s_b841cebdcfad95::t_6905734326b9b1 6-8,11-13,49-50
+filefn/server/src/shares/service.ts
+  s_b841cebdcfad95::t_e167c40d5d4f02 8,92-95,162-164,175-206,216,229-237,330,334,336,358,360-369
+filefn/server/tests/sharing-security.test.ts
+  s_b841cebdcfad95::t_84b23287f3278f 181-292
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4595fead5a65e4dc50c3e686aa9ffb2b4ced5568",
+  "prompts": {},
+  "sessions": {
+    "s_b841cebdcfad95": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "436f4738-d86e-44e1-82bc-c432f9aaabf3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

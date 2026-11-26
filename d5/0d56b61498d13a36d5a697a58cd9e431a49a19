@@ -1,0 +1,36 @@
+mcpfn/testing/tests/client-profile-contracts.test.ts
+  s_c8d3e62c4e5cbc::t_34d1916011b8b6 86-87
+mcpfn/REQUIREMENTS.md
+  s_c8d3e62c4e5cbc::t_b639bf4d367d5b 55
+mcpfn/core/tests/client-profiles.test.ts
+  s_c8d3e62c4e5cbc::t_18c9e9644e8c7a 235,244,349-370,376-378,390-414
+  s_c8d3e62c4e5cbc::t_e3d94585f7845c 694,707,716
+  s_c8d3e62c4e5cbc::t_2ca321a8f96590 415
+mcpfn/core/src/server.ts
+  s_c8d3e62c4e5cbc::t_23965109ed05a7 395
+mcpfn/docs/content/docs/reference/core.md
+  s_c8d3e62c4e5cbc::t_b639bf4d367d5b 165-173
+mcpfn/core/README.md
+  s_c8d3e62c4e5cbc::t_b639bf4d367d5b 160-168
+mcpfn/core/src/client-profiles.ts
+  s_c8d3e62c4e5cbc::t_23965109ed05a7 89-99,505-513,516-537
+  s_c8d3e62c4e5cbc::t_1ea5816ffdffa7 135-143
+mcpfn/docs/static/llms-full.txt
+  s_c8d3e62c4e5cbc::t_232c202aff4d26 850-858
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d50d56b61498d13a36d5a697a58cd9e431a49a19",
+  "prompts": {},
+  "sessions": {
+    "s_c8d3e62c4e5cbc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "81c58342-6481-4e86-8c66-8c52736f9b64",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

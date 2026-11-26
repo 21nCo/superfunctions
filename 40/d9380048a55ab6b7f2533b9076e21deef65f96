@@ -1,0 +1,21 @@
+flowfn/typescript/src/queue/lease-deadline.test.ts
+  s_02a1388c57c6bd::t_88ae0cff4f3c7d 96-119
+flowfn/typescript/src/queue/queue.ts
+  s_02a1388c57c6bd::t_965a478b059415 624-636
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "40d9380048a55ab6b7f2533b9076e21deef65f96",
+  "prompts": {},
+  "sessions": {
+    "s_02a1388c57c6bd": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_02a1388c57c6bd",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

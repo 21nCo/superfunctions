@@ -1,0 +1,33 @@
+testfn/.conduct/IMPLEMENTATION.md
+  s_9d1dce42613b00::t_383f70e8c87387 58,185
+testfn/typescript/README.md
+  s_9d1dce42613b00::t_e2bc318d28d273 128,130,210
+testfn/typescript/src/core/worker-pool.ts
+  s_9d1dce42613b00::t_ebcca9548908b6 7,32-35,109-113
+testfn/typescript/src/index.ts
+  s_9d1dce42613b00::t_f528bbb109ea88 21-22
+testfn/typescript/src/integrations/index.ts
+  s_9d1dce42613b00::t_1f1b1be487d5a7 7-10
+testfn/typescript/src/integrations/json-adapter.ts
+  s_9d1dce42613b00::t_13799248f87565 5-9,82-83
+testfn/typescript/src/integrations/process.ts
+  s_9d1dce42613b00::t_7e2e6b41b66381 16-40,144
+testfn/typescript/tests/framework-failure-contract.test.ts
+  s_9d1dce42613b00::t_dfe0b84bb95740 243-315
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b6987e35f9d4af73d0a0f69504d57b105f317804",
+  "prompts": {},
+  "sessions": {
+    "s_9d1dce42613b00": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_9d1dce42613b00",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

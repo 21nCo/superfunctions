@@ -1,0 +1,19 @@
+reviewfn/core/src/panel/coordinator.ts
+  s_b841cebdcfad95::t_3c60d0887dfce1 487,628,631,633
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ee9e83d9771329a85fb4a0ca0a51648242d8fb07",
+  "prompts": {},
+  "sessions": {
+    "s_b841cebdcfad95": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "436f4738-d86e-44e1-82bc-c432f9aaabf3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,31 @@
+contentfn/server/README.md
+  s_4db55fa6c7d0f8::t_5b67de1839ceaa 16-18
+contentfn/server/src/__tests__/pr-review-regressions.test.ts
+  s_4db55fa6c7d0f8::t_e60cfcb37bad6d 91-103,107-108,120,122-139,165,174-180,186,216-243
+contentfn/server/src/realtime/sse.ts
+  s_4db55fa6c7d0f8::t_21fd0b0a95ca36 9-35,49,52,164-179,184,193-200,253-255,263-264
+contentfn/server/src/server.ts
+  s_4db55fa6c7d0f8::t_49de9a99f3e714 8,257,260
+contentfn/server/src/storage/docs.ts
+  s_4db55fa6c7d0f8::t_56ee74babdab4a 190-191,221-224
+contentfn/server/src/storage/documentIdentityBackfill.ts
+  s_4db55fa6c7d0f8::t_d88e9ae6614e10 12-13,24
+contentfn/server/src/storage/schedules.ts
+  s_4db55fa6c7d0f8::t_47cdc519870743 19-20
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8323b396b8eb9d44452cd6ea5ac81e4ec7ba991d",
+  "prompts": {},
+  "sessions": {
+    "s_4db55fa6c7d0f8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_4db55fa6c7d0f8",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

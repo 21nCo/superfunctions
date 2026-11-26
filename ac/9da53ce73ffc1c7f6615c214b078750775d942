@@ -1,0 +1,21 @@
+billfn/core/src/__tests__/webhook-session-link.test.ts
+  s_0d7e11293d5a4e::t_2b73de489fda70 499-525
+billfn/core/src/service.ts
+  s_0d7e11293d5a4e::t_2b73de489fda70 5537,5558-5577,5663-5669
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ac9da53ce73ffc1c7f6615c214b078750775d942",
+  "prompts": {},
+  "sessions": {
+    "s_0d7e11293d5a4e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "97ac12a3-1bf1-4732-a6f3-ece8c28b207e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}

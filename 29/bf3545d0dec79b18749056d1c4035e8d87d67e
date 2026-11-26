@@ -1,0 +1,23 @@
+apifn/cli/__tests__/check-command.test.ts
+  s_20515a762a192e::t_70d61ebd3c44ff 61-62,64,92-95,2838-2841,2852-2854,4541,4593-4606
+apifn/cli/src/commands/check-publish.ts
+  s_20515a762a192e::t_2ec15a035ca780 687-688,782,786-787,789-790
+apifn/cli/src/utils/router-loader.ts
+  s_20515a762a192e::t_5194cbef4e18aa 32-35
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "29bf3545d0dec79b18749056d1c4035e8d87d67e",
+  "prompts": {},
+  "sessions": {
+    "s_20515a762a192e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0f6b33b7-3990-413c-81c0-415a21ace6a6",
+        "model": "unknown"
+      },
+      "human_author": "thyaravind <samalaaravind02@gmail.com>"
+    }
+  }
+}

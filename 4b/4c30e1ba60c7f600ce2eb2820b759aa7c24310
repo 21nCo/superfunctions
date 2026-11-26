@@ -1,0 +1,29 @@
+testfn/scripts/packed-consumer.mjs
+  s_19abec75182420::t_385b4024e214c1 79,122
+testfn/typescript/README.md
+  s_19abec75182420::t_1861b37dbbb559 158,166
+testfn/typescript/src/fixtures/authfn/in-process.ts
+  s_19abec75182420::t_e0d2a7efb77215 3,6-12,23-29,61-69,73,81-89,94-101,105,114,146
+testfn/typescript/src/fixtures/authfn/index.ts
+  s_19abec75182420::t_fecd3545355c40 4
+testfn/typescript/src/fixtures/authfn/plugin.ts
+  s_19abec75182420::t_132464b914f67d 1,7,9,16-19,26,30-33,35-37,41,45-46,51,55-87,92-93,95-100,103,106-173
+testfn/typescript/tests/authfn-fixture.test.ts
+  s_19abec75182420::t_72babf22d261d1 2-9,51-59,61-71,74-84,86-117,119-147,149-162,173,175,179,181,185-195,197-199,201,206-207,220,255,286,315,327,342,360,434-435
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4b4c30e1ba60c7f600ce2eb2820b759aa7c24310",
+  "prompts": {},
+  "sessions": {
+    "s_19abec75182420": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d61a7abd-8c27-4e7c-ba23-13d43e2da322",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
