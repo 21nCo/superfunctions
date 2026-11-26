@@ -150,6 +150,58 @@ if (result.ok && result.data.token) {
 }
 ```
 
+## Browser social handoff
+
+`createBrowserHandoff` runs the [handoff code exchange](../plugins/social-oauth#handoff-code-exchange) in a browser app. It keeps the verifier in a store you choose, binds the return to the handoff that started it, and makes the stored state single use.
+
+```ts
+import {
+  createAuthFnClient,
+  createBrowserHandoff,
+  createWebStorageHandoffStore,
+} from '@authfn/client';
+
+const client = createAuthFnClient({ baseUrl: 'https://api.example.com/auth' });
+const handoff = createBrowserHandoff({
+  store: createWebStorageHandoffStore(localStorage),
+  allowedOrigins: ['https://app.example.com'],
+  exchange: client.exchangeSocialHandoff,
+});
+
+// Sign-in button
+const begun = await handoff.begin({ returnTo: 'https://app.example.com/post-auth' });
+const started = await client.startSocialSignIn({ provider: 'google', ...begun.start });
+if (started.ok) location.assign(started.data.redirectTo);
+
+// On /post-auth
+const result = await handoff.complete(location.href);
+if (result.status !== 'not-callback') history.replaceState(null, '', result.cleanUrl);
+if (result.status === 'completed') credentialStore.setToken(result.handoff.token);
+```
+
+- `begin` creates a random verifier and a handoff id, stores them for `ttlMs` (default 10 minutes), and returns the `/social/start` input. The id travels in the `returnTo` fragment (`#authfn_handoff=<id>`), so the provider's `allowlistedReturnTo` must list the app's bare origin (`https://app.example.com`), not one exact URL. The server must accept a session-token handoff to a web target (`allowWebSessionTokenHandoff`).
+- `complete` accepts only a return on an allowed origin, on the origin and path the handoff began on, carrying `handoff=code` for that handoff id. It then claims the stored record, replacing it with a tombstone that no longer holds the verifier, before it calls `exchange`. Any return that names a live handoff uses it up, whatever the outcome; start again after a failure.
+- Several windows over one store are concurrent participants. `createWebStorageHandoffStore` claims under `navigator.locks` when the browser has it, so only one window exchanges. Without an atomic claim, both may exchange, and the server's single-use code lets only the first succeed; the other window gets `already-used`.
+- `sessionStorage` keeps the handoff to one tab. A custom store implements `get`, `set`, `delete`, `keys` and `compareAndSet`.
+- Results, events (`onEvent`) and stored tombstones never contain the verifier or the code. Navigation, removing the callback parameters with `cleanUrl`, and keeping the session token stay with your app.
+
+`complete` returns `{ status: 'completed', session, handoff, requestId, cleanUrl }`, `{ status: 'not-callback' }` for a page without a handoff return, or `{ status: 'failed', reason }`:
+
+| `reason` | Meaning |
+|---|---|
+| `origin-mismatch` | The return is not on an allowed origin, or not on the one the handoff began on. |
+| `flow-mismatch` | The return is not the code-and-verifier return of the handoff it names (another path, no `handoff=code`, or no handoff id). |
+| `unknown-handoff` | No handoff with that id is stored here. |
+| `expired` | The handoff outlived `ttlMs`. |
+| `already-used` | Another window, a reload or a duplicate return already claimed it, or the server reports the code used. |
+| `malformed-state` | The stored record could not be read; it is removed. |
+| `malformed-callback` | The return's parameters are missing or invalid. |
+| `provider-error` | The callback redirected with `auth_error`; `error.code` holds the server's code. |
+| `exchange-rejected` | The server refused the code; `error` holds its code and message. |
+| `exchange-canceled` | The exchange threw or failed before a response. |
+
+`prune()` removes expired records (`begin` also prunes), and `abandon(handoffId)` removes one that the user gave up on.
+
 ## Region-aware client
 
 ```ts

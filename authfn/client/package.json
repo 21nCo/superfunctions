@@ -1,6 +1,6 @@
 {
   "name": "@authfn/client",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "Typed browser client for authfn",
   "type": "module",
   "main": "./dist/index.js",
@@ -17,6 +17,7 @@
   "scripts": {
     "build": "tsc",
     "test": "vitest run",
+    "test:browser": "vitest run --config vitest.browser.config.ts",
     "typecheck": "tsc --noEmit"
   },
   "author": "21n",
@@ -41,6 +42,8 @@
     "@authfn/social-oauth": "0.2.4",
     "@authfn/two-factor": "0.2.1",
     "@types/node": "^22.0.0",
+    "esbuild": "0.21.5",
+    "playwright": "^1.57.0",
     "typescript": "^5.6.0",
     "vitest": "^3.2.4"
   }
