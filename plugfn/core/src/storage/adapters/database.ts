@@ -12,7 +12,7 @@ import type {
   PlugFnWebhookReceipt,
 } from '../../types/runtime.js';
 import type { Workflow, WorkflowExecution } from '../../types/workflow.js';
-import { assertWebhookReceiptProvider, webhookRetryUpdates } from '../../webhooks/webhook-handler.js';
+import { assertWebhookReceiptProvider, webhookDeliveryReassignmentConflict, webhookRetryUpdates } from '../../webhooks/webhook-handler.js';
 import type { WebhookRecord } from '../webhook-storage.js';
 
 const WEBHOOK_DELIVERY_LEASE_MS = 5 * 60 * 1000;
@@ -543,15 +543,15 @@ class DbBackedPlugFnDatabaseAdapter implements PlugFnDatabaseStorageAdapter {
     const data = cloneRecord(updates);
     delete data.workflowScoped;
     delete data.signatureVerified;
-    if (data.receiptId !== undefined) {
+    if (data.receiptId === undefined) {
+      delete data.receiptId;
+    } else {
       const existing = await this.database.findOne<PlugFnWebhookDelivery>({ model, where });
       if (!existing) throw new NotFoundError(model, where);
       if (existing.receiptId !== data.receiptId &&
           (existing.workflowScoped || (await this.getWebhookReceipt(existing.receiptId))?.workflowIdempotencyKey ||
            (await this.getWebhookReceipt(data.receiptId))?.workflowIdempotencyKey)) {
-        throw Object.assign(new Error('scoped webhook deliveries cannot change receipts'), {
-          code: 'WEBHOOK_DELIVERY_REASSIGNMENT_CONFLICT', status: 409, retryable: false,
-        });
+        throw webhookDeliveryReassignmentConflict();
       }
     }
     if (Object.keys(data).length === 0) {

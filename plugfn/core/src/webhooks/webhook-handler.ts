@@ -90,6 +90,7 @@ export class WebhookHandlerError extends Error {
     | 'WEBHOOK_WORKFLOW_BINDING_REQUIRED'
     | 'WEBHOOK_WORKFLOW_BINDING_REVOKED'
     | 'WEBHOOK_IDEMPOTENCY_CONFLICT'
+    | 'WEBHOOK_DELIVERY_REASSIGNMENT_CONFLICT'
     | 'WEBHOOK_HANDLER_FAILED'
     | 'PLUGFN_NOT_READY'
     | 'VALIDATION_ERROR';
@@ -625,7 +626,7 @@ function handlerKey(provider: string, event: string, binding?: WebhookWorkflowBi
   return JSON.stringify([provider, event, binding?.tenantId, binding?.connectionId]);
 }
 
-function webhookBindingRequired(message = 'webhook has no unique verified workflow binding'): WebhookHandlerError {
+export function webhookBindingRequired(message = 'webhook has no unique verified workflow binding'): WebhookHandlerError {
   return new WebhookHandlerError(
     'WEBHOOK_WORKFLOW_BINDING_REQUIRED',
     message,
@@ -676,6 +677,12 @@ const retryBookkeepingFields = new Set([
 
 export function webhookRetryUpdates(updates: Partial<PlugFnWebhookDelivery>): Partial<PlugFnWebhookDelivery> {
   return Object.fromEntries(Object.entries(updates).filter(([field]) => retryBookkeepingFields.has(field)));
+}
+
+export function webhookDeliveryReassignmentConflict(): WebhookHandlerError {
+  return new WebhookHandlerError(
+    'WEBHOOK_DELIVERY_REASSIGNMENT_CONFLICT', 'scoped webhook deliveries cannot change receipts', 409,
+  );
 }
 
 function sha256(value: string | Uint8Array): string {

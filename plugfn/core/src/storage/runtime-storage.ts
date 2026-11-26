@@ -16,7 +16,15 @@ import {
   ensurePlugFnDatabaseAdapter,
   type PlugFnDatabaseStorageAdapter,
 } from './adapters/database.js';
-import { assertWebhookReceiptProvider, WebhookHandlerError, webhookRetryUpdates } from '../webhooks/webhook-handler.js';
+import {
+  assertWebhookReceiptProvider,
+  hasWebhookSignatureProof,
+  isBindingId,
+  webhookBindingRequired,
+  webhookDeliveryReassignmentConflict,
+  WebhookHandlerError,
+  webhookRetryUpdates,
+} from '../webhooks/webhook-handler.js';
 
 export const webhookSignatureProof = Symbol('plugfn.webhookSignatureProof');
 export const webhookReceiptTenantId = Symbol('plugfn.webhookReceiptTenantId');
@@ -153,12 +161,11 @@ export class AdapterRuntimeStorage {
 
   async createWebhookReceipt(input: CreateWebhookReceiptInput): Promise<PlugFnWebhookReceipt> {
     const { provider, idempotencyKey, idempotencyNamespace = 'standalone' } = input;
-    if (!idempotencyKey) {
-      if (idempotencyNamespace === 'workflow') {
-        throw new Error('workflow webhook receipts require an idempotency key');
-      }
-      return this.persistWebhookReceipt(input);
-    }
+    if (idempotencyNamespace === 'workflow' && (
+      !idempotencyKey || !input[webhookSignatureProof] ||
+      !isBindingId(input[webhookReceiptTenantId]) || !isBindingId(input.connectionId)
+    )) throw webhookBindingRequired('verified workflow receipt admission required');
+    if (!idempotencyKey) return this.persistWebhookReceipt(input);
 
     const claimKey = JSON.stringify([provider, idempotencyNamespace, idempotencyKey]);
     return this.withWebhookReceiptClaimLock(claimKey, async () => {
@@ -168,7 +175,7 @@ export class AdapterRuntimeStorage {
         idempotencyNamespace
       );
       if (existing) {
-        return assertMatchingWebhookReceipt(existing, input.payloadHash);
+        return this.admitExistingWebhookReceipt(input, existing);
       }
 
       try {
@@ -181,11 +188,45 @@ export class AdapterRuntimeStorage {
           idempotencyNamespace
         );
         if (concurrentlyCreated) {
-          return assertMatchingWebhookReceipt(concurrentlyCreated, input.payloadHash);
+          return this.admitExistingWebhookReceipt(input, concurrentlyCreated);
         }
         throw error;
       }
     });
+  }
+
+  private async admitExistingWebhookReceipt(input: CreateWebhookReceiptInput, receipt: PlugFnWebhookReceipt) {
+    if (input.idempotencyNamespace !== 'workflow' || hasWebhookSignatureProof(receipt)) {
+      return assertMatchingWebhookReceipt(receipt, input.payloadHash);
+    }
+    // A row without verified admission cannot reserve a workflow receipt key.
+    const now = new Date();
+    await this.adapter.database.updateMany({
+      model: this.adapter.models.webhookReceipts,
+      where: [
+        { field: 'id', operator: 'eq', value: receipt.id },
+        { field: 'provider', operator: 'eq', value: input.provider },
+        { field: 'workflowIdempotencyKey', operator: 'eq', value: receipt.workflowIdempotencyKey },
+        { field: 'signatureVerified', operator: 'eq', value: receipt.signatureVerified ?? null },
+      ],
+      data: {
+        event: input.event,
+        connectionId: input.connectionId,
+        workflowTenantId: input[webhookReceiptTenantId],
+        payloadHash: input.payloadHash,
+        headersRedacted: input.headersRedacted,
+        verificationStatus: 'verified',
+        signatureVerified: true,
+        createdAt: now,
+        receivedAt: now,
+        metadata: webhookReceiptMetadata(input),
+      },
+    });
+    const admitted = await this.adapter.getWebhookReceipt(receipt.id);
+    if (!admitted || !hasWebhookSignatureProof(admitted)) {
+      throw new WebhookHandlerError('WEBHOOK_HANDLER_FAILED', 'could not admit workflow receipt', 503);
+    }
+    return assertMatchingWebhookReceipt(admitted, input.payloadHash);
   }
 
   private persistWebhookReceipt(input: CreateWebhookReceiptInput): Promise<PlugFnWebhookReceipt> {
@@ -319,13 +360,25 @@ export class AdapterRuntimeStorage {
     });
   }
 
-  updateWebhookDelivery(
+  async updateWebhookDelivery(
     id: string,
     updates: Partial<PlugFnWebhookDelivery>,
   ): Promise<PlugFnWebhookDelivery> {
     const fields = { ...updates };
     delete fields.workflowScoped;
     delete fields.signatureVerified;
+    if (fields.receiptId === undefined) {
+      delete fields.receiptId;
+    } else {
+      const model = this.adapter.models.webhookDeliveries;
+      const where: WhereClause[] = [{ field: 'id', operator: 'eq', value: id }];
+      const existing = await this.adapter.database.findOne<PlugFnWebhookDelivery>({ model, where });
+      if (!existing) throw new NotFoundError(model, where);
+      if (existing.receiptId !== fields.receiptId && (
+        existing.workflowScoped || await this.workflowDeliveryScope(existing.receiptId) ||
+        await this.workflowDeliveryScope(fields.receiptId)
+      )) throw webhookDeliveryReassignmentConflict();
+    }
     return this.adapter.updateWebhookDelivery(id, { ...fields, updatedAt: new Date() });
   }
 

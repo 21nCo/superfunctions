@@ -5,7 +5,7 @@ import * as publicPlugFn from '../src/index.js';
 import { createPlugFnRouter, plugFn, TriggerType, WorkflowStatus } from '../src/index.js';
 import { createPlugFnDatabaseAdapter } from '../src/storage/adapters/database.js';
 import { MemoryAdapter } from '../src/storage/adapters/memory.js';
-import { AdapterRuntimeStorage } from '../src/storage/runtime-storage.js';
+import { AdapterRuntimeStorage, webhookReceiptTenantId, webhookSignatureProof } from '../src/storage/runtime-storage.js';
 import { mockProvider } from '../src/testing/index.js';
 import { NoopLogger } from '../src/utils/logger.js';
 import type { WebhookConfig } from '../src/types/trigger.js';
@@ -165,6 +165,38 @@ describe('webhook workflow admission', () => {
     expect(result).toMatchObject({ receiptId: standalone.id, status: 'success' });
     expect(result?.workflowScoped).not.toBe(true);
     expect(result?.signatureVerified).not.toBe(true);
+  });
+
+  it('rejects unverified workflow reservations and admits a verified delivery over an old unverified row', async () => {
+    const { runtime, send } = startRuntime(database);
+    const webhooks = runtime.runtime.webhooks;
+    const input = {
+      provider: 'test-provider', event: 'test.event', payloadHash: 'test-unverified-payload',
+      idempotencyKey: 'test-workflow-key', idempotencyNamespace: 'workflow' as const,
+    };
+    await expect(webhooks.createReceipt(input)).rejects.toMatchObject({ code: 'WEBHOOK_WORKFLOW_BINDING_REQUIRED' });
+    expect(await database.findMany({ model: receiptModel })).toEqual([]);
+
+    const createReceipt = webhooks.createReceipt;
+    vi.spyOn(webhooks, 'createReceipt').mockImplementationOnce(async (verified) => {
+      const scopeKey = fingerprint(JSON.stringify([verified.provider, verified.idempotencyKey]));
+      await database.create({
+        model: receiptModel,
+        data: {
+          id: 'test-stale-receipt', provider: verified.provider, event: input.event,
+          workflowIdempotencyKey: scopeKey, payloadHash: input.payloadHash, verificationStatus: 'not-required',
+          createdAt: new Date(0), receivedAt: new Date(0),
+        },
+      });
+      return createReceipt(verified);
+    });
+    const listener = vi.fn();
+    runtime.webhooks.on('test-provider', 'test.event', listener);
+    expect((await send('test-installation-one')).status).toBe(200);
+    expect(listener).toHaveBeenCalledOnce();
+    await expect(webhooks.getReceipt('test-stale-receipt')).resolves.toMatchObject({
+      workflowTenantId: firstBinding.tenantId, connectionId: firstBinding.connectionId, signatureVerified: true,
+    });
   });
 
   it.each([false, true])('uses only an authenticated delivery ID for scoped ingress (%s has ID)', async (authenticateDeliveryId) => {
@@ -480,6 +512,22 @@ describe('webhook workflow admission', () => {
     expect(worker).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
       delivery: expect.objectContaining({ id: attempt.id }),
     }));
+    await expect(database.updateWebhookDelivery(scoped.id, { receiptId: undefined })).resolves.toMatchObject({
+      receiptId: scoped.receiptId,
+    });
+
+    const adapter = createPlugFnDatabaseAdapter({ database });
+    const permissiveUpdate = vi.spyOn(adapter, 'updateWebhookDelivery').mockImplementation((id, updates) =>
+      database.update({ model: deliveryModel, where: [{ field: 'id', operator: 'eq', value: id }], data: updates }),
+    );
+    const custom = new AdapterRuntimeStorage(adapter);
+    await expect(custom.updateWebhookDelivery(scoped.id, { receiptId: standalone.id })).rejects.toMatchObject({
+      code: 'WEBHOOK_DELIVERY_REASSIGNMENT_CONFLICT',
+    });
+    expect(permissiveUpdate).not.toHaveBeenCalled();
+    await expect(custom.updateWebhookDelivery(scoped.id, { receiptId: undefined })).resolves.toMatchObject({
+      receiptId: scoped.receiptId,
+    });
   });
 
   it('preserves the original Buffer for a standalone SDK verifier', async () => {
@@ -742,7 +790,10 @@ describe('webhook workflow admission', () => {
       idempotencyKey: 'test-delivery-key',
       payloadHash: 'test-payload-hash',
     };
-    const workflowInput = { ...input, idempotencyNamespace: 'workflow' as const };
+    const workflowInput = {
+      ...input, idempotencyNamespace: 'workflow' as const, connectionId: firstBinding.connectionId,
+      [webhookReceiptTenantId]: firstBinding.tenantId, [webhookSignatureProof]: true,
+    };
     const workflow = await webhooks.createReceipt(workflowInput);
     expect(workflow.workflowIdempotencyKey).toEqual(expect.any(String));
     const standaloneKey = workflow.workflowIdempotencyKey!;
@@ -778,7 +829,10 @@ describe('webhook workflow admission', () => {
     const standalone = await storage.createWebhookReceipt(input);
     standaloneLookup.mockClear();
 
-    const workflowInput = { ...input, idempotencyNamespace: 'workflow' as const };
+    const workflowInput = {
+      ...input, idempotencyNamespace: 'workflow' as const, connectionId: firstBinding.connectionId,
+      [webhookReceiptTenantId]: firstBinding.tenantId, [webhookSignatureProof]: true,
+    };
     const workflow = await storage.createWebhookReceipt(workflowInput);
     expect(workflow.id).not.toBe(standalone.id);
     expect(await storage.createWebhookReceipt(workflowInput)).toEqual(workflow);
