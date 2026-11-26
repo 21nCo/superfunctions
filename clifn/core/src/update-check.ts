@@ -488,7 +488,7 @@ export function startUpdateCheck(options: UpdateCheckOptions): UpdateCheck {
   // added to what was seen; once none remains the decision uses what the rereads saw, with no file access, and only
   // when their last read started within FRESH_MS. The interval is decided here, on the time after that read, so a
   // delivery that expired since the check settled no longer suppresses the notice.
-  const handOut = async (entry: LatestEntry, sampled: number, budget: () => number): Promise<boolean> => {
+  const handOut = async (entry: LatestEntry, budget: () => number): Promise<boolean> => {
     const dir = checkPlan.stateDir;
     const left = budget();
     if (left > 0) {
@@ -501,7 +501,11 @@ export function startUpdateCheck(options: UpdateCheckOptions): UpdateCheck {
     } else if (!(monotonicNow() - readAt <= FRESH_MS)) {
       return false;
     }
-    const notifiedAt = clock() ?? sampled;
+    // A clock that cannot tell the time cannot show the interval has passed: no notice, nothing recorded.
+    const notifiedAt = clock();
+    if (notifiedAt === undefined) {
+      return false;
+    }
     const previous = handedOutAt.get(dir);
     if (
       (previous !== undefined && isRecent(previous, notifiedAt, checkPlan.intervalMs)) ||
@@ -524,10 +528,6 @@ export function startUpdateCheck(options: UpdateCheckOptions): UpdateCheck {
     }
     handedOut = true;
     stopObserving();
-    const sampled = clock();
-    if (sampled === undefined) {
-      return checked.notice;
-    }
     const dir = checkPlan.stateDir;
     for (let other = handingOut.get(dir); other !== undefined; other = handingOut.get(dir)) {
       const left = budget();
@@ -542,7 +542,7 @@ export function startUpdateCheck(options: UpdateCheckOptions): UpdateCheck {
     handingOut.set(dir, mine);
     let delivered = false;
     try {
-      delivered = await handOut(checked.entry, sampled, budget);
+      delivered = await handOut(checked.entry, budget);
     } catch {
       delivered = false;
     } finally {
