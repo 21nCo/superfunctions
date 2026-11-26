@@ -1365,3 +1365,96 @@ describe('ConnectionManager OAuth callback state pin', () => {
     });
   });
 });
+
+// oauth-flow reads a state row's canonical subject first and its flat fields
+// only for a legacy row, so handleCallback must take the user the same way.
+describe('ConnectionManager OAuth callback canonical state subject', () => {
+  type RowShape = 'canonical-only' | 'canonical-only without owner metadata' | 'legacy flat-only';
+
+  function reshape(record: any, shape: RowShape): any {
+    const { userId, tenantId, subject, metadata, ...rest } = record;
+    if (shape === 'legacy flat-only') {
+      return { ...rest, userId: subject?.userId ?? userId, tenantId: subject?.tenantId ?? tenantId, metadata: subject?.metadata ?? metadata };
+    }
+    const subjectMetadata = { ...(subject?.metadata ?? {}) };
+    if (shape === 'canonical-only without owner metadata') delete subjectMetadata.plugfnOwner;
+    return {
+      ...rest,
+      subject: { kind: 'connection', userId: subject?.userId ?? userId, tenantId: subject?.tenantId ?? tenantId, metadata: subjectMetadata },
+    };
+  }
+
+  async function reshapedState(shape: RowShape) {
+    const adapter = new MemoryAdapter();
+    const tokenClient = createTokenHttpClient();
+    const base = createManagerEnvironment(adapter, tokenClient);
+    // Injected dependencies: PlugFn's OAuthStateStore returns rows in this
+    // shape, while the injected oauth-flow service keeps its own store
+    // representation. An injected set has no state guard.
+    const inner = base.oauthDependencies.oauthStateStore;
+    const shaped = (record: any) => (record ? reshape(record, shape) : record);
+    const store = {
+      put: (record: any) => inner.put(record),
+      get: async (stateId: string) => shaped(await inner.get(stateId)),
+      consume: async (stateId: string, consumedAt?: any) => shaped(await inner.consume(stateId, consumedAt)),
+      deleteExpired: (before: any) => inner.deleteExpired(before),
+    } as any;
+    const manager = new ConnectionManager(
+      new AdapterConnectionStorage(adapter),
+      base.providers,
+      (base.manager as any).integrationConfigs,
+      BASE_URL,
+      ENCRYPTION_KEY,
+      new NoopLogger(),
+      { ...base.oauthDependencies, oauthStateStore: store, oauthStateGuard: undefined }
+    );
+    const env = { manager };
+    // The state is issued as usual; only the callback reads the reshaped row.
+    const authUrl = await base.manager.getAuthUrl({
+      userId: 'user-1',
+      provider: 'google',
+      redirectUri: REDIRECT_URI,
+      owner: { kind: 'user', userId: 'user-1', tenantId: 'workspace-1' },
+    });
+    const state = new URL(authUrl).searchParams.get('state')!;
+    const stored = await store.get(state);
+    if (shape === 'legacy flat-only') {
+      expect(stored.subject).toBeUndefined();
+      expect(stored.userId).toBe('user-1');
+    } else {
+      expect(stored.userId).toBeUndefined();
+      expect(stored.subject).toMatchObject({ kind: 'connection', userId: 'user-1', tenantId: 'workspace-1' });
+    }
+    return { env, adapter, state, tokenClient };
+  }
+
+  for (const shape of ['canonical-only', 'canonical-only without owner metadata', 'legacy flat-only'] as const) {
+    it(`completes a ${shape} row for its matching actor and saves that user`, async () => {
+      const { env, adapter, state } = await reshapedState(shape);
+
+      const { connection } = await env.manager.handleCallback({
+        code: 'auth-code-1',
+        state,
+        // Without owner metadata the owner is the subject user, with no tenant.
+        actor: shape === 'canonical-only without owner metadata'
+          ? { userId: 'user-1' }
+          : { userId: 'user-1', tenantId: 'workspace-1' },
+      });
+      expect(connection).toMatchObject({ userId: 'user-1', ownerKind: 'user', ownerId: 'user-1' });
+      expect(await readTokenEntryByConnection(adapter, connection.id)).not.toBeNull();
+    });
+
+    it(`rejects a ${shape} row for another actor before the code exchange`, async () => {
+      const { env, state, tokenClient } = await reshapedState(shape);
+
+      await expect(
+        env.manager.handleCallback({
+          code: 'auth-code-1',
+          state,
+          actor: { userId: 'user-2', tenantId: 'workspace-1' },
+        })
+      ).rejects.toMatchObject({ code: 'TENANT_ACCESS_DENIED' });
+      expect(tokenClient.exchangeToken).not.toHaveBeenCalled();
+    });
+  }
+});

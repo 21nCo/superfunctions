@@ -378,17 +378,21 @@ export class ConnectionManager {
     if (!statePreview) {
       throw new Error('OAuth state is invalid or expired');
     }
+    // The canonical subject (falling back to the flat fields of a legacy row),
+    // as oauth-flow reads it, decides the user everywhere below.
+    const previewSubject = oauthStateSubject(statePreview);
+    const previewUserId = previewSubject.userId;
 
     const pendingOwner = readConnectionOwnerFromMetadata(
       readPlugFnOAuthStateMetadata(statePreview),
-      statePreview.userId
+      previewUserId
     );
     if (!pendingOwner) {
       throw new Error('OAuth state is invalid or expired');
     }
     if (actor) {
       if (
-        actor.userId !== statePreview.userId ||
+        actor.userId !== previewUserId ||
         !actorCanInstallForOwner(actor, pendingOwner)
       ) {
         throw new ConnectionResolutionError(
@@ -439,13 +443,12 @@ export class ConnectionManager {
       pin?.release();
     }
     const callbackConnectionId = callbackResult.connectionId;
-    const previewSubject = oauthStateSubject(statePreview);
     const callbackSubject = callbackResult.subject;
     if (
       pin?.changed ||
       callbackSubject?.kind !== 'connection' ||
       previewSubject.kind !== 'connection' ||
-      (callbackSubject.userId !== undefined && callbackSubject.userId !== statePreview.userId) ||
+      (callbackSubject.userId !== undefined && callbackSubject.userId !== previewUserId) ||
       callbackSubject.tenantId !== previewSubject.tenantId
     ) {
       if (callbackConnectionId) {
@@ -458,7 +461,7 @@ export class ConnectionManager {
       }
       throw stateChanged();
     }
-    const subjectUserId = statePreview.userId;
+    const subjectUserId = previewUserId;
     if (!subjectUserId || !callbackConnectionId) {
       throw new Error('OAuth callback did not resolve a stable connection subject');
     }

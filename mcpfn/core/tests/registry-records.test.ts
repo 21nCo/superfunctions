@@ -143,6 +143,33 @@ describe.each(["ajv", "cfworker", "custom"] as const)("McpFnRegistry definition 
     }
   });
 
+  it("rejects a function root as a schema or execution before compiling", async () => {
+    const mcpfn = await load(mode);
+    const { createSchemaCompiler } = await import("../src/validation.js");
+    const shared = createSchemaCompiler();
+    const compileSchema = vi.fn((schema: object) => shared.compile(schema));
+    const source = mode === "custom" ? new mcpfn.McpFnRegistry({ compileSchema }) : mcpfn.registry();
+    const objectSchema = { type: "object" as const };
+    // A function root is not JSON data (JSON.stringify drops it), so it fails
+    // like a nested non-JSON value instead of staying live in the listing.
+    const fn = <T extends object>(fields: T) => Object.assign(function schemaLike() {}, fields);
+    const cases: Array<[string, Record<string, unknown>, string]> = [
+      ["inputSchema", { inputSchema: fn({ type: "object" }) }, "Tool t inputSchema must be JSON data"],
+      ["outputSchema", { inputSchema: objectSchema, outputSchema: fn({ type: "object" }) }, "Tool t outputSchema must be JSON data"],
+      ["execution", { inputSchema: objectSchema, execution: fn({ taskSupport: "optional" }), taskHandler: handler }, "Tool t execution must be JSON data"],
+    ];
+    for (const [label, fields, message] of cases) {
+      const register = () => source.register({ name: "t", description: label, handler, ...fields } as never);
+      expect(register, label).toThrow(mcpfn.McpFnValidationError);
+      expect(register, label).toThrow(message);
+    }
+    expect(() => source.registerPrompt({ name: "p", argumentsSchema: fn({ type: "object" }) as never, get: async () => ({ messages: [] }) }))
+      .toThrow("Prompt p argumentsSchema must be JSON data");
+    expect(compileSchema).not.toHaveBeenCalled();
+    expect(source.listTools()).toEqual([]);
+    expect(source.listPrompts()).toEqual([]);
+  });
+
   it("rejects schema data that is not plain JSON before compiling", async () => {
     const { registry, McpFnValidationError } = await load(mode);
     const source = registry();

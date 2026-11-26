@@ -125,11 +125,13 @@ function deepFreeze<T>(value: T): T {
  * Date, Map, RegExp, typed array, class instance, function, accessor, cycle or
  * undefined array item) fails, because a frozen view of it could still change
  * (a Date's time, a Map's entries) while the validator compiled from it could
- * not. The registry compiles, validates with, advertises and copies only these
+ * not. The check applies to the root as well. The registry compiles, validates with, advertises and copies only these
  * snapshots, so editing the caller's object after registration changes nothing.
  */
 function snapshotJson<T>(value: T, label: string): T {
-  if (value === null || typeof value !== "object") return value;
+  // Only an absent optional field skips the check: a function, symbol, bigint
+  // or non-finite root fails like the same value nested inside an object.
+  if (value === undefined) return value;
   const copies = new Map<object, unknown>();
   const active = new Set<object>();
   const copy = (current: unknown, path: string): unknown => {
