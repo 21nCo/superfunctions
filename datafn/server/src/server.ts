@@ -26,7 +26,7 @@ import { normalizeObservability, type ObservabilityInput, type ObservationLogger
 import type { SequenceStore, SequenceStorePolicy } from "./execution/sync/sequence-store.js";
 import { createSequenceStore } from "./execution/sync/sequence-store.js";
 import { createStatusHandler } from "./routes/status.js";
-import { createQueryHandler, POST_WRITE_READ_PROBE, type PostWriteReadProbe } from "./routes/query.js";
+import { createQueryHandler, type PostWriteReadProbe } from "./routes/query.js";
 import {
   configureRevisions,
   relationWritingPrimaryKey,
@@ -1234,6 +1234,23 @@ export async function createDatafnServer<TContext = any>(
   // DATA-41: a push's read-back requests, keyed by the Request object the push
   // created, so no header or body field a caller sends can mark a request.
   const postWriteReads = new WeakMap<Request, PostWriteReadProbe>();
+  /**
+   * DATA-41: the read-back re-enters the router while the push is still in
+   * flight, so router middleware that serializes requests (a lock held across
+   * next()) would queue it behind the push. Every read-back of one push must
+   * answer within this time; otherwise the push returns its revisions alone.
+   */
+  const POST_WRITE_READ_TIMEOUT_MS = 2_000;
+  const withinDeadline = async (pending: Promise<Response>, deadline: number): Promise<Response | undefined> => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const expired = new Promise<undefined>((resolve) => {
+      timer = setTimeout(() => resolve(undefined), Math.max(0, deadline - Date.now()));
+    });
+    const response = await Promise.race([pending, expired]).finally(() => clearTimeout(timer));
+    // A late answer is discarded unread.
+    if (!response) pending.then((late) => late.body?.cancel(), () => undefined);
+    return response;
+  };
 
   // LOW-001: withAuth returns a handler with signature compatible with Route<TContext>.handler
   const withAuthUnannounced = (
@@ -1241,7 +1258,7 @@ export async function createDatafnServer<TContext = any>(
     handler: (
       req: Request,
       ctx: TContext & { parsedBody?: unknown },
-      options?: { readPostWriteRows?: PostWriteRowReader },
+      options?: { readPostWriteRows?: PostWriteRowReader; postWriteReadProbe?: PostWriteReadProbe },
     ) => Promise<Response> | Response,
     origin: "http" | "executor" = "http",
     rest = false,
@@ -1249,11 +1266,10 @@ export async function createDatafnServer<TContext = any>(
     return async (req: Request, ctx: TContext): Promise<Response> => {
       const enrichedCtx = createEnrichedContext(ctx);
       // DATA-41: only a push's own read-back request (marked in process, never
-      // by anything the caller sends) carries a probe, skips the query rate
-      // limit (the push was limited) and the caller body limit (its body is
-      // generated).
-      const postWriteRead = action === "query" ? postWriteReads.get(req) : undefined;
-      (enrichedCtx as Record<symbol, unknown>)[POST_WRITE_READ_PROBE] = postWriteRead;
+      // by anything the caller sends) gets a probe (a handler option; the
+      // caller's context is never touched), skips the query rate limit (the
+      // push was limited) and the caller body limit (its body is generated).
+      const postWriteRead = action === "query" && req ? postWriteReads.get(req) : undefined;
       const maxPayloadBytes = postWriteRead ? undefined : limits.maxPayloadBytes;
       const parseBody = req.method === "POST" || req.method === "PUT" || req.method === "PATCH";
       const verifyHttpPlacement = multiRegionRuntime?.placement && origin === "http" && action !== "status";
@@ -1537,8 +1553,10 @@ export async function createDatafnServer<TContext = any>(
         const assertionAdmitted = Boolean(verifyHttpPlacement) && Boolean(
           req.headers.get(multiRegionRuntime?.placement?.assertionHeader ?? DATAFN_ROUTING_ASSERTION_HEADER)?.trim(),
         );
+        let readDeadline: number | undefined;
         const readPostWriteRows: PostWriteRowReader | undefined = action === "push"
           ? async (resource, ids) => {
+            readDeadline ??= Date.now() + POST_WRITE_READ_TIMEOUT_MS;
             const rows = new Map<string, Record<string, unknown>>();
             if (assertionAdmitted) return rows;
             const readUrl = new URL(req.url);
@@ -1548,7 +1566,7 @@ export async function createDatafnServer<TContext = any>(
             readUrl.pathname = `${pushPath.slice(0, -"/push".length)}/query`;
             const pushNamespace = await extractNamespace(enrichedCtx);
             const chunkSize = Math.max(1, limits.maxLimit ?? ids.length);
-            for (let offset = 0; offset < ids.length; offset += chunkSize) {
+            for (let offset = 0; offset < ids.length && Date.now() < readDeadline; offset += chunkSize) {
               const chunk = ids.slice(offset, offset + chunkSize);
               const readPayload = {
                 version: 1, resource, withRevisions: true, filters: { id: { $in: chunk } }, limit: chunk.length,
@@ -1560,11 +1578,11 @@ export async function createDatafnServer<TContext = any>(
               const readRequest = new Request(readUrl, { method: "POST", headers, body: JSON.stringify(readPayload) });
               const probe: PostWriteReadProbe = {};
               postWriteReads.set(readRequest, probe);
-              const response = await router.handle(readRequest);
+              const response = await withinDeadline(router.handle(readRequest), readDeadline);
               const executed = probe.executed;
               const query = executed?.queries.length === 1 ? executed.queries[0] : undefined;
               if (
-                !response.ok || executed?.namespace !== pushNamespace || query?.resource !== resource ||
+                !response?.ok || executed?.namespace !== pushNamespace || query?.resource !== resource ||
                 query.accessMode === "sharedWithMe" || query.namespaceFilter
               ) continue;
               const body = (await response.json()) as { ok?: boolean; result?: { data?: unknown } };
@@ -1582,8 +1600,8 @@ export async function createDatafnServer<TContext = any>(
           request: req,
           context: enrichedCtx,
           payload,
-          response: await (readPostWriteRows
-            ? handler(req, enrichedCtx, { readPostWriteRows })
+          response: await (readPostWriteRows || postWriteRead
+            ? handler(req, enrichedCtx, readPostWriteRows ? { readPostWriteRows } : { postWriteReadProbe: postWriteRead })
             : handler(req, enrichedCtx)),
         });
       } catch (error) {

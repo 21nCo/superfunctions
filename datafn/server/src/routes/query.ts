@@ -86,11 +86,11 @@ type RequestPrincipalResolutions = Map<string, Promise<string[]>>;
  * all read.
  */
 /**
- * DATA-41: a push's post-write read sets this key on its query context; the
- * handler records the namespace and queries it actually executed (after
- * every hook), so the push can tell the read selected the written record.
+ * DATA-41: the server passes a push's post-write read a probe as a handler
+ * option; the handler records the namespace and queries it actually executed
+ * (after every hook), so the push can tell the read selected the written
+ * record.
  */
-export const POST_WRITE_READ_PROBE = Symbol("datafn.postWriteReadProbe");
 export interface PostWriteReadProbe {
   executed?: {
     namespace: string;
@@ -670,7 +670,11 @@ export function createQueryHandler(
     });
   };
 
-    return async (req: Request, ctx?: { parsedBody?: unknown }): Promise<Response> => {
+    return async (
+      req: Request,
+      ctx?: { parsedBody?: unknown },
+      options?: { postWriteReadProbe?: PostWriteReadProbe },
+    ): Promise<Response> => {
       const startTime = Date.now();
       let resource: string | undefined;
       const timer = timingEmitter ? new ExecutionTimer() : null;
@@ -833,7 +837,7 @@ export function createQueryHandler(
         // Execute queries
         if (db) {
           const namespace = await extractNamespace(ctx);
-          const readProbe = (ctx as Record<symbol, PostWriteReadProbe | undefined> | undefined)?.[POST_WRITE_READ_PROBE];
+          const readProbe = options?.postWriteReadProbe;
           // Copied now: a later hook may change the query objects.
           if (readProbe) {
             readProbe.executed = {

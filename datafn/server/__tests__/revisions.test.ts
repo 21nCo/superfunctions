@@ -3134,6 +3134,9 @@ describe("DATA-41 revisions: PR review round 3", () => {
   });
 
   it("retries a revision swap with a current read when the transaction reads a stale snapshot", async () => {
+    // A fixed clock: the concurrent bump and every retry write the same updated_at.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
     const database = memoryAdapter();
     const served = await serve({ database });
     await served.push({ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } });
@@ -3150,9 +3153,13 @@ describe("DATA-41 revisions: PR review round 3", () => {
           };
         }
         if (property === "update") {
+          // Only an update that changes a value gives the transaction its own
+          // version of the row; one that writes the same values does not.
           return async (table: string, where: Array<{ value: unknown }>, data: Record<string, unknown>) => {
+            const before = await target.findOne(table, [where[0]] as any);
             const affected = await target.update(table, where as any, data);
-            if (affected > 0) snapshot.delete(`${table}:${String(where[0]?.value)}`);
+            const changed = before !== null && Object.entries(data).some(([key, value]) => before[key] !== value);
+            if (affected > 0 && changed) snapshot.delete(`${table}:${String(where[0]?.value)}`);
             return affected;
           };
         }
@@ -3166,5 +3173,39 @@ describe("DATA-41 revisions: PR review round 3", () => {
     await bumpRevision(database, NS, "task", "task:1", false);
     expect(await bumpRevision(stale, NS, "task", "task:1", false)).toBe(3);
     expect(await served.rev("task", "task:1")).toEqual({ rev: 3, deleted: false });
+  });
+
+  it("settles a push whose read-back router middleware would queue behind the push", async () => {
+    const served = await serve();
+    // Router middleware that serializes requests with a lock held across next().
+    let lock: Promise<unknown> = Promise.resolve();
+    served.server.router.use(async (_request, _ctx, next) => {
+      const previous = lock;
+      let release!: () => void;
+      lock = new Promise<void>((resolve) => { release = resolve; });
+      await previous;
+      try {
+        return await next();
+      } finally {
+        release();
+      }
+    });
+    const res = await served.push({ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } });
+    expect(res.body.ok).toBe(true);
+    expect(res.body.result.revisions[res.mutationId]).toEqual({ resource: "task", id: "task:1", rev: 1 });
+    // The late read-back then runs and is discarded; later requests still pass.
+    expect((await served.send("query", { version: 1, resource: "task" })).status).toBe(200);
+  });
+
+  it("leaves a caller's immutable executor context untouched", async () => {
+    const { server } = await serve();
+    class Caller { readonly user = "u1"; }
+    const context = Object.freeze(new Caller());
+    await expect(server.executor.query({ version: 1, resource: "task" }, context as any)).resolves.toMatchObject({ data: [] });
+    await expect(server.executor.mutate(
+      { version: 1, resource: "task", operation: "insert", id: "task:1", record: { title: "a" }, clientId: "c", mutationId: "x1" },
+      context as any,
+    )).resolves.toMatchObject({ ok: true });
+    expect(Object.getOwnPropertySymbols(context)).toEqual([]);
   });
 });

@@ -311,8 +311,13 @@ async function raiseRevision(
       // A retry follows a write that committed after this transaction's read.
       // Under a snapshot-per-transaction isolation (MySQL InnoDB REPEATABLE
       // READ) a plain read would return the same stale revision again, so
-      // first write the row: that locks it and makes the transaction's next
+      // first change the row: that locks it and makes the transaction's next
       // read see the latest committed revision (its own version of the row).
+      // An update that leaves every value as it is creates no such version,
+      // so write two different timestamps: at least one changes the row, and
+      // the second leaves the current time.
+      const later = new Date(Date.parse(updatedAt) + 1_000).toISOString();
+      await db.internal.update(REVISIONS_TABLE, where, { updated_at: later });
       await db.internal.update(REVISIONS_TABLE, where, { updated_at: updatedAt });
     }
     const row = await db.internal.findOne(REVISIONS_TABLE, where);
