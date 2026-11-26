@@ -499,57 +499,18 @@ jobs:
             echo "allow_install_scripts is true: npm ci runs the lifecycle scripts."
           else
             echo "allow_install_scripts is false: npm ci --ignore-scripts (set it to true if the router needs files install scripts build or generate)."
-          fi
-          if [ "$ignore_scripts" == "true" ]; then
             # --ignore-scripts does not stop npm from running the prepare script of a git dependency, or of a directory
-            # dependency it installs as a copy (install-links), while packing it. Fail before npm runs anything when a
-            # lockfile npm ci may use has one (working_directory's, or a parent's up to the repository root, which npm
-            # uses for a workspace member); such a dependency needs allow_install_scripts: true. Only package paths
-            # are printed: a resolved git URL can carry a credential.
-            node - <<'NODE'
-          const fs = require("node:fs");
-          const path = require("node:path");
-          const root = fs.realpathSync(process.env.GITHUB_WORKSPACE);
-          const lockfiles = [];
-          for (let dir = fs.realpathSync(process.cwd()); ; dir = path.dirname(dir)) {
-            const lockfile = ["npm-shrinkwrap.json", "package-lock.json"].map((file) => path.join(dir, file)).find((file) => fs.existsSync(file));
-            if (lockfile !== undefined) lockfiles.push(lockfile);
-            if (dir === root || path.dirname(dir) === dir) break;
-          }
-          const prepared = [];
-          for (const lockfile of lockfiles) {
-            const lock = JSON.parse(fs.readFileSync(lockfile, "utf8"));
-            const check = (name, entry) => {
-              if (entry === null || typeof entry !== "object" || entry.link === true) return;
-              for (const source of [entry.resolved, entry.version]) {
-                if (typeof source !== "string") continue;
-                // A local archive is extracted without preparing; a directory or any git source is packed.
-                const local = /^file:/i.test(source);
-                if ((local && !/\.(tgz|tar\.gz|tar)$/i.test(source)) || (!local && /^(git[+:]|github:|gitlab:|bitbucket:|gist:)/i.test(source))) {
-                  prepared.push(`${path.relative(root, lockfile) || lockfile}: ${name}`);
-                  return;
-                }
-              }
-            };
-            const walk = (dependencies, prefix) => {
-              for (const [name, entry] of Object.entries(dependencies ?? {})) {
-                check(prefix + name, entry);
-                walk(entry?.dependencies, `${prefix}${name} > `);
-              }
-            };
-            if (lock.packages) {
-              for (const [key, entry] of Object.entries(lock.packages)) if (key !== "") check(key, entry);
-            } else {
-              walk(lock.dependencies, "");
-            }
-          }
-          if (prepared.length > 0) {
-            console.log(`::error::npm prepares these git or directory dependencies by running their scripts even with --ignore-scripts: ${prepared.join(", ")}. Set allow_install_scripts: true to install them.`);
-            process.exit(1);
-          }
-          NODE
+            # dependency it installs as a copy, while packing it (npm's own git and directory classification decides
+            # which). These settings reach every npm process of the install: scripts stay off, and a script npm starts
+            # anyway runs /usr/bin/false instead of its command, so the install fails without running it.
+            export npm_config_ignore_scripts=true npm_config_script_shell=/usr/bin/false
           fi
-          npm ci --ignore-scripts="$ignore_scripts"
+          if ! npm ci --ignore-scripts="$ignore_scripts"; then
+            if [ "$ignore_scripts" == "true" ]; then
+              echo "::error::npm ci --ignore-scripts failed in $PWD (see above). A dependency npm prepares by running a script (a git dependency, or a directory dependency installed as a copy) cannot be installed with allow_install_scripts: false; set it to true if the router needs it."
+            fi
+            exit 1
+          fi
           if [ "$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)" != "$CHECKOUT_COMMIT" ]; then
             echo "::error::npm ci in $PWD moved HEAD away from the checked-out commit $CHECKOUT_COMMIT; apifn check must read the committed router and spec."
             exit 1
