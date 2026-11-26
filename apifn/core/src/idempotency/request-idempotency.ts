@@ -18,7 +18,11 @@
  *   claim is reported as indeterminate until its retention ends.
  * - A committed receipt wins over any response settled without it: settle,
  *   release, claim and recover record the receipt's response, and a receipt
- *   for a different body is a conflict, never a replay.
+ *   for a different body is a conflict, never a replay. Settle and release
+ *   reconcile through one step that records the receipt and reports it
+ *   relative to the token, even when another caller recorded it first.
+ * - Only the stored replay copy is bounded: settle and release return the
+ *   full winning response, and receipt-backed replays read the receipt.
  * - A request's recovery mode must match the live record's; a mismatch is a
  *   conflict, so a request never takes over or downgrades a receipt claim.
  */
@@ -166,21 +170,22 @@ export type IdempotencyClaimResult =
   | { outcome: "invalid_key"; reason: IdempotencyInvalidKeyReason };
 
 /**
- * `settled`: the claim is complete; send `response` (the receipt's response
- * when the holder's own commit wrote one). `committed`: another holder's
- * receipt for the same body exists and was recorded instead; send its
- * response. `conflict`: a receipt for a different body holds the key.
- * `stale`: a newer claim owns the key.
+ * `settled`: the claim is complete; send `response`, which is the full
+ * response (the holder's own, or its own receipt's when its commit wrote
+ * one), never the bounded stored copy. `committed`: another holder's receipt
+ * for the same body exists and was recorded instead; send its response.
+ * `conflict`: a receipt for a different body holds the key. `stale`: no
+ * receipt exists and a newer claim owns the key.
  */
 export type IdempotencySettleResult =
-  | { outcome: "settled"; response: StoredIdempotentResponse }
-  | { outcome: "committed"; response: StoredIdempotentResponse }
+  | { outcome: "settled"; response: IdempotentResponse }
+  | { outcome: "committed"; response: IdempotentResponse }
   | { outcome: "conflict" }
   | { outcome: "stale" };
 
 export type IdempotencyReleaseResult =
   | { outcome: "released" }
-  | { outcome: "committed"; response: StoredIdempotentResponse }
+  | { outcome: "committed"; response: IdempotentResponse }
   | { outcome: "conflict" }
   | { outcome: "stale" };
 
@@ -212,6 +217,7 @@ export interface RequestIdempotencyOptions {
   maxResponseBytes?: number;
   /** Unique version tokens. Defaults to `crypto.randomUUID()`. */
   nonce?: () => string;
+  /** Called synchronously; a throw or a rejected promise never changes an outcome. */
   onDiagnostic?: (event: IdempotencyDiagnostic) => void;
 }
 
@@ -376,6 +382,22 @@ export function normalizeIdempotentResponse(
   return { status, headers: {}, omitted: ["body", "headers"] };
 }
 
+/**
+ * Re-applies the write-path header rules to a stored response before it is
+ * replayed, so a record written by another writer never replays credential,
+ * framing or (without its body) representation headers.
+ */
+function replayable(response: StoredIdempotentResponse): StoredIdempotentResponse {
+  const bodyOmitted = response.omitted?.includes("body") === true;
+  const headers: Record<string, string> = {};
+  for (const [name, value] of Object.entries(response.headers)) {
+    if (CREDENTIAL_HEADERS.has(name) || HOP_BY_HOP_HEADERS.has(name)) continue;
+    if (bodyOmitted && BODY_REPRESENTATION_HEADERS.has(name)) continue;
+    headers[name] = value;
+  }
+  return { ...response, headers };
+}
+
 function isStoredResponse(value: unknown): value is StoredIdempotentResponse {
   if (!isPlainObject(value) || !isValidStatus(value.status) || !isPlainObject(value.headers)) return false;
   for (const [name, header] of Object.entries(value.headers)) {
@@ -411,6 +433,7 @@ function isToken(value: unknown): value is IdempotencyToken {
     nonEmptyString(value.fingerprint) &&
     nonEmptyString(value.operation) &&
     Number.isSafeInteger(value.generation) &&
+    (value.generation as number) > 0 &&
     (value.recovery === "receipt" || value.recovery === "none")
   );
 }
@@ -461,9 +484,19 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
 
   const emit = (event: IdempotencyDiagnostic): void => {
     try {
-      onDiagnostic?.(event);
+      const returned: unknown = onDiagnostic?.(event);
+      // An async listener's rejection is observed here, so it never surfaces as an unhandled rejection.
+      if (typeof (returned as PromiseLike<unknown> | undefined)?.then === "function") {
+        Promise.resolve(returned).catch(() => undefined);
+      }
     } catch {
       // Diagnostics never change an idempotency outcome.
+    }
+  };
+
+  const requireReceiptSource = (action: "settle" | "release", token: IdempotencyToken): void => {
+    if (token.recovery === "receipt" && !receipts) {
+      throw new TypeError(`idempotency ${action} of a "receipt" token needs a receipts source with durable commit evidence`);
     }
   };
 
@@ -490,7 +523,12 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
     if (!receipts) return undefined;
     const receipt = await receipts.find(storeKey);
     if (receipt === undefined || receipt === null) return undefined;
-    if (!isPlainObject(receipt) || !nonEmptyString(receipt.fingerprint) || !Number.isSafeInteger(receipt.generation)) {
+    if (
+      !isPlainObject(receipt) ||
+      !nonEmptyString(receipt.fingerprint) ||
+      !Number.isSafeInteger(receipt.generation) ||
+      receipt.generation <= 0
+    ) {
       throw new Error("idempotency receipt source returned a malformed receipt");
     }
     if (receipt.storeKey !== storeKey) {
@@ -543,6 +581,24 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
 
   const retryAfter = (until: number, at: number): number => Math.max(1, Math.ceil(until - at));
 
+  /** The receipt's response for the caller: header rules applied, never size-bounded. */
+  const fullReceiptResponse = (receipt: IdempotencyReceipt): StoredIdempotentResponse =>
+    normalizeIdempotentResponse(receipt.response, Number.POSITIVE_INFINITY);
+
+  /**
+   * Replays a completed record. A copy recorded from a receipt whose parts
+   * were dropped for size is served in full from the receipt itself.
+   */
+  const replayOf = async (storeKey: string, record: CompletedIdempotencyRecord): Promise<IdempotencyReplay> => {
+    if (record.fromReceipt === true && record.response.omitted !== undefined && receipts) {
+      const receipt = await findReceipt(storeKey);
+      if (receipt && receipt.fingerprint === record.fingerprint) {
+        return { outcome: "replay", response: fullReceiptResponse(receipt), source: "receipt" };
+      }
+    }
+    return { outcome: "replay", response: replayable(record.response), source: "store" };
+  };
+
   type ReceiptOutcome = IdempotencyReplay | { outcome: "conflict" };
 
   /**
@@ -556,9 +612,10 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
     receipt: IdempotencyReceipt,
     fingerprint: string,
   ): Promise<ReceiptOutcome | undefined> => {
-    const response = await completeFromReceipt(storeKey, expectedVersion, generation, receipt);
-    if (!response) return undefined;
-    return receipt.fingerprint === fingerprint ? { outcome: "replay", response, source: "receipt" } : { outcome: "conflict" };
+    if (!(await completeFromReceipt(storeKey, expectedVersion, generation, receipt))) return undefined;
+    return receipt.fingerprint === fingerprint
+      ? { outcome: "replay", response: fullReceiptResponse(receipt), source: "receipt" }
+      : { outcome: "conflict" };
   };
 
   /**
@@ -602,7 +659,7 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
     }
     const { record } = live;
     if (record.fingerprint !== prepared.fingerprint) return { outcome: "conflict" };
-    if (record.state === "completed") return { outcome: "replay", response: record.response, source: "store" };
+    if (record.state === "completed") return replayOf(prepared.storeKey, record);
     if (at < record.leaseExpiresAt) return { outcome: "in_progress", retryAfterMs: retryAfter(record.leaseExpiresAt, at) };
     // The lease expired and the receipt source shows no commit: take the key over.
     if (record.recovery === "receipt") return acquire(prepared.storeKey, record.version, record.generation + 1, prepared, at);
@@ -661,38 +718,72 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
     return final;
   };
 
+  type Reconciled =
+    | { outcome: "settled" | "committed"; response: IdempotentResponse }
+    | { outcome: "conflict" }
+    | { outcome: "stale" };
+
   /**
-   * For a receipt-mode token, records an existing receipt in place of the
-   * holder's own result. Undefined when no receipt exists.
+   * The one reconcile step for settle and release. For a receipt-mode token
+   * whose key has a receipt, records the receipt over the live record unless
+   * it is already recorded (by this or any other caller), then reports it
+   * relative to the token: `settled` for the token's own commit, `committed`
+   * for another holder's commit of the same body, `conflict` for a different
+   * body. The receipt wins over any record, as it does in claim and recover.
+   * Undefined when the token has no receipt contract or no receipt exists.
    */
-  const settleFromReceipt = async (
-    token: IdempotencyToken,
-  ): Promise<IdempotencySettleResult | undefined> => {
+  const reconcileReceipt = async (token: IdempotencyToken): Promise<Reconciled | undefined> => {
     if (token.recovery !== "receipt") return undefined;
     const receipt = await findReceipt(token.storeKey);
     if (!receipt) return undefined;
-    const applied = await applyReceipt(token.storeKey, token.version, token.generation, receipt, token.fingerprint);
-    if (!applied) return { outcome: "stale" };
-    if (applied.outcome === "conflict") return applied;
-    return { outcome: receipt.generation === token.generation ? "settled" : "committed", response: applied.response };
+    let recorded = false;
+    for (let attempt = 0; attempt < MAX_ATTEMPTS && !recorded; attempt += 1) {
+      const live = await readLive(token.storeKey, now());
+      if (live.kind === "present") {
+        const { record } = live;
+        recorded =
+          (record.state === "completed" && record.fromReceipt === true && record.fingerprint === receipt.fingerprint) ||
+          (await completeFromReceipt(token.storeKey, record.version, record.generation, receipt)) !== undefined;
+      } else {
+        recorded =
+          (await completeFromReceipt(token.storeKey, live.expectedVersion, live.previousGeneration, receipt)) !== undefined;
+      }
+    }
+    // Persistent contention: other writers keep winning; the next claim or recover records the receipt.
+    if (!recorded) return { outcome: "stale" };
+    if (receipt.fingerprint !== token.fingerprint) return { outcome: "conflict" };
+    return {
+      outcome: receipt.generation === token.generation ? "settled" : "committed",
+      response: fullReceiptResponse(receipt),
+    };
+  };
+
+  /** Completes the token's own claim with its response when no receipt exists. */
+  const settleOwn = async (
+    token: IdempotencyToken,
+    response: IdempotentResponse,
+    stored: StoredIdempotentResponse,
+  ): Promise<IdempotencySettleResult> => {
+    const written = await store.compareAndSet(token.storeKey, token.version, {
+      state: "completed",
+      version: nextVersion(),
+      generation: token.generation,
+      fingerprint: token.fingerprint,
+      recovery: token.recovery,
+      response: stored,
+      expiresAt: now() + retentionMs,
+    });
+    // The caller sends its own full response; a lost write rechecks for a receipt recorded meanwhile.
+    if (written) return { outcome: "settled", response };
+    return (await reconcileReceipt(token)) ?? { outcome: "stale" };
   };
 
   const settle = async (token: IdempotencyToken, response: IdempotentResponse): Promise<IdempotencySettleResult> => {
     if (!isToken(token)) throw new TypeError("idempotency settle needs a token from claim");
+    requireReceiptSource("settle", token);
+    // Validates the response and bounds only the stored replay copy.
     const stored = normalizeIdempotentResponse(response, maxResponseBytes);
-    let result: IdempotencySettleResult | undefined = await settleFromReceipt(token);
-    if (!result) {
-      const written = await store.compareAndSet(token.storeKey, token.version, {
-        state: "completed",
-        version: nextVersion(),
-        generation: token.generation,
-        fingerprint: token.fingerprint,
-        recovery: token.recovery,
-        response: stored,
-        expiresAt: now() + retentionMs,
-      });
-      result = written ? { outcome: "settled", response: stored } : { outcome: "stale" };
-    }
+    const result: IdempotencySettleResult = (await reconcileReceipt(token)) ?? (await settleOwn(token, response, stored));
     emit({
       action: "settle",
       outcome: result.outcome,
@@ -703,16 +794,22 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
     return result;
   };
 
+  const releaseResult = (reconciled: Reconciled): IdempotencyReleaseResult =>
+    "response" in reconciled ? { outcome: "committed", response: reconciled.response } : reconciled;
+
   const release = async (token: IdempotencyToken): Promise<IdempotencyReleaseResult> => {
     if (!isToken(token)) throw new TypeError("idempotency release needs a token from claim");
+    requireReceiptSource("release", token);
     // A commit exists for this key: record it instead of freeing the key for a second run.
-    const fromReceipt = await settleFromReceipt(token);
+    const reconciled = await reconcileReceipt(token);
     let result: IdempotencyReleaseResult;
-    if (fromReceipt) {
-      result = "response" in fromReceipt ? { outcome: "committed", response: fromReceipt.response } : fromReceipt;
+    if (reconciled) {
+      result = releaseResult(reconciled);
+    } else if (await store.compareAndSet(token.storeKey, token.version, null)) {
+      result = { outcome: "released" };
     } else {
-      const written = await store.compareAndSet(token.storeKey, token.version, null);
-      result = written ? { outcome: "released" } : { outcome: "stale" };
+      const late = await reconcileReceipt(token);
+      result = late ? releaseResult(late) : { outcome: "stale" };
     }
     emit({
       action: "release",
@@ -732,7 +829,7 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
     if (live.kind === "absent") return { outcome: "absent" };
     const { record } = live;
     if (record.fingerprint !== prepared.fingerprint) return { outcome: "conflict" };
-    if (record.state === "completed") return { outcome: "replay", response: record.response, source: "store" };
+    if (record.state === "completed") return replayOf(prepared.storeKey, record);
     if (at < record.leaseExpiresAt) return { outcome: "in_progress", retryAfterMs: retryAfter(record.leaseExpiresAt, at) };
     return record.recovery === "receipt"
       ? { outcome: "not_committed" }

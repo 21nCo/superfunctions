@@ -187,8 +187,9 @@ describe("createRequestIdempotency", () => {
     expect(await restarted.claim(orderRequest())).toMatchObject({ outcome: "replay", source: "store" });
     expect(shared.database.orders).toEqual(["book"]);
 
-    // The original holder cannot overwrite the recorded result afterwards.
-    expect(await shared.idempotency.settle(token, { status: 500 })).toEqual({ outcome: "stale" });
+    // The original holder learns its own commit was recorded; its late result never overwrites the receipt.
+    expect(await shared.idempotency.settle(token, { status: 500 })).toMatchObject({ outcome: "settled", response: { status: 201 } });
+    expect(await restarted.claim(orderRequest())).toMatchObject({ outcome: "replay", response: { status: 201 } });
   });
 
   it("recovers a dropped response through recover() without running the handler again", async () => {
@@ -291,17 +292,23 @@ describe("createRequestIdempotency", () => {
     expect(await idempotency.claim(request)).toMatchObject({ outcome: "indeterminate" });
   });
 
-  it("bounds the stored response and drops credential headers", async () => {
+  it("bounds only the stored replay copy, drops credential headers from it and returns the full response", async () => {
     const { idempotency, store } = setup({ maxResponseBytes: 256 });
-    const token = acquired(await idempotency.claim(orderRequest()));
-    const settled = await idempotency.settle(token, {
+    const token = acquired(await idempotency.claim(orderRequest({ recovery: "none" })));
+    const response = {
       status: 201,
       headers: { "Content-Type": "application/json", "Set-Cookie": "session=test-session", authorization: "Bearer test-token" },
       body: "x".repeat(1_000),
-    });
+    };
 
-    expect(settled).toEqual({
-      outcome: "settled",
+    // The first caller gets its own full response, not the bounded copy.
+    expect(await idempotency.settle(token, response)).toEqual({ outcome: "settled", response });
+    expect([...store.records.values()][0]).toMatchObject({
+      response: { status: 201, headers: { "content-type": "application/json" }, omitted: ["body"] },
+    });
+    expect(await idempotency.claim(orderRequest({ recovery: "none" }))).toEqual({
+      outcome: "replay",
+      source: "store",
       response: { status: 201, headers: { "content-type": "application/json" }, omitted: ["body"] },
     });
     const stored = JSON.stringify([...store.records.values()]);
@@ -400,8 +407,85 @@ describe("createRequestIdempotency receipt reconciliation", () => {
     expect(settled).toMatchObject({ outcome: "committed", response: { status: 201 } });
     expect(await idempotency.claim(orderRequest())).toMatchObject({ outcome: "replay", response: { status: 201 } });
     expect(await idempotency.recover(orderRequest())).toMatchObject({ outcome: "replay", response: { status: 201 } });
-    expect(await idempotency.settle(slow, { status: 201 })).toEqual({ outcome: "stale" });
+    // The slow holder's own commit is the recorded result, so it settles rather than failing as stale.
+    expect(await idempotency.settle(slow, { status: 500 })).toMatchObject({ outcome: "settled", response: { status: 201 } });
     expect(database.orders).toEqual(["book"]);
+  });
+
+  it.each([
+    ["claim", "settle"],
+    ["claim", "release"],
+    ["recover", "settle"],
+    ["recover", "release"],
+  ] as const)(
+    "reports the holder's own commit when a concurrent %s recorded its receipt before %s",
+    async (reader, finish) => {
+      const { idempotency, database, store } = setup();
+      const holder = acquired(await idempotency.claim(orderRequest()));
+      const committed = await database.createOrder(holder, "book");
+      // A retry records the holder's receipt first, so the holder's version no longer matches.
+      expect(await idempotency[reader](orderRequest())).toMatchObject({ outcome: "replay", source: "receipt" });
+      const recorded = [...store.records.values()][0];
+
+      const result = finish === "settle" ? await idempotency.settle(holder, committed) : await idempotency.release(holder);
+      expect(result).toEqual({ outcome: finish === "settle" ? "settled" : "committed", response: committed });
+      expect([...store.records.values()][0]).toEqual(recorded);
+      expect(database.orders).toEqual(["book"]);
+    },
+  );
+
+  it("records a holder's commit over a newer takeover claim and settles the holder", async () => {
+    const { idempotency, database, clock } = setup();
+    const slow = acquired(await idempotency.claim(orderRequest()));
+    clock.advance(1_001);
+    const current = acquired(await idempotency.claim(orderRequest()));
+    // The slow holder commits after the takeover; its commit evidence wins over the newer pending claim.
+    const committed = await database.createOrder(slow, "book");
+
+    expect(await idempotency.settle(slow, committed)).toEqual({ outcome: "settled", response: committed });
+    await expect(database.createOrder(current, "book")).rejects.toThrow("receipt already committed");
+    expect(await idempotency.release(current)).toEqual({ outcome: "committed", response: committed });
+    expect(database.orders).toEqual(["book"]);
+  });
+
+  it.each(["settle", "release"] as const)(
+    "refuses to %s a receipt token on an instance without a receipts source, before any store write",
+    async (finish) => {
+      const { idempotency, store, clock } = setup();
+      const token = acquired(await idempotency.claim(orderRequest()));
+      const withoutReceipts = createRequestIdempotency({ store, clock, leaseMs: 1_000, retentionMs: 60_000, nonce: testNonce });
+      const before = structuredClone([...store.records.values()]);
+      const writes = store.writes;
+
+      const finishing =
+        finish === "settle" ? withoutReceipts.settle(token, { status: 500 }) : withoutReceipts.release(token);
+      await expect(finishing).rejects.toThrow(TypeError);
+      await expect(finishing).rejects.toThrow(/receipts source/);
+      expect(store.writes).toBe(writes);
+      expect([...store.records.values()]).toEqual(before);
+    },
+  );
+
+  it("returns a committed receipt's full response and replays it in full from the receipt", async () => {
+    const { idempotency, store } = setup({ maxResponseBytes: 256 });
+    const holder = acquired(await idempotency.claim(orderRequest()));
+    const response = { status: 201, headers: { "content-type": "application/json", "content-length": "1002" }, body: JSON.stringify("x".repeat(1_000)) };
+    const receipts = new Map<string, IdempotencyReceipt>([[holder.storeKey, { ...holder, response }]]);
+    const large = createRequestIdempotency({
+      store,
+      receipts: { find: async (storeKey) => receipts.get(storeKey) },
+      clock: new FakeClock(),
+      leaseMs: 1_000,
+      retentionMs: 60_000,
+      maxResponseBytes: 256,
+      nonce: testNonce,
+    });
+
+    expect(await large.settle(holder, { status: 500 })).toEqual({ outcome: "settled", response });
+    // The stored copy is bounded, but a replay reads the full response from the receipt.
+    expect([...store.records.values()][0]).toMatchObject({ fromReceipt: true, response: { omitted: ["body"] } });
+    expect(await large.claim(orderRequest())).toEqual({ outcome: "replay", source: "receipt", response });
+    expect(await large.recover(orderRequest())).toEqual({ outcome: "replay", source: "receipt", response });
   });
 
   it("settles a holder's own commit with its receipt's response", async () => {
@@ -484,6 +568,59 @@ describe("createRequestIdempotency receipt reconciliation", () => {
 
     expect(token.storeKey).toMatch(/^[0-9a-f]{64}$/);
     expect(JSON.stringify(events)).not.toMatch(/user-1|tenant-a|store-1|order-key-1/);
+  });
+
+  it("never replays credential, framing or bodiless representation headers from a stored record", async () => {
+    const { idempotency, store } = setup();
+    const token = acquired(await idempotency.claim(orderRequest({ recovery: "none" })));
+    const headers = { "content-type": "text/plain", "set-cookie": "session=test-session", "transfer-encoding": "chunked", etag: '"v1"' };
+    store.records.set(token.storeKey, {
+      state: "completed",
+      version: "v",
+      generation: 1,
+      fingerprint: token.fingerprint,
+      recovery: "none",
+      expiresAt: 2_000_000,
+      response: { status: 200, headers, omitted: ["body"] },
+    });
+
+    expect(await idempotency.claim(orderRequest({ recovery: "none" }))).toEqual({
+      outcome: "replay",
+      source: "store",
+      response: { status: 200, headers: { "content-type": "text/plain" }, omitted: ["body"] },
+    });
+  });
+
+  it("rejects tokens and receipts with a non-positive generation", async () => {
+    const { idempotency, database } = setup();
+    const token = acquired(await idempotency.claim(orderRequest()));
+    await expect(idempotency.settle({ ...token, generation: 0 }, { status: 200 })).rejects.toThrow(/token from claim/);
+    await expect(idempotency.release({ ...token, generation: -1 })).rejects.toThrow(/token from claim/);
+    database.receiptsByKey.set(token.storeKey, { ...token, generation: 0, response: { status: 201 } });
+    await expect(idempotency.claim(orderRequest())).rejects.toThrow(/malformed receipt/);
+  });
+
+  it("ignores a rejected promise from an async diagnostic listener", async () => {
+    const rejected: string[] = [];
+    const { idempotency } = setup({
+      onDiagnostic: (event) => {
+        rejected.push(event.outcome);
+        return Promise.reject(new Error("listener failed")) as unknown as void;
+      },
+    });
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      const token = acquired(await idempotency.claim(orderRequest({ recovery: "none" })));
+      expect(await idempotency.settle(token, { status: 204 })).toMatchObject({ outcome: "settled" });
+      await tick();
+      await tick();
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+    expect(rejected).toEqual(["acquired", "settled"]);
+    expect(unhandled).toEqual([]);
   });
 
   it("fails closed on stored responses the write path would reject", async () => {
