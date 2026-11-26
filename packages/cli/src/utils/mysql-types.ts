@@ -26,6 +26,44 @@ export function isUnboundedMySqlTextType(dataType: string): boolean {
   return /^(tinytext|text|mediumtext|longtext)$/i.test(dataType.trim());
 }
 
+// MySQL reports TEXT as 65,535 (and MEDIUMTEXT/LONGTEXT as larger) in
+// CHARACTER_MAXIMUM_LENGTH. Generators create TEXT for strings without a
+// maxLength, so these types already satisfy an unbounded schema string.
+// TINYTEXT is narrower than TEXT and still needs a migration.
+export function satisfiesUnboundedMySqlString(dataType: string): boolean {
+  return /^(text|mediumtext|longtext)$/i.test(dataType.trim());
+}
+
+// InnoDB key limits: 767 bytes per part, or 3,072 on DYNAMIC rows where large
+// index prefixes are always on (MySQL 8.0+, MariaDB 10.3+; else 767), and per
+// key 3,072, 1,536 or 768 bytes on 16+, 8 or 4 KiB pages. Other engines, row
+// formats (COMPRESSED: KEY_BLOCK_SIZE) or page sizes are not modelled: return why.
+export function mysqlIndexKeyBudget(t: { name: string; engine?: string | null; rowFormat?: string | null; innodbPageSize?: number | null; serverVersion?: string | null }) {
+  const version = /^(\d{1,3})\.(\d{1,3})\.\d{1,4}(?:-\S+)?$/.exec(t.serverVersion ?? '')?.map(Number);
+  const [floorMajor, floorMinor] = /-mariadb/i.test(t.serverVersion ?? '') ? [10, 3] : [8, 0];
+  const largePrefix = !!version && (version[1] > floorMajor || (version[1] === floorMajor && version[2] >= floorMinor));
+  if (!/^innodb$/i.test(t.engine ?? '') || !/^(dynamic|compact|redundant)$/i.test(t.rowFormat ?? '')) {
+    return `its ${t.engine ?? 'unknown'} engine and ${t.rowFormat ?? 'unknown'} row format have key limits this check does not model (COMPRESSED: KEY_BLOCK_SIZE); convert it first with ALTER TABLE ${t.name} ENGINE=InnoDB ROW_FORMAT=DYNAMIC`;
+  }
+  const page = t.innodbPageSize ?? 0;
+  if (![4_096, 8_192, 16_384, 32_768, 65_536].includes(page)) return `innodb_page_size ${t.innodbPageSize ?? 'unknown'} is not a known InnoDB page size`;
+  const total = page >= 16_384 ? 3_072 : page > 4_096 ? 1_536 : 768;
+  return {
+    innodbPageSize: page, total, part: Math.min(largePrefix && /^dynamic$/i.test(t.rowFormat!) ? 3_072 : 767, total),
+    partLimit: largePrefix ? `its ${t.rowFormat} row format` : `server version ${t.serverVersion ?? 'unknown'}, whose innodb_large_prefix may be off,`,
+    remedy: largePrefix ? `Convert the table first with ALTER TABLE ${t.name} ROW_FORMAT=DYNAMIC` : 'Upgrade to MySQL 8.0 or MariaDB 10.3 (or later) first',
+  };
+}
+
+// Key bytes of a fixed-width type such as `tinyint(1)` or `datetime(3)`.
+export function mysqlFixedKeyBytes(sqlType: string): number | undefined {
+  const match = /^(tinyint|bool|boolean|year|smallint|mediumint|int|integer|bigint|date|time|timestamp|datetime)\b(?:\s*\(\s*(\d+)\s*\))?/i.exec(sqlType.trim());
+  if (!match) return undefined;
+  const name = match[1].toLowerCase();
+  const bytes = ({ smallint: 2, mediumint: 3, int: 4, integer: 4, bigint: 8, date: 3, time: 3, timestamp: 4, datetime: 5 } as Record<string, number>)[name] ?? 1;
+  return /^(time|timestamp|datetime)$/.test(name) ? bytes + Math.ceil(Number(match[2] ?? 0) / 2) : bytes;
+}
+
 export function databaseStringLength(input: {
   dataType: string;
   maxLength?: number | null;
