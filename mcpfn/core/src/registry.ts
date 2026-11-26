@@ -37,16 +37,22 @@ import type {
 } from "./types.js";
 
 interface RegisteredTool<TContext> {
-  /** The caller's definition: handlers and live non-schema fields. */
+  /** The caller's definition, the receiver its handlers are bound to. */
   definition: McpFnToolDefinition<TContext>;
-  /** What the registry advertises: the definition with its schema snapshots. */
+  /**
+   * What the registry advertises, validates against and calls: the fields read
+   * once at registration, with its schema snapshots and handlers bound to the
+   * caller's definition.
+   */
   view: McpFnToolDefinition<TContext>;
   validateInput: CompiledSchema;
   validateOutput?: CompiledSchema;
 }
 
 interface RegisteredPrompt<TContext> {
+  /** The caller's definition, the receiver get() is bound to. */
   definition: McpFnPromptDefinition<TContext>;
+  /** What the registry advertises and calls, like RegisteredTool.view. */
   view: McpFnPromptDefinition<TContext>;
   validateArguments: CompiledSchema;
 }
@@ -112,40 +118,178 @@ function deepFreeze<T>(value: T): T {
 }
 
 /**
- * A deep-frozen structured clone of caller-owned schema data. The registry
- * compiles, validates with, advertises and copies only snapshots, so editing
- * the caller's object after registration changes nothing.
+ * A deep-frozen copy of caller-owned schema data. Only JSON data is accepted:
+ * plain objects (prototype Object.prototype or null) with data properties,
+ * arrays, strings, finite numbers, booleans and null. An object property whose
+ * value is undefined is left out, as JSON.stringify does. Anything else (a
+ * Date, Map, RegExp, typed array, class instance, function, accessor, cycle or
+ * undefined array item) fails, because a frozen view of it could still change
+ * (a Date's time, a Map's entries) while the validator compiled from it could
+ * not. The registry compiles, validates with, advertises and copies only these
+ * snapshots, so editing the caller's object after registration changes nothing.
  */
 function snapshotJson<T>(value: T, label: string): T {
   if (value === null || typeof value !== "object") return value;
-  let copy: T;
+  const copies = new Map<object, unknown>();
+  const active = new Set<object>();
+  const copy = (current: unknown, path: string): unknown => {
+    if (current === null || typeof current === "string" || typeof current === "boolean") {
+      return current;
+    }
+    if (typeof current === "number") {
+      if (Number.isFinite(current)) return current;
+      throw new Error(`${path} is not a finite number`);
+    }
+    if (typeof current !== "object") throw new Error(`${path} is a ${typeof current}`);
+    const done = copies.get(current);
+    if (done !== undefined) return done;
+    if (active.has(current)) throw new Error(`${path} is circular`);
+    active.add(current);
+    let result: unknown;
+    if (Array.isArray(current)) {
+      if (Object.getPrototypeOf(current) !== Array.prototype) {
+        throw new Error(`${path} is not a plain array`);
+      }
+      const items: unknown[] = [];
+      for (let index = 0; index < current.length; index += 1) {
+        const descriptor = Object.getOwnPropertyDescriptor(current, index);
+        if (!descriptor || !("value" in descriptor) || descriptor.value === undefined) {
+          throw new Error(`${path}[${index}] is not JSON data`);
+        }
+        items.push(copy(descriptor.value, `${path}[${index}]`));
+      }
+      result = items;
+    } else {
+      const prototype = Object.getPrototypeOf(current) as unknown;
+      if (prototype !== Object.prototype && prototype !== null) {
+        throw new Error(`${path} is not a plain object`);
+      }
+      const entries: Record<string, unknown> = {};
+      for (const key of Object.keys(current)) {
+        const descriptor = Object.getOwnPropertyDescriptor(current, key);
+        if (!descriptor) continue;
+        if (!("value" in descriptor)) throw new Error(`${path}.${key} is an accessor`);
+        if (descriptor.value === undefined) continue;
+        Object.defineProperty(entries, key, {
+          value: copy(descriptor.value, `${path}.${key}`),
+          enumerable: true,
+          writable: true,
+          configurable: true,
+        });
+      }
+      result = entries;
+    }
+    active.delete(current);
+    copies.set(current, result);
+    return result;
+  };
+  let snapshot: unknown;
   try {
-    copy = structuredClone(value);
+    snapshot = copy(value, "value");
   } catch (error) {
     throw new McpFnValidationError(`${label} must be JSON data`, {
-      cause: errorMessage(error),
+      cause: isStackOverflow(error) ? "value is nested too deeply" : errorMessage(error),
     });
   }
-  return deepFreeze(copy);
+  return deepFreeze(snapshot as T);
+}
+
+/** A registry-issued tool or prompt view and the caller definition behind it. */
+interface DefinitionRecord {
+  kind: "tool" | "prompt";
+  /** The caller's definition: the only receiver for handlers and get(). */
+  definition: object;
+  /** The schema snapshots the view advertises. */
+  schemas: ToolSchemas | PromptSchemas;
+}
+
+// Every view any registry issued, so registering a view again (a clone, or the
+// upstream replay of definitions() into cloneEmpty()) uses the record it came
+// from instead of re-reading the view as a new caller definition. A view is
+// frozen data, so the mapping holds for every registry.
+const viewRecords = new WeakMap<object, DefinitionRecord>();
+
+const TOOL_FIELDS = [
+  "name",
+  "title",
+  "description",
+  "inputSchema",
+  "outputSchema",
+  "annotations",
+  "execution",
+  "icons",
+  "metadata",
+  "handler",
+  "taskHandler",
+  "handleInvalidArguments",
+] as const;
+
+const PROMPT_FIELDS = [
+  "name",
+  "title",
+  "description",
+  "arguments",
+  "argumentsSchema",
+  "icons",
+  "metadata",
+  "get",
+  "complete",
+] as const;
+
+// Methods called with the caller definition as `this`, so a view's copy works
+// when called directly (a class method using private fields, for example).
+const BOUND_FIELDS = new Set<PropertyKey>(["handler", "handleInvalidArguments", "get"]);
+
+/** Define an own enumerable data property, even for a key such as __proto__. */
+function defineField(target: object, key: PropertyKey, value: unknown): void {
+  Object.defineProperty(target, key, { value, enumerable: true, writable: true, configurable: true });
 }
 
 /**
- * The frozen view the registry advertises and enforces for a caller
- * definition: its own fields as read at registration, with every schema field
- * defined as an own property holding the registry's snapshot (or undefined), so
- * neither a later edit nor a prototype getter changes what is listed. It keeps
- * the prototype; handlers are still called on the caller's definition.
+ * Read a caller definition once, through the caller as receiver: its own
+ * enumerable fields and every known definition field (own or inherited, such
+ * as a class getter). Every check and the view use only these values, so no
+ * later read, and no code on the caller's prototype, can change them.
  */
-function freezeView<T extends object>(
-  definition: T,
+function readDefinition(
+  definition: object,
+  known: readonly string[],
+): Record<PropertyKey, unknown> {
+  const source = definition as Record<PropertyKey, unknown>;
+  const fields: Record<PropertyKey, unknown> = {};
+  const keys: PropertyKey[] = Reflect.ownKeys(definition).filter(key =>
+    Object.prototype.propertyIsEnumerable.call(definition, key));
+  for (const key of known) if (!keys.includes(key)) keys.push(key);
+  for (const key of keys) {
+    const value = source[key];
+    if (value === undefined && !Object.hasOwn(definition, key)) continue;
+    defineField(
+      fields,
+      key,
+      BOUND_FIELDS.has(key) && typeof value === "function"
+        ? (value as (...args: unknown[]) => unknown).bind(definition)
+        : value,
+    );
+  }
+  return fields;
+}
+
+/**
+ * The frozen view the registry advertises: a plain object whose every field is
+ * an own data property (the read fields, with each schema field holding the
+ * registry's snapshot or undefined), so listing it runs no caller code.
+ */
+function issueView<T>(
+  fields: Record<PropertyKey, unknown>,
   snapshots: Record<string, unknown>,
+  record: DefinitionRecord,
 ): T {
-  return Object.freeze(
-    Object.defineProperties(
-      Object.create(Object.getPrototypeOf(definition) as object | null) as T,
-      Object.getOwnPropertyDescriptors({ ...definition, ...snapshots }),
-    ),
-  );
+  const view: Record<PropertyKey, unknown> = {};
+  for (const key of Reflect.ownKeys(fields)) defineField(view, key, fields[key]);
+  for (const key of Object.keys(snapshots)) defineField(view, key, snapshots[key]);
+  Object.freeze(view);
+  viewRecords.set(view, record);
+  return view as T;
 }
 
 /** One failure reported by a {@link McpFnSchemaValidator}. */
@@ -731,12 +875,13 @@ export class McpFnRegistry<TContext = undefined> {
 
   /**
    * Clone in successful registration order, preserving cross-definition
-   * references. Each successful registration is replayed with its live
-   * definition (handlers and every non-compile check) and the schema snapshots
-   * the source accepted, so the clone validates and advertises exactly what
-   * the source does. A built-in compiler is a fresh instance holding the
-   * source's accepted snapshots; a custom `compileSchema` is shared as-is and
-   * is not called again for them (the clone reuses the source validators).
+   * references. Each successful tool or prompt registration is replayed from
+   * its record: the frozen view the source advertises (fields read once at
+   * registration, schema snapshots) and the caller definition its handlers are
+   * bound to. No caller code runs, so the clone advertises exactly the source's
+   * contract. A built-in compiler is a fresh instance holding the source's
+   * accepted snapshots; a custom `compileSchema` is shared as-is and is not
+   * called again for them (the clone reuses the source validators).
    */
   clone(): McpFnRegistry<TContext> {
     this.assertClosed();
@@ -746,7 +891,9 @@ export class McpFnRegistry<TContext = undefined> {
   }
 
   /**
-   * An empty registry with this registry's options and no definitions. It
+   * An empty registry with this registry's options and no definitions. A
+   * view from definitions() or promptDefinitions() registered on it keeps its
+   * record (the same fields and handler receiver). It
    * inherits the schemas this registry accepted so far (not later ones):
    * registering the same schema object again (a snapshot from definitions()
    * or promptDefinitions(), or the unchanged caller object), in any order,
@@ -929,43 +1076,56 @@ export class McpFnRegistry<TContext = undefined> {
   register<TDefinition extends McpFnToolDefinition<TContext>>(
     definition: TDefinition,
   ): this {
-    return this.registerTool(definition, undefined);
+    return this.transact("tool", () => this.addTool(definition));
   }
 
-  private registerTool(
-    definition: McpFnToolDefinition<TContext>,
-    accepted: ToolSchemas | undefined,
-  ): this {
-    return this.transact("tool", () => this.addTool(definition, accepted));
+  /**
+   * The definition a registration reads: for a registry-issued view, its
+   * frozen fields and the record it came from (no caller code runs); for a
+   * caller definition, its fields read once through the caller as receiver.
+   */
+  private readRegistration(
+    input: object,
+    kind: DefinitionRecord["kind"],
+    known: readonly string[],
+  ): { definition: object; fields: Record<PropertyKey, unknown>; record?: DefinitionRecord } {
+    const record = viewRecords.get(input);
+    if (record?.kind === kind) {
+      const fields: Record<PropertyKey, unknown> = {};
+      for (const key of Reflect.ownKeys(input)) {
+        defineField(fields, key, (input as Record<PropertyKey, unknown>)[key]);
+      }
+      return { definition: record.definition, fields, record };
+    }
+    return { definition: input, fields: readDefinition(input, known) };
   }
 
-  private addTool(
-    definition: McpFnToolDefinition<TContext>,
-    accepted: ToolSchemas | undefined,
-  ): void {
-    assertName("tool", definition.name);
-    if (this.tools.has(definition.name)) {
-      throw new McpFnValidationError(`Duplicate MCP tool: ${definition.name}`);
+  private addTool(given: McpFnToolDefinition<TContext>): void {
+    const { definition, fields, record } = this.readRegistration(given, "tool", TOOL_FIELDS);
+    const tool = fields as unknown as McpFnToolDefinition<TContext>;
+    assertName("tool", tool.name);
+    if (this.tools.has(tool.name)) {
+      throw new McpFnValidationError(`Duplicate MCP tool: ${tool.name}`);
     }
-    if (!definition.description.trim()) {
+    if (!tool.description.trim()) {
       throw new McpFnValidationError(
-        `Tool ${definition.name} requires a non-empty description`,
+        `Tool ${tool.name} requires a non-empty description`,
       );
     }
-    if (typeof definition.handler !== "function") {
+    if (typeof tool.handler !== "function") {
       throw new McpFnValidationError(
-        `Tool ${definition.name} requires a handler function`,
+        `Tool ${tool.name} requires a handler function`,
       );
     }
-    const sourceInput = accepted ? accepted.inputSchema : definition.inputSchema;
-    const sourceOutput = accepted ? accepted.outputSchema : definition.outputSchema;
-    const inputSchema = this.snapshotOf(sourceInput, `Tool ${definition.name} inputSchema`);
+    const sourceInput = tool.inputSchema;
+    const sourceOutput = tool.outputSchema;
+    const inputSchema = this.snapshotOf(sourceInput, `Tool ${tool.name} inputSchema`);
     const outputSchema = sourceOutput !== undefined
-      ? this.snapshotOf(sourceOutput, `Tool ${definition.name} outputSchema`)
+      ? this.snapshotOf(sourceOutput, `Tool ${tool.name} outputSchema`)
       : undefined;
     if (inputSchema.type !== "object") {
       throw new McpFnValidationError(
-        `Tool ${definition.name} inputSchema must be an object schema`,
+        `Tool ${tool.name} inputSchema must be an object schema`,
       );
     }
     if (
@@ -976,26 +1136,31 @@ export class McpFnRegistry<TContext = undefined> {
         outputSchema.type !== "object")
     ) {
       throw new McpFnValidationError(
-        `Tool ${definition.name} outputSchema must be an object schema`,
+        `Tool ${tool.name} outputSchema must be an object schema`,
       );
     }
-    const taskSupport = definition.execution?.taskSupport ?? "forbidden";
+    // The execution contract decides task support, so the registry keeps its
+    // own frozen copy (a view's copy is already frozen).
+    const execution = record || tool.execution === undefined
+      ? tool.execution
+      : snapshotJson(tool.execution, `Tool ${tool.name} execution`);
+    const taskSupport = execution?.taskSupport ?? "forbidden";
     if (!["forbidden", "optional", "required"].includes(taskSupport)) {
       throw new McpFnValidationError(
-        `Tool ${definition.name} has invalid taskSupport=${String(taskSupport)}`,
+        `Tool ${tool.name} has invalid taskSupport=${String(taskSupport)}`,
       );
     }
     if (
       (taskSupport === "required" || taskSupport === "optional") &&
-      !definition.taskHandler
+      !tool.taskHandler
     ) {
       throw new McpFnValidationError(
-        `Tool ${definition.name} declares taskSupport=${taskSupport} but has no taskHandler`,
+        `Tool ${tool.name} declares taskSupport=${taskSupport} but has no taskHandler`,
       );
     }
-    if (taskSupport === "forbidden" && definition.taskHandler) {
+    if (taskSupport === "forbidden" && tool.taskHandler) {
       throw new McpFnValidationError(
-        `Tool ${definition.name} has a taskHandler but forbids task execution`,
+        `Tool ${tool.name} has a taskHandler but forbids task execution`,
       );
     }
 
@@ -1006,7 +1171,7 @@ export class McpFnRegistry<TContext = undefined> {
       output = outputSchema !== undefined ? this.entryFor(outputSchema, sourceOutput) : undefined;
     } catch (error) {
       throw new McpFnValidationError(
-        `Tool ${definition.name} contains an invalid JSON Schema`,
+        `Tool ${tool.name} contains an invalid JSON Schema`,
         { cause: errorMessage(error) },
       );
     }
@@ -1015,14 +1180,25 @@ export class McpFnRegistry<TContext = undefined> {
       inputSchema: input.snapshot as ToolSchemas["inputSchema"],
       outputSchema: output?.snapshot as ToolSchemas["outputSchema"],
     };
-    this.tools.set(definition.name, {
-      definition,
-      view: freezeView(definition, { ...schemas }),
+    // A view whose snapshots this registry holds is reused as-is, so a clone
+    // advertises the source's own view objects.
+    const view = record &&
+        tool.inputSchema === schemas.inputSchema &&
+        tool.outputSchema === schemas.outputSchema
+      ? given
+      : issueView<McpFnToolDefinition<TContext>>(fields, { ...schemas, execution }, {
+        kind: "tool",
+        definition,
+        schemas,
+      });
+    this.tools.set(tool.name, {
+      definition: definition as McpFnToolDefinition<TContext>,
+      view,
       validateInput: input.validator,
       validateOutput: output?.validator,
     });
     this.schemas.push(input.snapshot, ...(output ? [output.snapshot] : []));
-    this.registrations.push(target => { target.registerTool(definition, schemas); });
+    this.registrations.push(target => { target.register(view); });
   }
 
   registerAll(definitions: McpFnToolDefinition<TContext>[]): this {
@@ -1133,38 +1309,31 @@ export class McpFnRegistry<TContext = undefined> {
   }
 
   registerPrompt(definition: McpFnPromptDefinition<TContext>): this {
-    return this.registerPromptDefinition(definition, undefined);
+    return this.transact("prompt", () => this.addPrompt(definition));
   }
 
-  private registerPromptDefinition(
-    definition: McpFnPromptDefinition<TContext>,
-    accepted: PromptSchemas | undefined,
-  ): this {
-    return this.transact("prompt", () => this.addPrompt(definition, accepted));
-  }
-
-  private addPrompt(
-    definition: McpFnPromptDefinition<TContext>,
-    accepted: PromptSchemas | undefined,
-  ): void {
-    assertName("prompt", definition.name);
-    if (this.prompts.has(definition.name)) {
+  private addPrompt(given: McpFnPromptDefinition<TContext>): void {
+    const { definition, fields, record } = this.readRegistration(given, "prompt", PROMPT_FIELDS);
+    const prompt = fields as unknown as McpFnPromptDefinition<TContext>;
+    const accepted = record?.schemas as PromptSchemas | undefined;
+    assertName("prompt", prompt.name);
+    if (this.prompts.has(prompt.name)) {
       throw new McpFnValidationError(
-        `Duplicate MCP prompt: ${definition.name}`,
+        `Duplicate MCP prompt: ${prompt.name}`,
       );
     }
-    if (typeof definition.get !== "function") {
+    if (typeof prompt.get !== "function") {
       throw new McpFnValidationError(
-        `Prompt ${definition.name} requires a get handler function`,
+        `Prompt ${prompt.name} requires a get handler function`,
       );
     }
     // Every check, compile and listing below reads these snapshots only.
-    const sourceSchema = accepted ? accepted.argumentsSchema : definition.argumentsSchema;
+    const sourceSchema = prompt.argumentsSchema;
     const declared: Pick<McpFnPromptDefinition<TContext>, "arguments" | "argumentsSchema"> = {
       arguments: accepted
         ? accepted.arguments
-        : snapshotJson(definition.arguments, `Prompt ${definition.name} arguments`),
-      argumentsSchema: this.snapshotOf(sourceSchema, `Prompt ${definition.name} argumentsSchema`),
+        : snapshotJson(prompt.arguments, `Prompt ${prompt.name} arguments`),
+      argumentsSchema: this.snapshotOf(sourceSchema, `Prompt ${prompt.name} argumentsSchema`),
     };
     if (
       declared.arguments !== undefined &&
@@ -1178,7 +1347,7 @@ export class McpFnRegistry<TContext = undefined> {
         ))
     ) {
       throw new McpFnValidationError(
-        `Prompt ${definition.name} arguments must be an array`,
+        `Prompt ${prompt.name} arguments must be an array`,
       );
     }
     for (const argument of declared.arguments ?? []) {
@@ -1188,7 +1357,7 @@ export class McpFnRegistry<TContext = undefined> {
         typeof argument.description !== "string"
       ) {
         throw new McpFnValidationError(
-          `Prompt ${definition.name} argument ${argument.name} description must be a string`,
+          `Prompt ${prompt.name} argument ${argument.name} description must be a string`,
         );
       }
       if (
@@ -1196,7 +1365,7 @@ export class McpFnRegistry<TContext = undefined> {
         typeof argument.required !== "boolean"
       ) {
         throw new McpFnValidationError(
-          `Prompt ${definition.name} argument ${argument.name} required must be a boolean`,
+          `Prompt ${prompt.name} argument ${argument.name} required must be a boolean`,
         );
       }
     }
@@ -1208,7 +1377,7 @@ export class McpFnRegistry<TContext = undefined> {
         declared.argumentsSchema.type !== "object")
     ) {
       throw new McpFnValidationError(
-        `Prompt ${definition.name} argumentsSchema must be an object schema`,
+        `Prompt ${prompt.name} argumentsSchema must be an object schema`,
       );
     }
     let compiled: SchemaEntry;
@@ -1218,14 +1387,14 @@ export class McpFnRegistry<TContext = undefined> {
         : this.entryFor(accepted?.schema ?? deepFreeze(promptSchema(declared)), undefined);
     } catch (error) {
       throw new McpFnValidationError(
-        `Prompt ${definition.name} contains an invalid arguments JSON Schema`,
+        `Prompt ${prompt.name} contains an invalid arguments JSON Schema`,
         { cause: errorMessage(error) },
       );
     }
     if (declared.argumentsSchema) {
       assertPromptSchemaSupportsStringValues(
         declared.argumentsSchema,
-        `Prompt ${definition.name} argumentsSchema`,
+        `Prompt ${prompt.name} argumentsSchema`,
       );
     }
     const argumentNames = (promptArguments(declared) ?? []).map(
@@ -1233,7 +1402,7 @@ export class McpFnRegistry<TContext = undefined> {
     );
     if (new Set(argumentNames).size !== argumentNames.length) {
       throw new McpFnValidationError(
-        `Prompt ${definition.name} has duplicate arguments`,
+        `Prompt ${prompt.name} has duplicate arguments`,
       );
     }
     if (declared.arguments && declared.argumentsSchema) {
@@ -1245,14 +1414,14 @@ export class McpFnRegistry<TContext = undefined> {
       );
       if (JSON.stringify(listed) !== JSON.stringify(schemaDeclared)) {
         throw new McpFnValidationError(
-          `Prompt ${definition.name} arguments and argumentsSchema disagree`,
+          `Prompt ${prompt.name} arguments and argumentsSchema disagree`,
         );
       }
     }
-    for (const name of Object.keys(definition.complete ?? {})) {
+    for (const name of Object.keys(prompt.complete ?? {})) {
       if (!argumentNames.includes(name)) {
         throw new McpFnValidationError(
-          `Prompt ${definition.name} has a completer for unknown argument ${name}`,
+          `Prompt ${prompt.name} has a completer for unknown argument ${name}`,
         );
       }
     }
@@ -1263,16 +1432,22 @@ export class McpFnRegistry<TContext = undefined> {
         : undefined,
       schema: compiled.snapshot,
     };
-    this.prompts.set(definition.name, {
-      definition,
-      view: freezeView(definition, {
+    const view = record &&
+        prompt.arguments === schemas.arguments &&
+        prompt.argumentsSchema === schemas.argumentsSchema &&
+        accepted?.schema === schemas.schema
+      ? given
+      : issueView<McpFnPromptDefinition<TContext>>(fields, {
         arguments: schemas.arguments,
         argumentsSchema: schemas.argumentsSchema,
-      }),
+      }, { kind: "prompt", definition, schemas });
+    this.prompts.set(prompt.name, {
+      definition: definition as McpFnPromptDefinition<TContext>,
+      view,
       validateArguments: compiled.validator,
     });
     this.schemas.push(compiled.snapshot);
-    this.registrations.push(target => { target.registerPromptDefinition(definition, schemas); });
+    this.registrations.push(target => { target.registerPrompt(view); });
   }
 
   has(name: string): boolean {
@@ -1338,7 +1513,7 @@ export class McpFnRegistry<TContext = undefined> {
       [...this.resourceTemplates.values()].some(
         ({ definition }) => definition.complete,
       ) ||
-      [...this.prompts.values()].some(({ definition }) => definition.complete)
+      [...this.prompts.values()].some(({ view }) => view.complete)
     )
       capabilities.completions = {};
     if (
@@ -1456,7 +1631,7 @@ export class McpFnRegistry<TContext = undefined> {
     // Thrown, not returned: an oversized call never reaches
     // handleInvalidArguments, so it can't be turned into a success.
     if (exceedsJsonNodes(normalizedArgs, MAX_ARGUMENT_NODES)) {
-      throw new McpFnValidationError(`Invalid arguments for ${registered.definition.name}`, {
+      throw new McpFnValidationError(`Invalid arguments for ${registered.view.name}`, {
         issues: [{
           path: "/", instancePath: "/", schemaPath: "#", keyword: "maxNodes",
           message: `Tool arguments may contain at most ${MAX_ARGUMENT_NODES} values`,
@@ -1499,9 +1674,9 @@ export class McpFnRegistry<TContext = undefined> {
     observer.onStage?.("input-validation");
     const normalized = this.normalizeAndValidateArgs(registered, args);
     if (normalized.issues) {
-      if (registered.definition.handleInvalidArguments) {
+      if (registered.view.handleInvalidArguments) {
         observer.onStage?.("invalid-arguments-handler");
-        const handled = await registered.definition.handleInvalidArguments(
+        const handled = await registered.view.handleInvalidArguments(
           normalized.args,
           normalized.issues,
           context,
@@ -1515,7 +1690,7 @@ export class McpFnRegistry<TContext = undefined> {
       });
     }
     observer.onStage?.("handler");
-    const result = await registered.definition.handler(
+    const result = await registered.view.handler(
       normalized.args,
       context,
       extra,
@@ -1547,7 +1722,7 @@ export class McpFnRegistry<TContext = undefined> {
         issues: normalized.issues,
       });
     }
-    if (!registered.definition.taskHandler) {
+    if (!registered.view.taskHandler) {
       throw new McpFnValidationError(
         `Tool ${name} does not support task execution`,
       );
@@ -1585,7 +1760,7 @@ export class McpFnRegistry<TContext = undefined> {
         return typeof value === "function" ? value.bind(target) : value;
       },
     });
-    return registered.definition.taskHandler.createTask(
+    return registered.view.taskHandler.createTask(
       normalized.args,
       context,
       { ...extra, taskStore },
@@ -1662,7 +1837,7 @@ export class McpFnRegistry<TContext = undefined> {
         issues: formatMcpFnSchemaIssues(registered.validateArguments.errors),
       });
     }
-    return registered.definition.get(normalized, context, extra);
+    return registered.view.get(normalized, context, extra);
   }
 
   async complete(
@@ -1679,7 +1854,7 @@ export class McpFnRegistry<TContext = undefined> {
       const prompt = this.prompts.get(ref.name);
       if (!prompt)
         throw new McpFnValidationError(`Unknown MCP prompt: ${ref.name}`);
-      const completers = prompt.definition.complete;
+      const completers = prompt.view.complete;
       if (!completers || !Object.hasOwn(completers, argument.name)) return empty;
       // Called as a method so a completer keeps its `this`.
       return (
@@ -1724,12 +1899,12 @@ export class McpFnRegistry<TContext = undefined> {
     if (registered.validateOutput) {
       if (!result.structuredContent) {
         throw new McpFnOutputValidationError(
-          `Tool ${registered.definition.name} declares outputSchema but returned no structuredContent`,
+          `Tool ${registered.view.name} declares outputSchema but returned no structuredContent`,
         );
       }
       if (!registered.validateOutput(result.structuredContent)) {
         throw new McpFnOutputValidationError(
-          `Invalid output from ${registered.definition.name}`,
+          `Invalid output from ${registered.view.name}`,
           { issues: formatMcpFnSchemaIssues(registered.validateOutput.errors) },
         );
       }

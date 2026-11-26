@@ -136,7 +136,7 @@ describe.each(["ajv", "cfworker", "custom"] as const)("McpFnRegistry copy gates 
     target.register({ name: "inner", description: "Inner.", inputSchema: { type: "object" }, handler });
 
   it.each(["propagate", "swallow"] as const)(
-    "refuses registration from a schema or definition getter run during a registration (%s)",
+    "refuses registration from a schema proxy trap or definition getter run during a registration (%s)",
     async (policy) => {
       const { McpFnValidationError, registry } = await load(mode);
       const source = registry();
@@ -149,11 +149,12 @@ describe.each(["ajv", "cfworker", "custom"] as const)("McpFnRegistry copy gates 
           if (policy === "propagate") throw error;
         }
       };
-      const schemaWithGetter = (title: string) => Object.defineProperty({ type: "object", title }, "properties", {
-        enumerable: true,
-        get() {
+      // Schema data must be plain JSON data (an accessor is refused unread),
+      // but a Proxy around a plain object still runs caller code as it is read.
+      const schemaWithGetter = (title: string) => new Proxy({ type: "object", title, properties: {} }, {
+        ownKeys(target) {
           reenter();
-          return {};
+          return Reflect.ownKeys(target);
         },
       });
       const definitionWithGetter = <T extends object>(definition: T) => Object.defineProperty(definition, "title", {

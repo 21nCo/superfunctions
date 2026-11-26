@@ -166,9 +166,9 @@ describe.each(["ajv", "cfworker"] as const)("McpFnRegistry.cloneEmpty() with the
   });
 });
 
-// clone() keeps the dev contract: a fresh built-in compiler (or the shared
-// custom compiler) replays every successful registration with its live
-// definition, in registration order. Failed registrations are not replayed, so
+// clone() replays every successful registration in registration order from
+// the source's record (its frozen view and accepted schema snapshots) on a
+// fresh built-in compiler (or the shared custom compiler). Failed registrations are not replayed, so
 // a definition that only resolved through their compiler residue fails loudly
 // at clone() and at declaration time, as on dev. cloneEmpty() replays nothing.
 describe.each(["ajv", "cfworker"] as const)("McpFnRegistry.clone() with the built-in %s compiler", (engine) => {
@@ -463,13 +463,14 @@ describe.each(["ajv", "cfworker"] as const)("McpFnRegistry.clone() with a statef
     expect(replayed.schemaDefinitions()).toEqual(source.schemaDefinitions());
   });
 
-  it("keeps non-compile checks when replaying a reused registration", async () => {
-    const { McpFnRegistry, McpFnValidationError, compileSchema, compiled } = await load();
+  it("replays the registered record, not a definition edited in place, without compiling", async () => {
+    const { McpFnRegistry, compileSchema, compiled } = await load();
     const definition = { name: "t", description: "Valid at registration.", inputSchema: objectWithId("https://test.invalid/s"), handler };
     const source = new McpFnRegistry({ compileSchema }).register(definition);
     definition.description = " ";
-    expect(() => source.clone()).toThrow(McpFnValidationError);
-    expect(() => source.clone()).toThrow("Tool t requires a non-empty description");
+    const replayed = source.clone();
+    expect(replayed.listTools()).toEqual(source.listTools());
+    expect(replayed.listTools()[0]!.description).toBe("Valid at registration.");
     expect(compiled).toHaveLength(1);
   });
 
