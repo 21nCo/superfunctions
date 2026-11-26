@@ -32,6 +32,11 @@ The collection runner, OpenAPI validation, watchFn middleware and request idempo
    after both renderers.
 4. `@apifn/cli` **0.1.4** after its dependencies are available.
 
+The npm registry lists `@apifn/react` and `@apifn/svelte` up to **0.0.5** and
+`@apifn/docsfn` up to **0.1.2**, so `@apifn/react` and `@apifn/svelte`
+**0.0.7** and `@apifn/docsfn` **0.1.4** are unreleased and ship the Core
+**0.3.0** pin.
+
 The reusable workflow can move to the fixed CLI after it is published. API-6
 tracks the lockfile pin, workflow default, and external caller example.
 

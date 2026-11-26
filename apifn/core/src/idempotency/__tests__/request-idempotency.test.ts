@@ -724,13 +724,13 @@ describe("normalizeIdempotentResponse", () => {
       "content-digest": "sha-256=:test-digest:",
       "transfer-encoding": "chunked",
     };
-    expect(normalizeIdempotentResponse({ status: 200, headers, body: "x".repeat(1_000) }, 400)).toEqual({
+    expect(normalizeIdempotentResponse({ status: 200, headers, body: "x".repeat(1_000) }, { maxBytes: 400 })).toEqual({
       status: 200,
       headers: { "content-type": "application/json" },
       omitted: ["body"],
     });
     expect(normalizeIdempotentResponse({ status: 200, headers, body: "x" }).headers).not.toHaveProperty("transfer-encoding");
-    expect(normalizeIdempotentResponse({ status: 204, headers: { "x-large": "y".repeat(100) } }, 50)).toEqual({
+    expect(normalizeIdempotentResponse({ status: 204, headers: { "x-large": "y".repeat(100) } }, { maxBytes: 50 })).toEqual({
       status: 204,
       headers: {},
       omitted: ["headers"],
@@ -738,7 +738,7 @@ describe("normalizeIdempotentResponse", () => {
   });
 
   it("drops headers too when they alone exceed the bound", () => {
-    expect(normalizeIdempotentResponse({ status: 200, headers: { "x-large": "y".repeat(100) }, body: "z" }, 50)).toEqual({
+    expect(normalizeIdempotentResponse({ status: 200, headers: { "x-large": "y".repeat(100) }, body: "z" }, { maxBytes: 50 })).toEqual({
       status: 200,
       headers: {},
       omitted: ["body", "headers"],
@@ -964,5 +964,210 @@ describe("createRequestIdempotency round-4 regressions", () => {
     const first = acquired(await idempotency.claim(orderRequest()));
     expect(await idempotency.claim(orderRequest())).toMatchObject({ outcome: "in_progress" });
     expect(first.generation).toBe(1);
+  });
+});
+
+/** Atomic store whose first `slowWrites` claim writes take longer than the lease. */
+class SlowAcquireStore extends FakeAtomicStore {
+  constructor(
+    private readonly clock: FakeClock,
+    private slowWrites: number,
+  ) {
+    super();
+  }
+
+  override async compareAndSet(storeKey: string, expectedVersion: string | null, next: IdempotencyRecord | null): Promise<boolean> {
+    const written = await super.compareAndSet(storeKey, expectedVersion, next);
+    if (next?.state === "pending" && this.slowWrites > 0) {
+      this.slowWrites -= 1;
+      this.clock.advance(1_500); // the lease is 1_000
+    }
+    return written;
+  }
+}
+
+describe("createRequestIdempotency round-5 regressions", () => {
+  it("settles with the receipt's response when the holder's response repeats a header name in another case", async () => {
+    const { idempotency, database, store } = setup();
+    const token = acquired(await idempotency.claim(orderRequest()));
+    const receiptResponse = { status: 201, headers: { location: "/orders/1" }, body: '{"id":1}' };
+    database.receiptsByKey.set(token.storeKey, { ...token, response: receiptResponse });
+
+    const doubled = { status: 201, headers: { Location: "/orders/1", location: "/orders/1" }, body: '{"id":1}' };
+    expect(await idempotency.settle(token, doubled)).toEqual({ outcome: "settled", response: receiptResponse });
+    expect(() => normalizeIdempotentResponse(doubled)).toThrow(/repeats a header name/);
+
+    const plain = acquired(await idempotency.claim(orderRequest({ key: "order-key-2", recovery: "none" })));
+    const writes = store.writes;
+    await expect(idempotency.settle(plain, doubled)).rejects.toThrow(/repeats a header name/);
+    expect(store.writes).toBe(writes);
+  });
+
+  it("never hands out a claim whose lease lapsed during the claim write", async () => {
+    const clock = new FakeClock();
+    const store = new SlowAcquireStore(clock, 1);
+    const { idempotency } = setup({ clock, store });
+    const token = acquired(await idempotency.claim(orderRequest()));
+    // The lapsed first write was released, and the retry claimed the key with a live lease.
+    expect(token.generation).toBe(2);
+    const record = store.records.get(token.storeKey);
+    expect(record).toMatchObject({ state: "pending", generation: 2 });
+    expect(record?.state === "pending" && record.leaseExpiresAt > clock.now()).toBe(true);
+    expect(await idempotency.claim(orderRequest())).toMatchObject({ outcome: "in_progress" });
+
+    const alwaysSlowClock = new FakeClock();
+    const alwaysSlow = new SlowAcquireStore(alwaysSlowClock, Number.POSITIVE_INFINITY);
+    const slow = setup({ clock: alwaysSlowClock, store: alwaysSlow });
+    expect(await slow.idempotency.claim(orderRequest())).toEqual({ outcome: "in_progress", retryAfterMs: 1 });
+    expect([...alwaysSlow.records.values()][0]).toMatchObject({ state: "released" });
+  });
+
+  it("fails closed on sparse omitted lists and on a lease that outlives its record", async () => {
+    const { idempotency, store } = setup();
+    const token = acquired(await idempotency.claim(orderRequest()));
+    const base = { version: "v", generation: 1, fingerprint: token.fingerprint, recovery: "receipt", expiresAt: 2_000_000 };
+    for (const record of [
+      { ...base, state: "completed", response: { status: 200, headers: {}, omitted: new Array(1) } },
+      { ...base, state: "pending", leaseExpiresAt: 2_000_001 },
+    ]) {
+      store.records.set(token.storeKey, record as unknown as IdempotencyRecord);
+      await expect(idempotency.recover(orderRequest())).rejects.toThrow(/malformed record/);
+    }
+  });
+
+  it("replays only the response fields of a stored record", async () => {
+    const { idempotency, store } = setup();
+    const token = acquired(await idempotency.claim(orderRequest({ recovery: "none" })));
+    store.records.set(token.storeKey, {
+      state: "completed",
+      version: "v",
+      generation: 1,
+      fingerprint: token.fingerprint,
+      recovery: "none",
+      expiresAt: 2_000_000,
+      response: { status: 200, headers: { "x-keep": "kept" }, body: "done", internal: "test-internal-field" },
+    } as unknown as IdempotencyRecord);
+    const replay = await idempotency.claim(orderRequest({ recovery: "none" }));
+    expect(replay).toEqual({ outcome: "replay", source: "store", response: { status: 200, headers: { "x-keep": "kept" }, body: "done" } });
+  });
+
+  it("keeps a released or expired receipt claim's contract against a request without receipt recovery", async () => {
+    const { idempotency, database, clock, store } = setup();
+    const withoutReceipts = createRequestIdempotency({ store, clock, leaseMs: 1_000, retentionMs: 60_000, nonce: testNonce });
+    const none = orderRequest({ recovery: "none" });
+
+    // Released tombstone of a receipt claim.
+    const released = acquired(await idempotency.claim(orderRequest()));
+    expect(await idempotency.release(released)).toEqual({ outcome: "released" });
+    for (const instance of [idempotency, withoutReceipts]) {
+      expect(await instance.claim(none)).toEqual({ outcome: "conflict" });
+      expect(await instance.recover(none)).toEqual({ outcome: "conflict" });
+    }
+
+    // Expired but not yet evicted receipt claim, on an instance with no receipts source.
+    const holder = acquired(await idempotency.claim(orderRequest({ key: "order-key-2" })));
+    await idempotency.settle(holder, await database.createOrder(holder, "book"));
+    clock.advance(60_001);
+    const writes = store.writes;
+    expect(await withoutReceipts.claim(orderRequest({ key: "order-key-2", recovery: "none" }))).toEqual({ outcome: "conflict" });
+    expect(await withoutReceipts.recover(orderRequest({ key: "order-key-2", recovery: "none" }))).toEqual({ outcome: "conflict" });
+    expect(store.writes).toBe(writes);
+    expect(database.orders).toEqual(["book"]);
+  });
+
+  it("releases a claim without receipt recovery when a receipt lands during its claim write", async () => {
+    const database = new FakeOrderDatabase();
+    let landed = false;
+    class LateReceiptStore extends FakeAtomicStore {
+      override async compareAndSet(storeKey: string, expectedVersion: string | null, next: IdempotencyRecord | null) {
+        if (!landed && next?.state === "pending") {
+          landed = true;
+          const fingerprint = next.fingerprint;
+          const commit = { storeKey, fingerprint, generation: 1, claimId: "test-claim-other" };
+          database.receiptsByKey.set(storeKey, { ...commit, response: { status: 201, body: "{}" } });
+        }
+        return super.compareAndSet(storeKey, expectedVersion, next);
+      }
+    }
+    const store = new LateReceiptStore();
+    const { idempotency } = setup({ store, receipts: database.receipts });
+    expect(await idempotency.claim(orderRequest({ recovery: "none" }))).toEqual({ outcome: "conflict" });
+    expect([...store.records.values()][0]).toMatchObject({ state: "released", recovery: "none" });
+    expect(await idempotency.claim(orderRequest({ recovery: "none" }))).toEqual({ outcome: "conflict" });
+  });
+
+  it("accepts final statuses only and no body for 204, 205 and 304", async () => {
+    for (const response of [{ status: 101 }, { status: 199 }, { status: 204, body: "x" }, { status: 205, body: "" }, { status: 304, body: "x" }]) {
+      expect(() => normalizeIdempotentResponse(response)).toThrow(/status/);
+    }
+    const { idempotency, store, database } = setup();
+    const plain = acquired(await idempotency.claim(orderRequest({ recovery: "none" })));
+    await expect(idempotency.settle(plain, { status: 204, body: "x" })).rejects.toThrow(/must not have a body/);
+    const base = { state: "completed", version: "v", generation: 1, fingerprint: plain.fingerprint, recovery: "none", expiresAt: 2_000_000 };
+    for (const response of [{ status: 101, headers: {} }, { status: 304, headers: {}, body: "x" }]) {
+      store.records.set(plain.storeKey, { ...base, response } as unknown as IdempotencyRecord);
+      await expect(idempotency.claim(orderRequest({ recovery: "none" }))).rejects.toThrow(/malformed record/);
+    }
+    const token = acquired(await idempotency.claim(orderRequest({ key: "order-key-2" })));
+    database.receiptsByKey.set(token.storeKey, { ...token, response: { status: 205, body: "x" } });
+    await expect(idempotency.settle(token, { status: 201 })).rejects.toThrow(/malformed receipt/);
+  });
+
+  it("rejects array subclasses, extra array members and accessors in a body", () => {
+    class Items extends Array<number> {}
+    const withGetter = {};
+    Object.defineProperty(withGetter, "item", { enumerable: true, get: () => "book" });
+    const itemGetter = [0];
+    Object.defineProperty(itemGetter, 0, { enumerable: true, get: () => 1 });
+    for (const value of [Items.from([1]), Object.assign([1], { extra: 1 }), Object.assign([1], { [Symbol("s")]: 1 }), withGetter, itemGetter]) {
+      expect(() => canonicalJson(value)).toThrow(TypeError);
+      expect(() => canonicalJson({ nested: value })).toThrow(TypeError);
+    }
+  });
+
+  it("never echoes body member names in canonical JSON errors", () => {
+    const member = "test-sensitive-member-name";
+    for (const value of [{ [member]: Number.NaN }, { [member]: [1, undefined] }, { [member]: { [member]: () => 1 } }]) {
+      let message = "";
+      try {
+        canonicalJson(value);
+      } catch (error) {
+        message = (error as Error).message;
+      }
+      expect(message).toMatch(/canonicalJson: .*depth/);
+      expect(message).not.toContain(member);
+    }
+  });
+
+  it("never stores or replays host-named credential headers", async () => {
+    const { idempotency, store, database } = setup({ credentialHeaders: ["X-Session-Token"] });
+    const plain = acquired(await idempotency.claim(orderRequest({ recovery: "none" })));
+    const response = { status: 200, headers: { "X-Session-Token": "test-session-token", "x-keep": "kept" }, body: "done" };
+    // The holder's own caller gets its response unchanged.
+    expect(await idempotency.settle(plain, response)).toEqual({ outcome: "settled", response });
+    expect(JSON.stringify([...store.records.values()])).not.toContain("test-session-token");
+    expect(await idempotency.claim(orderRequest({ recovery: "none" }))).toMatchObject({ response: { headers: { "x-keep": "kept" } } });
+
+    // A record or receipt written elsewhere never replays it either.
+    const record = store.records.get(plain.storeKey);
+    if (record?.state !== "completed") throw new Error("expected a completed record");
+    store.records.set(plain.storeKey, { ...record, response: { ...record.response, headers: { "x-session-token": "test-session-token" } } });
+    expect(await idempotency.claim(orderRequest({ recovery: "none" }))).toMatchObject({ response: { headers: {} } });
+    const holder = acquired(await idempotency.claim(orderRequest({ key: "order-key-2" })));
+    database.receiptsByKey.set(holder.storeKey, { ...holder, claimId: "test-claim-other", response });
+    expect(await idempotency.settle(holder, { status: 500 })).toEqual({
+      outcome: "committed",
+      response: { status: 200, headers: { "x-keep": "kept" }, body: "done" },
+    });
+
+    expect(normalizeIdempotentResponse(response, { credentialHeaders: ["x-session-token"] }).headers).toEqual({ "x-keep": "kept" });
+    expect(() => setup({ credentialHeaders: ["bad name"] })).toThrow(TypeError);
+  });
+
+  it("validates the bound passed to normalizeIdempotentResponse", () => {
+    for (const maxBytes of [0, -1, 1.5, Number.POSITIVE_INFINITY, 16 * 1024 * 1024 + 1, "10" as unknown as number]) {
+      expect(() => normalizeIdempotentResponse({ status: 200 }, { maxBytes })).toThrow(/maxBytes/);
+    }
+    expect(normalizeIdempotentResponse({ status: 200, body: "x" }, { maxBytes: 16 * 1024 * 1024 })).toMatchObject({ body: "x" });
   });
 });

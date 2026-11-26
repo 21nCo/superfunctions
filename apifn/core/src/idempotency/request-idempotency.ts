@@ -37,7 +37,13 @@
  *   a record. Release leaves a tombstone that keeps the generation until
  *   retention ends.
  * - The recovery mode is fixed per operation. Changing it needs a new
- *   operation name or a full retention drain of the old one.
+ *   operation name or a full retention drain of the old one. A `"none"`
+ *   request over a released or expired receipt-mode record that the store
+ *   still holds is a conflict, with or without a receipts source.
+ * - A claim is handed out only while its lease is still running after the
+ *   acquire write; a write that outlasted the lease is released and retried.
+ *   `leaseMs` must exceed the store's latency plus the handler's longest
+ *   transaction.
  */
 
 import { canonicalJson } from "./canonical-json.js";
@@ -245,6 +251,12 @@ export interface RequestIdempotencyOptions {
   retentionMs?: number;
   /** Upper bound for a stored response. Default 64 KiB. */
   maxResponseBytes?: number;
+  /**
+   * Extra response header names that carry credentials. Like the built-in
+   * list (authorization, set-cookie and similar), they are never stored and
+   * never replayed.
+   */
+  credentialHeaders?: readonly string[];
   /** Unique version tokens. Defaults to `crypto.randomUUID()`. */
   nonce?: () => string;
   /** Called synchronously; a throw or a rejected promise never changes an outcome. */
@@ -361,8 +373,32 @@ function byteLength(value: string): number {
   return utf8.encode(value).byteLength;
 }
 
+/** A final response status: informational 1xx responses are never the result of a request. */
 function isValidStatus(status: unknown): status is number {
-  return Number.isInteger(status) && (status as number) >= 100 && (status as number) <= 599;
+  return Number.isInteger(status) && (status as number) >= 200 && (status as number) <= 599;
+}
+
+// Statuses that never carry content (RFC 9110 15.3.5, 15.3.6, 15.4.5).
+const BODYLESS_STATUSES = new Set([204, 205, 304]);
+
+const NO_EXTRA_CREDENTIALS: ReadonlySet<string> = new Set();
+
+function credentialHeaderSet(names: unknown): ReadonlySet<string> {
+  if (names === undefined) return NO_EXTRA_CREDENTIALS;
+  if (!Array.isArray(names)) throw new TypeError("credentialHeaders must be an array of header names");
+  const set = new Set<string>();
+  for (let index = 0; index < names.length; index += 1) {
+    const name: unknown = names[index];
+    if (typeof name !== "string" || !HEADER_NAME_PATTERN.test(name.toLowerCase())) {
+      throw new TypeError("credentialHeaders must contain valid header names");
+    }
+    set.add(name.toLowerCase());
+  }
+  return set;
+}
+
+function isCredentialHeader(name: string, extra: ReadonlySet<string>): boolean {
+  return CREDENTIAL_HEADERS.has(name) || extra.has(name);
 }
 
 function isSingleLine(value: unknown): value is string {
@@ -388,6 +424,13 @@ function headerBytes(headers: Readonly<Record<string, string>>): number {
   return total;
 }
 
+export interface NormalizeIdempotentResponseOptions {
+  /** Upper bound for the stored copy: a positive integer up to 16 MiB. Default 64 KiB. */
+  maxBytes?: number;
+  /** Extra credential header names, dropped like the built-in list. */
+  credentialHeaders?: readonly string[];
+}
+
 /**
  * Validates a response and bounds what is stored for replay. Credential and
  * hop-by-hop headers, including fields a Connection header nominates, are
@@ -396,20 +439,37 @@ function headerBytes(headers: Readonly<Record<string, string>>): number {
  */
 export function normalizeIdempotentResponse(
   response: IdempotentResponse,
-  maxBytes: number = DEFAULT_MAX_RESPONSE_BYTES,
+  options: NormalizeIdempotentResponseOptions = {},
 ): StoredIdempotentResponse {
+  if (!isPlainObject(options)) throw new TypeError("normalizeIdempotentResponse options must be an object");
+  const maxBytes: unknown = options.maxBytes ?? DEFAULT_MAX_RESPONSE_BYTES;
+  if (typeof maxBytes !== "number" || !Number.isSafeInteger(maxBytes) || maxBytes <= 0 || maxBytes > MAX_RESPONSE_BYTES_LIMIT) {
+    throw new TypeError(`normalizeIdempotentResponse: maxBytes must be a positive integer no larger than ${MAX_RESPONSE_BYTES_LIMIT}`);
+  }
+  return normalize(response, maxBytes, credentialHeaderSet(options.credentialHeaders));
+}
+
+/** `normalizeIdempotentResponse` with a trusted bound, which may be `Infinity`. */
+function normalize(response: IdempotentResponse, maxBytes: number, extraCredentials: ReadonlySet<string>): StoredIdempotentResponse {
   if (!isPlainObject(response)) throw new TypeError("idempotent response must be an object");
   const { status, headers, body } = response;
-  if (!isValidStatus(status)) throw new TypeError("idempotent response status must be an integer from 100 to 599");
+  if (!isValidStatus(status)) throw new TypeError("idempotent response status must be a final status from 200 to 599");
   if (body !== undefined && typeof body !== "string") throw new TypeError("idempotent response body must be a string");
+  if (body !== undefined && BODYLESS_STATUSES.has(status)) {
+    throw new TypeError(`idempotent response status ${status} must not have a body`);
+  }
   if (headers !== undefined && !isPlainObject(headers)) throw new TypeError("idempotent response headers must be an object");
   const kept: Record<string, string> = {};
+  const seen = new Set<string>();
   const nominated = connectionNominated(headers ?? {});
   for (const [rawName, value] of Object.entries(headers ?? {})) {
     const name = rawName.toLowerCase();
     if (!HEADER_NAME_PATTERN.test(name)) throw new TypeError("idempotent response has an invalid header name");
     if (!isSingleLine(value)) throw new TypeError("idempotent response header values must be single-line strings");
-    if (CREDENTIAL_HEADERS.has(name) || HOP_BY_HOP_HEADERS.has(name) || nominated.has(name) || Object.hasOwn(kept, name)) continue;
+    // Two spellings of one field would leave the delivered and the replayed response different.
+    if (seen.has(name)) throw new TypeError("idempotent response repeats a header name in a different case");
+    seen.add(name);
+    if (isCredentialHeader(name, extraCredentials) || HOP_BY_HOP_HEADERS.has(name) || nominated.has(name)) continue;
     kept[name] = value;
   }
   if (body === undefined) {
@@ -429,33 +489,43 @@ export function normalizeIdempotentResponse(
  * replayed, so a record written by another writer never replays credential,
  * framing or (without its body) representation headers.
  */
-function replayable(response: StoredIdempotentResponse): StoredIdempotentResponse {
+function replayable(response: StoredIdempotentResponse, extraCredentials: ReadonlySet<string>): StoredIdempotentResponse {
   const bodyOmitted = response.omitted?.includes("body") === true;
   const nominated = connectionNominated(response.headers);
   const headers: Record<string, string> = {};
   for (const [name, value] of Object.entries(response.headers)) {
-    if (CREDENTIAL_HEADERS.has(name) || HOP_BY_HOP_HEADERS.has(name) || nominated.has(name)) continue;
+    if (isCredentialHeader(name, extraCredentials) || HOP_BY_HOP_HEADERS.has(name) || nominated.has(name)) continue;
     if (bodyOmitted && BODY_REPRESENTATION_HEADERS.has(name)) continue;
     headers[name] = value;
   }
-  return { ...response, headers };
+  // Only the response fields are copied, never unknown fields a store kept on the record.
+  return {
+    status: response.status,
+    headers,
+    ...(response.body === undefined ? {} : { body: response.body }),
+    ...(response.omitted === undefined ? {} : { omitted: [...response.omitted] }),
+  };
 }
 
 /** Whether a response passes the write-path validation, without bounding it. */
-function isValidResponse(response: unknown): response is IdempotentResponse {
+function isValidResponse(response: unknown, extraCredentials: ReadonlySet<string>): response is IdempotentResponse {
   try {
-    normalizeIdempotentResponse(response as IdempotentResponse, Number.POSITIVE_INFINITY);
+    normalize(response as IdempotentResponse, Number.POSITIVE_INFINITY, extraCredentials);
     return true;
   } catch {
     return false;
   }
 }
 
-/** Whether two responses replay identically: same status, body and headers after the replay header rules. */
-function sameReplayView(left: IdempotentResponse, right: IdempotentResponse): boolean {
-  if (!isValidResponse(left) || !isValidResponse(right)) return false;
-  const a = normalizeIdempotentResponse(left, Number.POSITIVE_INFINITY);
-  const b = normalizeIdempotentResponse(right, Number.POSITIVE_INFINITY);
+/**
+ * Whether two responses replay identically: same status, body and headers
+ * after the replay header rules. A response the write path rejects (such as
+ * one that repeats a header name in a different case) never matches.
+ */
+function sameReplayView(left: IdempotentResponse, right: IdempotentResponse, extraCredentials: ReadonlySet<string>): boolean {
+  if (!isValidResponse(left, extraCredentials) || !isValidResponse(right, extraCredentials)) return false;
+  const a = normalize(left, Number.POSITIVE_INFINITY, extraCredentials);
+  const b = normalize(right, Number.POSITIVE_INFINITY, extraCredentials);
   if (a.status !== b.status || a.body !== b.body) return false;
   const names = Object.keys(a.headers);
   if (names.length !== Object.keys(b.headers).length) return false;
@@ -468,10 +538,18 @@ function isStoredResponse(value: unknown): value is StoredIdempotentResponse {
     if (!HEADER_NAME_PATTERN.test(name) || !isSingleLine(header)) return false;
   }
   if (value.body !== undefined && typeof value.body !== "string") return false;
+  if (value.body !== undefined && BODYLESS_STATUSES.has(value.status)) return false;
   if (value.omitted === undefined) return true;
   const { omitted } = value;
-  if (!Array.isArray(omitted) || omitted.length === 0 || new Set(omitted).size !== omitted.length) return false;
-  if (!omitted.every((part) => part === "body" || part === "headers")) return false;
+  if (!Array.isArray(omitted) || omitted.length === 0) return false;
+  const parts = new Set<unknown>();
+  // An index loop: a sparse array's holes fail instead of being skipped.
+  for (let index = 0; index < omitted.length; index += 1) {
+    if (!Object.hasOwn(omitted, index)) return false;
+    const part: unknown = omitted[index];
+    if ((part !== "body" && part !== "headers") || parts.has(part)) return false;
+    parts.add(part);
+  }
   // Parts the write path dropped are absent, and headers are dropped only after the body (or with no body).
   if (omitted.includes("body") && value.body !== undefined) return false;
   if (omitted.includes("headers") && (Object.keys(value.headers).length > 0 || value.body !== undefined)) return false;
@@ -488,7 +566,8 @@ function isRecord(value: unknown): value is IdempotencyRecord {
     (value.recovery === "receipt" || value.recovery === "none") &&
     finiteNumber(value.expiresAt);
   if (!base) return false;
-  if (value.state === "pending") return finiteNumber(value.leaseExpiresAt);
+  // A lease never outlives the record it belongs to.
+  if (value.state === "pending") return finiteNumber(value.leaseExpiresAt) && value.leaseExpiresAt <= (value.expiresAt as number);
   if (value.state === "released") return true;
   if (value.fromReceipt !== undefined && typeof value.fromReceipt !== "boolean") return false;
   // Only a receipt-mode record can be recorded from a receipt.
@@ -511,7 +590,13 @@ function isToken(value: unknown): value is IdempotencyToken {
 }
 
 type Live =
-  | { kind: "absent"; expectedVersion: string | null; previousGeneration: number }
+  | {
+      kind: "absent";
+      expectedVersion: string | null;
+      previousGeneration: number;
+      /** Recovery mode of a released or expired record the store still holds. */
+      previousRecovery?: IdempotencyRecovery;
+    }
   | { kind: "present"; record: ActiveIdempotencyRecord };
 
 export function createRequestIdempotency(options: RequestIdempotencyOptions): RequestIdempotency {
@@ -532,6 +617,7 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
     DEFAULT_MAX_RESPONSE_BYTES,
     MAX_RESPONSE_BYTES_LIMIT,
   );
+  const extraCredentials = credentialHeaderSet(options.credentialHeaders);
   const digest = options.fingerprint ?? sha256Fingerprint;
   const nonce = options.nonce ?? defaultNonce();
   const clock = options.clock ?? { now: () => Date.now() };
@@ -587,7 +673,12 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
     if (!isRecord(stored)) throw new Error("idempotency store returned a malformed record");
     // A released tombstone frees the key but keeps the generation, so the next claim never reuses it.
     if (stored.state === "released" || stored.expiresAt <= at) {
-      return { kind: "absent", expectedVersion: stored.version, previousGeneration: stored.generation };
+      return {
+        kind: "absent",
+        expectedVersion: stored.version,
+        previousGeneration: stored.generation,
+        previousRecovery: stored.recovery,
+      };
     }
     return { kind: "present", record: stored };
   };
@@ -602,7 +693,7 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
       !nonEmptyString(receipt.claimId) ||
       !Number.isSafeInteger(receipt.generation) ||
       receipt.generation <= 0 ||
-      !isValidResponse(receipt.response)
+      !isValidResponse(receipt.response, extraCredentials)
     ) {
       throw new Error("idempotency receipt source returned a malformed receipt");
     }
@@ -619,7 +710,7 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
     generation: number,
     receipt: IdempotencyReceipt,
   ): Promise<StoredIdempotentResponse | undefined> => {
-    const response = normalizeIdempotentResponse(receipt.response, maxResponseBytes);
+    const response = normalize(receipt.response, maxResponseBytes, extraCredentials);
     const written = await store.compareAndSet(storeKey, expectedVersion, {
       state: "completed",
       version: nextVersion(),
@@ -657,7 +748,7 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
 
   /** The receipt's response for the caller: header rules applied, never size-bounded. */
   const fullReceiptResponse = (receipt: IdempotencyReceipt): StoredIdempotentResponse =>
-    normalizeIdempotentResponse(receipt.response, Number.POSITIVE_INFINITY);
+    normalize(receipt.response, Number.POSITIVE_INFINITY, extraCredentials);
 
   /**
    * Replays a completed record. A copy recorded from a receipt whose parts
@@ -670,7 +761,7 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
         return { outcome: "replay", response: fullReceiptResponse(receipt), source: "receipt" };
       }
     }
-    return { outcome: "replay", response: replayable(record.response), source: "store" };
+    return { outcome: "replay", response: replayable(record.response, extraCredentials), source: "store" };
   };
 
   type ReceiptOutcome = IdempotencyReplay | { outcome: "conflict" };
@@ -709,6 +800,8 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
     const record = live.kind === "present" ? live.record : undefined;
     if (record && record.recovery !== recovery) return { done: { outcome: "conflict" } };
     if (recovery === "none") {
+      // A released or expired receipt claim the store still holds keeps its contract, with or without receipts.
+      if (live.kind === "absent" && live.previousRecovery === "receipt") return { done: { outcome: "conflict" } };
       if (!record && (await findReceipt(storeKey))) return { done: { outcome: "conflict" } };
       return { live };
     }
@@ -767,6 +860,16 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
       expiresAt: at + retentionMs,
     });
     if (!written) return undefined;
+    // A receipt that landed during a "none" acquire means the key is committed: free the claim, never run.
+    if (prepared.recovery === "none" && receipts && (await findReceipt(storeKey))) {
+      await releaseUnused(storeKey, version, generation, prepared);
+      return { outcome: "conflict" };
+    }
+    // The write outlasted the lease, so another caller may already be taking the key over: never hand it out.
+    if (now() >= at + leaseMs) {
+      await releaseUnused(storeKey, version, generation, prepared);
+      return undefined;
+    }
     const token: IdempotencyToken = Object.freeze({
       storeKey,
       version,
@@ -777,6 +880,18 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
       operation: prepared.operation,
     });
     return { outcome: "acquired", token };
+  };
+
+  /** Releases a claim no handler ran under. A lost write means a newer writer already owns the key. */
+  const releaseUnused = async (storeKey: string, version: string, generation: number, prepared: Prepared): Promise<void> => {
+    await store.compareAndSet(storeKey, version, {
+      state: "released",
+      version: nextVersion(),
+      generation,
+      fingerprint: prepared.fingerprint,
+      recovery: prepared.recovery,
+      expiresAt: now() + retentionMs,
+    });
   };
 
   const claim = async (request: IdempotencyRequest): Promise<IdempotencyClaimResult> => {
@@ -852,7 +967,7 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
     if (reconciled.outcome !== "receipt") return reconciled;
     const { receipt, own } = reconciled;
     if (!own) return { outcome: "committed", response: fullReceiptResponse(receipt) };
-    return { outcome: "settled", response: sameReplayView(response, receipt.response) ? response : fullReceiptResponse(receipt) };
+    return { outcome: "settled", response: sameReplayView(response, receipt.response, extraCredentials) ? response : fullReceiptResponse(receipt) };
   };
 
   /** Release's view: the key is committed, so the receipt's response is reported with the replay header rules. */
@@ -864,7 +979,7 @@ export function createRequestIdempotency(options: RequestIdempotencyOptions): Re
   /** Completes the token's own claim with its response when no receipt exists. */
   const settleOwn = async (token: IdempotencyToken, response: IdempotentResponse): Promise<IdempotencySettleResult> => {
     // Validates the response and bounds only the stored replay copy.
-    const stored = normalizeIdempotentResponse(response, maxResponseBytes);
+    const stored = normalize(response, maxResponseBytes, extraCredentials);
     const written = await store.compareAndSet(token.storeKey, token.version, {
       state: "completed",
       version: nextVersion(),

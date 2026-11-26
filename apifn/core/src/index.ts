@@ -138,6 +138,7 @@ export type {
   IdempotencyScope,
   IdempotencySettleResult,
   IdempotencyStore,
+  NormalizeIdempotentResponseOptions,
   IdempotencyToken,
   IdempotentResponse,
   PendingIdempotencyRecord,
