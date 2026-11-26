@@ -179,6 +179,18 @@ describe("runAction with updateCheck", () => {
       expect(events).toEqual(["out:[i] done\n", `err:${NOTICE}\n`]);
     });
 
+    it("prints the notice once when one handle is passed to several runAction calls", async () => {
+      const { events, options } = capture();
+      const fetch = vi.fn<UpdateCheckFetch>(async () => new Response(JSON.stringify({ latest: "1.3.0" })));
+      const updateCheck = start(fetch);
+
+      await runAction(() => undefined, undefined, { ...options, updateCheck });
+      await runAction(() => undefined, undefined, { ...options, updateCheck });
+
+      expect(events).toEqual([`err:${NOTICE}\n`]);
+      expect(fetch).toHaveBeenCalledTimes(1);
+    });
+
     it("drops a notice that is not ready within the timeout", async () => {
       const { events, options } = capture();
       const updateCheck = start(() => new Promise(() => undefined), 50);

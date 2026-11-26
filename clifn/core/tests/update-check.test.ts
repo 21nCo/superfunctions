@@ -34,6 +34,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   vi.useRealTimers();
+  vi.restoreAllMocks();
   vi.unstubAllEnvs();
   await settleCacheWrites();
   await rm(root, { recursive: true, force: true });
@@ -152,6 +153,16 @@ describe("startUpdateCheck: request and notice", () => {
     ["an array body", () => registry(["2.0.0"])],
     ["a JSON null body", () => registry("null")],
     ["a body over 64 KiB", () => registry({ latest: "2.0.0", padding: "x".repeat(70_000) })],
+    [
+      // About 41 K characters but 82 KiB of UTF-8: the limit counts bytes, also without a body stream.
+      "a text-only body over 64 KiB in bytes but not in characters",
+      () =>
+        vi.fn<UpdateCheckFetch>(async () => ({
+          status: 200,
+          body: null,
+          text: async () => JSON.stringify({ latest: "2.0.0", padding: "é".repeat(40 * 1024) }),
+        })),
+    ],
     [
       "a 500 whose body cancel never settles",
       () =>
@@ -294,18 +305,51 @@ describe("startUpdateCheck: request and notice", () => {
     expect(next).not.toHaveBeenCalled();
   });
 
-  it("waits for a slow registry only within the timeout and then returns the same notice each time", async () => {
+  it("waits for a slow registry only within the timeout and gives the notice to the first call only", async () => {
     let respond: ((response: Response) => void) | undefined;
     const fetch = vi.fn<UpdateCheckFetch>(() => new Promise((resolve) => (respond = resolve)));
     const handle = check({ fetch, now: () => Date.now(), timeoutMs: 5_000 });
     const first = handle.notice();
+    const second = handle.notice();
     await until(() => fetch.mock.calls.length === 1);
     respond?.(new Response(JSON.stringify({ latest: "1.3.0" })));
 
     await expect(first).resolves.toBe(NOTICE_1_3_0);
-    await expect(handle.notice()).resolves.toBe(NOTICE_1_3_0);
+    await expect(second).resolves.toBeNull();
+    await expect(handle.notice()).resolves.toBeNull();
     expect(fetch).toHaveBeenCalledTimes(1);
   });
+
+  it("gives a ready notice to one notice() call per handle", async () => {
+    const handle = check();
+    await settled();
+    await expect(handle.notice()).resolves.toBe(NOTICE_1_3_0);
+    await expect(handle.notice()).resolves.toBeNull();
+    await expect(readCacheJson()).resolves.toEqual({ checkedAt: T0, latest: "1.3.0", notifiedAt: T0 });
+  });
+
+  it("measures the timeout on the monotonic clock when no clock is injected", async () => {
+    let wallClock = T0;
+    vi.spyOn(Date, "now").mockImplementation(() => wallClock);
+    let respond: ((response: Response) => void) | undefined;
+    const fetch = vi.fn<UpdateCheckFetch>(() => new Promise((resolve) => (respond = resolve)));
+    const handle = startUpdateCheck({
+      name: "my-cli",
+      currentVersion: "1.2.0",
+      appName: APP,
+      env,
+      terminal,
+      fetch,
+      timeoutMs: 5_000,
+    });
+    await until(() => fetch.mock.calls.length === 1);
+    // The wall clock jumps an hour ahead; the timeout has not passed.
+    wallClock = T0 + 60 * 60 * 1000;
+    respond?.(new Response(JSON.stringify({ latest: "1.3.0" })));
+
+    await expect(handle.notice()).resolves.toBe(NOTICE_1_3_0);
+  });
+
 });
 
 describe("startUpdateCheck: registry and name encoding", () => {
@@ -420,6 +464,36 @@ describe("startUpdateCheck: cache interval", () => {
 
     await expect(run({ fetch, now: () => T0 + DAY + hour })).resolves.toBe(NOTICE_1_3_0);
     expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it.each<[string, Record<string, unknown>, Record<string, unknown>]>([
+    [
+      "a newer error entry",
+      { checkedAt: T0 + 10, error: true },
+      { checkedAt: T0 + 10, error: true },
+    ],
+    [
+      "a newer entry for another version",
+      { checkedAt: T0 + 10, latest: "1.4.0" },
+      { checkedAt: T0 + 10, latest: "1.4.0" },
+    ],
+    [
+      "a newer entry for the same version",
+      { checkedAt: T0 + 10, latest: "1.3.0" },
+      { checkedAt: T0 + 10, latest: "1.3.0", notifiedAt: T0 + 20 },
+    ],
+  ])("records delivery without rolling back %s another run wrote meanwhile", async (_label, newer, expected) => {
+    let clock = T0;
+    const fetch = registry({ latest: "1.3.0" });
+    const handle = check({ fetch, now: () => clock });
+    await until(() => exists(cacheFile));
+    await settled();
+    await expect(readCacheJson()).resolves.toEqual({ checkedAt: T0, latest: "1.3.0" });
+
+    await writeCacheText(JSON.stringify(newer));
+    clock = T0 + 20;
+    await expect(handle.notice()).resolves.toBe(NOTICE_1_3_0);
+    await expect(readCacheJson()).resolves.toEqual(expected);
   });
 
   it.each([

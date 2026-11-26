@@ -3,7 +3,7 @@ import { appDirResolver } from "./app-dirs.js";
 import { resolveTerminal, type TerminalStream } from "./terminal.js";
 import {
   readCache,
-  trackCacheWrite,
+  recordDeliveryQuietly,
   UPDATE_CHECK_FILE,
   writeCacheQuietly,
   type CacheEntry,
@@ -64,8 +64,9 @@ export interface UpdateCheck {
   /**
    * The notice (`Update available: 1.2.0 → 1.3.0 (npm i -g my-cli)`), or `null`. Never rejects and never waits past
    * the check's timeout: a result that is not ready by then is dropped, and every later call resolves `null` too.
-   * Resolving with the notice counts as delivering it: the time is recorded in the cache (in the background), and no
-   * other run gives a notice until `intervalMs` has passed.
+   * Resolving with the notice counts as delivering it: only the first call that resolves with it gets it (later calls on
+   * the same handle resolve `null`), the time is recorded in the cache (in the background, without replacing a newer
+   * entry another run wrote), and no other run gives a notice until `intervalMs` has passed.
    */
   notice(): Promise<string | null>;
 }
@@ -188,7 +189,7 @@ async function readBody(response: UpdateCheckResponse): Promise<string> {
     return Buffer.concat(chunks).toString("utf8");
   }
   const text = await response.text();
-  if (typeof text !== "string" || text.length > MAX_BODY_BYTES) {
+  if (typeof text !== "string" || Buffer.byteLength(text, "utf8") > MAX_BODY_BYTES) {
     throw new Error("response body too large");
   }
   return text;
@@ -282,6 +283,10 @@ async function runCheck(plan: CheckPlan): Promise<CheckResult> {
   return resultFor(plan, entry, plan.now(), writeCacheQuietly(plan.stateDir, entry));
 }
 
+function monotonicNow(): number {
+  return performance.now();
+}
+
 /** The request plan, or null when a skip rule (D10) applies or an option cannot be used. */
 function planCheck(options: UpdateCheckOptions): CheckPlan | null {
   const { name, currentVersion, appName } = options;
@@ -322,13 +327,16 @@ function planCheck(options: UpdateCheckOptions): CheckPlan | null {
   // Only the state directory: the config and cache directories may need a home directory this check never uses.
   const stateDir = appDirResolver(appName, { env })("state");
   const now = options.now ?? Date.now;
+  // The timeout runs on the injected clock when one is given, else on the monotonic clock, so a wall-clock jump
+  // cannot stretch it; `now` still stamps the cache.
+  const elapsedClock = options.now ?? monotonicNow;
   const timeoutMs = validDuration(options.timeoutMs, DEFAULT_TIMEOUT_MS);
-  const deadline = now() + timeoutMs;
+  const deadline = elapsedClock() + timeoutMs;
   return {
     url,
     fetch: fetchFn,
     now,
-    remainingMs: () => deadline - now(),
+    remainingMs: () => deadline - elapsedClock(),
     name,
     current,
     currentText: currentVersion,
@@ -364,7 +372,8 @@ export function startUpdateCheck(options: UpdateCheckOptions): UpdateCheck {
   // "pending" until the check settles or its deadline passes, whichever comes first; the outcome never changes after.
   let outcome: "pending" | "ready" | "expired" = "pending";
   let ready: CheckResult | null = null;
-  let delivered = false;
+  // The notice is handed out by at most one notice() call; every later call resolves null.
+  let handedOut = false;
   const remaining = (): number => {
     try {
       return checkPlan.remainingMs();
@@ -385,24 +394,21 @@ export function startUpdateCheck(options: UpdateCheckOptions): UpdateCheck {
       }
     });
 
-  // The notice of an on-time result, recording its delivery once (after this run's own cache write).
+  // The notice of an on-time result, the first time it is asked for; records its delivery after this run's own write.
   const deliver = (): string | null => {
     const checked: CheckResult | null = outcome === "ready" ? ready : null;
-    if (checked === null || checked.notice === null) {
+    if (handedOut || checked === null || checked.notice === null || checked.entry === null) {
       return null;
     }
-    if (!delivered && checked.entry !== null) {
-      delivered = true;
-      let notifiedAt: number | undefined;
-      try {
-        notifiedAt = checkPlan.now();
-      } catch {
-        notifiedAt = undefined;
-      }
-      if (notifiedAt !== undefined && Number.isFinite(notifiedAt)) {
-        const marked: LatestEntry = { ...checked.entry, notifiedAt };
-        void trackCacheWrite(checked.written.then(() => writeCacheQuietly(checkPlan.stateDir, marked)));
-      }
+    handedOut = true;
+    let notifiedAt: number | undefined;
+    try {
+      notifiedAt = checkPlan.now();
+    } catch {
+      notifiedAt = undefined;
+    }
+    if (notifiedAt !== undefined && Number.isFinite(notifiedAt)) {
+      void recordDeliveryQuietly(checkPlan.stateDir, checked.entry, notifiedAt, checked.written);
     }
     return checked.notice;
   };
@@ -418,15 +424,22 @@ export function startUpdateCheck(options: UpdateCheckOptions): UpdateCheck {
         return Promise.resolve(null);
       }
       return new Promise<string | null>((resolve) => {
+        let answered = false;
+        const answer = (): void => {
+          if (!answered) {
+            answered = true;
+            resolve(deliver());
+          }
+        };
         const timer = setTimeout(() => {
           if (outcome === "pending") {
             outcome = "expired";
           }
-          resolve(deliver());
+          answer();
         }, left);
         void result.then(() => {
           clearTimeout(timer);
-          resolve(deliver());
+          answer();
         });
       });
     },

@@ -57,7 +57,8 @@ describe("startUpdateCheck: a slow cache write", () => {
     await new Promise((resolve) => setTimeout(resolve, 250));
     const file = path.join(resolveAppPaths("my-cli", { env }).state, "update-check.json");
     await expect(readFile(file, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
-    await expect(handle.notice()).resolves.toBe(NOTICE);
+    // The notice was handed out once; the handle gives no second one.
+    await expect(handle.notice()).resolves.toBeNull();
 
     gate.hold = false;
     gate.waiting.splice(0).forEach((release) => release());

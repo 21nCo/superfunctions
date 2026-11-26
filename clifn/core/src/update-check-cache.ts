@@ -114,3 +114,31 @@ async function writeCache(dir: string, entry: CacheEntry): Promise<void> {
 export function writeCacheQuietly(dir: string, entry: CacheEntry): Promise<void> {
   return trackCacheWrite(writeCache(dir, entry).catch(() => undefined));
 }
+
+/**
+ * Records that the notice for `entry.latest` was delivered at `notifiedAt`, once `after` (this run's own write) has
+ * settled. It re-reads the cache first so it never rolls back what another run wrote meanwhile: an error entry or an
+ * entry for another version is left as it is, and an entry for the same version keeps its newer `checkedAt`. Never
+ * rejects.
+ */
+export function recordDeliveryQuietly(
+  dir: string,
+  entry: LatestEntry,
+  notifiedAt: number,
+  after: Promise<void>
+): Promise<void> {
+  const record = async (): Promise<void> => {
+    await after;
+    const read = await readCache(join(dir, UPDATE_CHECK_FILE));
+    let current: LatestEntry | null = null;
+    if (read !== null) {
+      if (!("latest" in read) || read.latest !== entry.latest) {
+        return;
+      }
+      current = read;
+    }
+    const base = current !== null && current.checkedAt >= entry.checkedAt ? current : entry;
+    await writeCache(dir, { checkedAt: base.checkedAt, latest: base.latest, notifiedAt });
+  };
+  return trackCacheWrite(record().catch(() => undefined));
+}
