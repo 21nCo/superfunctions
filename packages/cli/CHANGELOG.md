@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.2
 
 - MySQL migrations: introspected `TEXT`, `MEDIUMTEXT` and `LONGTEXT` columns (reported with a length such as 65535) now match schema strings without a `maxLength`, and `TINYINT(1)` columns match boolean fields (numeric fields keep comparing them as integers), so unchanged columns no longer produce changes or errors on upgrade.
 - MySQL migrations: `generate` introspects MySQL through the Kysely adapter's callback `mysql2` pool and the Prisma client, not only the Drizzle promise pool. The MySQL schema it reads is the connection's own database (`SELECT DATABASE()`) for every adapter, not a database parsed from a connection URL or `DATABASE_URL`, and the Prisma dialect comes from the client's provider before `DATABASE_URL`.
