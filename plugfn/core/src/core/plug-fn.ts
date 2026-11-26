@@ -515,7 +515,6 @@ export function plugFn(config: PlugFnConfig): PlugFn {
         const delivery = await deliverWebhook(api, {
           provider,
           event: verified.triggerKey,
-          triggerKey: verified.triggerKey,
           headers: verified.normalizedHeaders,
           rawBody,
           verificationStatus: 'verified',
@@ -857,7 +856,7 @@ export function plugFn(config: PlugFnConfig): PlugFn {
           status: 'dead-lettered',
           attempts: attempt,
           error: 'webhook receipt not found',
-          metadata: withoutWebhookReplayData(delivery.metadata),
+          ...withoutWebhookReplayData(delivery),
         });
         if (deadLetter) {
           deliveries.push(deadLetter);
@@ -873,7 +872,7 @@ export function plugFn(config: PlugFnConfig): PlugFn {
           status: 'failed',
           workflowScoped: true,
           error: 'scoped webhook retries require verified ingress',
-          metadata: withoutWebhookReplayData(delivery.metadata),
+          ...withoutWebhookReplayData(delivery),
         });
         if (excluded) deliveries.push(excluded);
         failed += 1;
@@ -896,7 +895,7 @@ export function plugFn(config: PlugFnConfig): PlugFn {
           attempts: attempt,
           error: 'webhook receipt was already delivered successfully',
           nextAttemptAt: undefined,
-          metadata: withoutWebhookReplayData(delivery.metadata),
+          ...withoutWebhookReplayData(delivery),
         });
         if (superseded) {
           deliveries.push(superseded);
@@ -935,20 +934,19 @@ export function plugFn(config: PlugFnConfig): PlugFn {
         if (webhookReplayBodyExpired(delivery)) {
           throw new Error('webhook retry payload expired');
         }
-        const replayHeaders = webhookReplayHeaders(delivery);
-        const replayEvent = replayHeaders ? delivery.metadata?.event : undefined;
+        const replay = hasWebhookSignatureProof(delivery) ? delivery.runtimeReplayContext : undefined;
         await handler({
           delivery,
           receipt,
           provider: receipt.provider,
-          event: typeof replayEvent === 'string' ? replayEvent : receipt.event,
-          headers: replayHeaders ?? receipt.headersRedacted ?? {},
+          event: replay?.event ?? receipt.event,
+          headers: replay?.headers ?? receipt.headersRedacted ?? {},
           rawBody: decodeWebhookDeliveryBody(delivery),
         });
         const updated = await finishClaim({
           status: 'success',
           attempts: attempt,
-          metadata: withoutWebhookReplayData(delivery.metadata),
+          ...withoutWebhookReplayData(delivery),
         });
         if (updated) {
           deliveries.push(updated);
@@ -971,9 +969,7 @@ export function plugFn(config: PlugFnConfig): PlugFn {
           attempts: attempt,
           error: errorMessage,
           nextAttemptAt,
-          ...(status === 'dead-lettered'
-            ? { metadata: withoutWebhookReplayData(delivery.metadata) }
-            : {}),
+          ...(status === 'dead-lettered' ? withoutWebhookReplayData(delivery) : {}),
         });
         if (updated) {
           deliveries.push(updated);
@@ -1008,14 +1004,6 @@ export function plugFn(config: PlugFnConfig): PlugFn {
   function webhookReplayBodyExpired(delivery: PlugFnWebhookDelivery): boolean {
     const expiresAt = delivery.metadata?.rawBodyExpiresAt;
     return typeof expiresAt === 'string' && Date.parse(expiresAt) <= Date.now();
-  }
-
-  function webhookReplayHeaders(delivery: PlugFnWebhookDelivery): Record<string, string> | undefined {
-    const headers = delivery.metadata?.replayHeaders;
-    if (!headers || typeof headers !== 'object' || Array.isArray(headers)) return undefined;
-    return Object.values(headers).every((value) => typeof value === 'string')
-      ? headers as Record<string, string>
-      : undefined;
   }
 
   // Create dynamic provider proxies

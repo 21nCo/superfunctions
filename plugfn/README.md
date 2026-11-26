@@ -61,6 +61,12 @@ const router = createPlugFnRouter(plug);
 
 Python examples exist, but the Python runtime is still experimental and does not yet match the TypeScript provider surface. Use the matrix below before treating any Python provider as adoption-ready.
 
+## Upgrading webhook workflows
+
+A delivery in flight when tenant binding is enabled may run its listener twice. Signed, bound deliveries start a separate receipt history for the signing authority that verified them.
+
+Make listeners idempotent by storing a durable key for each side effect, scoped to the provider and relevant tenant or connection. Use a stable event ID from the verified payload when available, or an application key for the same business operation. Enforce uniqueness in the same database transaction as a local side effect. For an external side effect, pass the stable key to the downstream service as its idempotency key when supported.
+
 ## Readiness model
 
 - Core provider set tracked by the release gate: `github`, `linear`, `clickup`, `gmail`, `notion`

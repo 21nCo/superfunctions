@@ -11,7 +11,7 @@ import type {
   WebhookWorkflowBindingMatch,
 } from '../types/trigger.js';
 import type { WebhookOptions } from '../types/config.js';
-import type { PlugFnWebhookReceipt } from '../types/runtime.js';
+import type { PlugFnWebhookDelivery, PlugFnWebhookReceipt } from '../types/runtime.js';
 import type { Logger } from '../types/action.js';
 import { ProviderRegistry } from '../core/provider-registry.js';
 
@@ -33,15 +33,9 @@ export interface WebhookAdmission {
   binding?: Readonly<WebhookWorkflowBinding>;
   idempotencyKey?: string;
   payloadHash?: string;
-  authenticatedDeliveryId?: string;
   assertActive?(): void;
   event(): WebhookEvent;
-  dispatch(options?: WebhookDispatchOptions): Promise<WebhookEvent>;
-}
-
-interface WebhookDispatchOptions {
-  skipListeners?: boolean;
-  onListenersCompleted?(): void;
+  dispatch(): Promise<WebhookEvent>;
 }
 
 interface WebhookDispatchScope {
@@ -142,7 +136,6 @@ export class WebhookHandler {
     provider: string,
     prepared: PreparedWebhook,
     scope?: WebhookDispatchScope,
-    { skipListeners = false, onListenersCompleted }: WebhookDispatchOptions = {}
   ): Promise<WebhookEvent> {
     const { triggerKey, trigger, transformedPayload, verified } = prepared;
     if (scope && (!(await scope.bindingIsCurrent()) || scope.revoked.aborted)) {
@@ -166,11 +159,10 @@ export class WebhookHandler {
     if (scope?.revoked.aborted) {
       throw webhookBindingRevoked();
     }
-    const listenersCompleted = await this.emit(
-      provider, triggerKey, { ...triggerEvent, ...webhookEvent }, scope, skipListeners,
+    await this.emit(
+      provider, triggerKey, { ...triggerEvent, ...webhookEvent }, scope,
       trigger.webhookConfig?.cloneWorkflowEvent,
     );
-    if (listenersCompleted) onListenersCompleted?.();
 
     if (processedEventKey) {
       this.rememberProcessedEvent(processedEventKey);
@@ -304,7 +296,7 @@ export class WebhookHandler {
         if (!requiresBinding || (authenticatedWithoutSubject && this.getHandlerCount(provider, triggerKey) > 0)) {
           return {
             signatureVerified,
-            dispatch: (options) => this.dispatchWebhook(provider, prepared, undefined, options),
+            dispatch: () => this.dispatchWebhook(provider, prepared),
             event: () => this.createWebhookEvent(provider, prepared),
           };
         }
@@ -367,13 +359,12 @@ export class WebhookHandler {
           binding,
           idempotencyKey,
           payloadHash,
-          authenticatedDeliveryId: deliveryId,
           assertActive: () => {
             if (revoked.aborted) {
               throw webhookBindingRevoked();
             }
           },
-          dispatch: (options) => this.dispatchWebhook(provider, prepared, scope, options),
+          dispatch: () => this.dispatchWebhook(provider, prepared, scope),
           event: () => this.createWebhookEvent(provider, prepared, scope),
         };
       },
@@ -469,14 +460,13 @@ export class WebhookHandler {
     event: string,
     webhookEvent: Parameters<TriggerHandler>[0],
     scope: WebhookDispatchScope | undefined,
-    skipListeners: boolean,
     cloneWorkflowEvent: WebhookConfig['cloneWorkflowEvent'],
-  ): Promise<boolean> {
-    const listeners = skipListeners ? undefined : this.handlers.get(handlerKey(provider, event));
+  ): Promise<void> {
+    const listeners = this.handlers.get(handlerKey(provider, event));
     const workflowHandlers = scope && this.workflowHandlers.get(handlerKey(provider, event, scope.binding));
     if (!listeners?.size && !workflowHandlers?.size) {
       this.logger.debug(`No handlers registered for ${provider}.${event}`);
-      return false;
+      return;
     }
 
     if (scope && workflowHandlers) {
@@ -496,7 +486,6 @@ export class WebhookHandler {
       Promise.resolve().then(() => handler({ ...webhookEvent }))
     );
     await this.settleHandlers(provider, event, listenerCalls);
-    return listenerCalls.length > 0;
   }
 
   private async settleHandlers(provider: string, event: string, calls: Promise<void>[]): Promise<void> {
@@ -636,11 +625,13 @@ export function hasWebhookSignatureProof(record: { metadata?: Record<string, unk
 }
 
 export function withoutWebhookReplayData(
-  metadata: Record<string, unknown> | undefined
-): Record<string, unknown> | undefined {
-  if (!metadata) return undefined;
-  const { rawBodyBase64: _body, rawBodyExpiresAt: _expiry, replayHeaders: _headers, ...remaining } = metadata;
-  return remaining;
+  delivery: PlugFnWebhookDelivery,
+): Pick<PlugFnWebhookDelivery, 'metadata' | 'runtimeReplayContext'> {
+  const { rawBodyBase64: _body, rawBodyExpiresAt: _expiry, ...metadata } = delivery.metadata ?? {};
+  return {
+    ...(delivery.metadata ? { metadata } : {}),
+    ...(hasWebhookSignatureProof(delivery) && delivery.runtimeReplayContext ? { runtimeReplayContext: null } : {}),
+  };
 }
 
 function sha256(value: string | Uint8Array): string {

@@ -8,6 +8,7 @@ import { AdapterRuntimeStorage } from '../src/storage/runtime-storage.js';
 import { mockProvider } from '../src/testing/index.js';
 import { NoopLogger } from '../src/utils/logger.js';
 import type { WebhookConfig } from '../src/types/trigger.js';
+import type { PlugFnWebhookDelivery } from '../src/types/runtime.js';
 import type { Workflow, WorkflowContext, WorkflowRuntimeRegistry } from '../src/types/workflow.js';
 
 const firstBinding = {
@@ -270,25 +271,6 @@ describe('webhook workflow admission', () => {
     expect(action).toHaveBeenCalledTimes(2);
   });
 
-  it('records the canonical listener only when the receipt actually dispatched it', async () => {
-    const { runtime, send } = startRuntime(database, { withResolver: false, authenticateEventHeader: true });
-    const first = vi.fn();
-    const second = vi.fn();
-    runtime.webhooks.on('test-provider', 'test.event', first);
-    runtime.webhooks.on('test-provider', 'test.other-event', second);
-    const rawBody = Buffer.from(JSON.stringify({ id: 'test-delivery', installationId: 'test-installation-one' }));
-    await runtime.webhooks.handle('test-provider', 'test.event', undefined, {
-      'x-plugfn-delivery': 'test-delivery',
-    }, signingCredential, { rawBody });
-    expect(first).toHaveBeenCalledOnce();
-
-    expect((await send('test-installation-one', 'test-delivery', {}, 'test.other-event')).status).toBe(200);
-    expect(second).not.toHaveBeenCalled();
-    const [delivery] = await database.findMany({ model: deliveryModel });
-    expect(delivery).toMatchObject({ status: 'success' });
-    expect(delivery).not.toHaveProperty('metadata.triggerKey');
-  });
-
   it('keeps a reassigned attempt out of standalone retries while its receipt is scoped', async () => {
     const { runtime } = startRuntime(database);
     const webhooks = runtime.runtime.webhooks;
@@ -481,7 +463,7 @@ describe('webhook workflow admission', () => {
     expect(action).toHaveBeenCalledTimes(2);
   });
 
-  it('preserves completed listener deduplication independently of workflows', async () => {
+  it('ignores even a verified standalone completion and deduplicates subsequent scoped deliveries', async () => {
     await seedWorkflow(database, 'one', firstBinding.tenantId, firstBinding.connectionId);
     const route = 'test-alias';
     const legacy = startRuntime(database, { withResolver: false, routeAlias: route });
@@ -493,9 +475,48 @@ describe('webhook workflow admission', () => {
 
     const scoped = startRuntime(database, { routeAlias: route });
     scoped.runtime.webhooks.on('test-provider', 'test.event', listener);
+    const lookup = vi.spyOn(scoped.runtime.runtime.webhooks, 'findReceiptByIdempotencyKey');
     expect((await scoped.send('test-installation-one')).status).toBe(200);
-    expect(listener).toHaveBeenCalledOnce();
+    expect(listener).toHaveBeenCalledTimes(2);
     expect(scoped.action).toHaveBeenCalledOnce();
+    expect(lookup.mock.calls.every(([, , namespace]) => namespace === 'workflow')).toBe(true);
+
+    const restarted = startRuntime(database, { routeAlias: route });
+    restarted.runtime.webhooks.on('test-provider', 'test.event', listener);
+    const duplicate = await restarted.send('test-installation-one');
+    await expect(duplicate.json()).resolves.toMatchObject({ data: { duplicate: true } });
+    expect(listener).toHaveBeenCalledTimes(2);
+    expect(restarted.action).not.toHaveBeenCalled();
+  });
+
+  it('deduplicates signed bound deliveries separately for each signing authority', async () => {
+    await seedWorkflow(database, 'one', firstBinding.tenantId, firstBinding.connectionId);
+    const { runtime, send, action, resolveAlternateBinding } = startRuntime(database);
+    resolveAlternateBinding.mockReturnValue([firstBinding]);
+    const listener = vi.fn();
+    runtime.webhooks.on('test-provider', 'test.event', listener);
+    const alternate = { 'x-test-authority': 'alternate' };
+
+    expect((await send('test-installation-one')).status).toBe(200);
+    expect((await send('test-installation-one', 'test-delivery', alternate)).status).toBe(200);
+    const duplicate = await send('test-installation-one', 'test-delivery', alternate);
+    await expect(duplicate.json()).resolves.toMatchObject({ data: { duplicate: true } });
+    expect(listener).toHaveBeenCalledTimes(2);
+    expect(action).toHaveBeenCalledTimes(2);
+  });
+
+  it('requires signature evidence on a scoped completion before deduplicating it', async () => {
+    await seedWorkflow(database, 'one', firstBinding.tenantId, firstBinding.connectionId);
+    const before = startRuntime(database);
+    expect((await before.send('test-installation-one')).status).toBe(200);
+    const [delivery] = await database.findMany<{ id: string }>({ model: deliveryModel });
+    await database.updateWebhookDelivery(delivery.id, { metadata: {} });
+
+    const after = startRuntime(database);
+    const listener = vi.fn();
+    after.runtime.webhooks.on('test-provider', 'test.event', listener);
+    expect((await after.send('test-installation-one')).status).toBe(200);
+    expect(listener).toHaveBeenCalledOnce();
   });
 
   it.each([
@@ -524,7 +545,7 @@ describe('webhook workflow admission', () => {
     expect(after.action).toHaveBeenCalledOnce();
     expect(await database.findMany({ model: deliveryModel })).toContainEqual(expect.objectContaining({
       status: 'success',
-      metadata: expect.objectContaining({ signatureVerified: true, triggerKey: 'test.event' }),
+      metadata: expect.objectContaining({ signatureVerified: true }),
     }));
     const duplicate = await after.send('test-installation-one', 'test-delivery', signedHeaders);
     await expect(duplicate.json()).resolves.toMatchObject({ data: { duplicate: true } });
@@ -575,18 +596,47 @@ describe('webhook workflow admission', () => {
     expect((await send(undefined, 'test-delivery', {
       'x-test-topic': 'test-signed-topic', 'x-signature': 'test-signature',
     })).status).toBe(503);
-    const [failed] = await database.findMany<{ id: string }>({
+    const [failed] = await database.findMany<PlugFnWebhookDelivery>({
       model: deliveryModel, where: [{ field: 'status', operator: 'eq', value: 'failed' }],
     });
-    await database.updateWebhookDelivery(failed.id, { nextAttemptAt: new Date(0) });
+    expect(failed.runtimeReplayContext).toMatchObject({
+      event: 'test.event',
+      headers: { 'x-test-topic': 'test-signed-topic', 'x-signature': '[redacted]' },
+    });
+    const applicationHeaders = { 'x-test-topic': 'test-application-topic' };
+    await database.updateWebhookDelivery(failed.id, {
+      nextAttemptAt: new Date(0),
+      metadata: { ...failed.metadata, event: 'test.other-event', replayHeaders: applicationHeaders },
+    });
     const retryHandler = vi.fn();
     const result = await runtime.runtime.webhooks.processDueDeliveries(retryHandler);
     expect(result).toMatchObject({ processed: 1, succeeded: 1 });
     expect(retryHandler).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      event: 'test.event',
       headers: expect.objectContaining({ 'x-test-topic': 'test-signed-topic', 'x-signature': '[redacted]' }),
     }));
-    expect(result.deliveries[0]?.metadata).toMatchObject({ signatureVerified: true });
-    expect(result.deliveries[0]?.metadata).not.toHaveProperty('replayHeaders');
+    expect(result.deliveries[0]?.metadata).toMatchObject({ signatureVerified: true, replayHeaders: applicationHeaders });
+    expect(result.deliveries[0]?.runtimeReplayContext).toBeNull();
+  });
+
+  it.each(['success', 'dead-lettered'] as const)('keeps application replayHeaders through an unsigned %s pre-binding attempt', async (status) => {
+    const { runtime } = startRuntime(database, { withResolver: false, withVerifier: false });
+    const webhooks = runtime.runtime.webhooks;
+    const receipt = await webhooks.createReceipt({
+      provider: 'test-provider', event: 'test.receipt-event', payloadHash: 'test-payload-hash',
+      headersRedacted: { 'x-test-topic': 'test-receipt-topic' },
+    });
+    const metadata = { event: 'test.app-event', replayHeaders: { 'x-test-topic': 'test-app-topic' } };
+    await webhooks.createDelivery({ receiptId: receipt.id, status: 'pending', metadata });
+    const handler = vi.fn(async () => {
+      if (status === 'dead-lettered') throw new Error('test retry failed');
+    });
+
+    const result = await webhooks.processDueDeliveries(handler, { maxAttempts: 1 });
+    expect(handler).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      event: receipt.event, headers: receipt.headersRedacted,
+    }));
+    expect(result.deliveries[0]).toMatchObject({ status, metadata });
   });
 
   it('claims the first signed delivery once across runtimes that share an older receipt', async () => {
@@ -618,46 +668,6 @@ describe('webhook workflow admission', () => {
     expect(listener).toHaveBeenCalledOnce();
   });
 
-  it('uses only unowned legacy receipts to suppress a standalone listener during scoped dispatch', async () => {
-    await seedWorkflow(database, 'one', firstBinding.tenantId, firstBinding.connectionId);
-    const { runtime, send, action } = startRuntime(database);
-    const listener = vi.fn();
-    runtime.webhooks.on('test-provider', 'test.event', listener);
-    const receipt = await runtime.runtime.webhooks.createReceipt({
-      provider: 'test-provider',
-      event: 'test.event',
-      idempotencyKey: 'test-delivery',
-      payloadHash: fingerprint(JSON.stringify({ id: 'test-delivery', installationId: 'test-installation-one' })),
-      owner: { kind: 'user', userId: 'test-owner', tenantId: firstBinding.tenantId },
-      verificationStatus: 'verified',
-    });
-    await runtime.runtime.webhooks.createDelivery({
-      receiptId: receipt.id, status: 'success', metadata: { triggerKey: 'test.event', signatureVerified: true },
-    });
-
-    expect((await send('test-installation-one')).status).toBe(200);
-    expect(listener).toHaveBeenCalledOnce();
-    expect(action).toHaveBeenCalledOnce();
-  });
-
-  it('requires a proven delivery ID before using legacy listener completion for a delivery with a signed ID', async () => {
-    await seedWorkflow(database, 'one', firstBinding.tenantId, firstBinding.connectionId);
-    const legacy = startRuntime(database, { withResolver: false });
-    legacy.runtime.webhooks.on('test-provider', 'test.event', vi.fn());
-    expect((await legacy.send('test-installation-one', 'test-delivery', {
-      'x-test-signed-delivery': 'test-first-delivery',
-    })).status).toBe(200);
-
-    const scoped = startRuntime(database, { authenticateDeliveryId: true });
-    const listener = vi.fn();
-    scoped.runtime.webhooks.on('test-provider', 'test.event', listener);
-    expect((await scoped.send('test-installation-one', 'test-delivery', {
-      'x-test-signed-delivery': 'test-second-delivery',
-    })).status).toBe(200);
-    expect(listener).toHaveBeenCalledOnce();
-    expect(scoped.action).toHaveBeenCalledOnce();
-  });
-
   it('retries a standalone receipt that carries application tenant metadata', async () => {
     const { runtime, send } = startRuntime(database, { withResolver: false });
     const listener = vi.fn().mockRejectedValueOnce(new Error('test listener failed'));
@@ -669,31 +679,6 @@ describe('webhook workflow admission', () => {
 
     expect((await send()).status).toBe(200);
     expect(listener).toHaveBeenCalledTimes(2);
-  });
-
-  it.each([
-    { route: 'test-alias', historical: false },
-    { route: 'test-alias', historical: true },
-    { route: 'test.other-event', historical: true },
-  ])('delivers the new event after reassignment of $route (historical: $historical)', async ({ route, historical }) => {
-    await seedWorkflow(
-      database, 'other-event', firstBinding.tenantId, firstBinding.connectionId, 'test.other-event'
-    );
-    const legacy = startRuntime(database, { withResolver: false, routeAlias: route });
-    expect((await legacy.send('test-installation-one', 'test-delivery', {}, route)).status).toBe(200);
-    if (historical) {
-      const [delivery] = await database.findMany<{ id: string }>({ model: deliveryModel });
-      await database.updateWebhookDelivery(delivery.id, { metadata: { event: route, signatureVerified: true } });
-    }
-
-    const scoped = startRuntime(database, { authenticateEventHeader: true, otherRouteAlias: route });
-    const listener = vi.fn();
-    scoped.runtime.webhooks.on('test-provider', 'test.other-event', listener);
-    expect((await scoped.send('test-installation-one', 'test-delivery', {
-      'x-test-signed-event': 'test.other-event',
-    }, route)).status).toBe(200);
-    expect(listener).toHaveBeenCalledOnce();
-    expect(scoped.action).toHaveBeenCalledOnce();
   });
 
   it('stores and retrieves identical opaque keys independently in each receipt namespace', async () => {
@@ -746,25 +731,6 @@ describe('webhook workflow admission', () => {
     expect(workflow.id).not.toBe(standalone.id);
     expect(await storage.createWebhookReceipt(workflowInput)).toEqual(workflow);
     expect(standaloneLookup).not.toHaveBeenCalled();
-  });
-
-  it('ignores a completed legacy receipt for a different authenticated event', async () => {
-    await seedWorkflow(
-      database, 'other-event', firstBinding.tenantId, firstBinding.connectionId, 'test.other-event'
-    );
-    const legacy = startRuntime(database, { withResolver: false, authenticateEventHeader: true });
-    expect((await legacy.send('test-installation-one', 'test-delivery', {
-      'x-test-signed-event': 'test.event',
-    })).status).toBe(200);
-
-    const scoped = startRuntime(database, { authenticateEventHeader: true });
-    const listener = vi.fn();
-    scoped.runtime.webhooks.on('test-provider', 'test.other-event', listener);
-    expect((await scoped.send('test-installation-one', 'test-delivery', {
-      'x-test-signed-event': 'test.other-event',
-    }, 'test.other-event')).status).toBe(200);
-    expect(listener).toHaveBeenCalledOnce();
-    expect(scoped.action).toHaveBeenCalledOnce();
   });
 
   it('revalidates the registry after a receipt claim and before dispatch', async () => {
@@ -1092,7 +1058,7 @@ function startRuntime(
       default: return [];
     }
   });
-  const resolveAlternateBinding = vi.fn(() => []);
+  const resolveAlternateBinding = vi.fn((): typeof firstBinding[] => []);
   const runtime = plugFn({
     database,
     auth: { authenticate: () => null },

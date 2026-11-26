@@ -24,6 +24,7 @@ function getV8Tables(): TableSchema[] {
     if (table.modelName === 'plugfn_webhook_deliveries') {
       const fields = { ...table.fields };
       delete fields.workflowScoped;
+      delete fields.runtimeReplayContext;
       return { ...table, fields };
     }
     if (table.modelName !== RECEIPT_TABLE) return table;
@@ -425,13 +426,16 @@ describe('plugfn schema v9 migration', () => {
           missingIndexes: [{ name: WORKFLOW_RECEIPT_INDEX, columns: ['workflow_idempotency_key'], unique: true }],
           changedIndexes: [],
         }),
-        expect.objectContaining({ tableName: 'plugfn_webhook_deliveries', missingColumns: ['workflow_scoped'] }),
+        expect.objectContaining({
+          tableName: 'plugfn_webhook_deliveries', missingColumns: ['workflow_scoped', 'runtime_replay_context'],
+        }),
       ]);
 
       const up = upStatements(adapterType, pending!.migrationFile.content);
       expect(up).toContain(adapterType === 'kysely'
         ? `.addColumn('workflow_idempotency_key', 'varchar(64)', (col) => col)`
         : `ADD COLUMN workflow_idempotency_key VARCHAR(64);`);
+      expect(up).toContain('runtime_replay_context');
       expect(up).toContain(`CREATE UNIQUE INDEX ${WORKFLOW_RECEIPT_INDEX} ON ${RECEIPT_TABLE} (workflow_idempotency_key)`);
     },
   );

@@ -250,6 +250,7 @@ export const plugfn_webhook_deliveries = pgTable(
   metadata: json('metadata'),
   nextAttemptAt: timestamp('next_attempt_at', { withTimezone: true }),
   receiptId: text('receipt_id').notNull(),
+  runtimeReplayContext: json('runtime_replay_context'),
   sinkId: text('sink_id'),
   status: text('status').notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull(),

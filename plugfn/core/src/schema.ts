@@ -212,6 +212,7 @@ export function getSchema(options: PlugFnSchemaOptions = {}): { version: number;
           sinkId: { type: 'string', required: false, fieldName: 'sink_id' },
           handlerName: { type: 'string', required: false, fieldName: 'handler_name' },
           workflowScoped: { type: 'boolean', required: false, fieldName: 'workflow_scoped' },
+          runtimeReplayContext: { type: 'json', required: false, fieldName: 'runtime_replay_context' },
           status: { type: 'string', required: true, fieldName: 'status' },
           claimToken: { type: 'string', required: false, fieldName: 'claim_token' },
           attempts: { type: 'number', required: true, fieldName: 'attempts' },

@@ -84,12 +84,19 @@ export interface PlugFnWebhookReceipt {
   metadata?: Record<string, unknown>;
 }
 
+export interface PlugFnWebhookReplayContext {
+  event: string;
+  headers: Record<string, string>;
+}
+
 export interface PlugFnWebhookDelivery {
   id: string;
   receiptId: string;
   sinkId?: string;
   handlerName?: string;
   workflowScoped?: true | null;
+  /** Runtime-owned context for retrying a signature-verified standalone delivery. */
+  runtimeReplayContext?: PlugFnWebhookReplayContext | null;
   status: 'pending' | 'running' | 'success' | 'failed' | 'dead-lettered';
   claimToken?: string;
   attempts: number;

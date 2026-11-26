@@ -11,13 +11,16 @@ import type {
   PlugFnWebhookDelivery,
   PlugFnWebhookReceipt,
   PlugFnWebhookReceiptNamespace,
+  PlugFnWebhookReplayContext,
 } from '../types/runtime.js';
 import {
   ensurePlugFnDatabaseAdapter,
   type PlugFnDatabaseStorageAdapter,
 } from './adapters/database.js';
+import { hasWebhookSignatureProof } from '../webhooks/webhook-handler.js';
 
 export const claimFirstSignedWebhookDelivery = Symbol('plugfn.claimFirstSignedWebhookDelivery');
+export const webhookRuntimeReplayContext = Symbol('plugfn.webhookRuntimeReplayContext');
 
 export interface CreateProviderInstallationInput {
   provider: string;
@@ -47,6 +50,7 @@ export interface CreateWebhookReceiptInput {
 }
 
 export interface CreateWebhookDeliveryInput {
+  [webhookRuntimeReplayContext]?: PlugFnWebhookReplayContext;
   receiptId: string;
   sinkId?: string;
   handlerName?: string;
@@ -289,12 +293,16 @@ export class AdapterRuntimeStorage {
   private async persistWebhookDelivery(input: CreateWebhookDeliveryInput, id: string): Promise<PlugFnWebhookDelivery> {
     const workflowScoped = await this.workflowDeliveryScope(input.receiptId);
     const now = new Date();
+    const runtimeReplayContext = !workflowScoped && hasWebhookSignatureProof(input)
+      ? input[webhookRuntimeReplayContext]
+      : undefined;
     return this.adapter.createWebhookDelivery({
       id,
       receiptId: input.receiptId,
       sinkId: input.sinkId,
       handlerName: input.handlerName,
       ...(workflowScoped ? { workflowScoped } : {}),
+      ...(runtimeReplayContext ? { runtimeReplayContext } : {}),
       status: input.status ?? 'pending',
       attempts: 0,
       nextAttemptAt: input.nextAttemptAt,
@@ -308,8 +316,12 @@ export class AdapterRuntimeStorage {
     id: string,
     updates: Partial<PlugFnWebhookDelivery>
   ): Promise<PlugFnWebhookDelivery> {
-    const { workflowScoped: _scope, ...fields } = updates;
-    const data = { ...fields, updatedAt: new Date() };
+    const { workflowScoped: _scope, runtimeReplayContext, ...fields } = updates;
+    const data = {
+      ...fields,
+      ...(runtimeReplayContext === null ? { runtimeReplayContext } : {}),
+      updatedAt: new Date(),
+    };
     if (fields.receiptId === undefined) return this.adapter.updateWebhookDelivery(id, data);
 
     const model = this.adapter.models.webhookDeliveries;

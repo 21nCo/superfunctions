@@ -9,7 +9,11 @@ import type { Connection, HandleCallbackResult } from '../types/connection.js';
 import type { PlugFnApiEnvelope, PlugFnResponseMeta } from '../types/protocol.js';
 import type { PlugFnConnectionOwner } from '../types/runtime.js';
 import { connectionMatchesActor, hasAny } from '../security/tenancy.js';
-import { claimFirstSignedWebhookDelivery, type CreateWebhookDeliveryInput } from '../storage/runtime-storage.js';
+import {
+  claimFirstSignedWebhookDelivery,
+  webhookRuntimeReplayContext,
+  type CreateWebhookDeliveryInput,
+} from '../storage/runtime-storage.js';
 import {
   assertWebhookReceiptScope,
   hasWebhookSignatureProof,
@@ -924,7 +928,6 @@ async function handleWebhookRoute(
     return successResponse(await deliverWebhook(plugFn, {
       provider,
       event: resolvedEvent,
-      triggerKey: verification.triggerKey,
       headers,
       rawBody,
       legacyPayloadHash: payloadHash,
@@ -945,7 +948,6 @@ export async function deliverWebhook(
   options: {
     provider: string;
     event: string;
-    triggerKey: string;
     headers: Record<string, string>;
     rawBody: Uint8Array;
     legacyPayloadHash?: string;
@@ -956,7 +958,7 @@ export async function deliverWebhook(
   const { provider, event: resolvedEvent, headers, rawBody, verificationStatus, admission } = options;
   const { signatureVerified } = admission;
   const idempotencyNamespace = admission.binding ? 'workflow' : 'standalone';
-  const currentPayloadHash = options.legacyPayloadHash ?? legacyWebhookPayloadHash(provider, rawBody);
+  const admittedPayloadHash = admission.payloadHash ?? options.legacyPayloadHash ?? legacyWebhookPayloadHash(provider, rawBody);
   const workflowBindings = plugFn.config.webhooks?.workflowBindings;
   const requiresBinding = workflowBindings && Object.hasOwn(workflowBindings, provider);
   let deliveryId: string | undefined;
@@ -972,9 +974,9 @@ export async function deliverWebhook(
 
   try {
     // Preserve standalone receipt keys. Scoped keys come from the authenticated delivery identity.
-    const legacyKey = readWebhookIdempotencyKey(provider, headers, rawBody);
-    idempotencyKey = admission.binding ? admission.idempotencyKey : legacyKey;
-    const admittedPayloadHash = admission.payloadHash ?? currentPayloadHash;
+    idempotencyKey = admission.binding
+      ? admission.idempotencyKey
+      : readWebhookIdempotencyKey(provider, headers, rawBody);
 
     try {
       await plugFn.ready;
@@ -1024,29 +1026,6 @@ export async function deliverWebhook(
       }
     }
 
-    // A completed standalone delivery can suppress repeat listener side effects,
-    // while workflow dispatch still requires its own scoped receipt.
-    // Legacy receipts never recorded an authenticated delivery ID.
-    const legacyReceipt = admission.binding && admission.authenticatedDeliveryId === undefined && legacyKey
-      ? await plugFn.runtime.webhooks.findReceiptByIdempotencyKey(provider, legacyKey)
-      : undefined;
-    const skipListeners = Boolean(
-      legacyReceipt &&
-      legacyReceipt.workflowIdempotencyKey == null &&
-      legacyReceipt.connectionId == null &&
-      legacyReceipt.ownerKind == null &&
-      legacyReceipt.ownerId == null &&
-      legacyReceipt.metadata?.plugfnTenantId == null &&
-      legacyReceipt.verificationStatus === 'verified' &&
-      legacyReceipt.payloadHash === currentPayloadHash &&
-      (await plugFn.runtime.webhooks.listDeliveries(legacyReceipt.id)).some((delivery) =>
-        delivery.status === 'success' &&
-        // Reuse only a completion with proof of both signature verification and the listener's canonical trigger.
-        hasWebhookSignatureProof(delivery) &&
-        delivery.metadata?.triggerKey === options.triggerKey
-      )
-    );
-
     const receiptClaimToken = idempotencyKey
       ? `claim_${randomBytes(12).toString('hex')}`
       : undefined;
@@ -1090,6 +1069,9 @@ export async function deliverWebhook(
       receiptId: receipt.id,
       handlerName: `${provider}.${resolvedEvent}`,
       status: 'running',
+      [webhookRuntimeReplayContext]: signatureVerified && !admission.binding
+        ? { event: resolvedEvent, headers: headersRedacted }
+        : undefined,
       metadata: {
         provider,
         event: resolvedEvent,
@@ -1099,7 +1081,6 @@ export async function deliverWebhook(
         ...(!admission.binding ? {
           rawBodyBase64: Buffer.from(rawBody).toString('base64'),
           rawBodyExpiresAt: new Date(Date.now() + WEBHOOK_RETRY_PAYLOAD_TTL_MS).toISOString(),
-          ...(signatureVerified ? { replayHeaders: headersRedacted } : {}),
         } : {}),
       },
     };
@@ -1114,19 +1095,12 @@ export async function deliverWebhook(
     deliveryId = delivery.id;
     deliveryAttempts = delivery.attempts;
 
-    let listenersCompleted = false;
-    const webhookEvent = await admission.dispatch({
-      skipListeners,
-      onListenersCompleted: () => { listenersCompleted = true; },
-    });
+    const webhookEvent = await admission.dispatch();
 
     await plugFn.runtime.webhooks.updateDelivery(delivery.id, {
       status: 'success',
       attempts: delivery.attempts + 1,
-      metadata: {
-        ...withoutWebhookReplayData(delivery.metadata),
-        ...(listenersCompleted ? { triggerKey: options.triggerKey } : {}),
-      },
+      ...withoutWebhookReplayData(delivery),
     });
 
     return {
@@ -1142,7 +1116,7 @@ export async function deliverWebhook(
           provider,
           resolvedEvent,
           headers,
-          currentPayloadHash,
+          admittedPayloadHash,
           idempotencyKey,
           error
         );
