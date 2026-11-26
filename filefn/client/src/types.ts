@@ -53,18 +53,23 @@ export interface FileFnClientConfig {
      * Required with `partition`: the principal this client's credentials act
      * for right now (null when signed out). Queued work uploads and runs hooks
      * only while it matches `partition`, so an account switch in another tab
-     * that shares cookies cannot upload one principal's files as another.
+     * that shares cookies cannot upload one principal's files as another. It
+     * is also checked before every local read or staging, so it must answer
+     * from local state (a session store or cookie the app keeps current)
+     * without a network request: offline, a rejected or failed call reads as
+     * a mismatch and staging is refused.
      */
     currentPrincipal?: OfflineQueueCurrentPrincipal;
     /**
-     * Auth headers that act for exactly `principal`, used by queued replays
-     * of the built-in transport instead of `getAuthHeaders` (return null when
-     * there are none: the replay stays provisional). This binds a replay's
-     * credentials to its partition. Without it, replays resolve
-     * `getAuthHeaders` between two `currentPrincipal` checks and check again
-     * before each request, which cannot see an account that switches away
-     * and back while `getAuthHeaders` runs. Cookies are ambient: they are
-     * only covered by the checks.
+     * Required for a user partition replayed by the built-in transport (else
+     * `FILEFN_OFFLINE_CREDENTIALS_REQUIRED`): auth headers that act for exactly
+     * `principal`, sent by every queued replay request instead of the client's
+     * `getAuthHeaders` (which acts for whoever is signed in now). Return null
+     * when there are none: the replay stays provisional. Ambient cookies are
+     * sent per `credentials` and are covered only by the `currentPrincipal`
+     * checks, so cookie-authenticated apps should return headers that the
+     * server binds to `principal` (for example a per-principal CSRF or session
+     * token), or supply `uploader`.
      */
     getAuthHeaders?: (
       principal: OfflineQueuePrincipal,

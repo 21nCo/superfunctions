@@ -72,6 +72,43 @@ describe('OfflineSync', () => {
     });
   });
 
+  it('records no retry and delivers no result once disposed, even when the client ignores the abort', async () => {
+    const incrementRetryCount = vi.fn(async () => {});
+    const pending = {
+      uploadSessionId: 'offline_dispose_1',
+      fileId: 'file_dispose_1',
+      policy: 'p',
+      fileName: 'a.txt',
+      size: 4,
+      mimeType: 'text/plain',
+      fileData: new TextEncoder().encode('test').buffer,
+      createdAt: new Date().toISOString(),
+      retryCount: 0,
+    };
+    let fail!: (error: Error) => void;
+    const sync = new OfflineSync({
+      store: {
+        async listPendingUploads() { return ['offline_dispose_1']; },
+        async getPendingUpload() { return pending; },
+        async deletePendingUpload() {},
+        incrementRetryCount,
+      } as any,
+      // Ignores its abort signal and fails later.
+      client: { uploadFile: () => new Promise((_resolve, reject) => (fail = reject)) },
+    });
+    sync.setConnectivityChecker({ isOnline: () => true, onOnline: () => () => {}, onOffline: () => () => {} });
+    const outcome = vi.fn();
+    sync.waitForUpload('offline_dispose_1').then(outcome, outcome);
+    const syncing = sync.syncUpload('offline_dispose_1');
+    await vi.advanceTimersByTimeAsync(0);
+    sync.dispose();
+    fail(new Error('network timeout'));
+    await syncing;
+    await vi.advanceTimersByTimeAsync(0);
+    expect(incrementRetryCount).not.toHaveBeenCalled();
+    expect(outcome).not.toHaveBeenCalled();
+  });
+
   it('keeps settled results available on the fast path until expiry', async () => {
     const sync = new OfflineSync({
       store: {

@@ -23,6 +23,13 @@ export interface SyncConfig {
   client?: UploadClient;
   maxRetries?: number;
   retryDelayMs?: number;
+  /**
+   * With a queue: while started and online, how long after a pass that left
+   * nothing to retry the next pass runs anyway (default 30000; 0 turns it
+   * off). It finds work no wakeup announced, such as an entry another tab
+   * claimed and left when it closed.
+   */
+  idlePollMs?: number;
   onSyncProgress?: (progress: SyncProgress) => void;
   onSyncComplete?: (result: SyncResult) => void;
   onSyncError?: (error: Error, uploadSessionId: string) => void;
@@ -55,6 +62,8 @@ export class OfflineSync {
   private static readonly SETTLED_RESULT_TTL_MS = 5 * 60 * 1000;
   private config: ResolvedSyncConfig;
   private isSyncing = false;
+  /** Started (`start`/`startAutoSync`) and not stopped since. */
+  private autoSyncing = false;
   /** Work arrived during a pass that had already listed its entries: run one more pass after it. */
   private rerunRequested = false;
   private queueRetries = 0;
@@ -78,6 +87,7 @@ export class OfflineSync {
     this.config = {
       maxRetries: 3,
       retryDelayMs: 1000,
+      idlePollMs: 30_000,
       onSyncProgress: () => {},
       onSyncComplete: () => {},
       onSyncError: () => {},
@@ -123,6 +133,7 @@ export class OfflineSync {
       throw new Error('OfflineSync was disposed');
     }
     this.stopAutoSync();
+    this.autoSyncing = true;
     this.stopOnlineListener = this.connectivityChecker.onOnline(() => this.runPass());
     // Work this tab makes runnable (a staging, a released hold) starts a pass at once.
     this.stopWorkListener = this.config.queue?.onWork(() => {
@@ -135,6 +146,8 @@ export class OfflineSync {
    * Stop listening for online events.
    */
   stopAutoSync(): void {
+    this.autoSyncing = false;
+    this.clearRetry('*idle*');
     this.stopOnlineListener?.();
     this.stopOnlineListener = undefined;
     this.stopWorkListener?.();
@@ -148,6 +161,7 @@ export class OfflineSync {
 
   private passFailed(error: unknown): void {
     if (this.disposed) return;
+    if (this.queueGone(error)) return;
     this.config.onSyncError(error instanceof Error ? error : new Error('Unknown error'), this.config.queue ? '*queue*' : '*sync*');
     if (this.config.queue && this.isOnline()) this.scheduleQueueRetry();
   }
@@ -315,7 +329,7 @@ export class OfflineSync {
     try {
       outcomes = await queue.processAll({ signal: this.lifetime.signal });
     } catch (error) {
-      if (this.disposed) return result;
+      if (this.disposed || this.queueGone(error)) return result;
       if ((error as { code?: unknown })?.code !== 'FILEFN_QUEUE_PRINCIPAL_MISMATCH') throw error;
       // Another account is active for now: look again later.
       if (this.isOnline()) this.scheduleQueueRetry();
@@ -373,9 +387,33 @@ export class OfflineSync {
     progress.current = null;
     if (this.disposed) return result;
     this.config.onSyncComplete(result);
-    if (!retry) this.queueRetries = 0;
-    else if (this.isOnline() && !this.disposed) this.scheduleQueueRetry();
+    if (!retry) {
+      this.queueRetries = 0;
+      this.scheduleIdlePoll();
+    } else if (this.isOnline() && !this.disposed) this.scheduleQueueRetry();
     return result;
+  }
+
+  /**
+   * A disposed queue ends this sync for good: it disposes itself, silently,
+   * instead of reporting and retrying a queue that can never run again.
+   */
+  private queueGone(error: unknown): boolean {
+    if ((error as { code?: unknown })?.code !== 'FILEFN_QUEUE_DISPOSED' || !this.config.queue?.isDisposed) return false;
+    this.dispose();
+    return true;
+  }
+
+  private scheduleIdlePoll(): void {
+    const key = '*idle*';
+    const delay = this.config.idlePollMs;
+    if (!this.autoSyncing || this.disposed || !(delay > 0) || this.retryTimers.has(key) || this.retryTimers.has('*queue*')) return;
+    if (!this.isOnline()) return;
+    const timer = setTimeout(() => {
+      this.retryTimers.delete(key);
+      if (this.autoSyncing && this.isOnline()) this.runPass();
+    }, delay);
+    this.retryTimers.set(key, timer);
   }
 
   private scheduleQueueRetry(): void {
@@ -444,6 +482,8 @@ export class OfflineSync {
         if (this.cancelledUploads.has(uploadSessionId) || (error instanceof DOMException && error.name === 'AbortError')) {
           throw error;
         }
+        // A disposed sync records nothing, even when the client ignored the abort.
+        if (this.disposed) throw new DOMException('Aborted', 'AbortError');
         await store.incrementRetryCount(uploadSessionId);
         throw error;
       } finally {
@@ -474,14 +514,18 @@ export class OfflineSync {
 
     try {
       const result = await this.syncOne(uploadSessionId);
+      if (this.disposed) return;
       this.notifyListeners(uploadSessionId, result);
     } catch (error) {
       if (this.cancelledUploads.has(uploadSessionId)) {
         this.cancelledUploads.delete(uploadSessionId);
         return;
       }
+      // A disposed sync delivers nothing: the upload stays for a live one.
+      if (this.disposed) return;
       const err = error instanceof Error ? error : new Error('Unknown error');
       const pending = await this.legacyStore().getPendingUpload(uploadSessionId);
+      if (this.disposed) return;
       if (pending && pending.retryCount >= this.config.maxRetries) {
         this.notifyListeners(uploadSessionId, err);
         return;
@@ -524,6 +568,7 @@ export class OfflineSync {
     const timer = setTimeout(() => {
       this.retryTimers.delete(uploadSessionId);
       void this.syncUpload(uploadSessionId).catch((error) => {
+        if (this.disposed) return;
         const err = error instanceof Error ? error : new Error('Unknown error');
         this.config.onSyncError(err, uploadSessionId);
       });

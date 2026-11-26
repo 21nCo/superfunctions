@@ -65,7 +65,13 @@ describe('offline replay transport', () => {
       fetch: stagingFetch,
       credentials: 'include',
       getAuthHeaders: () => ({ 'x-csrf-token': 'csrf-before-reload' }),
-      offline: { enabled: true, partition: PARTITION, currentPrincipal: () => PARTITION.principal, queue: { coordinator: locks.forTab('before') } },
+      offline: {
+        enabled: true,
+        partition: PARTITION,
+        currentPrincipal: () => PARTITION.principal,
+        getAuthHeaders: () => ({ 'x-csrf-token': 'csrf-before-reload' }),
+        queue: { coordinator: locks.forTab('before') },
+      },
     });
     beforeReload.uploadFile({ policy: 'p', file: new Blob(['hello'], { type: 'text/plain' }), fileName: 'a.txt', fileId: 'file_00000001' });
     await vi.waitFor(() => expect(persistedText()).toContain('g1.bin'));
@@ -95,7 +101,14 @@ describe('offline replay transport', () => {
       fetch: replayFetch as unknown as typeof fetch,
       credentials: 'include',
       getAuthHeaders: () => ({ 'x-csrf-token': 'csrf-after-reload' }),
-      offline: { enabled: true, partition: PARTITION, currentPrincipal: () => PARTITION.principal, queue: { coordinator: locks.forTab('after') } },
+      offline: {
+        enabled: true,
+        partition: PARTITION,
+        currentPrincipal: () => PARTITION.principal,
+        // Replays send credentials issued for the partition's principal, resolved at replay time.
+        getAuthHeaders: () => ({ 'x-csrf-token': 'csrf-after-reload' }),
+        queue: { coordinator: locks.forTab('after') },
+      },
     });
 
     // Touching offline state starts the client's sync loop, which replays the staged upload.

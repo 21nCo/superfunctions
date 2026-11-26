@@ -366,6 +366,12 @@ export class OPFSStore {
     }
   }
 
+  /** A pending upload's metadata without its data, or null. */
+  async getPendingUploadMetadata(uploadSessionId: string): Promise<Omit<PendingUpload, 'fileData'> | null> {
+    await this.ensureInitialized();
+    return this.readPendingMetadata(uploadSessionId);
+  }
+
   private async readPendingMetadata(uploadSessionId: string): Promise<Omit<PendingUpload, 'fileData'> | null> {
     try {
       const uploadDir = await this.rootDir!.getDirectoryHandle(uploadSessionId);

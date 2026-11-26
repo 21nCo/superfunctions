@@ -11,6 +11,7 @@ import {
 import { OfflineSync } from '../offline/sync.js';
 import { UPLOAD_SESSION_ENDED_ERROR } from '../upload-manager.js';
 import {
+  ChannelBus,
   MemoryDirectory,
   MemoryFile,
   SharedLockManager,
@@ -25,6 +26,7 @@ const FILE_ID = 'file_00000000entry01';
 
 let storage: ReturnType<typeof createStorage>;
 let locks: SharedLockManager;
+let bus: ChannelBus;
 
 /** A deterministic uploader: records every call and returns ver_<n>. */
 function recordingUploader() {
@@ -49,6 +51,7 @@ function tab(
     coordinator: locks.forTab(name),
     getRoot: async () => storage.root,
     currentPrincipal: () => (overrides.partition ?? ALICE).principal,
+    channel: bus.channel,
     ...overrides,
   });
 }
@@ -111,6 +114,7 @@ function dataFiles(): string[] {
 beforeEach(() => {
   storage = createStorage();
   locks = new SharedLockManager();
+  bus = new ChannelBus();
   // No ambient Web Locks or OPFS: each test chooses its coordinator and root.
   vi.stubGlobal('navigator', {});
 });
@@ -1252,7 +1256,7 @@ describe('durable step boundaries', () => {
     await expect(settled).resolves.toMatchObject({ generation: entry.generation, state: 'published' });
   });
 
-  it('gives a second legacy upload sharing a replay key a key of its own', async () => {
+  it('takes over no replay key that two legacy uploads share: each gets a key of its own', async () => {
     for (const n of ['4', '5']) {
       const id = `offline_1731000000000_legacy00${n}`;
       const legacy = await (await storage.root.getDirectoryHandle('filefn-pending-uploads', { create: true })).getDirectoryHandle(id, { create: true });
@@ -1266,8 +1270,9 @@ describe('durable step boundaries', () => {
     }
     await a.processAll();
     expect(uploader.calls).toHaveLength(2);
-    expect(uploader.calls[0].idempotencyKey).toBe('test-legacy-key-shared');
-    expect(uploader.calls[1].idempotencyKey).not.toBe('test-legacy-key-shared');
+    const keys = uploader.calls.map((call) => call.idempotencyKey);
+    expect(keys).not.toContain('test-legacy-key-shared');
+    expect(new Set(keys).size).toBe(2);
   });
 });
 
@@ -1343,5 +1348,195 @@ describe('sync passes', () => {
     await sync.syncAll();
     expect(progress).toHaveBeenCalledTimes(1);
     expect(complete).not.toHaveBeenCalled();
+  });
+});
+
+describe('principal fenced after every read', () => {
+  /** A principal check that answers for Alice `allowed` more times, then for Bob. */
+  function switching() {
+    const state = { allowed: Infinity };
+    return { state, currentPrincipal: () => (state.allowed-- > 0 ? ALICE.principal : BOB.principal) };
+  }
+
+  it('returns no snapshot of a held entry when the principal changes while its journal is read', async () => {
+    const principal = switching();
+    const a = tab('a', { currentPrincipal: principal.currentPrincipal });
+    await stage(a, 'v1', { hold: true, metadata: { title: 'alice-private' } });
+    // The check on entering the transaction passes; the one after the read does not.
+    principal.state.allowed = 1;
+    expect(await a.process(FILE_ID)).toEqual({ status: 'stopped', reason: 'principal-mismatch' });
+  });
+
+  it('stops a processAll batch at a principal mismatch and returns none of its results', async () => {
+    let signedIn: OfflineQueuePrincipal = ALICE.principal;
+    const a = tab('a', {
+      currentPrincipal: () => signedIn,
+      uploader: {
+        async upload(input) {
+          // The account switches once the first entry is uploaded.
+          signedIn = BOB.principal;
+          return { fileId: input.fileId, versionId: 'ver_1' };
+        },
+      },
+    });
+    await stage(a, 'first', { entryId: 'e1', fileId: 'file_00000000entry0a' });
+    await stage(a, 'second', { entryId: 'e2', fileId: 'file_00000000entry0b', hold: true, metadata: { title: 'alice-private' } });
+    await expect(a.processAll()).rejects.toMatchObject({ code: 'FILEFN_QUEUE_PRINCIPAL_MISMATCH' });
+  });
+
+  it('rejects a hook\'s principal check once its step is stopped', async () => {
+    const checked = deferred<unknown>();
+    const reached = deferred<void>();
+    const a = tab('a', {
+      hooks: {
+        verify: async (context) => {
+          reached.resolve();
+          await new Promise((resolve) => context.signal.addEventListener('abort', resolve));
+          checked.resolve(await context.assertPrincipal().then(() => 'passed', (error: Error) => error.name));
+          return { verified: true };
+        },
+      },
+    });
+    await stage(a);
+    void a.process(FILE_ID).catch(() => {});
+    await reached.promise;
+    a.dispose();
+    expect(await checked.promise).toBe('AbortError');
+  });
+});
+
+describe('cross-tab wakeups', () => {
+  it('drives work another tab staged and left when it closed, with no online event', async () => {
+    const uploader = recordingUploader();
+    const b = tab('b', { uploader });
+    const sync = onlineSync(b, { idlePollMs: 0 });
+    sync.start();
+    await vi.waitFor(() => expect(locks.requests.length).toBeGreaterThan(0));
+    const a = tab('a');
+    await stage(a, 'from-a');
+    locks.closeTab('a');
+    a.dispose();
+    await vi.waitFor(async () => expect((await b.get(FILE_ID))?.state).toBe('published'));
+    expect(uploader.calls.map((call) => call.body)).toEqual(['from-a']);
+    sync.dispose();
+  });
+
+  it('finds such work on an idle poll when no channel is available', async () => {
+    const b = tab('b', { channel: () => undefined });
+    const sync = onlineSync(b, { idlePollMs: 10 });
+    sync.start();
+    const a = tab('a', { channel: () => undefined });
+    await stage(a);
+    a.dispose();
+    await vi.waitFor(async () => expect((await b.get(FILE_ID))?.state).toBe('published'));
+    sync.dispose();
+  });
+
+  it('a sync of a disposed queue disposes itself instead of reporting and retrying', async () => {
+    const onSyncError = vi.fn();
+    const a = tab('a');
+    const sync = onlineSync(a, { onSyncError, retryDelayMs: 1 });
+    a.dispose();
+    await sync.syncAll();
+    expect(sync.isDisposed).toBe(true);
+    expect(onSyncError).not.toHaveBeenCalled();
+  });
+});
+
+describe('verification provenance', () => {
+  it('runs a verifier that became required on a generation verified without one, before publishing it', async () => {
+    const run = vi.fn(async () => ({}));
+    const verify = vi.fn(async () => ({ verified: true as const }));
+    // Staged where only publication was required; uploaded where no hook exists.
+    await stage(tab('publisher-only', { hooks: { publish: { run: async () => ({}) } } }));
+    expect(await tab('bare').process(FILE_ID)).toMatchObject({ status: 'provisional', reason: 'hook-unavailable', entry: { phase: 'verified' } });
+    const full = tab('full', { hooks: { verify, publish: { run } } });
+    expect(await full.process(FILE_ID)).toMatchObject({ status: 'published' });
+    expect(verify).toHaveBeenCalledTimes(1);
+    expect(verify.mock.invocationCallOrder[0]).toBeLessThan(run.mock.invocationCallOrder[0]);
+  });
+});
+
+describe('hook and upload outcomes outside their contract', () => {
+  it.each([
+    ['a version with a path separator', { versionId: '/' }],
+    ['a file ID outside the server grammar', { fileId: '../file' }],
+  ])('keeps an upload result naming %s ambiguous under the same key', async (_label, result) => {
+    const a = tab('a', { uploader: { upload: async (input) => ({ fileId: input.fileId, versionId: 'ver_1', ...result }) } });
+    await stage(a);
+    expect(await a.process(FILE_ID)).toMatchObject({ status: 'provisional', reason: 'ambiguous', entry: { phase: 'uploading' } });
+  });
+
+  it.each([
+    ['false', false],
+    ['null', null],
+    ['a result that is not JSON', { result: { count: BigInt(1) } }],
+  ])('never confirms a publication that resolved with %s', async (_label, value) => {
+    const a = tab('a', { hooks: { publish: { run: async () => value as never } } });
+    await stage(a);
+    expect(await a.process(FILE_ID)).toMatchObject({ status: 'provisional', reason: 'ambiguous', entry: { phase: 'publishing' } });
+  });
+});
+
+describe('waiters across a cancel', () => {
+  it('resolves a waiter of a generation published and replaced since, when the entry is cancelled', async () => {
+    const a = tab('a', { observeIntervalMs: 0 });
+    const b = tab('b');
+    const { entry } = await stage(b);
+    const settled = a.whenSettled(FILE_ID, entry.generation);
+    // Read while provisional: the waiter stays.
+    await a.get(FILE_ID);
+    expect(await b.process(FILE_ID)).toMatchObject({ status: 'published' });
+    await stage(b, 'v2', { hold: true });
+    expect(await a.cancel(FILE_ID)).toBe(true);
+    await expect(settled).resolves.toMatchObject({ generation: entry.generation, state: 'published' });
+  });
+});
+
+describe('legacy migration admission', () => {
+  async function writeLegacy(id: string, key: string, fileId = FILE_ID) {
+    const legacy = await (await storage.root.getDirectoryHandle('filefn-pending-uploads', { create: true })).getDirectoryHandle(id, { create: true });
+    await writeCommitted(legacy, 'data.bin', 'old bytes');
+    await writeCommitted(legacy, 'metadata.json', JSON.stringify({ uploadSessionId: id, fileId, policy: 'p', fileName: 'old.txt', size: 9, mimeType: 'text/plain', createdAt: '2026-11-01T00:00:00.000Z', retryCount: 0, metadataVersion: 2, idempotencyKey: key }));
+  }
+
+  it('keeps the legacy key for a retry after a staging that failed', async () => {
+    await writeLegacy('offline_1731000000000_legacy011', 'test-legacy-key-0011');
+    const uploader = recordingUploader();
+    const a = tab('a', { uploader });
+    storage.storage.fault = (path, step) => {
+      if (path.endsWith('.bin') && path.includes('filefn-offline-queue') && step === 'close') throw quotaExceeded();
+    };
+    expect(await a.migrateLegacyUpload('offline_1731000000000_legacy011', { ownershipVerified: true })).toMatchObject({ status: 'refused', limit: 'quota' });
+    storage.storage.fault = undefined;
+    expect(await a.migrateLegacyUpload('offline_1731000000000_legacy011', { ownershipVerified: true })).toMatchObject({ status: 'staged' });
+    await a.processAll();
+    expect(uploader.calls.map((call) => call.idempotencyKey)).toEqual(['test-legacy-key-0011']);
+  });
+
+  it('never returns a later generation as the entry a legacy upload became', async () => {
+    await writeLegacy('offline_1731000000000_legacy012', 'test-legacy-key-0012');
+    const a = tab('a');
+    expect(await a.migrateLegacyUpload('offline_1731000000000_legacy012', { ownershipVerified: true })).toMatchObject({ status: 'staged' });
+    await stage(a, 'new bytes', { expectedGeneration: 1 });
+    // Its cleanup was interrupted: the legacy record is back.
+    await writeLegacy('offline_1731000000000_legacy012', 'test-legacy-key-0012');
+    expect(await a.migrateLegacyUpload('offline_1731000000000_legacy012', { ownershipVerified: true })).toEqual({
+      status: 'refused',
+      reason: 'already-migrated',
+    });
+  });
+
+  it('admits a legacy upload into one partition only, even across services', async () => {
+    await writeLegacy('offline_1731000000000_legacy013', 'test-legacy-key-0013');
+    const notes = tab('notes');
+    const other: OfflineQueuePartition = { serviceId: 'svc-other', principal: ALICE.principal };
+    const otherService = tab('other', { partition: other });
+    const results = await Promise.all([
+      notes.migrateLegacyUpload('offline_1731000000000_legacy013', { ownershipVerified: true }),
+      otherService.migrateLegacyUpload('offline_1731000000000_legacy013', { ownershipVerified: true }),
+    ]);
+    expect(results.filter((result) => result.status === 'staged')).toHaveLength(1);
+    expect((await notes.list()).length + (await otherService.list()).length).toBe(1);
   });
 });

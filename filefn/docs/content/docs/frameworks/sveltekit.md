@@ -57,6 +57,9 @@ export const filefnClient = browser
         enabled: true,
         partition: { serviceId: "app", principal: { kind: "user", principalId: getSignedInUserId() } },
         currentPrincipal: () => ({ kind: "user", principalId: getSignedInUserId() }),
+        // Cookie auth: send nothing extra, and only while this user is still signed in.
+        getAuthHeaders: (principal) =>
+          principal.kind === "user" && principal.principalId === getSignedInUserId() ? {} : null,
       },
     })
   : null;

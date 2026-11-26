@@ -29,7 +29,7 @@ import {
   generateOfflineSessionId,
   type SyncConfig,
 } from './offline/sync.js';
-import { OfflineQueue, OfflineQueueError, type OfflineQueueUploader } from './offline/queue.js';
+import { OfflineQueue, OfflineQueueError, type OfflineQueuePrincipal, type OfflineQueueUploader } from './offline/queue.js';
 
 export type {
   ArtifactDescriptor,
@@ -98,11 +98,14 @@ export {
 export type {
   LegacyPendingUploadSummary,
   OfflineQueueCapabilities,
+  OfflineQueueChannel,
+  OfflineQueueCurrentPrincipal,
   OfflineQueueDirectoryHandle,
   OfflineQueueEntry,
   OfflineQueueErrorCode,
   OfflineQueueEvent,
   OfflineQueueFileHandle,
+  OfflineQueueHoldResult,
   OfflineQueueHooks,
   OfflineQueueLimits,
   OfflineQueueLockCoordinator,
@@ -326,12 +329,44 @@ function buildPreprocessors(config: FileFnClientConfig): UploadPreprocessor[] {
   return preprocessors;
 }
 
+/**
+ * Replays queued uploads with a snapshot of the client's transport. Every
+ * request, retry and part sends only headers `authHeaders(principal)` issued
+ * for the queue's own principal, resolved between two principal checks, and
+ * the principal is checked again right before each request goes out.
+ */
+function replayUploader(
+  transport: FileFnClientConfig,
+  authHeaders: NonNullable<NonNullable<FileFnClientConfig['offline']>['getAuthHeaders']>,
+  principal: () => OfflineQueuePrincipal,
+): OfflineQueueUploader {
+  return {
+    upload: (input) => {
+      const headers = async (): Promise<Record<string, string>> => {
+        await input.assertPrincipal();
+        const bound = await authHeaders(principal());
+        if (!bound) {
+          throw new OfflineQueueError('FILEFN_QUEUE_PRINCIPAL_MISMATCH', "No credentials for the queue's principal");
+        }
+        await input.assertPrincipal();
+        return bound;
+      };
+      // Already prepared when staged: no preprocessors run again.
+      const manager = new UploadManager(createHttpClient(transport, { beforeSend: input.assertPrincipal, authHeaders: headers }));
+      manager.bindAbortSignal(input.signal);
+      return manager.startUpload(input);
+    },
+  };
+}
+
 export function createFileFnClient(config: FileFnClientConfig): FileFnClient {
   const httpClient = createHttpClient(config);
   const preprocessors = buildPreprocessors(config);
   
   let offlineQueue: OfflineQueue | undefined;
   let implicitSync: OfflineSync | undefined;
+  /** Every sync `createOfflineSync` made: disposed with the client. */
+  const createdSyncs = new Set<OfflineSync>();
   let disposed = false;
 
   function offlineError(code: string, message: string): Error & { code: string } {
@@ -360,48 +395,31 @@ export function createFileFnClient(config: FileFnClientConfig): FileFnClient {
         'A guest partition needs offline.uploader, a transport whose replays are idempotent',
       );
     }
-    offlineQueue ??= new OfflineQueue({
-      ...config.offline.queue,
-      partition: config.offline.partition,
-      currentPrincipal,
-      legacyRootDir: config.offline.opfsDir,
-      uploader: config.offline.uploader ?? builtInUploader,
-    });
+    const boundAuthHeaders = config.offline.getAuthHeaders;
+    if (!config.offline.uploader && typeof boundAuthHeaders !== 'function') {
+      // The client's own getAuthHeaders acts for whoever is signed in now:
+      // replays would carry another account's credentials after a switch.
+      throw offlineError(
+        'FILEFN_OFFLINE_CREDENTIALS_REQUIRED',
+        'Offline replay with the built-in transport needs offline.getAuthHeaders(principal), credentials bound to the partition',
+      );
+    }
+    if (!offlineQueue) {
+      // Captured now: later changes to `config` never redirect queued work.
+      const transport: FileFnClientConfig = { ...config, getAuthHeaders: undefined, offline: undefined };
+      let queue: OfflineQueue | undefined;
+      queue = new OfflineQueue({
+        ...config.offline.queue,
+        partition: config.offline.partition,
+        currentPrincipal,
+        legacyRootDir: config.offline.opfsDir,
+        uploader:
+          config.offline.uploader ?? replayUploader(transport, boundAuthHeaders!, () => queue!.partition.principal),
+      });
+      offlineQueue = queue;
+    }
     return offlineQueue;
   }
-
-  /**
-   * Replays with this client's transport. The auth headers of every request,
-   * retry and part are resolved between two principal checks (or, with
-   * `offline.getAuthHeaders`, for the partition's principal itself), and the
-   * principal is checked again right before each request is sent.
-   */
-  const builtInUploader: OfflineQueueUploader = {
-    upload: (input) => {
-      const offline = config.offline!;
-      const principal = offline.partition!.principal;
-      const authHeaders = async (): Promise<Record<string, string> | undefined> => {
-        await input.assertPrincipal();
-        let headers: Record<string, string> | undefined;
-        if (offline.getAuthHeaders) {
-          const bound = await offline.getAuthHeaders(principal);
-          if (!bound) {
-            throw new OfflineQueueError('FILEFN_QUEUE_PRINCIPAL_MISMATCH', "No credentials for the queue's principal");
-          }
-          headers = bound;
-        } else {
-          headers = config.getAuthHeaders ? await config.getAuthHeaders() : undefined;
-        }
-        // Headers captured while another account was active never pass.
-        await input.assertPrincipal();
-        return headers;
-      };
-      // Already prepared when staged: no preprocessors run again.
-      const manager = new UploadManager(createHttpClient(config, { beforeSend: input.assertPrincipal, authHeaders }));
-      manager.bindAbortSignal(input.signal);
-      return manager.startUpload(input);
-    },
-  };
 
   /** The queue for read paths: null when offline is off, unbound or unsupported here. */
   function readableOfflineQueue(): OfflineQueue | null {
@@ -616,7 +634,9 @@ export function createFileFnClient(config: FileFnClientConfig): FileFnClient {
     getOfflineQueue,
 
     createOfflineSync(options = {}): OfflineSync {
-      return new OfflineSync({ ...options, queue: getOfflineQueue() });
+      const sync = new OfflineSync({ ...options, queue: getOfflineQueue() });
+      createdSyncs.add(sync);
+      return sync;
     },
 
     dispose(): void {
@@ -625,6 +645,8 @@ export function createFileFnClient(config: FileFnClientConfig): FileFnClient {
       }
       disposed = true;
       implicitSync?.dispose();
+      for (const sync of createdSyncs) sync.dispose();
+      createdSyncs.clear();
       offlineQueue?.dispose();
     },
   };

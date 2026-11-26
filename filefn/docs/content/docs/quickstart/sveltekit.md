@@ -91,18 +91,24 @@ export const fileFn = createFileFn({
 import { createFileFnClient } from "@filefn/client";
 
 // One client per signed-in user; call dispose() on sign-out.
-export function createFilefnClient(userId: string) {
+// `readSession()` reads the session your app keeps current locally (for
+// example a store updated on sign-in, sign-out and from other tabs): the
+// offline queue calls it before every local read and staging, also offline,
+// so it must not make a network request.
+export function createFilefnClient(userId: string, readSession: () => { userId: string } | null) {
   return createFileFnClient({
     baseUrl: "/filefn",
-    getAuthHeaders: async () => ({}),
     offline: {
       enabled: true,
       partition: { serviceId: "app", principal: { kind: "user", principalId: userId } },
-      // Read the live session (another tab may have switched it), not the captured userId.
-      currentPrincipal: async () => {
-        const session = await fetch("/api/session").then((r) => (r.ok ? r.json() : null));
+      // The live session (another tab may have switched it), not the captured userId.
+      currentPrincipal: () => {
+        const session = readSession();
         return session ? { kind: "user", principalId: session.userId } : null;
       },
+      // Credentials for exactly this principal, sent by every queued replay.
+      getAuthHeaders: (principal) =>
+        principal.kind === "user" && readSession()?.userId === principal.principalId ? {} : null,
     },
   });
 }

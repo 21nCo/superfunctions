@@ -1,4 +1,5 @@
 import type {
+  OfflineQueueChannel,
   OfflineQueueDirectoryHandle,
   OfflineQueueFileHandle,
   OfflineQueueLockCoordinator,
@@ -212,4 +213,37 @@ export function deferred<T>() {
     reject = rej;
   });
   return { promise, resolve, reject };
+}
+
+/**
+ * A `BroadcastChannel` stand-in shared by every tab of a test: a message
+ * reaches every other open channel of the same name, asynchronously, never
+ * the one that posted it. `posts` records each message posted.
+ */
+export class ChannelBus {
+  private readonly open = new Map<string, Set<{ deliver: (data: unknown) => void }>>();
+  readonly posts: Array<{ name: string; data: unknown }> = [];
+
+  readonly channel = (name: string): OfflineQueueChannel => {
+    const members = this.open.get(name) ?? new Set();
+    this.open.set(name, members);
+    const listeners: Array<(event: { data?: unknown }) => void> = [];
+    const self = { deliver: (data: unknown) => listeners.forEach((listener) => listener({ data })) };
+    members.add(self);
+    let closed = false;
+    return {
+      postMessage: (data) => {
+        if (closed) throw new DOMException('Channel closed', 'InvalidStateError');
+        this.posts.push({ name, data });
+        for (const member of members) if (member !== self) queueMicrotask(() => member.deliver(data));
+      },
+      addEventListener: (_type, listener) => {
+        listeners.push(listener);
+      },
+      close: () => {
+        closed = true;
+        members.delete(self);
+      },
+    };
+  };
 }

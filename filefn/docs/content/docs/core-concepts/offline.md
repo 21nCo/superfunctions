@@ -24,8 +24,12 @@ const client = createFileFnClient({
     enabled: true,
     // Trusted: from your own session, never from the URL or user input.
     partition: { serviceId: "app", principal: { kind: "user", principalId: session.userId } },
-    // Who the credentials act for right now; queued work runs only while it matches.
+    // Who the credentials act for right now, from local state (it is called
+    // offline too); queued work runs and is shown only while it matches.
     currentPrincipal: () => (session.userId ? { kind: "user", principalId: session.userId } : null),
+    // Credentials issued for exactly this principal, sent by queued replays.
+    getAuthHeaders: (principal) =>
+      principal.kind === "user" && principal.principalId === session.userId ? {} : null,
   },
 });
 

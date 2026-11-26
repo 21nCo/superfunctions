@@ -167,17 +167,21 @@ function envelope(data: unknown): Response {
 
 const locks = new SharedLockManager();
 
+/** Clients a test made: disposed after it, so none of them drives a later test's queue. */
+const clients: Array<{ dispose(): void }> = [];
+
 function offlineClient(fetch: typeof globalThis.fetch) {
-  return createFileFnClient({
+  return track(createFileFnClient({
     baseUrl: BASE,
     fetch,
     offline: {
       enabled: true,
       partition: { serviceId: 'svc-notes', principal: { kind: 'user', principalId: 'user-alice' } },
       currentPrincipal: () => ({ kind: 'user', principalId: 'user-alice' }),
+      getAuthHeaders: () => ({}),
       queue: { coordinator: locks.forTab('tab') },
     },
-  });
+  }));
 }
 
 beforeEach(() => {
@@ -186,7 +190,13 @@ beforeEach(() => {
   setOnline(true);
 });
 
+function track<T extends { dispose(): void }>(client: T): T {
+  clients.push(client);
+  return client;
+}
+
 afterEach(() => {
+  for (const client of clients.splice(0)) client.dispose();
   vi.unstubAllGlobals();
 });
 
@@ -311,8 +321,9 @@ describe('legacy pending uploads from @filefn/client 0.2.0', () => {
       expect(await queue.migrateLegacyUpload(uploadSessionId, { ownershipVerified: true })).toMatchObject({ status: 'staged' });
     }
     expect(pendingDirs()).toEqual([]);
+    // The client's implicit sync may drive one of them meanwhile.
     await queue.processAll();
-    expect([...server.initFileIds].sort()).toEqual(Object.values(expected).sort());
+    await vi.waitFor(() => expect([...server.initFileIds].sort()).toEqual(Object.values(expected).sort()));
   });
 
   it('report any other invalid stored fileId as FILEFN_INVALID_FILE_ID on sync and keep the record unchanged', async () => {

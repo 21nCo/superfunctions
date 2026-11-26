@@ -74,18 +74,27 @@ function createServer() {
   return { fetch: fetch as unknown as typeof globalThis.fetch, calls: fetch, inits, paths, state };
 }
 
+/** Credentials issued for exactly `principal`, as offline.getAuthHeaders must return. */
+function boundHeaders(principal: OfflineQueuePrincipal): Record<string, string> | null {
+  return principal.kind === 'user' ? { authorization: `Bearer test-token-${principal.principalId}` } : null;
+}
+
+/** Clients a test made: disposed after it, so none of them drives a later test's queue. */
+const clients: Array<{ dispose(): void }> = [];
+
 function offlineClient(offline: Partial<NonNullable<FileFnClientConfig['offline']>> = {}, tab = 'tab-1') {
-  return createFileFnClient({
+  return track(createFileFnClient({
     baseUrl: BASE,
     fetch: server.fetch,
     offline: {
       enabled: true,
       partition: ALICE,
       currentPrincipal: () => (offline.partition ?? ALICE).principal,
+      getAuthHeaders: boundHeaders,
       ...offline,
       queue: { coordinator: locks.forTab(tab), ...offline.queue },
     },
-  });
+  }));
 }
 
 function dataFiles(): string[] {
@@ -112,7 +121,13 @@ beforeEach(() => {
   setOnline(false);
 });
 
+function track<T extends { dispose(): void }>(client: T): T {
+  clients.push(client);
+  return client;
+}
+
 afterEach(() => {
+  for (const client of clients.splice(0)) client.dispose();
   vi.unstubAllGlobals();
 });
 
@@ -207,7 +222,15 @@ describe('offline uploads through the client', () => {
     ).toThrow(expect.objectContaining({ code: 'FILEFN_OFFLINE_GUEST_TRANSPORT_REQUIRED' }));
 
     // Without Web Locks the queue is still reachable for its capability result, and staging fails closed.
-    const unlocked = createFileFnClient({ baseUrl: BASE, offline: { enabled: true, partition: ALICE, currentPrincipal: () => ALICE.principal } });
+    // The built-in transport replays only with credentials bound to the partition's principal.
+    expect(() =>
+      createFileFnClient({ baseUrl: BASE, getAuthHeaders: () => ({}), offline: { enabled: true, partition: ALICE, currentPrincipal: () => ALICE.principal } })
+        .uploadFile({ policy: 'p', file }),
+    ).toThrow(expect.objectContaining({ code: 'FILEFN_OFFLINE_CREDENTIALS_REQUIRED' }));
+    const unlocked = createFileFnClient({
+      baseUrl: BASE,
+      offline: { enabled: true, partition: ALICE, currentPrincipal: () => ALICE.principal, getAuthHeaders: boundHeaders },
+    });
     expect(unlocked.getOfflineQueue().capabilities()).toMatchObject({ durable: false, reason: 'locks-unavailable' });
     await expect(unlocked.uploadFile({ policy: 'p', file }).done()).rejects.toMatchObject({
       code: 'FILEFN_QUEUE_REFUSED',
@@ -270,6 +293,46 @@ describe('offline replay lifecycle', () => {
     expect(await returning.getOfflineQueue().list()).toMatchObject([{ entryId: handle.fileId }]);
     await returning.createOfflineSync().syncAll();
     expect((await returning.getOfflineQueue().get(handle.fileId))?.state).toBe('published');
+    expect(server.inits).toHaveLength(1);
+  });
+  it('disposes every sync createOfflineSync made when the client is disposed', async () => {
+    const onSyncError = vi.fn();
+    const client = offlineClient({ implicitReplay: false });
+    const sync = client.createOfflineSync({ onSyncError, retryDelayMs: 1 });
+    sync.start();
+    client.dispose();
+    expect(sync.isDisposed).toBe(true);
+    await goOnline();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(onSyncError).not.toHaveBeenCalled();
+  });
+
+  it('replays under the partition and transport captured when the queue was made, whatever the config says later', async () => {
+    const asked: OfflineQueuePrincipal[] = [];
+    const config = {
+      baseUrl: BASE,
+      fetch: server.fetch,
+      offline: {
+        enabled: true,
+        partition: ALICE,
+        implicitReplay: false,
+        currentPrincipal: () => ALICE.principal,
+        getAuthHeaders: (principal: OfflineQueuePrincipal) => {
+          asked.push(principal);
+          return boundHeaders(principal);
+        },
+        queue: { coordinator: locks.forTab('tab-1') },
+      },
+    } satisfies FileFnClientConfig;
+    const client = track(createFileFnClient(config));
+    const handle = client.uploadFile({ policy: 'p', file: new File(['content'], 'test.txt') });
+    await vi.waitFor(async () => expect(await client.getOfflineQueue().list()).toHaveLength(1));
+    // The app reuses its config object for another account and another server.
+    (config.offline as { partition: OfflineQueuePartition }).partition = { serviceId: 'svc-notes', principal: { kind: 'user', principalId: 'user-bob' } };
+    (config as { baseUrl: string }).baseUrl = 'https://other.example.com';
+    setOnline(true);
+    expect(await client.getOfflineQueue().process(handle.fileId)).toMatchObject({ status: 'published' });
+    expect(new Set(asked.map((principal) => (principal.kind === 'user' ? principal.principalId : '')))).toEqual(new Set(['user-alice']));
     expect(server.inits).toHaveLength(1);
   });
 });
@@ -339,7 +402,14 @@ describe('replay transport', () => {
       baseUrl: BASE,
       fetch: server.fetch,
       retryOptions: { maxRetries: 2, baseDelayMs: 1, maxDelayMs: 1 },
-      offline: { enabled: true, partition: ALICE, implicitReplay: false, currentPrincipal: () => signedIn, queue: { coordinator: locks.forTab('tab-1') } },
+      offline: {
+        enabled: true,
+        partition: ALICE,
+        implicitReplay: false,
+        currentPrincipal: () => signedIn,
+        getAuthHeaders: boundHeaders,
+        queue: { coordinator: locks.forTab('tab-1') },
+      },
     });
     const handle = await stagedOffline(client as ReturnType<typeof offlineClient>);
     server.state.override = (path) => {
@@ -391,7 +461,8 @@ describe('replay transport', () => {
     const client = offlineClient({ queue: { hooks: { publish: { run: () => publication } } } });
     const handle = await stagedOffline(client);
     const done = handle.done();
-    void client.getOfflineQueue().processAll();
+    // Never settles: the publication hangs until the client is disposed after the test.
+    client.getOfflineQueue().processAll().catch(() => {});
     await vi.waitFor(async () => expect((await client.getOfflineQueue().list())[0]).toMatchObject({ phase: 'publishing' }));
     handle.abort();
     await expect(done).rejects.toThrow('Aborted');

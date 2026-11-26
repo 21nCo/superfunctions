@@ -63,6 +63,7 @@ async function createApp() {
       enabled: true,
       partition: { serviceId: 'svc-notes', principal: { kind: 'user', principalId: 'user-owner' } },
       currentPrincipal: () => ({ kind: 'user', principalId: 'user-owner' }),
+      getAuthHeaders: () => ({}),
       implicitReplay: false,
       queue: { coordinator: locks.forTab('tab-1'), getRoot: async () => storage.root },
     },
@@ -287,10 +288,21 @@ describe('session outcomes a replay settles under the same key', () => {
         });
       },
     });
-    const fileFn = createFileFn({ database, storage, policies: [{ name: 'doc', maxSizeBytes: 1024 }] });
+    // `gate`, when set, runs before each read of a session's recorded parts.
+    const control: { gate?: () => Promise<void> } = {};
+    const gated = Object.assign(Object.create(database), {
+      async findMany(query: { model: string }) {
+        if (query.model === 'uploadParts') await control.gate?.();
+        return database.findMany(query as Parameters<typeof database.findMany>[0]);
+      },
+    }) as typeof database;
+    const fileFn = createFileFn({ database: gated, storage, policies: [{ name: 'doc', maxSizeBytes: 1024 }] });
     return {
       fileFn,
       database,
+      control,
+      session: async (id: string) =>
+        (await database.findMany<Record<string, any>>({ model: 'uploadSessions' })).find((row) => row.uploadSessionId === id)!,
       updateSession: (id: string, data: Record<string, unknown>) =>
         database.update({ model: 'uploadSessions', where: [{ field: 'uploadSessionId', operator: 'eq', value: id }], data }),
     };
@@ -337,5 +349,55 @@ describe('session outcomes a replay settles under the same key', () => {
       });
     }, 50);
     await expect(completing).resolves.toMatchObject({ fileId: 'file_00000000outcome1', versionId: 'ver_test_0001' });
+  });
+
+  const init = { policy: 'doc', fileName: 'a.bin', size: 4, mimeType: 'application/octet-stream', fileId: 'file_00000000outcome2' };
+
+  it('reports a replayed session expired only after ending it, so a completion that passed its expiry check cannot publish', async () => {
+    const server = await createServer();
+    const key = 'test-replay-key-0101';
+    const session = await server.fileFn.createUploadSession({ ...init, idempotencyKey: key }, owner);
+    await server.fileFn.services.uploads.uploadPartBytes(session.uploadSessionId, 1, body(4), 4, owner);
+    // A completion passed its expiry check and is admitting the session when it expires.
+    let admitting!: () => void;
+    const reached = new Promise<void>((resolve) => (admitting = resolve));
+    let resume!: () => void;
+    server.control.gate = () => {
+      server.control.gate = undefined;
+      admitting();
+      return new Promise<void>((resolve) => (resume = resolve));
+    };
+    const completing = server.fileFn.completeUploadSession({ uploadSessionId: session.uploadSessionId }, owner);
+    completing.catch(() => {});
+    await reached;
+    await server.updateSession(session.uploadSessionId, { expiresAt: new Date(Date.now() - 1000).toISOString() });
+
+    const replay = await server.fileFn.createUploadSession({ ...init, idempotencyKey: key }, owner);
+    expect(replay).toMatchObject({ uploadSessionId: session.uploadSessionId, status: 'expired' });
+    expect((await server.session(session.uploadSessionId)).status).toBe('expired');
+
+    resume();
+    await expect(completing).rejects.toMatchObject({ code: 'FILEFN_UPLOAD_EXPIRED' });
+    expect(await server.database.findMany({ model: 'fileVersions' })).toHaveLength(0);
+  });
+
+  it('finishes an expired session an earlier FileFn left partly published instead of reporting it ended', async () => {
+    const server = await createServer();
+    const key = 'test-replay-key-0102';
+    const session = await server.fileFn.createUploadSession({ ...init, idempotencyKey: key }, owner);
+    await server.fileFn.services.uploads.uploadPartBytes(session.uploadSessionId, 1, body(4), 4, owner);
+    const stored = await server.fileFn.completeUploadSession({ uploadSessionId: session.uploadSessionId }, owner);
+    // As an earlier FileFn left it: the file points at the version, the session never completed.
+    await server.updateSession(session.uploadSessionId, {
+      status: 'in_progress',
+      completionPublication: null,
+      expiresAt: new Date(Date.now() - 1000).toISOString(),
+    });
+
+    const replay = await server.fileFn.createUploadSession({ ...init, idempotencyKey: key }, owner);
+    expect(replay.status).not.toBe('expired');
+    expect((await server.session(session.uploadSessionId)).status).not.toBe('expired');
+    await expect(server.fileFn.completeUploadSession({ uploadSessionId: session.uploadSessionId }, owner)).resolves.toMatchObject(stored);
+    expect(await server.database.findMany({ model: 'fileVersions' })).toHaveLength(1);
   });
 });

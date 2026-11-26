@@ -24,6 +24,11 @@ const client = createFileFnClient({
     enabled: true,
     partition: { serviceId: "app", principal: { kind: "user", principalId: session.userId } },
     currentPrincipal: () => (session.userId ? { kind: "user", principalId: session.userId } : null),
+    // Queued replays send only a token issued for the partition's principal.
+    getAuthHeaders: (principal) =>
+      principal.kind === "user" && principal.principalId === session.userId
+        ? { Authorization: `Bearer ${getToken()}` }
+        : null,
   },
   preprocessing: {
     heic: { enabled: true },
@@ -133,7 +138,7 @@ See [Render intents](../core-concepts/render-intents).
 
 ## OPFS offline
 
-`offline: { enabled: true, partition, currentPrincipal }` activates the OPFS pipeline (both are required for offline staging; a guest partition also needs `offline.uploader`). See [Features › Offline](../features/offline) for the details.
+`offline: { enabled: true, partition, currentPrincipal, getAuthHeaders }` activates the OPFS pipeline (all three are required for offline staging with the built-in transport, else `FILEFN_OFFLINE_PARTITION_REQUIRED`, `FILEFN_OFFLINE_PRINCIPAL_CHECK_REQUIRED` or `FILEFN_OFFLINE_CREDENTIALS_REQUIRED`; a guest partition needs `offline.uploader` instead of `getAuthHeaders`). `currentPrincipal` must answer from local state without a network request. See [Features › Offline](../features/offline) for the details.
 
 ## HEIC preprocessing
 

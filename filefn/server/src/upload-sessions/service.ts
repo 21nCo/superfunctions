@@ -734,37 +734,61 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
     return true;
   }
 
-  // The result a completed session recorded.
   /**
    * What an idempotent `upload/init` replay reports about the session it found,
-   * so a client reconciles instead of uploading again: `status` as
-   * getSessionStatus reports it (a pending or in-progress session past its
-   * expiry reads 'expired'), plus the `fileId` and `versionId` a completed
-   * session recorded itself. A session completed before completion versions
-   * were recorded reports neither: the file's current version may belong to a
-   * later upload, so the client cannot confirm the replay and keeps it
-   * provisional. A client treats 'expired' and 'aborted' as final and starts
-   * again under a new key.
+   * so a client reconciles instead of uploading again: `status`, plus the
+   * `fileId` and `versionId` a completed session recorded itself. A session
+   * completed before completion versions were recorded reports neither: the
+   * file's current version may belong to a later upload, so the client cannot
+   * confirm the replay and keeps it provisional. A client treats 'expired' and
+   * 'aborted' as final and starts again under a new key, so 'expired' is
+   * reported only once the session was moved to 'expired' by a conditional
+   * write, which no completion claim can follow (a claim also moves the row
+   * from 'pending' or 'in_progress'). A session an earlier FileFn left partly
+   * published is adopted and finished as a publication instead. Anything this
+   * cannot settle reads 'in_progress': the client replays the same key.
    */
-  function replayedSessionState(session: UploadSession): {
+  async function replayedSessionState(found: UploadSession): Promise<{
     status: 'pending' | 'in_progress' | 'completed' | 'aborted' | 'expired';
     fileId?: string;
     versionId?: string;
-  } {
-    if (session.status === 'completed') {
-      return session.fileId && session.completionVersionId
-        ? { status: 'completed', fileId: session.fileId, versionId: session.completionVersionId }
-        : { status: 'completed' };
+  }> {
+    let session: UploadSession | null = found;
+    for (let attempt = 0; attempt < 4 && session; attempt += 1) {
+      if (session.status === 'completed') {
+        return session.fileId && session.completionVersionId
+          ? { status: 'completed', fileId: session.fileId, versionId: session.completionVersionId }
+          : { status: 'completed' };
+      }
+      if (isAbortedStatus(session.status)) return { status: 'aborted' };
+      if (session.status === 'expired') return { status: 'expired' };
+      // 'completing' and 'publishing' hold a completion that is still running;
+      // the session can finish even past its expiry.
+      if (session.status === 'completing' || session.status === 'publishing') return { status: 'in_progress' };
+      if (!isExpiredAt(session.expiresAt)) return { status: session.status === 'pending' ? 'pending' : 'in_progress' };
+      let adopted: UploadSession | null | undefined;
+      try {
+        adopted = await adoptLegacyPublication(session);
+      } catch {
+        return { status: 'in_progress' };
+      }
+      if (adopted !== undefined) {
+        session = adopted;
+        continue;
+      }
+      const ended = await updateSessionIf(
+        session.uploadSessionId,
+        { status: session.status, completionClaim: session.completionClaim ?? null },
+        { status: 'expired' },
+        (row) => row.status === 'expired',
+      );
+      if (ended.applied) return { status: 'expired' };
+      session = ended.current;
     }
-    if (isAbortedStatus(session.status)) return { status: 'aborted' };
-    if (session.status === 'expired') return { status: 'expired' };
-    // 'completing' and 'publishing' hold a completion that is still running;
-    // the session can finish even past its expiry.
-    if (session.status === 'completing' || session.status === 'publishing') return { status: 'in_progress' };
-    if (Date.parse(session.expiresAt) <= Date.now()) return { status: 'expired' };
-    return { status: session.status === 'pending' ? 'pending' : 'in_progress' };
+    return { status: 'in_progress' };
   }
 
+  // The result a completed session recorded.
   async function recordedResult(session: UploadSession): Promise<{ fileId: string; versionId: string }> {
     if (session.fileId && session.completionVersionId) {
       return { fileId: session.fileId, versionId: session.completionVersionId };
@@ -1555,7 +1579,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
             totalParts: existing.totalParts,
             expiresAt: existing.expiresAt,
             warnings: [],
-            ...replayedSessionState(existing),
+            ...(await replayedSessionState(existing)),
           };
         }
       }
