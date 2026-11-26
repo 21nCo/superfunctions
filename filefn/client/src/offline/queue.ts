@@ -466,7 +466,13 @@ interface JournalRecord {
   createdAt: string;
   updatedAt: string;
   current: GenerationState;
-  holds: Array<{ holdId: string; generation: number; operationId: string }>;
+  /**
+   * `admission`: the staging hold of an `uploadFile` call, owned by the Web
+   * Lock that call holds (`admissionLockName`). Once that lock is free (the
+   * call returned, its queue was disposed, its tab closed or crashed) the
+   * hold no longer applies and the next plan removes it (`planStep`).
+   */
+  holds: Array<{ holdId: string; generation: number; operationId: string; admission?: true }>;
   /** The admission (see `LegacyClaim`) that wrote this migrated generation. */
   migrationAdmission?: string;
   /** The legacy upload this generation was migrated from (never inherited by a later generation). */
@@ -990,8 +996,9 @@ function snapshot(record: JournalRecord): OfflineQueueEntry {
     phase: cur.phase,
     state: cur.phase === 'published' ? 'published' : 'provisional',
     ...(cur.publicationAttempt ? { publicationAttemptId: cur.publicationAttempt } : {}),
+    // An admission hold is the staging call's own, never one of the app's.
     holds: record.holds
-      .filter((hold) => hold.operationId === cur.operationId)
+      .filter((hold) => hold.operationId === cur.operationId && !hold.admission)
       .map(({ holdId, generation }) => ({ holdId, generation })),
     attempts: cur.attempts,
     ...(cur.upload ? { upload: { ...cur.upload } } : {}),
@@ -1016,7 +1023,16 @@ type AfterReturn = (settle: () => void) => void;
 const STALE: unique symbol = Symbol('stale');
 
 /** What a preview read found for a file ID, at its durable position. */
-type PendingRead = { found: { record: JournalRecord; data: ArrayBuffer } | null; position: Position };
+/**
+ * A preview read: the eligible generation found (if any), the position of
+ * every entry of the file present in the partition, and the position at
+ * which every other entry was absent (`absent`, from the meta read).
+ */
+type PendingRead = {
+  found: { record: JournalRecord; data: ArrayBuffer } | null;
+  positions: Map<string, Position>;
+  absent: Position;
+};
 
 /** The uploader's replay scope for one pass, or why there is none. */
 type ScopeResolution = { scope: string } | { error: unknown };
@@ -1099,13 +1115,19 @@ export class OfflineQueue {
   private readonly objectUrls = new Map<string, { operationId: string; url: string }>();
   /**
    * Per entry, the newest durable position (see `Position`) an observation
-   * applied; per file ID, the newest one a preview returned. An observation
-   * or preview read older than these is discarded whole: it settles no
+   * applied; per file, the entries' positions the newest preview read saw
+   * (`previewSeen`). An observation or preview read older than these is discarded whole: it settles no
    * waiter, revokes no preview and returns nothing. The check and what it
    * delivers run in one synchronous block, after the read's last await.
    */
   private readonly applied = new Map<string, Position>();
-  private readonly previewApplied = new Map<string, Position>();
+  /**
+   * Per file: the position of each entry of the file as the newest preview
+   * read of it saw it (absent entries at the read's absence position). Each
+   * entry orders by its own durable journal position, so a file's order
+   * covers every entry of it, never just the one a read returned.
+   */
+  private readonly previewSeen = new Map<string, Map<string, Position>>();
   private partitionIdPromise: Promise<string> | undefined;
   private channelPromise: Promise<OfflineQueueChannel | undefined> | undefined;
   private posting: Promise<void> = Promise.resolve();
@@ -1241,6 +1263,95 @@ export class OfflineQueue {
    * current principal that is not the partition's.
    */
   async stage(input: OfflineQueueStageInput): Promise<OfflineQueueStageResult> {
+    return this.stageWith(input, undefined);
+  }
+
+  /**
+   * Stages a generation held by an admission that lasts only as long as this
+   * call: the hold is owned by a Web Lock (or coordinator lock) the call
+   * holds, so a generation whose call returned, was disposed, or whose tab
+   * closed or crashed before it was let go is runnable again for its
+   * principal (the hold is dropped by the next plan). The staging call
+   * decides release or cancellation in the one partition-lock transaction
+   * that ends the hold: `aborted()` is read there, and true removes the
+   * generation (`cancelled`) without it ever being runnable; otherwise the
+   * hold is released and only that committed release announces work. A
+   * committed staging that a principal switch refused (`principal-mismatch`)
+   * stays runnable for its principal. An abort that comes after the queue
+   * was disposed or its principal changed cannot be journaled.
+   */
+  async stageAdmitted(
+    input: Omit<OfflineQueueStageInput, 'hold'>,
+    aborted: () => boolean,
+  ): Promise<OfflineQueueStageResult | { status: 'cancelled'; entryId: string; generation: number }> {
+    if (this.disposed) throw new OfflineQueueError('FILEFN_QUEUE_DISPOSED', 'Offline queue was disposed');
+    const capability = this.capabilities();
+    if (!capability.durable) return { status: 'refused', reason: capability.reason! };
+    const holdId = randomId('hold');
+    const lockName = await this.admissionLockName(holdId);
+    try {
+      return await this.coordinator!.request(lockName, { signal: this.lifetime.signal }, async () => {
+        const staged = await this.stageWith(input, holdId);
+        if (staged.status !== 'staged') return staged;
+        const { entryId, generation } = staged.entry;
+        const ended = await this.endAdmission(entryId, generation, holdId, aborted);
+        if (ended === 'cancelled') return { status: 'cancelled', entryId, generation } as const;
+        return staged;
+      });
+    } catch (error) {
+      if (this.disposed && isAbort(error)) throw new OfflineQueueError('FILEFN_QUEUE_DISPOSED', 'Offline queue was disposed');
+      throw error;
+    }
+  }
+
+  /**
+   * Ends an admission hold in one partition-lock transaction: cancels the
+   * generation when `aborted()` (read inside it), else releases the hold and
+   * then announces work. `gone`: the generation was replaced or removed.
+   */
+  private async endAdmission(
+    entryId: string,
+    generation: number,
+    holdId: string,
+    aborted: () => boolean,
+  ): Promise<'released' | 'cancelled' | 'gone'> {
+    return this.disclosing(async (after) => {
+      const outcome = await this.transact(async (root) => {
+        const found = await this.readEntry(root, entryId);
+        if (!found || found.record.current.generation !== generation) return { kind: 'gone' } as const;
+        const { dir, record } = found;
+        const index = record.holds.findIndex((hold) => hold.holdId === holdId && hold.generation === generation);
+        if (index < 0) return { kind: 'gone' } as const;
+        if (aborted()) {
+          // Held since it was staged: nothing ran it, and nothing will.
+          const partitionDir = await this.partitionDir(root);
+          await this.noteRemoval(partitionDir, [record]);
+          const { tombstones, lastGeneration } = await this.loadMeta(partitionDir);
+          await this.removePath(partitionDir, await this.entryKey(entryId), true);
+          return { kind: 'cancelled', tombstones, lastGeneration } as const;
+        }
+        record.holds.splice(index, 1);
+        await this.writeRecord(dir, record);
+        return { kind: 'released' } as const;
+      }, { disclose: true });
+      if (outcome.kind === 'cancelled') {
+        after(() => this.settleAbsent(entryId, outcome.tombstones, outcome.lastGeneration));
+      }
+      if (outcome.kind === 'released') this.notifyWork();
+      return outcome.kind;
+    });
+  }
+
+  private async admissionLockName(holdId: string): Promise<string> {
+    return `${await this.partitionLockName()}:admission:${holdId}`;
+  }
+
+  /** Whether the call that took an admission hold still holds its lock. */
+  private async admissionLive(holdId: string): Promise<boolean> {
+    return this.coordinator!.request(await this.admissionLockName(holdId), { ifAvailable: true }, async (lock) => lock === null);
+  }
+
+  private async stageWith(input: OfflineQueueStageInput, admissionHoldId: string | undefined): Promise<OfflineQueueStageResult> {
     if (this.disposed) throw new OfflineQueueError('FILEFN_QUEUE_DISPOSED', 'Offline queue was disposed');
     const capability = this.capabilities();
     if (!capability.durable) {
@@ -1271,7 +1382,7 @@ export class OfflineQueue {
     const fileName = input.fileName ?? (typeof File !== 'undefined' && input.file instanceof File ? input.file.name : 'blob');
     const mimeType = input.mimeType || input.file.type || 'application/octet-stream';
     return this.disclosing<OfflineQueueStageResult>(
-      (after) => this.stageBytes({ ...input, entryId, fileId, fileName, mimeType }, bytes, undefined, after),
+      (after) => this.stageBytes({ ...input, entryId, fileId, fileName, mimeType, admissionHoldId }, bytes, undefined, after),
       MISMATCH_REFUSAL,
     );
   }
@@ -1634,40 +1745,47 @@ export class OfflineQueue {
   private async readPendingDescriptor(fileId: string): Promise<PendingRead> {
     return this.transact(async (root) => {
       const partitionDir = await this.partitionDir(root);
-      const records = (await this.readAllIn(partitionDir)).filter(
-        (record) => record.current.fileId === fileId && record.current.phase !== 'published' && !record.current.dataRemoved,
-      );
+      const all = (await this.readAllIn(partitionDir)).filter((record) => record.current.fileId === fileId);
+      const positions = new Map(all.map((record) => [record.entryId, positionOf(record)] as const));
+      const absent = absentAt((await this.loadMeta(partitionDir)).lastGeneration);
+      const records = all.filter((record) => record.current.phase !== 'published' && !record.current.dataRemoved);
       records.sort((a, b) => b.current.generation - a.current.generation || a.entryId.localeCompare(b.entryId));
       for (const record of records) {
         const dir = await getDir(partitionDir, await this.entryKey(record.entryId));
         const blob = dir ? await getFile(dir, record.current.dataFile) : null;
-        if (blob) return { found: { record, data: await blob.arrayBuffer() }, position: positionOf(record) };
+        if (blob) return { found: { record, data: await blob.arrayBuffer() }, positions, absent };
       }
-      return { found: null, position: absentAt((await this.loadMeta(partitionDir)).lastGeneration) };
+      return { found: null, positions, absent };
     }, { disclose: true });
   }
 
   /**
-   * The last step of a preview read, synchronous, after its outermost fence:
-   * a read older than the newest preview returned for the file, or than the
-   * newest observation of its entry, is STALE (read again). Otherwise its
-   * entry's preview URL is reused, or replaced when the generation changed.
+   * The last step of a preview read, synchronous, after its outermost fence.
+   * The read is STALE (read again) when it saw any entry of the file at an
+   * older position than the newest preview read of the file, or than the
+   * newest observation of that entry, did: an entry it found absent counts
+   * at the read's absence position. Otherwise its entry's preview URL is
+   * reused, or replaced when the generation changed. A newer entry that was
+   * removed or published since does not hold back a fresh read: that read
+   * saw the removal or publication, which is newer.
    */
   private deliverPendingDescriptor(fileId: string, read: PendingRead): PendingLocalDescriptor | null | typeof STALE {
-    if (isBefore(read.position, this.previewApplied.get(fileId))) return STALE;
-    if (!read.found) {
-      this.previewApplied.set(fileId, read.position);
-      return null;
+    const seen = this.previewSeen.get(fileId) ?? new Map<string, Position>();
+    const view = new Map<string, Position>();
+    for (const entryId of new Set([...read.positions.keys(), ...seen.keys()])) {
+      const position = read.positions.get(entryId) ?? read.absent;
+      if (isBefore(position, seen.get(entryId)) || isBefore(position, this.applied.get(entryId))) return STALE;
+      view.set(entryId, position);
     }
-    const { record, data } = read.found;
-    if (isBefore(read.position, this.applied.get(record.entryId))) return STALE;
-    if (typeof URL === 'undefined' || typeof URL.createObjectURL !== 'function') {
+    if (read.found && (typeof URL === 'undefined' || typeof URL.createObjectURL !== 'function')) {
       const error = new Error('Local preview unavailable') as Error & { code?: string };
       error.code = 'FILEFN_OFFLINE_PREVIEW_UNSUPPORTED';
       throw error;
     }
-    this.applied.set(record.entryId, read.position);
-    this.previewApplied.set(fileId, read.position);
+    this.previewSeen.set(fileId, view);
+    if (!read.found) return null;
+    const { record, data } = read.found;
+    this.applied.set(record.entryId, positionOf(record));
     const cur = record.current;
     let cached = this.objectUrls.get(record.entryId);
     if (!cached || cached.operationId !== cur.operationId) {
@@ -2406,7 +2524,7 @@ export class OfflineQueue {
   }
 
   private async stageBytes(
-    input: OfflineQueueStageInput & { entryId: string; fileId: string; fileName: string; mimeType: string },
+    input: OfflineQueueStageInput & { entryId: string; fileId: string; fileName: string; mimeType: string; admissionHoldId?: string },
     bytes: ArrayBuffer,
     migration: { source: string; key?: string; keyShared?: boolean; admissionId?: string } | undefined,
     after: AfterReturn,
@@ -2472,7 +2590,8 @@ export class OfflineQueue {
     // and its preview goes, after the result returned.
     const staged = outcome;
     after(() => this.observe(staged.record, staged.tombstones));
-    return { status: 'staged', entry: snapshot(outcome.record), ...(outcome.holdId ? { holdId: outcome.holdId } : {}) };
+    const appHold = outcome.holdId && !outcome.record.holds.some((hold) => hold.holdId === outcome.holdId && hold.admission);
+    return { status: 'staged', entry: snapshot(outcome.record), ...(appHold ? { holdId: outcome.holdId } : {}) };
   }
 
   private async stageIn(
@@ -2578,7 +2697,8 @@ export class OfflineQueue {
       attempts: 0,
       phase: 'staged',
     };
-    const holdId = input.hold ? randomId('hold') : undefined;
+    const admissionHoldId = (input as { admissionHoldId?: string }).admissionHoldId;
+    const holdId = admissionHoldId ?? (input.hold ? randomId('hold') : undefined);
     const record: JournalRecord = {
       journalVersion: JOURNAL_VERSION,
       binding: { ...this.partition, partitionId: await this.partitionId() },
@@ -2588,7 +2708,7 @@ export class OfflineQueue {
       updatedAt: now,
       current,
       // Holds of earlier generations no longer apply.
-      holds: holdId ? [{ holdId, generation, operationId }] : [],
+      holds: holdId ? [{ holdId, generation, operationId, ...(admissionHoldId ? { admission: true as const } : {}) }] : [],
       ...(migration ? { migratedFrom: migration.source } : {}),
       ...(migration?.admissionId ? { migrationAdmission: migration.admissionId } : {}),
       ...(migratedKey !== undefined ? { migratedKey } : {}),
@@ -2776,7 +2896,13 @@ export class OfflineQueue {
     signal?.addEventListener('abort', onAbort, { once: true });
     let scope: unknown;
     try {
-      scope = await uploader.replayScope!.call(uploader, this.partition.principal, controller.signal);
+      // Raced with the pass and the queue's lifetime, as every step is: a
+      // resolver that never settles (or ignores its signal) cannot keep the
+      // entry lock after an abort or disposal; its late result is discarded.
+      scope = await raceAbort(
+        invoke(() => uploader.replayScope!.call(uploader, this.partition.principal, controller.signal)),
+        controller.signal,
+      );
     } catch (error) {
       if (isPrincipalMismatch(error) || this.disposed || signal?.aborted) throw error;
       return { error };
@@ -2875,6 +3001,16 @@ export class OfflineQueue {
     };
     const provisional = (reason: Extract<OfflineQueueProcessResult, { status: 'provisional' }>['reason'], emit = false) =>
       finish({ status: 'provisional', entry: snapshot(record), reason }, emit);
+    // An admission hold whose staging call is gone (returned, disposed, its
+    // tab closed) no longer applies: dropped here, durably, before planning.
+    const dead: string[] = [];
+    for (const hold of record.holds) {
+      if (hold.admission && !(await this.admissionLive(hold.holdId))) dead.push(hold.holdId);
+    }
+    if (dead.length > 0) {
+      record.holds = record.holds.filter((hold) => !dead.includes(hold.holdId));
+      await this.writeRecord(dir, record);
+    }
     if (record.holds.some((hold) => hold.operationId === cur.operationId) && cur.phase !== 'published') {
       return provisional('held');
     }

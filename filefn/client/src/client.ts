@@ -97,7 +97,8 @@ function resultInvalid(message: string): Error & { code: string } {
  * The payload of a successful body, through the route's schema: the data of
  * `{ ok: true, data }` with no `error`, or a bare legacy body that names no
  * `ok` or `error`. Any other body (an `ok` that is not `true`, an `error`,
- * a payload of another shape) proves nothing. Also used for a custom
+ * a payload of another shape, a payload that itself carries an `ok` other
+ * than `true` or a non-null `error`) proves nothing. Also used for a custom
  * offline uploader's result.
  */
 export function decodeFileFnBody<T>(body: unknown, schema: FileFnSchema<T>): FileFnResult<T> {
@@ -107,6 +108,9 @@ export function decodeFileFnBody<T>(body: unknown, schema: FileFnSchema<T>): Fil
       return { kind: "unknown", error: resultInvalid("The answer is not a FileFn success envelope") };
     }
     payload = body.data;
+  }
+  if (isObject(payload) && (("ok" in payload && payload.ok !== true) || (payload.error !== undefined && payload.error !== null))) {
+    return { kind: "unknown", error: resultInvalid("The answer's payload carries a failure marker") };
   }
   if (!schema(payload)) {
     return { kind: "unknown", error: resultInvalid("The answer does not have the route's shape") };

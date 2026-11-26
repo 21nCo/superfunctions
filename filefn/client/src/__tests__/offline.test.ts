@@ -497,20 +497,49 @@ describe('local previews of a file staged by several entries', () => {
       vi.useRealTimers();
     }
   });
+
+  it('previews the older pending generation through the client and resolveRenderable once the newer one is cancelled', async () => {
+    const client = offlineClient({ implicitReplay: false });
+    const queue = client.getOfflineQueue();
+    const fileId = 'file_00000000preview2';
+    await queue.stage({ policy: 'p', file: new File(['old'], 'old.png', { type: 'image/png' }), fileId, entryId: 'older' });
+    await queue.stage({ policy: 'p', file: new File(['newer!'], 'new.png', { type: 'image/png' }), fileId, entryId: 'newer' });
+    expect(await client.getPendingLocalDescriptor(fileId)).toMatchObject({ source: { url: 'blob:local-6' } });
+    expect(await queue.cancel('newer')).toBe(true);
+    expect(await client.getPendingLocalDescriptor(fileId)).toMatchObject({ source: { url: 'blob:local-3' } });
+    expect(await client.resolveRenderable({ fileId, intent: 'preview', preferLocal: true })).toMatchObject({
+      state: 'pending-local',
+      name: 'old.png',
+      size: 3,
+    });
+  });
 });
 
 describe('architecture reset: an offline upload is runnable only once its staging call lets it go', () => {
   /** Tab 1's coordinator: holds back the return of the next partition-lock request, or fails the next one. */
   function scriptedCoordinator() {
     const inner = locks.forTab('tab-1');
-    const control: { hold?: Promise<void>; reached?: () => void; failNext?: Error } = {};
+    const control: {
+      hold?: Promise<void>;
+      reached?: () => void;
+      failNext?: Error;
+      before?: Promise<void>;
+      beforeReached?: () => void;
+    } = {};
     const coordinator: typeof inner = {
       request: (async (lock: string, options: unknown, callback: unknown) => {
-        const partitionLock = !lock.includes(':entry:') && !lock.startsWith('filefn-offline-legacy:');
+        const partitionLock =
+          !lock.includes(':entry:') && !lock.includes(':admission:') && !lock.startsWith('filefn-offline-legacy:');
         if (partitionLock && control.failNext) {
           const error = control.failNext;
           control.failNext = undefined;
           throw error;
+        }
+        if (partitionLock && control.before) {
+          const before = control.before;
+          control.before = undefined;
+          control.beforeReached?.();
+          await before;
         }
         const value = await (inner.request as (...args: unknown[]) => Promise<unknown>)(lock, options, callback);
         if (partitionLock && control.hold) {
@@ -530,7 +559,16 @@ describe('architecture reset: an offline upload is runnable only once its stagin
       control.reached = reached;
       return { reached: reachedPromise, release };
     };
-    return { coordinator, holdNext, control };
+    /** Holds the next partition-lock request back before it asks for the lock. */
+    const delayNext = () => {
+      let release!: () => void;
+      let reached!: () => void;
+      control.before = new Promise<void>((resolve) => (release = resolve));
+      const reachedPromise = new Promise<void>((resolve) => (reached = resolve));
+      control.beforeReached = reached;
+      return { reached: reachedPromise, release };
+    };
+    return { coordinator, holdNext, delayNext, control };
   }
 
   it('cancels a generation aborted while it is staged: another tab never uploads it', async () => {
@@ -551,7 +589,7 @@ describe('architecture reset: an offline upload is runnable only once its stagin
     expect(server.inits).toEqual([]);
   });
 
-  it('rejects the handle with a failed cancel and leaves the entry held, never runnable', async () => {
+  it('rejects the handle when the abort cannot be journaled; the admission hold ends with the call', async () => {
     const scripted = scriptedCoordinator();
     const client = offlineClient({ implicitReplay: false, queue: { coordinator: scripted.coordinator } });
     const other = offlineClient({ implicitReplay: false }, 'tab-2').getOfflineQueue();
@@ -564,8 +602,93 @@ describe('architecture reset: an offline upload is runnable only once its stagin
     scripted.control.failNext = lost;
     gate.release();
     await expect(done).rejects.toBe(lost);
-    expect(await other.list()).toEqual([expect.objectContaining({ entryId: handle.fileId, holds: [expect.any(Object)] })]);
+    // The abort was never journaled: the hold was the call's, and the call is
+    // over, so the generation is its principal's to run (never held forever).
+    expect(await other.list()).toEqual([expect.objectContaining({ entryId: handle.fileId, holds: [] })]);
+    expect(await other.processAll()).toEqual([{ entryId: handle.fileId, result: expect.objectContaining({ status: 'published' }) }]);
+  });
+  it('decides release or cancellation in the transaction that ends the hold: an abort while it waits sends nothing', async () => {
+    const scripted = scriptedCoordinator();
+    const client = offlineClient({ implicitReplay: false, queue: { coordinator: scripted.coordinator } });
+    const other = offlineClient({ implicitReplay: false }, 'tab-2').getOfflineQueue();
+    const staged = scripted.holdNext();
+    const handle = client.uploadFile({ policy: 'p', file: new File(['content'], 'test.txt') });
+    const done = handle.done();
+    await staged.reached;
+    // The request that ends the staging hold waits for the lock, then holds its return.
+    const entering = scripted.delayNext();
+    staged.release();
+    await entering.reached;
+    const ending = scripted.holdNext();
     expect(await other.processAll()).toEqual([{ entryId: handle.fileId, result: expect.objectContaining({ reason: 'held' }) }]);
+    handle.abort();
+    entering.release();
+    await ending.reached;
+    // Committed by now, and nothing was ever runnable: another tab polling finds nothing to send.
+    expect(await other.processAll()).toEqual([]);
+    ending.release();
+    await expect(done).rejects.toThrow('Aborted');
+    expect(await other.list()).toEqual([]);
     expect(server.inits).toEqual([]);
+  });
+
+  it('a reload between the staging commit and the release leaves the generation to replay under its recorded key', async () => {
+    const scripted = scriptedCoordinator();
+    const client = offlineClient({ implicitReplay: false, queue: { coordinator: scripted.coordinator } });
+    const staged = scripted.holdNext();
+    const handle = client.uploadFile({ policy: 'p', file: new File(['content'], 'test.txt'), idempotencyKey: 'test-idem-key-0001' });
+    const done = handle.done();
+    void done.catch(() => {});
+    await staged.reached;
+    // The tab goes away: its locks, the staging call's admission lock included, are released.
+    locks.closeTab('tab-1');
+    staged.release();
+    await expect(done).rejects.toThrow();
+    const reloaded = offlineClient({ implicitReplay: false }, 'tab-3').getOfflineQueue();
+    const [entry] = await reloaded.list();
+    expect(entry).toMatchObject({ entryId: handle.fileId, holds: [] });
+    expect(await reloaded.processAll()).toEqual([{ entryId: handle.fileId, result: expect.objectContaining({ status: 'published' }) }]);
+    expect(server.inits).toEqual([{ fileId: handle.fileId, key: `test-idem-key-0001:${entry.operationId}`, bodyKey: undefined }]);
+  });
+
+  it('a disposal between the staging commit and the release leaves the generation runnable', async () => {
+    const scripted = scriptedCoordinator();
+    const client = offlineClient({ implicitReplay: false, queue: { coordinator: scripted.coordinator } });
+    const staged = scripted.holdNext();
+    const handle = client.uploadFile({ policy: 'p', file: new File(['content'], 'test.txt') });
+    const done = handle.done();
+    void done.catch(() => {});
+    await staged.reached;
+    client.dispose();
+    staged.release();
+    await expect(done).rejects.toThrow();
+    const next = offlineClient({ implicitReplay: false }).getOfflineQueue();
+    expect(await next.processAll()).toEqual([{ entryId: handle.fileId, result: expect.objectContaining({ status: 'published' }) }]);
+    expect(server.inits).toHaveLength(1);
+  });
+
+  it('a principal switch that refuses a committed staging leaves it runnable for its principal', async () => {
+    const scripted = scriptedCoordinator();
+    let current: OfflineQueuePrincipal = ALICE.principal;
+    const client = offlineClient({
+      implicitReplay: false,
+      currentPrincipal: () => current,
+      queue: { coordinator: scripted.coordinator },
+    });
+    const staged = scripted.holdNext();
+    const handle = client.uploadFile({ policy: 'p', file: new File(['content'], 'test.txt') });
+    const done = handle.done();
+    void done.catch(() => {});
+    await staged.reached;
+    // Another tab signs in as Bob before the staging call returns.
+    current = { kind: 'user', principalId: 'user-bob' };
+    staged.release();
+    await expect(done).rejects.toMatchObject({ code: 'FILEFN_QUEUE_REFUSED' });
+    expect(server.inits).toEqual([]);
+    // Alice is back (here, in another tab): her generation replays.
+    current = ALICE.principal;
+    const alice = offlineClient({ implicitReplay: false }, 'tab-2').getOfflineQueue();
+    expect(await alice.processAll()).toEqual([{ entryId: handle.fileId, result: expect.objectContaining({ status: 'published' }) }]);
+    expect(server.inits).toHaveLength(1);
   });
 });

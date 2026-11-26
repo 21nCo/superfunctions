@@ -400,6 +400,91 @@ describe('replay settlement boundaries', () => {
     c.dispose();
   });
 
+  it.each([
+    ['an inner ok: false', { ok: false }],
+    ['an inner error', { error: { code: 'FILEFN_INTERNAL', message: 'test failure' } }],
+  ] as const)('keeps the key of an expired or aborted session reported inside a success envelope with %s', async (_label, marker) => {
+    for (const status of ['expired', 'aborted'] as const) {
+      storage = createStorage();
+      const s = server((path, init, call) => {
+        if (path !== '/upload/init') return undefined;
+        if (call === 1) return envelope({ ...marker, uploadSessionId: 'sess_1', status, ...replayScopeOf(init) });
+        return envelope({ uploadSessionId: 'sess_1', status: 'completed', fileId: FILE, versionId: 'ver_1', versionConfirmed: true, ...replayScopeOf(init) });
+      });
+      const c = client(s.fetch);
+      const queue = c.getOfflineQueue();
+      await stageOne(queue);
+      expect(await queue.process(FILE)).toMatchObject({ status: 'provisional', reason: 'ambiguous' });
+      expect(persistedText()).toContain('.bin');
+      expect(await queue.process(FILE)).toMatchObject({ status: 'published' });
+      // One key for both answers: the first was never taken as a confirmed end.
+      expect(s.keys).toHaveLength(2);
+      expect(new Set(s.keys).size).toBe(1);
+      c.dispose();
+    }
+  });
+
+  it.each(
+    (
+      [
+        ['an inner ok: false', { ok: false }],
+        ['an inner error', { error: { code: 'FILEFN_INTERNAL', message: 'test failure' } }],
+      ] as const
+    ).flatMap(([label, marker]) => [
+      [`completion with ${label}`, (path: string) => (path === '/upload/sess_1/complete' ? envelope({ ...marker, fileId: FILE, versionId: 'ver_1' }) : undefined)],
+      [
+        `a completed init with ${label}`,
+        (path: string, init: RequestInit) =>
+          path === '/upload/init'
+            ? envelope({ ...marker, uploadSessionId: 'sess_1', status: 'completed', fileId: FILE, versionId: 'ver_1', versionConfirmed: true, ...replayScopeOf(init) })
+            : undefined,
+      ],
+      [
+        `the version readback with ${label}`,
+        (path: string, init: RequestInit) => {
+          if (path === '/upload/init') return envelope({ uploadSessionId: 'sess_1', status: 'completed', fileId: FILE, versionId: 'ver_1', ...replayScopeOf(init) });
+          if (path === `/${FILE}/versions/ver_1`) return envelope({ ...marker, fileId: FILE, versionId: 'ver_1' });
+          return undefined;
+        },
+      ],
+    ]),
+  )('confirms no stored version from a success envelope whose payload carries a failure marker: %s', async (_label, route) => {
+    const s = server(route as Route);
+    const verify = vi.fn(async () => ({ verified: true as const }));
+    const c = client(s.fetch, { queue: { coordinator: locks.forTab('a'), hooks: { verify } } });
+    const queue = c.getOfflineQueue();
+    await stageOne(queue);
+    expect(await queue.process(FILE)).toMatchObject({ status: 'provisional', reason: 'ambiguous', entry: { phase: 'uploading' } });
+    expect((await queue.get(FILE))?.upload).toBeUndefined();
+    expect(verify).not.toHaveBeenCalled();
+    expect(persistedText()).toContain('.bin');
+    c.dispose();
+  });
+
+  it('lets go of the entry when disposed while replayAccount never settles, so a new instance processes it', async () => {
+    const s = server();
+    let asked!: () => void;
+    const reached = new Promise<void>((resolve) => (asked = resolve));
+    const stuck = client(s.fetch, {
+      replayAccount: () => {
+        asked();
+        return new Promise<never>(() => {});
+      },
+    });
+    const queue = stuck.getOfflineQueue();
+    await stageOne(queue);
+    const pass = queue.process(FILE);
+    void pass.catch(() => {});
+    await reached;
+    stuck.dispose();
+    await expect(pass).rejects.toMatchObject({ code: 'FILEFN_QUEUE_DISPOSED' });
+    // Same tab, same principal: the entry lock is free again.
+    const next = client(s.fetch);
+    expect(await next.getOfflineQueue().process(FILE)).toMatchObject({ status: 'published' });
+    expect(s.keys).toHaveLength(1);
+    next.dispose();
+  });
+
   it('keeps a coded 404 from a same-origin signed storage URL provisional, and reconciles it under the same key', async () => {
     const s = server((path, init, call) => {
       if (path === '/upload/sess_1/parts/1/sign') return envelope({ url: `${BASE}/storage-bucket/object-1`, headers: {}, expiresAt: 'x' });

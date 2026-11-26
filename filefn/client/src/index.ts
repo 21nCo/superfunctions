@@ -512,12 +512,14 @@ export function createFileFnClient(config: FileFnClientConfig): FileFnClient {
         const abortSignal = new Promise<void>((resolve) => {
           notifyAbort = resolve;
         });
-        // The generation is staged held by this call, in the staging's own
-        // journal write: no sync, here or in another tab, may run it until
-        // this call lets it go. Aborted by then, it is cancelled under that
-        // hold; otherwise the hold is released, and only then is work
-        // announced. A failed cancel or release rejects the handle and leaves
-        // the entry held (recoverable through the queue), never runnable.
+        // The generation is staged under an admission hold owned by this
+        // call (`stageAdmitted`): no sync, here or in another tab, runs it
+        // until the call lets it go, and a call that never does (its queue
+        // disposed, its tab reloaded or crashed, a principal switch refusing
+        // the staging after its commit) leaves it runnable for its principal.
+        // Release or cancellation is decided in the transaction that ends the
+        // hold, reading the abort there: only a committed release announces
+        // work, and an abort before it removes the generation unrun.
         const stagePromise = (async () => {
           const prepared = await prepareUploadInput(normalizedInput, [
             ...preprocessors,
@@ -526,25 +528,27 @@ export function createFileFnClient(config: FileFnClientConfig): FileFnClient {
           if (aborted) {
             throw createAbortError();
           }
-          const result = await queue.stage({
-            entryId: prepared.fileId,
-            fileId: prepared.fileId,
-            policy: prepared.policy,
-            file: prepared.file,
-            fileName: prepared.fileName,
-            mimeType: prepared.mimeType,
-            metadata: prepared.metadata,
-            localSource: prepared.localSource,
-            idempotencyKey: prepared.idempotencyKey,
-            hold: true,
-          });
+          const result = await queue.stageAdmitted(
+            {
+              entryId: prepared.fileId,
+              fileId: prepared.fileId,
+              policy: prepared.policy,
+              file: prepared.file,
+              fileName: prepared.fileName,
+              mimeType: prepared.mimeType,
+              metadata: prepared.metadata,
+              localSource: prepared.localSource,
+              idempotencyKey: prepared.idempotencyKey,
+            },
+            () => aborted,
+          );
+          if (result.status === 'cancelled') throw createAbortError();
           if (result.status !== 'staged') {
             throw new OfflineQueueError('FILEFN_QUEUE_REFUSED', `Offline staging refused: ${result.reason}`, { ...result });
           }
           const staged = { entryId: result.entry.entryId, generation: result.entry.generation };
-          if (!aborted) await queue.release(staged.entryId, staged.generation, result.holdId!);
           if (aborted) {
-            // Aborted while staging or releasing: cancelled (a released
+            // Aborted after the release committed: cancelled now (a
             // generation that already started publishing refuses).
             await queue.cancel(staged.entryId, staged.generation);
             throw createAbortError();

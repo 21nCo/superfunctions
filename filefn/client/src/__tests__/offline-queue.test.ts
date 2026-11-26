@@ -2155,6 +2155,25 @@ describe('round 9: completed reads, previews and envelopes', () => {
     }
   });
 
+  it.each(['cancelled', 'published'] as const)(
+    'previews the older pending generation of a file once the newer one is %s, not FILEFN_QUEUE_BUSY',
+    async (outcome) => {
+      vi.stubGlobal('URL', { createObjectURL: (blob: Blob) => `blob:size-${blob.size}`, revokeObjectURL: () => {} });
+      const a = tab('a');
+      const older = await stage(a, 'old', { entryId: 'older' });
+      // The older generation waits (held): only the newer one can be published.
+      heldId(await a.hold('older', older.entry.generation));
+      await stage(a, 'newer!', { entryId: 'newer' });
+      expect(await a.getPendingLocalDescriptor(FILE_ID)).toMatchObject({ source: { url: 'blob:size-6' } });
+      if (outcome === 'cancelled') expect(await a.cancel('newer')).toBe(true);
+      else expect(await a.process('newer')).toMatchObject({ status: 'published' });
+      // Every later read saw the removal or publication: it returns the older generation.
+      expect(await a.getPendingLocalDescriptor(FILE_ID)).toMatchObject({ uploadSessionId: older.entry.operationId, source: { url: 'blob:size-3' } });
+      expect(await a.getPendingLocalDescriptor(FILE_ID)).toMatchObject({ uploadSessionId: older.entry.operationId });
+      a.dispose();
+    },
+  );
+
   it('creates no preview URL when the principal changes while the read waits on the coordinator', async () => {
     let signedIn: OfflineQueuePrincipal = ALICE.principal;
     let created = 0;
@@ -2685,6 +2704,8 @@ describe('architecture reset: durable observation order and the upload result sc
     ['ok: false', { ok: false, fileId: FILE_ID, versionId: 'ver_1' }],
     ['an error member', { fileId: FILE_ID, versionId: 'ver_1', error: 'failed' }],
     ['a malformed versionId', { fileId: FILE_ID, versionId: 'ver/1' }],
+    ['an inner ok: false in the success envelope', { ok: true, data: { ok: false, fileId: FILE_ID, versionId: 'ver_1' } }],
+    ['an inner error in the success envelope', { ok: true, data: { fileId: FILE_ID, versionId: 'ver_1', error: { code: 'FILEFN_INTERNAL' } } }],
   ])('keeps a custom uploader result with %s provisional', async (_label, result) => {
     const uploader: OfflineQueueUploader = { upload: async () => result as never };
     const a = tab('a', { uploader });
