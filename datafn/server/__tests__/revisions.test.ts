@@ -2975,4 +2975,60 @@ describe("DATA-41 revisions: PR review round 2", () => {
     // The host's read rule still applies to the in-process read.
     expect(await pushVia("project", "project:1", { name: "p" })).toEqual({ resource: "project", id: "project:1", rev: 1 });
   });
+
+  it("gives an assertion-admitted push rev alone where route tickets guard queries", async () => {
+    const directory = createMemoryDatafnPlacementDirectory();
+    await claimDatafnNamespacePlacement({ directory, namespace: "tenant", regionId: "eu" });
+    const assertions = createDatafnHmacRoutingAssertions({ activeKeyId: "v1", keys: { v1: "test-only-secret" } });
+    const tickets = createDatafnHmacRouteTickets({ activeKeyId: "test", keys: { test: "x".repeat(32) } });
+    const server = await createDatafnServer({
+      schema, database: memoryAdapter(), allowUnknownResources: true, revisions: { enabled: true },
+      context: () => ({ namespace: "tenant" }),
+      namespaceProvider: { getNamespace: (context: { namespace: string }) => context.namespace },
+      plugins: [datafnMultiRegionPlugin({ regionId: "eu", directory: createMemoryIndexedDirectoryStore(),
+        placement: { directory, assertionVerifier: assertions, replayStore: createMemoryDatafnRoutingReplayStore(),
+          routeTickets: { verifier: tickets, issuer: "app", audience: "eu" } } })],
+    } as any);
+    const gateway = createDatafnGatewayRouter({
+      directory,
+      deriveNamespace: () => "tenant",
+      cellRegistry: { resolve: () => (request: Request) => server.router.handle(request) },
+      dispatcher: { dispatch: ({ target, request, assertion }) => target(withDatafnRoutingAssertion(request, assertion), "tenant") },
+      assertionSigner: assertions,
+    } as any);
+    const res = await gateway.handle(new Request("https://data.example/datafn/push", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ clientId: "c", mutations: [{ version: 1, clientId: "c", mutationId: "m", resource: "task", operation: "insert", id: "task:1", record: { title: "t" } }] }),
+    }));
+    const body = (await res.json()) as Json;
+    expect(body.ok).toBe(true);
+    expect(body.result.revisions.m).toEqual({ resource: "task", id: "task:1", rev: 1 });
+  });
+
+  it("withholds the row when a hook redirects the read to another resource holding an identical row", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+    const twin = { version: 1, fields: [{ name: "title", type: "string" as const, required: false }] };
+    const redirect = {
+      name: "redirect",
+      runsOn: ["server"],
+      beforeQuery: (_ctx: unknown, query: Json) => (query.resource === "alpha" ? { ...query, resource: "beta" } : query),
+    };
+    const { push } = await serve({
+      schema: { resources: [{ ...twin, name: "alpha" }, { ...twin, name: "beta" }] },
+      config: { plugins: [redirect] },
+    });
+    const beta = await push({ resource: "beta", operation: "insert", id: "x:1", record: { title: "same" } });
+    expect(beta.body.result.revisions[beta.mutationId].record).toMatchObject({ id: "x:1", title: "same", $rev: 1 });
+    const alpha = await push({ resource: "alpha", operation: "insert", id: "x:1", record: { title: "same" } });
+    expect(alpha.body.result.revisions[alpha.mutationId]).toEqual({ resource: "alpha", id: "x:1", rev: 1 });
+  });
+
+  it("does not spend the caller's query rate limit on the post-write read", async () => {
+    const { push, send } = await serve({ config: { rateLimit: { enabled: true, maxRequests: 1, windowSeconds: 60 } } });
+    const inserted = await push({ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } });
+    expect(inserted.body.result.revisions[inserted.mutationId].record).toMatchObject({ id: "task:1", $rev: 1 });
+    expect((await send("query", { version: 1, resource: "task" })).status).toBe(200);
+  });
 });

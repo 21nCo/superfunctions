@@ -85,6 +85,16 @@ type RequestPrincipalResolutions = Map<string, Promise<string[]>>;
  * clause gets none, and so does a resource whose fields the caller may not
  * all read.
  */
+/**
+ * DATA-41: a push's post-write read sets this key on its query context; the
+ * handler records the namespace and queries it actually executed (after
+ * every hook), so the push can tell the read selected the written record.
+ */
+export const POST_WRITE_READ_PROBE = Symbol("datafn.postWriteReadProbe");
+export interface PostWriteReadProbe {
+  executed?: { namespace: string; queries: readonly unknown[] };
+}
+
 function isVersionedQuery(query: Record<string, unknown>, schema: DatafnSchema): boolean {
   if (query.withRevisions !== true || typeof query.resource !== "string") return false;
   if (!issuesRevisions(schema, query.resource) || !canReadEveryField(schema, query.resource)) return false;
@@ -820,6 +830,8 @@ export function createQueryHandler(
         // Execute queries
         if (db) {
           const namespace = await extractNamespace(ctx);
+          const readProbe = (ctx as Record<symbol, PostWriteReadProbe | undefined> | undefined)?.[POST_WRITE_READ_PROBE];
+          if (readProbe) readProbe.executed = { namespace, queries: transformedQueries };
           const actorId = extractActorId ? await extractActorId(ctx) : undefined;
           // Membership and hierarchy are written by the host, outside this
           // handler, so a cache kept on the handler would survive revocation.

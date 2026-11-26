@@ -28,7 +28,7 @@ import { normalizeObservability, type ObservabilityInput, type ObservationLogger
 import type { SequenceStore, SequenceStorePolicy } from "./execution/sync/sequence-store.js";
 import { createSequenceStore } from "./execution/sync/sequence-store.js";
 import { createStatusHandler } from "./routes/status.js";
-import { createQueryHandler } from "./routes/query.js";
+import { createQueryHandler, POST_WRITE_READ_PROBE, type PostWriteReadProbe } from "./routes/query.js";
 import {
   configureRevisions,
   relationWritingPrimaryKey,
@@ -1242,6 +1242,8 @@ export async function createDatafnServer<TContext = any>(
     ) => Promise<Response> | Response,
     origin: "http" | "executor" = "http",
     rest = false,
+    // DATA-41: a push's post-write read; the push was already rate limited.
+    postWriteRead = false,
   ): ((req: Request, ctx: TContext) => Promise<Response>) => {
     return async (req: Request, ctx: TContext): Promise<Response> => {
       const enrichedCtx = createEnrichedContext(ctx);
@@ -1267,7 +1269,7 @@ export async function createDatafnServer<TContext = any>(
       inFlightCount++;
       try {
         // Rate limiting — applied BEFORE JSON parsing and authorization (RATE-001)
-        if (rateLimitMiddleware) {
+        if (rateLimitMiddleware && !postWriteRead) {
           const rateLimitResponse = await rateLimitMiddleware(action, enrichedCtx);
           if (rateLimitResponse) {
             await emitDataFnEvent({
@@ -1524,8 +1526,12 @@ export async function createDatafnServer<TContext = any>(
         // A routing assertion is bound to the push request's path and body,
         // so it cannot admit the read: a push the gateway's assertion
         // admitted reads in process (placement and fencing are checked
-        // again, every authorization and query hook still runs), while a
-        // route ticket is validated again for the read with the query scope.
+        // again, every authorization and query hook still runs), except
+        // where route tickets are configured, whose query boundary a push
+        // assertion must not satisfy (rev only); a route ticket is validated
+        // again for the read with the query scope. The read is not rate
+        // limited again, and counts only if the query handler executed the
+        // query for the written resource in the push's namespace.
         const assertionAdmitted = Boolean(verifyHttpPlacement) && Boolean(
           req.headers.get(multiRegionRuntime?.placement?.assertionHeader ?? DATAFN_ROUTING_ASSERTION_HEADER)?.trim(),
         );
@@ -1533,6 +1539,7 @@ export async function createDatafnServer<TContext = any>(
         const readPostWriteRows: PostWriteRowReader | undefined = action === "push"
           ? async (resource, ids) => {
             const rows = new Map<string, Record<string, unknown>>();
+            if (assertionAdmitted && multiRegionRuntime?.placement?.routeTickets) return rows;
             const readUrl = new URL(req.url);
             let pushPath = readUrl.pathname;
             while (pushPath.endsWith("/")) pushPath = pushPath.slice(0, -1);
@@ -1554,13 +1561,18 @@ export async function createDatafnServer<TContext = any>(
               const readUserCtx = typeof configuredContext === "function"
                 ? await (configuredContext as (request: Request) => Promise<TContext> | TContext)(readRequest)
                 : configuredContext ?? ({} as TContext);
-              const readCtx = mergeContexts(readUserCtx as object, createRouteContext(readRequest, {})) as TContext;
-              // The namespace the query handler resolves, with its parsed payload in place.
-              const namespaceProbe = createEnrichedContext(readCtx);
-              namespaceProbe.parsedBody = readPayload;
-              if ((await extractNamespace(namespaceProbe)) !== pushNamespace) return rows;
-              const response = await withAuthUnannounced("query", queryHandler, readOrigin)(readRequest, readCtx);
-              if (!response.ok) continue;
+              const probe: PostWriteReadProbe = {};
+              const readCtx = Object.assign(
+                mergeContexts(readUserCtx as object, createRouteContext(readRequest, {})),
+                { [POST_WRITE_READ_PROBE]: probe },
+              ) as TContext;
+              const response = await withAuthUnannounced("query", queryHandler, readOrigin, false, true)(readRequest, readCtx);
+              const executed = probe.executed;
+              const query = executed?.queries.length === 1 ? executed.queries[0] as Record<string, any> : undefined;
+              if (
+                !response.ok || executed?.namespace !== pushNamespace || query?.resource !== resource ||
+                query.metadata?.accessMode === "sharedWithMe" || query.metadata?.namespaceFilter !== undefined
+              ) continue;
               const body = (await response.json()) as { ok?: boolean; result?: { data?: unknown } };
               if (body?.ok !== true || !Array.isArray(body.result?.data)) continue;
               for (const row of body.result.data as Array<Record<string, unknown>>) {
