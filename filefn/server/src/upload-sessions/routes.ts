@@ -189,7 +189,9 @@ export function createUploadSessionRoutes(ctx: RouteContext) {
         const result = await service.createSession(
           // createSession validates the key (a string of bounded length).
           { ...body, idempotencyKey: idempotencyKey as string | undefined },
-          { principalId: principal?.principalId, tenantId: principal?.tenantId, roles: principal?.roles, requestId }
+          { principalId: principal?.principalId, tenantId: principal?.tenantId, roles: principal?.roles, requestId },
+          // The pre-0.5 form: the key in the body only, no replay marker.
+          { legacyBodyKey: fromBody && replayScope === undefined },
         );
         const warnings = fromBody ? [...result.warnings, BODY_IDEMPOTENCY_KEY_DEPRECATED] : result.warnings;
 

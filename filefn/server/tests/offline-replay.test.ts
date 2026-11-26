@@ -218,6 +218,90 @@ describe('offline replay against the FileFn server', () => {
     expect(await app.rows('uploadSessions')).toHaveLength(1);
   });
 
+  it.each(['completed', 'expired', 'aborted'] as const)(
+    'gives a pre-0.5 client (body key only) whose session %s a fresh session it can finish, while the header form still replays it',
+    async (ending) => {
+      const app = await createApp();
+      const fileId = 'file_00000000legacy02';
+      const request = async (path: string, init: { method: string; headers?: Record<string, string>; body?: BodyInit }) => {
+        const response = await app.fetch(path.startsWith('http') ? path : `${BASE}${path}`, init);
+        const json = await response.json().catch(() => null);
+        return { status: response.status, json };
+      };
+      const init = (headers: Record<string, string>, body: Record<string, unknown>) =>
+        request('/upload/init', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', ...headers },
+          body: JSON.stringify({ policy: 'doc', fileName: 'a.txt', size: 5, mimeType: 'text/plain', fileId, ...body }),
+        });
+      // What @filefn/client 0.4 does with an init answer: sign, put and complete every part.
+      const legacyFinish = async (sessionId: string, token?: string) => {
+        const auth: Record<string, string> = token ? { 'x-upload-session-token': token } : {};
+        const signed = await request(`/upload/${sessionId}/parts/1/sign`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', ...auth },
+          body: JSON.stringify({ contentLength: 5 }),
+        });
+        expect(signed.status).toBe(200);
+        const part = signed.json.data;
+        const put = await app.fetch(new URL(part.url, BASE).toString(), {
+          method: part.method ?? 'PUT',
+          headers: { ...(part.headers ?? {}), ...auth },
+          body: new Blob(['hello']),
+        });
+        expect(put.status).toBeLessThan(300);
+        return request(`/upload/${sessionId}/complete`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', ...auth },
+          body: JSON.stringify({}),
+        });
+      };
+      const key = 'test-replay-key-0007';
+      const first = await init({}, { idempotencyKey: key });
+      expect(first.status).toBe(200);
+      const firstId = first.json.data.uploadSessionId as string;
+      if (ending === 'completed') {
+        // The completion was applied but its answer never reached the 0.4 client.
+        expect((await legacyFinish(firstId, first.json.data.uploadSessionToken)).status).toBe(200);
+      } else if (ending === 'expired') {
+        await app.database.update({
+          model: 'uploadSessions',
+          where: [{ field: 'uploadSessionId', operator: 'eq', value: firstId }],
+          data: { expiresAt: new Date(Date.now() - 1000).toISOString() },
+        });
+      } else {
+        expect((await request(`/upload/${firstId}/abort`, { method: 'POST' })).status).toBe(200);
+      }
+
+      // The 0.4 retry of the same record: a new session, which its flow finishes.
+      const retry = await init({}, { idempotencyKey: key });
+      expect(retry.status).toBe(200);
+      expect(retry.json.warnings).toContain(BODY_IDEMPOTENCY_KEY_DEPRECATED);
+      expect(retry.json.data.uploadSessionId).not.toBe(firstId);
+      const finished = await legacyFinish(retry.json.data.uploadSessionId, retry.json.data.uploadSessionToken);
+      expect(finished.status).toBe(200);
+      expect(finished.json.data).toMatchObject({ fileId });
+
+      // The header form (0.5) still replays the key's own session.
+      const replay = await init({ 'x-idempotency-key': key }, {});
+      expect(replay.json.data).toMatchObject({ uploadSessionId: firstId, status: ending });
+    },
+  );
+
+  it('lets a pre-0.5 client (body key only) resume its session while parts can still be uploaded', async () => {
+    const app = await createApp();
+    const send = (body: Record<string, unknown>) =>
+      app.fetch(`${BASE}/upload/init`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ policy: 'doc', fileName: 'a.txt', size: 5, mimeType: 'text/plain', fileId: 'file_00000000legacy03', ...body }),
+      }).then(async (response) => ({ status: response.status, json: await response.json() }));
+    const first = await send({ idempotencyKey: 'test-replay-key-0008' });
+    const again = await send({ idempotencyKey: 'test-replay-key-0008' });
+    expect(again.json.data.uploadSessionId).toBe(first.json.data.uploadSessionId);
+    expect(await app.rows('uploadSessions')).toHaveLength(1);
+  });
+
   it.each(['expired', 'aborted'] as const)('starts a %s session again under a fresh key journaled before the request', async (ending) => {
     const app = await createApp();
     await app.stage('file_00000000ending01', 'test-replay-key-0004');

@@ -563,6 +563,13 @@ interface PartitionMeta {
    * `seenRevision`).
    */
   revision: number;
+  /**
+   * Names the revision sequence. A meta rebuilt after its content was lost
+   * starts a new epoch, so a revision number reused after the rebuild never
+   * matches one an earlier read saw (revisions are compared as
+   * `epoch:revision` tokens). Absent in a meta written before epochs: ''.
+   */
+  epoch?: string;
 }
 
 const MAX_TOMBSTONES = 64;
@@ -1134,10 +1141,34 @@ type AfterReturn = (settle: () => void) => void;
 /** A preview read that a newer read overtook: read again, never applied. */
 const STALE: unique symbol = Symbol('stale');
 
+/** The partition revision of a running transaction (see `PartitionMeta.revision`). */
+interface TxRevision {
+  partitionDir: OfflineQueueDirectoryHandle;
+  epoch: string;
+  value: number;
+  bumped: boolean;
+}
+
+/** A revision as compared: the same number in another epoch is another revision. */
+function revisionToken(tx: { epoch: string; value: number }): string {
+  return `${tx.epoch}:${tx.value}`;
+}
+
+/**
+ * Sets `meta` (as loaded in this transaction) to the next revision. It never
+ * goes backwards: within one epoch it is above both the revision the
+ * transaction read and the one committed; a rebuilt meta keeps its new epoch.
+ */
+function raiseRevision(tx: TxRevision, meta: PartitionMeta): void {
+  const epoch = meta.epoch ?? '';
+  meta.epoch = epoch;
+  meta.revision = (epoch === tx.epoch ? Math.max(tx.value, meta.revision) : meta.revision) + 1;
+}
+
 /** A preview read: the eligible generation found (if any), at the partition revision it read. */
 type PendingRead = {
   found: { record: JournalRecord; data: ArrayBuffer } | null;
-  revision: number;
+  revision: string;
 };
 
 /**
@@ -1222,14 +1253,14 @@ export class OfflineQueue {
   /** The fence of the transaction this instance is running (the partition lock serializes them). */
   private txFence: Fence | undefined;
   /** The partition revision of the transaction this instance is running (see `PartitionMeta.revision`). */
-  private txRevision: { partitionDir: OfflineQueueDirectoryHandle; value: number; bumped: boolean } | undefined;
+  private txRevision: TxRevision | undefined;
   /**
    * The partition revision of the last transaction this instance ran (the
    * partition lock orders them): what its newest read of the partition saw.
    * A preview read made at another revision was overtaken by a later read of
    * this instance, whatever entries either saw, and is read again.
    */
-  private seenRevision: number | undefined;
+  private seenRevision: string | undefined;
   private readonly objectUrls = new Map<string, { operationId: string; url: string }>();
   /**
    * Per entry, the newest durable position (see `Position`) an observation
@@ -1937,7 +1968,7 @@ export class OfflineQueue {
     return this.transact(async (root) => {
       const partitionDir = await this.partitionDir(root);
       // Read-only: the revision this transaction read is its place in partition order.
-      const revision = this.txRevision!.value;
+      const revision = revisionToken(this.txRevision!);
       const records = (await this.readAllIn(partitionDir)).filter(
         (record) => record.current.fileId === fileId && record.current.phase !== 'published' && !record.current.dataRemoved,
       );
@@ -2387,9 +2418,10 @@ export class OfflineQueue {
   /**
    * The upload's guard before each request: the principal (`guardPrincipal`),
    * then, under the partition lock, that the generation is still current and
-   * not held. A hold taken by any tab therefore admits no further request of
-   * an upload already running (FILEFN_QUEUE_HELD); the upload resumes under
-   * the same key once released.
+   * not held. A hold taken by any tab therefore stops every later request
+   * of an upload already running (FILEFN_QUEUE_HELD); a request this guard
+   * admitted before the hold committed still goes out (the lock is not held
+   * across the network). The upload resumes under the same key once released.
    */
   private async guardUpload(entryId: string, planned: GenerationState, signal: AbortSignal): Promise<void> {
     await this.guardPrincipal(signal);
@@ -2494,11 +2526,23 @@ export class OfflineQueue {
         // Every transaction reads the partition revision first (see
         // `seenRevision`); a change raises it before its first write.
         const partitionDir = await this.partitionDir(root);
-        const tx = { partitionDir, value: await this.readRevision(partitionDir), bumped: false };
-        this.seenRevision = tx.value;
+        const read = await this.readRevision(partitionDir);
+        const tx: TxRevision = { partitionDir, epoch: read.epoch, value: read.value, bumped: false };
+        this.seenRevision = revisionToken(tx);
         this.txFence = fence;
         this.txRevision = tx;
         try {
+          // A meta whose content was lost is rebuilt under a new epoch at
+          // once, so later reads agree on one revision again. Out of storage
+          // the rebuild waits for the next change; until then every read has
+          // its own token (a preview read in that state is read again).
+          if (read.corrupt) {
+            try {
+              await this.bumpRevision();
+            } catch (error) {
+              if (!isQuotaError(error)) throw error;
+            }
+          }
           const value = await fn(root);
           if (options.disclose) await fence();
           return value;
@@ -2589,6 +2633,7 @@ export class OfflineQueue {
             migratedKeys: Array.isArray(meta.migratedKeys) ? meta.migratedKeys.filter((key) => typeof key === 'string') : [],
             tombstones: Array.isArray(meta.tombstones) ? meta.tombstones : [],
             revision: Number.isSafeInteger(meta.revision) ? meta.revision! : 0,
+            epoch: typeof meta.epoch === 'string' ? meta.epoch : '',
           };
         }
       } catch {
@@ -2598,16 +2643,31 @@ export class OfflineQueue {
     let lastGeneration = 0;
     for (const record of await this.readAllIn(partitionDir)) lastGeneration = Math.max(lastGeneration, record.current.generation);
     // Keys of migrations the lost meta recorded are found in the journals that took them over.
-    return { journalVersion: JOURNAL_VERSION, partitionId, lastGeneration, migrated: [], migratedKeys: [], tombstones: [], revision: 0 };
+    // A new epoch: no revision an earlier read saw is ever matched again.
+    return {
+      journalVersion: JOURNAL_VERSION,
+      partitionId,
+      lastGeneration,
+      migrated: [],
+      migratedKeys: [],
+      tombstones: [],
+      revision: 0,
+      epoch: randomId('rev'),
+    };
   }
 
   private async writeMeta(partitionDir: OfflineQueueDirectoryHandle, meta: PartitionMeta): Promise<void> {
     const tx = this.txRevision;
     // The transaction's partition revision travels with every meta write:
     // raised by the first change of the transaction, kept by later ones.
-    if (tx) meta.revision = tx.bumped ? tx.value : tx.value + 1;
+    if (tx?.bumped) {
+      meta.epoch = tx.epoch;
+      meta.revision = tx.value;
+    } else if (tx) {
+      raiseRevision(tx, meta);
+    }
     await writeFile(partitionDir, PARTITION_META_FILE, JSON.stringify(meta), this.txFence);
-    if (tx && !tx.bumped) this.noteRevision(tx, meta.revision);
+    if (tx && !tx.bumped) this.noteRevision(tx, meta);
   }
 
   /**
@@ -2620,27 +2680,44 @@ export class OfflineQueue {
     const tx = this.txRevision;
     if (!tx || tx.bumped) return;
     const meta = await this.loadMeta(tx.partitionDir);
-    meta.revision = tx.value + 1;
+    raiseRevision(tx, meta);
     await writeFile(tx.partitionDir, PARTITION_META_FILE, JSON.stringify(meta), this.txFence);
-    this.noteRevision(tx, meta.revision);
+    this.noteRevision(tx, meta);
   }
 
-  private noteRevision(tx: { value: number; bumped: boolean }, revision: number): void {
-    tx.value = revision;
+  private noteRevision(tx: TxRevision, meta: PartitionMeta): void {
+    tx.epoch = meta.epoch ?? '';
+    tx.value = meta.revision;
     tx.bumped = true;
-    this.seenRevision = revision;
+    this.seenRevision = revisionToken(tx);
   }
 
-  /** The partition revision as journaled (0 before the first change). */
-  private async readRevision(partitionDir: OfflineQueueDirectoryHandle): Promise<number> {
+  /**
+   * The partition revision as committed. Only a missing meta is revision 0
+   * (nothing was ever changed). A read that fails propagates: the
+   * transaction writes nothing on the strength of it. A meta whose content
+   * does not parse is `corrupt`: its token is unique, so it matches no other
+   * read, and the transaction rebuilds it under a new epoch.
+   */
+  private async readRevision(
+    partitionDir: OfflineQueueDirectoryHandle,
+  ): Promise<{ epoch: string; value: number; corrupt?: true }> {
     const blob = await getFile(partitionDir, PARTITION_META_FILE);
-    if (!blob) return 0;
+    if (!blob) return { epoch: '', value: 0 };
+    const text = await blob.text();
+    let meta: Partial<PartitionMeta>;
     try {
-      const revision = (JSON.parse(await blob.text()) as { revision?: unknown }).revision;
-      return typeof revision === 'number' && Number.isSafeInteger(revision) ? revision : 0;
+      meta = JSON.parse(text) as Partial<PartitionMeta>;
     } catch {
-      return 0;
+      return { epoch: randomId('unread'), value: 0, corrupt: true };
     }
+    if (!meta || meta.partitionId !== (await this.partitionId()) || !Number.isSafeInteger(meta.lastGeneration)) {
+      return { epoch: randomId('unread'), value: 0, corrupt: true };
+    }
+    return {
+      epoch: typeof meta.epoch === 'string' ? meta.epoch : '',
+      value: Number.isSafeInteger(meta.revision) ? meta.revision! : 0,
+    };
   }
 
   /** Removes a file or directory once the transaction's fence passes. */

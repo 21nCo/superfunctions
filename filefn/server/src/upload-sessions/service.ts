@@ -90,6 +90,25 @@ export interface CreateSessionInput {
   idempotencyKey?: string;
 }
 
+/** How `createSession` was called (set by the `upload/init` route). */
+export interface CreateSessionOptions {
+  /**
+   * The key came only in the JSON body, the form `@filefn/client` 0.4 and
+   * earlier send (deprecated, honored for one minor version). Such a client
+   * ignores the replay fields of the answer and signs parts, so a replay
+   * returns its session only while parts can still be uploaded (`pending`,
+   * or `in_progress` with no completion started). A completed, aborted or
+   * expired session, one whose completion started, or a different payload
+   * under the key gets a fresh session without the key instead.
+   */
+  legacyBodyKey?: boolean;
+}
+
+/** Whether a replayed session is one a pre-0.5 client (which signs parts) can still finish. */
+function resumableByLegacyClient(state: { status: string; completionStarted?: boolean }): boolean {
+  return state.status === 'pending' || (state.status === 'in_progress' && !state.completionStarted);
+}
+
 export interface UploadSession {
   uploadSessionId: string;
   // 'refused' is a completion refused at commit or admission whose own objects
@@ -1527,7 +1546,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       }
     },
 
-    async createSession(input: CreateSessionInput, ctx: FileProviderContext): Promise<{
+    async createSession(input: CreateSessionInput, ctx: FileProviderContext, options: CreateSessionOptions = {}): Promise<{
       uploadSessionId: string;
       uploadMode: string;
       chunkSizeBytes: number;
@@ -1600,7 +1619,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       // replay could only return the session without its token (which only
       // the creator holds), dead-ending the client's retry. A retry instead
       // gets a fresh session and token; the abandoned one expires.
-      const scopedIdempotencyKey = input.idempotencyKey && !isAnonymousContext(ctx)
+      let scopedIdempotencyKey = input.idempotencyKey && !isAnonymousContext(ctx)
         ? scopeIdempotencyKey(input.idempotencyKey, ctx)
         : null;
       if (scopedIdempotencyKey && input.idempotencyKey) {
@@ -1636,18 +1655,28 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         }
 
         if (existing) {
-          if (existing.idempotencyPayloadHash !== expectedHash) {
+          const sameRequest = existing.idempotencyPayloadHash === expectedHash;
+          if (!sameRequest && !options.legacyBodyKey) {
             throw errors.idempotencyConflict();
           }
-          return {
-            uploadSessionId: existing.uploadSessionId,
-            uploadMode: existing.uploadMode,
-            chunkSizeBytes: existing.chunkSizeBytes,
-            totalParts: existing.totalParts,
-            expiresAt: existing.expiresAt,
-            warnings: [],
-            ...(await replayedSessionState(existing)),
-          };
+          const state = sameRequest ? await replayedSessionState(existing) : undefined;
+          // A pre-0.5 client (key in the body only) reads none of the replay
+          // fields and signs parts, so it is given back only a session it can
+          // still upload to. For anything else it gets a fresh session without
+          // the key, as before the body key was honored; the key's session is
+          // left as it is.
+          if (state && (!options.legacyBodyKey || resumableByLegacyClient(state))) {
+            return {
+              uploadSessionId: existing.uploadSessionId,
+              uploadMode: existing.uploadMode,
+              chunkSizeBytes: existing.chunkSizeBytes,
+              totalParts: existing.totalParts,
+              expiresAt: existing.expiresAt,
+              warnings: [],
+              ...state,
+            };
+          }
+          scopedIdempotencyKey = null;
         }
       }
 

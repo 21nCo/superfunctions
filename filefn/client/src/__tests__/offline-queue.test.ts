@@ -3033,6 +3033,51 @@ describe('round 16: pass signals, partition-wide preview order, legacy roots and
     b.dispose();
   });
 
+  it.each(['unreadable', 'truncated'] as const)(
+    'never lets the partition revision go back when partition.json is %s, so an overtaken preview is read again',
+    async (damage) => {
+      vi.stubGlobal('URL', { createObjectURL: (blob: Blob) => `blob:size-${blob.size}`, revokeObjectURL: () => {} });
+      const damageMeta = async () => {
+        if (damage === 'truncated') {
+          await writeCommitted(await partitionDir(), 'partition.json', '{"journalVersion":1,"partiti');
+          return;
+        }
+        let faults = 1;
+        storage.storage.fault = (path, step) => {
+          if (step === 'read' && path.endsWith('/partition.json') && faults-- > 0) throw new DOMException('transient', 'NotReadableError');
+        };
+      };
+      // A failed read changes nothing: the call is retried, as an app would.
+      const retried = async <T>(fn: () => Promise<T>): Promise<T> => {
+        try {
+          return await fn();
+        } catch (error) {
+          if ((error as Error).name !== 'NotReadableError') throw error;
+          return fn();
+        }
+      };
+      const b = tab('b');
+      const older = await stage(b, 'aaa', { entryId: 'entry-a' });
+      await damageMeta();
+      await retried(() => stage(b, 'bbbbbbbbb', { entryId: 'entry-b' }));
+      storage.storage.fault = undefined;
+      const gated = gatedCoordinator('a');
+      const a = tab('a', { coordinator: gated.coordinator });
+      const gate = gated.arm(isPartitionLock);
+      const preview = a.getPendingLocalDescriptor(FILE_ID);
+      await gate.reached;
+      // The read found entry-b; tab b removes it over a damaged meta, then tab a lists.
+      await damageMeta();
+      expect(await retried(() => b.cancel('entry-b'))).toBe(true);
+      storage.storage.fault = undefined;
+      expect((await a.list()).map((entry) => entry.entryId)).toEqual(['entry-a']);
+      gate.release();
+      expect(await preview).toMatchObject({ uploadSessionId: older.entry.operationId, source: { url: 'blob:size-3' } });
+      a.dispose();
+      b.dispose();
+    },
+  );
+
   it('admits the same legacy upload ID from two legacy roots as two uploads', async () => {
     for (const root of ['filefn-pending-uploads', 'filefn-pending-uploads-other']) {
       const legacy = await (await storage.root.getDirectoryHandle(root, { create: true })).getDirectoryHandle('offline_1731000000000_legacy016', { create: true });
