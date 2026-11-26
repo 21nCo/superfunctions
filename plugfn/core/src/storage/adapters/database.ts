@@ -12,6 +12,7 @@ import type {
   PlugFnWebhookReceipt,
 } from '../../types/runtime.js';
 import type { Workflow, WorkflowExecution } from '../../types/workflow.js';
+import { assertWebhookReceiptProvider } from '../../webhooks/webhook-handler.js';
 import type { WebhookRecord } from '../webhook-storage.js';
 
 const WEBHOOK_DELIVERY_LEASE_MS = 5 * 60 * 1000;
@@ -492,11 +493,29 @@ class DbBackedPlugFnDatabaseAdapter implements PlugFnDatabaseStorageAdapter {
     id: string,
     updates: Partial<PlugFnWebhookReceipt>
   ): Promise<PlugFnWebhookReceipt> {
-    return this.database.update<PlugFnWebhookReceipt>({
-      model: this.models.webhookReceipts,
-      where: [{ field: 'id', operator: 'eq', value: id }],
-      data: cloneRecord(updates),
-    });
+    const model = this.models.webhookReceipts;
+    const where: WhereClause[] = [{ field: 'id', operator: 'eq', value: id }];
+    const data = cloneRecord(updates);
+    const { provider } = data;
+    delete data.provider;
+    delete data.workflowIdempotencyKey;
+    let existing: PlugFnWebhookReceipt | null = null;
+    if (provider !== undefined) {
+      existing = await this.getWebhookReceipt(id);
+      if (!existing) throw new NotFoundError(model, where);
+      assertWebhookReceiptProvider(existing, provider);
+      if (provider !== existing.provider) {
+        data.provider = provider;
+        // A provider change may only update a row that is still standalone.
+        where.push({ field: 'workflowIdempotencyKey', operator: 'eq', value: null });
+      }
+    }
+    if (Object.keys(data).length === 0) {
+      const receipt = existing ?? await this.getWebhookReceipt(id);
+      if (!receipt) throw new NotFoundError(model, where);
+      return receipt;
+    }
+    return this.database.update<PlugFnWebhookReceipt>({ model, where, data });
   }
 
   async createWebhookDelivery(delivery: PlugFnWebhookDelivery): Promise<PlugFnWebhookDelivery> {

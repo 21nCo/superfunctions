@@ -111,6 +111,37 @@ describe('webhook workflow admission', () => {
     expect(action).toHaveBeenCalledOnce();
   });
 
+  it.each(['public API', 'storage adapter'] as const)('rejects scoped receipt provider changes through the %s', async (surface) => {
+    await seedWorkflow(database, 'one', firstBinding.tenantId, firstBinding.connectionId);
+    const { runtime, send, action } = startRuntime(database);
+    expect((await send('test-installation-one')).status).toBe(200);
+    const [receipt] = await database.findMany<publicPlugFn.PlugFnWebhookReceipt>({ model: receiptModel });
+    const update = (changes: Partial<publicPlugFn.PlugFnWebhookReceipt>) => surface === 'public API'
+      ? runtime.runtime.webhooks.updateReceipt(receipt.id, changes)
+      : database.updateWebhookReceipt(receipt.id, changes);
+    await expect(update({ provider: 'test-other-provider', metadata: { unexpected: true } })).rejects.toMatchObject({
+      code: 'WEBHOOK_IDEMPOTENCY_CONFLICT', status: 409,
+    });
+    await expect(runtime.runtime.webhooks.getReceipt(receipt.id)).resolves.toEqual(receipt);
+    await expect(update({ provider: receipt.provider, workflowIdempotencyKey: undefined })).resolves.toEqual(receipt);
+
+    const duplicate = await send('test-installation-one');
+    expect(duplicate.status).toBe(200);
+    await expect(duplicate.json()).resolves.toMatchObject({ data: { duplicate: true, receiptId: receipt.id } });
+    expect(action).toHaveBeenCalledOnce();
+  });
+
+  it('preserves provider updates for standalone receipts', async () => {
+    const { runtime } = startRuntime(database);
+    const webhooks = runtime.runtime.webhooks;
+    const receipt = await webhooks.createReceipt({
+      provider: 'test-provider', event: 'test.event', payloadHash: 'test-payload-hash',
+    });
+    await expect(webhooks.updateReceipt(receipt.id, { provider: 'test-other-provider' })).resolves.toMatchObject({
+      provider: 'test-other-provider',
+    });
+  });
+
   it('keeps scoped receipts out of the standalone receipt key space', async () => {
     await seedWorkflow(database, 'one', firstBinding.tenantId, firstBinding.connectionId);
     const { runtime, send } = startRuntime(database);

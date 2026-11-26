@@ -645,6 +645,15 @@ export function assertWebhookReceiptScope(
   }
 }
 
+export function assertWebhookReceiptProvider(
+  receipt: PlugFnWebhookReceipt,
+  provider: string | undefined,
+): void {
+  if (receipt.workflowIdempotencyKey && provider !== undefined && provider !== receipt.provider) {
+    throw new WebhookHandlerError('WEBHOOK_IDEMPOTENCY_CONFLICT', 'scoped webhook receipt provider cannot be changed', 409);
+  }
+}
+
 export function hasWebhookSignatureProof(record: { signatureVerified?: true | null }): boolean {
   return record.signatureVerified === true;
 }

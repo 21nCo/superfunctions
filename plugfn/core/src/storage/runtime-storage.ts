@@ -17,7 +17,7 @@ import {
   ensurePlugFnDatabaseAdapter,
   type PlugFnDatabaseStorageAdapter,
 } from './adapters/database.js';
-import { WebhookHandlerError } from '../webhooks/webhook-handler.js';
+import { assertWebhookReceiptProvider, WebhookHandlerError } from '../webhooks/webhook-handler.js';
 
 export const claimFirstSignedWebhookDelivery = Symbol('plugfn.claimFirstSignedWebhookDelivery');
 export const webhookRuntimeReplayContext = Symbol('plugfn.webhookRuntimeReplayContext');
@@ -273,9 +273,12 @@ export class AdapterRuntimeStorage {
       ...normalizedUpdates
     } = updates;
     let existing: PlugFnWebhookReceipt | null = null;
-    if ('connectionId' in normalizedUpdates || 'idempotencyKey' in normalizedUpdates) {
+    if (normalizedUpdates.provider === undefined) delete normalizedUpdates.provider;
+    if ('provider' in normalizedUpdates || 'connectionId' in normalizedUpdates || 'idempotencyKey' in normalizedUpdates) {
       existing = await this.adapter.getWebhookReceipt(id);
+      if (existing) assertWebhookReceiptProvider(existing, normalizedUpdates.provider);
       if (existing?.workflowIdempotencyKey) {
+        delete normalizedUpdates.provider;
         delete normalizedUpdates.connectionId;
         delete normalizedUpdates.idempotencyKey;
       }
