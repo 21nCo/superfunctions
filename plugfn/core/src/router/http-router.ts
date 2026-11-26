@@ -1066,23 +1066,24 @@ export async function deliverWebhook(
       });
     }
     admission.assertActive?.();
+    const replayPayload = admission.binding ? undefined : {
+      rawBodyBase64: Buffer.from(rawBody).toString('base64'),
+      rawBodyExpiresAt: new Date(Date.now() + WEBHOOK_RETRY_PAYLOAD_TTL_MS).toISOString(),
+    };
     const deliveryInput: CreateWebhookDeliveryInput = {
       receiptId: receipt.id,
       handlerName: `${provider}.${resolvedEvent}`,
       status: 'running',
       [webhookSignatureProof]: signatureVerified,
-      [webhookRuntimeReplayContext]: signatureVerified && !admission.binding
-        ? { event: resolvedEvent, headers: headersRedacted }
+      [webhookRuntimeReplayContext]: signatureVerified && replayPayload
+        ? { event: resolvedEvent, headers: headersRedacted, ...replayPayload }
         : undefined,
       metadata: {
         provider,
         event: resolvedEvent,
         payloadHash: admittedPayloadHash,
         idempotencyKey,
-        ...(!admission.binding ? {
-          rawBodyBase64: Buffer.from(rawBody).toString('base64'),
-          rawBodyExpiresAt: new Date(Date.now() + WEBHOOK_RETRY_PAYLOAD_TTL_MS).toISOString(),
-        } : {}),
+        ...(!signatureVerified ? replayPayload : undefined),
       },
     };
     let delivery;
@@ -1098,10 +1099,12 @@ export async function deliverWebhook(
 
     const webhookEvent = await admission.dispatch();
 
+    const { runtimeReplayContext, ...metadataUpdates } = withoutWebhookReplayData(delivery);
     await plugFn.runtime.webhooks.updateDelivery(delivery.id, {
       status: 'success',
       attempts: delivery.attempts + 1,
-      ...withoutWebhookReplayData(delivery),
+      [webhookRuntimeReplayContext]: runtimeReplayContext,
+      ...metadataUpdates,
     });
 
     return {

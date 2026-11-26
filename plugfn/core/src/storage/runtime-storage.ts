@@ -61,6 +61,10 @@ export interface CreateWebhookDeliveryInput {
   metadata?: Record<string, unknown>;
 }
 
+export type UpdateWebhookDeliveryInput = Partial<PlugFnWebhookDelivery> & {
+  [webhookRuntimeReplayContext]?: null;
+};
+
 export interface CreateSyncJobInput {
   provider: string;
   connectionId: string;
@@ -319,12 +323,18 @@ export class AdapterRuntimeStorage {
 
   async updateWebhookDelivery(
     id: string,
-    updates: Partial<PlugFnWebhookDelivery>
+    updates: UpdateWebhookDeliveryInput,
   ): Promise<PlugFnWebhookDelivery> {
-    const { workflowScoped: _scope, signatureVerified: _proof, runtimeReplayContext, ...fields } = updates;
+    const {
+      workflowScoped: _scope,
+      signatureVerified: _proof,
+      runtimeReplayContext: _replay,
+      [webhookRuntimeReplayContext]: clearReplayContext,
+      ...fields
+    } = updates;
     const data = {
       ...fields,
-      ...(runtimeReplayContext === null ? { runtimeReplayContext } : {}),
+      ...(clearReplayContext === null ? { runtimeReplayContext: null } : {}),
       updatedAt: new Date(),
     };
     if (fields.receiptId === undefined) return this.adapter.updateWebhookDelivery(id, data);

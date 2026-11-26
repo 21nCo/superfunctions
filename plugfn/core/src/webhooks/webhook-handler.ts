@@ -626,12 +626,12 @@ export function hasWebhookSignatureProof(record: { signatureVerified?: true | nu
 
 export function withoutWebhookReplayData(
   delivery: PlugFnWebhookDelivery,
-): Pick<PlugFnWebhookDelivery, 'metadata' | 'runtimeReplayContext'> {
+): { metadata?: PlugFnWebhookDelivery['metadata']; runtimeReplayContext?: null } {
+  if (hasWebhookSignatureProof(delivery) && delivery.runtimeReplayContext) {
+    return { runtimeReplayContext: null };
+  }
   const { rawBodyBase64: _body, rawBodyExpiresAt: _expiry, ...metadata } = delivery.metadata ?? {};
-  return {
-    ...(delivery.metadata ? { metadata } : {}),
-    ...(hasWebhookSignatureProof(delivery) && delivery.runtimeReplayContext ? { runtimeReplayContext: null } : {}),
-  };
+  return delivery.metadata ? { metadata } : {};
 }
 
 function sha256(value: string | Uint8Array): string {

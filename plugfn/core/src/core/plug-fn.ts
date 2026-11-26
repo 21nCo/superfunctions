@@ -63,6 +63,7 @@ import {
   type CreateWebhookDeliveryInput,
   type CreateWebhookReceiptInput,
   type UpdateSyncJobProgressInput,
+  type UpdateWebhookDeliveryInput,
 } from '../storage/runtime-storage.js';
 import { AdapterWorkflowStorage } from '../storage/workflow-storage.js';
 import { ConsoleLogger } from '../utils/logger.js';
@@ -120,7 +121,7 @@ export interface PlugFn {
       updateReceipt(id: string, updates: Partial<PlugFnWebhookReceipt>): Promise<PlugFnWebhookReceipt>;
       createDelivery(input: CreateWebhookDeliveryInput): Promise<PlugFnWebhookDelivery>;
       [claimFirstSignedWebhookDelivery](input: CreateWebhookDeliveryInput): Promise<PlugFnWebhookDelivery | null>;
-      updateDelivery(id: string, updates: Partial<PlugFnWebhookDelivery>): Promise<PlugFnWebhookDelivery>;
+      updateDelivery(id: string, updates: UpdateWebhookDeliveryInput): Promise<PlugFnWebhookDelivery>;
       listDeliveries(receiptId: string): Promise<PlugFnWebhookDelivery[]>;
       processDueDeliveries(
         handler: PlugFnWebhookDeliveryHandler,
@@ -931,18 +932,20 @@ export function plugFn(config: PlugFnConfig): PlugFn {
         return updateClaimed(updates);
       };
 
+      const replay = hasWebhookSignatureProof(delivery) ? delivery.runtimeReplayContext : undefined;
+      const replayPayload = replay ?? delivery.metadata;
+      const expiresAt = replayPayload?.rawBodyExpiresAt;
       try {
-        if (webhookReplayBodyExpired(delivery)) {
+        if (webhookReplayBodyExpired(expiresAt)) {
           throw new Error('webhook retry payload expired');
         }
-        const replay = hasWebhookSignatureProof(delivery) ? delivery.runtimeReplayContext : undefined;
         await handler({
           delivery,
           receipt,
           provider: receipt.provider,
           event: replay?.event ?? receipt.event,
           headers: replay?.headers ?? receipt.headersRedacted ?? {},
-          rawBody: decodeWebhookDeliveryBody(delivery),
+          rawBody: decodeWebhookDeliveryBody(replayPayload?.rawBodyBase64),
         });
         const updated = await finishClaim({
           status: 'success',
@@ -958,7 +961,7 @@ export function plugFn(config: PlugFnConfig): PlugFn {
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'webhook delivery failed';
         const status =
-          webhookReplayBodyExpired(delivery) || attempt >= maxAttempts
+          webhookReplayBodyExpired(expiresAt) || attempt >= maxAttempts
             ? 'dead-lettered'
             : 'failed';
         const nextAttemptAt =
@@ -994,16 +997,14 @@ export function plugFn(config: PlugFnConfig): PlugFn {
     };
   }
 
-  function decodeWebhookDeliveryBody(delivery: PlugFnWebhookDelivery): Uint8Array {
-    const encoded = delivery.metadata?.rawBodyBase64;
+  function decodeWebhookDeliveryBody(encoded: unknown): Uint8Array {
     if (typeof encoded !== 'string') {
       return new Uint8Array();
     }
     return Buffer.from(encoded, 'base64');
   }
 
-  function webhookReplayBodyExpired(delivery: PlugFnWebhookDelivery): boolean {
-    const expiresAt = delivery.metadata?.rawBodyExpiresAt;
+  function webhookReplayBodyExpired(expiresAt: unknown): boolean {
     return typeof expiresAt === 'string' && Date.parse(expiresAt) <= Date.now();
   }
 

@@ -581,6 +581,9 @@ describe('webhook workflow admission', () => {
     const signedHeaders = { 'x-signature': 'test-signed-webhook' };
     expect((await send(undefined, 'test-delivery', signedHeaders)).status).toBe(200);
     expect(listener).toHaveBeenCalledTimes(2);
+    expect(await database.findMany({ model: deliveryModel })).toContainEqual(expect.objectContaining({
+      signatureVerified: true, status: 'success', runtimeReplayContext: null,
+    }));
     const duplicate = await send(undefined, 'test-delivery', signedHeaders);
     await expect(duplicate.json()).resolves.toMatchObject({ data: { duplicate: true } });
     expect(listener).toHaveBeenCalledTimes(2);
@@ -602,13 +605,19 @@ describe('webhook workflow admission', () => {
     expect(failed.runtimeReplayContext).toMatchObject({
       event: 'test.event',
       headers: { 'x-test-topic': 'test-signed-topic', 'x-signature': '[redacted]' },
+      rawBodyBase64: Buffer.from(JSON.stringify({ id: 'test-delivery' })).toString('base64'),
+      rawBodyExpiresAt: expect.any(String),
     });
+    expect(failed.metadata).not.toHaveProperty('rawBodyBase64');
+    expect(failed.metadata).not.toHaveProperty('rawBodyExpiresAt');
     const applicationHeaders = { 'x-test-topic': 'test-application-topic' };
-    await runtime.runtime.webhooks.updateDelivery(failed.id, {
+    const updated = await runtime.runtime.webhooks.updateDelivery(failed.id, {
       nextAttemptAt: new Date(0),
       signatureVerified: null,
+      runtimeReplayContext: null,
       metadata: { event: 'test.other-event', replayHeaders: applicationHeaders },
     });
+    expect(updated.runtimeReplayContext).toEqual(failed.runtimeReplayContext);
     const retryHandler = vi.fn(async () => {
       if (status === 'dead-lettered') throw new Error('test retry failed');
     });
@@ -617,9 +626,30 @@ describe('webhook workflow admission', () => {
     expect(retryHandler).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
       event: 'test.event',
       headers: expect.objectContaining({ 'x-test-topic': 'test-signed-topic', 'x-signature': '[redacted]' }),
+      rawBody: Buffer.from(JSON.stringify({ id: 'test-delivery' })),
     }));
     expect(result.deliveries[0]).toMatchObject({ status, signatureVerified: true, metadata: { replayHeaders: applicationHeaders } });
     expect(result.deliveries[0]?.runtimeReplayContext).toBeNull();
+  });
+
+  it('expires a signed retry using its stored deadline after application metadata is replaced', async () => {
+    const { runtime, send } = startRuntime(database, { withResolver: false });
+    runtime.webhooks.on('test-provider', 'test.event', vi.fn().mockRejectedValue(new Error('test listener failed')));
+    expect((await send()).status).toBe(503);
+    const [failed] = await database.findMany<PlugFnWebhookDelivery>({ model: deliveryModel });
+    await database.updateWebhookDelivery(failed.id, {
+      runtimeReplayContext: { ...failed.runtimeReplayContext!, rawBodyExpiresAt: new Date(0).toISOString() },
+    });
+    const metadata = { rawBodyExpiresAt: '2099-01-01T00:00:00.000Z' };
+    const webhooks = runtime.runtime.webhooks;
+    await webhooks.updateDelivery(failed.id, { metadata, nextAttemptAt: new Date(0) });
+
+    const handler = vi.fn();
+    const result = await webhooks.processDueDeliveries(handler);
+    expect(handler).not.toHaveBeenCalled();
+    expect(result.deliveries).toMatchObject([{
+      status: 'dead-lettered', error: 'webhook retry payload expired', runtimeReplayContext: null, metadata,
+    }]);
   });
 
   it.each(['success', 'dead-lettered'] as const)('keeps application replayHeaders through an unsigned %s pre-binding attempt', async (status) => {

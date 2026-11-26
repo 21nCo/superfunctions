@@ -63,7 +63,7 @@ Python examples exist, but the Python runtime is still experimental and does not
 
 ## Upgrading webhook workflows
 
-A delivery in flight when tenant binding is enabled may run its listener twice. Signed, bound deliveries start a separate receipt history for the signing authority that verified them.
+A delivery in flight when tenant binding is enabled may run its listener twice. Signed, bound deliveries start a separate receipt history for the signing authority that verified them. After upgrading to schema v9, a verified redelivery of a standalone webhook recorded before v9 can also run its listener again, even if tenant binding stays disabled.
 
 Make listeners idempotent by storing a durable key for each side effect, scoped to the provider and relevant tenant or connection. Use a stable event ID from the verified payload when available, or an application key for the same business operation. Enforce uniqueness in the same database transaction as a local side effect. For an external side effect, pass the stable key to the downstream service as its idempotency key when supported.
 

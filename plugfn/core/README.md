@@ -177,7 +177,9 @@ registered server-side listener for its event.
 
 An in-flight delivery may run its listener twice when you enable tenant binding.
 Signed, bound deliveries use a separate receipt history for each verified signing
-authority. Make listener effects idempotent with a durable key for the provider
+authority. After you upgrade to schema v9, a verified redelivery of a standalone
+webhook recorded before v9 can also run its listener again, even if tenant binding
+stays disabled. Make listener effects idempotent with a durable key for the provider
 and relevant tenant or connection. Use an event ID from the verified payload or a
 stable business operation key. Enforce uniqueness in the transaction that applies
 a local effect, or pass the key to the downstream service when it accepts an

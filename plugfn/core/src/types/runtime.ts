@@ -89,6 +89,8 @@ export interface PlugFnWebhookReceipt {
 export interface PlugFnWebhookReplayContext {
   event: string;
   headers: Record<string, string>;
+  rawBodyBase64: string;
+  rawBodyExpiresAt: string;
 }
 
 export interface PlugFnWebhookDelivery {
