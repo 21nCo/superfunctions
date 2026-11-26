@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, it, expect } from "vitest";
 import { existsSync, mkdtempSync, mkdirSync, readdirSync, symlinkSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, relative, sep } from "node:path";
+import { basename, join, posix, relative, sep, win32 } from "node:path";
 import { buildManifest, loadDocsConfig } from "@docsfn/core";
 import { FsContentProvider } from "@docsfn/provider-fs";
-import { loadLlmsSiteSource, withSourceLinks } from "./llms.mjs";
+import { createSnapshotPathMapper, loadLlmsSiteSource, withSourceLinks } from "./llms.mjs";
 
 describe("LLM consumer content roots", () => {
   it.each(["default", "relative", "absolute"])("reads %s roots independently of the invocation directory", async (layout) => {
@@ -36,7 +36,13 @@ describe("LLM consumer content roots", () => {
 
 describe("LLM loader front matter policy", () => {
   const executed = "__docsLlmsFrontMatterExecuted";
-  const originalTmpdir = process.env.TMPDIR;
+  const temporaryVariables = ["TMPDIR", "TEMP", "TMP"];
+  const originalTemporary = temporaryVariables.map((name) => process.env[name]);
+  /** os.tmpdir() reads TMPDIR on POSIX and TEMP/TMP on Windows. @param {string} directory */
+  function redirectTemporary(directory) {
+    scratch = directory;
+    for (const name of temporaryVariables) process.env[name] = directory;
+  }
   let cwd;
   let scratch;
   /** @type {string[]} */
@@ -71,16 +77,17 @@ describe("LLM loader front matter policy", () => {
     systemTmpdir = tmpdir();
     cwd = mkdtempSync(join(systemTmpdir, "docs-llms-policy-"));
     // Snapshots are created under os.tmpdir(); point it at a disposable directory we can inspect.
-    scratch = mkdtempSync(join(systemTmpdir, "docs-llms-scratch-"));
+    redirectTemporary(mkdtempSync(join(systemTmpdir, "docs-llms-scratch-")));
     disposable = [cwd, scratch];
-    process.env.TMPDIR = scratch;
     for (const directory of ["guide", "pages", "blog", "api", "static"]) mkdirSync(join(cwd, directory));
     writeSite();
     delete globalThis[executed];
   });
   afterEach(() => {
-    if (originalTmpdir === undefined) delete process.env.TMPDIR;
-    else process.env.TMPDIR = originalTmpdir;
+    temporaryVariables.forEach((name, index) => {
+      if (originalTemporary[index] === undefined) delete process.env[name];
+      else process.env[name] = originalTemporary[index];
+    });
     delete process.env.DOCSFN_HTML_UNSAFE_ALLOWLIST;
     for (const directory of disposable) rmSync(directory, { recursive: true, force: true });
   });
@@ -92,6 +99,19 @@ describe("LLM loader front matter policy", () => {
     expect(manifest).toEqual(await buildManifest(direct, config));
     expect(readdirSync(scratch)).toEqual([]);
     return manifest;
+  }
+
+  /** Fail through the snapshot and directly on the source tree with the same error and location. */
+  async function expectProviderErrorParity() {
+    const config = await loadDocsConfig({ cwd });
+    const directConfig = { ...config, content: { ...config.content, root: join(cwd, config.content.root) } };
+    const direct = await buildManifest(new FsContentProvider({ ...directConfig.content }), directConfig).then(() => undefined, (caught) => caught);
+    const error = await loadLlmsSiteSource(cwd, dependencies).then(() => undefined, (caught) => caught);
+    expect(direct).toBeDefined();
+    expect({ code: error?.code, message: error?.message, diagnostics: error?.diagnostics })
+      .toEqual({ code: direct.code, message: direct.message, diagnostics: direct.diagnostics });
+    expect(readdirSync(scratch)).toEqual([]);
+    return error;
   }
 
   it("keeps plain Markdown, default YAML and explicit YAML metadata", async () => {
@@ -220,6 +240,42 @@ describe("LLM loader front matter policy", () => {
     expect(readdirSync(scratch)).toEqual([]);
   });
 
+  it("snapshots collections that re-enter the content root through its parent like the provider", async () => {
+    write("site/guide/index.md", "---\ntitle: Home\n---\nHome body.");
+    write("site/guide/nested/meta.json", '{"title":"Nested"}');
+    write("site/guide/nested/child.md", "# Child");
+    write("site/extra/about.md", "# About");
+    writeSite({ root: "site", docsDir: "../site/guide", pagesDir: "../site/extra" });
+    const manifest = await expectProviderParity();
+    expect(manifest.pages["docs:index.md"].body).toBe("Home body.");
+    expect(manifest.pages["pages:about.md"].body).toBe("# About");
+  });
+
+  it.each([
+    ["re-entering docs", { root: ".", docsDir: "../{site}/absent" }],
+    ["re-entering pages", { root: ".", docsDir: "guide", pagesDir: "../{site}/absent" }],
+    ["in-root docs", { root: ".", docsDir: "absent" }],
+    ["escaping pages", { root: ".", docsDir: "guide", pagesDir: "../docs-llms-absent" }],
+    ["absolute blog", { root: ".", docsDir: "guide", blogDir: "{cwd}/absent" }],
+  ])("fails a missing %s directory strictly with the provider's message and source location", async (_name, content) => {
+    write("guide/index.md", "# Guide");
+    writeSite(JSON.parse(JSON.stringify(content).replaceAll("{site}", basename(cwd)).replaceAll("{cwd}", cwd.replaceAll("\\", "/"))));
+    const error = await expectProviderErrorParity();
+    expect(error.code).toBe("DOCS_ENTRY_INVALID");
+    expect(error.message).not.toContain("docs-llms-snapshot-");
+  });
+
+  it("never snapshots its own staging directory when the temp dir is inside the site", async () => {
+    write("guide/index.md", "# Guide");
+    write("pages/about.md", "# About");
+    mkdirSync(join(cwd, "tmp"));
+    redirectTemporary(join(cwd, "tmp"));
+    writeSite({ root: ".", docsDir: "guide", pagesDir: "." });
+    const manifest = await expectProviderParity();
+    expect(Object.keys(manifest.pages).filter((id) => id.includes("docs-llms-snapshot-"))).toEqual([]);
+    expect(Object.keys(manifest.pages)).toContain("pages:guide/index.md");
+  });
+
   it("applies path-based trust rules and diagnostics to the source files, not the snapshot", async () => {
     write("guide/index.md", "# Guide");
     write("guide/unsafe.md", "# Unsafe\n\n<script>alert(1)</script>");
@@ -251,5 +307,31 @@ describe("source links for unhosted sites", () => {
 
   it("leaves text unchanged when a public origin is configured", () => {
     expect(withSourceLinks("[Guide](/docs/guide)", manifest, "clifn", "https://clifn.com")).toBe("[Guide](/docs/guide)");
+  });
+});
+
+describe("snapshot path mapping", () => {
+  it("maps native and slash-form Windows paths back to the source in the form they arrived", () => {
+    const mapper = createSnapshotPathMapper([
+      ["C:\\Temp\\docs-llms-snapshot-1\\root", "C:\\site"],
+      ["C:\\Temp\\docs-llms-snapshot-1\\external\\docs", "D:\\reference"],
+    ], win32, [["configured docsDir C:\\Temp\\docs-llms-snapshot-1\\external\\docs ", "configured docsDir ../reference "]]);
+    expect(mapper.toSourcePath("C:/Temp/docs-llms-snapshot-1/root/guide/index.md")).toBe("C:/site/guide/index.md");
+    expect(mapper.toSourcePath("C:\\Temp\\docs-llms-snapshot-1\\root\\guide\\index.md")).toBe("C:\\site\\guide\\index.md");
+    expect(mapper.toSourcePath("C:\\Temp\\docs-llms-snapshot-1\\root")).toBe("C:\\site");
+    expect(mapper.toSourcePath("C:/Temp/docs-llms-snapshot-1/external/docs/a/b.md")).toBe("D:/reference/a/b.md");
+    expect(mapper.toSourcePath("C:/Temp/docs-llms-snapshot-1/rootless/a.md")).toBe("C:/Temp/docs-llms-snapshot-1/rootless/a.md");
+    expect(mapper.toSourceText("bad C:/Temp/docs-llms-snapshot-1/root/a.md and C:\\Temp\\docs-llms-snapshot-1\\root\\b.md"))
+      .toBe("bad C:/site/a.md and C:\\site\\b.md");
+    expect(mapper.toSourceText("configured docsDir C:\\Temp\\docs-llms-snapshot-1\\external\\docs does not exist"))
+      .toBe("configured docsDir ../reference does not exist");
+  });
+
+  it("keeps POSIX mapping literal, including backslashes inside file names", () => {
+    const mapper = createSnapshotPathMapper([["/tmp/docs-llms-snapshot-1/root", "/site"]], posix);
+    expect(mapper.toSourcePath("/tmp/docs-llms-snapshot-1/root/guide/a\\b.md")).toBe("/site/guide/a\\b.md");
+    expect(mapper.toSourcePath("/tmp/docs-llms-snapshot-1/root")).toBe("/site");
+    expect(mapper.toSourcePath("/tmp/docs-llms-snapshot-1/rootless/a.md")).toBe("/tmp/docs-llms-snapshot-1/rootless/a.md");
+    expect(mapper.toSourceText("at /tmp/docs-llms-snapshot-1/root/a.md")).toBe("at /site/a.md");
   });
 });

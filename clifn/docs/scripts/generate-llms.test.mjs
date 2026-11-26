@@ -23,7 +23,8 @@ function prebuild() {
   return spawnSync(process.execPath, [join(site, "scripts", "generate-llms.mjs")], {
     cwd: site,
     encoding: "utf8",
-    env: { ...process.env, TMPDIR: scratch, CLOUDFLARE_DOCS_DEPLOY: "" },
+    // os.tmpdir() reads TMPDIR on POSIX and TEMP/TMP on Windows.
+    env: { ...process.env, TMPDIR: scratch, TEMP: scratch, TMP: scratch, CLOUDFLARE_DOCS_DEPLOY: "" },
   });
 }
 
@@ -49,8 +50,9 @@ before(() => {
     copyFileSync(join(siteDir, file), join(site, file));
   }
   // Reuse the installed packages so the entry point loads the actual DocsFn provider.
-  symlinkSync(join(siteDir, "node_modules"), join(site, "node_modules"), "dir");
-  symlinkSync(join(repoRoot, "node_modules"), join(workspace, "node_modules"), "dir");
+  const linkType = process.platform === "win32" ? "junction" : "dir";
+  symlinkSync(join(siteDir, "node_modules"), join(site, "node_modules"), linkType);
+  symlinkSync(join(repoRoot, "node_modules"), join(workspace, "node_modules"), linkType);
   for (const directory of ["content/pages", "content/blog", "content/api", "static"]) mkdirSync(join(site, directory), { recursive: true });
 });
 

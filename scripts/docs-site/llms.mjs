@@ -1,10 +1,10 @@
 import {
   closeSync, constants as fsConstants, fchmodSync, fstatSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync,
-  readFileSync, renameSync, rmSync, statSync, unlinkSync, utimesSync, writeFileSync,
+  readFileSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, utimesSync, writeFileSync,
 } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
-import { dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import nodePath, { dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { assertYamlFrontMatter } from "./front-matter.mjs";
 
 /** Collection directories the filesystem provider resolves, with its defaults when a site sets none. */
@@ -27,16 +27,19 @@ function isDirectory(path) {
 
 /**
  * Relative paths of regular files the provider would list: no dot segments, no symbolic links
- * (fast-glob `dot: false`, `followSymbolicLinks: false`, `onlyFiles: true`).
- * @param {string} directory
+ * (fast-glob `dot: false`, `followSymbolicLinks: false`, `onlyFiles: true`). The real path of the
+ * snapshot's own staging directory is never entered.
+ * @param {string} directory real path of the directory to list
+ * @param {string} excluded real path of a directory to skip
  * @param {string} [prefix]
  * @returns {Generator<string>}
  */
-function* listProviderFiles(directory, prefix = "") {
+function* listProviderFiles(directory, excluded, prefix = "") {
+  if (isInside(excluded, directory)) return;
   for (const entry of readdirSync(directory, { withFileTypes: true })) {
     if (entry.name.startsWith(".")) continue;
     const relativePath = prefix ? `${prefix}/${entry.name}` : entry.name;
-    if (entry.isDirectory()) yield* listProviderFiles(join(directory, entry.name), relativePath);
+    if (entry.isDirectory()) yield* listProviderFiles(join(directory, entry.name), excluded, relativePath);
     else if (entry.isFile()) yield relativePath;
   }
 }
@@ -70,26 +73,69 @@ function isInside(root, path) {
 }
 
 /**
+ * Map snapshot paths back to the source paths they stand for. The provider reports paths in two
+ * forms: native ones (path.resolve) and fast-glob ones, which use forward slashes on Windows too.
+ * Each mapped path keeps the form it arrived in, so it matches what the provider would have reported
+ * without the snapshot.
+ * @param {Array<[string, string]>} prefixes snapshot directory and source directory pairs
+ * @param {Pick<typeof nodePath, "join" | "sep">} [pathApi]
+ * @param {Array<[string, string]>} [aliases] exact message fragments restored before path mapping
+ */
+export function createSnapshotPathMapper(prefixes, pathApi = nodePath, aliases = []) {
+  const windows = pathApi.sep === "\\";
+  /** @param {string} path */
+  const toSlash = (path) => (windows ? path.replaceAll("\\", "/") : path);
+  const sorted = prefixes
+    .map(([snapshotPath, sourcePath]) => /** @type {const} */ ([toSlash(snapshotPath), sourcePath]))
+    .sort((left, right) => right[0].length - left[0].length);
+  /** @param {string} path */
+  const toSourcePath = (path) => {
+    const candidate = toSlash(path);
+    for (const [snapshotPath, sourcePath] of sorted) {
+      if (candidate !== snapshotPath && !candidate.startsWith(`${snapshotPath}/`)) continue;
+      const rest = candidate.slice(snapshotPath.length + 1);
+      if (windows && !path.includes("\\")) return rest ? `${toSlash(sourcePath)}/${rest}` : toSlash(sourcePath);
+      return rest ? pathApi.join(sourcePath, rest) : sourcePath;
+    }
+    return path;
+  };
+  /** @param {string} text */
+  const toSourceText = (text) => sorted.reduce((result, [snapshotPath, sourcePath]) => {
+    const native = windows ? snapshotPath.replaceAll("/", "\\") : snapshotPath;
+    const replaced = result.replaceAll(native, sourcePath);
+    return windows ? replaced.replaceAll(snapshotPath, toSlash(sourcePath)) : replaced;
+  }, aliases.reduce((result, [snapshotText, sourceText]) => result.replaceAll(snapshotText, sourceText), text));
+  return { toSourcePath, toSourceText };
+}
+
+/**
  * Snapshot the Markdown collections the provider will read into a private directory, so it parses
  * exactly the bytes that passed the YAML-only check, never a file it reopens later.
  *
  * The layout is derived from the configuration the provider itself receives (buildManifest's
- * canonical config) and keeps its resolution rules. Relative directories inside the content root keep
- * their configured value and are mirrored under `<snapshot>/root`, so default candidates and
- * missing-directory strictness are unchanged. Absolute or escaping directories, which the provider
- * always treats as strict, get a private absolute path under `<snapshot>/external` (present) or
- * `<snapshot>/missing` (absent). API and asset collections are not parsed as front matter and keep
- * their resolved source directories.
+ * canonical config) and keeps its resolution rules. Directories inside the content root are mirrored
+ * under `<snapshot>/root`; directories outside it get `<snapshot>/external/<collection>` (present) or
+ * `<snapshot>/missing/<collection>` (absent), a namespace disjoint from the mirror. A configured value
+ * is kept only when it resolves against the snapshot root to the exact directory its checked bytes were
+ * copied to, so default candidates keep their strictness; any other value (absolute, escaping or
+ * re-entering the root) is replaced by that absolute snapshot directory, which the provider treats as
+ * strict exactly like the original value. API and asset collections are not parsed as front matter
+ * and keep their resolved source directories.
  * @param {string} root
  * @param {Record<string, unknown>} content
  */
 function createCheckedContentSnapshot(root, content) {
   const snapshotBase = mkdtempSync(join(tmpdir(), "docs-llms-snapshot-"));
   const snapshotRoot = join(snapshotBase, "root");
-  /** Snapshot path prefixes and the source paths they stand for, longest first when mapping. */
+  /** @type {Array<[string, string]>} */
   const prefixes = [[snapshotRoot, root]];
+  /** Provider messages quote the configured value; restore it where the snapshot replaced it. */
+  /** @type {Array<[string, string]>} */
+  const aliases = [];
   const dispose = () => rmSync(snapshotBase, { recursive: true, force: true });
   try {
+    // The walk never copies the staging tree into itself, even when the temp dir sits in the site.
+    const stagingDirectory = realpathSync(snapshotBase);
     // A missing root stays missing, so the provider reports it as before.
     if (isDirectory(root)) mkdirSync(snapshotRoot, { mode: 0o700 });
     /** @type {Record<string, string>} */
@@ -100,49 +146,43 @@ function createCheckedContentSnapshot(root, content) {
       const sourceDirectory = configured !== undefined
         ? resolve(root, configured)
         : defaults.map((candidate) => resolve(root, candidate)).find(isDirectory);
-      const exists = sourceDirectory !== undefined && isDirectory(sourceDirectory);
-      const mirrored = sourceDirectory !== undefined && isInside(root, sourceDirectory);
-      if (!MARKDOWN_COLLECTIONS.has(collection) && exists) {
-        overrides[key] = /** @type {string} */ (sourceDirectory);
+      // Unconfigured and no default present: the snapshot has none either, as the provider expects.
+      if (sourceDirectory === undefined) continue;
+      const exists = isDirectory(sourceDirectory);
+      const markdown = MARKDOWN_COLLECTIONS.has(collection);
+      if (!markdown && exists) {
+        overrides[key] = sourceDirectory;
         continue;
       }
-      /** @type {string | undefined} */
+      /** @type {string} */
       let snapshotDirectory;
-      if (configured === undefined || (mirrored && !isAbsolute(configured))) {
-        // Unchanged value against the mirrored root: same candidates, same strictness.
-        if (sourceDirectory !== undefined) snapshotDirectory = resolve(snapshotRoot, relative(root, sourceDirectory));
-      } else if (mirrored) {
+      if (isInside(root, sourceDirectory)) {
         snapshotDirectory = resolve(snapshotRoot, relative(root, sourceDirectory));
-        overrides[key] = snapshotDirectory;
       } else {
         snapshotDirectory = join(snapshotBase, exists ? "external" : "missing", collection);
-        overrides[key] = snapshotDirectory;
-        prefixes.push([snapshotDirectory, /** @type {string} */ (sourceDirectory)]);
+        prefixes.push([snapshotDirectory, sourceDirectory]);
       }
-      if (!exists || !MARKDOWN_COLLECTIONS.has(collection) || snapshotDirectory === undefined) continue;
+      if (configured !== undefined && resolve(snapshotRoot, configured) !== snapshotDirectory) {
+        overrides[key] = snapshotDirectory;
+        aliases.push([`configured ${key} ${snapshotDirectory} `, `configured ${key} ${configured} `]);
+      }
+      const effective = resolve(snapshotRoot, overrides[key] ?? configured ?? snapshotDirectory);
+      if (effective !== snapshotDirectory || !isInside(snapshotBase, effective)) {
+        throw new Error(`Docs snapshot for ${key} resolves outside its staging directory: ${sourceDirectory}`);
+      }
+      if (!exists || !markdown) continue;
       mkdirSync(snapshotDirectory, { recursive: true, mode: 0o700 });
-      for (const relativePath of listProviderFiles(/** @type {string} */ (sourceDirectory))) {
+      for (const relativePath of listProviderFiles(realpathSync(sourceDirectory), stagingDirectory)) {
         const name = relativePath.slice(relativePath.lastIndexOf("/") + 1).toLowerCase();
-        const markdown = MARKDOWN_EXTENSIONS.has(extname(name));
-        if (name !== CONTROL_FILE_NAME && !markdown) continue;
+        const isMarkdown = MARKDOWN_EXTENSIONS.has(extname(name));
+        if (name !== CONTROL_FILE_NAME && !isMarkdown) continue;
         const target = join(snapshotDirectory, relativePath);
         if (written.has(target)) continue;
         written.add(target);
-        snapshotFile(join(/** @type {string} */ (sourceDirectory), relativePath), target, markdown);
+        snapshotFile(join(sourceDirectory, relativePath), target, isMarkdown);
       }
     }
-    prefixes.sort((left, right) => right[0].length - left[0].length);
-    /** @param {string} path */
-    const toSourcePath = (path) => {
-      for (const [snapshotPath, sourcePath] of prefixes) {
-        if (path === snapshotPath) return sourcePath;
-        if (path.startsWith(`${snapshotPath}${sep}`)) return join(sourcePath, path.slice(snapshotPath.length + 1));
-      }
-      return path;
-    };
-    /** @param {string} text */
-    const toSourceText = (text) => prefixes.reduce((result, [snapshotPath, sourcePath]) => result.replaceAll(snapshotPath, sourcePath), text);
-    return { content: overrides, dispose, toSourcePath, toSourceText };
+    return { content: overrides, dispose, ...createSnapshotPathMapper(prefixes, nodePath, aliases) };
   } catch (error) {
     dispose();
     throw error;
