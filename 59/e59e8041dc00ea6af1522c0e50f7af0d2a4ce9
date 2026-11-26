@@ -1,0 +1,37 @@
+filefn/client/src/__tests__/offline-queue.test.ts
+  s_fdd2a650d6ee54::t_e77b55130e9851 820-821,2594-2705
+filefn/client/src/__tests__/offline.test.ts
+  s_fdd2a650d6ee54::t_a8848fcc38f89b 460,469-470,501-571
+filefn/client/src/__tests__/transport-offline.test.ts
+  s_fdd2a650d6ee54::t_1a6a27c6e8c737 336-337,421-585
+filefn/client/src/client.ts
+  s_fdd2a650d6ee54::t_ef83e9300ad613 18,55-169,477-523,531,551-556,621,640-642,716,728,740,752,764,819-822,826-835,837
+filefn/client/src/index.ts
+  s_fdd2a650d6ee54::t_65576f632cab0e 10,350-353,362-367,381-384,509-513,515-520,539,544-545,547-548,567-579,585-586,588-589,593,596-597
+filefn/client/src/offline/queue.ts
+  s_fdd2a650d6ee54::t_998702e830c48d 8,12,86-97,114-118,433-435,518-519,1018-1023,1038-1062,1065-1070,1099,1101-1105,1107-1108,1331,1333,1338-1339,1342-1343,1352,1366-1367,1397,1401,1404-1406,1410,1466,1485,1490,1497,1597,1603,1606,1621-1622,1624-1628,1634-1637,1642,1644,1646,1648-1663,1669-1672,1674-1676,1983-1985,1994-1998,2013-2018,2020,2369-2375,2377-2381,2385,2467-2468,2471-2472,2474,2734-2736,2740-2744,2762-2793,2859,2873,2918-2938,2949,3073-3077,3241,3272-3273,3275,3277,3281-3283,3285-3295,3298-3329,3348-3349,3358-3361,3363-3367,3374-3377,3408
+filefn/client/src/upload-manager.ts
+  s_fdd2a650d6ee54::t_49c7a61c5a67c0 62-66,69,72-73,372,376-381,401-402,419-421,443,460,462-463,471-472,485,489-491,520
+filefn/docs/content/docs/features/offline.md
+  s_fdd2a650d6ee54::t_a89e620bf4efc9 35,94,101,105,153
+filefn/docs/content/docs/reference/changelog.md
+  s_fdd2a650d6ee54::t_a8fa40491997b4 18,22
+filefn/docs/static/llms-full.txt
+  s_fdd2a650d6ee54::t_43c5925c5b6d36 3872,3931,3938,3942,3990,8401,8405
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "59e59e8041dc00ea6af1522c0e50f7af0d2a4ce9",
+  "prompts": {},
+  "sessions": {
+    "s_fdd2a650d6ee54": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a2172b-a397-70b2-8690-d9c8bf8e1fb0",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
