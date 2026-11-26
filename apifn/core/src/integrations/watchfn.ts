@@ -4,10 +4,11 @@
  * Provides:
  *  - `fetchEndpointMetrics()` — fetch performance metrics from a watchfn HTTP API
  *  - `createWatchFnClient()` — factory that returns a WatchFnClient
- *  - `apifnWatchMiddleware()` — @superfunctions/http middleware that reports per-route
- *    metrics to watchfn via its event API
+ *  - `apifnWatchMiddleware()` — @superfunctions/http `Middleware` that reports per-route
+ *    metrics to watchfn via its event API and returns the downstream Response unchanged
  */
 
+import type { Middleware } from "@superfunctions/http";
 import type { EndpointMetrics, WatchFnClient } from "../types.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -195,15 +196,38 @@ export function createWatchFnClient(
 // ─── apifnWatchMiddleware ─────────────────────────────────────────────────────
 
 /**
+ * Formats a thrown value for a warning. Never throws: values such as
+ * `Object.create(null)` or an error whose `message` getter throws cannot be
+ * stringified safely.
+ */
+function describeError(err: unknown): string {
+    try {
+        return err instanceof Error ? String(err.message) : String(err);
+    } catch {
+        return "unknown error";
+    }
+}
+
+/** Status recorded when downstream middleware or the handler throws instead of returning a Response. */
+const UNHANDLED_ERROR_STATUS = 500;
+
+/**
  * @superfunctions/http middleware that captures route metrics and ships them
  * to a watchfn event API endpoint (WATCH-004).
  *
+ * It follows the router's `Middleware` contract: it returns the exact
+ * `Response` produced downstream (status, headers and body untouched, body
+ * never read) and records that Response's `status`. Telemetry failures never
+ * change the response: they are reported with `console.warn` unless `silent`
+ * is set.
+ *
  * @example
+ * const router = createRouter({ routes });
  * router.use(apifnWatchMiddleware({ baseUrl: "http://localhost:7100" }));
  */
-export function apifnWatchMiddleware(
+export function apifnWatchMiddleware<TContext = unknown>(
     options: WatchFnMiddlewareOptions
-): (req: unknown, res: unknown, next: (...args: unknown[]) => unknown) => Promise<void> {
+): Middleware<TContext> {
     const {
         baseUrl,
         apiKey,
@@ -218,6 +242,17 @@ export function apifnWatchMiddleware(
         Accept: "application/json",
     };
     if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
+
+    /** Reports a telemetry failure. Never throws, whatever `err` is or `console.warn` does. */
+    function warn(message: string, err?: unknown): void {
+        if (silent) return;
+        try {
+            const detail = err === undefined ? "" : `: ${describeError(err)}`;
+            console.warn(`[apifn/watchfn] ${message}${detail}`);
+        } catch {
+            // A failing warning sink must not escape the telemetry boundary.
+        }
+    }
 
     async function sendEvent(event: WatchFnEvent): Promise<void> {
         try {
@@ -234,51 +269,52 @@ export function apifnWatchMiddleware(
             } finally {
                 clearTimeout(timer);
             }
-            if (!res.ok && !silent) {
-                console.warn(`[apifn/watchfn] Event POST returned HTTP ${res.status}`);
+            if (!res.ok) {
+                warn(`Event POST returned HTTP ${res.status}`);
             }
         } catch (err) {
-            if (!silent) {
-                const msg = err instanceof Error ? err.message : String(err);
-                console.warn(`[apifn/watchfn] Failed to send event to watchfn: ${msg}`);
-            }
+            warn("Failed to send event to watchfn", err);
         }
     }
 
-    /**
-     * The actual middleware function.
-     * Compatible with @superfunctions/http Middleware signature:
-     *   (req, res, next) => void | Promise<void>
-     */
-    return async function watchMiddleware(req: unknown, res: unknown, next: (...args: unknown[]) => unknown): Promise<void> {
+    /** Records one request. Never throws: a telemetry failure must not change the response. */
+    async function observe(request: Request, statusCode: number, start: number): Promise<void> {
+        try {
+            const event: WatchFnEvent = {
+                method: request.method,
+                path: new URL(request.url).pathname,
+                status_code: statusCode,
+                duration_ms: Date.now() - start,
+                timestamp: new Date().toISOString(),
+            };
+            if (fireAndForget) {
+                // Non-blocking: the response is returned without waiting for the POST.
+                // The terminal catch keeps the detached promise from ever becoming an
+                // unhandled rejection.
+                sendEvent(event).catch(() => { /* sendEvent already reported it */ });
+            } else {
+                await sendEvent(event);
+            }
+        } catch (err) {
+            warn("Failed to record request telemetry", err);
+        }
+    }
+
+    return async function watchMiddleware(request, _context, next): Promise<Response> {
         const start = Date.now();
 
-        await next();
-
-        const durationMs = Date.now() - start;
-
-        // Extract method/path/status from request/response objects
-        // @superfunctions/http uses req.method, req.path (or req.url), res.statusCode
-        const r = req as { method?: string; path?: string; url?: string };
-        const s = res as { statusCode?: number };
-
-        const method = r.method ?? "UNKNOWN";
-        const path = r.path ?? (r.url ? new URL(r.url, "http://localhost").pathname : "/unknown");
-        const statusCode = s.statusCode ?? 200;
-
-        const event: WatchFnEvent = {
-            method,
-            path,
-            status_code: statusCode,
-            duration_ms: durationMs,
-            timestamp: new Date().toISOString(),
-        };
-
-        if (fireAndForget) {
-            // Non-blocking — don't hold up the response
-            sendEvent(event).catch(() => {/* already warned inside sendEvent */ });
-        } else {
-            await sendEvent(event);
+        let response: Response;
+        try {
+            response = await next();
+        } catch (err) {
+            // The shared router converts downstream errors into a Response before
+            // they reach this middleware; a throw only escapes in chains without an
+            // error handler. Record it as unhandled and let the error propagate.
+            await observe(request, UNHANDLED_ERROR_STATUS, start);
+            throw err;
         }
+
+        await observe(request, response.status, start);
+        return response;
     };
 }

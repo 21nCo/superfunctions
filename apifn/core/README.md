@@ -186,9 +186,12 @@ const metrics = await fetchEndpointMetrics({
 
 const client = createWatchFnClient({ baseUrl: "https://watch.example.com" });
 
-// Middleware records per-endpoint timing to watchfn
+// Middleware records per-endpoint timing and status to watchfn
+const router = createRouter({ routes }); // from @superfunctions/http
 router.use(apifnWatchMiddleware({ baseUrl: "https://watch.example.com" }));
 ```
+
+`apifnWatchMiddleware` is a `@superfunctions/http` `Middleware`, so it also works in `createRouter({ middleware: [...] })` and in a route's `middleware` list. It returns the downstream `Response` unchanged (status, headers and body, which it never reads) and records that response's status. When the router's error handler turns a thrown error into a response, it records that response's status. Telemetry failures never change the response: they are logged with `console.warn` unless `silent: true`. By default (`fireAndForget: true`) it returns the response without waiting for the event POST to finish.
 
 ### authfn
 

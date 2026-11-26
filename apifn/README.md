@@ -21,16 +21,16 @@ Your router is the source of truth: introspect it into OpenAPI 3.1, then drive v
 
 ### npm release dependency order
 
-The collection runner and OpenAPI validation security updates keep exact pins aligned across the npm packages. Publish in this order.
+The collection runner, OpenAPI validation and watchFn middleware updates keep exact pins aligned across the npm packages. Publish in this order.
 
-1. `@apifn/core` **0.1.2**.
-2. `@apifn/collections` and `@apifn/mock` **0.0.6**, `@apifn/snippets`,
-   `@apifn/react` and `@apifn/svelte` **0.0.7**, `@apifn/contracts` **0.1.2**,
-   and `@apifn/admin` **0.1.4**. These packages pin Core. Admin also requires
-   the published `@superfunctions/admin` **^0.1.4** peer.
-3. `@apifn/sdk` **0.1.2** after Contracts, and `@apifn/docsfn` **0.1.4**
+1. `@apifn/core` **0.2.0**.
+2. `@apifn/collections` and `@apifn/mock` **0.0.7**, `@apifn/react` and
+   `@apifn/svelte` **0.0.7**, `@apifn/snippets` **0.0.8**, `@apifn/contracts`
+   **0.1.3**, and `@apifn/admin` **0.1.5**. These packages pin Core. Admin also
+   requires the published `@superfunctions/admin` **^0.1.4** peer.
+3. `@apifn/sdk` **0.1.3** after Contracts, and `@apifn/docsfn` **0.1.4**
    after both renderers.
-4. `@apifn/cli` **0.1.2** after its dependencies are available.
+4. `@apifn/cli` **0.1.3** after its dependencies are available.
 
 The reusable workflow can move to the fixed CLI after it is published. API-6
 tracks the lockfile pin, workflow default, and external caller example.
