@@ -1,5 +1,6 @@
 import type {
   AuthFnErrorEnvelope,
+  AuthFnRegionalClient,
   AuthFnSocialHandoffClient
 } from './types.js';
 
@@ -12,9 +13,11 @@ import type {
  * origin and the flow, claims the stored record by replacing it with a
  * tombstone that no longer holds the verifier, and only then exchanges the
  * one-time code with the verifier through the existing
- * `/social/handoff/exchange` route. The server's single-use exchange is the
- * authority: when two windows race on a store without an atomic claim, the
- * server refuses the second exchange and it is reported as `already-used`.
+ * `/social/handoff/exchange` route. The claim must be atomic across every
+ * window that shares the store: the server consumes each code once, but a
+ * retried `/social/start` can mint a second code for the same handoff, so
+ * only the claim keeps a begun handoff to one completion. A store that
+ * cannot claim atomically (`atomic: false`) is refused.
  *
  * Navigation (sending the browser to `redirectTo`, removing the callback
  * parameters from the address bar with `cleanUrl`) stays with the host.
@@ -32,11 +35,29 @@ export interface AuthFnBrowserHandoffStore {
   /**
    * Replaces the value of `key` with `next` (or removes it when `next` is
    * `null`) only if it still equals `expected`, and reports whether it did.
-   * Hosts whose participants can run at once (several windows over
-   * `localStorage`) make this atomic across them; the server's single-use
-   * exchange still decides when it is not.
+   * It must be atomic across every participant that shares the store
+   * (several windows over `localStorage`).
    */
   compareAndSet(key: string, expected: string, next: string | null): Awaitable<boolean>;
+  /**
+   * `false` when `compareAndSet` cannot be atomic across participants; the
+   * handoff then refuses to begin or complete. Omitted means atomic.
+   */
+  readonly atomic?: boolean;
+}
+
+/** The part of Web Storage (`localStorage`, `sessionStorage`) the store uses. */
+export interface AuthFnWebStorageLike {
+  readonly length: number;
+  key(index: number): string | null;
+  getItem(key: string): string | null;
+  setItem(key: string, value: string): void;
+  removeItem(key: string): void;
+}
+
+/** The part of the Web Locks API (`navigator.locks`) the store uses. */
+export interface AuthFnLockManagerLike {
+  request(name: string, options: { mode: 'exclusive' }, callback: () => unknown): Promise<unknown>;
 }
 
 export interface AuthFnBrowserHandoffClock {
@@ -46,12 +67,17 @@ export interface AuthFnBrowserHandoffClock {
 
 export type AuthFnBrowserHandoffExchange = (
   input: { code: string; verifier: string },
+  /**
+   * `regionId` is the region passed to `begin()`, read back from the store,
+   * never from the callback URL.
+   */
   context: { handoffId: string; regionId?: string }
 ) => ReturnType<AuthFnSocialHandoffClient['exchangeSocialHandoff']>;
 
 export type AuthFnBrowserHandoffEvent =
   | { type: 'begun'; handoffId: string; expiresAt: string }
   | { type: 'completed'; handoffId: string }
+  | { type: 'two-factor-required'; handoffId: string }
   | { type: 'failed'; handoffId?: string; reason: AuthFnBrowserHandoffFailureReason }
   | { type: 'pruned'; count: number };
 
@@ -59,7 +85,10 @@ export interface AuthFnBrowserHandoffOptions {
   store: AuthFnBrowserHandoffStore;
   /** Absolute http(s) origins on which a handoff may begin and complete. */
   allowedOrigins: readonly string[];
-  /** Usually `client.exchangeSocialHandoff`. */
+  /**
+   * Usually `client.exchangeSocialHandoff`; with the region-aware client,
+   * `createRegionalHandoffExchange(regionalClient)`.
+   */
   exchange: AuthFnBrowserHandoffExchange;
   clock?: AuthFnBrowserHandoffClock;
   /** How long a begun handoff may wait for its callback. Default 10 minutes, at most 1 hour. */
@@ -73,6 +102,12 @@ export interface AuthFnBrowserHandoffOptions {
 export interface AuthFnBrowserHandoffBeginInput {
   /** Absolute http(s) URL on an allowed origin, without a fragment. */
   returnTo: string;
+  /**
+   * The region the sign-in starts in (`regionalClient.getCurrentRegionId()`).
+   * It is stored with the handoff and given to `exchange`, so the exchange
+   * after a reload reaches the region that issued the code.
+   */
+  regionId?: string;
 }
 
 export interface AuthFnBrowserHandoffBeginResult {
@@ -105,7 +140,9 @@ export type AuthFnBrowserHandoffFailureReason =
   /** The server refused the code. Start the sign-in again. */
   | 'exchange-rejected'
   /** The exchange did not complete (network failure or abort). Start the sign-in again. */
-  | 'exchange-canceled';
+  | 'exchange-canceled'
+  /** The store cannot claim atomically across windows (`atomic: false`); nothing was exchanged. */
+  | 'store-not-atomic';
 
 export type AuthFnBrowserHandoffResult =
   | {
@@ -118,11 +155,25 @@ export type AuthFnBrowserHandoffResult =
       cleanUrl: string;
     }
   | {
+      /**
+       * The server needs a second factor before it issues a session. The
+       * handoff is retired; continue with
+       * `client.completeTwoFactorChallenge({ challengeId, code })`.
+       */
+      status: 'two-factor-required';
+      handoffId: string;
+      challengeId: string;
+      primaryMethod: string;
+      cleanUrl: string;
+    }
+  | {
       status: 'failed';
       reason: AuthFnBrowserHandoffFailureReason;
       handoffId?: string;
+      /** A fixed message; it never repeats free-form text from the exchange. */
       error?: { code: string; message: string };
       requestId?: string;
+      /** Present whenever the callback URL could be parsed. */
       cleanUrl?: string;
     }
   /** The URL carries no handoff callback; there is nothing to do. */
@@ -151,6 +202,7 @@ interface PendingRecord {
   path: string;
   verifier: string;
   expiresAt: number;
+  regionId?: string;
 }
 
 interface UsedRecord {
@@ -168,14 +220,33 @@ const MODE_PARAM = 'handoff';
 const REGION_PARAM = 'regionId';
 const FRAGMENT_PARAMS = [HANDOFF_ID_PARAM, CODE_PARAM, MODE_PARAM, REGION_PARAM];
 const ERROR_QUERY_PARAMS = ['auth_error', 'auth_error_code', 'auth_provider', 'auth_request_id'];
+const TWO_FACTOR_CODE_PARAM = 'authfnCode';
+const TWO_FACTOR_QUERY_PARAMS = [TWO_FACTOR_CODE_PARAM, 'challengeId', 'primaryMethod'];
+/** Query parameters the social callback adds to the return target. */
+const SERVER_QUERY_PARAMS = [...ERROR_QUERY_PARAMS, ...TWO_FACTOR_QUERY_PARAMS];
+const TWO_FACTOR_REQUIRED_CODE = 'AUTHFN_2FA_REQUIRED';
 const HANDOFF_ID_PATTERN = /^[A-Za-z0-9_-]{22}$/;
 const VERIFIER_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 const CODE_PATTERN = /^[A-Za-z0-9_-]{1,256}$/;
+const REGION_ID_PATTERN = /^[A-Za-z0-9_.-]{1,64}$/;
+const CHALLENGE_ID_PATTERN = /^[A-Za-z0-9_.:-]{1,256}$/;
+const METHOD_PATTERN = /^[a-z0-9_-]{1,64}$/;
+const ERROR_CODE_PATTERN = /^[A-Z][A-Z0-9_]{0,63}$/;
+const REQUEST_ID_PATTERN = /^[A-Za-z0-9_.:-]{1,128}$/;
+const USED_RECORD_KEYS = ['expiresAt', 'id', 'state', 'v'].join();
 const DEFAULT_TTL_MS = 10 * 60 * 1000;
 const MAX_TTL_MS = 60 * 60 * 1000;
 const DEFAULT_KEY_PREFIX = 'authfn.handoff.';
 const REPLAYED_CODE = 'AUTHFN_OAUTH_STATE_REPLAYED';
 const NETWORK_ERROR_CODE = 'AUTHFN_NETWORK_ERROR';
+const INTERNAL_ERROR_CODE = 'AUTHFN_INTERNAL_ERROR';
+const NOT_ATOMIC_MESSAGE = 'createBrowserHandoff needs a store that claims atomically across windows; '
+  + 'this store is atomic: false (for example localStorage without navigator.locks)';
+const EXCHANGE_FAILURE_MESSAGES: Partial<Record<AuthFnBrowserHandoffFailureReason, string>> = {
+  'already-used': 'This social sign-in was already completed',
+  'exchange-canceled': 'The social sign-in exchange did not complete',
+  'exchange-rejected': 'The server refused the social sign-in code'
+};
 
 export function createBrowserHandoff(options: AuthFnBrowserHandoffOptions): AuthFnBrowserHandoff {
   const store = options.store;
@@ -236,6 +307,13 @@ export function createBrowserHandoff(options: AuthFnBrowserHandoffOptions): Auth
   return {
     async begin(input) {
       const target = parseBeginTarget(input?.returnTo, allowedOrigins);
+      const regionId = input?.regionId;
+      if (regionId !== undefined && (typeof regionId !== 'string' || !REGION_ID_PATTERN.test(regionId))) {
+        throw new TypeError('begin regionId must be a region id of letters, digits, dot, dash or underscore');
+      }
+      if (store.atomic === false) {
+        throw new Error(NOT_ATOMIC_MESSAGE);
+      }
       await prune();
       const handoffId = randomBase64Url(16);
       const verifier = randomBase64Url(32);
@@ -247,10 +325,11 @@ export function createBrowserHandoff(options: AuthFnBrowserHandoffOptions): Auth
         state: 'pending',
         origin: target.origin,
         // Serialized as the callback's query is compared, so a target whose
-        // query the server re-encodes (auth_error) still matches.
-        path: target.pathname + stripErrorParams(target.search),
+        // query the server re-encodes (auth_error, authfnCode) still matches.
+        path: target.pathname + stripServerParams(target.search),
         verifier,
-        expiresAt
+        expiresAt,
+        ...(regionId ? { regionId } : {})
       };
       await store.set(keyFor(handoffId), JSON.stringify(record));
       const returnTo = new URL(target.href);
@@ -280,20 +359,30 @@ export function createBrowserHandoff(options: AuthFnBrowserHandoffOptions): Auth
       const handoffIdValues = fragment.getAll(HANDOFF_ID_PARAM);
       const looksLikeHandoff = fragment.has(CODE_PARAM)
         || fragment.has(MODE_PARAM)
-        || url.searchParams.has('auth_error');
-      if (handoffIdValues.length === 0) {
-        // A code-and-verifier return that no handoff of this helper is bound to.
-        return looksLikeHandoff ? fail('flow-mismatch') : { status: 'not-callback' };
+        || url.searchParams.has('auth_error')
+        || url.searchParams.has(TWO_FACTOR_CODE_PARAM);
+      if (handoffIdValues.length === 0 && !looksLikeHandoff) {
+        return { status: 'not-callback' };
       }
       const cleanUrl = stripCallbackParams(url);
       if (!allowedOrigins.has(url.origin)) {
         return fail('origin-mismatch', { cleanUrl });
+      }
+      if (handoffIdValues.length === 0) {
+        // A callback that no handoff of this helper is bound to.
+        return fail('flow-mismatch', { cleanUrl });
       }
       const handoffId = handoffIdValues[0]!;
       if (handoffIdValues.length !== 1 || !HANDOFF_ID_PATTERN.test(handoffId)) {
         return fail('malformed-callback', { cleanUrl });
       }
       const key = keyFor(handoffId);
+      if (store.atomic === false) {
+        // Without an atomic claim two windows could both exchange; retire
+        // the verifier instead (removing it is safe without a lock).
+        await retire(() => store.delete(key));
+        return fail('store-not-atomic', { handoffId, cleanUrl });
+      }
       let raw: string | null | undefined;
       try {
         raw = await store.get(key);
@@ -338,23 +427,36 @@ export function createBrowserHandoff(options: AuthFnBrowserHandoffOptions): Auth
       if (!claimed) {
         return fail('already-used', { handoffId, cleanUrl });
       }
+      // The claim can wait on another window's lock: the deadline is checked
+      // again before anything is exchanged. The tombstone stays.
+      if (record.expiresAt <= now()) {
+        return fail('expired', { handoffId, cleanUrl });
+      }
 
       if (url.origin !== record.origin) {
         return fail('origin-mismatch', { handoffId, cleanUrl });
       }
-      if (url.pathname + stripErrorParams(url.search) !== record.path) {
+      if (url.pathname + stripServerParams(url.search) !== record.path) {
         return fail('flow-mismatch', { handoffId, cleanUrl });
+      }
+      const twoFactor = readTwoFactorChallenge(url, fragment);
+      if (twoFactor === 'malformed') {
+        return fail('malformed-callback', { handoffId, cleanUrl });
+      }
+      if (twoFactor) {
+        emit({ type: 'two-factor-required', handoffId });
+        return { status: 'two-factor-required', handoffId, ...twoFactor, cleanUrl };
       }
       if (url.searchParams.has('auth_error')) {
         if (fragment.has(CODE_PARAM)) {
           return fail('malformed-callback', { handoffId, cleanUrl });
         }
-        const requestId = url.searchParams.get('auth_request_id') ?? undefined;
+        const requestId = matching(url.searchParams.get('auth_request_id'), REQUEST_ID_PATTERN);
         return fail('provider-error', {
           handoffId,
           cleanUrl,
           error: {
-            code: url.searchParams.get('auth_error_code') || 'AUTHFN_OAUTH_CALLBACK_FAILED',
+            code: matching(url.searchParams.get('auth_error_code'), ERROR_CODE_PATTERN) ?? 'AUTHFN_OAUTH_CALLBACK_FAILED',
             message: 'Social sign-in did not complete'
           },
           ...(requestId ? { requestId } : {})
@@ -372,40 +474,44 @@ export function createBrowserHandoff(options: AuthFnBrowserHandoffOptions): Auth
       if (codes.length !== 1 || !code || !CODE_PATTERN.test(code)) {
         return fail('malformed-callback', { handoffId, cleanUrl });
       }
-      const regionIds = fragment.getAll(REGION_PARAM);
-      if (regionIds.length > 1) {
-        return fail('malformed-callback', { handoffId, cleanUrl });
-      }
+      // Text from the exchange is passed on only in a fixed shape that cannot
+      // carry the verifier or the code back out.
+      const verifier = record.verifier;
+      const safeText = (value: unknown, pattern: RegExp): string | undefined =>
+        typeof value === 'string' && pattern.test(value) && !value.includes(verifier) && !value.includes(code)
+          ? value
+          : undefined;
 
       let envelope: Awaited<ReturnType<AuthFnBrowserHandoffExchange>>;
       try {
         envelope = await options.exchange(
-          { code, verifier: record.verifier },
-          { handoffId, ...(regionIds[0] ? { regionId: regionIds[0] } : {}) }
+          { code, verifier },
+          { handoffId, ...(record.regionId ? { regionId: record.regionId } : {}) }
         );
       } catch {
-        return fail('exchange-canceled', { handoffId, cleanUrl });
+        return fail('exchange-canceled', {
+          handoffId,
+          cleanUrl,
+          error: { code: NETWORK_ERROR_CODE, message: EXCHANGE_FAILURE_MESSAGES['exchange-canceled']! }
+        });
       }
       if (!envelope || typeof envelope !== 'object') {
         return fail('exchange-rejected', { handoffId, cleanUrl });
       }
+      const requestId = safeText((envelope as { requestId?: unknown }).requestId, REQUEST_ID_PATTERN);
       if (envelope.ok !== true) {
-        const error = (envelope as AuthFnErrorEnvelope).error;
-        const errorCode = typeof error?.code === 'string' ? error.code : 'AUTHFN_INTERNAL_ERROR';
+        const errorCode = safeText((envelope as AuthFnErrorEnvelope).error?.code, ERROR_CODE_PATTERN)
+          ?? INTERNAL_ERROR_CODE;
         const reason: AuthFnBrowserHandoffFailureReason = errorCode === REPLAYED_CODE
           ? 'already-used'
           : errorCode === NETWORK_ERROR_CODE
             ? 'exchange-canceled'
             : 'exchange-rejected';
-        const requestId = (envelope as AuthFnErrorEnvelope).requestId;
         return fail(reason, {
           handoffId,
           cleanUrl,
-          error: {
-            code: errorCode,
-            message: typeof error?.message === 'string' ? error.message : 'Social handoff exchange failed'
-          },
-          ...(typeof requestId === 'string' ? { requestId } : {})
+          error: { code: errorCode, message: EXCHANGE_FAILURE_MESSAGES[reason]! },
+          ...(requestId ? { requestId } : {})
         });
       }
       const data = envelope.data;
@@ -418,7 +524,7 @@ export function createBrowserHandoff(options: AuthFnBrowserHandoffOptions): Auth
         handoffId,
         session: data.session,
         handoff: data.handoff,
-        requestId: envelope.requestId,
+        requestId: requestId ?? 'authfn-browser-handoff',
         cleanUrl
       };
     },
@@ -446,26 +552,53 @@ export function createMemoryHandoffStore(): AuthFnBrowserHandoffStore {
       values.delete(key);
     },
     keys: () => Array.from(values.keys()),
-    compareAndSet: (key, expected, next) => compareAndSetSync(values, key, expected, next)
+    compareAndSet: (key, expected, next) => compareAndSetSync(values, key, expected, next),
+    atomic: true
+  };
+}
+
+/**
+ * The exchange for the region-aware client: it sends the code to the region
+ * passed to `begin()` (through the client's own `resolveBaseUrl`), even when
+ * the page after the redirect starts in the default region, and leaves the
+ * client in that region once the session is issued.
+ */
+export function createRegionalHandoffExchange(
+  client: Pick<AuthFnRegionalClient, 'getCurrentRegionId' | 'setCurrentRegionId'> & AuthFnSocialHandoffClient
+): AuthFnBrowserHandoffExchange {
+  return async (input, context) => {
+    if (!context.regionId) {
+      return client.exchangeSocialHandoff(input);
+    }
+    const previous = client.getCurrentRegionId();
+    client.setCurrentRegionId(context.regionId);
+    const response = await client.exchangeSocialHandoff(input).catch((error: unknown) => {
+      client.setCurrentRegionId(previous);
+      throw error;
+    });
+    if (!response.ok) {
+      client.setCurrentRegionId(previous);
+    }
+    return response;
   };
 }
 
 export interface AuthFnWebStorageHandoffStoreOptions {
   /**
    * Lock manager that makes `compareAndSet` atomic across windows of the
-   * origin. Defaults to `navigator.locks` when the browser has it; pass
-   * `null` to opt out, leaving the server's single-use exchange to decide.
+   * origin. Defaults to `navigator.locks` when the browser has it. Without
+   * one the store is `atomic: false`, and the handoff refuses to use it.
    */
-  locks?: Pick<LockManager, 'request'> | null;
+  locks?: AuthFnLockManagerLike | null;
 }
 
-/** A store over `localStorage` or `sessionStorage`. */
+/** A store over `localStorage` or `sessionStorage`, atomic through Web Locks. */
 export function createWebStorageHandoffStore(
-  storage: Storage,
+  storage: AuthFnWebStorageLike,
   options: AuthFnWebStorageHandoffStoreOptions = {}
 ): AuthFnBrowserHandoffStore {
   const locks = options.locks === undefined
-    ? (globalThis as { navigator?: { locks?: Pick<LockManager, 'request'> } }).navigator?.locks ?? null
+    ? (globalThis as { navigator?: { locks?: AuthFnLockManagerLike } }).navigator?.locks ?? null
     : options.locks;
   const map = {
     get: (key: string) => storage.getItem(key) ?? undefined,
@@ -486,10 +619,11 @@ export function createWebStorageHandoffStore(
       }
       return keys;
     },
-    compareAndSet: (key, expected, next) => locks
-      ? locks.request(`authfn-handoff:${key}`, { mode: 'exclusive' }, () =>
-          compareAndSetSync(map, key, expected, next))
-      : compareAndSetSync(map, key, expected, next)
+    compareAndSet: async (key, expected, next) => locks
+      ? await locks.request(`authfn-handoff:${key}`, { mode: 'exclusive' }, () =>
+          compareAndSetSync(map, key, expected, next)) === true
+      : compareAndSetSync(map, key, expected, next),
+    atomic: locks !== null
   };
 }
 
@@ -508,6 +642,10 @@ function compareAndSetSync(
     map.set(key, next);
   }
   return true;
+}
+
+function matching(value: string | null, pattern: RegExp): string | undefined {
+  return value !== null && pattern.test(value) ? value : undefined;
 }
 
 async function retire(action: () => Awaitable<unknown>): Promise<void> {
@@ -554,6 +692,9 @@ function parseBeginTarget(returnTo: unknown, allowedOrigins: Set<string>): URL {
   } catch {
     throw new TypeError('begin returnTo must be an absolute URL');
   }
+  if (target.protocol !== 'https:' && target.protocol !== 'http:') {
+    throw new TypeError('begin returnTo must be an http(s) URL');
+  }
   if (typeof returnTo !== 'string' || !allowedOrigins.has(target.origin)) {
     throw new TypeError('begin returnTo must be on an allowed origin');
   }
@@ -563,8 +704,8 @@ function parseBeginTarget(returnTo: unknown, allowedOrigins: Set<string>): URL {
   if (target.hash || returnTo.includes('#')) {
     throw new TypeError('begin returnTo must not have a fragment; the handoff uses it');
   }
-  if (ERROR_QUERY_PARAMS.some((name) => target.searchParams.has(name))) {
-    throw new TypeError('begin returnTo must not carry auth_error parameters');
+  if (SERVER_QUERY_PARAMS.some((name) => target.searchParams.has(name))) {
+    throw new TypeError(`begin returnTo must not carry the callback parameters ${SERVER_QUERY_PARAMS.join(', ')}`);
   }
   return target;
 }
@@ -589,7 +730,11 @@ function parseRecord(raw: string, handoffId: string): StoredRecord | null {
     return null;
   }
   if (record.state === 'used') {
-    return { v: 1, id: handoffId, state: 'used', expiresAt: record.expiresAt };
+    // A tombstone holds nothing else; one that still carries the verifier
+    // (or anything more) is not one this helper wrote.
+    return Object.keys(record).sort().join() === USED_RECORD_KEYS
+      ? { v: 1, id: handoffId, state: 'used', expiresAt: record.expiresAt }
+      : null;
   }
   if (
     record.state !== 'pending'
@@ -598,6 +743,8 @@ function parseRecord(raw: string, handoffId: string): StoredRecord | null {
     || !record.path.startsWith('/')
     || typeof record.verifier !== 'string'
     || !VERIFIER_PATTERN.test(record.verifier)
+    || (record.regionId !== undefined
+      && (typeof record.regionId !== 'string' || !REGION_ID_PATTERN.test(record.regionId)))
   ) {
     return null;
   }
@@ -608,13 +755,46 @@ function parseRecord(raw: string, handoffId: string): StoredRecord | null {
     origin: record.origin,
     path: record.path,
     verifier: record.verifier,
-    expiresAt: record.expiresAt
+    expiresAt: record.expiresAt,
+    ...(typeof record.regionId === 'string' ? { regionId: record.regionId } : {})
   };
 }
 
-function stripErrorParams(search: string): string {
+/**
+ * Reads the social callback's two-factor return
+ * (`?authfnCode=AUTHFN_2FA_REQUIRED&challengeId=…&primaryMethod=…`, no code).
+ */
+function readTwoFactorChallenge(
+  url: URL,
+  fragment: URLSearchParams
+): { challengeId: string; primaryMethod: string } | 'malformed' | null {
+  const present = TWO_FACTOR_QUERY_PARAMS.some((name) => url.searchParams.has(name));
+  if (!present) {
+    return null;
+  }
+  const single = (name: string, pattern: RegExp) => {
+    const values = url.searchParams.getAll(name);
+    return values.length === 1 && pattern.test(values[0]!) ? values[0]! : undefined;
+  };
+  const authfnCode = single(TWO_FACTOR_CODE_PARAM, ERROR_CODE_PATTERN);
+  const challengeId = single('challengeId', CHALLENGE_ID_PATTERN);
+  const primaryMethod = single('primaryMethod', METHOD_PATTERN);
+  if (
+    authfnCode !== TWO_FACTOR_REQUIRED_CODE
+    || !challengeId
+    || !primaryMethod
+    || fragment.has(CODE_PARAM)
+    || fragment.has(MODE_PARAM)
+    || url.searchParams.has('auth_error')
+  ) {
+    return 'malformed';
+  }
+  return { challengeId, primaryMethod };
+}
+
+function stripServerParams(search: string): string {
   const params = new URLSearchParams(search);
-  for (const name of ERROR_QUERY_PARAMS) {
+  for (const name of SERVER_QUERY_PARAMS) {
     params.delete(name);
   }
   const value = params.toString();
@@ -623,7 +803,7 @@ function stripErrorParams(search: string): string {
 
 function stripCallbackParams(url: URL): string {
   const clean = new URL(url.href);
-  clean.search = stripErrorParams(url.search);
+  clean.search = stripServerParams(url.search);
   const fragment = new URLSearchParams(url.hash.startsWith('#') ? url.hash.slice(1) : url.hash);
   for (const name of FRAGMENT_PARAMS) {
     fragment.delete(name);

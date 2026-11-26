@@ -9,6 +9,7 @@ export type { AuthFnBearerTokenProvider } from './transport-auth-internal.js';
 export {
   createBrowserHandoff,
   createMemoryHandoffStore,
+  createRegionalHandoffExchange,
   createWebStorageHandoffStore,
   type AuthFnBrowserHandoff,
   type AuthFnBrowserHandoffBeginInput,
@@ -20,5 +21,7 @@ export {
   type AuthFnBrowserHandoffOptions,
   type AuthFnBrowserHandoffResult,
   type AuthFnBrowserHandoffStore,
-  type AuthFnWebStorageHandoffStoreOptions
+  type AuthFnLockManagerLike,
+  type AuthFnWebStorageHandoffStoreOptions,
+  type AuthFnWebStorageLike
 } from './browser-handoff.js';

@@ -143,13 +143,13 @@ describe('createBrowserHandoff in Chromium', () => {
    * consent screen. (A redirect fulfilled through request interception is not
    * followed, so the page navigates to its Location.)
    */
-  async function beginAndReturn(input: { atomic?: boolean } = {}) {
+  async function beginAndReturn() {
     const tab = await openPage();
-    const { begun, stateId } = await tab.evaluate(async (atomic) => {
-      const begun = await authfnTest.make({ atomic }).begin({ returnTo: `${location.origin}/post-auth` });
+    const { begun, stateId } = await tab.evaluate(async () => {
+      const begun = await authfnTest.make().begin({ returnTo: `${location.origin}/post-auth` });
       const started = await authfnTest.client.startSocialSignIn({ provider: 'google', ...begun.start });
       return { begun, stateId: started.data.stateId };
-    }, input.atomic);
+    });
     const verifier = await readVerifier(tab, begun.handoffId);
     const callback = await auth.router.handle(new Request(
       `${APP}/auth/social/callback/google?code=test-provider-code&state=${encodeURIComponent(stateId)}`
@@ -185,14 +185,51 @@ describe('createBrowserHandoff in Chromium', () => {
     expect(disclosed).not.toContain(verifier);
   });
 
-  it('lets the server decide between two windows when the store has no lock', async () => {
-    const { tab, returnUrl } = await beginAndReturn({ atomic: false });
-    const second = await openPage(returnUrl);
+  it('lets one of two windows complete when a retried start returns two different codes', async () => {
+    const tab = await openPage();
+    const { begun, stateIds } = await tab.evaluate(async () => {
+      const begun = await authfnTest.make().begin({ returnTo: `${location.origin}/post-auth` });
+      // A double click sends the same start twice; each mints its own code.
+      const first = await authfnTest.client.startSocialSignIn({ provider: 'google', ...begun.start });
+      const second = await authfnTest.client.startSocialSignIn({ provider: 'google', ...begun.start });
+      return { begun, stateIds: [first.data.stateId, second.data.stateId] };
+    });
+    const locations: string[] = [];
+    for (const stateId of stateIds) {
+      const callback = await auth.router.handle(new Request(
+        `${APP}/auth/social/callback/google?code=test-provider-code&state=${encodeURIComponent(stateId)}`
+      ));
+      locations.push(new URL(callback.headers.get('location')!, APP).href);
+    }
+    expect(new URL(locations[0]!).hash).not.toBe(new URL(locations[1]!).hash);
+    await tab.goto(locations[0]!);
+    const second = await openPage(locations[1]!);
 
-    const results = await Promise.all([complete(tab, false), complete(second, false)]);
+    const results = await Promise.all([complete(tab), complete(second)]);
 
-    expect(results.filter((result) => result.status === 'completed')).toHaveLength(1);
-    expect(results.find((result) => result.status === 'failed')).toMatchObject({ reason: 'already-used' });
+    expect(results.map((result) => result.status).sort()).toEqual(['completed', 'failed']);
+    expect(results.find((result) => result.status === 'failed')).toMatchObject({
+      reason: 'already-used',
+      handoffId: begun.handoffId
+    });
+    expect(exchanges).toBe(1);
+  });
+
+  it('refuses to begin or complete in a window without Web Locks', async () => {
+    const tab = await openPage();
+    expect(await tab.evaluate(() => authfnTest.make({ atomic: false })
+      .begin({ returnTo: `${location.origin}/post-auth` })
+      .then(() => 'begun', (error: Error) => error.message))).toMatch(/atomic/);
+
+    const { tab: returned, begun } = await beginAndReturn();
+    expect(await complete(returned, false)).toMatchObject({
+      status: 'failed',
+      reason: 'store-not-atomic',
+      handoffId: begun.handoffId,
+      cleanUrl: `${APP}/post-auth`
+    });
+    expect(await returned.evaluate((key) => localStorage.getItem(key), `authfn.handoff.${begun.handoffId}`)).toBeNull();
+    expect(exchanges).toBe(0);
   });
 
   it('completes after the page reloads and refuses the same return after the next reload', async () => {

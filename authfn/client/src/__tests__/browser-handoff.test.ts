@@ -3,12 +3,15 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   createBrowserHandoff,
   createMemoryHandoffStore,
+  createWebStorageHandoffStore,
   type AuthFnBrowserHandoffBeginResult,
   type AuthFnBrowserHandoffEvent,
   type AuthFnBrowserHandoffExchange,
   type AuthFnBrowserHandoffOptions,
   type AuthFnBrowserHandoffResult,
-  type AuthFnBrowserHandoffStore
+  type AuthFnBrowserHandoffStore,
+  type AuthFnLockManagerLike,
+  type AuthFnWebStorageLike
 } from '../index.js';
 
 const APP = 'https://app.example.com';
@@ -144,6 +147,37 @@ function failed(result: AuthFnBrowserHandoffResult) {
 
 const consoleMethods = ['log', 'info', 'warn', 'error', 'debug'] as const;
 
+/** `localStorage` as several windows of one origin share it. */
+function createSharedStorage(): AuthFnWebStorageLike {
+  const values = new Map<string, string>();
+  return {
+    get length() {
+      return values.size;
+    },
+    key: (index) => Array.from(values.keys())[index] ?? null,
+    getItem: (key) => values.get(key) ?? null,
+    setItem: (key, value) => {
+      values.set(key, value);
+    },
+    removeItem: (key) => {
+      values.delete(key);
+    }
+  };
+}
+
+/** Web Locks: one holder of a name at a time, granted asynchronously. */
+function createLockManager(): AuthFnLockManagerLike {
+  const tails = new Map<string, Promise<unknown>>();
+  return {
+    request: (name, _options, callback) => {
+      const previous = tails.get(name) ?? Promise.resolve();
+      const run = previous.then(() => new Promise((resolve) => setTimeout(resolve, 1))).then(callback);
+      tails.set(name, run.catch(() => undefined));
+      return run;
+    }
+  };
+}
+
 describe('createBrowserHandoff', () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -165,9 +199,10 @@ describe('createBrowserHandoff', () => {
 
   it('completes after a reload from the shared store and retires the verifier', async () => {
     const { make, store, server, events } = setup();
-    const begun = await make().begin({ returnTo: RETURN_TO });
+    const begun = await make().begin({ returnTo: RETURN_TO, regionId: 'region-a' });
     const verifier = await storedVerifier(store, begun.handoffId);
-    const callback = server.callbackFor(begun, { regionId: 'region-a' });
+    // The callback's own regionId is not trusted for routing the exchange.
+    const callback = server.callbackFor(begun, { regionId: 'region-b' });
 
     // A new instance stands in for the page that loads after the redirect.
     const result = await make().complete(`${callback}&keep=1`);
@@ -207,32 +242,49 @@ describe('createBrowserHandoff', () => {
     expect(server.exchange).toHaveBeenCalledTimes(1);
   });
 
-  it('relies on the single-use exchange when the store cannot claim atomically', async () => {
-    const { make, server, store } = setup();
-    // Both windows read the record before either writes, as plain
-    // localStorage without Web Locks allows.
-    const racy: AuthFnBrowserHandoffStore = {
-      ...store,
-      compareAndSet: async (key, _expected, next) => {
-        await (next === null ? store.delete(key) : store.set(key, next));
-        return true;
-      }
-    };
-    const begun = await make({ store: racy }).begin({ returnTo: RETURN_TO });
-    const callback = server.callbackFor(begun);
+  it('lets one completion through when two windows return with different codes for one handoff', async () => {
+    // A retried /social/start mints a second code with the same challenge;
+    // the server consumes each code once, so only the claim stops the second.
+    const storage = createSharedStorage();
+    const locks = createLockManager();
+    const window = () => createWebStorageHandoffStore(storage, { locks });
+    const { make, server } = setup();
+    const begun = await make({ store: window() }).begin({ returnTo: RETURN_TO });
+    const first = server.callbackFor(begun);
+    const second = server.callbackFor(begun);
 
     const results = await Promise.all([
-      make({ store: racy }).complete(callback),
-      make({ store: racy }).complete(callback)
+      make({ store: window() }).complete(first),
+      make({ store: window() }).complete(second)
     ]);
 
-    expect(server.exchange).toHaveBeenCalledTimes(2);
-    expect(server.exchanged).toBe(1);
-    expect(results.filter((result) => result.status === 'completed')).toHaveLength(1);
-    expect(results.find((result) => result.status === 'failed')).toMatchObject({
-      reason: 'already-used',
-      error: { code: 'AUTHFN_OAUTH_STATE_REPLAYED' }
+    expect(results.map((result) => result.status).sort()).toEqual(['completed', 'failed']);
+    expect(results.find((result) => result.status === 'failed')).toMatchObject({ reason: 'already-used' });
+    expect(server.exchange).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses to begin or complete on a store that cannot claim atomically', async () => {
+    const storage = createSharedStorage();
+    const lockless = createWebStorageHandoffStore(storage, { locks: null });
+    expect(lockless.atomic).toBe(false);
+    expect(createWebStorageHandoffStore(storage, { locks: createLockManager() }).atomic).toBe(true);
+    const { make, server } = setup();
+
+    await expect(make({ store: lockless }).begin({ returnTo: RETURN_TO })).rejects.toThrow(/atomic/);
+    expect(storage.length).toBe(0);
+
+    const begun = await make({ store: createWebStorageHandoffStore(storage, { locks: createLockManager() }) })
+      .begin({ returnTo: RETURN_TO });
+    const callback = server.callbackFor(begun);
+    expect(await make({ store: lockless }).complete(callback)).toMatchObject({
+      status: 'failed',
+      reason: 'store-not-atomic',
+      handoffId: begun.handoffId,
+      cleanUrl: RETURN_TO
     });
+    // The verifier is retired, so no window can exchange this return later.
+    expect(storage.length).toBe(0);
+    expect(server.exchange).not.toHaveBeenCalled();
   });
 
   it('refuses a duplicate return without exchanging again', async () => {
@@ -254,6 +306,25 @@ describe('createBrowserHandoff', () => {
 
     expect(failed(await make().complete(callback)).reason).toBe('expired');
     expect(Array.from(await store.keys())).toEqual([]);
+    expect(server.exchange).not.toHaveBeenCalled();
+  });
+
+  it('rechecks expiry after a claim that waited past the deadline, without exchanging', async () => {
+    const { make, server, store, clock } = setup({ ttlMs: 60_000 });
+    const begun = await make().begin({ returnTo: RETURN_TO });
+    const callback = server.callbackFor(begun);
+    clock.advance(59_000);
+    // The claim waits on another window's lock until after the deadline.
+    const slow: AuthFnBrowserHandoffStore = {
+      ...store,
+      compareAndSet: async (key, expected, next) => {
+        clock.advance(2_000);
+        return store.compareAndSet(key, expected, next);
+      }
+    };
+
+    expect(failed(await make({ store: slow }).complete(callback)).reason).toBe('expired');
+    expect(JSON.parse(String(await store.get(`authfn.handoff.${begun.handoffId}`)))).toMatchObject({ state: 'used' });
     expect(server.exchange).not.toHaveBeenCalled();
   });
 
@@ -287,8 +358,13 @@ describe('createBrowserHandoff', () => {
     const { make, server } = setup();
     const handoff = make();
 
-    expect(failed(await handoff.complete(`${RETURN_TO}#token=test-handoff-code-1&handoff=code`)).reason)
-      .toBe('flow-mismatch');
+    expect(await handoff.complete(`${RETURN_TO}#token=test-handoff-code-1&handoff=code&keep=1`)).toEqual({
+      status: 'failed',
+      reason: 'flow-mismatch',
+      cleanUrl: `${RETURN_TO}#keep=1`
+    });
+    expect(await handoff.complete('https://evil.example.com/post-auth?auth_error=x#token=test-handoff-code-1&handoff=code'))
+      .toEqual({ status: 'failed', reason: 'origin-mismatch', cleanUrl: 'https://evil.example.com/post-auth' });
     expect(failed(await handoff.complete(`${RETURN_TO}#authfn_handoff=AAAAAAAAAAAAAAAAAAAAAA&token=x&handoff=code`)).reason)
       .toBe('unknown-handoff');
     expect(failed(await handoff.complete(`${RETURN_TO}#authfn_handoff=not-an-id`)).reason)
@@ -317,6 +393,78 @@ describe('createBrowserHandoff', () => {
     });
     expect(failed(await make().complete(server.callbackFor(begun))).reason).toBe('already-used');
     expect(server.exchange).not.toHaveBeenCalled();
+  });
+
+  it('returns the two-factor challenge of the social callback and retires the handoff', async () => {
+    const { make, server, events } = setup();
+    const begun = await make().begin({ returnTo: RETURN_TO });
+    // The callback's shape when two-factor is on: the challenge in the query,
+    // the handoff id kept in the fragment, and no code.
+    const url = new URL(begun.start.returnTo);
+    url.searchParams.set('authfnCode', 'AUTHFN_2FA_REQUIRED');
+    url.searchParams.set('challengeId', 'signin_2fa_test-challenge');
+    url.searchParams.set('primaryMethod', 'oauth-google');
+
+    expect(await make().complete(url.href)).toEqual({
+      status: 'two-factor-required',
+      handoffId: begun.handoffId,
+      challengeId: 'signin_2fa_test-challenge',
+      primaryMethod: 'oauth-google',
+      cleanUrl: RETURN_TO
+    });
+    expect(events.map((event) => event.type)).toEqual(['begun', 'two-factor-required']);
+    expect(failed(await make().complete(server.callbackFor(begun))).reason).toBe('already-used');
+    expect(server.exchange).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['without a challenge id', (url: URL) => url.searchParams.delete('challengeId')],
+    ['with another code', (url: URL) => url.searchParams.set('authfnCode', 'AUTHFN_OTHER')],
+    ['with a handoff code too', (url: URL) => {
+      url.hash = `${url.hash.slice(1)}&token=test-handoff-code-1&handoff=code`;
+    }]
+  ])('refuses a two-factor return %s as malformed', async (_label, mutate) => {
+    const { make, server } = setup();
+    const begun = await make().begin({ returnTo: RETURN_TO });
+    const url = new URL(begun.start.returnTo);
+    url.searchParams.set('authfnCode', 'AUTHFN_2FA_REQUIRED');
+    url.searchParams.set('challengeId', 'signin_2fa_test-challenge');
+    url.searchParams.set('primaryMethod', 'oauth-google');
+    mutate(url);
+
+    expect(failed(await make().complete(url.href)).reason).toBe('malformed-callback');
+    expect(server.exchange).not.toHaveBeenCalled();
+  });
+
+  it('never repeats exchange text that echoes the request', async () => {
+    const { make, server, store } = setup();
+    const begun = await make().begin({ returnTo: RETURN_TO });
+    const verifier = await storedVerifier(store, begun.handoffId);
+    const callback = server.callbackFor(begun);
+    const code = new URL(callback).hash.match(/token=([^&]+)/)![1]!;
+    // A fetch adapter whose error message repeats the request body.
+    const echo = JSON.stringify({ code, verifier });
+    const result = await make({
+      exchange: async () => ({
+        ok: false as const,
+        error: { code: 'AUTHFN_NETWORK_ERROR', message: `request ${echo} failed`, retryable: true },
+        requestId: `req-${code}`
+      })
+    }).complete(callback);
+
+    expect(result).toEqual({
+      status: 'failed',
+      reason: 'exchange-canceled',
+      handoffId: begun.handoffId,
+      cleanUrl: RETURN_TO,
+      error: { code: 'AUTHFN_NETWORK_ERROR', message: 'The social sign-in exchange did not complete' }
+    });
+    const thrown = await make({
+      exchange: async () => {
+        throw new Error(`request ${echo} failed`);
+      }
+    }).complete(server.callbackFor(await make().begin({ returnTo: RETURN_TO })));
+    expect(JSON.stringify(thrown)).not.toContain('request');
   });
 
   it.each([
@@ -362,7 +510,8 @@ describe('createBrowserHandoff', () => {
     ['an unknown version', (record: Record<string, unknown>) => JSON.stringify({ ...record, v: 2 })],
     ['another handoff id', (record: Record<string, unknown>) => JSON.stringify({ ...record, id: 'BBBBBBBBBBBBBBBBBBBBBB' })],
     ['a short verifier', (record: Record<string, unknown>) => JSON.stringify({ ...record, verifier: 'short' })],
-    ['no expiry', (record: Record<string, unknown>) => JSON.stringify({ ...record, expiresAt: 'later' })]
+    ['no expiry', (record: Record<string, unknown>) => JSON.stringify({ ...record, expiresAt: 'later' })],
+    ['a used record that keeps its verifier', (record: Record<string, unknown>) => JSON.stringify({ ...record, state: 'used' })]
   ])('removes a persisted record that is %s without exchanging', async (_label, corrupt) => {
     const { make, server, store } = setup();
     const begun = await make().begin({ returnTo: RETURN_TO });
@@ -453,10 +602,18 @@ describe('createBrowserHandoff', () => {
     'https://evil.example.com/post-auth',
     `${RETURN_TO}#tab=x`,
     '/post-auth',
-    `${APP}/post-auth?auth_error=x`
+    `${APP}/post-auth?auth_error=x`,
+    `${APP}/post-auth?authfnCode=AUTHFN_2FA_REQUIRED`,
+    `blob:${APP}/00000000-0000-4000-8000-000000000001`
   ])('refuses to begin with returnTo %s', async (returnTo) => {
     const { make, store } = setup();
     await expect(make().begin({ returnTo })).rejects.toThrow(TypeError);
+    expect(Array.from(await store.keys())).toEqual([]);
+  });
+
+  it('refuses to begin with a region id that is not a plain id', async () => {
+    const { make, store } = setup();
+    await expect(make().begin({ returnTo: RETURN_TO, regionId: 'eu/../x' })).rejects.toThrow(TypeError);
     expect(Array.from(await store.keys())).toEqual([]);
   });
 });
