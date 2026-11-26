@@ -1487,7 +1487,7 @@ describe('verification provenance', () => {
 
 describe('hook and upload outcomes outside their contract', () => {
   it.each([
-    ['a version with a path separator', { versionId: '/' }],
+    ['a version that is a dot segment', { versionId: '..' }],
     ['a file ID outside the server grammar', { fileId: '../file' }],
   ])('keeps an upload result naming %s ambiguous under the same key', async (_label, result) => {
     const a = tab('a', { uploader: { upload: async (input) => ({ fileId: input.fileId, versionId: 'ver_1', ...result }) } });
@@ -2730,7 +2730,7 @@ describe('architecture reset: durable observation order and the upload result sc
     ['an outer error with ok: true', { ok: true, error: { code: 'FILEFN_INTERNAL' }, data: { fileId: FILE_ID, versionId: 'ver_1' } }],
     ['ok: false', { ok: false, fileId: FILE_ID, versionId: 'ver_1' }],
     ['an error member', { fileId: FILE_ID, versionId: 'ver_1', error: 'failed' }],
-    ['a malformed versionId', { fileId: FILE_ID, versionId: 'ver/1' }],
+    ['a malformed versionId', { fileId: FILE_ID, versionId: '..' }],
     ['an inner ok: false in the success envelope', { ok: true, data: { ok: false, fileId: FILE_ID, versionId: 'ver_1' } }],
     ['an inner error in the success envelope', { ok: true, data: { fileId: FILE_ID, versionId: 'ver_1', error: { code: 'FILEFN_INTERNAL' } } }],
   ])('keeps a custom uploader result with %s provisional', async (_label, result) => {
@@ -2841,5 +2841,86 @@ describe('round 14: a preview is ordered against every observation of its file',
     gate.release();
     expect(await preview).toMatchObject({ uploadSessionId: newer.entry.operationId, source: { url: 'blob:size-9' } });
     a.dispose();
+  });
+});
+
+describe('round 15: aborts, caller callbacks and absences', () => {
+  const isAdmissionLock = (lock: string) => lock.includes(':admission:');
+  const isPartitionLock = (lock: string) =>
+    !lock.includes(':entry:') && !lock.includes(':admission:') && !lock.startsWith('filefn-offline-legacy:');
+
+  it('removes the generation when the abort comes while the admission call waits on its outer fence, before another tab claims it', async () => {
+    const gated = gatedCoordinator('a');
+    let fence: ReturnType<typeof deferred<OfflineQueuePrincipal>> | undefined;
+    let gateNext = false;
+    const a = tab('a', {
+      coordinator: gated.coordinator,
+      currentPrincipal: () => {
+        if (!gateNext) return ALICE.principal;
+        gateNext = false;
+        fence = deferred<OfflineQueuePrincipal>();
+        return fence.promise;
+      },
+    });
+    const uploader = recordingUploader();
+    const b = tab('b', { uploader });
+    const controller = new AbortController();
+    const gate = gated.arm(isAdmissionLock);
+    const staging = a.stageAdmitted({ policy: 'p', file: new Blob(['v1'], { type: 'text/plain' }), fileName: 'a.txt', fileId: FILE_ID }, controller.signal);
+    await gate.reached;
+    // The release committed; the call now waits on its outer fence.
+    gateNext = true;
+    gate.release();
+    await vi.waitFor(() => expect(fence).toBeDefined());
+    controller.abort();
+    const polled = b.process(FILE_ID);
+    expect(await polled).toEqual({ status: 'not-found' });
+    fence!.resolve(ALICE.principal);
+    expect(await staging).toMatchObject({ status: 'cancelled', entryId: FILE_ID });
+    expect(uploader.calls).toHaveLength(0);
+    expect(await b.get(FILE_ID)).toBeNull();
+    a.dispose();
+    b.dispose();
+  });
+
+  it('frees the partition lock when a principal check never settles and the queue is disposed', async () => {
+    let hang = false;
+    const a = tab('a', {
+      currentPrincipal: () =>
+        hang && locks.heldNames().some(isPartitionLock) ? new Promise<OfflineQueuePrincipal>(() => {}) : ALICE.principal,
+    });
+    await stage(a);
+    hang = true;
+    const pass = a.process(FILE_ID);
+    void pass.catch(() => {});
+    await vi.waitFor(() => expect(locks.heldNames().some(isPartitionLock)).toBe(true));
+    a.dispose();
+    await expect(pass).rejects.toMatchObject({ code: 'FILEFN_QUEUE_DISPOSED' });
+    const uploader = recordingUploader();
+    const b = tab('b', { uploader });
+    expect(await b.process(FILE_ID)).toMatchObject({ status: 'published' });
+    expect(uploader.calls).toHaveLength(1);
+    b.dispose();
+  });
+
+  it('rereads a preview that saw an entry another tab removed before a later listing in this tab', async () => {
+    vi.stubGlobal('URL', { createObjectURL: (blob: Blob) => `blob:size-${blob.size}`, revokeObjectURL: () => {} });
+    const gated = gatedCoordinator('a');
+    const a = tab('a', { coordinator: gated.coordinator });
+    const b = tab('b');
+    const older = await stage(a, 'aaa', { entryId: 'entry-a' });
+    await stage(a, 'bbbbbbbbb', { entryId: 'entry-b' });
+    expect((await a.list()).map((entry) => entry.entryId)).toEqual(['entry-a', 'entry-b']);
+    const gate = gated.arm(isPartitionLock);
+    const preview = a.getPendingLocalDescriptor(FILE_ID);
+    await gate.reached;
+    // The read found entry-b; it is removed in tab b, and tab a lists again.
+    expect(await b.cancel('entry-b')).toBe(true);
+    expect((await a.list()).map((entry) => entry.entryId)).toEqual(['entry-a']);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    gate.release();
+    expect(await preview).toMatchObject({ uploadSessionId: older.entry.operationId, source: { url: 'blob:size-3' } });
+    a.dispose();
+    b.dispose();
   });
 });

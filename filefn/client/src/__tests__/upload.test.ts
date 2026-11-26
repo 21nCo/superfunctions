@@ -449,7 +449,7 @@ describe('error handling', () => {
 describe('replayed session end', () => {
   it.each([
     ['a numeric session ID', 42],
-    ['a session ID with a path separator', 'ups/../x'],
+    ['a session ID that is a dot segment', '..'],
   ])('keeps an expired answer with %s ambiguous instead of confirming the end', async (_label, uploadSessionId) => {
     const { UPLOAD_SESSION_ENDED_ERROR } = await import('../upload-manager.js');
     const client = createFileFnClient({ baseUrl: 'https://api.test/files' });
@@ -465,5 +465,25 @@ describe('replayed session end', () => {
     mockFetch.mockResolvedValueOnce(createMockResponse({ ok: true, data: { uploadSessionId: 'ups_1', status: 'expired', totalParts: 1, chunkSizeBytes: 100 } }));
     const error = await client.uploadFile({ policy: 'p', file: createMockBlob(10), fileId: generateFileId() }).done().catch((e: unknown) => e);
     expect((error as { code?: string }).code).toBe(UPLOAD_SESSION_ENDED_ERROR);
+  });
+});
+
+describe('round 15: the online upload accepts what the server sends', () => {
+  it.each([
+    ['a legacy { data } envelope without ok', 'session_003', (data: Record<string, unknown>) => ({ data })],
+    ['a server-generated session ID with ":" and "."', 'sess:2026.a', (data: Record<string, unknown>) => ({ ok: true, data })],
+  ])('completes an upload whose init answers with %s', async (_label, uploadSessionId, wrap) => {
+    const client = createFileFnClient({ baseUrl: 'https://api.test/files' });
+    const encoded = encodeURIComponent(uploadSessionId);
+    mockFetch
+      .mockResolvedValueOnce(createMockResponse(wrap({ uploadSessionId, chunkSizeBytes: 100, totalParts: 1 })))
+      .mockResolvedValueOnce(createMockResponse({ url: 'https://storage.test/upload/part1' }))
+      .mockResolvedValueOnce(createMockResponse({}, 200, { ETag: '"etag-1"' }))
+      .mockResolvedValueOnce(createMockResponse({ recorded: true }))
+      .mockResolvedValueOnce(createMockResponse({ fileId: 'file_00000003', versionId: 'ver.2026:1' }));
+    const result = await client.uploadFile({ policy: 'p', file: createMockBlob(10), fileId: 'file_00000003' }).done();
+    expect(result).toEqual({ fileId: 'file_00000003', versionId: 'ver.2026:1' });
+    expect(mockFetch.mock.calls[1][0]).toBe(`https://api.test/files/upload/${encoded}/parts/1/sign`);
+    expect(mockFetch.mock.calls[4][0]).toBe(`https://api.test/files/upload/${encoded}/complete`);
   });
 });

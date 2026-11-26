@@ -57,12 +57,24 @@ export class FileFnHttpError extends Error {
 export const UPLOAD_RESULT_INVALID_ERROR = "FILEFN_UPLOAD_RESULT_INVALID";
 
 /**
- * A server-issued identifier such as a version or session ID: 1-256 URL-safe
- * characters (letters, digits, `_` and `-`, not starting with `_` or `-`), so
- * it names one path segment and nothing else (no `/`, `.` or `%`).
+ * A server-issued identifier such as a version or session ID. The server's
+ * `generateId` may produce any string, so the client accepts any string of
+ * 1-1024 characters that can name exactly one encoded path segment: not
+ * blank, no control characters, and not a dot segment (`.` or `..`, which
+ * `encodeURIComponent` leaves as they are and URL parsing collapses). Every
+ * path built from an identifier encodes it (`encodeURIComponent`).
  */
 export function isWellFormedId(value: unknown): value is string {
-  return typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9_-]{0,255}$/.test(value);
+  return (
+    typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= 1024 &&
+    value.trim().length > 0 &&
+    value !== "." &&
+    value !== ".." &&
+    // eslint-disable-next-line no-control-regex
+    !/[\u0000-\u001f\u007f]/.test(value)
+  );
 }
 
 /** Checks a decoded payload: true when it has the route's shape. */
@@ -71,7 +83,8 @@ export type FileFnSchema<T> = (data: unknown) => data is T;
 /**
  * What one FileFn answer proves, decided in one place (`decodeFileFnResult`):
  * - `ok`: a 2xx, not redirected, whose body is `{ ok: true, data }` (with no
- *   `error`) or a legacy bare body (no `ok` or `error` member), and whose
+ *   `error`), a legacy `{ data }` envelope (no `ok` or `error`) or a legacy
+ *   bare body (no `ok`, `error` or object `data` member), and whose
  *   payload passes the route's schema;
  * - `refused`: a non-2xx from the verified FileFn route, not redirected, whose
  *   body is a FileFn error envelope with a code;
@@ -95,8 +108,8 @@ function resultInvalid(message: string): Error & { code: string } {
 
 /**
  * The payload of a successful body, through the route's schema: the data of
- * `{ ok: true, data }` with no `error`, or a bare legacy body that names no
- * `ok` or `error`. Any other body (an `ok` that is not `true`, an `error`,
+ * `{ ok: true, data }` with no `error`, of a legacy `{ data }` envelope that
+ * names no `ok` or `error`, or a bare legacy body. Any other body (an `ok` that is not `true`, an `error`,
  * a payload of another shape, a payload that itself carries an `ok` other
  * than `true` or a non-null `error`) proves nothing. Also used for a custom
  * offline uploader's result.
@@ -107,6 +120,9 @@ export function decodeFileFnBody<T>(body: unknown, schema: FileFnSchema<T>): Fil
     if (body.ok !== true || (body.error !== undefined && body.error !== null)) {
       return { kind: "unknown", error: resultInvalid("The answer is not a FileFn success envelope") };
     }
+    payload = body.data;
+  } else if (isObject(body) && isObject(body.data)) {
+    // A legacy `{ data: {...} }` envelope without `ok` (accepted since 0.x).
     payload = body.data;
   }
   if (isObject(payload) && (("ok" in payload && payload.ok !== true) || (payload.error !== undefined && payload.error !== null))) {
@@ -729,7 +745,7 @@ export function createHttpClient(config: FileFnClientConfig, httpOptions: HttpCl
     async getUploadStatus(uploadSessionId, uploadSessionToken, signal) {
       return request<UploadStatusResponse>(
         "GET",
-        `/upload/${uploadSessionId}/status`,
+        `/upload/${encodeURIComponent(uploadSessionId)}/status`,
         undefined,
         signal,
         retryOptions,
@@ -741,7 +757,7 @@ export function createHttpClient(config: FileFnClientConfig, httpOptions: HttpCl
     async signPart(uploadSessionId, partNumber, contentLength, uploadSessionToken, signal) {
       return request<SignPartResponse>(
         "POST",
-        `/upload/${uploadSessionId}/parts/${partNumber}/sign`,
+        `/upload/${encodeURIComponent(uploadSessionId)}/parts/${partNumber}/sign`,
         { contentLength },
         signal,
         retryOptions,
@@ -753,7 +769,7 @@ export function createHttpClient(config: FileFnClientConfig, httpOptions: HttpCl
     async completePart(uploadSessionId, partNumber, etag, size, uploadSessionToken, signal) {
       return request<CompletePartResponse>(
         "POST",
-        `/upload/${uploadSessionId}/parts/${partNumber}/complete`,
+        `/upload/${encodeURIComponent(uploadSessionId)}/parts/${partNumber}/complete`,
         { etag, size },
         signal,
         retryOptions,
@@ -765,7 +781,7 @@ export function createHttpClient(config: FileFnClientConfig, httpOptions: HttpCl
     async completeUpload(uploadSessionId, uploadSessionToken, signal) {
       return request<CompleteUploadResponse>(
         "POST",
-        `/upload/${uploadSessionId}/complete`,
+        `/upload/${encodeURIComponent(uploadSessionId)}/complete`,
         undefined,
         signal,
         retryOptions,
@@ -777,7 +793,7 @@ export function createHttpClient(config: FileFnClientConfig, httpOptions: HttpCl
     async abortUpload(uploadSessionId, uploadSessionToken, signal) {
       return request<AbortUploadResponse>(
         "POST",
-        `/upload/${uploadSessionId}/abort`,
+        `/upload/${encodeURIComponent(uploadSessionId)}/abort`,
         undefined,
         signal,
         retryOptions,

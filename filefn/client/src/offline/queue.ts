@@ -770,6 +770,41 @@ function raceAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
   });
 }
 
+/**
+ * Runs app code that the queue awaits before any effect (no request sent, no
+ * hook started), raced with every given signal: the first abort rejects with
+ * AbortError at once, aborts the signal handed to `fn`, and discards whatever
+ * `fn` settles with later. So a callback that ignores its signal and never
+ * settles cannot keep the partition lock (another tab's work) or the entry
+ * lock after a disposal or an abort.
+ *
+ * The one path for every such callback:
+ * - `currentPrincipal`, in every principal check (`principalMatches`: the
+ *   fences under the partition and entry locks, waiter and event delivery);
+ * - `uploader.replayScope` (the client's `offline.replayAccount`), in
+ *   `resolveReplayScope`;
+ * - `offline.getAuthHeaders`, before each request of the built-in replay
+ *   uploader (`replayUploader` in the client).
+ * Uploads and hooks that may already have taken effect are not covered: their
+ * step keeps the entry lock until they settle (raced only to stop waiting).
+ */
+export function raceCallerCallback<T>(
+  fn: (signal: AbortSignal) => Promise<T> | T,
+  signals: ReadonlyArray<AbortSignal | undefined>,
+): Promise<T> {
+  const controller = new AbortController();
+  const live = signals.filter((signal): signal is AbortSignal => signal !== undefined);
+  if (live.some((signal) => signal.aborted)) {
+    controller.abort();
+    return Promise.reject(abortError());
+  }
+  const onAbort = () => controller.abort();
+  for (const signal of live) signal.addEventListener('abort', onAbort, { once: true });
+  return raceAbort(invoke(() => fn(controller.signal)), controller.signal).finally(() => {
+    for (const signal of live) signal.removeEventListener('abort', onAbort);
+  });
+}
+
 function toJson(value: unknown): unknown {
   if (value === undefined) return undefined;
   try {
@@ -1317,7 +1352,8 @@ export class OfflineQueue {
    * generation (`cancelled`) without it ever being runnable; otherwise the
    * hold is released and only that committed release announces work. An
    * abort after that release (while this call is still returning) requests
-   * `abortStaged` at once: it is ordered against the first upload-step claim
+   * `abortStaged` at once, until this call has returned (its outer fence
+   * included): it is ordered against the first upload-step claim
    * by the partition lock, removes the generation only if that claim never
    * committed, and otherwise throws FILEFN_QUEUE_UPLOAD_STARTED with the
    * generation kept. A committed staging that a principal switch refused
@@ -1332,46 +1368,57 @@ export class OfflineQueue {
     if (this.disposed) throw new OfflineQueueError('FILEFN_QUEUE_DISPOSED', 'Offline queue was disposed');
     const capability = this.capabilities();
     if (!capability.durable) return { status: 'refused', reason: capability.reason! };
-    return this.disclosing(async (after) => {
-      const holdId = randomId('hold');
-      const lockName = await this.admissionLockName(holdId);
-      let abortRun: Promise<boolean> | undefined;
-      let listener: (() => void) | undefined;
-      let result: OfflineQueueStageResult | { status: 'cancelled'; entryId: string; generation: number };
-      try {
-        result = await this.coordinator!.request(lockName, { signal: this.lifetime.signal }, async () => {
-          const staged = await this.stageWith(input, holdId);
-          if (staged.status !== 'staged') return staged;
-          const { entryId, generation } = staged.entry;
-          // From the committed staging on, an abort is a lock-ordered request
-          // at once. Before the release commits, the admission hold keeps any
-          // claim out, so it always removes the generation (and the ending
-          // transaction then finds it gone, or reads the abort itself).
-          const request = () => {
-            abortRun ??= this.abortStagedIn(entryId, generation, after);
-            void abortRun.catch(() => {});
-          };
-          listener = request;
-          signal.addEventListener('abort', request, { once: true });
-          const ended = await this.endAdmission(entryId, generation, holdId, () => signal.aborted);
-          if (ended === 'cancelled') return { status: 'cancelled', entryId, generation } as const;
-          return staged;
-        });
-      } catch (error) {
-        if (this.disposed && isAbort(error)) throw new OfflineQueueError('FILEFN_QUEUE_DISPOSED', 'Offline queue was disposed');
-        throw error;
-      } finally {
-        if (listener) signal.removeEventListener('abort', listener);
-      }
+    let abortRun: Promise<boolean> | undefined;
+    let listener: (() => void) | undefined;
+    // Waiter settlements of the abort's removal: flushed once this call is
+    // over, behind a fresh principal check, whenever the abort came.
+    const removals: Array<() => void> = [];
+    type Admitted = OfflineQueueStageResult | { status: 'cancelled'; entryId: string; generation: number };
+    try {
+      const result = await this.disclosing<Admitted, Admitted>(async () => {
+        const holdId = randomId('hold');
+        const lockName = await this.admissionLockName(holdId);
+        try {
+          return await this.coordinator!.request(lockName, { signal: this.lifetime.signal }, async () => {
+            const staged = await this.stageWith(input, holdId);
+            if (staged.status !== 'staged') return staged;
+            const { entryId, generation } = staged.entry;
+            // From the committed staging until this call has returned (its
+            // outer fence included), an abort is a lock-ordered request at
+            // once. Before the release commits, the admission hold keeps any
+            // claim out, so it always removes the generation (and the ending
+            // transaction then finds it gone, or reads the abort itself).
+            const request = () => {
+              abortRun ??= this.abortStagedIn(entryId, generation, (settle) => removals.push(settle));
+              void abortRun.catch(() => {});
+            };
+            listener = request;
+            signal.addEventListener('abort', request, { once: true });
+            const ended = await this.endAdmission(entryId, generation, holdId, () => signal.aborted);
+            if (ended === 'cancelled') return { status: 'cancelled', entryId, generation } as const;
+            return staged;
+          });
+        } catch (error) {
+          if (this.disposed && isAbort(error)) throw new OfflineQueueError('FILEFN_QUEUE_DISPOSED', 'Offline queue was disposed');
+          throw error;
+        }
+      }, MISMATCH_REFUSAL);
       if (abortRun && result.status === 'staged') {
         const { entryId, generation } = result.entry;
-        await abortRun;
-        return { status: 'cancelled', entryId, generation } as const;
+        const run = abortRun;
+        // Its outcome (an error may name the phase) passes the fence too.
+        return await this.disclosing<Admitted, Admitted>(async () => {
+          await run;
+          return { status: 'cancelled', entryId, generation } as const;
+        }, MISMATCH_REFUSAL);
       }
       // The ending transaction cancelled it itself: the abort's request finds it gone.
       if (abortRun) await abortRun.catch(() => {});
       return result;
-    }, MISMATCH_REFUSAL);
+    } finally {
+      if (listener) signal.removeEventListener('abort', listener);
+      for (const settle of removals) this.settleAfterReturn(settle);
+    }
   }
 
   /**
@@ -2168,11 +2215,18 @@ export class OfflineQueue {
   private async principalMatches(signal: AbortSignal): Promise<boolean> {
     let matches: boolean;
     try {
-      const principal = await this.options.currentPrincipal(signal);
+      // Raced with the caller's signal and the queue's lifetime: a check that
+      // never settles cannot keep the lock it runs under after a disposal.
+      const principal = await raceCallerCallback(
+        (raced) => this.options.currentPrincipal(raced),
+        [signal, this.lifetime.signal],
+      );
       matches =
         Boolean(principal) &&
         partitionIdentity(normalizeOfflineQueuePartition({ serviceId: this.partition.serviceId, principal: principal! })) === this.identity;
     } catch {
+      // Stopped, not answered: no mismatch was observed, so nothing is revoked.
+      if (signal.aborted || this.lifetime.signal.aborted) return false;
       matches = false;
     }
     if (!matches) this.revokeAllObjectUrls();
@@ -2260,6 +2314,9 @@ export class OfflineQueue {
 
   private async assertPrincipal(signal: AbortSignal): Promise<void> {
     if (!(await this.principalMatches(signal))) {
+      // A check stopped by a disposal or an abort is that, not a mismatch.
+      this.assertUsable();
+      if (signal.aborted) throw abortError();
       throw new OfflineQueueError('FILEFN_QUEUE_PRINCIPAL_MISMATCH', "The current principal is not this queue's");
     }
   }
@@ -3002,26 +3059,18 @@ export class OfflineQueue {
   private async resolveReplayScope(signal: AbortSignal | undefined): Promise<{ scope: string } | { error: unknown }> {
     const uploader = this.options.uploader;
     await this.discloseFence(signal);
-    const controller = new AbortController();
-    const onAbort = () => controller.abort();
-    if (this.lifetime.signal.aborted || signal?.aborted) controller.abort();
-    this.lifetime.signal.addEventListener('abort', onAbort, { once: true });
-    signal?.addEventListener('abort', onAbort, { once: true });
     let scope: unknown;
     try {
-      // Raced with the pass and the queue's lifetime, as every step is: a
-      // resolver that never settles (or ignores its signal) cannot keep the
+      // Raced with the pass and the queue's lifetime (`raceCallerCallback`):
+      // a resolver that never settles (or ignores its signal) cannot keep the
       // entry lock after an abort or disposal; its late result is discarded.
-      scope = await raceAbort(
-        invoke(() => uploader.replayScope!.call(uploader, this.partition.principal, controller.signal)),
-        controller.signal,
+      scope = await raceCallerCallback(
+        (raced) => uploader.replayScope!.call(uploader, this.partition.principal, raced),
+        [signal, this.lifetime.signal],
       );
     } catch (error) {
       if (isPrincipalMismatch(error) || this.disposed || signal?.aborted) throw error;
       return { error };
-    } finally {
-      this.lifetime.signal.removeEventListener('abort', onAbort);
-      signal?.removeEventListener('abort', onAbort);
     }
     await this.discloseFence(signal);
     if (!isReplayScope(scope)) {
@@ -3099,7 +3148,12 @@ export class OfflineQueue {
   ): Promise<Plan> {
     const found = await this.readEntry(root, entryId);
     if (!found) {
+      const meta = await this.loadMeta(await this.partitionDir(root));
       await this.txFence!();
+      // Its absence is an observation like any other (`settleAbsent`).
+      if (!this.disposed && (await this.principalMatches(this.lifetime.signal))) {
+        this.settleAbsent(entryId, meta.tombstones, meta.lastGeneration);
+      }
       return { kind: 'done', result: { status: 'not-found' } };
     }
     const { dir, record } = found;
@@ -3651,10 +3705,16 @@ export class OfflineQueue {
     }
   }
 
-  /** Applies the absence of every entry with waiters or a preview that a partition-wide read did not find. */
+  /**
+   * Applies, through `settleAbsent`, the absence of every entry this instance
+   * knows (waiters, previews, an applied observation, any file's view) that a
+   * partition-wide read did not find, so a preview read that saw it present
+   * earlier is ordered behind that absence.
+   */
   private forgetAbsent(present: Set<string>, tombstones: Tombstone[], lastGeneration: number): void {
-    const absent = new Set([...this.waiters.keys(), ...this.objectUrls.keys()].filter((entryId) => !present.has(entryId)));
-    for (const entryId of absent) this.settleAbsent(entryId, tombstones, lastGeneration);
+    const known = new Set([...this.waiters.keys(), ...this.objectUrls.keys(), ...this.applied.keys()]);
+    for (const view of this.fileView.values()) for (const entryId of view.keys()) known.add(entryId);
+    for (const entryId of known) if (!present.has(entryId)) this.settleAbsent(entryId, tombstones, lastGeneration);
   }
 
   /**

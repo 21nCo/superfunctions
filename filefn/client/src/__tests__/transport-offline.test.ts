@@ -612,7 +612,7 @@ describe('replay settlement boundaries', () => {
     ['ok: false', (init: RequestInit) => json({ ok: false, data: { uploadSessionId: 'sess_1', status: 'aborted', ...replayScopeOf(init) } })],
     ['no session ID', (init: RequestInit) => envelope({ status: 'expired', ...replayScopeOf(init) })],
     ['a numeric session ID', (init: RequestInit) => envelope({ uploadSessionId: 12, status: 'expired', ...replayScopeOf(init) })],
-    ['a path-like session ID', (init: RequestInit) => envelope({ uploadSessionId: '../sess_1', status: 'aborted', ...replayScopeOf(init) })],
+    ['a dot-segment session ID', (init: RequestInit) => envelope({ uploadSessionId: '..', status: 'aborted', ...replayScopeOf(init) })],
   ] as const)('keeps the key of a session reported ended by an init answer with %s', async (_label, answer) => {
     const s = server((path, init, call) => {
       if (path !== '/upload/init') return undefined;
@@ -652,7 +652,7 @@ describe('replay settlement boundaries', () => {
       (path: string) =>
         path === '/upload/sess_1/complete' ? json({ ok: true, error: { code: 'FILEFN_INTERNAL' }, data: { fileId: FILE, versionId: 'ver_1' } }) : undefined,
     ],
-    ['completion: a malformed versionId', (path: string) => (path === '/upload/sess_1/complete' ? envelope({ fileId: FILE, versionId: '../ver_1' }) : undefined)],
+    ['completion: a malformed versionId', (path: string) => (path === '/upload/sess_1/complete' ? envelope({ fileId: FILE, versionId: '..' }) : undefined)],
     [
       'a completed init: an outer error with ok: true',
       (path: string, init: RequestInit) =>
@@ -660,11 +660,11 @@ describe('replay settlement boundaries', () => {
     ],
     [
       'a completed init: a malformed session ID',
-      (path: string, init: RequestInit) => (path === '/upload/init' ? envelope(completed(init, { uploadSessionId: 'sess/1' })) : undefined),
+      (path: string, init: RequestInit) => (path === '/upload/init' ? envelope(completed(init, { uploadSessionId: '.' })) : undefined),
     ],
     [
       'a completed init: a malformed versionId',
-      (path: string, init: RequestInit) => (path === '/upload/init' ? envelope(completed(init, { versionId: 'ver 1' })) : undefined),
+      (path: string, init: RequestInit) => (path === '/upload/init' ? envelope(completed(init, { versionId: 'ver\n1' })) : undefined),
     ],
     [
       'the readback: an outer error with ok: true',

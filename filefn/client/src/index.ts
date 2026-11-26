@@ -33,7 +33,7 @@ import {
   generateOfflineSessionId,
   type SyncConfig,
 } from './offline/sync.js';
-import { OfflineQueue, OfflineQueueError, type OfflineQueuePrincipal, type OfflineQueueUploader } from './offline/queue.js';
+import { OfflineQueue, OfflineQueueError, raceCallerCallback, type OfflineQueuePrincipal, type OfflineQueueUploader } from './offline/queue.js';
 
 export type {
   ArtifactDescriptor,
@@ -334,25 +334,6 @@ function buildPreprocessors(config: FileFnClientConfig): UploadPreprocessor[] {
   return preprocessors;
 }
 
-/** Settles with `promise`, or rejects with AbortError once `signal` aborts. */
-function raceSignal<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
-  if (signal.aborted) return Promise.reject(new DOMException('Aborted', 'AbortError'));
-  return new Promise<T>((resolve, reject) => {
-    const onAbort = () => reject(new DOMException('Aborted', 'AbortError'));
-    signal.addEventListener('abort', onAbort, { once: true });
-    promise.then(
-      (value) => {
-        signal.removeEventListener('abort', onAbort);
-        resolve(value);
-      },
-      (error: unknown) => {
-        signal.removeEventListener('abort', onAbort);
-        reject(error);
-      },
-    );
-  });
-}
-
 /**
  * Replays queued uploads with a snapshot of the client's transport. Every
  * request, retry and part sends only headers `authHeaders(principal)` issued
@@ -387,11 +368,11 @@ function replayUploader(
       }
       const headers = async (): Promise<Record<string, string>> => {
         await input.assertPrincipal();
-        // App code that runs before a request goes out: raced with the step's
-        // signal, so a disposal or cancellation with nothing sent settles the
-        // step (and frees its entry) even if it never settles. A late result
-        // is discarded.
-        const bound = await raceSignal(Promise.resolve().then(() => authHeaders(principal())), input.signal);
+        // App code that runs before a request goes out (`raceCallerCallback`):
+        // raced with the step's signal, so a disposal or cancellation with
+        // nothing sent settles the step (and frees its entry) even if it never
+        // settles. A late result is discarded.
+        const bound = await raceCallerCallback(() => authHeaders(principal()), [input.signal]);
         if (!bound) {
           throw new OfflineQueueError('FILEFN_QUEUE_PRINCIPAL_MISMATCH', "No credentials for the queue's principal");
         }
