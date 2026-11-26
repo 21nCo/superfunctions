@@ -520,6 +520,24 @@ describe('webhook workflow admission', () => {
     expect(action).toHaveBeenCalledOnce();
   });
 
+  it('requires a proven delivery ID before using legacy listener completion for a delivery with a signed ID', async () => {
+    await seedWorkflow(database, 'one', firstBinding.tenantId, firstBinding.connectionId);
+    const legacy = startRuntime(database, { withResolver: false });
+    legacy.runtime.webhooks.on('test-provider', 'test.event', vi.fn());
+    expect((await legacy.send('test-installation-one', 'test-delivery', {
+      'x-test-signed-delivery': 'test-first-delivery',
+    })).status).toBe(200);
+
+    const scoped = startRuntime(database, { authenticateDeliveryId: true });
+    const listener = vi.fn();
+    scoped.runtime.webhooks.on('test-provider', 'test.event', listener);
+    expect((await scoped.send('test-installation-one', 'test-delivery', {
+      'x-test-signed-delivery': 'test-second-delivery',
+    })).status).toBe(200);
+    expect(listener).toHaveBeenCalledOnce();
+    expect(scoped.action).toHaveBeenCalledOnce();
+  });
+
   it('retries a standalone receipt that carries application tenant metadata', async () => {
     const { runtime, send } = startRuntime(database, { withResolver: false });
     const listener = vi.fn().mockRejectedValueOnce(new Error('test listener failed'));

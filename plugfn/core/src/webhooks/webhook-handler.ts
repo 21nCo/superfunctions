@@ -28,6 +28,7 @@ export interface WebhookAdmission {
   binding?: Readonly<WebhookWorkflowBinding>;
   idempotencyKey?: string;
   payloadHash?: string;
+  authenticatedDeliveryId?: string;
   assertActive?(): void;
   event(): WebhookEvent;
   dispatch(options?: WebhookDispatchOptions): Promise<WebhookEvent>;
@@ -337,8 +338,9 @@ export class WebhookHandler {
         }
         const { tenantId, connectionId, revoked } = match;
         const binding = Object.freeze({ tenantId, connectionId });
-        const deliveryIdentity = isBindingId(authenticatedDeliveryId)
-          ? ['delivery', authenticatedDeliveryId]
+        const deliveryId = isBindingId(authenticatedDeliveryId) ? authenticatedDeliveryId : undefined;
+        const deliveryIdentity = deliveryId
+          ? ['delivery', deliveryId]
           : ['payload', workflowEvent, payloadHash];
         const idempotencyKey = sha256(JSON.stringify([authority.id, subject, ...deliveryIdentity]));
         const bindingIsCurrent = async () => {
@@ -353,6 +355,7 @@ export class WebhookHandler {
           binding,
           idempotencyKey,
           payloadHash,
+          authenticatedDeliveryId: deliveryId,
           assertActive: () => {
             if (revoked.aborted) {
               throw webhookBindingRevoked();

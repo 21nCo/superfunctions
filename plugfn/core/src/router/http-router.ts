@@ -1027,7 +1027,8 @@ export async function deliverWebhook(
 
     // A completed standalone delivery can suppress repeat listener side effects,
     // while workflow dispatch still requires its own scoped receipt.
-    const legacyReceipt = admission.binding && legacyKey
+    // Legacy receipts never recorded an authenticated delivery ID.
+    const legacyReceipt = admission.binding && admission.authenticatedDeliveryId === undefined && legacyKey
       ? await plugFn.runtime.webhooks.findReceiptByIdempotencyKey(provider, legacyKey)
       : undefined;
     const skipListeners = Boolean(
