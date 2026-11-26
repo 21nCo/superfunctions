@@ -85,8 +85,18 @@ export interface OAuthStatePin {
   release(): void;
 }
 
+interface VersionedCredentials {
+  credentials: Credentials;
+  version: string;
+}
+
 export interface OAuthStateGuard {
   pin(record: OAuthStateRecord): OAuthStatePin;
+}
+
+function compareCodeUnits(left: string, right: string): number {
+  if (left === right) return 0;
+  return left < right ? -1 : 1;
 }
 
 function sortedJson(value: unknown): string {
@@ -94,7 +104,7 @@ function sortedJson(value: unknown): string {
     item && typeof item === 'object' && !Array.isArray(item)
       ? Object.fromEntries(
           Object.entries(item as Record<string, unknown>).sort(([left], [right]) =>
-            left < right ? -1 : left > right ? 1 : 0
+            compareCodeUnits(left, right)
           )
         )
       : item
@@ -307,6 +317,8 @@ export class ConnectionManager {
   private readonly keyRef: string;
   private readonly actionLogAdapter: PlugFnDatabaseStorageAdapter;
   private readonly refreshInFlight = new Map<string, Promise<Connection>>();
+  private readonly credentialVersions = new WeakMap<Credentials, string>();
+  private readonly configuredVersions = new Map<string, { values: unknown[]; version: string }>();
 
   constructor(
     private connectionStorage: ConnectionStorage,
@@ -338,7 +350,20 @@ export class ConnectionManager {
     }
 
     const oauthConfig = provider.auth.config as OAuth2Config;
-    const owner = options.owner ?? { kind: 'user', userId: options.userId } satisfies PlugFnConnectionOwner;
+    // Like connect(): the default owner is the actor's own user in the actor's
+    // tenant, and a supplied actor must be able to install for the owner, so
+    // the callback with the same actor accepts the state this issues.
+    const actor = options.actor === undefined ? undefined : snapshotActor(options.actor);
+    const owner: PlugFnConnectionOwner = options.owner === undefined
+      ? {
+          kind: 'user',
+          userId: options.userId,
+          ...(actor?.tenantId !== undefined ? { tenantId: actor.tenantId } : {}),
+        }
+      : snapshotConnectionOwner(options.owner, 'owner');
+    if (actor && (actor.userId !== options.userId || !actorCanInstallForOwner(actor, owner))) {
+      throw new ConnectionResolutionError('TENANT_ACCESS_DENIED', 'connection owner mismatch', 403);
+    }
     const metadata = buildConnectionStateMetadata(owner, options.returnTo);
     const result = await this.oauthFlowService.start({
       providerId: options.provider,
@@ -378,39 +403,11 @@ export class ConnectionManager {
     if (!statePreview) {
       throw new Error('OAuth state is invalid or expired');
     }
-    // The canonical subject (falling back to the flat fields of a legacy row),
-    // as oauth-flow reads it, decides the user everywhere below.
-    const previewSubject = oauthStateSubject(statePreview);
-    const previewUserId = previewSubject.userId;
-
-    const pendingOwner = readConnectionOwnerFromMetadata(
-      readPlugFnOAuthStateMetadata(statePreview),
-      previewUserId
+    const { previewSubject, previewUserId, pendingOwner } = authorizeCallbackPreview(
+      statePreview,
+      actor,
+      expectedOwner
     );
-    if (!pendingOwner) {
-      throw new Error('OAuth state is invalid or expired');
-    }
-    if (actor) {
-      if (
-        actor.userId !== previewUserId ||
-        !actorCanInstallForOwner(actor, pendingOwner)
-      ) {
-        throw new ConnectionResolutionError(
-          'TENANT_ACCESS_DENIED',
-          'connection owner mismatch',
-          403
-        );
-      }
-    }
-    if (expectedOwner) {
-      if (!ownersEqual(expectedOwner, pendingOwner)) {
-        throw new ConnectionResolutionError(
-          'TENANT_ACCESS_DENIED',
-          'connection owner mismatch',
-          403
-        );
-      }
-    }
 
     const returnTo = readReturnToFromMetadata(readPlugFnOAuthStateMetadata(statePreview));
     const providerId = providerOverride ?? statePreview.providerId;
@@ -875,41 +872,52 @@ export class ConnectionManager {
   }
 
   async getCredentials(connectionId: string): Promise<Credentials> {
+    const { credentials, version } = await this.loadCredentials(connectionId);
+    this.credentialVersions.set(credentials, version);
+    return credentials;
+  }
+
+  /**
+   * A non-secret version of credentials that getCredentials returned: the
+   * stored ciphertext record (or, for configured credentials, a per-manager
+   * value that changes whenever the configured secret does). Replacing or
+   * refreshing the credential changes it, so the action cache can bind entries
+   * to it without ever hashing the secret itself.
+   */
+  credentialVersion(credentials: Credentials): string | undefined {
+    return this.credentialVersions.get(credentials);
+  }
+
+  private async loadCredentials(connectionId: string): Promise<VersionedCredentials> {
     const configuredProvider = parseConfiguredConnectionId(connectionId);
     if (configuredProvider) {
       const credentials = this.readConfiguredCredentials(configuredProvider);
       if (!credentials) {
         throw new Error(`Configured credentials missing for ${configuredProvider}`);
       }
-      return credentials;
+      return this.configuredVersion(configuredProvider, credentials);
     }
 
     const connection = await this.get(connectionId);
     const provider = this.providers.get(connection.provider);
-
-    if (provider?.auth.type === AuthType.OAuth2) {
-      if (
-        connection.status === ConnectionStatus.Active &&
-        connection.expiresAt &&
-        new Date() >= connection.expiresAt
-      ) {
-        const refreshedConnection = await this.refresh(connectionId);
-        const refreshedToken = await this.encryptedTokenVault.getTokenSetByConnection(refreshedConnection.id);
-        if (refreshedToken) {
-          return this.toOAuth2Credentials(refreshedToken.tokenSet);
-        }
-        return this.decryptLegacyCredentials(refreshedConnection);
-      }
-
-      const storedToken = await this.encryptedTokenVault.getTokenSetByConnection(connection.id);
-      if (storedToken) {
-        return this.toOAuth2Credentials(storedToken.tokenSet);
-      }
-
-      return this.decryptLegacyCredentials(connection);
+    if (provider?.auth.type !== AuthType.OAuth2) {
+      return this.decryptNonOAuthCredentials(connection);
     }
 
-    return this.decryptNonOAuthCredentials(connection);
+    const current =
+      connection.status === ConnectionStatus.Active &&
+      connection.expiresAt &&
+      new Date() >= connection.expiresAt
+        ? await this.refresh(connectionId)
+        : connection;
+    const storedToken = await this.encryptedTokenVault.getTokenSetByConnection(current.id);
+    if (storedToken) {
+      return {
+        credentials: this.toOAuth2Credentials(storedToken.tokenSet),
+        version: `vault:${storedToken.record.encryptedPayload}`,
+      };
+    }
+    return this.decryptLegacyCredentials(current);
   }
 
   async markUsed(connectionId: string): Promise<void> {
@@ -990,18 +998,33 @@ export class ConnectionManager {
     return rewritten;
   }
 
-  private decryptLegacyCredentials(connection: Connection): Credentials {
-    return this.tokenStorage.decryptCredentials(connection.credentials);
+  private decryptLegacyCredentials(connection: Connection): VersionedCredentials {
+    return {
+      credentials: this.tokenStorage.decryptCredentials(connection.credentials),
+      version: `stored:${connection.credentials.encrypted}`,
+    };
   }
 
-  private decryptNonOAuthCredentials(connection: Connection): Credentials {
+  private decryptNonOAuthCredentials(connection: Connection): VersionedCredentials {
     try {
-      return this.tokenStorage.decryptCredentials(connection.credentials);
+      return this.decryptLegacyCredentials(connection);
     } catch (error) {
       const configuredCredentials = this.readConfiguredCredentials(connection.provider);
-      if (configuredCredentials) return configuredCredentials;
+      if (configuredCredentials) return this.configuredVersion(connection.provider, configuredCredentials);
       throw error;
     }
+  }
+
+  /** A random version per configured secret, renewed when any field changes. */
+  private configuredVersion(provider: string, credentials: Credentials): VersionedCredentials {
+    const values = Object.values(credentials);
+    const known = this.configuredVersions.get(provider);
+    if (known?.values.length === values.length && known.values.every((value, index) => value === values[index])) {
+      return { credentials, version: known.version };
+    }
+    const version = `configured:${randomBytes(16).toString('hex')}`;
+    this.configuredVersions.set(provider, { values, version });
+    return { credentials, version };
   }
 
   private readConfiguredCredentials(provider: string): Credentials | null {
@@ -1084,6 +1107,42 @@ export class ConnectionManager {
     }
     return connectionMatchesActor(connection, actor, operation);
   }
+}
+
+/**
+ * Check a callback's state row before oauth-flow consumes it or exchanges the
+ * code: it must be a connection state with a user, carry a valid PlugFn owner,
+ * and match the actor and expected owner when given. The canonical subject
+ * (falling back to the flat fields of a legacy row), as oauth-flow reads it,
+ * decides the user.
+ */
+function authorizeCallbackPreview(
+  statePreview: OAuthStateRecord,
+  actor: PlugFnActor | undefined,
+  expectedOwner: PlugFnConnectionOwner | undefined
+): {
+  previewSubject: ReturnType<typeof oauthStateSubject>;
+  previewUserId: string;
+  pendingOwner: PlugFnConnectionOwner;
+} {
+  const previewSubject = oauthStateSubject(statePreview);
+  const previewUserId = previewSubject.userId;
+  if (previewSubject.kind !== 'connection' || typeof previewUserId !== 'string' || previewUserId === '') {
+    throw new Error('OAuth state is invalid or expired');
+  }
+  const pendingOwner = readConnectionOwnerFromMetadata(
+    readPlugFnOAuthStateMetadata(statePreview),
+    previewUserId
+  );
+  if (!pendingOwner) {
+    throw new Error('OAuth state is invalid or expired');
+  }
+  const actorDenied = actor !== undefined &&
+    (actor.userId !== previewUserId || !actorCanInstallForOwner(actor, pendingOwner));
+  if (actorDenied || (expectedOwner !== undefined && !ownersEqual(expectedOwner, pendingOwner))) {
+    throw new ConnectionResolutionError('TENANT_ACCESS_DENIED', 'connection owner mismatch', 403);
+  }
+  return { previewSubject, previewUserId, pendingOwner };
 }
 
 function actorCanInstallForOwner(

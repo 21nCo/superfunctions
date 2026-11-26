@@ -582,7 +582,7 @@ describe("McpFnRegistry custom compileSchema thenable results", () => {
   // but is still a genuine native promise whose rejection must be handled.
   function crossRealmRejection(message: string): Promise<never> {
     const promise = runInNewContext(`Promise.reject(new Error(${JSON.stringify(message)}))`) as Promise<never>;
-    expect(promise instanceof Promise).toBe(false);
+    expect(promise).not.toBeInstanceOf(Promise);
     return promise;
   }
 

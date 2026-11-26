@@ -578,6 +578,16 @@ function validateCfWorkerSchemaCollection(schemas: readonly object[]): void {
 }
 
 /**
+ * Check only that every `$ref` in a related collection of JSON Schema
+ * resources resolves inside the collection. Unlike validateSchemaCollection it
+ * applies no dialect's syntax rules, so it suits schemas a caller-supplied
+ * compiler accepts (for example draft 2020-12) that the built-in engines do not.
+ */
+export function validateSchemaReferences(schemas: readonly object[]): void {
+  prepareCfWorkerResources(schemas);
+}
+
+/**
  * Validate a related collection of JSON Schema resources without changing each
  * schema's root. All resources are indexed before references are checked, so
  * forward references do not depend on canonical manifest ordering.

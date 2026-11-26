@@ -1458,3 +1458,163 @@ describe('ConnectionManager OAuth callback canonical state subject', () => {
     });
   }
 });
+
+// SFNS-107 PR round 1: a callback state that is not a user's connection state
+// is refused before oauth-flow consumes it or exchanges the code, and a state
+// started by a tenant-scoped actor without an explicit owner completes for
+// that same actor.
+describe('ConnectionManager OAuth callback subject precheck', () => {
+  async function previewedAs(reshape: (record: any) => any) {
+    const adapter = new MemoryAdapter();
+    const tokenClient = createTokenHttpClient();
+    const base = createManagerEnvironment(adapter, tokenClient);
+    const inner = base.oauthDependencies.oauthStateStore;
+    const consume = vi.spyOn(inner, 'consume');
+    const putTokenSet = vi.spyOn(base.oauthDependencies.encryptedTokenVault, 'putTokenSet');
+    const store = {
+      put: (record: any) => inner.put(record),
+      get: async (stateId: string) => {
+        const record = await inner.get(stateId);
+        return record ? reshape(record) : record;
+      },
+      consume: (stateId: string, consumedAt?: any) => inner.consume(stateId, consumedAt),
+      deleteExpired: (before: any) => inner.deleteExpired(before),
+    } as any;
+    const manager = new ConnectionManager(
+      new AdapterConnectionStorage(adapter),
+      base.providers,
+      (base.manager as any).integrationConfigs,
+      BASE_URL,
+      ENCRYPTION_KEY,
+      new NoopLogger(),
+      { ...base.oauthDependencies, oauthStateStore: store, oauthStateGuard: undefined }
+    );
+    const authUrl = await base.manager.getAuthUrl({
+      userId: 'user-1',
+      provider: 'google',
+      redirectUri: REDIRECT_URI,
+      owner: { kind: 'user', userId: 'user-1', tenantId: 'workspace-1' },
+    });
+    const state = new URL(authUrl).searchParams.get('state')!;
+    putTokenSet.mockClear();
+    return { manager, state, tokenClient, consume, putTokenSet };
+  }
+
+  it.each([
+    ['a browser-auth state', (record: any) => ({
+      ...record,
+      intentId: 'intent-1',
+      subject: { ...record.subject, kind: 'browser-auth' },
+    })],
+    ['a connection state without a user', (record: any) => {
+      const { userId: _flatUser, ...rest } = record;
+      const { userId: _subjectUser, ...subject } = record.subject ?? {};
+      return { ...rest, subject: { ...subject, kind: 'connection' } };
+    }],
+    ['a connection state with an empty user', (record: any) => ({
+      ...record,
+      userId: '',
+      subject: { ...record.subject, kind: 'connection', userId: '' },
+    })],
+  ])('refuses %s with owner metadata before any consume, exchange or token write', async (_label, reshape) => {
+    const { manager, state, tokenClient, consume, putTokenSet } = await previewedAs(reshape);
+
+    await expect(manager.handleCallback({ code: 'auth-code-1', state })).rejects.toThrow(
+      'OAuth state is invalid or expired'
+    );
+    expect(consume).not.toHaveBeenCalled();
+    expect(tokenClient.exchangeToken).not.toHaveBeenCalled();
+    expect(putTokenSet).not.toHaveBeenCalled();
+  });
+
+  it('completes a state started by a tenant-scoped actor with no explicit owner', async () => {
+    const adapter = new MemoryAdapter();
+    const env = createManagerEnvironment(adapter, createTokenHttpClient());
+    const actor = { userId: 'user-1', tenantId: 'workspace-1' };
+    const authUrl = await env.manager.getAuthUrl({
+      userId: 'user-1',
+      provider: 'google',
+      redirectUri: REDIRECT_URI,
+      actor,
+    });
+    const state = new URL(authUrl).searchParams.get('state')!;
+
+    const { connection } = await env.manager.handleCallback({ code: 'auth-code-1', state, actor });
+    expect(connection).toMatchObject({
+      userId: 'user-1',
+      ownerKind: 'user',
+      ownerId: 'user-1',
+      tenantId: 'workspace-1',
+    });
+  });
+
+  it('refuses to start for an actor that cannot install for the requested owner', async () => {
+    const env = createManagerEnvironment(new MemoryAdapter(), createTokenHttpClient());
+
+    await expect(
+      env.manager.getAuthUrl({
+        userId: 'user-1',
+        provider: 'google',
+        redirectUri: REDIRECT_URI,
+        owner: { kind: 'user', userId: 'user-1', tenantId: 'workspace-2' },
+        actor: { userId: 'user-1', tenantId: 'workspace-1' },
+      })
+    ).rejects.toMatchObject({ code: 'TENANT_ACCESS_DENIED' });
+  });
+});
+
+describe('ConnectionManager credential versions', () => {
+  function apiKeyManager(apiKey: string) {
+    const adapter = new MemoryAdapter();
+    const base = createManagerEnvironment(adapter, createTokenHttpClient());
+    const providers = new Map<string, Provider>([['linear', createApiKeyProvider()]]);
+    const integrationConfigs = new Map<string, any>([['linear', { type: 'api-key', apiKey }]]);
+    const manager = new ConnectionManager(
+      new AdapterConnectionStorage(adapter),
+      providers,
+      integrationConfigs,
+      BASE_URL,
+      ENCRYPTION_KEY,
+      new NoopLogger(),
+      base.oauthDependencies
+    );
+    return { manager, integrationConfigs };
+  }
+
+  it('versions a stored credential by its record, never by the secret, and renews it on replacement', async () => {
+    const { manager } = apiKeyManager('test-configured-key');
+    const secret = 'test-direct-key-' + 'one';
+    const connection = await manager.connect({
+      userId: 'user-1',
+      provider: 'linear',
+      credentials: { type: 'api-key', apiKey: secret },
+    });
+
+    const first = manager.credentialVersion(await manager.getCredentials(connection.id));
+    const again = manager.credentialVersion(await manager.getCredentials(connection.id));
+    expect(first).toMatch(/^stored:/);
+    expect(again).toBe(first);
+    expect(first).not.toContain(secret);
+
+    const replaced = await manager.connect({
+      userId: 'user-1',
+      provider: 'linear',
+      credentials: { type: 'api-key', apiKey: secret },
+    });
+    await (manager as any).connectionStorage.update(connection.id, {
+      credentials: (await (manager as any).connectionStorage.get(replaced.id)).credentials,
+    });
+    expect(manager.credentialVersion(await manager.getCredentials(connection.id))).not.toBe(first);
+  });
+
+  it('renews a configured credential version when the configured secret changes', async () => {
+    const { manager, integrationConfigs } = apiKeyManager('test-configured-key-one');
+    const configured = await manager.resolveConnectionForAction({ userId: 'user-1', provider: 'linear' });
+    const first = manager.credentialVersion(await manager.getCredentials(configured!.id));
+    expect(manager.credentialVersion(await manager.getCredentials(configured!.id))).toBe(first);
+    expect(first).toMatch(/^configured:[a-f0-9]{32}$/);
+
+    integrationConfigs.get('linear').apiKey = 'test-configured-key-two';
+    expect(manager.credentialVersion(await manager.getCredentials(configured!.id))).not.toBe(first);
+  });
+});

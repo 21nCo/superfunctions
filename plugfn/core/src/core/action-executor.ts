@@ -159,11 +159,15 @@ export class ActionExecutor {
         grantedScopes = refreshed.scopes;
       }
 
-      // Bind the cache entry to the exact credential and granted scopes used
-      // for this dispatch, so a replaced or narrowed credential on the same
-      // connection never reads, or races a late write into, an older entry.
-      const binding = shouldUseCache
-        ? credentialBinding(this.cacheBindingKey, credentials, grantedScopes)
+      // Bind the cache entry to the exact credential version and granted
+      // scopes used for this dispatch, so a replaced or narrowed credential on
+      // the same connection never reads, or races a late write into, an older
+      // entry. Credentials without a known version are never cached.
+      const credentialVersion = shouldUseCache
+        ? this.connectionManager.credentialVersion?.(credentials)
+        : undefined;
+      const binding = credentialVersion !== undefined
+        ? credentialBinding(this.cacheBindingKey, credentialVersion, grantedScopes)
         : undefined;
       const cacheKey = binding !== undefined
         ? typeof options.cache === 'object' && options.cache.key

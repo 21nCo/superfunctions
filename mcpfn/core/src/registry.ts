@@ -2,6 +2,7 @@ import { UriTemplate } from "@modelcontextprotocol/sdk/shared/uriTemplate.js";
 import {
   createSchemaCompiler,
   validateSchemaCollection,
+  validateSchemaReferences,
   type CompiledSchema,
   type SchemaCompiler,
   type SchemaIssue,
@@ -60,12 +61,12 @@ interface RegisteredPrompt<TContext> {
 /** The deep-frozen schema snapshots one tool registration declares. */
 interface ToolSchemas {
   inputSchema: McpFnToolDefinition<unknown>["inputSchema"];
-  outputSchema?: McpFnToolDefinition<unknown>["outputSchema"];
+  outputSchema?: NonNullable<McpFnToolDefinition<unknown>["outputSchema"]>;
 }
 
 /** The deep-frozen argument snapshots one prompt registration declares. */
 interface PromptSchemas {
-  arguments?: McpFnPromptDefinition<unknown>["arguments"];
+  arguments?: NonNullable<McpFnPromptDefinition<unknown>["arguments"]>;
   argumentsSchema?: McpFnObjectSchema;
   /** The arguments JSON Schema the registry compiles and advertises. */
   schema: object;
@@ -141,6 +142,34 @@ function isPlainObject(value: object): boolean {
   return Object.prototype.toString.call(value) === "[object Object]";
 }
 
+type CopyJson = (value: unknown, path: string) => unknown;
+
+function copyJsonArray(value: unknown[], path: string, copy: CopyJson): unknown[] {
+  if (!isPlainArray(value)) throw new Error(`${path} is not a plain array`);
+  const items: unknown[] = [];
+  for (let index = 0; index < value.length; index += 1) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, index);
+    if (!descriptor || !("value" in descriptor) || descriptor.value === undefined) {
+      throw new Error(`${path}[${index}] is not JSON data`);
+    }
+    items.push(copy(descriptor.value, `${path}[${index}]`));
+  }
+  return items;
+}
+
+function copyJsonObject(value: object, path: string, copy: CopyJson): Record<string, unknown> {
+  if (!isPlainObject(value)) throw new Error(`${path} is not a plain object`);
+  const entries: Record<string, unknown> = {};
+  for (const key of Object.keys(value)) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!descriptor) continue;
+    if (!("value" in descriptor)) throw new Error(`${path}.${key} is an accessor`);
+    if (descriptor.value === undefined) continue;
+    defineField(entries, key, copy(descriptor.value, `${path}.${key}`));
+  }
+  return entries;
+}
+
 /**
  * A deep-frozen copy of caller-owned schema data. Only JSON data is accepted:
  * plain objects (prototype null or any realm's Object.prototype) with data
@@ -173,35 +202,9 @@ function snapshotJson<T>(value: T, label: string): T {
     if (done !== undefined) return done;
     if (active.has(current)) throw new Error(`${path} is circular`);
     active.add(current);
-    let result: unknown;
-    if (Array.isArray(current)) {
-      if (!isPlainArray(current)) throw new Error(`${path} is not a plain array`);
-      const items: unknown[] = [];
-      for (let index = 0; index < current.length; index += 1) {
-        const descriptor = Object.getOwnPropertyDescriptor(current, index);
-        if (!descriptor || !("value" in descriptor) || descriptor.value === undefined) {
-          throw new Error(`${path}[${index}] is not JSON data`);
-        }
-        items.push(copy(descriptor.value, `${path}[${index}]`));
-      }
-      result = items;
-    } else {
-      if (!isPlainObject(current)) throw new Error(`${path} is not a plain object`);
-      const entries: Record<string, unknown> = {};
-      for (const key of Object.keys(current)) {
-        const descriptor = Object.getOwnPropertyDescriptor(current, key);
-        if (!descriptor) continue;
-        if (!("value" in descriptor)) throw new Error(`${path}.${key} is an accessor`);
-        if (descriptor.value === undefined) continue;
-        Object.defineProperty(entries, key, {
-          value: copy(descriptor.value, `${path}.${key}`),
-          enumerable: true,
-          writable: true,
-          configurable: true,
-        });
-      }
-      result = entries;
-    }
+    const result = Array.isArray(current)
+      ? copyJsonArray(current, path, copy)
+      : copyJsonObject(current, path, copy);
     active.delete(current);
     copies.set(current, result);
     return result;
@@ -215,6 +218,76 @@ function snapshotJson<T>(value: T, label: string): T {
     });
   }
   return deepFreeze(snapshot as T);
+}
+
+function assertTaskSupport(
+  tool: McpFnToolDefinition<unknown>,
+  execution: McpFnToolDefinition<unknown>["execution"],
+): void {
+  const taskSupport = execution?.taskSupport ?? "forbidden";
+  if (!["forbidden", "optional", "required"].includes(taskSupport)) {
+    throw new McpFnValidationError(
+      `Tool ${tool.name} has invalid taskSupport=${String(taskSupport)}`,
+    );
+  }
+  if (taskSupport !== "forbidden" && !tool.taskHandler) {
+    throw new McpFnValidationError(
+      `Tool ${tool.name} declares taskSupport=${taskSupport} but has no taskHandler`,
+    );
+  }
+  if (taskSupport === "forbidden" && tool.taskHandler) {
+    throw new McpFnValidationError(
+      `Tool ${tool.name} has a taskHandler but forbids task execution`,
+    );
+  }
+}
+
+function assertPromptArgumentList(
+  name: string,
+  declared: Pick<McpFnPromptDefinition<unknown>, "arguments">,
+): void {
+  if (
+    declared.arguments !== undefined &&
+    (!Array.isArray(declared.arguments) ||
+      declared.arguments.some(
+        (argument) =>
+          !argument ||
+          typeof argument !== "object" ||
+          Array.isArray(argument) ||
+          typeof argument.name !== "string",
+      ))
+  ) {
+    throw new McpFnValidationError(`Prompt ${name} arguments must be an array`);
+  }
+  for (const argument of declared.arguments ?? []) {
+    assertName("prompt argument", argument.name);
+    if (argument.description !== undefined && typeof argument.description !== "string") {
+      throw new McpFnValidationError(
+        `Prompt ${name} argument ${argument.name} description must be a string`,
+      );
+    }
+    if (argument.required !== undefined && typeof argument.required !== "boolean") {
+      throw new McpFnValidationError(
+        `Prompt ${name} argument ${argument.name} required must be a boolean`,
+      );
+    }
+  }
+}
+
+function assertPromptArgumentsAgree(
+  name: string,
+  declared: Pick<McpFnPromptDefinition<unknown>, "arguments" | "argumentsSchema">,
+): void {
+  if (!declared.arguments || !declared.argumentsSchema) return;
+  const listed = declared.arguments
+    .map(({ name: argument, required }) => ({ name: argument, required: required === true }))
+    .sort((left, right) => compareCodeUnits(left.name, right.name));
+  const schemaDeclared = schemaPromptArguments(declared)!.map(
+    ({ name: argument, required }) => ({ name: argument, required: required === true }),
+  );
+  if (JSON.stringify(listed) !== JSON.stringify(schemaDeclared)) {
+    throw new McpFnValidationError(`Prompt ${name} arguments and argumentsSchema disagree`);
+  }
 }
 
 /** A registry-issued tool or prompt view and the caller definition behind it. */
@@ -286,15 +359,33 @@ function readDefinition(
   for (const key of keys) {
     const value = source[key];
     if (value === undefined && !Object.hasOwn(definition, key)) continue;
-    defineField(
-      fields,
-      key,
-      BOUND_FIELDS.has(key) && typeof value === "function"
-        ? (value as (...args: unknown[]) => unknown).bind(definition)
-        : value,
-    );
+    defineField(fields, key, captureField(definition, key, value));
   }
   return fields;
+}
+
+/**
+ * The value a view keeps for one definition field. Methods are bound to the
+ * caller definition. The nested handler tables (taskHandler, complete) are
+ * read once into frozen copies whose functions stay bound to the caller's
+ * table, so adding, replacing or removing a nested handler after
+ * registration changes neither execution, completion nor clone().
+ */
+function captureField(definition: object, key: PropertyKey, value: unknown): unknown {
+  if (typeof value === "function") {
+    return BOUND_FIELDS.has(key) ? value.bind(definition) : value;
+  }
+  if ((key === "taskHandler" || key === "complete") && isObject(value)) {
+    const table: Record<PropertyKey, unknown> = {};
+    const names = key === "taskHandler" ? ["createTask"] : Object.keys(value);
+    for (const name of names) {
+      const handler = (value as Record<PropertyKey, unknown>)[name];
+      if (key === "taskHandler" && handler === undefined) continue;
+      defineField(table, name, typeof handler === "function" ? handler.bind(value) : handler);
+    }
+    return Object.freeze(table);
+  }
+  return value;
 }
 
 /**
@@ -345,18 +436,19 @@ export interface McpFnRegistryOptions {
 
 const MAX_CUSTOM_SCHEMA_ISSUES = 100;
 
+function customSchemaIssue(error: unknown): SchemaIssue {
+  const issue = (error && typeof error === "object" ? error : {}) as Record<string, unknown>;
+  return {
+    instancePath: typeof issue.instancePath === "string" ? issue.instancePath : "",
+    message: typeof issue.message === "string" ? issue.message : undefined,
+    keyword: typeof issue.keyword === "string" ? issue.keyword : "schema",
+  };
+}
+
 function customSchemaIssues(errors: unknown): SchemaIssue[] {
-  const issues: SchemaIssue[] = [];
-  if (Array.isArray(errors)) {
-    for (const error of errors.slice(0, MAX_CUSTOM_SCHEMA_ISSUES)) {
-      const issue = (error && typeof error === "object" ? error : {}) as Record<string, unknown>;
-      issues.push({
-        instancePath: typeof issue.instancePath === "string" ? issue.instancePath : "",
-        message: typeof issue.message === "string" ? issue.message : undefined,
-        keyword: typeof issue.keyword === "string" ? issue.keyword : "schema",
-      });
-    }
-  }
+  const issues = Array.isArray(errors)
+    ? errors.slice(0, MAX_CUSTOM_SCHEMA_ISSUES).map(customSchemaIssue)
+    : [];
   // A rejection must always carry a diagnostic, even from a terse validator.
   return issues.length > 0
     ? issues
@@ -391,10 +483,14 @@ const ignore = (): undefined => undefined;
  * species getter throws therefore cannot be marked handled by any JavaScript
  * code; the registry still fails closed on it with the same diagnostic.
  */
+function attachIgnore(value: object): void {
+  void Promise.prototype.then.call(value, undefined, ignore);
+}
+
 function ignoreRejection(value: unknown): void {
   if (value === null || (typeof value !== "object" && typeof value !== "function")) return;
   try {
-    Promise.prototype.then.call(value, undefined, ignore);
+    attachIgnore(value);
   } catch {
     // Not a native promise of any realm: nothing of ours can reject unhandled.
   }
@@ -895,6 +991,12 @@ export class McpFnRegistry<TContext = undefined> {
   // in the middle of it.
   private registering = false;
   private compileAttempts = 0;
+  // Validators a custom compiler returned during registrations that failed,
+  // by schema text. Such a compiler may keep state the registry cannot roll
+  // back (an Ajv instance holding each compiled $id), so an exact retry of the
+  // same schema reuses that compile instead of compiling it again. They are
+  // never listed, and are used for nothing but the identical schema text.
+  private readonly abandoned = new Map<string, CompiledSchema>();
 
   /**
    * Clone in successful registration order, preserving cross-definition
@@ -963,14 +1065,20 @@ export class McpFnRegistry<TContext = undefined> {
     if (entry.source) this.sources.set(entry.source, entry);
   }
 
-  /** Whether this registry's schema collection resolves on its own. */
+  /**
+   * Whether this registry's schema collection resolves on its own. With a
+   * custom compileSchema, which already accepted each schema in its own
+   * dialect, only reference resolution is checked.
+   */
   private closureError(): unknown {
     if (this.closure?.count !== this.registrations.length) {
       let error: unknown;
       try {
-        validateSchemaCollection([...new Set(this.schemas)]);
-      } catch (caught) {
-        error = caught ?? new Error("schema collection is invalid");
+        const schemas = [...new Set(this.schemas)];
+        if (this.customCompile) validateSchemaReferences(schemas);
+        else validateSchemaCollection(schemas);
+      } catch (error_) {
+        error = error_ ?? new Error("schema collection is invalid");
       }
       this.closure = { count: this.registrations.length, error };
     }
@@ -1010,11 +1118,19 @@ export class McpFnRegistry<TContext = undefined> {
     }
     const entry: SchemaEntry = {
       snapshot,
-      validator: this.compile(snapshot),
+      validator: this.reuseAbandoned(snapshot) ?? this.compile(snapshot),
       ...(isObject(source) && source !== snapshot ? { source } : {}),
     };
     pending.push(entry);
     return entry;
+  }
+
+  private reuseAbandoned(snapshot: object): CompiledSchema | undefined {
+    if (!this.customCompile || this.abandoned.size === 0) return undefined;
+    const text = snapshotText(snapshot);
+    const validator = this.abandoned.get(text);
+    this.abandoned.delete(text);
+    return validator;
   }
 
   private compile(schema: object): CompiledSchema {
@@ -1051,6 +1167,11 @@ export class McpFnRegistry<TContext = undefined> {
         body();
       } catch (error) {
         if (this.builtIn && this.compileAttempts !== attempts) this.resetBuiltIn();
+        if (this.customCompile) {
+          for (const entry of pending) {
+            this.abandoned.set(snapshotText(entry.snapshot), entry.validator);
+          }
+        }
         throw error;
       } finally {
         this.pending = undefined;
@@ -1167,25 +1288,7 @@ export class McpFnRegistry<TContext = undefined> {
     const execution = record || tool.execution === undefined
       ? tool.execution
       : snapshotJson(tool.execution, `Tool ${tool.name} execution`);
-    const taskSupport = execution?.taskSupport ?? "forbidden";
-    if (!["forbidden", "optional", "required"].includes(taskSupport)) {
-      throw new McpFnValidationError(
-        `Tool ${tool.name} has invalid taskSupport=${String(taskSupport)}`,
-      );
-    }
-    if (
-      (taskSupport === "required" || taskSupport === "optional") &&
-      !tool.taskHandler
-    ) {
-      throw new McpFnValidationError(
-        `Tool ${tool.name} declares taskSupport=${taskSupport} but has no taskHandler`,
-      );
-    }
-    if (taskSupport === "forbidden" && tool.taskHandler) {
-      throw new McpFnValidationError(
-        `Tool ${tool.name} has a taskHandler but forbids task execution`,
-      );
-    }
+    assertTaskSupport(tool, execution);
 
     let input: SchemaEntry;
     let output: SchemaEntry | undefined;
@@ -1358,40 +1461,7 @@ export class McpFnRegistry<TContext = undefined> {
         : snapshotJson(prompt.arguments, `Prompt ${prompt.name} arguments`),
       argumentsSchema: this.snapshotOf(sourceSchema, `Prompt ${prompt.name} argumentsSchema`),
     };
-    if (
-      declared.arguments !== undefined &&
-      (!Array.isArray(declared.arguments) ||
-        declared.arguments.some(
-          (argument) =>
-            !argument ||
-            typeof argument !== "object" ||
-            Array.isArray(argument) ||
-            typeof argument.name !== "string",
-        ))
-    ) {
-      throw new McpFnValidationError(
-        `Prompt ${prompt.name} arguments must be an array`,
-      );
-    }
-    for (const argument of declared.arguments ?? []) {
-      assertName("prompt argument", argument.name);
-      if (
-        argument.description !== undefined &&
-        typeof argument.description !== "string"
-      ) {
-        throw new McpFnValidationError(
-          `Prompt ${prompt.name} argument ${argument.name} description must be a string`,
-        );
-      }
-      if (
-        argument.required !== undefined &&
-        typeof argument.required !== "boolean"
-      ) {
-        throw new McpFnValidationError(
-          `Prompt ${prompt.name} argument ${argument.name} required must be a boolean`,
-        );
-      }
-    }
+    assertPromptArgumentList(prompt.name, declared);
     if (
       declared.argumentsSchema !== undefined &&
       (!declared.argumentsSchema ||
@@ -1428,19 +1498,7 @@ export class McpFnRegistry<TContext = undefined> {
         `Prompt ${prompt.name} has duplicate arguments`,
       );
     }
-    if (declared.arguments && declared.argumentsSchema) {
-      const listed = declared.arguments
-        .map(({ name, required }) => ({ name, required: required === true }))
-        .sort((left, right) => compareCodeUnits(left.name, right.name));
-      const schemaDeclared = schemaPromptArguments(declared)!.map(
-        ({ name, required }) => ({ name, required: required === true }),
-      );
-      if (JSON.stringify(listed) !== JSON.stringify(schemaDeclared)) {
-        throw new McpFnValidationError(
-          `Prompt ${prompt.name} arguments and argumentsSchema disagree`,
-        );
-      }
-    }
+    assertPromptArgumentsAgree(prompt.name, declared);
     for (const name of Object.keys(prompt.complete ?? {})) {
       if (!argumentNames.includes(name)) {
         throw new McpFnValidationError(

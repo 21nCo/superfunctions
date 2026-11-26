@@ -32,37 +32,33 @@ export function randomCacheBindingKey(): Uint8Array {
   return randomBytes(CACHE_BINDING_KEY_BYTES);
 }
 
-function canonicalJson(value: unknown): string {
-  if (value instanceof Date) return JSON.stringify(value.toISOString());
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
-  if (value !== null && typeof value === 'object') {
-    const record = value as Record<string, unknown>;
-    const entries = Object.keys(record)
-      .filter((key) => record[key] !== undefined && typeof record[key] !== 'function')
-      .sort()
-      .map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`);
-    return `{${entries.join(',')}}`;
-  }
-  return JSON.stringify(value) ?? 'null';
+/** Locale-independent ordering by UTF-16 code units. */
+function compareCodeUnits(left: string, right: string): number {
+  if (left === right) return 0;
+  return left < right ? -1 : 1;
 }
 
 /**
- * Keyed HMAC-SHA-256 (hex) of the canonical credential and the sorted set of
- * granted scopes. Without the server-side binding key, a cache key or log line
- * that carries this value cannot be used to test guesses for the credential.
+ * Keyed HMAC-SHA-256 (hex) of a credential version and the sorted set of
+ * granted scopes. The version is a non-secret identifier of the stored
+ * credential (see ConnectionManager.credentialVersion), never the secret, so
+ * a cache key or log line that carries this value reveals nothing about it.
  */
 export function credentialBinding(
   bindingKey: Uint8Array,
-  credentials: unknown,
+  credentialVersion: string,
   scopes: readonly string[] | undefined
 ): string {
   if (!(bindingKey instanceof Uint8Array) || bindingKey.length < CACHE_BINDING_KEY_BYTES) {
     throw new TypeError('cache binding key must be at least 32 bytes');
   }
-  const canonical = canonicalJson({
-    credentials,
-    scopes: [...new Set(scopes ?? [])].sort(),
-  });
+  if (typeof credentialVersion !== 'string' || credentialVersion === '') {
+    throw new TypeError('credential version must be a non-empty string');
+  }
+  const canonical = JSON.stringify([
+    credentialVersion,
+    [...new Set(scopes ?? [])].sort(compareCodeUnits),
+  ]);
   return createHmac('sha256', bindingKey).update(canonical, 'utf8').digest('hex');
 }
 

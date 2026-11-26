@@ -16,6 +16,10 @@ type Credentials = { type: 'oauth2'; accessToken: string };
 
 function setup(options: { cacheBindingKey?: Uint8Array; entries?: Map<string, string> } = {}) {
   let credentials: Credentials = { type: 'oauth2', accessToken: 'test-token-before' };
+  // The manager versions each stored credential (its ciphertext record); a
+  // replacement stores a new record and so a new version.
+  let version = 1;
+  const versions = new WeakMap<object, string>();
   let scopes = ['read', 'write'];
   const keys: string[] = [];
   const reads: string[] = [];
@@ -36,7 +40,12 @@ function setup(options: { cacheBindingKey?: Uint8Array; entries?: Map<string, st
   const manager = {
     markUsed: vi.fn(),
     resolveConnectionForAction: vi.fn(async () => ({ id: 'connection-1', scopes: [...scopes] })),
-    getCredentials: vi.fn(async () => ({ ...credentials })),
+    getCredentials: vi.fn(async () => {
+      const issued = { ...credentials };
+      versions.set(issued, `stored-record-v${version}`);
+      return issued;
+    }),
+    credentialVersion: vi.fn((issued: object) => versions.get(issued)),
   };
   const provider = mockProvider('test', { getProfile: mockResponse({}) });
   const seen: string[] = [];
@@ -64,7 +73,8 @@ function setup(options: { cacheBindingKey?: Uint8Array; entries?: Map<string, st
     keys,
     reads,
     seen,
-    replaceCredentials: (next: Credentials) => { credentials = next; },
+    manager,
+    replaceCredentials: (next: Credentials) => { credentials = next; version += 1; },
     narrowScopes: (next: string[]) => { scopes = next; },
     holdNextExecution: () => {
       let release: () => void = () => {};
@@ -143,14 +153,11 @@ describe('ActionExecutor credential binding', () => {
   const encryptionKeyA = '0'.repeat(63) + '1';
   const encryptionKeyB = '0'.repeat(63) + '2';
 
-  it('carries a keyed digest, not the plain SHA-256 of the credential and scopes', async () => {
+  it('carries a keyed digest, not the plain SHA-256 of the credential version and scopes', async () => {
     const { executor, keys } = setup({ cacheBindingKey: deriveCacheBindingKey(encryptionKeyA) });
     await executor.execute('test', 'getProfile', read(true));
 
-    const canonical = JSON.stringify({
-      credentials: { accessToken: 'test-token-before', type: 'oauth2' },
-      scopes: ['read', 'write'],
-    });
+    const canonical = JSON.stringify(['stored-record-v1', ['read', 'write']]);
     const unkeyed = createHash('sha256').update(canonical).digest('hex');
     const segment = /:credential-hmac=([a-f0-9]{64}):/.exec(keys[0])?.[1];
     expect(segment).toBeDefined();
@@ -158,6 +165,34 @@ describe('ActionExecutor credential binding', () => {
     expect(keys[0]).not.toContain(unkeyed);
     expect(keys[0]).not.toContain('test-token-before');
     expect(keys[0]).not.toContain(encryptionKeyA);
+  });
+
+  it('binds to the credential version, never to the secret value', async () => {
+    const entries = new Map<string, string>();
+    const first = setup({ cacheBindingKey: deriveCacheBindingKey(encryptionKeyA), entries });
+    await first.executor.execute('test', 'getProfile', read(true));
+    // Another process holding a different secret under the same stored record
+    // version computes the same key: the secret is not an input of the HMAC.
+    const second = setup({ cacheBindingKey: deriveCacheBindingKey(encryptionKeyA), entries });
+    second.manager.getCredentials.mockImplementationOnce(async () => {
+      const issued = { type: 'oauth2' as const, accessToken: 'test-token-other' };
+      second.manager.credentialVersion.mockReturnValueOnce('stored-record-v1');
+      return issued;
+    });
+    expect((await second.executor.execute('test', 'getProfile', read(true))).cached).toBe(true);
+  });
+
+  it('never caches credentials without a known version', async () => {
+    const { executor, manager, seen, keys, reads } = setup();
+    manager.credentialVersion.mockReturnValue(undefined);
+
+    await executor.execute('test', 'getProfile', read(true));
+    const second = await executor.execute('test', 'getProfile', read(true));
+
+    expect(second.cached).toBe(false);
+    expect(seen).toHaveLength(2);
+    expect(keys).toEqual([]);
+    expect(reads).toEqual([]);
   });
 
   it('works without a global WebCrypto', async () => {
