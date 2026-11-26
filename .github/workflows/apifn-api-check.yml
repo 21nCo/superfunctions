@@ -4,12 +4,54 @@ on:
   workflow_call:
     inputs:
       spec_path:
-        description: Path to generated OpenAPI spec (repo-relative)
-        required: true
+        description: Committed OpenAPI spec. Required without router_path (repo-relative); with router_path it is passed as --spec, relative to working_directory (empty uses the apifn config's default)
+        required: false
+        default: ""
         type: string
+      router_path:
+        description: Router module, relative to working_directory. Set it to run apifn check (drift, validation, breaking changes against the base) instead of validate-and-diff
+        required: false
+        default: ""
+        type: string
+      config_path:
+        description: apifn config file for apifn check, relative to working_directory (empty finds apifn.config.ts, .js or .mjs there)
+        required: false
+        default: ""
+        type: string
+      base_spec:
+        description: With router_path, a base spec file (relative to working_directory) or HTTP(S) URL used instead of the spec committed at origin/<base_branch>
+        required: false
+        default: ""
+        type: string
+      allow_breaking:
+        description: "With router_path, report breaking changes the contract version does not cover without failing (apifn check --allow-breaking, verdict warn). Only this input allows them; diff.failOnBreaking false in the caller's apifn config does not"
+        required: false
+        default: false
+        type: boolean
+      allow_install_scripts:
+        description: "With router_path, run the lifecycle scripts of the caller's npm ci (its own and its dependencies': postinstall, prepare, native builds). false (the default) runs npm ci --ignore-scripts, so files those scripts would build or generate are missing when the router is imported"
+        required: false
+        default: false
+        type: boolean
+      working_directory:
+        description: Directory of the caller's package, repo-relative. With router_path, npm ci and apifn check run there
+        required: false
+        default: "."
+        type: string
+      cli_source:
+        description: "npm (the lockfile install pinned by this workflow revision) or workspace (build @apifn/cli from the checked-out repository; 21nCo/superfunctions only)"
+        required: false
+        default: npm
+        type: string
+      enforce_gates:
+        description: Fail the job when a gate fails. false only reports (summary, comment and outputs still carry the result); keep the default for a required check
+        required: false
+        default: true
+        type: boolean
       collection_dir:
-        description: Path to OpenCollection directory (repo-relative)
-        required: true
+        description: OpenCollection directory (repo-relative). Empty skips the collection tests, reported as not run
+        required: false
+        default: ""
         type: string
       environment:
         description: Collection environment name
@@ -22,7 +64,7 @@ on:
         default: "0.1.2"
         type: string
       start_mock_server:
-        description: Start apifn mock for workflow self-tests before running the collection
+        description: Start apifn mock on spec_path (relative to working_directory with router_path) for workflow self-tests before running the collection
         required: false
         default: false
         type: boolean
@@ -32,7 +74,7 @@ on:
         default: 19999
         type: number
       base_branch:
-        description: Base branch for spec diff
+        description: Base branch for spec diff (a branch name, not a revision)
         required: false
         default: main
         type: string
@@ -51,15 +93,67 @@ on:
         required: false
         default: true
         type: boolean
+    outputs:
+      verdict:
+        description: "pass, warn or fail: the result of every gate (warn only with router_path)"
+        value: ${{ jobs.api-check.outputs.verdict }}
+      drift:
+        description: "true when the committed spec differs from the router (router_path only; empty otherwise or when apifn check produced no consistent report)"
+        value: ${{ jobs.api-check.outputs.drift }}
+      breaking:
+        description: "true when the diff against the base found breaking changes, allowed or not (empty when no consistent report was produced)"
+        value: ${{ jobs.api-check.outputs.breaking }}
   workflow_dispatch:
     inputs:
       spec_path:
-        description: Path to generated OpenAPI spec (repo-relative)
-        required: true
+        description: Committed OpenAPI spec. Required without router_path (repo-relative); with router_path it is passed as --spec, relative to working_directory (empty uses the apifn config's default)
+        required: false
+        default: ""
         type: string
+      router_path:
+        description: Router module, relative to working_directory. Set it to run apifn check (drift, validation, breaking changes against the base) instead of validate-and-diff
+        required: false
+        default: ""
+        type: string
+      config_path:
+        description: apifn config file for apifn check, relative to working_directory (empty finds apifn.config.ts, .js or .mjs there)
+        required: false
+        default: ""
+        type: string
+      base_spec:
+        description: With router_path, a base spec file (relative to working_directory) or HTTP(S) URL used instead of the spec committed at origin/<base_branch>
+        required: false
+        default: ""
+        type: string
+      allow_breaking:
+        description: "With router_path, report breaking changes the contract version does not cover without failing (apifn check --allow-breaking, verdict warn). Only this input allows them; diff.failOnBreaking false in the caller's apifn config does not"
+        required: false
+        default: false
+        type: boolean
+      allow_install_scripts:
+        description: "With router_path, run the lifecycle scripts of the caller's npm ci (its own and its dependencies': postinstall, prepare, native builds). false (the default) runs npm ci --ignore-scripts, so files those scripts would build or generate are missing when the router is imported"
+        required: false
+        default: false
+        type: boolean
+      working_directory:
+        description: Directory of the caller's package, repo-relative. With router_path, npm ci and apifn check run there
+        required: false
+        default: "."
+        type: string
+      cli_source:
+        description: "npm (the lockfile install pinned by this workflow revision) or workspace (build @apifn/cli from the checked-out repository; 21nCo/superfunctions only)"
+        required: false
+        default: npm
+        type: string
+      enforce_gates:
+        description: Fail the job when a gate fails. false only reports (summary, comment and outputs still carry the result); keep the default for a required check
+        required: false
+        default: true
+        type: boolean
       collection_dir:
-        description: Path to OpenCollection directory (repo-relative)
-        required: true
+        description: OpenCollection directory (repo-relative). Empty skips the collection tests, reported as not run
+        required: false
+        default: ""
         type: string
       environment:
         description: Collection environment name
@@ -72,7 +166,7 @@ on:
         default: "0.1.2"
         type: string
       start_mock_server:
-        description: Start apifn mock for workflow self-tests before running the collection
+        description: Start apifn mock on spec_path (relative to working_directory with router_path) for workflow self-tests before running the collection
         required: false
         default: false
         type: boolean
@@ -82,7 +176,7 @@ on:
         default: 19999
         type: number
       base_branch:
-        description: Base branch for spec diff
+        description: Base branch for spec diff (a branch name, not a revision)
         required: false
         default: main
         type: string
@@ -97,30 +191,192 @@ on:
         default: true
         type: boolean
 
-# Callers must grant at least these scopes. A reusable workflow cannot
-# elevate GITHUB_TOKEN; a caller with pull-requests: read causes
-# startup_failure before any job runs.
+# Callers must grant at least contents: read and pull-requests: write. A
+# reusable workflow cannot elevate GITHUB_TOKEN; a caller with
+# pull-requests: read causes startup_failure before any job runs. Each job
+# sets its own: evaluate (the caller's code) gets contents: read, api-check
+# pull-requests: write.
 permissions:
   contents: read
-  pull-requests: write
 
 jobs:
-  api-check:
+  # Runs the caller's code (npm ci lifecycle scripts when allow_install_scripts is true, the workspace build, the
+  # router and config imports) with a read-only token. The api-check job below posts the comment and applies the
+  # gates; only it can write to the pull request, and it checks out, installs and imports nothing.
+  # Every step continues on error and the later steps run only while none failed (steps.*.outcome), so a failed step
+  # still reaches the summary and the gate decision, and the api-check job reports it. Every step has a timeout and
+  # their sum stays below the job's (360 minutes), so a hung install or router import fails its step rather than the
+  # job; if this job still fails as a whole (a lost runner, a cancellation), api-check runs anyway and fails. The
+  # summary cannot fail on a report's shape; if it fails anyway, the gate decision reports it as a failure.
+  #
+  # Threat model: the drift, base and install guards protect against caller code that is not adversarial (lifecycle
+  # scripts, router or config imports that generate or rewrite files). Hostile code in the pull request runs in this
+  # job and can forge its result (for example through $GITHUB_ENV or sudo); the job split only keeps the write token
+  # away from it. Cases that need hostile code (a transient replace-and-restore, a deliberate commit or update-ref
+  # that the checks do not see) are out of scope.
+  evaluate:
     # A called workflow sees its caller's github context (repository, event_name, workflow_ref), so only its own inputs
     # tell a call from a direct run: called_as_reusable_workflow defaults to true under workflow_call and is not declared
-    # under workflow_dispatch. Every caller, including external repositories (apifn/README.md), runs this job; a direct
+    # under workflow_dispatch. Every caller, including external repositories (apifn/README.md), runs these jobs; a direct
     # workflow_dispatch run skips outside 21nCo/superfunctions (SFNS-121 D14, checked by scripts/verify-owners.mjs).
     if: github.repository == '21nCo/superfunctions' || inputs.called_as_reusable_workflow == true
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      verdict: ${{ steps.result.outputs.verdict }}
+      drift: ${{ steps.result.outputs.drift }}
+      breaking: ${{ steps.result.outputs.breaking }}
+      comment: ${{ steps.result.outputs.comment }}
+      gate_code: ${{ steps.gates.outputs.code }}
 
     steps:
+      - name: Check inputs
+        id: inputs
+        continue-on-error: true
+        timeout-minutes: 5
+        shell: bash
+        env:
+          CLI_SOURCE: ${{ inputs.cli_source }}
+          CALLER_REPOSITORY: ${{ github.repository }}
+          ROUTER_PATH: ${{ inputs.router_path }}
+          SPEC_PATH: ${{ inputs.spec_path }}
+          BASE_SPEC: ${{ inputs.base_spec }}
+          CONFIG_PATH: ${{ inputs.config_path }}
+          COLLECTION_DIR: ${{ inputs.collection_dir }}
+          START_MOCK_SERVER: ${{ inputs.start_mock_server }}
+          BASE_BRANCH: ${{ inputs.base_branch }}
+        run: |
+          set -euo pipefail
+          # base_branch names the branch origin/<base_branch> tracks; revision syntax (dev~1, @{-1}) would pick another commit.
+          if [[ "$BASE_BRANCH" == *"@{"* ]] || ! git check-ref-format --branch "$BASE_BRANCH" > /dev/null 2>&1; then
+            echo "::error::base_branch must be a branch name, got '$BASE_BRANCH'"
+            exit 1
+          fi
+          # Path inputs are passed to apifn as operands; a leading '-' would be read as an option.
+          for name in router_path config_path spec_path base_spec collection_dir; do
+            case "$name" in
+              router_path) value="$ROUTER_PATH" ;;
+              config_path) value="$CONFIG_PATH" ;;
+              spec_path) value="$SPEC_PATH" ;;
+              base_spec) value="$BASE_SPEC" ;;
+              collection_dir) value="$COLLECTION_DIR" ;;
+              *)
+                echo "::error::unknown path input $name"
+                exit 1
+                ;;
+            esac
+            if [[ "$value" == -* ]]; then
+              echo "::error::$name must not start with '-', got '$value'"
+              exit 1
+            fi
+          done
+          case "$CLI_SOURCE" in
+            npm) ;;
+            workspace)
+              # The workspace build runs the caller's checkout of apifn/cli; only this repository has one.
+              if [ "$CALLER_REPOSITORY" != "21nCo/superfunctions" ]; then
+                echo "::error::cli_source: workspace builds @apifn/cli from the checked-out repository and is allowed only in 21nCo/superfunctions (caller: $CALLER_REPOSITORY). Use cli_source: npm."
+                exit 1
+              fi
+              ;;
+            *)
+              echo "::error::cli_source must be npm or workspace, got '$CLI_SOURCE'"
+              exit 1
+              ;;
+          esac
+          if [ -z "$ROUTER_PATH" ] && [ -z "$SPEC_PATH" ]; then
+            echo "::error::spec_path is required without router_path"
+            exit 1
+          fi
+          if [ -z "$ROUTER_PATH" ] && [ -n "$BASE_SPEC" ]; then
+            echo "::error::base_spec applies only with router_path"
+            exit 1
+          fi
+          # The mock server serves spec_path (relative to working_directory with router_path); it is never inferred from a config.
+          if [ "$START_MOCK_SERVER" == "true" ] && [ -n "$COLLECTION_DIR" ] && [ -z "$SPEC_PATH" ]; then
+            echo "::error::start_mock_server needs spec_path"
+            exit 1
+          fi
+
+      # Router mode runs the caller's install scripts and imports its router and config, so the token is not left in
+      # .git/config for them; fetch-depth 0 already fetched origin/<base_branch>. The legacy path keeps the default.
       - name: Checkout
         id: caller_checkout
+        if: ${{ !contains(steps.*.outcome, 'failure') }}
+        continue-on-error: true
+        timeout-minutes: 15
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
+          persist-credentials: ${{ inputs.router_path == '' }}
+
+      # Pins the base before any caller code runs (the workspace CLI build, npm ci, the router and config imports), so
+      # neither run can be pointed at another base. A base branch is pinned to its commit from the remote-tracking ref
+      # only (a tag or branch named origin/<base_branch> cannot stand in for it); the checkout fetched every branch, so
+      # the token is used only when that ref is missing, and then only through this command's environment. A base_spec
+      # (an HTTP(S) download or a local file resolved against working_directory, each at most 32 MiB as the CLI reads
+      # it) is copied to a snapshot outside the checkout, and both check runs read that snapshot. A base_spec that
+      # cannot be loaded is a baseline load error the check step reports (exit 2), as the CLI would, not a failed step.
+      - name: Pin base
+        id: fetch_base
+        if: ${{ !contains(steps.*.outcome, 'failure') && inputs.router_path != '' }}
+        continue-on-error: true
+        timeout-minutes: 10
+        shell: bash
+        working-directory: ${{ inputs.working_directory }}
+        env:
+          BASE_BRANCH: ${{ inputs.base_branch }}
+          BASE_SPEC: ${{ inputs.base_spec }}
+          FETCH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          snapshot="$RUNNER_TEMP/apifn-base-spec"
+          max_bytes=33554432
+          rm -f "$snapshot"
+          load_error() {
+            rm -f "$snapshot"
+            echo "error=${1//$'\n'/ }" >> "$GITHUB_OUTPUT"
+            echo "::error::$1"
+            exit 0
+          }
+          if [[ "$BASE_SPEC" =~ ^[Hh][Tt][Tt][Pp][Ss]?:// ]]; then
+            # The URL is never printed: a signed URL carries its credential. --globoff makes it one transfer.
+            if ! curl --fail --silent --show-error --globoff --location --max-time 30 --max-filesize "$max_bytes" --proto =http,https --proto-redir =http,https \
+              --output "$snapshot" -- "$BASE_SPEC" 2> /dev/null; then
+              load_error "Could not download the HTTP(S) base_spec"
+            fi
+            echo "Downloaded the HTTP(S) base_spec"
+          elif [ -n "$BASE_SPEC" ]; then
+            if [ ! -f "$BASE_SPEC" ]; then load_error "base_spec $BASE_SPEC is not a file in $PWD"; fi
+            # Reads at most one byte past the limit, so an oversized or unreadable file is a load error, not a copy.
+            if ! head -c "$((max_bytes + 1))" -- "$BASE_SPEC" > "$snapshot" 2> /dev/null; then
+              load_error "Could not read base_spec $BASE_SPEC"
+            fi
+            if [ "$(wc -c < "$snapshot")" -gt "$max_bytes" ]; then load_error "base_spec $BASE_SPEC is larger than $max_bytes bytes"; fi
+            echo "Copied base_spec $BASE_SPEC"
+          else
+            ref="refs/remotes/origin/${BASE_BRANCH}"
+            # show-ref --verify reads exactly this ref; rev-parse would fall back to a tag or branch of the same name.
+            if git show-ref --verify --quiet "$ref"; then
+              echo "origin/${BASE_BRANCH} was fetched by the checkout."
+            else
+              auth="$(printf 'x-access-token:%s' "$FETCH_TOKEN" | base64 -w0)"
+              echo "::add-mask::$auth"
+              GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="http.${GITHUB_SERVER_URL}/.extraheader" GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth" \
+                git fetch --no-tags origin "+refs/heads/${BASE_BRANCH}:${ref}"
+            fi
+            oid="$(git show-ref --verify --hash "$ref")"
+            sha="$(git rev-parse --verify "${oid}^{commit}")"
+            echo "Base origin/${BASE_BRANCH} is $sha"
+            echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Setup Node
+        id: setup_node
+        if: ${{ !contains(steps.*.outcome, 'failure') }}
+        continue-on-error: true
+        timeout-minutes: 10
         uses: actions/setup-node@v4
         with:
           node-version: "20"
@@ -128,9 +384,12 @@ jobs:
       - name: Fetch CLI lockfile from the workflow revision
         id: workflow_lockfile
         if: >-
+          !contains(steps.*.outcome, 'failure') && inputs.cli_source != 'workspace' && (
           github.repository != job.workflow_repository ||
           steps.caller_checkout.outputs.commit != job.workflow_sha ||
-          hashFiles('.github/apifn-cli-install/package-lock.json') == ''
+          hashFiles('.github/apifn-cli-install/package-lock.json') == '')
+        continue-on-error: true
+        timeout-minutes: 10
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: ${{ job.workflow_repository }}
@@ -140,6 +399,10 @@ jobs:
           persist-credentials: false
 
       - name: Install ApiFn CLI
+        id: install_cli
+        if: ${{ !contains(steps.*.outcome, 'failure') && inputs.cli_source != 'workspace' }}
+        continue-on-error: true
+        timeout-minutes: 30
         shell: bash
         env:
           APIFN_CLI_VERSION: ${{ inputs.cli_version }}
@@ -162,8 +425,280 @@ jobs:
           fi
           "$BIN_DIR/apifn" --version
 
+      # Same install and build as the repository's CI: no install scripts except esbuild's, plus the native Rollup package.
+      - name: Build ApiFn CLI from the workspace
+        id: build_cli
+        if: ${{ !contains(steps.*.outcome, 'failure') && inputs.cli_source == 'workspace' }}
+        continue-on-error: true
+        timeout-minutes: 30
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci --ignore-scripts
+          npm rebuild esbuild
+          node scripts/ci-install-rollup-native.mjs
+          ./node_modules/.bin/turbo run build --filter='@apifn/cli...'
+          BIN_DIR="$RUNNER_TEMP/apifn-workspace-bin"
+          mkdir -p "$BIN_DIR"
+          printf '#!/usr/bin/env bash\nexec node %q "$@"\n' "$PWD/apifn/cli/dist/bin.js" > "$BIN_DIR/apifn"
+          chmod +x "$BIN_DIR/apifn"
+          echo "$BIN_DIR" >> "$GITHUB_PATH"
+          echo "Built @apifn/cli@$(node -p "require('./apifn/cli/package.json').version") from the workspace"
+          "$BIN_DIR/apifn" --version
+
+      # The router module imports the caller's packages, so they are installed first. npm ci runs lifecycle scripts
+      # only with allow_install_scripts: true. apifn check reads the spec and router from the working tree, so an
+      # install that changes tracked files or adds untracked ones (a prepare script regenerating the spec) fails
+      # closed instead of hiding drift.
+      - name: Install caller dependencies
+        id: install_caller
+        if: ${{ !contains(steps.*.outcome, 'failure') && inputs.router_path != '' }}
+        continue-on-error: true
+        timeout-minutes: 30
+        shell: bash
+        working-directory: ${{ inputs.working_directory }}
+        env:
+          CLI_SOURCE: ${{ inputs.cli_source }}
+          CHECKOUT_COMMIT: ${{ steps.caller_checkout.outputs.commit }}
+          ALLOW_INSTALL_SCRIPTS: ${{ inputs.allow_install_scripts }}
+          NPM_TARBALL_SHA512: sha512-5Cf+jE+XctbhH/zjOOqXC+ity7eec/Tkk4Ql38tf6w+1htp2wYPHmE4c1R1Es3DY227Ac14+SLrlYJwkBicbTg==
+        run: |
+          set -euo pipefail
+          # The commit the checkout bound before any caller code ran; the install and the check compare against it,
+          # not against HEAD, which an install script could move.
+          if [ -z "$CHECKOUT_COMMIT" ] || [ "$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)" != "$CHECKOUT_COMMIT" ]; then
+            echo "::error::HEAD is not the checked-out commit (${CHECKOUT_COMMIT:-unknown})"
+            exit 1
+          fi
+          # The workspace CLI build installed the repository root with scripts off; with allow_install_scripts: true the
+          # root is installed again below, with them on. allow_install_scripts governs this caller install, not that
+          # build: cli_source: workspace runs only in 21nCo/superfunctions, whose own CI installs the same root lockfile
+          # with scripts on.
+          if [ "$CLI_SOURCE" == "workspace" ] && [ "$ALLOW_INSTALL_SCRIPTS" != "true" ] &&
+            [ "$(pwd -P)" == "$(cd "$GITHUB_WORKSPACE" && pwd -P)" ]; then
+            echo "The workspace CLI build already installed the repository root."
+            exit 0
+          fi
+          if [ ! -f package.json ]; then
+            echo "No package.json in $PWD; nothing to install."
+            exit 0
+          fi
+          # node_modules (at the root or nested) is the install's own output, even where the caller's .gitignore does
+          # not list it, so it is excluded by pathspec.
+          outside_node_modules=(-- . ':(exclude,glob)**/node_modules/**')
+          tree_state() {
+            git -C "$GITHUB_WORKSPACE" status --porcelain=v1 --untracked-files=all "${outside_node_modules[@]}"
+            git -C "$GITHUB_WORKSPACE" diff --binary "$CHECKOUT_COMMIT" "${outside_node_modules[@]}"
+          }
+          before="$(tree_state | sha256sum)"
+          # Lifecycle scripts (the caller's and its dependencies', prepare included) run only when the caller sets
+          # allow_install_scripts: true; anything else installs with them off. Either way npm ci runs in this read-only
+          # job, and the tree and HEAD checks around it fail closed.
+          if [ "$ALLOW_INSTALL_SCRIPTS" == "true" ]; then
+            echo "allow_install_scripts is true: npm ci runs the lifecycle scripts (npm $(npm --version))."
+            npm ci --ignore-scripts=false
+          else
+            # The npm bundled with Node 20 (10.8) still runs the prepare script of a git dependency, or of a directory
+            # dependency it installs as a copy, under --ignore-scripts; npm 11.21 (pacote 21) skips it. That exact npm
+            # is downloaded and checked against its registry integrity, installed offline outside the checkout from
+            # outside the caller's directory (so its .npmrc does not apply) without scripts, and put first on PATH.
+            caller_npm="$RUNNER_TEMP/apifn-caller-npm"
+            tarball="$RUNNER_TEMP/npm-11.21.3.tgz"
+            curl --fail --silent --show-error --location --proto =https --proto-redir =https --output "$tarball" \
+              https://registry.npmjs.org/npm/-/npm-11.21.3.tgz
+            integrity="$(node -e "const c=require('node:crypto');process.stdout.write('sha512-'+c.createHash('sha512').update(require('node:fs').readFileSync(process.argv[1])).digest('base64'))" "$tarball")"
+            if [ "$integrity" != "$NPM_TARBALL_SHA512" ]; then
+              echo "::error::npm-11.21.3.tgz does not match its pinned integrity"
+              exit 1
+            fi
+            (cd "$RUNNER_TEMP" && npm install --global --prefix "$caller_npm" --ignore-scripts --offline --no-audit --no-fund "$tarball")
+            export PATH="$caller_npm/bin:$PATH"
+            if [ "$(npm --version)" != "11.21.3" ]; then
+              echo "::error::The caller install needs npm 11.21.3; found $(npm --version)"
+              exit 1
+            fi
+            echo "allow_install_scripts is false: npm ci --ignore-scripts with npm 11.21.3 (set it to true if the router needs files install scripts build or generate)."
+            npm ci --ignore-scripts
+          fi
+          if [ "$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)" != "$CHECKOUT_COMMIT" ]; then
+            echo "::error::npm ci in $PWD moved HEAD away from the checked-out commit $CHECKOUT_COMMIT; apifn check must read the committed router and spec."
+            exit 1
+          fi
+          if [ "$(tree_state | sha256sum)" != "$before" ]; then
+            git -C "$GITHUB_WORKSPACE" status --porcelain=v1 --untracked-files=all "${outside_node_modules[@]}"
+            echo "::error::npm ci in $PWD changed the checked-out files (listed above); apifn check must read the committed router and spec. Keep generated files out of install scripts or ignore them."
+            exit 1
+          fi
+
+      # Markdown for the summary and PR comment, JSON for the outputs. Both reports are written outside the checkout by
+      # --report, so output the caller's router or config prints while loading cannot corrupt them; the summary step
+      # cross-checks the two runs (exit codes, verdict, drift, breaking) and reports an error when they disagree. Both
+      # runs diff against the base Pin base fixed before any caller code ran: the base_spec snapshot or the base
+      # branch commit. After both runs HEAD must still be the checked-out commit, and the spec the CLI opened
+      # (spec_path as given, or the config default the report names), with every symlink on its path, must be
+      # committed at that commit (spec_state committed, or missing at both), so a spec generated or rewritten by the
+      # install, the router or the config cannot hide drift.
+      - name: Run apifn check
+        id: check
+        if: ${{ !contains(steps.*.outcome, 'failure') && inputs.router_path != '' }}
+        continue-on-error: true
+        timeout-minutes: 30
+        shell: bash
+        working-directory: ${{ inputs.working_directory }}
+        env:
+          ROUTER_PATH: ${{ inputs.router_path }}
+          CONFIG_PATH: ${{ inputs.config_path }}
+          SPEC_PATH: ${{ inputs.spec_path }}
+          BASE_SPEC: ${{ inputs.base_spec }}
+          BASE_SHA: ${{ steps.fetch_base.outputs.sha }}
+          BASE_SPEC_ERROR: ${{ steps.fetch_base.outputs.error }}
+          CHECKOUT_COMMIT: ${{ steps.caller_checkout.outputs.commit }}
+          ALLOW_BREAKING: ${{ inputs.allow_breaking }}
+          # Prints "committed", "missing" or "changed", then the reason, for the spec (argv 3) relative to the physical
+          # directory (argv 2) under the repository root (argv 1), against the checked-out commit (argv 4). Like the
+          # CLI, it follows each component as the kernel does, so a symlink before '..' is resolved first.
+          SPEC_WALK: |
+            const fs = require('node:fs');
+            const path = require('node:path');
+            const { execFileSync } = require('node:child_process');
+            const [top, base, spec, commit] = process.argv.slice(1);
+            const done = (state, detail) => { process.stdout.write(`${state}\n${detail}\n`); process.exit(0); };
+            const env = { ...process.env, GIT_LITERAL_PATHSPECS: '1' };
+            const git = (...args) => execFileSync('git', ['-C', top, ...args], { encoding: 'utf8', env, stdio: ['ignore', 'pipe', 'ignore'] });
+            const headEntry = (rel) => {
+              for (const line of git('ls-tree', '-z', '--full-tree', commit, '--', rel).split('\0')) {
+                const tab = line.indexOf('\t');
+                const [mode, type, oid] = line.slice(0, tab).split(' ');
+                if (tab !== -1 && line.slice(tab + 1) === rel) return { mode, type, oid };
+              }
+              return null;
+            };
+            const parts = (value) => value.split('/').filter((part) => part !== '' && part !== '.');
+            const baseRel = path.relative(top, base);
+            if (path.isAbsolute(spec) || path.isAbsolute(baseRel) || baseRel === '..' || baseRel.startsWith('../')) {
+              done('changed', `${spec} is not a path inside the repository`);
+            }
+            let pending = [...parts(baseRel), ...parts(spec)];
+            const resolved = [];
+            let hops = 0;
+            let missing = false;
+            while (pending.length > 0) {
+              const part = pending.shift();
+              if (part === '..') {
+                if (resolved.length === 0) done('changed', `${spec} leads outside the repository`);
+                resolved.pop();
+                continue;
+              }
+              resolved.push(part);
+              if (missing) continue;
+              const rel = resolved.join('/');
+              let stat;
+              try {
+                stat = fs.lstatSync(path.join(top, rel));
+              } catch {
+                missing = true;
+                continue;
+              }
+              if (!stat.isSymbolicLink()) continue;
+              hops += 1;
+              const target = fs.readlinkSync(path.join(top, rel));
+              const entry = headEntry(rel);
+              if (hops > 40 || entry === null || entry.mode !== '120000' || git('cat-file', 'blob', entry.oid) !== target) {
+                done('changed', `the symlink ${rel} is not committed at ${commit} with the target ${target}`);
+              }
+              if (path.isAbsolute(target)) done('changed', `the symlink ${rel} has an absolute target`);
+              resolved.pop();
+              pending = [...parts(target), ...pending];
+            }
+            const rel = resolved.join('/');
+            const entry = rel === '' ? null : headEntry(rel);
+            if (missing) done(entry === null ? 'missing' : 'changed', `${rel} is not in the checkout`);
+            if (!fs.lstatSync(path.join(top, rel)).isFile()) done('changed', `${rel} is not a regular file`);
+            if (entry === null || entry.type !== 'blob' || entry.mode === '120000') done('changed', `${rel} is not committed at ${commit}`);
+            if (git('hash-object', `--path=${rel}`, '--', rel).trim() !== entry.oid) done('changed', `${rel} differs from ${commit}`);
+            done('committed', rel);
+        run: |
+          set +e
+          top="$(git rev-parse --show-toplevel)"
+          base_dir="$(pwd -P)"
+          rm -f "$RUNNER_TEMP/apifn-check.md" "$RUNNER_TEMP/apifn-check.json"
+          args=("$ROUTER_PATH")
+          if [ -n "$CONFIG_PATH" ]; then args+=(--config "$CONFIG_PATH"); fi
+          if [ -n "$SPEC_PATH" ]; then args+=(--spec "$SPEC_PATH"); fi
+          if [ -n "$BASE_SPEC_ERROR" ]; then
+            echo "::error::Failed to load base spec: $BASE_SPEC_ERROR"
+            printf 'exit_code=2\njson_exit_code=2\nspec_state=\n' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ -n "$BASE_SPEC" ]; then
+            args+=(--base-spec "$RUNNER_TEMP/apifn-base-spec")
+          else
+            args+=(--base "$BASE_SHA")
+          fi
+          if [ "$ALLOW_BREAKING" == "true" ]; then args+=(--allow-breaking); fi
+          apifn check "${args[@]}" --format markdown --report "$RUNNER_TEMP/apifn-check.md"
+          code=$?
+          apifn check "${args[@]}" --format json --report "$RUNNER_TEMP/apifn-check.json" > /dev/null
+          json_code=$?
+          if [ -n "$BASE_SPEC" ] && ! [[ "$BASE_SPEC" =~ ^[Hh][Tt][Tt][Pp][Ss]?:// ]]; then
+            # The reports name the base the CLI read, the snapshot; show the caller's local base_spec instead (an
+            # HTTP(S) base_spec keeps the snapshot name, so no URL credential reaches the reports). Only the JSON
+            # base.ref and the Markdown Base row change, escaped as the CLI escapes it (one line, markup and pipes
+            # escaped); the label is literal data.
+            node -e '
+              const fs = require("node:fs");
+              const [snapshot, label, md, json] = process.argv.slice(1);
+              const mdText = (value) => value.replaceAll(/\r\n?|\n/g, " ").replaceAll(/[\\`*_[\]<>|]/g, (char) => "\\" + char);
+              try {
+                const report = JSON.parse(fs.readFileSync(json, "utf8"));
+                if (report?.base?.ref === snapshot) {
+                  report.base.ref = label;
+                  fs.writeFileSync(json, JSON.stringify(report, null, 2) + "\n");
+                }
+              } catch {}
+              try {
+                const lines = fs.readFileSync(md, "utf8").split("\n");
+                const row = lines.findIndex((line) => line.startsWith("| Base | "));
+                if (row !== -1) {
+                  lines[row] = lines[row].replaceAll(mdText(snapshot), () => mdText(label));
+                  fs.writeFileSync(md, lines.join("\n"));
+                }
+              } catch {}
+            ' "$RUNNER_TEMP/apifn-base-spec" "$BASE_SPEC (snapshot taken before the install)" "$RUNNER_TEMP/apifn-check.md" "$RUNNER_TEMP/apifn-check.json" || true
+          fi
+          spec="$(node -e 'try { const r = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")); if (typeof r.spec === "string") process.stdout.write(r.spec); } catch {}' "$RUNNER_TEMP/apifn-check.json")"
+          spec_state=""
+          spec_file=""
+          if [ -n "$spec" ]; then
+            # The CLI opens spec_path as given, following symlinks before '..' (the report shows it normalized), and
+            # the config default normalized, as the report names it. Each component of that path is followed from
+            # the repository root: every symlink on the way must be committed at the checked-out commit with the same
+            # target, and the file it reaches must be committed there with the same content. A spec absent from both
+            # is missing.
+            walk="$(node -e "$SPEC_WALK" "$top" "$base_dir" "${SPEC_PATH:-$spec}" "$CHECKOUT_COMMIT")" || walk=$'changed\nthe spec check did not complete'
+            spec_state="${walk%%$'\n'*}"
+            case "$spec_state" in
+              committed) spec_file="${walk#*$'\n'}"; spec_file="${spec_file%$'\n'}" ;;
+              missing) ;;
+              *)
+                spec_state=changed
+                echo "::error::The spec apifn check read (${SPEC_PATH:-$spec}) is not the file committed at $CHECKOUT_COMMIT: ${walk#*$'\n'}. The install, the router or the config created or changed it, or it is outside the repository; the check must read the committed spec."
+                ;;
+            esac
+          fi
+          if [ -z "$CHECKOUT_COMMIT" ] || [ "$(git rev-parse HEAD)" != "$CHECKOUT_COMMIT" ]; then
+            spec_state=changed
+            spec_file=""
+            echo "::error::HEAD is no longer the checked-out commit ${CHECKOUT_COMMIT:-unknown}: the router or the config moved it, so the check did not read the committed spec."
+          fi
+          printf 'exit_code=%s\njson_exit_code=%s\nspec_state=%s\nspec_file=%s\n' "$code" "$json_code" "$spec_state" "$spec_file" >> "$GITHUB_OUTPUT"
+          exit 0
+
       - name: Resolve base spec from base branch
         id: base_spec
+        if: ${{ !contains(steps.*.outcome, 'failure') && inputs.router_path == '' }}
+        continue-on-error: true
+        timeout-minutes: 10
         shell: bash
         env:
           BASE_BRANCH: ${{ inputs.base_branch }}
@@ -180,7 +715,9 @@ jobs:
 
       - name: Validate OpenAPI
         id: validate
+        if: ${{ !contains(steps.*.outcome, 'failure') && inputs.router_path == '' }}
         continue-on-error: true
+        timeout-minutes: 10
         shell: bash
         env:
           SPEC_PATH: ${{ inputs.spec_path }}
@@ -193,34 +730,45 @@ jobs:
 
       - name: Diff OpenAPI against base branch
         id: diff
-        if: steps.base_spec.outputs.found == 'true'
+        if: ${{ !contains(steps.*.outcome, 'failure') && inputs.router_path == '' && steps.base_spec.outputs.found == 'true' }}
         continue-on-error: true
+        timeout-minutes: 10
         shell: bash
         env:
           SPEC_PATH: ${{ inputs.spec_path }}
           FAIL_ON_BREAKING: ${{ inputs.fail_on_breaking }}
         run: |
           set +e
-          DIFF_ARGS=""
+          DIFF_ARGS=()
           if [ "$FAIL_ON_BREAKING" != "true" ]; then
-            DIFF_ARGS="--no-fail-on-breaking"
+            DIFF_ARGS+=(--no-fail-on-breaking)
           fi
-          apifn diff .apifn-base-openapi.yml "$SPEC_PATH" --format json $DIFF_ARGS > diff-report.json
+          apifn diff .apifn-base-openapi.yml "$SPEC_PATH" --format json "${DIFF_ARGS[@]}" > diff-report.json
           code=$?
           echo "exit_code=$code" >> "$GITHUB_OUTPUT"
           exit 0
 
+      # spec_path is relative to working_directory with router_path, as apifn check reads it; there the mock serves the
+      # committed file apifn check resolved (symlinks followed as the CLI follows them), when it resolved one.
+      # A mock that does not start fails the tests (and the job) through the summary and gates, which still run.
       - name: Start smoke mock server
-        if: inputs.start_mock_server == true || inputs.start_mock_server == 'true'
+        id: mock
+        if: ${{ !contains(steps.*.outcome, 'failure') && inputs.collection_dir != '' && (inputs.start_mock_server == true || inputs.start_mock_server == 'true') }}
+        continue-on-error: true
+        timeout-minutes: 5
         shell: bash
+        working-directory: ${{ inputs.router_path != '' && inputs.working_directory || '.' }}
         env:
           SPEC_PATH: ${{ inputs.spec_path }}
+          CHECKED_SPEC_FILE: ${{ steps.check.outputs.spec_file }}
           MOCK_PORT: ${{ inputs.mock_port }}
         run: |
           set -euo pipefail
-          apifn mock "$SPEC_PATH" --port "$MOCK_PORT" > apifn-mock.log 2>&1 &
-          echo "$!" > apifn-mock.pid
-          for attempt in {1..30}; do
+          spec="$SPEC_PATH"
+          if [ -n "$CHECKED_SPEC_FILE" ]; then spec="$GITHUB_WORKSPACE/$CHECKED_SPEC_FILE"; fi
+          apifn mock "$spec" --port "$MOCK_PORT" > "$RUNNER_TEMP/apifn-mock.log" 2>&1 &
+          echo "$!" > "$RUNNER_TEMP/apifn-mock.pid"
+          for _ in {1..30}; do
             # Any HTTP response means the mock accepted a connection. Do not
             # require GET /users — caller specs may not define that route.
             if curl --silent --output /dev/null --max-time 1 "http://127.0.0.1:${MOCK_PORT}/"; then
@@ -228,98 +776,406 @@ jobs:
             fi
             sleep 1
           done
-          cat apifn-mock.log
+          cat "$RUNNER_TEMP/apifn-mock.log"
           exit 1
 
+      # D3: collections are optional; without collection_dir the tests are reported as not run.
       - name: Run collection tests
         id: test
+        if: ${{ !contains(steps.*.outcome, 'failure') && inputs.collection_dir != '' }}
         continue-on-error: true
+        timeout-minutes: 60
         shell: bash
         env:
           COLLECTION_DIR: ${{ inputs.collection_dir }}
           COLLECTION_ENVIRONMENT: ${{ inputs.environment }}
         run: |
           set +e
-          apifn test "$COLLECTION_DIR" --env "$COLLECTION_ENVIRONMENT" --reporter json > test-report.json
+          # A fresh report outside the checkout: the summary reads it only when this step succeeded.
+          rm -f "$RUNNER_TEMP/apifn-test-report.json"
+          apifn test "$COLLECTION_DIR" --env "$COLLECTION_ENVIRONMENT" --reporter json > "$RUNNER_TEMP/apifn-test-report.json"
           code=$?
           echo "exit_code=$code" >> "$GITHUB_OUTPUT"
           exit 0
 
       - name: Stop smoke mock server
-        if: always() && (inputs.start_mock_server == true || inputs.start_mock_server == 'true')
+        if: always() && inputs.collection_dir != '' && (inputs.start_mock_server == true || inputs.start_mock_server == 'true')
+        continue-on-error: true
+        timeout-minutes: 2
         shell: bash
         run: |
-          if [ -f apifn-mock.pid ]; then
-            kill "$(cat apifn-mock.pid)" || true
+          if [ -f "$RUNNER_TEMP/apifn-mock.pid" ]; then
+            kill "$(cat "$RUNNER_TEMP/apifn-mock.pid")" || true
           fi
 
       - name: Build markdown summary
-        id: summary
+        id: result
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        timeout-minutes: 5
         shell: bash
         env:
-          TEST_EXIT_CODE: ${{ steps.test.outputs.exit_code }}
+          # The first step that failed before the API check ran, or empty.
+          SETUP_FAILED_STEP: >-
+            ${{
+            steps.inputs.outcome == 'failure' && 'Check inputs' ||
+            steps.caller_checkout.outcome == 'failure' && 'Checkout' ||
+            steps.fetch_base.outcome == 'failure' && 'Pin base' ||
+            steps.setup_node.outcome == 'failure' && 'Setup Node' ||
+            steps.workflow_lockfile.outcome == 'failure' && 'Fetch CLI lockfile from the workflow revision' ||
+            steps.install_cli.outcome == 'failure' && 'Install ApiFn CLI' ||
+            steps.build_cli.outcome == 'failure' && 'Build ApiFn CLI from the workspace' ||
+            steps.install_caller.outcome == 'failure' && 'Install caller dependencies' ||
+            steps.base_spec.outcome == 'failure' && 'Resolve base spec from base branch' ||
+            '' }}
+          ROUTER_PATH: ${{ inputs.router_path }}
+          COLLECTION_DIR: ${{ inputs.collection_dir }}
+          CHECK_EXIT_CODE: ${{ steps.check.outputs.exit_code }}
+          CHECK_JSON_EXIT_CODE: ${{ steps.check.outputs.json_exit_code }}
+          CHECK_SPEC_STATE: ${{ steps.check.outputs.spec_state }}
+          ALLOW_BREAKING: ${{ inputs.allow_breaking }}
+          MOCK_OUTCOME: ${{ steps.mock.outcome }}
+          TEST_OUTCOME: ${{ steps.test.outcome }}
+          VALIDATE_EXIT_CODE: ${{ steps.validate.outputs.exit_code }}
+          DIFF_EXIT_CODE: ${{ steps.diff.outcome == 'failure' && '1' || steps.diff.outputs.exit_code }}
+          TEST_EXIT_CODE: ${{ (steps.mock.outcome == 'failure' || steps.test.outcome == 'failure') && '1' || steps.test.outputs.exit_code }}
         run: |
           node <<'JS'
           const fs = require('node:fs');
+          const path = require('node:path');
+          const crypto = require('node:crypto');
 
-          function readJson(path, fallback) {
-            try { return JSON.parse(fs.readFileSync(path, 'utf8')); } catch { return fallback; }
+          const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
+          const isCount = (value) => Number.isSafeInteger(value) && value >= 0;
+          function readJson(file, fallback) {
+            try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return fallback; }
+          }
+          function readText(file) {
+            try { return fs.readFileSync(file, 'utf8'); } catch { return null; }
+          }
+          // The semver core of a contract version, as apifn check parses it (build metadata and prerelease ignored).
+          function semverCore(version) {
+            if (typeof version !== 'string') return null;
+            const plus = version.indexOf('+');
+            const build = plus === -1 ? null : version.slice(plus + 1);
+            const withoutBuild = plus === -1 ? version : version.slice(0, plus);
+            const dash = withoutBuild.indexOf('-');
+            const prerelease = dash === -1 ? null : withoutBuild.slice(dash + 1);
+            const core = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.exec(dash === -1 ? withoutBuild : withoutBuild.slice(0, dash));
+            if (!core) return null;
+            if (prerelease !== null && !prerelease.split('.').every((id) => /^(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)$/.test(id))) return null;
+            if (build !== null && !build.split('.').every((id) => /^[0-9a-zA-Z-]+$/.test(id))) return null;
+            return { major: BigInt(core[1]), minor: BigInt(core[2]) };
+          }
+          // D7: a major bump covers a breaking change, or a minor bump while both majors are 0.
+          function versionCoversBreaking(base, head) {
+            const b = semverCore(base);
+            const h = semverCore(head);
+            if (!b || !h) return false;
+            if (h.major > b.major) return true;
+            return b.major === 0n && h.major === 0n && h.minor > b.minor;
           }
 
-          const validate = readJson('validate-report.json', { ok: false, errors: [{ path: '', message: 'missing validate report' }] });
-          const diff = readJson('diff-report.json', { hasBreakingChanges: false, summary: { breaking: 0, nonBreaking: 0, added: 0, removed: 0, modified: 0 } });
-          const test = readJson('test-report.json', { summary: { total: 0, passed: 0, failed: 0, skipped: 0, errors: 0 } });
+          const env = process.env;
+          const marker = '<!-- apifn-ci-report -->';
+          // Throws nothing on any report shape; anything else that throws is reported by the catch at the end.
+          function summarize() {
+          const collectionRun = env.COLLECTION_DIR !== '';
+          // The test report is read only from this run's test step, and only when it has every count.
+          const testCounts = ['total', 'passed', 'failed', 'skipped', 'errors'];
+          const testReport = env.TEST_OUTCOME === 'success' ? readJson(path.join(env.RUNNER_TEMP, 'apifn-test-report.json'), null) : null;
+          const testReported = isObject(testReport) && isObject(testReport.summary) && testCounts.every((key) => isCount(testReport.summary[key]));
+          const test = testReported ? testReport : { summary: { total: 0, passed: 0, failed: 0, skipped: 0, errors: 0 } };
+          const testFailed = collectionRun && (!testReported || env.TEST_EXIT_CODE !== '0' || test.summary.failed > 0 || test.summary.errors > 0);
+          let testLine = '- Tests: **NOT RUN** (no collection_dir)';
+          if (env.MOCK_OUTCOME === 'failure') testLine = '- Tests: **FAIL** (the smoke mock server did not start; see the job log)';
+          else if (collectionRun && !testReported) testLine = '- Tests: **FAIL** (apifn test produced no report; see the job log)';
+          else if (collectionRun) testLine = `- Tests: **${testFailed ? 'FAIL' : 'PASS'}** (passed=${test.summary.passed}, failed=${test.summary.failed}, errors=${test.summary.errors})`;
+          const testTable = collectionRun && testReported
+            ? [
+                '',
+                '### Test Summary',
+                '',
+                '| Metric | Value |',
+                '|---|---:|',
+                `| Total | ${test.summary.total} |`,
+                `| Passed | ${test.summary.passed} |`,
+                `| Failed | ${test.summary.failed} |`,
+                `| Skipped | ${test.summary.skipped} |`,
+                `| Errors | ${test.summary.errors} |`,
+              ]
+            : [];
 
-          const validateStatus = validate.ok ? 'PASS' : 'FAIL';
-          const diffStatus = diff.hasBreakingChanges ? 'BREAKING' : 'OK';
-          const testStatus = (process.env.TEST_EXIT_CODE !== '0' || test.summary.failed || test.summary.errors) ? 'FAIL' : 'PASS';
+          let body;
+          let verdict;
+          let drift = '';
+          let breaking = '';
 
-          const lines = [
-            '<!-- apifn-ci-report -->',
-            '## ApiFn CI Summary',
-            '',
-            `- Validate: **${validateStatus}**`,
-            `- Diff: **${diffStatus}** (breaking=${diff.summary.breaking ?? 0}, non-breaking=${diff.summary.nonBreaking ?? 0})`,
-            `- Tests: **${testStatus}** (passed=${test.summary.passed ?? 0}, failed=${test.summary.failed ?? 0}, errors=${test.summary.errors ?? 0})`,
-            '',
-            '### Diff Summary',
-            '',
-            '| Metric | Value |',
-            '|---|---:|',
-            `| Breaking | ${diff.summary.breaking ?? 0} |`,
-            `| Non-breaking | ${diff.summary.nonBreaking ?? 0} |`,
-            `| Added | ${diff.summary.added ?? 0} |`,
-            `| Removed | ${diff.summary.removed ?? 0} |`,
-            `| Modified | ${diff.summary.modified ?? 0} |`,
-            '',
-            '### Test Summary',
-            '',
-            '| Metric | Value |',
-            '|---|---:|',
-            `| Total | ${test.summary.total ?? 0} |`,
-            `| Passed | ${test.summary.passed ?? 0} |`,
-            `| Failed | ${test.summary.failed ?? 0} |`,
-            `| Skipped | ${test.summary.skipped ?? 0} |`,
-            `| Errors | ${test.summary.errors ?? 0} |`,
-          ];
+          if (env.SETUP_FAILED_STEP !== '') {
+            verdict = 'fail';
+            body = [marker, '## ApiFn API check: **ERROR**', '', `The step "${env.SETUP_FAILED_STEP}" failed, so the API check did not run. See the job log.`];
+          } else if (env.ROUTER_PATH !== '') {
+            const report = readJson(path.join(env.RUNNER_TEMP, 'apifn-check.json'), null);
+            const markdown = readText(path.join(env.RUNNER_TEMP, 'apifn-check.md'));
+            const code = env.CHECK_EXIT_CODE;
+            const verdicts = ['pass', 'warn', 'fail'];
+            const hasReport = isObject(report) && verdicts.includes(report.verdict);
+            // The Markdown and JSON reports come from two runs: the Markdown one is shown only when its verdict,
+            // drift and breaking-change rows say what the JSON report says, and exit 0 (pass or warn) or 1 (fail)
+            // matches the verdict in both runs.
+            const markdownLines = markdown === null ? [] : markdown.split('\n');
+            const markdownAgrees = () => {
+              const diffCount = (key) => (isObject(report.diff) && Array.isArray(report.diff[key]) ? String(report.diff[key].length) : '-');
+              const driftRow = markdownLines.find((line) => line.startsWith('| Drift | '));
+              return (
+                markdownLines[0] === marker &&
+                markdownLines[1] === `## ApiFn check: **${report.verdict.toUpperCase()}**` &&
+                driftRow !== undefined &&
+                (driftRow === '| Drift | none |') === (report.drift === false) &&
+                markdownLines.includes(`| Breaking | ${diffCount('breaking')} |`) &&
+                markdownLines.includes(`| Non-breaking | ${diffCount('nonBreaking')} |`)
+              );
+            };
+            // The spec the report names must be the file committed at HEAD; a spec missing from both the checkout
+            // and HEAD is a drift report, which must say so.
+            const specState = env.CHECK_SPEC_STATE;
+            const specCommitted =
+              hasReport && (specState === 'committed' || (specState === 'missing' && report.drift === true && report.verdict === 'fail'));
+            const consistent =
+              specCommitted &&
+              hasReport &&
+              typeof report.drift === 'boolean' &&
+              Array.isArray(report.breaking) &&
+              (code === '0' || code === '1') &&
+              env.CHECK_JSON_EXIT_CODE === code &&
+              (report.verdict === 'fail') === (code === '1') &&
+              markdownAgrees();
+            if (consistent) {
+              drift = String(report.drift);
+              breaking = String(report.breaking.length > 0);
+            }
+            let checkVerdict = consistent ? report.verdict : 'fail';
+            // Only allow_breaking allows a breaking change the contract version does not cover (D7, as apifn check
+            // applies it): diff.failOnBreaking false in the caller's config makes apifn check warn, and the workflow
+            // fails it instead.
+            let policyNote = null;
+            if (consistent && env.ALLOW_BREAKING !== 'true' && checkVerdict !== 'fail' && report.breaking.length > 0) {
+              const versions = isObject(report.versions) ? report.versions : {};
+              if (!versionCoversBreaking(versions.base, versions.head)) {
+                checkVerdict = 'fail';
+                policyNote = `> The workflow fails this check: ${report.breaking.length} breaking change(s) without a major version bump (base ${String(versions.base ?? '-')}, head ${String(versions.head ?? '-')}). allow_breaking is false, so \`diff.failOnBreaking: false\` in the apifn config does not allow them.`;
+              }
+            }
+            let error = `apifn check did not produce consistent reports (Markdown run exit ${code || '-'}, JSON run exit ${env.CHECK_JSON_EXIT_CODE || '-'}; exit 2 is a usage or load error, and the two runs must agree on the verdict, drift and breaking changes). See the job log.`;
+            if (hasReport && !specCommitted) {
+              error = `The spec apifn check read (\`${String(report.spec)}\`) is not the file committed at the checked-out commit, or HEAD moved: the install, the router or the config created or changed it. The check must read the committed spec. See the job log.`;
+            }
+            let lines = [marker, '## ApiFn check: **ERROR**', '', error];
+            if (consistent && policyNote === null) lines = [markdown.trimEnd()];
+            if (consistent && policyNote !== null) {
+              lines = [marker, '## ApiFn check: **FAIL**', '', policyNote, ...markdown.trimEnd().split('\n').slice(2)];
+            }
+            lines.push('', '### Collection tests', '', testLine, ...testTable);
+            body = lines;
+            if (checkVerdict === 'fail' || testFailed) verdict = 'fail';
+            else verdict = checkVerdict;
+          } else {
+            // A report is read only when its step ran (a file left in the checkout is not this run's).
+            const validateReport = env.VALIDATE_EXIT_CODE ? readJson('validate-report.json', null) : null;
+            const validateReported = isObject(validateReport) && typeof validateReport.ok === 'boolean';
+            const diffReport = readJson('diff-report.json', null);
+            const diffCounts = ['breaking', 'nonBreaking', 'added', 'removed', 'modified'];
+            const diffReported =
+              isObject(diffReport) &&
+              typeof diffReport.hasBreakingChanges === 'boolean' &&
+              isObject(diffReport.summary) &&
+              diffCounts.every((key) => isCount(diffReport.summary[key]));
+            const diff = diffReported ? diffReport : { hasBreakingChanges: false, summary: { breaking: 0, nonBreaking: 0, added: 0, removed: 0, modified: 0 } };
+            let validateStatus = 'FAIL** (apifn validate produced no report)';
+            if (validateReported) validateStatus = validateReport.ok ? 'PASS**' : 'FAIL**';
+            let diffStatus = 'ERROR** (apifn diff produced no report)';
+            if (diffReported) diffStatus = `${diff.hasBreakingChanges ? 'BREAKING' : 'OK'}** (breaking=${diff.summary.breaking}, non-breaking=${diff.summary.nonBreaking})`;
+            // Empty when apifn diff produced no report, as the breaking output documents.
+            if (diffReported) breaking = String(diffReport.hasBreakingChanges);
+            const diffCode = env.DIFF_EXIT_CODE || '0';
+            verdict = env.VALIDATE_EXIT_CODE !== '0' || !validateReported || !validateReport.ok || diffCode !== '0' || !diffReported || testFailed ? 'fail' : 'pass';
+            body = [
+              marker,
+              '## ApiFn CI Summary',
+              '',
+              `- Validate: **${validateStatus}`,
+              `- Diff: **${diffStatus}`,
+              testLine,
+              '',
+              '### Diff Summary',
+              '',
+              '| Metric | Value |',
+              '|---|---:|',
+              `| Breaking | ${diff.summary.breaking} |`,
+              `| Non-breaking | ${diff.summary.nonBreaking} |`,
+              `| Added | ${diff.summary.added} |`,
+              `| Removed | ${diff.summary.removed} |`,
+              `| Modified | ${diff.summary.modified} |`,
+              ...testTable,
+            ];
+          }
+          return { body, verdict, drift, breaking, setupFailedStep: env.SETUP_FAILED_STEP };
+          }
 
-          const body = `${lines.join('\n')}\n`;
-          fs.writeFileSync('ci-summary.md', body);
-          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, body);
+          let result;
+          try {
+            result = summarize();
+          } catch (error) {
+            console.log(`::error::Build markdown summary failed: ${error && error.stack ? error.stack : error}`);
+            result = {
+              body: [marker, '## ApiFn API check: **ERROR**', '', 'The workflow could not summarize the API check. See the job log.'],
+              verdict: 'fail',
+              drift: '',
+              breaking: '',
+              setupFailedStep: 'Build markdown summary',
+            };
+          }
+          const { body, verdict, drift, breaking } = result;
+
+          const text = `${body.join('\n')}\n`;
+          fs.writeFileSync(path.join(env.RUNNER_TEMP, 'apifn-ci-summary.md'), text);
+          // A step summary holds at most 1 MiB; the full report always goes to the job log.
+          console.log(text);
+          const summaryLimit = 1000 * 1000;
+          fs.appendFileSync(
+            env.GITHUB_STEP_SUMMARY,
+            Buffer.byteLength(text) <= summaryLimit
+              ? text
+              : `${Buffer.from(text).subarray(0, summaryLimit).toString('utf8').replace(/\uFFFD*$/, '')}\n\n_Report truncated; the full report is in the job log._\n`
+          );
+          // The api-check job posts this as the PR comment. GitHub holds at most 65536 characters in a comment and
+          // Linux at most 128 KiB in the environment variable that carries it, so the bound is 60000 UTF-8 bytes
+          // (never more characters than bytes): a longer report keeps its head, cut at a line, and points at the job
+          // summary.
+          const limit = 60000;
+          const runUrl = `${env.GITHUB_SERVER_URL}/${env.GITHUB_REPOSITORY}/actions/runs/${env.GITHUB_RUN_ID}`;
+          const note = `\n\n_Report truncated; the full report is in the [job summary](${runUrl})._\n`;
+          let comment = text;
+          if (Buffer.byteLength(text) > limit) {
+            const head = Buffer.from(text).subarray(0, limit - Buffer.byteLength(note)).toString('utf8').replace(/\uFFFD*$/, '');
+            const cut = head.lastIndexOf('\n');
+            comment = `${cut > 0 ? head.slice(0, cut) : head}${note}`;
+          }
+          const delimiter = `APIFN_COMMENT_${crypto.randomBytes(16).toString('hex')}`;
+          fs.appendFileSync(
+            env.GITHUB_OUTPUT,
+            `verdict=${verdict}\ndrift=${drift}\nbreaking=${breaking}\nsetup_failed_step=${result.setupFailedStep}\ncomment<<${delimiter}\n${comment}\n${delimiter}\n`
+          );
           JS
 
+      # The gate decision, applied by the api-check job. A step that failed before the check ran fails it whatever
+      # enforce_gates says, as does a summary that did not finish.
+      - name: Decide CI gates
+        id: gates
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        timeout-minutes: 2
+        shell: bash
+        env:
+          SETUP_FAILED_STEP: ${{ steps.result.outcome != 'success' && 'Build markdown summary' || steps.result.outputs.setup_failed_step }}
+          ROUTER_PATH: ${{ inputs.router_path }}
+          ENFORCE_GATES: ${{ inputs.enforce_gates }}
+          VERDICT: ${{ steps.result.outputs.verdict }}
+          CHECK_EXIT_CODE: ${{ steps.check.outputs.exit_code }}
+          VALIDATE_EXIT_CODE: ${{ steps.validate.outputs.exit_code }}
+          DIFF_EXIT_CODE: ${{ steps.diff.outcome == 'failure' && '1' || steps.diff.outputs.exit_code }}
+          TEST_EXIT_CODE: ${{ (steps.mock.outcome == 'failure' || steps.test.outcome == 'failure') && '1' || steps.test.outputs.exit_code }}
+        run: |
+          set +e
+          (
+            set -euo pipefail
+
+            if [ -n "$SETUP_FAILED_STEP" ]; then
+              echo "::error::The step \"$SETUP_FAILED_STEP\" failed, so the API check did not run (enforce_gates does not apply)"
+              exit 1
+            fi
+
+            if [ "$ENFORCE_GATES" != "true" ]; then
+              echo "::notice::enforce_gates is false: verdict=$VERDICT is reported without failing the job"
+              exit 0
+            fi
+
+            test_code="${TEST_EXIT_CODE:-0}"
+
+            if [ -n "$ROUTER_PATH" ]; then
+              if [ "$VERDICT" == "fail" ]; then
+                check_code="${CHECK_EXIT_CODE:-1}"
+                if [ "$check_code" == "0" ]; then check_code=1; fi
+                echo "apifn check failed (verdict=$VERDICT, exit=${CHECK_EXIT_CODE:-none})"
+                if [ "$test_code" != "0" ]; then echo "Collection tests failed (exit=$test_code)"; fi
+                exit "$check_code"
+              fi
+              exit 0
+            fi
+
+            validate_code="${VALIDATE_EXIT_CODE:-1}"
+            diff_code="${DIFF_EXIT_CODE:-0}"
+
+            if [ "$validate_code" != "0" ]; then
+              echo "Validation failed (exit=$validate_code)"
+              exit "$validate_code"
+            fi
+
+            if [ "$diff_code" != "0" ]; then
+              echo "Diff failed (exit=$diff_code)"
+              exit "$diff_code"
+            fi
+
+            if [ "$test_code" != "0" ]; then
+              echo "Collection tests failed (exit=$test_code)"
+              exit "$test_code"
+            fi
+
+            # A report that is missing or malformed fails the summary's verdict even when every step exited 0.
+            if [ "$VERDICT" != "pass" ]; then
+              echo "The API check failed (verdict=${VERDICT:-none})"
+              exit 1
+            fi
+          )
+          code=$?
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+
+  # Posts the comment and applies the gate the evaluate job decided. Every evaluate step continues on error and has a
+  # timeout, so every failure before or during the check is reported there. This job runs whatever the evaluate job's
+  # result (always()), so an evaluate job that fails as a whole (a lost runner, its timeout, a cancellation) fails this
+  # required check instead of skipping it (a skipped check passes branch protection). Its guard is the evaluate job's,
+  # so both run or both skip (scripts/verify-owners.mjs).
+  # This is the only job whose token can write to the pull request; it checks out, installs and imports nothing.
+  api-check:
+    if: always() && (github.repository == '21nCo/superfunctions' || inputs.called_as_reusable_workflow == true)
+    needs: evaluate
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    outputs:
+      verdict: ${{ needs.evaluate.result == 'success' && needs.evaluate.outputs.verdict || 'fail' }}
+      drift: ${{ needs.evaluate.result == 'success' && needs.evaluate.outputs.drift || '' }}
+      breaking: ${{ needs.evaluate.result == 'success' && needs.evaluate.outputs.breaking || '' }}
+
+    steps:
       - name: Post/Update PR comment
         # workflow_call sets github.event_name to "workflow_call", not "pull_request".
         # The caller payload is reused, so gate on PR number instead of event name.
         # workflow_dispatch inputs are strings, so accept boolean true or "true".
         # Fork PRs get a read-only token; skip mutation so gates still run.
-        # Job summary is already written in the previous step.
-        if: (inputs.post_pr_comment == true || inputs.post_pr_comment == 'true') && github.event.pull_request.number && github.event.pull_request.head.repo.full_name == github.repository
+        # The evaluate job wrote the job summary.
+        # The comment only mirrors the job summary, so a post that fails, even before its script starts, does not
+        # decide the job; the next step does.
+        # An evaluate job that did not complete posts nothing, so an interrupted older run cannot replace the report
+        # of a newer commit; the next step fails the check.
+        if: needs.evaluate.result == 'success' && (inputs.post_pr_comment == true || inputs.post_pr_comment == 'true') && github.event.pull_request.number && github.event.pull_request.head.repo.full_name == github.repository
+        continue-on-error: true
+        timeout-minutes: 5
         uses: actions/github-script@v7
+        env:
+          APIFN_COMMENT: ${{ needs.evaluate.outputs.comment }}
         with:
           script: |
-            const fs = require('node:fs');
-            const body = fs.readFileSync('ci-summary.md', 'utf8');
             const { owner, repo } = context.repo;
             const issue_number = context.payload.pull_request?.number;
             if (!issue_number) {
@@ -327,45 +1183,49 @@ jobs:
               return;
             }
             const marker = '<!-- apifn-ci-report -->';
+            const runUrl = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
+            // The evaluate job bounded the report to 60000 UTF-8 bytes and kept the marker.
+            const body = process.env.APIFN_COMMENT
+              ? process.env.APIFN_COMMENT
+              : `${marker}\n## ApiFn API check: **ERROR**\n\nThe evaluate job produced no report; see the [run](${runUrl}).\n`;
 
-            const comments = await github.paginate(github.rest.issues.listComments, {
-              owner,
-              repo,
-              issue_number,
-              per_page: 100,
-            });
-            const existing = comments.find((c) => c.user?.type === 'Bot' && c.body?.includes(marker));
-
-            if (existing) {
-              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
-            } else {
-              await github.rest.issues.createComment({ owner, repo, issue_number, body });
+            // A failed post is a warning.
+            try {
+              const comments = await github.paginate(github.rest.issues.listComments, {
+                owner,
+                repo,
+                issue_number,
+                per_page: 100,
+              });
+              const existing = comments.find((c) => c.user?.type === 'Bot' && c.body?.includes(marker));
+              if (existing) {
+                await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+              } else {
+                await github.rest.issues.createComment({ owner, repo, issue_number, body });
+              }
+            } catch (error) {
+              core.warning(`Could not post the API check comment: ${error.message}`);
             }
 
       - name: Enforce CI gates
+        timeout-minutes: 2
         shell: bash
+        env:
+          EVALUATE_RESULT: ${{ needs.evaluate.result }}
+          GATE_CODE: ${{ needs.evaluate.outputs.gate_code }}
+          VERDICT: ${{ needs.evaluate.outputs.verdict }}
         run: |
           set -euo pipefail
-
-          validate_code="${{ steps.validate.outputs.exit_code }}"
-          diff_code="${{ steps.diff.outputs.exit_code }}"
-          test_code="${{ steps.test.outputs.exit_code }}"
-
-          if [ -z "$diff_code" ]; then
-            diff_code=0
+          if [ "$EVALUATE_RESULT" != "success" ]; then
+            echo "::error::The evaluate job did not complete (result: ${EVALUATE_RESULT:-unknown}); the API check fails closed. See its log."
+            exit 1
           fi
-
-          if [ "$validate_code" != "0" ]; then
-            echo "Validation failed (exit=$validate_code)"
-            exit "$validate_code"
+          if ! [[ "$GATE_CODE" =~ ^[0-9]+$ ]]; then
+            echo "::error::The evaluate job reported no gate result (verdict=${VERDICT:-none}); see its log."
+            exit 1
           fi
-
-          if [ "$diff_code" != "0" ]; then
-            echo "Diff failed (exit=$diff_code)"
-            exit "$diff_code"
+          if [ "$GATE_CODE" != "0" ]; then
+            echo "::error::The API check failed (verdict=${VERDICT:-none}, exit $GATE_CODE); see the evaluate job's summary and log."
+            exit "$GATE_CODE"
           fi
-
-          if [ "$test_code" != "0" ]; then
-            echo "Collection tests failed (exit=$test_code)"
-            exit "$test_code"
-          fi
+          echo "The API check passed its gates (verdict=$VERDICT)."

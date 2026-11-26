@@ -1,0 +1,20 @@
+{
+  "name": "apifn-check-smoke-install-scripts",
+  "version": "0.0.0",
+  "lockfileVersion": 3,
+  "requires": true,
+  "packages": {
+    "": {
+      "name": "apifn-check-smoke-install-scripts",
+      "version": "0.0.0",
+      "hasInstallScript": true,
+      "dependencies": {
+        "apifn-check-smoke-prepare-dep": "file:./prepare-dep"
+      }
+    },
+    "node_modules/apifn-check-smoke-prepare-dep": {
+      "version": "0.0.0",
+      "resolved": "file:prepare-dep"
+    }
+  }
+}

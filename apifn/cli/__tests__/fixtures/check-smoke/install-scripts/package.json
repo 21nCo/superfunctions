@@ -1,0 +1,12 @@
+{
+  "name": "apifn-check-smoke-install-scripts",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Smoke fixture for allow_install_scripts in .github/workflows/apifn-api-check.yml",
+  "scripts": {
+    "postinstall": "node postinstall.mjs"
+  },
+  "dependencies": {
+    "apifn-check-smoke-prepare-dep": "file:./prepare-dep"
+  }
+}
