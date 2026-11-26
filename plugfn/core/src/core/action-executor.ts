@@ -16,7 +16,7 @@ import { ConnectionManager } from './connection-manager.js';
 import { ProviderRegistry } from './provider-registry.js';
 import { RetryMiddleware } from '../middleware/retry.js';
 import { RateLimiter } from '../middleware/rate-limiter.js';
-import { CacheMiddleware } from '../middleware/caching.js';
+import { CacheMiddleware, credentialFingerprint } from '../middleware/caching.js';
 import { LoggingMiddleware } from '../middleware/logging.js';
 import { MetricsMiddleware } from '../middleware/metrics.js';
 import { FetchHttpClient } from '../utils/request.js';
@@ -135,36 +135,46 @@ export class ActionExecutor {
       };
       requireScopes(connection.scopes);
 
-      const cacheKey = shouldUseCache
-        ? typeof options.cache === 'object' && options.cache.key
-          ? this.cacheMiddleware.generateCustomKey(
-              provider,
-              action,
-              options.cache.key,
-              options.userId,
-              connection.id
-            )
-          : this.cacheMiddleware.generateKey(
-              provider,
-              action,
-              validatedParams,
-              options.userId,
-              connection.id
-            )
-        : undefined;
-
       // Get credentials
       const credentials = await this.connectionManager.getCredentials(connection.id);
 
       // Refresh may change granted scopes. Reapply consumer authorization against
       // the persisted refreshed connection before any external dispatch.
+      let grantedScopes = connection.scopes;
       if (connection.expiresAt && new Date() >= connection.expiresAt) {
         const refreshed = await this.connectionManager.resolveConnectionForAction({
           userId: options.userId, provider, connectionId: connection.id, actor: options.actor,
         });
         if (!refreshed) throw new Error("Connection unavailable after refresh");
         requireScopes(refreshed.scopes);
+        grantedScopes = refreshed.scopes;
       }
+
+      // Bind the cache entry to the exact credential and granted scopes used
+      // for this dispatch, so a replaced or narrowed credential on the same
+      // connection never reads, or races a late write into, an older entry.
+      const fingerprint = shouldUseCache
+        ? await credentialFingerprint(credentials, grantedScopes)
+        : undefined;
+      const cacheKey = fingerprint !== undefined
+        ? typeof options.cache === 'object' && options.cache.key
+          ? this.cacheMiddleware.generateCustomKey(
+              provider,
+              action,
+              options.cache.key,
+              options.userId,
+              connection.id,
+              fingerprint
+            )
+          : this.cacheMiddleware.generateKey(
+              provider,
+              action,
+              validatedParams,
+              options.userId,
+              connection.id,
+              fingerprint
+            )
+        : undefined;
 
       // Check cache only after resolving the concrete connection.
       if (cacheKey) {

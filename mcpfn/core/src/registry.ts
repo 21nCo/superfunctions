@@ -93,18 +93,49 @@ function customSchemaIssues(errors: unknown): SchemaIssue[] {
     : [{ instancePath: "", message: "Schema validation failed", keyword: "schema" }];
 }
 
+function isThenable(value: unknown): value is PromiseLike<unknown> {
+  return (
+    value !== null &&
+    (typeof value === "object" || typeof value === "function") &&
+    typeof (value as { then?: unknown }).then === "function"
+  );
+}
+
+function ignoreRejection(value: unknown): void {
+  if (!isThenable(value)) return;
+  try {
+    value.then(undefined, () => undefined);
+  } catch {
+    // A hostile thenable cannot make the caller throw here.
+  }
+}
+
 function adaptSchemaCompiler(
   compileSchema: McpFnSchemaCompiler,
 ): (schema: object) => CompiledSchema {
   return (schema) => {
-    const validate = compileSchema(schema);
+    const validate: unknown = compileSchema(schema);
     if (typeof validate !== "function") {
+      ignoreRejection(validate);
       throw new TypeError("compileSchema must return a validator function");
     }
+    const validator = validate as McpFnSchemaValidator;
     const compiled = ((data: unknown): boolean => {
+      const result: unknown = validator(data);
+      if (isThenable(result)) {
+        // A validator must answer synchronously. Fail closed and never leave
+        // its promise to reject unhandled.
+        ignoreRejection(result);
+        compiled.errors = [{
+          instancePath: "",
+          message: "compileSchema validators must be synchronous",
+          keyword: "schema",
+        }];
+        return false;
+      }
       // Fail closed: only an explicit `true` accepts the value.
-      const valid = validate(data) === true;
-      compiled.errors = valid ? null : customSchemaIssues(validate.errors);
+      const valid = result === true;
+      compiled.errors = valid ? null : customSchemaIssues(validator.errors);
       return valid;
     }) as CompiledSchema;
     compiled.errors = null;
@@ -546,51 +577,131 @@ function exceedsJsonNodes(value: unknown, limit: number): boolean {
   return false;
 }
 
+interface CompileEntry {
+  kind: "compile";
+  schema: object;
+  ok: boolean;
+}
+
+type CompileLogEntry<TContext> =
+  | CompileEntry
+  | { kind: "seed"; schemas: object[] }
+  | {
+      kind: "registration";
+      replay: (target: McpFnRegistry<TContext>) => void;
+      schemas: object[];
+    };
+
 export class McpFnRegistry<TContext = undefined> {
   private readonly options: McpFnRegistryOptions;
   private readonly compileSchema: (schema: object) => CompiledSchema;
-  private readonly registrations: Array<(target: McpFnRegistry<TContext>) => void> = [];
-  private readonly schemas: object[] = [];
-  // Schemas a built-in compiler was seeded with by cloneEmpty(). They resolve
-  // `$ref`s like registered schemas but belong to no definition.
-  private readonly seededSchemas: object[] = [];
+  // Every schema compile this registry's compiler received, in order. A
+  // successful registration folds its compiles into one entry; a failed one
+  // leaves them as plain compile entries, because a compiler can keep state
+  // from them (Ajv keeps a schema's `$id` even when its compile fails).
+  private readonly compileLog: Array<CompileLogEntry<TContext>> = [];
+  // Validators for schemas replayed from a source registration, keyed by the
+  // schema object. The first registration that compiles the same object reuses
+  // its validator, as Ajv does for a schema object it already compiled, so a
+  // definition re-registered on a cloneEmpty() copy does not collide with its
+  // own `$id` on an engine that rejects a repeated `$id`.
+  private readonly seededValidators = new Map<object, CompiledSchema>();
 
   /** Clone in successful registration order, preserving cross-definition references. */
   clone(): McpFnRegistry<TContext> {
-    const target = new McpFnRegistry<TContext>(this.options);
-    target.seedSchemas(this.seededSchemas);
-    for (const register of this.registrations) register(target);
-    return target;
+    return this.replayInto(new McpFnRegistry<TContext>(this.options), true);
   }
 
   /**
    * An empty registry that keeps this registry's schema compiler and no
    * definitions. A custom `compileSchema` is shared as-is. A built-in compiler
-   * is a fresh instance seeded, in registration order, with every schema this
-   * registry's compiler resolves, so `$ref`s to their `$id`s keep resolving
-   * while later registrations on either registry stay separate.
+   * is a fresh instance given the same compiles, in the same order, as this
+   * registry's compiler, so it resolves exactly the `$id`s this registry
+   * resolves, while later registrations on either registry stay separate.
    */
   cloneEmpty(): McpFnRegistry<TContext> {
-    const target = new McpFnRegistry<TContext>(this.options);
-    target.seedSchemas([...this.seededSchemas, ...this.schemas]);
-    return target;
-  }
-
-  private seedSchemas(schemas: readonly object[]): void {
-    if (this.options.compileSchema !== undefined) return;
-    for (const schema of schemas) {
-      this.compileSchema(schema);
-      this.seededSchemas.push(schema);
-    }
+    return this.replayInto(new McpFnRegistry<TContext>(this.options), false);
   }
 
   /**
-   * Schema resources the runtime compiler resolves, in compile order, for
-   * catalog projections: seeded schemas, then hidden and visible tools and prompts.
+   * Schema resources the runtime compiler resolves from successful
+   * registrations, in compile order, for catalog projections: hidden and
+   * visible tools and prompts, including source registrations a cloneEmpty()
+   * copy was seeded with.
    */
   schemaDefinitions(): object[] {
-    return [...this.seededSchemas, ...this.schemas];
+    return this.compileLog.flatMap((entry) => entry.kind === "compile" ? [] : entry.schemas);
   }
+
+  private replayInto(
+    target: McpFnRegistry<TContext>,
+    withDefinitions: boolean,
+  ): McpFnRegistry<TContext> {
+    // A shared custom compiler already holds whatever state it keeps.
+    const builtIn = this.options.compileSchema === undefined;
+    for (const entry of this.compileLog) {
+      if (entry.kind === "registration" && withDefinitions) {
+        entry.replay(target);
+      } else if (!builtIn) {
+        continue;
+      } else if (entry.kind === "compile") {
+        target.replayCompile(entry.schema, entry.ok);
+      } else if (entry.schemas.length > 0) {
+        const start = target.compileLog.length;
+        for (const schema of entry.schemas) {
+          const compiled = target.replayCompile(schema, true);
+          if (compiled) target.seededValidators.set(schema, compiled);
+        }
+        const compiles = target.compileLog.splice(start) as CompileEntry[];
+        target.compileLog.push({ kind: "seed", schemas: compiles.map(({ schema }) => schema) });
+      }
+    }
+    return target;
+  }
+
+  private replayCompile(schema: object, expectedOk: boolean): CompiledSchema | undefined {
+    let ok = true;
+    let cause: unknown;
+    let compiled: CompiledSchema | undefined;
+    try {
+      compiled = this.compile(schema);
+    } catch (error) {
+      ok = false;
+      cause = error;
+    }
+    if (ok !== expectedOk) {
+      throw new McpFnValidationError(
+        "Cloned registry schema compile diverged from its source registry",
+        { cause: cause instanceof Error ? cause.message : String(cause ?? "compile succeeded") },
+      );
+    }
+    return compiled;
+  }
+
+  /** The single compile chokepoint: every attempt is logged, failures included. */
+  private compile(schema: object): CompiledSchema {
+    let ok = false;
+    try {
+      const seeded = this.seededValidators.get(schema);
+      this.seededValidators.delete(schema);
+      const compiled = seeded ?? this.compileSchema(schema);
+      ok = true;
+      return compiled;
+    } finally {
+      this.compileLog.push({ kind: "compile", schema, ok });
+    }
+  }
+
+  /** Fold the compiles a successful registration made since `start` into one entry. */
+  private commitRegistration(
+    start: number,
+    replay: (target: McpFnRegistry<TContext>) => void,
+  ): this {
+    const compiles = this.compileLog.splice(start) as CompileEntry[];
+    this.compileLog.push({ kind: "registration", replay, schemas: compiles.map(({ schema }) => schema) });
+    return this;
+  }
+
   private readonly tools = new Map<string, RegisteredTool<TContext>>();
   private readonly resources = new Map<
     string,
@@ -619,6 +730,7 @@ export class McpFnRegistry<TContext = undefined> {
   register<TDefinition extends McpFnToolDefinition<TContext>>(
     definition: TDefinition,
   ): this {
+    const logStart = this.compileLog.length;
     assertName("tool", definition.name);
     if (this.tools.has(definition.name)) {
       throw new McpFnValidationError(`Duplicate MCP tool: ${definition.name}`);
@@ -672,9 +784,9 @@ export class McpFnRegistry<TContext = undefined> {
     let validateInput: CompiledSchema;
     let validateOutput: CompiledSchema | undefined;
     try {
-      validateInput = this.compileSchema(definition.inputSchema);
+      validateInput = this.compile(definition.inputSchema);
       validateOutput = definition.outputSchema !== undefined
-        ? this.compileSchema(definition.outputSchema)
+        ? this.compile(definition.outputSchema)
         : undefined;
     } catch (error) {
       throw new McpFnValidationError(
@@ -688,9 +800,7 @@ export class McpFnRegistry<TContext = undefined> {
       validateInput,
       validateOutput,
     });
-    this.schemas.push(definition.inputSchema, ...(definition.outputSchema ? [definition.outputSchema] : []));
-    this.registrations.push(target => { target.register(definition); });
-    return this;
+    return this.commitRegistration(logStart, target => { target.register(definition); });
   }
 
   registerAll(definitions: McpFnToolDefinition<TContext>[]): this {
@@ -699,6 +809,7 @@ export class McpFnRegistry<TContext = undefined> {
   }
 
   registerResource(definition: McpFnResourceDefinition<TContext>): this {
+    const logStart = this.compileLog.length;
     assertUri("resource", definition.uri);
     assertName("resource", definition.name);
     if (typeof definition.read !== "function") {
@@ -718,13 +829,13 @@ export class McpFnRegistry<TContext = undefined> {
       definition.unsubscribe,
     );
     this.resources.set(definition.uri, definition);
-    this.registrations.push(target => { target.registerResource(definition); });
-    return this;
+    return this.commitRegistration(logStart, target => { target.registerResource(definition); });
   }
 
   registerResourceTemplate(
     definition: McpFnResourceTemplateDefinition<TContext>,
   ): this {
+    const logStart = this.compileLog.length;
     assertName("resource template", definition.name);
     if (typeof definition.read !== "function") {
       throw new McpFnValidationError(
@@ -786,11 +897,11 @@ export class McpFnRegistry<TContext = undefined> {
       }
     }
     this.resourceTemplates.set(definition.name, { definition, template });
-    this.registrations.push(target => { target.registerResourceTemplate(definition); });
-    return this;
+    return this.commitRegistration(logStart, target => { target.registerResourceTemplate(definition); });
   }
 
   registerPrompt(definition: McpFnPromptDefinition<TContext>): this {
+    const logStart = this.compileLog.length;
     assertName("prompt", definition.name);
     if (this.prompts.has(definition.name)) {
       throw new McpFnValidationError(
@@ -849,7 +960,7 @@ export class McpFnRegistry<TContext = undefined> {
     }
     let validateArguments: CompiledSchema;
     try {
-      validateArguments = this.compileSchema(promptSchema(definition));
+      validateArguments = this.compile(promptSchema(definition));
     } catch (error) {
       throw new McpFnValidationError(
         `Prompt ${definition.name} contains an invalid arguments JSON Schema`,
@@ -891,9 +1002,7 @@ export class McpFnRegistry<TContext = undefined> {
       }
     }
     this.prompts.set(definition.name, { definition, validateArguments });
-    this.schemas.push(promptSchema(definition));
-    this.registrations.push(target => { target.registerPrompt(definition); });
-    return this;
+    return this.commitRegistration(logStart, target => { target.registerPrompt(definition); });
   }
 
   has(name: string): boolean {

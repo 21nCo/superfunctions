@@ -3,6 +3,47 @@ import type { Logger } from '../types/action.js';
 import type { KVStoreAdapter } from '@superfunctions/db';
 import { hash } from '../utils/crypto.js';
 
+function credentialSegment(fingerprint: string | undefined): string {
+  if (fingerprint === undefined) return '';
+  if (!/^[a-f0-9]{64}$/.test(fingerprint)) {
+    throw new TypeError('credentialFingerprint must be a SHA-256 hex digest');
+  }
+  return `:credential-sha256=${fingerprint}`;
+}
+
+function canonicalJson(value: unknown): string {
+  if (value instanceof Date) return JSON.stringify(value.toISOString());
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  if (value !== null && typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    const entries = Object.keys(record)
+      .filter((key) => record[key] !== undefined && typeof record[key] !== 'function')
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`);
+    return `{${entries.join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'null';
+}
+
+/**
+ * SHA-256 (WebCrypto, hex) of the canonical credential and the sorted set of
+ * granted scopes. Cache keys carry only this digest, never the secret itself.
+ */
+export async function credentialFingerprint(
+  credentials: unknown,
+  scopes: readonly string[] | undefined
+): Promise<string> {
+  const canonical = canonicalJson({
+    credentials,
+    scopes: [...new Set(scopes ?? [])].sort(),
+  });
+  const digest = await globalThis.crypto.subtle.digest(
+    'SHA-256',
+    new TextEncoder().encode(canonical)
+  );
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
 interface CacheEntry {
   data: any;
   expiresAt: number;
@@ -147,17 +188,20 @@ export class CacheMiddleware {
   }
 
   /**
-   * Generate cache key for action
+   * Generate cache key for action. A credential fingerprint (see
+   * {@link credentialFingerprint}) binds the entry to the credential and
+   * granted scopes that produced it; keys without one are unchanged.
    */
   generateKey(
     provider: string,
     action: string,
     params: any,
     userId?: string,
-    connectionId?: string
+    connectionId?: string,
+    credentialFingerprint?: string
   ): string {
     const paramsHash = hash(JSON.stringify(params));
-    return `${provider}:${action}:${userId || 'anonymous'}:${connectionId || 'default'}:${paramsHash}`;
+    return `${provider}:${action}:${userId || 'anonymous'}:${connectionId || 'default'}${credentialSegment(credentialFingerprint)}:${paramsHash}`;
   }
 
   /** Generate a key in a namespace that cannot collide with parameter-derived keys. */
@@ -166,10 +210,11 @@ export class CacheMiddleware {
     action: string,
     customKey: string,
     userId?: string,
-    connectionId?: string
+    connectionId?: string,
+    credentialFingerprint?: string
   ): string {
     const customKeyHash = hash(customKey);
-    return `${provider}:${action}:${userId || 'anonymous'}:${connectionId || 'default'}:custom:${customKeyHash}`;
+    return `${provider}:${action}:${userId || 'anonymous'}:${connectionId || 'default'}${credentialSegment(credentialFingerprint)}:custom:${customKeyHash}`;
   }
 
   /**

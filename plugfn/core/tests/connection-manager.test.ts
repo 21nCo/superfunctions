@@ -1079,3 +1079,130 @@ async function readTokenEntryByConnection(
     record,
   };
 }
+
+// SFNS-107 architecture reset: connect() and handleCallback() read every
+// caller-supplied authorization input once, before the first await, so a
+// change to the caller's objects later cannot alter the decision or the
+// stored owner.
+describe('ConnectionManager caller input snapshots', () => {
+  const delegated = {
+    kind: 'delegated',
+    organizationId: 'org-1',
+    delegatedToUserId: 'delegate-a',
+    installedByUserId: 'admin-1',
+    grants: ['read', 'write'],
+    tenantId: 'workspace-1',
+  } as const;
+
+  async function pendingDelegatedState() {
+    const adapter = new MemoryAdapter();
+    const tokenClient = createTokenHttpClient();
+    const env = createManagerEnvironment(adapter, tokenClient);
+    const authUrl = await env.manager.getAuthUrl({
+      userId: 'admin-1',
+      provider: 'google',
+      redirectUri: REDIRECT_URI,
+      owner: { ...delegated, grants: [...delegated.grants] },
+    });
+    const state = new URL(authUrl).searchParams.get('state')!;
+    const stateStore = (env.manager as any).oauthStateStore;
+    const originalGet = stateStore.get.bind(stateStore);
+    const duringStateLookup = (mutate: () => void) => {
+      vi.spyOn(stateStore, 'get').mockImplementation(async (...args: unknown[]) => {
+        const result = await originalGet(...args);
+        mutate();
+        return result;
+      });
+    };
+    return { env, tokenClient, state, duringStateLookup };
+  }
+
+  it('decides the callback on expectedOwner grants as passed, not as changed during the state lookup', async () => {
+    const { env, tokenClient, state, duringStateLookup } = await pendingDelegatedState();
+    const expectedOwner = { ...delegated, grants: ['read'] };
+    duringStateLookup(() => { expectedOwner.grants.push('write'); });
+
+    await expect(
+      env.manager.handleCallback({ code: 'auth-code-1', state, expectedOwner })
+    ).rejects.toMatchObject({ code: 'TENANT_ACCESS_DENIED' });
+    expect(tokenClient.exchangeToken).not.toHaveBeenCalled();
+  });
+
+  it('decides the callback on the expectedOwner delegate as passed', async () => {
+    const { env, tokenClient, state, duringStateLookup } = await pendingDelegatedState();
+    const expectedOwner: Record<string, unknown> = { ...delegated, grants: [...delegated.grants], delegatedToUserId: 'delegate-b' };
+    duringStateLookup(() => { expectedOwner.delegatedToUserId = 'delegate-a'; });
+
+    await expect(
+      env.manager.handleCallback({ code: 'auth-code-1', state, expectedOwner: expectedOwner as any })
+    ).rejects.toMatchObject({ code: 'TENANT_ACCESS_DENIED' });
+    expect(tokenClient.exchangeToken).not.toHaveBeenCalled();
+  });
+
+  it('decides the callback on the actor tenant as passed', async () => {
+    const { env, tokenClient, state, duringStateLookup } = await pendingDelegatedState();
+    const actor = { userId: 'admin-1', tenantId: 'workspace-2', organizationId: 'org-1' };
+    duringStateLookup(() => { actor.tenantId = 'workspace-1'; });
+
+    await expect(
+      env.manager.handleCallback({ code: 'auth-code-1', state, actor })
+    ).rejects.toMatchObject({ code: 'TENANT_ACCESS_DENIED' });
+    expect(tokenClient.exchangeToken).not.toHaveBeenCalled();
+  });
+
+  it('completes a matching callback even when the caller objects change during the state lookup', async () => {
+    const { env, tokenClient, state, duringStateLookup } = await pendingDelegatedState();
+    const expectedOwner = { ...delegated, grants: ['read', 'write'] };
+    const actor = { userId: 'admin-1', tenantId: 'workspace-1', organizationId: 'org-1' };
+    duringStateLookup(() => {
+      expectedOwner.grants.push('admin');
+      actor.tenantId = 'workspace-2';
+    });
+
+    const result = await env.manager.handleCallback({ code: 'auth-code-1', state, expectedOwner, actor });
+    expect(result.connection).toMatchObject({ ownerKind: 'delegated', delegatedToUserId: 'delegate-a' });
+    expect(tokenClient.exchangeToken).toHaveBeenCalledTimes(1);
+  });
+
+  it('authorizes and stores a direct connection owner from a single read of each field', async () => {
+    const adapter = new MemoryAdapter();
+    const env = createManagerEnvironment(adapter, createTokenHttpClient());
+    env.providers.set('linear', createApiKeyProvider());
+    let organizationReads = 0;
+    const owner = {
+      kind: 'organization',
+      installedByUserId: 'admin-1',
+      get organizationId() {
+        organizationReads += 1;
+        return organizationReads === 1 ? 'org-1' : 'org-other';
+      },
+    };
+
+    const connection = await env.manager.connect({
+      userId: 'admin-1',
+      provider: 'linear',
+      credentials: { type: 'api-key', apiKey: 'test-linear-api-key' },
+      owner: owner as any,
+      actor: { userId: 'admin-1', organizationId: 'org-1' },
+    });
+
+    expect(organizationReads).toBe(1);
+    expect(connection).toMatchObject({ ownerKind: 'organization', ownerId: 'org-1', organizationId: 'org-1' });
+  });
+
+  it('rejects a malformed actor with VALIDATION_ERROR before anything is stored', async () => {
+    const adapter = new MemoryAdapter();
+    const env = createManagerEnvironment(adapter, createTokenHttpClient());
+    env.providers.set('linear', createApiKeyProvider());
+
+    await expect(
+      env.manager.connect({
+        userId: 'user-1',
+        provider: 'linear',
+        credentials: { type: 'api-key', apiKey: 'test-linear-api-key' },
+        actor: { userId: 'user-1', grants: 'read' } as any,
+      })
+    ).rejects.toMatchObject({ code: 'VALIDATION_ERROR', status: 400 });
+    expect(await adapter.listConnections('user-1', 'linear')).toEqual([]);
+  });
+});

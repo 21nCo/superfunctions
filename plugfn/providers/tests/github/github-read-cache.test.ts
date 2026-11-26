@@ -50,6 +50,18 @@ describe('github reads through the action executor', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it('never serves a cache:true read cached under the replaced credential', async () => {
+    const { executor, fetchMock, replaceToken } = setup();
+
+    await executor.execute('github', 'pulls.get', { userId: 'user-1', params, cache: true });
+    replaceToken('test-token-after');
+    const second = await executor.execute<any>('github', 'pulls.get', { userId: 'user-1', params, cache: true });
+
+    expect(second.cached).toBe(false);
+    expect(second.data.title).toBe('seen with Bearer test-token-after');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it('keeps caching a read when the caller asks for it', async () => {
     const { executor, fetchMock } = setup();
 
