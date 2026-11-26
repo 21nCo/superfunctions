@@ -12,6 +12,8 @@ const accepted = [
   ["explicit padded uppercase YAML", "--- YAML \ntitle: Explicit\n---\nBody"],
   ["explicit yml", "---yml\r\ntitle: Explicit\r\n---\r\nBody"],
   ["a thematic break is not front matter", "----js\nnot front matter"],
+  ["a bare opener without a newline", "---"],
+  ["explicit yaml with trailing space and no newline", "---yaml "],
 ];
 const rejected = [
   ["js", "---js\n({ title: 'x' })\n---\nBody", "js"],
@@ -24,6 +26,9 @@ const rejected = [
   ["a label after a BOM", "﻿---js\n({ title: 'x' })\n---\nBody", "js"],
   ["an empty js block", "---js\n---\nBody", "js"],
   ["a label without a newline, sliced like gray-matter", "---yaml", "yam"],
+  ["a non-YAML label that gray-matter truncates to yaml at end of file", "---yamlx", "yamlx"],
+  ["a one-character label that gray-matter truncates to the default at end of file", "---x", "x"],
+  ["a label that gray-matter truncates to js at end of file", "---jsx", "jsx"],
 ];
 
 describe("YAML-only front matter policy", () => {

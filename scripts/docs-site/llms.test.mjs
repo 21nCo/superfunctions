@@ -265,24 +265,62 @@ describe("LLM loader front matter policy", () => {
     expect(error.message).not.toContain("docs-llms-snapshot-");
   });
 
-  it("never snapshots its own staging directory when the temp dir is inside the site", async () => {
+  it("stages in a temp dir inside the site when no collection contains it", async () => {
     write("guide/index.md", "# Guide");
     write("pages/about.md", "# About");
     mkdirSync(join(cwd, "tmp"));
     redirectTemporary(join(cwd, "tmp"));
+    await expectProviderParity();
+  });
+
+  const defaultLayout = { root: ".", docsDir: "guide", pagesDir: "pages", blogDir: "blog", apiDir: "api", assetsDir: "static" };
+  it.each([
+    ["a root-level pages collection", { root: ".", docsDir: "guide", pagesDir: "." }, "tmp", "pagesDir"],
+    ["a docs collection", defaultLayout, "guide/tmp", "docsDir"],
+    ["the API directory", defaultLayout, "api/tmp", "apiDir"],
+    ["the assets directory", defaultLayout, "static/tmp", "assetsDir"],
+  ])("refuses to stage when the temp dir is inside %s, where another build's snapshot already lives", async (_name, content, temporary, key) => {
+    write("guide/index.md", "# Guide");
+    // A concurrent build's live snapshot in the same temp dir must never become content either.
+    write(`${temporary}/docs-llms-snapshot-other/root/meta.json`, '{"title":"Staged"}');
+    write(`${temporary}/docs-llms-snapshot-other/root/staged.md`, "# Staged");
+    redirectTemporary(join(cwd, temporary));
+    writeSite(content);
+    const error = await loadLlmsSiteSource(cwd, dependencies).then(() => undefined, (caught) => caught);
+    expect(error?.message).toContain(`is inside the docs ${key} `);
+    expect(error?.message).toContain("TMPDIR");
+    expect(readdirSync(scratch)).toEqual(["docs-llms-snapshot-other"]);
+  });
+
+  it("snapshots each collection on its own when one contains another's case variant", async (context) => {
+    rmSync(join(cwd, "guide"), { recursive: true });
+    write("Guide/intro.md", "# Intro");
+    // Only a case-insensitive volume resolves docsDir "guide" to the Guide directory.
+    if (!existsSync(join(cwd, "guide", "intro.md"))) context.skip();
     writeSite({ root: ".", docsDir: "guide", pagesDir: "." });
     const manifest = await expectProviderParity();
-    expect(Object.keys(manifest.pages).filter((id) => id.includes("docs-llms-snapshot-"))).toEqual([]);
-    expect(Object.keys(manifest.pages)).toContain("pages:guide/index.md");
+    expect(Object.keys(manifest.pages).filter((id) => id.endsWith("intro.md"))).toEqual(["docs:intro.md", "pages:Guide/intro.md"]);
+  });
+
+  it("does not list a symlinked docs collection under a root-level pages collection", async () => {
+    const outside = external();
+    writeFileSync(join(outside, "intro.md"), "# Intro");
+    symlinkSync(outside, join(cwd, "guide-link"), process.platform === "win32" ? "junction" : "dir");
+    write("pages/about.md", "# About");
+    writeSite({ root: ".", docsDir: "guide-link", pagesDir: "." });
+    const manifest = await expectProviderParity();
+    expect(Object.keys(manifest.pages).filter((id) => id.endsWith("intro.md"))).toEqual(["docs:intro.md"]);
   });
 
   it("applies path-based trust rules and diagnostics to the source files, not the snapshot", async () => {
     write("guide/index.md", "# Guide");
     write("guide/unsafe.md", "# Unsafe\n\n<script>alert(1)</script>");
-    const error = await loadLlmsSiteSource(cwd, dependencies).then(() => undefined, (caught) => caught);
+    const error = await expectProviderErrorParity();
     expect(error).toMatchObject({ code: "DOCS_HTML_UNSAFE" });
-    expect(error.diagnostics[0].location.absolutePath).toBe(join(cwd, "guide", "unsafe.md"));
-    process.env.DOCSFN_HTML_UNSAFE_ALLOWLIST = join(cwd, "guide", "unsafe.md");
+    // The provider reports fast-glob paths, which use forward slashes on Windows as well.
+    const reported = error.diagnostics[0].location.absolutePath;
+    expect(reported).toBe(join(cwd, "guide", "unsafe.md").replaceAll(sep, "/"));
+    process.env.DOCSFN_HTML_UNSAFE_ALLOWLIST = reported;
     const { manifest } = await loadLlmsSiteSource(cwd, dependencies);
     expect(manifest.pages["docs:unsafe.md"].body).toContain("<script>");
     expect(readdirSync(scratch)).toEqual([]);
@@ -333,5 +371,7 @@ describe("snapshot path mapping", () => {
     expect(mapper.toSourcePath("/tmp/docs-llms-snapshot-1/root")).toBe("/site");
     expect(mapper.toSourcePath("/tmp/docs-llms-snapshot-1/rootless/a.md")).toBe("/tmp/docs-llms-snapshot-1/rootless/a.md");
     expect(mapper.toSourceText("at /tmp/docs-llms-snapshot-1/root/a.md")).toBe("at /site/a.md");
+    const special = createSnapshotPathMapper([["/tmp/docs-llms-snapshot-1/root", "/site/$&$'x"]], posix);
+    expect(special.toSourceText("at /tmp/docs-llms-snapshot-1/root/a.md")).toBe("at /site/$&$'x/a.md");
   });
 });

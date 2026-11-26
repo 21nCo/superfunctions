@@ -21,28 +21,43 @@ export class UnsupportedFrontMatterError extends Error {
 }
 
 /**
+ * The front matter opener after gray-matter 4's BOM stripping and `----` rejection, split at the
+ * first line break (`newline` is -1 when the opener line runs to the end of the source).
+ * @param {string} source
+ */
+function openerLine(source) {
+  const text = source.charCodeAt(0) === 0xfeff ? source.slice(1) : source;
+  if (!text.startsWith("---") || text.charAt(3) === "-") return undefined;
+  const rest = text.slice(3);
+  return { rest, newline: rest.search(/\r?\n/) };
+}
+
+/**
  * Return the engine label gray-matter 4 (default options) would dispatch for `source`:
  * `undefined` when there is no front matter block, `""` for the bare default delimiter.
- * This mirrors its BOM stripping, `----` rejection and first-line label slicing exactly,
- * so the label checked here is the label the parser would use.
+ * This mirrors its first-line label slicing exactly, including the dropped last character
+ * when the opener line has no line break, so the label checked here is the label the parser would use.
  * @param {string} source
  * @returns {string | undefined}
  */
 export function frontMatterLanguage(source) {
-  const text = source.charCodeAt(0) === 0xfeff ? source.slice(1) : source;
-  if (!text.startsWith("---") || text.charAt(3) === "-") return undefined;
-  const rest = text.slice(3);
-  return rest.slice(0, rest.search(/\r?\n/)).trim();
+  const opener = openerLine(source);
+  return opener && opener.rest.slice(0, opener.newline).trim();
 }
 
 /**
  * Reject every front matter engine declaration except the default delimiter and explicit YAML,
- * before any parser sees the source. Plain Markdown passes through unchanged.
+ * before any parser sees the source. Both the declared label (the whole opener line) and the label
+ * gray-matter dispatches (which loses its last character without a line break) must be YAML or empty.
+ * Plain Markdown passes through unchanged.
  * @param {string} source
  * @param {string} sourcePath
  */
 export function assertYamlFrontMatter(source, sourcePath) {
-  const label = frontMatterLanguage(source);
-  if (!label || YAML_LABELS.has(label.toLowerCase())) return;
-  throw new UnsupportedFrontMatterError(label, sourcePath);
+  const opener = openerLine(source);
+  if (!opener) return;
+  const declared = (opener.newline === -1 ? opener.rest : opener.rest.slice(0, opener.newline)).trim();
+  const dispatched = opener.rest.slice(0, opener.newline).trim();
+  const label = [declared, dispatched].find((value) => value && !YAML_LABELS.has(value.toLowerCase()));
+  if (label !== undefined) throw new UnsupportedFrontMatterError(label, sourcePath);
 }
