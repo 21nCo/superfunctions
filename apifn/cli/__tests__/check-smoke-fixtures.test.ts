@@ -54,6 +54,10 @@ describe("API check smoke fixtures", () => {
       const withoutScripts = await check("install-scripts", [], dir);
       expect(withoutScripts.code).toBe(1);
       expect(withoutScripts.report).toMatchObject({ verdict: "fail", drift: true, valid: true, breaking: [] });
+      // The smoke's default job pins its base to the committed spec: the missing route is also a breaking change.
+      const pinned = await check("install-scripts", ["--base-spec", path.join(dir, "openapi.yml")], dir);
+      expect(pinned.report).toMatchObject({ verdict: "fail", drift: true });
+      expect(pinned.report.breaking.map((entry) => entry.path)).toEqual(["paths./install-script.get"]);
 
       mkdirSync(path.join(dir, "node_modules"), { recursive: true });
       writeFileSync(path.join(dir, "node_modules", ".apifn-install-script-ran"), "");

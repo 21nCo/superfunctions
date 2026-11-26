@@ -119,7 +119,9 @@ jobs:
       post_pr_comment: false
 
   # The default (allow_install_scripts omitted) runs npm ci --ignore-scripts: the route is missing, so the check reports
-  # drift. enforce_gates: false keeps this caller non-blocking; router-outputs asserts the failure.
+  # drift, and removing it from the committed spec is breaking. base_spec pins that base, so the result is the same
+  # before and after the fixture lands on dev. enforce_gates: false keeps this caller non-blocking; router-outputs
+  # asserts the failure.
   router-install-scripts-default:
     if: github.repository == '21nCo/superfunctions'
     permissions:
@@ -131,6 +133,7 @@ jobs:
       router_path: router.ts
       config_path: apifn.config.ts
       spec_path: openapi.yml
+      base_spec: openapi.yml
       enforce_gates: false
       cli_source: workspace
       base_branch: dev
@@ -188,5 +191,5 @@ jobs:
           expect router-install-scripts-default.result "$NO_SCRIPTS_RESULT" success
           expect router-install-scripts-default.verdict "$NO_SCRIPTS_VERDICT" fail
           expect router-install-scripts-default.drift "$NO_SCRIPTS_DRIFT" true
-          expect router-install-scripts-default.breaking "$NO_SCRIPTS_BREAKING" false
+          expect router-install-scripts-default.breaking "$NO_SCRIPTS_BREAKING" true
           exit "$failed"
