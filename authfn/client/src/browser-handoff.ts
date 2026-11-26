@@ -1054,6 +1054,19 @@ function parseBeginTarget(returnTo: unknown, allowedOrigins: Set<string>): URL {
   return target;
 }
 
+/** Whether `value` is a canonical http(s) origin, as `begin()` stores it. */
+function isPageOrigin(value: unknown): value is string {
+  if (typeof value !== 'string') {
+    return false;
+  }
+  try {
+    const url = new URL(value);
+    return (url.protocol === 'https:' || url.protocol === 'http:') && url.origin === value;
+  } catch {
+    return false;
+  }
+}
+
 function parseRecord(raw: string, handoffId: string): StoredRecord | null {
   let value: unknown;
   try {
@@ -1087,7 +1100,9 @@ function parseRecord(raw: string, handoffId: string): StoredRecord | null {
   }
   if (
     record.state !== 'pending'
-    || typeof record.origin !== 'string'
+    // begin() needs ttlMs >= 1, so a pending record it wrote has a lifetime.
+    || record.expiresAt - record.issuedAt < 1
+    || !isPageOrigin(record.origin)
     || typeof record.path !== 'string'
     || !record.path.startsWith('/')
     || typeof record.verifier !== 'string'

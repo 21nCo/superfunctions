@@ -301,6 +301,19 @@ describe('createBrowserHandoff', () => {
     expect(events.map((event) => event.type)).toEqual(['begun', 'completed']);
   });
 
+  it('removes only the handoff parameters from cleanUrl and leaves others as the URL has them', async () => {
+    const { make, server } = setup();
+    const begun = await make().begin({ returnTo: RETURN_TO });
+    const callback = server.callbackFor(begun);
+    const code = String(new URLSearchParams(new URL(callback).hash.slice(1)).get('token'));
+
+    // A copy under another name is the URL author's own parameter, not the handoff's.
+    const result = await make().complete(`${callback}&copy=${code}&keep=1`);
+
+    expect(result).toMatchObject({ status: 'completed', cleanUrl: `${RETURN_TO}#copy=${code}&keep=1` });
+    expect(server.exchange).toHaveBeenCalledTimes(1);
+  });
+
   it('lets only one of two windows over shared storage complete the same return', async () => {
     const { make, server } = setup();
     const begun = await make().begin({ returnTo: RETURN_TO });
@@ -1214,6 +1227,16 @@ describe('createBrowserHandoff', () => {
     expect(await errorFor('AUTHFN_REFLECTED_CODE')).toBe('AUTHFN_INTERNAL_ERROR');
   });
 
+  it('keeps the redirect error the client builds when the request code is that label', async () => {
+    const client = createAuthFnClient({
+      baseUrl: `${APP}/auth`,
+      fetch: async () => new Response(null, { status: 302, headers: { location: `${APP}/elsewhere` } })
+    });
+    const envelope = await client.exchangeSocialHandoff({ code: 'AUTHFN_REDIRECT_REQUIRES_NAVIGATION', verifier: plainInput.verifier });
+
+    expect((envelope as { error: { code: string } }).error.code).toBe('AUTHFN_REDIRECT_REQUIRES_NAVIGATION');
+  });
+
   it('keeps only the field of a validation error', async () => {
     expect(await keptDetailsFor('AUTHFN_VALIDATION_ERROR', 400, {
       field: 'verifier',
@@ -1399,6 +1422,56 @@ describe('createBrowserHandoff', () => {
 
     expect(failed(await make().complete(server.callbackFor(begun))).reason).toBe('malformed-state');
     expect(await retiredState(store, key)).toBe('tombstone');
+    expect(server.exchange).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    'not-an-origin',
+    'javascript:',
+    `${APP}/`,
+    APP.toUpperCase(),
+    '',
+    'null'
+  ])('retires a pending record whose stored origin %j is not a page origin', async (origin) => {
+    const { make, server, store } = setup();
+    const begun = await make().begin({ returnTo: RETURN_TO });
+    const key = `authfn.handoff.${begun.handoffId}`;
+    const record = JSON.parse(String(await store.get(key)));
+    await store.set(key, JSON.stringify({ ...record, origin }));
+
+    expect(failed(await make().complete(server.callbackFor(begun))).reason).toBe('malformed-state');
+    expect(await retiredState(store, key)).toBe('tombstone');
+    expect(await dumpStore(store)).not.toContain(record.verifier);
+    expect(server.exchange).not.toHaveBeenCalled();
+  });
+
+  it('prunes a pending record whose stored origin is not a page origin', async () => {
+    const { make, store } = setup();
+    const begun = await make().begin({ returnTo: RETURN_TO });
+    const key = `authfn.handoff.${begun.handoffId}`;
+    const record = JSON.parse(String(await store.get(key)));
+    await store.set(key, JSON.stringify({ ...record, origin: 'javascript:' }));
+
+    expect(await make().prune()).toBe(1);
+    expect(await retiredState(store, key)).toBe('tombstone');
+    expect(await dumpStore(store)).not.toContain(record.verifier);
+  });
+
+  it('retires a pending record with no lifetime but keeps a zero-lifetime tombstone final', async () => {
+    const { make, server, store } = setup();
+    const begun = await make().begin({ returnTo: RETURN_TO });
+    const key = `authfn.handoff.${begun.handoffId}`;
+    const callback = server.callbackFor(begun);
+    const record = JSON.parse(String(await store.get(key)));
+    // Both still in the future, so only the lifetime is wrong.
+    await store.set(key, JSON.stringify({ ...record, issuedAt: record.expiresAt }));
+
+    expect(failed(await make().complete(callback)).reason).toBe('malformed-state');
+    expect(await dumpStore(store)).not.toContain(record.verifier);
+    const tombstone = JSON.parse(String(await store.get(key)));
+    expect(tombstone.state).toBe('used');
+    await store.set(key, JSON.stringify({ ...tombstone, issuedAt: tombstone.expiresAt }));
+    expect(failed(await make().complete(callback)).reason).toBe('already-used');
     expect(server.exchange).not.toHaveBeenCalled();
   });
 
