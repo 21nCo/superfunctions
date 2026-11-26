@@ -176,11 +176,13 @@ export function recordDeliveryQuietly(
 ): Promise<void> {
   const record = serialized(dir, async () => {
     const current = await readCache(join(dir, UPDATE_CHECK_FILE));
+    // The delivery time itself bounds what counts as the future when the clock now throws or is not a number.
     let at = notifiedAt;
     try {
-      at = Math.max(notifiedAt, now());
+      const time = now();
+      at = Number.isFinite(time) ? Math.max(notifiedAt, time) : notifiedAt;
     } catch {
-      // The delivery time itself bounds what counts as the future.
+      at = notifiedAt;
     }
     await writeCache(dir, withNotifiedAt(current ?? entry, laterDelivery(current?.notifiedAt, notifiedAt, at)));
   });

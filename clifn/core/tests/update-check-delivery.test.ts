@@ -437,6 +437,22 @@ describe("claim kept current after the check settles", () => {
     expect(file.notifiedAt).toBe(T0 - 10);
   });
 
+  it("records the hand-out time when the clock stops telling the time after the hand-out", async () => {
+    let clock: () => number = () => T0;
+    await writeCacheJson({ checkedAt: T0, latest: "1.3.0", notifiedAt: T0 - DAY + 10 });
+    fsHooks.holdRenames = gate();
+    const handle = check({ now: () => clock(), timeoutMs: 60_000 });
+    await settle();
+    clock = () => T0 + 20;
+
+    expect(await handle.notice()).toBe(NOTICE_1_3_0);
+    clock = () => Number.NaN;
+    releaseAll();
+    await settleCacheWrites();
+    const file = JSON.parse(await readFile(fsHooks.cacheFile, "utf8")) as { notifiedAt?: number };
+    expect(file.notifiedAt).toBe(T0 + 20);
+  });
+
   it("still gives the notice after an asynchronous action longer than the timeout", async () => {
     await writeCacheJson({ checkedAt: Date.now(), latest: "1.3.0" });
     const updateCheck = check({ now: Date.now, timeoutMs: 100 });
