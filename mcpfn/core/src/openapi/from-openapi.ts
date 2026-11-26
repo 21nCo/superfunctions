@@ -586,7 +586,9 @@ class OperationConverter {
     let current: unknown = Object.hasOwn(section, name) ? section[name] : undefined;
     const chain = [name];
     const visited = new Set(chain);
-    let outcome: OpenApiSecurityScheme | null | undefined;
+    // A name already resolved ends the walk with its outcome, null included; the
+    // `$ref` object the walk stopped at is then never read as a scheme itself.
+    let cached: OpenApiSecurityScheme | null | undefined;
     while (isObject(current) && "$ref" in current) {
       this.schemas.chargeWork(1);
       let target: string;
@@ -601,14 +603,13 @@ class OperationConverter {
         current = undefined;
         break;
       }
-      // A name already resolved ends the walk with its outcome.
-      outcome = this.schemeOutcomes.get(target);
-      if (outcome !== undefined) break;
+      cached = this.schemeOutcomes.get(target);
+      if (cached !== undefined) break;
       visited.add(target);
       chain.push(target);
       current = section[target];
     }
-    outcome ??= (isPlainRecord(current) ? schemeInfo(current) : undefined) ?? null;
+    const outcome = cached !== undefined ? cached : ((isPlainRecord(current) ? schemeInfo(current) : undefined) ?? null);
     for (const walked of chain) this.schemeOutcomes.set(walked, outcome);
     return outcome ?? undefined;
   }

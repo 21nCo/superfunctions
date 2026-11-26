@@ -2579,6 +2579,31 @@ describe("httpExecutor HTML named references a non-ASCII credential form may hid
   });
 });
 
+describe("httpExecutor named references that only start with a legacy name", () => {
+  const cookie = { cookie: "session=test-%E2%8B%89-key" };
+  const body = "<p>test-&ltimes;-key</p>";
+  const run = (headers: Record<string, string>, status: number) =>
+    execute(
+      httpExecutor<Context>({
+        baseUrl: api.origin,
+        headers,
+        fetch: stubFetch(() => new Response(body, { status, headers: { "content-type": "text/html" } })).fetch,
+      }),
+      operationOf("echo"),
+    );
+
+  it("withholds &ltimes; spelling a non-ASCII cookie form on an error and a success", async () => {
+    expect(text(await run(cookie, 500))).toBe("The API responded with HTTP 500.\n[body withheld: it reveals an operator credential]");
+    expect(text(await run(cookie, 200))).toContain("reveals an operator credential and was withheld");
+  });
+
+  it("returns the body unchanged when every credential form is ASCII", async () => {
+    const headers = { "x-api-key": "test-operator-key" };
+    expect(text(await run(headers, 500))).toBe(`The API responded with HTTP 500.\n\n${body}`);
+    expect(text(await run(headers, 200))).toBe(body);
+  });
+});
+
 describe("httpExecutor JSON error bodies read as they serialize", () => {
   const headers = { "x-cfg": '{"label":"test-key"}' };
   const run = (body: string) =>
@@ -2718,5 +2743,25 @@ describe("httpExecutor security scheme $ref chains", () => {
       executor: httpExecutor({ baseUrl: api.origin }),
     });
     expect(second.tools.map((tool) => tool.name)).toEqual(["b"]);
+  });
+
+  it.each([
+    ["the dead name first", ["dead", "c0"]],
+    ["the aliasing name first", ["c0", "dead"]],
+  ])("keeps a cached dead outcome final and never reads $ref siblings, with %s", (_order, names) => {
+    const schemes = {
+      dead: ref("missing"),
+      c0: { ...ref("dead"), type: "apiKey", in: "header", name: "X-K" },
+    };
+    const paths = Object.fromEntries(
+      names.map((name) => [`/${name}`, { get: { operationId: name, security: [{ [name]: [] }], responses: ok } }]),
+    );
+    const document = { openapi: "3.1.0", info: { title: "scheme-order", version: "1.0.0" }, components: { securitySchemes: schemes }, paths };
+    const { tools, skipped } = fromOpenAPI(document, { executor: httpExecutor({ baseUrl: api.origin }) });
+    expect(tools).toEqual([]);
+    expect(skipped.find((skip) => skip.operation.operationId === "c0")).toMatchObject({
+      code: "unsupported-by-executor",
+      reason: 'the security scheme "c0" does not resolve to a scheme of a known type, so the parameter that carries its credential is unknown',
+    });
   });
 });

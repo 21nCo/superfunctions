@@ -97,6 +97,7 @@ const HTML_NAMED = new Map<string, string>(
   }),
 );
 const HTML_LEGACY = ["amp", "AMP", "lt", "LT", "gt", "GT", "quot", "QUOT"] as const;
+const HTML_LEGACY_NAMES: ReadonlySet<string> = new Set(HTML_LEGACY);
 const HTML_NAME = /&([A-Za-z][A-Za-z0-9]*)/g;
 const NON_ASCII = /[^\x00-\x7f]/;
 
@@ -615,14 +616,16 @@ function holdsSecret(text: string, secrets: readonly string[]): boolean {
 }
 
 /**
- * Whether `text` has a named character reference `htmlUnescaped` leaves as
- * written. Such a reference (`&eacute;`) can stand for a non-ASCII character,
+ * Whether `text` has a named character reference whose name is not exactly
+ * one `htmlUnescaped` decodes (a longer name that starts with a legacy one,
+ * such as `&ltimes;`, is not). Such a reference (`&eacute;`) can stand for a non-ASCII character,
  * which only a credential form decoded from percent escapes can hold, so with
  * one of those it counts as a possible echo.
  */
 function opaqueReference(text: string): boolean {
   for (const [, name] of text.matchAll(HTML_NAME)) {
-    if (!HTML_NAMED.has(name!) && !HTML_LEGACY.some((legacy) => name!.startsWith(legacy))) return true;
+    // Only an exact name counts as decoded: `&ltimes;` starts with a legacy name but stands for U+22C9.
+    if (!HTML_NAMED.has(name!) && !HTML_LEGACY_NAMES.has(name!)) return true;
   }
   return false;
 }
