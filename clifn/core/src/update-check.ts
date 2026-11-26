@@ -452,8 +452,8 @@ export function startUpdateCheck(options: UpdateCheckOptions): UpdateCheck {
       }
     });
 
-  // The claimed notice, to the first call only. A claim that is `intervalMs` old or more (or a clock that cannot tell)
-  // is dropped: another run may have claimed the next interval's notice by then. Reading the clock is no file access.
+  // The claimed notice, to the first call only. A claim that is `intervalMs` old or more (or a clock that cannot tell;
+  // with a zero interval no claim ages out) is dropped: another run may have claimed the next interval's notice by then. Reading the clock is no file access.
   const take = (): string | null => {
     const notice = claimed;
     claimed = null;
@@ -461,7 +461,11 @@ export function startUpdateCheck(options: UpdateCheckOptions): UpdateCheck {
       return null;
     }
     const at = clock();
-    return at !== undefined && isRecent(claimedTime, at, checkPlan.intervalMs) ? notice : null;
+    if (at === undefined) {
+      return null;
+    }
+    // With a zero interval nothing is held back, so a claim never ages out.
+    return checkPlan.intervalMs === 0 || isRecent(claimedTime, at, checkPlan.intervalMs) ? notice : null;
   };
 
   return {

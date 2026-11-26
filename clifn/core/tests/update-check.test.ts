@@ -514,8 +514,9 @@ describe("startUpdateCheck: cache interval", () => {
     const handles = [check({ fetch }), check({ fetch }), check({ fetch })];
     await settled();
 
+    // Whichever handle's check settles first claims it; the reads finish in no fixed order.
     const notices = await Promise.all(handles.map((handle) => handle.notice()));
-    expect(notices).toEqual([NOTICE_1_3_0, null, null]);
+    expect(notices.filter((notice) => notice !== null)).toEqual([NOTICE_1_3_0]);
     await expect(readCacheJson()).resolves.toEqual({ checkedAt: T0, latest: "1.3.0", notifiedAt: T0 });
     await expect(run({ fetch, now: () => T0 + 1 })).resolves.toBeNull();
     expect(fetch).not.toHaveBeenCalled();

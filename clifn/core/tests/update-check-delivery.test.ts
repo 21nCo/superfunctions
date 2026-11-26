@@ -365,6 +365,18 @@ describe("claim at settle", () => {
     expect(await cachedNotifiedAt()).toBe(T0 + 600);
   });
 
+  it("gives each handle its notice once with a zero interval, after any action length", async () => {
+    await writeCacheJson({ checkedAt: T0 - 1, latest: "1.3.0" });
+    let clock = T0;
+    const handles = [check({ now: () => clock, intervalMs: 0 }), check({ now: () => clock, intervalMs: 0 })];
+    await settle();
+    clock = T0 + DAY;
+
+    expect(await handles[0].notice()).toBe(NOTICE_1_3_0);
+    expect(await handles[1].notice()).toBe(NOTICE_1_3_0);
+    expect(await handles[0].notice()).toBeNull();
+  });
+
   it("caches the registry's answer while the claim read stalls", async () => {
     await writeCacheJson({ checkedAt: T0 - 2 * DAY, latest: "1.3.0" });
     // Read 1 is the first cache read; read 2 is the claim read after the registry answered.
