@@ -28,6 +28,11 @@ on:
         required: false
         default: false
         type: boolean
+      allow_install_scripts:
+        description: "With router_path, run the lifecycle scripts of the caller's npm ci (its own and its dependencies': postinstall, prepare, native builds). false (the default) runs npm ci --ignore-scripts, so files those scripts would build or generate are missing when the router is imported"
+        required: false
+        default: false
+        type: boolean
       working_directory:
         description: Directory of the caller's package, repo-relative. With router_path, npm ci and apifn check run there
         required: false
@@ -125,6 +130,11 @@ on:
         required: false
         default: false
         type: boolean
+      allow_install_scripts:
+        description: "With router_path, run the lifecycle scripts of the caller's npm ci (its own and its dependencies': postinstall, prepare, native builds). false (the default) runs npm ci --ignore-scripts, so files those scripts would build or generate are missing when the router is imported"
+        required: false
+        default: false
+        type: boolean
       working_directory:
         description: Directory of the caller's package, repo-relative. With router_path, npm ci and apifn check run there
         required: false
@@ -190,9 +200,9 @@ permissions:
   contents: read
 
 jobs:
-  # Runs the caller's code (npm ci lifecycle scripts, the workspace build, the router and config imports) with a
-  # read-only token. The api-check job below posts the comment and applies the gates; only it can write to the pull
-  # request, and it checks out, installs and imports nothing.
+  # Runs the caller's code (npm ci lifecycle scripts when allow_install_scripts is true, the workspace build, the
+  # router and config imports) with a read-only token. The api-check job below posts the comment and applies the
+  # gates; only it can write to the pull request, and it checks out, installs and imports nothing.
   # Every step continues on error and the later steps run only while none failed (steps.*.outcome), so a failed step
   # still reaches the summary and the gate decision, and the api-check job reports it. Every step has a timeout and
   # their sum stays below the job's (360 minutes), so a hung install or router import fails its step rather than the
@@ -436,10 +446,10 @@ jobs:
           echo "Built @apifn/cli@$(node -p "require('./apifn/cli/package.json').version") from the workspace"
           "$BIN_DIR/apifn" --version
 
-      # The router module imports the caller's packages, so they are installed first. npm ci runs the caller's
-      # lifecycle scripts; apifn check reads the spec and router from the working tree, so an install that changes
-      # tracked files or adds untracked ones (a prepare script regenerating the spec) fails closed instead of
-      # hiding drift.
+      # The router module imports the caller's packages, so they are installed first. npm ci runs lifecycle scripts
+      # only with allow_install_scripts: true. apifn check reads the spec and router from the working tree, so an
+      # install that changes tracked files or adds untracked ones (a prepare script regenerating the spec) fails
+      # closed instead of hiding drift.
       - name: Install caller dependencies
         id: install_caller
         if: ${{ !contains(steps.*.outcome, 'failure') && inputs.router_path != '' }}
@@ -450,6 +460,7 @@ jobs:
         env:
           CLI_SOURCE: ${{ inputs.cli_source }}
           CHECKOUT_COMMIT: ${{ steps.caller_checkout.outputs.commit }}
+          ALLOW_INSTALL_SCRIPTS: ${{ inputs.allow_install_scripts }}
         run: |
           set -euo pipefail
           # The commit the checkout bound before any caller code ran; the install and the check compare against it,
@@ -474,9 +485,17 @@ jobs:
             git -C "$GITHUB_WORKSPACE" diff --binary "$CHECKOUT_COMMIT" "${outside_node_modules[@]}"
           }
           before="$(tree_state | sha256sum)"
-          # Lifecycle scripts stay on: the caller's router imports packages that may need them (API-4 runs the caller's
-          # npm ci). They run in this read-only job, and the tree and HEAD checks around them fail closed.
-          npm ci
+          # Lifecycle scripts (the caller's and its dependencies') run only when the caller sets allow_install_scripts:
+          # true; anything else installs with them off. Either way npm ci runs in this read-only job, and the tree and
+          # HEAD checks around it fail closed.
+          ignore_scripts=true
+          if [ "$ALLOW_INSTALL_SCRIPTS" == "true" ]; then
+            ignore_scripts=false
+            echo "allow_install_scripts is true: npm ci runs the lifecycle scripts."
+          else
+            echo "allow_install_scripts is false: npm ci --ignore-scripts (set it to true if the router needs files install scripts build or generate)."
+          fi
+          npm ci --ignore-scripts="$ignore_scripts"
           if [ "$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)" != "$CHECKOUT_COMMIT" ]; then
             echo "::error::npm ci in $PWD moved HEAD away from the checked-out commit $CHECKOUT_COMMIT; apifn check must read the committed router and spec."
             exit 1

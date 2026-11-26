@@ -100,8 +100,44 @@ jobs:
       cli_source: workspace
       post_pr_comment: false
 
+  # The fixture's committed spec includes a route its router serves only after its postinstall script ran.
+  # allow_install_scripts: true runs npm ci with lifecycle scripts, so the check passes.
+  router-install-scripts:
+    if: github.repository == '21nCo/superfunctions'
+    permissions:
+      contents: read
+      pull-requests: write
+    uses: ./.github/workflows/apifn-api-check.yml
+    with:
+      working_directory: apifn/cli/__tests__/fixtures/check-smoke/install-scripts
+      router_path: router.ts
+      config_path: apifn.config.ts
+      spec_path: openapi.yml
+      allow_install_scripts: true
+      cli_source: workspace
+      base_branch: dev
+      post_pr_comment: false
+
+  # The default (allow_install_scripts omitted) runs npm ci --ignore-scripts: the route is missing, so the check reports
+  # drift. enforce_gates: false keeps this caller non-blocking; router-outputs asserts the failure.
+  router-install-scripts-default:
+    if: github.repository == '21nCo/superfunctions'
+    permissions:
+      contents: read
+      pull-requests: write
+    uses: ./.github/workflows/apifn-api-check.yml
+    with:
+      working_directory: apifn/cli/__tests__/fixtures/check-smoke/install-scripts
+      router_path: router.ts
+      config_path: apifn.config.ts
+      spec_path: openapi.yml
+      enforce_gates: false
+      cli_source: workspace
+      base_branch: dev
+      post_pr_comment: false
+
   router-outputs:
-    needs: [router-compatible, router-breaking]
+    needs: [router-compatible, router-breaking, router-install-scripts, router-install-scripts-default]
     if: github.repository == '21nCo/superfunctions' && (always())
     runs-on: ubuntu-latest
     permissions: {}
@@ -117,6 +153,13 @@ jobs:
           BREAKING_VERDICT: ${{ needs.router-breaking.outputs.verdict }}
           BREAKING_DRIFT: ${{ needs.router-breaking.outputs.drift }}
           BREAKING_BREAKING: ${{ needs.router-breaking.outputs.breaking }}
+          SCRIPTS_RESULT: ${{ needs.router-install-scripts.result }}
+          SCRIPTS_VERDICT: ${{ needs.router-install-scripts.outputs.verdict }}
+          SCRIPTS_DRIFT: ${{ needs.router-install-scripts.outputs.drift }}
+          NO_SCRIPTS_RESULT: ${{ needs.router-install-scripts-default.result }}
+          NO_SCRIPTS_VERDICT: ${{ needs.router-install-scripts-default.outputs.verdict }}
+          NO_SCRIPTS_DRIFT: ${{ needs.router-install-scripts-default.outputs.drift }}
+          NO_SCRIPTS_BREAKING: ${{ needs.router-install-scripts-default.outputs.breaking }}
         run: |
           set -euo pipefail
           failed=0
@@ -139,4 +182,11 @@ jobs:
           expect router-breaking.verdict "$BREAKING_VERDICT" fail
           expect router-breaking.drift "$BREAKING_DRIFT" false
           expect router-breaking.breaking "$BREAKING_BREAKING" true
+          expect router-install-scripts.result "$SCRIPTS_RESULT" success
+          expect router-install-scripts.verdict "$SCRIPTS_VERDICT" pass
+          expect router-install-scripts.drift "$SCRIPTS_DRIFT" false
+          expect router-install-scripts-default.result "$NO_SCRIPTS_RESULT" success
+          expect router-install-scripts-default.verdict "$NO_SCRIPTS_VERDICT" fail
+          expect router-install-scripts-default.drift "$NO_SCRIPTS_DRIFT" true
+          expect router-install-scripts-default.breaking "$NO_SCRIPTS_BREAKING" false
           exit "$failed"

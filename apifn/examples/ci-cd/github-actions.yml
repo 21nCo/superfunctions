@@ -25,6 +25,9 @@ jobs:
       working_directory: .
       base_branch: main
       allow_breaking: false
+      # npm ci runs with --ignore-scripts. Set true only if the router needs what install scripts build or generate
+      # (native modules, generated clients such as Prisma's, prepare builds).
+      allow_install_scripts: false
       post_pr_comment: true
       # Optional: collection tests. Without collection_dir the summary reports them as not run.
       # collection_dir: .apifn/collection
