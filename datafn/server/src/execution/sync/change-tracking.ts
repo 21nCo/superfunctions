@@ -15,8 +15,8 @@
 import type { Adapter } from "@superfunctions/db";
 import type { InternalWhereClause } from "@superfunctions/db/types";
 import type { SequenceStore } from "./sequence-store.js";
-import { ensureChangesRevColumn, ensureInternalTable } from "../internal-tables.js";
-import { assignWriteRevisions, ensureRevisionsTable, issuesRevisions, revisionsEnabled } from "../revisions.js";
+import { adapterIdentity, ensureChangesRevColumn, ensureInternalTable } from "../internal-tables.js";
+import { assignWriteRevisions, ensureRevisionsTable, isRevisionAssignmentFailure, issuesRevisions, revisionsEnabled } from "../revisions.js";
 import type { DatafnSchema } from "../../core-types.js";
 import type { DatafnLogger } from "../../logger.js";
 import { withAdapterNamespaceLock } from "./namespace-lock.js";
@@ -41,7 +41,8 @@ export async function recordChangeWithRetry(
       await changeTracking.recordChange(params);
       return;
     } catch (e) {
-      if (i === maxRetries) throw e;
+      // DATA-41: a failed revision raise aborts the write; it is not retried.
+      if (i === maxRetries || isRevisionAssignmentFailure(e)) throw e;
       logger?.warn("Change tracking retry", { attempt: i + 1, maxRetries, error: String(e) });
       await sleep(50 * (i + 1)); // 50ms, 100ms
     }
@@ -65,7 +66,7 @@ export async function recordChangesWithRetry(
       await changeTracking.recordChanges(entries);
       return;
     } catch (e) {
-      if (i === maxRetries) throw e;
+      if (i === maxRetries || isRevisionAssignmentFailure(e)) throw e;
       logger?.warn("Change tracking retry (bulk)", {
         attempt: i + 1,
         maxRetries,
@@ -242,10 +243,10 @@ export class ChangeTrackingService {
     if (this.namespaceMetaEnsured) {
       return;
     }
-    let prepared = preparedNamespaces.get(this.db);
+    let prepared = preparedNamespaces.get(adapterIdentity(this.db));
     if (!prepared) {
       prepared = new Set<string>();
-      preparedNamespaces.set(this.db, prepared);
+      preparedNamespaces.set(adapterIdentity(this.db), prepared);
     }
     if (prepared.has(this.namespace)) {
       this.namespaceMetaEnsured = true;
@@ -414,7 +415,7 @@ export class ChangeTrackingService {
    * again, so a caller recording one write's entries one by one assigns them
    * first.
    */
-  async assignRevisions(entries: ChangeEntryInput[]): Promise<void> {
+  async assignRevisions(entries: ChangeEntryInput[], writeDb: Adapter = this.db): Promise<void> {
     // Inside a transaction the table and column are only used when they were
     // ensured before the transaction began; change rows then record no
     // revision.
@@ -427,7 +428,7 @@ export class ChangeTrackingService {
     // the row is read, so the change keeps its own payload.
     const certified = this.writesCertified;
     await assignWriteRevisions(
-      this.db,
+      writeDb,
       this.namespace,
       entries,
       (resource) => certified && recordRev && schema !== undefined && issuesRevisions(schema, resource),

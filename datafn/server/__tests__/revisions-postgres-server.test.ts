@@ -10,12 +10,13 @@ import { kyselyAdapter } from "@superfunctions/db/adapters";
 import type { Adapter } from "@superfunctions/db";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
+  assignWriteRevisions,
   bumpRevision,
-  bumpTombstone,
   configureRevisions,
   ensureRevisionsTable,
   readRevisions,
   readWithRevisions,
+  withWriteEvidence,
 } from "../src/execution/revisions.js";
 import { ChangeTrackingService } from "../src/execution/sync/change-tracking.js";
 import { createDatafnServer } from "../src/server.js";
@@ -45,6 +46,19 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
   return { promise, resolve };
 }
 
+/**
+ * Deletes task `id` in `tx` and raises its tombstone from that DELETE's own
+ * affected-row count, as push and /mutation do; undefined when it removed
+ * nothing.
+ */
+async function deleteWithTombstone(tx: Adapter, id: string): Promise<number | undefined> {
+  const write = withWriteEvidence(tx);
+  await write.delete({ model: "task", where: [{ field: "id", operator: "eq", value: id }], namespace: "datafn" } as any);
+  const entry: { resource: string; id: string; op: string; record: null; rev?: number } = { resource: "task", id, op: "delete", record: null };
+  await assignWriteRevisions(write, "datafn", [entry], () => false);
+  return entry.rev;
+}
+
 describe.skipIf(!url)("DATA-41 revisions on a PostgreSQL server", { timeout: 60_000 }, () => {
   beforeAll(async () => {
     kysely = new Kysely<any>({
@@ -70,12 +84,15 @@ describe.skipIf(!url)("DATA-41 revisions on a PostgreSQL server", { timeout: 60_
     await service.ensureRevisionsReady();
     const id = "task:overlap";
     await adapter.rawSql!.execute(`INSERT INTO "${taskTable}" (id, title) VALUES ('${id}', 't0')`);
+    // Each write updates the row and records its change from that UPDATE.
+    const merge = async (tx: Adapter, entry: { id: string; record: { id: string; title: string } } & Record<string, unknown>) => {
+      const write = withWriteEvidence(tx);
+      await write.update({ model: "task", where: [{ field: "id", operator: "eq", value: entry.id }], data: { title: entry.record.title } } as any);
+      await service.withDb(write, false).recordChanges([entry as any]);
+    };
     for (let seq = 1; seq <= 3; seq++) {
-      await db.transaction(async (tx) => {
-        await service.withDb(tx as Adapter, false).recordChanges([
-          { serverSeq: seq, resource: "task", id, op: "merge", record: { id, title: `t${seq}` } },
-        ]);
-      });
+      await db.transaction(async (tx) =>
+        merge(tx as Adapter, { serverSeq: seq, resource: "task", id, op: "merge", record: { id, title: `t${seq}` } }));
     }
     const n = (await readRevisions(adapter, namespace, "task", [id])).get(id)!.rev;
     expect(n).toBe(3);
@@ -85,16 +102,16 @@ describe.skipIf(!url)("DATA-41 revisions on a PostgreSQL server", { timeout: 60_
     const aBumped = deferred();
     const releaseA = deferred();
     const writerA = db.transaction(async (tx) => {
-      const entry = { serverSeq: 10, resource: "task", id, op: "merge" as const, record: { id, title: "A" } };
-      await service.withDb(tx as Adapter, false).recordChanges([entry]);
+      const entry: Record<string, any> = { serverSeq: 10, resource: "task", id, op: "merge" as const, record: { id, title: "A" } };
+      await merge(tx as Adapter, entry as any);
       aBumped.resolve();
       await releaseA.promise;
       return entry.rev;
     });
     await aBumped.promise;
     const writerB = db.transaction(async (tx) => {
-      const entry = { serverSeq: 11, resource: "task", id, op: "merge" as const, record: { id, title: "B" } };
-      await service.withDb(tx as Adapter, false).recordChanges([entry]);
+      const entry: Record<string, any> = { serverSeq: 11, resource: "task", id, op: "merge" as const, record: { id, title: "B" } };
+      await merge(tx as Adapter, entry as any);
       return entry.rev;
     });
     // B is now blocked on A's uncommitted update; let A commit.
@@ -224,8 +241,7 @@ describe.skipIf(!url)("DATA-41 versioned query on a PostgreSQL server", { timeou
     await first.transaction(async (tx) => bumpRevision(tx as Adapter, "datafn", "task", id, false));
     // P1 deletes the record and commits its tombstone.
     await first.transaction(async (tx) => {
-      await (tx as Adapter).rawSql!.execute(`DELETE FROM "task" WHERE id = '${id}'`);
-      expect(await bumpTombstone(tx as Adapter, "datafn", "task", id)).toBe(2);
+      expect(await deleteWithTombstone(tx as Adapter, id)).toBe(2);
     });
     // P3 re-inserts it and raises its revision, holding its transaction open.
     const bumped = deferred();
@@ -240,10 +256,7 @@ describe.skipIf(!url)("DATA-41 versioned query on a PostgreSQL server", { timeou
     await bumped.promise;
     // P2's DELETE matches nothing (P1's delete committed, P3's insert has
     // not); its tombstone swap waits for P3 and then finds the row back.
-    const overlapping = first.transaction(async (tx) => {
-      await (tx as Adapter).rawSql!.execute(`DELETE FROM "task" WHERE id = '${id}'`);
-      return bumpTombstone(tx as Adapter, "datafn", "task", id);
-    });
+    const overlapping = first.transaction(async (tx) => deleteWithTombstone(tx as Adapter, id));
     await new Promise((resolve) => setTimeout(resolve, 300));
     commit.resolve();
     expect(await reinsert).toBe(3);
@@ -264,8 +277,7 @@ describe.skipIf(!url)("DATA-41 versioned query on a PostgreSQL server", { timeou
     const raised = deferred();
     const commit = deferred();
     const t1 = first.transaction(async (tx) => {
-      await (tx as Adapter).rawSql!.execute(`DELETE FROM "task" WHERE id = '${id}'`);
-      const rev = await bumpTombstone(tx as Adapter, "datafn", "task", id);
+      const rev = await deleteWithTombstone(tx as Adapter, id);
       raised.resolve();
       await commit.promise;
       return rev;
@@ -273,10 +285,7 @@ describe.skipIf(!url)("DATA-41 versioned query on a PostgreSQL server", { timeou
     await raised.promise;
     // T2 also saw the record; its DELETE waits on T1's row lock and then
     // matches nothing, so it removed nothing and must raise nothing.
-    const t2 = second.transaction(async (tx) => {
-      await (tx as Adapter).rawSql!.execute(`DELETE FROM "task" WHERE id = '${id}'`);
-      return bumpTombstone(tx as Adapter, "datafn", "task", id);
-    });
+    const t2 = second.transaction(async (tx) => deleteWithTombstone(tx as Adapter, id));
     await new Promise((resolve) => setTimeout(resolve, 300));
     commit.resolve();
     expect(await t1).toBe(2);

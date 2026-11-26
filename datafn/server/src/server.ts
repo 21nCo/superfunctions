@@ -469,8 +469,7 @@ const guardExpired = (guard?: ReadBackGuard) =>
  * the guard holds, and a body read past it is cancelled (a cancel that fails
  * changes nothing).
  */
-async function readBodyBytes(body: ReadableStream<Uint8Array>, guard?: ReadBackGuard): Promise<Uint8Array> {
-  const reader = body.getReader();
+async function readBodyBytes(reader: ReadableStreamDefaultReader<Uint8Array>, guard?: ReadBackGuard): Promise<Uint8Array> {
   const chunks: Uint8Array[] = [];
   let onAbort: (() => void) | undefined;
   const aborted = guard && new Promise<never>((_resolve, reject) => {
@@ -486,11 +485,7 @@ async function readBodyBytes(body: ReadableStream<Uint8Array>, guard?: ReadBackG
       chunks.push(chunk.value);
     }
   } catch (error) {
-    try {
-      reader.cancel().catch(() => undefined);
-    } catch {
-      // Already released or closed.
-    }
+    cancelQuietly(reader);
     throw error;
   } finally {
     if (onAbort) guard?.signal.removeEventListener("abort", onAbort);
@@ -502,6 +497,15 @@ async function readBodyBytes(body: ReadableStream<Uint8Array>, guard?: ReadBackG
     offset += chunk.byteLength;
   }
   return bytes;
+}
+
+/** Cancels a body or reader no one reads any more; a failed cancel changes nothing. */
+function cancelQuietly(body: { cancel(): Promise<void> } | null | undefined): void {
+  try {
+    body?.cancel().catch(() => undefined);
+  } catch {
+    // Already released or closed.
+  }
 }
 
 /**
@@ -568,36 +572,62 @@ function spliceRevisionCapability(text: string): string {
 }
 
 /**
- * A read-back body served in slices, each only while the guard holds: once it
- * expires, the stream (and every branch teed from it) is errored, so router
- * middleware reading it stops at the push's deadline.
+ * The upstream JSON body with the revision capability spliced in, read only
+ * when the body is first pulled, so router middleware gets the Response
+ * (status and headers) at once. Under a read-back guard, the upstream is read
+ * and the result served in slices only while the guard holds; once it
+ * expires, the stream (and every branch teed from it) is errored and the
+ * upstream cancelled.
  */
-function guardedBody(bytes: Uint8Array, guard: ReadBackGuard): ReadableStream<Uint8Array> {
-  const slice = 16 * 1024;
+function splicedBody(upstream: ReadableStream<Uint8Array>, guard?: ReadBackGuard): ReadableStream<Uint8Array> {
+  const slice = guard ? 16 * 1024 : Number.POSITIVE_INFINITY;
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  let bytes: Uint8Array | undefined;
   let offset = 0;
   let onAbort: (() => void) | undefined;
   const release = () => {
-    if (onAbort) guard.signal.removeEventListener("abort", onAbort);
+    if (onAbort) guard?.signal.removeEventListener("abort", onAbort);
   };
+  const cancelUpstream = () => cancelQuietly(reader ?? upstream);
   return new ReadableStream<Uint8Array>({
     start(controller) {
-      onAbort = () => controller.error(readBackExpiredError());
-      guard.signal.addEventListener("abort", onAbort, { once: true });
+      if (!guard) return;
+      onAbort = () => {
+        controller.error(readBackExpiredError());
+        cancelUpstream();
+      };
+      if (guard.signal.aborted) onAbort();
+      else guard.signal.addEventListener("abort", onAbort, { once: true });
     },
-    pull(controller) {
+    async pull(controller) {
       if (guardExpired(guard)) {
         release();
+        cancelUpstream();
         controller.error(readBackExpiredError());
         return;
       }
-      controller.enqueue(bytes.subarray(offset, offset + slice));
+      if (!bytes) {
+        reader = upstream.getReader();
+        const raw = await readBodyBytes(reader, guard);
+        let text: string | undefined;
+        try {
+          text = new TextDecoder("utf-8", { fatal: true }).decode(raw);
+        } catch {
+          text = undefined;
+        }
+        bytes = text === undefined ? raw : new TextEncoder().encode(spliceRevisionCapability(text));
+      }
+      if (offset < bytes.byteLength) controller.enqueue(bytes.subarray(offset, offset + slice));
       offset += slice;
       if (offset >= bytes.byteLength) {
         release();
         controller.close();
       }
     },
-    cancel: release,
+    cancel() {
+      release();
+      cancelUpstream();
+    },
   }, { highWaterMark: 0 });
 }
 
@@ -611,8 +641,10 @@ function guardedBody(bytes: Uint8Array, guard: ReadBackGuard): ReadableStream<Ui
  * revision-aware server from an older one. External requests and a push's
  * own read-back get the envelope from the same splice, so router middleware
  * sees the same body for both. A body with a Content-Encoding, or one that
- * is not UTF-8, is passed through unchanged, without the capability. A
- * read-back's body is read and served only until its deadline.
+ * is not UTF-8, is passed through unchanged, without the capability. The
+ * Response is returned as soon as the handler answers; its body is spliced
+ * when first read. A read-back's body is read and served only until its
+ * deadline, and is errored once the push stops waiting for it.
  */
 function withRevisionCapability<A extends unknown[]>(
   schema: DatafnSchema,
@@ -640,17 +672,9 @@ function withRevisionCapability<A extends unknown[]>(
         status: response.status, statusText: response.statusText, headers: response.headers,
       });
     }
-    const bytes = await readBodyBytes(response.body, guard);
-    let text: string | undefined;
-    try {
-      text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-    } catch {
-      text = undefined;
-    }
-    const spliced = text === undefined ? bytes : new TextEncoder().encode(spliceRevisionCapability(text));
     const headers = new Headers(response.headers);
     headers.delete("content-length");
-    return new Response(guard ? guardedBody(spliced, guard) : spliced, {
+    return new Response(splicedBody(response.body, guard), {
       status: response.status, statusText: response.statusText, headers,
     });
   };
@@ -1412,63 +1436,46 @@ export async function createDatafnServer<TContext = any>(
    * answer within this time; otherwise the push returns its revisions alone.
    */
   const POST_WRITE_READ_TIMEOUT_MS = 2_000;
-  /** Cancels a discarded read-back body; a failed cancel changes nothing. */
-  const discardBody = (body: { cancel(): Promise<void> } | null | undefined): void => {
-    try {
-      body?.cancel().catch(() => undefined);
-    } catch {
-      // Already released or closed.
-    }
-  };
   /**
    * Dispatches a read-back through the router and reads its JSON body, both
    * before `deadline`. Undefined for a non-2xx answer, an unreadable body or
-   * a missed deadline; a body that is not read is cancelled.
+   * a missed deadline. Its single exit aborts the read-back request whatever
+   * the outcome, so every body it produced, including clones or tee branches
+   * router middleware kept, is errored and abort-aware middleware is told.
    */
-  const readBackWithin = (request: Request, deadline: number, abort: AbortController): Promise<unknown> => {
-    let expired = false;
+  const readBackWithin = async (request: Request, deadline: number, abort: AbortController): Promise<unknown> => {
     let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
-    // Every expiry aborts the read-back request: abort-aware middleware is
-    // told, and its body (and any branch teed from it) is errored.
-    const expire = () => {
-      expired = true;
-      abort.abort();
-    };
     // Ready chunks resume in microtasks that can starve the timer, so the
     // clock is also checked on every chunk and after the parse.
-    const late = () => {
-      if (!expired && Date.now() >= deadline) expire();
-      return expired;
-    };
-    const read = (async () => {
+    const late = () => abort.signal.aborted || Date.now() >= deadline;
+    const read = async (): Promise<unknown> => {
       const response = await router.handle(request);
       if (late() || !response.ok || !response.body) {
-        discardBody(response.body);
+        cancelQuietly(response.body);
         return undefined;
       }
       reader = response.body.getReader();
       const decoder = new TextDecoder();
       let text = "";
       for (let chunk = await reader.read(); !chunk.done; chunk = await reader.read()) {
-        if (late()) {
-          discardBody(reader);
-          return undefined;
-        }
+        if (late()) return undefined;
         text += decoder.decode(chunk.value, { stream: true });
       }
       if (late()) return undefined;
       const parsed = JSON.parse(text + decoder.decode()) as unknown;
       return late() ? undefined : parsed;
-    })();
+    };
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<undefined>((resolve) => {
-      timer = setTimeout(() => {
-        expire();
-        discardBody(reader);
-        resolve(undefined);
-      }, Math.max(0, deadline - Date.now()));
+      timer = setTimeout(() => resolve(undefined), Math.max(0, deadline - Date.now()));
     });
-    return Promise.race([read.catch(() => undefined), timeout]).finally(() => clearTimeout(timer));
+    try {
+      return await Promise.race([read().catch(() => undefined), timeout]);
+    } finally {
+      clearTimeout(timer);
+      abort.abort();
+      cancelQuietly(reader);
+    }
   };
 
   // LOW-001: withAuth returns a handler with signature compatible with Route<TContext>.handler

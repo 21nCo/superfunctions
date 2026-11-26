@@ -20,7 +20,7 @@ import {
 } from "../idempotency.js";
 import type { SequenceStore } from "./sequence-store.js";
 import { ChangeTrackingService, recordChangeWithRetry } from "./change-tracking.js";
-import { canonicalRow, issuesRevisions, recordedRevision, recordIdMismatch, REVISION_FIELD } from "../revisions.js";
+import { canonicalRow, issuesRevisions, recordedRevision, recordIdMismatch, REVISION_FIELD, withWriteEvidence } from "../revisions.js";
 import type { ChangeEntryInput } from "./change-tracking.js";
 import { canReadEveryField, isPrivateShareableResource, resolveAccessLevel } from "../../validation/authz.js";
 import {
@@ -1379,7 +1379,9 @@ export async function executePush(
       const mutationResourceSeqs: Record<string, number> = {};
       const pendingChangeEvents: number[] = [];
       try {
-        await (db as any).transaction(async (txDb: Adapter) => {
+        await (db as any).transaction(async (txAdapter: Adapter) => {
+          // DATA-41: the write's own statements decide which revisions it raises.
+          const txDb = withWriteEvidence(txAdapter);
           // Execute operation inside transaction
           const opResult = await executeMutationOp(mut, txDb);
           if (!opResult.ok) {
@@ -1468,6 +1470,7 @@ export async function executePush(
       }
     } else {
       // Non-transaction path: execute operation, then record changes separately (best-effort)
+      const writeDb = withWriteEvidence(db);
       let opResult: ExecuteMutationResult;
       let failedShareCompensationDeferred = false;
       try {
@@ -1483,7 +1486,7 @@ export async function executePush(
             { pending: true },
           );
         }
-        opResult = await executeMutationOp(mut, db);
+        opResult = await executeMutationOp(mut, writeDb);
       } catch (error) {
         const failedShareCompensation = getFailedShareCompensation(error);
         if (
@@ -1524,7 +1527,7 @@ export async function executePush(
             resourceSeqs[change.resource] = Math.max(resourceSeqs[change.resource] || 0, seq);
             recorded.push({ serverSeq: seq, resource: change.resource, id: change.id, op, record });
           }
-          await changeTracking.assignRevisions(recorded);
+          await changeTracking.assignRevisions(recorded, writeDb);
           noteBatchRevisions(recorded);
           for (const entry of recorded) {
             await recordChangeWithRetry(changeTracking, entry, 2, logger);

@@ -115,6 +115,20 @@ export async function ensureInternalTable(
   await adapter.internal.ensureTable(tableName, columns);
 }
 
+const adapterTargets = new WeakMap<object, object>();
+
+/**
+ * DATA-41: the adapter a per-write wrapper (withWriteEvidence) stands for, so
+ * state kept per adapter (namespace locks, prepared tables) is shared with it.
+ */
+export function adapterIdentity(adapter: object): object {
+  return adapterTargets.get(adapter) ?? adapter;
+}
+
+export function registerAdapterWrapper(wrapper: object, adapter: object): void {
+  adapterTargets.set(wrapper, adapterIdentity(adapter));
+}
+
 const changesRevColumnReady = new WeakMap<object, Promise<boolean>>();
 
 /**
@@ -125,11 +139,11 @@ const changesRevColumnReady = new WeakMap<object, Promise<boolean>>();
  * failed probe would abort a PostgreSQL transaction).
  */
 export function ensureChangesRevColumn(adapter: Adapter): Promise<boolean> {
-  let ready = changesRevColumnReady.get(adapter);
+  let ready = changesRevColumnReady.get(adapterIdentity(adapter));
   if (!ready) {
     ready = addChangesRevColumns(adapter);
-    changesRevColumnReady.set(adapter, ready);
-    ready.catch(() => changesRevColumnReady.delete(adapter));
+    changesRevColumnReady.set(adapterIdentity(adapter), ready);
+    ready.catch(() => changesRevColumnReady.delete(adapterIdentity(adapter)));
   }
   return ready;
 }

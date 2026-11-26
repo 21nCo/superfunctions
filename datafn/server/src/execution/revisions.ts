@@ -12,12 +12,13 @@
  */
 
 import { createHash } from "node:crypto";
-import type { Adapter } from "@superfunctions/db";
+import { NotFoundError, type Adapter } from "@superfunctions/db";
 import { getRelationFkFieldsForResource, resolveJoinStoreResources } from "@datafn/core";
 import type { DatafnSchema } from "../core-types.js";
-import { ensureInternalTable } from "./internal-tables.js";
+import { ensureInternalTable, registerAdapterWrapper } from "./internal-tables.js";
 import { isKvResource } from "./mutation/kv-merge.js";
 import { canReadEveryField, withoutUnreadableFields } from "../validation/authz.js";
+import { isNotFoundError } from "./mutation/merge-decision.js";
 
 export const REVISIONS_TABLE = "__datafn_revisions";
 /** Reserved row metadata property that carries a returned row's revision. */
@@ -263,12 +264,12 @@ export async function bumpRevision(
   recordId: string,
   deleted: boolean,
 ): Promise<number> {
-  return (await raiseRevision(db, namespace, resource, recordId, deleted)) as number;
+  return raiseRevision(db, namespace, resource, recordId, deleted);
 }
 
 /**
  * DATA-41: `staleView` is set when the bump succeeded only after a swap miss
- * on an adapter whose reads are a transaction snapshot: the record row this
+ * on an adapter whose reads may be a transaction snapshot: the record row this
  * transaction reads may then be older than the revision, so it is not
  * recorded as the row at that revision.
  */
@@ -276,78 +277,173 @@ export interface BumpOutcome {
   staleView?: boolean;
 }
 
-/**
- * DATA-41: raises a deleted record's revision to a tombstone, but only for a
- * write that moved the record from present to absent. Each attempt, every
- * compare-and-swap retry included, reads the revision row and then checks,
- * before the swap:
- * - a revision row that is already a tombstone means an earlier delete raised
- *   it (a concurrent delete that removed the row first, or a repeated delete),
- *   so this delete removed nothing and raises nothing;
- * - a record row present in the write's own view means a concurrent writer
- *   re-inserted the record (and raised its revision) first, so this delete
- *   must not mark that live record deleted.
- * A writer that commits after the revision read changes the revision, so the
- * swap fails and the next attempt sees its state. Returns undefined, raising
- * nothing, in both cases. A record with no revision row or a live one still
- * gets its tombstone.
- */
+/** Raises a deleted record's revision to a tombstone (see raiseRevision). */
 export async function bumpTombstone(
   db: Adapter,
   namespace: string,
   resource: string,
   recordId: string,
   outcome?: BumpOutcome,
-): Promise<number | undefined> {
-  return raiseRevision(db, namespace, resource, recordId, true, outcome, async (row) =>
-    isTombstone(row) ||
-    (await db.findOne({
-      model: resource,
-      where: [{ field: "id", operator: "eq", value: recordId }],
-      namespace,
-    })) !== null);
+): Promise<number> {
+  return raiseRevision(db, namespace, resource, recordId, true, outcome);
 }
 
 /**
- * DATA-41: raises the revision of a record a non-delete write changed, but
- * only while the record row is present in the write's own view. Each attempt,
- * every compare-and-swap retry included, checks before the swap. A write that
- * matched no row (a relation or `setNull` update of a deleted record, or a
- * merge, trash or archive that lost to a concurrent delete) raises nothing
- * and returns undefined: an existing tombstone stays as it is, and the change
- * row and result carry no revision. A writer that deletes the record after
- * the revision read raises its tombstone, so the swap fails and the next
- * attempt sees the record absent.
+ * DATA-41: whether a plain read inside a transaction on `db` may return a
+ * snapshot older than the latest commit (MySQL InnoDB REPEATABLE READ, or SQL
+ * of unknown isolation). PostgreSQL READ COMMITTED, SQLite (one writer at a
+ * time), the memory adapter and adapters without transactions read current.
  */
-export async function bumpPresent(
-  db: Adapter,
-  namespace: string,
-  resource: string,
-  recordId: string,
-  outcome?: BumpOutcome,
-  writesRow = false,
-): Promise<number | undefined> {
-  // After a swap miss where reads are a snapshot, a record row this write did
-  // not write may be read as it was before a delete committed since (the
-  // revision row, just written, is read current). A write that certainly
-  // wrote the row (`writesRow`: the write inserted, replaced, upserted or
-  // KV-merged it) reads its own, current row. Any other write facing a
-  // tombstone committed since cannot tell a recreation from a write that
-  // matched no row, so it fails and is retried rather than guess.
-  return raiseRevision(db, namespace, resource, recordId, false, outcome, async (row, recovered) => {
-    if (recovered && isTombstone(row) && !writesRow) {
-      throw new Error("INTERNAL: Record revision changed by a concurrent delete; retry the write");
-    }
-    return (await db.findOne({
-      model: resource,
-      where: [{ field: "id", operator: "eq", value: recordId }],
-      namespace,
-    })) === null;
-  });
+export function readsMayBeSnapshot(db: Adapter): boolean {
+  if (!transactionsUsable(db)) return false;
+  const dialect = db.rawSql?.dialect;
+  if (dialect === "postgres" || dialect === "sqlite") return false;
+  return dialect !== undefined || (db as { id?: unknown }).id !== "memory";
 }
 
-function isTombstone(row: Record<string, unknown> | null): boolean {
-  return row !== null && Number(row.deleted) === 1;
+type WhereList = ReadonlyArray<{ field?: unknown; operator?: unknown; value?: unknown }>;
+
+/** The record ids a where clause names by `id = x` or `id IN (...)`. */
+function idsOf(where: unknown, allowIn: boolean): string[] | undefined {
+  if (!Array.isArray(where)) return undefined;
+  for (const clause of where as WhereList) {
+    if (clause?.field !== "id") continue;
+    if (clause.operator === "eq" && typeof clause.value === "string") return [clause.value];
+    if (allowIn && clause.operator === "in" && Array.isArray(clause.value)) {
+      return [...new Set(clause.value.filter((v): v is string => typeof v === "string"))];
+    }
+  }
+  return undefined;
+}
+
+/** One statement's effect on one record row. */
+interface WriteEvent {
+  key: string;
+  deleted: boolean;
+  applied: boolean;
+}
+
+const writeLogs = new WeakMap<object, WriteEvent[]>();
+
+/**
+ * DATA-41: `db` for one write, recording what each of its own record
+ * statements did to each record row it names by id: a create or upsert that
+ * succeeded wrote the row, and an update or delete changed it only if the
+ * statement's own affected-row count says so. Where reads may be a snapshot,
+ * an update's returned row is a re-read, not evidence, so the update runs as
+ * a counted update (a current read) and the row is read after it. A revision
+ * is raised only on this evidence (assignWriteRevisions).
+ */
+export function withWriteEvidence(db: Adapter, log: WriteEvent[] = []): Adapter {
+  const note = (model: string, ids: readonly string[], deleted: boolean, applied: boolean) => {
+    for (const id of ids) log.push({ key: JSON.stringify([model, id]), deleted, applied });
+  };
+  const snapshot = readsMayBeSnapshot(db);
+  const target = db as Adapter & Record<string, unknown>;
+  const writers: Record<string, (p: any, ...rest: unknown[]) => Promise<unknown>> = {
+    async create(p) {
+      const out = await db.create(p);
+      note(p.model, idsOf([{ field: "id", operator: "eq", value: p.data?.id }], false) ?? [], false, true);
+      return out;
+    },
+    async createMany(p) {
+      const out = await db.createMany(p);
+      for (const row of p.data ?? []) note(p.model, typeof row?.id === "string" ? [row.id] : [], false, true);
+      return out;
+    },
+    async upsert(p) {
+      const out = await db.upsert(p);
+      const id = idsOf(p.where, false) ?? (typeof p.create?.id === "string" ? [p.create.id] : []);
+      note(p.model, id, false, true);
+      return out;
+    },
+    async update(p) {
+      const ids = idsOf(p.where, false);
+      if (!ids) return db.update(p);
+      if (snapshot) {
+        const count = await db.updateMany({ model: p.model, where: p.where, data: p.data, namespace: p.namespace });
+        note(p.model, ids, false, count > 0);
+        if (count === 0) throw new NotFoundError(p.model, p.where);
+        return db.findOne({ model: p.model, where: p.where, select: p.select, namespace: p.namespace });
+      }
+      try {
+        const out = await db.update(p);
+        const strict = db.capabilities?.operations?.strictUpdateNotFound === true;
+        note(p.model, ids, false, !(out === null || (strict && out === undefined)));
+        return out;
+      } catch (error) {
+        if (isNotFoundError(error)) note(p.model, ids, false, false);
+        throw error;
+      }
+    },
+    async updateMany(p) {
+      const count = await db.updateMany(p);
+      const ids = idsOf(p.where, true);
+      if (!ids || ids.length === 0) return count;
+      if (count === 0 || count === ids.length) {
+        note(p.model, ids, false, count > 0);
+        return count;
+      }
+      // Some named rows matched and some did not: the same write again, one
+      // row at a time, tells which (it leaves matched rows as they are).
+      for (const id of ids) {
+        const where = [...p.where.filter((c: { field?: unknown }) => c?.field !== "id"), { field: "id", operator: "eq", value: id }];
+        note(p.model, [id], false, (await db.updateMany({ ...p, where })) > 0);
+      }
+      return count;
+    },
+    async delete(p) {
+      const ids = idsOf(p.where, false);
+      if (!ids) return db.delete(p);
+      note(p.model, ids, true, (await db.deleteMany({ model: p.model, where: p.where, namespace: p.namespace })) > 0);
+    },
+    async deleteMany(p) {
+      const count = await db.deleteMany(p);
+      // A partial count cannot name the rows removed; a tombstone raised for
+      // a record already absent is only an extra bump of a tombstone.
+      note(p.model, idsOf(p.where, true) ?? [], true, count > 0);
+      return count;
+    },
+    async transaction(fn: (tx: Adapter) => Promise<unknown>, ...rest: unknown[]) {
+      return (db.transaction as (...a: unknown[]) => Promise<unknown>).call(
+        db,
+        (tx: Adapter) => fn(withWriteEvidence(tx, log)),
+        ...rest,
+      );
+    },
+  };
+  const wrapped = new Proxy(target, {
+    get(obj, key) {
+      const value = Reflect.get(obj, key, obj);
+      if (typeof value !== "function") return value;
+      if (typeof key === "string" && Object.prototype.hasOwnProperty.call(writers, key)) return writers[key];
+      return value.bind(obj);
+    },
+  });
+  writeLogs.set(wrapped, log);
+  registerAdapterWrapper(wrapped, db);
+  return wrapped;
+}
+
+/**
+ * Takes the evidence `db` recorded since it was last taken, folded per
+ * record: applied if any statement changed the row, and deleted as the last
+ * statement that changed it left it.
+ */
+function takeWriteEvidence(db: Adapter): Map<string, { applied: boolean; deleted: boolean }> {
+  const folded = new Map<string, { applied: boolean; deleted: boolean }>();
+  for (const event of writeLogs.get(db)?.splice(0) ?? []) {
+    if (event.applied) folded.set(event.key, { applied: true, deleted: event.deleted });
+    else if (!folded.has(event.key)) folded.set(event.key, { applied: false, deleted: event.deleted });
+  }
+  return folded;
+}
+
+const assignmentFailures = new WeakSet<object>();
+
+/** Whether `error` is a write's failed revision assignment (never retried within it). */
+export function isRevisionAssignmentFailure(error: unknown): boolean {
+  return typeof error === "object" && error !== null && assignmentFailures.has(error);
 }
 
 async function raiseRevision(
@@ -357,12 +453,10 @@ async function raiseRevision(
   recordId: string,
   deleted: boolean,
   outcome?: BumpOutcome,
-  skip?: (row: Record<string, unknown> | null, recovered: boolean) => Promise<boolean>,
-): Promise<number | undefined> {
+): Promise<number> {
   const id = revisionRowId(namespace, resource, recordId);
   const where = [{ field: "id", op: "eq" as const, value: id }];
-  // Only PostgreSQL's READ COMMITTED reads the latest commit on every statement.
-  const snapshotReads = db.rawSql?.dialect !== "postgres";
+  const snapshotReads = readsMayBeSnapshot(db);
   for (let attempt = 0; attempt < MAX_BUMP_ATTEMPTS; attempt++) {
     const updatedAt = new Date().toISOString();
     const recovered = attempt > 0 && snapshotReads;
@@ -371,7 +465,6 @@ async function raiseRevision(
     // a plain read in a snapshot would return the same stale revision again.
     if (attempt > 0) await writeLatest(db, id, updatedAt);
     const row = await db.internal.findOne(REVISIONS_TABLE, where);
-    if (skip && (await skip(row, recovered))) return undefined;
     if (!row) {
       const created = await createIfAbsent(db, {
         id,
@@ -632,16 +725,20 @@ type WriteEntry = {
 };
 
 /**
- * One write's revision assignment. `bumped` and `finished` hold the last
- * entries whose revision was raised and whose committed row was recorded, so
- * a retry after a failure part-way through completes the remaining records
- * without raising any record twice.
+ * One write's revision assignment. `evidence` is what the write's own
+ * statements did to each record row, taken once; `bumped` and `finished` hold
+ * the last entries whose revision was raised and whose committed row was
+ * recorded, so a retry after a failure part-way through completes the
+ * remaining records without raising any record twice. `failure` is a failed
+ * raise, rethrown to every retry so the write aborts.
  */
 interface WriteAssignment {
   entries: ReadonlyArray<WriteEntry>;
+  evidence: Map<string, { applied: boolean; deleted: boolean }>;
   bumped: WeakSet<object>;
   finished: WeakSet<object>;
   complete: boolean;
+  failure?: object;
 }
 
 const assignments = new WeakMap<object, WriteAssignment>();
@@ -649,14 +746,18 @@ const assignments = new WeakMap<object, WriteAssignment>();
 /**
  * Raises the revision of each record one write changes exactly once, inside
  * the write's transaction, however many change entries the write recorded
- * for it (an insert and its inherited-inactive update are one write). Only
- * the record's last entry carries the new revision; it marks a delete's
- * tombstone. Where `completeRow` holds, a last entry that writes a whole record
- * (insert, replace, upsert, or any KV write) records the stored row read on
- * `db` after the write, so a change carrying a revision always carries the exact committed
- * row (defaults and server fields included). Recording entries of a write
- * already assigned (in full or in part) keeps the revisions already raised
- * and raises only the records a failed attempt did not reach.
+ * for it (an insert and its inherited-inactive update are one write). A
+ * record is raised only when one of the write's own statements changed its
+ * row (`withWriteEvidence` on `db`): to a tombstone when the last such
+ * statement deleted it, otherwise to a live revision. A record no statement
+ * changed (a relation update or delete that matched no row) raises nothing,
+ * and its change row and result carry no revision. Only the record's last
+ * entry carries the new revision. Where `completeRow` holds, a last entry that
+ * writes a whole record (insert, replace, upsert, or any KV write) records
+ * the stored row read on `db` after the write, so a change carrying a
+ * revision always carries the exact committed row. Recording entries of a
+ * write already assigned keeps the revisions already raised; after a failed
+ * raise it rethrows that failure.
  */
 export async function assignWriteRevisions(
   db: Adapter,
@@ -670,52 +771,56 @@ export async function assignWriteRevisions(
     write = assignments.get(entry);
     if (write) break;
   }
+  if (write?.failure) throw write.failure;
   if (write?.complete) return;
   if (!write) {
-    write = { entries: [...entries], bumped: new WeakSet(), finished: new WeakSet(), complete: false };
+    write = {
+      entries: [...entries],
+      evidence: takeWriteEvidence(db),
+      bumped: new WeakSet(),
+      finished: new WeakSet(),
+      complete: false,
+    };
     for (const entry of entries) assignments.set(entry, write);
   }
   const last = new Map<string, WriteEntry>();
-  // Records any entry of this write wrote as a whole row, whatever entry
-  // (such as an inherited-inactive update) comes last.
-  const wroteRow = new Set<string>();
   for (const entry of write.entries) {
-    const key = JSON.stringify([entry.resource, entry.id]);
-    if (tracksRevisions(entry.resource, schema)) last.set(key, entry);
-    if (["insert", "replace", "upsert"].includes(entry.op) || (entry.op === "merge" && isKvResource(entry.resource))) {
-      wroteRow.add(key);
-    }
+    if (tracksRevisions(entry.resource, schema)) last.set(JSON.stringify([entry.resource, entry.id]), entry);
   }
-  for (const entry of last.values()) {
-    if (write.finished.has(entry)) continue;
-    const deleted = entry.op === "delete";
-    if (!write.bumped.has(entry)) {
-      // A delete whose record row is present again (re-inserted by a
-      // concurrent writer) raises no tombstone, and any other write whose
-      // record row is absent (it changed nothing) raises nothing: its change
-      // row and result carry no revision. Revisions are raised the same way
-      // whether or not the server returns them, so a server with revisions
-      // off never turns a tombstone live for a write that changed nothing.
-      const outcome: BumpOutcome = {};
-      entry.rev = deleted
-        ? await bumpTombstone(db, namespace, entry.resource, entry.id, outcome)
-        : await bumpPresent(db, namespace, entry.resource, entry.id, outcome,
-          wroteRow.has(JSON.stringify([entry.resource, entry.id])));
-      if (outcome.staleView) entry.revUncertified = true;
-      write.bumped.add(entry);
+  try {
+    for (const [key, entry] of last) {
+      if (write.finished.has(entry)) continue;
+      const evidence = write.evidence.get(key);
+      if (!evidence?.applied) {
+        entry.rev = undefined;
+        write.finished.add(entry);
+        continue;
+      }
+      if (!write.bumped.has(entry)) {
+        const outcome: BumpOutcome = {};
+        entry.rev = await raiseRevision(db, namespace, entry.resource, entry.id, evidence.deleted, outcome);
+        if (outcome.staleView) entry.revUncertified = true;
+        write.bumped.add(entry);
+      }
+      if (!evidence.deleted && completeRow(entry.resource) && (entry.op !== "merge" || isKvResource(entry.resource))) {
+        const stored = await db.findOne({
+          model: entry.resource,
+          where: [{ field: "id", operator: "eq", value: entry.id }],
+          namespace,
+        });
+        if (stored) entry.record = { ...(stored as Record<string, unknown>) };
+        else entry.rev = undefined;
+      }
+      write.finished.add(entry);
     }
-    // A whole-row write reads its own row (current even after a recovered
-    // swap, which only leaves the change row uncertified).
-    if (!deleted && completeRow(entry.resource) && (entry.op !== "merge" || isKvResource(entry.resource))) {
-      const stored = await db.findOne({
-        model: entry.resource,
-        where: [{ field: "id", operator: "eq", value: entry.id }],
-        namespace,
-      });
-      if (stored) entry.record = { ...(stored as Record<string, unknown>) };
-      else entry.rev = undefined;
-    }
-    write.finished.add(entry);
+  } catch (error) {
+    // In a transaction the write aborts. Without one its statements have
+    // committed, so change tracking retries the records not yet raised.
+    if (!transactionsUsable(db)) throw error;
+    const failure = typeof error === "object" && error !== null ? error : new Error(String(error));
+    assignmentFailures.add(failure);
+    write.failure = failure;
+    throw failure;
   }
   write.complete = true;
 }

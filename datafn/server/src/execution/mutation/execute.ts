@@ -45,7 +45,7 @@ import {
 import { getDatafnMultiRegionRuntimeConfig } from "../../plugins/multi-region.js";
 import type { DatafnMultiRegionRuntimeConfig } from "../../plugins/multi-region.js";
 import { ChangeTrackingService, recordChangeWithRetry, recordChangesWithRetry, type ChangeEntryInput } from "../sync/change-tracking.js";
-import { issuesRevisions, recordedRevision, recordIdMismatch } from "../revisions.js";
+import { issuesRevisions, recordedRevision, recordIdMismatch, withWriteEvidence } from "../revisions.js";
 import {
   applyRelationInheritanceForRelate,
   applyRelationInheritanceForShare,
@@ -1406,7 +1406,9 @@ export async function executeMutation(
     try {
       await changeTracking.ensureReady();
       await changeTracking.ensureRevisionsReady();
-      await (db as any).transaction(async (txDb: Adapter) => {
+      await (db as any).transaction(async (txAdapter: Adapter) => {
+        // DATA-41: the write's own statements decide which revisions it raises.
+        const txDb = withWriteEvidence(txAdapter);
         // DI-002: Re-read record inside transaction to prevent TOCTOU
         const guardResult = await evaluateGuard(
           txDb,
@@ -1550,7 +1552,8 @@ export async function executeMutation(
     try {
       await changeTracking.ensureReady();
       await changeTracking.ensureRevisionsReady();
-      await (db as any).transaction(async (txDb: Adapter) => {
+      await (db as any).transaction(async (txAdapter: Adapter) => {
+        const txDb = withWriteEvidence(txAdapter);
         txMutationResult = await executeMutationCore(
           mutation,
           txDb,
@@ -1622,13 +1625,14 @@ export async function executeMutation(
     if (!insideTransaction) {
       await changeTracking.ensureRevisionsReady();
     }
+    const writeDb = withWriteEvidence(db);
     result = await executeMutationCore(
       mutation,
-      db,
+      writeDb,
       schema,
       namespace,
       effectiveMutationId,
-      changeTracking.withDb(db, true, insideTransaction),
+      changeTracking.withDb(writeDb, true, insideTransaction),
       actorId,
       logger,
       multiRegionRuntime,

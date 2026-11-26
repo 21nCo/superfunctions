@@ -9,7 +9,6 @@ import { createDatafnServer } from "../src/server.js";
 import {
   READ_CHUNK,
   assignWriteRevisions,
-  bumpPresent,
   bumpRevision,
   bumpTombstone,
   configureRevisions,
@@ -17,6 +16,7 @@ import {
   readRevisions,
   readWithRevisions,
   revisionRowId,
+  withWriteEvidence,
 } from "../src/execution/revisions.js";
 import { executeClone } from "../src/execution/sync/clone.js";
 import { executePull } from "../src/execution/sync/pull.js";
@@ -1756,11 +1756,11 @@ describe("DATA-41 revisions: a tombstone needs an actual delete (round 10)", () 
     const wrap = (db: Adapter): Adapter =>
       new Proxy(db, {
         get(target, property, receiver) {
-          if (property === "delete") {
+          if (property === "delete" || property === "deleteMany") {
             return async (args: any) => {
               const id = (args.where ?? []).find((w: any) => w.field === "id")?.value;
-              if (ids.has(id)) return undefined;
-              return target.delete(args);
+              if (ids.has(id)) return property === "delete" ? undefined : 0;
+              return (target as any)[property](args);
             };
           }
           if (property === "transaction") {
@@ -1835,7 +1835,7 @@ describe("DATA-41 revisions: a tombstone needs an actual delete (round 10)", () 
     for (const change of await deleteChanges(blocked.send, "comment:1")) expect(change).not.toHaveProperty("rev");
   });
 
-  it("skips the tombstone when a compare-and-swap retry finds the record re-inserted", async () => {
+  it("without transactions, raises the tombstone of a delete that removed the row even if a re-insert commits before its swap", async () => {
     const database = memoryAdapter();
     let reinsert: (() => Promise<void>) | undefined;
     const racing = {
@@ -1866,9 +1866,12 @@ describe("DATA-41 revisions: a tombstone needs an actual delete (round 10)", () 
     const res = await served.push({ resource: "task", operation: "delete", id: "task:1" });
     expect(res.body.ok).toBe(true);
     expect(reinsert).toBeUndefined();
-    expect(res.body.result.revisions?.[res.mutationId]).toBeUndefined();
-    expect(await served.rev("task", "task:1")).toEqual({ rev: 2, deleted: false });
-    for (const change of await deleteChanges(served.send, "task:1")) expect(change).not.toHaveProperty("rev");
+    // The DELETE removed the row (its own count): the tombstone follows the
+    // re-insert's revision, never reusing it. Without transactions a write
+    // and its revision are separate statements (revisions.mdx), so the
+    // re-inserted row is served without a revision until its next write.
+    expect(res.body.result.revisions?.[res.mutationId]?.rev).toBe(3);
+    expect(await served.rev("task", "task:1")).toEqual({ rev: 3, deleted: true });
   });
 });
 
@@ -1997,31 +2000,27 @@ describe("DATA-41 revisions: a tombstone needs a present-to-absent delete (round
     expect(revs.filter((rev) => rev !== undefined)).toEqual([2]);
   });
 
-  it("skips the tombstone when a compare-and-swap retry finds that a concurrent delete raised it", async () => {
+  it("raises no tombstone when a concurrent delete removed the row and raised it first", async () => {
     const database = memoryAdapter();
     let concurrentDelete: (() => Promise<void>) | undefined;
     const racing = {
       ...database,
       capabilities: { ...database.capabilities, transactions: { supported: false, nested: false } },
-      internal: new Proxy(database.internal, {
-        get: (target, property, receiver) =>
-          property === "update"
-            ? async (table: string, where: unknown, data: unknown) => {
-                if (table === "__datafn_revisions" && concurrentDelete) {
-                  // Another delete of the record commits its tombstone
-                  // between this delete's revision read and its swap.
-                  const write = concurrentDelete;
-                  concurrentDelete = undefined;
-                  await write();
-                }
-                return (target as any).update(table, where, data);
-              }
-            : Reflect.get(target, property, receiver),
-      }),
+      deleteMany: async (args: any) => {
+        if (args.model === "task" && concurrentDelete) {
+          // Another delete of the record removes it and commits its
+          // tombstone just before this delete's DELETE, which matches nothing.
+          const write = concurrentDelete;
+          concurrentDelete = undefined;
+          await write();
+        }
+        return database.deleteMany(args);
+      },
     } as Adapter;
     const served = await serve({ database: racing });
     await served.push({ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } });
     concurrentDelete = async () => {
+      await database.delete({ model: "task", where: [{ field: "id", operator: "eq", value: "task:1" }], namespace: NS } as any);
       await bumpRevision(database, NS, "task", "task:1", true);
     };
     const res = await served.push({ resource: "task", operation: "delete", id: "task:1" });
@@ -2144,18 +2143,22 @@ describe("DATA-41 revisions: round 12", () => {
     await tracking.ensureRevisionsReady();
     // Each change is recorded in the transaction that writes it, so the
     // change row certifies its revision (as push and /mutation record them).
-    const record = (entries: any[]) =>
-      database.transaction((tx) => tracking.withDb(tx as Adapter, true, true).recordChanges(entries));
+    const record = (entries: any[], write?: (db: Adapter) => Promise<unknown>) =>
+      database.transaction(async (tx) => {
+        const writes = withWriteEvidence(tx as Adapter);
+        await write?.(writes);
+        await tracking.withDb(writes, true, true).recordChanges(entries);
+      });
     const grant = {
       id: "grant-1", resourceType: "notebook", resourceNs: NS, resourceId: "notebook:1",
       principalId: "user:bob", level: "viewer", grantKind: "record", sourceRef: null,
       grantedBy: "alice", grantedAt: 1, revokedAt: null,
     };
-    await database.create({ model: "notebook", data: { id: "notebook:1", title: "a" }, namespace: NS } as any);
-    await record([{ serverSeq: 1, resource: "notebook", id: "notebook:1", op: "insert", record: { id: "notebook:1", title: "a" } }]);
+    await record([{ serverSeq: 1, resource: "notebook", id: "notebook:1", op: "insert", record: { id: "notebook:1", title: "a" } }],
+      (db) => db.create({ model: "notebook", data: { id: "notebook:1", title: "a" }, namespace: NS } as any));
     // A physical delete that recorded tombstone revision 2 (the row is gone).
-    await database.delete({ model: "notebook", where: [{ field: "id", operator: "eq", value: "notebook:1" }], namespace: NS } as any);
-    await record([{ serverSeq: 2, resource: "notebook", id: "notebook:1", op: "delete", record: null }]);
+    await record([{ serverSeq: 2, resource: "notebook", id: "notebook:1", op: "delete", record: null }],
+      (db) => db.delete({ model: "notebook", where: [{ field: "id", operator: "eq", value: "notebook:1" }], namespace: NS } as any));
     const pull = () =>
       executePull({ clientId: "client:b", cursors: { notebook: "0" }, actorId: "bob" } as any, shared, database, NS) as Promise<Json>;
 
@@ -3504,6 +3507,8 @@ describe("DATA-41 revisions: PR review round 4", () => {
       return new Proxy(database, {
         get(target, property, receiver) {
           if (property === "internal") return internal;
+          // SQL of a snapshot-per-transaction isolation, not the memory adapter.
+          if (property === "id") return "snapshot-view";
           if (property === "findOne") {
             return (args: any) => read(`${args.model}:${String(args.where[0]?.value)}`, () => target.findOne(args));
           }
@@ -3517,26 +3522,31 @@ describe("DATA-41 revisions: PR review round 4", () => {
     await served.push({ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } });
     await served.push({ resource: "task", operation: "insert", id: "task:2", record: { title: "a" } });
 
-    // A delete commits after this transaction's snapshot; its relation write matched no row.
+    // A delete commits after this transaction's snapshot; its relation write
+    // matches no row (its UPDATE is a current read), so it raises nothing.
     const stale = snapshotView(served.database);
     await stale.internal.findOne("__datafn_revisions", ledger("task:1"));
     await stale.findOne(record("task:1"));
     await served.push({ resource: "task", operation: "delete", id: "task:1" });
-    // Without evidence that it wrote the row, the write fails (and is retried) rather than guess.
-    await expect(bumpPresent(stale, NS, "task", "task:1")).rejects.toThrow(/concurrent delete/);
+    const lost = withWriteEvidence(stale);
+    await expect(lost.update({ ...record("task:1"), data: { projectId: null } })).rejects.toThrow(/not found/i);
+    const relationEntry: any[] = [{ resource: "task", id: "task:1", op: "merge", record: { id: "task:1", projectId: null } }];
+    await assignWriteRevisions(lost, NS, relationEntry, () => true, schema);
+    expect(relationEntry[0].rev).toBeUndefined();
     expect(await served.rev("task", "task:1")).toEqual({ rev: 2, deleted: true });
 
-    // A re-insert that loses the swap to that tombstone still raises it live.
+    // A re-insert that loses the swap to a later tombstone still raises it live.
     const again = snapshotView(served.database);
     await again.internal.findOne("__datafn_revisions", ledger("task:1"));
     await bumpRevision(served.database, NS, "task", "task:1", true);
-    await served.database.create({ model: "task", data: { id: "task:1", title: "again" }, namespace: NS } as any);
+    const reinsertion = withWriteEvidence(again);
+    await reinsertion.create({ model: "task", data: { id: "task:1", title: "again" }, namespace: NS } as any);
     // An inherited-inactive update of the same record comes last.
     const reinsert: any[] = [
       { resource: "task", id: "task:1", op: "insert", record: { id: "task:1", title: "again" } },
       { resource: "task", id: "task:1", op: "merge", record: { id: "task:1", isAncestorInactive: true } },
     ];
-    await assignWriteRevisions(again, NS, reinsert, () => true, schema);
+    await assignWriteRevisions(reinsertion, NS, reinsert, () => true, schema);
     expect(reinsert[1]).toMatchObject({ rev: 4, revUncertified: true });
     expect(await served.rev("task", "task:1")).toEqual({ rev: 4, deleted: false });
 
@@ -3544,10 +3554,12 @@ describe("DATA-41 revisions: PR review round 4", () => {
     const later = snapshotView(served.database);
     await later.internal.findOne("__datafn_revisions", ledger("task:2"));
     await bumpRevision(served.database, NS, "task", "task:2", false);
+    const replacement = withWriteEvidence(later);
+    await replacement.update({ ...record("task:2"), data: { title: "r" } });
     const entries: any[] = [{ resource: "task", id: "task:2", op: "replace", record: { id: "task:2", title: "r" } }];
-    await assignWriteRevisions(later, NS, entries, () => true, schema);
+    await assignWriteRevisions(replacement, NS, entries, () => true, schema);
     // Its own whole-row write is read back (stored fields included), uncertified.
-    expect(entries[0]).toMatchObject({ rev: 3, revUncertified: true, record: { id: "task:2", title: "a" } });
+    expect(entries[0]).toMatchObject({ rev: 3, revUncertified: true, record: { id: "task:2", title: "r" } });
   });
 
   it("keeps a versioned query's $rev only on rows the afterQuery hooks left unchanged", async () => {
@@ -3642,5 +3654,210 @@ describe("DATA-41 revisions: PR review round 4", () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(middleware).toBe("settled");
     expect(cancelled).toBe(1);
+  });
+});
+
+/**
+ * InnoDB REPEATABLE READ over the memory adapter: inside a transaction a
+ * plain read (record or revision row) returns what the transaction first read,
+ * until the transaction itself changes that row; UPDATE and DELETE read the
+ * current rows. `race.run` runs once, just before the transaction's first
+ * write of record `race.id`, after the transaction has read that record and
+ * its revision row: another writer commits first (on the shared store). An UPDATE that matched no
+ * row returns null (`race.miss` "null") or throws not found ("throw").
+ */
+type Race = { id: string; run?: (db: Adapter) => Promise<void>; miss: "null" | "throw" };
+
+function snapshotReads(database: Adapter, race: Race): Adapter {
+  const idOf = (where: any[] | undefined) => String((where ?? []).find((w: any) => w.field === "id")?.value);
+  const view = (tx: Adapter): Adapter => {
+    const seen = new Map<string, unknown>();
+    const read = async (key: string, load: () => Promise<unknown>) => {
+      if (!seen.has(key)) seen.set(key, await load());
+      return seen.get(key) ?? null;
+    };
+    const internal = new Proxy(tx.internal, {
+      get(target, property, receiver) {
+        if (property === "findOne") {
+          return (table: string, where: any[]) => read(`${table}:${idOf(where)}`, () => target.findOne(table, where));
+        }
+        if (property === "update") {
+          return async (table: string, where: any[], data: Json) => {
+            const affected = await target.update(table, where, data);
+            if (affected > 0) seen.delete(`${table}:${idOf(where)}`);
+            return affected;
+          };
+        }
+        return Reflect.get(target, property, receiver);
+      },
+    });
+    const ledger = (model: string, id: string) => [{ field: "id", op: "eq", value: revisionRowId(NS, model, id) }] as any;
+    const beforeWrite = async (model: string, id: string) => {
+      if (!race.run || race.id !== id) return;
+      await internal.findOne("__datafn_revisions", ledger(model, id));
+      await read(`${model}:${id}`, () => tx.findOne({ model, where: [{ field: "id", operator: "eq", value: id }], namespace: NS } as any));
+      const run = race.run;
+      race.run = undefined;
+      // Through the transaction's adapter: the memory adapter queues others.
+      await run(tx);
+    };
+    return new Proxy(tx, {
+      get(target, property, receiver) {
+        if (property === "internal") return internal;
+        if (property === "findOne") {
+          return (args: any) => read(`${args.model}:${idOf(args.where)}`, () => target.findOne(args));
+        }
+        if (property === "findMany") {
+          return async (args: any) => {
+            const rows = await target.findMany(args);
+            for (const row of rows as Json[]) if (!seen.has(`${args.model}:${row.id}`)) seen.set(`${args.model}:${row.id}`, row);
+            return rows;
+          };
+        }
+        if (property === "update") {
+          return async (args: any) => {
+            await beforeWrite(args.model, idOf(args.where));
+            const affected = await target.updateMany(args);
+            if (affected > 0) {
+              seen.delete(`${args.model}:${idOf(args.where)}`);
+              return target.findOne(args);
+            }
+            if (race.miss === "throw") throw new Error(`Record not found in ${args.model}`);
+            return null;
+          };
+        }
+        if (["updateMany", "delete", "deleteMany", "create"].includes(String(property))) {
+          return async (args: any) => {
+            const id = property === "create" ? String(args.data?.id) : idOf(args.where);
+            await beforeWrite(args.model, id);
+            const out = await (target as any)[property](args);
+            seen.delete(`${args.model}:${id}`);
+            return out;
+          };
+        }
+        if (property === "transaction") {
+          return (fn: (inner: Adapter) => Promise<unknown>) => target.transaction((inner) => fn(view(inner as Adapter)));
+        }
+        return Reflect.get(target, property, receiver);
+      },
+    });
+  };
+  return new Proxy(database, {
+    get(target, property, receiver) {
+      if (property === "transaction") {
+        return (fn: (tx: Adapter) => Promise<unknown>) => target.transaction((tx) => fn(view(tx as Adapter)));
+      }
+      return Reflect.get(target, property, receiver);
+    },
+  });
+}
+
+describe("DATA-41 revisions: PR review round 5", () => {
+  it.each(["push", "mutation"])("raises nothing for a %s setNull child whose stale snapshot row a concurrent delete removed", async (route) => {
+    const database = memoryAdapter();
+    const race: Race = { id: "task:1", miss: "null" };
+    const served = await serve({ database: snapshotReads(database, race) });
+    await served.push({ resource: "project", operation: "insert", id: "project:1", record: { name: "p" } });
+    await served.push({ resource: "task", operation: "insert", id: "task:1", record: { title: "a", projectId: "project:1" } });
+    // The task is deleted (tombstone 2) after this write read it as a child.
+    race.run = async (db) => {
+      await db.delete({ model: "task", where: [{ field: "id", operator: "eq", value: "task:1" }], namespace: NS } as any);
+      await bumpRevision(db, NS, "task", "task:1", true);
+    };
+    const res = route === "push"
+      ? (await served.push({ resource: "project", operation: "delete", id: "project:1" })).body.result
+      : (await served.send("mutation", { resource: "project", version: 1, operation: "delete", id: "project:1", clientId: "c", mutationId: "d5" })).body.result;
+    expect(race.run).toBeUndefined();
+    expect(JSON.stringify(res)).toContain('"ok":true');
+    expect(await served.rev("task", "task:1")).toEqual({ rev: 2, deleted: true });
+    expect(await served.rev("project", "project:1")).toEqual({ rev: 2, deleted: true });
+  });
+
+  it("raises a live revision over a tombstone for a push merge that recreated the record", async () => {
+    const database = memoryAdapter();
+    const race: Race = { id: "task:1", miss: "throw" };
+    const served = await serve({ database: snapshotReads(database, race) });
+    await served.push({ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } });
+    race.run = async (db) => {
+      await db.delete({ model: "task", where: [{ field: "id", operator: "eq", value: "task:1" }], namespace: NS } as any);
+      await bumpRevision(db, NS, "task", "task:1", true);
+    };
+    // Its UPDATE matches nothing, so the merge creates the record.
+    const res = await served.push({ resource: "task", operation: "merge", id: "task:1", record: { title: "b" } });
+    expect(race.run).toBeUndefined();
+    expect(res.body.result.revisions[res.mutationId]).toMatchObject({ rev: 3 });
+    expect(await served.rev("task", "task:1")).toEqual({ rev: 3, deleted: false });
+    expect(await database.findOne({ model: "task", where: [{ field: "id", operator: "eq", value: "task:1" }], namespace: NS } as any))
+      .toMatchObject({ title: "b" });
+  });
+
+  it("aborts a non-2xx read-back that middleware keeps a clone of", async () => {
+    const served = await serve({ config: { routeHooks: {
+      afterResponse: ({ action, response }: { action: string; response: Response }) => action !== "query" ? response
+        : new Response(new ReadableStream<Uint8Array>({ start(c) { c.enqueue(new TextEncoder().encode("{")); } }),
+          { status: 503, headers: { "content-type": "text/plain" } }),
+    } } });
+    let signal: AbortSignal | undefined;
+    let kept: Response | undefined;
+    served.server.router.use(async (request, _ctx, next) => {
+      const response = await next();
+      if (!new URL(request.url).pathname.endsWith("/query")) return response;
+      signal = request.signal;
+      kept = response.clone();
+      return response;
+    });
+    const res = await served.push({ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } });
+    expect(res.body.result.ok).toBe(true);
+    expect(res.body.result.revisions[res.mutationId]).toEqual({ resource: "task", id: "task:1", rev: 1 });
+    expect(kept).toBeDefined();
+    expect(signal?.aborted).toBe(true);
+  });
+
+  it("gives router middleware the read-back Response before its body is read", async () => {
+    const served = await serve({ config: { routeHooks: {
+      afterResponse: ({ action, response }: { action: string; response: Response }) => action !== "query" ? response
+        : new Response(new ReadableStream<Uint8Array>({ start(c) { c.enqueue(new TextEncoder().encode("{")); } }),
+          { status: 200, headers: { "content-type": "application/json" } }),
+    } } });
+    let nextMs = -1;
+    served.server.router.use(async (request, _ctx, next) => {
+      const started = Date.now();
+      const response = await next();
+      if (new URL(request.url).pathname.endsWith("/query")) nextMs = Date.now() - started;
+      return response;
+    });
+    const res = await served.push({ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } });
+    expect(nextMs).toBeGreaterThanOrEqual(0);
+    expect(nextMs).toBeLessThan(500);
+    expect(res.body.result.revisions[res.mutationId]).toEqual({ resource: "task", id: "task:1", rev: 1 });
+  }, 10_000);
+
+  it("checks a versioned query's $rev on the wire form the response sends", async () => {
+    let mode: "keyed" | "unshaped" | "identity" = "keyed";
+    const hooks = {
+      name: "serializers",
+      runsOn: ["server"],
+      afterQuery: (_ctx: unknown, _query: unknown, result: Json) => {
+        if (!Array.isArray(result?.data) || mode === "identity") return result;
+        if (mode === "unshaped") {
+          // No raw rows: its rows (with a forged $rev) appear only on serialization.
+          return { toJSON: () => ({ data: [{ id: "task:1", title: "forged", $rev: 99 }] }) };
+        }
+        return {
+          ...result,
+          toJSON(key: string) {
+            return key === "result" ? { data: this.data.map((row: Json) => ({ id: row.id, $rev: row.$rev })) } : { data: this.data };
+          },
+        };
+      },
+    };
+    const served = await serve({ config: { plugins: [hooks] } });
+    await served.push({ resource: "task", operation: "insert", id: "task:1", record: { title: "secret" } });
+    const query = async () => (await served.send("query", { version: 1, resource: "task", withRevisions: true })).body.result.data;
+    expect(await query()).toEqual([{ id: "task:1" }]);
+    mode = "unshaped";
+    expect(await query()).toEqual([{ id: "task:1", title: "forged" }]);
+    mode = "identity";
+    expect((await query())[0]).toMatchObject({ id: "task:1", title: "secret", $rev: 1 });
   });
 });

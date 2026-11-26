@@ -10,7 +10,7 @@ import { Kysely, PostgresDialect, type PostgresPool, type PostgresPoolClient, ty
 import { kyselyAdapter } from "@superfunctions/db/adapters";
 import type { Adapter } from "@superfunctions/db";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { bumpRevision, configureRevisions, ensureRevisionsTable, readRevisions, readWithRevisions } from "../src/execution/revisions.js";
+import { bumpRevision, configureRevisions, ensureRevisionsTable, readRevisions, readWithRevisions, withWriteEvidence } from "../src/execution/revisions.js";
 import { ChangeTrackingService } from "../src/execution/sync/change-tracking.js";
 import { executeTransaction } from "../src/execution/transact.js";
 import {
@@ -93,7 +93,9 @@ describe("DATA-41 revisions on PostgreSQL", { timeout: PG_TIMEOUT_MS }, () => {
     await service.ensureReady();
     await service.ensureRevisionsReady();
     await db.transaction(async (tx) => {
-      await service.withDb(tx as any, false).recordChanges([
+      const write = withWriteEvidence(tx as any);
+      await write.update({ model: "task", where: [{ field: "id", operator: "eq", value: "task:1" }], data: { title: "b" } } as any);
+      await service.withDb(write, false).recordChanges([
         { serverSeq: 1, resource: "task", id: "task:1", op: "merge", record: { id: "task:1" } },
       ]);
     });

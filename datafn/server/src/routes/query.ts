@@ -1080,27 +1080,12 @@ export function createQueryHandler(
           // Run afterQuery hooks (fail-open)
           result = await runAfterQuery(transformedBody, result, hookCtx, plugins);
 
-          // A result that needs a revision removed is rebuilt from its wire
-          // form, so every serializer (toJSON) of the hook output is applied first.
-          const recheck = (value: unknown, index: number): unknown => {
-            if (!versioned[index] || !rowsWithRevision(value).some(hasRevision)) return value;
-            const wire = JSON.parse(JSON.stringify(value) ?? "null") as unknown;
-            const certified = certifiedBefore[index];
-            let changed = false;
-            for (const row of rowsWithRevision(wire)) {
-              if (!hasRevision(row) || certified?.has(canonicalRow(row))) continue;
-              changed = true;
-              delete row[REVISION_FIELD];
-            }
-            return changed ? wire : value;
-          };
-          if (isBatch && Array.isArray(result)) {
-            const checked = result.map(recheck);
-            if (checked.some((value, index) => value !== (result as unknown[])[index])) result = checked;
-          } else if (!isBatch) {
-            result = recheck(result, 0);
+          // The response envelope is serialized once, exactly as okResponse
+          // would send it, so every serializer (toJSON) sees its wire key. An
+          // uncertified `$rev` is removed from that wire form, which is sent.
+          if (versioned.some(Boolean)) {
+            result = withCertifiedRevisionsOnly(result, isBatch, versioned, certifiedBefore);
           }
-
           if (timingEmitter && timer) {
             timingEmitter(timer.build("/datafn/query", resource, "query"));
           }
@@ -1144,3 +1129,43 @@ export function createQueryHandler(
           }, logger);
       }
     };}
+
+/**
+ * DATA-41: serialize `{ ok: true, result }` once and keep `$rev` only on rows
+ * of a versioned query whose wire form equals a row certified before the
+ * afterQuery hooks. An unexpected wire shape loses every `$rev`. The returned
+ * value is plain JSON, so okResponse re-serializes it byte-identically.
+ */
+function withCertifiedRevisionsOnly(
+  result: unknown,
+  isBatch: boolean,
+  versioned: boolean[],
+  certifiedBefore: Array<Set<string>>,
+): unknown {
+  const wire = JSON.parse(JSON.stringify({ ok: true, result })) as { result?: unknown };
+  const entries = isBatch ? wire.result : [wire.result];
+  if (!Array.isArray(entries) || entries.length !== versioned.length) {
+    stripEveryRevision(wire.result);
+    return wire.result;
+  }
+  for (let index = 0; index < entries.length; index++) {
+    if (!versioned[index]) continue;
+    const entry = entries[index] as { data?: unknown } | null;
+    const rows = entry !== null && typeof entry === "object" ? entry.data : undefined;
+    if (!Array.isArray(rows)) {
+      stripEveryRevision(entry);
+      continue;
+    }
+    for (const row of rows) {
+      if (row === null || typeof row !== "object" || !(REVISION_FIELD in row)) continue;
+      if (!certifiedBefore[index]?.has(canonicalRow(row))) delete (row as Record<string, unknown>)[REVISION_FIELD];
+    }
+  }
+  return wire.result;
+}
+
+function stripEveryRevision(value: unknown): void {
+  if (value === null || typeof value !== "object") return;
+  if (!Array.isArray(value)) delete (value as Record<string, unknown>)[REVISION_FIELD];
+  for (const child of Object.values(value)) stripEveryRevision(child);
+}
