@@ -1007,7 +1007,7 @@ export function plugFn(config: PlugFnConfig): PlugFn {
     return typeof expiresAt === 'string' && Date.parse(expiresAt) <= Date.now();
   }
 
-  registerWebhookPreparation(api.webhooks, webhookHandler[prepareWebhookDelivery].bind(webhookHandler));
+  registerWebhookPreparation(api.webhooks.handle, webhookHandler[prepareWebhookDelivery].bind(webhookHandler));
 
   // Create dynamic provider proxies
   const proxyApi = new Proxy(api, {

@@ -244,13 +244,14 @@ export class AdapterRuntimeStorage {
     return this.adapter.getWebhookReceipt(id);
   }
 
-  findWebhookReceiptByIdempotencyKey(
+  async findWebhookReceiptByIdempotencyKey(
     provider: string,
     idempotencyKey: string,
     namespace: PlugFnWebhookReceiptNamespace = 'standalone'
   ): Promise<PlugFnWebhookReceipt | null> {
     if (namespace === 'standalone') {
-      return this.adapter.findWebhookReceiptByIdempotencyKey(provider, idempotencyKey);
+      const receipt = await this.adapter.findWebhookReceiptByIdempotencyKey(provider, idempotencyKey);
+      return receipt?.workflowIdempotencyKey ? null : receipt;
     }
     return this.adapter.database.findOne<PlugFnWebhookReceipt>({
       model: this.adapter.models.webhookReceipts,
@@ -271,8 +272,13 @@ export class AdapterRuntimeStorage {
       workflowTenantId: _workflowTenant,
       ...normalizedUpdates
     } = updates;
-    if ('connectionId' in updates && (await this.adapter.getWebhookReceipt(id))?.workflowIdempotencyKey) {
-      delete normalizedUpdates.connectionId;
+    let existing: PlugFnWebhookReceipt | null = null;
+    if ('connectionId' in normalizedUpdates || 'idempotencyKey' in normalizedUpdates) {
+      existing = await this.adapter.getWebhookReceipt(id);
+      if (existing?.workflowIdempotencyKey) {
+        delete normalizedUpdates.connectionId;
+        delete normalizedUpdates.idempotencyKey;
+      }
     }
     if (updates.metadata !== undefined) {
       const metadata: Record<string, unknown> = {};
@@ -286,6 +292,13 @@ export class AdapterRuntimeStorage {
       // read/merge/write race and always preserve the runtime-owned timestamp.
       metadata.updatedAt = new Date().toISOString();
       normalizedUpdates.metadata = metadata;
+    }
+    if (Object.keys(normalizedUpdates).length === 0) {
+      const receipt = existing ?? await this.adapter.getWebhookReceipt(id);
+      if (!receipt) {
+        throw new NotFoundError(this.adapter.models.webhookReceipts, [{ field: 'id', operator: 'eq', value: id }]);
+      }
+      return receipt;
     }
     return this.adapter.updateWebhookReceipt(id, normalizedUpdates);
   }

@@ -56,6 +56,20 @@ describe('webhook workflow admission', () => {
     expect(Object.getOwnPropertySymbols(runtime.webhooks)).toEqual([]);
   });
 
+  it('routes webhooks through a shallow copy of the SDK facade', async () => {
+    const { runtime } = startRuntime(database, { withResolver: false });
+    const listener = vi.fn();
+    runtime.webhooks.on('test-provider', 'test.event', listener);
+    const router = createPlugFnRouter({ ...runtime, webhooks: { ...runtime.webhooks } }, {
+      webhookSecret: { 'test-provider': signingCredential },
+    });
+    const response = await router.handle(new Request('https://app.example.test/webhooks/test-provider/test.event', {
+      method: 'POST', body: JSON.stringify({ id: 'test-delivery' }),
+    }));
+    expect(response.status).toBe(200);
+    expect(listener).toHaveBeenCalledOnce();
+  });
+
   it('keeps a scoped receipt bound when an application replaces its metadata', async () => {
     await seedWorkflow(database, 'one', firstBinding.tenantId, firstBinding.connectionId);
     const { runtime, send, action, resolveBinding } = startRuntime(database);
@@ -78,6 +92,21 @@ describe('webhook workflow admission', () => {
     resolveBinding.mockResolvedValue([secondBinding]);
     expect((await send('test-installation-one')).status).toBe(409);
     expect(action).toHaveBeenCalledOnce();
+  });
+
+  it('keeps scoped receipts out of the standalone receipt key space', async () => {
+    await seedWorkflow(database, 'one', firstBinding.tenantId, firstBinding.connectionId);
+    const { runtime, send } = startRuntime(database);
+    expect((await send('test-installation-one')).status).toBe(200);
+    const [scoped] = await database.findMany<publicPlugFn.PlugFnWebhookReceipt>({ model: receiptModel });
+    const webhooks = runtime.runtime.webhooks;
+    const key = 'test-standalone-delivery';
+    const updated = await webhooks.updateReceipt(scoped.id, { idempotencyKey: key });
+    expect(updated.idempotencyKey).toBeUndefined();
+
+    // Verify that even a mixed row introduced by an adapter cannot be read as standalone.
+    await database.updateWebhookReceipt(scoped.id, { idempotencyKey: key });
+    await expect(webhooks.findReceiptByIdempotencyKey('test-provider', key)).resolves.toBeNull();
   });
 
   it('reports SDK receipt content conflicts as webhook errors', async () => {
@@ -839,6 +868,8 @@ describe('webhook workflow admission', () => {
     expect(workflow.id).not.toBe(standalone.id);
     expect(await storage.createWebhookReceipt(workflowInput)).toEqual(workflow);
     expect(standaloneLookup).not.toHaveBeenCalled();
+    standaloneLookup.mockResolvedValueOnce(workflow);
+    await expect(storage.findWebhookReceiptByIdempotencyKey(input.provider, input.idempotencyKey)).resolves.toBeNull();
   });
 
   it('revalidates the registry after a receipt claim and before dispatch', async () => {

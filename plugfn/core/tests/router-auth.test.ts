@@ -747,7 +747,7 @@ function createMockPlugFn(overrides: {
   const authenticate = overrides.authenticate ?? vi.fn(async () => ({ userId: 'u1' }));
   const createJob = overrides.createJob ?? vi.fn(async () => ({ id: 'job_1' }));
   const webhooks = { on: vi.fn(), off: vi.fn(), handle: handleWebhook };
-  registerWebhookPreparation(webhooks, vi.fn(async () => ({
+  registerWebhookPreparation(handleWebhook, vi.fn(async () => ({
     verified: true,
     admit: async () => ({ dispatch: handleWebhook }),
   })) as any);

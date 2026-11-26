@@ -483,6 +483,7 @@ class DbBackedPlugFnDatabaseAdapter implements PlugFnDatabaseStorageAdapter {
       where: [
         { field: 'provider', operator: 'eq', value: provider },
         { field: 'idempotencyKey', operator: 'eq', value: idempotencyKey },
+        { field: 'workflowIdempotencyKey', operator: 'eq', value: null },
       ],
     });
   }

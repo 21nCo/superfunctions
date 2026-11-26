@@ -49,14 +49,15 @@ interface WebhookDispatchScope {
 export const prepareWebhookDelivery = Symbol('plugfn.prepareWebhookDelivery');
 
 type WebhookPreparation = WebhookHandler[typeof prepareWebhookDelivery];
+// A shallow copy of the public facade keeps its handle function.
 const webhookPreparations = new WeakMap<object, WebhookPreparation>();
 
-export function registerWebhookPreparation(webhooks: object, prepare: WebhookPreparation): void {
-  webhookPreparations.set(webhooks, prepare);
+export function registerWebhookPreparation(handle: object, prepare: WebhookPreparation): void {
+  webhookPreparations.set(handle, prepare);
 }
 
-export function prepareWebhookIngress(webhooks: object, ...args: Parameters<WebhookPreparation>): ReturnType<WebhookPreparation> {
-  const prepare = webhookPreparations.get(webhooks);
+export function prepareWebhookIngress(handle: object, ...args: Parameters<WebhookPreparation>): ReturnType<WebhookPreparation> {
+  const prepare = webhookPreparations.get(handle);
   if (!prepare) {
     throw new WebhookHandlerError('PLUGFN_NOT_READY', 'webhook ingress is not initialized', 503);
   }
