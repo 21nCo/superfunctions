@@ -2122,6 +2122,28 @@ describe("httpExecutor error excerpts redacted only in plain bodies", () => {
     expect(text(await run({ "x-api-key": "test-key-one" }, body))).toBe(withheld);
   });
 
+  it.each([
+    ["a decimal reference without its semicolon", "te&#115t-operator-key"],
+    ["a decimal reference to a hyphen without its semicolon", "test&#45operator-key"],
+    ["a hex reference without its semicolon", "test&#x2doperator-key"],
+    ["a decimal reference with leading zeros", "test&#0000000045;operator-key"],
+    ["named references to ASCII punctuation", "test&lowbar;operator&colon;key"],
+    ["a legacy reference without its semicolon", "test&ampoperator-key"],
+  ])("withholds an error body and a success body that echo the credential through %s", async (_label, echo) => {
+    const headers = { "x-api-key": echo.includes("lowbar") ? "test_operator:key" : echo.includes("amp") ? "test&operator-key" : "test-operator-key" };
+    expect(text(await run(headers, `<p>bad key ${echo}</p>`, "text/html"))).toBe(withheld);
+    const success = await execute(
+      httpExecutor<Context>({ baseUrl: api.origin, headers, fetch: stubFetch(() => new Response(`<p>${echo}</p>`, { status: 200, headers: { "content-type": "text/html" } })).fetch }),
+      operationOf("echo"),
+    );
+    expect(text(success)).toContain("reveals an operator credential and was withheld");
+  });
+
+  it("returns an HTML error body with references unchanged when it reveals no credential", async () => {
+    const body = "<p>a&#45b &lowbar; &amp &#x2d; &colon;</p>";
+    expect(text(await run({ "x-api-key": "test-operator-key" }, body, "text/html"))).toBe(`The API responded with HTTP 500.\n\n${body}`);
+  });
+
   it("still redacts a literal echo in a plain JSON body", async () => {
     const body = '{"error":"bad key test-key-one","code":401}';
     expect(text(await run({ "x-api-key": "test-key-one" }, body, "application/json"))).toBe(
@@ -2284,6 +2306,61 @@ describe("httpExecutor documented request media types that name a charset", () =
     ]);
     await registry.callTool("utf8", { body: {} }, undefined, requestExtra());
     expect(urls).toEqual([`${api.origin}/utf8`]);
+  });
+});
+
+describe("httpExecutor request bodies documented under several JSON media types", () => {
+  const documentWith = (content: Record<string, unknown>) => ({
+    openapi: "3.1.0",
+    info: { title: "media-alternatives", version: "1.0.0" },
+    paths: { "/p": { post: { operationId: "p", requestBody: { required: true, content }, responses: ok } } },
+  });
+  // Each entry requires its own property, so the tool input shows which schema was chosen.
+  const entry = (property: string) => ({ schema: { type: "object", required: [property], properties: { [property]: { type: "string" } } } });
+
+  it.each([
+    ["names a charset other than UTF-8", "application/json; charset=utf-16", "application/json"],
+    ["cannot be parsed", "application/json; charset", "application/example+json"],
+    ["has a quoted CR LF", 'application/json; profile="a\r\nb"', "application/example+json; charset=utf-8"],
+  ])("lists an operation whose first JSON entry %s and sends the next one, with its schema", async (_label, unsendable, sendable) => {
+    const sent: Array<{ contentType: string | null; body: unknown }> = [];
+    const fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
+      sent.push({ contentType: new Headers(init?.headers).get("content-type"), body: init?.body });
+      return new Response("ok");
+    }) as typeof globalThis.fetch;
+    const { registry, tools, skipped } = fromOpenAPI(documentWith({ [unsendable]: entry("first"), [sendable]: entry("second") }), {
+      executor: httpExecutor({ baseUrl: api.origin, fetch }),
+      allowMutations: true,
+    });
+    expect(skipped).toEqual([]);
+    expect(tools[0]!.operation.requestBody).toEqual({ required: true, contentType: sendable });
+    const result = await registry.callTool("p", { body: { second: "value" } }, undefined, requestExtra());
+    expect(result.isError).toBeFalsy();
+    expect(sent).toEqual([{ contentType: sendable, body: '{"second":"value"}' }]);
+    // The unsendable entry's schema is not the input: a body for it is refused before any request.
+    await expect(registry.callTool("p", { body: { first: "value" } }, undefined, requestExtra())).rejects.toThrow(McpFnValidationError);
+    expect(sent).toHaveLength(1);
+  });
+
+  it("still skips an operation whose JSON entries are all unsendable, for the first entry's reason", () => {
+    const content = { "application/json; charset=utf-16": entry("first"), "application/example+json; charset=latin1": entry("second") };
+    const { tools, skipped } = fromOpenAPI(documentWith(content), {
+      executor: httpExecutor({ baseUrl: api.origin, fetch: stubFetch(() => new Response("ok")).fetch }),
+      allowMutations: true,
+    });
+    expect(tools).toEqual([]);
+    expect(skipped).toMatchObject([
+      {
+        code: "unsupported-by-executor",
+        reason: "the request body's documented media type names a charset other than UTF-8, but the body is sent as UTF-8",
+      },
+    ]);
+  });
+
+  it("keeps the first entry for an executor that does not say which media types it sends", () => {
+    const content = { "application/json; charset=utf-16": entry("first"), "application/json": entry("second") };
+    const { tools } = fromOpenAPI(documentWith(content), { executor: { execute: () => ({ content: [] }) }, allowMutations: true });
+    expect(tools[0]!.operation.requestBody).toEqual({ required: true, contentType: "application/json; charset=utf-16" });
   });
 });
 

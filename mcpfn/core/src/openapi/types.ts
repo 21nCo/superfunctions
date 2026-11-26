@@ -190,6 +190,15 @@ export interface OpenApiExecutor<TContext = unknown> {
    */
   ownsParameter?(parameter: OpenApiParameterQuery): boolean;
   /**
+   * Whether the executor can send a request body under this documented media
+   * type, as written in the request body's `content`. `fromOpenAPI` then
+   * chooses the request body only among the JSON entries the executor can
+   * send, so the tool uses that entry's schema and media type together. When
+   * it can send none of them, every entry is tried as without this hook, and
+   * `unsupported` decides.
+   */
+  sendsRequestMedia?(contentType: string): boolean;
+  /**
    * Which response schema becomes a tool's output schema. `first-success`
    * (the default): the first 2xx JSON schema. `every-success`: that schema
    * only when every documented 2xx response offers only JSON content with

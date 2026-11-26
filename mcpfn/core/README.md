@@ -271,6 +271,9 @@ for (const { operation, code, reason } of skipped) {
   implement `ownsParameter({ name, in, required })` for query and header
   parameters: one it supplies itself returns `true` and is left out of the
   tool input and `operation.parameters`, so no caller value is accepted for it.
+  An executor that implements `sendsRequestMedia(contentType)` has the
+  request body chosen only among the JSON entries it can send, when there is
+  one, so the tool takes that entry's schema and media type together.
 
 ### Sending calls over HTTP
 
@@ -308,7 +311,8 @@ const { registry } = fromOpenAPI<{ apiToken: string }>(document, {
   a required header whose name is not an HTTP token (such as `X Bad`), or a body
   whose documented media type names a charset other than UTF-8, since the
   body is sent as UTF-8, or has a character no header can carry, such as a
-  CR, LF, NUL or one above 0xFF) are skipped by `fromOpenAPI`
+  CR, LF, NUL or one above 0xFF, unless another documented JSON entry can be
+  sent, which is then the one used) are skipped by `fromOpenAPI`
   as `unsupported-by-executor`, and so is an operation whose every security
   requirement needs an `apiKey` credential in the query or in a header
   fetch manages, which operator headers cannot carry, and one whose security
@@ -359,7 +363,9 @@ const { registry } = fromOpenAPI<{ apiToken: string }>(document, {
   as `Bearer`, and each value of a `Cookie` header, also percent-decoded as
   UTF-8 (a cookie parser's reading); and for echoes of these spelled with
   JSON escapes, percent escapes (also with `+` for a space) or HTML character
-  references (one or two of these, in either order). A body is decoded in
+  references as HTML decodes them (numeric references and every named
+  reference to an ASCII character, with or without the closing `;` where HTML
+  allows it), one or two of these, in either order. A body is decoded in
   the encoding it marks or declares (a UTF-16 or UTF-8 byte order mark,
   else the `Content-Type` charset, read with quoted values respected, else
   UTF-8) and checked in that text, also with any NUL characters removed,

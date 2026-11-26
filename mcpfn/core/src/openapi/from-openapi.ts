@@ -401,6 +401,8 @@ class OperationConverter {
     private readonly everySuccess = false,
     /** Query and header parameters the executor supplies itself (`OpenApiExecutor.ownsParameter`). */
     private readonly ownsParameter?: (parameter: OpenApiParameterQuery) => boolean,
+    /** Request body media types the executor can send (`OpenApiExecutor.sendsRequestMedia`). */
+    private readonly sendsRequestMedia?: (contentType: string) => boolean,
   ) {
     this.components = isObject(document.components) ? document.components : {};
     const dialect = document.jsonSchemaDialect;
@@ -1202,8 +1204,9 @@ class OperationConverter {
   /**
    * The JSON media entries of a declared request body, in the order they are
    * tried: object-valued `application/json` entries, then `*+json` ones
-   * (none without a request body). A declared body without such an entry is
-   * skipped, whether or not it is required, since the tool could never send it.
+   * (none without a request body), keeping only those the executor can send
+   * when it can send any. A declared body without such an entry is skipped,
+   * whether or not it is required, since the tool could never send it.
    * Parameters and the request body are resolved per occurrence: a parsed
    * document may share one operation object between path items, and the
    * path-level parameters and template differ.
@@ -1216,10 +1219,16 @@ class OperationConverter {
     }
     const content = body.content;
     const keys = Object.keys(content);
-    const candidates = [
+    let candidates = [
       ...keys.filter(isApplicationJson),
       ...keys.filter((key) => isJsonMediaType(key) && !isApplicationJson(key)),
     ].filter((key) => isObject(content[key]));
+    if (this.sendsRequestMedia) {
+      // An entry the executor cannot send is not tried while a sendable one exists;
+      // with none, the executor's `unsupported` reports the operation as before.
+      const sendable = candidates.filter(this.sendsRequestMedia);
+      if (sendable.length > 0) candidates = sendable;
+    }
     if (candidates.length === 0) {
       if (keys.some(isJsonMediaType)) {
         throw new OpenApiSkip(
@@ -1461,6 +1470,9 @@ function validateOptions<TContext>(options: FromOpenApiOptions<TContext>): void 
   if (options.executor.ownsParameter !== undefined && typeof options.executor.ownsParameter !== "function") {
     throw new McpFnValidationError("fromOpenAPI executor.ownsParameter must be a function");
   }
+  if (options.executor.sendsRequestMedia !== undefined && typeof options.executor.sendsRequestMedia !== "function") {
+    throw new McpFnValidationError("fromOpenAPI executor.sendsRequestMedia must be a function");
+  }
   if (options.name !== undefined && typeof options.name !== "function") {
     throw new McpFnValidationError("fromOpenAPI name must be a function");
   }
@@ -1509,6 +1521,7 @@ export function fromOpenAPI<TContext>(
     options.registry === undefined,
     options.executor.outputSchemaRule === "every-success",
     options.executor.ownsParameter ? (parameter) => options.executor.ownsParameter!(parameter) : undefined,
+    options.executor.sendsRequestMedia ? (contentType) => options.executor.sendsRequestMedia!(contentType) === true : undefined,
   );
   const skipped: OpenApiSkippedOperation[] = [];
   const candidates: Candidate[] = [];

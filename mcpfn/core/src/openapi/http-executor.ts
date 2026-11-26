@@ -82,8 +82,21 @@ const BODYLESS_STATUSES = new Set([204, 205]);
 const JSON_ESCAPE = /\\(?:u([0-9a-fA-F]{4})|(["\\/bfnrt]))/g;
 const JSON_SIMPLE_ESCAPES: Record<string, string> = { '"': '"', "\\": "\\", "/": "/", b: "\b", f: "\f", n: "\n", r: "\r", t: "\t" };
 const PERCENT_RUN = /(?:%[0-9a-fA-F]{2})+/g;
-const HTML_REFERENCE = /&(?:#(\d{1,7})|#[xX]([0-9a-fA-F]{1,6})|(amp|lt|gt|quot|apos));/g;
-const HTML_NAMED: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" };
+// A character reference as HTML decodes it: numeric (any number of digits) or
+// named, the closing `;` optional. Operator values are ASCII, so only the named
+// references whose value is printable ASCII, TAB or LF are decoded (all of the
+// HTML5 table's), and the legacy ones HTML also decodes without `;`.
+const HTML_REFERENCE = /&(?:#(?:(\d+)|[xX]([0-9a-fA-F]+));?|([A-Za-z][A-Za-z0-9]*)(;?))/g;
+const HTML_NAMED = new Map<string, string>(
+  Object.entries({
+    Tab: "\t", NewLine: "\n", excl: "!", quot: '"', QUOT: '"', num: "#", dollar: "$", percnt: "%", amp: "&", AMP: "&",
+    apos: "'", lpar: "(", rpar: ")", ast: "*", midast: "*", plus: "+", comma: ",", period: ".", sol: "/", colon: ":",
+    semi: ";", lt: "<", LT: "<", equals: "=", gt: ">", GT: ">", quest: "?", commat: "@", lsqb: "[", lbrack: "[",
+    bsol: "\\", rsqb: "]", rbrack: "]", Hat: "^", lowbar: "_", UnderBar: "_", grave: "`", DiacriticalGrave: "`",
+    lcub: "{", lbrace: "{", verbar: "|", vert: "|", VerticalLine: "|", rcub: "}", rbrace: "}", fjlig: "fj",
+  }),
+);
+const HTML_LEGACY = ["amp", "AMP", "lt", "LT", "gt", "GT", "quot", "QUOT"] as const;
 
 const encoder = new TextEncoder();
 const percentDecoder = new TextDecoder("utf-8", { ignoreBOM: true });
@@ -143,6 +156,7 @@ export function httpExecutor<TContext = unknown>(options: HttpExecutorOptions<TC
     unsupported: unsupportedReason,
     outputSchemaRule: "every-success",
     ownsParameter: (parameter: OpenApiParameterQuery) => ownsParameter(parameter, fixedNames),
+    sendsRequestMedia: (contentType: string) => requestMediaRefusal(contentType) === undefined,
 
     async execute(request: OpenApiExecuteRequest<TContext>): Promise<CallToolResult> {
       const { operation, args } = request;
@@ -320,14 +334,8 @@ function unsupportedReason(operation: OpenApiOperation): string | undefined {
     return `fetch cannot send a ${operation.method} request with a body`;
   }
   if (operation.requestBody) {
-    // Headers.set throws for CR, LF, NUL or a character above 0xFF, also inside a quoted parameter.
-    if (/[\x00-\x08\x0a-\x1f\x7f]|[^\x00-\xff]/.test(operation.requestBody.contentType)) {
-      return "the request body's documented media type has a character no HTTP header can carry";
-    }
-    const documented = parseMediaType(operation.requestBody.contentType);
-    if (documented === null || (documented.charset !== undefined && !isUtf8(documented.charset))) {
-      return "the request body's documented media type names a charset other than UTF-8, but the body is sent as UTF-8";
-    }
+    const refusal = requestMediaRefusal(operation.requestBody.contentType);
+    if (refusal !== undefined) return refusal;
   }
   const managed = operation.parameters.find(
     (parameter) => parameter.in === "header" && parameter.required && TRANSPORT_HEADERS.has(parameter.name.toLowerCase()),
@@ -342,6 +350,19 @@ function unsupportedReason(operation: OpenApiOperation): string | undefined {
   );
   if (unsendable) return `the required header ${JSON.stringify(unsendable.name)} is not a valid HTTP header name`;
   return securityRefusal(operation);
+}
+
+/** Why a request body cannot be sent under the documented media type `contentType`, or `undefined` when it can. */
+function requestMediaRefusal(contentType: string): string | undefined {
+  // Headers.set throws for CR, LF, NUL or a character above 0xFF, also inside a quoted parameter.
+  if (/[\x00-\x08\x0a-\x1f\x7f]|[^\x00-\xff]/.test(contentType)) {
+    return "the request body's documented media type has a character no HTTP header can carry";
+  }
+  const documented = parseMediaType(contentType);
+  if (documented === null || (documented.charset !== undefined && !isUtf8(documented.charset))) {
+    return "the request body's documented media type names a charset other than UTF-8, but the body is sent as UTF-8";
+  }
+  return undefined;
 }
 
 function cancelled(): CallToolResult {
@@ -552,13 +573,33 @@ function percentDecoded(text: string): string {
   });
 }
 
-/** `text` with HTML/XML character references decoded: the five XML entities and numeric references. */
+/**
+ * `text` with HTML character references decoded as an HTML reader decodes
+ * them, for every character an operator value can hold: numeric references
+ * with or without `;` (an invalid code point becomes U+FFFD) and the named
+ * references `HTML_NAMED` lists, including the legacy ones without `;`
+ * (`&ampx` reads as `&x`). It may decode more than HTML does (`&ltimes;` reads
+ * as `<imes;`), which only withholds more. One pass, linear in the text.
+ */
 function htmlUnescaped(text: string): string {
-  return text.replace(HTML_REFERENCE, (match, decimal: string | undefined, hex: string | undefined, named: string | undefined) => {
-    if (named) return HTML_NAMED[named]!;
-    const code = Number.parseInt(decimal ?? hex!, decimal ? 10 : 16);
-    return code <= 0x10ffff ? String.fromCodePoint(code) : match;
-  });
+  return text.replace(
+    HTML_REFERENCE,
+    (match, decimal: string | undefined, hex: string | undefined, name: string | undefined, semicolon: string | undefined) => {
+      if (name === undefined) return codePointText(decimal ?? hex!, decimal === undefined ? 16 : 10);
+      if (semicolon && HTML_NAMED.has(name)) return HTML_NAMED.get(name)!;
+      const legacy = HTML_LEGACY.find((candidate) => name.startsWith(candidate));
+      return legacy === undefined ? match : `${HTML_NAMED.get(legacy)!}${name.slice(legacy.length)}${semicolon}`;
+    },
+  );
+}
+
+/** The character a numeric reference's digits name, U+FFFD for NUL, a surrogate or a value past U+10FFFF. */
+function codePointText(digits: string, radix: number): string {
+  let start = 0;
+  while (start < digits.length - 1 && digits[start] === "0") start += 1;
+  // More than seven significant digits exceed U+10FFFF in either radix, so such runs are not parsed.
+  const code = digits.length - start > 7 ? Number.POSITIVE_INFINITY : Number.parseInt(digits.slice(start), radix);
+  return code === 0 || code > 0x10ffff || (code >= 0xd800 && code <= 0xdfff) ? "\ufffd" : String.fromCodePoint(code);
 }
 
 function holdsSecret(text: string, secrets: readonly string[]): boolean {
