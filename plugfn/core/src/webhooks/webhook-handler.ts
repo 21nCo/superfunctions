@@ -44,6 +44,8 @@ interface WebhookDispatchScope {
   authenticatedDeliveryId?: string;
   bindingIsCurrent(): Promise<boolean>;
   revoked: AbortSignal;
+  /** Undefined shares the workflow trigger. Null means a separate route has no listener. */
+  standalone?: PreparedWebhook | null;
 }
 
 /** Internal preparation used by the router. Public verification returns inspection data only. */
@@ -165,7 +167,8 @@ export class WebhookHandler {
 
     const webhookEvent = this.createWebhookEvent(provider, prepared, scope);
     const { deliveryId: eventId, idempotencyKey } = webhookEvent;
-    if (trigger.webhookConfig?.shouldDispatch?.(transformedPayload) === false) {
+    const dispatchWorkflowEvent = trigger.webhookConfig?.shouldDispatch?.(transformedPayload) !== false;
+    if (!dispatchWorkflowEvent && !scope?.standalone) {
       this.logger.info(`Webhook dispatch skipped: ${provider}.${triggerKey}`);
       return webhookEvent;
     }
@@ -176,14 +179,24 @@ export class WebhookHandler {
       return webhookEvent;
     }
 
-    const triggerEvent = await trigger.handler(transformedPayload);
-    if (scope?.revoked.aborted) {
-      throw webhookBindingRevoked();
+    if (dispatchWorkflowEvent) {
+      const triggerEvent = await trigger.handler(transformedPayload);
+      if (scope?.revoked.aborted) throw webhookBindingRevoked();
+      await this.emit(
+        provider, triggerKey, { ...triggerEvent, ...webhookEvent }, scope,
+        trigger.webhookConfig?.cloneWorkflowEvent,
+      );
     }
-    await this.emit(
-      provider, triggerKey, { ...triggerEvent, ...webhookEvent }, scope,
-      trigger.webhookConfig?.cloneWorkflowEvent,
-    );
+    if (scope?.standalone) {
+      const standalone = scope.standalone;
+      if (scope.revoked.aborted) throw webhookBindingRevoked();
+      if (standalone.trigger.webhookConfig?.shouldDispatch?.(standalone.transformedPayload) !== false) {
+        const standaloneEvent = this.createWebhookEvent(provider, standalone, scope);
+        const triggerEvent = await standalone.trigger.handler(standalone.transformedPayload);
+        if (scope.revoked.aborted) throw webhookBindingRevoked();
+        await this.emit(provider, standalone.triggerKey, { ...triggerEvent, ...standaloneEvent }, undefined, undefined);
+      }
+    }
 
     if (processedEventKey) {
       this.rememberProcessedEvent(processedEventKey);
@@ -391,7 +404,28 @@ export class WebhookHandler {
             current.revoked === revoked &&
             !revoked.aborted;
         };
-        const scope = { binding, idempotencyKey, authenticatedDeliveryId: deliveryId, bindingIsCurrent, revoked };
+        const scope: WebhookDispatchScope = {
+          binding, idempotencyKey, authenticatedDeliveryId: deliveryId, bindingIsCurrent, revoked,
+        };
+        const standaloneEvent = options.standaloneEvent;
+        if (standaloneEvent !== undefined && standaloneEvent !== event) {
+          let legacyKey: string | undefined;
+          try {
+            legacyKey = this.resolveTrigger(provider, standaloneEvent, providerObj.triggers ?? {}).triggerKey;
+          } catch (error) {
+            if (!(error instanceof WebhookHandlerError) || error.status !== 404) throw error;
+          }
+          if (legacyKey !== triggerKey) {
+            scope.standalone = null;
+            if (legacyKey && this.getHandlerCount(provider, legacyKey) > 0) {
+              const legacy = await this[prepareWebhookDelivery](
+                provider, standaloneEvent, payload, headers, secret, { rawBody: options.rawBody },
+              );
+              if (!legacy.signatureVerified) throw webhookBindingRequired('standalone webhook signature proof required');
+              scope.standalone = legacy;
+            }
+          }
+        }
         return {
           signatureVerified,
           binding,
@@ -500,7 +534,7 @@ export class WebhookHandler {
     scope: WebhookDispatchScope | undefined,
     cloneWorkflowEvent: WebhookConfig['cloneWorkflowEvent'],
   ): Promise<void> {
-    const listeners = this.handlers.get(handlerKey(provider, event));
+    const listeners = scope?.standalone === undefined ? this.handlers.get(handlerKey(provider, event)) : undefined;
     const workflowHandlers = scope && this.workflowHandlers.get(handlerKey(provider, event, scope.binding));
     if (!listeners?.size && !workflowHandlers?.size) {
       this.logger.debug(`No handlers registered for ${provider}.${event}`);
@@ -667,8 +701,9 @@ export function assertWebhookReceiptProvider(
   }
 }
 
-export function hasWebhookSignatureProof(record: { signatureVerified?: true | null }): boolean {
-  return record.signatureVerified === true;
+export function hasWebhookSignatureProof(record: { signatureVerified?: unknown }): boolean {
+  // MySQL drivers can return BOOLEAN columns as TINYINT values on readback.
+  return record.signatureVerified === true || record.signatureVerified === 1;
 }
 
 const retryBookkeepingFields = new Set([

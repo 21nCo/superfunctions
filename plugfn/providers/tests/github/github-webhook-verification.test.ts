@@ -99,10 +99,13 @@ describe('github webhook verification', () => {
   });
 
   it.each([
-    { scoped: true, hasInstallation: true, event: 'pull_request.closed' },
-    { scoped: true, hasInstallation: false, event: 'pull_request' },
-    { scoped: false, hasInstallation: true, event: 'pull_request' },
-  ])('dispatches the pull-request alias as $event with bindings $scoped and installation $hasInstallation', async ({ scoped, hasInstallation, event }) => {
+    { scoped: true, hasInstallation: true, event: 'pull_request.closed', ingress: 'HTTP' },
+    { scoped: true, hasInstallation: true, event: 'pull_request.closed', ingress: 'SDK' },
+    { scoped: true, hasInstallation: false, event: 'pull_request', ingress: 'HTTP' },
+    { scoped: false, hasInstallation: true, event: 'pull_request', ingress: 'HTTP' },
+  ])('dispatches the pull-request alias via $ingress with binding $scoped and installation $hasInstallation', async ({
+    scoped, hasInstallation, event, ingress,
+  }) => {
     const binding = {
       tenantId: 'test-tenant',
       connectionId: 'test-connection',
@@ -110,13 +113,30 @@ describe('github webhook verification', () => {
     };
     const secret = 'test-github-webhook-secret';
     const resolveBinding = vi.fn(() => [binding]);
+    const database = new MemoryAdapter();
+    const action = vi.fn(async () => ({}));
+    if (scoped && hasInstallation) {
+      await database.create({
+        model: 'plugfn_workflows',
+        data: {
+          id: 'test-github-workflow', name: 'Test GitHub workflow', userId: 'test-user',
+          tenantId: binding.tenantId, status: 'enabled',
+          definition: {
+            trigger: { provider: 'github', event: 'pull_request.closed', connectionId: binding.connectionId },
+            steps: [{ id: 'test-step', type: 'action', action: 'test-action' }],
+          },
+          createdAt: new Date(), updatedAt: new Date(),
+        },
+      });
+    }
     const runtime = plugFn({
-      database: new MemoryAdapter(),
+      database,
       auth: { authenticate: () => null },
       baseUrl: 'https://app.example.test',
       encryptionKey: Buffer.alloc(32, 1).toString('hex'),
       integrations: {},
       logger: new NoopLogger(),
+      workflows: { runtime: { actions: { 'test-action': action } } },
       webhooks: scoped ? {
         workflowBindings: {
           github: [{
@@ -129,7 +149,9 @@ describe('github webhook verification', () => {
     });
     runtime.providers.register(githubProvider);
     const listener = vi.fn();
-    runtime.webhooks.on('github', event, listener);
+    const otherListener = vi.fn();
+    runtime.webhooks.on('github', 'pull_request', listener);
+    runtime.webhooks.on('github', 'pull_request.closed', otherListener);
 
     const payload = {
       action: 'closed',
@@ -153,35 +175,34 @@ describe('github webhook verification', () => {
       },
     };
     const rawBody = JSON.stringify(payload);
-    if (scoped && hasInstallation) {
+    if (ingress === 'SDK') {
       await expect(runtime.webhooks.handle(
         'github', 'pull_request', undefined, { 'x-hub-signature-256': sign(rawBody, secret) }, secret,
         { rawBody: encoder.encode(rawBody) },
-      )).resolves.toMatchObject({ event: 'pull_request.closed', verified: true });
-      expect(listener).toHaveBeenCalledOnce();
-    }
-
-    const router = createPlugFnRouter(runtime, { webhookSecret: { github: secret } });
-    const accepted = await router.handle(new Request('https://app.example.test/webhooks/github/pull-request', {
-      method: 'POST',
-      headers: { 'x-github-event': 'pull_request', 'x-hub-signature-256': sign(rawBody, secret) },
-      body: rawBody,
-    }));
-    expect(accepted.status).toBe(200);
-    const result = await accepted.json();
-    expect(result).toMatchObject({
-      data: { event: { event, verified: true } },
-    });
-    if (scoped && !hasInstallation) {
-      const receipt = await runtime.runtime.webhooks.getReceipt(result.data.receiptId);
-      expect(receipt).toMatchObject({ event: 'pull-request' });
-      await expect(runtime.runtime.webhooks.listDeliveries(result.data.receiptId)).resolves.toEqual([
-        expect.objectContaining({ handlerName: 'github.pull-request' }),
-      ]);
+      )).resolves.toMatchObject({ event, verified: true });
+    } else {
+      const router = createPlugFnRouter(runtime, { webhookSecret: { github: secret } });
+      const accepted = await router.handle(new Request('https://app.example.test/webhooks/github/pull-request', {
+        method: 'POST',
+        headers: { 'x-github-event': 'pull_request', 'x-hub-signature-256': sign(rawBody, secret) },
+        body: rawBody,
+      }));
+      expect(accepted.status).toBe(200);
+      const result = await accepted.json();
+      expect(result).toMatchObject({ data: { event: { event, verified: true } } });
+      if (scoped && !hasInstallation) {
+        const receipt = await runtime.runtime.webhooks.getReceipt(result.data.receiptId);
+        expect(receipt).toMatchObject({ event: 'pull-request' });
+        await expect(runtime.runtime.webhooks.listDeliveries(result.data.receiptId)).resolves.toEqual([
+          expect.objectContaining({ handlerName: 'github.pull-request' }),
+        ]);
+      }
     }
     if (scoped && hasInstallation) expect(resolveBinding).toHaveBeenCalledWith('42');
     else expect(resolveBinding).not.toHaveBeenCalled();
-    expect(listener).toHaveBeenCalledTimes(1);
+    expect(listener).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ event: 'pull_request' }));
+    expect(otherListener).not.toHaveBeenCalled();
+    expect(action).toHaveBeenCalledTimes(scoped && hasInstallation ? 1 : 0);
     const resolutionsAfterDispatch = resolveBinding.mock.calls.length;
 
     await expect(

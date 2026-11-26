@@ -812,6 +812,39 @@ describe('webhook workflow admission', () => {
     expect(listener).toHaveBeenCalledOnce();
   });
 
+  it('preserves a verified receipt and successful attempt read back as MySQL TINYINT values', async () => {
+    const before = startRuntime(database);
+    const response = await before.send('test-installation-one');
+    const { data } = await response.json();
+    expect(response.status).toBe(200);
+    const receipt = await before.runtime.runtime.webhooks.getReceipt(data.receiptId);
+    expect(receipt?.signatureVerified).toBe(true);
+
+    // mysql2 returns TINYINT columns, including MySQL BOOLEAN, as numbers.
+    const findOne = database.findOne.bind(database);
+    const findMany = database.findMany.bind(database);
+    vi.spyOn(database, 'findOne').mockImplementation(async (query) => {
+      const row = await findOne(query);
+      return query.model === receiptModel && row?.signatureVerified === true ? { ...row, signatureVerified: 1 } : row;
+    });
+    vi.spyOn(database, 'findMany').mockImplementation(async (query) => {
+      const rows = await findMany(query);
+      return query.model === deliveryModel
+        ? rows.map((row) => row.signatureVerified === true ? { ...row, signatureVerified: 1 } : row)
+        : rows;
+    });
+
+    const after = startRuntime(database);
+    const listener = vi.fn();
+    after.runtime.webhooks.on('test-provider', 'test.event', listener);
+    const duplicate = await after.send('test-installation-one');
+    expect(duplicate.status).toBe(200);
+    await expect(duplicate.json()).resolves.toMatchObject({ data: { duplicate: true, receiptId: data.receiptId } });
+    expect(listener).not.toHaveBeenCalled();
+    expect(await findOne({ model: receiptModel, where: [{ field: 'id', operator: 'eq', value: data.receiptId }] }))
+      .toEqual(receipt);
+  });
+
   it.each([
     { source: 'a provider without a verifier', withVerifier: false, verifySignatures: undefined },
     { source: 'a provider with verification disabled', withVerifier: true, verifySignatures: false },
