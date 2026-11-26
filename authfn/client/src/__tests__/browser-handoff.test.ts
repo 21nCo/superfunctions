@@ -1135,6 +1135,23 @@ describe('createBrowserHandoff', () => {
     expect((envelope as { error: { details: unknown } }).error.details).toEqual({ status: 400 });
   });
 
+  it('reports an exchange region header by the region id contract unless it repeats the verifier', async () => {
+    const verifier = 'test-verifier-'.repeat(4);
+    const metrics: AuthFnClientRequestMetric[] = [];
+    const region = { value: 'aws:eu-west-1' };
+    const client = createAuthFnClient({
+      baseUrl: `${APP}/auth`,
+      fetch: async () => new Response(null, { status: 502, headers: { 'x-account-region': region.value } }),
+      onRequestMetric: (metric) => metrics.push(metric)
+    });
+    await client.exchangeSocialHandoff({ code: 'test-handoff-code-1', verifier });
+    region.value = `eu:${verifier.slice(3, 11)}`;
+    await client.exchangeSocialHandoff({ code: 'test-handoff-code-1', verifier });
+
+    expect(metrics[0]?.accountRegion).toBe('aws:eu-west-1');
+    expect(metrics[1]).not.toHaveProperty('accountRegion');
+  });
+
   it('still reports the response headers of requests without one-time secrets', async () => {
     const metrics: AuthFnClientRequestMetric[] = [];
     const client = createAuthFnClient({
@@ -1390,10 +1407,12 @@ describe('createBrowserHandoff', () => {
   // window's retirement: its tombstone must survive, a later return reads
   // already-used, and the code is exchanged exactly once.
   it.each([
-    ['complete', 'its read fails after the other window completed', 'malformed-state',
+    ['complete', 'its read fails after the other window completed', 'already-used',
       (other: () => Promise<unknown>): ScriptStep[] => [{ op: 'get', call: 1, before: other, fail: true }]],
-    ['complete', 'its read fails and the other window completes before the tombstone write', 'malformed-state',
-      (other: () => Promise<unknown>): ScriptStep[] => [{ op: 'get', call: 1, fail: true }, { op: 'set', call: 1, before: other }]],
+    ['complete', 'its read fails and the other window completes before the re-read', 'already-used',
+      (other: () => Promise<unknown>): ScriptStep[] => [{ op: 'get', call: 1, fail: true }, { op: 'get', call: 2, before: other }]],
+    ['complete', 'its read fails and the other window completes before the retirement', 'already-used',
+      (other: () => Promise<unknown>): ScriptStep[] => [{ op: 'get', call: 1, fail: true }, { op: 'compareAndSet', call: 1, before: other }]],
     ['complete', 'its claim fails after the other window completed', 'already-used',
       (other: () => Promise<unknown>): ScriptStep[] => [{ op: 'compareAndSet', call: 1, before: other, fail: true }]],
     ['complete', 'its claim fails and the other window completes after the re-read', 'already-used',
@@ -1401,7 +1420,7 @@ describe('createBrowserHandoff', () => {
         { op: 'compareAndSet', call: 1, fail: true },
         { op: 'compareAndSet', call: 2, before: other }
       ]],
-    ['complete', 'its claim and retirement fail around the other window\'s completion', 'malformed-state',
+    ['complete', 'its claim and retirement fail around the other window\'s completion', 'already-used',
       (other: () => Promise<unknown>): ScriptStep[] => [
         { op: 'compareAndSet', call: 1, fail: true },
         { op: 'compareAndSet', call: 2, before: other, fail: true }
@@ -1417,7 +1436,11 @@ describe('createBrowserHandoff', () => {
     const begun = await make().begin({ returnTo: RETURN_TO });
     const callback = server.callbackFor(begun);
     const key = `authfn.handoff.${begun.handoffId}`;
-    const other = async () => expect((await make().complete(callback)).status).toBe('completed');
+    let winner: unknown;
+    const other = async () => {
+      expect((await make().complete(callback)).status).toBe('completed');
+      winner = await store.get(key);
+    };
     const thisWindow = make({ store: scriptedStore(store, script(other)) });
 
     if (action === 'complete') {
@@ -1426,8 +1449,53 @@ describe('createBrowserHandoff', () => {
       await thisWindow.abandon(begun.handoffId);
     }
     expect(await retiredState(store, key)).toBe('tombstone');
+    // The other window's tombstone is left byte for byte.
+    expect(await store.get(key)).toBe(winner);
     expect(failed(await make().complete(callback)).reason).toBe('already-used');
     expect(server.exchanged).toBe(1);
+    expect(server.exchange).toHaveBeenCalledTimes(1);
+  });
+
+  // A window with a shorter TTL fails to read (or to claim and then read)
+  // after another window completed: its retirement must not rewrite the
+  // winner's tombstone with its own, earlier expiry, so a duplicate return
+  // still reads already-used until the winner's deadline.
+  it.each([
+    ['complete', 'its read fails', (): ScriptStep[] => [{ op: 'get', call: 1, fail: true }]],
+    ['abandon', 'its read fails', (): ScriptStep[] => [{ op: 'get', call: 1, fail: true }]],
+    ['complete', 'its claim and the re-read of it fail', (other?: () => Promise<unknown>): ScriptStep[] => [
+      { op: 'compareAndSet', call: 1, before: other, fail: true },
+      { op: 'get', call: 2, fail: true }
+    ]]
+  ] as const)('keeps a committed tombstone final when this window\'s %s and %s', async (action, label, script) => {
+    const { make, server, store, clock } = setup();
+    const begun = await make().begin({ returnTo: RETURN_TO });
+    const callback = server.callbackFor(begun);
+    const key = `authfn.handoff.${begun.handoffId}`;
+    let winner: unknown;
+    const other = async () => {
+      expect((await make().complete(callback)).status).toBe('completed');
+      winner = await store.get(key);
+    };
+    // A failed read happens after the other window completed; a failed
+    // claim races it, so the other window completes just before it.
+    const claimRace = label.startsWith('its claim');
+    if (!claimRace) {
+      await other();
+    }
+    const thisWindow = make({ ttlMs: 1000, store: scriptedStore(store, script(claimRace ? other : undefined)) });
+
+    if (action === 'complete') {
+      expect(failed(await thisWindow.complete(callback)).reason).toBe('already-used');
+    } else {
+      await thisWindow.abandon(begun.handoffId);
+    }
+    expect(winner).toEqual(expect.any(String));
+    expect(await store.get(key)).toBe(winner);
+    // Past this window's TTL, before the winner's deadline.
+    clock.advance(5000);
+    expect(await make().prune()).toBe(0);
+    expect(failed(await make().complete(callback)).reason).toBe('already-used');
     expect(server.exchange).toHaveBeenCalledTimes(1);
   });
 

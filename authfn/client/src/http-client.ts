@@ -57,7 +57,7 @@ const SENSITIVE_METRIC_FIELDS = {
   lookupDurationMs: DURATION_PATTERN,
   lookupCallCount: COUNT_PATTERN,
   workerColo: /^[A-Za-z0-9-]{1,16}$/,
-  accountRegion: /^[A-Za-z0-9_.-]{1,64}$/
+  accountRegion: isRegionId
 } as const satisfies Partial<Record<keyof AuthFnClientRequestMetric, TextCheck>>;
 export function createAuthFnHttpClient(options: AuthFnClientOptions = {}) {
   const fetchImpl = options.fetch ?? fetch;

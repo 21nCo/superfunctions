@@ -312,33 +312,52 @@ export function createBrowserHandoff(options: AuthFnBrowserHandoffOptions): Auth
    * Retires the record under `key`, which was last seen holding `observed`
    * (anything but a string when it could not be read or is not a string),
    * by replacing it with a used tombstone that holds no verifier. A
-   * tombstone is final: retirement only ever replaces it with another
-   * tombstone, and only `prune()` removes it once it has expired. The ladder, in the order of what matters most (at most one
-   * exchange, then no verifier left behind, then a later return still
-   * reading `already-used`):
+   * committed tombstone is final: retirement never writes over it, and only
+   * `prune()` removes it once it has expired. The ladder, in the order of
+   * what matters most (at most one exchange, then no verifier left behind,
+   * then a later return still reading `already-used`):
    * 1. compare-and-set `observed` -> tombstone; `changed` when another
    *    participant moved the record first;
-   * 2. if that throws (or nothing could be compared), a plain write of the
-   *    tombstone, which can at most overwrite another participant's
-   *    tombstone with one;
-   * 3. if that throws too, delete: the verifier is gone, and a later return
+   * 2. if that throws (or nothing could be compared), read the record again:
+   *    a tombstone is left byte for byte (`changed`), nothing stored is
+   *    `absent`, and any other string is compared-and-set to a tombstone;
+   * 3. only if the re-read fails, is not a string, or its compare-and-set
+   *    throws, a plain write of the tombstone;
+   * 4. if that throws too, delete: the verifier is gone, and a later return
    *    reads `unknown-handoff` instead of `already-used`.
    */
   const retire = async (
     key: string,
     observed: unknown,
     expiresAt: number
-  ): Promise<'tombstoned' | 'changed' | 'deleted' | 'failed'> => {
-    const tombstone = tombstoneFor(key.slice(keyPrefix.length), expiresAt);
+  ): Promise<'tombstoned' | 'changed' | 'absent' | 'deleted' | 'failed'> => {
+    const handoffId = key.slice(keyPrefix.length);
+    const swap = async (expected: string, expiry: number) =>
+      await guarded.compareAndSet(key, expected, tombstoneFor(handoffId, expiry)) ? 'tombstoned' : 'changed';
     if (typeof observed === 'string') {
       try {
-        return await guarded.compareAndSet(key, observed, tombstone) ? 'tombstoned' : 'changed';
+        return await swap(observed, expiresAt);
+      } catch {
+        // The re-read below.
+      }
+    }
+    const current = await read(key);
+    if (current === null || current === undefined) {
+      return 'absent';
+    }
+    if (typeof current === 'string') {
+      const record = parseRecord(current, handoffId, now());
+      if (record?.state === 'used') {
+        return 'changed';
+      }
+      try {
+        return await swap(current, record ? tombstoneExpiry(record) : expiresAt);
       } catch {
         // The plain write below.
       }
     }
     try {
-      await guarded.set(key, tombstone);
+      await guarded.set(key, tombstoneFor(handoffId, expiresAt));
       return 'tombstoned';
     } catch {
       // The delete below.
@@ -517,15 +536,15 @@ export function createBrowserHandoff(options: AuthFnBrowserHandoffOptions): Auth
       if (!record) {
         // Unreadable, not a string, or not a record this helper wrote: it
         // cannot be trusted to be claimed later, so it is retired.
-        await retire(key, raw, tombstoneExpiry(null));
-        return fail('malformed-state', { handoffId, cleanUrl });
+        const outcome = await retire(key, raw, tombstoneExpiry(null));
+        return fail(outcome === 'changed' ? 'already-used' : 'malformed-state', { handoffId, cleanUrl });
       }
       if (record.state === 'used') {
         return fail('already-used', { handoffId, cleanUrl });
       }
       if (record.expiresAt <= now()) {
-        await retire(key, raw, tombstoneExpiry(record));
-        return fail('expired', { handoffId, cleanUrl });
+        const outcome = await retire(key, raw, tombstoneExpiry(record));
+        return fail(outcome === 'changed' ? 'already-used' : 'expired', { handoffId, cleanUrl });
       }
 
       // From here on the callback names a live handoff, so any outcome
@@ -537,15 +556,16 @@ export function createBrowserHandoff(options: AuthFnBrowserHandoffOptions): Auth
       } catch {
         // Whether the claim committed is unknown, so this window never
         // exchanges. It reads the record again: another participant's
-        // tombstone is left as it is; anything else is retired.
+        // tombstone is left as it is; anything else is retired (and retire()
+        // reads once more before any plain write).
         const current = await read(key);
         if (typeof current === 'string' && parseRecord(current, handoffId, now())?.state === 'used') {
           return fail('already-used', { handoffId, cleanUrl });
         }
-        if (current !== null && current !== undefined && await retire(key, current, record.expiresAt) === 'changed') {
-          return fail('already-used', { handoffId, cleanUrl });
-        }
-        return fail('malformed-state', { handoffId, cleanUrl });
+        const outcome = current === null || current === undefined
+          ? 'absent'
+          : await retire(key, current, record.expiresAt);
+        return fail(outcome === 'changed' ? 'already-used' : 'malformed-state', { handoffId, cleanUrl });
       }
       if (!claimed) {
         return fail('already-used', { handoffId, cleanUrl });
