@@ -18,7 +18,14 @@ const CHANGES_COLUMNS: InternalColumnDef[] = [
   // DATA-41: the record's revision after this change. Added to existing
   // tables by `ensureChangesRevColumn`; NULL on rows written before it.
   { name: "rev", type: "integer" },
+  // DATA-41: 1 when the writer committed the change together with its
+  // revision (in one database transaction), so the recorded row is the state
+  // at `rev`; 0 or NULL otherwise. Pull pairs a row with `rev` only then.
+  { name: "rev_certified", type: "integer" },
 ];
+
+/** DATA-41: the late `__datafn_changes` columns a change row's revision needs. */
+const CHANGES_REVISION_COLUMNS = ["rev", "rev_certified"] as const;
 
 /**
  * Columns a table may still lack on a database created before they were
@@ -26,7 +33,7 @@ const CHANGES_COLUMNS: InternalColumnDef[] = [
  * them.
  */
 export const LATE_INTERNAL_COLUMNS: Readonly<Record<string, readonly string[]>> = {
-  __datafn_changes: ["rev"],
+  __datafn_changes: CHANGES_REVISION_COLUMNS,
 };
 
 /** DATA-41: one row per record, kept as a tombstone when the record is deleted. */
@@ -111,16 +118,16 @@ export async function ensureInternalTable(
 const changesRevColumnReady = new WeakMap<object, Promise<boolean>>();
 
 /**
- * Adds the `rev` column to a `__datafn_changes` table created before DATA-41
- * and resolves whether change rows may carry it. Stores without a fixed
- * schema keep any column; a SQL database without raw SQL access is probed.
- * Runs once per adapter, outside any transaction (a failed probe would abort
- * a PostgreSQL transaction).
+ * Adds the `rev` and `rev_certified` columns to a `__datafn_changes` table
+ * created before DATA-41 and resolves whether change rows may carry them.
+ * Stores without a fixed schema keep any column; a SQL database without raw
+ * SQL access is probed. Runs once per adapter, outside any transaction (a
+ * failed probe would abort a PostgreSQL transaction).
  */
 export function ensureChangesRevColumn(adapter: Adapter): Promise<boolean> {
   let ready = changesRevColumnReady.get(adapter);
   if (!ready) {
-    ready = addChangesRevColumn(adapter);
+    ready = addChangesRevColumns(adapter);
     changesRevColumnReady.set(adapter, ready);
     ready.catch(() => changesRevColumnReady.delete(adapter));
   }
@@ -130,16 +137,16 @@ export function ensureChangesRevColumn(adapter: Adapter): Promise<boolean> {
 /** A filter on a column name no table has, to tell a real probe from a lax one. */
 const ABSENT_COLUMN = "__datafn_absent_column_probe";
 
-async function addChangesRevColumn(adapter: Adapter): Promise<boolean> {
+async function addChangesRevColumns(adapter: Adapter): Promise<boolean> {
   const rawSql = adapter.rawSql;
   if (!rawSql) {
     // Stores without a fixed schema (memory, KV) keep any column.
     if (adapter.capabilities?.schema?.constraints !== true) return true;
     // A SQL database reached without raw SQL (Prisma) cannot be altered
-    // here: change rows carry `rev` only if the table already has it. A probe
-    // is trusted only when the same probe on a column that cannot exist
-    // fails (a driver that reads an unknown quoted name as a string literal
-    // accepts both), otherwise no change row records `rev`.
+    // here: change rows carry `rev` only if the table already has both
+    // columns. A probe is trusted only when the same probe on a column that
+    // cannot exist fails (a driver that reads an unknown quoted name as a
+    // string literal accepts both), otherwise no change row records `rev`.
     const probe = async (field: string) => {
       try {
         await adapter.internal.findMany("__datafn_changes", [{ field, op: "eq", value: -1 }], { limit: 1 });
@@ -149,43 +156,49 @@ async function addChangesRevColumn(adapter: Adapter): Promise<boolean> {
       }
     };
     if (await probe(ABSENT_COLUMN)) return false;
-    return probe("rev");
+    for (const column of CHANGES_REVISION_COLUMNS) {
+      if (!(await probe(column))) return false;
+    }
+    return true;
   }
+  for (const column of CHANGES_REVISION_COLUMNS) await addChangesColumn(rawSql, column);
+  return true;
+}
+
+async function addChangesColumn(rawSql: NonNullable<Adapter["rawSql"]>, column: string): Promise<void> {
   // Read the column from the catalog: an unqualified `SELECT "rev"` succeeds
   // on SQLite builds that read unknown double-quoted names as strings.
-  const hasColumn = async () => changesTableHasRev(rawSql);
-  if (await hasColumn()) return true;
+  if (await changesTableHasColumn(rawSql, column)) return;
   if (rawSql.dialect === "postgres") {
     // Only when the catalog lacks the column, so a role without ownership of
     // an upgraded table, and every later start, never needs the ALTER lock.
-    await rawSql.execute('ALTER TABLE "__datafn_changes" ADD COLUMN IF NOT EXISTS "rev" integer');
-    return true;
+    await rawSql.execute(`ALTER TABLE "__datafn_changes" ADD COLUMN IF NOT EXISTS "${column}" integer`);
+    return;
   }
   // SQLite and MySQL have no ADD COLUMN IF NOT EXISTS: after a failed ALTER
   // (another worker added it meanwhile, or a driver that wraps the
   // duplicate-column error) read the catalog again.
   const quote = rawSql.dialect === "mysql" ? "`" : '"';
   try {
-    await rawSql.execute(`ALTER TABLE ${quote}__datafn_changes${quote} ADD COLUMN ${quote}rev${quote} integer`);
+    await rawSql.execute(`ALTER TABLE ${quote}__datafn_changes${quote} ADD COLUMN ${quote}${column}${quote} integer`);
   } catch (error) {
-    if (!(await hasColumn())) throw error;
+    if (!(await changesTableHasColumn(rawSql, column))) throw error;
   }
-  return true;
 }
 
-async function changesTableHasRev(rawSql: NonNullable<Adapter["rawSql"]>): Promise<boolean> {
+async function changesTableHasColumn(rawSql: NonNullable<Adapter["rawSql"]>, column: string): Promise<boolean> {
   if (rawSql.dialect === "sqlite") {
     const columns = await rawSql.query('PRAGMA table_info("__datafn_changes")');
-    return columns.some((column) => column.name === "rev");
+    return columns.some((row) => row.name === column);
   }
   if (rawSql.dialect === "postgres") {
     const rows = await rawSql.query(
-      "SELECT 1 AS present FROM pg_attribute WHERE attrelid = to_regclass('\"__datafn_changes\"') AND attname = 'rev' AND NOT attisdropped",
+      `SELECT 1 AS present FROM pg_attribute WHERE attrelid = to_regclass('"__datafn_changes"') AND attname = '${column}' AND NOT attisdropped`,
     );
     return rows.length > 0;
   }
   const rows = await rawSql.query(
-    "SELECT 1 AS present FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = '__datafn_changes' AND column_name = 'rev'",
+    `SELECT 1 AS present FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = '__datafn_changes' AND column_name = '${column}'`,
   );
   return rows.length > 0;
 }

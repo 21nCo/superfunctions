@@ -335,7 +335,9 @@ describe("transaction-bound runtime state", () => {
     const service = new ChangeTrackingService({ internal: outerInternal } as any, "tenant");
 
     await service.ensureReady();
-    const txService = service.withDb({ internal: txInternal } as any);
+    // DATA-41: revision assignment reads the record to confirm the write
+    // changed a present row (see bumpPresent).
+    const txService = service.withDb({ internal: txInternal, findOne: vi.fn(async () => ({ id: "task:1" })) } as any);
     await txService.recordChange({
       serverSeq: 1,
       resource: "tasks",
@@ -619,7 +621,9 @@ describe("REL-011: ChangeTrackingService.withDb() creates transaction-scoped ins
     const txInternal = makeInternalApi();
 
     const originalDb = { internal: originalInternal } as any;
-    const txDb = { internal: txInternal } as any;
+    // DATA-41: revision assignment reads the record to confirm the write
+    // changed a present row (see bumpPresent).
+    const txDb = { internal: txInternal, findOne: vi.fn(async () => ({ id: "t1" })) } as any;
 
     const service = new ChangeTrackingService(originalDb, "default");
     const txService = service.withDb(txDb);

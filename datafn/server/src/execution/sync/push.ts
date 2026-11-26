@@ -1334,7 +1334,7 @@ export async function executePush(
           const changes = opResult.changes;
           // Change notifications describe committed state, so suppress the
           // transaction-bound service callback and publish only after commit.
-          const txChangeTracking = changeTracking.withDb(txDb, false);
+          const txChangeTracking = changeTracking.withDb(txDb, false, true);
           const recorded: ChangeEntryInput[] = [];
           mutationRecorded = recorded;
           for (const change of changes) {

@@ -133,15 +133,20 @@ export function recordIdMismatch(
  * record to another id while the revision is raised under the old one.
  */
 export function relationWritingPrimaryKey(schema: DatafnSchema): string | undefined {
-  for (const resource of schema.resources) {
-    for (const fk of getRelationFkFieldsForResource(schema, resource.name)) {
-      if (fk.field === "id") return `the foreign key of ${resource.name}`;
-      if (fk.resourceField === "id") return `the foreign key resource field of ${resource.name}`;
-    }
-  }
   for (const relation of schema.relations ?? []) {
+    const name = String(relation.relation ?? relation.to);
+    // Each relation's own columns, derived for it alone as the relation
+    // writer derives them: a resource's combined list keeps one entry per
+    // foreign key name, so a second relation sharing a foreign key (with its
+    // own resource discriminator) would be hidden behind the first.
+    for (const resource of schema.resources) {
+      for (const fk of getRelationFkFieldsForResource({ resources: [], relations: [relation] }, resource.name)) {
+        if (fk.field === "id") return `the foreign key of relation ${name} on ${resource.name}`;
+        if (fk.resourceField === "id") return `the foreign key resource field of relation ${name} on ${resource.name}`;
+      }
+    }
     if (relation.type === "htree" && (relation.pathField || "parentPath") === "id") {
-      return `the tree path field of ${String(relation.relation ?? relation.to)}`;
+      return `the tree path field of ${name}`;
     }
   }
   return undefined;
@@ -361,36 +366,6 @@ export async function readRevisions(
 
 function transactionsUsable(db: Adapter): boolean {
   return db.capabilities?.transactions?.supported !== false && typeof db.transaction === "function";
-}
-
-const pairingProbes = new WeakMap<object, Promise<boolean>>();
-
-/**
- * DATA-41: whether a write on `db` commits together with its revision, so a
- * row read after the write (in its transaction) is the state at that
- * revision. Not on adapters without transactions (D1), nor on those that
- * expose one but reject async callbacks (Drizzle with better-sqlite3), where
- * push runs non-atomically. PostgreSQL adapters run async transactions; any
- * other adapter is probed once with an empty transaction. A failed probe
- * answers no without being remembered.
- */
-export function revisionPairsVerifiable(db: Adapter): Promise<boolean> {
-  if (!transactionsUsable(db)) return Promise.resolve(false);
-  if (db.rawSql?.dialect === "postgres") return Promise.resolve(true);
-  let probe = pairingProbes.get(db);
-  if (!probe) {
-    probe = Promise.resolve()
-      .then(() => db.transaction(async () => undefined))
-      .then(
-        () => true,
-        () => {
-          pairingProbes.delete(db);
-          return false;
-        },
-      );
-    pairingProbes.set(db, probe);
-  }
-  return probe;
 }
 
 /**
@@ -646,15 +621,12 @@ export async function assignWriteRevisions(
       // A delete whose record row is present again (re-inserted by a
       // concurrent writer) raises no tombstone, and any other write whose
       // record row is absent (it changed nothing) raises nothing: its change
-      // row and result carry no revision. The presence read is made where
-      // the revision can be returned (the resource issues revisions); with
-      // revisions off nothing returns it, and the write keeps the reads it
-      // makes without revisions.
+      // row and result carry no revision. Revisions are raised the same way
+      // whether or not the server returns them, so a server with revisions
+      // off never turns a tombstone live for a write that changed nothing.
       entry.rev = deleted
         ? await bumpTombstone(db, namespace, entry.resource, entry.id)
-        : schema !== undefined && issuesRevisions(schema, entry.resource)
-          ? await bumpPresent(db, namespace, entry.resource, entry.id)
-          : await bumpRevision(db, namespace, entry.resource, entry.id, false);
+        : await bumpPresent(db, namespace, entry.resource, entry.id);
       write.bumped.add(entry);
     }
     if (!deleted && completeRow(entry.resource) && (entry.op !== "merge" || isKvResource(entry.resource))) {
@@ -704,8 +676,9 @@ export function wireChange(
   if (!canReadEveryField(schema, resource, record)) {
     return { record: withoutUnreadableFields(schema, resource, record), ...revField };
   }
-  // Without a verified write boundary (see revisionPairsVerifiable) the
-  // recorded row may be another write's state: `rev` alone is sent.
+  // Unless the writer committed the change together with its revision
+  // (`pairable`, the change row's write-time provenance), the recorded row may
+  // be another write's state: `rev` alone is sent.
   if (rev === undefined || !pairable) return { record, ...revField };
   const complete = change.op !== "delete" && (change.op !== "merge" || isKvResource(resource));
   return { record: complete ? certify({ ...record, [REVISION_FIELD]: rev }) : record, rev };

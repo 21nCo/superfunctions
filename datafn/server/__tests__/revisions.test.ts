@@ -2127,16 +2127,20 @@ describe("DATA-41 revisions: round 12", () => {
     tracking.useRevisionsOf(shared);
     await tracking.ensureReady();
     await tracking.ensureRevisionsReady();
+    // Each change is recorded in the transaction that writes it, so the
+    // change row certifies its revision (as push and /mutation record them).
+    const record = (entries: any[]) =>
+      database.transaction((tx) => tracking.withDb(tx as Adapter, true, true).recordChanges(entries));
     const grant = {
       id: "grant-1", resourceType: "notebook", resourceNs: NS, resourceId: "notebook:1",
       principalId: "user:bob", level: "viewer", grantKind: "record", sourceRef: null,
       grantedBy: "alice", grantedAt: 1, revokedAt: null,
     };
     await database.create({ model: "notebook", data: { id: "notebook:1", title: "a" }, namespace: NS } as any);
-    await tracking.recordChanges([{ serverSeq: 1, resource: "notebook", id: "notebook:1", op: "insert", record: { id: "notebook:1", title: "a" } }]);
+    await record([{ serverSeq: 1, resource: "notebook", id: "notebook:1", op: "insert", record: { id: "notebook:1", title: "a" } }]);
     // A physical delete that recorded tombstone revision 2 (the row is gone).
     await database.delete({ model: "notebook", where: [{ field: "id", operator: "eq", value: "notebook:1" }], namespace: NS } as any);
-    await tracking.recordChanges([{ serverSeq: 2, resource: "notebook", id: "notebook:1", op: "delete", record: null }]);
+    await record([{ serverSeq: 2, resource: "notebook", id: "notebook:1", op: "delete", record: null }]);
     const pull = () =>
       executePull({ clientId: "client:b", cursors: { notebook: "0" }, actorId: "bob" } as any, shared, database, NS) as Promise<Json>;
 
@@ -2147,8 +2151,8 @@ describe("DATA-41 revisions: round 12", () => {
 
     // The grant is created and then revoked: a visibility delete for the
     // same id, which records no tombstone revision.
-    await tracking.recordChanges([{ serverSeq: 3, resource: "__datafn_permissions_global", id: "grant-1", op: "insert", record: grant }]);
-    await tracking.recordChanges([{ serverSeq: 4, resource: "__datafn_permissions_global", id: "grant-1", op: "delete", record: null }]);
+    await record([{ serverSeq: 3, resource: "__datafn_permissions_global", id: "grant-1", op: "insert", record: grant }]);
+    await record([{ serverSeq: 4, resource: "__datafn_permissions_global", id: "grant-1", op: "delete", record: null }]);
     const after = await pull();
     expect(after.ok).toBe(true);
     expect(after.deleted.notebook).toContain("notebook:1");
@@ -2156,40 +2160,40 @@ describe("DATA-41 revisions: round 12", () => {
   });
 });
 
-describe("DATA-41 revisions: round 13", () => {
-  /**
-   * A concurrent delete of each id in `ids` commits (row removed, tombstone
-   * raised) just before this write's UPDATE of it, so the UPDATE matches no
-   * row: the write changed nothing. The adapter reports that as a zero-row
-   * update (like updateMany) instead of throwing, as an adapter may.
-   */
-  function deletedBeforeUpdate(database: Adapter, ids: Set<string>): Adapter {
-    const wrap = (db: Adapter): Adapter =>
-      new Proxy(db, {
-        get(target, property, receiver) {
-          if (property === "update" || property === "updateMany") {
-            return async (args: any) => {
-              const value = (args.where ?? []).find((w: any) => w.field === "id")?.value;
-              const raced = (Array.isArray(value) ? value : [value]).filter((id) => ids.has(id));
-              const namespace = args.namespace ?? NS;
-              for (const id of raced) {
-                ids.delete(id);
-                await target.delete({ model: args.model, where: [{ field: "id", operator: "eq", value: id }], namespace } as any);
-                await bumpTombstone(target, namespace, args.model, id);
-              }
-              if (property === "update" && raced.length > 0) return null;
-              return (target as any)[property](args);
-            };
-          }
-          if (property === "transaction") {
-            return (fn: (tx: Adapter) => Promise<unknown>) => target.transaction((tx) => fn(wrap(tx as Adapter)));
-          }
-          return Reflect.get(target, property, receiver);
-        },
-      });
-    return wrap(database);
-  }
+/**
+ * A concurrent delete of each id in `ids` commits (row removed, tombstone
+ * raised) just before this write's UPDATE of it, so the UPDATE matches no
+ * row: the write changed nothing. The adapter reports that as a zero-row
+ * update (like updateMany) instead of throwing, as an adapter may.
+ */
+function deletedBeforeUpdate(database: Adapter, ids: Set<string>): Adapter {
+  const wrap = (db: Adapter): Adapter =>
+    new Proxy(db, {
+      get(target, property, receiver) {
+        if (property === "update" || property === "updateMany") {
+          return async (args: any) => {
+            const value = (args.where ?? []).find((w: any) => w.field === "id")?.value;
+            const raced = (Array.isArray(value) ? value : [value]).filter((id) => ids.has(id));
+            const namespace = args.namespace ?? NS;
+            for (const id of raced) {
+              ids.delete(id);
+              await target.delete({ model: args.model, where: [{ field: "id", operator: "eq", value: id }], namespace } as any);
+              await bumpTombstone(target, namespace, args.model, id);
+            }
+            if (property === "update" && raced.length > 0) return null;
+            return (target as any)[property](args);
+          };
+        }
+        if (property === "transaction") {
+          return (fn: (tx: Adapter) => Promise<unknown>) => target.transaction((tx) => fn(wrap(tx as Adapter)));
+        }
+        return Reflect.get(target, property, receiver);
+      },
+    });
+  return wrap(database);
+}
 
+describe("DATA-41 revisions: round 13", () => {
   async function seeded() {
     const raced = new Set<string>();
     const served = await serve({ database: deletedBeforeUpdate(memoryAdapter(), raced) });
@@ -2396,5 +2400,131 @@ describe("DATA-41 revisions: round 13", () => {
     await expect(createDatafnServer({ schema: idSchema, database: memoryAdapter() })).resolves.toBeDefined();
     const normal = { ...idSchema, relations: [{ ...idSchema.relations[0], fkField: "projectId" }] };
     await expect(createDatafnServer({ schema: normal, database: memoryAdapter(), revisions: { enabled: true } })).resolves.toBeDefined();
+  });
+});
+
+describe("DATA-41 revisions: round 14", () => {
+  const batchSchema = {
+    resources: [
+      { name: "project", version: 1, fields: [{ name: "name", type: "string" as const, required: false }] },
+      { name: "task", version: 1, fields: [{ name: "title", type: "string" as const, required: false }, { name: "projectId", type: "string" as const, required: false }] },
+    ],
+    relations: [{ from: "project", to: "task", type: "one-many", relation: "tasks", fkField: "projectId" }],
+  } as any;
+
+  it.each(["relate", "unrelate"])(
+    "with revisions off, keeps the tombstone of a batched %s target a concurrent delete removed",
+    async (operation) => {
+      const raced = new Set<string>();
+      const served = await serve({ enabled: false, schema: batchSchema, database: deletedBeforeUpdate(memoryAdapter(), raced) });
+      await served.push({ resource: "project", operation: "insert", id: "project:1", record: { name: "p" } });
+      for (const id of ["task:1", "task:2"]) {
+        await served.push({ resource: "task", operation: "insert", id, record: { title: id, projectId: "project:1" } });
+      }
+      // task:2 is deleted (tombstone 2) after the target check and before the
+      // batched updateMany, which then changes task:1 only.
+      raced.add("task:2");
+      const res = await served.push({ resource: "project", operation, id: "project:1", relations: { tasks: ["task:1", "task:2"] } });
+      expect(res.body.result.ok, JSON.stringify(res.body)).toBe(true);
+      expect(raced.size).toBe(0);
+      expect(await served.rev("task", "task:1")).toEqual({ rev: 2, deleted: false });
+      expect(await served.rev("task", "task:2")).toEqual({ rev: 2, deleted: true });
+    },
+  );
+
+  it("with revisions off, keeps the tombstone of a merged record a concurrent delete removed", async () => {
+    const raced = new Set<string>();
+    const served = await serve({ enabled: false, database: deletedBeforeUpdate(memoryAdapter(), raced) });
+    await served.push({ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } });
+    raced.add("task:1");
+    await served.push({ resource: "task", operation: "merge", id: "task:1", record: { title: "b" } });
+    expect(raced.size).toBe(0);
+    expect(await served.rev("task", "task:1")).toEqual({ rev: 2, deleted: true });
+  });
+
+  it("refuses revisions.enabled when a relation sharing another's foreign key writes the id as its resource field", async () => {
+    const shared = {
+      resources: [
+        { name: "project", version: 1, fields: [{ name: "name", type: "string" as const, required: false }] },
+        { name: "goal", version: 1, fields: [{ name: "label", type: "string" as const, required: false }] },
+        { name: "task", version: 1, fields: [{ name: "title", type: "string" as const, required: false }, { name: "targetId", type: "string" as const, required: false }] },
+      ],
+      relations: [
+        { from: "task", to: "project", type: "many-one", relation: "project", fkField: "targetId" },
+        { from: "task", to: ["project", "goal"], type: "many-one", relation: "target", fkField: "targetId", fkResourceField: "id" },
+      ],
+    } as any;
+    await expect(createDatafnServer({ schema: shared, database: memoryAdapter(), revisions: { enabled: true } }))
+      .rejects.toThrow(/never write a record's id/);
+    const safe = { ...shared, relations: [shared.relations[0], { ...shared.relations[1], fkResourceField: "targetResource" }] };
+    await expect(createDatafnServer({ schema: safe, database: memoryAdapter(), revisions: { enabled: true } })).resolves.toBeDefined();
+  });
+
+  it("resolves access afresh when a versioned query falls back, not from a membership an earlier batch query cached", async () => {
+    const team = "org:acme";
+    const notes = {
+      resources: [{
+        name: "notes",
+        version: 1,
+        capabilities: ["timestamps", "audit", { shareable: { levels: ["viewer", "editor", "owner"], default: "private" } }],
+        fields: [{ name: "title", type: "string" as const, required: true }],
+      }],
+      relations: [],
+    } as any;
+    const base = memoryAdapter();
+    await base.create({ model: "notes", data: { id: "note_shared", title: "Shared", createdBy: "alice", __ns: team }, namespace: team });
+    await base.create({ model: "notes", data: { id: "note_own", title: "Own", createdBy: "bob", __ns: team }, namespace: team });
+    await base.create({
+      model: "__datafn_principal_memberships",
+      data: { id: "m_bob", namespace: team, actorId: "bob", principalId: "team:eng", revokedAt: null, __ns: team },
+      namespace: team,
+    });
+    await base.create({
+      model: "__datafn_permissions_global",
+      data: {
+        id: "g_shared", resourceType: "notes", resourceNs: team, resourceId: "note_shared", principalId: "team:eng",
+        level: "viewer", grantKind: "record", sourceRef: null, grantedBy: "alice", grantedAt: 1, revokedAt: null, __ns: team,
+      },
+      namespace: team,
+    });
+    // The revisions table cannot be created, so the versioned query falls
+    // back to a plain read. The host revokes bob's membership after the
+    // batch's first query resolved it.
+    const failing = failingRevisions(base, "ddl");
+    let membershipReads = 0;
+    const database = new Proxy(failing, {
+      get(target, property, receiver) {
+        if (property === "findMany") {
+          return async (args: any) => {
+            const rows = await target.findMany(args);
+            if (args.model !== "__datafn_principal_memberships") return rows;
+            membershipReads += 1;
+            return membershipReads === 1 ? rows : rows.map((row: Json) => ({ ...row, revokedAt: 2 }));
+          };
+        }
+        return Reflect.get(target, property, receiver);
+      },
+    }) as Adapter;
+    const server = await createDatafnServer({
+      schema: notes,
+      database,
+      allowUnknownResources: true,
+      revisions: { enabled: true },
+      limits: { maxBatchQueryConcurrency: 1 },
+      namespaceProvider: { getNamespace: () => team, getActorId: () => "bob" as any },
+    } as any);
+    const request = { resource: "notes", version: 1, operation: "find" };
+    const res = await server.router.handle(new Request("http://localhost/datafn/query", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify([request, { ...request, withRevisions: true }]),
+    }));
+    expect(res.status).toBe(200);
+    const batch = (await res.json()) as Json;
+    const ids = (result: Json) => (result.data as Json[]).map((row) => row.id).sort();
+    expect(ids(batch.result[0])).toEqual(["note_own", "note_shared"]);
+    expect(ids(batch.result[1])).toEqual(["note_own"]);
+    for (const row of batch.result[1].data as Json[]) expect(row).not.toHaveProperty("$rev");
+    expect(membershipReads).toBe(2);
   });
 });

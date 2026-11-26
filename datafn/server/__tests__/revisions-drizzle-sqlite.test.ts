@@ -7,6 +7,8 @@ import Database from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 import { drizzleAdapter } from "@superfunctions/db/adapters/drizzle";
+import { kyselyAdapter } from "@superfunctions/db/adapters";
+import { Kysely, SqliteDialect } from "kysely";
 import { createDatafnServer } from "../src/index.js";
 import { conformanceSchema, createTableStatements, drizzleSchema, resourceTables } from "./drizzle-sqlite/fixture.js";
 
@@ -23,12 +25,17 @@ afterEach(async () => {
 async function start(
   existing?: Database.Database,
   wrap: (adapter: ReturnType<typeof drizzleAdapter>) => ReturnType<typeof drizzleAdapter> = (adapter) => adapter,
+  transactional = false,
 ) {
   const sqlite = existing ?? new Database(":memory:");
   // A fresh database: only the resource tables exist, no DataFn internal table.
   if (!existing) for (const statement of createTableStatements(resourceTables)) sqlite.exec(statement);
-  const adapter = wrap(drizzleAdapter({ db: drizzle(sqlite, { schema: drizzleSchema }), dialect: "sqlite" }));
-  expect(adapter.capabilities?.transactions?.supported).toBe(false);
+  // `transactional`: the same database through Kysely, whose transactions
+  // commit a write together with its revision.
+  const adapter = transactional
+    ? kyselyAdapter({ db: new Kysely<any>({ dialect: new SqliteDialect({ database: sqlite }) }), dialect: "sqlite", schema: { tag: "tag" } })
+    : wrap(drizzleAdapter({ db: drizzle(sqlite, { schema: drizzleSchema }), dialect: "sqlite" }));
+  expect(adapter.capabilities?.transactions?.supported).toBe(!transactional ? false : true);
   const server = await createDatafnServer({
     schema: conformanceSchema,
     db: adapter,
@@ -136,6 +143,58 @@ describe("DATA-41 revisions on Drizzle SQLite (no transactions)", () => {
     // the absence it is sent with, so none is sent (round 13).
     expect(canonical.body.result.deleted.task).toContain("task:b");
     expect(canonical.body.result.deletedRevisions).toBeUndefined();
+  });
+
+  it("certifies nothing a non-transactional writer recorded when a transactional adapter pulls it (round 14)", async () => {
+    const writer = await start();
+    const pushed = await writer.call("push", {
+      clientId: "c1",
+      mutations: [
+        insert("task:a", "m1"),
+        { resource: "task", version: 1, operation: "replace", id: "task:a", clientId: "c1", mutationId: "m2", record: { id: "task:a", title: "Bravo", priority: 2, done: true } },
+        insert("task:b", "m3"),
+        { resource: "task", version: 1, operation: "delete", id: "task:b", clientId: "c1", mutationId: "m4" },
+      ],
+    });
+    expect(pushed.body.result.ok).toBe(true);
+    // Each change row records whether its write committed with its revision.
+    expect(writer.sqlite.prepare(`SELECT record_id, op, rev, rev_certified FROM "__datafn_changes" ORDER BY server_seq`).all()).toEqual([
+      { record_id: "task:a", op: "insert", rev: 1, rev_certified: 0 },
+      { record_id: "task:a", op: "replace", rev: 2, rev_certified: 0 },
+      { record_id: "task:b", op: "insert", rev: 1, rev_certified: 0 },
+      { record_id: "task:b", op: "delete", rev: 2, rev_certified: 0 },
+    ]);
+
+    // A server on the same database through an adapter with transactions.
+    const reader = await start(writer.sqlite, undefined, true);
+    const global = await reader.call("pull", { clientId: "c2", cursor: "0" });
+    expect(global.status).toBe(200);
+    const changes = global.body.result.changes as Array<Record<string, any>>;
+    expect(changes.map((change) => [change.id, change.op, change.rev])).toEqual([
+      ["task:a", "upsert", 1], ["task:a", "upsert", 2], ["task:b", "upsert", 1], ["task:b", "delete", undefined],
+    ]);
+    for (const change of changes) if (change.record) expect(change.record).not.toHaveProperty("$rev");
+    const canonical = await reader.call("pull", { clientId: "c2", cursors: { task: "0" } });
+    expect(canonical.status).toBe(200);
+    for (const row of canonical.body.result.records.task as Array<Record<string, any>>) expect(row).not.toHaveProperty("$rev");
+    expect(canonical.body.result.deleted.task).toContain("task:b");
+    expect(canonical.body.result.deletedRevisions).toBeUndefined();
+
+    // A write the transactional adapter commits with its revision is
+    // certified, read through either adapter.
+    for (const mutation of [
+      { resource: "tag", version: 1, operation: "insert", id: "tag:a", clientId: "c1", mutationId: "t1", record: { label: "L" } },
+      { resource: "tag", version: 1, operation: "insert", id: "tag:b", clientId: "c1", mutationId: "t2", record: { label: "M" } },
+      { resource: "tag", version: 1, operation: "delete", id: "tag:b", clientId: "c1", mutationId: "t3" },
+    ]) {
+      expect((await reader.call("push", { clientId: "c1", mutations: [mutation] })).body.result.ok).toBe(true);
+    }
+    for (const server of [reader, writer]) {
+      const tags = await server.call("pull", { clientId: "c3", cursors: { tag: "0" } });
+      const rows = tags.body.result.records.tag as Array<Record<string, any>>;
+      expect(rows.find((row) => row.id === "tag:a")).toMatchObject({ label: "L", $rev: 1 });
+      expect(tags.body.result.deletedRevisions).toEqual({ tag: { "tag:b": 2 } });
+    }
   });
 
   it("creates no revision storage for an atomic /transact it refuses", async () => {

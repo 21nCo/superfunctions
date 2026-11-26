@@ -89,12 +89,19 @@ export interface ChangeEntry {
   record: Record<string, unknown> | null;
   /** DATA-41: the record's revision after this change; absent on rows written without one. */
   rev?: number;
+  /**
+   * DATA-41: set when the writer committed this change together with `rev`
+   * (in one database transaction), so `record` is the stored state at `rev`.
+   * Absent on rows written without that guarantee or before it was recorded.
+   */
+  certified?: true;
 }
 
-/** DATA-41: a change row's revision, when it recorded one. */
-function storedRev(row: Record<string, unknown>): { rev?: number } {
+/** DATA-41: a change row's revision and its write-time provenance, when it recorded one. */
+function storedRev(row: Record<string, unknown>): { rev?: number; certified?: true } {
   const rev = row.rev === null || row.rev === undefined ? NaN : Number(row.rev);
-  return Number.isInteger(rev) && rev > 0 ? { rev } : {};
+  if (!Number.isInteger(rev) || rev <= 0) return {};
+  return Number(row.rev_certified) === 1 ? { rev, certified: true } : { rev };
 }
 
 /**
@@ -137,6 +144,12 @@ export class ChangeTrackingService {
   private revisionsEnsured = false;
   private revColumnReady = false;
   private transactionBound = false;
+  /**
+   * DATA-41: this service records changes inside a database transaction that
+   * also commits the write and its revisions (set by `withDb`), so the rows it
+   * records are certified as the state at their revision.
+   */
+  private writesCertified = false;
   /**
    * DATA-41: record each change's revision on its change row. Set from the
    * server's `revisions.enabled` option; revisions are bumped either way.
@@ -258,8 +271,11 @@ export class ChangeTrackingService {
    * REL-011: Create a new ChangeTrackingService with a different db adapter.
    * Used to run change tracking within a transaction (pass tx db here).
    * The namespace and sequenceStore are inherited from the original instance.
+   * DATA-41: pass `inTransaction` only when `txDb` is a database transaction
+   * that commits the write, its revisions and its change rows together; only
+   * then do change rows certify their row as the state at their revision.
    */
-  withDb(txDb: Adapter, emitChanges = true): ChangeTrackingService {
+  withDb(txDb: Adapter, emitChanges = true, inTransaction = false): ChangeTrackingService {
     const sequenceStore = this.sequenceStore?.withDb?.(txDb) ?? this.sequenceStore;
     const bound = new ChangeTrackingService(
       txDb,
@@ -274,6 +290,7 @@ export class ChangeTrackingService {
     bound.issueRevisions = this.issueRevisions;
     bound.revisionSchema = this.revisionSchema;
     bound.transactionBound = true;
+    bound.writesCertified = inTransaction;
     bound.revisionsEnsured = this.revisionsEnsured;
     bound.revColumnReady = this.revColumnReady;
     return bound;
@@ -403,12 +420,15 @@ export class ChangeTrackingService {
     const recordRev = this.issueRevisions && this.revColumnReady;
     const schema = this.revisionSchema;
     // A change row carrying a revision records the stored row of a resource
-    // the schema issues revisions for.
+    // the schema issues revisions for, but only when the write commits
+    // together with its revision: otherwise another write may land before
+    // the row is read, so the change keeps its own payload.
+    const certified = this.writesCertified;
     await assignWriteRevisions(
       this.db,
       this.namespace,
       entries,
-      (resource) => recordRev && schema !== undefined && issuesRevisions(schema, resource),
+      (resource) => certified && recordRev && schema !== undefined && issuesRevisions(schema, resource),
       schema,
     );
   }
@@ -441,10 +461,11 @@ export class ChangeTrackingService {
     await this.assignRevisions(entries);
     const recordRev = this.issueRevisions && this.revColumnReady;
     const schema = this.revisionSchema;
-    // A change row records a revision only when the write certified its
-    // record: the resource issued revisions when it was written, so the
-    // record is the stored row read in the write (or a patch or delete whose
-    // revision alone is sent). A resource with its own `$rev` field records
+    // A change row records a revision only when the resource issued
+    // revisions when it was written, and records whether the write committed
+    // together with it (`rev_certified`): only then is the record the stored
+    // row read in the write (or a patch or delete whose revision alone is
+    // sent). A resource with its own `$rev` field records
     // none, so its payloads are never read as certified rows later.
     const certifiesRecord = (resource: string): boolean =>
       recordRev && schema !== undefined && issuesRevisions(schema, resource);
@@ -459,7 +480,9 @@ export class ChangeTrackingService {
       op: params.op,
       record: params.record ? JSON.stringify(params.record) : null,
       created_at: now,
-      ...(params.rev !== undefined && certifiesRecord(params.resource) ? { rev: params.rev } : {}),
+      ...(params.rev !== undefined && certifiesRecord(params.resource)
+        ? { rev: params.rev, rev_certified: this.writesCertified ? 1 : 0 }
+        : {}),
     }));
 
     // EXE-018: Batch capability detection — use createMany when available

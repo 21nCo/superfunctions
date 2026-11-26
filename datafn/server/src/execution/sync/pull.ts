@@ -9,7 +9,6 @@ import { ChangeTrackingService, type ChangeEntry } from "./change-tracking.js";
 import {
   issuesRevisions,
   isRevisionCertified,
-  revisionPairsVerifiable,
   revisionsEnabled,
   wireChange,
   withoutUncertifiedRevision,
@@ -802,9 +801,10 @@ async function executePullGlobalCursor(
   }
 
   const changeTracking = new ChangeTrackingService(db, namespace, sequenceStore);
-  // DATA-41: recorded rows certify their revision only where writes commit
-  // together with it.
-  const pairable = revisionsEnabled(schema) && (await revisionPairsVerifiable(db));
+  // DATA-41: a recorded row certifies its revision only when its writer
+  // committed it together with that revision (the change row's write-time
+  // provenance), whatever adapter reads it now.
+  const pairable = (change: ChangeEntry): boolean => revisionsEnabled(schema) && change.certified === true;
   const sinceSeq = parseInt(request.cursor, 10);
   const rawChanges = await changeTracking.getGlobalChanges({
     sinceSeq,
@@ -846,7 +846,7 @@ async function executePullGlobalCursor(
           record: null,
           // DATA-41: a tombstone revision only where the delete committed
           // together with it (see wireChange).
-          ...(pairable && change.rev !== undefined && issuesRevisions(schema, change.resource)
+          ...(pairable(change) && change.rev !== undefined && issuesRevisions(schema, change.resource)
             ? { rev: change.rev }
             : {}),
         });
@@ -867,7 +867,7 @@ async function executePullGlobalCursor(
 
     // DATA-41: a complete row carries its revision as `$rev`; `rev` is the
     // record's revision after any change that recorded one.
-    const wire = wireChange(schema, change.resource, change, pairable);
+    const wire = wireChange(schema, change.resource, change, pairable(change));
     visibleChanges.push({
       serverSeq: change.serverSeq,
       resource: change.resource,
@@ -1024,9 +1024,10 @@ async function executePullCanonical(
 
   const changeTracking = new ChangeTrackingService(db, namespace, sequenceStore);
   const actorId = normalizeNonEmptyString((request as { actorId?: string }).actorId) ?? undefined;
-  // DATA-41: recorded rows certify their revision only where writes commit
-  // together with it.
-  const pairable = revisionsEnabled(schema) && (await revisionPairsVerifiable(db));
+  // DATA-41: a recorded row certifies its revision only when its writer
+  // committed it together with that revision (the change row's write-time
+  // provenance), whatever adapter reads it now.
+  const pairable = (change: ChangeEntry): boolean => revisionsEnabled(schema) && change.certified === true;
 
   const requestedResourceKeys = Object.keys(request.cursors).filter(
     (resource) => resource !== ACTOR_FEED_CURSOR_KEY,
@@ -1039,7 +1040,7 @@ async function executePullCanonical(
   // DATA-41: a change's row as it goes on the wire; a complete row carries
   // its revision as `$rev` (see wireChange).
   const withRev = (resource: string, change: ChangeEntry): Record<string, unknown> =>
-    wireChange(schema, resource, change, pairable).record!;
+    wireChange(schema, resource, change, pairable(change)).record!;
   const revisionOf = (resource: string, change: ChangeEntry): number | undefined =>
     change.rev !== undefined && issuesRevisions(schema, resource) ? change.rev : undefined;
   // DATA-41: ids with a delete that recorded no revision get no tombstone
@@ -1151,7 +1152,7 @@ async function executePullCanonical(
       // id in this page recorded one, and only where a delete commits together
       // with its revision (pairable): otherwise the revision may name a state
       // other than the absence it is sent with.
-      const rev = pairable ? revisionOf(resource, change) : undefined;
+      const rev = pairable(change) ? revisionOf(resource, change) : undefined;
       if (rev === undefined) {
         unrevisionedDeletes.add(`${resource}\u0000${change.id}`);
       } else {

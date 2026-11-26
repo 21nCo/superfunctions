@@ -155,7 +155,10 @@ describe("Phase 05: Mutation Optimization", () => {
         Array.isArray(params?.where) &&
         params.where.some((c: any) => c?.field === "id" && c?.operator === "eq" && c?.value === "task-strict-update"),
       );
-      expect(mergeFallbackReads).toHaveLength(0);
+      // DATA-41: revision assignment reads the record once to confirm the
+      // merge changed a present row (bumpPresent); the merge itself makes no
+      // not-found fallback read.
+      expect(mergeFallbackReads).toHaveLength(1);
 
       findOneSpy.mockRestore();
       const record = await db.findOne({
@@ -332,7 +335,10 @@ describe("Phase 05: Mutation Optimization", () => {
         Array.isArray(params?.where) &&
         params.where.some((c: any) => c?.field === "id" && c?.operator === "eq" && c?.value === "task-push-strict"),
       );
-      expect(mergeFallbackReads).toHaveLength(0);
+      // DATA-41: revision assignment reads the record once to confirm the
+      // merge changed a present row (bumpPresent); the merge itself makes no
+      // not-found fallback read.
+      expect(mergeFallbackReads).toHaveLength(1);
 
       findOneSpy.mockRestore();
       const record = await db.findOne({

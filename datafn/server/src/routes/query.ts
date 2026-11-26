@@ -970,8 +970,10 @@ export function createQueryHandler(
                 // projects it, without `$rev`. If revision setup or any read
                 // inside the snapshot fails (thrown, or swallowed by a
                 // push-down or in-memory fallback, which on PostgreSQL aborts
-                // the transaction), the query is run again outside it, with
-                // access resolved as before and without revisions.
+                // the transaction), the query is run again outside it,
+                // without revisions, and with access resolved afresh too: an
+                // earlier query of the batch may have cached a membership
+                // revoked since.
                 const readable = (row: Record<string, unknown>) =>
                   canReadEveryField(validatedSchema, resourceName, row);
                 const select = Array.isArray(query.select) ? (query.select as string[]) : undefined;
@@ -983,7 +985,7 @@ export function createQueryHandler(
                   (readDb) => run(readDb, false, readDb, new Map()),
                   () => {
                     plain = true;
-                    return run(db);
+                    return run(db, true, db, new Map());
                   },
                   rowsOf,
                   readable,
