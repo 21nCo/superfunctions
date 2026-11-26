@@ -1756,11 +1756,11 @@ describe("DATA-41 revisions: a tombstone needs an actual delete (round 10)", () 
     const wrap = (db: Adapter): Adapter =>
       new Proxy(db, {
         get(target, property, receiver) {
-          if (property === "delete") {
+          if (property === "delete" || property === "deleteMany") {
             return async (args: any) => {
               const id = (args.where ?? []).find((w: any) => w.field === "id")?.value;
-              if (ids.has(id)) return undefined;
-              return target.delete(args);
+              if (ids.has(id)) return property === "delete" ? undefined : 0;
+              return (target as any)[property](args);
             };
           }
           if (property === "transaction") {
@@ -2006,15 +2006,15 @@ describe("DATA-41 revisions: a tombstone needs a present-to-absent delete (round
     const racing = {
       ...database,
       capabilities: { ...database.capabilities, transactions: { supported: false, nested: false } },
-      updateMany: async (args: any) => {
+      deleteMany: async (args: any) => {
         if (args.model === "task" && concurrentDelete) {
           // Another delete of the record removes it and commits its
-          // tombstone just before this delete locks the row, which matches nothing.
+          // tombstone just before this delete's DELETE, which matches nothing.
           const write = concurrentDelete;
           concurrentDelete = undefined;
           await write();
         }
-        return database.updateMany(args);
+        return database.deleteMany(args);
       },
     } as Adapter;
     const served = await serve({ database: racing });
@@ -3529,7 +3529,9 @@ describe("DATA-41 revisions: PR review round 4", () => {
     await stale.findOne(record("task:1"));
     await served.push({ resource: "task", operation: "delete", id: "task:1" });
     const lost = withWriteEvidence(stale);
-    await expect(lost.update({ ...record("task:1"), data: { projectId: null } })).rejects.toThrow(/not found/i);
+    // Its UPDATE matches nothing; the re-select returns the snapshot row, as
+    // the MySQL adapters' update does.
+    await lost.update({ ...record("task:1"), data: { projectId: null } });
     const relationEntry: any[] = [{ resource: "task", id: "task:1", op: "merge", record: { id: "task:1", projectId: null } }];
     await assignWriteRevisions(lost, NS, relationEntry, () => true, schema);
     expect(relationEntry[0].rev).toBeUndefined();
@@ -3666,7 +3668,7 @@ describe("DATA-41 revisions: PR review round 4", () => {
  * its revision row: another writer commits first (on the shared store). An UPDATE that matched no
  * row returns null (`race.miss` "null") or throws not found ("throw").
  */
-type Race = { id: string; run?: (db: Adapter) => Promise<void>; miss: "null" | "throw" };
+type Race = { id: string; run?: (db: Adapter) => Promise<void>; miss: "null" | "throw"; adapterId?: string };
 
 function snapshotReads(database: Adapter, race: Race): Adapter {
   const idOf = (where: any[] | undefined) => String((where ?? []).find((w: any) => w.field === "id")?.value);
@@ -3704,6 +3706,7 @@ function snapshotReads(database: Adapter, race: Race): Adapter {
     return new Proxy(tx, {
       get(target, property, receiver) {
         if (property === "internal") return internal;
+        if (property === "id" && race.adapterId) return race.adapterId;
         if (property === "findOne") {
           return (args: any) => read(`${args.model}:${idOf(args.where)}`, () => target.findOne(args));
         }
@@ -3731,7 +3734,8 @@ function snapshotReads(database: Adapter, race: Race): Adapter {
             const id = property === "create" ? String(args.data?.id) : idOf(args.where);
             await beforeWrite(args.model, id);
             const out = await (target as any)[property](args);
-            seen.delete(`${args.model}:${id}`);
+            // A statement that matched no row leaves the snapshot as it was.
+            if (typeof out !== "number" || out > 0) seen.delete(`${args.model}:${id}`);
             return out;
           };
         }
@@ -3755,7 +3759,7 @@ function snapshotReads(database: Adapter, race: Race): Adapter {
 describe("DATA-41 revisions: PR review round 5", () => {
   it.each(["push", "mutation"])("raises nothing for a %s setNull child whose stale snapshot row a concurrent delete removed", async (route) => {
     const database = memoryAdapter();
-    const race: Race = { id: "task:1", miss: "null" };
+    const race: Race = { id: "task:1", miss: "null", adapterId: "innodb-view" };
     const served = await serve({ database: snapshotReads(database, race) });
     await served.push({ resource: "project", operation: "insert", id: "project:1", record: { name: "p" } });
     await served.push({ resource: "task", operation: "insert", id: "task:1", record: { title: "a", projectId: "project:1" } });
@@ -3943,22 +3947,66 @@ describe("DATA-41 revisions: PR review round 5", () => {
     expect(await served.rev("task", "task:1")).toEqual({ rev: 2, deleted: true });
   });
 
-  it("keeps application $rev values when afterQuery hooks reshape a mixed batch", async () => {
+  it("strips row $rev from a mixed batch the afterQuery hooks reshape, and keeps nested data", async () => {
     const hooks = {
       name: "shorten",
       runsOn: ["server"],
-      afterQuery: (_ctx: unknown, _query: unknown, result: unknown) => (Array.isArray(result) ? result.slice(1) : result),
+      afterQuery: (_ctx: unknown, _query: unknown, result: unknown) => (!Array.isArray(result) ? result
+        : result.slice(1).map((entry: Json) => ({
+          ...entry,
+          data: entry.data.map((row: Json) => (row.id === "legacy:2" ? { ...row, meta: { $rev: "nested" } } : row)),
+        }))),
     };
     const served = await serve({ config: { plugins: [hooks] } });
     await served.push({ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } });
-    await served.push({ resource: "legacy", operation: "insert", id: "legacy:1", record: { $rev: "app-value" } });
+    await served.push({ resource: "legacy", operation: "insert", id: "legacy:1", record: { $rev: "99" } });
+    await served.push({ resource: "legacy", operation: "insert", id: "legacy:2", record: {} });
     const res = await served.send("query", [
       { version: 1, resource: "task", withRevisions: true },
-      { version: 1, resource: "legacy" },
+      { version: 1, resource: "legacy", sort: ["id"] },
     ]);
     expect(res.body.ok, JSON.stringify(res.body)).toBe(true);
+    // The legacy rows now sit where the versioned task rows were: no result can
+    // be tied to the query that certified it, so no row keeps a `$rev`.
     expect(res.body.result).toHaveLength(1);
-    expect(res.body.result[0].data).toEqual([expect.objectContaining({ id: "legacy:1", $rev: "app-value" })]);
+    expect(res.body.result[0].data).toEqual([{ id: "legacy:1" }, { id: "legacy:2", meta: { $rev: "nested" } }]);
+  });
+
+  it("tombstones a delete and continues on re-insert where counts are changed rows", async () => {
+    const served = await serve({ database: changedRowCounts(memoryAdapter()) });
+    await served.push({ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } });
+    await served.push({ resource: "task", operation: "delete", id: "task:1" });
+    expect(await served.rev("task", "task:1")).toEqual({ rev: 2, deleted: true });
+    await served.push({ resource: "task", operation: "insert", id: "task:1", record: { title: "b" } });
+    expect(await served.rev("task", "task:1")).toEqual({ rev: 3, deleted: false });
+  });
+
+  it("runs each record write as one statement, with no extra UPDATE", async () => {
+    const calls: string[] = [];
+    const counting = (db: Adapter): Adapter => new Proxy(db, {
+      get(target, property, receiver) {
+        const value = Reflect.get(target, property, receiver);
+        if (property === "transaction") {
+          return (fn: (tx: Adapter) => Promise<unknown>) => target.transaction((tx) => fn(counting(tx as Adapter)));
+        }
+        if (["update", "updateMany", "delete", "deleteMany"].includes(String(property))) {
+          return (args: any) => {
+            if (args?.model === "task") calls.push(String(property));
+            return (value as (a: unknown) => unknown).call(target, args);
+          };
+        }
+        return value;
+      },
+    });
+    const served = await serve({ database: counting(changedRowCounts(memoryAdapter())) });
+    await served.push({ resource: "task", operation: "insert", id: "task:1", record: { title: "a" } });
+    calls.length = 0;
+    await served.push({ resource: "task", operation: "merge", id: "task:1", record: { title: "b" } });
+    expect(calls).toEqual(["updateMany"]);
+    calls.length = 0;
+    await served.push({ resource: "task", operation: "delete", id: "task:1" });
+    expect(calls).toEqual(["deleteMany"]);
+    expect(await served.rev("task", "task:1")).toEqual({ rev: 3, deleted: true });
   });
 });
 
