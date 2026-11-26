@@ -461,6 +461,7 @@ jobs:
           CLI_SOURCE: ${{ inputs.cli_source }}
           CHECKOUT_COMMIT: ${{ steps.caller_checkout.outputs.commit }}
           ALLOW_INSTALL_SCRIPTS: ${{ inputs.allow_install_scripts }}
+          NPM_TARBALL_SHA512: sha512-5Cf+jE+XctbhH/zjOOqXC+ity7eec/Tkk4Ql38tf6w+1htp2wYPHmE4c1R1Es3DY227Ac14+SLrlYJwkBicbTg==
         run: |
           set -euo pipefail
           # The commit the checkout bound before any caller code ran; the install and the check compare against it,
@@ -490,25 +491,33 @@ jobs:
             git -C "$GITHUB_WORKSPACE" diff --binary "$CHECKOUT_COMMIT" "${outside_node_modules[@]}"
           }
           before="$(tree_state | sha256sum)"
-          # The npm bundled with Node 20 (10.8) still runs the prepare script of a git dependency, or of a directory
-          # dependency it installs as a copy, under --ignore-scripts; npm 11.21 (pacote 21) skips it. This exact npm is
-          # installed outside the checkout, from outside the caller's directory (so its .npmrc does not apply), without
-          # scripts, and put first on PATH for the caller install only.
-          caller_npm="$RUNNER_TEMP/apifn-caller-npm"
-          (cd "$RUNNER_TEMP" && npm install --global --prefix "$caller_npm" --ignore-scripts --no-audit --no-fund npm@11.21.3)
-          export PATH="$caller_npm/bin:$PATH"
-          if [ "$(npm --version)" != "11.21.3" ]; then
-            echo "::error::The caller install needs npm 11.21.3; found $(npm --version)"
-            exit 1
-          fi
           # Lifecycle scripts (the caller's and its dependencies', prepare included) run only when the caller sets
           # allow_install_scripts: true; anything else installs with them off. Either way npm ci runs in this read-only
           # job, and the tree and HEAD checks around it fail closed.
           if [ "$ALLOW_INSTALL_SCRIPTS" == "true" ]; then
-            echo "allow_install_scripts is true: npm ci runs the lifecycle scripts."
+            echo "allow_install_scripts is true: npm ci runs the lifecycle scripts (npm $(npm --version))."
             npm ci --ignore-scripts=false
           else
-            echo "allow_install_scripts is false: npm ci --ignore-scripts (set it to true if the router needs files install scripts build or generate)."
+            # The npm bundled with Node 20 (10.8) still runs the prepare script of a git dependency, or of a directory
+            # dependency it installs as a copy, under --ignore-scripts; npm 11.21 (pacote 21) skips it. That exact npm
+            # is downloaded and checked against its registry integrity, installed offline outside the checkout from
+            # outside the caller's directory (so its .npmrc does not apply) without scripts, and put first on PATH.
+            caller_npm="$RUNNER_TEMP/apifn-caller-npm"
+            tarball="$RUNNER_TEMP/npm-11.21.3.tgz"
+            curl --fail --silent --show-error --location --proto =https --proto-redir =https --output "$tarball" \
+              https://registry.npmjs.org/npm/-/npm-11.21.3.tgz
+            integrity="$(node -e "const c=require('node:crypto');process.stdout.write('sha512-'+c.createHash('sha512').update(require('node:fs').readFileSync(process.argv[1])).digest('base64'))" "$tarball")"
+            if [ "$integrity" != "$NPM_TARBALL_SHA512" ]; then
+              echo "::error::npm-11.21.3.tgz does not match its pinned integrity"
+              exit 1
+            fi
+            (cd "$RUNNER_TEMP" && npm install --global --prefix "$caller_npm" --ignore-scripts --offline --no-audit --no-fund "$tarball")
+            export PATH="$caller_npm/bin:$PATH"
+            if [ "$(npm --version)" != "11.21.3" ]; then
+              echo "::error::The caller install needs npm 11.21.3; found $(npm --version)"
+              exit 1
+            fi
+            echo "allow_install_scripts is false: npm ci --ignore-scripts with npm 11.21.3 (set it to true if the router needs files install scripts build or generate)."
             npm ci --ignore-scripts
           fi
           if [ "$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)" != "$CHECKOUT_COMMIT" ]; then
