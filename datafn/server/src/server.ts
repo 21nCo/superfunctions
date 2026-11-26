@@ -16,6 +16,8 @@ import {
   createObservabilityMiddleware,
   createRouter,
   executeMiddlewareChain,
+  createRouteContext,
+  mergeContexts,
   type Router,
   type Route,
   type RouteHandler,
@@ -1514,22 +1516,32 @@ export async function createDatafnServer<TContext = any>(
         if (action === "push") {
           // DATA-41: push returns a post-write row only to a caller whom a
           // query of the resource would admit: a route ticket with the query
-          // scope where tickets are required, and the plugin and host
-          // authorization of a query request (the REST read payload
-          // `{ resource }`). A denial or error omits the row.
+          // scope where tickets are configured (a push admitted without a
+          // ticket gets none), and the plugin and host authorization of a
+          // query request (the REST read payload `{ resource }`) whose
+          // context the configured context factory builds afresh from that
+          // request, in the push's namespace. A denial or error omits the row.
           const requireQueryTicket = Boolean(multiRegionRuntime?.placement?.routeTickets);
           pushReadAuthorizers.set(enrichedCtx, async (resource) => {
             try {
               if (requireQueryTicket && !admittedTicketScopes?.includes("query")) return false;
               const readPayload = { resource };
               const readUrl = new URL(req.url);
-              if (!readUrl.pathname.endsWith("/push")) return false;
-              readUrl.pathname = `${readUrl.pathname.slice(0, -"/push".length)}/query`;
+              const pushPath = readUrl.pathname.replace(/\/+$/, "");
+              if (!pushPath.endsWith("/push")) return false;
+              readUrl.pathname = `${pushPath.slice(0, -"/push".length)}/query`;
               const headers = new Headers(req.headers);
               headers.delete("content-length");
               const readRequest = new Request(readUrl, { method: "POST", headers, body: JSON.stringify(readPayload) });
-              const readCtx = createEnrichedContext(ctx);
+              const configuredContext = config.context;
+              const readUserCtx = typeof configuredContext === "function"
+                ? await (configuredContext as (request: Request) => Promise<TContext> | TContext)(readRequest)
+                : configuredContext ?? ({} as TContext);
+              const readCtx = createEnrichedContext(
+                mergeContexts(readUserCtx as object, createRouteContext(readRequest, {})) as TContext,
+              );
               readCtx.parsedBody = readPayload;
+              if ((await extractNamespace(readCtx)) !== (await extractNamespace(enrichedCtx))) return false;
               if (!(await authorizePlugins({ action: "query", request: readRequest, context: readCtx, payload: readPayload })).ok) {
                 return false;
               }

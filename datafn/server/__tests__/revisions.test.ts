@@ -2808,4 +2808,28 @@ describe("DATA-41 revisions: PR review round 1", () => {
     expect(await pushWith(["push"], "task:1")).toEqual({ resource: "task", id: "task:1", rev: 1 });
     expect((await pushWith(["push", "query"], "task:2")).record).toMatchObject({ id: "task:2", $rev: 1 });
   });
+
+  it("builds the read check's context from the query request, and accepts the push route with a trailing slash", async () => {
+    // The host authenticates per endpoint in its context factory: only a reader credential is a principal on /query.
+    const server = await createDatafnServer({
+      schema, database: memoryAdapter(), allowUnknownResources: true, revisions: { enabled: true },
+      context: (request: Request) => ({
+        principal: new URL(request.url).pathname.endsWith("/query")
+          ? (request.headers.get("x-test-role") === "reader" ? "reader" : null)
+          : "writer",
+      }),
+      authorize: (ctx: Json, action: string) => action !== "query" || ctx.principal !== null,
+    } as any);
+    const pushAs = async (role: string, id: string, path = "/datafn/push") => {
+      const res = await server.router.handle(new Request(`http://localhost${path}`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-test-role": role },
+        body: JSON.stringify({ clientId: "c", mutations: [{ version: 1, clientId: "c", mutationId: id, resource: "task", operation: "insert", id, record: { title: "t" } }] }),
+      }));
+      return ((await res.json()) as Json).result?.revisions?.[id];
+    };
+    expect(await pushAs("writer", "task:1")).toEqual({ resource: "task", id: "task:1", rev: 1 });
+    expect((await pushAs("reader", "task:2")).record).toMatchObject({ id: "task:2", $rev: 1 });
+    expect((await pushAs("reader", "task:3", "/datafn/push/")).record).toMatchObject({ id: "task:3", $rev: 1 });
+  });
 });

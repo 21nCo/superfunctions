@@ -1241,7 +1241,8 @@ export async function executePush(
     }
 
     const batchKey = `${mut.clientId}:${mut.mutationId}`;
-    const target = revisionKey(String(mut.resource), String(mut.id));
+    // A mutation without a record id (a scope operation) never matches a record's key.
+    const target = JSON.stringify([mut.resource ?? null, typeof mut.id === "string" ? mut.id : null]);
     if ((revisionTargets.get(mut.mutationId) ?? target) !== target) ambiguousRevisionIds.add(mut.mutationId);
     revisionTargets.set(mut.mutationId, target);
 
