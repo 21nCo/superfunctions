@@ -213,6 +213,9 @@ export class AdapterRuntimeStorage {
         event: input.event,
         connectionId: input.connectionId,
         workflowTenantId: input[webhookReceiptTenantId],
+        idempotencyKey: null,
+        ownerKind: null,
+        ownerId: null,
         payloadHash: input.payloadHash,
         headersRedacted: input.headersRedacted,
         verificationStatus: 'verified',
@@ -242,7 +245,7 @@ export class AdapterRuntimeStorage {
       ...receiptKey,
       ...(receiptKey.workflowIdempotencyKey ? { workflowTenantId: input[webhookReceiptTenantId] } : {}),
       connectionId: input.connectionId,
-      ...ownerFields(input.owner),
+      ...ownerFields(receiptKey.workflowIdempotencyKey ? undefined : input.owner),
       headersRedacted: input.headersRedacted,
       payloadHash: input.payloadHash,
       verificationStatus: input.verificationStatus ?? 'not-required',
@@ -306,7 +309,8 @@ export class AdapterRuntimeStorage {
     let existing: PlugFnWebhookReceipt | null = null;
     if (normalizedUpdates.provider === undefined) delete normalizedUpdates.provider;
     if ('provider' in normalizedUpdates || 'connectionId' in normalizedUpdates || 'idempotencyKey' in normalizedUpdates ||
-        'id' in normalizedUpdates || 'event' in normalizedUpdates || 'payloadHash' in normalizedUpdates) {
+        'id' in normalizedUpdates || 'event' in normalizedUpdates || 'payloadHash' in normalizedUpdates ||
+        'ownerKind' in normalizedUpdates || 'ownerId' in normalizedUpdates) {
       existing = await this.adapter.getWebhookReceipt(id);
       if (existing) assertWebhookReceiptProvider(existing, normalizedUpdates.provider);
       if (existing?.workflowIdempotencyKey) {
@@ -316,6 +320,8 @@ export class AdapterRuntimeStorage {
         delete normalizedUpdates.id;
         delete normalizedUpdates.event;
         delete normalizedUpdates.payloadHash;
+        delete normalizedUpdates.ownerKind;
+        delete normalizedUpdates.ownerId;
       }
     }
     if (updates.metadata !== undefined) {

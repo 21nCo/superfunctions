@@ -503,7 +503,7 @@ class DbBackedPlugFnDatabaseAdapter implements PlugFnDatabaseStorageAdapter {
     delete data.signatureVerified;
     let existing: PlugFnWebhookReceipt | null = null;
     if (provider !== undefined || 'connectionId' in data || 'event' in data || 'idempotencyKey' in data ||
-        'payloadHash' in data || 'id' in data) {
+        'payloadHash' in data || 'id' in data || 'ownerKind' in data || 'ownerId' in data) {
       existing = await this.getWebhookReceipt(id);
       if (!existing) throw new NotFoundError(model, where);
       assertWebhookReceiptProvider(existing, provider);
@@ -513,6 +513,8 @@ class DbBackedPlugFnDatabaseAdapter implements PlugFnDatabaseStorageAdapter {
         delete data.idempotencyKey;
         delete data.payloadHash;
         delete data.id;
+        delete data.ownerKind;
+        delete data.ownerId;
       } else if (provider !== undefined && provider !== existing.provider) {
         data.provider = provider;
         // A provider change may only update a row that is still standalone.

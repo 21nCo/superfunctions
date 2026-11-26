@@ -129,6 +129,8 @@ describe('webhook workflow admission', () => {
       id: 'test-other-receipt',
       event: 'test.other-event',
       payloadHash: 'test-other-payload',
+      ownerKind: 'organization',
+      ownerId: 'test-unverified-owner',
     })).resolves.toEqual(receipt);
 
     const duplicate = await send('test-installation-one');
@@ -185,6 +187,7 @@ describe('webhook workflow admission', () => {
         data: {
           id: 'test-stale-receipt', provider: verified.provider, event: input.event,
           workflowIdempotencyKey: scopeKey, payloadHash: input.payloadHash, verificationStatus: 'not-required',
+          ownerKind: 'organization', ownerId: 'test-unverified-owner', idempotencyKey: 'test-standalone-key',
           createdAt: new Date(0), receivedAt: new Date(0),
         },
       });
@@ -226,6 +229,7 @@ describe('webhook workflow admission', () => {
     expect(listener).toHaveBeenCalledOnce();
     await expect(webhooks.getReceipt('test-stale-receipt')).resolves.toMatchObject({
       workflowTenantId: firstBinding.tenantId, connectionId: firstBinding.connectionId, signatureVerified: true,
+      ownerKind: null, ownerId: null, idempotencyKey: null,
     });
   });
 
@@ -558,6 +562,37 @@ describe('webhook workflow admission', () => {
     await expect(custom.updateWebhookDelivery(scoped.id, { receiptId: undefined })).resolves.toMatchObject({
       receiptId: scoped.receiptId,
     });
+  });
+
+  it('clears replay payloads if an unmarked scoped attempt reaches the standalone worker', async () => {
+    const { runtime, send } = startRuntime(database);
+    expect((await send('test-installation-one')).status).toBe(200);
+    const [scoped] = await database.findMany<PlugFnWebhookDelivery>({ model: deliveryModel });
+    const unexpected = await runtime.runtime.webhooks.createDelivery({
+      receiptId: scoped.receiptId,
+      metadata: {
+        rawBodyBase64: Buffer.from('test-legacy-body').toString('base64'),
+        rawBodyExpiresAt: new Date(Date.now() + 60_000).toISOString(),
+        applicationTag: 'test-tag',
+      },
+    });
+    await database.update({
+      model: deliveryModel,
+      where: [{ field: 'id', operator: 'eq', value: unexpected.id }],
+      data: { workflowScoped: null },
+    });
+    const retry = vi.fn();
+    const result = await runtime.runtime.webhooks.processDueDeliveries(retry);
+    expect(result).toMatchObject({
+      deadLettered: 1,
+      deliveries: [expect.objectContaining({
+        id: unexpected.id,
+        metadata: expect.objectContaining({ applicationTag: 'test-tag' }),
+      })],
+    });
+    expect(result.deliveries[0].metadata).not.toHaveProperty('rawBodyBase64');
+    expect(result.deliveries[0].metadata).not.toHaveProperty('rawBodyExpiresAt');
+    expect(retry).not.toHaveBeenCalled();
   });
 
   it('preserves the original Buffer for a standalone SDK verifier', async () => {

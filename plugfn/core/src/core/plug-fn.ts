@@ -869,6 +869,7 @@ export function plugFn(config: PlugFnConfig): PlugFn {
         const excluded = await updateClaimed({
           status: 'dead-lettered',
           error: 'scoped webhook retries require verified ingress',
+          metadata: withoutWebhookReplayBody(delivery.metadata),
         });
         if (excluded) {
           deliveries.push(excluded);
