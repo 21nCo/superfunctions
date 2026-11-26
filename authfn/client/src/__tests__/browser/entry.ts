@@ -1,7 +1,7 @@
 import {
   createAuthFnClient,
   createBrowserHandoff,
-  createWebStorageHandoffStore,
+  createIndexedDbHandoffStore,
   type AuthFnBrowserHandoffEvent
 } from '../../index.js';
 
@@ -9,13 +9,17 @@ import {
 const events: AuthFnBrowserHandoffEvent[] = [];
 const client = createAuthFnClient({ baseUrl: '/auth' });
 
+/** The page's IndexedDB store; without IndexedDB it is `atomic: false`. */
+const store = (input: { atomic?: boolean } = {}) =>
+  createIndexedDbHandoffStore(input.atomic === false ? { indexedDB: null } : {});
+
 function make(input: { atomic?: boolean } = {}) {
   return createBrowserHandoff({
-    store: createWebStorageHandoffStore(localStorage, input.atomic === false ? { locks: null } : {}),
+    store: store(input),
     allowedOrigins: ['https://app.example.com'],
     exchange: client.exchangeSocialHandoff,
     onEvent: (event) => events.push(event)
   });
 }
 
-(globalThis as unknown as { authfnTest: unknown }).authfnTest = { client, events, make };
+(globalThis as unknown as { authfnTest: unknown }).authfnTest = { client, events, make, store };

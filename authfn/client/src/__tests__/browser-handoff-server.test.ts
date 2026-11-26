@@ -138,6 +138,51 @@ async function runCallback(auth: TestServer, baseUrl: string, stateId: string): 
   return callback.headers.get('location')!;
 }
 
+/**
+ * Signs the provider's user in with a cookie (no handoff), which creates the
+ * account, and enrolls a TOTP second factor. Returns the TOTP secret.
+ */
+async function enrollTwoFactor(auth: TestServer, baseUrl: string): Promise<string> {
+  const jar = new Map<string, string>();
+  const remember = (response: Response) => {
+    for (const cookie of response.headers.getSetCookie()) {
+      const pair = cookie.split(';')[0]!;
+      const name = pair.slice(0, pair.indexOf('=')).trim();
+      const value = pair.slice(pair.indexOf('=') + 1);
+      if (value) {
+        jar.set(name, value);
+      } else {
+        jar.delete(name);
+      }
+    }
+  };
+  const cookieHeader = () => Array.from(jar, ([name, value]) => `${name}=${value}`).join('; ');
+  const account = createAuthFnClient({
+    baseUrl,
+    cookieAccessor: cookieHeader,
+    fetch: async (input, init) => {
+      const headers = new Headers(init?.headers);
+      headers.set('cookie', cookieHeader());
+      const response = await auth.router.handle(new Request(String(input), { method: init?.method, headers, body: init?.body }));
+      remember(response);
+      return response;
+    }
+  });
+  const cookieStart = await account.startSocialSignIn({ provider: 'google', returnTo: `${APP}/signed-in`, callbackMode: 'redirect' });
+  if (!cookieStart.ok) {
+    throw new Error(`social start failed: ${cookieStart.error.code}`);
+  }
+  remember(await auth.router.handle(new Request(
+    `${baseUrl}/social/callback/google?code=test-provider-code&state=${encodeURIComponent(cookieStart.data.stateId)}`
+  )));
+  const enrollment = await account.enableTwoFactor();
+  if (!enrollment.ok) {
+    throw new Error(`2fa enrollment failed: ${enrollment.error.code}`);
+  }
+  expect((await account.confirmTwoFactor({ code: generateTotp(enrollment.data.secret) })).ok).toBe(true);
+  return enrollment.data.secret;
+}
+
 describe('createBrowserHandoff against the AuthFn social plugin', () => {
   it('completes once through the real start, callback redirect and single-use exchange', async () => {
     const { auth, client } = createServerAndClient();
@@ -190,44 +235,7 @@ describe('createBrowserHandoff with two-factor and regional AuthFn servers', () 
     const { auth, client } = createServerAndClient({ twoFactor: true });
     const baseUrl = 'https://account.example.com/auth';
 
-    // A cookie sign-in (no handoff) creates the user, who enrolls a second factor.
-    const jar = new Map<string, string>();
-    const remember = (response: Response) => {
-      for (const cookie of response.headers.getSetCookie()) {
-        const pair = cookie.split(';')[0]!;
-        const name = pair.slice(0, pair.indexOf('=')).trim();
-        const value = pair.slice(pair.indexOf('=') + 1);
-        if (value) {
-          jar.set(name, value);
-        } else {
-          jar.delete(name);
-        }
-      }
-    };
-    const cookieHeader = () => Array.from(jar, ([name, value]) => `${name}=${value}`).join('; ');
-    const account = createAuthFnClient({
-      baseUrl,
-      cookieAccessor: cookieHeader,
-      fetch: async (input, init) => {
-        const headers = new Headers(init?.headers);
-        headers.set('cookie', cookieHeader());
-        const response = await auth.router.handle(new Request(String(input), { method: init?.method, headers, body: init?.body }));
-        remember(response);
-        return response;
-      }
-    });
-    const cookieStart = await account.startSocialSignIn({ provider: 'google', returnTo: `${APP}/signed-in`, callbackMode: 'redirect' });
-    if (!cookieStart.ok) {
-      throw new Error(`social start failed: ${cookieStart.error.code}`);
-    }
-    remember(await auth.router.handle(new Request(
-      `${baseUrl}/social/callback/google?code=test-provider-code&state=${encodeURIComponent(cookieStart.data.stateId)}`
-    )));
-    const enrollment = await account.enableTwoFactor();
-    if (!enrollment.ok) {
-      throw new Error(`2fa enrollment failed: ${enrollment.error.code}`);
-    }
-    expect((await account.confirmTwoFactor({ code: generateTotp(enrollment.data.secret) })).ok).toBe(true);
+    await enrollTwoFactor(auth, baseUrl);
 
     const store = createMemoryHandoffStore();
     const options = { store, allowedOrigins: [APP], exchange: client.exchangeSocialHandoff };
@@ -252,50 +260,94 @@ describe('createBrowserHandoff with two-factor and regional AuthFn servers', () 
     });
   });
 
-  it('exchanges in the region the sign-in began in after a reload starts in the default region', async () => {
-    const servers: Record<string, TestServer> = { us: createAuthServer(), eu: createAuthServer() };
-    const exchangeHosts: string[] = [];
+  /** Two AuthFn regions behind real regional clients; each page builds a new client in region us. */
+  function setupRegions(input: { twoFactor?: boolean } = {}) {
+    const servers: Record<string, TestServer> = {
+      us: createAuthServer(input),
+      eu: createAuthServer(input)
+    };
+    const requests: string[] = [];
     const baseUrlOf = (regionId: string) => `https://${regionId}.account.example.com/auth`;
+    const clientOptions = {
+      fetch: async (request: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(String(request));
+        requests.push(`${url.host}${url.pathname}`);
+        return fetchVia(servers[url.host.split('.')[0]!]!)(request, init);
+      }
+    };
     const regionalClient = () => createAuthFnRegionalClient({
       defaultRegionId: 'us',
       resolveBaseUrl: baseUrlOf,
       storage: { get: async () => null, set: async () => undefined, delete: async () => undefined },
-      clientOptions: {
-        fetch: async (input, init) => {
-          const url = new URL(String(input));
-          if (url.pathname.endsWith('/social/handoff/exchange')) {
-            exchangeHosts.push(url.host);
-          }
-          return fetchVia(servers[url.host.split('.')[0]!]!)(input, init);
-        }
-      }
+      clientOptions
     });
-    const store = createMemoryHandoffStore();
+    const handoffFor = (client: ReturnType<typeof regionalClient>, store: AuthFnBrowserHandoffStore) =>
+      createBrowserHandoff({
+        store,
+        allowedOrigins: [APP],
+        exchange: createRegionalHandoffExchange({ regionalClient: client, resolveBaseUrl: baseUrlOf, clientOptions })
+      });
+    /** Begins in region eu and returns where eu's callback redirects. */
+    const beginInEu = async (store: AuthFnBrowserHandoffStore) => {
+      const before = regionalClient();
+      before.setCurrentRegionId('eu');
+      const begun = await handoffFor(before, store)
+        .begin({ returnTo: `${APP}/post-auth`, regionId: before.getCurrentRegionId() });
+      const started = await before.startSocialSignIn({ provider: 'google', ...begun.start });
+      if (!started.ok) {
+        throw new Error(`social start failed: ${started.error.code}`);
+      }
+      return { begun, location: await runCallback(servers.eu!, baseUrlOf('eu'), started.data.stateId) };
+    };
+    return { servers, requests, baseUrlOf, regionalClient, handoffFor, beginInEu };
+  }
 
-    const before = regionalClient();
-    before.setCurrentRegionId('eu');
-    const begun = await createBrowserHandoff({
-      store,
-      allowedOrigins: [APP],
-      exchange: createRegionalHandoffExchange(before)
-    }).begin({ returnTo: `${APP}/post-auth`, regionId: before.getCurrentRegionId() });
-    const started = await before.startSocialSignIn({ provider: 'google', ...begun.start });
-    if (!started.ok) {
-      throw new Error(`social start failed: ${started.error.code}`);
-    }
-    const location = await runCallback(servers.eu!, baseUrlOf('eu'), started.data.stateId);
+  it('exchanges in the region the sign-in began in after a reload starts in the default region', async () => {
+    const { requests, regionalClient, handoffFor, beginInEu } = setupRegions();
+    const store = createMemoryHandoffStore();
+    const { begun, location } = await beginInEu(store);
 
     // The page after the redirect builds a new client, back in region us.
     const after = regionalClient();
     expect(after.getCurrentRegionId()).toBe('us');
-    const result = await createBrowserHandoff({
-      store,
-      allowedOrigins: [APP],
-      exchange: createRegionalHandoffExchange(after)
-    }).complete(location);
+    const result = await handoffFor(after, store).complete(location);
 
     expect(result).toMatchObject({ status: 'completed', handoffId: begun.handoffId });
-    expect(exchangeHosts).toEqual(['eu.account.example.com']);
+    expect(requests.filter((request) => request.endsWith('/social/handoff/exchange')))
+      .toEqual(['eu.account.example.com/auth/social/handoff/exchange']);
+    // The session lives in eu, so the client continues there.
     expect(after.getCurrentRegionId()).toBe('eu');
+  });
+
+  it('returns the issuing region with a two-factor challenge, so it completes there after a reload', async () => {
+    const { servers, requests, baseUrlOf, regionalClient, handoffFor, beginInEu } = setupRegions({ twoFactor: true });
+    const secret = await enrollTwoFactor(servers.eu!, baseUrlOf('eu'));
+    const store = createMemoryHandoffStore();
+    const { begun, location } = await beginInEu(store);
+    expect(new URL(location).searchParams.get('authfnCode')).toBe('AUTHFN_2FA_REQUIRED');
+
+    const after = regionalClient();
+    expect(after.getCurrentRegionId()).toBe('us');
+    const result = await handoffFor(after, store).complete(location);
+    expect(result).toMatchObject({
+      status: 'two-factor-required',
+      handoffId: begun.handoffId,
+      regionId: 'eu',
+      challengeId: expect.any(String)
+    });
+    if (result.status !== 'two-factor-required' || !result.regionId) {
+      throw new Error('expected a two-factor result with a region');
+    }
+
+    // As documented: select the challenge's region, then complete it.
+    after.setCurrentRegionId(result.regionId);
+    const completed = await after.completeTwoFactorChallenge({
+      challengeId: result.challengeId,
+      // The enrollment used the current time step, which cannot be replayed.
+      code: generateTotp(secret, new Date(TEST_NOW.getTime() + 30_000))
+    });
+    expect(completed).toMatchObject({ ok: true });
+    expect(requests.filter((request) => request.endsWith('/2fa/challenge')))
+      .toEqual(['eu.account.example.com/auth/2fa/challenge']);
   });
 });

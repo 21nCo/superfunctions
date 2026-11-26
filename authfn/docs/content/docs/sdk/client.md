@@ -158,12 +158,12 @@ if (result.ok && result.data.token) {
 import {
   createAuthFnClient,
   createBrowserHandoff,
-  createWebStorageHandoffStore,
+  createIndexedDbHandoffStore,
 } from '@authfn/client';
 
 const client = createAuthFnClient({ baseUrl: 'https://api.example.com/auth' });
 const handoff = createBrowserHandoff({
-  store: createWebStorageHandoffStore(localStorage),
+  store: createIndexedDbHandoffStore(),
   allowedOrigins: ['https://app.example.com'],
   exchange: client.exchangeSocialHandoff,
 });
@@ -182,10 +182,10 @@ if (result.status === 'two-factor-required') askForSecondFactor(result.challenge
 
 - `begin` creates a random verifier and a handoff id, stores them for `ttlMs` (default 10 minutes), and returns the `/social/start` input. `returnTo` must be an `http(s)` URL on an allowed origin, without a fragment or the callback's own query parameters (`auth_error*`, `authfnCode`, `challengeId`, `primaryMethod`). The id travels in the `returnTo` fragment (`#authfn_handoff=<id>`), so the provider's `allowlistedReturnTo` must list the app's bare origin (`https://app.example.com`), not one exact URL. The server must accept a session-token handoff to a web target (`allowWebSessionTokenHandoff`).
 - `complete` accepts only a return on an allowed origin, on the origin and path the handoff began on, carrying `handoff=code` for that handoff id. It then claims the stored record, replacing it with a tombstone that no longer holds the verifier, and checks the expiry again before it calls `exchange`. Any return that names a live handoff uses it up, whatever the outcome; start again after a failure.
-- Several windows over one store are concurrent participants, and one begun handoff completes at most once, even when a retried `/social/start` minted a second code. The claim must therefore be atomic across windows: the server consumes each code once, not each handoff. `createWebStorageHandoffStore` claims under `navigator.locks`. In a browser without Web Locks the store reports `atomic: false`, `begin` throws, and `complete` returns `store-not-atomic` without exchanging; use another sign-in path there.
-- `sessionStorage` keeps the handoff to one tab. A custom store implements `get`, `set`, `delete`, `keys` and an atomic `compareAndSet`, or sets `atomic: false`.
-- When the user has two-factor authentication, the callback issues no code: it returns `?authfnCode=AUTHFN_2FA_REQUIRED&challengeId=…&primaryMethod=…`. `complete` retires the handoff and returns `{ status: 'two-factor-required', challengeId, primaryMethod, cleanUrl }`; continue with `client.completeTwoFactorChallenge({ challengeId, code })`.
-- With the region-aware client, pass `regionId: regional.getCurrentRegionId()` to `begin` and use `exchange: createRegionalHandoffExchange(regional)`. The region is stored with the handoff, so the exchange reaches the region that issued the code even though the page after the redirect starts in the default region. The `regionId` in the callback URL is never used for routing.
+- Several windows over one store are concurrent participants, and one begun handoff completes at most once, even when a retried `/social/start` minted a second code. The claim must therefore be atomic across windows: the server consumes each code once, not each handoff. `createIndexedDbHandoffStore` keeps records in an IndexedDB database of the origin and claims in one readwrite transaction, which the browser runs one at a time across every tab, popup and renderer process of the origin. Without IndexedDB the store reports `atomic: false`, `begin` throws, and `complete` returns `store-not-atomic` without exchanging; use another sign-in path there.
+- Web Storage is not a safe store: a popup gets its own copy of the opener's `sessionStorage`, and `localStorage` reaches other processes asynchronously, so neither can claim atomically, even under `navigator.locks`. A custom store implements `get`, `set`, `delete`, `keys` and a `compareAndSet` that is atomic across all participants, or sets `atomic: false`. `createMemoryHandoffStore` is atomic only within one page and does not survive a reload.
+- When the user has two-factor authentication, the callback issues no code: it returns `?authfnCode=AUTHFN_2FA_REQUIRED&challengeId=…&primaryMethod=…`. `complete` retires the handoff and returns `{ status: 'two-factor-required', challengeId, primaryMethod, regionId?, cleanUrl }`; continue with `client.completeTwoFactorChallenge({ challengeId, code })`.
+- With the region-aware client, pass `regionId: regional.getCurrentRegionId()` to `begin` and use `exchange: createRegionalHandoffExchange({ regionalClient: regional, resolveBaseUrl, clientOptions })` with the same `resolveBaseUrl` and `clientOptions` you gave `createAuthFnRegionalClient`. The region is stored with the handoff, so the exchange reaches the region that issued the code even though the page after the redirect starts in the default region. Each exchange goes through a client of its own region and does not change which region other calls use while it runs; once the session is issued, `regional` moves to that region. A two-factor result carries the stored `regionId`, because the challenge exists only there: call `regional.setCurrentRegionId(result.regionId)` before `regional.completeTwoFactorChallenge(...)`. The `regionId` in the callback URL is never used for routing.
 - Results, events (`onEvent`) and stored tombstones never contain the verifier or the code. Failure messages are fixed text, never the exchange's own message. Navigation, removing the callback parameters with `cleanUrl`, and keeping the session token stay with your app.
 
 `complete` returns `{ status: 'completed', session, handoff, requestId, cleanUrl }`, `{ status: 'two-factor-required', … }`, `{ status: 'not-callback' }` for a page without a handoff return, or `{ status: 'failed', reason }`. A failed result has `cleanUrl` whenever the callback URL could be parsed:
@@ -197,12 +197,12 @@ if (result.status === 'two-factor-required') askForSecondFactor(result.challenge
 | `unknown-handoff` | No handoff with that id is stored here. |
 | `expired` | The handoff outlived `ttlMs`. |
 | `already-used` | Another window, a reload or a duplicate return already claimed it, or the server reports the code used. |
-| `malformed-state` | The stored record could not be read; it is removed. |
+| `malformed-state` | The stored record could not be read, or the store failed; the record is removed where the store allows. |
 | `malformed-callback` | The return's parameters are missing or invalid. |
 | `provider-error` | The callback redirected with `auth_error`; `error.code` holds the server's code. |
 | `exchange-rejected` | The server refused the code; `error.code` holds its code. |
 | `exchange-canceled` | The exchange threw or failed before a response. |
-| `store-not-atomic` | The store cannot claim atomically across windows; nothing was exchanged and the handoff is removed. |
+| `store-not-atomic` | The store cannot claim atomically across windows; nothing was exchanged, and the handoff is removed where the store can reach it. |
 
 `prune()` removes expired records (`begin` also prunes), and `abandon(handoffId)` removes one that the user gave up on.
 

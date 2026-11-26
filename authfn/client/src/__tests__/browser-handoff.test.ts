@@ -1,17 +1,18 @@
 import { createHash } from 'node:crypto';
+import { IDBFactory } from 'fake-indexeddb';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   createBrowserHandoff,
+  createIndexedDbHandoffStore,
   createMemoryHandoffStore,
-  createWebStorageHandoffStore,
+  createRegionalHandoffExchange,
   type AuthFnBrowserHandoffBeginResult,
   type AuthFnBrowserHandoffEvent,
   type AuthFnBrowserHandoffExchange,
   type AuthFnBrowserHandoffOptions,
   type AuthFnBrowserHandoffResult,
   type AuthFnBrowserHandoffStore,
-  type AuthFnLockManagerLike,
-  type AuthFnWebStorageLike
+  type AuthFnSocialHandoffClient
 } from '../index.js';
 
 const APP = 'https://app.example.com';
@@ -147,35 +148,14 @@ function failed(result: AuthFnBrowserHandoffResult) {
 
 const consoleMethods = ['log', 'info', 'warn', 'error', 'debug'] as const;
 
-/** `localStorage` as several windows of one origin share it. */
-function createSharedStorage(): AuthFnWebStorageLike {
-  const values = new Map<string, string>();
-  return {
-    get length() {
-      return values.size;
-    },
-    key: (index) => Array.from(values.keys())[index] ?? null,
-    getItem: (key) => values.get(key) ?? null,
-    setItem: (key, value) => {
-      values.set(key, value);
-    },
-    removeItem: (key) => {
-      values.delete(key);
-    }
-  };
-}
-
-/** Web Locks: one holder of a name at a time, granted asynchronously. */
-function createLockManager(): AuthFnLockManagerLike {
-  const tails = new Map<string, Promise<unknown>>();
-  return {
-    request: (name, _options, callback) => {
-      const previous = tails.get(name) ?? Promise.resolve();
-      const run = previous.then(() => new Promise((resolve) => setTimeout(resolve, 1))).then(callback);
-      tails.set(name, run.catch(() => undefined));
-      return run;
-    }
-  };
+/**
+ * IndexedDB of one origin: each store opens its own connection to the same
+ * database, as each window does, and the transaction scheduler decides
+ * which readwrite transaction runs first.
+ */
+function createSharedIndexedDb() {
+  const factory = new IDBFactory();
+  return { factory, window: () => createIndexedDbHandoffStore({ indexedDB: factory }) };
 }
 
 describe('createBrowserHandoff', () => {
@@ -245,9 +225,7 @@ describe('createBrowserHandoff', () => {
   it('lets one completion through when two windows return with different codes for one handoff', async () => {
     // A retried /social/start mints a second code with the same challenge;
     // the server consumes each code once, so only the claim stops the second.
-    const storage = createSharedStorage();
-    const locks = createLockManager();
-    const window = () => createWebStorageHandoffStore(storage, { locks });
+    const { window } = createSharedIndexedDb();
     const { make, server } = setup();
     const begun = await make({ store: window() }).begin({ returnTo: RETURN_TO });
     const first = server.callbackFor(begun);
@@ -263,27 +241,45 @@ describe('createBrowserHandoff', () => {
     expect(server.exchange).toHaveBeenCalledTimes(1);
   });
 
+  it('claims through one IndexedDB transaction, so one of many concurrent connections wins', async () => {
+    const { window } = createSharedIndexedDb();
+    const windows = Array.from({ length: 6 }, window);
+    for (let round = 0; round < 10; round += 1) {
+      const key = `authfn.handoff.race-${round}`;
+      await windows[0]!.set(key, 'pending');
+      const claims = await Promise.all(windows.map((store, index) => store.compareAndSet(key, 'pending', `used-${index}`)));
+      expect(claims.filter(Boolean)).toHaveLength(1);
+      expect(await windows[1]!.get(key)).toBe(`used-${claims.indexOf(true)}`);
+    }
+    expect(await windows[2]!.compareAndSet('authfn.handoff.missing', 'pending', null)).toBe(false);
+    await windows[0]!.set('authfn.handoff.gone', 'x');
+    expect(await windows[3]!.compareAndSet('authfn.handoff.gone', 'x', null)).toBe(true);
+    expect(await windows[4]!.get('authfn.handoff.gone')).toBeNull();
+    expect(Array.from(await windows[5]!.keys())).not.toContain('authfn.handoff.gone');
+  });
+
   it('refuses to begin or complete on a store that cannot claim atomically', async () => {
-    const storage = createSharedStorage();
-    const lockless = createWebStorageHandoffStore(storage, { locks: null });
-    expect(lockless.atomic).toBe(false);
-    expect(createWebStorageHandoffStore(storage, { locks: createLockManager() }).atomic).toBe(true);
+    const shared = createMemoryHandoffStore();
+    const nonAtomic: AuthFnBrowserHandoffStore = { ...shared, atomic: false };
+    // Without IndexedDB the browser store cannot claim, and says so.
+    expect(createIndexedDbHandoffStore({ indexedDB: null }).atomic).toBe(false);
     const { make, server } = setup();
 
-    await expect(make({ store: lockless }).begin({ returnTo: RETURN_TO })).rejects.toThrow(/atomic/);
-    expect(storage.length).toBe(0);
+    await expect(make({ store: nonAtomic }).begin({ returnTo: RETURN_TO })).rejects.toThrow(/atomic/);
+    await expect(make({ store: createIndexedDbHandoffStore({ indexedDB: null }) }).begin({ returnTo: RETURN_TO }))
+      .rejects.toThrow(/atomic/);
+    expect(Array.from(await shared.keys())).toEqual([]);
 
-    const begun = await make({ store: createWebStorageHandoffStore(storage, { locks: createLockManager() }) })
-      .begin({ returnTo: RETURN_TO });
+    const begun = await make({ store: shared }).begin({ returnTo: RETURN_TO });
     const callback = server.callbackFor(begun);
-    expect(await make({ store: lockless }).complete(callback)).toMatchObject({
+    expect(await make({ store: nonAtomic }).complete(callback)).toMatchObject({
       status: 'failed',
       reason: 'store-not-atomic',
       handoffId: begun.handoffId,
       cleanUrl: RETURN_TO
     });
     // The verifier is retired, so no window can exchange this return later.
-    expect(storage.length).toBe(0);
+    expect(Array.from(await shared.keys())).toEqual([]);
     expect(server.exchange).not.toHaveBeenCalled();
   });
 
@@ -397,19 +393,22 @@ describe('createBrowserHandoff', () => {
 
   it('returns the two-factor challenge of the social callback and retires the handoff', async () => {
     const { make, server, events } = setup();
-    const begun = await make().begin({ returnTo: RETURN_TO });
+    const begun = await make().begin({ returnTo: RETURN_TO, regionId: 'region-a' });
     // The callback's shape when two-factor is on: the challenge in the query,
     // the handoff id kept in the fragment, and no code.
     const url = new URL(begun.start.returnTo);
     url.searchParams.set('authfnCode', 'AUTHFN_2FA_REQUIRED');
     url.searchParams.set('challengeId', 'signin_2fa_test-challenge');
     url.searchParams.set('primaryMethod', 'oauth-google');
+    // The region comes from the store, never from the callback.
+    url.hash = `${url.hash.slice(1)}&regionId=region-b`;
 
     expect(await make().complete(url.href)).toEqual({
       status: 'two-factor-required',
       handoffId: begun.handoffId,
       challengeId: 'signin_2fa_test-challenge',
       primaryMethod: 'oauth-google',
+      regionId: 'region-a',
       cleanUrl: RETURN_TO
     });
     expect(events.map((event) => event.type)).toEqual(['begun', 'two-factor-required']);
@@ -523,12 +522,31 @@ describe('createBrowserHandoff', () => {
     expect(server.exchange).not.toHaveBeenCalled();
   });
 
-  it('reports a store that fails to read as malformed-state', async () => {
+  it.each([
+    ['read', 'get'],
+    ['claim', 'compareAndSet']
+  ] as const)('reports a store that fails to %s as malformed-state and removes the verifier', async (_label, method) => {
     const { make, server, store } = setup();
     const begun = await make().begin({ returnTo: RETURN_TO });
-    const broken = { ...store, get: () => Promise.reject(new Error('storage unavailable')) };
+    const broken: AuthFnBrowserHandoffStore = {
+      ...store,
+      [method]: () => Promise.reject(new Error('storage unavailable'))
+    };
 
     expect(failed(await make({ store: broken }).complete(server.callbackFor(begun))).reason).toBe('malformed-state');
+    expect(await store.get(`authfn.handoff.${begun.handoffId}`)).toBeNull();
+    expect(server.exchange).not.toHaveBeenCalled();
+  });
+
+  it('treats a pending record whose deadline is beyond any TTL as malformed-state', async () => {
+    const { make, server, store } = setup();
+    const begun = await make().begin({ returnTo: RETURN_TO });
+    const key = `authfn.handoff.${begun.handoffId}`;
+    const record = JSON.parse(String(await store.get(key)));
+    await store.set(key, JSON.stringify({ ...record, expiresAt: T0 + 60 * 60 * 1000 + 1 }));
+
+    expect(failed(await make().complete(server.callbackFor(begun))).reason).toBe('malformed-state');
+    expect(await store.get(key)).toBeNull();
     expect(server.exchange).not.toHaveBeenCalled();
   });
 
@@ -615,5 +633,95 @@ describe('createBrowserHandoff', () => {
     const { make, store } = setup();
     await expect(make().begin({ returnTo: RETURN_TO, regionId: 'eu/../x' })).rejects.toThrow(TypeError);
     expect(Array.from(await store.keys())).toEqual([]);
+  });
+});
+
+describe('createRegionalHandoffExchange', () => {
+  const okEnvelope = (label: string) => ({ ok: true as const, requestId: label, data: { label } }) as never;
+  const failedEnvelope = (label: string) => ({
+    ok: false as const,
+    requestId: label,
+    error: { code: 'AUTHFN_OAUTH_STATE_INVALID', message: 'refused', retryable: false }
+  }) as never;
+
+  /** Region servers answer through `respond`; `regionalClient` records region selections. */
+  function setupRegions() {
+    const pending: Array<{ host: string; resolve: (response: Response) => void }> = [];
+    const selections: string[] = [];
+    let current = 'us';
+    const regionalExchange = vi.fn<AuthFnSocialHandoffClient['exchangeSocialHandoff']>(async () => okEnvelope('current'));
+    const regionalClient = {
+      exchangeSocialHandoff: regionalExchange,
+      setCurrentRegionId: (regionId: string) => {
+        selections.push(regionId);
+        current = regionId;
+      }
+    };
+    const exchange = createRegionalHandoffExchange({
+      regionalClient,
+      resolveBaseUrl: (regionId) => `https://${regionId}.account.example.com/auth`,
+      clientOptions: {
+        fetch: (input) => new Promise<Response>((resolve) => {
+          pending.push({ host: new URL(String(input)).host, resolve });
+        })
+      }
+    });
+    const respond = async (host: string, ok: boolean) => {
+      await vi.waitFor(() => expect(pending.some((entry) => entry.host === host)).toBe(true));
+      const entry = pending.splice(pending.findIndex((item) => item.host === host), 1)[0]!;
+      entry.resolve(new Response(JSON.stringify(ok ? okEnvelope(host) : failedEnvelope(host)), {
+        status: ok ? 200 : 400,
+        headers: { 'content-type': 'application/json' }
+      }));
+    };
+    return { exchange, respond, selections, regionalExchange, current: () => current };
+  }
+
+  const input = { code: 'test-handoff-code', verifier: 'test-verifier' };
+
+  it.each([
+    ['ap settles first', ['ap', 'eu']],
+    ['eu settles first', ['eu', 'ap']]
+  ] as const)('routes overlapping exchanges to their own regions without moving the client until success (%s)', async (_label, order) => {
+    const { exchange, respond, selections, current } = setupRegions();
+    const ap = exchange(input, { handoffId: 'handoff-ap', regionId: 'ap' });
+    const eu = exchange(input, { handoffId: 'handoff-eu', regionId: 'eu' });
+    // While both are in flight, the client stays where it was.
+    expect(current()).toBe('us');
+
+    for (const region of order) {
+      await respond(`${region}.account.example.com`, region === 'ap');
+    }
+
+    expect((await ap).ok).toBe(true);
+    expect((await eu).ok).toBe(false);
+    // Only the successful exchange selects its region; the failure changes nothing.
+    expect(selections).toEqual(['ap']);
+    expect(current()).toBe('ap');
+  });
+
+  it('uses the regional client as it is when the handoff has no region', async () => {
+    const { exchange, regionalExchange, selections } = setupRegions();
+    expect((await exchange(input, { handoffId: 'handoff-plain' })).ok).toBe(true);
+    expect(regionalExchange).toHaveBeenCalledWith(input);
+    expect(selections).toEqual([]);
+  });
+
+  it('leaves the region alone when resolving the region throws', async () => {
+    const selections: string[] = [];
+    const exchange = createRegionalHandoffExchange({
+      regionalClient: {
+        exchangeSocialHandoff: async () => okEnvelope('current'),
+        setCurrentRegionId: (regionId) => selections.push(regionId)
+      },
+      resolveBaseUrl: () => {
+        throw new Error('unknown region');
+      }
+    });
+    const { make, server } = setup({ exchange });
+    const begun = await make().begin({ returnTo: RETURN_TO, regionId: 'eu' });
+
+    expect(failed(await make().complete(server.callbackFor(begun))).reason).toBe('exchange-canceled');
+    expect(selections).toEqual([]);
   });
 });

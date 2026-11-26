@@ -1,4 +1,6 @@
+import { createAuthFnClient } from './client.js';
 import type {
+  AuthFnClientOptions,
   AuthFnErrorEnvelope,
   AuthFnRegionalClient,
   AuthFnSocialHandoffClient
@@ -17,7 +19,10 @@ import type {
  * window that shares the store: the server consumes each code once, but a
  * retried `/social/start` can mint a second code for the same handoff, so
  * only the claim keeps a begun handoff to one completion. A store that
- * cannot claim atomically (`atomic: false`) is refused.
+ * cannot claim atomically (`atomic: false`) is refused. In a browser the
+ * store is `createIndexedDbHandoffStore()`: its compare-and-set runs in one
+ * IndexedDB readwrite transaction, which the browser serializes across every
+ * window, tab and process of the origin.
  *
  * Navigation (sending the browser to `redirectTo`, removing the callback
  * parameters from the address bar with `cleanUrl`) stays with the host.
@@ -36,7 +41,7 @@ export interface AuthFnBrowserHandoffStore {
    * Replaces the value of `key` with `next` (or removes it when `next` is
    * `null`) only if it still equals `expected`, and reports whether it did.
    * It must be atomic across every participant that shares the store
-   * (several windows over `localStorage`).
+   * (every window, tab and renderer process of the origin).
    */
   compareAndSet(key: string, expected: string, next: string | null): Awaitable<boolean>;
   /**
@@ -46,18 +51,9 @@ export interface AuthFnBrowserHandoffStore {
   readonly atomic?: boolean;
 }
 
-/** The part of Web Storage (`localStorage`, `sessionStorage`) the store uses. */
-export interface AuthFnWebStorageLike {
-  readonly length: number;
-  key(index: number): string | null;
-  getItem(key: string): string | null;
-  setItem(key: string, value: string): void;
-  removeItem(key: string): void;
-}
-
-/** The part of the Web Locks API (`navigator.locks`) the store uses. */
-export interface AuthFnLockManagerLike {
-  request(name: string, options: { mode: 'exclusive' }, callback: () => unknown): Promise<unknown>;
+/** The part of `IDBFactory` (`globalThis.indexedDB`) the store uses. */
+export interface AuthFnIndexedDbFactoryLike {
+  open(name: string, version?: number): unknown;
 }
 
 export interface AuthFnBrowserHandoffClock {
@@ -87,7 +83,7 @@ export interface AuthFnBrowserHandoffOptions {
   allowedOrigins: readonly string[];
   /**
    * Usually `client.exchangeSocialHandoff`; with the region-aware client,
-   * `createRegionalHandoffExchange(regionalClient)`.
+   * `createRegionalHandoffExchange({ regionalClient, resolveBaseUrl })`.
    */
   exchange: AuthFnBrowserHandoffExchange;
   clock?: AuthFnBrowserHandoffClock;
@@ -158,12 +154,18 @@ export type AuthFnBrowserHandoffResult =
       /**
        * The server needs a second factor before it issues a session. The
        * handoff is retired; continue with
-       * `client.completeTwoFactorChallenge({ challengeId, code })`.
+       * `client.completeTwoFactorChallenge({ challengeId, code })` in the
+       * region that issued the challenge (`regionId`).
        */
       status: 'two-factor-required';
       handoffId: string;
       challengeId: string;
       primaryMethod: string;
+      /**
+       * The region passed to `begin()`, read back from the store, never from
+       * the callback URL. The challenge exists only there.
+       */
+      regionId?: string;
       cleanUrl: string;
     }
   | {
@@ -241,7 +243,7 @@ const REPLAYED_CODE = 'AUTHFN_OAUTH_STATE_REPLAYED';
 const NETWORK_ERROR_CODE = 'AUTHFN_NETWORK_ERROR';
 const INTERNAL_ERROR_CODE = 'AUTHFN_INTERNAL_ERROR';
 const NOT_ATOMIC_MESSAGE = 'createBrowserHandoff needs a store that claims atomically across windows; '
-  + 'this store is atomic: false (for example localStorage without navigator.locks)';
+  + 'this store is atomic: false (for example createIndexedDbHandoffStore without IndexedDB)';
 const EXCHANGE_FAILURE_MESSAGES: Partial<Record<AuthFnBrowserHandoffFailureReason, string>> = {
   'already-used': 'This social sign-in was already completed',
   'exchange-canceled': 'The social sign-in exchange did not complete',
@@ -293,7 +295,7 @@ export function createBrowserHandoff(options: AuthFnBrowserHandoffOptions): Auth
       if (typeof raw !== 'string') {
         continue;
       }
-      const record = parseRecord(raw, key.slice(keyPrefix.length));
+      const record = parseRecord(raw, key.slice(keyPrefix.length), current);
       if ((!record || record.expiresAt <= current) && await store.compareAndSet(key, raw, null)) {
         removed += 1;
       }
@@ -387,6 +389,8 @@ export function createBrowserHandoff(options: AuthFnBrowserHandoffOptions): Auth
       try {
         raw = await store.get(key);
       } catch {
+        // Whatever is stored cannot be trusted to be claimed later: retire it.
+        await retire(() => store.delete(key));
         return fail('malformed-state', { handoffId, cleanUrl });
       }
       if (raw === null || raw === undefined) {
@@ -396,7 +400,7 @@ export function createBrowserHandoff(options: AuthFnBrowserHandoffOptions): Auth
         await retire(() => store.delete(key));
         return fail('malformed-state', { handoffId, cleanUrl });
       }
-      const record = parseRecord(raw, handoffId);
+      const record = parseRecord(raw, handoffId, now());
       if (!record) {
         await retire(() => store.compareAndSet(key, raw, null));
         return fail('malformed-state', { handoffId, cleanUrl });
@@ -422,6 +426,9 @@ export function createBrowserHandoff(options: AuthFnBrowserHandoffOptions): Auth
       try {
         claimed = await store.compareAndSet(key, raw, tombstone);
       } catch {
+        // Nothing was exchanged; remove the verifier rather than leave it
+        // for a later claim the store may not be able to make either.
+        await retire(() => store.delete(key));
         return fail('malformed-state', { handoffId, cleanUrl });
       }
       if (!claimed) {
@@ -445,7 +452,13 @@ export function createBrowserHandoff(options: AuthFnBrowserHandoffOptions): Auth
       }
       if (twoFactor) {
         emit({ type: 'two-factor-required', handoffId });
-        return { status: 'two-factor-required', handoffId, ...twoFactor, cleanUrl };
+        return {
+          status: 'two-factor-required',
+          handoffId,
+          ...twoFactor,
+          ...(record.regionId ? { regionId: record.regionId } : {}),
+          cleanUrl
+        };
       }
       if (url.searchParams.has('auth_error')) {
         if (fragment.has(CODE_PARAM)) {
@@ -557,73 +570,164 @@ export function createMemoryHandoffStore(): AuthFnBrowserHandoffStore {
   };
 }
 
+export interface AuthFnRegionalHandoffExchangeOptions {
+  /** The region-aware client of the page; it is moved to the handoff's region once a session is issued. */
+  regionalClient: Pick<AuthFnRegionalClient, 'setCurrentRegionId'> & AuthFnSocialHandoffClient;
+  /** The same trusted region-to-URL mapping the regional client was created with. */
+  resolveBaseUrl(regionId: string): string;
+  /** The same client options the regional client was created with. */
+  clientOptions?: Omit<AuthFnClientOptions, 'baseUrl'>;
+}
+
 /**
- * The exchange for the region-aware client: it sends the code to the region
- * passed to `begin()` (through the client's own `resolveBaseUrl`), even when
- * the page after the redirect starts in the default region, and leaves the
- * client in that region once the session is issued.
+ * The exchange for the region-aware client. It sends the code to the region
+ * passed to `begin()` through a client of that region alone, so it never
+ * changes which region other calls use while it runs, even when the page
+ * after the redirect starts in the default region. Only once the session is
+ * issued does it move `regionalClient` to that region, where the session
+ * lives. Without a stored region it uses `regionalClient` as it is.
  */
 export function createRegionalHandoffExchange(
-  client: Pick<AuthFnRegionalClient, 'getCurrentRegionId' | 'setCurrentRegionId'> & AuthFnSocialHandoffClient
+  options: AuthFnRegionalHandoffExchangeOptions
 ): AuthFnBrowserHandoffExchange {
+  const { regionalClient, resolveBaseUrl, clientOptions } = options ?? ({} as AuthFnRegionalHandoffExchangeOptions);
+  if (!regionalClient || typeof resolveBaseUrl !== 'function') {
+    throw new TypeError('createRegionalHandoffExchange needs regionalClient and resolveBaseUrl');
+  }
+  const clients = new Map<string, AuthFnSocialHandoffClient>();
+  const clientFor = (regionId: string) => {
+    let client = clients.get(regionId);
+    if (!client) {
+      client = createAuthFnClient({ ...(clientOptions ?? {}), baseUrl: resolveBaseUrl(regionId) });
+      clients.set(regionId, client);
+    }
+    return client;
+  };
   return async (input, context) => {
     if (!context.regionId) {
-      return client.exchangeSocialHandoff(input);
+      return regionalClient.exchangeSocialHandoff(input);
     }
-    const previous = client.getCurrentRegionId();
-    client.setCurrentRegionId(context.regionId);
-    const response = await client.exchangeSocialHandoff(input).catch((error: unknown) => {
-      client.setCurrentRegionId(previous);
-      throw error;
-    });
-    if (!response.ok) {
-      client.setCurrentRegionId(previous);
+    const response = await clientFor(context.regionId).exchangeSocialHandoff(input);
+    if (response.ok) {
+      regionalClient.setCurrentRegionId(context.regionId);
     }
     return response;
   };
 }
 
-export interface AuthFnWebStorageHandoffStoreOptions {
-  /**
-   * Lock manager that makes `compareAndSet` atomic across windows of the
-   * origin. Defaults to `navigator.locks` when the browser has it. Without
-   * one the store is `atomic: false`, and the handoff refuses to use it.
-   */
-  locks?: AuthFnLockManagerLike | null;
+export interface AuthFnIndexedDbHandoffStoreOptions {
+  /** Defaults to `globalThis.indexedDB`. Without one the store is `atomic: false`. */
+  indexedDB?: AuthFnIndexedDbFactoryLike | null;
+  /** Database name. Default `authfn-handoff`. */
+  databaseName?: string;
 }
 
-/** A store over `localStorage` or `sessionStorage`, atomic through Web Locks. */
-export function createWebStorageHandoffStore(
-  storage: AuthFnWebStorageLike,
-  options: AuthFnWebStorageHandoffStoreOptions = {}
+const IDB_OBJECT_STORE = 'records';
+
+/**
+ * The browser store: records live in an IndexedDB database of the origin,
+ * which every window, tab and popup of the origin shares, and
+ * `compareAndSet` reads and writes in one readwrite transaction. The browser
+ * runs readwrite transactions over the same object store one at a time
+ * across all connections, so a claim is atomic across renderer processes
+ * (unlike Web Storage, whose `sessionStorage` is copied into popups and whose
+ * `localStorage` reaches other processes asynchronously).
+ */
+export function createIndexedDbHandoffStore(
+  options: AuthFnIndexedDbHandoffStoreOptions = {}
 ): AuthFnBrowserHandoffStore {
-  const locks = options.locks === undefined
-    ? (globalThis as { navigator?: { locks?: AuthFnLockManagerLike } }).navigator?.locks ?? null
-    : options.locks;
-  const map = {
-    get: (key: string) => storage.getItem(key) ?? undefined,
-    set: (key: string, value: string) => storage.setItem(key, value),
-    delete: (key: string) => storage.removeItem(key)
+  const factory = (options.indexedDB === undefined
+    ? (globalThis as { indexedDB?: AuthFnIndexedDbFactoryLike }).indexedDB ?? null
+    : options.indexedDB) as IDBFactory | null;
+  const databaseName = options.databaseName ?? 'authfn-handoff';
+  if (typeof databaseName !== 'string' || databaseName.length === 0) {
+    throw new TypeError('createIndexedDbHandoffStore databaseName must be a non-empty string');
+  }
+  let opening: Promise<IDBDatabase> | null = null;
+  const database = (): Promise<IDBDatabase> => {
+    if (!factory) {
+      return Promise.reject(new Error('IndexedDB is not available'));
+    }
+    opening ??= new Promise<IDBDatabase>((resolve, reject) => {
+      const request = factory.open(databaseName, 1);
+      request.onupgradeneeded = () => {
+        if (!request.result.objectStoreNames.contains(IDB_OBJECT_STORE)) {
+          request.result.createObjectStore(IDB_OBJECT_STORE);
+        }
+      };
+      request.onsuccess = () => {
+        const db = request.result;
+        const forget = () => {
+          opening = null;
+        };
+        db.onversionchange = () => {
+          db.close();
+          forget();
+        };
+        db.onclose = forget;
+        resolve(db);
+      };
+      request.onerror = () => reject(request.error ?? new Error('IndexedDB open failed'));
+      request.onblocked = () => reject(new Error('IndexedDB open is blocked'));
+    }).catch((error: unknown) => {
+      opening = null;
+      throw error;
+    });
+    return opening;
+  };
+  /**
+   * Runs `body` in one transaction and settles once the transaction has
+   * committed, with the value `body` decided, or rejects if it aborts.
+   */
+  const run = async <T>(
+    mode: IDBTransactionMode,
+    body: (records: IDBObjectStore, decide: (value: T) => void) => void
+  ): Promise<T> => {
+    const db = await database();
+    return new Promise<T>((resolve, reject) => {
+      const transaction = db.transaction(IDB_OBJECT_STORE, mode);
+      let decided: T | undefined;
+      transaction.oncomplete = () => resolve(decided as T);
+      transaction.onerror = () => reject(transaction.error ?? new Error('IndexedDB transaction failed'));
+      transaction.onabort = () => reject(transaction.error ?? new Error('IndexedDB transaction aborted'));
+      body(transaction.objectStore(IDB_OBJECT_STORE), (value) => {
+        decided = value;
+      });
+    });
   };
   return {
-    get: (key) => storage.getItem(key),
-    set: (key, value) => storage.setItem(key, value),
-    delete: (key) => storage.removeItem(key),
-    keys: () => {
-      const keys: string[] = [];
-      for (let index = 0; index < storage.length; index += 1) {
-        const key = storage.key(index);
-        if (key !== null) {
-          keys.push(key);
+    // A value that is not a string is passed on as it is, so the handoff
+    // removes it as malformed state.
+    get: (key) => run<string | null>('readonly', (records, decide) => {
+      const request = records.get(key);
+      request.onsuccess = () => decide((request.result ?? null) as string | null);
+    }),
+    set: (key, value) => run<void>('readwrite', (records) => {
+      records.put(value, key);
+    }),
+    delete: (key) => run<void>('readwrite', (records) => {
+      records.delete(key);
+    }),
+    keys: () => run<string[]>('readonly', (records, decide) => {
+      const request = records.getAllKeys();
+      request.onsuccess = () => decide(request.result.filter((key): key is string => typeof key === 'string'));
+    }),
+    compareAndSet: (key, expected, next) => run<boolean>('readwrite', (records, decide) => {
+      decide(false);
+      const request = records.get(key);
+      request.onsuccess = () => {
+        if (request.result !== expected) {
+          return;
         }
-      }
-      return keys;
-    },
-    compareAndSet: async (key, expected, next) => locks
-      ? await locks.request(`authfn-handoff:${key}`, { mode: 'exclusive' }, () =>
-          compareAndSetSync(map, key, expected, next)) === true
-      : compareAndSetSync(map, key, expected, next),
-    atomic: locks !== null
+        if (next === null) {
+          records.delete(key);
+        } else {
+          records.put(next, key);
+        }
+        decide(true);
+      };
+    }),
+    atomic: factory !== null
   };
 }
 
@@ -710,7 +814,7 @@ function parseBeginTarget(returnTo: unknown, allowedOrigins: Set<string>): URL {
   return target;
 }
 
-function parseRecord(raw: string, handoffId: string): StoredRecord | null {
+function parseRecord(raw: string, handoffId: string, now: number): StoredRecord | null {
   let value: unknown;
   try {
     value = JSON.parse(raw);
@@ -726,6 +830,8 @@ function parseRecord(raw: string, handoffId: string): StoredRecord | null {
     || record.id !== handoffId
     || typeof record.expiresAt !== 'number'
     || !Number.isFinite(record.expiresAt)
+    // No handoff this helper begins outlives the longest TTL.
+    || record.expiresAt > now + MAX_TTL_MS
   ) {
     return null;
   }
