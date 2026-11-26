@@ -1,4 +1,5 @@
 import { defaultCookieAccessor, readCsrfToken } from './cookies.js';
+import { isRegionId } from './region-id.js';
 import type { AuthFnClientOptions, AuthFnClientRequestMetric, AuthFnErrorEnvelope } from './types.js';
 
 interface RequestOptions {
@@ -21,6 +22,10 @@ const REQUEST_ID_PATTERN = /^[A-Za-z0-9_.:-]{1,128}$/;
 const ERROR_CODE_PATTERN = /^[A-Z][A-Z0-9_]{0,63}$/;
 const DURATION_PATTERN = /^\d{1,9}(\.\d{1,6})?$/;
 const COUNT_PATTERN = /^\d{1,9}$/;
+const NETWORK_ERROR_CODE = 'AUTHFN_NETWORK_ERROR';
+const REGION_MISMATCH_CODE = 'AUTHFN_REGION_MISMATCH';
+/** A check a reported value must pass: a pattern it matches or a predicate. */
+type TextCheck = RegExp | ((value: string) => boolean);
 /**
  * The metric header fields a sensitive request may report, each only when
  * it matches its pattern and shares no text with the body. `serverTiming`
@@ -36,7 +41,7 @@ const SENSITIVE_METRIC_FIELDS = {
   lookupCallCount: COUNT_PATTERN,
   workerColo: /^[A-Za-z0-9-]{1,16}$/,
   accountRegion: /^[A-Za-z0-9_.-]{1,64}$/
-} as const satisfies Partial<Record<keyof AuthFnClientRequestMetric, RegExp>>;
+} as const satisfies Partial<Record<keyof AuthFnClientRequestMetric, TextCheck>>;
 /** A reported value may not repeat this many consecutive characters of a secret. */
 const SECRET_WINDOW = 8;
 
@@ -242,10 +247,13 @@ export function createAuthFnHttpClient(options: AuthFnClientOptions = {}) {
       return redactSensitive.envelope(undefined, undefined, []) as AuthFnErrorEnvelope;
     }
     let status: number | undefined;
+    let requestId: string | undefined;
     let result: unknown;
+    let transportFailed = false;
     try {
       result = await transport.send<T>(request, () => body, (metric) => {
         status = metric.status;
+        requestId = metric.requestId;
         try {
           options.onRequestMetric?.(redactSensitive.metric(metric, secrets));
         } catch {
@@ -253,9 +261,12 @@ export function createAuthFnHttpClient(options: AuthFnClientOptions = {}) {
         }
       });
     } catch {
-      result = undefined;
+      // The response arrived but its body could not be read (for example an
+      // aborted stream): the request did not complete, as when fetch fails.
+      transportFailed = true;
+      result = { ok: false, error: { code: NETWORK_ERROR_CODE, retryable: true }, requestId };
     }
-    return redactSensitive.envelope(result, status, secrets) as T | AuthFnErrorEnvelope;
+    return redactSensitive.envelope(result, status, secrets, transportFailed) as T | AuthFnErrorEnvelope;
   };
 
   return {
@@ -277,7 +288,11 @@ export function createAuthFnHttpClient(options: AuthFnClientOptions = {}) {
  * name and message. A success envelope is passed on with a safe request id;
  * any other result becomes an error envelope with a code that matches the
  * error code pattern, a fixed message, `details: { status }` and a safe
- * request id.
+ * request id. The one exception is `AUTHFN_REGION_MISMATCH`, whose
+ * `details.regionId` names the region to retry in: it is kept when it is a
+ * region id that shares no text with the body. A request that failed before
+ * its response was read (fetch threw, or the body stream failed) is
+ * `AUTHFN_NETWORK_ERROR` with the fixed transport message.
  */
 const redactSensitive = {
   metric(metric: AuthFnClientRequestMetric, secrets: readonly string[]): AuthFnClientRequestMetric {
@@ -289,8 +304,8 @@ const redactSensitive = {
       ok: metric.ok,
       durationMs: metric.durationMs
     };
-    for (const [field, pattern] of Object.entries(SENSITIVE_METRIC_FIELDS)) {
-      const value = safeText(metric[field as keyof typeof SENSITIVE_METRIC_FIELDS], pattern, secrets);
+    for (const [field, check] of Object.entries(SENSITIVE_METRIC_FIELDS)) {
+      const value = safeText(metric[field as keyof typeof SENSITIVE_METRIC_FIELDS], check, secrets);
       if (value !== undefined) {
         safe[field as keyof typeof SENSITIVE_METRIC_FIELDS] = value;
       }
@@ -301,33 +316,45 @@ const redactSensitive = {
     return safe;
   },
 
-  envelope(result: unknown, status: number | undefined, secrets: readonly string[]): unknown {
+  envelope(
+    result: unknown,
+    status: number | undefined,
+    secrets: readonly string[],
+    transportFailed = false
+  ): unknown {
     const candidate = (typeof result === 'object' && result !== null ? result : {}) as {
       ok?: unknown;
       requestId?: unknown;
-      error?: { code?: unknown; retryable?: unknown };
+      error?: { code?: unknown; retryable?: unknown; details?: unknown };
     };
     const requestId = safeText(candidate.requestId, REQUEST_ID_PATTERN, secrets) ?? 'authfn-redacted';
     if (candidate.ok === true) {
       return candidate.requestId === requestId ? result : { ...candidate, requestId };
     }
     const error = typeof candidate.error === 'object' && candidate.error !== null ? candidate.error : {};
+    const code = safeText(error.code, ERROR_CODE_PATTERN, secrets) ?? 'AUTHFN_INTERNAL_ERROR';
+    const regionId = code === REGION_MISMATCH_CODE && typeof error.details === 'object' && error.details !== null
+      ? safeText((error.details as { regionId?: unknown }).regionId, isRegionId, secrets)
+      : undefined;
     return {
       ok: false,
       error: {
-        code: safeText(error.code, ERROR_CODE_PATTERN, secrets) ?? 'AUTHFN_INTERNAL_ERROR',
-        message: status === undefined ? TRANSPORT_FAILURE_MESSAGE : `AuthFn request failed (${status})`,
+        code,
+        message: status === undefined || transportFailed ? TRANSPORT_FAILURE_MESSAGE : `AuthFn request failed (${status})`,
         retryable: typeof error.retryable === 'boolean' ? error.retryable : status === undefined || status >= 500,
-        details: status === undefined ? {} : { status }
+        details: {
+          ...(status === undefined ? {} : { status }),
+          ...(regionId === undefined ? {} : { regionId })
+        }
       },
       requestId
     } satisfies AuthFnErrorEnvelope;
   }
 };
 
-/** `value` when it is a string that matches `pattern` and shares no text with `secrets`. */
-function safeText(value: unknown, pattern: RegExp, secrets: readonly string[]): string | undefined {
-  if (typeof value !== 'string' || !pattern.test(value)) {
+/** `value` when it is a string that passes `check` and shares no text with `secrets`. */
+function safeText(value: unknown, check: TextCheck, secrets: readonly string[]): string | undefined {
+  if (typeof value !== 'string' || !(typeof check === 'function' ? check(value) : check.test(value))) {
     return undefined;
   }
   return secrets.some((secret) => sharesText(value, secret)) ? undefined : value;

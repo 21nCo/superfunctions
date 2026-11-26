@@ -760,6 +760,127 @@ describe('createBrowserHandoff', () => {
     expect(observed).not.toContain('test-verifier-');
   });
 
+  it.each(exchangePaths)('reports a response whose body stream aborts as exchange-canceled through %s', async (_label, path) => {
+    const metrics: AuthFnClientRequestMetric[] = [];
+    const envelopes: unknown[] = [];
+    let fetched = 0;
+    // The headers arrive, then the body stream fails with an error that repeats the request.
+    const clientOptions = {
+      fetch: async (_input: RequestInfo | URL, init?: RequestInit) => {
+        fetched += 1;
+        const sent = String(init?.body);
+        const stream = new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.error(new DOMException(`aborted while reading ${sent}`, 'AbortError'));
+          }
+        });
+        return new Response(stream, { status: 200, headers: { 'x-request-id': 'req-body-aborted' } });
+      },
+      onRequestMetric: (metric: AuthFnClientRequestMetric) => metrics.push(metric)
+    };
+    const resolveBaseUrl = (regionId: string) => `https://${regionId}.account.example.com/auth`;
+    let exchange: AuthFnBrowserHandoffExchange;
+    if (path === 'direct') {
+      exchange = createAuthFnClient({ ...clientOptions, baseUrl: `${APP}/auth` }).exchangeSocialHandoff;
+    } else {
+      const regionalClient = createAuthFnRegionalClient({
+        defaultRegionId: 'us',
+        resolveBaseUrl,
+        storage: { get: async () => null, set: async () => undefined, delete: async () => undefined },
+        clientOptions
+      });
+      exchange = createRegionalHandoffExchange({ regionalClient, resolveBaseUrl, clientOptions });
+    }
+    const { make, server, store } = setup({
+      exchange: async (input, context) => {
+        const envelope = await exchange(input, context);
+        envelopes.push(envelope);
+        return envelope;
+      }
+    });
+    const begun = await make().begin({ returnTo: RETURN_TO, ...(path === 'regional-bound' ? { regionId: 'eu' } : {}) });
+    const verifier = await storedVerifier(store, begun.handoffId);
+    const callback = server.callbackFor(begun);
+    const code = new URL(callback).hash.match(/token=([^&]+)/)![1]!;
+
+    const result = failed(await make().complete(callback));
+
+    expect(result.reason).toBe('exchange-canceled');
+    expect(envelopes).toEqual([{
+      ok: false,
+      error: {
+        code: 'AUTHFN_NETWORK_ERROR',
+        message: 'AuthFn request failed before a response was received',
+        retryable: true,
+        details: { status: 200 }
+      },
+      requestId: 'req-body-aborted'
+    }]);
+    expect(failed(await make().complete(callback)).reason).toBe('already-used');
+    expect(fetched).toBe(1);
+    const observed = JSON.stringify({ metrics, envelopes, result });
+    expect(observed).not.toContain(verifier);
+    expect(observed).not.toContain(code);
+    expect(observed).not.toContain('aborted while reading');
+  });
+
+  it.each([
+    ['a region id', 'eu', 'eu'],
+    ['a region id with a colon', 'aws:eu-west-1', 'aws:eu-west-1'],
+    ['the code', 'code', undefined],
+    ['the verifier', 'verifier', undefined],
+    ['a control character', 'eu\u0007', undefined],
+    ['not a string', 7, undefined]
+  ] as const)('keeps the region of a region mismatch only when it is %s that repeats no secret', async (_label, regionIdSent, expected) => {
+    const input = { code: 'test-handoff-code-1', verifier: 'test-verifier-'.padEnd(43, 'v') };
+    const client = createAuthFnClient({
+      baseUrl: `${APP}/auth`,
+      fetch: async () => Response.json({
+        ok: false,
+        requestId: 'req-region-mismatch',
+        error: {
+          code: 'AUTHFN_REGION_MISMATCH',
+          message: 'Social handoff code belongs to a different region',
+          retryable: false,
+          details: {
+            regionId: regionIdSent === 'code' ? input.code : regionIdSent === 'verifier' ? input.verifier : regionIdSent,
+            authority: 'https://eu.account.example.com',
+            note: 'dropped'
+          }
+        }
+      }, { status: 409 })
+    });
+
+    const envelope = await client.exchangeSocialHandoff(input);
+
+    expect(envelope).toEqual({
+      ok: false,
+      error: {
+        code: 'AUTHFN_REGION_MISMATCH',
+        message: 'AuthFn request failed (409)',
+        retryable: false,
+        details: { status: 409, ...(expected === undefined ? {} : { regionId: expected }) }
+      },
+      requestId: 'req-region-mismatch'
+    });
+  });
+
+  it('keeps no details but the status for errors other than a region mismatch', async () => {
+    const client = createAuthFnClient({
+      baseUrl: `${APP}/auth`,
+      fetch: async () => Response.json({
+        ok: false,
+        requestId: 'req-invalid',
+        error: { code: 'AUTHFN_OAUTH_STATE_INVALID', message: 'invalid', retryable: false, details: { regionId: 'eu' } }
+      }, { status: 400 })
+    });
+
+    const envelope = await client.exchangeSocialHandoff({ code: 'test-handoff-code-1', verifier: 'test-verifier' });
+
+    expect(envelope).toMatchObject({ ok: false, error: { code: 'AUTHFN_OAUTH_STATE_INVALID', details: { status: 400 } } });
+    expect((envelope as { error: { details: unknown } }).error.details).toEqual({ status: 400 });
+  });
+
   it('still reports the response headers of requests without one-time secrets', async () => {
     const metrics: AuthFnClientRequestMetric[] = [];
     const client = createAuthFnClient({
@@ -1298,10 +1419,70 @@ describe('createBrowserHandoff', () => {
     expect(Array.from(await store.keys())).toEqual([]);
   });
 
-  it('refuses to begin with a region id that is not a plain id', async () => {
+  // 255 characters counted as code points, as the server counts them; each is two UTF-16 units.
+  const longRegionId = '\u{1F30D}'.repeat(255);
+  const invalidRegionIds = [
+    ['empty', ''],
+    ['256 characters', '\u{1F30D}'.repeat(256)],
+    ['a control character', 'eu\u0007'],
+    ['leading whitespace', ' eu'],
+    ['trailing whitespace', 'eu\n']
+  ] as const;
+
+  it.each([
+    ['a region id with a colon', 'aws:eu-west-1'],
+    ['a 255-character region id', longRegionId]
+  ])('keeps %s through begin, reload, the two-factor result and adapter routing', async (_label, regionId) => {
+    const routed: string[] = [];
+    const exchange = createRegionalHandoffExchange({
+      regionalClient: {
+        exchangeSocialHandoff: async () => {
+          throw new Error('the stored region must be used');
+        },
+        setCurrentRegionId: () => undefined
+      },
+      resolveBaseUrl: (region) => {
+        routed.push(region);
+        return `https://region.account.example.com/auth`;
+      },
+      clientOptions: {
+        fetch: async () => Response.json({
+          ok: true,
+          requestId: 'req-ok',
+          data: { session: { id: 'session-1' }, handoff: { type: 'session-token', token: 'test-session-token' } }
+        })
+      }
+    });
+    const { make, server } = setup({ exchange });
+
+    const twoFactor = await make().begin({ returnTo: RETURN_TO, regionId });
+    const url = new URL(twoFactor.start.returnTo);
+    url.searchParams.set('authfnCode', 'AUTHFN_2FA_REQUIRED');
+    url.searchParams.set('challengeId', 'signin_2fa_test-challenge');
+    url.searchParams.set('primaryMethod', 'oauth-google');
+    // A fresh instance over the same store, as after a reload.
+    expect(await make().complete(url.href)).toMatchObject({ status: 'two-factor-required', regionId });
+
+    const begun = await make().begin({ returnTo: RETURN_TO, regionId });
+    expect((await make().complete(server.callbackFor(begun))).status).toBe('completed');
+    expect(routed).toEqual([regionId]);
+  });
+
+  it.each(invalidRegionIds)('refuses to begin with a region id that is %s', async (_label, regionId) => {
     const { make, store } = setup();
-    await expect(make().begin({ returnTo: RETURN_TO, regionId: 'eu/../x' })).rejects.toThrow(TypeError);
+    await expect(make().begin({ returnTo: RETURN_TO, regionId })).rejects.toThrow(TypeError);
     expect(Array.from(await store.keys())).toEqual([]);
+  });
+
+  it.each(invalidRegionIds)('treats a stored region id that is %s as malformed-state', async (_label, regionId) => {
+    const { make, server, store } = setup();
+    const begun = await make().begin({ returnTo: RETURN_TO, regionId: 'eu' });
+    const key = `authfn.handoff.${begun.handoffId}`;
+    await store.set(key, JSON.stringify({ ...JSON.parse(String(await store.get(key))), regionId }));
+
+    expect(failed(await make().complete(server.callbackFor(begun))).reason).toBe('malformed-state');
+    expect(await retiredState(store, key)).toBe('tombstone');
+    expect(server.exchange).not.toHaveBeenCalled();
   });
 });
 

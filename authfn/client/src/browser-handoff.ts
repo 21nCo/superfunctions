@@ -1,4 +1,5 @@
 import { createAuthFnClient } from './client.js';
+import { isRegionId } from './region-id.js';
 import type {
   AuthFnClientOptions,
   AuthFnErrorEnvelope,
@@ -241,7 +242,6 @@ const TWO_FACTOR_REQUIRED_CODE = 'AUTHFN_2FA_REQUIRED';
 const HANDOFF_ID_PATTERN = /^[A-Za-z0-9_-]{22}$/;
 const VERIFIER_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 const CODE_PATTERN = /^[A-Za-z0-9_-]{1,256}$/;
-const REGION_ID_PATTERN = /^[A-Za-z0-9_.-]{1,64}$/;
 /** The server's canonical challenge id spelling (`CANONICAL_CHALLENGE_ID`). */
 const CHALLENGE_ID_PATTERN = /^[a-z0-9_-]{1,255}$/;
 /** The social sign-in methods the social callback names (`SOCIAL_PROVIDER_METHODS`). */
@@ -403,8 +403,9 @@ export function createBrowserHandoff(options: AuthFnBrowserHandoffOptions): Auth
     async begin(input) {
       const target = parseBeginTarget(input?.returnTo, allowedOrigins);
       const regionId = input?.regionId;
-      if (regionId !== undefined && (typeof regionId !== 'string' || !REGION_ID_PATTERN.test(regionId))) {
-        throw new TypeError('begin regionId must be a region id of letters, digits, dot, dash or underscore');
+      if (regionId !== undefined && !isRegionId(regionId)) {
+        throw new TypeError('begin regionId must be a region id: 1 to 255 characters, '
+          + 'no control characters and no leading or trailing whitespace');
       }
       if (store.atomic !== true) {
         throw new Error(NOT_ATOMIC_MESSAGE);
@@ -1018,8 +1019,7 @@ function parseRecord(raw: string, handoffId: string, now: number): StoredRecord 
     || !record.path.startsWith('/')
     || typeof record.verifier !== 'string'
     || !VERIFIER_PATTERN.test(record.verifier)
-    || (record.regionId !== undefined
-      && (typeof record.regionId !== 'string' || !REGION_ID_PATTERN.test(record.regionId)))
+    || (record.regionId !== undefined && !isRegionId(record.regionId))
   ) {
     return null;
   }
